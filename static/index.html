@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AgentOps MIS MVP</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="logo">AM</div>
+      <div>
+        <h1>AgentOps MIS</h1>
+        <p>AI Workforce Control Plane</p>
+      </div>
+    </div>
+    <nav id="nav"></nav>
+    <section class="hint">
+      <b>MVP 边界</b>
+      <p>本原型只运行 mock runtime，不调用任何真实 LLM 或外部 API。</p>
+    </section>
+  </aside>
+  <main class="main">
+    <header class="topbar">
+      <div>
+        <h2 id="page-title">Dashboard</h2>
+        <p id="page-subtitle">Agent registry, tasks, run ledger, approvals, memory, evaluation and audit.</p>
+      </div>
+      <div class="top-actions">
+        <button id="refresh-btn">刷新</button>
+        <button onclick="exportJson('/api/runs/export','runs-export.json')">导出 Runs</button>
+        <button onclick="exportJson('/api/memories/export','memories-export.json')">导出 Memories</button>
+      </div>
+    </header>
+    <section id="app" class="content"></section>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>
