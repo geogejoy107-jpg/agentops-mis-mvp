@@ -52,6 +52,7 @@ http://127.0.0.1:8787/dashboard
 - OpenClaw status/import/probe：读取 `~/.openclaw/openclaw.json`、cron jobs、cron run JSONL 和 subagent run index。
 - Hermes status/probe：检查本机 Hermes gateway 与 `127.0.0.1:8642`，不可用时记录 health failure，不让 MIS 崩溃。
 - Notion export：默认 dry-run，真实导出必须显式 `dry_run:false` + `confirm_export:true`。
+- 产品化 Notion 路径：除 parent/database 导出外，也支持 `NOTION_WORKSPACE_PRIVATE_EXPORT=true` 尝试 workspace-level private page；该模式取决于 token 类型，internal integration 通常仍需要指定 parent。
 
 OpenClaw 导入使用确定性 ID，重复导入不会重复造 agents/tasks/runs/evaluations/tool_calls。cron run summary 不存原文，只存脱敏前 200 字和 hash/source metadata。
 
@@ -101,6 +102,14 @@ Notion 连接已预留：
 ```bash
 export NOTION_TOKEN="..."
 export NOTION_PARENT_PAGE_ID="..."
+python3 server.py
+```
+
+如果使用 Notion public integration / OAuth / personal access token，并希望模拟 GPT-style “直接创建到 workspace private area”，可以尝试：
+
+```bash
+export NOTION_TOKEN="..."
+export NOTION_WORKSPACE_PRIVATE_EXPORT=true
 python3 server.py
 ```
 

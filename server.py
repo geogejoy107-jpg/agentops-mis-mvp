@@ -161,11 +161,15 @@ def notion_config() -> dict:
     token = os.environ.get("NOTION_TOKEN", "").strip()
     parent_page_id = os.environ.get("NOTION_PARENT_PAGE_ID", "").strip()
     database_id = os.environ.get("NOTION_DATABASE_ID", "").strip()
+    workspace_private_export = os.environ.get("NOTION_WORKSPACE_PRIVATE_EXPORT", "").strip().lower() in ("1", "true", "yes")
+    export_mode = "page_parent" if parent_page_id else "database_parent" if database_id else "workspace_private" if workspace_private_export else "dry_run_only"
     return {
-        "configured": bool(token and (parent_page_id or database_id)),
+        "configured": bool(token and export_mode != "dry_run_only"),
         "has_token": bool(token),
         "parent_page_id": parent_page_id,
         "database_id": database_id,
+        "workspace_private_export": workspace_private_export,
+        "export_mode": export_mode,
         "notion_version": os.environ.get("NOTION_VERSION", "2022-06-28"),
     }
 
@@ -1607,6 +1611,8 @@ class Handler(BaseHTTPRequestHandler):
                     "has_token": cfg["has_token"],
                     "has_parent_page_id": bool(cfg["parent_page_id"]),
                     "has_database_id": bool(cfg["database_id"]),
+                    "workspace_private_export": cfg["workspace_private_export"],
+                    "export_mode": cfg["export_mode"],
                     "notion_version": cfg["notion_version"],
                 })
             if path == "/api/integrations/notion/export-preview":
@@ -2029,14 +2035,17 @@ def build_notion_report(conn) -> str:
 def post_notion_page(markdown: str, title: str = "AgentOps MIS 项目汇报工作台") -> dict:
     cfg = notion_config()
     if not cfg["configured"]:
-        return {"configured": False, "created": False, "reason": "NOTION_TOKEN plus NOTION_PARENT_PAGE_ID or NOTION_DATABASE_ID is required."}
+        return {"configured": False, "created": False, "reason": "NOTION_TOKEN plus a parent/database target, or NOTION_WORKSPACE_PRIVATE_EXPORT=true, is required."}
 
     if cfg["parent_page_id"]:
         parent = {"page_id": cfg["parent_page_id"]}
         properties = {"title": {"title": [{"type": "text", "text": {"content": title}}]}}
-    else:
+    elif cfg["database_id"]:
         parent = {"database_id": cfg["database_id"]}
         properties = {"Name": {"title": [{"type": "text", "text": {"content": title}}]}}
+    else:
+        parent = {"workspace": True}
+        properties = {"title": {"title": [{"type": "text", "text": {"content": title}}]}}
 
     payload = {
         "parent": parent,
@@ -2056,7 +2065,7 @@ def post_notion_page(markdown: str, title: str = "AgentOps MIS 项目汇报工�
     )
     with urlopen(req, timeout=30) as res:
         data = json.loads(res.read().decode("utf-8"))
-    return {"configured": True, "created": True, "notion_page_id": data.get("id"), "url": data.get("url")}
+    return {"configured": True, "created": True, "export_mode": cfg["export_mode"], "notion_page_id": data.get("id"), "url": data.get("url")}
 
 
 def main():

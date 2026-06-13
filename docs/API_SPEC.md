@@ -169,9 +169,14 @@ NOTION_TOKEN=
 NOTION_PARENT_PAGE_ID=
 NOTION_DATABASE_ID=
 NOTION_VERSION=2022-06-28
+NOTION_WORKSPACE_PRIVATE_EXPORT=false
 ```
 
-`NOTION_PARENT_PAGE_ID` 和 `NOTION_DATABASE_ID` 二选一即可。未配置 token，或 parent/database 均未配置时，导出接口只返回 dry-run 预览，不会联网。
+`NOTION_PARENT_PAGE_ID` 和 `NOTION_DATABASE_ID` 二选一即可。
+
+产品化 OAuth / public integration 路径可以设置 `NOTION_WORKSPACE_PRIVATE_EXPORT=true`，在没有 parent/database 时尝试创建 workspace-level private page。Notion 官方限制是：internal integration 通常仍然需要 parent page 或 database；workspace-level private page 只适用于 Notion 允许的 public integration bot / personal access token 场景。
+
+未配置 token，或没有 parent/database 且未开启 workspace private export 时，导出接口只返回 dry-run 预览，不会联网。
 
 POST body：
 
