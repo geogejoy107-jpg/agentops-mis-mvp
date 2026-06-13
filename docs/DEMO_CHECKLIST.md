@@ -5,7 +5,9 @@
 Start the local service:
 
 ```bash
-cd /Users/wuji/Documents/MIS/code/agentops-mis-mvp
+cd agentops-mis-mvp
+python3 scripts/demo_seed_openclaw_redacted.py --reset
+python3 scripts/demo_acceptance.py --start-server
 python3 server.py
 ```
 
@@ -23,6 +25,8 @@ curl -fsS http://127.0.0.1:8787/api/integrations/openclaw/status
 curl -fsS http://127.0.0.1:8787/api/integrations/hermes/status
 curl -fsS http://127.0.0.1:8787/api/integrations/notion/status
 curl -fsS http://127.0.0.1:8787/api/integrations/notion/export-preview
+curl -fsS http://127.0.0.1:8787/api/runtime-connectors
+curl -fsS http://127.0.0.1:8787/api/bases
 ```
 
 ## Frontend Demo Path
@@ -58,8 +62,10 @@ curl -fsS http://127.0.0.1:8787/api/integrations/notion/export-preview
 8. `/integrations`
    - Show OpenClaw status, import local data, and manual probe.
    - Show Hermes status and manual probe. If Hermes API is not listening, show `unavailable` as a recorded health result.
+   - Show Agnesfallback fixed probe dry-run plan.
    - Show Notion status and report preview.
    - If Notion is not configured, explain dry-run privacy boundary.
+   - Mention template/base switching is available through `/api/bases`, `/api/template-packages` and `/api/migration/preview`.
 
 ## Backend Demo Path
 
@@ -112,6 +118,13 @@ Show reproducible OpenClaw experiment:
 python3 scripts/openclaw_v1_experiment.py --skip-live-probe
 ```
 
+Show v1.2.1 base/template preview:
+
+```bash
+curl -fsS http://127.0.0.1:8787/api/template-packages | jq .
+curl -fsS -X POST http://127.0.0.1:8787/api/migration/preview -d '{}' | jq .
+```
+
 ## Fallbacks
 
 If the fixed OpenClaw run id is missing:
@@ -139,5 +152,7 @@ If browser demo fails:
 - Use API responses and SQLite counts.
 - Open docs:
   - `docs/PRESENTATION_BRIEF.md`
+  - `docs/DEMO_VIDEO_SCRIPT.md`
+  - `docs/REPRODUCIBLE_DEMO.md`
   - `docs/ARCHITECTURE.md`
   - `docs/CHINESE_PRESENTATION_SCRIPT.md`

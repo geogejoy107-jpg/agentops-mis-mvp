@@ -6,7 +6,7 @@ AgentOps MIS: AI Digital Employee Management Information System
 
 ## One-Sentence Positioning
 
-AgentOps MIS is a management information system for AI digital employees, designed to manage agent identity, tasks, tools, runs, approvals, memory, quality and audit across runtimes such as OpenClaw and Hermes.
+AgentOps MIS is a management information system for AI digital employees, designed to manage agent identity, tasks, tools, runs, approvals, memory, quality, audit and external work bases across runtimes such as OpenClaw, Hermes and Agnesfallback.
 
 ## 10-Minute Structure
 
@@ -56,8 +56,10 @@ Architecture:
 - Local API control plane for structured operations.
 - SQLite as local MIS database.
 - Mock runtime for deterministic demo.
-- OpenClaw v1 probe for real runtime observability.
-- Notion export connector for report and knowledge workflow.
+- OpenClaw import/probe for local runtime observability.
+- Hermes/Agnesfallback connector for health, model discovery and fixed dry-run probes.
+- Notion External Base for report, task and memory preview.
+- Template + Base switching preview for product portability.
 
 Design principle:
 
@@ -88,8 +90,10 @@ Highlights:
 - Runs record cost, token usage, errors and trace id.
 - Memory candidates require review.
 - Audit logs include before/after hashes and tamper-chain placeholder.
-- OpenClaw live probe has already been recorded as a real `runtime_type=openclaw` run.
-- Broad community research protocol is packaged as a Codex skill.
+- OpenClaw cron/import and redacted scale demo are visible in the ledger.
+- Hermes unavailable is recorded as a health result instead of crashing the system.
+- Notion export is safe-by-default dry-run.
+- Template/base switching shows how the product can connect Notion, W&B, Plane, Docmost and Mattermost later.
 
 ### 5. System Demo: 2 Minutes
 
@@ -99,10 +103,11 @@ Demo path:
 2. Show total agents, tasks, approvals and run ledger.
 3. Open `/agents` and show mock agents plus OpenClaw agent.
 4. Open `/tasks` and show task lifecycle.
-5. Open `/runs/run_v1_openclaw_probe_20260613T122349Z`.
+5. Open a recent run and show graph fields: parent run, delegation id, child/sibling runs.
 6. Show tool calls, evaluation and audit.
 7. Open `/memory` and show candidate review.
-8. Open `/integrations` and show Notion export preview/status.
+8. Open `/integrations` and show OpenClaw, Hermes/Agnesfallback and Notion dry-run.
+9. Show `/api/migration/preview` as the base-switching story.
 
 ## Recommended Slide Titles
 

@@ -149,10 +149,36 @@ Privacy boundary: cron run `summary` raw text is never stored. The database stor
 
 ```http
 GET  /api/integrations/hermes/status
+GET  /api/integrations/hermes/models
 POST /api/integrations/hermes/probe
+POST /api/integrations/hermes/cli-probe
+POST /api/integrations/hermes/chat-completion-probe
+POST /api/integrations/hermes/run-task
 ```
 
 Hermes probe checks local gateway availability on `127.0.0.1:8642`. If the API port is not listening, the endpoint records an `unavailable` health failure as a normal run/evaluation instead of failing the whole MIS service.
+
+Agnesfallback is exposed as a Hermes-compatible runtime connector:
+
+- CLI connector: `rtc_agnesfallback_cli`
+- OpenAI-compatible API connector: `rtc_agnesfallback_openai_api`
+- Default behavior: dry-run only.
+- Real fixed probes require both `HERMES_ALLOW_REAL_RUN=true` and request body `{"confirm_run": true}`.
+- The CLI probe uses a fixed safe prompt and intentionally excludes `--yolo`.
+- Arbitrary `/run-task` remains a dry-run preview in v1.2.1.
+
+Environment variables:
+
+```text
+HERMES_GATEWAY_URL=http://127.0.0.1:8642
+HERMES_PROFILE=default
+HERMES_RUNTIME_MODE=health_only
+HERMES_ALLOW_REAL_RUN=false
+HERMES_REQUIRE_CONFIRM_RUN=true
+AGNESFALLBACK_BIN=~/.local/bin/agnesfallback
+AGNESFALLBACK_GATEWAY_URL=http://127.0.0.1:8643
+AGNESFALLBACK_PROFILE=agnesfallback
+```
 
 ## Integrations / Notion
 
@@ -160,6 +186,12 @@ Hermes probe checks local gateway availability on `127.0.0.1:8642`. If the API p
 GET /api/integrations/notion/status
 GET /api/integrations/notion/export-preview
 POST /api/integrations/notion/export-report
+POST /api/integrations/notion/preview
+POST /api/integrations/notion/dry-run-export
+POST /api/integrations/notion/export-confirmed
+POST /api/integrations/notion/import-preview
+POST /api/integrations/notion/sync-memory-candidates
+POST /api/integrations/notion/sync-tasks
 ```
 
 环境变量：
@@ -198,6 +230,48 @@ POST body：
 ```
 
 隐私边界：Notion 导出只包含项目汇报摘要和结构化指标，不导出 credentials、私聊正文、完整 session transcript 或原始命令体。
+
+## Runtime Connectors / Bases / Templates
+
+```http
+GET /api/runtime-connectors
+GET /api/runtime-events
+GET /api/bases
+GET /api/connectors
+GET /api/external-links
+GET /api/sync-events
+GET /api/template-packages
+GET /api/template-bindings
+POST /api/migration/preview
+```
+
+These endpoints support the v1.2.1 "external base" story:
+
+- Agent-MIS local bases remain canonical for task, memory, template and audit ledger records.
+- Notion is modeled as an external base in dry-run mode by default.
+- W&B, Plane, Docmost and Mattermost are represented as planned external bases with capability metadata.
+- Template packages describe scenario-specific agent roles, base bindings, memory schema, quality gates and approval policy.
+- Migration preview shows what can move between bases, what must stay local, permission changes and rollback steps.
+
+No endpoint imports private Notion content or writes to external systems unless a dedicated confirmed export endpoint is used.
+
+## Demo Scripts
+
+```bash
+python3 scripts/demo_seed_openclaw_redacted.py --reset
+python3 scripts/demo_acceptance.py --start-server
+```
+
+The seed script creates deterministic synthetic data only:
+
+- 10 demo agents
+- 50 demo tasks
+- 500 demo runs
+- 800 demo tool calls
+- 200 demo memory candidates
+- 2000 demo audit records
+
+The acceptance script verifies local API readiness for dashboard, integrations, runtime connectors, bases, templates, Notion dry-run, Agnesfallback dry-run and migration preview.
 
 ## 高风险工具策略
 

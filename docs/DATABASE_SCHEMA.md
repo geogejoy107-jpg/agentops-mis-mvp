@@ -195,3 +195,25 @@ CREATE INDEX IF NOT EXISTS idx_memories_status ON memories(review_status);
 CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope);
 CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_logs(entity_type, entity_id);
 ```
+
+## v1.2.1 扩展表
+
+为了支持 runtime connector、Notion External Base、Template + Base Switching 和 demo acceptance，`server.py` 还会初始化以下扩展表：
+
+| Table | 用途 |
+|---|---|
+| `runtime_connectors` | Hermes、Agnesfallback 等本地 runtime 的 endpoint/profile/binary/status。 |
+| `runtime_events` | health check、models discovery、dry-run probe、fixed probe 等 runtime 事件。 |
+| `bases` | Agent-MIS local base 与 Notion/W&B/Plane/Docmost/Mattermost external base。 |
+| `base_capabilities` | 每个 base 支持 task/comment/artifact/metrics/webhook/OAuth/writeback/audit 等能力。 |
+| `connectors` | Notion 等外部 base 的 connector 状态、安全默认和写回开关。 |
+| `connector_scopes` | connector 需要/已授予的权限范围。 |
+| `external_object_links` | 本地对象与外部对象的映射关系，用于未来 reconciliation。 |
+| `sync_jobs` | 外部同步 job 摘要。 |
+| `sync_events` | dry-run/export/import-preview 等同步事件，存 hash 和状态。 |
+| `field_mappings` | 内部字段到外部字段的映射。 |
+| `template_packages` | 用例模板：agent roles、task schema、memory schema、quality gates、approval policy。 |
+| `template_bindings` | 模板与 base/workspace 的绑定。 |
+| `migration_runs` | base/template switching preview 和未来迁移结果。 |
+
+隐私边界保持不变：这些扩展表记录结构化状态、短摘要、hash、连接器状态和迁移预览，不存 credentials、私聊正文、完整 transcript 或真实 prompt 原文。

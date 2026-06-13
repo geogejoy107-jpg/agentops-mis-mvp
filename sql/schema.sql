@@ -1,3 +1,8 @@
+-- Reference SQL for the core v1 schema.
+-- v1.2.1 runtime connector, external base, template and migration tables are
+-- initialized from server.py, which is the executable schema authority for the
+-- zero-dependency local MVP.
+
 CREATE TABLE IF NOT EXISTS users (
     user_id TEXT PRIMARY KEY,
     name TEXT NOT NULL,

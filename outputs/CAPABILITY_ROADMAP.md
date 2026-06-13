@@ -2,7 +2,7 @@
 
 ## Current State
 
-The current demo is a local Python/SQLite sandbox with a real OpenClaw v1 probe. It proves the core control-plane object model:
+The current demo is a local Python/SQLite sandbox with OpenClaw import/probe, Hermes/Agnesfallback runtime connector shape, Notion External Base dry-run, template/base switching preview and a redacted scale seed. It proves the core control-plane object model:
 
 - Agent registry
 - Task ledger
@@ -12,12 +12,16 @@ The current demo is a local Python/SQLite sandbox with a real OpenClaw v1 probe.
 - Evaluation records
 - Memory candidates
 - Audit logs
+- Runtime connectors
+- External bases
+- Template packages
+- Migration previews
 
 It is not yet the full Agent-MIS vision from the research notes.
 
 ## Time Estimate
 
-### 0.5-1 day: v1.1 usable local control plane
+### Completed: v1.1 usable local control plane
 
 - Import OpenClaw agents from safe config metadata.
 - Import cron jobs as tasks.
@@ -25,7 +29,7 @@ It is not yet the full Agent-MIS vision from the research notes.
 - Add Agent-MIS research/search protocol to project workflow.
 - Add a sharper dashboard section for OpenClaw runtime health.
 
-### 2-4 days: strong local MVP
+### Current: v1.2.1 video-ready local MVP
 
 - Add Hermes runtime probe.
 - Add parent/child delegation chain view.
@@ -33,6 +37,11 @@ It is not yet the full Agent-MIS vision from the research notes.
 - Add policy/approval rules for risky actions.
 - Add basic cost-quality metrics and agent performance cards.
 - Add test/smoke scripts and Playwright visual checks.
+- Add Agnesfallback fixed-probe dry-run adapter.
+- Add Notion External Base dry-run connector.
+- Add Template + Base Switching preview.
+- Add redacted OpenClaw-scale demo seed and acceptance script.
+- Add demo video and reproducibility docs.
 
 ### 1-2 weeks: product-shaped private alpha
 
@@ -122,24 +131,23 @@ Recommended process:
 
 ## Recommended Next Build
 
-Next concrete target: v1.1 OpenClaw Asset Import.
+Next concrete target: private alpha hardening.
 
 Inputs:
 
-- `~/.openclaw/openclaw.json`
-- `~/.openclaw/cron/jobs.json`
-- `~/.openclaw/cron/runs/*.jsonl`
-- `~/.openclaw/subagents/runs.json`
-- safe gateway/config-audit event summaries
+- v1.2.1 local schema and API.
+- Research traceability docs.
+- OpenClaw/Hermes/Notion adapter boundaries.
+- Template/base switching preview.
 
 Outputs:
 
-- OpenClaw agents in `agents`
-- cron jobs in `tasks`
-- cron/subagent/live probes in `runs`
-- safe runtime events in `tool_calls`
-- config/run events in `audit_logs`
-- rule-based health scores in `evaluations`
+- RBAC scaffolding.
+- Connector trust registry.
+- Stronger ledger/provenance model.
+- Postgres migration plan.
+- Production OAuth/export path.
+- Next.js UI handoff.
 
 Privacy boundary:
 

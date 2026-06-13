@@ -1,6 +1,6 @@
 # AgentOps MIS / AI Workforce MIS MVP
 
-这是一个面向“一人公司 / 小团队”的 **AgentOps MIS（AI 数字员工管理信息系统）** 本地原型包。它不是 LLM runtime、不是 agent builder，也不会调用真实外部 API。它实现的是管理控制面：
+这是一个面向“一人公司 / 小团队”的 **AgentOps MIS（AI 数字员工管理信息系统）** 本地原型包。它不是 LLM runtime、不是 agent builder；它是运行在 agent runtime 之上的管理控制面。默认本地优先、外部写入关闭，只有显式确认后才会尝试 Notion 导出或固定安全 runtime probe。
 
 - Agent Registry
 - Task Management
@@ -13,6 +13,9 @@
 - Audit Log
 - OpenClaw local import / probe
 - Hermes local health probe
+- Agnesfallback dry-run / fixed probe adapter
+- Notion External Base dry-run connector
+- Template + Base switching preview
 
 ## 为什么不是 Next.js 版？
 
@@ -45,6 +48,29 @@ http://127.0.0.1:8787/dashboard
 9. 查看 `/audit` 的审计记录。
 10. 打开 `/integrations`，运行 OpenClaw 本地导入、OpenClaw 手动 probe、Hermes 手动 probe，并查看 Notion dry-run/export。
 
+## v1.2.1 可录屏复现路径
+
+生成红acted、大规模、可复现 demo 数据：
+
+```bash
+python3 scripts/demo_seed_openclaw_redacted.py --reset
+```
+
+一键验收本地 API：
+
+```bash
+python3 scripts/demo_acceptance.py --start-server
+```
+
+验收覆盖：
+
+- Dashboard runtime health 和 Agent performance summary。
+- OpenClaw status。
+- Hermes/Agnesfallback status、models、dry-run CLI probe。
+- Notion status、preview、dry-run export。
+- Bases、connectors、template packages、migration preview。
+- SQLite 中 audit/runtime/template/bases 基础数据存在。
+
 ## 强本地 MVP 集成
 
 页面 `/integrations` 已经支持三个本地优先能力：
@@ -53,6 +79,8 @@ http://127.0.0.1:8787/dashboard
 - Hermes status/probe：检查本机 Hermes gateway 与 `127.0.0.1:8642`，不可用时记录 health failure，不让 MIS 崩溃。
 - Notion export：默认 dry-run，真实导出必须显式 `dry_run:false` + `confirm_export:true`。
 - 产品化 Notion 路径：除 parent/database 导出外，也支持 `NOTION_WORKSPACE_PRIVATE_EXPORT=true` 尝试 workspace-level private page；该模式取决于 token 类型，internal integration 通常仍需要指定 parent。
+- Agnesfallback：默认只返回 dry-run 计划；真实固定 probe 必须同时设置 `HERMES_ALLOW_REAL_RUN=true` 并在请求体里传 `confirm_run:true`。默认不会加 `--yolo`。
+- Base/template switching：提供 Notion、W&B、Plane、Docmost、Mattermost 等外部 base 的能力矩阵和迁移 preview；Agent-MIS local base 仍是权威账本。
 
 OpenClaw 导入使用确定性 ID，重复导入不会重复造 agents/tasks/runs/evaluations/tool_calls。cron run summary 不存原文，只存脱敏前 200 字和 hash/source metadata。
 
@@ -62,6 +90,9 @@ OpenClaw 导入使用确定性 ID，重复导入不会重复造 agents/tasks/run
 curl -fsS http://127.0.0.1:8787/api/integrations/openclaw/status | jq .
 curl -fsS -X POST http://127.0.0.1:8787/api/integrations/openclaw/import -d '{}' | jq .
 curl -fsS -X POST http://127.0.0.1:8787/api/integrations/hermes/probe -d '{}' | jq .
+curl -fsS -X POST http://127.0.0.1:8787/api/integrations/hermes/cli-probe -d '{}' | jq .
+curl -fsS -X POST http://127.0.0.1:8787/api/integrations/notion/dry-run-export -d '{}' | jq .
+curl -fsS -X POST http://127.0.0.1:8787/api/migration/preview -d '{}' | jq .
 curl -fsS http://127.0.0.1:8787/api/dashboard/metrics | jq .
 ```
 
@@ -121,7 +152,9 @@ python3 server.py
 agentops-mis-mvp/
 ├── server.py                         # 零依赖本地服务 + SQLite API + mock/OpenClaw/Hermes adapters
 ├── scripts/
-│   └── openclaw_v1_experiment.py      # OpenClaw v1 safe metadata + live probe experiment
+│   ├── openclaw_v1_experiment.py      # OpenClaw v1 safe metadata + live probe experiment
+│   ├── demo_seed_openclaw_redacted.py  # Synthetic redacted scale data for video demos
+│   └── demo_acceptance.py              # Local API acceptance checks
 ├── static/
 │   ├── index.html                     # 单页 UI
 │   ├── styles.css
@@ -153,11 +186,12 @@ agentops-mis-mvp/
 ## 默认安全策略
 
 - 不含真实 API key。
-- 不调用外部 API。
+- 默认不调用外部 API；Notion export 和 Agnesfallback fixed probe 需要显式确认。
 - 高风险工具调用默认进入审批。
 - 所有关键写操作写入 audit log。
 - 预留 `tamper_chain_hash` 字段。
 - 禁止隐藏 telemetry；如果未来接入第三方观测系统，必须显式记录并可关闭。
+- 不提交 `agentops_mis.db`、credentials、真实 prompts、私聊正文或完整 transcripts。
 
 ## 下一步
 

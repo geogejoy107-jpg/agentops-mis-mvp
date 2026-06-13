@@ -22,7 +22,7 @@ Report and system demo deadline shown in class material: July 3, 23:29.
 
 Owns integration and final judgment.
 
-- Keeps `/Users/wuji/Documents/MIS/code/agentops-mis-mvp` runnable.
+- Keeps the local `agentops-mis-mvp` workspace runnable.
 - Reviews and merges outputs from subthreads.
 - Updates project memory only for stable decisions.
 - Runs final smoke tests.

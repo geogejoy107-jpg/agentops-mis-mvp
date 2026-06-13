@@ -25,6 +25,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 from urllib.request import Request, urlopen
+from urllib.error import HTTPError, URLError
 
 ROOT = Path(__file__).resolve().parent
 DB_PATH = ROOT / "agentops_mis.db"
@@ -118,6 +119,14 @@ def socket_listening(host: str, port: int, timeout=0.5) -> bool:
             return True
     except OSError:
         return False
+
+
+def url_listening(url: str, timeout=0.5) -> bool:
+    parsed = urlparse(url)
+    if not parsed.hostname:
+        return False
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    return socket_listening(parsed.hostname, port, timeout)
 
 
 def db() -> sqlite3.Connection:
@@ -391,6 +400,194 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS runtime_connectors (
+    runtime_connector_id TEXT PRIMARY KEY,
+    provider TEXT NOT NULL,
+    connector_type TEXT NOT NULL,
+    profile_name TEXT,
+    base_url TEXT,
+    binary_path TEXT,
+    status TEXT NOT NULL,
+    allow_real_run INTEGER NOT NULL DEFAULT 0,
+    require_confirm_run INTEGER NOT NULL DEFAULT 1,
+    last_health_at TEXT,
+    last_error TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS runtime_events (
+    runtime_event_id TEXT PRIMARY KEY,
+    runtime_connector_id TEXT,
+    event_type TEXT NOT NULL,
+    status TEXT NOT NULL,
+    run_id TEXT,
+    task_id TEXT,
+    agent_id TEXT,
+    model_name TEXT,
+    latency_ms INTEGER,
+    prompt_hash TEXT,
+    input_summary TEXT,
+    output_summary TEXT,
+    error_message TEXT,
+    raw_payload_hash TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(runtime_connector_id) REFERENCES runtime_connectors(runtime_connector_id),
+    FOREIGN KEY(run_id) REFERENCES runs(run_id),
+    FOREIGN KEY(task_id) REFERENCES tasks(task_id),
+    FOREIGN KEY(agent_id) REFERENCES agents(agent_id)
+);
+
+CREATE TABLE IF NOT EXISTS bases (
+    base_id TEXT PRIMARY KEY,
+    provider TEXT NOT NULL,
+    category TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    status TEXT NOT NULL,
+    display_name TEXT NOT NULL,
+    description TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS base_capabilities (
+    capability_id TEXT PRIMARY KEY,
+    base_id TEXT NOT NULL,
+    supports_tasks INTEGER DEFAULT 0,
+    supports_comments INTEGER DEFAULT 0,
+    supports_artifacts INTEGER DEFAULT 0,
+    supports_metrics INTEGER DEFAULT 0,
+    supports_webhooks INTEGER DEFAULT 0,
+    supports_oauth INTEGER DEFAULT 0,
+    supports_writeback INTEGER DEFAULT 0,
+    supports_permissions INTEGER DEFAULT 0,
+    supports_audit_export INTEGER DEFAULT 0,
+    supports_realtime_sync INTEGER DEFAULT 0,
+    notes TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(base_id) REFERENCES bases(base_id)
+);
+
+CREATE TABLE IF NOT EXISTS connectors (
+    connector_id TEXT PRIMARY KEY,
+    base_id TEXT,
+    provider TEXT NOT NULL,
+    auth_type TEXT NOT NULL,
+    status TEXT NOT NULL,
+    last_checked_at TEXT,
+    last_error TEXT,
+    dry_run_default INTEGER NOT NULL DEFAULT 1,
+    writeback_allowed INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY(base_id) REFERENCES bases(base_id)
+);
+
+CREATE TABLE IF NOT EXISTS connector_scopes (
+    scope_id TEXT PRIMARY KEY,
+    connector_id TEXT NOT NULL,
+    scope_name TEXT NOT NULL,
+    granted INTEGER NOT NULL DEFAULT 0,
+    required_for TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(connector_id) REFERENCES connectors(connector_id)
+);
+
+CREATE TABLE IF NOT EXISTS external_object_links (
+    link_id TEXT PRIMARY KEY,
+    internal_object_type TEXT NOT NULL,
+    internal_object_id TEXT NOT NULL,
+    external_provider TEXT NOT NULL,
+    external_object_type TEXT NOT NULL,
+    external_object_id TEXT,
+    external_url TEXT,
+    sync_direction TEXT NOT NULL,
+    sync_status TEXT NOT NULL,
+    last_synced_at TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sync_jobs (
+    sync_job_id TEXT PRIMARY KEY,
+    connector_id TEXT NOT NULL,
+    job_type TEXT NOT NULL,
+    status TEXT NOT NULL,
+    started_at TEXT,
+    ended_at TEXT,
+    last_error TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(connector_id) REFERENCES connectors(connector_id)
+);
+
+CREATE TABLE IF NOT EXISTS sync_events (
+    sync_event_id TEXT PRIMARY KEY,
+    connector_id TEXT,
+    direction TEXT NOT NULL,
+    object_type TEXT NOT NULL,
+    internal_object_id TEXT,
+    external_object_id TEXT,
+    status TEXT NOT NULL,
+    error_message TEXT,
+    payload_hash TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(connector_id) REFERENCES connectors(connector_id)
+);
+
+CREATE TABLE IF NOT EXISTS field_mappings (
+    field_mapping_id TEXT PRIMARY KEY,
+    base_id TEXT NOT NULL,
+    internal_object_type TEXT NOT NULL,
+    internal_field TEXT NOT NULL,
+    external_field TEXT NOT NULL,
+    transform_rule TEXT,
+    required INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(base_id) REFERENCES bases(base_id)
+);
+
+CREATE TABLE IF NOT EXISTS template_packages (
+    template_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    scenario TEXT NOT NULL,
+    description TEXT,
+    default_bases_json TEXT NOT NULL DEFAULT '{}',
+    swappable_bases_json TEXT NOT NULL DEFAULT '{}',
+    agent_roles_json TEXT NOT NULL DEFAULT '[]',
+    task_schema_json TEXT NOT NULL DEFAULT '{}',
+    memory_schema_json TEXT NOT NULL DEFAULT '{}',
+    quality_gates_json TEXT NOT NULL DEFAULT '{}',
+    approval_policy_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS template_bindings (
+    binding_id TEXT PRIMARY KEY,
+    template_id TEXT NOT NULL,
+    base_id TEXT NOT NULL,
+    workspace_id TEXT,
+    status TEXT NOT NULL,
+    mapping_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(template_id) REFERENCES template_packages(template_id),
+    FOREIGN KEY(base_id) REFERENCES bases(base_id)
+);
+
+CREATE TABLE IF NOT EXISTS migration_runs (
+    migration_run_id TEXT PRIMARY KEY,
+    template_id TEXT,
+    from_base_id TEXT,
+    to_base_id TEXT,
+    status TEXT NOT NULL,
+    preview_json TEXT NOT NULL DEFAULT '{}',
+    result_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    completed_at TEXT,
+    FOREIGN KEY(template_id) REFERENCES template_packages(template_id),
+    FOREIGN KEY(from_base_id) REFERENCES bases(base_id),
+    FOREIGN KEY(to_base_id) REFERENCES bases(base_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_owner ON tasks(owner_agent_id);
 CREATE INDEX IF NOT EXISTS idx_runs_task ON runs(task_id);
@@ -402,6 +599,10 @@ CREATE INDEX IF NOT EXISTS idx_approvals_decision ON approvals(decision);
 CREATE INDEX IF NOT EXISTS idx_memories_status ON memories(review_status);
 CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope);
 CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_logs(entity_type, entity_id);
+CREATE INDEX IF NOT EXISTS idx_runtime_events_connector ON runtime_events(runtime_connector_id);
+CREATE INDEX IF NOT EXISTS idx_connectors_base ON connectors(base_id);
+CREATE INDEX IF NOT EXISTS idx_sync_events_connector ON sync_events(connector_id);
+CREATE INDEX IF NOT EXISTS idx_external_links_internal ON external_object_links(internal_object_type, internal_object_id);
 """
 
 
@@ -435,7 +636,249 @@ def audit(conn: sqlite3.Connection, actor_type: str, actor_id: str | None, actio
 def init_schema():
     with db() as conn:
         conn.executescript(SCHEMA_SQL)
+        ensure_v121_reference_data(conn)
         conn.commit()
+
+
+def ensure_v121_reference_data(conn: sqlite3.Connection):
+    now = now_iso()
+    bases = [
+        ("base_local_tasks", "agent-mis", "task", "managed", "active", "Agent-MIS Local Task Base", "Canonical managed task base for demo and core ledger."),
+        ("base_local_memory", "agent-mis", "memory", "managed", "active", "Agent-MIS Local Memory Base", "Canonical managed memory review base."),
+        ("base_local_templates", "agent-mis", "template", "managed", "active", "Agent-MIS Local Template Base", "Canonical managed template package base."),
+        ("base_notion_memory", "notion", "memory", "external", "dry_run", "Notion External Memory Base", "External Notion pages for reviewed memory and knowledge capture."),
+        ("base_notion_tasks", "notion", "task", "external", "dry_run", "Notion External Task Base", "External Notion database/pages for task previews and writeback."),
+        ("base_notion_templates", "notion", "template", "external", "dry_run", "Notion External Template Base", "External Notion pages for template presentation."),
+        ("base_wandb_observability", "wandb", "observability", "external", "planned", "W&B External Observability Base", "Planned observability base for evals and experiments."),
+        ("base_plane_tasks", "plane", "task", "external", "planned", "Plane External Task Base", "Planned issue/task base for software teams."),
+        ("base_docmost_docs", "docmost", "memory", "external", "planned", "Docmost External Knowledge Base", "Planned open-source documentation base."),
+        ("base_mattermost_ops", "mattermost", "communication", "external", "planned", "Mattermost External Ops Base", "Planned team communication base."),
+    ]
+    conn.executemany(
+        """INSERT OR IGNORE INTO bases(base_id,provider,category,mode,status,display_name,description,created_at,updated_at)
+        VALUES(?,?,?,?,?,?,?,?,?)""",
+        [(base_id, provider, category, mode, status, name, desc, now, now) for base_id, provider, category, mode, status, name, desc in bases],
+    )
+    caps = {
+        "base_local_tasks": dict(tasks=1, comments=1, artifacts=1, metrics=1, webhooks=0, oauth=0, writeback=1, permissions=1, audit=1, realtime=0, notes="Core task authority remains local."),
+        "base_local_memory": dict(tasks=0, comments=1, artifacts=1, metrics=1, webhooks=0, oauth=0, writeback=1, permissions=1, audit=1, realtime=0, notes="Core memory review and TTL remain local."),
+        "base_local_templates": dict(tasks=0, comments=0, artifacts=1, metrics=0, webhooks=0, oauth=0, writeback=1, permissions=1, audit=1, realtime=0, notes="Canonical template packages remain local."),
+        "base_notion_memory": dict(tasks=0, comments=1, artifacts=1, metrics=0, webhooks=0, oauth=1, writeback=0, permissions=1, audit=0, realtime=0, notes="Notion is external memory presentation, not audit authority."),
+        "base_notion_tasks": dict(tasks=1, comments=1, artifacts=1, metrics=0, webhooks=0, oauth=1, writeback=0, permissions=1, audit=0, realtime=0, notes="Notion task sync defaults to dry-run."),
+        "base_notion_templates": dict(tasks=0, comments=1, artifacts=1, metrics=0, webhooks=0, oauth=1, writeback=0, permissions=1, audit=0, realtime=0, notes="Notion can present templates but core package stays local."),
+    }
+    for base_id, c in caps.items():
+        conn.execute(
+            """INSERT OR IGNORE INTO base_capabilities(capability_id,base_id,supports_tasks,supports_comments,supports_artifacts,supports_metrics,supports_webhooks,supports_oauth,supports_writeback,supports_permissions,supports_audit_export,supports_realtime_sync,notes,created_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (stable_id("cap", base_id), base_id, c["tasks"], c["comments"], c["artifacts"], c["metrics"], c["webhooks"], c["oauth"], c["writeback"], c["permissions"], c["audit"], c["realtime"], c["notes"], now),
+        )
+    connectors = [
+        ("conn_notion_memory", "base_notion_memory", "notion", "token", "dry_run", None, None, 1, 0),
+        ("conn_notion_tasks", "base_notion_tasks", "notion", "token", "dry_run", None, None, 1, 0),
+        ("conn_notion_templates", "base_notion_templates", "notion", "token", "dry_run", None, None, 1, 0),
+    ]
+    conn.executemany(
+        """INSERT OR IGNORE INTO connectors(connector_id,base_id,provider,auth_type,status,last_checked_at,last_error,dry_run_default,writeback_allowed,created_at,updated_at)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+        [(cid, bid, provider, auth_type, status, checked, err, dry, write, now, now) for cid, bid, provider, auth_type, status, checked, err, dry, write in connectors],
+    )
+    for connector_id in ["conn_notion_memory", "conn_notion_tasks", "conn_notion_templates"]:
+        for scope_name, required_for in [("read_content", "preview/import-preview"), ("insert_content", "export-confirmed"), ("update_content", "future writeback")]:
+            conn.execute(
+                "INSERT OR IGNORE INTO connector_scopes(scope_id,connector_id,scope_name,granted,required_for,created_at) VALUES(?,?,?,?,?,?)",
+                (stable_id("scope", connector_id, scope_name), connector_id, scope_name, 0, required_for, now),
+            )
+    for row in runtime_connector_rows():
+        upsert_runtime_connector(conn, row)
+    for template in default_template_packages():
+        conn.execute(
+            """INSERT OR IGNORE INTO template_packages(template_id,name,scenario,description,default_bases_json,swappable_bases_json,agent_roles_json,task_schema_json,memory_schema_json,quality_gates_json,approval_policy_json,created_at,updated_at)
+            VALUES(:template_id,:name,:scenario,:description,:default_bases_json,:swappable_bases_json,:agent_roles_json,:task_schema_json,:memory_schema_json,:quality_gates_json,:approval_policy_json,:created_at,:updated_at)""",
+            template,
+        )
+        for base_id in json.loads(template["default_bases_json"]).values():
+            conn.execute(
+                "INSERT OR IGNORE INTO template_bindings(binding_id,template_id,base_id,workspace_id,status,mapping_json,created_at) VALUES(?,?,?,?,?,?,?)",
+                (stable_id("bind", template["template_id"], base_id), template["template_id"], base_id, "local-demo", "active", json.dumps({"mode": "canonical"}, ensure_ascii=False), now),
+            )
+
+
+def hermes_runtime_config() -> dict:
+    return {
+        "gateway_url": os.environ.get("HERMES_GATEWAY_URL", "http://127.0.0.1:8642").strip(),
+        "profile": os.environ.get("HERMES_PROFILE", "default").strip() or "default",
+        "runtime_mode": os.environ.get("HERMES_RUNTIME_MODE", "health_only").strip() or "health_only",
+        "allow_real_run": os.environ.get("HERMES_ALLOW_REAL_RUN", "").strip().lower() in ("1", "true", "yes"),
+        "require_confirm_run": os.environ.get("HERMES_REQUIRE_CONFIRM_RUN", "true").strip().lower() not in ("0", "false", "no"),
+    }
+
+
+def agnesfallback_config() -> dict:
+    return {
+        "binary_path": os.path.expanduser(os.environ.get("AGNESFALLBACK_BIN", "~/.local/bin/agnesfallback").strip()),
+        "gateway_url": os.environ.get("AGNESFALLBACK_GATEWAY_URL", "http://127.0.0.1:8643").strip(),
+        "profile": os.environ.get("AGNESFALLBACK_PROFILE", "agnesfallback").strip() or "agnesfallback",
+    }
+
+
+def runtime_connector_rows() -> list[dict]:
+    now = now_iso()
+    hermes = hermes_runtime_config()
+    agnes = agnesfallback_config()
+    return [
+        {
+            "runtime_connector_id": "rtc_hermes_default_gateway",
+            "provider": "hermes",
+            "connector_type": "health_probe",
+            "profile_name": hermes["profile"],
+            "base_url": hermes["gateway_url"],
+            "binary_path": None,
+            "status": "unknown",
+            "allow_real_run": 1 if hermes["allow_real_run"] else 0,
+            "require_confirm_run": 1 if hermes["require_confirm_run"] else 0,
+            "last_health_at": None,
+            "last_error": None,
+            "created_at": now,
+            "updated_at": now,
+        },
+        {
+            "runtime_connector_id": "rtc_agnesfallback_cli",
+            "provider": "agnesfallback",
+            "connector_type": "cli_probe",
+            "profile_name": agnes["profile"],
+            "base_url": None,
+            "binary_path": agnes["binary_path"],
+            "status": "available" if Path(agnes["binary_path"]).exists() else "unavailable",
+            "allow_real_run": 1 if hermes["allow_real_run"] else 0,
+            "require_confirm_run": 1 if hermes["require_confirm_run"] else 0,
+            "last_health_at": None,
+            "last_error": None if Path(agnes["binary_path"]).exists() else "AGNESFALLBACK_BIN not found.",
+            "created_at": now,
+            "updated_at": now,
+        },
+        {
+            "runtime_connector_id": "rtc_agnesfallback_openai_api",
+            "provider": "agnesfallback",
+            "connector_type": "openai_compatible",
+            "profile_name": agnes["profile"],
+            "base_url": agnes["gateway_url"],
+            "binary_path": None,
+            "status": "unknown",
+            "allow_real_run": 1 if hermes["allow_real_run"] else 0,
+            "require_confirm_run": 1 if hermes["require_confirm_run"] else 0,
+            "last_health_at": None,
+            "last_error": None,
+            "created_at": now,
+            "updated_at": now,
+        },
+    ]
+
+
+def upsert_runtime_connector(conn, row: dict):
+    before = conn.execute("SELECT * FROM runtime_connectors WHERE runtime_connector_id=?", (row["runtime_connector_id"],)).fetchone()
+    if before:
+        conn.execute(
+            """UPDATE runtime_connectors SET provider=:provider, connector_type=:connector_type, profile_name=:profile_name,
+            base_url=:base_url, binary_path=:binary_path, status=:status, allow_real_run=:allow_real_run,
+            require_confirm_run=:require_confirm_run, last_health_at=:last_health_at, last_error=:last_error,
+            updated_at=:updated_at WHERE runtime_connector_id=:runtime_connector_id""",
+            row,
+        )
+    else:
+        conn.execute(
+            """INSERT INTO runtime_connectors(runtime_connector_id,provider,connector_type,profile_name,base_url,binary_path,status,allow_real_run,require_confirm_run,last_health_at,last_error,created_at,updated_at)
+            VALUES(:runtime_connector_id,:provider,:connector_type,:profile_name,:base_url,:binary_path,:status,:allow_real_run,:require_confirm_run,:last_health_at,:last_error,:created_at,:updated_at)""",
+            row,
+        )
+
+
+def runtime_event(conn, connector_id, event_type, status, **kwargs):
+    row = {
+        "runtime_event_id": new_id("rte"),
+        "runtime_connector_id": connector_id,
+        "event_type": event_type,
+        "status": status,
+        "run_id": kwargs.get("run_id"),
+        "task_id": kwargs.get("task_id"),
+        "agent_id": kwargs.get("agent_id"),
+        "model_name": kwargs.get("model_name"),
+        "latency_ms": kwargs.get("latency_ms"),
+        "prompt_hash": kwargs.get("prompt_hash"),
+        "input_summary": redact_text(kwargs.get("input_summary"), 200) if kwargs.get("input_summary") else None,
+        "output_summary": redact_text(kwargs.get("output_summary"), 200) if kwargs.get("output_summary") else None,
+        "error_message": redact_text(kwargs.get("error_message"), 200) if kwargs.get("error_message") else None,
+        "raw_payload_hash": kwargs.get("raw_payload_hash"),
+        "created_at": now_iso(),
+    }
+    conn.execute(
+        """INSERT INTO runtime_events(runtime_event_id,runtime_connector_id,event_type,status,run_id,task_id,agent_id,model_name,latency_ms,prompt_hash,input_summary,output_summary,error_message,raw_payload_hash,created_at)
+        VALUES(:runtime_event_id,:runtime_connector_id,:event_type,:status,:run_id,:task_id,:agent_id,:model_name,:latency_ms,:prompt_hash,:input_summary,:output_summary,:error_message,:raw_payload_hash,:created_at)""",
+        row,
+    )
+    return row
+
+
+def default_template_packages() -> list[dict]:
+    now = now_iso()
+    def pack(template_id, name, scenario, description, roles, quality, approvals, swappable):
+        return {
+            "template_id": template_id,
+            "name": name,
+            "scenario": scenario,
+            "description": description,
+            "default_bases_json": json.dumps({"tasks": "base_local_tasks", "memory": "base_local_memory", "templates": "base_local_templates"}, ensure_ascii=False),
+            "swappable_bases_json": json.dumps(swappable, ensure_ascii=False),
+            "agent_roles_json": json.dumps(roles, ensure_ascii=False),
+            "task_schema_json": json.dumps({"fields": ["goal", "owner_agent", "risk_level", "acceptance_criteria", "due_date", "artifact_ref"]}, ensure_ascii=False),
+            "memory_schema_json": json.dumps({"types": ["decision", "sop", "failure_case", "risk", "artifact_summary"], "required": ["source_ref", "confidence", "review_status", "ttl_review_due_at"]}, ensure_ascii=False),
+            "quality_gates_json": json.dumps(quality, ensure_ascii=False),
+            "approval_policy_json": json.dumps(approvals, ensure_ascii=False),
+            "created_at": now,
+            "updated_at": now,
+        }
+    return [
+        pack(
+            "tpl_ai_software_team",
+            "AI Software Team Template",
+            "software_delivery",
+            "CoS, Builder, Reviewer and Ops agents deliver code/docs with core ledger retained in Agent-MIS.",
+            ["CoS", "Architect", "Builder", "QA Reviewer", "Release Ops"],
+            {"required": ["tests_pass", "no_high_risk_without_approval", "audit_written"], "warn": ["duration_over_180s"]},
+            {"high_risk_tools": ["shell.exec", "github.push", "database.write"], "confirm_real_runtime": True},
+            {"tasks": ["Plane", "Notion"], "memory": ["Notion", "Docmost"], "observability": ["W&B", "Langfuse", "Helicone"], "communication": ["Mattermost"]},
+        ),
+        pack(
+            "tpl_ai_experiment_evaluation",
+            "AI Experiment Evaluation Template",
+            "experiment_eval",
+            "Run model/runtime experiments with repeatable evaluation, cost-quality tracking and audit.",
+            ["Experiment Planner", "Runtime Runner", "Evaluator", "Report Writer"],
+            {"required": ["dataset_defined", "eval_score_recorded", "cost_recorded"], "warn": ["unexplained_regression"]},
+            {"real_runtime_probe": "confirm_run", "external_write": "confirm_export"},
+            {"tasks": ["Notion"], "memory": ["Docmost"], "observability": ["W&B", "Langfuse", "AgentOps"]},
+        ),
+        pack(
+            "tpl_content_studio",
+            "Content Studio Template",
+            "content_ops",
+            "Plan, draft, review and publish content while retaining approvals and memory provenance.",
+            ["Editor", "Researcher", "Writer", "Fact Checker", "Publisher"],
+            {"required": ["source_links", "fact_check_pass", "human_publish_approval"], "warn": ["missing_style_memory"]},
+            {"publish_actions": "human_approval", "external_posts": "confirm_export"},
+            {"tasks": ["Notion", "Plane"], "memory": ["Notion", "Docmost"], "communication": ["Mattermost"]},
+        ),
+        pack(
+            "tpl_one_person_company_ops",
+            "One-Person Company Ops Template",
+            "solo_company_ops",
+            "Operate a small AI workforce with CoS, Research, Builder, QA and Ops roles.",
+            ["Founder", "CoS", "Research", "Builder", "QA", "Ops"],
+            {"required": ["weekly_review", "risk_scan", "memory_review"], "warn": ["approval_backlog", "cost_spike"]},
+            {"critical_actions": "fail_closed", "new_connector": "manual_review"},
+            {"tasks": ["Notion", "Plane"], "memory": ["Notion", "Docmost"], "observability": ["W&B", "Langfuse"], "communication": ["Mattermost"]},
+        ),
+    ]
 
 
 def seed(reset=False):
@@ -1334,21 +1777,70 @@ def run_openclaw_probe(conn) -> dict:
 
 
 def hermes_status() -> dict:
+    hermes = hermes_runtime_config()
+    agnes = agnesfallback_config()
+    default_api_listening = url_listening(hermes["gateway_url"])
+    agnes_api_listening = url_listening(agnes["gateway_url"])
+    agnes_bin_exists = Path(agnes["binary_path"]).exists()
     return {
         "provider": "hermes",
         "home": str(HERMES_HOME),
         "home_exists": HERMES_HOME.exists(),
         "gateway_pid_file": (HERMES_HOME / "gateway.pid").exists(),
         "launch_agent_hint": "ai.hermes.gateway",
-        "api_port": 8642,
-        "api_listening": socket_listening("127.0.0.1", 8642),
+        "profile": hermes["profile"],
+        "gateway_url": hermes["gateway_url"],
+        "runtime_mode": hermes["runtime_mode"],
+        "real_run_enabled": hermes["allow_real_run"],
+        "requires_confirm_run": hermes["require_confirm_run"],
+        "api_port": urlparse(hermes["gateway_url"]).port or 8642,
+        "api_listening": default_api_listening,
         "config_exists": (HERMES_HOME / "config.yaml").exists(),
         "auth_exists": (HERMES_HOME / "auth.json").exists(),
+        "default_gateway": {
+            "connector_id": "rtc_hermes_default_gateway",
+            "profile": hermes["profile"],
+            "gateway_url": hermes["gateway_url"],
+            "api_server_listening": default_api_listening,
+            "mode": hermes["runtime_mode"],
+            "last_error": None if default_api_listening else "Default Hermes API gateway is not listening.",
+        },
+        "agnesfallback": {
+            "cli_connector_id": "rtc_agnesfallback_cli",
+            "api_connector_id": "rtc_agnesfallback_openai_api",
+            "profile": agnes["profile"],
+            "binary_path": agnes["binary_path"],
+            "binary_exists": agnes_bin_exists,
+            "gateway_url": agnes["gateway_url"],
+            "api_server_listening": agnes_api_listening,
+            "real_run_enabled": hermes["allow_real_run"],
+            "requires_confirm_run": hermes["require_confirm_run"],
+            "last_error": None if (agnes_bin_exists or agnes_api_listening) else "Agnesfallback CLI/API are unavailable in the current environment.",
+        },
     }
+
+
+def refresh_runtime_connectors(conn, status: dict | None = None):
+    status = status or hermes_status()
+    for row in runtime_connector_rows():
+        if row["runtime_connector_id"] == "rtc_hermes_default_gateway":
+            row["status"] = "available" if status["default_gateway"]["api_server_listening"] else "unavailable"
+            row["last_health_at"] = now_iso()
+            row["last_error"] = status["default_gateway"]["last_error"]
+        elif row["runtime_connector_id"] == "rtc_agnesfallback_cli":
+            row["status"] = "available" if status["agnesfallback"]["binary_exists"] else "unavailable"
+            row["last_health_at"] = now_iso()
+            row["last_error"] = None if status["agnesfallback"]["binary_exists"] else "AGNESFALLBACK_BIN not found."
+        elif row["runtime_connector_id"] == "rtc_agnesfallback_openai_api":
+            row["status"] = "available" if status["agnesfallback"]["api_server_listening"] else "unavailable"
+            row["last_health_at"] = now_iso()
+            row["last_error"] = None if status["agnesfallback"]["api_server_listening"] else "Agnesfallback OpenAI-compatible API is not listening."
+        upsert_runtime_connector(conn, row)
 
 
 def run_hermes_probe(conn) -> dict:
     status = hermes_status()
+    refresh_runtime_connectors(conn, status)
     agent_id = "agt_hermes_gateway"
     upsert_agent(conn, {
         "agent_id": agent_id,
@@ -1412,7 +1904,242 @@ def run_hermes_probe(conn) -> dict:
     }
     upsert_run(conn, row, "hermes-probe", status)
     upsert_evaluation(conn, quality_gate_for_run(row), "hermes-probe")
+    runtime_event(
+        conn,
+        "rtc_hermes_default_gateway",
+        "health_probe",
+        "completed" if status["api_listening"] else "unavailable",
+        run_id=run_id,
+        task_id=task_id,
+        agent_id=agent_id,
+        latency_ms=1,
+        output_summary=row["output_summary"],
+        error_message=row["error_message"],
+        raw_payload_hash=stable_hash(status),
+    )
     return {"provider": "hermes", "status": status, "run_id": run_id}
+
+
+def hermes_models(conn) -> dict:
+    status = hermes_status()
+    refresh_runtime_connectors(conn, status)
+    agnes = status["agnesfallback"]
+    url = agnes["gateway_url"].rstrip("/") + "/v1/models"
+    started = dt.datetime.now(dt.timezone.utc)
+    try:
+        with urlopen(Request(url, method="GET"), timeout=8) as res:
+            payload = json.loads(res.read().decode("utf-8"))
+        latency = int((dt.datetime.now(dt.timezone.utc) - started).total_seconds() * 1000)
+        runtime_event(conn, "rtc_agnesfallback_openai_api", "models_probe", "completed", model_name="agnesfallback", latency_ms=latency, output_summary="Agnesfallback models endpoint responded.", raw_payload_hash=stable_hash(payload))
+        audit(conn, "system", "hermes-models", "runtime.models", "runtime_connectors", "rtc_agnesfallback_openai_api", None, {"status": "completed"}, {"payload_hash": stable_hash(payload)})
+        conn.commit()
+        return {"provider": "agnesfallback", "status": "available", "gateway_url": agnes["gateway_url"], "models": payload.get("data", payload)}
+    except Exception as exc:
+        err = redact_text(str(exc), 240)
+        runtime_event(conn, "rtc_agnesfallback_openai_api", "models_probe", "unavailable", error_message=err)
+        audit(conn, "system", "hermes-models", "runtime.models.unavailable", "runtime_connectors", "rtc_agnesfallback_openai_api", None, {"status": "unavailable"}, {"error": err})
+        conn.commit()
+        return {"provider": "agnesfallback", "status": "unavailable", "gateway_url": agnes["gateway_url"], "models": [], "error": err}
+
+
+def ensure_agnesfallback_agent_task(conn, mode: str):
+    agent_id = "agt_agnesfallback_runtime"
+    upsert_agent(conn, {
+        "agent_id": agent_id,
+        "name": "Agnesfallback Runtime",
+        "role": "Profile-aware Hermes/Agnesfallback Runtime",
+        "description": "Agnesfallback CLI/API runtime connector. Real runs require explicit confirmation.",
+        "runtime_type": "hermes",
+        "model_provider": "agnesfallback",
+        "model_name": "agnesfallback",
+        "status": "idle",
+        "permission_level": "manager",
+        "allowed_tools": json.dumps(["agnesfallback.cli", "openai_compatible.chat", "runtime.probe"], ensure_ascii=False),
+        "budget_limit_usd": 10.0,
+        "owner_user_id": "usr_founder",
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+    }, "runtime-connector")
+    task_id = f"tsk_agnesfallback_{mode}_probe"
+    upsert_task(conn, {
+        "task_id": task_id,
+        "title": f"Agnesfallback {mode} probe",
+        "description": "Fixed low-risk runtime connector probe. Full prompt and raw response are not stored.",
+        "requester_id": "usr_founder",
+        "owner_agent_id": agent_id,
+        "collaborator_agent_ids": json.dumps([], ensure_ascii=False),
+        "status": "planned",
+        "priority": "high",
+        "due_date": None,
+        "acceptance_criteria": "Connector returns the fixed health marker and writes run/evaluation/audit.",
+        "risk_level": "low",
+        "budget_limit_usd": 1.0,
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+    }, "runtime-connector")
+    return agent_id, task_id
+
+
+def agnesfallback_cli_probe(conn, body: dict) -> dict:
+    cfg = hermes_runtime_config()
+    agnes = agnesfallback_config()
+    prompt = "请只回复 AGNESFALLBACK_OK，不要解释。"
+    connector_id = "rtc_agnesfallback_cli"
+    confirm = bool(body.get("confirm_run"))
+    plan = {
+        "provider": "agnesfallback",
+        "mode": "cli_probe",
+        "dry_run": True,
+        "would_run": [agnes["binary_path"], "-z", "[FIXED_SAFE_PROMPT]"],
+        "prompt_hash": stable_hash(prompt),
+        "requires": {"HERMES_ALLOW_REAL_RUN": True, "confirm_run": True},
+        "note": "--yolo is not used by default and is intentionally excluded from this code path.",
+    }
+    refresh_runtime_connectors(conn)
+    if not (cfg["allow_real_run"] and confirm):
+        runtime_event(conn, connector_id, "cli_probe_dry_run", "planned", prompt_hash=stable_hash(prompt), input_summary="Agnesfallback CLI fixed probe dry-run.")
+        audit(conn, "system", "agnesfallback-cli", "runtime.cli_probe.dry_run", "runtime_connectors", connector_id, None, plan, {"confirm_run": confirm})
+        conn.commit()
+        return plan
+    agent_id, task_id = ensure_agnesfallback_agent_task(conn, "cli")
+    started_iso = now_iso()
+    started = dt.datetime.now(dt.timezone.utc)
+    ok = False
+    visible = None
+    error = None
+    try:
+        proc = subprocess.run([agnes["binary_path"], "-z", prompt], capture_output=True, text=True, timeout=180, check=False)
+        visible = redact_text((proc.stdout or "").strip(), 200)
+        ok = proc.returncode == 0 and visible == "AGNESFALLBACK_OK"
+        if not ok:
+            error = redact_text(proc.stderr or visible or f"exit={proc.returncode}", 240)
+    except Exception as exc:
+        error = redact_text(str(exc), 240)
+    duration = int((dt.datetime.now(dt.timezone.utc) - started).total_seconds() * 1000)
+    run_id = stable_id("run_agnes_cli_probe", dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d%H%M%S"))
+    row = {
+        "run_id": run_id,
+        "task_id": task_id,
+        "agent_id": agent_id,
+        "runtime_type": "hermes",
+        "status": "completed" if ok else "failed",
+        "started_at": started_iso,
+        "ended_at": now_iso(),
+        "duration_ms": duration,
+        "input_summary": f"Agnesfallback CLI fixed probe prompt_hash={stable_hash(prompt)[:16]}",
+        "output_summary": "Agnesfallback CLI returned AGNESFALLBACK_OK." if ok else "Agnesfallback CLI probe failed.",
+        "model_provider": "agnesfallback",
+        "model_name": "agnesfallback",
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "reasoning_tokens": 0,
+        "cost_usd": 0.0,
+        "error_type": None if ok else "AgnesfallbackCliProbeFailed",
+        "error_message": error,
+        "trace_id": None,
+        "parent_run_id": None,
+        "delegation_id": "agnesfallback:cli",
+        "approval_required": 0,
+        "created_at": started_iso,
+    }
+    upsert_run(conn, row, "agnesfallback-cli", {"prompt_hash": stable_hash(prompt)})
+    upsert_evaluation(conn, quality_gate_for_run(row), "agnesfallback-cli")
+    runtime_event(conn, connector_id, "cli_probe", "completed" if ok else "failed", run_id=run_id, task_id=task_id, agent_id=agent_id, model_name="agnesfallback", latency_ms=duration, prompt_hash=stable_hash(prompt), output_summary=visible, error_message=error, raw_payload_hash=stable_hash({"visible": visible, "error": error}))
+    audit(conn, "system", "agnesfallback-cli", "runtime.cli_probe", "runs", run_id, None, {"status": row["status"]}, {"prompt_hash": stable_hash(prompt), "confirmed": True})
+    conn.commit()
+    return {"provider": "agnesfallback", "mode": "cli_probe", "dry_run": False, "ok": ok, "run_id": run_id, "duration_ms": duration, "output_summary": row["output_summary"], "error": error}
+
+
+def agnesfallback_chat_completion_probe(conn, body: dict) -> dict:
+    cfg = hermes_runtime_config()
+    agnes = agnesfallback_config()
+    prompt = "请只回复 HERMES_AGNES_API_OK，不要解释。"
+    connector_id = "rtc_agnesfallback_openai_api"
+    confirm = bool(body.get("confirm_run"))
+    plan = {
+        "provider": "agnesfallback",
+        "mode": "openai_compatible",
+        "dry_run": True,
+        "would_post": agnes["gateway_url"].rstrip("/") + "/v1/chat/completions",
+        "prompt_hash": stable_hash(prompt),
+        "requires": {"HERMES_ALLOW_REAL_RUN": True, "confirm_run": True},
+    }
+    refresh_runtime_connectors(conn)
+    if not (cfg["allow_real_run"] and confirm):
+        runtime_event(conn, connector_id, "chat_completion_probe_dry_run", "planned", prompt_hash=stable_hash(prompt), input_summary="Agnesfallback API fixed probe dry-run.")
+        audit(conn, "system", "agnesfallback-api", "runtime.chat_completion_probe.dry_run", "runtime_connectors", connector_id, None, plan, {"confirm_run": confirm})
+        conn.commit()
+        return plan
+    agent_id, task_id = ensure_agnesfallback_agent_task(conn, "api")
+    started_iso = now_iso()
+    started = dt.datetime.now(dt.timezone.utc)
+    payload = {"model": "agnesfallback", "messages": [{"role": "user", "content": prompt}], "temperature": 0}
+    ok = False
+    visible = None
+    error = None
+    response_hash = None
+    try:
+        req = Request(
+            agnes["gateway_url"].rstrip("/") + "/v1/chat/completions",
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with urlopen(req, timeout=180) as res:
+            response = json.loads(res.read().decode("utf-8"))
+        response_hash = stable_hash(response)
+        visible = (((response.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
+        visible = redact_text(visible, 200)
+        ok = visible == "HERMES_AGNES_API_OK"
+        if not ok:
+            error = redact_text(visible or "unexpected response", 240)
+    except Exception as exc:
+        error = redact_text(str(exc), 240)
+    duration = int((dt.datetime.now(dt.timezone.utc) - started).total_seconds() * 1000)
+    run_id = stable_id("run_agnes_api_probe", dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d%H%M%S"))
+    row = {
+        "run_id": run_id,
+        "task_id": task_id,
+        "agent_id": agent_id,
+        "runtime_type": "hermes",
+        "status": "completed" if ok else "failed",
+        "started_at": started_iso,
+        "ended_at": now_iso(),
+        "duration_ms": duration,
+        "input_summary": f"Agnesfallback OpenAI-compatible fixed probe prompt_hash={stable_hash(prompt)[:16]}",
+        "output_summary": "Agnesfallback API returned HERMES_AGNES_API_OK." if ok else "Agnesfallback API probe failed.",
+        "model_provider": "agnesfallback",
+        "model_name": "agnesfallback",
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "reasoning_tokens": 0,
+        "cost_usd": 0.0,
+        "error_type": None if ok else "AgnesfallbackApiProbeFailed",
+        "error_message": error,
+        "trace_id": None,
+        "parent_run_id": None,
+        "delegation_id": "agnesfallback:openai-compatible",
+        "approval_required": 0,
+        "created_at": started_iso,
+    }
+    upsert_run(conn, row, "agnesfallback-api", {"prompt_hash": stable_hash(prompt), "raw_payload_hash": response_hash})
+    upsert_evaluation(conn, quality_gate_for_run(row), "agnesfallback-api")
+    runtime_event(conn, connector_id, "chat_completion_probe", "completed" if ok else "failed", run_id=run_id, task_id=task_id, agent_id=agent_id, model_name="agnesfallback", latency_ms=duration, prompt_hash=stable_hash(prompt), output_summary=visible, error_message=error, raw_payload_hash=response_hash)
+    audit(conn, "system", "agnesfallback-api", "runtime.chat_completion_probe", "runs", run_id, None, {"status": row["status"]}, {"prompt_hash": stable_hash(prompt), "confirmed": True})
+    conn.commit()
+    return {"provider": "agnesfallback", "mode": "openai_compatible", "dry_run": False, "ok": ok, "run_id": run_id, "duration_ms": duration, "output_summary": row["output_summary"], "error": error}
+
+
+def hermes_run_task(conn, body: dict) -> dict:
+    risk = body.get("risk_level", "low")
+    if risk not in ("low", "medium") and not body.get("confirm_run"):
+        return {"created": False, "dry_run": True, "requires_confirm_run": True, "reason": "High-risk runtime tasks require confirm_run=true."}
+    return {
+        "created": False,
+        "dry_run": True,
+        "reason": "v1.2.1 MVP exposes confirmed fixed probes only; arbitrary Hermes run-task is planned but not enabled.",
+        "allowed_probe_endpoints": ["/api/integrations/hermes/cli-probe", "/api/integrations/hermes/chat-completion-probe"],
+    }
 
 
 def run_graph(conn, run_id: str) -> dict | None:
@@ -1457,6 +2184,179 @@ def agent_performance(conn, agent_id: str) -> dict | None:
         "recent_error_types": errors,
         "recent_runs": recent,
     }
+
+
+def create_sync_event(conn, connector_id, direction, object_type, status, payload=None, internal_object_id=None, external_object_id=None, error_message=None):
+    row = {
+        "sync_event_id": new_id("syn"),
+        "connector_id": connector_id,
+        "direction": direction,
+        "object_type": object_type,
+        "internal_object_id": internal_object_id,
+        "external_object_id": external_object_id,
+        "status": status,
+        "error_message": redact_text(error_message, 240) if error_message else None,
+        "payload_hash": stable_hash(payload or {}),
+        "created_at": now_iso(),
+    }
+    conn.execute(
+        """INSERT INTO sync_events(sync_event_id,connector_id,direction,object_type,internal_object_id,external_object_id,status,error_message,payload_hash,created_at)
+        VALUES(:sync_event_id,:connector_id,:direction,:object_type,:internal_object_id,:external_object_id,:status,:error_message,:payload_hash,:created_at)""",
+        row,
+    )
+    return row
+
+
+def notion_status_payload(conn) -> dict:
+    cfg = notion_config()
+    last_sync = conn.execute("SELECT created_at FROM sync_events WHERE connector_id LIKE 'conn_notion_%' ORDER BY created_at DESC LIMIT 1").fetchone()
+    last_error = conn.execute("SELECT error_message FROM sync_events WHERE connector_id LIKE 'conn_notion_%' AND error_message IS NOT NULL ORDER BY created_at DESC LIMIT 1").fetchone()
+    connectors = rows_to_dicts(conn.execute("SELECT * FROM connectors WHERE provider='notion' ORDER BY connector_id").fetchall())
+    return {
+        "provider": "notion",
+        "configured": cfg["configured"],
+        "has_token": cfg["has_token"],
+        "has_parent_page_id": bool(cfg["parent_page_id"]),
+        "has_database_id": bool(cfg["database_id"]),
+        "workspace_private_export": cfg["workspace_private_export"],
+        "export_mode": cfg["export_mode"],
+        "dry_run_default": True,
+        "writeback_allowed": False,
+        "last_sync": last_sync["created_at"] if last_sync else None,
+        "last_error": last_error["error_message"] if last_error else None,
+        "notion_version": cfg["notion_version"],
+        "connectors": connectors,
+    }
+
+
+def notion_preview(conn) -> dict:
+    markdown = build_notion_report(conn)
+    tasks = rows_to_dicts(conn.execute("SELECT task_id,title,status,priority,risk_level,owner_agent_id,updated_at FROM tasks ORDER BY updated_at DESC LIMIT 20").fetchall())
+    memories = rows_to_dicts(conn.execute("SELECT memory_id,scope,memory_type,canonical_text,confidence,review_status,source_ref FROM memories WHERE review_status IN ('candidate','approved') ORDER BY updated_at DESC LIMIT 20").fetchall())
+    return {
+        "provider": "notion",
+        "status": notion_status_payload(conn),
+        "report": {"title": "AgentOps MIS 项目汇报工作台", "markdown": markdown, "block_count": len(text_blocks(markdown))},
+        "tasks": tasks,
+        "memory_candidates": memories,
+        "write_behavior": "preview only; no external write",
+    }
+
+
+def notion_dry_run_export(conn, actor="notion-dry-run") -> dict:
+    preview = notion_preview(conn)
+    event = create_sync_event(conn, "conn_notion_templates", "outbound", "report", "dry_run", preview)
+    audit(conn, "system", actor, "notion.dry_run_export", "sync_events", event["sync_event_id"], None, {"status": "dry_run"}, {"payload_hash": event["payload_hash"]})
+    conn.commit()
+    return {"provider": "notion", "dry_run": True, "created": False, "sync_event_id": event["sync_event_id"], "preview": preview}
+
+
+def notion_export_confirmed(conn, body: dict) -> dict:
+    confirm = bool(body.get("confirm_export"))
+    cfg = notion_config()
+    markdown = build_notion_report(conn)
+    if not confirm or not cfg["configured"]:
+        event = create_sync_event(conn, "conn_notion_templates", "outbound", "report", "dry_run", {"confirm_export": confirm, "configured": cfg["configured"]})
+        audit(conn, "system", "notion-export", "notion.export.skipped", "sync_events", event["sync_event_id"], None, {"dry_run": True}, {"confirm_export": confirm, "configured": cfg["configured"]})
+        conn.commit()
+        return {"provider": "notion", "dry_run": True, "created": False, "requires_confirm_export": not confirm, "configured": cfg["configured"], "sync_event_id": event["sync_event_id"], "markdown": markdown, "block_count": len(text_blocks(markdown))}
+    try:
+        result = post_notion_page(markdown, body.get("title", "AgentOps MIS 项目汇报工作台"))
+        event = create_sync_event(conn, "conn_notion_templates", "outbound", "report", "created", result, external_object_id=result.get("notion_page_id"))
+        if result.get("notion_page_id"):
+            conn.execute(
+                "INSERT INTO external_object_links(link_id,internal_object_type,internal_object_id,external_provider,external_object_type,external_object_id,external_url,sync_direction,sync_status,last_synced_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                (stable_id("lnk", "report", event["sync_event_id"]), "report", "agentops_mis_project_report", "notion", "page", result.get("notion_page_id"), result.get("url"), "outbound", "created", now_iso(), now_iso()),
+            )
+        audit(conn, "user", "usr_founder", "notion.export_confirmed", "integrations", "notion", None, result, {"sync_event_id": event["sync_event_id"]})
+        conn.commit()
+        return {**result, "sync_event_id": event["sync_event_id"]}
+    except Exception as exc:
+        err = redact_text(str(exc), 300)
+        event = create_sync_event(conn, "conn_notion_templates", "outbound", "report", "failed", {"export_mode": cfg["export_mode"]}, error_message=err)
+        audit(conn, "system", "notion-export", "notion.export_failed", "integrations", "notion", None, {"created": False}, {"error": err, "sync_event_id": event["sync_event_id"]})
+        conn.commit()
+        return {"provider": "notion", "created": False, "configured": cfg["configured"], "export_mode": cfg["export_mode"], "error": err, "sync_event_id": event["sync_event_id"]}
+
+
+def notion_import_preview(conn, body: dict) -> dict:
+    base_id = body.get("base_id") or "base_notion_tasks"
+    mappings = rows_to_dicts(conn.execute("SELECT * FROM field_mappings WHERE base_id=? ORDER BY internal_object_type, internal_field", (base_id,)).fetchall())
+    if not mappings:
+        mappings = [
+            {"internal_object_type": "task", "internal_field": "title", "external_field": "Name", "required": 1},
+            {"internal_object_type": "task", "internal_field": "status", "external_field": "Status", "required": 1},
+            {"internal_object_type": "memory", "internal_field": "canonical_text", "external_field": "Content", "required": 1},
+            {"internal_object_type": "memory", "internal_field": "review_status", "external_field": "Review", "required": 1},
+        ]
+    return {"provider": "notion", "base_id": base_id, "write_database": False, "field_mapping_suggestions": mappings, "notes": ["Preview only. No Notion content is read or written.", "Use external_object_links for future reconciliation."]}
+
+
+def notion_sync_memory_candidates(conn) -> dict:
+    rows = rows_to_dicts(conn.execute("SELECT * FROM memories WHERE review_status IN ('candidate','approved') ORDER BY updated_at DESC LIMIT 50").fetchall())
+    payloads = [
+        {
+            "parent": "[configured notion target]",
+            "properties": {"Name": {"title": [{"text": {"content": f"{row['memory_type']}: {row['memory_id']}"}}]}, "Review": {"select": {"name": row["review_status"]}}},
+            "children": [{"type": "paragraph", "paragraph": {"rich_text": [{"text": {"content": redact_text(row["canonical_text"], 500)}}]}}],
+        }
+        for row in rows
+    ]
+    event = create_sync_event(conn, "conn_notion_memory", "outbound", "memory", "dry_run", payloads)
+    audit(conn, "system", "notion-memory-sync", "notion.sync_memory_candidates.dry_run", "sync_events", event["sync_event_id"], None, {"count": len(payloads)}, {"payload_hash": event["payload_hash"]})
+    conn.commit()
+    return {"provider": "notion", "dry_run": True, "count": len(payloads), "sync_event_id": event["sync_event_id"], "payload_preview": payloads[:5]}
+
+
+def notion_sync_tasks(conn) -> dict:
+    rows = rows_to_dicts(conn.execute("SELECT * FROM tasks ORDER BY updated_at DESC LIMIT 50").fetchall())
+    payloads = [
+        {
+            "parent": "[configured notion database/page]",
+            "properties": {
+                "Name": {"title": [{"text": {"content": row["title"]}}]},
+                "Status": {"select": {"name": row["status"]}},
+                "Risk": {"select": {"name": row["risk_level"]}},
+            },
+        }
+        for row in rows
+    ]
+    event = create_sync_event(conn, "conn_notion_tasks", "outbound", "task", "dry_run", payloads)
+    audit(conn, "system", "notion-task-sync", "notion.sync_tasks.dry_run", "sync_events", event["sync_event_id"], None, {"count": len(payloads)}, {"payload_hash": event["payload_hash"]})
+    conn.commit()
+    return {"provider": "notion", "dry_run": True, "count": len(payloads), "sync_event_id": event["sync_event_id"], "payload_preview": payloads[:5]}
+
+
+def migration_preview(conn, body: dict) -> dict:
+    template_id = body.get("template_id") or "tpl_ai_software_team"
+    from_base_id = body.get("from_base_id") or "base_local_tasks"
+    to_base_id = body.get("to_base_id") or "base_notion_tasks"
+    from_base = conn.execute("SELECT * FROM bases WHERE base_id=?", (from_base_id,)).fetchone()
+    to_base = conn.execute("SELECT * FROM bases WHERE base_id=?", (to_base_id,)).fetchone()
+    template = conn.execute("SELECT * FROM template_packages WHERE template_id=?", (template_id,)).fetchone()
+    preview = {
+        "template_id": template_id,
+        "from_base": dict(from_base) if from_base else None,
+        "to_base": dict(to_base) if to_base else None,
+        "template": dict(template) if template else None,
+        "migratable_objects": ["tasks.title", "tasks.status", "tasks.priority", "tasks.risk_level", "memories.canonical_text", "memories.review_status"],
+        "non_migratable_objects": ["runs.raw ledger", "tool_calls.normalized_args_json", "approvals.authority", "audit_logs.tamper_chain_hash"],
+        "field_downgrades": [
+            {"field": "risk_level", "strategy": "Notion select; Agent-MIS remains authority."},
+            {"field": "audit_logs", "strategy": "Export summary/link only; canonical audit stays local."},
+            {"field": "tool_calls", "strategy": "External base receives count/summary, not raw args."},
+        ],
+        "permission_changes": ["External base permissions are not equivalent to Agent-MIS approval authority."],
+        "requires_human_confirmation": ["writeback_allowed", "external credential scope", "field mapping review"],
+        "rollback": ["Keep Agent-MIS local base canonical.", "Delete external links created in this preview batch.", "Replay sync_events if needed."],
+    }
+    conn.execute(
+        "INSERT INTO migration_runs(migration_run_id,template_id,from_base_id,to_base_id,status,preview_json,result_json,created_at,completed_at) VALUES(?,?,?,?,?,?,?,?,?)",
+        (new_id("mig"), template_id, from_base_id, to_base_id, "preview", json.dumps(preview, ensure_ascii=False), "{}", now_iso(), None),
+    )
+    audit(conn, "system", "migration-preview", "migration.preview", "template_packages", template_id, None, {"status": "preview"}, {"from_base_id": from_base_id, "to_base_id": to_base_id})
+    conn.commit()
+    return preview
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -1599,22 +2499,36 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT 200").fetchall()))
             if path == "/api/dashboard/metrics":
                 return self.send_json(dashboard_metrics(conn))
+            if path == "/api/runtime-connectors":
+                refresh_runtime_connectors(conn)
+                conn.commit()
+                return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM runtime_connectors ORDER BY provider, connector_type, profile_name").fetchall()))
+            if path == "/api/runtime-events":
+                return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM runtime_events ORDER BY created_at DESC LIMIT 200").fetchall()))
+            if path == "/api/bases":
+                bases = rows_to_dicts(conn.execute("SELECT * FROM bases ORDER BY provider, category, display_name").fetchall())
+                capabilities = rows_to_dicts(conn.execute("SELECT * FROM base_capabilities ORDER BY base_id").fetchall())
+                return self.send_json({"bases": bases, "capabilities": capabilities})
+            if path == "/api/connectors":
+                connectors = rows_to_dicts(conn.execute("SELECT * FROM connectors ORDER BY provider, connector_id").fetchall())
+                scopes = rows_to_dicts(conn.execute("SELECT * FROM connector_scopes ORDER BY connector_id, scope_name").fetchall())
+                return self.send_json({"connectors": connectors, "scopes": scopes})
+            if path == "/api/external-links":
+                return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM external_object_links ORDER BY created_at DESC LIMIT 200").fetchall()))
+            if path == "/api/sync-events":
+                return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM sync_events ORDER BY created_at DESC LIMIT 200").fetchall()))
+            if path == "/api/template-packages":
+                return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM template_packages ORDER BY scenario, name").fetchall()))
+            if path == "/api/template-bindings":
+                return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM template_bindings ORDER BY template_id, base_id").fetchall()))
             if path == "/api/integrations/openclaw/status":
                 return self.send_json(openclaw_status())
             if path == "/api/integrations/hermes/status":
                 return self.send_json(hermes_status())
+            if path == "/api/integrations/hermes/models":
+                return self.send_json(hermes_models(conn))
             if path == "/api/integrations/notion/status":
-                cfg = notion_config()
-                return self.send_json({
-                    "provider": "notion",
-                    "configured": cfg["configured"],
-                    "has_token": cfg["has_token"],
-                    "has_parent_page_id": bool(cfg["parent_page_id"]),
-                    "has_database_id": bool(cfg["database_id"]),
-                    "workspace_private_export": cfg["workspace_private_export"],
-                    "export_mode": cfg["export_mode"],
-                    "notion_version": cfg["notion_version"],
-                })
+                return self.send_json(notion_status_payload(conn))
             if path == "/api/integrations/notion/export-preview":
                 markdown = build_notion_report(conn)
                 return self.send_json({
@@ -1730,6 +2644,29 @@ class Handler(BaseHTTPRequestHandler):
                 result = run_hermes_probe(conn)
                 conn.commit()
                 return self.send_json(result, 201)
+            if path == "/api/integrations/hermes/cli-probe":
+                return self.send_json(agnesfallback_cli_probe(conn, body), 201)
+            if path == "/api/integrations/hermes/chat-completion-probe":
+                return self.send_json(agnesfallback_chat_completion_probe(conn, body), 201)
+            if path == "/api/integrations/hermes/run-task":
+                result = hermes_run_task(conn, body)
+                audit(conn, "user", "usr_founder", "runtime.run_task.preview", "runtime_connectors", "rtc_hermes_default_gateway", None, result, {"dry_run": result.get("dry_run", True)})
+                conn.commit()
+                return self.send_json(result, 201)
+            if path == "/api/integrations/notion/preview":
+                return self.send_json(notion_preview(conn))
+            if path == "/api/integrations/notion/dry-run-export":
+                return self.send_json(notion_dry_run_export(conn), 201)
+            if path == "/api/integrations/notion/export-confirmed":
+                return self.send_json(notion_export_confirmed(conn, body), 201)
+            if path == "/api/integrations/notion/import-preview":
+                return self.send_json(notion_import_preview(conn, body))
+            if path == "/api/integrations/notion/sync-memory-candidates":
+                return self.send_json(notion_sync_memory_candidates(conn), 201)
+            if path == "/api/integrations/notion/sync-tasks":
+                return self.send_json(notion_sync_tasks(conn), 201)
+            if path == "/api/migration/preview":
+                return self.send_json(migration_preview(conn, body), 201)
             if path == "/api/integrations/notion/export-report":
                 markdown = build_notion_report(conn)
                 dry_run = body.get("dry_run", True) is not False
