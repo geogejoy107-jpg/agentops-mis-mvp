@@ -39,6 +39,20 @@ http://127.0.0.1:8787/dashboard
 
 下载的 Figma/Vite UI 已保存在 `ui/start-building-app/`，用于演示更完整的 AgentOps MIS 产品界面。它是独立前端预览，不替代当前 Python/SQLite demo API。
 
+一条命令启动本地后端和 beta UI：
+
+```bash
+python3 scripts/run_local_stack.py --install-ui
+```
+
+依赖已经装过时可省略 `--install-ui`：
+
+```bash
+python3 scripts/run_local_stack.py
+```
+
+也可以手动启动 UI：
+
 ```bash
 cd ui/start-building-app
 npm install
