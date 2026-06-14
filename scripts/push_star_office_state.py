@@ -168,6 +168,7 @@ def build_payload(snapshot: dict, endpoint: str, compatible: bool = True) -> dic
     if endpoint == "set_state":
         return {
             "state": base["state"],
+            "detail": base["message"],
             "message": base["message"],
             "source": base["source"],
             "agent_id": base["agent_id"],

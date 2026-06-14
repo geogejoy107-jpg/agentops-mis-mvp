@@ -53,30 +53,32 @@ Run AgentOps MIS:
 python3 server.py
 ```
 
-Run the Star/Beta Office UI that is vendored under `ui/start-building-app`:
+Run the real Star-Office-UI pixel office as a separate local checkout. Do not copy its art assets into this repository:
 
 ```bash
-cd ui/start-building-app
-npm run dev -- --host 127.0.0.1 --port 19000
+cd /Users/wuji/Documents/MIS/code
+git clone https://github.com/ringhyacinth/Star-Office-UI.git
+cd Star-Office-UI
+/opt/homebrew/bin/python3.11 -m pip install -r backend/requirements.txt
+[ -f state.json ] || cp state.sample.json state.json
+STAR_BACKEND_PORT=19000 /opt/homebrew/bin/python3.11 backend/app.py
 ```
 
-The Star/Beta UI now reads AgentOps MIS through the Vite proxy:
+Open:
 
 ```text
-http://127.0.0.1:19000/mis-api/* -> http://127.0.0.1:8787/api/*
+http://127.0.0.1:19000/
 ```
 
-Live-connected routes include:
+If the browser still has the earlier Figma/React route open, use:
 
-- `/workspace`
-- `/workspace/tasks`
-- `/workspace/agents`
-- `/admin`
-- `/admin/runs`
-- `/admin/runs/:id`
-- `/admin/connectors`
-- `/admin/tasks/:id`
-- `/admin/agents/:id`
+```text
+http://127.0.0.1:19000/workspace
+```
+
+The local Star-Office checkout can map that path back to the pixel office homepage for demo convenience.
+
+The Figma/Start Building App under `ui/start-building-app` is a separate product/admin UI shell. It is not the Star-Office-UI art asset pack.
 
 Run external Star-Office-UI separately according to its own README if using the original repository. The default local endpoint assumed by the optional push adapter is:
 
@@ -112,7 +114,7 @@ python3 scripts/push_star_office_state.py
 Send to local Star-Office-UI:
 
 ```bash
-python3 scripts/push_star_office_state.py --send
+python3 scripts/push_star_office_state.py --endpoint set_state --send
 ```
 
 Custom endpoint:
