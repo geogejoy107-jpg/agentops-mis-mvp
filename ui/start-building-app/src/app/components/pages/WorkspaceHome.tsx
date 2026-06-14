@@ -3,14 +3,36 @@ import { Link } from "react-router";
 import { StatusBadge } from "../shared/StatusBadge";
 import { RiskBadge } from "../shared/RiskBadge";
 import { PixelHero } from "../shared/PixelHero";
-import { tasks, approvals, runs, memories, agents } from "../../data/mockData";
-
-const activeTasks = tasks.filter(t => ["running", "waiting_approval", "planned"].includes(t.status));
-const pendingApprovals = approvals.filter(a => a.decision === "pending");
-const recentRuns = runs.slice(0, 4);
-const memoryCandidates = memories.filter(m => m.review_status === "candidate").slice(0, 3);
+import {
+  loadApprovals,
+  loadDashboard,
+  loadMemories,
+  loadRuns,
+  loadTasks,
+  useLiveData,
+} from "../../data/liveApi";
 
 export function WorkspaceHome() {
+  const { data, loading, error, refresh } = useLiveData(async () => {
+    const [metrics, tasks, approvals, runs, memories] = await Promise.all([
+      loadDashboard(),
+      loadTasks(),
+      loadApprovals(),
+      loadRuns(),
+      loadMemories(),
+    ]);
+    return { metrics, tasks, approvals, runs, memories };
+  }, []);
+
+  const tasks = data?.tasks || [];
+  const approvals = data?.approvals || [];
+  const runs = data?.runs || [];
+  const memories = data?.memories || [];
+  const activeTasks = tasks.filter(t => ["running", "waiting_approval", "planned"].includes(t.status));
+  const pendingApprovals = approvals.filter(a => a.decision === "pending");
+  const recentRuns = runs.slice(0, 4);
+  const memoryCandidates = memories.filter(m => m.review_status === "candidate").slice(0, 3);
+
   return (
     <div className="space-y-6 max-w-5xl">
       {/* Pixel Hero */}
@@ -23,7 +45,7 @@ export function WorkspaceHome() {
             Workspace Home
           </h1>
           <p className="text-xs mt-0.5" style={{ color: "var(--mis-dim)" }}>
-            Sunday, June 14, 2026 · AgentOps Demo
+            Sunday, June 14, 2026 · Live AgentOps MIS backend
           </p>
         </div>
         <div className="flex gap-2">
@@ -35,22 +57,26 @@ export function WorkspaceHome() {
             New Task
           </button>
           <button
+            onClick={refresh}
             className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded"
             style={{ background: "rgba(34,211,238,0.12)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.2)" }}
           >
             <Play size={13} />
-            Start Run
+            Refresh Live
           </button>
         </div>
       </div>
+
+      {loading && <p className="text-xs" style={{ color: "var(--mis-muted)" }}>Loading live MIS state...</p>}
+      {error && <p className="text-xs" style={{ color: "#F87171" }}>Live backend unavailable: {error}</p>}
 
       {/* Summary strip */}
       <div className="grid grid-cols-4 gap-3">
         {[
           { icon: <Play size={15} />, label: "Active Tasks", value: activeTasks.length, color: "var(--mis-cyan)" },
           { icon: <ShieldAlert size={15} />, label: "Pending Approvals", value: pendingApprovals.length, color: "#FBBF24" },
-          { icon: <CheckCircle size={15} />, label: "Runs Today", value: 5, color: "var(--mis-success)" },
-          { icon: <Brain size={15} />, label: "Memory Candidates", value: memoryCandidates.length, color: "var(--mis-purple)" },
+          { icon: <CheckCircle size={15} />, label: "Total Runs", value: runs.length, color: "var(--mis-success)" },
+          { icon: <Brain size={15} />, label: "Memory Candidates", value: data?.metrics?.stale_or_due_memories ?? memoryCandidates.length, color: "var(--mis-purple)" },
         ].map(({ icon, label, value, color }) => (
           <div
             key={label}

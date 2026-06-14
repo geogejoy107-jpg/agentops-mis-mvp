@@ -1,7 +1,7 @@
 import { Link } from "react-router";
 import { Bot, DollarSign, Star, Activity } from "lucide-react";
 import { StatusBadge } from "../shared/StatusBadge";
-import { agents } from "../../data/mockData";
+import { loadAgents, loadDashboard, useLiveData } from "../../data/liveApi";
 
 const RUNTIME_COLOR: Record<string, string> = {
   claude_code: "#7A5AF8",
@@ -15,14 +15,25 @@ const RUNTIME_COLOR: Record<string, string> = {
 };
 
 export function AIEmployees() {
+  const { data, loading, error, refresh } = useLiveData(async () => {
+    const metrics = await loadDashboard();
+    return loadAgents(metrics);
+  }, []);
+  const agents = data || [];
+
   return (
     <div className="space-y-5 max-w-5xl">
       {/* Header */}
       <div>
         <h1 className="text-lg font-semibold" style={{ color: "var(--mis-text)" }}>AI Employees</h1>
         <p className="text-xs mt-0.5" style={{ color: "var(--mis-dim)" }}>
-          {agents.length} registered agents · {agents.filter(a => a.status === "running").length} active
+          {agents.length} registered agents · {agents.filter(a => a.status === "running").length} active · live backend
         </p>
+        {loading && <p className="text-xs mt-2" style={{ color: "var(--mis-muted)" }}>Loading live agents...</p>}
+        {error && <p className="text-xs mt-2" style={{ color: "#F87171" }}>Live backend unavailable: {error}</p>}
+        <button onClick={refresh} className="mt-3 text-[11px] px-3 py-1.5 rounded" style={{ background: "rgba(34,211,238,0.12)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.2)" }}>
+          Refresh live agents
+        </button>
       </div>
 
       {/* Agent cards grid */}

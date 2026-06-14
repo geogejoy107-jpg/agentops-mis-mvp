@@ -2,19 +2,33 @@ import { useParams } from "react-router";
 import { CheckCircle, Users, Clock, ShieldCheck } from "lucide-react";
 import { StatusBadge } from "../shared/StatusBadge";
 import { RiskBadge } from "../shared/RiskBadge";
-import { tasks, runs, approvals, memories, evaluations, agents } from "../../data/mockData";
+import { loadAgents, loadDashboard, loadTaskDetail, useLiveData } from "../../data/liveApi";
 
 export function TaskDetail() {
   const { id } = useParams<{ id: string }>();
-  const task = tasks.find(t => t.task_id === id) ?? tasks[0];
-  const taskRuns = runs.filter(r => r.task_id === task.task_id);
-  const taskApprovals = approvals.filter(a => a.task_id === task.task_id);
-  const taskMemories = memories.filter(m => m.task_id === task.task_id);
-  const taskEvals = evaluations.filter(e => e.task_id === task.task_id);
-  const latestEval = taskEvals[taskEvals.length - 1];
+  const { data, loading, error } = useLiveData(async () => {
+    const metrics = await loadDashboard();
+    const [detail, agents] = await Promise.all([loadTaskDetail(id || ""), loadAgents(metrics)]);
+    return { detail, agents };
+  }, [id]);
 
-  const ownerAgent = agents.find(a => a.agent_id === task.owner_agent_id);
-  const collabAgents = agents.filter(a => task.collaborator_agent_ids.includes(a.agent_id));
+  if (loading) {
+    return <p className="text-xs" style={{ color: "var(--mis-muted)" }}>Loading live task detail...</p>;
+  }
+  if (error || !data?.detail?.task) {
+    return <p className="text-xs" style={{ color: "#F87171" }}>Live task detail unavailable: {error || "not found"}</p>;
+  }
+
+  const task = data.detail.task;
+  const taskRuns = data.detail.runs;
+  const taskApprovals = data.detail.approvals;
+  const taskMemories = data.detail.memories;
+  const taskEvals = data.detail.evaluations;
+  const latestEval = taskEvals[taskEvals.length - 1];
+  const latestScore = latestEval ? (latestEval.score <= 1 ? Math.round(latestEval.score * 100) : Math.round(latestEval.score)) : 0;
+
+  const ownerAgent = data.agents.find(a => a.agent_id === task.owner_agent_id);
+  const collabAgents = data.agents.filter(a => task.collaborator_agent_ids.includes(a.agent_id));
 
   const priorityColor: Record<string, string> = {
     low: "var(--mis-success)", medium: "var(--mis-primary)", high: "var(--mis-warning)", critical: "#F87171",
@@ -90,13 +104,13 @@ export function TaskDetail() {
                   <div
                     className="h-2 rounded-full"
                     style={{
-                      width: `${latestEval.score}%`,
-                      background: latestEval.score >= 80 ? "var(--mis-success)" : "var(--mis-warning)",
+                      width: `${latestScore}%`,
+                      background: latestScore >= 80 ? "var(--mis-success)" : "var(--mis-warning)",
                     }}
                   />
                 </div>
-                <span className="text-xs font-semibold shrink-0" style={{ color: latestEval.score >= 80 ? "var(--mis-success)" : "var(--mis-warning)" }}>
-                  {latestEval.score}/100
+                <span className="text-xs font-semibold shrink-0" style={{ color: latestScore >= 80 ? "var(--mis-success)" : "var(--mis-warning)" }}>
+                  {latestScore}/100
                 </span>
                 <StatusBadge status={latestEval.pass_fail} />
               </div>

@@ -53,7 +53,32 @@ Run AgentOps MIS:
 python3 server.py
 ```
 
-Run Star-Office-UI separately according to its own README. The default local endpoint assumed by the adapter is:
+Run the Star/Beta Office UI that is vendored under `ui/start-building-app`:
+
+```bash
+cd ui/start-building-app
+npm run dev -- --host 127.0.0.1 --port 19000
+```
+
+The Star/Beta UI now reads AgentOps MIS through the Vite proxy:
+
+```text
+http://127.0.0.1:19000/mis-api/* -> http://127.0.0.1:8787/api/*
+```
+
+Live-connected routes include:
+
+- `/workspace`
+- `/workspace/tasks`
+- `/workspace/agents`
+- `/admin`
+- `/admin/runs`
+- `/admin/runs/:id`
+- `/admin/connectors`
+- `/admin/tasks/:id`
+- `/admin/agents/:id`
+
+Run external Star-Office-UI separately according to its own README if using the original repository. The default local endpoint assumed by the optional push adapter is:
 
 ```text
 http://127.0.0.1:19000

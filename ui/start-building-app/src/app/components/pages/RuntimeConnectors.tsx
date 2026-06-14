@@ -1,13 +1,19 @@
 import { Plug, Radio } from "lucide-react";
 import { ConnectorCard } from "../shared/ConnectorCard";
 import { StatusBadge } from "../shared/StatusBadge";
-import { runtimeConnectors, auditLogs } from "../../data/mockData";
-
-const connectorAuditLogs = auditLogs.filter(a =>
-  a.entity_type === "runtime_connector" || a.entity_type === "connector"
-);
+import { loadAudit, loadRuntimeConnectors, useLiveData } from "../../data/liveApi";
 
 export function RuntimeConnectors() {
+  const { data, loading, error, refresh } = useLiveData(async () => {
+    const [runtimeConnectors, auditLogs] = await Promise.all([loadRuntimeConnectors(), loadAudit()]);
+    const connectorAuditLogs = auditLogs.filter(a =>
+      a.entity_type === "runtime_connectors" || a.entity_type === "runtime_connector" || a.entity_type === "connector"
+    );
+    return { runtimeConnectors, connectorAuditLogs };
+  }, []);
+  const runtimeConnectors = data?.runtimeConnectors || [];
+  const connectorAuditLogs = data?.connectorAuditLogs || [];
+
   return (
     <div className="space-y-6 max-w-5xl">
       {/* Header */}
@@ -17,13 +23,15 @@ export function RuntimeConnectors() {
             Runtime Connectors
           </h1>
           <p className="text-xs mt-0.5" style={{ color: "var(--mis-dim)" }}>
-            Vendor-neutral control plane · v1.2.2
+            Vendor-neutral control plane · live AgentOps MIS backend
           </p>
+          {loading && <p className="text-xs mt-2" style={{ color: "var(--mis-muted)" }}>Loading live connectors...</p>}
+          {error && <p className="text-xs mt-2" style={{ color: "#F87171" }}>Live backend unavailable: {error}</p>}
         </div>
-        <div className="flex items-center gap-2 text-xs px-3 py-1.5 rounded" style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)", color: "var(--mis-dim)" }}>
+        <button onClick={refresh} className="flex items-center gap-2 text-xs px-3 py-1.5 rounded" style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)", color: "var(--mis-dim)" }}>
           <Radio size={12} style={{ color: "var(--mis-success)" }} />
-          Live monitoring
-        </div>
+          Refresh live
+        </button>
       </div>
 
       {/* Status summary */}

@@ -35,7 +35,7 @@ const navGroups: NavGroup[] = [
     items: [
       { label: "Control Tower",  path: "/admin",                    icon: <Activity size={15} /> },
       { label: "Agent Registry", path: "/workspace/agents",         icon: <Bot size={15} /> },
-      { label: "Run Ledger",     path: "/admin/runs/run_001",       icon: <List size={15} /> },
+      { label: "Run Ledger",     path: "/admin/runs",               icon: <List size={15} /> },
       { label: "Tool Calls",     path: "/admin/toolcalls",          icon: <Wrench size={15} /> },
       { label: "Connectors",     path: "/admin/connectors",         icon: <Plug size={15} /> },
       { label: "External Bases", path: "/admin/bases/notion",       icon: <Database size={15} /> },

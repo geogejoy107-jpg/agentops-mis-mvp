@@ -2,18 +2,24 @@ import { useParams } from "react-router";
 import { Bot, Cpu, DollarSign, ShieldCheck, Activity, Star } from "lucide-react";
 import { StatusBadge } from "../shared/StatusBadge";
 import { RiskBadge } from "../shared/RiskBadge";
-import { agents, runs, evaluations } from "../../data/mockData";
+import { loadAgentPerformance, useLiveData } from "../../data/liveApi";
 
 const HIGH_RISK_TOOLS = ["shell.exec", "github.push", "email.send", "file.delete", "database.write", "mcp.invoke"];
 
 export function AgentDetail() {
   const { id } = useParams<{ id: string }>();
-  const agent = agents.find(a => a.agent_id === id) ?? agents[0];
-  const agentRuns = runs.filter(r => r.agent_id === agent.agent_id).slice(0, 5);
-  const agentEvals = evaluations.filter(e => e.agent_id === agent.agent_id);
-  const avgScore = agentEvals.length
-    ? Math.round(agentEvals.reduce((s, e) => s + e.score, 0) / agentEvals.length)
-    : null;
+  const { data, loading, error } = useLiveData(() => loadAgentPerformance(id || ""), [id]);
+
+  if (loading) {
+    return <p className="text-xs" style={{ color: "var(--mis-muted)" }}>Loading live agent detail...</p>;
+  }
+  if (error || !data?.agent) {
+    return <p className="text-xs" style={{ color: "#F87171" }}>Live agent detail unavailable: {error || "not found"}</p>;
+  }
+
+  const agent = data.agent;
+  const agentRuns = data.recent_runs.slice(0, 5);
+  const avgScore = null;
 
   return (
     <div className="space-y-5 max-w-4xl">
@@ -58,10 +64,10 @@ export function AgentDetail() {
         >
           <div className="text-xs font-semibold" style={{ color: "var(--mis-text)" }}>Performance</div>
           {[
-            { label: "Total Runs", value: agent.run_count, icon: <Activity size={13} /> },
-            { label: "Success Rate", value: `${Math.round(agent.success_rate * 100)}%`, icon: <Star size={13} /> },
-            { label: "Failures", value: agent.failure_count, icon: <Activity size={13} /> },
-            { label: "Approvals Requested", value: agent.approval_count, icon: <ShieldCheck size={13} /> },
+            { label: "Total Runs", value: data.total_runs, icon: <Activity size={13} /> },
+            { label: "Success Rate", value: `${Math.round(data.success_rate * 100)}%`, icon: <Star size={13} /> },
+            { label: "Failures", value: data.failures, icon: <Activity size={13} /> },
+            { label: "Approvals Requested", value: data.approval_required_count, icon: <ShieldCheck size={13} /> },
           ].map(({ label, value, icon }) => (
             <div key={label} className="flex items-center justify-between">
               <div className="flex items-center gap-1.5 text-xs" style={{ color: "var(--mis-dim)" }}>
@@ -94,7 +100,7 @@ export function AgentDetail() {
             Budget
           </div>
           <div className="text-2xl font-semibold" style={{ color: "var(--mis-text)" }}>
-            ${agent.budget_used_usd.toFixed(2)}
+            ${data.total_cost_usd.toFixed(2)}
           </div>
           <div className="text-xs" style={{ color: "var(--mis-muted)" }}>
             of ${agent.budget_limit_usd.toFixed(2)} limit
@@ -103,13 +109,13 @@ export function AgentDetail() {
             <div
               className="h-2 rounded-full transition-all"
               style={{
-                width: `${Math.min(100, (agent.budget_used_usd / agent.budget_limit_usd) * 100)}%`,
-                background: agent.budget_used_usd / agent.budget_limit_usd > 0.8 ? "var(--mis-warning)" : "var(--mis-success)",
+                width: `${Math.min(100, agent.budget_limit_usd ? (data.total_cost_usd / agent.budget_limit_usd) * 100 : 0)}%`,
+                background: agent.budget_limit_usd && data.total_cost_usd / agent.budget_limit_usd > 0.8 ? "var(--mis-warning)" : "var(--mis-success)",
               }}
             />
           </div>
           <div className="text-[11px] mt-1.5" style={{ color: "var(--mis-muted)" }}>
-            {Math.round((agent.budget_used_usd / agent.budget_limit_usd) * 100)}% used
+            {agent.budget_limit_usd ? Math.round((data.total_cost_usd / agent.budget_limit_usd) * 100) : 0}% used
           </div>
         </div>
 

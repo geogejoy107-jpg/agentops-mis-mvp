@@ -10,6 +10,7 @@ import { ControlTower } from "./components/pages/ControlTower";
 import { AgentDetail } from "./components/pages/AgentDetail";
 import { TaskDetail } from "./components/pages/TaskDetail";
 import { RunDetail } from "./components/pages/RunDetail";
+import { RunLedger } from "./components/pages/RunLedger";
 import { ToolCallLedger } from "./components/pages/ToolCallLedger";
 import { RuntimeConnectors } from "./components/pages/RuntimeConnectors";
 import { NotionBase } from "./components/pages/NotionBase";
@@ -33,6 +34,7 @@ export default function App() {
           <Route path="/admin" element={<ControlTower />} />
           <Route path="/admin/agents/:id" element={<AgentDetail />} />
           <Route path="/admin/tasks/:id" element={<TaskDetail />} />
+          <Route path="/admin/runs" element={<RunLedger />} />
           <Route path="/admin/runs/:id" element={<RunDetail />} />
           <Route path="/admin/toolcalls" element={<ToolCallLedger />} />
           <Route path="/admin/connectors" element={<RuntimeConnectors />} />

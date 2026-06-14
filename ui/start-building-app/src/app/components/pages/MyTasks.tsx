@@ -3,7 +3,7 @@ import { Link } from "react-router";
 import { Plus, Filter } from "lucide-react";
 import { StatusBadge } from "../shared/StatusBadge";
 import { RiskBadge } from "../shared/RiskBadge";
-import { tasks } from "../../data/mockData";
+import { loadTasks, useLiveData } from "../../data/liveApi";
 
 type FilterStatus = "all" | "running" | "waiting_approval" | "planned" | "completed" | "failed" | "blocked";
 
@@ -23,6 +23,8 @@ const PRIORITY_COLOR: Record<string, string> = {
 
 export function MyTasks() {
   const [filter, setFilter] = useState<FilterStatus>("all");
+  const { data, loading, error, refresh } = useLiveData(() => loadTasks(), []);
+  const tasks = data || [];
 
   const filtered = filter === "all" ? tasks : tasks.filter(t => t.status === filter);
 
@@ -37,12 +39,15 @@ export function MyTasks() {
           </p>
         </div>
         <button
+          onClick={refresh}
           className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded"
           style={{ background: "rgba(34,211,238,0.12)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.2)" }}
         >
-          <Plus size={13} /> New Task
+          <Plus size={13} /> Refresh Live
         </button>
       </div>
+      {loading && <p className="text-xs" style={{ color: "var(--mis-muted)" }}>Loading live tasks...</p>}
+      {error && <p className="text-xs" style={{ color: "#F87171" }}>Live backend unavailable: {error}</p>}
 
       {/* Status filter tabs */}
       <div className="flex gap-1 flex-wrap">

@@ -3,17 +3,33 @@ import { Cpu, DollarSign, Clock, GitBranch, AlertTriangle } from "lucide-react";
 import { StatusBadge } from "../shared/StatusBadge";
 import { RiskBadge } from "../shared/RiskBadge";
 import { AuditTimeline } from "../shared/AuditTimeline";
-import { runs, toolCalls, evaluations, auditLogs } from "../../data/mockData";
+import { loadAudit, loadRunDetail, loadRuns, useLiveData } from "../../data/liveApi";
 
 export function RunDetail() {
   const { id } = useParams<{ id: string }>();
-  const run = runs.find(r => r.run_id === id) ?? runs[0];
-  const runTools = toolCalls.filter(tc => tc.run_id === run.run_id);
-  const runEval = evaluations.find(e => e.run_id === run.run_id);
-  const runAudit = auditLogs.filter(a => a.entity_id === run.run_id || runTools.some(tc => a.entity_id === tc.tool_call_id)).slice(0, 5);
+  const { data, loading, error } = useLiveData(async () => {
+    const [detail, allRuns, auditLogs] = await Promise.all([
+      loadRunDetail(id || ""),
+      loadRuns(),
+      loadAudit(),
+    ]);
+    return { detail, allRuns, auditLogs };
+  }, [id]);
 
-  const childRuns = runs.filter(r => r.parent_run_id === run.run_id);
-  const parentRun = run.parent_run_id ? runs.find(r => r.run_id === run.parent_run_id) : null;
+  if (loading) {
+    return <p className="text-xs" style={{ color: "var(--mis-muted)" }}>Loading live run detail...</p>;
+  }
+  if (error || !data?.detail?.run) {
+    return <p className="text-xs" style={{ color: "#F87171" }}>Live run detail unavailable: {error || "not found"}</p>;
+  }
+
+  const run = data.detail.run;
+  const runTools = data.detail.tool_calls;
+  const runEval = data.detail.evaluations[0];
+  const runAudit = data.auditLogs.filter(a => a.entity_id === run.run_id || runTools.some(tc => a.entity_id === tc.tool_call_id)).slice(0, 5);
+  const childRuns = data.allRuns.filter(r => r.parent_run_id === run.run_id);
+  const parentRun = run.parent_run_id ? data.allRuns.find(r => r.run_id === run.parent_run_id) : null;
+  const score = runEval ? (runEval.score <= 1 ? Math.round(runEval.score * 100) : Math.round(runEval.score)) : 0;
 
   return (
     <div className="space-y-5 max-w-4xl">
@@ -176,13 +192,30 @@ export function RunDetail() {
             <div className="text-xs font-semibold" style={{ color: "var(--mis-text)" }}>Evaluation Result</div>
             <div className="flex items-center gap-2">
               <span className="text-sm font-semibold" style={{ color: runEval.score >= 80 ? "var(--mis-success)" : "var(--mis-warning)" }}>
-                {runEval.score}/100
+                {score}/100
               </span>
               <StatusBadge status={runEval.pass_fail} size="md" />
             </div>
           </div>
           <p className="text-xs" style={{ color: "var(--mis-dim)" }}>{runEval.notes}</p>
           <div className="text-[11px] mt-1" style={{ color: "var(--mis-muted)" }}>Evaluator: {runEval.evaluator_type}</div>
+        </div>
+      )}
+
+      {(data.detail.artifacts || []).length > 0 && (
+        <div
+          className="rounded-xl p-4"
+          style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}
+        >
+          <div className="text-xs font-semibold mb-3" style={{ color: "var(--mis-text)" }}>Artifacts</div>
+          <div className="space-y-2">
+            {(data.detail.artifacts || []).map((artifact) => (
+              <div key={artifact.artifact_id} className="p-3 rounded-lg" style={{ background: "var(--mis-surface2)" }}>
+                <div className="text-xs font-medium" style={{ color: "var(--mis-text)" }}>{artifact.title}</div>
+                <div className="text-[11px] mt-1" style={{ color: "var(--mis-dim)" }}>{artifact.summary}</div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
