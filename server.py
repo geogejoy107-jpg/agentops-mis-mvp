@@ -16,6 +16,7 @@ import json
 import os
 import random
 import re
+import shlex
 import socket
 import sqlite3
 import subprocess
@@ -715,11 +716,17 @@ def hermes_runtime_config() -> dict:
 
 
 def agnesfallback_config() -> dict:
+    extra_args = shlex.split(os.environ.get("AGNESFALLBACK_CLI_EXTRA_ARGS", "").strip())
     return {
         "binary_path": os.path.expanduser(os.environ.get("AGNESFALLBACK_BIN", "~/.local/bin/agnesfallback").strip()),
         "gateway_url": os.environ.get("AGNESFALLBACK_GATEWAY_URL", "http://127.0.0.1:8643").strip(),
         "profile": os.environ.get("AGNESFALLBACK_PROFILE", "agnesfallback").strip() or "agnesfallback",
+        "extra_args": extra_args,
     }
+
+
+def agnesfallback_cli_command(agnes: dict, prompt: str) -> list[str]:
+    return [agnes["binary_path"], "-z", prompt, *agnes.get("extra_args", [])]
 
 
 def runtime_connector_rows() -> list[dict]:
@@ -1990,10 +1997,10 @@ def agnesfallback_cli_probe(conn, body: dict) -> dict:
         "provider": "agnesfallback",
         "mode": "cli_probe",
         "dry_run": True,
-        "would_run": [agnes["binary_path"], "-z", "[FIXED_SAFE_PROMPT]"],
+        "would_run": agnesfallback_cli_command(agnes, "[FIXED_SAFE_PROMPT]"),
         "prompt_hash": stable_hash(prompt),
         "requires": {"HERMES_ALLOW_REAL_RUN": True, "confirm_run": True},
-        "note": "--yolo is not used by default and is intentionally excluded from this code path.",
+        "note": "Extra CLI args are empty by default. Use AGNESFALLBACK_CLI_EXTRA_ARGS only for explicit local recording mode.",
     }
     refresh_runtime_connectors(conn)
     if not (cfg["allow_real_run"] and confirm):
@@ -2008,7 +2015,7 @@ def agnesfallback_cli_probe(conn, body: dict) -> dict:
     visible = None
     error = None
     try:
-        proc = subprocess.run([agnes["binary_path"], "-z", prompt], capture_output=True, text=True, timeout=180, check=False)
+        proc = subprocess.run(agnesfallback_cli_command(agnes, prompt), capture_output=True, text=True, timeout=180, check=False)
         visible = redact_text((proc.stdout or "").strip(), 200)
         ok = proc.returncode == 0 and visible == "AGNESFALLBACK_OK"
         if not ok:
@@ -2254,7 +2261,7 @@ def run_local_ai_brief(conn, body: dict) -> dict:
         "provider": "agnesfallback",
         "workflow": "local_ai_brief",
         "dry_run": True,
-        "would_run": [agnes["binary_path"], "-z", "[SAFE_STRUCTURED_MIS_BRIEF_PROMPT]"],
+        "would_run": agnesfallback_cli_command(agnes, "[SAFE_STRUCTURED_MIS_BRIEF_PROMPT]"),
         "requires": {"HERMES_ALLOW_REAL_RUN": True, "confirm_run": True},
         "prompt_hash": prompt_hash,
         "state_hash": state_hash,
@@ -2278,7 +2285,7 @@ def run_local_ai_brief(conn, body: dict) -> dict:
     visible = None
     error = None
     try:
-        proc = subprocess.run([agnes["binary_path"], "-z", prompt], capture_output=True, text=True, timeout=180, check=False)
+        proc = subprocess.run(agnesfallback_cli_command(agnes, prompt), capture_output=True, text=True, timeout=180, check=False)
         visible = redact_text((proc.stdout or "").strip(), 1600)
         ok = proc.returncode == 0 and bool(visible)
         if not ok:
@@ -3132,14 +3139,16 @@ def build_notion_report(conn) -> str:
         )
     else:
         lines.append("- No OpenClaw run recorded yet.")
+    quality_distribution = ", ".join(f"{row['pass_fail']}={row['count']}" for row in quality) if quality else "none"
+    memory_review_distribution = ", ".join(f"{row['review_status']}={row['count']}" for row in memory_review) if memory_review else "none"
     lines.extend(
         [
             "",
             "## 强本地 MVP 状态",
             f"- OpenClaw cron health: {openclaw['cron_runs']} imported runs, {openclaw['failed_runs']} failed runs, {openclaw['failed_quality_gates']} failed quality gates",
             f"- Hermes probe readiness: {hermes.get('status', 'unknown')} on port {hermes.get('api_port', 8642)}",
-            f"- Quality gate distribution: {', '.join(f'{row['pass_fail']}={row['count']}' for row in quality) if quality else 'none'}",
-            f"- Memory review distribution: {', '.join(f'{row['review_status']}={row['count']}' for row in memory_review) if memory_review else 'none'}",
+            f"- Quality gate distribution: {quality_distribution}",
+            f"- Memory review distribution: {memory_review_distribution}",
             "",
             "## Agent 绩效摘要",
         ]

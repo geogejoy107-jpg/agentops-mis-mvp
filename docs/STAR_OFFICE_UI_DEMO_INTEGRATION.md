@@ -16,7 +16,10 @@ AgentOps MIS remains the authority for:
 - audit logs
 - runtime connector events
 
-Star-Office-UI is only a visual surface.
+Star-Office-UI is only a visual surface. In the local classroom demo, it becomes the front-stage Pixel Office:
+
+- `127.0.0.1:19000/workspace`: multi-agent Pixel Office room.
+- `127.0.0.1:19001/workspace`: AgentOps MIS management workbench and admin console.
 
 ## License Boundary
 
@@ -61,7 +64,10 @@ git clone https://github.com/ringhyacinth/Star-Office-UI.git
 cd Star-Office-UI
 /opt/homebrew/bin/python3.11 -m pip install -r backend/requirements.txt
 [ -f state.json ] || cp state.sample.json state.json
-STAR_BACKEND_PORT=19000 /opt/homebrew/bin/python3.11 backend/app.py
+STAR_BACKEND_PORT=19000 \
+AGENTOPS_MIS_API_BASE=http://127.0.0.1:8787/api \
+AGENTOPS_MIS_AGENT_LIMIT=12 \
+/opt/homebrew/bin/python3.11 backend/app.py
 ```
 
 Open:
@@ -78,7 +84,14 @@ http://127.0.0.1:19000/workspace
 
 The local Star-Office checkout can map that path back to the pixel office homepage for demo convenience.
 
-The Figma/Start Building App under `ui/start-building-app` is a separate product/admin UI shell. It is not the Star-Office-UI art asset pack.
+For the integrated local demo, patch the local Star-Office checkout so `/agents` can read safe MIS API data and map multiple MIS agents into the room. This is a demo-only local modification and should not be treated as vendored product code unless the Star-Office license/art boundary has been reviewed.
+
+The Figma/Start Building App under `ui/start-building-app` is the separate product/admin UI shell. It is not the Star-Office-UI art asset pack. Run it on a separate port:
+
+```bash
+cd ui/start-building-app
+npm run dev -- --host 127.0.0.1 --port 19001
+```
 
 Run external Star-Office-UI separately according to its own README if using the original repository. The default local endpoint assumed by the optional push adapter is:
 

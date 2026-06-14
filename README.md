@@ -118,7 +118,12 @@ python3 scripts/demo_acceptance.py --start-server
 
 ## Pixel Office Demo Mode
 
-v1.3 增加了可选的 Star-Office-UI demo visualizer 适配层，用于把 AgentOps MIS 的 run / approval / memory / audit 状态推送到本地像素办公室看板。
+v1.3 增加了可选的 Star-Office-UI demo visualizer 适配层，用于把 AgentOps MIS 的 agents / runs / approvals / memory / audit 状态映射到本地像素办公室。
+
+当前本地 demo 分两层：
+
+- `http://127.0.0.1:19000/workspace`：Pixel Office 前台。房间里会显示多个从 AgentOps MIS 映射出来的 Agent，并按运行量、成功率、失败数、审批数进入执行/同步/报警等区域。
+- `http://127.0.0.1:19001/workspace`：MIS 管理工作台。保留原 Figma/Vite UI 的任务、审批、Run Ledger、Memory、Connectors、Audit 等后台管理入口。
 
 重要边界：
 

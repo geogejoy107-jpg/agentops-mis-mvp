@@ -78,6 +78,26 @@ export interface AgentPerformancePayload {
   recent_runs: Run[];
 }
 
+export interface LocalBriefResult {
+  provider: string;
+  workflow: string;
+  dry_run: boolean;
+  ok?: boolean;
+  run_id?: string;
+  task_id?: string;
+  artifact_id?: string | null;
+  duration_ms?: number;
+  output_summary?: string;
+  error?: string | null;
+  note?: string;
+  state_preview?: {
+    agents_total?: number;
+    pending_approvals?: number;
+    openclaw_cron_runs?: number;
+    recent_real_runs?: number;
+  };
+}
+
 function asArray<T>(value: unknown): T[] {
   return Array.isArray(value) ? (value as T[]) : [];
 }
@@ -387,4 +407,18 @@ export async function loadAgentPerformance(id: string): Promise<AgentPerformance
     recent_error_types: asArray(raw.recent_error_types),
     recent_runs: asArray<Record<string, unknown>>(raw.recent_runs).map(normalizeRun),
   };
+}
+
+export async function decideApproval(id: string, decision: "approve" | "reject"): Promise<{ updated: boolean }> {
+  return apiJson<{ updated: boolean }>(`/approvals/${encodeURIComponent(id)}/${decision}`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
+export async function runLocalBrief(confirmRun = false): Promise<LocalBriefResult> {
+  return apiJson<LocalBriefResult>("/workflows/local-brief", {
+    method: "POST",
+    body: JSON.stringify(confirmRun ? { confirm_run: true } : {}),
+  });
 }
