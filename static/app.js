@@ -2,7 +2,7 @@ const routes = [
   ['dashboard','Dashboard','overview'], ['agents','Agents','registry'], ['tasks','Tasks','ledger'],
   ['runs','Runs','ledger'], ['tool-calls','Tool Calls','tools'], ['approvals','Approvals','HITL'],
   ['memory','Memory','governance'], ['evaluations','Evaluations','quality'], ['audit','Audit','trace'],
-  ['integrations','Integrations','runtime'], ['settings','Settings','config']
+  ['integrations','Integrations','runtime'], ['workflows','AI Workflows','real work'], ['settings','Settings','config']
 ];
 const app = document.getElementById('app');
 const pageTitle = document.getElementById('page-title');
@@ -128,7 +128,7 @@ async function renderRunDetail(id){ const d=await api('/api/runs/'+id); const gr
 <div class="grid-2 section"><div class="card"><h3>Run</h3><pre>${escapeHtml(JSON.stringify(r,null,2))}</pre></div><div class="card"><h3>Parent / Delegation</h3>${table([{parent_run_id:r.parent_run_id,delegation_id:r.delegation_id,children:(graph.children||[]).length,siblings:(graph.siblings_by_delegation||[]).length}],[{key:'parent_run_id',label:'Parent'},{key:'delegation_id',label:'Delegation'},{key:'children',label:'Child Runs'},{key:'siblings',label:'Sibling Runs'}])}</div></div>
 <div class="grid-2 section"><div class="card"><h3>Child Runs</h3>${runTable(graph.children||[])}</div><div class="card"><h3>Sibling Runs</h3>${runTable(graph.siblings_by_delegation||[])}</div></div>
 <div class="grid-2 section"><div class="card"><h3>Tool Calls</h3>${toolCallTable(d.tool_calls)}</div><div class="card"><h3>Evaluations</h3>${evaluationTable(d.evaluations)}</div></div>
-<div class="section card"><h3>Approvals</h3>${approvalTable(d.approvals)}</div>`; }
+<div class="grid-2 section"><div class="card"><h3>Approvals</h3>${approvalTable(d.approvals)}</div><div class="card"><h3>Artifacts</h3>${table(d.artifacts||[],[{key:'title',label:'Title'},{key:'artifact_type',label:'Type'},{key:'summary',label:'Summary'}])}</div></div>`; }
 async function completeRun(id){ await api(`/api/mock-runs/${id}/complete`,{method:'POST',body:'{}'}); toast('Run completion attempted'); render(); }
 async function runRuleCheck(id){ await api('/api/evaluations/run-rule-check',{method:'POST',body:JSON.stringify({run_id:id})}); toast('Rule evaluation created'); render(); }
 
@@ -205,6 +205,46 @@ async function exportNotion(dryRun){
   else toast(result.configured ? 'Notion dry run ready' : 'Notion not configured, preview returned');
   app.insertAdjacentHTML('afterbegin', `<div class="card section"><h3>Notion Export Result</h3><pre>${escapeHtml(JSON.stringify(result,null,2))}</pre></div>`);
 }
+
+async function renderWorkflows(){
+  setTitle('AI Workflows','Real local AI work that writes back into Run Ledger, Evaluation, Runtime Events and Audit.');
+  const [runs, events, evaluations, auditRows] = await Promise.all([
+    api('/api/runs?task_id=tsk_local_ai_daily_brief'),
+    api('/api/runtime-events'),
+    api('/api/evaluations'),
+    api('/api/audit')
+  ]);
+  const briefEvents = (events || []).filter(e => String(e.event_type || '').includes('local_ai_brief')).slice(0, 8);
+  const briefEvaluations = (evaluations || []).filter(e => e.task_id === 'tsk_local_ai_daily_brief').slice(0, 8);
+  const briefAudits = (auditRows || []).filter(a => String(a.action || '').includes('local_ai_brief')).slice(0, 8);
+  app.innerHTML = `<div class="grid-2">
+    <div class="card">
+      <h3>Local AI Brief</h3>
+      <p class="muted">Uses Agnesfallback CLI against safe structured MIS metrics. Default is dry-run; real run requires the server env HERMES_ALLOW_REAL_RUN=true and the explicit confirm button.</p>
+      <div class="actions">
+        <button onclick="runLocalBrief(false)">Dry-run Plan</button>
+        <button class="ok" onclick="runLocalBrief(true)">Run Real Brief</button>
+      </div>
+      <p class="muted">No credentials, private messages, full prompts, or raw transcripts are stored.</p>
+    </div>
+    <div class="card">
+      <h3>Latest Brief Runs</h3>${runTable(runs || [])}
+    </div>
+  </div>
+  <div class="grid-3 section">
+    <div class="card"><h3>Runtime Events</h3>${table(briefEvents,[{key:'created_at',label:'Time'},{key:'status',label:'Status',render:r=>statusBadge(r.status)},{key:'event_type',label:'Event'},{key:'output_summary',label:'Output'}])}</div>
+    <div class="card"><h3>Evaluations</h3>${evaluationTable(briefEvaluations)}</div>
+    <div class="card"><h3>Audit</h3>${table(briefAudits,[{key:'created_at',label:'Time'},{key:'action',label:'Action'},{key:'entity_id',label:'Entity'}])}</div>
+  </div>`;
+}
+
+async function runLocalBrief(confirmRun){
+  if(confirmRun && !confirm('Run a real local Agnesfallback brief now? The server must be started with HERMES_ALLOW_REAL_RUN=true.')) return;
+  const result = await api('/api/workflows/local-brief',{method:'POST',body:JSON.stringify(confirmRun ? {confirm_run:true} : {})});
+  toast(result.dry_run ? 'Dry-run plan recorded' : (result.ok ? 'Real AI brief recorded' : 'AI brief failed but was recorded'));
+  const jump = result.run_id ? `<div class="actions"><button onclick="setRoute('runs/${result.run_id}')">Open Run</button><button onclick="setRoute('tasks/${result.task_id}')">Open Task</button></div>` : '';
+  app.insertAdjacentHTML('afterbegin', `<div class="card section"><h3>Local AI Brief Result</h3>${jump}<pre>${escapeHtml(JSON.stringify(result,null,2))}</pre></div>`);
+}
 function renderSettings(){ setTitle('Settings','Default-off external calls, risk policy and future adapters.'); app.innerHTML=`<div class="grid-2"><div class="card"><h3>Runtime Policy</h3><pre>${escapeHtml(JSON.stringify({external_calls:'disabled',hidden_telemetry:'forbidden',high_risk_actions:'fail_closed',future_adapters:['claude_code','codex','openhands','crewai','langgraph','openclaw','hermes']},null,2))}</pre></div><div class="card"><h3>Default High-Risk Actions</h3><ul><li>shell.exec</li><li>github.push</li><li>email.send</li><li>file.delete</li><li>database.write</li></ul></div></div>`; }
 async function exportJson(path, filename){ const data=await api(path); const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'}); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=filename; a.click(); URL.revokeObjectURL(url); }
 
@@ -225,6 +265,7 @@ async function render(){
     if(r==='evaluations') return renderEvaluations();
     if(r==='audit') return renderAudit();
     if(r==='integrations') return renderIntegrations();
+    if(r==='workflows') return renderWorkflows();
     if(r==='settings') return renderSettings();
     return renderDashboard();
   } catch(e) { app.innerHTML = `<div class="card"><h3>Error</h3><pre>${escapeHtml(e.stack || e.message)}</pre></div>`; }

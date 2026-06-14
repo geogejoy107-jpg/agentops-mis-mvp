@@ -2130,6 +2130,205 @@ def agnesfallback_chat_completion_probe(conn, body: dict) -> dict:
     return {"provider": "agnesfallback", "mode": "openai_compatible", "dry_run": False, "ok": ok, "run_id": run_id, "duration_ms": duration, "output_summary": row["output_summary"], "error": error}
 
 
+def ensure_local_ai_brief_agent_task(conn):
+    now = now_iso()
+    agent_id = "agt_local_ai_brief"
+    upsert_agent(conn, {
+        "agent_id": agent_id,
+        "name": "Local AI Brief Assistant",
+        "role": "Local Operations Assistant",
+        "description": "Uses Agnesfallback locally to turn safe MIS ledger metrics into a Chinese project brief.",
+        "runtime_type": "hermes",
+        "model_provider": "agnesfallback",
+        "model_name": "agnesfallback",
+        "status": "idle",
+        "permission_level": "manager",
+        "allowed_tools": json.dumps(["agnesfallback.cli", "mis.sqlite.read", "report.write"], ensure_ascii=False),
+        "budget_limit_usd": 10.0,
+        "owner_user_id": "usr_founder",
+        "created_at": now,
+        "updated_at": now,
+    }, "local-ai-workflow")
+    task_id = "tsk_local_ai_daily_brief"
+    upsert_task(conn, {
+        "task_id": task_id,
+        "title": "Generate local AgentOps MIS work brief",
+        "description": "Generate a useful local project/ops brief from structured MIS counts and recent sanitized ledger summaries.",
+        "requester_id": "usr_founder",
+        "owner_agent_id": agent_id,
+        "collaborator_agent_ids": json.dumps([], ensure_ascii=False),
+        "status": "planned",
+        "priority": "high",
+        "due_date": None,
+        "acceptance_criteria": "Brief identifies real capabilities, demo/mock boundaries, next actions, and risks; output is recorded in the ledger.",
+        "risk_level": "low",
+        "budget_limit_usd": 1.0,
+        "created_at": now,
+        "updated_at": now,
+    }, "local-ai-workflow")
+    return agent_id, task_id
+
+
+def local_ai_brief_state(conn) -> dict:
+    metrics = dashboard_metrics(conn)
+    recent_runs = rows_to_dicts(conn.execute(
+        """SELECT run_id, task_id, agent_id, runtime_type, status, duration_ms, output_summary, error_type, error_message, created_at
+        FROM runs
+        ORDER BY created_at DESC
+        LIMIT 10"""
+    ).fetchall())
+    latest_real_runs = rows_to_dicts(conn.execute(
+        """SELECT run_id, task_id, agent_id, runtime_type, status, output_summary, error_type, created_at
+        FROM runs
+        WHERE runtime_type IN ('hermes','openclaw','claude_code','codex','openhands','crewai','langgraph')
+        ORDER BY created_at DESC
+        LIMIT 10"""
+    ).fetchall())
+    memory_review = dict(conn.execute(
+        """SELECT
+        SUM(CASE WHEN review_status='candidate' THEN 1 ELSE 0 END) AS candidates,
+        SUM(CASE WHEN review_status='approved' THEN 1 ELSE 0 END) AS approved,
+        SUM(CASE WHEN review_status IN ('stale','superseded') THEN 1 ELSE 0 END) AS needs_review
+        FROM memories"""
+    ).fetchone())
+    runtime_events = rows_to_dicts(conn.execute(
+        """SELECT runtime_connector_id, event_type, status, output_summary, error_message, created_at
+        FROM runtime_events
+        ORDER BY created_at DESC
+        LIMIT 8"""
+    ).fetchall())
+    return {
+        "generated_at": now_iso(),
+        "purpose": "local_ai_brief_safe_structured_state",
+        "privacy": "Only structured counts and sanitized summaries are included. No credentials, private messages, or full transcripts.",
+        "metrics": {
+            "agents_total": metrics["agents_total"],
+            "tasks_completed_total": metrics["tasks_completed_total"],
+            "failure_rate": metrics["failure_rate"],
+            "pending_approvals": metrics["pending_approvals"],
+            "stale_or_due_memories": metrics["stale_or_due_memories"],
+            "runtime_health": metrics["runtime_health"],
+            "openclaw_import": metrics["openclaw_import"],
+            "agent_performance_summary": metrics["agent_performance_summary"][:5],
+        },
+        "memory_review": memory_review,
+        "recent_runs": recent_runs,
+        "latest_real_runtime_runs": latest_real_runs,
+        "recent_runtime_events": runtime_events,
+        "known_boundaries": [
+            "The static MIS UI is the live local control plane.",
+            "OpenClaw imported data may be real metadata but does not prove a fresh task was executed now.",
+            "Agnesfallback live mode requires HERMES_ALLOW_REAL_RUN=true plus confirm_run:true.",
+            "Default cloned demo remains safe and dry-run first.",
+        ],
+    }
+
+
+def build_local_ai_brief_prompt(state: dict) -> str:
+    payload = json.dumps(state, ensure_ascii=False, indent=2, default=str)
+    return (
+        "你是 AgentOps MIS 的本地运营助理。请只基于下面 JSON 结构化状态，生成一份中文工作简报。"
+        "不要编造外部事实，不要提到没有证据的能力。控制在 8 条以内，要求有真实用途。\n\n"
+        "必须包含：\n"
+        "1. 现在系统已经真实能做什么。\n"
+        "2. 哪些内容仍然是 demo/mock/imported metadata，不要夸大。\n"
+        "3. 用户今天最该处理的 3 个工作项。\n"
+        "4. 当前风险或阻塞。\n"
+        "5. 下一步如何让它更像产品。\n\n"
+        f"JSON 状态：\n{payload}"
+    )
+
+
+def run_local_ai_brief(conn, body: dict) -> dict:
+    cfg = hermes_runtime_config()
+    agnes = agnesfallback_config()
+    connector_id = "rtc_agnesfallback_cli"
+    confirm = bool(body.get("confirm_run"))
+    refresh_runtime_connectors(conn)
+    agent_id, task_id = ensure_local_ai_brief_agent_task(conn)
+    state = local_ai_brief_state(conn)
+    prompt = build_local_ai_brief_prompt(state)
+    prompt_hash = stable_hash(prompt)
+    state_hash = stable_hash(state)
+    plan = {
+        "provider": "agnesfallback",
+        "workflow": "local_ai_brief",
+        "dry_run": True,
+        "would_run": [agnes["binary_path"], "-z", "[SAFE_STRUCTURED_MIS_BRIEF_PROMPT]"],
+        "requires": {"HERMES_ALLOW_REAL_RUN": True, "confirm_run": True},
+        "prompt_hash": prompt_hash,
+        "state_hash": state_hash,
+        "state_preview": {
+            "agents_total": state["metrics"]["agents_total"],
+            "pending_approvals": state["metrics"]["pending_approvals"],
+            "openclaw_cron_runs": state["metrics"]["openclaw_import"]["cron_runs"],
+            "recent_real_runs": len(state["latest_real_runtime_runs"]),
+        },
+        "note": "Dry-run only. No prompt body, credentials, private messages, or full transcripts are stored.",
+    }
+    if not (cfg["allow_real_run"] and confirm):
+        runtime_event(conn, connector_id, "local_ai_brief_dry_run", "planned", task_id=task_id, agent_id=agent_id, prompt_hash=prompt_hash, input_summary=f"Local AI brief dry-run state_hash={state_hash[:16]}")
+        audit(conn, "system", "local-ai-workflow", "workflow.local_ai_brief.dry_run", "tasks", task_id, None, plan, {"confirm_run": confirm, "state_hash": state_hash})
+        conn.commit()
+        return plan
+
+    started_iso = now_iso()
+    started = dt.datetime.now(dt.timezone.utc)
+    ok = False
+    visible = None
+    error = None
+    try:
+        proc = subprocess.run([agnes["binary_path"], "-z", prompt], capture_output=True, text=True, timeout=180, check=False)
+        visible = redact_text((proc.stdout or "").strip(), 1600)
+        ok = proc.returncode == 0 and bool(visible)
+        if not ok:
+            error = redact_text(proc.stderr or visible or f"exit={proc.returncode}", 300)
+    except Exception as exc:
+        error = redact_text(str(exc), 300)
+
+    duration = int((dt.datetime.now(dt.timezone.utc) - started).total_seconds() * 1000)
+    run_id = stable_id("run_local_ai_brief", dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d%H%M%S"))
+    row = {
+        "run_id": run_id,
+        "task_id": task_id,
+        "agent_id": agent_id,
+        "runtime_type": "hermes",
+        "status": "completed" if ok else "failed",
+        "started_at": started_iso,
+        "ended_at": now_iso(),
+        "duration_ms": duration,
+        "input_summary": f"Local MIS structured-state brief prompt_hash={prompt_hash[:16]} state_hash={state_hash[:16]}",
+        "output_summary": visible if ok else "Local AI brief generation failed.",
+        "model_provider": "agnesfallback",
+        "model_name": "agnesfallback",
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "reasoning_tokens": 0,
+        "cost_usd": 0.0,
+        "error_type": None if ok else "LocalAiBriefFailed",
+        "error_message": error,
+        "trace_id": None,
+        "parent_run_id": None,
+        "delegation_id": "agnesfallback:local-ai-brief",
+        "approval_required": 0,
+        "created_at": started_iso,
+    }
+    upsert_run(conn, row, "local-ai-workflow", {"prompt_hash": prompt_hash, "state_hash": state_hash, "confirmed": True})
+    upsert_evaluation(conn, quality_gate_for_run(row), "local-ai-workflow")
+    runtime_event(conn, connector_id, "local_ai_brief", "completed" if ok else "failed", run_id=run_id, task_id=task_id, agent_id=agent_id, model_name="agnesfallback", latency_ms=duration, prompt_hash=prompt_hash, input_summary=f"Structured MIS state_hash={state_hash[:16]}", output_summary=visible, error_message=error, raw_payload_hash=stable_hash({"visible": visible, "error": error, "state_hash": state_hash}))
+    artifact_id = stable_id("art_local_ai_brief", run_id)
+    if ok:
+        conn.execute(
+            """INSERT OR REPLACE INTO artifacts(artifact_id,task_id,run_id,artifact_type,title,uri,summary,created_at)
+            VALUES(?,?,?,?,?,?,?,?)""",
+            (artifact_id, task_id, run_id, "report", "Local AI Work Brief", f"run://{run_id}", visible, now_iso()),
+        )
+    conn.execute("UPDATE tasks SET status=?, updated_at=? WHERE task_id=?", ("completed" if ok else "blocked", now_iso(), task_id))
+    audit(conn, "system", "local-ai-workflow", "workflow.local_ai_brief", "runs", run_id, None, {"status": row["status"], "artifact_id": artifact_id if ok else None}, {"prompt_hash": prompt_hash, "state_hash": state_hash, "confirmed": True})
+    conn.commit()
+    return {"provider": "agnesfallback", "workflow": "local_ai_brief", "dry_run": False, "ok": ok, "run_id": run_id, "task_id": task_id, "artifact_id": artifact_id if ok else None, "duration_ms": duration, "output_summary": row["output_summary"], "error": error}
+
+
 def hermes_run_task(conn, body: dict) -> dict:
     risk = body.get("risk_level", "low")
     if risk not in ("low", "medium") and not body.get("confirm_run"):
@@ -2484,6 +2683,7 @@ class Handler(BaseHTTPRequestHandler):
                     "tool_calls": rows_to_dicts(conn.execute("SELECT * FROM tool_calls WHERE run_id=? ORDER BY created_at", (run_id,)).fetchall()),
                     "approvals": rows_to_dicts(conn.execute("SELECT * FROM approvals WHERE run_id=? ORDER BY created_at", (run_id,)).fetchall()),
                     "evaluations": rows_to_dicts(conn.execute("SELECT * FROM evaluations WHERE run_id=? ORDER BY created_at", (run_id,)).fetchall()),
+                    "artifacts": rows_to_dicts(conn.execute("SELECT * FROM artifacts WHERE run_id=? ORDER BY created_at", (run_id,)).fetchall()),
                 })
             if path == "/api/tool-calls":
                 return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM tool_calls ORDER BY created_at DESC").fetchall()))
@@ -2632,6 +2832,8 @@ class Handler(BaseHTTPRequestHandler):
                 evaluate_run(conn, run, task)
                 conn.commit()
                 return self.send_json({"created": True})
+            if path == "/api/workflows/local-brief":
+                return self.send_json(run_local_ai_brief(conn, body), 201)
             if path == "/api/integrations/openclaw/import":
                 result = import_openclaw(conn)
                 conn.commit()

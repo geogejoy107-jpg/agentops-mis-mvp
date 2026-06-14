@@ -160,6 +160,7 @@ python3 scripts/push_star_office_state.py --base-url http://127.0.0.1:19000 --en
 - 产品化 Notion 路径：除 parent/database 导出外，也支持 `NOTION_WORKSPACE_PRIVATE_EXPORT=true` 尝试 workspace-level private page；该模式取决于 token 类型，internal integration 通常仍需要指定 parent。
 - Agnesfallback：默认只返回 dry-run 计划；真实固定 probe 必须同时设置 `HERMES_ALLOW_REAL_RUN=true` 并在请求体里传 `confirm_run:true`。默认不会加 `--yolo`。
 - Base/template switching：提供 Notion、W&B、Plane、Docmost、Mattermost 等外部 base 的能力矩阵和迁移 preview；Agent-MIS local base 仍是权威账本。
+- Local AI Workflows：`/workflows` 里提供一个真实本地 AI brief 工作流。它读取 MIS 的结构化安全指标，调用本机 Agnesfallback 生成中文项目/运营简报，并写入 Run Ledger、Runtime Events、Evaluation、Audit 和 Artifact。默认仍是 dry-run；真实运行必须启动 server 前显式设置 `HERMES_ALLOW_REAL_RUN=true`，再用页面确认按钮或 API 传 `confirm_run:true`。
 
 OpenClaw 导入使用确定性 ID，重复导入不会重复造 agents/tasks/runs/evaluations/tool_calls。cron run summary 不存原文，只存脱敏前 200 字和 hash/source metadata。
 
@@ -170,9 +171,27 @@ curl -fsS http://127.0.0.1:8787/api/integrations/openclaw/status | jq .
 curl -fsS -X POST http://127.0.0.1:8787/api/integrations/openclaw/import -d '{}' | jq .
 curl -fsS -X POST http://127.0.0.1:8787/api/integrations/hermes/probe -d '{}' | jq .
 curl -fsS -X POST http://127.0.0.1:8787/api/integrations/hermes/cli-probe -d '{}' | jq .
+curl -fsS -X POST http://127.0.0.1:8787/api/workflows/local-brief -d '{}' | jq .
 curl -fsS -X POST http://127.0.0.1:8787/api/integrations/notion/dry-run-export -d '{}' | jq .
 curl -fsS -X POST http://127.0.0.1:8787/api/migration/preview -d '{}' | jq .
 curl -fsS http://127.0.0.1:8787/api/dashboard/metrics | jq .
+```
+
+本机录屏或自用时执行一次真实 brief：
+
+```bash
+export HERMES_ALLOW_REAL_RUN=true
+export HERMES_REQUIRE_CONFIRM_RUN=true
+python3 server.py
+curl -fsS -X POST http://127.0.0.1:8787/api/workflows/local-brief \
+  -H "Content-Type: application/json" \
+  -d '{"confirm_run":true}' | jq .
+```
+
+录完或用完关闭 live mode：
+
+```bash
+unset HERMES_ALLOW_REAL_RUN
 ```
 
 ## V1 OpenClaw 实验脚本
