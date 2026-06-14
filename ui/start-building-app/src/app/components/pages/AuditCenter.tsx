@@ -30,7 +30,7 @@ export function AuditCenter() {
   const filtered = actorFilter === "all" ? auditLogs : auditLogs.filter(l => l.actor_type === actorFilter);
 
   return (
-    <div className="space-y-5 max-w-4xl">
+    <div className="space-y-5 w-full">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-lg font-semibold" style={{ color: "var(--mis-text)" }}>Audit Center</h1>

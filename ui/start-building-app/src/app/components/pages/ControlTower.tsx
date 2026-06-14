@@ -33,7 +33,7 @@ export function ControlTower() {
   const totalRuns = metrics?.recent_runs ? Number(metrics.openclaw_import?.cron_runs || 0) + Number(metrics.recent_runs.length || 0) : 0;
 
   return (
-    <div className="space-y-6 max-w-6xl">
+    <div className="space-y-6 w-full">
       <div>
         <h1 className="text-lg font-semibold" style={{ color: "var(--mis-text)" }}>Control Tower</h1>
         <p className="text-xs mt-0.5" style={{ color: "var(--mis-dim)" }}>Admin overview · live AgentOps MIS backend · June 14, 2026</p>

@@ -8,7 +8,7 @@ export function RunLedger() {
   const rows = runs || [];
 
   return (
-    <div className="space-y-5 max-w-6xl">
+    <div className="space-y-5 w-full">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-lg font-semibold" style={{ color: "var(--mis-text)" }}>Run Ledger</h1>

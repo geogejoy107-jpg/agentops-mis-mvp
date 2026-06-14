@@ -16,34 +16,37 @@ import { RuntimeConnectors } from "./components/pages/RuntimeConnectors";
 import { NotionBase } from "./components/pages/NotionBase";
 import { TemplateSwitching } from "./components/pages/TemplateSwitching";
 import { AuditCenter } from "./components/pages/AuditCenter";
+import { PreferencesProvider } from "./context/PreferencesContext";
 
 export default function App() {
   return (
-    <BrowserRouter>
-      <Routes>
-        <Route element={<AppShell />}>
-          <Route index element={<Navigate to="/workspace" replace />} />
-          {/* Client Workspace */}
-          <Route path="/workspace" element={<WorkspaceHome />} />
-          <Route path="/workspace/tasks" element={<MyTasks />} />
-          <Route path="/workspace/agents" element={<AIEmployees />} />
-          <Route path="/workspace/approvals" element={<ApprovalsInbox />} />
-          <Route path="/workspace/memory" element={<MemoryLibrary />} />
-          <Route path="/workspace/reports" element={<Reports />} />
-          {/* Admin Console */}
-          <Route path="/admin" element={<ControlTower />} />
-          <Route path="/admin/agents/:id" element={<AgentDetail />} />
-          <Route path="/admin/tasks/:id" element={<TaskDetail />} />
-          <Route path="/admin/runs" element={<RunLedger />} />
-          <Route path="/admin/runs/:id" element={<RunDetail />} />
-          <Route path="/admin/toolcalls" element={<ToolCallLedger />} />
-          <Route path="/admin/connectors" element={<RuntimeConnectors />} />
-          <Route path="/admin/bases/notion" element={<NotionBase />} />
-          <Route path="/admin/templates" element={<TemplateSwitching />} />
-          <Route path="/admin/audit" element={<AuditCenter />} />
-          <Route path="*" element={<Navigate to="/workspace" replace />} />
-        </Route>
-      </Routes>
-    </BrowserRouter>
+    <PreferencesProvider>
+      <BrowserRouter>
+        <Routes>
+          <Route element={<AppShell />}>
+            <Route index element={<Navigate to="/workspace" replace />} />
+            {/* Client Workspace */}
+            <Route path="/workspace" element={<WorkspaceHome />} />
+            <Route path="/workspace/tasks" element={<MyTasks />} />
+            <Route path="/workspace/agents" element={<AIEmployees />} />
+            <Route path="/workspace/approvals" element={<ApprovalsInbox />} />
+            <Route path="/workspace/memory" element={<MemoryLibrary />} />
+            <Route path="/workspace/reports" element={<Reports />} />
+            {/* Admin Console */}
+            <Route path="/admin" element={<ControlTower />} />
+            <Route path="/admin/agents/:id" element={<AgentDetail />} />
+            <Route path="/admin/tasks/:id" element={<TaskDetail />} />
+            <Route path="/admin/runs" element={<RunLedger />} />
+            <Route path="/admin/runs/:id" element={<RunDetail />} />
+            <Route path="/admin/toolcalls" element={<ToolCallLedger />} />
+            <Route path="/admin/connectors" element={<RuntimeConnectors />} />
+            <Route path="/admin/bases/notion" element={<NotionBase />} />
+            <Route path="/admin/templates" element={<TemplateSwitching />} />
+            <Route path="/admin/audit" element={<AuditCenter />} />
+            <Route path="*" element={<Navigate to="/workspace" replace />} />
+          </Route>
+        </Routes>
+      </BrowserRouter>
+    </PreferencesProvider>
   );
 }

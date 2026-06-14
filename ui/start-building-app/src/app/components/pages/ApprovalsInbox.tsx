@@ -67,7 +67,7 @@ export function ApprovalsInbox() {
   };
 
   return (
-    <div className="space-y-6 max-w-4xl">
+    <div className="space-y-6 w-full">
       <div>
         <h1 className="text-lg font-semibold" style={{ color: "var(--mis-text)" }}>Approvals Inbox</h1>
         <p className="text-xs mt-0.5" style={{ color: "var(--mis-dim)" }}>

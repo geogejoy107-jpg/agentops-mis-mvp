@@ -135,6 +135,48 @@
   --mis-dim:      #9CA3AF;
 }
 
+.theme-dark {
+  --mis-bg:       #101114;
+  --mis-surface:  #17191F;
+  --mis-surface2: #20242C;
+  --mis-border:   #303642;
+  --mis-primary:  #60A5FA;
+  --mis-success:  #2A9D8F;
+  --mis-warning:  #F97316;
+  --mis-purple:   #A78BFA;
+  --mis-cyan:     #22D3EE;
+  --mis-muted:    #7C8491;
+  --mis-text:     #F4F6FA;
+  --mis-dim:      #B5BDCA;
+}
+
+.theme-light {
+  --mis-bg:       #F5F7FB;
+  --mis-surface:  #FFFFFF;
+  --mis-surface2: #EEF2F7;
+  --mis-border:   #D9E1EC;
+  --mis-primary:  #2563EB;
+  --mis-success:  #0F8F7A;
+  --mis-warning:  #C2410C;
+  --mis-purple:   #7048E8;
+  --mis-cyan:     #0891B2;
+  --mis-muted:    #748094;
+  --mis-text:     #172033;
+  --mis-dim:      #566174;
+}
+
+.app-main {
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--mis-surface2) 36%, transparent), transparent 220px),
+    var(--mis-bg);
+}
+
+.theme-light .app-main {
+  background:
+    linear-gradient(180deg, rgba(226, 232, 240, 0.65), transparent 240px),
+    var(--mis-bg);
+}
+
 @theme inline {
   --color-mis-bg:       var(--mis-bg);
   --color-mis-surface:  var(--mis-surface);

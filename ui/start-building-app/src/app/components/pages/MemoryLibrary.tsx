@@ -28,7 +28,7 @@ export function MemoryLibrary() {
   });
 
   return (
-    <div className="space-y-5 max-w-4xl">
+    <div className="space-y-5 w-full">
       <div>
         <h1 className="text-lg font-semibold" style={{ color: "var(--mis-text)" }}>Memory Library</h1>
         <p className="text-xs mt-0.5" style={{ color: "var(--mis-dim)" }}>

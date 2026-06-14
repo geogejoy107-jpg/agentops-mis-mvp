@@ -32,7 +32,7 @@ export function RunDetail() {
   const score = runEval ? (runEval.score <= 1 ? Math.round(runEval.score * 100) : Math.round(runEval.score)) : 0;
 
   return (
-    <div className="space-y-5 max-w-4xl">
+    <div className="space-y-5 w-full">
       {/* Header */}
       <div
         className="rounded-xl p-5"

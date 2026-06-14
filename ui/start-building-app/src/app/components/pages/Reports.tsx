@@ -25,7 +25,7 @@ const evalScores = evaluations.map(e => ({
 
 export function Reports() {
   return (
-    <div className="space-y-6 max-w-5xl">
+    <div className="space-y-6 w-full">
       <div>
         <h1 className="text-lg font-semibold" style={{ color: "var(--mis-text)" }}>Reports</h1>
         <p className="text-xs mt-0.5" style={{ color: "var(--mis-dim)" }}>Sprint summary · June 2026</p>

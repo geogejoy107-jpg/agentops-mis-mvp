@@ -22,7 +22,7 @@ export function AgentDetail() {
   const avgScore = null;
 
   return (
-    <div className="space-y-5 max-w-4xl">
+    <div className="space-y-5 w-full">
       {/* Header */}
       <div
         className="rounded-xl p-5 flex items-start gap-4"

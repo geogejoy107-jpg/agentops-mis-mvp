@@ -1,52 +1,95 @@
 import { useState } from "react";
+import type { ReactNode } from "react";
 import { NavLink, useLocation } from "react-router";
 import {
   Home, CheckSquare, Bot, ShieldCheck, Brain, BarChart2, Package,
-  Activity, BookOpen, List, Wrench, Plug, Database, FileText, ClipboardList,
+  Activity, List, Wrench, Plug, Database, ClipboardList,
   ChevronDown, ChevronRight, Zap,
 } from "lucide-react";
+import { pick, usePreferences } from "../../context/PreferencesContext";
 
 interface NavItem {
-  label: string;
+  labelKey: string;
   path: string;
-  icon: React.ReactNode;
+  icon: ReactNode;
 }
 
 interface NavGroup {
-  title: string;
+  titleKey: string;
   items: NavItem[];
 }
 
 const navGroups: NavGroup[] = [
   {
-    title: "Client Workspace",
+    titleKey: "clientWorkspace",
     items: [
-      { label: "Home",         path: "/workspace",          icon: <Home size={15} /> },
-      { label: "My Tasks",     path: "/workspace/tasks",    icon: <CheckSquare size={15} /> },
-      { label: "AI Employees", path: "/workspace/agents",   icon: <Bot size={15} /> },
-      { label: "Approvals",    path: "/workspace/approvals",icon: <ShieldCheck size={15} /> },
-      { label: "Memory",       path: "/workspace/memory",   icon: <Brain size={15} /> },
-      { label: "Reports",      path: "/workspace/reports",  icon: <BarChart2 size={15} /> },
-      { label: "Templates",    path: "/admin/templates",    icon: <Package size={15} /> },
+      { labelKey: "home",         path: "/workspace",          icon: <Home size={15} /> },
+      { labelKey: "myTasks",      path: "/workspace/tasks",    icon: <CheckSquare size={15} /> },
+      { labelKey: "aiEmployees",  path: "/workspace/agents",   icon: <Bot size={15} /> },
+      { labelKey: "approvals",    path: "/workspace/approvals",icon: <ShieldCheck size={15} /> },
+      { labelKey: "memory",       path: "/workspace/memory",   icon: <Brain size={15} /> },
+      { labelKey: "reports",      path: "/workspace/reports",  icon: <BarChart2 size={15} /> },
+      { labelKey: "templates",    path: "/admin/templates",    icon: <Package size={15} /> },
     ],
   },
   {
-    title: "Admin Console",
+    titleKey: "adminConsole",
     items: [
-      { label: "Control Tower",  path: "/admin",                    icon: <Activity size={15} /> },
-      { label: "Agent Registry", path: "/workspace/agents",         icon: <Bot size={15} /> },
-      { label: "Run Ledger",     path: "/admin/runs",               icon: <List size={15} /> },
-      { label: "Tool Calls",     path: "/admin/toolcalls",          icon: <Wrench size={15} /> },
-      { label: "Connectors",     path: "/admin/connectors",         icon: <Plug size={15} /> },
-      { label: "External Bases", path: "/admin/bases/notion",       icon: <Database size={15} /> },
-      { label: "Audit",          path: "/admin/audit",              icon: <ClipboardList size={15} /> },
+      { labelKey: "controlTower",  path: "/admin",                    icon: <Activity size={15} /> },
+      { labelKey: "agentRegistry", path: "/workspace/agents",         icon: <Bot size={15} /> },
+      { labelKey: "runLedger",     path: "/admin/runs",               icon: <List size={15} /> },
+      { labelKey: "toolCalls",     path: "/admin/toolcalls",          icon: <Wrench size={15} /> },
+      { labelKey: "connectors",    path: "/admin/connectors",         icon: <Plug size={15} /> },
+      { labelKey: "externalBases", path: "/admin/bases/notion",       icon: <Database size={15} /> },
+      { labelKey: "audit",         path: "/admin/audit",              icon: <ClipboardList size={15} /> },
     ],
   },
 ];
 
 export function Sidebar() {
   const location = useLocation();
+  const { locale } = usePreferences();
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const copy = pick(locale, {
+    en: {
+      clientWorkspace: "Client Workspace",
+      adminConsole: "Admin Console",
+      home: "Home",
+      myTasks: "My Tasks",
+      aiEmployees: "AI Employees",
+      approvals: "Approvals",
+      memory: "Memory",
+      reports: "Reports",
+      templates: "Templates",
+      controlTower: "Control Tower",
+      agentRegistry: "Agent Registry",
+      runLedger: "Run Ledger",
+      toolCalls: "Tool Calls",
+      connectors: "Connectors",
+      externalBases: "External Bases",
+      audit: "Audit",
+      workspace: "Workspace",
+    },
+    zh: {
+      clientWorkspace: "前台工作区",
+      adminConsole: "后台管理端",
+      home: "首页",
+      myTasks: "我的任务",
+      aiEmployees: "AI 员工",
+      approvals: "审批",
+      memory: "记忆",
+      reports: "报告",
+      templates: "模板",
+      controlTower: "控制塔",
+      agentRegistry: "代理注册表",
+      runLedger: "运行账本",
+      toolCalls: "工具调用",
+      connectors: "连接器",
+      externalBases: "外部知识库",
+      audit: "审计",
+      workspace: "工作区",
+    },
+  });
 
   const toggleGroup = (title: string) => {
     setCollapsed((prev) => ({ ...prev, [title]: !prev[title] }));
@@ -84,15 +127,16 @@ export function Sidebar() {
       {/* Nav */}
       <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-4">
         {navGroups.map((group) => {
-          const isCollapsed = collapsed[group.title];
+          const groupTitle = copy[group.titleKey as keyof typeof copy];
+          const isCollapsed = collapsed[group.titleKey];
           return (
-            <div key={group.title}>
+            <div key={group.titleKey}>
               <button
-                onClick={() => toggleGroup(group.title)}
+                onClick={() => toggleGroup(group.titleKey)}
                 className="flex items-center justify-between w-full px-2 py-1 rounded text-[10px] font-semibold tracking-wider uppercase mb-1 hover:opacity-80 transition-opacity"
                 style={{ color: "var(--mis-muted)" }}
               >
-                {group.title}
+                {groupTitle}
                 {isCollapsed ? <ChevronRight size={11} /> : <ChevronDown size={11} />}
               </button>
 
@@ -118,7 +162,7 @@ export function Sidebar() {
                           }}
                         >
                           {item.icon}
-                          {item.label}
+                          {copy[item.labelKey as keyof typeof copy]}
                         </NavLink>
                       </li>
                     );
@@ -135,7 +179,7 @@ export function Sidebar() {
         className="px-4 py-3 border-t text-[10px]"
         style={{ borderColor: "var(--mis-border)", color: "var(--mis-dim)" }}
       >
-        <div>Workspace: AgentOps Demo</div>
+        <div>{copy.workspace}: AgentOps Demo</div>
         <div style={{ color: "var(--mis-muted)" }}>jiwu@agentops.dev</div>
       </div>
     </aside>

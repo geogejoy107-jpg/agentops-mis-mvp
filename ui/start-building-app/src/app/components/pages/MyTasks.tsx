@@ -29,7 +29,7 @@ export function MyTasks() {
   const filtered = filter === "all" ? tasks : tasks.filter(t => t.status === filter);
 
   return (
-    <div className="space-y-5 max-w-4xl">
+    <div className="space-y-5 w-full">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>

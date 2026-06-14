@@ -22,7 +22,7 @@ export function AIEmployees() {
   const agents = data || [];
 
   return (
-    <div className="space-y-5 max-w-5xl">
+    <div className="space-y-5 w-full">
       {/* Header */}
       <div>
         <h1 className="text-lg font-semibold" style={{ color: "var(--mis-text)" }}>AI Employees</h1>

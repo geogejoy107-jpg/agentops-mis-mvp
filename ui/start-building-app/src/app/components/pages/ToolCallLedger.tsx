@@ -20,7 +20,7 @@ export function ToolCallLedger() {
   };
 
   return (
-    <div className="space-y-5 max-w-5xl">
+    <div className="space-y-5 w-full">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-lg font-semibold" style={{ color: "var(--mis-text)" }}>Tool Call Ledger</h1>
