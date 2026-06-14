@@ -35,6 +35,28 @@ python3 server.py
 http://127.0.0.1:8787/dashboard
 ```
 
+## Figma UI Preview
+
+下载的 Figma/Vite UI 已保存在 `ui/start-building-app/`，用于演示更完整的 AgentOps MIS 产品界面。它是独立前端预览，不替代当前 Python/SQLite demo API。
+
+```bash
+cd ui/start-building-app
+npm install
+npm run dev -- --host 127.0.0.1 --port 5173
+```
+
+打开：
+
+```text
+http://127.0.0.1:5173/
+```
+
+构建检查：
+
+```bash
+npm run build
+```
+
 ## 关键验收路径
 
 1. 打开 `/dashboard` 看总览。

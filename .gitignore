@@ -6,3 +6,11 @@ __pycache__/
 agentops_mis.db
 .playwright-cli/
 
+# Downloaded / generated UI runtime artifacts.
+node_modules/
+dist/
+output/playwright/
+ui/**/node_modules/
+ui/**/dist/
+ui/**/output/
+ui/**/.playwright-cli/
