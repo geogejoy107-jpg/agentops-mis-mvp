@@ -116,6 +116,40 @@ python3 scripts/demo_acceptance.py --start-server
 - 调用 probe 时必须传 `{"confirm_run": true}`。
 - 录完 `unset HERMES_ALLOW_REAL_RUN`，停止临时 gateway，并确认 `agentops_mis.db` 没有被提交。
 
+## Pixel Office Demo Mode
+
+v1.3 增加了可选的 Star-Office-UI demo visualizer 适配层，用于把 AgentOps MIS 的 run / approval / memory / audit 状态推送到本地像素办公室看板。
+
+重要边界：
+
+- Star-Office-UI 只作为课程 demo / 本地录屏视觉层。
+- 它不替代 AgentOps MIS Core，MIS 的 SQLite/API 仍是权威账本。
+- 本仓库不提交 Star-Office-UI 美术资产。
+- Star-Office-UI 资产仅限非商业学习、演示、交流用途；正式发布、商业化、官网宣传、对外产品版本必须换成原创 AgentOps MIS Pixel Office assets。
+
+文档：
+
+- `docs/STAR_OFFICE_UI_DEMO_INTEGRATION.md`
+- `docs/PIXEL_OFFICE_ASSET_REPLACEMENT_PLAN.md`
+
+Dry-run 预览 payload：
+
+```bash
+python3 scripts/push_star_office_state.py
+```
+
+本地 Star-Office-UI 跑在 `127.0.0.1:19000` 后，显式发送：
+
+```bash
+python3 scripts/push_star_office_state.py --send
+```
+
+自定义 endpoint：
+
+```bash
+python3 scripts/push_star_office_state.py --base-url http://127.0.0.1:19000 --endpoint set_state --send
+```
+
 ## 强本地 MVP 集成
 
 页面 `/integrations` 已经支持三个本地优先能力：
