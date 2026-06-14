@@ -71,6 +71,15 @@ python3 scripts/demo_acceptance.py --start-server
 - Bases、connectors、template packages、migration preview。
 - SQLite 中 audit/runtime/template/bases 基础数据存在。
 
+## Local live recording mode
+
+默认可复现 demo 仍然是 dry-run，这是 GitHub clone 后最安全的行为。录制本机视频时，如果要展示一次真实 Agnesfallback fixed probe，可以按 `docs/LIVE_DEMO_RUNBOOK.md` 显式开启 live mode：
+
+- 不要把 `HERMES_ALLOW_REAL_RUN=true` 写入 `.env.example`。
+- 启动 server 前只在当前 shell 中 `export HERMES_ALLOW_REAL_RUN=true`。
+- 调用 probe 时必须传 `{"confirm_run": true}`。
+- 录完 `unset HERMES_ALLOW_REAL_RUN`，停止临时 gateway，并确认 `agentops_mis.db` 没有被提交。
+
 ## 强本地 MVP 集成
 
 页面 `/integrations` 已经支持三个本地优先能力：
