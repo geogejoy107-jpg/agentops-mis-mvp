@@ -1,0 +1,272 @@
+diff --git a/backend/app.py b/backend/app.py
+index f64c675..cf129cb 100644
+--- a/backend/app.py
++++ b/backend/app.py
+@@ -12,6 +12,8 @@ import shutil
+ import subprocess
+ import tempfile
+ import threading
++import urllib.error
++import urllib.request
+ from pathlib import Path
+ from security_utils import is_production_mode, is_strong_secret, is_strong_drawer_pass
+ from memo_utils import get_yesterday_date_str, sanitize_content, extract_memo_from_file
+@@ -60,6 +62,8 @@ HOME_FAVORITES_DIR = os.path.join(ROOT_DIR, "assets", "home-favorites")
+ HOME_FAVORITES_INDEX_FILE = os.path.join(HOME_FAVORITES_DIR, "index.json")
+ HOME_FAVORITES_MAX = 30
+ ASSET_POSITIONS_FILE = os.path.join(ROOT_DIR, "asset-positions.json")
++AGENTOPS_MIS_API_BASE = os.environ.get("AGENTOPS_MIS_API_BASE", "http://127.0.0.1:8787/api").rstrip("/")
++AGENTOPS_MIS_AGENT_LIMIT = int(os.environ.get("AGENTOPS_MIS_AGENT_LIMIT", "12"))
+ 
+ # 性能保护：默认关闭“每次打开页面随机换背景”，避免首页首屏被磁盘复制拖慢
+ AUTO_ROTATE_HOME_ON_PAGE_OPEN = (os.getenv("AUTO_ROTATE_HOME_ON_PAGE_OPEN", "0").strip().lower() in {"1", "true", "yes", "on"})
+@@ -118,6 +122,96 @@ def _is_asset_editor_authed() -> bool:
+     return bool(session.get("asset_editor_authed"))
+ 
+ 
++def _safe_agent_id(value: str) -> str:
++    return re.sub(r"[^a-zA-Z0-9_-]+", "_", str(value or "agent")).strip("_") or "agent"
++
++
++def _fetch_mis_json(path: str):
++    """Fetch safe public demo data from local AgentOps MIS only."""
++    url = f"{AGENTOPS_MIS_API_BASE}{path}"
++    req = urllib.request.Request(url, headers={"Accept": "application/json"})
++    with urllib.request.urlopen(req, timeout=1.4) as resp:
++        return json.loads(resp.read().decode("utf-8"))
++
++
++def _mis_agent_state(agent: dict, perf: dict | None) -> str:
++    status = str(agent.get("status") or "idle")
++    runtime = str(agent.get("runtime_type") or "")
++    failures = int((perf or {}).get("failures") or 0)
++    total_runs = int((perf or {}).get("total_runs") or 0)
++    approvals = int((perf or {}).get("approval_required_count") or 0)
++    if status in {"error", "disabled"}:
++        return "error"
++    if failures and total_runs and failures / max(total_runs, 1) >= 0.45:
++        return "error"
++    if approvals > 0:
++        return "syncing"
++    if status == "running":
++        return "executing"
++    if total_runs > 0:
++        return "executing" if runtime in {"openclaw", "hermes"} else "writing"
++    return "idle"
++
++
++def _map_mis_agents_for_room() -> list[dict]:
++    try:
++        agents = _fetch_mis_json("/agents")
++        metrics = _fetch_mis_json("/dashboard/metrics")
++    except Exception:
++        return []
++
++    perf_by_id = {
++        str(row.get("agent_id")): row
++        for row in (metrics.get("agent_performance_summary") or [])
++        if isinstance(row, dict)
++    }
++    preferred = sorted(
++        [a for a in agents if isinstance(a, dict)],
++        key=lambda a: (
++            0 if str(a.get("runtime_type") or "") in {"openclaw", "hermes"} else 1,
++            -int((perf_by_id.get(str(a.get("agent_id"))) or {}).get("total_runs") or 0),
++            str(a.get("name") or ""),
++        ),
++    )
++
++    mapped = []
++    for idx, agent in enumerate(preferred[:AGENTOPS_MIS_AGENT_LIMIT]):
++        agent_id = str(agent.get("agent_id") or f"agent_{idx}")
++        perf = perf_by_id.get(agent_id) or {}
++        state = _mis_agent_state(agent, perf)
++        runtime = str(agent.get("runtime_type") or "runtime")
++        total_runs = int(perf.get("total_runs") or 0)
++        success = float(perf.get("success_rate") or 0)
++        failures = int(perf.get("failures") or 0)
++        approvals = int(perf.get("approval_required_count") or 0)
++        detail = f"{runtime} · runs {total_runs} · success {round(success * 100)}% · failures {failures}"
++        if approvals:
++            detail += f" · approvals {approvals}"
++        mapped.append({
++            "agentId": f"mis_{_safe_agent_id(agent_id)}",
++            "name": str(agent.get("name") or agent_id).replace("OpenClaw ", "OC "),
++            "isMain": False,
++            "state": state,
++            "detail": detail,
++            "bubbleText": detail,
++            "updated_at": datetime.now().isoformat(),
++            "area": state_to_area(state),
++            "source": "agentops-mis",
++            "joinKey": None,
++            "authStatus": "approved",
++            "authExpiresAt": None,
++            "lastPushAt": datetime.now().isoformat(),
++            "avatar": f"guest_anim_{(idx % 6) + 1}",
++            "misAgentId": agent_id,
++            "runtimeType": runtime,
++            "totalRuns": total_runs,
++            "successRate": success,
++            "failures": failures,
++            "approvalCount": approvals,
++        })
++    return mapped
++
++
+ def _require_asset_editor_auth():
+     if _is_asset_editor_authed():
+         return None
+@@ -249,6 +343,8 @@ _INDEX_HTML_CACHE = None
+ 
+ 
+ @app.route("/", methods=["GET"])
++@app.route("/workspace", methods=["GET"])
++@app.route("/admin", methods=["GET"])
+ def index():
+     """Serve the pixel office UI with built-in version cache busting"""
+     # 默认禁用页面打开即换背景，避免首屏慢
+@@ -885,6 +981,14 @@ def get_agents():
+     save_agents_state(cleaned_agents)
+     save_join_keys(keys_data)
+ 
++    mis_agents = _map_mis_agents_for_room()
++    if mis_agents:
++        local_non_main = [
++            a for a in cleaned_agents
++            if not a.get("isMain") and not str(a.get("agentId", "")).startswith("mis_")
++        ]
++        return jsonify([cleaned_agents[0], *mis_agents, *local_non_main])
++
+     return jsonify(cleaned_agents)
+ 
+ 
+@@ -2100,4 +2204,3 @@ if __name__ == "__main__":
+     print("=" * 50)
+ 
+     app.run(host="0.0.0.0", port=backend_port, debug=False)
+-
+diff --git a/frontend/index.html b/frontend/index.html
+index b803428..4763a37 100644
+--- a/frontend/index.html
++++ b/frontend/index.html
+@@ -604,6 +604,24 @@
+             position: relative;
+             z-index: 1000002 !important;
+         }
++        #mis-workbench-link {
++            position: fixed;
++            top: calc(env(safe-area-inset-top, 0px) + 12px);
++            left: 50%;
++            transform: translateX(-50%);
++            z-index: 1000003;
++            padding: 8px 12px;
++            font-family: ArkPixel, monospace;
++            font-size: 13px;
++            text-decoration: none;
++            cursor: pointer;
++            border: 2px solid #0f766e;
++            border-radius: 5px;
++            background: rgba(20, 184, 166, 0.92);
++            color: #052e16;
++            box-shadow: 0 4px 0 rgba(15, 118, 110, .65);
++        }
++        #mis-workbench-link:hover { filter: brightness(1.08); }
+         .room-loading-inner {
+             display: flex;
+             flex-direction: column;
+@@ -1160,7 +1178,7 @@
+         
+         <!-- 状态控制栏 -->
+         <div id="control-bar">
+-            <div id="control-bar-title">Star 状态</div>
++            <div id="control-bar-title">AgentOps 状态</div>
+             <div id="control-buttons">
+                 <button id="btn-state-idle" onclick="setState('idle','待命')">待命</button>
+                 <button id="btn-state-writing" onclick="setState('writing','工作中')">工作</button>
+@@ -1172,7 +1190,7 @@
+ 
+         <!-- Guest Agent 名单面板（右下角） -->
+         <div id="guest-agent-panel">
+-            <div id="guest-agent-panel-title">访 客 列 表</div>
++            <div id="guest-agent-panel-title">AgentOps Agents</div>
+             <div id="guest-agent-list">
+                 <div style="color:#9ca3af;font-size:12px;text-align:center;padding:20px 0;">正在加载访客...</div>
+             </div>
+@@ -1281,6 +1299,7 @@
+     <button id="pan-toggle" style="position:fixed; top:calc(env(safe-area-inset-top, 0px) + 12px); left:12px; z-index:999999; padding:8px 10px; font-family:ArkPixel,monospace; font-size:13px; cursor:pointer; border:2px solid #333; border-radius:5px; background:#333; color:#fff;">
+         移动视野
+     </button>
++    <a id="mis-workbench-link" href="http://127.0.0.1:19001/workspace" target="_blank" rel="noreferrer">打开 MIS 工作台</a>
+     <div id="lang-toggle-group" style="position:fixed; top:calc(env(safe-area-inset-top, 0px) + 52px); left:12px; z-index:1000002; display:flex; gap:2px; align-items:center;">
+         <button id="lang-btn-en" onclick="setUILanguage('en')" style="padding:8px 10px; font-family:ArkPixel,monospace; font-size:13px; cursor:pointer; border:2px solid #333; border-radius:5px; background:#333; color:#fff;">EN</button>
+         <button id="lang-btn-jp" onclick="setUILanguage('ja')" style="padding:8px 10px; font-family:ArkPixel,monospace; font-size:13px; cursor:pointer; border:2px solid #333; border-radius:5px; background:#333; color:#fff;">JP</button>
+@@ -1293,7 +1312,7 @@
+         let uiLang = localStorage.getItem('uiLang') || 'en';
+         const I18N = {
+             zh: {
+-                controlTitle: 'Star 状态',
++                controlTitle: 'AgentOps 状态',
+                 btnIdle: '待命', btnWork: '工作', btnSync: '同步', btnError: '报警', btnDecor: '装修房间',
+                 drawerTitle: '装修房间 · 资产侧边栏', drawerClose: '关闭',
+                 authTitle: '请输入装修验证码', authPlaceholder: '输入验证码', authVerify: '验证', authDefaultPassHint: '默认密码：1234（可随时让我帮你改，建议改成强密码）',
+@@ -1317,11 +1336,11 @@
+                 assetHintNotInScene: '当前场景未检测到此对象，仍可替换文件（刷新后生效）',
+                 assetHintDefault: '通用素材：建议保持原图尺寸、透明通道与视觉重心一致，避免错位或失真',
+                 showCoords: '显示坐标', hideCoords: '隐藏坐标', moveView: '移动视野', lockView: '锁定视野',
+-                memoTitle: '昨 日 小 记', guestTitle: '访 客 列 表', officeTitle: '海辛小龙虾的办公室',
++                memoTitle: '昨 日 小 记', guestTitle: 'AgentOps Agents', officeTitle: 'AgentOps 像素办公室',
+                 loadingOffice: '正在加载 Star 的像素办公室...'
+             },
+             en: {
+-                controlTitle: 'Star Status',
++                controlTitle: 'AgentOps Status',
+                 btnIdle: 'Idle', btnWork: 'Work', btnSync: 'Sync', btnError: 'Alert', btnDecor: 'Decorate Room',
+                 drawerTitle: 'Decorate Room · Asset Sidebar', drawerClose: 'Close',
+                 authTitle: 'Enter Decor Passcode', authPlaceholder: 'Enter passcode', authVerify: 'Verify', authDefaultPassHint: 'Default passcode: 1234 (ask me anytime to change it; stronger passcode recommended)',
+@@ -1345,11 +1364,11 @@
+                 assetHintNotInScene: 'This object is not detected in current scene; you can still replace file (effective after refresh)',
+                 assetHintDefault: 'Generic asset: keep source size, alpha channel, and visual anchor to avoid drift/distortion',
+                 showCoords: 'Show Coords', hideCoords: 'Hide Coords', moveView: 'Pan View', lockView: 'Lock View',
+-                memoTitle: 'YESTERDAY NOTES', guestTitle: 'VISITOR LIST', officeTitle: 'Haixin Lobster Office',
++                memoTitle: 'YESTERDAY NOTES', guestTitle: 'AgentOps Agents', officeTitle: 'AgentOps Pixel Office',
+                 loadingOffice: 'Loading Star’s pixel office...'
+             },
+             ja: {
+-                controlTitle: 'Star ステータス',
++                controlTitle: 'AgentOps ステータス',
+                 btnIdle: '待機', btnWork: '作業', btnSync: '同期', btnError: '警報', btnDecor: '部屋を編集',
+                 drawerTitle: '部屋編集・アセットサイドバー', drawerClose: '閉じる',
+                 authTitle: '編集パスコードを入力', authPlaceholder: 'パスコード入力', authVerify: '認証', authDefaultPassHint: '初期パスコード：1234（いつでも変更を相談可。強固なパス推奨）',
+@@ -1373,7 +1392,7 @@
+                 assetHintNotInScene: '現在のシーンでこのオブジェクトは未検出です。ファイル差し替えは可能（更新後に反映）',
+                 assetHintDefault: '汎用素材：元サイズ・透過・視覚アンカーを維持し、ズレや崩れを防いでください',
+                 showCoords: '座標表示', hideCoords: '座標非表示', moveView: '視点移動', lockView: '視点固定',
+-                memoTitle: '昨日のメモ', guestTitle: '訪問者リスト', officeTitle: 'ハイシン・ロブスターのオフィス',
++                memoTitle: '昨日のメモ', guestTitle: 'AgentOps Agents', officeTitle: 'AgentOps ピクセルオフィス',
+                 loadingOffice: 'Star のピクセルオフィスを読み込み中...'
+             }
+         };
+@@ -3447,17 +3466,20 @@ function toggleBrokerPanel() {
+                     error: '报警'
+                 };
+ 
+-                const statusText = statusMap[authStatus] || authStatus;
++                const statusText = agent.source === 'agentops-mis' ? (agent.runtimeType || 'MIS') : (statusMap[authStatus] || authStatus);
+                 const stateText = stateMap[state] || state;
+                 const subtitle = `${statusText} · ${stateText}`;
+ 
+-                const pendingActions = `<button onclick="alert('交换 skill 功能开发中')">交换skill</button><button class="leave-btn" onclick="leaveGuestAgent('${agent.agentId}','${name}')">离开房间</button>`;
++                const pendingActions = agent.source === 'agentops-mis'
++                    ? `<button onclick="window.open('http://127.0.0.1:19001/admin/agents/${agent.misAgentId || agent.agentId}','_blank')">查看 Agent</button><button onclick="window.open('http://127.0.0.1:19001/admin/runs','_blank')">Run 账本</button>`
++                    : `<button onclick="alert('交换 skill 功能开发中')">交换skill</button><button class="leave-btn" onclick="leaveGuestAgent('${agent.agentId}','${name}')">离开房间</button>`;
+ 
+                 return `
+                   <div class="guest-agent-item" data-name="${name}">
+                     <div>
+                       <div class="guest-agent-name">${name}</div>
+                       <div style="font-size:11px;color:#cbd5e1;">${subtitle}</div>
++                      ${agent.detail ? `<div style="font-size:10px;color:#94a3b8;max-width:168px;line-height:1.25;margin-top:2px;">${agent.detail}</div>` : ''}
+                     </div>
+                     <div class="guest-agent-buttons">
+                       ${pendingActions}
