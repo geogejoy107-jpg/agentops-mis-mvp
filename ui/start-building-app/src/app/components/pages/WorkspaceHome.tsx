@@ -2,15 +2,18 @@ import { useState } from "react";
 import { Link } from "react-router";
 import {
   Activity,
+  ArrowRight,
   Bot,
   Brain,
   CheckCircle,
   ExternalLink,
+  Map,
   Play,
   RefreshCw,
   ShieldAlert,
   Sparkles,
   TerminalSquare,
+  Wifi,
 } from "lucide-react";
 import { StatusBadge } from "../shared/StatusBadge";
 import { RiskBadge } from "../shared/RiskBadge";
@@ -26,8 +29,7 @@ import {
   type LocalBriefResult,
 } from "../../data/liveApi";
 
-const STAR_OFFICE_URL =
-  import.meta.env.VITE_STAR_OFFICE_URL || "http://127.0.0.1:19000/workspace";
+const STAR_OFFICE_URL = import.meta.env.VITE_STAR_OFFICE_URL as string | undefined;
 
 function formatRuntime(value: unknown) {
   if (!value || typeof value !== "object") return "unknown";
@@ -59,6 +61,8 @@ export function WorkspaceHome() {
   const recentRuns = runs.slice(0, 5);
   const memoryCandidates = memories.filter(m => m.review_status === "candidate").slice(0, 3);
   const latestRun = briefResult?.run_id || recentRuns[0]?.run_id;
+  const runtimeLabel = metrics?.runtime_health?.[0] ? formatRuntime(metrics.runtime_health[0]) : "demo-safe";
+  const runCount = runs.length || metrics?.openclaw_import?.cron_runs || 0;
 
   const runBrief = async (confirmRun: boolean) => {
     setActionBusy(confirmRun ? "confirm-brief" : "dry-brief");
@@ -83,40 +87,44 @@ export function WorkspaceHome() {
 
   return (
     <div className="space-y-4 max-w-none">
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-lg font-semibold" style={{ color: "var(--mis-text)" }}>
-              Pixel Office Workbench
+              Workspace Home
             </h1>
             <span
-              className="text-[10px] px-2 py-1 rounded"
+              className="text-[10px] px-2 py-1 rounded uppercase tracking-wide"
               style={{ background: "rgba(34,211,238,0.12)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.22)" }}
             >
-              Star-Office base + live MIS ledger
+              MIS live cockpit
+            </span>
+            <span
+              className="text-[10px] px-2 py-1 rounded uppercase tracking-wide"
+              style={{ background: "rgba(168,85,247,0.12)", color: "var(--mis-purple)", border: "1px solid rgba(168,85,247,0.24)" }}
+            >
+              Pixel map ready
             </span>
           </div>
-          <p className="text-xs mt-1" style={{ color: "var(--mis-dim)" }}>
-            Front desk for real local work: visual office, approvals, runs, memory review and local AI brief workflow.
+          <p className="text-xs mt-1 max-w-3xl" style={{ color: "var(--mis-dim)" }}>
+            Front desk for real local work: approvals, runs, memory review, local AI brief workflow, and the native Pixel Operating Map.
           </p>
         </div>
-        <div className="flex gap-2">
-          <a
-            href={STAR_OFFICE_URL}
-            target="_blank"
-            rel="noreferrer"
-            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded"
-            style={{ background: "var(--mis-surface2)", color: "var(--mis-dim)", border: "1px solid var(--mis-border)" }}
-          >
-            <ExternalLink size={13} />
-            Pixel view
-          </a>
-          <button
-            onClick={refresh}
+        <div className="flex flex-wrap gap-2">
+          <Link
+            to="/workspace/pixel-office"
             className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded"
             style={{ background: "rgba(34,211,238,0.12)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.2)" }}
           >
-            <RefreshCw size={13} />
+            <Map size={13} />
+            Open Pixel Office
+          </Link>
+          <button
+            onClick={refresh}
+            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded"
+            style={{ background: "var(--mis-surface2)", color: "var(--mis-dim)", border: "1px solid var(--mis-border)" }}
+          >
+            <RefreshCw size={13} className={loading ? "animate-spin" : ""} />
             Refresh
           </button>
         </div>
@@ -127,25 +135,128 @@ export function WorkspaceHome() {
 
       <div className="grid grid-cols-12 gap-4 items-start">
         <section
-          className="col-span-12 xl:col-span-8 overflow-hidden rounded-lg"
+          className="col-span-12 xl:col-span-8 rounded-lg overflow-hidden"
           style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}
         >
-          <div className="flex items-center justify-between px-3 py-2 border-b" style={{ borderColor: "var(--mis-border)" }}>
-            <div className="flex items-center gap-2 text-xs" style={{ color: "var(--mis-text)" }}>
-              <Sparkles size={14} style={{ color: "var(--mis-cyan)" }} />
-              Live Pixel Office
-            </div>
-            <div className="text-[10px]" style={{ color: "var(--mis-muted)" }}>
-              state source: AgentOps MIS SQLite
+          <div className="p-4 border-b" style={{ borderColor: "var(--mis-border)" }}>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2 text-sm font-semibold" style={{ color: "var(--mis-text)" }}>
+                  <Sparkles size={15} style={{ color: "var(--mis-cyan)" }} />
+                  Pixel Office Mode
+                </div>
+                <p className="mt-1 text-xs leading-relaxed" style={{ color: "var(--mis-dim)" }}>
+                  Live visual navigator for AgentOps MIS. It shows where AI digital employees are working, then routes users into formal MIS pages for evidence and decisions.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Link
+                  to="/workspace/pixel-office"
+                  className="inline-flex items-center gap-1.5 rounded px-3 py-1.5 text-xs"
+                  style={{ background: "rgba(34,211,238,0.12)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.22)" }}
+                >
+                  Open Pixel Office
+                  <ArrowRight size={13} />
+                </Link>
+                {STAR_OFFICE_URL && (
+                  <a
+                    href={STAR_OFFICE_URL}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 rounded px-3 py-1.5 text-xs"
+                    style={{ background: "var(--mis-surface2)", color: "var(--mis-dim)", border: "1px solid var(--mis-border)" }}
+                  >
+                    <ExternalLink size={13} />
+                    Legacy Star Office View
+                  </a>
+                )}
+              </div>
             </div>
           </div>
-          <div className="relative bg-black" style={{ aspectRatio: "16 / 9" }}>
-            <iframe
-              title="Star Office Pixel Workbench"
-              src={STAR_OFFICE_URL}
-              className="absolute inset-0 h-full w-full"
-              style={{ border: 0 }}
-            />
+
+          <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 p-4">
+            <div className="lg:col-span-3 rounded-lg overflow-hidden relative min-h-[260px]" style={{ background: "linear-gradient(135deg, rgba(15,23,42,0.98), rgba(2,6,23,0.98))", border: "1px solid rgba(148,163,184,0.16)" }}>
+              <div
+                className="absolute inset-0 opacity-45"
+                style={{
+                  backgroundImage:
+                    "linear-gradient(rgba(148,163,184,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(148,163,184,0.05) 1px, transparent 1px)",
+                  backgroundSize: "18px 18px",
+                }}
+              />
+              {[
+                { label: "Control", x: 6, y: 8, w: 24, h: 22, color: "var(--mis-purple)" },
+                { label: "Tasks", x: 36, y: 10, w: 30, h: 28, color: "var(--mis-cyan)" },
+                { label: "Runs", x: 70, y: 9, w: 23, h: 22, color: "var(--mis-primary)" },
+                { label: "Runtime", x: 8, y: 43, w: 28, h: 24, color: "var(--mis-purple)" },
+                { label: "Approvals", x: 43, y: 47, w: 22, h: 23, color: "#FBBF24" },
+                { label: "Audit", x: 70, y: 48, w: 22, h: 24, color: "#94A3B8" },
+              ].map((zone) => (
+                <div
+                  key={zone.label}
+                  className="absolute rounded-sm p-2 text-[10px] font-mono"
+                  style={{
+                    left: `${zone.x}%`,
+                    top: `${zone.y}%`,
+                    width: `${zone.w}%`,
+                    height: `${zone.h}%`,
+                    color: zone.color,
+                    border: `1px solid ${zone.color}`,
+                    background: "rgba(2,6,23,0.58)",
+                    boxShadow: `0 0 18px rgba(34,211,238,0.08)`,
+                    clipPath: "polygon(0 0, calc(100% - 6px) 0, 100% 6px, 100% 100%, 6px 100%, 0 calc(100% - 6px))",
+                  }}
+                >
+                  {zone.label}
+                </div>
+              ))}
+              {[0, 1, 2, 3, 4].map((agent) => (
+                <div
+                  key={agent}
+                  className="absolute h-7 w-5 rounded-sm"
+                  style={{
+                    left: `${18 + agent * 13}%`,
+                    top: `${30 + (agent % 3) * 15}%`,
+                    background: agent === 2 ? "#FBBF24" : "var(--mis-cyan)",
+                    border: "2px solid #0B1020",
+                    boxShadow: "0 0 12px rgba(34,211,238,0.32)",
+                  }}
+                />
+              ))}
+              <div className="absolute left-4 bottom-4 right-4 rounded px-3 py-2 text-[10px]" style={{ background: "rgba(2,6,23,0.72)", color: "var(--mis-muted)", border: "1px solid rgba(148,163,184,0.18)" }}>
+                Original CSS preview only · no Star-Office assets copied
+              </div>
+            </div>
+
+            <div className="lg:col-span-2 space-y-3">
+              <div className="grid grid-cols-2 gap-2">
+                {[
+                  { icon: <Bot size={14} />, label: "Agents", value: metrics?.agents_total ?? "—", color: "var(--mis-cyan)" },
+                  { icon: <Activity size={14} />, label: "Runs", value: runCount || "—", color: "var(--mis-success)" },
+                  { icon: <ShieldAlert size={14} />, label: "Approvals", value: metrics?.pending_approvals ?? pendingApprovals.length, color: "#FBBF24" },
+                  { icon: <Wifi size={14} />, label: "Runtime", value: runtimeLabel, color: "var(--mis-purple)" },
+                ].map(item => (
+                  <div key={item.label} className="rounded p-2" style={{ background: "var(--mis-surface2)", border: "1px solid rgba(148,163,184,0.12)" }}>
+                    <div className="flex items-center gap-1.5 text-[10px]" style={{ color: item.color }}>
+                      {item.icon}
+                      <span style={{ color: "var(--mis-muted)" }}>{item.label}</span>
+                    </div>
+                    <div className="text-lg font-semibold mt-1 truncate" style={{ color: "var(--mis-text)" }}>{item.value}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="rounded p-3" style={{ background: "rgba(34,211,238,0.08)", border: "1px solid rgba(34,211,238,0.18)" }}>
+                <div className="text-[10px] uppercase tracking-wide" style={{ color: "var(--mis-cyan)" }}>Map contract</div>
+                <p className="mt-1 text-[11px] leading-relaxed" style={{ color: "var(--mis-dim)" }}>
+                  The map is a navigation and operations layer. It does not replace Run Ledger, Audit, Approvals, Tool Calls or Memory.
+                </p>
+              </div>
+              {!STAR_OFFICE_URL && (
+                <div className="rounded p-3 text-[11px]" style={{ background: "var(--mis-surface2)", color: "var(--mis-muted)", border: "1px solid rgba(148,163,184,0.12)" }}>
+                  Legacy Star Office link is hidden because VITE_STAR_OFFICE_URL is not configured.
+                </div>
+              )}
+            </div>
           </div>
         </section>
 
@@ -154,7 +265,7 @@ export function WorkspaceHome() {
             <div className="grid grid-cols-2 gap-2">
               {[
                 { icon: <Bot size={14} />, label: "Agents", value: metrics?.agents_total ?? "—", color: "var(--mis-cyan)" },
-                { icon: <Activity size={14} />, label: "Runs", value: runs.length || metrics?.openclaw_import?.cron_runs || "—", color: "var(--mis-success)" },
+                { icon: <Activity size={14} />, label: "Runs", value: runCount || "—", color: "var(--mis-success)" },
                 { icon: <ShieldAlert size={14} />, label: "Approvals", value: metrics?.pending_approvals ?? pendingApprovals.length, color: "#FBBF24" },
                 { icon: <Brain size={14} />, label: "Memory", value: metrics?.stale_or_due_memories ?? memoryCandidates.length, color: "var(--mis-purple)" },
               ].map(item => (
@@ -260,6 +371,7 @@ export function WorkspaceHome() {
             <Link to="/workspace/tasks" className="text-[11px]" style={{ color: "var(--mis-cyan)" }}>Tasks</Link>
           </div>
           <div className="space-y-2">
+            {activeTasks.length === 0 && <p className="text-xs" style={{ color: "var(--mis-muted)" }}>No active tasks.</p>}
             {activeTasks.map(task => (
               <Link key={task.task_id} to={`/admin/tasks/${task.task_id}`} className="block rounded p-2.5 hover:opacity-80" style={{ background: "var(--mis-surface2)" }}>
                 <div className="flex items-start justify-between gap-2">
@@ -280,6 +392,7 @@ export function WorkspaceHome() {
             <Link to="/admin/runs" className="text-[11px]" style={{ color: "var(--mis-cyan)" }}>Runs</Link>
           </div>
           <div className="space-y-2">
+            {recentRuns.length === 0 && <p className="text-xs" style={{ color: "var(--mis-muted)" }}>No recent runs.</p>}
             {recentRuns.map(run => (
               <Link key={run.run_id} to={`/admin/runs/${run.run_id}`} className="flex items-center justify-between gap-3 rounded p-2.5 hover:opacity-80" style={{ background: "var(--mis-surface2)" }}>
                 <div className="min-w-0">
