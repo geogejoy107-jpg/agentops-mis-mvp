@@ -1,4 +1,4 @@
-import type { Approval, Memory, Run, Task } from "../../data/mockData";
+import type { Agent, Approval, AuditLog, Memory, Run, Task } from "../../data/mockData";
 import type { DashboardMetrics } from "../../data/liveApi";
 
 export type PixelZoneId =
@@ -326,6 +326,20 @@ export const DEMO_AGENTS: PixelAgent[] = [
   },
 ];
 
+export const DEMO_AGENT_CYCLE: PixelZoneId[] = [
+  "agent_lobby",
+  "task_hall",
+  "runtime_lab",
+  "tool_workshop",
+  "approval_gate",
+  "evaluation_room",
+  "memory_archive",
+  "external_base_dock",
+  "audit_vault",
+  "run_stream",
+  "incident_corner",
+];
+
 export function zoneCenter(zone: PixelZoneDefinition, index = 0) {
   const offsets = [
     { x: 0.2, y: 0.25 },
@@ -372,22 +386,99 @@ export function deriveTaskCards(tasks: Task[]): PixelTaskCard[] {
   }));
 }
 
+export function derivePixelAgents(input: {
+  agents?: Agent[];
+  tasks?: Task[];
+  approvals?: Approval[];
+  runs?: Run[];
+  memories?: Memory[];
+}): PixelAgent[] {
+  const agents = input.agents || [];
+  if (agents.length === 0) return DEMO_AGENTS;
+
+  const tasks = input.tasks || [];
+  const approvals = input.approvals || [];
+  const runs = input.runs || [];
+  const memories = input.memories || [];
+
+  return agents.slice(0, 12).map((agent, index) => {
+    const pendingApproval = approvals.find((approval) =>
+      approval.decision === "pending" && approval.requested_by_agent_id === agent.agent_id,
+    );
+    const activeRun = runs.find((run) =>
+      run.agent_id === agent.agent_id && ["running", "waiting_approval", "pending_approval"].includes(run.status),
+    );
+    const failedRun = runs.find((run) =>
+      run.agent_id === agent.agent_id && ["failed", "error", "blocked", "timeout"].includes(run.status),
+    );
+    const activeTask = tasks.find((task) =>
+      task.owner_agent_id === agent.agent_id && ["running", "waiting_approval", "blocked", "planned"].includes(task.status),
+    );
+    const memoryCandidate = memories.find((memory) =>
+      memory.agent_id === agent.agent_id && memory.review_status === "candidate",
+    );
+
+    let targetZone: PixelZoneId = statusToZone(agent.status);
+    let status = agent.status;
+
+    if (pendingApproval) {
+      targetZone = "approval_gate";
+      status = "waiting_approval";
+    } else if (failedRun || activeTask?.status === "failed" || activeTask?.status === "blocked") {
+      targetZone = "incident_corner";
+      status = failedRun?.status || activeTask?.status || agent.status;
+    } else if (activeRun) {
+      targetZone = statusToZone(activeRun.status);
+      status = activeRun.status;
+    } else if (activeTask) {
+      targetZone = activeTask.status === "planned" ? "task_hall" : statusToZone(activeTask.status);
+      status = activeTask.status;
+    } else if (memoryCandidate) {
+      targetZone = "memory_archive";
+      status = "candidate_review";
+    } else if (["openclaw", "hermes"].includes(agent.runtime_type)) {
+      targetZone = "runtime_lab";
+    }
+
+    return {
+      id: agent.agent_id,
+      name: agent.name,
+      role: agent.role,
+      runtime: agent.runtime_type,
+      status,
+      currentZone: DEMO_AGENT_CYCLE[index % DEMO_AGENT_CYCLE.length],
+      targetZone,
+      taskTitle: activeTask?.title,
+      latestRunId: activeRun?.run_id || failedRun?.run_id,
+      risk: activeTask?.risk_level || (agent.failure_count > 5 ? "high" : "low"),
+      approvalState: pendingApproval?.decision,
+      routeToDetail: agent.agent_id ? `/admin/agents/${agent.agent_id}` : "/workspace/agents",
+    };
+  });
+}
+
 export function derivePixelMetrics(input: {
   metrics?: DashboardMetrics | null;
   tasks?: Task[];
   approvals?: Approval[];
   runs?: Run[];
   memories?: Memory[];
+  audit?: AuditLog[];
 }): PixelMetrics {
   const tasks = input.tasks || [];
   const approvals = input.approvals || [];
   const runs = input.runs || [];
   const memories = input.memories || [];
+  const audit = input.audit || [];
   const metrics = input.metrics || null;
   const runtime = metrics?.runtime_health?.[0] as Record<string, unknown> | undefined;
   const failedRuns = runs.filter((run) => ["failed", "error", "blocked", "timeout"].includes(run.status)).length;
   const pendingApprovals = approvals.filter((approval) => approval.decision === "pending").length;
   const memoryCandidates = memories.filter((memory) => memory.review_status === "candidate").length;
+  const latestAudit = audit[0]
+    ? `${audit[0].action || "event"} · ${audit[0].entity_type || audit[0].actor_type}`
+    : runs[0]?.run_id || approvals[0]?.approval_id || "demo_audit_event";
+
   return {
     totalAgents: metrics?.agents_total ?? Math.max(DEMO_AGENTS.length, metrics?.agent_performance_summary?.length || 0),
     totalRuns: runs.length || metrics?.recent_runs?.length || metrics?.openclaw_import?.cron_runs || 0,
@@ -397,10 +488,10 @@ export function derivePixelMetrics(input: {
     memoryCandidates: metrics?.stale_or_due_memories ?? memoryCandidates,
     failedRuns: metrics?.openclaw_import?.failed_runs ?? failedRuns,
     blockedTasks: tasks.filter((task) => ["blocked", "failed"].includes(task.status)).length,
-    auditEvents: runs.length + approvals.length + memories.length,
+    auditEvents: audit.length || runs.length + approvals.length + memories.length,
     runtimeHealth: String(runtime?.status || runtime?.provider || (metrics?.runtime_health?.length ? "mixed" : "demo-safe")),
     externalSyncState: memoryCandidates > 0 ? "review queue" : "Notion dry-run ready",
-    latestAudit: runs[0]?.run_id || approvals[0]?.approval_id || "demo_audit_event",
+    latestAudit,
   };
 }
 
@@ -435,17 +526,3 @@ export function formatZoneMetric(zoneId: PixelZoneId, metrics: PixelMetrics): st
       return "live MIS";
   }
 }
-
-export const DEMO_AGENT_CYCLE: PixelZoneId[] = [
-  "agent_lobby",
-  "task_hall",
-  "runtime_lab",
-  "tool_workshop",
-  "approval_gate",
-  "evaluation_room",
-  "memory_archive",
-  "external_base_dock",
-  "audit_vault",
-  "run_stream",
-  "incident_corner",
-];
