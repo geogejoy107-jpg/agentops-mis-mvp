@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { NavLink, useLocation } from "react-router";
 import {
   Home, CheckSquare, Bot, ShieldCheck, Brain, BarChart2, Package,
-  Activity, List, Wrench, Plug, Database, ClipboardList,
+  Activity, List, Wrench, Plug, Database, ClipboardList, Map,
   ChevronDown, ChevronRight, Zap,
 } from "lucide-react";
 import { pick, usePreferences } from "../../context/PreferencesContext";
@@ -23,13 +23,14 @@ const navGroups: NavGroup[] = [
   {
     titleKey: "clientWorkspace",
     items: [
-      { labelKey: "home",         path: "/workspace",          icon: <Home size={15} /> },
-      { labelKey: "myTasks",      path: "/workspace/tasks",    icon: <CheckSquare size={15} /> },
-      { labelKey: "aiEmployees",  path: "/workspace/agents",   icon: <Bot size={15} /> },
-      { labelKey: "approvals",    path: "/workspace/approvals",icon: <ShieldCheck size={15} /> },
-      { labelKey: "memory",       path: "/workspace/memory",   icon: <Brain size={15} /> },
-      { labelKey: "reports",      path: "/workspace/reports",  icon: <BarChart2 size={15} /> },
-      { labelKey: "templates",    path: "/admin/templates",    icon: <Package size={15} /> },
+      { labelKey: "home",         path: "/workspace",              icon: <Home size={15} /> },
+      { labelKey: "pixelOffice",  path: "/workspace/pixel-office", icon: <Map size={15} /> },
+      { labelKey: "myTasks",      path: "/workspace/tasks",        icon: <CheckSquare size={15} /> },
+      { labelKey: "aiEmployees",  path: "/workspace/agents",       icon: <Bot size={15} /> },
+      { labelKey: "approvals",    path: "/workspace/approvals",    icon: <ShieldCheck size={15} /> },
+      { labelKey: "memory",       path: "/workspace/memory",       icon: <Brain size={15} /> },
+      { labelKey: "reports",      path: "/workspace/reports",      icon: <BarChart2 size={15} /> },
+      { labelKey: "templates",    path: "/admin/templates",        icon: <Package size={15} /> },
     ],
   },
   {
@@ -55,6 +56,7 @@ export function Sidebar() {
       clientWorkspace: "Client Workspace",
       adminConsole: "Admin Console",
       home: "Home",
+      pixelOffice: "Pixel Office",
       myTasks: "My Tasks",
       aiEmployees: "AI Employees",
       approvals: "Approvals",
@@ -74,6 +76,7 @@ export function Sidebar() {
       clientWorkspace: "前台工作区",
       adminConsole: "后台管理端",
       home: "首页",
+      pixelOffice: "像素办公室",
       myTasks: "我的任务",
       aiEmployees: "AI 员工",
       approvals: "审批",
@@ -119,7 +122,7 @@ export function Sidebar() {
             AgentOps MIS
           </div>
           <div className="text-[10px] leading-tight" style={{ color: "var(--mis-dim)" }}>
-            v1.2.2
+            v1.3
           </div>
         </div>
       </div>
