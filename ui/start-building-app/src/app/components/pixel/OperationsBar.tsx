@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Activity, AlertTriangle, Brain, CheckCircle2, RefreshCw, ShieldAlert, Wifi } from "lucide-react";
 import type { PixelMetrics } from "./pixelModel";
 
@@ -13,7 +14,7 @@ interface OperationTile {
   value: string | number;
   hint: string;
   tone: "cyan" | "green" | "amber" | "red" | "purple";
-  icon: JSX.Element;
+  icon: ReactNode;
 }
 
 const toneStyle: Record<OperationTile["tone"], { color: string; bg: string; border: string }> = {
