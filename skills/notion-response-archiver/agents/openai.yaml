@@ -1,0 +1,5 @@
+interface:
+  display_name: "Notion Response Archiver"
+  short_description: "Formalize ChatGPT answers and archive them to the right Notion database."
+  icon: "📥"
+  brand_color: "#2E86AB"
