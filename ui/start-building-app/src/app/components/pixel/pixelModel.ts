@@ -1,4 +1,5 @@
-import type { Approval, DashboardMetrics, Memory, Run, Task } from "../../data/mockData";
+import type { Approval, Memory, Run, Task } from "../../data/mockData";
+import type { DashboardMetrics } from "../../data/liveApi";
 
 export type PixelZoneId =
   | "control_tower"
