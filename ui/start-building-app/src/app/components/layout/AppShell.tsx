@@ -1,9 +1,10 @@
 import { Outlet } from "react-router";
+import type { ReactNode } from "react";
 import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
 import { usePreferences } from "../../context/PreferencesContext";
 
-export function AppShell() {
+export function AppShell({ children }: { children?: ReactNode }) {
   const { theme } = usePreferences();
 
   return (
@@ -15,7 +16,7 @@ export function AppShell() {
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
         <Topbar />
         <main className="app-main flex-1 overflow-y-auto p-4 lg:p-5">
-          <Outlet />
+          {children ?? <Outlet />}
         </main>
       </div>
     </div>

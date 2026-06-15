@@ -20,6 +20,7 @@ import {
   loadTasks,
   type DashboardMetrics,
 } from "../../data/liveApi";
+import { pick, usePreferences } from "../../context/PreferencesContext";
 import {
   agents as mockAgents,
   approvals as mockApprovals,
@@ -115,9 +116,50 @@ function readSettled<T>(result: PromiseSettledResult<T>, fallback: T): T {
 
 export function PixelOffice() {
   const navigate = useNavigate();
+  const { locale } = usePreferences();
   const [snapshot, setSnapshot] = useState<PixelOfficeSnapshot>(fallbackSnapshot);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const copy = pick(locale, {
+    en: {
+      title: "Agent-MIS Pixel Operating Floor",
+      liveState: "Live MIS state",
+      demoSafe: "Demo-safe",
+      legacyAvailable: "Legacy Star Office available",
+      legacyMissing: "Legacy Star Office not configured",
+      legacyLink: "Legacy Star Office",
+      controlTower: "Control Tower",
+      subtitle: "A clickable operations floor for AI digital employees. Zones visualize AgentOps MIS state and jump into the formal ledgers for agents, tasks, runs, approvals, tools, memory, evaluations, audit and external bases.",
+      routingTitle: "Zone routing contract",
+      routingBody: "Every room is a route into an existing MIS page. The floor is an orientation layer, not a duplicate ledger.",
+      stateTitle: "State source",
+      stateBody: "Agent placement comes from AgentOps MIS agents, tasks, runs, approvals, memories and audit events. Demo sprites appear only when live data is sparse.",
+      agentsPlaced: "Agents placed",
+      taskCards: "Task cards",
+      boundaryTitle: "Asset and authority boundary",
+      boundaryBody: "This v1.3 map uses original React/CSS geometry only. No Star-Office, paid tileset or third-party sprite assets are copied into the product UI.",
+      authority: "AgentOps MIS remains the authority system for state, permissions, evaluations and audit.",
+    },
+    zh: {
+      title: "Agent-MIS 像素运营大厅",
+      liveState: "实时 MIS 状态",
+      demoSafe: "演示安全",
+      legacyAvailable: "可打开旧 Star Office",
+      legacyMissing: "未配置旧 Star Office",
+      legacyLink: "旧 Star Office",
+      controlTower: "控制塔",
+      subtitle: "面向 AI 数字员工的可点击运营大厅。各区域把 AgentOps MIS 状态可视化，并跳转到代理、任务、运行、审批、工具、记忆、评估、审计和外部库等正式账本。",
+      routingTitle: "区域路由契约",
+      routingBody: "每个房间都对应一个已有 MIS 页面。运营大厅负责定位和导航，不重复替代正式账本。",
+      stateTitle: "状态来源",
+      stateBody: "代理位置来自 AgentOps MIS 的 agents、tasks、runs、approvals、memories 和 audit events。只有实时数据不足时才使用演示 sprite。",
+      agentsPlaced: "已放置代理",
+      taskCards: "任务卡片",
+      boundaryTitle: "资产与权威边界",
+      boundaryBody: "v1.3 地图只使用原创 React/CSS 几何结构，不把 Star-Office、付费 tileset 或第三方 sprite 资产复制进产品 UI。",
+      authority: "AgentOps MIS 仍然是状态、权限、评估和审计的权威系统。",
+    },
+  });
 
   const refresh = async () => {
     setLoading(true);
@@ -195,32 +237,32 @@ export function PixelOffice() {
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-lg font-semibold" style={{ color: "var(--mis-text)" }}>
-              Agent-MIS Pixel Operating Floor
+              {copy.title}
             </h1>
             <span
               className="inline-flex items-center gap-1.5 rounded px-2 py-1 text-[10px] uppercase tracking-wide"
               style={{ background: "rgba(34,211,238,0.12)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.22)" }}
             >
               <Sparkles size={11} />
-              Live MIS state
+              {copy.liveState}
             </span>
             <span
               className="rounded px-2 py-1 text-[10px] uppercase tracking-wide"
               style={{ background: "rgba(168,85,247,0.12)", color: "var(--mis-purple)", border: "1px solid rgba(168,85,247,0.24)" }}
             >
-              Demo-safe
+              {copy.demoSafe}
             </span>
             {configuredStarOfficeUrl && (
               <span
                 className="rounded px-2 py-1 text-[10px] uppercase tracking-wide"
                 style={{ background: "rgba(42,157,143,0.12)", color: "var(--mis-success)", border: "1px solid rgba(42,157,143,0.24)" }}
               >
-                Legacy Star Office available
+                {copy.legacyAvailable}
               </span>
             )}
           </div>
           <p className="mt-1 max-w-3xl text-xs leading-relaxed" style={{ color: "var(--mis-dim)" }}>
-            A clickable operations floor for AI digital employees. Zones visualize AgentOps MIS state and jump into the formal ledgers for agents, tasks, runs, approvals, tools, memory, evaluations, audit and external bases.
+            {copy.subtitle}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -233,11 +275,11 @@ export function PixelOffice() {
               style={{ background: "var(--mis-surface2)", color: "var(--mis-dim)", border: "1px solid var(--mis-border)" }}
             >
               <ExternalLink size={13} />
-              Legacy Star Office
+              {copy.legacyLink}
             </a>
           ) : (
             <span className="rounded px-3 py-1.5 text-[11px]" style={{ background: "var(--mis-surface2)", color: "var(--mis-muted)", border: "1px solid var(--mis-border)" }}>
-              Legacy Star Office not configured
+              {copy.legacyMissing}
             </span>
           )}
           <Link
@@ -245,7 +287,7 @@ export function PixelOffice() {
             className="inline-flex items-center gap-1.5 rounded px-3 py-1.5 text-xs"
             style={{ background: "rgba(34,211,238,0.12)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.22)" }}
           >
-            Control Tower
+            {copy.controlTower}
             <ArrowRight size={13} />
           </Link>
         </div>
@@ -259,10 +301,10 @@ export function PixelOffice() {
         <div className="rounded-lg p-4" style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}>
           <div className="flex items-center gap-2 text-sm font-semibold" style={{ color: "var(--mis-text)" }}>
             <Map size={15} style={{ color: "var(--mis-cyan)" }} />
-            Zone routing contract
+            {copy.routingTitle}
           </div>
           <p className="mt-2 text-[11px] leading-relaxed" style={{ color: "var(--mis-dim)" }}>
-            Every room is a route into an existing MIS page. The floor is an orientation layer, not a duplicate ledger.
+            {copy.routingBody}
           </p>
           <div className="mt-3 flex flex-wrap gap-1.5">
             {PIXEL_ZONES.slice(0, 8).map((zone) => (
@@ -281,18 +323,18 @@ export function PixelOffice() {
         <div className="rounded-lg p-4" style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}>
           <div className="flex items-center gap-2 text-sm font-semibold" style={{ color: "var(--mis-text)" }}>
             <MonitorCog size={15} style={{ color: "var(--mis-purple)" }} />
-            State source
+            {copy.stateTitle}
           </div>
           <p className="mt-2 text-[11px] leading-relaxed" style={{ color: "var(--mis-dim)" }}>
-            Agent placement comes from AgentOps MIS agents, tasks, runs, approvals, memories and audit events. Demo sprites appear only when live data is sparse.
+            {copy.stateBody}
           </p>
           <div className="mt-3 grid grid-cols-2 gap-2 text-[11px]">
             <div className="rounded p-2" style={{ background: "var(--mis-surface2)" }}>
-              <div style={{ color: "var(--mis-muted)" }}>Agents placed</div>
+              <div style={{ color: "var(--mis-muted)" }}>{copy.agentsPlaced}</div>
               <div className="text-base font-semibold" style={{ color: "var(--mis-text)" }}>{pixelAgents.length}</div>
             </div>
             <div className="rounded p-2" style={{ background: "var(--mis-surface2)" }}>
-              <div style={{ color: "var(--mis-muted)" }}>Task cards</div>
+              <div style={{ color: "var(--mis-muted)" }}>{copy.taskCards}</div>
               <div className="text-base font-semibold" style={{ color: "var(--mis-text)" }}>{taskCards.length}</div>
             </div>
           </div>
@@ -300,13 +342,13 @@ export function PixelOffice() {
         <div className="rounded-lg p-4" style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}>
           <div className="flex items-center gap-2 text-sm font-semibold" style={{ color: "var(--mis-text)" }}>
             <ShieldCheck size={15} style={{ color: "var(--mis-success)" }} />
-            Asset and authority boundary
+            {copy.boundaryTitle}
           </div>
           <p className="mt-2 text-[11px] leading-relaxed" style={{ color: "var(--mis-dim)" }}>
-            This v1.3 map uses original React/CSS geometry only. No Star-Office, paid tileset or third-party sprite assets are copied into the product UI.
+            {copy.boundaryBody}
           </p>
           <div className="mt-3 rounded p-2 text-[10px]" style={{ background: "rgba(42,157,143,0.10)", color: "var(--mis-success)", border: "1px solid rgba(42,157,143,0.22)" }}>
-            AgentOps MIS remains the authority system for state, permissions, evaluations and audit.
+            {copy.authority}
           </div>
         </div>
       </section>

@@ -2,6 +2,7 @@ import { Link } from "react-router";
 import { Activity, ArrowRight, CheckCircle2, ClipboardCheck, Gauge, XCircle } from "lucide-react";
 import { agents, evaluations, runs, tasks } from "../../data/mockData";
 import { StatusBadge } from "../shared/StatusBadge";
+import { pick, usePreferences } from "../../context/PreferencesContext";
 
 function agentName(agentId: string) {
   return agents.find((agent) => agent.agent_id === agentId)?.name || agentId;
@@ -12,6 +13,53 @@ function taskTitle(taskId: string) {
 }
 
 export function EvaluationRoom() {
+  const { locale } = usePreferences();
+  const copy = pick(locale, {
+    en: {
+      title: "Evaluation Room",
+      badge: "Quality gate surface",
+      subtitle: "A lightweight room for evaluator results, failed gates and run-quality signals. The Pixel Operating Map links here when an agent needs quality review.",
+      runLedger: "Run ledger",
+      avgScore: "Avg score",
+      passedGates: "Passed gates",
+      failedGates: "Failed gates",
+      failedRuns: "Failed runs",
+      mockHint: "mock + live-ready",
+      evaluations: "evaluations",
+      qualityRisks: "open quality risks",
+      runtimeIncidents: "runtime incidents",
+      queueTitle: "Evaluator result queue",
+      queueBody: "Result-level and trajectory-level scores should remain linked to runs, tasks and agents.",
+      score: "score",
+      failureTitle: "Failure reason analysis",
+      failureBody: "v1.3 keeps the Evaluation Room simple: surface failed gates, link to run evidence, and avoid replacing the full run ledger.",
+      noFailedRuns: "No failed runs in the current demo state.",
+      runtimeFailure: "Runtime failure",
+      future: "Future v1.4/v1.5 can add evaluator filters, score trends and trace replay once the run ledger emits richer evaluator payloads.",
+    },
+    zh: {
+      title: "评估室",
+      badge: "质量门界面",
+      subtitle: "用于展示评估结果、失败质量门和运行质量信号的轻量房间。当某个代理需要质量复核时，像素运营地图会跳到这里。",
+      runLedger: "运行账本",
+      avgScore: "平均分",
+      passedGates: "通过质量门",
+      failedGates: "失败质量门",
+      failedRuns: "失败运行",
+      mockHint: "模拟 + 可接实时",
+      evaluations: "条评估",
+      qualityRisks: "个开放质量风险",
+      runtimeIncidents: "个运行事故",
+      queueTitle: "评估结果队列",
+      queueBody: "结果级和轨迹级评分需要持续关联到 runs、tasks 和 agents。",
+      score: "分数",
+      failureTitle: "失败原因分析",
+      failureBody: "v1.3 先保持评估室轻量：暴露失败质量门，链接到运行证据，不替代完整运行账本。",
+      noFailedRuns: "当前演示状态没有失败运行。",
+      runtimeFailure: "运行失败",
+      future: "后续 v1.4/v1.5 可以在运行账本输出更丰富评估载荷后，增加评估器筛选、分数趋势和 trace replay。",
+    },
+  });
   const total = evaluations.length;
   const passed = evaluations.filter((evaluation) => evaluation.pass_fail === "pass").length;
   const failed = total - passed;
@@ -19,10 +67,10 @@ export function EvaluationRoom() {
   const failedRuns = runs.filter((run) => ["failed", "error", "blocked", "timeout"].includes(run.status));
 
   const scoreTiles = [
-    { label: "Avg score", value: `${averageScore}/100`, hint: "mock + live-ready", icon: <Gauge size={15} />, tone: "cyan" },
-    { label: "Passed gates", value: passed, hint: `${total} evaluations`, icon: <CheckCircle2 size={15} />, tone: "green" },
-    { label: "Failed gates", value: failed, hint: "open quality risks", icon: <XCircle size={15} />, tone: failed > 0 ? "red" : "green" },
-    { label: "Failed runs", value: failedRuns.length, hint: "runtime incidents", icon: <Activity size={15} />, tone: failedRuns.length > 0 ? "red" : "cyan" },
+    { label: copy.avgScore, value: `${averageScore}/100`, hint: copy.mockHint, icon: <Gauge size={15} />, tone: "cyan" },
+    { label: copy.passedGates, value: passed, hint: `${total} ${copy.evaluations}`, icon: <CheckCircle2 size={15} />, tone: "green" },
+    { label: copy.failedGates, value: failed, hint: copy.qualityRisks, icon: <XCircle size={15} />, tone: failed > 0 ? "red" : "green" },
+    { label: copy.failedRuns, value: failedRuns.length, hint: copy.runtimeIncidents, icon: <Activity size={15} />, tone: failedRuns.length > 0 ? "red" : "cyan" },
   ];
 
   return (
@@ -30,13 +78,13 @@ export function EvaluationRoom() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-2">
-            <h1 className="text-lg font-semibold" style={{ color: "var(--mis-text)" }}>Evaluation Room</h1>
+            <h1 className="text-lg font-semibold" style={{ color: "var(--mis-text)" }}>{copy.title}</h1>
             <span className="rounded px-2 py-1 text-[10px] uppercase tracking-wide" style={{ background: "rgba(42,157,143,0.12)", color: "var(--mis-success)", border: "1px solid rgba(42,157,143,0.24)" }}>
-              Quality gate surface
+              {copy.badge}
             </span>
           </div>
           <p className="mt-1 max-w-2xl text-xs leading-relaxed" style={{ color: "var(--mis-dim)" }}>
-            A lightweight room for evaluator results, failed gates and run-quality signals. The Pixel Operating Map links here when an agent needs quality review.
+            {copy.subtitle}
           </p>
         </div>
         <Link
@@ -44,7 +92,7 @@ export function EvaluationRoom() {
           className="inline-flex items-center gap-1.5 rounded px-3 py-1.5 text-xs"
           style={{ background: "rgba(34,211,238,0.12)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.22)" }}
         >
-          Run ledger
+          {copy.runLedger}
           <ArrowRight size={13} />
         </Link>
       </div>
@@ -70,10 +118,10 @@ export function EvaluationRoom() {
           <div className="p-4 border-b" style={{ borderColor: "var(--mis-border)" }}>
             <div className="flex items-center gap-2 text-sm font-semibold" style={{ color: "var(--mis-text)" }}>
               <ClipboardCheck size={15} style={{ color: "var(--mis-cyan)" }} />
-              Evaluator result queue
+              {copy.queueTitle}
             </div>
             <p className="mt-1 text-[11px]" style={{ color: "var(--mis-dim)" }}>
-              Result-level and trajectory-level scores should remain linked to runs, tasks and agents.
+              {copy.queueBody}
             </p>
           </div>
           <div className="divide-y" style={{ borderColor: "var(--mis-border)" }}>
@@ -98,7 +146,7 @@ export function EvaluationRoom() {
                   </div>
                   <div className="rounded px-2.5 py-1.5 text-right" style={{ background: "var(--mis-surface2)", border: "1px solid rgba(148,163,184,0.14)" }}>
                     <div className="text-lg font-semibold" style={{ color: evaluation.pass_fail === "pass" ? "var(--mis-success)" : "#F87171" }}>{evaluation.score}</div>
-                    <div className="text-[9px]" style={{ color: "var(--mis-muted)" }}>score</div>
+                    <div className="text-[9px]" style={{ color: "var(--mis-muted)" }}>{copy.score}</div>
                   </div>
                 </div>
               </Link>
@@ -107,14 +155,14 @@ export function EvaluationRoom() {
         </div>
 
         <aside className="rounded-lg p-4" style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}>
-          <h2 className="text-sm font-semibold" style={{ color: "var(--mis-text)" }}>Failure reason analysis</h2>
+          <h2 className="text-sm font-semibold" style={{ color: "var(--mis-text)" }}>{copy.failureTitle}</h2>
           <p className="mt-1 text-[11px] leading-relaxed" style={{ color: "var(--mis-dim)" }}>
-            v1.3 keeps the Evaluation Room simple: surface failed gates, link to run evidence, and avoid replacing the full run ledger.
+            {copy.failureBody}
           </p>
           <div className="mt-4 space-y-2">
             {failedRuns.length === 0 && (
               <div className="rounded p-3 text-[11px]" style={{ background: "var(--mis-surface2)", color: "var(--mis-muted)" }}>
-                No failed runs in the current demo state.
+                {copy.noFailedRuns}
               </div>
             )}
             {failedRuns.map((run) => (
@@ -128,13 +176,13 @@ export function EvaluationRoom() {
                   <span className="font-mono text-[10px]" style={{ color: "#FCA5A5" }}>{run.run_id}</span>
                   <StatusBadge status={run.status} />
                 </div>
-                <div className="mt-1 text-[11px]" style={{ color: "var(--mis-text)" }}>{run.error_type || "Runtime failure"}</div>
+                <div className="mt-1 text-[11px]" style={{ color: "var(--mis-text)" }}>{run.error_type || copy.runtimeFailure}</div>
                 <div className="mt-1 text-[10px] leading-relaxed" style={{ color: "var(--mis-muted)" }}>{run.error_message || run.output_summary}</div>
               </Link>
             ))}
           </div>
           <div className="mt-4 rounded p-3 text-[10px]" style={{ background: "rgba(34,211,238,0.08)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.18)" }}>
-            Future v1.4/v1.5 can add evaluator filters, score trends and trace replay once the run ledger emits richer evaluator payloads.
+            {copy.future}
           </div>
         </aside>
       </section>
