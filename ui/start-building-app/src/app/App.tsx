@@ -1,12 +1,14 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router";
 import { AppShell } from "./components/layout/AppShell";
 import { WorkspaceHome } from "./components/pages/WorkspaceHome";
+import { PixelOffice } from "./components/pages/PixelOffice";
 import { MyTasks } from "./components/pages/MyTasks";
 import { AIEmployees } from "./components/pages/AIEmployees";
 import { ApprovalsInbox } from "./components/pages/ApprovalsInbox";
 import { MemoryLibrary } from "./components/pages/MemoryLibrary";
 import { Reports } from "./components/pages/Reports";
 import { ControlTower } from "./components/pages/ControlTower";
+import { EvaluationRoom } from "./components/pages/EvaluationRoom";
 import { AgentDetail } from "./components/pages/AgentDetail";
 import { TaskDetail } from "./components/pages/TaskDetail";
 import { RunDetail } from "./components/pages/RunDetail";
@@ -22,18 +24,18 @@ export default function App() {
   return (
     <PreferencesProvider>
       <BrowserRouter>
-        <Routes>
-          <Route element={<AppShell />}>
-            <Route index element={<Navigate to="/workspace" replace />} />
-            {/* Client Workspace */}
+        <AppShell>
+          <Routes>
+            <Route path="/" element={<Navigate to="/workspace" replace />} />
             <Route path="/workspace" element={<WorkspaceHome />} />
+            <Route path="/workspace/pixel-office" element={<PixelOffice />} />
             <Route path="/workspace/tasks" element={<MyTasks />} />
             <Route path="/workspace/agents" element={<AIEmployees />} />
             <Route path="/workspace/approvals" element={<ApprovalsInbox />} />
             <Route path="/workspace/memory" element={<MemoryLibrary />} />
             <Route path="/workspace/reports" element={<Reports />} />
-            {/* Admin Console */}
             <Route path="/admin" element={<ControlTower />} />
+            <Route path="/admin/evaluations" element={<EvaluationRoom />} />
             <Route path="/admin/agents/:id" element={<AgentDetail />} />
             <Route path="/admin/tasks/:id" element={<TaskDetail />} />
             <Route path="/admin/runs" element={<RunLedger />} />
@@ -43,9 +45,8 @@ export default function App() {
             <Route path="/admin/bases/notion" element={<NotionBase />} />
             <Route path="/admin/templates" element={<TemplateSwitching />} />
             <Route path="/admin/audit" element={<AuditCenter />} />
-            <Route path="*" element={<Navigate to="/workspace" replace />} />
-          </Route>
-        </Routes>
+          </Routes>
+        </AppShell>
       </BrowserRouter>
     </PreferencesProvider>
   );
