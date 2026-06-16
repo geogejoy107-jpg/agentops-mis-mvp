@@ -63,6 +63,15 @@ AGENTOPS_API_KEY=local_dev_only_do_not_commit
 
 The CLI should be a thin wrapper over the Agent Gateway API. It should return JSON by default so agents can parse it.
 
+Current local MVP implementation:
+
+```bash
+./scripts/agentops --help
+./scripts/agentops login --base-url http://127.0.0.1:8787 --workspace-id local-demo --agent-id agt_local_worker
+```
+
+The implementation lives in `scripts/agentops.py`, with `scripts/agentops` as a shell wrapper. It uses only Python standard library modules and reads configuration from environment variables or `~/.agentops/config.json`.
+
 ### `agentops login`
 
 Stores a local API key or local token for the current workspace.
@@ -419,6 +428,8 @@ Add a small `agentops` CLI wrapper that can:
 
 The first implementation can be a Python script under `scripts/` or a small package later.
 
+Status: implemented as `scripts/agentops.py` and `scripts/agentops`.
+
 ### Step 3: Backend Endpoints
 
 Add minimal local endpoints under `/api/agent-gateway/*`.
@@ -435,6 +446,8 @@ The first backend pass should support:
 - Approval request.
 - Evaluation submit.
 - Audit emit.
+
+Status: implemented in the local Python server for v1.4 MVP.
 
 ### Step 4: Connect OpenClaw / Hermes Adapters
 

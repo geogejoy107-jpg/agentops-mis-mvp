@@ -142,6 +142,32 @@ v1.3 当前默认使用原创 React/CSS Pixel Operating Map，不复制 Star-Off
 
 v1.4 增加了最小 Agent Gateway/API slice，用于让本机或远程 AI 员工通过 CLI/API/MCP 写入 MIS，而不是让 agent 操作浏览器 UI。
 
+本地 CLI wrapper：
+
+```bash
+./scripts/agentops --help
+./scripts/agentops login --base-url http://127.0.0.1:8787 --workspace-id local-demo --agent-id agt_local_worker
+./scripts/agentops agent register --id agt_local_worker --name "Local Worker" --role "AI Digital Employee"
+./scripts/agentops task pull --agent-id agt_local_worker
+```
+
+已支持：
+
+```text
+agentops login
+agentops agent register
+agentops agent heartbeat
+agentops task pull
+agentops task claim
+agentops run start
+agentops run heartbeat
+agentops toolcall record
+agentops approval request
+agentops memory propose
+agentops eval submit
+agentops audit emit
+```
+
 知识库机器人客户任务演示：
 
 ```bash
