@@ -24,6 +24,8 @@ AgentOps MIS turns that request into managed AI-team work:
 - Evaluation and memory candidates are written.
 - Audit and runtime events prove the work happened.
 
+Dify can run locally or on a customer server. In that model, Dify is the agent's knowledge/workflow tool, while AgentOps MIS remains the control plane and ledger. MIS records only task state, summaries, hashes, connector ids, approval decisions, document ids, evaluations and audit events.
+
 ## Run
 
 Start the backend and UI first:
@@ -61,4 +63,34 @@ AGENTOPS_API_KEY="$AGENTOPS_API_KEY" python3 scripts/run_kb_bot_demo.py
 - No raw customer documents are uploaded.
 - No credentials are stored.
 - No full private chats or transcripts are written to MIS.
-- External Dify/OpenAI File Search/AnythingLLM ingestion stays pending until a human approval exists.
+- Local/private Dify may run with explicit `DIFY_ALLOW_REAL_UPLOAD=true` plus `confirm_upload`; cloud or cross-domain ingestion stays pending until a human approval exists.
+
+## Optional Local Dify Agent Demo
+
+Check local Dify connector status:
+
+```bash
+curl -fsS http://127.0.0.1:8787/api/integrations/dify/status | jq .
+```
+
+Dry-run a local agent upload:
+
+```bash
+python3 scripts/dify_local_agent_demo.py
+```
+
+Live local/private upload:
+
+```bash
+export DIFY_API_BASE_URL="http://127.0.0.1:8088/v1"
+export DIFY_KB_API_KEY="..."
+export DIFY_DATASET_ID="..."
+export DIFY_ALLOW_REAL_UPLOAD=true
+python3 scripts/dify_local_agent_demo.py --confirm-upload
+```
+
+For `cloud_dify` or cross-trust-domain Dify, pass an approved approval id:
+
+```bash
+python3 scripts/dify_local_agent_demo.py --confirm-upload --approval-id ap_...
+```

@@ -155,6 +155,30 @@ python3 scripts/run_kb_bot_demo.py
 - 写入 Run Ledger、Tool Calls、Runtime Events、Evaluations、Memories 和 Audit。
 - 对 Dify / OpenAI File Search / AnythingLLM 外部上传创建 pending approval，不上传原始资料、不保存凭证。
 
+Dify 可以作为本地或客户服务器上的 agent 工具层，而不是 MIS 的替代品。MIS 负责记录任务、运行、工具、审批、评估和审计；Dify 负责知识库/工作流/问答应用。查看 Dify 当前信任域和配置：
+
+```bash
+curl -fsS http://127.0.0.1:8787/api/integrations/dify/status | jq .
+```
+
+本地 agent 触发一次安全 dry-run：
+
+```bash
+python3 scripts/dify_local_agent_demo.py
+```
+
+本地/私有 Dify 真正上传需要显式环境变量和确认：
+
+```bash
+export DIFY_API_BASE_URL="http://127.0.0.1:8088/v1"
+export DIFY_KB_API_KEY="..."
+export DIFY_DATASET_ID="..."
+export DIFY_ALLOW_REAL_UPLOAD=true
+python3 scripts/dify_local_agent_demo.py --confirm-upload
+```
+
+云端或跨信任域 Dify 默认还需要传入已批准的 `approval_id`。不管 dry-run 还是真实上传，MIS 都不会保存 API key 或完整文档正文。
+
 录屏可看：
 
 - `/workspace/pixel-office`

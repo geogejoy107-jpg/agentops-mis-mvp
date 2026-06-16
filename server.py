@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import hashlib
+import ipaddress
 import json
 import os
 import random
@@ -2367,6 +2368,246 @@ def hermes_models(conn) -> dict:
         return {"provider": "agnesfallback", "status": "unavailable", "gateway_url": agnes["gateway_url"], "models": [], "error": err}
 
 
+def is_local_or_private_url(value: str) -> bool:
+    parsed = urlparse(value or "")
+    host = parsed.hostname or ""
+    if host in {"localhost", "127.0.0.1", "::1"}:
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+        return ip.is_private or ip.is_loopback
+    except ValueError:
+        return host.endswith(".local") or host.endswith(".internal")
+
+
+def dify_config() -> dict:
+    base_url = os.environ.get("DIFY_API_BASE_URL", os.environ.get("DIFY_BASE_URL", "http://127.0.0.1:8088/v1")).strip().rstrip("/")
+    mode = os.environ.get("DIFY_TRUST_MODE", "").strip()
+    if not mode:
+        mode = "local_dify" if is_local_or_private_url(base_url) else "cloud_dify"
+    api_key = os.environ.get("DIFY_KB_API_KEY", os.environ.get("DIFY_API_KEY", "")).strip()
+    dataset_id = os.environ.get("DIFY_DATASET_ID", "").strip()
+    allow_real_upload = os.environ.get("DIFY_ALLOW_REAL_UPLOAD", "").strip().lower() in ("1", "true", "yes")
+    require_approval_env = os.environ.get("DIFY_REQUIRE_APPROVAL", "").strip().lower()
+    if require_approval_env:
+        require_approval = require_approval_env not in ("0", "false", "no")
+    else:
+        require_approval = mode != "local_dify"
+    return {
+        "provider": "dify",
+        "api_base_url": base_url,
+        "trust_mode": coerce_choice(mode, {"local_dify", "customer_server_dify", "cloud_dify"}, "cloud_dify"),
+        "has_api_key": bool(api_key),
+        "api_key": api_key,
+        "dataset_id": dataset_id,
+        "has_dataset_id": bool(dataset_id),
+        "allow_real_upload": allow_real_upload,
+        "require_approval": require_approval,
+        "same_trust_domain": is_local_or_private_url(base_url),
+        "api_listening": url_listening(base_url),
+    }
+
+
+def dify_status(conn=None) -> dict:
+    cfg = dify_config()
+    status = "available" if cfg["api_listening"] and cfg["has_api_key"] else "dry_run" if cfg["api_listening"] else "unavailable"
+    payload = {
+        "provider": "dify",
+        "connector_id": "conn_dify_knowledge",
+        "api_base_url": cfg["api_base_url"],
+        "trust_mode": cfg["trust_mode"],
+        "same_trust_domain": cfg["same_trust_domain"],
+        "api_listening": cfg["api_listening"],
+        "configured": cfg["api_listening"] and cfg["has_api_key"] and cfg["has_dataset_id"],
+        "has_api_key": cfg["has_api_key"],
+        "has_dataset_id": cfg["has_dataset_id"],
+        "allow_real_upload": cfg["allow_real_upload"],
+        "require_approval": cfg["require_approval"],
+        "dry_run_default": not cfg["allow_real_upload"],
+        "write_behavior": "local/private Dify may run with confirm_upload; cloud or cross-domain upload requires approval.",
+    }
+    if conn:
+        conn.execute(
+            "UPDATE connectors SET status=?, last_checked_at=?, last_error=?, writeback_allowed=?, updated_at=? WHERE connector_id='conn_dify_knowledge'",
+            (
+                status,
+                now_iso(),
+                None if payload["configured"] else "Dify needs reachable API, API key and dataset id for live upload.",
+                1 if cfg["allow_real_upload"] else 0,
+                now_iso(),
+            ),
+        )
+    return payload
+
+
+def ensure_dify_agent_task(conn, body: dict):
+    now = now_iso()
+    agent_id = body.get("agent_id") or "agt_gw_kb_builder"
+    ensure_gateway_agent(conn, agent_id, name="Knowledge Base Builder Agent", role="Knowledge Base Builder", runtime_type="mock")
+    task_id = body.get("task_id") or stable_id("tsk_dify_upload", body.get("dataset_id") or dify_config()["dataset_id"] or "local", body.get("document_name") or "document")
+    if not conn.execute("SELECT 1 FROM tasks WHERE task_id=?", (task_id,)).fetchone():
+        upsert_task(conn, {
+            "task_id": task_id,
+            "title": body.get("task_title") or "Dify knowledge base ingestion",
+            "description": "Agent-managed Dify document ingestion. MIS stores only summary, hashes, ids and audit evidence.",
+            "requester_id": body.get("requester_id") or "usr_founder",
+            "owner_agent_id": agent_id,
+            "collaborator_agent_ids": json.dumps([], ensure_ascii=False),
+            "status": "planned",
+            "priority": coerce_choice(body.get("priority"), VALID_PRIORITIES, "high"),
+            "due_date": None,
+            "acceptance_criteria": "Dify receives the approved document, and MIS records run/tool/eval/audit without storing raw credentials or full source text.",
+            "risk_level": coerce_choice(body.get("risk_level"), VALID_RISK_LEVELS, "high"),
+            "budget_limit_usd": float(body.get("budget_limit_usd") or 1.0),
+            "created_at": now,
+            "updated_at": now,
+        }, "dify-connector")
+    return agent_id, task_id
+
+
+def approval_is_approved(conn, approval_id: str | None) -> bool:
+    if not approval_id:
+        return False
+    row = conn.execute("SELECT decision FROM approvals WHERE approval_id=?", (approval_id,)).fetchone()
+    return bool(row and row["decision"] == "approved")
+
+
+def dify_create_document_by_text(conn, body: dict) -> dict:
+    cfg = dify_config()
+    status_payload = dify_status(conn)
+    confirm = bool(body.get("confirm_upload"))
+    dataset_id = body.get("dataset_id") or cfg["dataset_id"]
+    document_name = redact_text(body.get("document_name") or body.get("name") or "AgentOps MIS document", 120)
+    text = body.get("text") or body.get("document_text") or ""
+    text_hash = stable_hash(text)
+    text_preview = redact_text(text, 200)
+    agent_id, task_id = ensure_dify_agent_task(conn, {**body, "dataset_id": dataset_id, "document_name": document_name})
+    approval_ok = not cfg["require_approval"] or approval_is_approved(conn, body.get("approval_id"))
+    can_upload = bool(cfg["allow_real_upload"] and confirm and cfg["has_api_key"] and dataset_id and text and approval_ok)
+    plan = {
+        "provider": "dify",
+        "mode": cfg["trust_mode"],
+        "dry_run": True,
+        "configured": status_payload["configured"],
+        "would_post": f"{cfg['api_base_url']}/datasets/{dataset_id or '[dataset_id]'}/document/create-by-text",
+        "document_name": document_name,
+        "text_preview": text_preview,
+        "text_hash": text_hash,
+        "requires": {
+            "DIFY_ALLOW_REAL_UPLOAD": True,
+            "confirm_upload": True,
+            "DIFY_KB_API_KEY": True,
+            "DIFY_DATASET_ID_or_body_dataset_id": True,
+            "approved_approval_id": cfg["require_approval"],
+        },
+        "trust_boundary": {
+            "same_trust_domain": cfg["same_trust_domain"],
+            "require_approval": cfg["require_approval"],
+            "approval_ok": approval_ok,
+        },
+        "note": "MIS never stores the full document text or API key. Live upload sends the provided text to Dify only when explicitly allowed.",
+    }
+    if not can_upload:
+        runtime_event(conn, "rtc_agent_gateway_local", "dify.upload_text.dry_run", "planned", task_id=task_id, agent_id=agent_id, input_summary=f"Dify upload dry-run text_hash={text_hash[:16]}", raw_payload_hash=text_hash)
+        audit(conn, "agent", agent_id, "dify.upload_text.dry_run", "connectors", "conn_dify_knowledge", None, plan, {"confirm_upload": confirm, "approval_id": body.get("approval_id"), "text_hash": text_hash})
+        conn.commit()
+        return plan
+
+    started_iso = now_iso()
+    started = dt.datetime.now(dt.timezone.utc)
+    run_id = body.get("run_id") or stable_id("run_dify_upload", dataset_id, document_name, dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d%H%M%S"))
+    payload = {
+        "name": document_name,
+        "text": text,
+        "indexing_technique": body.get("indexing_technique") or "high_quality",
+        "process_rule": body.get("process_rule") or {"mode": "automatic"},
+    }
+    ok = False
+    error = None
+    response_hash = None
+    document_id = None
+    try:
+        req = Request(
+            f"{cfg['api_base_url']}/datasets/{dataset_id}/document/create-by-text",
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            method="POST",
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {cfg['api_key']}"},
+        )
+        with urlopen(req, timeout=60) as res:
+            response = json.loads(res.read().decode("utf-8"))
+        response_hash = stable_hash(response)
+        document = response.get("document") or response.get("data") or response
+        document_id = document.get("id") if isinstance(document, dict) else None
+        ok = True
+    except Exception as exc:
+        error = redact_text(str(exc), 240)
+
+    duration = int((dt.datetime.now(dt.timezone.utc) - started).total_seconds() * 1000)
+    row = {
+        "run_id": run_id,
+        "task_id": task_id,
+        "agent_id": agent_id,
+        "runtime_type": "mock",
+        "status": "completed" if ok else "failed",
+        "started_at": started_iso,
+        "ended_at": now_iso(),
+        "duration_ms": duration,
+        "input_summary": f"Dify upload text_hash={text_hash[:16]} dataset_id={redact_text(dataset_id, 80)}",
+        "output_summary": f"Dify document created: {document_id}" if ok else "Dify document upload failed.",
+        "model_provider": "dify",
+        "model_name": "knowledge-api",
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "reasoning_tokens": 0,
+        "cost_usd": 0.0,
+        "error_type": None if ok else "DifyUploadFailed",
+        "error_message": error,
+        "trace_id": body.get("trace_id"),
+        "parent_run_id": body.get("parent_run_id"),
+        "delegation_id": body.get("delegation_id") or "dify:knowledge-upload",
+        "approval_required": 1 if cfg["require_approval"] else 0,
+        "created_at": started_iso,
+    }
+    upsert_run(conn, row, "dify-connector", {"text_hash": text_hash, "response_hash": response_hash, "document_id": document_id, "dataset_id": redact_text(dataset_id, 80)})
+    tool_row = {
+        "tool_call_id": body.get("tool_call_id") or stable_id("tc_dify_upload", run_id),
+        "run_id": run_id,
+        "agent_id": agent_id,
+        "tool_name": "dify.knowledge.upload",
+        "tool_version": "v1",
+        "tool_category": "custom",
+        "normalized_args_json": json.dumps({"dataset_id": redact_text(dataset_id, 80), "document_name": document_name, "text_hash": text_hash, "approval_id": body.get("approval_id")}, ensure_ascii=False),
+        "target_resource": f"dify://datasets/{redact_text(dataset_id, 80)}/documents/{document_id or 'unknown'}",
+        "risk_level": "medium" if cfg["trust_mode"] == "local_dify" else "high",
+        "status": "completed" if ok else "failed",
+        "result_summary": row["output_summary"],
+        "side_effect_id": document_id,
+        "started_at": started_iso,
+        "ended_at": row["ended_at"],
+        "created_at": started_iso,
+    }
+    upsert_tool_call(conn, tool_row, "dify-connector", {"text_hash": text_hash, "response_hash": response_hash, "raw_text_omitted": True})
+    upsert_evaluation(conn, quality_gate_for_run(row), "dify-connector")
+    runtime_event(conn, "rtc_agent_gateway_local", "dify.upload_text", "completed" if ok else "failed", run_id=run_id, task_id=task_id, agent_id=agent_id, latency_ms=duration, input_summary=f"Dify text upload text_hash={text_hash[:16]}", output_summary=row["output_summary"], error_message=error, raw_payload_hash=response_hash or text_hash)
+    audit(conn, "agent", agent_id, "dify.upload_text", "runs", run_id, None, {"status": row["status"], "document_id": document_id}, {"text_hash": text_hash, "dataset_id": redact_text(dataset_id, 80), "approval_id": body.get("approval_id"), "trust_mode": cfg["trust_mode"]})
+    conn.commit()
+    return {
+        "provider": "dify",
+        "mode": cfg["trust_mode"],
+        "dry_run": False,
+        "ok": ok,
+        "task_id": task_id,
+        "run_id": run_id,
+        "tool_call_id": tool_row["tool_call_id"],
+        "document_id": document_id,
+        "dataset_id": redact_text(dataset_id, 80),
+        "duration_ms": duration,
+        "text_hash": text_hash,
+        "output_summary": row["output_summary"],
+        "error": error,
+    }
+
+
 def ensure_agnesfallback_agent_task(conn, mode: str):
     agent_id = "agt_agnesfallback_runtime"
     upsert_agent(conn, {
@@ -3351,6 +3592,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(hermes_status())
             if path == "/api/integrations/hermes/models":
                 return self.send_json(hermes_models(conn))
+            if path == "/api/integrations/dify/status":
+                payload = dify_status(conn)
+                conn.commit()
+                return self.send_json(payload)
             if path == "/api/integrations/notion/status":
                 return self.send_json(notion_status_payload(conn))
             if path == "/api/integrations/notion/export-preview":
@@ -3511,6 +3756,8 @@ class Handler(BaseHTTPRequestHandler):
                 audit(conn, "user", "usr_founder", "runtime.run_task.preview", "runtime_connectors", "rtc_hermes_default_gateway", None, result, {"dry_run": result.get("dry_run", True)})
                 conn.commit()
                 return self.send_json(result, 201)
+            if path == "/api/integrations/dify/upload-text":
+                return self.send_json(dify_create_document_by_text(conn, body), 201)
             if path == "/api/integrations/notion/preview":
                 return self.send_json(notion_preview(conn))
             if path == "/api/integrations/notion/dry-run-export":
