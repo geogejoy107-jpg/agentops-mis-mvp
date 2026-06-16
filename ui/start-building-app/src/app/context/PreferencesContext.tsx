@@ -23,7 +23,8 @@ function readTheme(): ThemeMode {
 
 function readLocale(): LocaleMode {
   const stored = localStorage.getItem(LOCALE_KEY);
-  return stored === "zh" ? "zh" : "en";
+  if (stored === "en" || stored === "zh") return stored;
+  return "zh";
 }
 
 export function PreferencesProvider({ children }: { children: ReactNode }) {

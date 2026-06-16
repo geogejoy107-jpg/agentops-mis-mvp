@@ -118,12 +118,13 @@ python3 scripts/demo_acceptance.py --start-server
 
 ## Pixel Office Demo Mode
 
-v1.3 增加了可选的 Star-Office-UI demo visualizer 适配层，用于把 AgentOps MIS 的 agents / runs / approvals / memory / audit 状态映射到本地像素办公室。
+v1.3 当前默认使用原创 React/CSS Pixel Operating Map，不复制 Star-Office-UI 资产。它把 AgentOps MIS 的 agents / tasks / runs / approvals / memory / audit 状态映射到一个可点击运营大厅。
 
-当前本地 demo 分两层：
+当前本地 demo 主入口：
 
-- `http://127.0.0.1:19000/workspace`：Pixel Office 前台。房间里会显示多个从 AgentOps MIS 映射出来的 Agent，并按运行量、成功率、失败数、审批数进入执行/同步/报警等区域。
-- `http://127.0.0.1:19001/workspace`：MIS 管理工作台。保留原 Figma/Vite UI 的任务、审批、Run Ledger、Memory、Connectors、Audit 等后台管理入口。
+- `http://127.0.0.1:19001/workspace/pixel-office`：原生 Pixel Office 前台。顾客可以提交任务、选择 AI 员工，并跳转到正式 MIS 页面。
+- `http://127.0.0.1:19001/admin`：MIS 后台管理端。查看控制塔、Run Ledger、Tool Calls、Evaluations、Connectors、External Bases 和 Audit。
+- `http://127.0.0.1:19000/workspace`：可选 legacy Star-Office visualizer，仅当你单独启动 Star-Office-UI 时使用。
 
 重要边界：
 
@@ -136,6 +137,35 @@ v1.3 增加了可选的 Star-Office-UI demo visualizer 适配层，用于把 Age
 
 - `docs/STAR_OFFICE_UI_DEMO_INTEGRATION.md`
 - `docs/PIXEL_OFFICE_ASSET_REPLACEMENT_PLAN.md`
+
+## Agent Gateway Customer Task Demo
+
+v1.4 增加了最小 Agent Gateway/API slice，用于让本机或远程 AI 员工通过 CLI/API/MCP 写入 MIS，而不是让 agent 操作浏览器 UI。
+
+知识库机器人客户任务演示：
+
+```bash
+python3 scripts/run_kb_bot_demo.py
+```
+
+它会模拟 AI 团队完成“正式 AI 知识库 / 问答机器人”项目：
+
+- 注册 Project Planner、Document Cleaner、Knowledge Base Builder、Q&A Evaluator、Customer Report Writer。
+- 创建并认领任务。
+- 写入 Run Ledger、Tool Calls、Runtime Events、Evaluations、Memories 和 Audit。
+- 对 Dify / OpenAI File Search / AnythingLLM 外部上传创建 pending approval，不上传原始资料、不保存凭证。
+
+录屏可看：
+
+- `/workspace/pixel-office`
+- `/workspace/tasks`
+- `/admin/runs`
+- `/admin/toolcalls`
+- `/workspace/approvals`
+- `/admin/evaluations`
+- `/admin/audit`
+
+详情见 `docs/AI_KNOWLEDGE_BASE_BOT_DEMO.md`。
 
 Dry-run 预览 payload：
 

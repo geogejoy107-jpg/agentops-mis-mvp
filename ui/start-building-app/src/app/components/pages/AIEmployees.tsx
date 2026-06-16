@@ -2,6 +2,7 @@ import { Link } from "react-router";
 import { Bot, DollarSign, Star, Activity } from "lucide-react";
 import { StatusBadge } from "../shared/StatusBadge";
 import { loadAgents, loadDashboard, useLiveData } from "../../data/liveApi";
+import { pick, usePreferences } from "../../context/PreferencesContext";
 
 const RUNTIME_COLOR: Record<string, string> = {
   claude_code: "#7A5AF8",
@@ -15,24 +16,52 @@ const RUNTIME_COLOR: Record<string, string> = {
 };
 
 export function AIEmployees() {
+  const { locale } = usePreferences();
   const { data, loading, error, refresh } = useLiveData(async () => {
     const metrics = await loadDashboard();
     return loadAgents(metrics);
   }, []);
   const agents = data || [];
+  const activeAgents = agents.filter(a => a.status === "running").length;
+  const copy = pick(locale, {
+    en: {
+      title: "AI Employees",
+      summary: `${agents.length} registered agents · ${activeAgents} active · live backend`,
+      loading: "Loading live agents...",
+      backendUnavailable: "Live backend unavailable",
+      refresh: "Refresh live agents",
+      runs: "Runs",
+      success: "Success",
+      approvals: "Approvals",
+      budget: "Budget",
+      more: "more",
+    },
+    zh: {
+      title: "AI 员工",
+      summary: `${agents.length} 个已注册代理 · ${activeAgents} 个运行中 · 连接本地后端`,
+      loading: "正在加载实时代理...",
+      backendUnavailable: "本地后端不可用",
+      refresh: "刷新实时代理",
+      runs: "运行",
+      success: "成功率",
+      approvals: "审批",
+      budget: "预算",
+      more: "项更多",
+    },
+  });
 
   return (
     <div className="space-y-5 w-full">
       {/* Header */}
       <div>
-        <h1 className="text-lg font-semibold" style={{ color: "var(--mis-text)" }}>AI Employees</h1>
+        <h1 className="text-lg font-semibold" style={{ color: "var(--mis-text)" }}>{copy.title}</h1>
         <p className="text-xs mt-0.5" style={{ color: "var(--mis-dim)" }}>
-          {agents.length} registered agents · {agents.filter(a => a.status === "running").length} active · live backend
+          {copy.summary}
         </p>
-        {loading && <p className="text-xs mt-2" style={{ color: "var(--mis-muted)" }}>Loading live agents...</p>}
-        {error && <p className="text-xs mt-2" style={{ color: "#F87171" }}>Live backend unavailable: {error}</p>}
+        {loading && <p className="text-xs mt-2" style={{ color: "var(--mis-muted)" }}>{copy.loading}</p>}
+        {error && <p className="text-xs mt-2" style={{ color: "#F87171" }}>{copy.backendUnavailable}: {error}</p>}
         <button onClick={refresh} className="mt-3 text-[11px] px-3 py-1.5 rounded" style={{ background: "rgba(34,211,238,0.12)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.2)" }}>
-          Refresh live agents
+          {copy.refresh}
         </button>
       </div>
 
@@ -82,11 +111,11 @@ export function AIEmployees() {
               {/* Stats row */}
               <div className="grid grid-cols-3 gap-2 mb-3">
                 <div>
-                  <div className="text-[10px]" style={{ color: "var(--mis-muted)" }}>Runs</div>
+                  <div className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{copy.runs}</div>
                   <div className="text-xs font-semibold" style={{ color: "var(--mis-text)" }}>{agent.run_count}</div>
                 </div>
                 <div>
-                  <div className="text-[10px]" style={{ color: "var(--mis-muted)" }}>Success</div>
+                  <div className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{copy.success}</div>
                   <div
                     className="text-xs font-semibold"
                     style={{ color: agent.success_rate >= 0.8 ? "var(--mis-success)" : "var(--mis-warning)" }}
@@ -95,7 +124,7 @@ export function AIEmployees() {
                   </div>
                 </div>
                 <div>
-                  <div className="text-[10px]" style={{ color: "var(--mis-muted)" }}>Approvals</div>
+                  <div className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{copy.approvals}</div>
                   <div className="text-xs font-semibold" style={{ color: agent.approval_count > 5 ? "#FBBF24" : "var(--mis-text)" }}>
                     {agent.approval_count}
                   </div>
@@ -105,7 +134,7 @@ export function AIEmployees() {
               {/* Budget bar */}
               <div>
                 <div className="flex items-center justify-between mb-1">
-                  <span className="text-[10px]" style={{ color: "var(--mis-muted)" }}>Budget</span>
+                  <span className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{copy.budget}</span>
                   <span className="text-[10px]" style={{ color: "var(--mis-dim)" }}>
                     ${agent.budget_used_usd.toFixed(2)} / ${agent.budget_limit_usd}
                   </span>
@@ -130,7 +159,7 @@ export function AIEmployees() {
                 ))}
                 {agent.allowed_tools.length > 3 && (
                   <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: "var(--mis-surface2)", color: "var(--mis-muted)" }}>
-                    +{agent.allowed_tools.length - 3} more
+                    +{agent.allowed_tools.length - 3} {copy.more}
                   </span>
                 )}
               </div>

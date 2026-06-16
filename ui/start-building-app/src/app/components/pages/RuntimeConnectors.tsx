@@ -2,8 +2,10 @@ import { Plug, Radio } from "lucide-react";
 import { ConnectorCard } from "../shared/ConnectorCard";
 import { StatusBadge } from "../shared/StatusBadge";
 import { loadAudit, loadRuntimeConnectors, useLiveData } from "../../data/liveApi";
+import { pick, usePreferences } from "../../context/PreferencesContext";
 
 export function RuntimeConnectors() {
+  const { locale } = usePreferences();
   const { data, loading, error, refresh } = useLiveData(async () => {
     const [runtimeConnectors, auditLogs] = await Promise.all([loadRuntimeConnectors(), loadAudit()]);
     const connectorAuditLogs = auditLogs.filter(a =>
@@ -13,6 +15,34 @@ export function RuntimeConnectors() {
   }, []);
   const runtimeConnectors = data?.runtimeConnectors || [];
   const connectorAuditLogs = data?.connectorAuditLogs || [];
+  const copy = pick(locale, {
+    en: {
+      title: "Runtime Connectors",
+      subtitle: "Vendor-neutral control plane · live AgentOps MIS backend",
+      loading: "Loading live connectors...",
+      backendUnavailable: "Live backend unavailable",
+      refresh: "Refresh live",
+      ready: "Ready",
+      live: "Live",
+      dryRun: "Dry-run",
+      unavailable: "Unavailable",
+      plannedConnectors: "Planned Connectors",
+      recentRuntimeEvents: "Recent Runtime Events",
+    },
+    zh: {
+      title: "运行时连接器",
+      subtitle: "供应商中立的控制平面 · 连接本地 AgentOps MIS 后端",
+      loading: "正在加载实时连接器...",
+      backendUnavailable: "本地后端不可用",
+      refresh: "刷新实时状态",
+      ready: "就绪",
+      live: "实时",
+      dryRun: "安全预演",
+      unavailable: "不可用",
+      plannedConnectors: "计划接入的连接器",
+      recentRuntimeEvents: "最近运行时事件",
+    },
+  });
 
   return (
     <div className="space-y-6 w-full">
@@ -20,27 +50,27 @@ export function RuntimeConnectors() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-lg font-semibold" style={{ color: "var(--mis-text)" }}>
-            Runtime Connectors
+            {copy.title}
           </h1>
           <p className="text-xs mt-0.5" style={{ color: "var(--mis-dim)" }}>
-            Vendor-neutral control plane · live AgentOps MIS backend
+            {copy.subtitle}
           </p>
-          {loading && <p className="text-xs mt-2" style={{ color: "var(--mis-muted)" }}>Loading live connectors...</p>}
-          {error && <p className="text-xs mt-2" style={{ color: "#F87171" }}>Live backend unavailable: {error}</p>}
+          {loading && <p className="text-xs mt-2" style={{ color: "var(--mis-muted)" }}>{copy.loading}</p>}
+          {error && <p className="text-xs mt-2" style={{ color: "#F87171" }}>{copy.backendUnavailable}: {error}</p>}
         </div>
         <button onClick={refresh} className="flex items-center gap-2 text-xs px-3 py-1.5 rounded" style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)", color: "var(--mis-dim)" }}>
           <Radio size={12} style={{ color: "var(--mis-success)" }} />
-          Refresh live
+          {copy.refresh}
         </button>
       </div>
 
       {/* Status summary */}
       <div className="flex gap-4 flex-wrap">
         {[
-          { label: "Ready", count: runtimeConnectors.filter(c => c.status === "ready").length, status: "ready" },
-          { label: "Live", count: runtimeConnectors.filter(c => c.status === "live").length, status: "live" },
-          { label: "Dry-run", count: runtimeConnectors.filter(c => c.status === "dry_run").length, status: "dry_run" },
-          { label: "Unavailable", count: runtimeConnectors.filter(c => c.status === "unavailable").length, status: "unavailable" },
+          { label: copy.ready, count: runtimeConnectors.filter(c => c.status === "ready").length, status: "ready" },
+          { label: copy.live, count: runtimeConnectors.filter(c => c.status === "live").length, status: "live" },
+          { label: copy.dryRun, count: runtimeConnectors.filter(c => c.status === "dry_run").length, status: "dry_run" },
+          { label: copy.unavailable, count: runtimeConnectors.filter(c => c.status === "unavailable").length, status: "unavailable" },
         ].map(({ label, count, status }) => (
           <div
             key={label}
@@ -68,7 +98,7 @@ export function RuntimeConnectors() {
       >
         <div className="font-semibold mb-2" style={{ color: "var(--mis-text)" }}>
           <Plug size={13} className="inline mr-1.5" style={{ color: "var(--mis-primary)" }} />
-          Planned Connectors
+          {copy.plannedConnectors}
         </div>
         <div className="flex gap-3 flex-wrap">
           {["OpenAI-compatible APIs", "Claude Direct", "Codex", "OpenHands", "CrewAI", "LangGraph"].map(name => (
@@ -89,7 +119,7 @@ export function RuntimeConnectors() {
           className="rounded-xl p-4"
           style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}
         >
-          <div className="text-xs font-semibold mb-3" style={{ color: "var(--mis-text)" }}>Recent Runtime Events</div>
+          <div className="text-xs font-semibold mb-3" style={{ color: "var(--mis-text)" }}>{copy.recentRuntimeEvents}</div>
           <div className="space-y-2">
             {connectorAuditLogs.map(log => (
               <div key={log.audit_id} className="flex items-center justify-between py-2" style={{ borderBottom: "1px solid var(--mis-border)" }}>
@@ -98,7 +128,7 @@ export function RuntimeConnectors() {
                   <span className="text-[11px] ml-2" style={{ color: "var(--mis-muted)" }}>{log.entity_id}</span>
                 </div>
                 <span className="text-[11px]" style={{ color: "var(--mis-muted)" }}>
-                  {new Date(log.created_at).toLocaleString()}
+                  {new Date(log.created_at).toLocaleString(locale === "zh" ? "zh-CN" : "en-US")}
                 </span>
               </div>
             ))}

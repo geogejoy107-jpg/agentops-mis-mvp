@@ -1,0 +1,465 @@
+# Agent Gateway CLI Spec
+
+## Purpose
+
+The Agent Gateway is the machine-facing layer that lets local and remote AI agents participate in AgentOps MIS without pretending to be human browser users.
+
+Browser UI is for humans. CLI, API, and MCP are for agents.
+
+## Why Browser UI Is For Humans
+
+The browser UI is optimized for judgment, review, and supervision:
+
+- Create or edit high-level goals.
+- Inspect task queues and agent performance.
+- Review approvals.
+- Read reports.
+- Inspect audit trails.
+- Watch Pixel Office status.
+
+Agents should not depend on browser clicks to do their work. Browser automation is brittle, hard to audit, and easy to confuse with human intent.
+
+## Why CLI/API/MCP Is For Agents
+
+Agents need stable machine contracts:
+
+- Pull a task.
+- Claim ownership.
+- Start a run.
+- Send heartbeat.
+- Record tool calls.
+- Request approval.
+- Submit output summaries.
+- Propose memory.
+- Submit evaluations.
+- Emit audit events.
+
+The Agent Gateway makes these operations explicit, scoped, replayable, and auditable.
+
+## Local Debugging And Secrets Policy
+
+Local debugging is allowed and expected in v1.4, especially for OpenClaw, Hermes, Dify, OpenAI File Search, and remote agents. The rule is: debug locally, never persist raw secrets.
+
+For local debug:
+
+- Use environment variables, local config files, or OS keychain-style storage for API keys.
+- Never commit `.env`, local tokens, local SQLite databases, runtime logs with credentials, or raw customer files.
+- Never store full prompts, private chats, raw responses, or credentials in `runs`, `tool_calls`, `audit_logs`, or memory.
+- Store summaries, hashes, IDs, timestamps, status, duration, cost, and scoped metadata.
+- Redact request/response previews before writing them to MIS.
+- Use `confirm_run:true` or an equivalent explicit flag for real runtime actions.
+- Keep dry-run as the default for demos and cloned repos.
+
+Example local environment names for future use:
+
+```text
+AGENTOPS_BASE_URL=http://127.0.0.1:8787
+AGENTOPS_WORKSPACE_ID=local_demo
+AGENTOPS_AGENT_ID=agt_local_researcher
+AGENTOPS_API_KEY=local_dev_only_do_not_commit
+```
+
+## CLI Commands
+
+The CLI should be a thin wrapper over the Agent Gateway API. It should return JSON by default so agents can parse it.
+
+### `agentops login`
+
+Stores a local API key or local token for the current workspace.
+
+```bash
+agentops login --base-url http://127.0.0.1:8787 --workspace local_demo
+```
+
+v1.4 can support environment-variable auth only. Interactive login is optional.
+
+### `agentops agent register`
+
+Registers or updates an AI digital employee identity.
+
+```bash
+agentops agent register \
+  --agent-id agt_kb_researcher \
+  --name "Knowledge Base Researcher" \
+  --role researcher \
+  --runtime openclaw \
+  --scope tasks:read,runs:write,toolcalls:write,approvals:request
+```
+
+Maps to `agents`.
+
+### `agentops agent heartbeat`
+
+Reports liveness, runtime, current task, and safe status metadata.
+
+```bash
+agentops agent heartbeat --agent-id agt_kb_researcher --status running
+```
+
+Maps to `agents` and `audit_logs`.
+
+### `agentops task pull`
+
+Returns available tasks for the agent based on role, scope, and workspace policy.
+
+```bash
+agentops task pull --agent-id agt_kb_researcher --limit 5
+```
+
+Reads from `tasks`.
+
+### `agentops task claim`
+
+Claims a task for an agent.
+
+```bash
+agentops task claim --task-id tsk_clean_sources --agent-id agt_doc_cleaner
+```
+
+Updates `tasks` and writes `audit_logs`.
+
+### `agentops run start`
+
+Starts a run for a claimed task.
+
+```bash
+agentops run start --task-id tsk_clean_sources --agent-id agt_doc_cleaner --runtime hermes
+```
+
+Maps to `runs`.
+
+### `agentops run heartbeat`
+
+Updates run progress without storing full private output.
+
+```bash
+agentops run heartbeat --run-id run_123 --status running --summary "Cleaned 4 source files"
+```
+
+Maps to `runs` and optionally `audit_logs`.
+
+### `agentops toolcall record`
+
+Records a tool call summary, risk level, duration, status, and redacted metadata.
+
+```bash
+agentops toolcall record \
+  --run-id run_123 \
+  --tool browser.search \
+  --status completed \
+  --risk low \
+  --summary "Checked Dify knowledge-base import docs"
+```
+
+Maps to `tool_calls`.
+
+### `agentops approval request`
+
+Requests human approval for a risky operation.
+
+```bash
+agentops approval request \
+  --run-id run_123 \
+  --task-id tsk_upload_sources \
+  --risk high \
+  --reason "Upload customer PDFs to Dify knowledge base"
+```
+
+Maps to `approvals` and `audit_logs`.
+
+### `agentops memory propose`
+
+Creates a reviewable memory candidate.
+
+```bash
+agentops memory propose \
+  --task-id tsk_eval_retrieval \
+  --type evaluation_finding \
+  --text "OpenAI File Search needs source metadata for reliable citations"
+```
+
+Maps to `memories`.
+
+### `agentops eval submit`
+
+Submits an evaluation result for a run, artifact, or task.
+
+```bash
+agentops eval submit \
+  --run-id run_123 \
+  --gate citation_grounding \
+  --score 86 \
+  --pass true \
+  --notes "Answers cite the uploaded course notes in 8/10 checks"
+```
+
+Maps to `evaluations`.
+
+### `agentops audit emit`
+
+Emits a structured audit event for important state transitions.
+
+```bash
+agentops audit emit \
+  --actor-type agent \
+  --actor-id agt_kb_researcher \
+  --action connector.plan_created \
+  --entity-type task \
+  --entity-id tsk_kb_setup
+```
+
+Maps to `audit_logs`.
+
+## API Endpoint Proposal
+
+All endpoints are under the existing local API server.
+
+```http
+POST /api/agent-gateway/register
+POST /api/agent-gateway/heartbeat
+GET  /api/agent-gateway/tasks/pull
+POST /api/agent-gateway/tasks/:id/claim
+POST /api/agent-gateway/runs/start
+POST /api/agent-gateway/runs/:id/heartbeat
+POST /api/agent-gateway/tool-calls
+POST /api/agent-gateway/approvals/request
+POST /api/agent-gateway/memories/propose
+POST /api/agent-gateway/evaluations/submit
+POST /api/agent-gateway/audit
+```
+
+### Common Request Fields
+
+Every write endpoint should accept or infer:
+
+```json
+{
+  "workspace_id": "local_demo",
+  "agent_id": "agt_kb_researcher",
+  "runtime_type": "openclaw",
+  "request_id": "optional_idempotency_key"
+}
+```
+
+### `POST /api/agent-gateway/register`
+
+Creates or updates an agent identity.
+
+Writes:
+
+- `agents`
+- `audit_logs`
+
+### `POST /api/agent-gateway/heartbeat`
+
+Updates liveness and current work state.
+
+Writes:
+
+- `agents`
+- `audit_logs` for meaningful state changes only
+
+### `GET /api/agent-gateway/tasks/pull`
+
+Returns tasks matching agent scope, role, and status.
+
+Reads:
+
+- `tasks`
+- `agents`
+- future policy tables
+
+### `POST /api/agent-gateway/tasks/:id/claim`
+
+Assigns a task to the caller when allowed.
+
+Writes:
+
+- `tasks`
+- `audit_logs`
+
+### `POST /api/agent-gateway/runs/start`
+
+Creates a run for an agent and task.
+
+Writes:
+
+- `runs`
+- `audit_logs`
+
+### `POST /api/agent-gateway/runs/:id/heartbeat`
+
+Updates run status, duration, safe output summary, and progress metadata.
+
+Writes:
+
+- `runs`
+- `audit_logs` for important transitions
+
+### `POST /api/agent-gateway/tool-calls`
+
+Records tool-call evidence.
+
+Writes:
+
+- `tool_calls`
+- `approvals` when policy requires approval
+- `audit_logs`
+
+### `POST /api/agent-gateway/approvals/request`
+
+Creates a human approval request.
+
+Writes:
+
+- `approvals`
+- `audit_logs`
+
+### `POST /api/agent-gateway/memories/propose`
+
+Creates a candidate memory, never an auto-approved memory.
+
+Writes:
+
+- `memories`
+- `audit_logs`
+
+### `POST /api/agent-gateway/evaluations/submit`
+
+Submits quality-gate output.
+
+Writes:
+
+- `evaluations`
+- `audit_logs`
+
+### `POST /api/agent-gateway/audit`
+
+Emits a direct audit event for state transitions that do not fit another endpoint.
+
+Writes:
+
+- `audit_logs`
+
+## Required Auth Model
+
+### v1.4 Local Auth
+
+v1.4 should use a simple local token or API key. It is enough for local demos and real local debugging.
+
+Required fields:
+
+- `workspace_id`
+- `agent_id`
+- API key or local token
+- permission scope
+
+Supported auth headers:
+
+```http
+Authorization: Bearer <local_token>
+X-AgentOps-Agent-Id: agt_kb_researcher
+X-AgentOps-Workspace-Id: local_demo
+```
+
+Scopes should be explicit:
+
+```text
+agents:write
+tasks:read
+tasks:claim
+runs:write
+toolcalls:write
+approvals:request
+memories:propose
+evaluations:submit
+audit:write
+```
+
+### Future Auth
+
+Future product versions should add:
+
+- Short-lived session tokens.
+- Token rotation.
+- Workspace-level RBAC.
+- Connector-specific scoped credentials.
+- Remote agent enrollment and revocation.
+- mTLS or signed heartbeats for server-side agents.
+- Trust registry for external runtimes.
+
+## Data Mapping To Existing Tables
+
+| Gateway object | Existing table | Notes |
+| --- | --- | --- |
+| Agent identity | `agents` | Register, role, runtime, status, tool scope, budget. |
+| Task assignment | `tasks` | Pull, claim, status changes, ownership. |
+| Run lifecycle | `runs` | Start, heartbeat, completion, failure, output summary. |
+| Tool evidence | `tool_calls` | Tool name, risk, duration, status, redacted metadata. |
+| Human gate | `approvals` | Required for high-risk side effects. |
+| Memory candidate | `memories` | Candidate only; approval is separate. |
+| Quality result | `evaluations` | Gate name, score, pass/fail, notes. |
+| Audit event | `audit_logs` | Append-only operational evidence. |
+
+## v1.4 Implementation Plan
+
+### Step 1: Docs Only
+
+Create and review the product usage model and Agent Gateway CLI/API spec. No backend or UI change is required for this step.
+
+### Step 2: Minimal CLI Wrapper
+
+Add a small `agentops` CLI wrapper that can:
+
+- Read `AGENTOPS_BASE_URL`.
+- Read `AGENTOPS_API_KEY`.
+- Send JSON requests.
+- Print JSON responses.
+- Avoid writing secrets to logs.
+
+The first implementation can be a Python script under `scripts/` or a small package later.
+
+### Step 3: Backend Endpoints
+
+Add minimal local endpoints under `/api/agent-gateway/*`.
+
+The first backend pass should support:
+
+- Register.
+- Heartbeat.
+- Task pull.
+- Task claim.
+- Run start.
+- Run heartbeat.
+- Tool-call record.
+- Approval request.
+- Evaluation submit.
+- Audit emit.
+
+### Step 4: Connect OpenClaw / Hermes Adapters
+
+Add adapters that translate runtime activity into Agent Gateway calls:
+
+- OpenClaw agent or cron jobs call `task pull`, `run start`, `toolcall record`, and `eval submit`.
+- Hermes or Agnesfallback local probes call `run start`, `run heartbeat`, and `audit emit`.
+- Dify / OpenAI File Search workflows can be represented as external runtimes or connectors, with uploads and writes gated by approvals.
+
+### Step 5: Remote Agent Support
+
+After local v1.4 works, support remote agents running on another computer or server:
+
+- Remote agent gets a scoped token.
+- Remote agent registers with workspace and runtime metadata.
+- Remote agent heartbeats periodically.
+- Remote agent pulls scoped tasks.
+- MIS can revoke the agent token.
+- Raw files and credentials stay outside the ledger unless explicitly approved and redacted.
+
+## Non-Goals For v1.4
+
+- No SaaS multi-tenant billing.
+- No public OAuth marketplace.
+- No automatic secret ingestion.
+- No browser-click automation as the primary agent integration.
+- No default real external writes.
+- No storage of full private transcripts or raw customer files in the ledger.

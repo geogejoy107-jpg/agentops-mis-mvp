@@ -1,12 +1,14 @@
 import type { ReactNode } from "react";
 import { Activity, AlertTriangle, Brain, CheckCircle2, RefreshCw, ShieldAlert, Wifi } from "lucide-react";
-import type { PixelMetrics } from "./pixelModel";
+import type { PixelLocale, PixelMetrics } from "./pixelModel";
+import { externalSyncDisplay, runtimeHealthDisplay } from "./pixelModel";
 
 interface OperationsBarProps {
   metrics: PixelMetrics;
   loading?: boolean;
   error?: string | null;
   onRefresh?: () => void;
+  locale?: PixelLocale;
 }
 
 interface OperationTile {
@@ -25,47 +27,48 @@ const toneStyle: Record<OperationTile["tone"], { color: string; bg: string; bord
   purple: { color: "var(--mis-purple)", bg: "rgba(168,85,247,0.12)", border: "rgba(168,85,247,0.26)" },
 };
 
-export function OperationsBar({ metrics, loading, error, onRefresh }: OperationsBarProps) {
+export function OperationsBar({ metrics, loading, error, onRefresh, locale = "en" }: OperationsBarProps) {
+  const zh = locale === "zh";
   const tiles: OperationTile[] = [
     {
-      label: "Active runs",
+      label: zh ? "运行中" : "Active runs",
       value: metrics.activeRuns,
-      hint: `${metrics.totalRuns} total`,
+      hint: zh ? `共 ${metrics.totalRuns} 次` : `${metrics.totalRuns} total`,
       tone: "cyan",
       icon: <Activity size={14} />,
     },
     {
-      label: "Pending approvals",
+      label: zh ? "待审批" : "Pending approvals",
       value: metrics.pendingApprovals,
-      hint: "human gate",
+      hint: zh ? "人工闸口" : "human gate",
       tone: metrics.pendingApprovals > 0 ? "amber" : "green",
       icon: <ShieldAlert size={14} />,
     },
     {
-      label: "Failed gates",
+      label: zh ? "失败质量门" : "Failed gates",
       value: metrics.failedQualityGates,
-      hint: "quality",
+      hint: zh ? "质量检查" : "quality",
       tone: metrics.failedQualityGates > 0 ? "red" : "green",
       icon: <CheckCircle2 size={14} />,
     },
     {
-      label: "Memory candidates",
+      label: zh ? "候选记忆" : "Memory candidates",
       value: metrics.memoryCandidates,
-      hint: "review queue",
+      hint: zh ? "审核队列" : "review queue",
       tone: "purple",
       icon: <Brain size={14} />,
     },
     {
-      label: "Runtime health",
-      value: metrics.runtimeHealth,
-      hint: "connectors",
+      label: zh ? "运行时健康" : "Runtime health",
+      value: runtimeHealthDisplay(metrics.runtimeHealth, locale),
+      hint: zh ? "连接器" : "connectors",
       tone: metrics.runtimeHealth.includes("fail") || metrics.runtimeHealth.includes("unavailable") ? "red" : "cyan",
       icon: <Wifi size={14} />,
     },
     {
-      label: "Incidents",
+      label: zh ? "故障" : "Incidents",
       value: metrics.failedRuns + metrics.blockedTasks,
-      hint: "failed / blocked",
+      hint: zh ? "失败 / 阻塞" : "failed / blocked",
       tone: metrics.failedRuns + metrics.blockedTasks > 0 ? "red" : "green",
       icon: <AlertTriangle size={14} />,
     },
@@ -75,9 +78,9 @@ export function OperationsBar({ metrics, loading, error, onRefresh }: Operations
     <section className="rounded-lg p-3" style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}>
       <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
         <div>
-          <h2 className="text-sm font-semibold" style={{ color: "var(--mis-text)" }}>Operations Bar</h2>
+          <h2 className="text-sm font-semibold" style={{ color: "var(--mis-text)" }}>{zh ? "运行状态栏" : "Operations Bar"}</h2>
           <p className="text-[11px]" style={{ color: "var(--mis-dim)" }}>
-            Live control-plane signals that drive the floor map.
+            {zh ? "驱动工作台地图的实时控制平面信号。" : "Live control-plane signals that drive the floor map."}
           </p>
         </div>
         {onRefresh && (
@@ -89,13 +92,13 @@ export function OperationsBar({ metrics, loading, error, onRefresh }: Operations
             style={{ background: "rgba(34,211,238,0.10)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.22)" }}
           >
             <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
-            Refresh
+            {zh ? "刷新" : "Refresh"}
           </button>
         )}
       </div>
       {error && (
         <div className="mb-3 rounded px-2.5 py-2 text-[11px]" style={{ background: "rgba(248,113,113,0.10)", color: "#FCA5A5", border: "1px solid rgba(248,113,113,0.24)" }}>
-          Live backend unavailable, showing demo-safe state: {error}
+          {zh ? "实时后端不可用，正在显示演示安全状态：" : "Live backend unavailable, showing demo-safe state: "}{error}
         </div>
       )}
       <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-2">
@@ -114,7 +117,7 @@ export function OperationsBar({ metrics, loading, error, onRefresh }: Operations
         })}
       </div>
       <div className="mt-2 text-[10px]" style={{ color: "var(--mis-muted)" }}>
-        Latest audit signal: <span style={{ color: "var(--mis-cyan)" }}>{metrics.latestAudit}</span> · External base: <span style={{ color: "var(--mis-cyan)" }}>{metrics.externalSyncState}</span>
+        {zh ? "最新审计信号：" : "Latest audit signal: "}<span style={{ color: "var(--mis-cyan)" }}>{metrics.latestAudit}</span> · {zh ? "外部库：" : "External base: "}<span style={{ color: "var(--mis-cyan)" }}>{externalSyncDisplay(metrics.externalSyncState, locale)}</span>
       </div>
     </section>
   );

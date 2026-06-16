@@ -98,6 +98,36 @@ export interface LocalBriefResult {
   };
 }
 
+export interface CustomerTaskWorkflowInput {
+  title: string;
+  description: string;
+  acceptance_criteria: string;
+  priority: string;
+  risk_level: string;
+  owner_agent_id?: string;
+  selected_agent_ids: string[];
+  template_id?: string;
+  workflow_kind?: string;
+  confirm_run?: boolean;
+}
+
+export interface CustomerTaskWorkflowResult {
+  provider: string;
+  workflow: string;
+  dry_run: boolean;
+  ok?: boolean;
+  task_id: string;
+  run_id?: string;
+  artifact_id?: string | null;
+  duration_ms?: number;
+  output_summary?: string;
+  error?: string | null;
+  reason?: string;
+  note?: string;
+  requires?: Record<string, unknown>;
+  selected_agent_ids?: string[];
+}
+
 function asArray<T>(value: unknown): T[] {
   return Array.isArray(value) ? (value as T[]) : [];
 }
@@ -420,5 +450,12 @@ export async function runLocalBrief(confirmRun = false): Promise<LocalBriefResul
   return apiJson<LocalBriefResult>("/workflows/local-brief", {
     method: "POST",
     body: JSON.stringify(confirmRun ? { confirm_run: true } : {}),
+  });
+}
+
+export async function runCustomerTaskWorkflow(input: CustomerTaskWorkflowInput): Promise<CustomerTaskWorkflowResult> {
+  return apiJson<CustomerTaskWorkflowResult>("/workflows/customer-task", {
+    method: "POST",
+    body: JSON.stringify(input),
   });
 }

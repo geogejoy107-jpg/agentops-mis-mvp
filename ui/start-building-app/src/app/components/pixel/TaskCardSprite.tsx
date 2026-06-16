@@ -1,10 +1,11 @@
-import type { PixelTaskCard } from "./pixelModel";
-import { PIXEL_ZONE_BY_ID } from "./pixelModel";
+import type { PixelLocale, PixelTaskCard } from "./pixelModel";
+import { PIXEL_ZONE_BY_ID, statusDisplay } from "./pixelModel";
 
 interface TaskCardSpriteProps {
   task: PixelTaskCard;
   index: number;
   onOpen: (route: string) => void;
+  locale?: PixelLocale;
 }
 
 const riskStyle: Record<PixelTaskCard["risk"], { color: string; bg: string }> = {
@@ -14,7 +15,7 @@ const riskStyle: Record<PixelTaskCard["risk"], { color: string; bg: string }> = 
   critical: { color: "#F87171", bg: "rgba(248,113,113,0.2)" },
 };
 
-export function TaskCardSprite({ task, index, onOpen }: TaskCardSpriteProps) {
+export function TaskCardSprite({ task, index, onOpen, locale = "en" }: TaskCardSpriteProps) {
   const hall = PIXEL_ZONE_BY_ID.task_hall;
   const col = index % 3;
   const row = Math.floor(index / 3) % 3;
@@ -37,7 +38,7 @@ export function TaskCardSprite({ task, index, onOpen }: TaskCardSpriteProps) {
         onOpen(task.route);
       }}
       title={`${task.title} · ${task.status}`}
-      aria-label={`Open task ${task.title}`}
+      aria-label={locale === "zh" ? `打开任务 ${task.title}` : `Open task ${task.title}`}
     >
       <div
         className="rounded-sm p-1"
@@ -51,7 +52,7 @@ export function TaskCardSprite({ task, index, onOpen }: TaskCardSpriteProps) {
         <div className="flex items-center justify-between gap-1">
           <span className="h-1.5 w-1.5 shrink-0" style={{ background: style.color }} />
           <span className="truncate text-[8px] font-mono uppercase" style={{ color: style.color }}>
-            {task.status.replace("_", " ")}
+            {statusDisplay(task.status, locale)}
           </span>
         </div>
         <div className="mt-1 truncate text-[9px] font-medium leading-tight" style={{ color: "var(--mis-text)" }}>

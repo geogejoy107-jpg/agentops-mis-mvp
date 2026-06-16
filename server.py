@@ -42,8 +42,15 @@ RISKY_TOOLS = {
     "email.send",
     "file.delete",
     "database.write",
+    "dify.knowledge.upload",
+    "openai.file_search.upload",
 }
 HIGH_RISK_CATEGORIES = {"shell", "email", "database"}
+VALID_TASK_STATUSES = {"backlog", "planned", "running", "waiting_approval", "blocked", "completed", "failed", "canceled"}
+VALID_RISK_LEVELS = {"low", "medium", "high", "critical"}
+VALID_PRIORITIES = {"low", "medium", "high", "critical"}
+VALID_TOOL_CATEGORIES = {"browser", "github", "file", "shell", "email", "notion", "discord", "database", "mcp", "custom"}
+VALID_RUNTIME_TYPES = {"mock", "claude_code", "codex", "openhands", "crewai", "langgraph", "openclaw", "hermes"}
 
 
 def now_iso() -> str:
@@ -654,6 +661,9 @@ def ensure_v121_reference_data(conn: sqlite3.Connection):
         ("base_plane_tasks", "plane", "task", "external", "planned", "Plane External Task Base", "Planned issue/task base for software teams."),
         ("base_docmost_docs", "docmost", "memory", "external", "planned", "Docmost External Knowledge Base", "Planned open-source documentation base."),
         ("base_mattermost_ops", "mattermost", "communication", "external", "planned", "Mattermost External Ops Base", "Planned team communication base."),
+        ("base_dify_knowledge", "dify", "knowledge", "external", "planned", "Dify Knowledge Base", "Planned low-code AI assistant base for document ingestion, workflows and chat apps."),
+        ("base_openai_file_search", "openai", "knowledge", "external", "planned", "OpenAI File Search Base", "Planned developer API base for file retrieval, citations and assistant workflows."),
+        ("base_anythingllm_knowledge", "anythingllm", "knowledge", "external", "planned", "AnythingLLM Knowledge Base", "Planned self-hosted knowledge base target for local/private document Q&A."),
     ]
     conn.executemany(
         """INSERT OR IGNORE INTO bases(base_id,provider,category,mode,status,display_name,description,created_at,updated_at)
@@ -667,6 +677,9 @@ def ensure_v121_reference_data(conn: sqlite3.Connection):
         "base_notion_memory": dict(tasks=0, comments=1, artifacts=1, metrics=0, webhooks=0, oauth=1, writeback=0, permissions=1, audit=0, realtime=0, notes="Notion is external memory presentation, not audit authority."),
         "base_notion_tasks": dict(tasks=1, comments=1, artifacts=1, metrics=0, webhooks=0, oauth=1, writeback=0, permissions=1, audit=0, realtime=0, notes="Notion task sync defaults to dry-run."),
         "base_notion_templates": dict(tasks=0, comments=1, artifacts=1, metrics=0, webhooks=0, oauth=1, writeback=0, permissions=1, audit=0, realtime=0, notes="Notion can present templates but core package stays local."),
+        "base_dify_knowledge": dict(tasks=0, comments=0, artifacts=1, metrics=1, webhooks=1, oauth=1, writeback=0, permissions=1, audit=0, realtime=0, notes="Dify upload is an external write and requires approval before any real connector action."),
+        "base_openai_file_search": dict(tasks=0, comments=0, artifacts=1, metrics=1, webhooks=0, oauth=1, writeback=0, permissions=1, audit=0, realtime=0, notes="OpenAI File Search upload is approval-gated; MIS stores summaries, hashes and audit evidence only."),
+        "base_anythingllm_knowledge": dict(tasks=0, comments=0, artifacts=1, metrics=1, webhooks=1, oauth=0, writeback=0, permissions=1, audit=0, realtime=0, notes="AnythingLLM can be self-hosted; external ingestion remains approval-gated."),
     }
     for base_id, c in caps.items():
         conn.execute(
@@ -678,6 +691,9 @@ def ensure_v121_reference_data(conn: sqlite3.Connection):
         ("conn_notion_memory", "base_notion_memory", "notion", "token", "dry_run", None, None, 1, 0),
         ("conn_notion_tasks", "base_notion_tasks", "notion", "token", "dry_run", None, None, 1, 0),
         ("conn_notion_templates", "base_notion_templates", "notion", "token", "dry_run", None, None, 1, 0),
+        ("conn_dify_knowledge", "base_dify_knowledge", "dify", "api_key", "planned", None, None, 1, 0),
+        ("conn_openai_file_search", "base_openai_file_search", "openai", "api_key", "planned", None, None, 1, 0),
+        ("conn_anythingllm_knowledge", "base_anythingllm_knowledge", "anythingllm", "local_token", "planned", None, None, 1, 0),
     ]
     conn.executemany(
         """INSERT OR IGNORE INTO connectors(connector_id,base_id,provider,auth_type,status,last_checked_at,last_error,dry_run_default,writeback_allowed,created_at,updated_at)
@@ -686,6 +702,12 @@ def ensure_v121_reference_data(conn: sqlite3.Connection):
     )
     for connector_id in ["conn_notion_memory", "conn_notion_tasks", "conn_notion_templates"]:
         for scope_name, required_for in [("read_content", "preview/import-preview"), ("insert_content", "export-confirmed"), ("update_content", "future writeback")]:
+            conn.execute(
+                "INSERT OR IGNORE INTO connector_scopes(scope_id,connector_id,scope_name,granted,required_for,created_at) VALUES(?,?,?,?,?,?)",
+                (stable_id("scope", connector_id, scope_name), connector_id, scope_name, 0, required_for, now),
+            )
+    for connector_id in ["conn_dify_knowledge", "conn_openai_file_search", "conn_anythingllm_knowledge"]:
+        for scope_name, required_for in [("read_metadata", "status/probe"), ("upload_documents", "approval-gated ingestion"), ("query_documents", "future assistant retrieval")]:
             conn.execute(
                 "INSERT OR IGNORE INTO connector_scopes(scope_id,connector_id,scope_name,granted,required_for,created_at) VALUES(?,?,?,?,?,?)",
                 (stable_id("scope", connector_id, scope_name), connector_id, scope_name, 0, required_for, now),
@@ -734,6 +756,21 @@ def runtime_connector_rows() -> list[dict]:
     hermes = hermes_runtime_config()
     agnes = agnesfallback_config()
     return [
+        {
+            "runtime_connector_id": "rtc_agent_gateway_local",
+            "provider": "agent-gateway",
+            "connector_type": "local_cli_api_mcp",
+            "profile_name": "local-demo",
+            "base_url": "http://127.0.0.1:8787/api/agent-gateway",
+            "binary_path": None,
+            "status": "available",
+            "allow_real_run": 1,
+            "require_confirm_run": 1,
+            "last_health_at": now,
+            "last_error": None,
+            "created_at": now,
+            "updated_at": now,
+        },
         {
             "runtime_connector_id": "rtc_hermes_default_gateway",
             "provider": "hermes",
@@ -874,6 +911,16 @@ def default_template_packages() -> list[dict]:
             {"required": ["source_links", "fact_check_pass", "human_publish_approval"], "warn": ["missing_style_memory"]},
             {"publish_actions": "human_approval", "external_posts": "confirm_export"},
             {"tasks": ["Notion", "Plane"], "memory": ["Notion", "Docmost"], "communication": ["Mattermost"]},
+        ),
+        pack(
+            "tpl_ai_knowledge_base_bot",
+            "AI Knowledge Base / Q&A Bot Template",
+            "knowledge_base_bot",
+            "Plan document cleaning, choose Dify/OpenAI File Search/AnythingLLM, design chunking, retrieval, citations, evaluation and approval-gated ingestion.",
+            ["Project Planner", "Document Cleaner", "Knowledge Base Builder", "Q&A Evaluator", "Customer Report Writer"],
+            {"required": ["source_inventory", "chunking_strategy", "citation_plan", "no_external_upload_without_approval", "evaluation_recorded"], "warn": ["missing_fallback_connector"]},
+            {"document_upload": "human_approval", "external_vector_write": "human_approval", "connector_credentials": "never_store"},
+            {"tasks": ["Notion", "Plane"], "memory": ["Notion", "Docmost"], "knowledge": ["Dify", "OpenAI File Search", "AnythingLLM"], "observability": ["Agent-MIS Local"]},
         ),
         pack(
             "tpl_one_person_company_ops",
@@ -1684,6 +1731,377 @@ def memory_candidate_row(memory_id, memory_type, text, task_id, agent_id, source
     }
 
 
+def coerce_choice(value, allowed: set[str], fallback: str) -> str:
+    value = str(value or "").strip()
+    return value if value in allowed else fallback
+
+
+def safe_json_metadata(value):
+    if isinstance(value, dict):
+        return {str(k)[:80]: safe_json_metadata(v) for k, v in list(value.items())[:40]}
+    if isinstance(value, list):
+        return [safe_json_metadata(item) for item in value[:40]]
+    if isinstance(value, (int, float, bool)) or value is None:
+        return value
+    return redact_text(str(value), 240)
+
+
+def agent_gateway_auth_error(headers) -> dict | None:
+    expected = os.environ.get("AGENTOPS_API_KEY", "").strip()
+    if not expected:
+        return None
+    supplied = (headers.get("X-AgentOps-Api-Key") or "").strip()
+    auth = (headers.get("Authorization") or "").strip()
+    if auth.lower().startswith("bearer "):
+        supplied = auth.split(" ", 1)[1].strip()
+    if supplied == expected:
+        return None
+    return {
+        "error": "unauthorized",
+        "message": "Agent Gateway local token is required when AGENTOPS_API_KEY is configured. Token values are never logged.",
+    }
+
+
+def agent_gateway_identity(headers, body=None, qs=None) -> dict:
+    body = body or {}
+    qs = qs or {}
+    agent_id = body.get("agent_id") or headers.get("X-AgentOps-Agent-Id") or (qs.get("agent_id") or [None])[0]
+    workspace_id = body.get("workspace_id") or headers.get("X-AgentOps-Workspace-Id") or (qs.get("workspace_id") or ["local-demo"])[0]
+    scope = body.get("scope") or headers.get("X-AgentOps-Scope") or "local:agent"
+    return {
+        "agent_id": str(agent_id or "").strip(),
+        "workspace_id": str(workspace_id or "local-demo").strip(),
+        "scope": redact_text(str(scope), 120),
+    }
+
+
+def ensure_gateway_agent(conn, agent_id: str, name: str | None = None, role: str | None = None, runtime_type: str | None = None):
+    if conn.execute("SELECT 1 FROM agents WHERE agent_id=?", (agent_id,)).fetchone():
+        return
+    now = now_iso()
+    upsert_agent(conn, {
+        "agent_id": agent_id,
+        "name": name or agent_id.replace("_", " ").title(),
+        "role": role or "External Runtime Agent",
+        "description": "Registered lazily through Agent Gateway. Browser UI is for humans; this API is for CLI/API/MCP agents.",
+        "runtime_type": coerce_choice(runtime_type, VALID_RUNTIME_TYPES, "mock"),
+        "model_provider": "external",
+        "model_name": "gateway-client",
+        "status": "idle",
+        "permission_level": "standard",
+        "allowed_tools": json.dumps(["agent_gateway.task", "agent_gateway.run", "agent_gateway.audit"], ensure_ascii=False),
+        "budget_limit_usd": 5.0,
+        "owner_user_id": "usr_founder",
+        "created_at": now,
+        "updated_at": now,
+    }, "agent-gateway")
+
+
+def agent_gateway_register(conn, body) -> tuple[dict, int]:
+    now = now_iso()
+    name = body.get("name") or body.get("agent_name") or "Gateway Agent"
+    agent_id = body.get("agent_id") or stable_id("agt_gw", name, body.get("runtime_profile") or body.get("workspace_id") or "local")
+    runtime_type = coerce_choice(body.get("runtime_type"), VALID_RUNTIME_TYPES, "mock")
+    tools = body.get("allowed_tools") or body.get("scopes") or ["agent_gateway.task", "agent_gateway.run", "agent_gateway.audit"]
+    if not isinstance(tools, list):
+        tools = [str(tools)]
+    row = {
+        "agent_id": agent_id,
+        "name": redact_text(name, 120) or "Gateway Agent",
+        "role": redact_text(body.get("role") or "AI Digital Employee", 120),
+        "description": redact_text(body.get("description") or "Agent registered through local Agent Gateway.", 360),
+        "runtime_type": runtime_type,
+        "model_provider": redact_text(body.get("model_provider") or body.get("provider") or "external", 80),
+        "model_name": redact_text(body.get("model_name") or body.get("model") or "gateway-client", 120),
+        "status": coerce_choice(body.get("status"), {"idle", "running", "paused", "error", "disabled"}, "idle"),
+        "permission_level": redact_text(body.get("permission_level") or "standard", 80),
+        "allowed_tools": json.dumps([redact_text(item, 120) for item in tools], ensure_ascii=False),
+        "budget_limit_usd": float(body.get("budget_limit_usd", 5.0) or 0),
+        "owner_user_id": body.get("owner_user_id") or "usr_founder",
+        "created_at": now,
+        "updated_at": now,
+    }
+    outcome = upsert_agent(conn, row, "agent-gateway")
+    runtime_event(conn, "rtc_agent_gateway_local", "agent.register", "completed", agent_id=agent_id, output_summary=f"{outcome}: {row['name']}")
+    return {"agent": row, "outcome": outcome}, 201 if outcome == "created" else 200
+
+
+def agent_gateway_heartbeat(conn, body) -> tuple[dict, int]:
+    ident = agent_gateway_identity({}, body)
+    agent_id = ident["agent_id"]
+    if not agent_id:
+        return {"error": "agent_id is required"}, 400
+    ensure_gateway_agent(conn, agent_id, runtime_type=body.get("runtime_type"))
+    before = conn.execute("SELECT * FROM agents WHERE agent_id=?", (agent_id,)).fetchone()
+    status = coerce_choice(body.get("status"), {"idle", "running", "paused", "error", "disabled"}, "idle")
+    conn.execute("UPDATE agents SET status=?, updated_at=? WHERE agent_id=?", (status, now_iso(), agent_id))
+    after = conn.execute("SELECT * FROM agents WHERE agent_id=?", (agent_id,)).fetchone()
+    runtime_event(conn, "rtc_agent_gateway_local", "agent.heartbeat", status, agent_id=agent_id, output_summary=body.get("summary") or "Heartbeat recorded.")
+    audit(conn, "agent", agent_id, "agent_gateway.heartbeat", "agents", agent_id, dict(before) if before else None, dict(after) if after else None, {"workspace_id": body.get("workspace_id", "local-demo")})
+    return {"agent_id": agent_id, "status": status, "recorded_at": now_iso()}, 200
+
+
+def agent_gateway_pull_tasks(conn, qs, headers) -> tuple[dict, int]:
+    ident = agent_gateway_identity(headers, qs=qs)
+    agent_id = ident["agent_id"]
+    limit = min(max(int((qs.get("limit") or ["10"])[0]), 1), 50)
+    statuses = qs.get("status") or ["planned", "backlog"]
+    statuses = [coerce_choice(status, VALID_TASK_STATUSES, "planned") for status in statuses]
+    placeholders = ",".join("?" for _ in statuses)
+    params = list(statuses)
+    sql = f"SELECT * FROM tasks WHERE status IN ({placeholders})"
+    if agent_id:
+        sql += " AND (owner_agent_id=? OR collaborator_agent_ids LIKE ? OR owner_agent_id IS NULL OR owner_agent_id='')"
+        params.extend([agent_id, f"%{agent_id}%"])
+    sql += " ORDER BY created_at ASC LIMIT ?"
+    params.append(limit)
+    rows = rows_to_dicts(conn.execute(sql, params).fetchall())
+    if agent_id:
+        runtime_event(conn, "rtc_agent_gateway_local", "task.pull", "completed", agent_id=agent_id, output_summary=f"Pulled {len(rows)} task(s).")
+        audit(conn, "agent", agent_id, "agent_gateway.task_pull", "tasks", agent_id, None, {"count": len(rows)}, {"workspace_id": ident["workspace_id"]})
+    return {"tasks": rows, "count": len(rows), "workspace_id": ident["workspace_id"]}, 200
+
+
+def agent_gateway_claim_task(conn, task_id: str, body) -> tuple[dict, int]:
+    ident = agent_gateway_identity({}, body)
+    agent_id = ident["agent_id"]
+    if not agent_id:
+        return {"error": "agent_id is required"}, 400
+    task = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+    if not task:
+        return {"error": "task not found"}, 404
+    ensure_gateway_agent(conn, agent_id, runtime_type=body.get("runtime_type"))
+    before = dict(task)
+    conn.execute("UPDATE tasks SET owner_agent_id=?, status='running', updated_at=? WHERE task_id=?", (agent_id, now_iso(), task_id))
+    after = dict(conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone())
+    runtime_event(conn, "rtc_agent_gateway_local", "task.claim", "completed", task_id=task_id, agent_id=agent_id, output_summary=f"{agent_id} claimed {task_id}.")
+    audit(conn, "agent", agent_id, "agent_gateway.task_claim", "tasks", task_id, before, after, {"workspace_id": ident["workspace_id"]})
+    return {"task": after, "claimed_by": agent_id}, 200
+
+
+def agent_gateway_start_run(conn, body) -> tuple[dict, int]:
+    task_id = body.get("task_id")
+    ident = agent_gateway_identity({}, body)
+    agent_id = ident["agent_id"]
+    if not task_id or not agent_id:
+        return {"error": "task_id and agent_id are required"}, 400
+    task = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+    if not task:
+        return {"error": "task not found"}, 404
+    ensure_gateway_agent(conn, agent_id, runtime_type=body.get("runtime_type"))
+    agent = conn.execute("SELECT * FROM agents WHERE agent_id=?", (agent_id,)).fetchone()
+    started = now_iso()
+    run_id = body.get("run_id") or new_id("run_gw")
+    row = {
+        "run_id": run_id,
+        "task_id": task_id,
+        "agent_id": agent_id,
+        "runtime_type": coerce_choice(body.get("runtime_type") or agent["runtime_type"], VALID_RUNTIME_TYPES, "mock"),
+        "status": coerce_choice(body.get("status"), {"running", "completed", "failed", "blocked", "waiting_approval"}, "running"),
+        "started_at": body.get("started_at") or started,
+        "ended_at": body.get("ended_at"),
+        "duration_ms": parse_ms(body.get("duration_ms")),
+        "input_summary": redact_text(body.get("input_summary") or task["title"], 200),
+        "output_summary": redact_text(body.get("output_summary"), 200) if body.get("output_summary") else None,
+        "model_provider": redact_text(body.get("model_provider") or agent["model_provider"] or "external", 80),
+        "model_name": redact_text(body.get("model_name") or agent["model_name"] or "gateway-client", 120),
+        "input_tokens": int(body.get("input_tokens") or 0),
+        "output_tokens": int(body.get("output_tokens") or 0),
+        "reasoning_tokens": int(body.get("reasoning_tokens") or 0),
+        "cost_usd": float(body.get("cost_usd") or 0),
+        "error_type": redact_text(body.get("error_type"), 80) if body.get("error_type") else None,
+        "error_message": redact_text(body.get("error_message"), 200) if body.get("error_message") else None,
+        "trace_id": body.get("trace_id") or new_id("trace"),
+        "parent_run_id": body.get("parent_run_id"),
+        "delegation_id": body.get("delegation_id") or stable_id("del", "agent_gateway", task_id, agent_id),
+        "approval_required": 1 if body.get("approval_required") else 0,
+        "created_at": started,
+    }
+    outcome = upsert_run(conn, row, "agent-gateway", {"workspace_id": ident["workspace_id"], "input_hash": stable_hash(body.get("input_summary") or task["title"])})
+    conn.execute("UPDATE tasks SET status='running', updated_at=? WHERE task_id=?", (now_iso(), task_id))
+    conn.execute("UPDATE agents SET status='running', updated_at=? WHERE agent_id=?", (now_iso(), agent_id))
+    runtime_event(conn, "rtc_agent_gateway_local", "run.start", "running", task_id=task_id, run_id=run_id, agent_id=agent_id, input_summary=row["input_summary"])
+    return {"run": row, "outcome": outcome}, 201 if outcome == "created" else 200
+
+
+def agent_gateway_run_heartbeat(conn, run_id: str, body) -> tuple[dict, int]:
+    before = conn.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
+    if not before:
+        return {"error": "run not found"}, 404
+    status = coerce_choice(body.get("status"), {"running", "completed", "failed", "blocked", "waiting_approval"}, before["status"])
+    ended_at = body.get("ended_at")
+    if status in {"completed", "failed", "blocked"} and not ended_at:
+        ended_at = now_iso()
+    output_summary = redact_text(body.get("output_summary"), 200) if body.get("output_summary") else before["output_summary"]
+    duration_ms = parse_ms(body.get("duration_ms"))
+    if duration_ms is None:
+        duration_ms = before["duration_ms"]
+    conn.execute(
+        """UPDATE runs SET status=?, ended_at=?, duration_ms=?, output_summary=?, error_type=?, error_message=?, output_tokens=?, cost_usd=?
+        WHERE run_id=?""",
+        (
+            status,
+            ended_at,
+            duration_ms,
+            output_summary,
+            redact_text(body.get("error_type"), 80) if body.get("error_type") else before["error_type"],
+            redact_text(body.get("error_message"), 200) if body.get("error_message") else before["error_message"],
+            int(body.get("output_tokens") or before["output_tokens"] or 0),
+            float(body.get("cost_usd") if body.get("cost_usd") is not None else before["cost_usd"] or 0),
+            run_id,
+        ),
+    )
+    if status in {"completed", "failed", "blocked"}:
+        task_status = "completed" if status == "completed" else "blocked" if status == "blocked" else "failed"
+        conn.execute("UPDATE tasks SET status=?, updated_at=? WHERE task_id=?", (task_status, now_iso(), before["task_id"]))
+        conn.execute("UPDATE agents SET status='idle', updated_at=? WHERE agent_id=?", (now_iso(), before["agent_id"]))
+    after = conn.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
+    runtime_event(conn, "rtc_agent_gateway_local", "run.heartbeat", status, run_id=run_id, task_id=before["task_id"], agent_id=before["agent_id"], output_summary=output_summary, error_message=body.get("error_message"))
+    audit(conn, "agent", before["agent_id"], "agent_gateway.run_heartbeat", "runs", run_id, dict(before), dict(after), {"status": status})
+    return {"run": dict(after)}, 200
+
+
+def agent_gateway_record_tool_call(conn, body) -> tuple[dict, int]:
+    run_id = body.get("run_id")
+    agent_id = body.get("agent_id")
+    run = conn.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
+    if not run:
+        return {"error": "run not found"}, 404
+    if not agent_id:
+        agent_id = run["agent_id"]
+    ensure_gateway_agent(conn, agent_id, runtime_type=body.get("runtime_type"))
+    tool_name = redact_text(body.get("tool_name") or "agent_gateway.note", 120)
+    risk = coerce_choice(body.get("risk_level") or ("high" if tool_name in RISKY_TOOLS else "low"), VALID_RISK_LEVELS, "low")
+    category = coerce_choice(body.get("tool_category"), VALID_TOOL_CATEGORIES, "custom")
+    status = coerce_choice(body.get("status"), {"planned", "running", "completed", "failed", "blocked", "waiting_approval"}, "completed" if risk in {"low", "medium"} else "waiting_approval")
+    args = safe_json_metadata(body.get("normalized_args_json") or body.get("args") or {"summary": body.get("args_summary") or "redacted"})
+    row = {
+        "tool_call_id": body.get("tool_call_id") or new_id("tc_gw"),
+        "run_id": run_id,
+        "agent_id": agent_id,
+        "tool_name": tool_name,
+        "tool_version": redact_text(body.get("tool_version") or "v1", 40),
+        "tool_category": category,
+        "normalized_args_json": json.dumps(args, ensure_ascii=False),
+        "target_resource": redact_text(body.get("target_resource"), 200) if body.get("target_resource") else None,
+        "risk_level": risk,
+        "status": status,
+        "result_summary": redact_text(body.get("result_summary"), 200) if body.get("result_summary") else None,
+        "side_effect_id": body.get("side_effect_id"),
+        "started_at": body.get("started_at") or now_iso(),
+        "ended_at": body.get("ended_at") or (now_iso() if status in {"completed", "failed", "blocked"} else None),
+        "created_at": now_iso(),
+    }
+    outcome = upsert_tool_call(conn, row, "agent-gateway", {"args_hash": stable_hash(args), "raw_omitted": True})
+    if risk in {"high", "critical"} or status == "waiting_approval":
+        conn.execute("UPDATE runs SET approval_required=1, status='waiting_approval' WHERE run_id=?", (run_id,))
+        conn.execute("UPDATE tasks SET status='waiting_approval', updated_at=? WHERE task_id=?", (now_iso(), run["task_id"]))
+    runtime_event(conn, "rtc_agent_gateway_local", "tool_call.record", status, run_id=run_id, task_id=run["task_id"], agent_id=agent_id, output_summary=f"{tool_name}: {row['result_summary'] or status}", raw_payload_hash=stable_hash(args))
+    return {"tool_call": row, "outcome": outcome}, 201 if outcome == "created" else 200
+
+
+def agent_gateway_request_approval(conn, body) -> tuple[dict, int]:
+    run_id = body.get("run_id")
+    run = conn.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
+    if not run:
+        return {"error": "run not found"}, 404
+    approval_id = body.get("approval_id") or new_id("ap_gw")
+    tool_call_id = body.get("tool_call_id")
+    reason = redact_text(body.get("reason") or "Agent requested approval for an external or high-risk action.", 260)
+    row = {
+        "approval_id": approval_id,
+        "task_id": body.get("task_id") or run["task_id"],
+        "run_id": run_id,
+        "tool_call_id": tool_call_id,
+        "requested_by_agent_id": body.get("requested_by_agent_id") or body.get("agent_id") or run["agent_id"],
+        "approver_user_id": body.get("approver_user_id") or "usr_founder",
+        "decision": "pending",
+        "reason": reason,
+        "expires_at": body.get("expires_at") or (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=2)).isoformat(),
+        "created_at": now_iso(),
+        "decided_at": None,
+    }
+    conn.execute(
+        """INSERT OR REPLACE INTO approvals(approval_id,task_id,run_id,tool_call_id,requested_by_agent_id,approver_user_id,decision,reason,expires_at,created_at,decided_at)
+        VALUES(:approval_id,:task_id,:run_id,:tool_call_id,:requested_by_agent_id,:approver_user_id,:decision,:reason,:expires_at,:created_at,:decided_at)""",
+        row,
+    )
+    conn.execute("UPDATE runs SET approval_required=1, status='waiting_approval' WHERE run_id=?", (run_id,))
+    conn.execute("UPDATE tasks SET status='waiting_approval', updated_at=? WHERE task_id=?", (now_iso(), row["task_id"]))
+    runtime_event(conn, "rtc_agent_gateway_local", "approval.request", "waiting_approval", run_id=run_id, task_id=row["task_id"], agent_id=row["requested_by_agent_id"], output_summary=reason)
+    audit(conn, "agent", row["requested_by_agent_id"], "agent_gateway.approval_request", "approvals", approval_id, None, row, {"raw_omitted": True})
+    return {"approval": row}, 201
+
+
+def agent_gateway_memory_propose(conn, body) -> tuple[dict, int]:
+    agent_id = body.get("agent_id")
+    task_id = body.get("task_id")
+    text = body.get("canonical_text") or body.get("text")
+    if not agent_id or not text:
+        return {"error": "agent_id and canonical_text are required"}, 400
+    ensure_gateway_agent(conn, agent_id, runtime_type=body.get("runtime_type"))
+    memory_id = body.get("memory_id") or stable_id("mem_gw", agent_id, task_id or "project", stable_hash(text)[:12])
+    row = {
+        "memory_id": memory_id,
+        "scope": coerce_choice(body.get("scope"), {"task", "project", "org"}, "project"),
+        "memory_type": coerce_choice(body.get("memory_type"), {"policy", "sop", "decision", "commitment", "risk", "failure_case", "project_context", "customer_preference", "agent_lesson", "artifact_summary"}, "artifact_summary"),
+        "canonical_text": redact_text(text, 360),
+        "source_type": coerce_choice(body.get("source_type"), {"chat", "email", "meeting", "github", "notion", "run_log", "manual"}, "run_log"),
+        "source_ref": redact_text(body.get("source_ref") or body.get("run_id") or "agent-gateway", 200),
+        "project_id": body.get("project_id") or "proj_mvp",
+        "task_id": task_id,
+        "agent_id": agent_id,
+        "confidence": float(body.get("confidence") or 0.72),
+        "review_status": "candidate",
+        "owner_user_id": body.get("owner_user_id") or "usr_founder",
+        "ttl_review_due_at": body.get("ttl_review_due_at") or (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=30)).isoformat(),
+        "supersedes_memory_id": body.get("supersedes_memory_id"),
+        "access_tags": json.dumps([redact_text(item, 80) for item in (body.get("access_tags") or ["agent-gateway", "review"])], ensure_ascii=False),
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+    }
+    outcome = upsert_memory_candidate(conn, row, "agent-gateway")
+    runtime_event(conn, "rtc_agent_gateway_local", "memory.propose", "completed", task_id=task_id, agent_id=agent_id, output_summary=row["canonical_text"])
+    return {"memory": row, "outcome": outcome}, 201 if outcome == "created" else 200
+
+
+def agent_gateway_eval_submit(conn, body) -> tuple[dict, int]:
+    run_id = body.get("run_id")
+    run = conn.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
+    if not run:
+        return {"error": "run not found"}, 404
+    score = float(body.get("score") if body.get("score") is not None else 1.0)
+    score = max(0.0, min(score, 1.0))
+    pass_fail = "pass" if body.get("pass_fail", "pass") == "pass" and score >= 0.5 else "fail"
+    rubric = safe_json_metadata(body.get("rubric") or body.get("rubric_json") or {"submitted_by": "agent_gateway"})
+    row = {
+        "evaluation_id": body.get("evaluation_id") or stable_id("eval_gw", run_id, body.get("evaluator_type") or "rule"),
+        "task_id": body.get("task_id") or run["task_id"],
+        "run_id": run_id,
+        "agent_id": body.get("agent_id") or run["agent_id"],
+        "evaluator_type": coerce_choice(body.get("evaluator_type"), {"human", "rule", "llm_mock"}, "rule"),
+        "score": score,
+        "pass_fail": pass_fail,
+        "rubric_json": json.dumps(rubric, ensure_ascii=False),
+        "notes": redact_text(body.get("notes") or "Submitted through Agent Gateway.", 260),
+        "created_at": now_iso(),
+    }
+    outcome = upsert_evaluation(conn, row, "agent-gateway")
+    runtime_event(conn, "rtc_agent_gateway_local", "evaluation.submit", pass_fail, run_id=run_id, task_id=row["task_id"], agent_id=row["agent_id"], output_summary=row["notes"])
+    return {"evaluation": row, "outcome": outcome}, 201 if outcome == "created" else 200
+
+
+def agent_gateway_emit_audit(conn, body) -> tuple[dict, int]:
+    agent_id = body.get("agent_id") or "agent-gateway"
+    entity_type = body.get("entity_type") or "agent_gateway"
+    entity_id = body.get("entity_id") or body.get("run_id") or agent_id
+    action = body.get("action") or "agent_gateway.audit_emit"
+    metadata = safe_json_metadata(body.get("metadata") or {})
+    audit(conn, "agent", agent_id, redact_text(action, 160), redact_text(entity_type, 80), redact_text(entity_id, 160), None, safe_json_metadata(body.get("after") or {"status": "emitted"}), metadata)
+    runtime_event(conn, "rtc_agent_gateway_local", "audit.emit", "completed", run_id=body.get("run_id"), task_id=body.get("task_id"), agent_id=agent_id, output_summary=f"Audit emitted: {redact_text(action, 120)}")
+    return {"emitted": True, "entity_type": entity_type, "entity_id": entity_id}, 201
+
+
 def run_openclaw_probe(conn) -> dict:
     agent_id = "agt_oc_main"
     cfg = read_json_file(OPENCLAW_HOME / "openclaw.json", {})
@@ -2336,6 +2754,198 @@ def run_local_ai_brief(conn, body: dict) -> dict:
     return {"provider": "agnesfallback", "workflow": "local_ai_brief", "dry_run": False, "ok": ok, "run_id": run_id, "task_id": task_id, "artifact_id": artifact_id if ok else None, "duration_ms": duration, "output_summary": row["output_summary"], "error": error}
 
 
+def ensure_customer_task_runner(conn):
+    now = now_iso()
+    conn.execute(
+        """INSERT OR IGNORE INTO users(user_id,name,email,role,created_at)
+        VALUES(?,?,?,?,?)""",
+        ("usr_customer_demo", "Customer Demo User", "customer-demo@example.local", "requester", now),
+    )
+    agent_id = "agt_customer_task_runner"
+    upsert_agent(conn, {
+        "agent_id": agent_id,
+        "name": "Customer Task Runner",
+        "role": "Customer-Facing Execution Agent",
+        "description": "Runs explicit customer tasks through the local Hermes/Agnesfallback connector and records evidence in MIS.",
+        "runtime_type": "hermes",
+        "model_provider": "agnesfallback",
+        "model_name": "agnesfallback",
+        "status": "idle",
+        "permission_level": "manager",
+        "allowed_tools": json.dumps(["agnesfallback.cli", "mis.ledger.write", "quality_gate.run"], ensure_ascii=False),
+        "budget_limit_usd": 10.0,
+        "owner_user_id": "usr_founder",
+        "created_at": now,
+        "updated_at": now,
+    }, "customer-task-workflow")
+    return agent_id
+
+
+def build_customer_task_prompt(task: dict, selected_agents: list[str], confirmed_real_run=False) -> str:
+    payload = {
+        "privacy": "Customer provided this task intentionally. Do not request or reveal credentials, private messages, or full transcripts.",
+        "execution_context": {
+            "workflow": "customer_task",
+            "confirmed_real_run": bool(confirmed_real_run),
+            "runtime": "agnesfallback.cli" if confirmed_real_run else "dry_run_plan",
+            "ledger_policy": "Store sanitized summaries and hashes only; do not store full prompt or raw response.",
+        },
+        "task": {
+            "title": redact_text(task.get("title"), 300),
+            "description": redact_text(task.get("description"), 1200),
+            "acceptance_criteria": redact_text(task.get("acceptance_criteria"), 800),
+            "priority": task.get("priority"),
+            "risk_level": task.get("risk_level"),
+            "selected_agents": selected_agents,
+        },
+        "required_output": [
+            "用中文给出可执行结果，而不是泛泛建议。",
+            "说明哪些事情由 agent 解决，哪些事情需要 MIS 前台/权限/审计解决。",
+            "给出 3-5 条下一步行动，每条有负责人或系统模块。",
+            "指出风险、阻塞和需要人工确认的地方。",
+        ],
+    }
+    return (
+        "你是 AgentOps MIS 中面向客户任务的本地执行代理。"
+        "请只基于下面 JSON 任务说明工作，不要编造外部事实。"
+        "输出应像一个可以交付给客户的任务结果简报，控制在 900 字以内。\n\n"
+        f"{json.dumps(payload, ensure_ascii=False, indent=2)}"
+    )
+
+
+def run_customer_task_workflow(conn, body: dict) -> dict:
+    cfg = hermes_runtime_config()
+    agnes = agnesfallback_config()
+    refresh_runtime_connectors(conn)
+
+    title = redact_text(body.get("title") or "客户任务", 180)
+    description = redact_text(body.get("description") or "", 1600)
+    acceptance = redact_text(body.get("acceptance_criteria") or "输出必须进入 MIS 运行账本、质量门和审计记录。", 900)
+    risk = body.get("risk_level", "medium")
+    if risk not in ("low", "medium", "high", "critical"):
+        risk = "medium"
+    priority = body.get("priority", "high")
+    if priority not in ("low", "medium", "high", "urgent"):
+        priority = "high"
+    selected_agents = [str(item) for item in body.get("selected_agent_ids", []) if item]
+    runner_agent_id = ensure_customer_task_runner(conn)
+    owner_agent_id = body.get("owner_agent_id") or (selected_agents[0] if selected_agents else runner_agent_id)
+    if not conn.execute("SELECT 1 FROM agents WHERE agent_id=?", (owner_agent_id,)).fetchone():
+        owner_agent_id = runner_agent_id
+
+    task_id = body.get("task_id") or stable_id("tsk_customer_workflow", title, description, now_iso())
+    task_row = {
+        "task_id": task_id,
+        "title": title,
+        "description": description,
+        "requester_id": body.get("requester_id", "usr_customer_demo"),
+        "owner_agent_id": owner_agent_id,
+        "collaborator_agent_ids": json.dumps(selected_agents, ensure_ascii=False),
+        "status": "running" if body.get("confirm_run") else "planned",
+        "priority": priority,
+        "due_date": body.get("due_date"),
+        "acceptance_criteria": acceptance,
+        "risk_level": risk,
+        "budget_limit_usd": float(body.get("budget_limit_usd", 1.0) or 1.0),
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+    }
+    upsert_task(conn, task_row, "customer-task-workflow")
+
+    confirm = bool(body.get("confirm_run"))
+    prompt = build_customer_task_prompt(task_row, selected_agents, confirmed_real_run=confirm and cfg["allow_real_run"])
+    prompt_hash = stable_hash(prompt)
+    plan = {
+        "provider": "agnesfallback",
+        "workflow": "customer_task",
+        "dry_run": True,
+        "task_id": task_id,
+        "would_run": agnesfallback_cli_command(agnes, "[CUSTOMER_TASK_PROMPT]"),
+        "requires": {"HERMES_ALLOW_REAL_RUN": True, "confirm_run": True},
+        "prompt_hash": prompt_hash,
+        "selected_agent_ids": selected_agents,
+        "note": "Task was created in MIS. Real execution requires explicit confirmation; full prompt/raw response are not stored.",
+    }
+    if not (cfg["allow_real_run"] and confirm):
+        runtime_event(conn, "rtc_agnesfallback_cli", "customer_task_dry_run", "planned", task_id=task_id, agent_id=runner_agent_id, prompt_hash=prompt_hash, input_summary=f"Customer task dry-run prompt_hash={prompt_hash[:16]}")
+        audit(conn, "user", "usr_customer_demo", "workflow.customer_task.dry_run", "tasks", task_id, None, plan, {"confirm_run": confirm})
+        conn.commit()
+        return plan
+
+    started_iso = now_iso()
+    started = dt.datetime.now(dt.timezone.utc)
+    ok = False
+    visible = None
+    error = None
+    try:
+        proc = subprocess.run(agnesfallback_cli_command(agnes, prompt), capture_output=True, text=True, timeout=180, check=False)
+        visible = redact_text((proc.stdout or "").strip(), 1600)
+        ok = proc.returncode == 0 and bool(visible)
+        if not ok:
+            error = redact_text(proc.stderr or visible or f"exit={proc.returncode}", 300)
+    except Exception as exc:
+        error = redact_text(str(exc), 300)
+
+    duration = int((dt.datetime.now(dt.timezone.utc) - started).total_seconds() * 1000)
+    run_id = stable_id("run_customer_task", task_id, started_iso)
+    row = {
+        "run_id": run_id,
+        "task_id": task_id,
+        "agent_id": runner_agent_id,
+        "runtime_type": "hermes",
+        "status": "completed" if ok else "failed",
+        "started_at": started_iso,
+        "ended_at": now_iso(),
+        "duration_ms": duration,
+        "input_summary": f"Customer task prompt_hash={prompt_hash[:16]}; title={title}",
+        "output_summary": visible if ok else "Customer task execution failed.",
+        "model_provider": "agnesfallback",
+        "model_name": "agnesfallback",
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "reasoning_tokens": 0,
+        "cost_usd": 0.0,
+        "error_type": None if ok else "CustomerTaskFailed",
+        "error_message": error,
+        "trace_id": None,
+        "parent_run_id": None,
+        "delegation_id": "customer-task:agnesfallback",
+        "approval_required": 0,
+        "created_at": started_iso,
+    }
+    upsert_run(conn, row, "customer-task-workflow", {"prompt_hash": prompt_hash, "confirmed": True, "selected_agent_ids": selected_agents})
+    upsert_tool_call(conn, {
+        "tool_call_id": stable_id("tc_customer_task", run_id, "agnesfallback-cli"),
+        "run_id": run_id,
+        "agent_id": runner_agent_id,
+        "tool_name": "agnesfallback.cli",
+        "tool_version": "v1",
+        "tool_category": "custom",
+        "normalized_args_json": json.dumps({"task_id": task_id, "prompt_policy": "summary_hash_only"}, ensure_ascii=False),
+        "target_resource": "local://agnesfallback/cli",
+        "risk_level": risk if risk in ("low", "medium") else "medium",
+        "status": "completed" if ok else "failed",
+        "result_summary": visible if ok else error,
+        "side_effect_id": run_id,
+        "started_at": started_iso,
+        "ended_at": now_iso(),
+        "created_at": started_iso,
+    }, "customer-task-workflow", {"prompt_hash": prompt_hash})
+    upsert_evaluation(conn, quality_gate_for_run(row), "customer-task-workflow")
+    runtime_event(conn, "rtc_agnesfallback_cli", "customer_task", "completed" if ok else "failed", run_id=run_id, task_id=task_id, agent_id=runner_agent_id, model_name="agnesfallback", latency_ms=duration, prompt_hash=prompt_hash, input_summary=f"Customer task title={title}", output_summary=visible, error_message=error, raw_payload_hash=stable_hash({"visible": visible, "error": error, "prompt_hash": prompt_hash}))
+    artifact_id = stable_id("art_customer_task", run_id)
+    if ok:
+        conn.execute(
+            """INSERT OR REPLACE INTO artifacts(artifact_id,task_id,run_id,artifact_type,title,uri,summary,created_at)
+            VALUES(?,?,?,?,?,?,?,?)""",
+            (artifact_id, task_id, run_id, "customer_result", f"客户任务结果：{title}", f"run://{run_id}", visible, now_iso()),
+        )
+    conn.execute("UPDATE tasks SET status=?, updated_at=? WHERE task_id=?", ("completed" if ok else "blocked", now_iso(), task_id))
+    audit(conn, "system", "customer-task-workflow", "workflow.customer_task", "runs", run_id, None, {"status": row["status"], "artifact_id": artifact_id if ok else None}, {"prompt_hash": prompt_hash, "confirmed": True, "selected_agent_ids": selected_agents})
+    conn.commit()
+    return {"provider": "agnesfallback", "workflow": "customer_task", "dry_run": False, "ok": ok, "run_id": run_id, "task_id": task_id, "artifact_id": artifact_id if ok else None, "duration_ms": duration, "output_summary": row["output_summary"], "error": error}
+
+
 def hermes_run_task(conn, body: dict) -> dict:
     risk = body.get("risk_level", "low")
     if risk not in ("low", "medium") and not body.get("confirm_run"):
@@ -2635,6 +3245,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def handle_get_api(self, path, qs):
         with db() as conn:
+            if path == "/api/agent-gateway/tasks/pull":
+                auth_error = agent_gateway_auth_error(self.headers)
+                if auth_error:
+                    return self.send_json(auth_error, 401)
+                payload, status = agent_gateway_pull_tasks(conn, qs, self.headers)
+                conn.commit()
+                return self.send_json(payload, status)
             if path == "/api/agents":
                 rows = conn.execute("SELECT * FROM agents ORDER BY created_at DESC").fetchall()
                 return self.send_json(rows_to_dicts(rows))
@@ -2749,6 +3366,36 @@ class Handler(BaseHTTPRequestHandler):
 
     def handle_post_api(self, path, body):
         with db() as conn:
+            if path.startswith("/api/agent-gateway/"):
+                auth_error = agent_gateway_auth_error(self.headers)
+                if auth_error:
+                    return self.send_json(auth_error, 401)
+                if path == "/api/agent-gateway/register":
+                    payload, status = agent_gateway_register(conn, body)
+                elif path == "/api/agent-gateway/heartbeat":
+                    payload, status = agent_gateway_heartbeat(conn, body)
+                elif path.startswith("/api/agent-gateway/tasks/") and path.endswith("/claim"):
+                    task_id = path.split("/")[-2]
+                    payload, status = agent_gateway_claim_task(conn, task_id, body)
+                elif path == "/api/agent-gateway/runs/start":
+                    payload, status = agent_gateway_start_run(conn, body)
+                elif path.startswith("/api/agent-gateway/runs/") and path.endswith("/heartbeat"):
+                    run_id = path.split("/")[-2]
+                    payload, status = agent_gateway_run_heartbeat(conn, run_id, body)
+                elif path == "/api/agent-gateway/tool-calls":
+                    payload, status = agent_gateway_record_tool_call(conn, body)
+                elif path == "/api/agent-gateway/approvals/request":
+                    payload, status = agent_gateway_request_approval(conn, body)
+                elif path == "/api/agent-gateway/memories/propose":
+                    payload, status = agent_gateway_memory_propose(conn, body)
+                elif path == "/api/agent-gateway/evaluations/submit":
+                    payload, status = agent_gateway_eval_submit(conn, body)
+                elif path == "/api/agent-gateway/audit":
+                    payload, status = agent_gateway_emit_audit(conn, body)
+                else:
+                    return self.send_json({"error": "unknown agent gateway endpoint"}, 404)
+                conn.commit()
+                return self.send_json(payload, status)
             if path == "/api/agents":
                 agent_id = body.get("agent_id") or new_id("agt")
                 now = now_iso()
@@ -2841,6 +3488,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"created": True})
             if path == "/api/workflows/local-brief":
                 return self.send_json(run_local_ai_brief(conn, body), 201)
+            if path == "/api/workflows/customer-task":
+                return self.send_json(run_customer_task_workflow(conn, body), 201)
             if path == "/api/integrations/openclaw/import":
                 result = import_openclaw(conn)
                 conn.commit()

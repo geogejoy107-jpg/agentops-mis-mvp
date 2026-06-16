@@ -1008,6 +1008,14 @@ export const templatePackages: TemplatePackage[] = [
     status: 'planned',
   },
   {
+    template_id: 'tpl_ai_knowledge_base_bot',
+    name: 'AI Knowledge Base / Q&A Bot',
+    description: 'Document cleaning, Dify/OpenAI File Search/AnythingLLM connector choice, chunking, embeddings, citations, evaluation and approval-gated upload.',
+    agent_roles: ['Planner', 'Document Cleaner', 'Knowledge Builder', 'Evaluator', 'Reporter'],
+    base_bindings: ['Agent-MIS Local', 'Dify', 'OpenAI File Search', 'AnythingLLM'],
+    status: 'active',
+  },
+  {
     template_id: 'tpl_one_person_ops',
     name: 'One-Person Company Ops',
     description: 'Solo operator template: single agent handling research, writing, and lightweight ops with minimal approval overhead.',
