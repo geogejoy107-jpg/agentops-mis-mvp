@@ -186,6 +186,21 @@ token_omitted: true
 revoked: 1
 ```
 
+Latest repeat run after adding worker fleet telemetry:
+
+```text
+script: python3 scripts/remote_agent_token_worker_smoke.py
+agent_id: agt_remote_worker_smoke_20260617175045
+token_id: agtok_agt_remote_worker_smoke_20260617175045_local_demo_99264bd393b2
+task_id: tsk_remote_worker_smoke_20260617175045
+run_id: run_gw_90dd36143edc
+run_status: completed
+tool_calls: 1
+evaluations: 1
+token_omitted: true
+revoked: 1
+```
+
 The `/workspace/agents` enrollment UI was verified in the in-app browser:
 
 ```text
@@ -213,6 +228,29 @@ POST /api/agent-gateway/enrollment/revoke
 
 Raw tokens are displayed only in the create response panel and are not persisted in frontend state beyond the current page session.
 
+The `/workspace/agents` worker fleet telemetry UI was verified in the in-app browser:
+
+```text
+url: http://127.0.0.1:19001/workspace/agents
+visible labels:
+  Worker Fleet 观测
+  Daemon 日志
+  最近网关事件
+  mock
+  hermes
+  openclaw
+```
+
+The log API also returned daemon log evidence:
+
+```text
+GET /api/workers/local/logs?adapter=mock
+adapter: mock
+status: stopped
+log_tail_lines: 80
+log_path_present: true
+```
+
 `python3 scripts/demo_acceptance.py` also passed after this UI change.
 
 ## What This Proves
@@ -238,5 +276,5 @@ planned MIS task
 - The worker does not call Dify or Notion.
 - The worker does not store full prompts or raw responses.
 - The worker is repo-local; it is not yet a launchd service, pip package, npm package, or signed binary.
-- The UI worker panel now supports one-shot dispatch plus local daemon start/stop; it is not a production fleet manager.
+- The UI worker panel now supports one-shot dispatch, local daemon start/stop, daemon log tails, and recent gateway events; it is not a production fleet manager.
 - Remote enrollment token issuance/revocation, endpoint-level scope enforcement, and a first enrollment UI now exist. Full RBAC, workspace isolation, token rotation, and production enrollment workflows remain future work.

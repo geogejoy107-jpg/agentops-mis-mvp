@@ -198,6 +198,7 @@ Current v1.5 implementation:
   - daemon start/stop controls,
   - daemon status cards.
   - remote agent enrollment token panel.
+  - worker fleet telemetry with daemon log tails and recent Agent Gateway events.
 - Browser verification confirmed the controls render.
 
 Acceptance evidence:
@@ -209,7 +210,11 @@ Acceptance evidence:
   - `停止常驻 worker`
   - `远程 Agent 接入`
   - `创建接入 token`
+  - `Worker Fleet 观测`
+  - `Daemon 日志`
+  - `最近网关事件`
   - daemon status cards.
+- `GET /api/workers/local/logs?adapter=mock` returned 80 log-tail lines.
 
 Remaining product work:
 
@@ -292,6 +297,7 @@ Implemented and verified:
 - Mock/Hermes/OpenClaw adapter loop.
 - UI one-shot worker dispatch.
 - UI daemon controls.
+- UI worker fleet telemetry.
 - Scoped token enrollment.
 - Remote enrollment UI.
 - Token revocation.

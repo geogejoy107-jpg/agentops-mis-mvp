@@ -190,6 +190,11 @@ export interface WorkerDaemonResult {
   error?: string;
 }
 
+export interface WorkerDaemonLogPayload {
+  provider: string;
+  daemon: WorkerDaemonStatus;
+}
+
 export interface AgentGatewayEnrollment {
   token_id: string;
   workspace_id: string;
@@ -655,6 +660,14 @@ export async function stopLocalWorkerDaemon(adapter?: "mock" | "hermes" | "openc
     method: "POST",
     body: JSON.stringify({ adapter: adapter || "all" }),
   });
+}
+
+export async function loadWorkerDaemonLogs(adapter: "mock" | "hermes" | "openclaw"): Promise<WorkerDaemonLogPayload> {
+  const raw = await apiJson<Record<string, unknown>>(`/workers/local/logs?adapter=${encodeURIComponent(adapter)}`);
+  return {
+    provider: String(raw.provider || "agentops-worker"),
+    daemon: normalizeWorkerDaemon((raw.daemon || {}) as Record<string, unknown>),
+  };
 }
 
 export async function loadAgentGatewayEnrollments(): Promise<AgentGatewayEnrollmentListPayload> {

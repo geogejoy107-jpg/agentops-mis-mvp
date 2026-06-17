@@ -273,6 +273,7 @@ python3 scripts/agent_worker.py --adapter mock --poll-interval 5 --max-tasks 10
 - `/workspace/agents` 现在有 “本地 Worker 循环 / Local Worker Loop” 面板。
 - 它可以从页面触发一次 `mock`、`Hermes` 或 `OpenClaw` worker run。
 - 它也可以启动/停止本地 mock / Hermes / OpenClaw daemon，让 worker 持续拉取普通 MIS 任务。
+- 它可以查看 “Worker Fleet 观测 / Worker Fleet Telemetry”，包括 daemon 日志尾部和最近 Agent Gateway runtime events。
 - 它也包含 “远程 Agent 接入 / Remote Agent Enrollment” 面板，可以创建、查看和吊销 scoped enrollment token；原始 token 只在创建后显示一次。
 - 后端会先创建普通 MIS 任务，再调用 `scripts/agent_worker.py --once`，结果写入 Run Ledger、Tool Calls、Evaluations 和 Audit。
 - Hermes/OpenClaw 页面派发仍会带显式确认，不改变默认安全策略。

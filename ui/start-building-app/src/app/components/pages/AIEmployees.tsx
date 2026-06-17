@@ -8,6 +8,7 @@ import {
   loadAgentGatewayEnrollments,
   loadAgents,
   loadDashboard,
+  loadWorkerDaemonLogs,
   loadWorkerStatus,
   revokeAgentGatewayEnrollment,
   startLocalWorkerDaemon,
@@ -38,10 +39,13 @@ const DEFAULT_GATEWAY_SCOPES = [
   "audit:write",
 ];
 
+const WORKER_ADAPTERS = ["mock", "hermes", "openclaw"] as const;
+
 export function AIEmployees() {
   const { locale } = usePreferences();
   const [dispatching, setDispatching] = useState<string | null>(null);
   const [dispatchResult, setDispatchResult] = useState<string | null>(null);
+  const [selectedLogAdapter, setSelectedLogAdapter] = useState<(typeof WORKER_ADAPTERS)[number]>("mock");
   const [enrollmentAction, setEnrollmentAction] = useState<string | null>(null);
   const [enrollmentResult, setEnrollmentResult] = useState<string | null>(null);
   const [createdToken, setCreatedToken] = useState<AgentGatewayEnrollmentCreateResult | null>(null);
@@ -55,16 +59,20 @@ export function AIEmployees() {
     scopes: DEFAULT_GATEWAY_SCOPES.join(", "),
   });
   const { data, loading, error, refresh } = useLiveData(async () => {
-    const [metrics, workerStatus, enrollmentPayload] = await Promise.all([
+    const [metrics, workerStatus, enrollmentPayload, daemonLogs] = await Promise.all([
       loadDashboard(),
       loadWorkerStatus(),
       loadAgentGatewayEnrollments(),
+      Promise.all(WORKER_ADAPTERS.map(adapter => loadWorkerDaemonLogs(adapter))),
     ]);
     const agents = await loadAgents(metrics);
-    return { agents, workerStatus, enrollmentPayload };
+    return { agents, workerStatus, enrollmentPayload, daemonLogs };
   }, []);
   const agents = data?.agents || [];
   const workerStatus = data?.workerStatus;
+  const daemonLogs = data?.daemonLogs || [];
+  const selectedDaemonLog = daemonLogs.find(item => item.daemon.adapter === selectedLogAdapter)?.daemon;
+  const recentEvents = workerStatus?.recent_events || [];
   const enrollments = data?.enrollmentPayload?.enrollments || [];
   const validScopes = data?.enrollmentPayload?.valid_scopes || DEFAULT_GATEWAY_SCOPES;
   const activeAgents = agents.filter(a => a.status === "running").length;
@@ -100,6 +108,15 @@ export function AIEmployees() {
       recentRun: "Recent run",
       daemonStatus: "Daemon status",
       pid: "PID",
+      fleetTitle: "Worker Fleet Telemetry",
+      fleetSummary: "Read-only observability for local daemons and Agent Gateway events.",
+      daemonLogs: "Daemon logs",
+      recentEvents: "Recent gateway events",
+      logPath: "Log path",
+      noLogs: "No log lines yet.",
+      noEvents: "No runtime events yet.",
+      eventStatus: "Status",
+      eventAgent: "Agent",
       enrollmentTitle: "Remote Agent Enrollment",
       enrollmentSummary: "Issue scoped tokens for agents running on another laptop or server. The token is shown once; MIS stores only a hash.",
       activeEnrollments: "Active enrollments",
@@ -151,6 +168,15 @@ export function AIEmployees() {
       recentRun: "最近 run",
       daemonStatus: "常驻状态",
       pid: "进程",
+      fleetTitle: "Worker Fleet 观测",
+      fleetSummary: "只读查看本地 daemon 日志和 Agent Gateway 最近事件。",
+      daemonLogs: "Daemon 日志",
+      recentEvents: "最近网关事件",
+      logPath: "日志路径",
+      noLogs: "暂无日志行。",
+      noEvents: "暂无运行事件。",
+      eventStatus: "状态",
+      eventAgent: "Agent",
       enrollmentTitle: "远程 Agent 接入",
       enrollmentSummary: "给运行在另一台电脑或服务器上的 agent 发放带权限范围的 token。token 只显示一次，MIS 只保存 hash。",
       activeEnrollments: "有效接入",
@@ -280,6 +306,11 @@ export function AIEmployees() {
     }
   };
 
+  const eventText = (event: Record<string, unknown>, key: string, fallback = "—") => {
+    const value = event[key];
+    return value === null || value === undefined || value === "" ? fallback : String(value);
+  };
+
   return (
     <div className="space-y-5 w-full">
       {/* Header */}
@@ -387,6 +418,82 @@ export function AIEmployees() {
               </div>
             </div>
           ))}
+        </div>
+      </div>
+
+      <div
+        className="rounded-xl p-4"
+        style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}
+      >
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <Activity size={14} style={{ color: "var(--mis-cyan)" }} />
+              <h2 className="text-sm font-semibold" style={{ color: "var(--mis-text)" }}>{copy.fleetTitle}</h2>
+            </div>
+            <p className="text-[11px] mt-1 max-w-2xl" style={{ color: "var(--mis-dim)" }}>{copy.fleetSummary}</p>
+          </div>
+          <div className="flex gap-1.5">
+            {WORKER_ADAPTERS.map(adapter => (
+              <button
+                key={adapter}
+                onClick={() => setSelectedLogAdapter(adapter)}
+                className="text-[11px] px-3 py-1.5 rounded"
+                style={{
+                  background: selectedLogAdapter === adapter ? "rgba(34,211,238,0.14)" : "var(--mis-surface2)",
+                  color: selectedLogAdapter === adapter ? "var(--mis-cyan)" : "var(--mis-muted)",
+                  border: "1px solid var(--mis-border)",
+                }}
+              >
+                {adapter}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-4 mt-4">
+          <div className="rounded-lg p-3 min-w-0" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.daemonLogs}</div>
+              <StatusBadge status={selectedDaemonLog?.running ? "running" : selectedDaemonLog?.status || "unknown"} />
+            </div>
+            <div className="text-[10px] mt-1 truncate" style={{ color: "var(--mis-muted)" }}>
+              {copy.logPath}: {selectedDaemonLog?.log_path || "—"}
+            </div>
+            <pre
+              className="mt-3 h-44 overflow-auto rounded p-3 text-[10px] leading-relaxed whitespace-pre-wrap"
+              style={{ background: "var(--mis-bg)", color: "var(--mis-dim)", border: "1px solid var(--mis-border)" }}
+            >
+              {(selectedDaemonLog?.log_tail || []).length > 0 ? selectedDaemonLog?.log_tail?.slice(-28).join("\n") : copy.noLogs}
+            </pre>
+          </div>
+
+          <div className="rounded-lg p-3 min-w-0" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+            <div className="text-[11px] font-semibold mb-2" style={{ color: "var(--mis-text)" }}>{copy.recentEvents}</div>
+            <div className="space-y-2 max-h-60 overflow-auto pr-1">
+              {recentEvents.length === 0 && (
+                <div className="text-[11px] rounded px-3 py-3" style={{ color: "var(--mis-muted)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                  {copy.noEvents}
+                </div>
+              )}
+              {recentEvents.slice(0, 8).map((event, index) => (
+                <div key={`${eventText(event, "runtime_event_id", String(index))}-${index}`} className="rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-[11px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>
+                      {eventText(event, "event_type")}
+                    </div>
+                    <StatusBadge status={eventText(event, "status", "unknown")} />
+                  </div>
+                  <div className="text-[10px] mt-1 truncate" style={{ color: "var(--mis-dim)" }}>
+                    {copy.eventAgent}: {eventText(event, "agent_id")} · {eventText(event, "created_at")}
+                  </div>
+                  <div className="text-[10px] mt-1 line-clamp-2" style={{ color: "var(--mis-muted)" }}>
+                    {eventText(event, "output_summary", eventText(event, "input_summary"))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
 
