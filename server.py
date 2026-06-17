@@ -4843,11 +4843,22 @@ class Handler(BaseHTTPRequestHandler):
         before = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (approval_id,)).fetchone()
         if not before:
             return self.send_json({"error": "not found"}, 404)
-        conn.execute("UPDATE approvals SET decision=?, decided_at=?, reason=? WHERE approval_id=?", (decision, now_iso(), f"Manual {decision}", approval_id))
+        conn.execute("UPDATE approvals SET decision=?, decided_at=? WHERE approval_id=?", (decision, now_iso(), approval_id))
         if before["tool_call_id"]:
+            tool_before = conn.execute("SELECT * FROM tool_calls WHERE tool_call_id=?", (before["tool_call_id"],)).fetchone()
             conn.execute("UPDATE tool_calls SET status=? WHERE tool_call_id=?", ("completed" if decision == "approved" else "blocked", before["tool_call_id"]))
+            tool_after = conn.execute("SELECT * FROM tool_calls WHERE tool_call_id=?", (before["tool_call_id"],)).fetchone()
+            audit(conn, "user", "usr_founder", f"tool_call.approval_{decision}", "tool_calls", before["tool_call_id"], dict(tool_before) if tool_before else None, dict(tool_after) if tool_after else None, {"approval_id": approval_id})
         if decision == "approved":
-            complete_run(conn, before["run_id"], "user", "usr_founder")
+            run = conn.execute("SELECT * FROM runs WHERE run_id=?", (before["run_id"],)).fetchone()
+            if run and run["status"] in {"running", "waiting_approval", "planned"}:
+                complete_run(conn, before["run_id"], "user", "usr_founder")
+            elif run:
+                run_before = dict(run)
+                conn.execute("UPDATE runs SET approval_required=0 WHERE run_id=?", (before["run_id"],))
+                conn.execute("UPDATE tasks SET status=CASE WHEN status='waiting_approval' THEN 'completed' ELSE status END, updated_at=? WHERE task_id=?", (now_iso(), before["task_id"]))
+                run_after = conn.execute("SELECT * FROM runs WHERE run_id=?", (before["run_id"],)).fetchone()
+                audit(conn, "user", "usr_founder", "run.approval_resolved", "runs", before["run_id"], run_before, dict(run_after), {"approval_id": approval_id, "decision": decision})
         else:
             run = conn.execute("SELECT * FROM runs WHERE run_id=?", (before["run_id"],)).fetchone()
             conn.execute("UPDATE runs SET status='blocked', error_type='ApprovalRejected', error_message='High-risk tool approval rejected.', ended_at=? WHERE run_id=?", (now_iso(), before["run_id"]))

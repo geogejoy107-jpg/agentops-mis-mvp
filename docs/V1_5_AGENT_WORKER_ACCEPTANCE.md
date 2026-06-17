@@ -73,6 +73,7 @@ python3 scripts/remote_agent_token_worker_smoke.py
 python3 scripts/enrollment_rotation_smoke.py
 python3 scripts/kb_bot_demo_smoke.py
 python3 scripts/kb_bot_workflow_api_smoke.py
+python3 scripts/approval_decision_side_effect_smoke.py
 ```
 
 ## Evidence
@@ -281,6 +282,21 @@ pending approval: ap_gw_8002e643f058
 ```
 
 This is the same path used by Pixel Office's "Generate KB bot project" action.
+
+The approval decision side-effect smoke passed:
+
+```text
+script: python3 scripts/approval_decision_side_effect_smoke.py
+approved approval: ap_gw_fd2603a88c4f
+approved tool: tc_gw_ddbecfc76ebd -> completed
+approved run: run_gw_ccf41fbdd066 -> completed
+approved task: tsk_kb_bot_20260617191012_03 -> completed
+rejected approval: ap_gw_62f7412387d7
+rejected tool: tc_gw_f3348b639fa3 -> blocked
+rejected run: run_gw_ff3d3fbc5a90 -> blocked
+rejected task: tsk_kb_bot_20260617191013_03 -> blocked
+reason preservation: passed
+```
 
 Latest repeat run after adding the enrollment UI:
 

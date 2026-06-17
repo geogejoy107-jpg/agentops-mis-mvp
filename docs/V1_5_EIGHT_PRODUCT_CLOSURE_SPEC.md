@@ -225,6 +225,7 @@ Current v1.5 implementation:
 - `/workspace/approvals` reads live approvals from the backend and can approve/reject through the real API.
 - `/admin/toolcalls` reads live tool-call evidence from the backend instead of mock data.
 - `/admin/tasks/:id` shows delivery artifacts and links related runs to their Run Detail pages.
+- Approval decisions preserve the original approval reason and synchronize linked tool/run/task status: approval completes the tool without overwriting completed run output; rejection blocks the tool, run and task.
 - Browser verification confirmed the controls render.
 
 Acceptance evidence:
@@ -244,6 +245,7 @@ Acceptance evidence:
 - `GET /api/approvals` returned 12 live approval rows, including pending `ap_gw_f289a8baafcd`.
 - `GET /api/tool-calls` returned 6928 live tool-call rows, including `artifact.delivery_summary`.
 - `GET /api/tasks/tsk_kb_bot_20260617185442_06` returned delivery artifact `art_kb_bot_delivery_20260617185442`.
+- `python3 scripts/approval_decision_side_effect_smoke.py` verified approve and reject status propagation.
 
 Remaining product work:
 
@@ -328,6 +330,7 @@ cd ui/start-building-app && npm run build
 python3 scripts/demo_acceptance.py
 python3 scripts/kb_bot_demo_smoke.py
 python3 scripts/kb_bot_workflow_api_smoke.py
+python3 scripts/approval_decision_side_effect_smoke.py
 python3 scripts/remote_agent_token_worker_smoke.py
 python3 scripts/workspace_isolation_smoke.py
 ```
