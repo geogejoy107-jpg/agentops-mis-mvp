@@ -536,6 +536,14 @@ Current v1.5.2 minimal support:
 - MIS can revoke the agent token.
 - Raw files and credentials stay outside the ledger unless explicitly approved and redacted.
 
+Verification helper:
+
+```bash
+python3 scripts/remote_agent_token_worker_smoke.py
+```
+
+This helper creates a scoped token, creates a normal MIS task for that agent, runs `scripts/agent_worker.py --once` with the token, verifies run/tool/eval evidence, and revokes the token by default. It does not print the raw token.
+
 Remaining future work:
 
 - Enrollment UI.

@@ -214,8 +214,9 @@ Minimum acceptance for v1.5 worker loop:
 8. `/workspace/agents` can start and stop a mock daemon; status shows running while the process is alive.
 9. A daemon can pull a newly planned task and complete it without a one-shot dispatch call.
 10. A scoped token can heartbeat and pull tasks, while a token missing `tasks:read` is rejected for task pull.
-11. Revoked tokens are rejected.
-12. Dify and Notion endpoints are not called by this worker.
+11. `python3 scripts/remote_agent_token_worker_smoke.py` can use a scoped token to run a worker end-to-end and revoke the token.
+12. Revoked tokens are rejected.
+13. Dify and Notion endpoints are not called by this worker.
 
 ## Known Limitations
 

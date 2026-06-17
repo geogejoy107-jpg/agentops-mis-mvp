@@ -68,6 +68,7 @@ Agent enrollment CLI/API:
 ./scripts/agentops agent heartbeat --id agt_remote_cli_smoke --status idle
 ./scripts/agentops task pull --agent-id agt_remote_cli_smoke --limit 1 --status planned
 ./scripts/agentops enrollment revoke --token-id agtok_...
+python3 scripts/remote_agent_token_worker_smoke.py
 ```
 
 ## Evidence
@@ -79,6 +80,7 @@ Agent enrollment CLI/API:
 | CLI | openclaw | `tsk_worker_openclaw_acceptance_20260617145647` | `run_gw_9b2a6550d489` | completed |
 | UI | mock | `tsk_worker_ui_mock_20260617150557_657b7768` | `run_gw_8fae81a1bfa6` | completed |
 | daemon | mock | `tsk_daemon_acceptance_20260617231559` | `run_gw_6ad797929084` | completed |
+| scoped token worker | mock | `tsk_remote_worker_smoke_20260617162927` | `run_gw_876a7c777841` | completed |
 
 All CLI/live adapter runs produced:
 
@@ -153,6 +155,21 @@ post-revoke pull: 401 token revoked
 ```
 
 MIS stores token hashes only. Raw token values are shown once at creation time and are not written into audit or runtime events.
+
+The remote-token worker smoke also passed:
+
+```text
+script: python3 scripts/remote_agent_token_worker_smoke.py
+agent_id: agt_remote_worker_smoke_20260617162927
+token_id: agtok_agt_remote_worker_smoke_20260617162927_local_demo_37b4595d76c5
+task_id: tsk_remote_worker_smoke_20260617162927
+run_id: run_gw_876a7c777841
+run_status: completed
+tool_calls: 1
+evaluations: 1
+token_omitted: true
+revoked: 1
+```
 
 ## What This Proves
 

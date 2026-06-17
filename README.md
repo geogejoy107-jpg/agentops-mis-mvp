@@ -201,6 +201,14 @@ agentops audit emit
 ./scripts/agentops task pull --agent-id agt_remote_builder
 ```
 
+远程 token + worker 完整 smoke：
+
+```bash
+python3 scripts/remote_agent_token_worker_smoke.py
+```
+
+它会创建 scoped token、创建一个普通 MIS 任务、用 token 跑 `scripts/agent_worker.py --once`、验证 run/tool/eval 证据，并默认吊销 token。
+
 注意：
 
 - enrollment token 只在创建响应里显示一次，MIS 只存 hash。
