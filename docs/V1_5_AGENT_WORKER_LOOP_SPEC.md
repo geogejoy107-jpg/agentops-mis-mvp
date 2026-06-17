@@ -33,9 +33,10 @@ This v1.5 track intentionally excludes Dify and Notion live sync. Those remain s
    - High-risk operations should not run automatically.
 
 6. UI Operation Loop
-   - v1.5 does not add a full worker control UI.
-   - The evidence must still appear in existing task/run/tool/evaluation/audit pages.
-   - A later UI can wrap the script with start/stop/status controls.
+   - v1.5 adds a minimal worker status and one-shot dispatch panel in the AI Employees page.
+   - The UI can trigger `mock`, `hermes`, or `openclaw` single-run workers.
+   - The evidence must appear in existing task/run/tool/evaluation/audit pages.
+   - Full start/stop daemon supervision remains v1.6+.
 
 7. Customer-Task Usefulness
    - v1.5 worker output must be useful enough for a customer task summary.
@@ -84,6 +85,39 @@ Writeback:
 - Emit an audit event.
 - Optionally propose one memory candidate only for stable operational lessons or failures.
 
+## Worker Status / Dispatch API
+
+The browser UI stays a human control surface. It does not execute adapter logic directly; it asks the backend to create a normal MIS task and run the repo-local worker once.
+
+Endpoints:
+
+```http
+GET  /api/workers/status
+POST /api/workers/local/dispatch-once
+```
+
+`GET /api/workers/status` returns recent worker agents, worker-owned tasks, worker runs, and Agent Gateway runtime events.
+
+`POST /api/workers/local/dispatch-once` accepts:
+
+```json
+{
+  "adapter": "mock",
+  "confirm_run": false,
+  "title": "worker UI dispatch task",
+  "description": "short redacted task summary",
+  "acceptance_criteria": "short acceptance summary"
+}
+```
+
+Behavior:
+
+- Creates a normal planned task with a worker owner agent.
+- Registers the worker agent through the same gateway agent path.
+- Runs `scripts/agent_worker.py --once`.
+- Requires `confirm_run:true` for Hermes/OpenClaw live adapter execution.
+- Writes audit for dispatch task creation and dispatch completion.
+
 ## Acceptance
 
 Minimum acceptance for v1.5 worker loop:
@@ -94,7 +128,8 @@ Minimum acceptance for v1.5 worker loop:
 4. `python3 scripts/agent_worker.py --once --adapter mock` completes that task and writes run/tool/eval/audit.
 5. `python3 scripts/agent_worker.py --once --adapter hermes --confirm-run` can complete a task when local Hermes gateway is live.
 6. `python3 scripts/agent_worker.py --once --adapter openclaw --confirm-run` can complete a task when OpenClaw CLI is live.
-7. Dify and Notion endpoints are not called by this worker.
+7. `/workspace/agents` can trigger one mock worker run from the browser and the run appears in run/tool/eval/audit ledgers.
+8. Dify and Notion endpoints are not called by this worker.
 
 ## Known Limitations
 
@@ -102,5 +137,6 @@ Minimum acceptance for v1.5 worker loop:
 - No daemon supervisor or launchd unit.
 - No remote enrollment UI.
 - No per-agent scope enforcement beyond existing MVP API key boundary.
+- UI controls are one-shot dispatch controls, not a persistent worker process manager.
 - Hermes/OpenClaw execution is still fixed safe adapter execution, not arbitrary prompt automation.
 - Long-form customer deliverables need a later artifact pipeline.

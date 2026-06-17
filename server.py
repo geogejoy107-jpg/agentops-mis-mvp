@@ -3329,6 +3329,131 @@ def hermes_run_task(conn, body: dict) -> dict:
     return {"created": True, "dry_run": False, "provider": "hermes", "mode": "default_gateway_fixed_probe", "ok": ok, "run_id": run_id, "task_id": task_id, "duration_ms": duration, "output_summary": row["output_summary"], "error": error}
 
 
+def worker_status(conn) -> dict:
+    worker_agents = rows_to_dicts(conn.execute(
+        """SELECT * FROM agents
+        WHERE agent_id LIKE 'agt_worker_%' OR allowed_tools LIKE '%agent_worker%'
+        ORDER BY updated_at DESC LIMIT 25"""
+    ).fetchall())
+    worker_runs = rows_to_dicts(conn.execute(
+        """SELECT * FROM runs
+        WHERE agent_id LIKE 'agt_worker_%' OR delegation_id LIKE 'worker:%'
+        ORDER BY created_at DESC LIMIT 25"""
+    ).fetchall())
+    worker_tasks = rows_to_dicts(conn.execute(
+        """SELECT * FROM tasks
+        WHERE owner_agent_id LIKE 'agt_worker_%'
+        ORDER BY created_at DESC LIMIT 25"""
+    ).fetchall())
+    worker_events = rows_to_dicts(conn.execute(
+        """SELECT * FROM runtime_events
+        WHERE agent_id LIKE 'agt_worker_%' OR event_type IN ('task.pull','task.claim','run.start','run.heartbeat','tool_call.record','evaluation.submit','audit.emit')
+        ORDER BY created_at DESC LIMIT 40"""
+    ).fetchall())
+    return {
+        "provider": "agentops-worker",
+        "status": "ready",
+        "worker_count": len(worker_agents),
+        "running_workers": len([agent for agent in worker_agents if agent.get("status") == "running"]),
+        "recent_completed_runs": len([run for run in worker_runs if run.get("status") == "completed"]),
+        "pending_worker_tasks": len([task for task in worker_tasks if task.get("status") in ("planned", "backlog")]),
+        "workers": worker_agents,
+        "recent_runs": worker_runs,
+        "recent_tasks": worker_tasks,
+        "recent_events": worker_events,
+    }
+
+
+def dispatch_local_worker_once(conn, body: dict) -> dict:
+    adapter = coerce_choice(body.get("adapter"), {"mock", "hermes", "openclaw"}, "mock")
+    confirm_run = bool(body.get("confirm_run"))
+    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d%H%M%S")
+    task_id = body.get("task_id") or stable_id("tsk_worker_ui", adapter, stamp, uuid.uuid4().hex[:8])
+    agent_id = body.get("agent_id") or stable_id("agt_worker_ui", adapter, stamp, uuid.uuid4().hex[:8])
+    now = now_iso()
+    title = redact_text(body.get("title") or f"{adapter} worker UI dispatch", 140)
+    description = redact_text(
+        body.get("description")
+        or "Run one local AgentOps worker loop from the UI and write run/tool/eval/audit evidence.",
+        600,
+    )
+    acceptance = redact_text(
+        body.get("acceptance_criteria")
+        or "Worker must complete one normal MIS task and write evidence through Agent Gateway.",
+        400,
+    )
+    ensure_gateway_agent(
+        conn,
+        agent_id,
+        name=f"UI {adapter} Worker",
+        role=f"Local {adapter} Adapter Worker",
+        runtime_type=adapter,
+    )
+    row = {
+        "task_id": task_id,
+        "title": title,
+        "description": description,
+        "requester_id": body.get("requester_id", "usr_founder"),
+        "owner_agent_id": agent_id,
+        "collaborator_agent_ids": json.dumps([], ensure_ascii=False),
+        "status": "planned",
+        "priority": coerce_choice(body.get("priority"), VALID_PRIORITIES, "high"),
+        "due_date": None,
+        "acceptance_criteria": acceptance,
+        "risk_level": "low",
+        "budget_limit_usd": float(body.get("budget_limit_usd") or 1.0),
+        "created_at": now,
+        "updated_at": now,
+    }
+    upsert_task(conn, row, "worker-ui-dispatch")
+    audit(conn, "user", "usr_founder", "worker.dispatch_task.create", "tasks", task_id, None, row, {"adapter": adapter, "confirm_run": confirm_run})
+    conn.commit()
+
+    cmd = [
+        sys.executable,
+        str(ROOT / "scripts" / "agent_worker.py"),
+        "--once",
+        "--adapter",
+        adapter,
+        "--agent-id",
+        agent_id,
+        "--base-url",
+        os.environ.get("AGENTOPS_BASE_URL", "http://127.0.0.1:8787"),
+    ]
+    if confirm_run:
+        cmd.append("--confirm-run")
+    if adapter == "hermes":
+        cmd.extend(["--hermes-gateway-url", os.environ.get("HERMES_GATEWAY_URL", "http://127.0.0.1:8642")])
+    if adapter == "openclaw":
+        cmd.extend(["--openclaw-bin", str(OPENCLAW_BIN), "--openclaw-timeout", "180"])
+
+    started = dt.datetime.now(dt.timezone.utc)
+    try:
+        proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=260, check=False)
+        stdout = proc.stdout.strip()
+        parsed = json.loads(stdout) if stdout else {}
+        ok = proc.returncode == 0 and bool(parsed.get("ok", True))
+        error = None if ok else redact_text(proc.stderr or stdout or f"exit={proc.returncode}", 240)
+    except Exception as exc:
+        parsed = {}
+        ok = False
+        error = redact_text(str(exc), 240)
+    duration = int((dt.datetime.now(dt.timezone.utc) - started).total_seconds() * 1000)
+    audit(conn, "system", "worker-dispatch", "worker.dispatch_once", "tasks", task_id, None, {"ok": ok}, {"adapter": adapter, "agent_id": agent_id, "duration_ms": duration, "error": error})
+    conn.commit()
+    return {
+        "provider": "agentops-worker",
+        "dry_run": adapter in {"hermes", "openclaw"} and not confirm_run,
+        "ok": ok,
+        "adapter": adapter,
+        "agent_id": agent_id,
+        "task_id": task_id,
+        "duration_ms": duration,
+        "worker_result": parsed,
+        "error": error,
+    }
+
+
 def run_graph(conn, run_id: str) -> dict | None:
     run = conn.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
     if not run:
@@ -3700,6 +3825,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM runtime_connectors ORDER BY provider, connector_type, profile_name").fetchall()))
             if path == "/api/runtime-events":
                 return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM runtime_events ORDER BY created_at DESC LIMIT 200").fetchall()))
+            if path == "/api/workers/status":
+                return self.send_json(worker_status(conn))
             if path == "/api/bases":
                 bases = rows_to_dicts(conn.execute("SELECT * FROM bases ORDER BY provider, category, display_name").fetchall())
                 capabilities = rows_to_dicts(conn.execute("SELECT * FROM base_capabilities ORDER BY base_id").fetchall())
@@ -3865,6 +3992,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(run_local_ai_brief(conn, body), 201)
             if path == "/api/workflows/customer-task":
                 return self.send_json(run_customer_task_workflow(conn, body), 201)
+            if path == "/api/workers/local/dispatch-once":
+                return self.send_json(dispatch_local_worker_once(conn, body), 201)
             if path == "/api/integrations/openclaw/import":
                 result = import_openclaw(conn)
                 conn.commit()

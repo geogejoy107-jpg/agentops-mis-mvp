@@ -128,6 +128,43 @@ export interface CustomerTaskWorkflowResult {
   selected_agent_ids?: string[];
 }
 
+export interface WorkerStatusPayload {
+  provider: string;
+  status: string;
+  worker_count: number;
+  running_workers: number;
+  recent_completed_runs: number;
+  pending_worker_tasks: number;
+  workers: Agent[];
+  recent_runs: Run[];
+  recent_tasks: Task[];
+  recent_events: Record<string, unknown>[];
+}
+
+export interface WorkerDispatchResult {
+  provider: string;
+  dry_run: boolean;
+  ok: boolean;
+  adapter: "mock" | "hermes" | "openclaw";
+  agent_id: string;
+  task_id: string;
+  duration_ms: number;
+  worker_result?: {
+    ok?: boolean;
+    processed?: number;
+    results?: {
+      processed?: boolean;
+      task_id?: string;
+      run_id?: string;
+      adapter?: string;
+      ok?: boolean;
+      output_summary?: string;
+      error_type?: string | null;
+    }[];
+  };
+  error?: string | null;
+}
+
 function asArray<T>(value: unknown): T[] {
   return Array.isArray(value) ? (value as T[]) : [];
 }
@@ -455,6 +492,35 @@ export async function runLocalBrief(confirmRun = false): Promise<LocalBriefResul
 
 export async function runCustomerTaskWorkflow(input: CustomerTaskWorkflowInput): Promise<CustomerTaskWorkflowResult> {
   return apiJson<CustomerTaskWorkflowResult>("/workflows/customer-task", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function loadWorkerStatus(): Promise<WorkerStatusPayload> {
+  const raw = await apiJson<Record<string, unknown>>("/workers/status");
+  return {
+    provider: String(raw.provider || "agentops-worker"),
+    status: String(raw.status || "unknown"),
+    worker_count: numberValue(raw.worker_count, 0),
+    running_workers: numberValue(raw.running_workers, 0),
+    recent_completed_runs: numberValue(raw.recent_completed_runs, 0),
+    pending_worker_tasks: numberValue(raw.pending_worker_tasks, 0),
+    workers: asArray<Record<string, unknown>>(raw.workers).map((row) => normalizeAgent(row)),
+    recent_runs: asArray<Record<string, unknown>>(raw.recent_runs).map(normalizeRun),
+    recent_tasks: asArray<Record<string, unknown>>(raw.recent_tasks).map(normalizeTask),
+    recent_events: asArray<Record<string, unknown>>(raw.recent_events),
+  };
+}
+
+export async function dispatchLocalWorkerOnce(input: {
+  adapter: "mock" | "hermes" | "openclaw";
+  confirm_run?: boolean;
+  title?: string;
+  description?: string;
+  acceptance_criteria?: string;
+}): Promise<WorkerDispatchResult> {
+  return apiJson<WorkerDispatchResult>("/workers/local/dispatch-once", {
     method: "POST",
     body: JSON.stringify(input),
   });

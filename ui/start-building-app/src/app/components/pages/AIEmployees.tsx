@@ -1,7 +1,8 @@
 import { Link } from "react-router";
-import { Bot, DollarSign, Star, Activity } from "lucide-react";
+import { useState } from "react";
+import { Bot, Play, RefreshCw, Activity } from "lucide-react";
 import { StatusBadge } from "../shared/StatusBadge";
-import { loadAgents, loadDashboard, useLiveData } from "../../data/liveApi";
+import { dispatchLocalWorkerOnce, loadAgents, loadDashboard, loadWorkerStatus, useLiveData } from "../../data/liveApi";
 import { pick, usePreferences } from "../../context/PreferencesContext";
 
 const RUNTIME_COLOR: Record<string, string> = {
@@ -17,11 +18,15 @@ const RUNTIME_COLOR: Record<string, string> = {
 
 export function AIEmployees() {
   const { locale } = usePreferences();
+  const [dispatching, setDispatching] = useState<string | null>(null);
+  const [dispatchResult, setDispatchResult] = useState<string | null>(null);
   const { data, loading, error, refresh } = useLiveData(async () => {
-    const metrics = await loadDashboard();
-    return loadAgents(metrics);
+    const [metrics, workerStatus] = await Promise.all([loadDashboard(), loadWorkerStatus()]);
+    const agents = await loadAgents(metrics);
+    return { agents, workerStatus };
   }, []);
-  const agents = data || [];
+  const agents = data?.agents || [];
+  const workerStatus = data?.workerStatus;
   const activeAgents = agents.filter(a => a.status === "running").length;
   const copy = pick(locale, {
     en: {
@@ -35,6 +40,16 @@ export function AIEmployees() {
       approvals: "Approvals",
       budget: "Budget",
       more: "more",
+      workerTitle: "Local Worker Loop",
+      workerSummary: "Pulls normal MIS tasks, executes through mock / Hermes / OpenClaw, and writes run · tool · eval · audit.",
+      workers: "Workers",
+      completedRuns: "Completed worker runs",
+      pendingTasks: "Pending worker tasks",
+      dispatchMock: "Run mock once",
+      dispatchHermes: "Run Hermes once",
+      dispatchOpenClaw: "Run OpenClaw once",
+      dispatching: "Dispatching...",
+      recentRun: "Recent run",
     },
     zh: {
       title: "AI 员工",
@@ -47,8 +62,41 @@ export function AIEmployees() {
       approvals: "审批",
       budget: "预算",
       more: "项更多",
+      workerTitle: "本地 Worker 循环",
+      workerSummary: "自动拉取普通 MIS 任务，通过 mock / Hermes / OpenClaw 执行，并写回 run · tool · eval · audit。",
+      workers: "Worker",
+      completedRuns: "已完成 worker run",
+      pendingTasks: "待处理 worker 任务",
+      dispatchMock: "运行 mock 单轮",
+      dispatchHermes: "运行 Hermes 单轮",
+      dispatchOpenClaw: "运行 OpenClaw 单轮",
+      dispatching: "正在派发...",
+      recentRun: "最近 run",
     },
   });
+
+  const runWorkerOnce = async (adapter: "mock" | "hermes" | "openclaw") => {
+    setDispatching(adapter);
+    setDispatchResult(null);
+    try {
+      const result = await dispatchLocalWorkerOnce({
+        adapter,
+        confirm_run: adapter !== "mock",
+        title: locale === "zh" ? `${adapter} worker 页面派发任务` : `${adapter} worker UI dispatch task`,
+        description: locale === "zh"
+          ? "从 AI 员工页面触发一次本地 worker，验证普通任务可以被自动执行并回写 MIS 账本。"
+          : "Trigger one local worker run from the AI Employees page and write evidence back to the MIS ledger.",
+        acceptance_criteria: "Worker must complete the task and write run/tool/eval/audit.",
+      });
+      const runId = result.worker_result?.results?.[0]?.run_id || result.task_id;
+      setDispatchResult(`${adapter}: ${result.ok ? "ok" : "failed"} · ${runId}`);
+      await refresh();
+    } catch (err) {
+      setDispatchResult(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDispatching(null);
+    }
+  };
 
   return (
     <div className="space-y-5 w-full">
@@ -63,6 +111,58 @@ export function AIEmployees() {
         <button onClick={refresh} className="mt-3 text-[11px] px-3 py-1.5 rounded" style={{ background: "rgba(34,211,238,0.12)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.2)" }}>
           {copy.refresh}
         </button>
+      </div>
+
+      <div
+        className="rounded-xl p-4"
+        style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}
+      >
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <Activity size={14} style={{ color: "var(--mis-success)" }} />
+              <h2 className="text-sm font-semibold" style={{ color: "var(--mis-text)" }}>{copy.workerTitle}</h2>
+              <StatusBadge status={workerStatus?.status || "unknown"} />
+            </div>
+            <p className="text-[11px] mt-1 max-w-2xl" style={{ color: "var(--mis-dim)" }}>{copy.workerSummary}</p>
+            {dispatchResult && (
+              <div className="text-[11px] mt-2" style={{ color: dispatchResult.includes("failed") ? "#F87171" : "var(--mis-success)" }}>
+                {dispatchResult}
+              </div>
+            )}
+          </div>
+          <div className="flex gap-2 flex-wrap justify-end">
+            {[
+              { adapter: "mock" as const, label: copy.dispatchMock },
+              { adapter: "hermes" as const, label: copy.dispatchHermes },
+              { adapter: "openclaw" as const, label: copy.dispatchOpenClaw },
+            ].map((item) => (
+              <button
+                key={item.adapter}
+                onClick={() => runWorkerOnce(item.adapter)}
+                disabled={Boolean(dispatching)}
+                className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded disabled:opacity-50"
+                style={{ background: "rgba(34,211,238,0.12)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.2)" }}
+              >
+                {dispatching === item.adapter ? <RefreshCw size={12} /> : <Play size={12} />}
+                {dispatching === item.adapter ? copy.dispatching : item.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="grid grid-cols-4 gap-3 mt-4">
+          {[
+            { label: copy.workers, value: workerStatus?.worker_count ?? "—" },
+            { label: copy.completedRuns, value: workerStatus?.recent_completed_runs ?? "—" },
+            { label: copy.pendingTasks, value: workerStatus?.pending_worker_tasks ?? "—" },
+            { label: copy.recentRun, value: workerStatus?.recent_runs?.[0]?.run_id || "—" },
+          ].map((item) => (
+            <div key={item.label} className="rounded-lg px-3 py-2" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+              <div className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{item.label}</div>
+              <div className="text-xs font-semibold truncate mt-1" style={{ color: "var(--mis-text)" }}>{item.value}</div>
+            </div>
+          ))}
+        </div>
       </div>
 
       {/* Agent cards grid */}

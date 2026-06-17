@@ -237,11 +237,28 @@ python3 scripts/agent_worker.py \
 python3 scripts/agent_worker.py --adapter mock --poll-interval 5 --max-tasks 10
 ```
 
+浏览器派发：
+
+- `/workspace/agents` 现在有 “本地 Worker 循环 / Local Worker Loop” 面板。
+- 它可以从页面触发一次 `mock`、`Hermes` 或 `OpenClaw` worker run。
+- 后端会先创建普通 MIS 任务，再调用 `scripts/agent_worker.py --once`，结果写入 Run Ledger、Tool Calls、Evaluations 和 Audit。
+- Hermes/OpenClaw 页面派发仍会带显式确认，不改变默认安全策略。
+
+Worker API：
+
+```bash
+curl -fsS http://127.0.0.1:8787/api/workers/status | jq .
+curl -fsS -X POST http://127.0.0.1:8787/api/workers/local/dispatch-once \
+  -H "Content-Type: application/json" \
+  -d '{"adapter":"mock"}' | jq .
+```
+
 边界：
 
 - 不调用 Dify / Notion。
 - 不保存完整 prompt、raw response、credentials、transcripts。
 - Hermes/OpenClaw 真实执行必须显式传 `--confirm-run`。
+- 页面控制仍是单轮派发，不是 launchd/daemon 进程管理器。
 - 当前仍是 repo-local worker，不是全局安装包或远程 enrollment 产品。
 
 Dify 可以作为本地或客户服务器上的 agent 工具层，而不是 MIS 的替代品。MIS 负责记录任务、运行、工具、审批、评估和审计；Dify 负责知识库/工作流/问答应用。查看 Dify 当前信任域和配置：

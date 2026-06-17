@@ -7,6 +7,7 @@ Command:
 ```bash
 python3 -m py_compile server.py scripts/*.py
 git diff --check
+cd ui/start-building-app && npm run build
 ```
 
 Result: passed.
@@ -50,19 +51,35 @@ python3 scripts/agent_worker.py \
 
 ## Evidence
 
-| Adapter | Task | Run | Result |
-| --- | --- | --- | --- |
-| mock | `tsk_worker_debug_create` | `run_gw_a20e5b2eb6e3` | completed |
-| hermes | `tsk_worker_hermes_acceptance_20260617145544` | `run_gw_0d793ed6bbac` | completed |
-| openclaw | `tsk_worker_openclaw_acceptance_20260617145647` | `run_gw_9b2a6550d489` | completed |
+| Path | Adapter | Task | Run | Result |
+| --- | --- | --- | --- | --- |
+| CLI | mock | `tsk_worker_debug_create` | `run_gw_a20e5b2eb6e3` | completed |
+| CLI | hermes | `tsk_worker_hermes_acceptance_20260617145544` | `run_gw_0d793ed6bbac` | completed |
+| CLI | openclaw | `tsk_worker_openclaw_acceptance_20260617145647` | `run_gw_9b2a6550d489` | completed |
+| UI | mock | `tsk_worker_ui_mock_20260617150557_657b7768` | `run_gw_8fae81a1bfa6` | completed |
 
-All three runs produced:
+All CLI/live adapter runs produced:
 
 - `runs.status = completed`
 - one `tool_calls` row with `agent_worker.{adapter}`
 - one `evaluations` row with `pass`
 - `audit_logs` entries including `agent_worker.task_processed`
 - completed task status
+
+The UI-triggered mock worker run was launched from `/workspace/agents` through:
+
+```http
+POST /api/workers/local/dispatch-once
+```
+
+It produced the same ledger evidence:
+
+```text
+runs:        run_gw_8fae81a1bfa6 completed
+tool_calls:  agent_worker.mock completed
+evaluations: pass
+audit_logs:  task.create, worker.dispatch_task.create, task_claim, run.create, run_heartbeat, agent_worker.task_processed, worker.dispatch_once
+```
 
 ## What This Proves
 
@@ -87,4 +104,5 @@ planned MIS task
 - The worker does not call Dify or Notion.
 - The worker does not store full prompts or raw responses.
 - The worker is repo-local; it is not yet a launchd service, pip package, npm package, or signed binary.
-- Remote enrollment, token revocation, RBAC, scope enforcement, and UI worker controls remain future work.
+- The UI worker panel is a one-shot dispatch surface, not a daemon supervisor.
+- Remote enrollment, token revocation, RBAC, and scope enforcement remain future work.
