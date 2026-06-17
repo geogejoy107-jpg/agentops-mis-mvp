@@ -10,7 +10,7 @@ This spec covers the eight non-Dify/Notion product gaps identified during v1.5 p
 
 Excluded from this closure spec:
 
-- Dify live dataset upload and knowledge-base bot delivery.
+- Dify live dataset upload and deployed chatbot hosting.
 - Notion bidirectional sync.
 - SaaS billing, hosted multi-tenant deployment, and marketplace connectors.
 
@@ -264,6 +264,7 @@ Current v1.5 implementation:
 - Remote token worker smoke creates and completes a normal task through the ledger.
 - AI knowledge-base / Q&A bot customer demo creates a six-step AI-team project, pending approval for external upload, evaluations, memories, audit events, and a customer delivery artifact through Agent Gateway.
 - Agent Gateway supports `POST /api/agent-gateway/artifacts` and CLI `agentops artifact record` for delivery summaries that store only safe summary/URI/hash metadata.
+- Pixel Office can start the same six-step customer project through `POST /api/workflows/kb-bot-project`, so the classroom/customer flow no longer requires manually running the script.
 
 Acceptance evidence:
 
@@ -274,6 +275,12 @@ Acceptance evidence:
   - project: `20260617185442`
   - delivery artifact: `art_kb_bot_delivery_20260617185442`
   - pending external-upload approval: `ap_gw_f289a8baafcd`
+- Browser-facing workflow smoke: `python3 scripts/kb_bot_workflow_api_smoke.py`
+  - project: `20260617190650`
+  - final task: `tsk_kb_bot_20260617190650_06`
+  - final run: `run_gw_b365e7e325c6`
+  - delivery artifact: `art_kb_bot_delivery_20260617190650`
+  - pending external-upload approval: `ap_gw_8002e643f058`
 
 Remaining product work:
 
@@ -320,6 +327,7 @@ git diff --check
 cd ui/start-building-app && npm run build
 python3 scripts/demo_acceptance.py
 python3 scripts/kb_bot_demo_smoke.py
+python3 scripts/kb_bot_workflow_api_smoke.py
 python3 scripts/remote_agent_token_worker_smoke.py
 python3 scripts/workspace_isolation_smoke.py
 ```

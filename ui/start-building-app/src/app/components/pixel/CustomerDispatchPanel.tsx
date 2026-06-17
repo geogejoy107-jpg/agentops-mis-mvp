@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 import { CheckCircle2, Loader2, Play, ShieldCheck } from "lucide-react";
 import type { Agent } from "../../data/mockData";
-import { runCustomerTaskWorkflow, type CustomerTaskWorkflowResult } from "../../data/liveApi";
+import { runCustomerTaskWorkflow, runKbBotProjectWorkflow, type CustomerTaskWorkflowResult, type KbBotProjectWorkflowResult } from "../../data/liveApi";
 import type { PixelLocale } from "./pixelModel";
 
 interface CustomerDispatchPanelProps {
@@ -43,7 +43,9 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
   const [risk, setRisk] = useState<(typeof riskOptions)[number]>("medium");
   const [selected, setSelected] = useState<string[]>(defaultSelected);
   const [busy, setBusy] = useState(false);
+  const [kbBusy, setKbBusy] = useState(false);
   const [result, setResult] = useState<CustomerTaskWorkflowResult | null>(null);
+  const [kbResult, setKbResult] = useState<KbBotProjectWorkflowResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -85,6 +87,20 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
     }
   };
 
+  const runKbProject = async () => {
+    setKbBusy(true);
+    setError(null);
+    try {
+      const next = await runKbBotProjectWorkflow();
+      setKbResult(next);
+      await onRefresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setKbBusy(false);
+    }
+  };
+
   return (
     <section className="rounded-lg p-4" style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}>
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -110,6 +126,18 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
             {result.run_id && (
               <Link className="rounded px-2.5 py-1.5" style={{ background: "rgba(168,85,247,0.12)", color: "var(--mis-purple)", border: "1px solid rgba(168,85,247,0.26)" }} to={`/admin/runs/${result.run_id}`}>
                 {zh ? "打开运行账本" : "Open run"}
+              </Link>
+            )}
+          </div>
+        )}
+        {kbResult?.task_id && (
+          <div className="flex flex-wrap gap-2 text-[11px]">
+            <Link className="rounded px-2.5 py-1.5" style={{ background: "rgba(34,211,238,0.10)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.22)" }} to={`/admin/tasks/${kbResult.task_id}`}>
+              {zh ? "打开项目交付任务" : "Open project delivery task"}
+            </Link>
+            {kbResult.run_id && (
+              <Link className="rounded px-2.5 py-1.5" style={{ background: "rgba(168,85,247,0.12)", color: "var(--mis-purple)", border: "1px solid rgba(168,85,247,0.26)" }} to={`/admin/runs/${kbResult.run_id}`}>
+                {zh ? "打开最终运行" : "Open final run"}
               </Link>
             )}
           </div>
@@ -208,6 +236,16 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
         </button>
         <button
           type="button"
+          onClick={runKbProject}
+          disabled={busy || kbBusy}
+          className="inline-flex items-center gap-1.5 rounded px-3 py-2 text-xs disabled:opacity-50"
+          style={{ background: "rgba(42,157,143,0.14)", color: "var(--mis-success)", border: "1px solid rgba(42,157,143,0.30)" }}
+        >
+          {kbBusy ? <Loader2 size={13} className="animate-spin" /> : <CheckCircle2 size={13} />}
+          {zh ? "一键生成知识库机器人项目" : "Generate KB bot project"}
+        </button>
+        <button
+          type="button"
           onClick={() => submit(true)}
           disabled={busy || !title.trim()}
           className="inline-flex items-center gap-1.5 rounded px-3 py-2 text-xs disabled:opacity-50"
@@ -236,6 +274,33 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
               {result.reason && <div><span style={{ color: "var(--mis-muted)" }}>{zh ? "原因：" : "Reason: "}</span>{result.reason}</div>}
               {result.output_summary && <p className="pt-1 leading-relaxed" style={{ color: "var(--mis-dim)" }}>{result.output_summary}</p>}
             </div>
+          )}
+        </div>
+      )}
+
+      {kbResult && (
+        <div className="mt-4 rounded p-3 text-[11px]" style={{ background: kbResult.ok ? "rgba(42,157,143,0.10)" : "rgba(248,113,113,0.10)", color: "var(--mis-text)", border: "1px solid rgba(148,163,184,0.18)" }}>
+          {kbResult.ok ? (
+            <div className="space-y-1">
+              <div>
+                <span style={{ color: "var(--mis-muted)" }}>{zh ? "知识库项目：" : "KB project: "}</span>
+                {kbResult.project_id}
+              </div>
+              <div><span style={{ color: "var(--mis-muted)" }}>{zh ? "任务数：" : "Tasks: "}</span>{kbResult.results?.length || 0}</div>
+              {kbResult.approval_ids && kbResult.approval_ids.length > 0 && (
+                <div><span style={{ color: "var(--mis-muted)" }}>{zh ? "待审批：" : "Pending approval: "}</span>{kbResult.approval_ids[0]}</div>
+              )}
+              {kbResult.artifact_id && (
+                <div><span style={{ color: "var(--mis-muted)" }}>{zh ? "交付物：" : "Artifact: "}</span>{kbResult.artifact_id}</div>
+              )}
+              <p className="pt-1 leading-relaxed" style={{ color: "var(--mis-dim)" }}>
+                {zh
+                  ? "已创建 6 步客户项目闭环：任务、运行、工具调用、外部上传审批、评估、记忆候选、审计和交付摘要。未上传原始资料或保存凭证。"
+                  : "Created a six-step customer project loop: tasks, runs, tool calls, external-upload approval, evaluations, memory candidates, audit and delivery summary. No raw documents or credentials were uploaded."}
+              </p>
+            </div>
+          ) : (
+            <div style={{ color: "#FCA5A5" }}>{kbResult.error || (zh ? "知识库项目生成失败" : "KB project generation failed")}</div>
           )}
         </div>
       )}

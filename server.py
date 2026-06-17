@@ -3604,6 +3604,47 @@ def run_customer_task_workflow(conn, body: dict) -> dict:
     return {"provider": "agnesfallback", "workflow": "customer_task", "dry_run": False, "ok": ok, "run_id": run_id, "task_id": task_id, "artifact_id": artifact_id if ok else None, "duration_ms": duration, "output_summary": row["output_summary"], "error": error}
 
 
+def run_kb_bot_project_workflow(conn, body: dict) -> dict:
+    base_url = str(body.get("base_url") or os.environ.get("AGENTOPS_BASE_URL") or "http://127.0.0.1:8787").rstrip("/")
+    cmd = [
+        sys.executable,
+        str(ROOT / "scripts" / "run_kb_bot_demo.py"),
+        "--base-url",
+        base_url,
+        "--db-path",
+        str(DB_PATH),
+    ]
+    api_key = os.environ.get("AGENTOPS_API_KEY", "")
+    if api_key:
+        cmd.extend(["--api-key", api_key])
+    started = now_iso()
+    try:
+        proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=150, check=False)
+        if proc.returncode != 0:
+            error = redact_text(proc.stderr or proc.stdout or f"exit={proc.returncode}", 360)
+            audit(conn, "system", "kb-bot-workflow", "workflow.kb_bot_project.failed", "workflows", "kb_bot_project", None, {"status": "failed"}, {"error": error, "started_at": started})
+            conn.commit()
+            return {"provider": "agent-gateway", "workflow": "formal_ai_knowledge_base_qa_bot", "dry_run": False, "ok": False, "error": error}
+        payload = json.loads(proc.stdout or "{}")
+        audit(conn, "system", "kb-bot-workflow", "workflow.kb_bot_project", "projects", payload.get("project_id", "kb_bot_project"), None, {"status": "completed", "artifact_id": (payload.get("results") or [{}])[-1].get("artifact_id") if payload.get("results") else None}, {"external_upload_performed": False, "raw_documents_stored": False, "credentials_stored": False})
+        conn.commit()
+        payload["provider"] = "agent-gateway"
+        payload["workflow"] = "formal_ai_knowledge_base_qa_bot"
+        payload["dry_run"] = False
+        payload["ok"] = True
+        if payload.get("results"):
+            payload["task_id"] = payload["results"][-1].get("task_id")
+            payload["run_id"] = payload["results"][-1].get("run_id")
+            payload["artifact_id"] = payload["results"][-1].get("artifact_id")
+            payload["approval_ids"] = [item.get("approval_id") for item in payload["results"] if item.get("approval_id")]
+        return payload
+    except Exception as exc:
+        error = redact_text(str(exc), 360)
+        audit(conn, "system", "kb-bot-workflow", "workflow.kb_bot_project.failed", "workflows", "kb_bot_project", None, {"status": "failed"}, {"error": error, "started_at": started})
+        conn.commit()
+        return {"provider": "agent-gateway", "workflow": "formal_ai_knowledge_base_qa_bot", "dry_run": False, "ok": False, "error": error}
+
+
 def hermes_run_task(conn, body: dict) -> dict:
     cfg = hermes_runtime_config()
     status = hermes_status()
@@ -4707,6 +4748,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(run_local_ai_brief(conn, body), 201)
             if path == "/api/workflows/customer-task":
                 return self.send_json(run_customer_task_workflow(conn, body), 201)
+            if path == "/api/workflows/kb-bot-project":
+                return self.send_json(run_kb_bot_project_workflow(conn, body), 201)
             if path == "/api/workers/local/dispatch-once":
                 return self.send_json(dispatch_local_worker_once(conn, body), 201)
             if path == "/api/workers/local/start":

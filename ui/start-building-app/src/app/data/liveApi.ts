@@ -128,6 +128,30 @@ export interface CustomerTaskWorkflowResult {
   selected_agent_ids?: string[];
 }
 
+export interface KbBotProjectWorkflowResult {
+  provider: string;
+  workflow: string;
+  dry_run: boolean;
+  ok: boolean;
+  project_id?: string;
+  task_id?: string;
+  run_id?: string;
+  artifact_id?: string | null;
+  approval_ids?: string[];
+  results?: {
+    task_id: string;
+    run_id: string;
+    agent_id: string;
+    approval_id?: string | null;
+    artifact_id?: string | null;
+    evaluation_id?: string;
+    memory_id?: string;
+  }[];
+  safe_defaults?: Record<string, unknown>;
+  open_pages?: Record<string, string>;
+  error?: string | null;
+}
+
 export interface WorkerStatusPayload {
   provider: string;
   status: string;
@@ -595,6 +619,13 @@ export async function runCustomerTaskWorkflow(input: CustomerTaskWorkflowInput):
   return apiJson<CustomerTaskWorkflowResult>("/workflows/customer-task", {
     method: "POST",
     body: JSON.stringify(input),
+  });
+}
+
+export async function runKbBotProjectWorkflow(): Promise<KbBotProjectWorkflowResult> {
+  return apiJson<KbBotProjectWorkflowResult>("/workflows/kb-bot-project", {
+    method: "POST",
+    body: JSON.stringify({}),
   });
 }
 

@@ -228,6 +228,7 @@ Workspace isolation smoke 会验证：token 绑定 workspace A 后，只能 pull
 ```bash
 python3 scripts/run_kb_bot_demo.py
 python3 scripts/kb_bot_demo_smoke.py
+python3 scripts/kb_bot_workflow_api_smoke.py
 ```
 
 它会模拟 AI 团队完成“正式 AI 知识库 / 问答机器人”项目：
@@ -237,6 +238,7 @@ python3 scripts/kb_bot_demo_smoke.py
 - 写入 Run Ledger、Tool Calls、Runtime Events、Evaluations、Memories 和 Audit。
 - 通过 Agent Gateway 登记一份客户交付摘要 artifact，可从任务/运行详情看到。
 - 对 Dify / OpenAI File Search / AnythingLLM 外部上传创建 pending approval，不上传原始资料、不保存凭证。
+- 也可以从 Pixel Office 里的“一键生成知识库机器人项目”按钮触发同一条浏览器工作流，后端接口是 `POST /api/workflows/kb-bot-project`。
 
 ## v1.5 Local Agent Worker Loop
 

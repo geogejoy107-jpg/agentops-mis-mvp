@@ -47,9 +47,17 @@ Acceptance smoke:
 
 ```bash
 python3 scripts/kb_bot_demo_smoke.py
+python3 scripts/kb_bot_workflow_api_smoke.py
 ```
 
 The smoke runs the same customer scenario and checks that `tasks`, `runs`, `tool_calls`, `approvals`, `evaluations`, `memories`, `runtime_events`, `audit_logs`, and `artifacts` all increase.
+The API smoke verifies the browser-facing endpoint:
+
+```http
+POST /api/workflows/kb-bot-project
+```
+
+That endpoint powers the Pixel Office "Generate KB bot project" action.
 
 If `AGENTOPS_API_KEY` is set on the server, pass the same local key:
 

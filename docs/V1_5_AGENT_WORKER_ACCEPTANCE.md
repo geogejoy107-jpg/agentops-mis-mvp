@@ -72,6 +72,7 @@ Agent enrollment CLI/API:
 python3 scripts/remote_agent_token_worker_smoke.py
 python3 scripts/enrollment_rotation_smoke.py
 python3 scripts/kb_bot_demo_smoke.py
+python3 scripts/kb_bot_workflow_api_smoke.py
 ```
 
 ## Evidence
@@ -265,6 +266,21 @@ artifact: art_kb_bot_delivery_20260617185442
 
 These pages no longer use `mockData` for the primary ledger rows.
 Task detail now surfaces delivery artifacts and links related runs to Run Detail.
+
+The browser-facing knowledge-base bot workflow API smoke also passed:
+
+```text
+script: python3 scripts/kb_bot_workflow_api_smoke.py
+endpoint: POST /api/workflows/kb-bot-project
+project_id: 20260617190650
+steps: 6
+final task: tsk_kb_bot_20260617190650_06
+final run: run_gw_b365e7e325c6
+delivery artifact: art_kb_bot_delivery_20260617190650
+pending approval: ap_gw_8002e643f058
+```
+
+This is the same path used by Pixel Office's "Generate KB bot project" action.
 
 Latest repeat run after adding the enrollment UI:
 
