@@ -233,6 +233,8 @@ python3 scripts/run_kb_bot_demo.py
 
 `scripts/agent_worker.py` 是 repo-local worker daemon v0.1。它通过 Agent Gateway API 拉取普通 MIS 任务，认领后调用 adapter，并把 run/tool/eval/audit 写回 MIS。
 
+8 点产品闭环目标与总 spec 见 `docs/V1_5_EIGHT_PRODUCT_CLOSURE_SPEC.md`。
+
 单轮 mock：
 
 ```bash

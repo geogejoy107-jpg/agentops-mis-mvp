@@ -8,6 +8,8 @@ Turn the current Agent Gateway protocol into a runnable local execution loop: a 
 
 This v1.5 track intentionally excludes Dify and Notion live sync. Those remain separate connector tracks.
 
+The consolidated product closure spec is `docs/V1_5_EIGHT_PRODUCT_CLOSURE_SPEC.md`.
+
 1. Long-running Agent Worker
    - v1.5 must provide a repo-local worker daemon script.
    - It must support both `--once` and loop mode.
