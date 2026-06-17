@@ -190,6 +190,57 @@ export interface WorkerDaemonResult {
   error?: string;
 }
 
+export interface AgentGatewayEnrollment {
+  token_id: string;
+  workspace_id: string;
+  agent_id: string;
+  scopes: string[];
+  status: string;
+  label: string;
+  heartbeat_timeout_sec: number;
+  created_at: string;
+  expires_at: string;
+  revoked_at?: string | null;
+  last_used_at?: string | null;
+  last_heartbeat_at?: string | null;
+  heartbeat_state: "fresh" | "stale" | "never_seen" | string;
+}
+
+export interface AgentGatewayEnrollmentListPayload {
+  enrollments: AgentGatewayEnrollment[];
+  valid_scopes: string[];
+}
+
+export interface AgentGatewayEnrollmentCreateInput {
+  agent_id: string;
+  name: string;
+  role?: string;
+  runtime_type: string;
+  workspace_id?: string;
+  label?: string;
+  scopes: string[];
+  ttl_days?: number;
+  heartbeat_timeout_sec?: number;
+}
+
+export interface AgentGatewayEnrollmentCreateResult {
+  created: boolean;
+  token_id: string;
+  agent_id: string;
+  workspace_id: string;
+  scopes: string[];
+  expires_at: string;
+  heartbeat_timeout_sec: number;
+  token: string;
+  note: string;
+}
+
+export interface AgentGatewayEnrollmentRevokeResult {
+  revoked: number;
+  changed: number;
+  tokens: string[];
+}
+
 function asArray<T>(value: unknown): T[] {
   return Array.isArray(value) ? (value as T[]) : [];
 }
@@ -569,6 +620,24 @@ function normalizeWorkerDaemon(row: Record<string, unknown>): WorkerDaemonStatus
   };
 }
 
+function normalizeAgentGatewayEnrollment(row: Record<string, unknown>): AgentGatewayEnrollment {
+  return {
+    token_id: String(row.token_id || ""),
+    workspace_id: String(row.workspace_id || ""),
+    agent_id: String(row.agent_id || ""),
+    scopes: parseJsonArray(row.scopes),
+    status: String(row.status || "unknown"),
+    label: String(row.label || ""),
+    heartbeat_timeout_sec: numberValue(row.heartbeat_timeout_sec, 0),
+    created_at: String(row.created_at || ""),
+    expires_at: String(row.expires_at || ""),
+    revoked_at: row.revoked_at ? String(row.revoked_at) : null,
+    last_used_at: row.last_used_at ? String(row.last_used_at) : null,
+    last_heartbeat_at: row.last_heartbeat_at ? String(row.last_heartbeat_at) : null,
+    heartbeat_state: String(row.heartbeat_state || "never_seen"),
+  };
+}
+
 export async function startLocalWorkerDaemon(input: {
   adapter: "mock" | "hermes" | "openclaw";
   confirm_run?: boolean;
@@ -585,5 +654,27 @@ export async function stopLocalWorkerDaemon(adapter?: "mock" | "hermes" | "openc
   return apiJson<WorkerDaemonResult>("/workers/local/stop", {
     method: "POST",
     body: JSON.stringify({ adapter: adapter || "all" }),
+  });
+}
+
+export async function loadAgentGatewayEnrollments(): Promise<AgentGatewayEnrollmentListPayload> {
+  const raw = await apiJson<Record<string, unknown>>("/agent-gateway/enrollments");
+  return {
+    enrollments: asArray<Record<string, unknown>>(raw.enrollments).map(normalizeAgentGatewayEnrollment),
+    valid_scopes: asArray(raw.valid_scopes).map(String),
+  };
+}
+
+export async function createAgentGatewayEnrollment(input: AgentGatewayEnrollmentCreateInput): Promise<AgentGatewayEnrollmentCreateResult> {
+  return apiJson<AgentGatewayEnrollmentCreateResult>("/agent-gateway/enrollment/create", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function revokeAgentGatewayEnrollment(input: { token_id?: string; agent_id?: string }): Promise<AgentGatewayEnrollmentRevokeResult> {
+  return apiJson<AgentGatewayEnrollmentRevokeResult>("/agent-gateway/enrollment/revoke", {
+    method: "POST",
+    body: JSON.stringify(input),
   });
 }

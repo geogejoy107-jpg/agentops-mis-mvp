@@ -171,6 +171,50 @@ token_omitted: true
 revoked: 1
 ```
 
+Latest repeat run after adding the enrollment UI:
+
+```text
+script: python3 scripts/remote_agent_token_worker_smoke.py
+agent_id: agt_remote_worker_smoke_20260617170534
+token_id: agtok_agt_remote_worker_smoke_20260617170534_local_demo_7b3ddaeda24a
+task_id: tsk_remote_worker_smoke_20260617170534
+run_id: run_gw_4b4e7af5275c
+run_status: completed
+tool_calls: 1
+evaluations: 1
+token_omitted: true
+revoked: 1
+```
+
+The `/workspace/agents` enrollment UI was verified in the in-app browser:
+
+```text
+url: http://127.0.0.1:19001/workspace/agents
+visible labels:
+  AI 员工
+  本地 Worker 循环
+  远程 Agent 接入
+  创建接入 token
+  最近接入记录
+```
+
+The UI reads:
+
+```http
+GET /api/agent-gateway/enrollments
+```
+
+and can call:
+
+```http
+POST /api/agent-gateway/enrollment/create
+POST /api/agent-gateway/enrollment/revoke
+```
+
+Raw tokens are displayed only in the create response panel and are not persisted in frontend state beyond the current page session.
+
+`python3 scripts/demo_acceptance.py` also passed after this UI change.
+
 ## What This Proves
 
 The v1.5 worker loop can process normal MIS tasks, not just connector probes:
@@ -195,4 +239,4 @@ planned MIS task
 - The worker does not store full prompts or raw responses.
 - The worker is repo-local; it is not yet a launchd service, pip package, npm package, or signed binary.
 - The UI worker panel now supports one-shot dispatch plus local daemon start/stop; it is not a production fleet manager.
-- Remote enrollment token issuance/revocation and endpoint-level scope enforcement now exist. Full RBAC, workspace isolation, token rotation, and enrollment UI remain future work.
+- Remote enrollment token issuance/revocation, endpoint-level scope enforcement, and a first enrollment UI now exist. Full RBAC, workspace isolation, token rotation, and production enrollment workflows remain future work.

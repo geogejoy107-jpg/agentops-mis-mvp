@@ -140,6 +140,7 @@ Current v1.5 implementation:
   - scoped by endpoint permissions,
   - revocable.
 - Heartbeat freshness is tracked.
+- `/workspace/agents` exposes a first operator UI for creating, viewing, and revoking scoped enrollment tokens.
 
 Acceptance evidence:
 
@@ -147,10 +148,10 @@ Acceptance evidence:
 - Remote token worker smoke passed:
   - `run_gw_876a7c777841`
   - repeat run `run_gw_f5635ff603fd`
+- Browser verification showed `远程 Agent 接入`, `创建接入 token`, and `最近接入记录` on `/workspace/agents`.
 
 Remaining product work:
 
-- Enrollment UI.
 - Token rotation.
 - Short-lived sessions.
 - Reconnection/backoff policy.
@@ -196,6 +197,7 @@ Current v1.5 implementation:
   - one-shot mock/Hermes/OpenClaw dispatch buttons,
   - daemon start/stop controls,
   - daemon status cards.
+  - remote agent enrollment token panel.
 - Browser verification confirmed the controls render.
 
 Acceptance evidence:
@@ -205,6 +207,8 @@ Acceptance evidence:
   - `本地 Worker 循环`
   - `启动 mock 常驻`
   - `停止常驻 worker`
+  - `远程 Agent 接入`
+  - `创建接入 token`
   - daemon status cards.
 
 Remaining product work:
@@ -289,6 +293,7 @@ Implemented and verified:
 - UI one-shot worker dispatch.
 - UI daemon controls.
 - Scoped token enrollment.
+- Remote enrollment UI.
 - Token revocation.
 - Endpoint-level scope enforcement.
 - Remote-token worker end-to-end smoke.
@@ -296,9 +301,7 @@ Implemented and verified:
 Not yet product-complete:
 
 - Global CLI package.
-- Remote enrollment UI.
 - Full RBAC/workspace isolation.
 - Token rotation and short-lived sessions.
 - Production worker fleet manager.
 - Hosted SaaS/commercial deployment layer.
-

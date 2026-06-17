@@ -1,8 +1,20 @@
 import { Link } from "react-router";
 import { useState } from "react";
-import { Bot, Play, RefreshCw, Activity, Power, Square } from "lucide-react";
+import { Bot, Play, RefreshCw, Activity, Power, Square, KeyRound, ShieldCheck, Trash2 } from "lucide-react";
 import { StatusBadge } from "../shared/StatusBadge";
-import { dispatchLocalWorkerOnce, loadAgents, loadDashboard, loadWorkerStatus, startLocalWorkerDaemon, stopLocalWorkerDaemon, useLiveData } from "../../data/liveApi";
+import {
+  createAgentGatewayEnrollment,
+  dispatchLocalWorkerOnce,
+  loadAgentGatewayEnrollments,
+  loadAgents,
+  loadDashboard,
+  loadWorkerStatus,
+  revokeAgentGatewayEnrollment,
+  startLocalWorkerDaemon,
+  stopLocalWorkerDaemon,
+  useLiveData,
+  type AgentGatewayEnrollmentCreateResult,
+} from "../../data/liveApi";
 import { pick, usePreferences } from "../../context/PreferencesContext";
 
 const RUNTIME_COLOR: Record<string, string> = {
@@ -16,18 +28,48 @@ const RUNTIME_COLOR: Record<string, string> = {
   langgraph:   "#F87171",
 };
 
+const DEFAULT_GATEWAY_SCOPES = [
+  "agents:heartbeat",
+  "tasks:read",
+  "tasks:claim",
+  "runs:write",
+  "toolcalls:write",
+  "evaluations:submit",
+  "audit:write",
+];
+
 export function AIEmployees() {
   const { locale } = usePreferences();
   const [dispatching, setDispatching] = useState<string | null>(null);
   const [dispatchResult, setDispatchResult] = useState<string | null>(null);
+  const [enrollmentAction, setEnrollmentAction] = useState<string | null>(null);
+  const [enrollmentResult, setEnrollmentResult] = useState<string | null>(null);
+  const [createdToken, setCreatedToken] = useState<AgentGatewayEnrollmentCreateResult | null>(null);
+  const [enrollmentForm, setEnrollmentForm] = useState({
+    agent_id: "agt_remote_customer_worker",
+    name: "Customer Remote Worker",
+    runtime_type: "mock",
+    workspace_id: "local-demo",
+    ttl_days: "30",
+    heartbeat_timeout_sec: "300",
+    scopes: DEFAULT_GATEWAY_SCOPES.join(", "),
+  });
   const { data, loading, error, refresh } = useLiveData(async () => {
-    const [metrics, workerStatus] = await Promise.all([loadDashboard(), loadWorkerStatus()]);
+    const [metrics, workerStatus, enrollmentPayload] = await Promise.all([
+      loadDashboard(),
+      loadWorkerStatus(),
+      loadAgentGatewayEnrollments(),
+    ]);
     const agents = await loadAgents(metrics);
-    return { agents, workerStatus };
+    return { agents, workerStatus, enrollmentPayload };
   }, []);
   const agents = data?.agents || [];
   const workerStatus = data?.workerStatus;
+  const enrollments = data?.enrollmentPayload?.enrollments || [];
+  const validScopes = data?.enrollmentPayload?.valid_scopes || DEFAULT_GATEWAY_SCOPES;
   const activeAgents = agents.filter(a => a.status === "running").length;
+  const activeEnrollments = enrollments.filter(item => item.status === "active").length;
+  const staleEnrollments = enrollments.filter(item => item.heartbeat_state === "stale").length;
   const copy = pick(locale, {
     en: {
       title: "AI Employees",
@@ -58,6 +100,27 @@ export function AIEmployees() {
       recentRun: "Recent run",
       daemonStatus: "Daemon status",
       pid: "PID",
+      enrollmentTitle: "Remote Agent Enrollment",
+      enrollmentSummary: "Issue scoped tokens for agents running on another laptop or server. The token is shown once; MIS stores only a hash.",
+      activeEnrollments: "Active enrollments",
+      staleEnrollments: "Stale heartbeats",
+      createToken: "Create scoped token",
+      creatingToken: "Creating token...",
+      revokeToken: "Revoke",
+      revokingToken: "Revoking...",
+      agentId: "Agent ID",
+      agentName: "Display name",
+      runtime: "Runtime",
+      workspace: "Workspace",
+      ttlDays: "TTL days",
+      heartbeat: "Heartbeat timeout",
+      scopes: "Scopes",
+      tokenShownOnce: "Copy this token now. It will not be shown again.",
+      recentEnrollments: "Recent enrollments",
+      lastHeartbeat: "Last heartbeat",
+      expires: "Expires",
+      tokenId: "Token",
+      noEnrollments: "No remote enrollments yet.",
     },
     zh: {
       title: "AI 员工",
@@ -88,6 +151,27 @@ export function AIEmployees() {
       recentRun: "最近 run",
       daemonStatus: "常驻状态",
       pid: "进程",
+      enrollmentTitle: "远程 Agent 接入",
+      enrollmentSummary: "给运行在另一台电脑或服务器上的 agent 发放带权限范围的 token。token 只显示一次，MIS 只保存 hash。",
+      activeEnrollments: "有效接入",
+      staleEnrollments: "心跳过期",
+      createToken: "创建接入 token",
+      creatingToken: "正在创建...",
+      revokeToken: "吊销",
+      revokingToken: "正在吊销...",
+      agentId: "Agent ID",
+      agentName: "显示名称",
+      runtime: "运行时",
+      workspace: "工作区",
+      ttlDays: "有效天数",
+      heartbeat: "心跳超时",
+      scopes: "权限范围",
+      tokenShownOnce: "请现在复制 token。页面不会再次显示原始 token。",
+      recentEnrollments: "最近接入记录",
+      lastHeartbeat: "最近心跳",
+      expires: "过期时间",
+      tokenId: "Token",
+      noEnrollments: "还没有远程接入记录。",
     },
   });
 
@@ -145,6 +229,54 @@ export function AIEmployees() {
       setDispatchResult(err instanceof Error ? err.message : String(err));
     } finally {
       setDispatching(null);
+    }
+  };
+
+  const updateEnrollmentForm = (field: keyof typeof enrollmentForm, value: string) => {
+    setEnrollmentForm(prev => ({ ...prev, [field]: value }));
+  };
+
+  const scopeList = enrollmentForm.scopes
+    .split(",")
+    .map(item => item.trim())
+    .filter(Boolean);
+
+  const createEnrollment = async () => {
+    setEnrollmentAction("create");
+    setEnrollmentResult(null);
+    setCreatedToken(null);
+    try {
+      const result = await createAgentGatewayEnrollment({
+        agent_id: enrollmentForm.agent_id.trim(),
+        name: enrollmentForm.name.trim(),
+        runtime_type: enrollmentForm.runtime_type,
+        workspace_id: enrollmentForm.workspace_id.trim(),
+        label: `${enrollmentForm.name.trim()} enrollment`,
+        scopes: scopeList,
+        ttl_days: Number(enrollmentForm.ttl_days) || 30,
+        heartbeat_timeout_sec: Number(enrollmentForm.heartbeat_timeout_sec) || 300,
+      });
+      setCreatedToken(result);
+      setEnrollmentResult(`${result.agent_id}: ${result.token_id}`);
+      await refresh();
+    } catch (err) {
+      setEnrollmentResult(err instanceof Error ? err.message : String(err));
+    } finally {
+      setEnrollmentAction(null);
+    }
+  };
+
+  const revokeEnrollment = async (tokenId: string) => {
+    setEnrollmentAction(`revoke-${tokenId}`);
+    setEnrollmentResult(null);
+    try {
+      const result = await revokeAgentGatewayEnrollment({ token_id: tokenId });
+      setEnrollmentResult(`revoked: ${result.tokens.join(", ") || result.revoked}`);
+      await refresh();
+    } catch (err) {
+      setEnrollmentResult(err instanceof Error ? err.message : String(err));
+    } finally {
+      setEnrollmentAction(null);
     }
   };
 
@@ -255,6 +387,197 @@ export function AIEmployees() {
               </div>
             </div>
           ))}
+        </div>
+      </div>
+
+      <div
+        className="rounded-xl p-4"
+        style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}
+      >
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <KeyRound size={14} style={{ color: "var(--mis-cyan)" }} />
+              <h2 className="text-sm font-semibold" style={{ color: "var(--mis-text)" }}>{copy.enrollmentTitle}</h2>
+            </div>
+            <p className="text-[11px] mt-1 max-w-2xl" style={{ color: "var(--mis-dim)" }}>{copy.enrollmentSummary}</p>
+            {enrollmentResult && (
+              <div
+                className="text-[11px] mt-2"
+                style={{ color: enrollmentResult.includes("Error") || enrollmentResult.includes("error") ? "#F87171" : "var(--mis-success)" }}
+              >
+                {enrollmentResult}
+              </div>
+            )}
+          </div>
+          <div className="grid grid-cols-2 gap-2 shrink-0">
+            <div className="rounded-lg px-3 py-2 min-w-28" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+              <div className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{copy.activeEnrollments}</div>
+              <div className="text-sm font-semibold mt-1" style={{ color: "var(--mis-text)" }}>{activeEnrollments}</div>
+            </div>
+            <div className="rounded-lg px-3 py-2 min-w-28" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+              <div className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{copy.staleEnrollments}</div>
+              <div className="text-sm font-semibold mt-1" style={{ color: staleEnrollments > 0 ? "var(--mis-warning)" : "var(--mis-text)" }}>{staleEnrollments}</div>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-6 gap-3 mt-4">
+          <label className="col-span-2 text-[10px] uppercase" style={{ color: "var(--mis-muted)" }}>
+            {copy.agentId}
+            <input
+              value={enrollmentForm.agent_id}
+              onChange={(event) => updateEnrollmentForm("agent_id", event.target.value)}
+              className="mt-1 w-full rounded px-3 py-2 text-xs outline-none"
+              style={{ background: "var(--mis-surface2)", color: "var(--mis-text)", border: "1px solid var(--mis-border)" }}
+            />
+          </label>
+          <label className="col-span-2 text-[10px] uppercase" style={{ color: "var(--mis-muted)" }}>
+            {copy.agentName}
+            <input
+              value={enrollmentForm.name}
+              onChange={(event) => updateEnrollmentForm("name", event.target.value)}
+              className="mt-1 w-full rounded px-3 py-2 text-xs outline-none"
+              style={{ background: "var(--mis-surface2)", color: "var(--mis-text)", border: "1px solid var(--mis-border)" }}
+            />
+          </label>
+          <label className="text-[10px] uppercase" style={{ color: "var(--mis-muted)" }}>
+            {copy.runtime}
+            <select
+              value={enrollmentForm.runtime_type}
+              onChange={(event) => updateEnrollmentForm("runtime_type", event.target.value)}
+              className="mt-1 w-full rounded px-3 py-2 text-xs outline-none"
+              style={{ background: "var(--mis-surface2)", color: "var(--mis-text)", border: "1px solid var(--mis-border)" }}
+            >
+              {["mock", "hermes", "openclaw", "codex", "claude_code", "openhands", "crewai", "langgraph"].map(runtime => (
+                <option key={runtime} value={runtime}>{runtime}</option>
+              ))}
+            </select>
+          </label>
+          <label className="text-[10px] uppercase" style={{ color: "var(--mis-muted)" }}>
+            {copy.workspace}
+            <input
+              value={enrollmentForm.workspace_id}
+              onChange={(event) => updateEnrollmentForm("workspace_id", event.target.value)}
+              className="mt-1 w-full rounded px-3 py-2 text-xs outline-none"
+              style={{ background: "var(--mis-surface2)", color: "var(--mis-text)", border: "1px solid var(--mis-border)" }}
+            />
+          </label>
+          <label className="text-[10px] uppercase" style={{ color: "var(--mis-muted)" }}>
+            {copy.ttlDays}
+            <input
+              type="number"
+              min="1"
+              value={enrollmentForm.ttl_days}
+              onChange={(event) => updateEnrollmentForm("ttl_days", event.target.value)}
+              className="mt-1 w-full rounded px-3 py-2 text-xs outline-none"
+              style={{ background: "var(--mis-surface2)", color: "var(--mis-text)", border: "1px solid var(--mis-border)" }}
+            />
+          </label>
+          <label className="text-[10px] uppercase" style={{ color: "var(--mis-muted)" }}>
+            {copy.heartbeat}
+            <input
+              type="number"
+              min="30"
+              value={enrollmentForm.heartbeat_timeout_sec}
+              onChange={(event) => updateEnrollmentForm("heartbeat_timeout_sec", event.target.value)}
+              className="mt-1 w-full rounded px-3 py-2 text-xs outline-none"
+              style={{ background: "var(--mis-surface2)", color: "var(--mis-text)", border: "1px solid var(--mis-border)" }}
+            />
+          </label>
+          <label className="col-span-4 text-[10px] uppercase" style={{ color: "var(--mis-muted)" }}>
+            {copy.scopes}
+            <input
+              value={enrollmentForm.scopes}
+              onChange={(event) => updateEnrollmentForm("scopes", event.target.value)}
+              className="mt-1 w-full rounded px-3 py-2 text-xs outline-none"
+              style={{ background: "var(--mis-surface2)", color: "var(--mis-text)", border: "1px solid var(--mis-border)" }}
+            />
+          </label>
+          <div className="flex items-end">
+            <button
+              onClick={createEnrollment}
+              disabled={Boolean(enrollmentAction) || !enrollmentForm.agent_id.trim() || !enrollmentForm.name.trim() || scopeList.length === 0}
+              className="w-full flex items-center justify-center gap-1.5 text-[11px] px-3 py-2 rounded disabled:opacity-50"
+              style={{ background: "rgba(34,211,238,0.12)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.2)" }}
+            >
+              {enrollmentAction === "create" ? <RefreshCw size={12} /> : <ShieldCheck size={12} />}
+              {enrollmentAction === "create" ? copy.creatingToken : copy.createToken}
+            </button>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-1.5 mt-3">
+          {validScopes.map(scope => (
+            <button
+              key={scope}
+              onClick={() => {
+                if (scopeList.includes(scope)) return;
+                updateEnrollmentForm("scopes", [...scopeList, scope].join(", "));
+              }}
+              className="text-[10px] px-2 py-1 rounded"
+              style={{ background: scopeList.includes(scope) ? "rgba(45,212,191,0.12)" : "var(--mis-surface2)", color: scopeList.includes(scope) ? "var(--mis-success)" : "var(--mis-muted)", border: "1px solid var(--mis-border)" }}
+            >
+              {scope}
+            </button>
+          ))}
+        </div>
+
+        {createdToken && (
+          <div className="rounded-lg p-3 mt-4" style={{ background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.28)" }}>
+            <div className="text-[11px] font-semibold" style={{ color: "var(--mis-warning)" }}>{copy.tokenShownOnce}</div>
+            <div className="mt-2 text-[11px] font-mono break-all" style={{ color: "var(--mis-text)" }}>{createdToken.token}</div>
+            <div className="mt-2 text-[10px]" style={{ color: "var(--mis-dim)" }}>
+              {createdToken.agent_id} · {createdToken.token_id} · {copy.expires}: {createdToken.expires_at}
+            </div>
+          </div>
+        )}
+
+        <div className="mt-4">
+          <div className="text-[11px] font-semibold mb-2" style={{ color: "var(--mis-text)" }}>{copy.recentEnrollments}</div>
+          <div className="space-y-2">
+            {enrollments.length === 0 && (
+              <div className="text-[11px] rounded-lg px-3 py-3" style={{ color: "var(--mis-muted)", background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                {copy.noEnrollments}
+              </div>
+            )}
+            {enrollments.slice(0, 6).map((item) => (
+              <div key={item.token_id} className="grid grid-cols-[1.2fr_1.1fr_0.9fr_1.3fr_auto] gap-3 items-center rounded-lg px-3 py-2" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                <div className="min-w-0">
+                  <div className="text-[11px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{item.agent_id}</div>
+                  <div className="text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>{copy.tokenId}: {item.token_id}</div>
+                </div>
+                <div className="flex items-center gap-2 min-w-0">
+                  <StatusBadge status={item.status} />
+                  <StatusBadge status={item.heartbeat_state} />
+                </div>
+                <div className="text-[10px] truncate" style={{ color: "var(--mis-dim)" }}>
+                  {copy.lastHeartbeat}: {item.last_heartbeat_at || "—"}
+                </div>
+                <div className="flex flex-wrap gap-1 min-w-0">
+                  {item.scopes.slice(0, 4).map(scope => (
+                    <span key={scope} className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: "rgba(34,211,238,0.08)", color: "var(--mis-cyan)" }}>
+                      {scope}
+                    </span>
+                  ))}
+                  {item.scopes.length > 4 && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: "var(--mis-surface)", color: "var(--mis-muted)" }}>
+                      +{item.scopes.length - 4}
+                    </span>
+                  )}
+                </div>
+                <button
+                  onClick={() => revokeEnrollment(item.token_id)}
+                  disabled={item.status !== "active" || Boolean(enrollmentAction)}
+                  className="flex items-center gap-1 text-[11px] px-2.5 py-1.5 rounded disabled:opacity-40"
+                  style={{ background: "rgba(248,113,113,0.1)", color: "#F87171", border: "1px solid rgba(248,113,113,0.22)" }}
+                >
+                  {enrollmentAction === `revoke-${item.token_id}` ? <RefreshCw size={12} /> : <Trash2 size={12} />}
+                  {enrollmentAction === `revoke-${item.token_id}` ? copy.revokingToken : copy.revokeToken}
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
 
