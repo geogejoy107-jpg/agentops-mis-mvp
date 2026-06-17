@@ -200,6 +200,50 @@ python3 scripts/run_kb_bot_demo.py
 - 写入 Run Ledger、Tool Calls、Runtime Events、Evaluations、Memories 和 Audit。
 - 对 Dify / OpenAI File Search / AnythingLLM 外部上传创建 pending approval，不上传原始资料、不保存凭证。
 
+## v1.5 Local Agent Worker Loop
+
+`scripts/agent_worker.py` 是 repo-local worker daemon v0.1。它通过 Agent Gateway API 拉取普通 MIS 任务，认领后调用 adapter，并把 run/tool/eval/audit 写回 MIS。
+
+单轮 mock：
+
+```bash
+python3 scripts/agent_worker.py --once --adapter mock --agent-id agt_worker_local
+```
+
+单轮 Hermes live adapter：
+
+```bash
+python3 scripts/agent_worker.py \
+  --once \
+  --adapter hermes \
+  --confirm-run \
+  --agent-id agt_worker_local \
+  --hermes-gateway-url http://127.0.0.1:8642
+```
+
+单轮 OpenClaw live adapter：
+
+```bash
+python3 scripts/agent_worker.py \
+  --once \
+  --adapter openclaw \
+  --confirm-run \
+  --agent-id agt_worker_local
+```
+
+循环模式：
+
+```bash
+python3 scripts/agent_worker.py --adapter mock --poll-interval 5 --max-tasks 10
+```
+
+边界：
+
+- 不调用 Dify / Notion。
+- 不保存完整 prompt、raw response、credentials、transcripts。
+- Hermes/OpenClaw 真实执行必须显式传 `--confirm-run`。
+- 当前仍是 repo-local worker，不是全局安装包或远程 enrollment 产品。
+
 Dify 可以作为本地或客户服务器上的 agent 工具层，而不是 MIS 的替代品。MIS 负责记录任务、运行、工具、审批、评估和审计；Dify 负责知识库/工作流/问答应用。查看 Dify 当前信任域和配置：
 
 ```bash
