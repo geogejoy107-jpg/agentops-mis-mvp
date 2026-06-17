@@ -74,6 +74,7 @@ python3 scripts/enrollment_rotation_smoke.py
 python3 scripts/kb_bot_demo_smoke.py
 python3 scripts/kb_bot_workflow_api_smoke.py
 python3 scripts/approval_decision_side_effect_smoke.py
+python3 scripts/agentops_cli_install_smoke.py
 ```
 
 ## Evidence
@@ -296,6 +297,21 @@ rejected tool: tc_gw_f3348b639fa3 -> blocked
 rejected run: run_gw_ff3d3fbc5a90 -> blocked
 rejected task: tsk_kb_bot_20260617191013_03 -> blocked
 reason preservation: passed
+```
+
+The local CLI install smoke passed:
+
+```text
+script: python3 scripts/agentops_cli_install_smoke.py
+installed command: agentops
+temporary shim help: passed
+token_written: false
+```
+
+On this machine, `python3 scripts/install_agentops_cli.py --force` installed:
+
+```text
+~/.local/bin/agentops -> repo scripts/agentops shim
 ```
 
 Latest repeat run after adding the enrollment UI:

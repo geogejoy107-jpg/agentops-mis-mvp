@@ -101,6 +101,7 @@ Current v1.5 implementation:
 
 - `scripts/agentops`
 - `scripts/agentops.py`
+- `scripts/install_agentops_cli.py` installs a local user shim at `~/.local/bin/agentops`.
 - Commands include:
   - `agentops login`
   - `agentops enrollment create/list/revoke/rotate`
@@ -121,10 +122,11 @@ Acceptance evidence:
 
 - CLI enrollment smoke passed with `agt_remote_cli_smoke`.
 - Revoked token was rejected.
+- Local CLI install smoke passed: `python3 scripts/agentops_cli_install_smoke.py`.
+- Current machine has `~/.local/bin/agentops` installed as a shim to this repo.
 
 Remaining product work:
 
-- Global `agentops` install.
 - pip/Homebrew/npm packaging.
 - Signed binary or installer.
 
@@ -331,6 +333,7 @@ python3 scripts/demo_acceptance.py
 python3 scripts/kb_bot_demo_smoke.py
 python3 scripts/kb_bot_workflow_api_smoke.py
 python3 scripts/approval_decision_side_effect_smoke.py
+python3 scripts/agentops_cli_install_smoke.py
 python3 scripts/remote_agent_token_worker_smoke.py
 python3 scripts/workspace_isolation_smoke.py
 ```
