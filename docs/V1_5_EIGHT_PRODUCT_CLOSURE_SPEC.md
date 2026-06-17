@@ -224,6 +224,7 @@ Current v1.5 implementation:
   - worker fleet telemetry with daemon log tails and recent Agent Gateway events.
 - `/workspace/approvals` reads live approvals from the backend and can approve/reject through the real API.
 - `/admin/toolcalls` reads live tool-call evidence from the backend instead of mock data.
+- `/admin/tasks/:id` shows delivery artifacts and links related runs to their Run Detail pages.
 - Browser verification confirmed the controls render.
 
 Acceptance evidence:
@@ -242,6 +243,7 @@ Acceptance evidence:
 - `GET /api/workers/local/logs?adapter=mock` returned 80 log-tail lines.
 - `GET /api/approvals` returned 12 live approval rows, including pending `ap_gw_f289a8baafcd`.
 - `GET /api/tool-calls` returned 6928 live tool-call rows, including `artifact.delivery_summary`.
+- `GET /api/tasks/tsk_kb_bot_20260617185442_06` returned delivery artifact `art_kb_bot_delivery_20260617185442`.
 
 Remaining product work:
 

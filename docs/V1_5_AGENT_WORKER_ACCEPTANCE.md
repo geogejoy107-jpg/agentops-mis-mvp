@@ -256,9 +256,15 @@ page: /admin/toolcalls
 source: GET /api/tool-calls
 rows: 6928
 latest tool: artifact.delivery_summary
+
+page: /admin/tasks/tsk_kb_bot_20260617185442_06
+source: GET /api/tasks/tsk_kb_bot_20260617185442_06
+delivery artifacts: 1
+artifact: art_kb_bot_delivery_20260617185442
 ```
 
 These pages no longer use `mockData` for the primary ledger rows.
+Task detail now surfaces delivery artifacts and links related runs to Run Detail.
 
 Latest repeat run after adding the enrollment UI:
 
