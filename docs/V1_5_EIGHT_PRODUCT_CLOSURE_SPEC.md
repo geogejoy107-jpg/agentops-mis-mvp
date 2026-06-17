@@ -138,10 +138,13 @@ Current v1.5 implementation:
   - shown once,
   - stored only as hashes,
   - bound to one `agent_id`,
+  - bound to one `workspace_id`,
   - scoped by endpoint permissions,
   - revocable.
 - Active tokens can be rotated; the old token is revoked and the replacement token is shown once.
 - Heartbeat freshness is tracked.
+- Token-auth requests cannot override `agent_id` or `workspace_id` through body, query string, or headers.
+- `tasks` and `runs` now carry `workspace_id`; Agent Gateway pull/claim/start/run-write paths check that boundary.
 - `/workspace/agents` exposes a first operator UI for creating, viewing, and revoking scoped enrollment tokens.
 - `/workspace/agents` also exposes scope presets and per-token rotation.
 
@@ -153,12 +156,18 @@ Acceptance evidence:
   - repeat run `run_gw_f5635ff603fd`
 - Browser verification showed `远程 Agent 接入`, `创建接入 token`, and `最近接入记录` on `/workspace/agents`.
 - `python3 scripts/enrollment_rotation_smoke.py` verified API and CLI rotation with redacted one-time token output.
+- `python3 scripts/workspace_isolation_smoke.py` verified:
+  - workspace A token only pulls workspace A tasks,
+  - workspace B tasks do not leak into pull results,
+  - header/query workspace spoofing returns 403,
+  - cross-workspace claim/start returns 403,
+  - matching workspace claim/start/heartbeat succeeds.
 
 Remaining product work:
 
 - Short-lived sessions.
 - Reconnection/backoff policy.
-- Strong workspace isolation.
+- Customer-facing enrollment approval workflow.
 
 ### 5. MVP Security Boundary
 
@@ -171,6 +180,8 @@ Current v1.5 implementation:
 - Token hash storage only.
 - Raw token values are not written to audit/runtime metadata.
 - Rotation smoke output omits raw token values; raw tokens are still one-time only.
+- Minimal workspace isolation is enforced for Agent Gateway token-auth task and run paths.
+- `workspace_id` values are normalized rather than redacted, preventing identifier corruption.
 - Worker output is summarized.
 - Tool args are normalized and redacted.
 - Hermes/OpenClaw real execution requires explicit confirmation.
@@ -184,7 +195,7 @@ Acceptance evidence:
 Remaining product work:
 
 - Full RBAC.
-- Workspace isolation.
+- Multi-tenant hosted isolation beyond this local SQLite MVP.
 - Secret manager.
 - Connector trust registry UI.
 
@@ -290,6 +301,7 @@ git diff --check
 cd ui/start-building-app && npm run build
 python3 scripts/demo_acceptance.py
 python3 scripts/remote_agent_token_worker_smoke.py
+python3 scripts/workspace_isolation_smoke.py
 ```
 
 ## Current Status Summary
@@ -307,12 +319,13 @@ Implemented and verified:
 - Token revocation.
 - Token rotation.
 - Endpoint-level scope enforcement.
+- Minimal workspace isolation for token-auth Agent Gateway pull/claim/run/write paths.
 - Remote-token worker end-to-end smoke.
 
 Not yet product-complete:
 
 - Global CLI package.
-- Full RBAC/workspace isolation.
-- Token rotation and short-lived sessions.
+- Full RBAC and hosted multi-tenant isolation.
+- Short-lived sessions.
 - Production worker fleet manager.
 - Hosted SaaS/commercial deployment layer.

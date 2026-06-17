@@ -263,6 +263,7 @@ CREATE TABLE IF NOT EXISTS agents (
 
 CREATE TABLE IF NOT EXISTS tasks (
     task_id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL DEFAULT 'local-demo',
     title TEXT NOT NULL,
     description TEXT,
     requester_id TEXT,
@@ -282,6 +283,7 @@ CREATE TABLE IF NOT EXISTS tasks (
 
 CREATE TABLE IF NOT EXISTS runs (
     run_id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL DEFAULT 'local-demo',
     task_id TEXT NOT NULL,
     agent_id TEXT NOT NULL,
     runtime_type TEXT NOT NULL,
@@ -670,8 +672,22 @@ def audit(conn: sqlite3.Connection, actor_type: str, actor_id: str | None, actio
 def init_schema():
     with db() as conn:
         conn.executescript(SCHEMA_SQL)
+        ensure_schema_migrations(conn)
         ensure_v121_reference_data(conn)
         conn.commit()
+
+
+def ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str):
+    existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    if column not in existing:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
+
+
+def ensure_schema_migrations(conn: sqlite3.Connection):
+    ensure_column(conn, "tasks", "workspace_id", "workspace_id TEXT NOT NULL DEFAULT 'local-demo'")
+    ensure_column(conn, "runs", "workspace_id", "workspace_id TEXT NOT NULL DEFAULT 'local-demo'")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_workspace ON tasks(workspace_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_workspace ON runs(workspace_id)")
 
 
 def ensure_v121_reference_data(conn: sqlite3.Connection):
@@ -1260,6 +1276,7 @@ def upsert_agent(conn, row: dict, actor_id="adapter-import") -> str:
 
 
 def upsert_task(conn, row: dict, actor_id="adapter-import") -> str:
+    row.setdefault("workspace_id", "local-demo")
     before = conn.execute("SELECT * FROM tasks WHERE task_id=?", (row["task_id"],)).fetchone()
     if before:
         if row_unchanged(before, row, {"created_at", "updated_at"}):
@@ -1268,14 +1285,14 @@ def upsert_task(conn, row: dict, actor_id="adapter-import") -> str:
             """UPDATE tasks SET title=:title, description=:description, requester_id=:requester_id,
             owner_agent_id=:owner_agent_id, collaborator_agent_ids=:collaborator_agent_ids, status=:status,
             priority=:priority, due_date=:due_date, acceptance_criteria=:acceptance_criteria, risk_level=:risk_level,
-            budget_limit_usd=:budget_limit_usd, updated_at=:updated_at WHERE task_id=:task_id""",
+            budget_limit_usd=:budget_limit_usd, workspace_id=:workspace_id, updated_at=:updated_at WHERE task_id=:task_id""",
             row,
         )
         action = "task.update"
     else:
         conn.execute(
-            """INSERT INTO tasks(task_id,title,description,requester_id,owner_agent_id,collaborator_agent_ids,status,priority,due_date,acceptance_criteria,risk_level,budget_limit_usd,created_at,updated_at)
-            VALUES(:task_id,:title,:description,:requester_id,:owner_agent_id,:collaborator_agent_ids,:status,:priority,:due_date,:acceptance_criteria,:risk_level,:budget_limit_usd,:created_at,:updated_at)""",
+            """INSERT INTO tasks(task_id,workspace_id,title,description,requester_id,owner_agent_id,collaborator_agent_ids,status,priority,due_date,acceptance_criteria,risk_level,budget_limit_usd,created_at,updated_at)
+            VALUES(:task_id,:workspace_id,:title,:description,:requester_id,:owner_agent_id,:collaborator_agent_ids,:status,:priority,:due_date,:acceptance_criteria,:risk_level,:budget_limit_usd,:created_at,:updated_at)""",
             row,
         )
         action = "task.create"
@@ -1284,6 +1301,9 @@ def upsert_task(conn, row: dict, actor_id="adapter-import") -> str:
 
 
 def upsert_run(conn, row: dict, actor_id="adapter-import", audit_metadata=None) -> str:
+    if not row.get("workspace_id"):
+        task = conn.execute("SELECT workspace_id FROM tasks WHERE task_id=?", (row.get("task_id"),)).fetchone()
+        row["workspace_id"] = (task["workspace_id"] if task else None) or "local-demo"
     before = conn.execute("SELECT * FROM runs WHERE run_id=?", (row["run_id"],)).fetchone()
     if before:
         if actor_id == "openclaw-import":
@@ -1296,15 +1316,16 @@ def upsert_run(conn, row: dict, actor_id="adapter-import", audit_metadata=None) 
             output_summary=:output_summary, model_provider=:model_provider, model_name=:model_name,
             input_tokens=:input_tokens, output_tokens=:output_tokens, reasoning_tokens=:reasoning_tokens,
             cost_usd=:cost_usd, error_type=:error_type, error_message=:error_message, trace_id=:trace_id,
-            parent_run_id=:parent_run_id, delegation_id=:delegation_id, approval_required=:approval_required
+            parent_run_id=:parent_run_id, delegation_id=:delegation_id, approval_required=:approval_required,
+            workspace_id=:workspace_id
             WHERE run_id=:run_id""",
             row,
         )
         action = "run.update"
     else:
         conn.execute(
-            """INSERT INTO runs(run_id,task_id,agent_id,runtime_type,status,started_at,ended_at,duration_ms,input_summary,output_summary,model_provider,model_name,input_tokens,output_tokens,reasoning_tokens,cost_usd,error_type,error_message,trace_id,parent_run_id,delegation_id,approval_required,created_at)
-            VALUES(:run_id,:task_id,:agent_id,:runtime_type,:status,:started_at,:ended_at,:duration_ms,:input_summary,:output_summary,:model_provider,:model_name,:input_tokens,:output_tokens,:reasoning_tokens,:cost_usd,:error_type,:error_message,:trace_id,:parent_run_id,:delegation_id,:approval_required,:created_at)""",
+            """INSERT INTO runs(run_id,workspace_id,task_id,agent_id,runtime_type,status,started_at,ended_at,duration_ms,input_summary,output_summary,model_provider,model_name,input_tokens,output_tokens,reasoning_tokens,cost_usd,error_type,error_message,trace_id,parent_run_id,delegation_id,approval_required,created_at)
+            VALUES(:run_id,:workspace_id,:task_id,:agent_id,:runtime_type,:status,:started_at,:ended_at,:duration_ms,:input_summary,:output_summary,:model_provider,:model_name,:input_tokens,:output_tokens,:reasoning_tokens,:cost_usd,:error_type,:error_message,:trace_id,:parent_run_id,:delegation_id,:approval_required,:created_at)""",
             row,
         )
         action = "run.create"
@@ -1900,14 +1921,55 @@ def agent_gateway_auth_error(headers) -> dict | None:
 def agent_gateway_identity(headers, body=None, qs=None, auth_ctx=None) -> dict:
     body = body or {}
     qs = qs or {}
-    agent_id = body.get("agent_id") or headers.get("X-AgentOps-Agent-Id") or (qs.get("agent_id") or [None])[0] or (auth_ctx or {}).get("agent_id")
-    workspace_id = body.get("workspace_id") or headers.get("X-AgentOps-Workspace-Id") or (qs.get("workspace_id") or ["local-demo"])[0] or (auth_ctx or {}).get("workspace_id")
+    if auth_ctx and auth_ctx.get("mode") == "agent_token":
+        agent_id = auth_ctx.get("agent_id")
+        workspace_id = auth_ctx.get("workspace_id")
+    else:
+        agent_id = body.get("agent_id") or headers.get("X-AgentOps-Agent-Id") or (qs.get("agent_id") or [None])[0] or (auth_ctx or {}).get("agent_id")
+        workspace_id = body.get("workspace_id") or headers.get("X-AgentOps-Workspace-Id") or (qs.get("workspace_id") or ["local-demo"])[0] or (auth_ctx or {}).get("workspace_id")
     scope = body.get("scope") or headers.get("X-AgentOps-Scope") or "local:agent"
     return {
         "agent_id": str(agent_id or "").strip(),
-        "workspace_id": str(workspace_id or "local-demo").strip(),
+        "workspace_id": normalize_workspace_id(workspace_id),
         "scope": redact_text(str(scope), 120),
     }
+
+
+def requested_workspace_from_qs(qs: dict, fallback="local-demo") -> str:
+    value = (qs.get("workspace_id") or [fallback])[0]
+    return normalize_workspace_id(value or fallback)
+
+
+def row_workspace(row) -> str:
+    try:
+        return normalize_workspace_id(row["workspace_id"] or "local-demo")
+    except Exception:
+        return "local-demo"
+
+
+def normalize_workspace_id(value) -> str:
+    raw = str(value or "local-demo").strip()[:120]
+    normalized = re.sub(r"[^A-Za-z0-9_.:-]+", "_", raw).strip("_")
+    return normalized or "local-demo"
+
+
+def workspace_forbidden(entity_type: str, entity_id: str, requested_workspace: str, actual_workspace: str) -> tuple[dict, int]:
+    return {
+        "error": "forbidden",
+        "message": f"{entity_type} {entity_id} belongs to workspace '{actual_workspace}', not '{requested_workspace}'.",
+    }, 403
+
+
+def ensure_run_access(conn: sqlite3.Connection, run_id: str, ident: dict) -> tuple[sqlite3.Row | None, tuple[dict, int] | None]:
+    run = conn.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
+    if not run:
+        return None, ({"error": "run not found"}, 404)
+    actual_workspace = row_workspace(run)
+    if actual_workspace != ident["workspace_id"]:
+        return run, workspace_forbidden("run", run_id, ident["workspace_id"], actual_workspace)
+    if ident.get("agent_id") and run["agent_id"] != ident["agent_id"]:
+        return run, ({"error": "forbidden", "message": "Agent token cannot write another agent's run."}, 403)
+    return run, None
 
 
 def ensure_gateway_agent(conn, agent_id: str, name: str | None = None, role: str | None = None, runtime_type: str | None = None):
@@ -1963,7 +2025,7 @@ def agent_gateway_register(conn, body) -> tuple[dict, int]:
 
 def agent_gateway_create_enrollment(conn, body) -> tuple[dict, int]:
     agent_id = body.get("agent_id") or stable_id("agt_remote", body.get("name") or "remote-agent", body.get("workspace_id") or "local-demo")
-    workspace_id = redact_text(body.get("workspace_id") or "local-demo", 120)
+    workspace_id = normalize_workspace_id(body.get("workspace_id") or "local-demo")
     runtime_type = coerce_choice(body.get("runtime_type"), VALID_RUNTIME_TYPES, "mock")
     scopes = parse_scope_list(body.get("scopes") or body.get("allowed_scopes") or [
         "agents:write",
@@ -2131,15 +2193,16 @@ def agent_gateway_heartbeat(conn, body) -> tuple[dict, int]:
     return {"agent_id": agent_id, "status": status, "recorded_at": now_iso()}, 200
 
 
-def agent_gateway_pull_tasks(conn, qs, headers) -> tuple[dict, int]:
-    ident = agent_gateway_identity(headers, qs=qs)
+def agent_gateway_pull_tasks(conn, qs, headers, auth_ctx=None) -> tuple[dict, int]:
+    ident = agent_gateway_identity(headers, qs=qs, auth_ctx=auth_ctx)
     agent_id = ident["agent_id"]
     limit = min(max(int((qs.get("limit") or ["10"])[0]), 1), 50)
     statuses = qs.get("status") or ["planned", "backlog"]
     statuses = [coerce_choice(status, VALID_TASK_STATUSES, "planned") for status in statuses]
     placeholders = ",".join("?" for _ in statuses)
     params = list(statuses)
-    sql = f"SELECT * FROM tasks WHERE status IN ({placeholders})"
+    sql = f"SELECT * FROM tasks WHERE status IN ({placeholders}) AND COALESCE(workspace_id,'local-demo')=?"
+    params.append(ident["workspace_id"])
     if agent_id:
         sql += " AND (owner_agent_id=? OR collaborator_agent_ids LIKE ? OR owner_agent_id IS NULL OR owner_agent_id='')"
         params.extend([agent_id, f"%{agent_id}%"])
@@ -2160,6 +2223,9 @@ def agent_gateway_claim_task(conn, task_id: str, body) -> tuple[dict, int]:
     task = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
     if not task:
         return {"error": "task not found"}, 404
+    actual_workspace = row_workspace(task)
+    if actual_workspace != ident["workspace_id"]:
+        return workspace_forbidden("task", task_id, ident["workspace_id"], actual_workspace)
     ensure_gateway_agent(conn, agent_id, runtime_type=body.get("runtime_type"))
     before = dict(task)
     conn.execute("UPDATE tasks SET owner_agent_id=?, status='running', updated_at=? WHERE task_id=?", (agent_id, now_iso(), task_id))
@@ -2178,12 +2244,16 @@ def agent_gateway_start_run(conn, body) -> tuple[dict, int]:
     task = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
     if not task:
         return {"error": "task not found"}, 404
+    actual_workspace = row_workspace(task)
+    if actual_workspace != ident["workspace_id"]:
+        return workspace_forbidden("task", task_id, ident["workspace_id"], actual_workspace)
     ensure_gateway_agent(conn, agent_id, runtime_type=body.get("runtime_type"))
     agent = conn.execute("SELECT * FROM agents WHERE agent_id=?", (agent_id,)).fetchone()
     started = now_iso()
     run_id = body.get("run_id") or new_id("run_gw")
     row = {
         "run_id": run_id,
+        "workspace_id": ident["workspace_id"],
         "task_id": task_id,
         "agent_id": agent_id,
         "runtime_type": coerce_choice(body.get("runtime_type") or agent["runtime_type"], VALID_RUNTIME_TYPES, "mock"),
@@ -2215,9 +2285,10 @@ def agent_gateway_start_run(conn, body) -> tuple[dict, int]:
 
 
 def agent_gateway_run_heartbeat(conn, run_id: str, body) -> tuple[dict, int]:
-    before = conn.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
-    if not before:
-        return {"error": "run not found"}, 404
+    ident = agent_gateway_identity({}, body)
+    before, access_error = ensure_run_access(conn, run_id, ident)
+    if access_error:
+        return access_error
     status = coerce_choice(body.get("status"), {"running", "completed", "failed", "blocked", "waiting_approval"}, before["status"])
     ended_at = body.get("ended_at")
     if status in {"completed", "failed", "blocked"} and not ended_at:
@@ -2253,10 +2324,11 @@ def agent_gateway_run_heartbeat(conn, run_id: str, body) -> tuple[dict, int]:
 
 def agent_gateway_record_tool_call(conn, body) -> tuple[dict, int]:
     run_id = body.get("run_id")
+    ident = agent_gateway_identity({}, body)
+    run, access_error = ensure_run_access(conn, run_id, ident)
+    if access_error:
+        return access_error
     agent_id = body.get("agent_id")
-    run = conn.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
-    if not run:
-        return {"error": "run not found"}, 404
     if not agent_id:
         agent_id = run["agent_id"]
     ensure_gateway_agent(conn, agent_id, runtime_type=body.get("runtime_type"))
@@ -2292,9 +2364,10 @@ def agent_gateway_record_tool_call(conn, body) -> tuple[dict, int]:
 
 def agent_gateway_request_approval(conn, body) -> tuple[dict, int]:
     run_id = body.get("run_id")
-    run = conn.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
-    if not run:
-        return {"error": "run not found"}, 404
+    ident = agent_gateway_identity({}, body)
+    run, access_error = ensure_run_access(conn, run_id, ident)
+    if access_error:
+        return access_error
     approval_id = body.get("approval_id") or new_id("ap_gw")
     tool_call_id = body.get("tool_call_id")
     reason = redact_text(body.get("reason") or "Agent requested approval for an external or high-risk action.", 260)
@@ -2329,6 +2402,15 @@ def agent_gateway_memory_propose(conn, body) -> tuple[dict, int]:
     text = body.get("canonical_text") or body.get("text")
     if not agent_id or not text:
         return {"error": "agent_id and canonical_text are required"}, 400
+    ident = agent_gateway_identity({}, body)
+    if body.get("run_id"):
+        _run, access_error = ensure_run_access(conn, body["run_id"], ident)
+        if access_error:
+            return access_error
+    elif task_id:
+        task = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+        if task and row_workspace(task) != ident["workspace_id"]:
+            return workspace_forbidden("task", task_id, ident["workspace_id"], row_workspace(task))
     ensure_gateway_agent(conn, agent_id, runtime_type=body.get("runtime_type"))
     memory_id = body.get("memory_id") or stable_id("mem_gw", agent_id, task_id or "project", stable_hash(text)[:12])
     row = {
@@ -2357,9 +2439,10 @@ def agent_gateway_memory_propose(conn, body) -> tuple[dict, int]:
 
 def agent_gateway_eval_submit(conn, body) -> tuple[dict, int]:
     run_id = body.get("run_id")
-    run = conn.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
-    if not run:
-        return {"error": "run not found"}, 404
+    ident = agent_gateway_identity({}, body)
+    run, access_error = ensure_run_access(conn, run_id, ident)
+    if access_error:
+        return access_error
     score = float(body.get("score") if body.get("score") is not None else 1.0)
     score = max(0.0, min(score, 1.0))
     pass_fail = "pass" if body.get("pass_fail", "pass") == "pass" and score >= 0.5 else "fail"
@@ -2383,6 +2466,11 @@ def agent_gateway_eval_submit(conn, body) -> tuple[dict, int]:
 
 def agent_gateway_emit_audit(conn, body) -> tuple[dict, int]:
     agent_id = body.get("agent_id") or "agent-gateway"
+    if body.get("run_id"):
+        ident = agent_gateway_identity({}, body)
+        _run, access_error = ensure_run_access(conn, body["run_id"], ident)
+        if access_error:
+            return access_error
     entity_type = body.get("entity_type") or "agent_gateway"
     entity_id = body.get("entity_id") or body.get("run_id") or agent_id
     action = body.get("action") or "agent_gateway.audit_emit"
@@ -4235,11 +4323,24 @@ class Handler(BaseHTTPRequestHandler):
                 if auth_error:
                     return self.send_json(auth_error, 401)
                 query = dict(qs)
-                if auth_ctx and auth_ctx.get("agent_id") and not query.get("agent_id"):
+                if auth_ctx and auth_ctx.get("mode") == "agent_token":
+                    requested_header_workspace = normalize_workspace_id(self.headers.get("X-AgentOps-Workspace-Id") or auth_ctx["workspace_id"])
+                    if requested_header_workspace != auth_ctx["workspace_id"]:
+                        return self.send_json({"error": "forbidden", "message": "Agent token cannot use another workspace header."}, 403)
+                    requested_workspace = requested_workspace_from_qs(query, auth_ctx["workspace_id"])
+                    if requested_workspace != auth_ctx["workspace_id"]:
+                        return self.send_json({"error": "forbidden", "message": "Agent token cannot pull tasks from another workspace."}, 403)
+                    requested_agent = (query.get("agent_id") or [auth_ctx["agent_id"]])[0]
+                    if requested_agent and requested_agent != auth_ctx["agent_id"]:
+                        return self.send_json({"error": "forbidden", "message": "Agent token cannot pull tasks as another agent."}, 403)
                     query["agent_id"] = [auth_ctx["agent_id"]]
-                if auth_ctx and auth_ctx.get("workspace_id") and not query.get("workspace_id"):
                     query["workspace_id"] = [auth_ctx["workspace_id"]]
-                payload, status = agent_gateway_pull_tasks(conn, query, self.headers)
+                else:
+                    if auth_ctx and auth_ctx.get("agent_id") and not query.get("agent_id"):
+                        query["agent_id"] = [auth_ctx["agent_id"]]
+                    if auth_ctx and auth_ctx.get("workspace_id") and not query.get("workspace_id"):
+                        query["workspace_id"] = [auth_ctx["workspace_id"]]
+                payload, status = agent_gateway_pull_tasks(conn, query, self.headers, auth_ctx)
                 conn.commit()
                 return self.send_json(payload, status)
             if path == "/api/agents":
@@ -4406,11 +4507,17 @@ class Handler(BaseHTTPRequestHandler):
                 if auth_error:
                     return self.send_json(auth_error, 401)
                 if auth_ctx and auth_ctx.get("mode") == "agent_token":
+                    requested_header_workspace = normalize_workspace_id(self.headers.get("X-AgentOps-Workspace-Id") or auth_ctx["workspace_id"])
+                    if requested_header_workspace != auth_ctx["workspace_id"]:
+                        return self.send_json({"error": "forbidden", "message": "Agent token cannot use another workspace header."}, 403)
                     requested_agent = body.get("agent_id") or body.get("requested_by_agent_id")
                     if requested_agent and requested_agent != auth_ctx["agent_id"]:
                         return self.send_json({"error": "forbidden", "message": "Agent token cannot act as another agent."}, 403)
-                    body.setdefault("agent_id", auth_ctx["agent_id"])
-                    body.setdefault("workspace_id", auth_ctx["workspace_id"])
+                    requested_workspace = normalize_workspace_id(body.get("workspace_id") or auth_ctx["workspace_id"])
+                    if requested_workspace != auth_ctx["workspace_id"]:
+                        return self.send_json({"error": "forbidden", "message": "Agent token cannot act in another workspace."}, 403)
+                    body["agent_id"] = auth_ctx["agent_id"]
+                    body["workspace_id"] = auth_ctx["workspace_id"]
                     body["_auth_token_id"] = auth_ctx.get("token_id")
                 if path == "/api/agent-gateway/register":
                     payload, status = agent_gateway_register(conn, body)
@@ -4467,6 +4574,7 @@ class Handler(BaseHTTPRequestHandler):
                 now = now_iso()
                 row = {
                     "task_id": task_id,
+                    "workspace_id": normalize_workspace_id(body.get("workspace_id") or "local-demo"),
                     "title": body.get("title", "New Task"),
                     "description": body.get("description", ""),
                     "requester_id": body.get("requester_id", "usr_founder"),
@@ -4481,8 +4589,8 @@ class Handler(BaseHTTPRequestHandler):
                     "created_at": now,
                     "updated_at": now,
                 }
-                conn.execute("""INSERT INTO tasks(task_id,title,description,requester_id,owner_agent_id,collaborator_agent_ids,status,priority,due_date,acceptance_criteria,risk_level,budget_limit_usd,created_at,updated_at)
-                    VALUES(:task_id,:title,:description,:requester_id,:owner_agent_id,:collaborator_agent_ids,:status,:priority,:due_date,:acceptance_criteria,:risk_level,:budget_limit_usd,:created_at,:updated_at)""", row)
+                conn.execute("""INSERT INTO tasks(task_id,workspace_id,title,description,requester_id,owner_agent_id,collaborator_agent_ids,status,priority,due_date,acceptance_criteria,risk_level,budget_limit_usd,created_at,updated_at)
+                    VALUES(:task_id,:workspace_id,:title,:description,:requester_id,:owner_agent_id,:collaborator_agent_ids,:status,:priority,:due_date,:acceptance_criteria,:risk_level,:budget_limit_usd,:created_at,:updated_at)""", row)
                 audit(conn, "user", "usr_founder", "task.create", "tasks", task_id, None, row, {})
                 conn.commit()
                 return self.send_json(row, 201)

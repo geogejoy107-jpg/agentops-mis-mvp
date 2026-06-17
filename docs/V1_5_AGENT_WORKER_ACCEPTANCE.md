@@ -170,6 +170,21 @@ token_omitted: true
 cleanup_revoked: 1
 ```
 
+The workspace isolation smoke passed:
+
+```text
+script: python3 scripts/workspace_isolation_smoke.py
+workspace A token pulled only workspace A task: pull_count=1
+workspace B task did not leak into pull results
+header spoof: forbidden
+query spoof: forbidden
+cross-workspace claim: forbidden
+cross-workspace run start: forbidden
+matching workspace run heartbeat: completed
+token_omitted: true
+latest verified run: run_gw_0b11e7514de6
+```
+
 MIS stores token hashes only. Raw token values are shown once at creation time and are not written into audit or runtime events.
 
 The remote-token worker smoke also passed:
@@ -294,4 +309,4 @@ planned MIS task
 - The worker does not store full prompts or raw responses.
 - The worker is repo-local; it is not yet a launchd service, pip package, npm package, or signed binary.
 - The UI worker panel now supports one-shot dispatch, local daemon start/stop, daemon log tails, and recent gateway events; it is not a production fleet manager.
-- Remote enrollment token issuance/revocation/rotation, endpoint-level scope enforcement, scope presets, and a first enrollment UI now exist. Full RBAC, workspace isolation, short-lived sessions, and production enrollment workflows remain future work.
+- Remote enrollment token issuance/revocation/rotation, endpoint-level scope enforcement, scope presets, a first enrollment UI, and minimal Agent Gateway workspace isolation now exist. Full RBAC, hosted multi-tenant isolation, short-lived sessions, and production enrollment workflows remain future work.

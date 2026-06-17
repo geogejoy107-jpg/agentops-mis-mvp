@@ -207,15 +207,18 @@ agentops audit emit
 ```bash
 python3 scripts/remote_agent_token_worker_smoke.py
 python3 scripts/enrollment_rotation_smoke.py
+python3 scripts/workspace_isolation_smoke.py
 ```
 
 它会创建 scoped token、创建一个普通 MIS 任务、用 token 跑 `scripts/agent_worker.py --once`、验证 run/tool/eval 证据，并默认吊销 token。
 Rotation smoke 会验证 API/CLI token 轮换：旧 token 变为 revoked，新 token active，输出不包含原始 token。
+Workspace isolation smoke 会验证：token 绑定 workspace A 后，只能 pull/claim/start/write workspace A 的任务和 run；header/query/body 伪造 workspace B 会返回 403。
 
 注意：
 
 - enrollment token 只在创建响应里显示一次，MIS 只存 hash。
 - token 绑定 `agent_id`，不能冒充其他 agent。
+- token 绑定 `workspace_id`，不能通过 header/query/body 切换到其他 workspace。
 - API 会检查 endpoint scope，例如 `tasks:read`、`runs:write`、`audit:write`。
 - `./scripts/agentops enrollment revoke --agent-id agt_remote_builder` 可吊销该 agent 的 active token。
 
@@ -302,7 +305,7 @@ curl -fsS -X POST http://127.0.0.1:8787/api/workers/local/stop \
 - 不保存完整 prompt、raw response、credentials、transcripts。
 - Hermes/OpenClaw 真实执行必须显式传 `--confirm-run`。
 - 页面 daemon 控制是本地录屏/自用 supervisor，不是 launchd/systemd 或远程 fleet manager。
-- 当前仍是 repo-local worker，不是全局安装包；远程 enrollment 已有 MVP UI/API/CLI、scope preset 和 token rotation，但还不是完整 RBAC、short-lived session 和多 workspace 产品。
+- 当前仍是 repo-local worker，不是全局安装包；远程 enrollment 已有 MVP UI/API/CLI、scope preset、token rotation 和最小 workspace isolation，但还不是完整 RBAC、short-lived session 和 hosted 多租户产品。
 
 Dify 可以作为本地或客户服务器上的 agent 工具层，而不是 MIS 的替代品。MIS 负责记录任务、运行、工具、审批、评估和审计；Dify 负责知识库/工作流/问答应用。查看 Dify 当前信任域和配置：
 

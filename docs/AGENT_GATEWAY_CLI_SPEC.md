@@ -445,7 +445,10 @@ Current implementation:
 - `POST /api/agent-gateway/enrollment/create` issues an agent-bound bearer token.
 - MIS stores only a token hash.
 - The token can act only as its bound `agent_id`.
+- The token can act only in its bound `workspace_id`.
+- Token-auth requests cannot override `agent_id` or `workspace_id` through request body, query string, or headers.
 - Gateway endpoints check required scopes.
+- Task pull, task claim, run start, run heartbeat, tool call, approval, memory, evaluation, and audit write paths enforce the run/task workspace boundary.
 - `POST /api/agent-gateway/enrollment/revoke` revokes tokens.
 - `POST /api/agent-gateway/enrollment/rotate` revokes an active token and returns a one-time replacement token.
 - `GET /api/agent-gateway/enrollments` reports heartbeat freshness.
@@ -553,15 +556,17 @@ Verification helper:
 
 ```bash
 python3 scripts/remote_agent_token_worker_smoke.py
+python3 scripts/workspace_isolation_smoke.py
 ```
 
 This helper creates a scoped token, creates a normal MIS task for that agent, runs `scripts/agent_worker.py --once` with the token, verifies run/tool/eval evidence, and revokes the token by default. It does not print the raw token.
+The workspace isolation helper creates workspace A/B tasks, verifies that the workspace A token cannot pull, claim, start, or write workspace B work, and verifies that normal workspace A execution still succeeds.
 
 Remaining future work:
 
-- Enrollment UI.
-- Short-lived session tokens and rotation.
-- Workspace isolation.
+- Production enrollment approval workflow.
+- Short-lived session tokens.
+- Hosted multi-tenant isolation and full RBAC.
 - Reconnection backoff policy.
 - mTLS or signed heartbeats for server-side agents.
 
