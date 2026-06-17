@@ -135,10 +135,26 @@ export interface WorkerStatusPayload {
   running_workers: number;
   recent_completed_runs: number;
   pending_worker_tasks: number;
+  daemons: WorkerDaemonStatus[];
   workers: Agent[];
   recent_runs: Run[];
   recent_tasks: Task[];
   recent_events: Record<string, unknown>[];
+}
+
+export interface WorkerDaemonStatus {
+  adapter: "mock" | "hermes" | "openclaw";
+  status: string;
+  running: boolean;
+  pid?: number | null;
+  agent_id?: string | null;
+  started_at?: string | null;
+  stopped_at?: string | null;
+  poll_interval?: number | null;
+  max_tasks?: number | null;
+  confirm_run?: boolean;
+  log_path?: string;
+  log_tail?: string[];
 }
 
 export interface WorkerDispatchResult {
@@ -163,6 +179,15 @@ export interface WorkerDispatchResult {
     }[];
   };
   error?: string | null;
+}
+
+export interface WorkerDaemonResult {
+  provider: string;
+  ok: boolean;
+  already_running?: boolean;
+  daemon?: WorkerDaemonStatus;
+  daemons?: WorkerDaemonStatus[];
+  error?: string;
 }
 
 function asArray<T>(value: unknown): T[] {
@@ -506,6 +531,7 @@ export async function loadWorkerStatus(): Promise<WorkerStatusPayload> {
     running_workers: numberValue(raw.running_workers, 0),
     recent_completed_runs: numberValue(raw.recent_completed_runs, 0),
     pending_worker_tasks: numberValue(raw.pending_worker_tasks, 0),
+    daemons: asArray<Record<string, unknown>>(raw.daemons).map(normalizeWorkerDaemon),
     workers: asArray<Record<string, unknown>>(raw.workers).map((row) => normalizeAgent(row)),
     recent_runs: asArray<Record<string, unknown>>(raw.recent_runs).map(normalizeRun),
     recent_tasks: asArray<Record<string, unknown>>(raw.recent_tasks).map(normalizeTask),
@@ -523,5 +549,41 @@ export async function dispatchLocalWorkerOnce(input: {
   return apiJson<WorkerDispatchResult>("/workers/local/dispatch-once", {
     method: "POST",
     body: JSON.stringify(input),
+  });
+}
+
+function normalizeWorkerDaemon(row: Record<string, unknown>): WorkerDaemonStatus {
+  return {
+    adapter: String(row.adapter || "mock") as WorkerDaemonStatus["adapter"],
+    status: String(row.status || "not_started"),
+    running: boolValue(row.running),
+    pid: row.pid ? numberValue(row.pid, 0) : null,
+    agent_id: row.agent_id ? String(row.agent_id) : null,
+    started_at: row.started_at ? String(row.started_at) : null,
+    stopped_at: row.stopped_at ? String(row.stopped_at) : null,
+    poll_interval: row.poll_interval ? numberValue(row.poll_interval, 0) : null,
+    max_tasks: row.max_tasks === undefined || row.max_tasks === null ? null : numberValue(row.max_tasks, 0),
+    confirm_run: boolValue(row.confirm_run),
+    log_path: row.log_path ? String(row.log_path) : undefined,
+    log_tail: asArray(row.log_tail).map(String),
+  };
+}
+
+export async function startLocalWorkerDaemon(input: {
+  adapter: "mock" | "hermes" | "openclaw";
+  confirm_run?: boolean;
+  poll_interval?: number;
+  max_tasks?: number;
+}): Promise<WorkerDaemonResult> {
+  return apiJson<WorkerDaemonResult>("/workers/local/start", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function stopLocalWorkerDaemon(adapter?: "mock" | "hermes" | "openclaw" | "all"): Promise<WorkerDaemonResult> {
+  return apiJson<WorkerDaemonResult>("/workers/local/stop", {
+    method: "POST",
+    body: JSON.stringify({ adapter: adapter || "all" }),
   });
 }

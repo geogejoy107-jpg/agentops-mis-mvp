@@ -4,6 +4,7 @@ __pycache__/
 
 # Local runtime state and imported personal run ledgers.
 agentops_mis.db
+.agentops_runtime/
 .playwright-cli/
 
 # Downloaded / generated UI runtime artifacts.

@@ -49,6 +49,18 @@ python3 scripts/agent_worker.py \
   --openclaw-timeout 180
 ```
 
+Daemon supervisor API:
+
+```bash
+curl -fsS http://127.0.0.1:8787/api/workers/status | jq .
+curl -fsS -X POST http://127.0.0.1:8787/api/workers/local/start \
+  -H "Content-Type: application/json" \
+  -d '{"adapter":"mock","poll_interval":1,"max_tasks":1}' | jq .
+curl -fsS -X POST http://127.0.0.1:8787/api/workers/local/stop \
+  -H "Content-Type: application/json" \
+  -d '{"adapter":"all"}' | jq .
+```
+
 ## Evidence
 
 | Path | Adapter | Task | Run | Result |
@@ -57,6 +69,7 @@ python3 scripts/agent_worker.py \
 | CLI | hermes | `tsk_worker_hermes_acceptance_20260617145544` | `run_gw_0d793ed6bbac` | completed |
 | CLI | openclaw | `tsk_worker_openclaw_acceptance_20260617145647` | `run_gw_9b2a6550d489` | completed |
 | UI | mock | `tsk_worker_ui_mock_20260617150557_657b7768` | `run_gw_8fae81a1bfa6` | completed |
+| daemon | mock | `tsk_daemon_acceptance_20260617231559` | `run_gw_6ad797929084` | completed |
 
 All CLI/live adapter runs produced:
 
@@ -79,6 +92,33 @@ runs:        run_gw_8fae81a1bfa6 completed
 tool_calls:  agent_worker.mock completed
 evaluations: pass
 audit_logs:  task.create, worker.dispatch_task.create, task_claim, run.create, run_heartbeat, agent_worker.task_processed, worker.dispatch_once
+```
+
+The daemon-triggered mock worker run was not a one-shot dispatch. The sequence was:
+
+```text
+POST /api/workers/local/start max_tasks=1
+create planned task for agt_worker_daemon_mock
+worker loop polls /api/agent-gateway/tasks/pull
+worker claims task and writes run/tool/eval/audit
+```
+
+Evidence:
+
+```text
+tasks:       tsk_daemon_acceptance_20260617231559 completed
+runs:        run_gw_6ad797929084 completed
+tool_calls:  agent_worker.mock completed
+evaluations: pass
+audit_logs:  agent_worker.task_processed exists
+```
+
+The persistent local daemon smoke also passed:
+
+```text
+POST /api/workers/local/start {"adapter":"mock","poll_interval":2,"max_tasks":0}
+GET /api/workers/status -> mock daemon running pid=82841
+POST /api/workers/local/stop {"adapter":"mock"} -> terminated
 ```
 
 ## What This Proves
@@ -104,5 +144,5 @@ planned MIS task
 - The worker does not call Dify or Notion.
 - The worker does not store full prompts or raw responses.
 - The worker is repo-local; it is not yet a launchd service, pip package, npm package, or signed binary.
-- The UI worker panel is a one-shot dispatch surface, not a daemon supervisor.
+- The UI worker panel now supports one-shot dispatch plus local daemon start/stop; it is not a production fleet manager.
 - Remote enrollment, token revocation, RBAC, and scope enforcement remain future work.

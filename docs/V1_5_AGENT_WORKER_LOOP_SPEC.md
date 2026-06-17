@@ -12,6 +12,7 @@ This v1.5 track intentionally excludes Dify and Notion live sync. Those remain s
    - v1.5 must provide a repo-local worker daemon script.
    - It must support both `--once` and loop mode.
    - It must use Agent Gateway API, not direct SQLite writes.
+   - v1.5.1 adds local start/stop/status supervision for the repo-local worker process.
 
 2. OpenClaw/Hermes Adapter Loop
    - v1.5 must support at least `mock`, `hermes`, and `openclaw` adapters.
@@ -35,8 +36,9 @@ This v1.5 track intentionally excludes Dify and Notion live sync. Those remain s
 6. UI Operation Loop
    - v1.5 adds a minimal worker status and one-shot dispatch panel in the AI Employees page.
    - The UI can trigger `mock`, `hermes`, or `openclaw` single-run workers.
+   - v1.5.1 adds daemon start/stop controls for local recording and self-use.
    - The evidence must appear in existing task/run/tool/evaluation/audit pages.
-   - Full start/stop daemon supervision remains v1.6+.
+   - Production-grade service management, restart policy, and remote worker fleets remain v1.6+.
 
 7. Customer-Task Usefulness
    - v1.5 worker output must be useful enough for a customer task summary.
@@ -93,10 +95,13 @@ Endpoints:
 
 ```http
 GET  /api/workers/status
+GET  /api/workers/local/logs?adapter=mock
 POST /api/workers/local/dispatch-once
+POST /api/workers/local/start
+POST /api/workers/local/stop
 ```
 
-`GET /api/workers/status` returns recent worker agents, worker-owned tasks, worker runs, and Agent Gateway runtime events.
+`GET /api/workers/status` returns local daemon status, recent worker agents, worker-owned tasks, worker runs, and Agent Gateway runtime events.
 
 `POST /api/workers/local/dispatch-once` accepts:
 
@@ -118,6 +123,37 @@ Behavior:
 - Requires `confirm_run:true` for Hermes/OpenClaw live adapter execution.
 - Writes audit for dispatch task creation and dispatch completion.
 
+`POST /api/workers/local/start` starts the repo-local worker in loop mode:
+
+```json
+{
+  "adapter": "mock",
+  "poll_interval": 2,
+  "max_tasks": 0,
+  "confirm_run": false
+}
+```
+
+Behavior:
+
+- Writes pid/log metadata to `.agentops_runtime/workers/`, which is gitignored.
+- Uses `scripts/agent_worker.py --adapter ... --max-tasks ...`.
+- `max_tasks:0` means keep polling until explicitly stopped.
+- Hermes/OpenClaw daemon start requires `confirm_run:true`.
+- Duplicate starts are idempotent if the daemon is already running.
+
+`POST /api/workers/local/stop` stops one adapter or all adapters:
+
+```json
+{ "adapter": "all" }
+```
+
+Behavior:
+
+- Sends `SIGTERM`, then `SIGKILL` only if the process does not exit.
+- Reaps completed child processes and treats zombies as stopped.
+- Writes runtime event and audit evidence for stop actions.
+
 ## Acceptance
 
 Minimum acceptance for v1.5 worker loop:
@@ -129,14 +165,16 @@ Minimum acceptance for v1.5 worker loop:
 5. `python3 scripts/agent_worker.py --once --adapter hermes --confirm-run` can complete a task when local Hermes gateway is live.
 6. `python3 scripts/agent_worker.py --once --adapter openclaw --confirm-run` can complete a task when OpenClaw CLI is live.
 7. `/workspace/agents` can trigger one mock worker run from the browser and the run appears in run/tool/eval/audit ledgers.
-8. Dify and Notion endpoints are not called by this worker.
+8. `/workspace/agents` can start and stop a mock daemon; status shows running while the process is alive.
+9. A daemon can pull a newly planned task and complete it without a one-shot dispatch call.
+10. Dify and Notion endpoints are not called by this worker.
 
 ## Known Limitations
 
 - No global package install.
-- No daemon supervisor or launchd unit.
+- Local daemon supervision is repo-local and process-based; no launchd/systemd unit.
 - No remote enrollment UI.
 - No per-agent scope enforcement beyond existing MVP API key boundary.
-- UI controls are one-shot dispatch controls, not a persistent worker process manager.
+- UI controls are local self-use/recording controls, not a production fleet manager.
 - Hermes/OpenClaw execution is still fixed safe adapter execution, not arbitrary prompt automation.
 - Long-form customer deliverables need a later artifact pipeline.

@@ -17,11 +17,13 @@ import json
 import os
 import random
 import re
+import signal
 import shlex
 import socket
 import sqlite3
 import subprocess
 import sys
+import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -33,6 +35,8 @@ ROOT = Path(__file__).resolve().parent
 DB_PATH = ROOT / "agentops_mis.db"
 STATIC_DIR = ROOT / "static"
 ARTIFACTS_DIR = ROOT / "artifacts"
+RUNTIME_DIR = ROOT / ".agentops_runtime"
+WORKER_RUNTIME_DIR = RUNTIME_DIR / "workers"
 OPENCLAW_HOME = Path.home() / ".openclaw"
 HERMES_HOME = Path.home() / ".hermes"
 OPENCLAW_BIN = Path("/opt/homebrew/bin/openclaw")
@@ -3329,6 +3333,213 @@ def hermes_run_task(conn, body: dict) -> dict:
     return {"created": True, "dry_run": False, "provider": "hermes", "mode": "default_gateway_fixed_probe", "ok": ok, "run_id": run_id, "task_id": task_id, "duration_ms": duration, "output_summary": row["output_summary"], "error": error}
 
 
+def worker_runtime_path(adapter: str, suffix: str) -> Path:
+    safe = coerce_choice(adapter, {"mock", "hermes", "openclaw"}, "mock")
+    return WORKER_RUNTIME_DIR / f"{safe}.{suffix}"
+
+
+def pid_is_alive(pid) -> bool:
+    try:
+        value = int(pid)
+    except Exception:
+        return False
+    if value <= 0:
+        return False
+    try:
+        waited_pid, _status = os.waitpid(value, os.WNOHANG)
+        if waited_pid == value:
+            return False
+    except ChildProcessError:
+        pass
+    except Exception:
+        pass
+    try:
+        stat = subprocess.run(["ps", "-o", "stat=", "-p", str(value)], capture_output=True, text=True, timeout=2, check=False)
+        if stat.returncode == 0 and stat.stdout.strip().startswith("Z"):
+            return False
+    except Exception:
+        pass
+    try:
+        os.kill(value, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except Exception:
+        return False
+
+
+def tail_text(path: Path, max_lines: int = 30) -> list[str]:
+    try:
+        if not path.exists():
+            return []
+        return path.read_text(encoding="utf-8", errors="replace").splitlines()[-max_lines:]
+    except Exception as exc:
+        return [f"[log unavailable] {redact_text(str(exc), 120)}"]
+
+
+def read_worker_daemon(adapter: str, include_log: bool = False) -> dict:
+    pid_path = worker_runtime_path(adapter, "json")
+    log_path = worker_runtime_path(adapter, "log")
+    meta = read_json_file(pid_path, {}) if pid_path.exists() else {}
+    pid = meta.get("pid")
+    alive = pid_is_alive(pid)
+    status = "running" if alive else "stopped" if meta.get("stopped_at") else "dead" if meta else "not_started"
+    payload = {
+        "adapter": adapter,
+        "status": status,
+        "running": alive,
+        "pid": pid,
+        "agent_id": meta.get("agent_id"),
+        "started_at": meta.get("started_at"),
+        "stopped_at": meta.get("stopped_at"),
+        "last_exit_note": meta.get("last_exit_note"),
+        "poll_interval": meta.get("poll_interval"),
+        "max_tasks": meta.get("max_tasks"),
+        "confirm_run": bool(meta.get("confirm_run")),
+        "log_path": str(log_path),
+    }
+    if include_log:
+        payload["log_tail"] = tail_text(log_path, 80)
+    return payload
+
+
+def worker_daemon_status(include_log: bool = False) -> list[dict]:
+    return [read_worker_daemon(adapter, include_log=include_log) for adapter in ("mock", "hermes", "openclaw")]
+
+
+def start_local_worker_daemon(conn, body: dict) -> tuple[dict, int]:
+    adapter = coerce_choice(body.get("adapter"), {"mock", "hermes", "openclaw"}, "mock")
+    confirm_run = bool(body.get("confirm_run"))
+    if adapter in {"hermes", "openclaw"} and not confirm_run:
+        return {
+            "provider": "agentops-worker",
+            "ok": False,
+            "adapter": adapter,
+            "error": "confirm_run:true is required for Hermes/OpenClaw live worker daemons.",
+        }, 400
+
+    existing = read_worker_daemon(adapter)
+    if existing["running"]:
+        return {"provider": "agentops-worker", "ok": True, "already_running": True, "daemon": existing}, 200
+
+    WORKER_RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+    agent_id = body.get("agent_id") or f"agt_worker_daemon_{adapter}"
+    poll_interval = min(max(float(body.get("poll_interval") or 5.0), 1.0), 300.0)
+    max_tasks = max(int(body.get("max_tasks") or 0), 0)
+    status_filters = body.get("status") if isinstance(body.get("status"), list) else ["planned"]
+    status_filters = [coerce_choice(str(item), VALID_TASK_STATUSES, "planned") for item in status_filters if item]
+    if not status_filters:
+        status_filters = ["planned"]
+
+    ensure_gateway_agent(
+        conn,
+        agent_id,
+        name=f"Daemon {adapter} Worker",
+        role=f"Local {adapter} Adapter Daemon",
+        runtime_type=adapter,
+    )
+    conn.execute("UPDATE agents SET status=?, updated_at=? WHERE agent_id=?", ("running", now_iso(), agent_id))
+    conn.commit()
+
+    cmd = [
+        sys.executable,
+        str(ROOT / "scripts" / "agent_worker.py"),
+        "--adapter",
+        adapter,
+        "--agent-id",
+        agent_id,
+        "--base-url",
+        os.environ.get("AGENTOPS_BASE_URL", "http://127.0.0.1:8787"),
+        "--poll-interval",
+        str(poll_interval),
+        "--max-tasks",
+        str(max_tasks),
+    ]
+    for status in status_filters:
+        cmd.extend(["--status", status])
+    if confirm_run:
+        cmd.append("--confirm-run")
+    if adapter == "hermes":
+        cmd.extend(["--hermes-gateway-url", os.environ.get("HERMES_GATEWAY_URL", "http://127.0.0.1:8642")])
+    if adapter == "openclaw":
+        cmd.extend(["--openclaw-bin", str(OPENCLAW_BIN), "--openclaw-timeout", str(int(body.get("openclaw_timeout") or 180))])
+
+    log_path = worker_runtime_path(adapter, "log")
+    with log_path.open("a", encoding="utf-8") as log:
+        log.write(f"\n[{now_iso()}] starting {' '.join(shlex.quote(part) for part in cmd)}\n")
+        log.flush()
+        proc = subprocess.Popen(cmd, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, start_new_session=True, close_fds=True)
+
+    meta = {
+        "adapter": adapter,
+        "agent_id": agent_id,
+        "pid": proc.pid,
+        "started_at": now_iso(),
+        "stopped_at": None,
+        "poll_interval": poll_interval,
+        "max_tasks": max_tasks,
+        "status_filters": status_filters,
+        "confirm_run": confirm_run,
+        "cmd": [part if "key" not in part.lower() and "token" not in part.lower() else "[REDACTED]" for part in cmd],
+    }
+    worker_runtime_path(adapter, "json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    runtime_event(conn, "rtc_agent_gateway_local", "worker.daemon.start", "running", agent_id=agent_id, output_summary=f"Started {adapter} local worker daemon pid={proc.pid}.")
+    audit(conn, "user", "usr_founder", "worker.daemon.start", "agents", agent_id, None, {"pid": proc.pid, "adapter": adapter}, {"poll_interval": poll_interval, "max_tasks": max_tasks, "confirm_run": confirm_run})
+    conn.commit()
+    return {"provider": "agentops-worker", "ok": True, "daemon": read_worker_daemon(adapter, include_log=True)}, 201
+
+
+def stop_local_worker_daemon(conn, body: dict) -> tuple[dict, int]:
+    requested = body.get("adapter")
+    adapters = ["mock", "hermes", "openclaw"] if requested in (None, "", "all") else [coerce_choice(requested, {"mock", "hermes", "openclaw"}, "mock")]
+    stopped = []
+    for adapter in adapters:
+        pid_path = worker_runtime_path(adapter, "json")
+        meta = read_json_file(pid_path, {}) if pid_path.exists() else {}
+        pid = meta.get("pid")
+        was_alive = pid_is_alive(pid)
+        note = "not_running"
+        if was_alive:
+            try:
+                os.killpg(int(pid), signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            except Exception:
+                try:
+                    os.kill(int(pid), signal.SIGTERM)
+                except Exception:
+                    pass
+            time_waited = 0.0
+            while pid_is_alive(pid) and time_waited < 2.0:
+                time.sleep(0.2)
+                time_waited += 0.2
+            if pid_is_alive(pid):
+                try:
+                    os.killpg(int(pid), signal.SIGKILL)
+                except Exception:
+                    try:
+                        os.kill(int(pid), signal.SIGKILL)
+                    except Exception:
+                        pass
+                note = "killed_after_timeout"
+            else:
+                note = "terminated"
+        meta.update({"stopped_at": now_iso(), "last_exit_note": note})
+        WORKER_RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+        pid_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+        agent_id = meta.get("agent_id") or f"agt_worker_daemon_{adapter}"
+        agent_exists = conn.execute("SELECT 1 FROM agents WHERE agent_id=?", (agent_id,)).fetchone()
+        if agent_exists:
+            conn.execute("UPDATE agents SET status=?, updated_at=? WHERE agent_id=?", ("paused", now_iso(), agent_id))
+        runtime_event(conn, "rtc_agent_gateway_local", "worker.daemon.stop", "completed", agent_id=agent_id if agent_exists else None, output_summary=f"Stopped {adapter} local worker daemon: {note}.")
+        audit(conn, "user", "usr_founder", "worker.daemon.stop", "agents", agent_id, None, {"adapter": adapter, "note": note}, {"pid": pid})
+        stopped.append(read_worker_daemon(adapter, include_log=True))
+    conn.commit()
+    return {"provider": "agentops-worker", "ok": True, "daemons": stopped}, 200
+
+
 def worker_status(conn) -> dict:
     worker_agents = rows_to_dicts(conn.execute(
         """SELECT * FROM agents
@@ -3350,13 +3561,16 @@ def worker_status(conn) -> dict:
         WHERE agent_id LIKE 'agt_worker_%' OR event_type IN ('task.pull','task.claim','run.start','run.heartbeat','tool_call.record','evaluation.submit','audit.emit')
         ORDER BY created_at DESC LIMIT 40"""
     ).fetchall())
+    daemons = worker_daemon_status(include_log=False)
+    active_daemons = [daemon for daemon in daemons if daemon["running"]]
     return {
         "provider": "agentops-worker",
-        "status": "ready",
+        "status": "running" if active_daemons else "ready",
         "worker_count": len(worker_agents),
-        "running_workers": len([agent for agent in worker_agents if agent.get("status") == "running"]),
+        "running_workers": len([agent for agent in worker_agents if agent.get("status") == "running"]) + len(active_daemons),
         "recent_completed_runs": len([run for run in worker_runs if run.get("status") == "completed"]),
         "pending_worker_tasks": len([task for task in worker_tasks if task.get("status") in ("planned", "backlog")]),
+        "daemons": daemons,
         "workers": worker_agents,
         "recent_runs": worker_runs,
         "recent_tasks": worker_tasks,
@@ -3827,6 +4041,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM runtime_events ORDER BY created_at DESC LIMIT 200").fetchall()))
             if path == "/api/workers/status":
                 return self.send_json(worker_status(conn))
+            if path == "/api/workers/local/logs":
+                adapter = coerce_choice((qs.get("adapter") or ["mock"])[0], {"mock", "hermes", "openclaw"}, "mock")
+                return self.send_json({"provider": "agentops-worker", "daemon": read_worker_daemon(adapter, include_log=True)})
             if path == "/api/bases":
                 bases = rows_to_dicts(conn.execute("SELECT * FROM bases ORDER BY provider, category, display_name").fetchall())
                 capabilities = rows_to_dicts(conn.execute("SELECT * FROM base_capabilities ORDER BY base_id").fetchall())
@@ -3994,6 +4211,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(run_customer_task_workflow(conn, body), 201)
             if path == "/api/workers/local/dispatch-once":
                 return self.send_json(dispatch_local_worker_once(conn, body), 201)
+            if path == "/api/workers/local/start":
+                payload, status = start_local_worker_daemon(conn, body)
+                return self.send_json(payload, status)
+            if path == "/api/workers/local/stop":
+                payload, status = stop_local_worker_daemon(conn, body)
+                return self.send_json(payload, status)
             if path == "/api/integrations/openclaw/import":
                 result = import_openclaw(conn)
                 conn.commit()

@@ -1,8 +1,8 @@
 import { Link } from "react-router";
 import { useState } from "react";
-import { Bot, Play, RefreshCw, Activity } from "lucide-react";
+import { Bot, Play, RefreshCw, Activity, Power, Square } from "lucide-react";
 import { StatusBadge } from "../shared/StatusBadge";
-import { dispatchLocalWorkerOnce, loadAgents, loadDashboard, loadWorkerStatus, useLiveData } from "../../data/liveApi";
+import { dispatchLocalWorkerOnce, loadAgents, loadDashboard, loadWorkerStatus, startLocalWorkerDaemon, stopLocalWorkerDaemon, useLiveData } from "../../data/liveApi";
 import { pick, usePreferences } from "../../context/PreferencesContext";
 
 const RUNTIME_COLOR: Record<string, string> = {
@@ -48,8 +48,16 @@ export function AIEmployees() {
       dispatchMock: "Run mock once",
       dispatchHermes: "Run Hermes once",
       dispatchOpenClaw: "Run OpenClaw once",
+      startMockDaemon: "Start mock daemon",
+      startHermesDaemon: "Start Hermes daemon",
+      startOpenClawDaemon: "Start OpenClaw daemon",
+      stopDaemons: "Stop daemons",
       dispatching: "Dispatching...",
+      starting: "Starting...",
+      stopping: "Stopping...",
       recentRun: "Recent run",
+      daemonStatus: "Daemon status",
+      pid: "PID",
     },
     zh: {
       title: "AI 员工",
@@ -70,8 +78,16 @@ export function AIEmployees() {
       dispatchMock: "运行 mock 单轮",
       dispatchHermes: "运行 Hermes 单轮",
       dispatchOpenClaw: "运行 OpenClaw 单轮",
+      startMockDaemon: "启动 mock 常驻",
+      startHermesDaemon: "启动 Hermes 常驻",
+      startOpenClawDaemon: "启动 OpenClaw 常驻",
+      stopDaemons: "停止常驻 worker",
       dispatching: "正在派发...",
+      starting: "正在启动...",
+      stopping: "正在停止...",
       recentRun: "最近 run",
+      daemonStatus: "常驻状态",
+      pid: "进程",
     },
   });
 
@@ -90,6 +106,40 @@ export function AIEmployees() {
       });
       const runId = result.worker_result?.results?.[0]?.run_id || result.task_id;
       setDispatchResult(`${adapter}: ${result.ok ? "ok" : "failed"} · ${runId}`);
+      await refresh();
+    } catch (err) {
+      setDispatchResult(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDispatching(null);
+    }
+  };
+
+  const startDaemon = async (adapter: "mock" | "hermes" | "openclaw") => {
+    setDispatching(`start-${adapter}`);
+    setDispatchResult(null);
+    try {
+      const result = await startLocalWorkerDaemon({
+        adapter,
+        confirm_run: adapter !== "mock",
+        poll_interval: 2,
+        max_tasks: 0,
+      });
+      const pid = result.daemon?.pid ? `pid ${result.daemon.pid}` : result.already_running ? "already running" : "started";
+      setDispatchResult(`${adapter} daemon: ${result.ok ? "ok" : "failed"} · ${pid}`);
+      await refresh();
+    } catch (err) {
+      setDispatchResult(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDispatching(null);
+    }
+  };
+
+  const stopDaemons = async () => {
+    setDispatching("stop-daemons");
+    setDispatchResult(null);
+    try {
+      const result = await stopLocalWorkerDaemon("all");
+      setDispatchResult(`daemon stop: ${result.ok ? "ok" : "failed"}`);
       await refresh();
     } catch (err) {
       setDispatchResult(err instanceof Error ? err.message : String(err));
@@ -150,6 +200,33 @@ export function AIEmployees() {
             ))}
           </div>
         </div>
+        <div className="flex gap-2 flex-wrap mt-4">
+          {[
+            { adapter: "mock" as const, label: copy.startMockDaemon },
+            { adapter: "hermes" as const, label: copy.startHermesDaemon },
+            { adapter: "openclaw" as const, label: copy.startOpenClawDaemon },
+          ].map((item) => (
+            <button
+              key={item.adapter}
+              onClick={() => startDaemon(item.adapter)}
+              disabled={Boolean(dispatching)}
+              className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded disabled:opacity-50"
+              style={{ background: "rgba(45,212,191,0.12)", color: "var(--mis-success)", border: "1px solid rgba(45,212,191,0.22)" }}
+            >
+              {dispatching === `start-${item.adapter}` ? <RefreshCw size={12} /> : <Power size={12} />}
+              {dispatching === `start-${item.adapter}` ? copy.starting : item.label}
+            </button>
+          ))}
+          <button
+            onClick={stopDaemons}
+            disabled={Boolean(dispatching)}
+            className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded disabled:opacity-50"
+            style={{ background: "rgba(248,113,113,0.1)", color: "#F87171", border: "1px solid rgba(248,113,113,0.22)" }}
+          >
+            {dispatching === "stop-daemons" ? <RefreshCw size={12} /> : <Square size={12} />}
+            {dispatching === "stop-daemons" ? copy.stopping : copy.stopDaemons}
+          </button>
+        </div>
         <div className="grid grid-cols-4 gap-3 mt-4">
           {[
             { label: copy.workers, value: workerStatus?.worker_count ?? "—" },
@@ -160,6 +237,22 @@ export function AIEmployees() {
             <div key={item.label} className="rounded-lg px-3 py-2" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
               <div className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{item.label}</div>
               <div className="text-xs font-semibold truncate mt-1" style={{ color: "var(--mis-text)" }}>{item.value}</div>
+            </div>
+          ))}
+        </div>
+        <div className="grid grid-cols-3 gap-3 mt-3">
+          {(workerStatus?.daemons || []).map((daemon) => (
+            <div key={daemon.adapter} className="rounded-lg px-3 py-2" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-[10px] uppercase" style={{ color: "var(--mis-muted)" }}>{daemon.adapter}</div>
+                <StatusBadge status={daemon.running ? "running" : daemon.status} />
+              </div>
+              <div className="text-[10px] mt-1 truncate" style={{ color: "var(--mis-dim)" }}>
+                {copy.daemonStatus}: {daemon.status}
+              </div>
+              <div className="text-[10px] mt-0.5 truncate" style={{ color: "var(--mis-dim)" }}>
+                {copy.pid}: {daemon.pid || "—"} · {daemon.agent_id || "—"}
+              </div>
             </div>
           ))}
         </div>
