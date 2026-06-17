@@ -128,6 +128,11 @@ export function AIEmployees() {
       recentRun: "Recent run",
       daemonStatus: "Daemon status",
       pid: "PID",
+      processed: "Processed",
+      iterations: "Loops",
+      errors: "Errors",
+      lastError: "Last error",
+      statePath: "State path",
       fleetTitle: "Worker Fleet Telemetry",
       fleetSummary: "Read-only observability for local daemons and Agent Gateway events.",
       daemonLogs: "Daemon logs",
@@ -195,6 +200,11 @@ export function AIEmployees() {
       recentRun: "最近 run",
       daemonStatus: "常驻状态",
       pid: "进程",
+      processed: "已处理",
+      iterations: "轮询",
+      errors: "错误",
+      lastError: "最近错误",
+      statePath: "状态路径",
       fleetTitle: "Worker Fleet 观测",
       fleetSummary: "只读查看本地 daemon 日志和 Agent Gateway 最近事件。",
       daemonLogs: "Daemon 日志",
@@ -472,11 +482,32 @@ export function AIEmployees() {
                 <StatusBadge status={daemon.running ? "running" : daemon.status} />
               </div>
               <div className="text-[10px] mt-1 truncate" style={{ color: "var(--mis-dim)" }}>
-                {copy.daemonStatus}: {daemon.status}
+                {copy.daemonStatus}: {daemon.worker_status || daemon.status}
               </div>
               <div className="text-[10px] mt-0.5 truncate" style={{ color: "var(--mis-dim)" }}>
                 {copy.pid}: {daemon.pid || "—"} · {daemon.agent_id || "—"}
               </div>
+              <div className="grid grid-cols-3 gap-1 mt-2">
+                <div className="rounded px-1.5 py-1" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                  <div className="text-[9px]" style={{ color: "var(--mis-muted)" }}>{copy.processed}</div>
+                  <div className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{daemon.processed ?? 0}</div>
+                </div>
+                <div className="rounded px-1.5 py-1" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                  <div className="text-[9px]" style={{ color: "var(--mis-muted)" }}>{copy.iterations}</div>
+                  <div className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{daemon.iterations ?? 0}</div>
+                </div>
+                <div className="rounded px-1.5 py-1" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                  <div className="text-[9px]" style={{ color: "var(--mis-muted)" }}>{copy.errors}</div>
+                  <div className="text-[10px] font-semibold" style={{ color: (daemon.consecutive_errors || 0) > 0 ? "#F87171" : "var(--mis-text)" }}>
+                    {daemon.consecutive_errors ?? 0}/{daemon.total_errors ?? 0}
+                  </div>
+                </div>
+              </div>
+              {daemon.last_error && (
+                <div className="text-[10px] mt-2 truncate" style={{ color: "#F87171" }}>
+                  {copy.lastError}: {String(daemon.last_error.error_message || daemon.last_error.error_type || "error")}
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -521,6 +552,14 @@ export function AIEmployees() {
             <div className="text-[10px] mt-1 truncate" style={{ color: "var(--mis-muted)" }}>
               {copy.logPath}: {selectedDaemonLog?.log_path || "—"}
             </div>
+            <div className="text-[10px] mt-1 truncate" style={{ color: "var(--mis-muted)" }}>
+              {copy.statePath}: {selectedDaemonLog?.state_path || "—"}
+            </div>
+            {selectedDaemonLog?.last_error && (
+              <div className="text-[10px] mt-2 rounded px-2 py-1" style={{ color: "#F87171", background: "rgba(248,113,113,0.08)", border: "1px solid rgba(248,113,113,0.18)" }}>
+                {copy.lastError}: {String(selectedDaemonLog.last_error.error_message || selectedDaemonLog.last_error.error_type || "error")}
+              </div>
+            )}
             <pre
               className="mt-3 h-44 overflow-auto rounded p-3 text-[10px] leading-relaxed whitespace-pre-wrap"
               style={{ background: "var(--mis-bg)", color: "var(--mis-dim)", border: "1px solid var(--mis-border)" }}

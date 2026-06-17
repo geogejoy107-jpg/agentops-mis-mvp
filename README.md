@@ -272,6 +272,7 @@ python3 scripts/agent_worker.py \
 
 ```bash
 python3 scripts/agent_worker.py --adapter mock --poll-interval 5 --max-tasks 10
+python3 scripts/agent_worker.py --adapter mock --poll-interval 5 --max-tasks 0 --continue-on-error --max-errors 5 --write-state --jsonl-log
 ```
 
 浏览器派发：
@@ -279,7 +280,7 @@ python3 scripts/agent_worker.py --adapter mock --poll-interval 5 --max-tasks 10
 - `/workspace/agents` 现在有 “本地 Worker 循环 / Local Worker Loop” 面板。
 - 它可以从页面触发一次 `mock`、`Hermes` 或 `OpenClaw` worker run。
 - 它也可以启动/停止本地 mock / Hermes / OpenClaw daemon，让 worker 持续拉取普通 MIS 任务。
-- 它可以查看 “Worker Fleet 观测 / Worker Fleet Telemetry”，包括 daemon 日志尾部和最近 Agent Gateway runtime events。
+- 它可以查看 “Worker Fleet 观测 / Worker Fleet Telemetry”，包括 daemon 状态计数、错误计数、state 文件路径、日志尾部和最近 Agent Gateway runtime events。
 - 它也包含 “远程 Agent 接入 / Remote Agent Enrollment” 面板，可以用权限预设创建、查看、轮换和吊销 scoped enrollment token；原始 token 只在创建/轮换后显示一次。
 - 后端会先创建普通 MIS 任务，再调用 `scripts/agent_worker.py --once`，结果写入 Run Ledger、Tool Calls、Evaluations 和 Audit。
 - Hermes/OpenClaw 页面派发仍会带显式确认，不改变默认安全策略。
@@ -297,6 +298,7 @@ curl -fsS -X POST http://127.0.0.1:8787/api/workers/local/start \
 curl -fsS -X POST http://127.0.0.1:8787/api/workers/local/stop \
   -H "Content-Type: application/json" \
   -d '{"adapter":"all"}' | jq .
+python3 scripts/worker_daemon_resilience_smoke.py
 ```
 
 边界：
@@ -304,7 +306,7 @@ curl -fsS -X POST http://127.0.0.1:8787/api/workers/local/stop \
 - 不调用 Dify / Notion。
 - 不保存完整 prompt、raw response、credentials、transcripts。
 - Hermes/OpenClaw 真实执行必须显式传 `--confirm-run`。
-- 页面 daemon 控制是本地录屏/自用 supervisor，不是 launchd/systemd 或远程 fleet manager。
+- 页面 daemon 控制是本地录屏/自用 supervisor；现在有 state/JSONL/error counters 和 bounded continue-on-error，但仍不是 launchd/systemd 或远程 fleet manager。
 - 当前仍是 repo-local worker，不是全局安装包；远程 enrollment 已有 MVP UI/API/CLI、scope preset、token rotation 和最小 workspace isolation，但还不是完整 RBAC、short-lived session 和 hosted 多租户产品。
 
 Dify 可以作为本地或客户服务器上的 agent 工具层，而不是 MIS 的替代品。MIS 负责记录任务、运行、工具、审批、评估和审计；Dify 负责知识库/工作流/问答应用。查看 Dify 当前信任域和配置：

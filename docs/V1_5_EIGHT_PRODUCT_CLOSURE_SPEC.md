@@ -39,6 +39,7 @@ Current v1.5 implementation:
 - `scripts/agent_worker.py`
 - Supports `--once`.
 - Supports loop mode with `--poll-interval` and `--max-tasks`.
+- Supports bounded daemon resilience with `--continue-on-error`, `--max-errors`, local state files, and JSONL iteration logs.
 - Uses Agent Gateway HTTP API instead of direct SQLite writes.
 - Local daemon supervisor APIs:
   - `GET /api/workers/status`
@@ -50,11 +51,16 @@ Acceptance evidence:
 
 - Daemon auto-pull run: `run_gw_6ad797929084`
 - Persistent daemon smoke: `max_tasks=0` showed running status and stopped cleanly.
+- Resilience smoke: `python3 scripts/worker_daemon_resilience_smoke.py`
+  - server daemon processed task `tsk_worker_daemon_resilience_20260617184522`
+  - wrote run `run_gw_9ee54d8e4d95`
+  - exposed `processed=1`, `iterations=1`, JSONL `worker.iteration`, and local state path
+  - direct bad-URL worker recorded two errors and exited after `max_errors`.
 
 Remaining product work:
 
 - launchd/systemd service unit.
-- Restart policy.
+- Full restart policy with supervised relaunch after process death.
 - Production log rotation.
 - Fleet-level worker management.
 

@@ -3740,10 +3740,15 @@ def tail_text(path: Path, max_lines: int = 30) -> list[str]:
 def read_worker_daemon(adapter: str, include_log: bool = False) -> dict:
     pid_path = worker_runtime_path(adapter, "json")
     log_path = worker_runtime_path(adapter, "log")
+    state_path = worker_runtime_path(adapter, "state.json")
     meta = read_json_file(pid_path, {}) if pid_path.exists() else {}
+    state = read_json_file(state_path, {}) if state_path.exists() else {}
     pid = meta.get("pid")
     alive = pid_is_alive(pid)
     status = "running" if alive else "stopped" if meta.get("stopped_at") else "dead" if meta else "not_started"
+    worker_status = state.get("status")
+    if alive and worker_status in {"error", "failed", "failed_max_errors"}:
+        status = "degraded"
     payload = {
         "adapter": adapter,
         "status": status,
@@ -3757,6 +3762,16 @@ def read_worker_daemon(adapter: str, include_log: bool = False) -> dict:
         "max_tasks": meta.get("max_tasks"),
         "confirm_run": bool(meta.get("confirm_run")),
         "log_path": str(log_path),
+        "state_path": str(state_path),
+        "worker_status": worker_status,
+        "state_updated_at": state.get("updated_at"),
+        "processed": int(state.get("processed") or 0),
+        "iterations": int(state.get("iterations") or 0),
+        "total_errors": int(state.get("total_errors") or 0),
+        "consecutive_errors": int(state.get("consecutive_errors") or 0),
+        "last_error": state.get("last_error"),
+        "last_result": state.get("last_result"),
+        "continue_on_error": bool(state.get("continue_on_error")),
     }
     if include_log:
         payload["log_tail"] = tail_text(log_path, 80)
@@ -3814,6 +3829,12 @@ def start_local_worker_daemon(conn, body: dict) -> tuple[dict, int]:
         str(poll_interval),
         "--max-tasks",
         str(max_tasks),
+        "--continue-on-error",
+        "--max-errors",
+        str(max(int(body.get("max_errors") or 5), 1)),
+        "--state-path",
+        str(worker_runtime_path(adapter, "state.json")),
+        "--jsonl-log",
     ]
     for status in status_filters:
         cmd.extend(["--status", status])
@@ -3841,6 +3862,9 @@ def start_local_worker_daemon(conn, body: dict) -> tuple[dict, int]:
         "status_filters": status_filters,
         "confirm_run": confirm_run,
         "cmd": [part if "key" not in part.lower() and "token" not in part.lower() else "[REDACTED]" for part in cmd],
+        "continue_on_error": True,
+        "max_errors": max(int(body.get("max_errors") or 5), 1),
+        "state_path": str(worker_runtime_path(adapter, "state.json")),
     }
     worker_runtime_path(adapter, "json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
     runtime_event(conn, "rtc_agent_gateway_local", "worker.daemon.start", "running", agent_id=agent_id, output_summary=f"Started {adapter} local worker daemon pid={proc.pid}.")
@@ -3887,6 +3911,10 @@ def stop_local_worker_daemon(conn, body: dict) -> tuple[dict, int]:
         meta.update({"stopped_at": now_iso(), "last_exit_note": note})
         WORKER_RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
         pid_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+        state_path = worker_runtime_path(adapter, "state.json")
+        state = read_json_file(state_path, {}) if state_path.exists() else {}
+        state.update({"status": "stopped", "stopped_at": now_iso(), "updated_at": now_iso(), "last_exit_note": note})
+        state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
         agent_id = meta.get("agent_id") or f"agt_worker_daemon_{adapter}"
         agent_exists = conn.execute("SELECT 1 FROM agents WHERE agent_id=?", (agent_id,)).fetchone()
         if agent_exists:

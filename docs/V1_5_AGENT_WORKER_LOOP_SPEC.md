@@ -141,8 +141,11 @@ Behavior:
 Behavior:
 
 - Writes pid/log metadata to `.agentops_runtime/workers/`, which is gitignored.
+- Writes local daemon state to `.agentops_runtime/workers/{adapter}.state.json`, including status, processed count, loop count, consecutive errors, total errors, last result and last error.
+- Emits one JSONL line per worker loop iteration into the daemon log.
 - Uses `scripts/agent_worker.py --adapter ... --max-tasks ...`.
 - `max_tasks:0` means keep polling until explicitly stopped.
+- Server-started daemons run with `--continue-on-error` and bounded `--max-errors` so one transient API/adapter failure does not silently kill the loop.
 - Hermes/OpenClaw daemon start requires `confirm_run:true`.
 - Duplicate starts are idempotent if the daemon is already running.
 
@@ -219,13 +222,14 @@ Minimum acceptance for v1.5 worker loop:
 11. `python3 scripts/remote_agent_token_worker_smoke.py` can use a scoped token to run a worker end-to-end and revoke the token.
 12. Revoked tokens are rejected.
 13. Dify and Notion endpoints are not called by this worker.
+14. `python3 scripts/worker_daemon_resilience_smoke.py` proves daemon state/log evidence and bounded error recovery.
 
 ## Known Limitations
 
 - No global package install.
 - Local daemon supervision is repo-local and process-based; no launchd/systemd unit.
-- No remote enrollment UI.
-- Scope enforcement is minimal endpoint-level enforcement, not full RBAC/workspace isolation.
+- No process relaunch after daemon death.
+- Scope enforcement and workspace isolation are still MVP-level, not full hosted RBAC.
 - UI controls are local self-use/recording controls, not a production fleet manager.
 - Hermes/OpenClaw execution is still fixed safe adapter execution, not arbitrary prompt automation.
 - Long-form customer deliverables need a later artifact pipeline.

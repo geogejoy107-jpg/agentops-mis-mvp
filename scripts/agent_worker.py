@@ -18,6 +18,7 @@ import hashlib
 import json
 import os
 import shlex
+import signal
 import subprocess
 import sys
 import time
@@ -35,6 +36,15 @@ DEFAULT_AGENT_ID = "agt_worker_local"
 DEFAULT_HERMES_GATEWAY_URL = "http://127.0.0.1:8642"
 DEFAULT_HERMES_MODEL = "hermes-agent"
 DEFAULT_OPENCLAW_BIN = "/opt/homebrew/bin/openclaw"
+DEFAULT_RUNTIME_DIR = ROOT / ".agentops_runtime" / "workers"
+
+
+SHOULD_STOP = False
+
+
+def handle_stop_signal(_signum, _frame):
+    global SHOULD_STOP
+    SHOULD_STOP = True
 
 
 def now_iso() -> str:
@@ -66,6 +76,80 @@ def redact_text(value, limit: int = 200) -> str:
 
 def json_dumps(data) -> str:
     return json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True)
+
+
+def safe_error(exc: Exception | str) -> dict:
+    return {
+        "error_type": exc.__class__.__name__ if isinstance(exc, Exception) else "WorkerError",
+        "error_message": redact_text(str(exc), 260),
+    }
+
+
+class WorkerState:
+    def __init__(self, args):
+        if args.state_path:
+            self.path = Path(args.state_path)
+        else:
+            self.path = DEFAULT_RUNTIME_DIR / f"{args.adapter}.state.json"
+        self.enabled = bool(args.write_state or args.state_path)
+        self.data = {
+            "adapter": args.adapter,
+            "agent_id": args.agent_id,
+            "workspace_id": args.workspace_id,
+            "base_url": args.base_url,
+            "status": "starting",
+            "processed": 0,
+            "iterations": 0,
+            "total_errors": 0,
+            "consecutive_errors": 0,
+            "max_errors": args.max_errors,
+            "continue_on_error": bool(args.continue_on_error),
+            "started_at": now_iso(),
+            "updated_at": now_iso(),
+            "last_heartbeat_at": None,
+            "last_result": None,
+            "last_error": None,
+        }
+        self.write()
+
+    def update(self, **kwargs):
+        self.data.update(kwargs)
+        self.data["updated_at"] = now_iso()
+        self.write()
+
+    def record_result(self, result: dict):
+        if result.get("processed"):
+            self.data["processed"] = int(self.data.get("processed") or 0) + 1
+        self.data["iterations"] = int(self.data.get("iterations") or 0) + 1
+        self.data["consecutive_errors"] = 0
+        self.data["last_error"] = None
+        self.update(
+            status="idle" if not result.get("processed") else "completed" if result.get("ok", True) else "failed",
+            last_result=result,
+            last_task_id=result.get("task_id"),
+            last_run_id=result.get("run_id"),
+            last_heartbeat_at=now_iso(),
+        )
+
+    def record_error(self, exc: Exception | str):
+        error = safe_error(exc)
+        self.data["iterations"] = int(self.data.get("iterations") or 0) + 1
+        self.data["total_errors"] = int(self.data.get("total_errors") or 0) + 1
+        self.data["consecutive_errors"] = int(self.data.get("consecutive_errors") or 0) + 1
+        self.update(status="error", last_error=error, last_result=None, last_heartbeat_at=now_iso())
+        return error
+
+    def stop(self, status: str = "stopped"):
+        self.update(status=status, stopped_at=now_iso())
+
+    def write(self):
+        if not self.enabled:
+            return
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self.path.write_text(json.dumps(self.data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        except Exception:
+            pass
 
 
 class AgentOpsClient:
@@ -250,6 +334,24 @@ def risk_allowed(task: dict, allow_high_risk: bool) -> bool:
     return allow_high_risk or (task.get("risk_level") or "medium") in {"low", "medium"}
 
 
+def emit_jsonl(args, payload: dict):
+    if args.jsonl_log:
+        print(json.dumps(payload, ensure_ascii=False, sort_keys=True), flush=True)
+
+
+def safe_worker_heartbeat(client: AgentOpsClient, args, status: str, summary: str):
+    try:
+        client.post("/api/agent-gateway/heartbeat", {
+            "workspace_id": client.workspace_id,
+            "agent_id": client.agent_id,
+            "status": status,
+            "summary": redact_text(summary, 200),
+            "runtime_type": args.adapter,
+        }, timeout=20)
+    except Exception:
+        pass
+
+
 def register_worker(client: AgentOpsClient, adapter: str):
     return client.post("/api/agent-gateway/register", {
         "workspace_id": client.workspace_id,
@@ -423,27 +525,68 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--openclaw-bin", default=os.environ.get("OPENCLAW_BIN", DEFAULT_OPENCLAW_BIN))
     parser.add_argument("--openclaw-agent", default=os.environ.get("OPENCLAW_AGENT", "main"))
     parser.add_argument("--openclaw-timeout", type=int, default=int(os.environ.get("OPENCLAW_TIMEOUT", "180")))
+    parser.add_argument("--continue-on-error", action="store_true", help="Keep polling after a loop/API/adapter error.")
+    parser.add_argument("--max-errors", type=int, default=5, help="Stop after this many consecutive errors when continuing.")
+    parser.add_argument("--state-path", default=os.environ.get("AGENTOPS_WORKER_STATE_PATH", ""))
+    parser.add_argument("--write-state", action="store_true", help="Write local worker state under .agentops_runtime/workers.")
+    parser.add_argument("--jsonl-log", action="store_true", help="Emit one JSON log line per loop iteration.")
     return parser
 
 
 def main() -> int:
     args = build_parser().parse_args()
+    signal.signal(signal.SIGTERM, handle_stop_signal)
+    signal.signal(signal.SIGINT, handle_stop_signal)
     client = AgentOpsClient(args.base_url, args.workspace_id, args.agent_id, args.api_key)
-    register_worker(client, args.adapter)
+    state = WorkerState(args)
     processed = 0
     results = []
+    registered = False
+    fatal_failure = False
     while True:
-        result = process_one_task(client, args)
-        results.append(result)
-        if result.get("processed"):
-            processed += 1
-        if args.once:
+        if SHOULD_STOP:
             break
-        if args.max_tasks and processed >= args.max_tasks:
-            break
-        time.sleep(args.poll_interval)
-    print(json_dumps({"ok": all(item.get("ok", True) for item in results if item.get("processed")), "processed": processed, "results": results}))
-    return 0 if all(item.get("ok", True) for item in results if item.get("processed")) else 1
+        try:
+            if not registered:
+                state.update(status="registering")
+                register_worker(client, args.adapter)
+                registered = True
+            state.update(status="polling")
+            result = process_one_task(client, args)
+            results.append(result)
+            state.record_result(result)
+            emit_jsonl(args, {"event": "worker.iteration", "ok": True, "result": result, "state": state.data})
+            if result.get("processed"):
+                processed += 1
+            if args.once:
+                break
+            if args.max_tasks and processed >= args.max_tasks:
+                break
+            time.sleep(args.poll_interval)
+        except Exception as exc:
+            error = state.record_error(exc)
+            result = {"processed": False, "ok": False, **error}
+            results.append(result)
+            safe_worker_heartbeat(client, args, "error", error["error_message"])
+            emit_jsonl(args, {"event": "worker.error", "ok": False, "error": error, "state": state.data})
+            if args.once or not args.continue_on_error:
+                fatal_failure = True
+                state.stop("failed")
+                break
+            if int(state.data.get("consecutive_errors") or 0) >= max(int(args.max_errors or 1), 1):
+                fatal_failure = True
+                state.stop("failed_max_errors")
+                break
+            time.sleep(min(max(args.poll_interval, 1.0) * int(state.data.get("consecutive_errors") or 1), 30.0))
+    final_ok = (
+        not fatal_failure
+        and all(item.get("ok", True) for item in results if item.get("processed"))
+        and not any(item.get("ok") is False for item in results if args.once)
+    )
+    final_status = "stopped" if SHOULD_STOP else "completed" if final_ok else "failed"
+    state.stop(final_status)
+    print(json_dumps({"ok": final_ok, "processed": processed, "results": results, "state": state.data}))
+    return 0 if final_ok else 1
 
 
 if __name__ == "__main__":

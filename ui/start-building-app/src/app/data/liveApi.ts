@@ -154,6 +154,16 @@ export interface WorkerDaemonStatus {
   max_tasks?: number | null;
   confirm_run?: boolean;
   log_path?: string;
+  state_path?: string;
+  worker_status?: string | null;
+  state_updated_at?: string | null;
+  processed?: number;
+  iterations?: number;
+  total_errors?: number;
+  consecutive_errors?: number;
+  continue_on_error?: boolean;
+  last_error?: Record<string, unknown> | null;
+  last_result?: Record<string, unknown> | null;
   log_tail?: string[];
 }
 
@@ -627,6 +637,16 @@ function normalizeWorkerDaemon(row: Record<string, unknown>): WorkerDaemonStatus
     max_tasks: row.max_tasks === undefined || row.max_tasks === null ? null : numberValue(row.max_tasks, 0),
     confirm_run: boolValue(row.confirm_run),
     log_path: row.log_path ? String(row.log_path) : undefined,
+    state_path: row.state_path ? String(row.state_path) : undefined,
+    worker_status: row.worker_status ? String(row.worker_status) : null,
+    state_updated_at: row.state_updated_at ? String(row.state_updated_at) : null,
+    processed: numberValue(row.processed, 0),
+    iterations: numberValue(row.iterations, 0),
+    total_errors: numberValue(row.total_errors, 0),
+    consecutive_errors: numberValue(row.consecutive_errors, 0),
+    continue_on_error: boolValue(row.continue_on_error),
+    last_error: (row.last_error || null) as Record<string, unknown> | null,
+    last_result: (row.last_result || null) as Record<string, unknown> | null,
     log_tail: asArray(row.log_tail).map(String),
   };
 }
