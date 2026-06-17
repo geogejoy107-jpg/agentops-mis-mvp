@@ -61,6 +61,15 @@ curl -fsS -X POST http://127.0.0.1:8787/api/workers/local/stop \
   -d '{"adapter":"all"}' | jq .
 ```
 
+Agent enrollment CLI/API:
+
+```bash
+./scripts/agentops enrollment create --agent-id agt_remote_cli_smoke --name "Remote CLI Smoke" --runtime mock --save-token
+./scripts/agentops agent heartbeat --id agt_remote_cli_smoke --status idle
+./scripts/agentops task pull --agent-id agt_remote_cli_smoke --limit 1 --status planned
+./scripts/agentops enrollment revoke --token-id agtok_...
+```
+
 ## Evidence
 
 | Path | Adapter | Task | Run | Result |
@@ -121,6 +130,30 @@ GET /api/workers/status -> mock daemon running pid=82841
 POST /api/workers/local/stop {"adapter":"mock"} -> terminated
 ```
 
+The scoped-token enrollment smoke passed:
+
+```text
+HTTP enrollment:
+agent_id: agt_remote_enroll_smoke
+token_id: agtok_agt_remote_enroll_smoke_local_demo_175054348add
+heartbeat: 200 idle
+tasks:read pull: 200
+runs:start with missing runs:write: forbidden
+revoke: revoked=1
+post-revoke pull: 401 token revoked
+
+CLI enrollment:
+agent_id: agt_remote_cli_smoke
+token_id: agtok_agt_remote_cli_smoke_local_demo_db074911c2fa
+--save-token wrote only to /tmp test config
+heartbeat: 200 idle
+tasks:read pull: 200
+revoke: revoked=1
+post-revoke pull: 401 token revoked
+```
+
+MIS stores token hashes only. Raw token values are shown once at creation time and are not written into audit or runtime events.
+
 ## What This Proves
 
 The v1.5 worker loop can process normal MIS tasks, not just connector probes:
@@ -145,4 +178,4 @@ planned MIS task
 - The worker does not store full prompts or raw responses.
 - The worker is repo-local; it is not yet a launchd service, pip package, npm package, or signed binary.
 - The UI worker panel now supports one-shot dispatch plus local daemon start/stop; it is not a production fleet manager.
-- Remote enrollment, token revocation, RBAC, and scope enforcement remain future work.
+- Remote enrollment token issuance/revocation and endpoint-level scope enforcement now exist. Full RBAC, workspace isolation, token rotation, and enrollment UI remain future work.

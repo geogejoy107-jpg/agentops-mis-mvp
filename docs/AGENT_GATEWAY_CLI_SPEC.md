@@ -68,6 +68,7 @@ Current local MVP implementation:
 ```bash
 ./scripts/agentops --help
 ./scripts/agentops login --base-url http://127.0.0.1:8787 --workspace-id local-demo --agent-id agt_local_worker
+./scripts/agentops enrollment create --agent-id agt_remote_builder --name "Remote Builder" --runtime openclaw
 ```
 
 The implementation lives in `scripts/agentops.py`, with `scripts/agentops` as a shell wrapper. It uses only Python standard library modules and reads configuration from environment variables or `~/.agentops/config.json`.
@@ -96,6 +97,44 @@ agentops agent register \
 ```
 
 Maps to `agents`.
+
+### `agentops enrollment create`
+
+Creates a scoped bearer token for a local or remote agent. The token is shown once; MIS stores only a hash.
+
+```bash
+agentops enrollment create \
+  --agent-id agt_remote_builder \
+  --name "Remote Builder" \
+  --runtime openclaw \
+  --scopes agents:write,agents:heartbeat,tasks:read,tasks:claim,runs:write,toolcalls:write,evaluations:submit,audit:write \
+  --ttl-days 30
+```
+
+Optional:
+
+```bash
+agentops enrollment create --agent-id agt_local_worker --name "Local Worker" --save-token
+```
+
+`--save-token` writes the returned token to the local CLI config for this machine only.
+
+### `agentops enrollment list`
+
+Lists token metadata, status, scopes, expiry, and heartbeat freshness. It never prints token secrets.
+
+```bash
+agentops enrollment list
+```
+
+### `agentops enrollment revoke`
+
+Revokes one token or all active tokens for an agent.
+
+```bash
+agentops enrollment revoke --token-id agtok_...
+agentops enrollment revoke --agent-id agt_remote_builder
+```
 
 ### `agentops agent heartbeat`
 
@@ -224,6 +263,9 @@ Maps to `audit_logs`.
 All endpoints are under the existing local API server.
 
 ```http
+GET  /api/agent-gateway/enrollments
+POST /api/agent-gateway/enrollment/create
+POST /api/agent-gateway/enrollment/revoke
 POST /api/agent-gateway/register
 POST /api/agent-gateway/heartbeat
 GET  /api/agent-gateway/tasks/pull
@@ -352,9 +394,9 @@ Writes:
 
 ## Required Auth Model
 
-### v1.4 Local Auth
+### v1.4 Local Auth / v1.5 Scoped Tokens
 
-v1.4 should use a simple local token or API key. It is enough for local demos and real local debugging.
+v1.4 used a simple local token or API key. v1.5.2 adds per-agent scoped bearer tokens for local and remote workers.
 
 Required fields:
 
@@ -384,6 +426,32 @@ memories:propose
 evaluations:submit
 audit:write
 ```
+
+Current implementation:
+
+- `AGENTOPS_API_KEY` remains a global local development key.
+- `POST /api/agent-gateway/enrollment/create` issues an agent-bound bearer token.
+- MIS stores only a token hash.
+- The token can act only as its bound `agent_id`.
+- Gateway endpoints check required scopes.
+- `POST /api/agent-gateway/enrollment/revoke` revokes tokens.
+- `GET /api/agent-gateway/enrollments` reports heartbeat freshness.
+
+Current endpoint scope map:
+
+| Endpoint | Required scope |
+| --- | --- |
+| `POST /api/agent-gateway/register` | `agents:write` |
+| `POST /api/agent-gateway/heartbeat` | `agents:heartbeat` |
+| `GET /api/agent-gateway/tasks/pull` | `tasks:read` |
+| `POST /api/agent-gateway/tasks/:id/claim` | `tasks:claim` |
+| `POST /api/agent-gateway/runs/start` | `runs:write` |
+| `POST /api/agent-gateway/runs/:id/heartbeat` | `runs:write` |
+| `POST /api/agent-gateway/tool-calls` | `toolcalls:write` |
+| `POST /api/agent-gateway/approvals/request` | `approvals:request` |
+| `POST /api/agent-gateway/memories/propose` | `memories:propose` |
+| `POST /api/agent-gateway/evaluations/submit` | `evaluations:submit` |
+| `POST /api/agent-gateway/audit` | `audit:write` |
 
 ### Future Auth
 
@@ -459,7 +527,7 @@ Add adapters that translate runtime activity into Agent Gateway calls:
 
 ### Step 5: Remote Agent Support
 
-After local v1.4 works, support remote agents running on another computer or server:
+Current v1.5.2 minimal support:
 
 - Remote agent gets a scoped token.
 - Remote agent registers with workspace and runtime metadata.
@@ -467,6 +535,14 @@ After local v1.4 works, support remote agents running on another computer or ser
 - Remote agent pulls scoped tasks.
 - MIS can revoke the agent token.
 - Raw files and credentials stay outside the ledger unless explicitly approved and redacted.
+
+Remaining future work:
+
+- Enrollment UI.
+- Short-lived session tokens and rotation.
+- Workspace isolation.
+- Reconnection backoff policy.
+- mTLS or signed heartbeats for server-side agents.
 
 ## Non-Goals For v1.4
 

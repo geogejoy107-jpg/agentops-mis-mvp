@@ -283,6 +283,44 @@ def cmd_audit_emit(args, client: AgentOpsClient) -> dict:
     return client.post("/api/agent-gateway/audit", payload)
 
 
+def cmd_enrollment_create(args, client: AgentOpsClient) -> dict:
+    payload = {
+        "workspace_id": client.workspace_id,
+        "agent_id": args.agent_id,
+        "name": args.name,
+        "role": args.role,
+        "runtime_type": args.runtime,
+        "scopes": split_csv(args.scopes),
+        "ttl_days": args.ttl_days,
+        "heartbeat_timeout_sec": args.heartbeat_timeout_sec,
+        "label": args.label,
+    }
+    result = client.post("/api/agent-gateway/enrollment/create", payload)
+    if args.save_token and result.get("token"):
+        config = load_config()
+        config.update({
+            "base_url": client.base_url,
+            "workspace_id": result.get("workspace_id") or client.workspace_id,
+            "agent_id": result.get("agent_id") or args.agent_id,
+            "api_key": result["token"],
+        })
+        save_config(config)
+        result["saved_to"] = str(CONFIG_PATH)
+    return result
+
+
+def cmd_enrollment_list(args, client: AgentOpsClient) -> dict:
+    return client.get("/api/agent-gateway/enrollments")
+
+
+def cmd_enrollment_revoke(args, client: AgentOpsClient) -> dict:
+    payload = {
+        "token_id": args.token_id,
+        "agent_id": args.agent_id,
+    }
+    return client.post("/api/agent-gateway/enrollment/revoke", payload)
+
+
 def add_global_args(parser):
     parser.add_argument("--base-url", default=None, help="AgentOps MIS base URL. Defaults to env/config/http://127.0.0.1:8787.")
     parser.add_argument("--api-key", default=None, help="Local API key. Prefer AGENTOPS_API_KEY for real use.")
@@ -426,6 +464,28 @@ def build_parser() -> argparse.ArgumentParser:
     audit_emit.add_argument("--metadata-json", default=None)
     audit_emit.set_defaults(handler="audit_emit")
 
+    enrollment = sub.add_parser("enrollment", help="Remote/local agent enrollment token commands.")
+    enrollment_sub = enrollment.add_subparsers(dest="action", required=True)
+    enroll_create = enrollment_sub.add_parser("create", help="Create a scoped one-time-visible agent token.")
+    enroll_create.add_argument("--agent-id", required=True)
+    enroll_create.add_argument("--name", default="Remote Agent")
+    enroll_create.add_argument("--role", default="Remote AI Digital Employee")
+    enroll_create.add_argument("--runtime", default="mock")
+    enroll_create.add_argument("--scopes", default="agents:write,agents:heartbeat,tasks:read,tasks:claim,runs:write,toolcalls:write,approvals:request,memories:propose,evaluations:submit,audit:write")
+    enroll_create.add_argument("--ttl-days", type=int, default=30)
+    enroll_create.add_argument("--heartbeat-timeout-sec", type=int, default=300)
+    enroll_create.add_argument("--label", default="")
+    enroll_create.add_argument("--save-token", action="store_true", help="Save returned token to local config for this CLI.")
+    enroll_create.set_defaults(handler="enrollment_create")
+
+    enroll_list = enrollment_sub.add_parser("list", help="List token metadata without secrets.")
+    enroll_list.set_defaults(handler="enrollment_list")
+
+    enroll_revoke = enrollment_sub.add_parser("revoke", help="Revoke a token by token id or all active tokens for an agent.")
+    enroll_revoke.add_argument("--token-id", default=None)
+    enroll_revoke.add_argument("--agent-id", default=None)
+    enroll_revoke.set_defaults(handler="enrollment_revoke")
+
     return parser
 
 
@@ -442,6 +502,9 @@ HANDLERS = {
     "memory_propose": cmd_memory_propose,
     "eval_submit": cmd_eval_submit,
     "audit_emit": cmd_audit_emit,
+    "enrollment_create": cmd_enrollment_create,
+    "enrollment_list": cmd_enrollment_list,
+    "enrollment_revoke": cmd_enrollment_revoke,
 }
 
 

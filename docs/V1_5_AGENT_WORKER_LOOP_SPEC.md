@@ -25,10 +25,12 @@ This v1.5 track intentionally excludes Dify and Notion live sync. Those remain s
 
 4. Remote Agent Entry Shape
    - v1.5 worker must be API-first so the same loop can run on another machine later.
-   - v1.5 does not implement enrollment UI, token issuance, revocation, or reconnection policy.
+   - v1.5.2 adds minimal token enrollment APIs for remote/local workers.
+   - Token issuance, revocation, heartbeat freshness, and scope checks are supported.
+   - Enrollment UI, reconnection policy, and production fleet management remain v1.6+.
 
 5. MVP Security Boundary
-   - v1.5 keeps local token/API key behavior.
+   - v1.5 keeps local token/API key behavior and adds per-agent bearer tokens.
    - Raw prompts, raw responses, credentials, private messages, and full transcripts must not be stored.
    - Tool args must be summaries or hashes.
    - High-risk operations should not run automatically.
@@ -154,6 +156,50 @@ Behavior:
 - Reaps completed child processes and treats zombies as stopped.
 - Writes runtime event and audit evidence for stop actions.
 
+## Agent Gateway Enrollment API
+
+The enrollment API lets a local or remote worker get a scoped token without storing raw credentials in the MIS ledger. The server stores only a hash.
+
+Endpoints:
+
+```http
+GET  /api/agent-gateway/enrollments
+POST /api/agent-gateway/enrollment/create
+POST /api/agent-gateway/enrollment/revoke
+```
+
+Create request:
+
+```json
+{
+  "workspace_id": "local-demo",
+  "agent_id": "agt_remote_builder",
+  "name": "Remote Builder",
+  "runtime_type": "openclaw",
+  "scopes": [
+    "agents:write",
+    "agents:heartbeat",
+    "tasks:read",
+    "tasks:claim",
+    "runs:write",
+    "toolcalls:write",
+    "evaluations:submit",
+    "audit:write"
+  ],
+  "ttl_days": 30,
+  "heartbeat_timeout_sec": 300
+}
+```
+
+Behavior:
+
+- Creates or ensures the agent identity.
+- Returns the bearer token once.
+- Stores only `token_hash`, status, scope list, expiry, and heartbeat timestamps.
+- A token can only act as its bound `agent_id`.
+- Every gateway endpoint checks the required scope.
+- `GET /api/agent-gateway/enrollments` reports `fresh`, `stale`, or `never_seen` heartbeat state.
+
 ## Acceptance
 
 Minimum acceptance for v1.5 worker loop:
@@ -167,14 +213,16 @@ Minimum acceptance for v1.5 worker loop:
 7. `/workspace/agents` can trigger one mock worker run from the browser and the run appears in run/tool/eval/audit ledgers.
 8. `/workspace/agents` can start and stop a mock daemon; status shows running while the process is alive.
 9. A daemon can pull a newly planned task and complete it without a one-shot dispatch call.
-10. Dify and Notion endpoints are not called by this worker.
+10. A scoped token can heartbeat and pull tasks, while a token missing `tasks:read` is rejected for task pull.
+11. Revoked tokens are rejected.
+12. Dify and Notion endpoints are not called by this worker.
 
 ## Known Limitations
 
 - No global package install.
 - Local daemon supervision is repo-local and process-based; no launchd/systemd unit.
 - No remote enrollment UI.
-- No per-agent scope enforcement beyond existing MVP API key boundary.
+- Scope enforcement is minimal endpoint-level enforcement, not full RBAC/workspace isolation.
 - UI controls are local self-use/recording controls, not a production fleet manager.
 - Hermes/OpenClaw execution is still fixed safe adapter execution, not arbitrary prompt automation.
 - Long-form customer deliverables need a later artifact pipeline.
