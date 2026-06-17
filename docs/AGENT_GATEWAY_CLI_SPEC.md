@@ -136,6 +136,17 @@ agentops enrollment revoke --token-id agtok_...
 agentops enrollment revoke --agent-id agt_remote_builder
 ```
 
+### `agentops enrollment rotate`
+
+Revokes an active token and issues a replacement token with the same agent binding and scopes by default. The replacement token is shown once; MIS stores only a hash.
+
+```bash
+agentops enrollment rotate --token-id agtok_...
+agentops enrollment rotate --agent-id agt_remote_builder --ttl-days 30 --save-token
+```
+
+Optional `--scopes` can narrow or replace the previous scope list during rotation.
+
 ### `agentops agent heartbeat`
 
 Reports liveness, runtime, current task, and safe status metadata.
@@ -266,6 +277,7 @@ All endpoints are under the existing local API server.
 GET  /api/agent-gateway/enrollments
 POST /api/agent-gateway/enrollment/create
 POST /api/agent-gateway/enrollment/revoke
+POST /api/agent-gateway/enrollment/rotate
 POST /api/agent-gateway/register
 POST /api/agent-gateway/heartbeat
 GET  /api/agent-gateway/tasks/pull
@@ -435,6 +447,7 @@ Current implementation:
 - The token can act only as its bound `agent_id`.
 - Gateway endpoints check required scopes.
 - `POST /api/agent-gateway/enrollment/revoke` revokes tokens.
+- `POST /api/agent-gateway/enrollment/rotate` revokes an active token and returns a one-time replacement token.
 - `GET /api/agent-gateway/enrollments` reports heartbeat freshness.
 
 Current endpoint scope map:

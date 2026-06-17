@@ -2061,6 +2061,59 @@ def agent_gateway_revoke_enrollment(conn, body) -> tuple[dict, int]:
     return {"revoked": len(before), "changed": changed, "tokens": [row["token_id"] for row in before]}, 200
 
 
+def agent_gateway_rotate_enrollment(conn, body) -> tuple[dict, int]:
+    token_id = body.get("token_id")
+    agent_id = body.get("agent_id")
+    if not token_id and not agent_id:
+        return {"error": "token_id or agent_id is required"}, 400
+
+    if token_id:
+        row = conn.execute(
+            "SELECT * FROM agent_gateway_tokens WHERE token_id=?",
+            (token_id,),
+        ).fetchone()
+    else:
+        row = conn.execute(
+            "SELECT * FROM agent_gateway_tokens WHERE agent_id=? AND status='active' ORDER BY created_at DESC LIMIT 1",
+            (agent_id,),
+        ).fetchone()
+    if not row:
+        return {"error": "not found", "message": "No enrollment token matched the rotation request."}, 404
+    old = dict(row)
+    if old.get("status") != "active":
+        return {"error": "not active", "message": "Only active enrollment tokens can be rotated."}, 409
+
+    agent = conn.execute("SELECT * FROM agents WHERE agent_id=?", (old["agent_id"],)).fetchone()
+    replacement_scopes = parse_scope_list(body.get("scopes") or old.get("scopes_json"))
+    if not replacement_scopes:
+        return {"error": "at least one valid scope is required", "valid_scopes": sorted(VALID_AGENT_GATEWAY_SCOPES)}, 400
+    now = now_iso()
+    conn.execute("UPDATE agent_gateway_tokens SET status='revoked', revoked_at=? WHERE token_id=?", (now, old["token_id"]))
+    runtime_event(conn, "rtc_agent_gateway_local", "agent.enrollment.rotate_revoke", "completed", agent_id=old["agent_id"], output_summary=f"Revoked old token {old['token_id']} during rotation.")
+    audit(conn, "user", "usr_founder", "agent_gateway.enrollment_rotate_revoke", "agent_gateway_tokens", old["token_id"], old, {"status": "revoked", "revoked_at": now}, {"token_omitted": True})
+
+    create_body = {
+        "workspace_id": body.get("workspace_id") or old.get("workspace_id") or "local-demo",
+        "agent_id": old["agent_id"],
+        "name": body.get("name") or (agent["name"] if agent else old["agent_id"]),
+        "role": body.get("role") or (agent["role"] if agent else "Remote AI Digital Employee"),
+        "runtime_type": body.get("runtime_type") or (agent["runtime_type"] if agent else "mock"),
+        "scopes": replacement_scopes,
+        "ttl_days": body.get("ttl_days") or 30,
+        "heartbeat_timeout_sec": body.get("heartbeat_timeout_sec") or old.get("heartbeat_timeout_sec") or 300,
+        "label": body.get("label") or f"{old['agent_id']} rotated token",
+    }
+    created, status = agent_gateway_create_enrollment(conn, create_body)
+    if status >= 400:
+        return created, status
+    created["rotated"] = True
+    created["rotated_from_token_id"] = old["token_id"]
+    created["revoked"] = 1
+    runtime_event(conn, "rtc_agent_gateway_local", "agent.enrollment.rotate", "completed", agent_id=old["agent_id"], output_summary=f"Rotated enrollment token {old['token_id']} -> {created['token_id']}.")
+    audit(conn, "user", "usr_founder", "agent_gateway.enrollment_rotate", "agent_gateway_tokens", created["token_id"], {"token_id": old["token_id"], "status": "active"}, {"token_id": created["token_id"], "status": "active"}, {"token_omitted": True, "rotated_from_token_id": old["token_id"]})
+    return created, 201
+
+
 def agent_gateway_heartbeat(conn, body) -> tuple[dict, int]:
     ident = agent_gateway_identity({}, body)
     agent_id = ident["agent_id"]
@@ -4325,6 +4378,13 @@ class Handler(BaseHTTPRequestHandler):
                     if auth_error:
                         return self.send_json(auth_error, 401)
                     payload, status = agent_gateway_revoke_enrollment(conn, body)
+                    conn.commit()
+                    return self.send_json(payload, status)
+                if path == "/api/agent-gateway/enrollment/rotate":
+                    auth_error = agent_gateway_admin_auth_error(self.headers)
+                    if auth_error:
+                        return self.send_json(auth_error, 401)
+                    payload, status = agent_gateway_rotate_enrollment(conn, body)
                     conn.commit()
                     return self.send_json(payload, status)
                 scope_by_path = {

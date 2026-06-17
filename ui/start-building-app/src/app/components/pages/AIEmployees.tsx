@@ -1,6 +1,6 @@
 import { Link } from "react-router";
 import { useState } from "react";
-import { Bot, Play, RefreshCw, Activity, Power, Square, KeyRound, ShieldCheck, Trash2 } from "lucide-react";
+import { Bot, Play, RefreshCw, Activity, Power, Square, KeyRound, ShieldCheck, Trash2, RotateCw } from "lucide-react";
 import { StatusBadge } from "../shared/StatusBadge";
 import {
   createAgentGatewayEnrollment,
@@ -11,6 +11,7 @@ import {
   loadWorkerDaemonLogs,
   loadWorkerStatus,
   revokeAgentGatewayEnrollment,
+  rotateAgentGatewayEnrollment,
   startLocalWorkerDaemon,
   stopLocalWorkerDaemon,
   useLiveData,
@@ -37,6 +38,25 @@ const DEFAULT_GATEWAY_SCOPES = [
   "toolcalls:write",
   "evaluations:submit",
   "audit:write",
+];
+
+const GATEWAY_SCOPE_PRESETS = [
+  {
+    id: "worker",
+    scopes: DEFAULT_GATEWAY_SCOPES,
+  },
+  {
+    id: "observer",
+    scopes: ["agents:heartbeat", "tasks:read", "audit:write"],
+  },
+  {
+    id: "approval",
+    scopes: ["agents:heartbeat", "tasks:read", "approvals:request", "audit:write"],
+  },
+  {
+    id: "full",
+    scopes: ["agents:write", "agents:heartbeat", "tasks:read", "tasks:claim", "runs:write", "toolcalls:write", "approvals:request", "memories:propose", "evaluations:submit", "audit:write"],
+  },
 ];
 
 const WORKER_ADAPTERS = ["mock", "hermes", "openclaw"] as const;
@@ -123,8 +143,15 @@ export function AIEmployees() {
       staleEnrollments: "Stale heartbeats",
       createToken: "Create scoped token",
       creatingToken: "Creating token...",
+      rotateToken: "Rotate",
+      rotatingToken: "Rotating...",
       revokeToken: "Revoke",
       revokingToken: "Revoking...",
+      scopePresets: "Permission presets",
+      presetWorker: "Worker",
+      presetObserver: "Observer",
+      presetApproval: "Approval",
+      presetFull: "Full",
       agentId: "Agent ID",
       agentName: "Display name",
       runtime: "Runtime",
@@ -183,8 +210,15 @@ export function AIEmployees() {
       staleEnrollments: "心跳过期",
       createToken: "创建接入 token",
       creatingToken: "正在创建...",
+      rotateToken: "轮换",
+      rotatingToken: "正在轮换...",
       revokeToken: "吊销",
       revokingToken: "正在吊销...",
+      scopePresets: "权限预设",
+      presetWorker: "Worker",
+      presetObserver: "只读观测",
+      presetApproval: "审批请求",
+      presetFull: "完整权限",
       agentId: "Agent ID",
       agentName: "显示名称",
       runtime: "运行时",
@@ -267,6 +301,13 @@ export function AIEmployees() {
     .map(item => item.trim())
     .filter(Boolean);
 
+  const presetLabel = (id: string) => {
+    if (id === "worker") return copy.presetWorker;
+    if (id === "observer") return copy.presetObserver;
+    if (id === "approval") return copy.presetApproval;
+    return copy.presetFull;
+  };
+
   const createEnrollment = async () => {
     setEnrollmentAction("create");
     setEnrollmentResult(null);
@@ -298,6 +339,26 @@ export function AIEmployees() {
     try {
       const result = await revokeAgentGatewayEnrollment({ token_id: tokenId });
       setEnrollmentResult(`revoked: ${result.tokens.join(", ") || result.revoked}`);
+      await refresh();
+    } catch (err) {
+      setEnrollmentResult(err instanceof Error ? err.message : String(err));
+    } finally {
+      setEnrollmentAction(null);
+    }
+  };
+
+  const rotateEnrollment = async (tokenId: string) => {
+    setEnrollmentAction(`rotate-${tokenId}`);
+    setEnrollmentResult(null);
+    setCreatedToken(null);
+    try {
+      const result = await rotateAgentGatewayEnrollment({
+        token_id: tokenId,
+        ttl_days: Number(enrollmentForm.ttl_days) || 30,
+        heartbeat_timeout_sec: Number(enrollmentForm.heartbeat_timeout_sec) || 300,
+      });
+      setCreatedToken(result);
+      setEnrollmentResult(`${result.agent_id}: ${result.rotated_from_token_id} -> ${result.token_id}`);
       await refresh();
     } catch (err) {
       setEnrollmentResult(err instanceof Error ? err.message : String(err));
@@ -615,6 +676,17 @@ export function AIEmployees() {
         </div>
 
         <div className="flex flex-wrap gap-1.5 mt-3">
+          <span className="text-[10px] px-2 py-1" style={{ color: "var(--mis-muted)" }}>{copy.scopePresets}</span>
+          {GATEWAY_SCOPE_PRESETS.map(preset => (
+            <button
+              key={preset.id}
+              onClick={() => updateEnrollmentForm("scopes", preset.scopes.join(", "))}
+              className="text-[10px] px-2 py-1 rounded"
+              style={{ background: "rgba(122,90,248,0.1)", color: "#A78BFA", border: "1px solid rgba(122,90,248,0.2)" }}
+            >
+              {presetLabel(preset.id)}
+            </button>
+          ))}
           {validScopes.map(scope => (
             <button
               key={scope}
@@ -673,15 +745,26 @@ export function AIEmployees() {
                     </span>
                   )}
                 </div>
-                <button
-                  onClick={() => revokeEnrollment(item.token_id)}
-                  disabled={item.status !== "active" || Boolean(enrollmentAction)}
-                  className="flex items-center gap-1 text-[11px] px-2.5 py-1.5 rounded disabled:opacity-40"
-                  style={{ background: "rgba(248,113,113,0.1)", color: "#F87171", border: "1px solid rgba(248,113,113,0.22)" }}
-                >
-                  {enrollmentAction === `revoke-${item.token_id}` ? <RefreshCw size={12} /> : <Trash2 size={12} />}
-                  {enrollmentAction === `revoke-${item.token_id}` ? copy.revokingToken : copy.revokeToken}
-                </button>
+                <div className="flex gap-1.5 justify-end">
+                  <button
+                    onClick={() => rotateEnrollment(item.token_id)}
+                    disabled={item.status !== "active" || Boolean(enrollmentAction)}
+                    className="flex items-center gap-1 text-[11px] px-2.5 py-1.5 rounded disabled:opacity-40"
+                    style={{ background: "rgba(34,211,238,0.1)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.22)" }}
+                  >
+                    {enrollmentAction === `rotate-${item.token_id}` ? <RefreshCw size={12} /> : <RotateCw size={12} />}
+                    {enrollmentAction === `rotate-${item.token_id}` ? copy.rotatingToken : copy.rotateToken}
+                  </button>
+                  <button
+                    onClick={() => revokeEnrollment(item.token_id)}
+                    disabled={item.status !== "active" || Boolean(enrollmentAction)}
+                    className="flex items-center gap-1 text-[11px] px-2.5 py-1.5 rounded disabled:opacity-40"
+                    style={{ background: "rgba(248,113,113,0.1)", color: "#F87171", border: "1px solid rgba(248,113,113,0.22)" }}
+                  >
+                    {enrollmentAction === `revoke-${item.token_id}` ? <RefreshCw size={12} /> : <Trash2 size={12} />}
+                    {enrollmentAction === `revoke-${item.token_id}` ? copy.revokingToken : copy.revokeToken}
+                  </button>
+                </div>
               </div>
             ))}
           </div>

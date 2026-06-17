@@ -240,6 +240,12 @@ export interface AgentGatewayEnrollmentCreateResult {
   note: string;
 }
 
+export interface AgentGatewayEnrollmentRotateResult extends AgentGatewayEnrollmentCreateResult {
+  rotated: boolean;
+  rotated_from_token_id: string;
+  revoked: number;
+}
+
 export interface AgentGatewayEnrollmentRevokeResult {
   revoked: number;
   changed: number;
@@ -687,6 +693,20 @@ export async function createAgentGatewayEnrollment(input: AgentGatewayEnrollment
 
 export async function revokeAgentGatewayEnrollment(input: { token_id?: string; agent_id?: string }): Promise<AgentGatewayEnrollmentRevokeResult> {
   return apiJson<AgentGatewayEnrollmentRevokeResult>("/agent-gateway/enrollment/revoke", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function rotateAgentGatewayEnrollment(input: {
+  token_id?: string;
+  agent_id?: string;
+  scopes?: string[];
+  ttl_days?: number;
+  heartbeat_timeout_sec?: number;
+  label?: string;
+}): Promise<AgentGatewayEnrollmentRotateResult> {
+  return apiJson<AgentGatewayEnrollmentRotateResult>("/agent-gateway/enrollment/rotate", {
     method: "POST",
     body: JSON.stringify(input),
   });

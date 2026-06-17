@@ -97,7 +97,7 @@ Current v1.5 implementation:
 - `scripts/agentops.py`
 - Commands include:
   - `agentops login`
-  - `agentops enrollment create/list/revoke`
+  - `agentops enrollment create/list/revoke/rotate`
   - `agentops agent register`
   - `agentops agent heartbeat`
   - `agentops task pull`
@@ -133,14 +133,17 @@ Current v1.5 implementation:
   - `POST /api/agent-gateway/enrollment/create`
   - `GET /api/agent-gateway/enrollments`
   - `POST /api/agent-gateway/enrollment/revoke`
+  - `POST /api/agent-gateway/enrollment/rotate`
 - Tokens are:
   - shown once,
   - stored only as hashes,
   - bound to one `agent_id`,
   - scoped by endpoint permissions,
   - revocable.
+- Active tokens can be rotated; the old token is revoked and the replacement token is shown once.
 - Heartbeat freshness is tracked.
 - `/workspace/agents` exposes a first operator UI for creating, viewing, and revoking scoped enrollment tokens.
+- `/workspace/agents` also exposes scope presets and per-token rotation.
 
 Acceptance evidence:
 
@@ -149,10 +152,10 @@ Acceptance evidence:
   - `run_gw_876a7c777841`
   - repeat run `run_gw_f5635ff603fd`
 - Browser verification showed `远程 Agent 接入`, `创建接入 token`, and `最近接入记录` on `/workspace/agents`.
+- `python3 scripts/enrollment_rotation_smoke.py` verified API and CLI rotation with redacted one-time token output.
 
 Remaining product work:
 
-- Token rotation.
 - Short-lived sessions.
 - Reconnection/backoff policy.
 - Strong workspace isolation.
@@ -167,6 +170,7 @@ Current v1.5 implementation:
 
 - Token hash storage only.
 - Raw token values are not written to audit/runtime metadata.
+- Rotation smoke output omits raw token values; raw tokens are still one-time only.
 - Worker output is summarized.
 - Tool args are normalized and redacted.
 - Hermes/OpenClaw real execution requires explicit confirmation.
@@ -301,6 +305,7 @@ Implemented and verified:
 - Scoped token enrollment.
 - Remote enrollment UI.
 - Token revocation.
+- Token rotation.
 - Endpoint-level scope enforcement.
 - Remote-token worker end-to-end smoke.
 

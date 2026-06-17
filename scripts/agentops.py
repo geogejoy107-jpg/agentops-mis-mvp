@@ -321,6 +321,29 @@ def cmd_enrollment_revoke(args, client: AgentOpsClient) -> dict:
     return client.post("/api/agent-gateway/enrollment/revoke", payload)
 
 
+def cmd_enrollment_rotate(args, client: AgentOpsClient) -> dict:
+    payload = {
+        "token_id": args.token_id,
+        "agent_id": args.agent_id,
+        "scopes": split_csv(args.scopes) if args.scopes else None,
+        "ttl_days": args.ttl_days,
+        "heartbeat_timeout_sec": args.heartbeat_timeout_sec,
+        "label": args.label,
+    }
+    result = client.post("/api/agent-gateway/enrollment/rotate", payload)
+    if args.save_token and result.get("token"):
+        config = load_config()
+        config.update({
+            "base_url": client.base_url,
+            "workspace_id": result.get("workspace_id") or client.workspace_id,
+            "agent_id": result.get("agent_id") or args.agent_id,
+            "api_key": result["token"],
+        })
+        save_config(config)
+        result["saved_to"] = str(CONFIG_PATH)
+    return result
+
+
 def add_global_args(parser):
     parser.add_argument("--base-url", default=None, help="AgentOps MIS base URL. Defaults to env/config/http://127.0.0.1:8787.")
     parser.add_argument("--api-key", default=None, help="Local API key. Prefer AGENTOPS_API_KEY for real use.")
@@ -486,6 +509,16 @@ def build_parser() -> argparse.ArgumentParser:
     enroll_revoke.add_argument("--agent-id", default=None)
     enroll_revoke.set_defaults(handler="enrollment_revoke")
 
+    enroll_rotate = enrollment_sub.add_parser("rotate", help="Rotate an active enrollment token and show the new token once.")
+    enroll_rotate.add_argument("--token-id", default=None)
+    enroll_rotate.add_argument("--agent-id", default=None)
+    enroll_rotate.add_argument("--scopes", default=None, help="Optional replacement scope list. Defaults to old token scopes.")
+    enroll_rotate.add_argument("--ttl-days", type=int, default=30)
+    enroll_rotate.add_argument("--heartbeat-timeout-sec", type=int, default=None)
+    enroll_rotate.add_argument("--label", default="")
+    enroll_rotate.add_argument("--save-token", action="store_true", help="Save returned token to local config for this CLI.")
+    enroll_rotate.set_defaults(handler="enrollment_rotate")
+
     return parser
 
 
@@ -505,6 +538,7 @@ HANDLERS = {
     "enrollment_create": cmd_enrollment_create,
     "enrollment_list": cmd_enrollment_list,
     "enrollment_revoke": cmd_enrollment_revoke,
+    "enrollment_rotate": cmd_enrollment_rotate,
 }
 
 

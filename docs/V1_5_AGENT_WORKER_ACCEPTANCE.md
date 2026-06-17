@@ -67,8 +67,10 @@ Agent enrollment CLI/API:
 ./scripts/agentops enrollment create --agent-id agt_remote_cli_smoke --name "Remote CLI Smoke" --runtime mock --save-token
 ./scripts/agentops agent heartbeat --id agt_remote_cli_smoke --status idle
 ./scripts/agentops task pull --agent-id agt_remote_cli_smoke --limit 1 --status planned
+./scripts/agentops enrollment rotate --token-id agtok_...
 ./scripts/agentops enrollment revoke --token-id agtok_...
 python3 scripts/remote_agent_token_worker_smoke.py
+python3 scripts/enrollment_rotation_smoke.py
 ```
 
 ## Evidence
@@ -154,6 +156,20 @@ revoke: revoked=1
 post-revoke pull: 401 token revoked
 ```
 
+The enrollment rotation smoke passed:
+
+```text
+script: python3 scripts/enrollment_rotation_smoke.py
+api old token: agtok_agt_rotate_api_smoke_20260617180040_local_demo_eb7bbc239f05
+api new token: agtok_agt_rotate_api_smoke_20260617180040_local_demo_7cec7f8f8bf2
+api old_status_after_rotate: revoked
+api new_status_after_rotate: active
+cli old token: agtok_agt_rotate_cli_smoke_20260617180040_local_demo_666c67b8c915
+cli new token: agtok_agt_rotate_cli_smoke_20260617180040_local_demo_4ea03a4a3a40
+token_omitted: true
+cleanup_revoked: 1
+```
+
 MIS stores token hashes only. Raw token values are shown once at creation time and are not written into audit or runtime events.
 
 The remote-token worker smoke also passed:
@@ -190,10 +206,10 @@ Latest repeat run after adding worker fleet telemetry:
 
 ```text
 script: python3 scripts/remote_agent_token_worker_smoke.py
-agent_id: agt_remote_worker_smoke_20260617175045
-token_id: agtok_agt_remote_worker_smoke_20260617175045_local_demo_99264bd393b2
-task_id: tsk_remote_worker_smoke_20260617175045
-run_id: run_gw_90dd36143edc
+agent_id: agt_remote_worker_smoke_20260617180040
+token_id: agtok_agt_remote_worker_smoke_20260617180040_local_demo_a1a3ca715719
+task_id: tsk_remote_worker_smoke_20260617180040
+run_id: run_gw_38fe52256f67
 run_status: completed
 tool_calls: 1
 evaluations: 1
@@ -224,9 +240,10 @@ and can call:
 ```http
 POST /api/agent-gateway/enrollment/create
 POST /api/agent-gateway/enrollment/revoke
+POST /api/agent-gateway/enrollment/rotate
 ```
 
-Raw tokens are displayed only in the create response panel and are not persisted in frontend state beyond the current page session.
+Raw tokens are displayed only in the create/rotate response panel and are not persisted in frontend state beyond the current page session.
 
 The `/workspace/agents` worker fleet telemetry UI was verified in the in-app browser:
 
@@ -277,4 +294,4 @@ planned MIS task
 - The worker does not store full prompts or raw responses.
 - The worker is repo-local; it is not yet a launchd service, pip package, npm package, or signed binary.
 - The UI worker panel now supports one-shot dispatch, local daemon start/stop, daemon log tails, and recent gateway events; it is not a production fleet manager.
-- Remote enrollment token issuance/revocation, endpoint-level scope enforcement, and a first enrollment UI now exist. Full RBAC, workspace isolation, token rotation, and production enrollment workflows remain future work.
+- Remote enrollment token issuance/revocation/rotation, endpoint-level scope enforcement, scope presets, and a first enrollment UI now exist. Full RBAC, workspace isolation, short-lived sessions, and production enrollment workflows remain future work.
