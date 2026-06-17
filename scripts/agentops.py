@@ -225,6 +225,22 @@ def cmd_toolcall_record(args, client: AgentOpsClient) -> dict:
     return client.post("/api/agent-gateway/tool-calls", payload)
 
 
+def cmd_artifact_record(args, client: AgentOpsClient) -> dict:
+    payload = {
+        "workspace_id": client.workspace_id,
+        "run_id": args.run_id,
+        "task_id": args.task_id,
+        "agent_id": args.agent_id or client.agent_id,
+        "artifact_id": args.artifact_id,
+        "artifact_type": args.type,
+        "title": args.title,
+        "uri": args.uri,
+        "summary": args.summary,
+        "content_hash": args.content_hash,
+    }
+    return client.post("/api/agent-gateway/artifacts", payload)
+
+
 def cmd_approval_request(args, client: AgentOpsClient) -> dict:
     payload = {
         "workspace_id": client.workspace_id,
@@ -434,6 +450,20 @@ def build_parser() -> argparse.ArgumentParser:
     record.add_argument("--summary", default="")
     record.set_defaults(handler="toolcall_record")
 
+    artifact = sub.add_parser("artifact", help="Artifact evidence commands.")
+    artifact_sub = artifact.add_subparsers(dest="action", required=True)
+    artifact_record = artifact_sub.add_parser("record", help="Record an artifact summary without storing raw content.")
+    artifact_record.add_argument("--run-id", required=True)
+    artifact_record.add_argument("--task-id", default=None)
+    artifact_record.add_argument("--agent-id", default=None)
+    artifact_record.add_argument("--artifact-id", default=None)
+    artifact_record.add_argument("--type", default="report")
+    artifact_record.add_argument("--title", required=True)
+    artifact_record.add_argument("--uri", default=None)
+    artifact_record.add_argument("--summary", required=True)
+    artifact_record.add_argument("--content-hash", default=None)
+    artifact_record.set_defaults(handler="artifact_record")
+
     approval = sub.add_parser("approval", help="Approval commands.")
     approval_sub = approval.add_subparsers(dest="action", required=True)
     request = approval_sub.add_parser("request", help="Request human approval.")
@@ -494,7 +524,7 @@ def build_parser() -> argparse.ArgumentParser:
     enroll_create.add_argument("--name", default="Remote Agent")
     enroll_create.add_argument("--role", default="Remote AI Digital Employee")
     enroll_create.add_argument("--runtime", default="mock")
-    enroll_create.add_argument("--scopes", default="agents:write,agents:heartbeat,tasks:read,tasks:claim,runs:write,toolcalls:write,approvals:request,memories:propose,evaluations:submit,audit:write")
+    enroll_create.add_argument("--scopes", default="agents:write,agents:heartbeat,tasks:read,tasks:claim,runs:write,toolcalls:write,artifacts:write,approvals:request,memories:propose,evaluations:submit,audit:write")
     enroll_create.add_argument("--ttl-days", type=int, default=30)
     enroll_create.add_argument("--heartbeat-timeout-sec", type=int, default=300)
     enroll_create.add_argument("--label", default="")
@@ -531,6 +561,7 @@ HANDLERS = {
     "run_start": cmd_run_start,
     "run_heartbeat": cmd_run_heartbeat,
     "toolcall_record": cmd_toolcall_record,
+    "artifact_record": cmd_artifact_record,
     "approval_request": cmd_approval_request,
     "memory_propose": cmd_memory_propose,
     "eval_submit": cmd_eval_submit,

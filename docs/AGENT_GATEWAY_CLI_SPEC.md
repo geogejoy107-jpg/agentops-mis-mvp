@@ -93,7 +93,7 @@ agentops agent register \
   --name "Knowledge Base Researcher" \
   --role researcher \
   --runtime openclaw \
-  --scope tasks:read,runs:write,toolcalls:write,approvals:request
+  --scope tasks:read,runs:write,toolcalls:write,artifacts:write,approvals:request
 ```
 
 Maps to `agents`.
@@ -107,7 +107,7 @@ agentops enrollment create \
   --agent-id agt_remote_builder \
   --name "Remote Builder" \
   --runtime openclaw \
-  --scopes agents:write,agents:heartbeat,tasks:read,tasks:claim,runs:write,toolcalls:write,evaluations:submit,audit:write \
+  --scopes agents:write,agents:heartbeat,tasks:read,tasks:claim,runs:write,toolcalls:write,artifacts:write,evaluations:submit,audit:write \
   --ttl-days 30
 ```
 
@@ -285,6 +285,7 @@ POST /api/agent-gateway/tasks/:id/claim
 POST /api/agent-gateway/runs/start
 POST /api/agent-gateway/runs/:id/heartbeat
 POST /api/agent-gateway/tool-calls
+POST /api/agent-gateway/artifacts
 POST /api/agent-gateway/approvals/request
 POST /api/agent-gateway/memories/propose
 POST /api/agent-gateway/evaluations/submit
@@ -369,6 +370,31 @@ Writes:
 - `approvals` when policy requires approval
 - `audit_logs`
 
+### `POST /api/agent-gateway/artifacts`
+
+Records a delivery artifact summary without storing raw customer content.
+
+Writes:
+
+- `artifacts`
+- `runtime_events`
+- `audit_logs`
+
+### `agentops artifact record`
+
+Records a customer-readable artifact reference after a run, while keeping the full artifact body in the customer-approved system of record.
+
+```bash
+agentops artifact record \
+  --run-id run_123 \
+  --title "Knowledge-base bot delivery summary" \
+  --type customer_delivery_report \
+  --uri agentops://kb-bot-demo/project/delivery-summary \
+  --summary "Delivered task plan, connector decision, QA rubric and pending external upload approval."
+```
+
+Maps to `artifacts`, `runtime_events`, and `audit_logs`.
+
 ### `POST /api/agent-gateway/approvals/request`
 
 Creates a human approval request.
@@ -433,6 +459,7 @@ tasks:read
 tasks:claim
 runs:write
 toolcalls:write
+artifacts:write
 approvals:request
 memories:propose
 evaluations:submit
@@ -464,6 +491,7 @@ Current endpoint scope map:
 | `POST /api/agent-gateway/runs/start` | `runs:write` |
 | `POST /api/agent-gateway/runs/:id/heartbeat` | `runs:write` |
 | `POST /api/agent-gateway/tool-calls` | `toolcalls:write` |
+| `POST /api/agent-gateway/artifacts` | `artifacts:write` |
 | `POST /api/agent-gateway/approvals/request` | `approvals:request` |
 | `POST /api/agent-gateway/memories/propose` | `memories:propose` |
 | `POST /api/agent-gateway/evaluations/submit` | `evaluations:submit` |

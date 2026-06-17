@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import json
 import os
 import sqlite3
@@ -58,7 +59,7 @@ class AgentOpsClient:
 
 
 def count_rows(client: AgentOpsClient, db_path: Path) -> dict:
-    tables = ["agents", "tasks", "runs", "tool_calls", "approvals", "memories", "evaluations", "audit_logs", "runtime_events"]
+    tables = ["agents", "tasks", "runs", "tool_calls", "approvals", "memories", "evaluations", "audit_logs", "runtime_events", "artifacts"]
     if db_path.exists():
         with sqlite3.connect(db_path) as conn:
             return {table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] for table in tables}
@@ -73,6 +74,7 @@ def count_rows(client: AgentOpsClient, db_path: Path) -> dict:
         "evaluations": "/api/evaluations",
         "audit_logs": "/api/audit",
         "runtime_events": "/api/runtime-events",
+        "artifacts": "/api/artifacts",
     }
     counts = {}
     for key, path in paths.items():
@@ -213,6 +215,24 @@ def run_task(client: AgentOpsClient, workspace_id: str, task_id: str, task: dict
         "access_tags": ["kb-bot-demo", "customer-task", "review"],
         "confidence": 0.78,
     })["memory"]
+    artifact_id = None
+    if task.get("artifact"):
+        artifact = task["artifact"]
+        summary = artifact["summary"].format(project_id=project_id)
+        content_hash = hashlib.sha256(summary.encode("utf-8")).hexdigest()
+        recorded = client.post("/api/agent-gateway/artifacts", {
+            "workspace_id": workspace_id,
+            "task_id": task_id,
+            "run_id": run_id,
+            "agent_id": agent_id,
+            "artifact_id": f"art_kb_bot_delivery_{project_id}",
+            "artifact_type": "customer_delivery_report",
+            "title": artifact["title"],
+            "uri": f"agentops://kb-bot-demo/{project_id}/delivery-summary",
+            "summary": summary,
+            "content_hash": content_hash,
+        })["artifact"]
+        artifact_id = recorded["artifact_id"]
     client.post("/api/agent-gateway/audit", {
         "workspace_id": workspace_id,
         "agent_id": agent_id,
@@ -224,6 +244,7 @@ def run_task(client: AgentOpsClient, workspace_id: str, task_id: str, task: dict
         "metadata": {
             "project_id": project_id,
             "approval_id": approval_id,
+            "artifact_id": artifact_id,
             "summary": task["output_summary"],
         },
     })
@@ -232,6 +253,7 @@ def run_task(client: AgentOpsClient, workspace_id: str, task_id: str, task: dict
         "run_id": run_id,
         "agent_id": agent_id,
         "approval_id": approval_id,
+        "artifact_id": artifact_id,
         "evaluation_id": evaluation["evaluation_id"],
         "memory_id": memory["memory_id"],
     }
@@ -329,6 +351,10 @@ def demo_tasks() -> list[dict]:
                 {"name": "artifact.delivery_summary", "category": "custom", "risk": "low", "summary": "Prepared customer-facing delivery summary."},
             ],
             "output_summary": "交付摘要完成：本地 MIS 已管理任务、运行、工具、审批、评估、记忆和审计；外部知识库写入等待人工批准。",
+            "artifact": {
+                "title": "AI 知识库/问答机器人客户交付摘要",
+                "summary": "项目 {project_id} 已完成本地 MIS 闭环：AI 团队拆解需求、设计资料清洗规则、比较 Dify/OpenAI File Search/AnythingLLM、规划 chunking/embedding/citation、建立质量评估 rubric，并把外部上传保留为 pending approval。MIS 账本包含 tasks、runs、tool_calls、approval、evaluations、memory candidates、audit logs；未保存原始资料、凭证或完整私聊 transcript。",
+            },
             "rubric": {"customer_readable": True, "ledger_links": True, "next_steps": True},
             "eval_notes": "Pass: summary is demo-ready and points to MIS evidence.",
             "memory": "客户交付报告应该展示 MIS 账本证据：任务、运行、工具调用、审批、评估、审计，而不只是最终文本。",

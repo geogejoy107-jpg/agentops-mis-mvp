@@ -36,6 +36,7 @@ const DEFAULT_GATEWAY_SCOPES = [
   "tasks:claim",
   "runs:write",
   "toolcalls:write",
+  "artifacts:write",
   "evaluations:submit",
   "audit:write",
 ];
@@ -55,7 +56,7 @@ const GATEWAY_SCOPE_PRESETS = [
   },
   {
     id: "full",
-    scopes: ["agents:write", "agents:heartbeat", "tasks:read", "tasks:claim", "runs:write", "toolcalls:write", "approvals:request", "memories:propose", "evaluations:submit", "audit:write"],
+    scopes: ["agents:write", "agents:heartbeat", "tasks:read", "tasks:claim", "runs:write", "toolcalls:write", "artifacts:write", "approvals:request", "memories:propose", "evaluations:submit", "audit:write"],
   },
 ];
 

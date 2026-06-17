@@ -111,6 +111,7 @@ Current v1.5 implementation:
   - `agentops run start`
   - `agentops run heartbeat`
   - `agentops toolcall record`
+  - `agentops artifact record`
   - `agentops approval request`
   - `agentops memory propose`
   - `agentops eval submit`
@@ -151,6 +152,7 @@ Current v1.5 implementation:
 - Heartbeat freshness is tracked.
 - Token-auth requests cannot override `agent_id` or `workspace_id` through body, query string, or headers.
 - `tasks` and `runs` now carry `workspace_id`; Agent Gateway pull/claim/start/run-write paths check that boundary.
+- Agent Gateway can now record customer delivery artifacts with `artifacts:write`, so remote workers can submit report summaries without raw customer content.
 - `/workspace/agents` exposes a first operator UI for creating, viewing, and revoking scoped enrollment tokens.
 - `/workspace/agents` also exposes scope presets and per-token rotation.
 
@@ -254,16 +256,21 @@ Current v1.5 implementation:
 - Pixel Office customer dispatch exists.
 - Worker loop can process normal MIS tasks.
 - Remote token worker smoke creates and completes a normal task through the ledger.
+- AI knowledge-base / Q&A bot customer demo creates a six-step AI-team project, pending approval for external upload, evaluations, memories, audit events, and a customer delivery artifact through Agent Gateway.
+- Agent Gateway supports `POST /api/agent-gateway/artifacts` and CLI `agentops artifact record` for delivery summaries that store only safe summary/URI/hash metadata.
 
 Acceptance evidence:
 
 - Customer task workflow previously verified with `run_customer_task_ce855c707aace6c8`.
 - Daemon normal task run: `run_gw_6ad797929084`
 - Remote token worker normal task run: `run_gw_f5635ff603fd`
+- Knowledge-base bot smoke: `python3 scripts/kb_bot_demo_smoke.py`
+  - project: `20260617185442`
+  - delivery artifact: `art_kb_bot_delivery_20260617185442`
+  - pending external-upload approval: `ap_gw_f289a8baafcd`
 
 Remaining product work:
 
-- Artifact pipeline for longer deliverables.
 - Task templates for common customer jobs.
 - Better task result pages and report export.
 
@@ -306,6 +313,7 @@ python3 -m py_compile server.py scripts/*.py
 git diff --check
 cd ui/start-building-app && npm run build
 python3 scripts/demo_acceptance.py
+python3 scripts/kb_bot_demo_smoke.py
 python3 scripts/remote_agent_token_worker_smoke.py
 python3 scripts/workspace_isolation_smoke.py
 ```
@@ -327,6 +335,7 @@ Implemented and verified:
 - Endpoint-level scope enforcement.
 - Minimal workspace isolation for token-auth Agent Gateway pull/claim/run/write paths.
 - Remote-token worker end-to-end smoke.
+- Customer-style knowledge-base bot project smoke with delivery artifact.
 
 Not yet product-complete:
 

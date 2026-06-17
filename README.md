@@ -182,6 +182,7 @@ agentops task claim
 agentops run start
 agentops run heartbeat
 agentops toolcall record
+agentops artifact record
 agentops approval request
 agentops memory propose
 agentops eval submit
@@ -226,6 +227,7 @@ Workspace isolation smoke 会验证：token 绑定 workspace A 后，只能 pull
 
 ```bash
 python3 scripts/run_kb_bot_demo.py
+python3 scripts/kb_bot_demo_smoke.py
 ```
 
 它会模拟 AI 团队完成“正式 AI 知识库 / 问答机器人”项目：
@@ -233,6 +235,7 @@ python3 scripts/run_kb_bot_demo.py
 - 注册 Project Planner、Document Cleaner、Knowledge Base Builder、Q&A Evaluator、Customer Report Writer。
 - 创建并认领任务。
 - 写入 Run Ledger、Tool Calls、Runtime Events、Evaluations、Memories 和 Audit。
+- 通过 Agent Gateway 登记一份客户交付摘要 artifact，可从任务/运行详情看到。
 - 对 Dify / OpenAI File Search / AnythingLLM 外部上传创建 pending approval，不上传原始资料、不保存凭证。
 
 ## v1.5 Local Agent Worker Loop

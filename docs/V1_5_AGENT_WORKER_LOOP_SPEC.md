@@ -188,6 +188,7 @@ Create request:
     "tasks:claim",
     "runs:write",
     "toolcalls:write",
+    "artifacts:write",
     "evaluations:submit",
     "audit:write"
   ],

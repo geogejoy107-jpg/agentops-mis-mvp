@@ -1815,6 +1815,7 @@ VALID_AGENT_GATEWAY_SCOPES = {
     "tasks:claim",
     "runs:write",
     "toolcalls:write",
+    "artifacts:write",
     "approvals:request",
     "memories:propose",
     "evaluations:submit",
@@ -2034,6 +2035,7 @@ def agent_gateway_create_enrollment(conn, body) -> tuple[dict, int]:
         "tasks:claim",
         "runs:write",
         "toolcalls:write",
+        "artifacts:write",
         "approvals:request",
         "memories:propose",
         "evaluations:submit",
@@ -2462,6 +2464,38 @@ def agent_gateway_eval_submit(conn, body) -> tuple[dict, int]:
     outcome = upsert_evaluation(conn, row, "agent-gateway")
     runtime_event(conn, "rtc_agent_gateway_local", "evaluation.submit", pass_fail, run_id=run_id, task_id=row["task_id"], agent_id=row["agent_id"], output_summary=row["notes"])
     return {"evaluation": row, "outcome": outcome}, 201 if outcome == "created" else 200
+
+
+def agent_gateway_record_artifact(conn, body) -> tuple[dict, int]:
+    run_id = body.get("run_id")
+    ident = agent_gateway_identity({}, body)
+    run, access_error = ensure_run_access(conn, run_id, ident)
+    if access_error:
+        return access_error
+    artifact_id = body.get("artifact_id") or stable_id("art_gw", run_id, body.get("title") or body.get("artifact_type") or "artifact")
+    row = {
+        "artifact_id": artifact_id,
+        "task_id": run["task_id"],
+        "run_id": run_id,
+        "artifact_type": redact_text(body.get("artifact_type") or "report", 80),
+        "title": redact_text(body.get("title") or "Agent Gateway Artifact", 160),
+        "uri": redact_text(body.get("uri") or f"run://{run_id}", 240),
+        "summary": redact_text(body.get("summary") or body.get("content_summary") or "Artifact summary recorded through Agent Gateway.", 360),
+        "created_at": body.get("created_at") or now_iso(),
+    }
+    conn.execute(
+        """INSERT OR REPLACE INTO artifacts(artifact_id,task_id,run_id,artifact_type,title,uri,summary,created_at)
+        VALUES(:artifact_id,:task_id,:run_id,:artifact_type,:title,:uri,:summary,:created_at)""",
+        row,
+    )
+    metadata = safe_json_metadata({
+        "workspace_id": ident["workspace_id"],
+        "content_hash": body.get("content_hash"),
+        "raw_content_omitted": True,
+    })
+    runtime_event(conn, "rtc_agent_gateway_local", "artifact.record", "completed", run_id=run_id, task_id=row["task_id"], agent_id=run["agent_id"], output_summary=row["summary"], raw_payload_hash=body.get("content_hash"))
+    audit(conn, "agent", run["agent_id"], "agent_gateway.artifact_record", "artifacts", artifact_id, None, row, metadata)
+    return {"artifact": row}, 201
 
 
 def agent_gateway_emit_audit(conn, body) -> tuple[dict, int]:
@@ -4438,6 +4472,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM memories ORDER BY created_at DESC").fetchall()))
             if path == "/api/evaluations":
                 return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM evaluations ORDER BY created_at DESC").fetchall()))
+            if path == "/api/artifacts":
+                return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM artifacts ORDER BY created_at DESC").fetchall()))
             if path == "/api/audit":
                 return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT 200").fetchall()))
             if path == "/api/dashboard/metrics":
@@ -4521,6 +4557,7 @@ class Handler(BaseHTTPRequestHandler):
                     "/api/agent-gateway/heartbeat": "agents:heartbeat",
                     "/api/agent-gateway/runs/start": "runs:write",
                     "/api/agent-gateway/tool-calls": "toolcalls:write",
+                    "/api/agent-gateway/artifacts": "artifacts:write",
                     "/api/agent-gateway/approvals/request": "approvals:request",
                     "/api/agent-gateway/memories/propose": "memories:propose",
                     "/api/agent-gateway/evaluations/submit": "evaluations:submit",
@@ -4561,6 +4598,8 @@ class Handler(BaseHTTPRequestHandler):
                     payload, status = agent_gateway_run_heartbeat(conn, run_id, body)
                 elif path == "/api/agent-gateway/tool-calls":
                     payload, status = agent_gateway_record_tool_call(conn, body)
+                elif path == "/api/agent-gateway/artifacts":
+                    payload, status = agent_gateway_record_artifact(conn, body)
                 elif path == "/api/agent-gateway/approvals/request":
                     payload, status = agent_gateway_request_approval(conn, body)
                 elif path == "/api/agent-gateway/memories/propose":

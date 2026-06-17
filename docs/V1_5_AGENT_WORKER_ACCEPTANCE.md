@@ -71,6 +71,7 @@ Agent enrollment CLI/API:
 ./scripts/agentops enrollment revoke --token-id agtok_...
 python3 scripts/remote_agent_token_worker_smoke.py
 python3 scripts/enrollment_rotation_smoke.py
+python3 scripts/kb_bot_demo_smoke.py
 ```
 
 ## Evidence
@@ -213,6 +214,34 @@ evaluations: 1
 token_omitted: true
 revoked: 1
 ```
+
+The knowledge-base bot customer task smoke passed:
+
+```text
+script: python3 scripts/kb_bot_demo_smoke.py
+project_id: 20260617185442
+created tasks: 6
+created runs: 6
+created tool_calls: 6
+created evaluations: 6
+created memories: 6
+created runtime_events: 54
+created audit_logs: 55
+created artifacts: 1
+pending approval: ap_gw_f289a8baafcd
+delivery artifact: art_kb_bot_delivery_20260617185442
+external_upload_performed: false
+credentials_stored: false
+raw_documents_stored: false
+```
+
+The delivery artifact is written through:
+
+```http
+POST /api/agent-gateway/artifacts
+```
+
+It stores a customer-readable title, summary, URI, and content hash metadata only. It does not store raw source documents, credentials, or full private transcripts.
 
 Latest repeat run after adding the enrollment UI:
 

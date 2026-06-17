@@ -1,6 +1,6 @@
 # AI Knowledge Base / Q&A Bot Customer Demo
 
-This is a safe local customer-task demo for the AgentOps MIS v1.4 Agent Gateway slice.
+This is a safe local customer-task demo for the AgentOps MIS v1.5 Agent Gateway slice.
 
 ## What It Shows
 
@@ -23,6 +23,7 @@ AgentOps MIS turns that request into managed AI-team work:
 - External knowledge-base upload is represented as a high-risk approval request.
 - Evaluation and memory candidates are written.
 - Audit and runtime events prove the work happened.
+- A customer-facing delivery artifact is recorded through Agent Gateway, without storing raw documents or credentials.
 
 Dify can run locally or on a customer server. In that model, Dify is the agent's knowledge/workflow tool, while AgentOps MIS remains the control plane and ledger. MIS records only task state, summaries, hashes, connector ids, approval decisions, document ids, evaluations and audit events.
 
@@ -42,6 +43,14 @@ Then run:
 python3 scripts/run_kb_bot_demo.py
 ```
 
+Acceptance smoke:
+
+```bash
+python3 scripts/kb_bot_demo_smoke.py
+```
+
+The smoke runs the same customer scenario and checks that `tasks`, `runs`, `tool_calls`, `approvals`, `evaluations`, `memories`, `runtime_events`, `audit_logs`, and `artifacts` all increase.
+
 If `AGENTOPS_API_KEY` is set on the server, pass the same local key:
 
 ```bash
@@ -57,11 +66,13 @@ AGENTOPS_API_KEY="$AGENTOPS_API_KEY" python3 scripts/run_kb_bot_demo.py
 - `/workspace/approvals`: pending approval for Dify/OpenAI/AnythingLLM upload.
 - `/admin/evaluations`: quality gate evidence.
 - `/admin/audit`: tamper-chain audit records.
+- Task or run detail: customer delivery artifact summary.
 
 ## Safety Boundaries
 
 - No raw customer documents are uploaded.
 - No credentials are stored.
+- Artifact records store title, summary, URI/hash metadata only; they do not store the full customer source corpus.
 - No full private chats or transcripts are written to MIS.
 - Local/private Dify may run with explicit `DIFY_ALLOW_REAL_UPLOAD=true` plus `confirm_upload`; cloud or cross-domain ingestion stays pending until a human approval exists.
 
