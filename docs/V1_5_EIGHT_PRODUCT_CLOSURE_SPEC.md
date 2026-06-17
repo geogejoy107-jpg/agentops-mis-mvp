@@ -222,6 +222,8 @@ Current v1.5 implementation:
   - daemon status cards.
   - remote agent enrollment token panel.
   - worker fleet telemetry with daemon log tails and recent Agent Gateway events.
+- `/workspace/approvals` reads live approvals from the backend and can approve/reject through the real API.
+- `/admin/toolcalls` reads live tool-call evidence from the backend instead of mock data.
 - Browser verification confirmed the controls render.
 
 Acceptance evidence:
@@ -238,6 +240,8 @@ Acceptance evidence:
   - `最近网关事件`
   - daemon status cards.
 - `GET /api/workers/local/logs?adapter=mock` returned 80 log-tail lines.
+- `GET /api/approvals` returned 12 live approval rows, including pending `ap_gw_f289a8baafcd`.
+- `GET /api/tool-calls` returned 6928 live tool-call rows, including `artifact.delivery_summary`.
 
 Remaining product work:
 
@@ -328,6 +332,8 @@ Implemented and verified:
 - UI one-shot worker dispatch.
 - UI daemon controls.
 - UI worker fleet telemetry.
+- Live Approvals Inbox.
+- Live Tool Call Ledger.
 - Scoped token enrollment.
 - Remote enrollment UI.
 - Token revocation.

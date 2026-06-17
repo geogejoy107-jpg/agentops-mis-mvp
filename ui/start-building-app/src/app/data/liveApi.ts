@@ -511,6 +511,10 @@ export async function loadApprovals(): Promise<Approval[]> {
   return (await apiJson<Record<string, unknown>[]>("/approvals")).map(normalizeApproval);
 }
 
+export async function loadToolCalls(): Promise<ToolCall[]> {
+  return (await apiJson<Record<string, unknown>[]>("/tool-calls")).map(normalizeToolCall);
+}
+
 export async function loadMemories(): Promise<Memory[]> {
   return (await apiJson<Record<string, unknown>[]>("/memories")).map(normalizeMemory);
 }

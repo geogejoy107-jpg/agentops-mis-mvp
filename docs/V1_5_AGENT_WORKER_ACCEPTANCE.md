@@ -243,6 +243,23 @@ POST /api/agent-gateway/artifacts
 
 It stores a customer-readable title, summary, URI, and content hash metadata only. It does not store raw source documents, credentials, or full private transcripts.
 
+The live UI ledger pass also passed:
+
+```text
+page: /workspace/approvals
+source: GET /api/approvals
+rows: 12
+latest pending approval: ap_gw_f289a8baafcd
+actions: approve/reject buttons call POST /api/approvals/:id/approve|reject
+
+page: /admin/toolcalls
+source: GET /api/tool-calls
+rows: 6928
+latest tool: artifact.delivery_summary
+```
+
+These pages no longer use `mockData` for the primary ledger rows.
+
 Latest repeat run after adding the enrollment UI:
 
 ```text
