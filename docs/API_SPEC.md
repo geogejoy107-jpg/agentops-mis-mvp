@@ -165,7 +165,7 @@ Agnesfallback is exposed as a Hermes-compatible runtime connector:
 - Default behavior: dry-run only.
 - Real fixed probes require both `HERMES_ALLOW_REAL_RUN=true` and request body `{"confirm_run": true}`.
 - The CLI probe uses a fixed safe prompt and intentionally excludes `--yolo`.
-- Arbitrary `/run-task` remains a dry-run preview in v1.2.1.
+- `/run-task` supports only a fixed safe Hermes default gateway probe when explicitly confirmed; arbitrary raw task prompts remain disabled.
 
 Environment variables:
 
@@ -179,6 +179,8 @@ AGNESFALLBACK_BIN=~/.local/bin/agnesfallback
 AGNESFALLBACK_GATEWAY_URL=http://127.0.0.1:8643
 AGNESFALLBACK_PROFILE=agnesfallback
 ```
+
+For local acceptance on machines where the Hermes gateway already exposes the Agnesfallback model through `127.0.0.1:8642`, `AGNESFALLBACK_GATEWAY_URL` may point at the same gateway URL. The connector still sends only the fixed probe prompt and stores hashes/summaries, not full prompts or raw responses.
 
 ## Integrations / Notion
 

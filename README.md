@@ -107,6 +107,25 @@ python3 scripts/demo_acceptance.py --start-server
 - Bases、connectors、template packages、migration preview。
 - SQLite 中 audit/runtime/template/bases 基础数据存在。
 
+除 Dify / Notion 之外的本地 runtime live 验收：
+
+```bash
+HERMES_ALLOW_REAL_RUN=true \
+HERMES_REQUIRE_CONFIRM_RUN=true \
+AGNESFALLBACK_GATEWAY_URL=http://127.0.0.1:8642 \
+python3 server.py
+
+python3 scripts/local_runtime_acceptance.py \
+  --live-openclaw \
+  --live-hermes \
+  --live-agnesfallback \
+  --live-agnesfallback-api \
+  --require-hermes-api \
+  --require-agnesfallback-api
+```
+
+这条验收会跑 Agent Gateway CLI smoke、OpenClaw import/probe、Hermes default gateway fixed run-task、Agnesfallback CLI fixed probe 和 Agnesfallback OpenAI-compatible fixed probe。它不会调用 Dify 或 Notion 写入路径。
+
 ## Local live recording mode
 
 默认可复现 demo 仍然是 dry-run，这是 GitHub clone 后最安全的行为。录制本机视频时，如果要展示一次真实 Agnesfallback fixed probe，可以按 `docs/LIVE_DEMO_RUNBOOK.md` 显式开启 live mode：

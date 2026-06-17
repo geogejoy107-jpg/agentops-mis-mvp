@@ -773,6 +773,21 @@ def runtime_connector_rows() -> list[dict]:
             "updated_at": now,
         },
         {
+            "runtime_connector_id": "rtc_openclaw_local",
+            "provider": "openclaw",
+            "connector_type": "local_cli",
+            "profile_name": "main",
+            "base_url": None,
+            "binary_path": str(OPENCLAW_BIN),
+            "status": "available" if OPENCLAW_BIN.exists() else "unavailable",
+            "allow_real_run": 1,
+            "require_confirm_run": 1,
+            "last_health_at": now,
+            "last_error": None if OPENCLAW_BIN.exists() else f"missing {OPENCLAW_BIN}",
+            "created_at": now,
+            "updated_at": now,
+        },
+        {
             "runtime_connector_id": "rtc_hermes_default_gateway",
             "provider": "hermes",
             "connector_type": "health_probe",
@@ -2104,6 +2119,10 @@ def agent_gateway_emit_audit(conn, body) -> tuple[dict, int]:
 
 
 def run_openclaw_probe(conn) -> dict:
+    for connector in runtime_connector_rows():
+        if connector["runtime_connector_id"] == "rtc_openclaw_local":
+            upsert_runtime_connector(conn, connector)
+            break
     agent_id = "agt_oc_main"
     cfg = read_json_file(OPENCLAW_HOME / "openclaw.json", {})
     defaults = cfg.get("agents", {}).get("defaults", {}) if isinstance(cfg, dict) else {}
@@ -2199,6 +2218,8 @@ def run_openclaw_probe(conn) -> dict:
     }
     upsert_run(conn, row, "openclaw-probe", {"manual_probe": True})
     upsert_evaluation(conn, quality_gate_for_run(row), "openclaw-probe")
+    runtime_event(conn, "rtc_openclaw_local", "agent_probe", "completed" if probe["ok"] else "failed", run_id=run_id, task_id=task_id, agent_id=agent_id, model_name=row["model_name"], latency_ms=row["duration_ms"], output_summary=probe.get("visible"), error_message=probe.get("error"), raw_payload_hash=stable_hash({"trace_id": probe.get("run_id"), "visible": probe.get("visible"), "error": probe.get("error")}))
+    audit(conn, "system", "openclaw-probe", "runtime.openclaw_probe", "runs", run_id, None, {"status": row["status"]}, {"manual_probe": True, "trace_id": probe.get("run_id")})
     return {"provider": "openclaw", "probe": probe, "run_id": run_id}
 
 
@@ -3188,15 +3209,124 @@ def run_customer_task_workflow(conn, body: dict) -> dict:
 
 
 def hermes_run_task(conn, body: dict) -> dict:
+    cfg = hermes_runtime_config()
+    status = hermes_status()
+    refresh_runtime_connectors(conn, status)
+    confirm = bool(body.get("confirm_run"))
+    prompt = "请只回复 HERMES_DEFAULT_RUN_OK，不要解释。"
+    prompt_hash = stable_hash(prompt)
+    plan = {
+        "created": False,
+        "dry_run": True,
+        "provider": "hermes",
+        "mode": "default_gateway_fixed_probe",
+        "would_post": status["gateway_url"].rstrip("/") + "/v1/chat/completions",
+        "prompt_hash": prompt_hash,
+        "requires": {"HERMES_ALLOW_REAL_RUN": True, "confirm_run": True, "api_listening": True},
+        "note": "Only a fixed safe probe is enabled here. Arbitrary Hermes task prompts remain disabled.",
+    }
     risk = body.get("risk_level", "low")
     if risk not in ("low", "medium") and not body.get("confirm_run"):
         return {"created": False, "dry_run": True, "requires_confirm_run": True, "reason": "High-risk runtime tasks require confirm_run=true."}
-    return {
-        "created": False,
-        "dry_run": True,
-        "reason": "v1.2.1 MVP exposes confirmed fixed probes only; arbitrary Hermes run-task is planned but not enabled.",
-        "allowed_probe_endpoints": ["/api/integrations/hermes/cli-probe", "/api/integrations/hermes/chat-completion-probe"],
+    if not (cfg["allow_real_run"] and confirm and status["api_listening"]):
+        runtime_event(conn, "rtc_hermes_default_gateway", "run_task_dry_run", "planned", prompt_hash=prompt_hash, input_summary="Hermes default fixed run-task dry-run.")
+        audit(conn, "system", "hermes-run-task", "runtime.run_task.dry_run", "runtime_connectors", "rtc_hermes_default_gateway", None, plan, {"confirm_run": confirm, "api_listening": status["api_listening"]})
+        conn.commit()
+        return plan
+
+    agent_id = "agt_hermes_gateway"
+    upsert_agent(conn, {
+        "agent_id": agent_id,
+        "name": "Hermes Gateway",
+        "role": "Hermes Runtime Gateway",
+        "description": "Local Hermes gateway fixed runtime task target.",
+        "runtime_type": "hermes",
+        "model_provider": "hermes",
+        "model_name": "hermes-agent",
+        "status": "idle",
+        "permission_level": "manager",
+        "allowed_tools": json.dumps(["hermes.gateway", "openai_compatible.chat", "runtime.probe"], ensure_ascii=False),
+        "budget_limit_usd": 10.0,
+        "owner_user_id": "usr_founder",
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+    }, "hermes-run-task")
+    task_id = "tsk_hermes_default_run_task"
+    upsert_task(conn, {
+        "task_id": task_id,
+        "title": "Hermes default gateway fixed runtime task",
+        "description": "Confirmed low-risk Hermes default gateway run. Full prompt and raw response are not stored.",
+        "requester_id": "usr_founder",
+        "owner_agent_id": agent_id,
+        "collaborator_agent_ids": json.dumps([], ensure_ascii=False),
+        "status": "planned",
+        "priority": "high",
+        "due_date": None,
+        "acceptance_criteria": "Hermes default gateway returns the fixed marker and writes run/evaluation/audit evidence.",
+        "risk_level": "low",
+        "budget_limit_usd": 1.0,
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+    }, "hermes-run-task")
+
+    started_iso = now_iso()
+    started = dt.datetime.now(dt.timezone.utc)
+    payload = {"model": "hermes-agent", "messages": [{"role": "user", "content": prompt}], "temperature": 0}
+    ok = False
+    visible = None
+    error = None
+    response_hash = None
+    try:
+        req = Request(
+            status["gateway_url"].rstrip("/") + "/v1/chat/completions",
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with urlopen(req, timeout=180) as res:
+            response = json.loads(res.read().decode("utf-8"))
+        response_hash = stable_hash(response)
+        visible = (((response.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
+        visible = redact_text(visible, 200)
+        ok = visible == "HERMES_DEFAULT_RUN_OK"
+        if not ok:
+            error = redact_text(visible or "unexpected response", 240)
+    except Exception as exc:
+        error = redact_text(str(exc), 240)
+
+    duration = int((dt.datetime.now(dt.timezone.utc) - started).total_seconds() * 1000)
+    run_id = stable_id("run_hermes_default_task", dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d%H%M%S"))
+    row = {
+        "run_id": run_id,
+        "task_id": task_id,
+        "agent_id": agent_id,
+        "runtime_type": "hermes",
+        "status": "completed" if ok else "failed",
+        "started_at": started_iso,
+        "ended_at": now_iso(),
+        "duration_ms": duration,
+        "input_summary": f"Hermes default fixed probe prompt_hash={prompt_hash[:16]}",
+        "output_summary": "Hermes default gateway returned HERMES_DEFAULT_RUN_OK." if ok else "Hermes default gateway fixed probe failed.",
+        "model_provider": "hermes",
+        "model_name": "hermes-agent",
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "reasoning_tokens": 0,
+        "cost_usd": 0.0,
+        "error_type": None if ok else "HermesDefaultRunTaskFailed",
+        "error_message": error,
+        "trace_id": None,
+        "parent_run_id": None,
+        "delegation_id": "hermes:default-gateway",
+        "approval_required": 0,
+        "created_at": started_iso,
     }
+    upsert_run(conn, row, "hermes-run-task", {"prompt_hash": prompt_hash, "raw_payload_hash": response_hash})
+    upsert_evaluation(conn, quality_gate_for_run(row), "hermes-run-task")
+    runtime_event(conn, "rtc_hermes_default_gateway", "run_task", "completed" if ok else "failed", run_id=run_id, task_id=task_id, agent_id=agent_id, model_name="hermes-agent", latency_ms=duration, prompt_hash=prompt_hash, output_summary=visible, error_message=error, raw_payload_hash=response_hash)
+    audit(conn, "system", "hermes-run-task", "runtime.run_task", "runs", run_id, None, {"status": row["status"]}, {"prompt_hash": prompt_hash, "confirmed": True})
+    conn.commit()
+    return {"created": True, "dry_run": False, "provider": "hermes", "mode": "default_gateway_fixed_probe", "ok": ok, "run_id": run_id, "task_id": task_id, "duration_ms": duration, "output_summary": row["output_summary"], "error": error}
 
 
 def run_graph(conn, run_id: str) -> dict | None:
