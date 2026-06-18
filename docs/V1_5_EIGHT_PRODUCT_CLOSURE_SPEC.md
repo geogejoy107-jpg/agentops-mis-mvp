@@ -151,7 +151,11 @@ Current v1.5 implementation:
   - scoped by endpoint permissions,
   - revocable.
 - Active tokens can be rotated; the old token is revoked and the replacement token is shown once.
-- Heartbeat freshness is tracked.
+- Heartbeat freshness is tracked with explicit lifecycle states:
+  - `never_seen`: active token exists but the remote worker has not heartbeated yet.
+  - `fresh`: active token has a recent heartbeat inside its timeout window.
+  - `stale`: active token has a heartbeat older than its timeout window.
+  - `revoked`: revoked token is no longer treated as live even if it has old heartbeat data.
 - Token-auth requests cannot override `agent_id` or `workspace_id` through body, query string, or headers.
 - `tasks` and `runs` now carry `workspace_id`; Agent Gateway pull/claim/start/run-write paths check that boundary.
 - Agent Gateway can now record customer delivery artifacts with `artifacts:write`, so remote workers can submit report summaries without raw customer content.
@@ -166,6 +170,7 @@ Acceptance evidence:
   - repeat run `run_gw_f5635ff603fd`
 - Browser verification showed `远程 Agent 接入`, `创建接入 token`, and `最近接入记录` on `/workspace/agents`.
 - `python3 scripts/enrollment_rotation_smoke.py` verified API and CLI rotation with redacted one-time token output.
+- `python3 scripts/enrollment_health_state_smoke.py` verified the remote enrollment lifecycle `never_seen -> fresh -> stale -> revoked`.
 - `python3 scripts/workspace_isolation_smoke.py` verified:
   - workspace A token only pulls workspace A tasks,
   - workspace B tasks do not leak into pull results,
@@ -336,6 +341,7 @@ python3 scripts/approval_decision_side_effect_smoke.py
 python3 scripts/agentops_cli_install_smoke.py
 python3 scripts/remote_agent_token_worker_smoke.py
 python3 scripts/workspace_isolation_smoke.py
+python3 scripts/enrollment_health_state_smoke.py
 ```
 
 ## Current Status Summary
@@ -354,6 +360,7 @@ Implemented and verified:
 - Remote enrollment UI.
 - Token revocation.
 - Token rotation.
+- Enrollment heartbeat states: `never_seen`, `fresh`, `stale`, and `revoked`.
 - Endpoint-level scope enforcement.
 - Minimal workspace isolation for token-auth Agent Gateway pull/claim/run/write paths.
 - Remote-token worker end-to-end smoke.

@@ -127,6 +127,13 @@ Lists token metadata, status, scopes, expiry, and heartbeat freshness. It never 
 agentops enrollment list
 ```
 
+Heartbeat freshness uses product-facing lifecycle states:
+
+- `never_seen`: token was issued but the remote worker has not connected yet.
+- `fresh`: token is active and the latest heartbeat is inside the timeout window.
+- `stale`: token is active but the latest heartbeat is older than the timeout window.
+- `revoked`: token is no longer valid and should not be shown as live even if it has old heartbeat data.
+
 ### `agentops enrollment revoke`
 
 Revokes one token or all active tokens for an agent.
@@ -479,6 +486,7 @@ Current implementation:
 - `POST /api/agent-gateway/enrollment/revoke` revokes tokens.
 - `POST /api/agent-gateway/enrollment/rotate` revokes an active token and returns a one-time replacement token.
 - `GET /api/agent-gateway/enrollments` reports heartbeat freshness.
+- Revoked tokens report `heartbeat_state=revoked`, not `fresh` or `stale`.
 
 Current endpoint scope map:
 
@@ -585,10 +593,12 @@ Verification helper:
 ```bash
 python3 scripts/remote_agent_token_worker_smoke.py
 python3 scripts/workspace_isolation_smoke.py
+python3 scripts/enrollment_health_state_smoke.py
 ```
 
 This helper creates a scoped token, creates a normal MIS task for that agent, runs `scripts/agent_worker.py --once` with the token, verifies run/tool/eval evidence, and revokes the token by default. It does not print the raw token.
 The workspace isolation helper creates workspace A/B tasks, verifies that the workspace A token cannot pull, claim, start, or write workspace B work, and verifies that normal workspace A execution still succeeds.
+The enrollment health helper verifies `never_seen -> fresh -> stale -> revoked` without printing the raw token.
 
 Remaining future work:
 

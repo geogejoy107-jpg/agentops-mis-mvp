@@ -13,6 +13,7 @@ const statusConfig: Record<string, { label: { en: string; zh: string }; color: s
   paused:            { label: { en: "Paused", zh: "已暂停" },                      color: "#FBBF24",            bg: "rgba(251,191,36,0.12)" },
   error:             { label: { en: "Error", zh: "错误" },                         color: "var(--mis-warning)", bg: "rgba(231,111,81,0.15)" },
   disabled:          { label: { en: "Disabled", zh: "已禁用" },                    color: "var(--mis-muted)",   bg: "rgba(107,114,128,0.1)" },
+  active:            { label: { en: "Active", zh: "已启用" },                      color: "var(--mis-success)", bg: "rgba(42,157,143,0.15)" },
   // task status
   backlog:           { label: { en: "Backlog", zh: "待排期" },                    color: "var(--mis-dim)",     bg: "rgba(107,114,128,0.1)" },
   planned:           { label: { en: "Planned", zh: "已计划" },                    color: "var(--mis-primary)", bg: "rgba(46,134,171,0.15)" },
@@ -30,6 +31,9 @@ const statusConfig: Record<string, { label: { en: string; zh: string }; color: s
   candidate:         { label: { en: "Candidate", zh: "候选" },                    color: "var(--mis-cyan)",    bg: "rgba(34,211,238,0.1)" },
   stale:             { label: { en: "Stale", zh: "已陈旧" },                      color: "var(--mis-muted)",   bg: "rgba(107,114,128,0.1)" },
   superseded:        { label: { en: "Superseded", zh: "已替代" },                 color: "var(--mis-muted)",   bg: "rgba(107,114,128,0.1)" },
+  fresh:             { label: { en: "Fresh", zh: "心跳正常" },                    color: "var(--mis-success)", bg: "rgba(42,157,143,0.15)" },
+  never_seen:        { label: { en: "Never Seen", zh: "未连接" },                 color: "#FBBF24",            bg: "rgba(251,191,36,0.12)" },
+  revoked:           { label: { en: "Revoked", zh: "已撤销" },                    color: "var(--mis-muted)",   bg: "rgba(107,114,128,0.1)" },
   // connector
   ready:             { label: { en: "Ready", zh: "就绪" },                        color: "var(--mis-success)", bg: "rgba(42,157,143,0.15)" },
   unavailable:       { label: { en: "Unavailable", zh: "不可用" },                color: "#F87171",            bg: "rgba(248,113,113,0.15)" },

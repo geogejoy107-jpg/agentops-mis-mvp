@@ -2096,15 +2096,19 @@ def agent_gateway_enrollment_rows(conn) -> list[dict]:
         scopes = parse_scope_list(row.get("scopes_json"))
         row["scopes"] = scopes
         row.pop("scopes_json", None)
+        if row.get("status") != "active":
+            row["heartbeat_state"] = row.get("status") or "inactive"
+            continue
         heartbeat_at = row.get("last_heartbeat_at")
-        stale = False
-        if row.get("status") == "active" and heartbeat_at:
-            try:
-                seen = dt.datetime.fromisoformat(heartbeat_at)
-                stale = (now_dt - seen).total_seconds() > int(row.get("heartbeat_timeout_sec") or 300)
-            except Exception:
-                stale = False
-        row["heartbeat_state"] = "stale" if stale else "fresh" if heartbeat_at else "never_seen"
+        if not heartbeat_at:
+            row["heartbeat_state"] = "never_seen"
+            continue
+        try:
+            seen = dt.datetime.fromisoformat(heartbeat_at)
+            stale = (now_dt - seen).total_seconds() > int(row.get("heartbeat_timeout_sec") or 300)
+        except Exception:
+            stale = False
+        row["heartbeat_state"] = "stale" if stale else "fresh"
     return rows
 
 

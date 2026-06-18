@@ -75,6 +75,7 @@ python3 scripts/kb_bot_demo_smoke.py
 python3 scripts/kb_bot_workflow_api_smoke.py
 python3 scripts/approval_decision_side_effect_smoke.py
 python3 scripts/agentops_cli_install_smoke.py
+python3 scripts/enrollment_health_state_smoke.py
 ```
 
 ## Evidence
@@ -186,6 +187,17 @@ token_omitted: true
 cleanup_revoked: 1
 ```
 
+The enrollment heartbeat health-state smoke passed:
+
+```text
+script: python3 scripts/enrollment_health_state_smoke.py
+agent_id: agt_enroll_health_smoke_20260618064218
+token_id: agtok_agt_enroll_health_smoke_20260618064218_local_demo_19b8b6a6325f
+states verified: never_seen -> fresh -> stale -> revoked
+token_omitted: true
+cleanup_revoked: 1
+```
+
 The workspace isolation smoke passed:
 
 ```text
@@ -207,10 +219,10 @@ The remote-token worker smoke also passed:
 
 ```text
 script: python3 scripts/remote_agent_token_worker_smoke.py
-agent_id: agt_remote_worker_smoke_20260617162927
-token_id: agtok_agt_remote_worker_smoke_20260617162927_local_demo_37b4595d76c5
-task_id: tsk_remote_worker_smoke_20260617162927
-run_id: run_gw_876a7c777841
+agent_id: agt_remote_worker_smoke_20260618064228
+token_id: agtok_agt_remote_worker_smoke_20260618064228_local_demo_2fd708d4aed4
+task_id: tsk_remote_worker_smoke_20260618064228
+run_id: run_gw_f61363bdf61d
 run_status: completed
 tool_calls: 1
 evaluations: 1
