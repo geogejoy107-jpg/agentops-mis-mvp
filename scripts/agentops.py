@@ -329,6 +329,41 @@ def cmd_enrollment_create(args, client: AgentOpsClient) -> dict:
     return result
 
 
+def cmd_enrollment_request(args, client: AgentOpsClient) -> dict:
+    payload = {
+        "workspace_id": client.workspace_id,
+        "agent_id": args.agent_id,
+        "name": args.name,
+        "role": args.role,
+        "runtime_type": args.runtime,
+        "scopes": split_csv(args.scopes),
+        "reason": args.reason,
+    }
+    return client.post("/api/agent-gateway/enrollment/request", payload)
+
+
+def cmd_enrollment_issue_approved(args, client: AgentOpsClient) -> dict:
+    payload = {
+        "request_id": args.request_id,
+        "approval_id": args.approval_id,
+        "ttl_days": args.ttl_days,
+        "heartbeat_timeout_sec": args.heartbeat_timeout_sec,
+        "label": args.label,
+    }
+    result = client.post("/api/agent-gateway/enrollment/issue-approved", payload)
+    if args.save_token and result.get("token"):
+        config = load_config()
+        config.update({
+            "base_url": client.base_url,
+            "workspace_id": result.get("workspace_id") or client.workspace_id,
+            "agent_id": result.get("agent_id") or client.agent_id,
+            "api_key": result["token"],
+        })
+        save_config(config)
+        result["saved_to"] = str(CONFIG_PATH)
+    return result
+
+
 def cmd_enrollment_list(args, client: AgentOpsClient) -> dict:
     return client.get("/api/agent-gateway/enrollments")
 
@@ -561,6 +596,24 @@ def build_parser() -> argparse.ArgumentParser:
     enroll_create.add_argument("--save-token", action="store_true", help="Save returned token to local config for this CLI.")
     enroll_create.set_defaults(handler="enrollment_create")
 
+    enroll_request = enrollment_sub.add_parser("request", help="Request human approval before issuing an enrollment token.")
+    enroll_request.add_argument("--agent-id", required=True)
+    enroll_request.add_argument("--name", default="Remote Agent")
+    enroll_request.add_argument("--role", default="Remote AI Digital Employee")
+    enroll_request.add_argument("--runtime", default="mock")
+    enroll_request.add_argument("--scopes", default="agents:heartbeat,tasks:read,tasks:claim,runs:write,toolcalls:write,evaluations:submit,audit:write")
+    enroll_request.add_argument("--reason", default="Remote worker needs scoped access to process assigned MIS tasks.")
+    enroll_request.set_defaults(handler="enrollment_request")
+
+    enroll_issue = enrollment_sub.add_parser("issue-approved", help="Issue a token for an approved enrollment request.")
+    enroll_issue.add_argument("--request-id", default=None)
+    enroll_issue.add_argument("--approval-id", default=None)
+    enroll_issue.add_argument("--ttl-days", type=int, default=30)
+    enroll_issue.add_argument("--heartbeat-timeout-sec", type=int, default=300)
+    enroll_issue.add_argument("--label", default="")
+    enroll_issue.add_argument("--save-token", action="store_true", help="Save returned token to local config for this CLI.")
+    enroll_issue.set_defaults(handler="enrollment_issue_approved")
+
     enroll_list = enrollment_sub.add_parser("list", help="List token metadata without secrets.")
     enroll_list.set_defaults(handler="enrollment_list")
 
@@ -606,6 +659,8 @@ HANDLERS = {
     "eval_submit": cmd_eval_submit,
     "audit_emit": cmd_audit_emit,
     "enrollment_create": cmd_enrollment_create,
+    "enrollment_request": cmd_enrollment_request,
+    "enrollment_issue_approved": cmd_enrollment_issue_approved,
     "enrollment_list": cmd_enrollment_list,
     "enrollment_revoke": cmd_enrollment_revoke,
     "enrollment_rotate": cmd_enrollment_rotate,

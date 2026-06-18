@@ -489,6 +489,29 @@ CREATE TABLE IF NOT EXISTS agent_gateway_sessions (
     FOREIGN KEY(agent_id) REFERENCES agents(agent_id)
 );
 
+CREATE TABLE IF NOT EXISTS agent_gateway_enrollment_requests (
+    request_id TEXT PRIMARY KEY,
+    approval_id TEXT NOT NULL,
+    task_id TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    workspace_id TEXT NOT NULL,
+    agent_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    role TEXT,
+    runtime_type TEXT NOT NULL,
+    scopes_json TEXT NOT NULL DEFAULT '[]',
+    reason TEXT,
+    status TEXT NOT NULL CHECK(status IN ('pending','approved','rejected','issued')),
+    token_id TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    decided_at TEXT,
+    FOREIGN KEY(approval_id) REFERENCES approvals(approval_id),
+    FOREIGN KEY(task_id) REFERENCES tasks(task_id),
+    FOREIGN KEY(run_id) REFERENCES runs(run_id),
+    FOREIGN KEY(token_id) REFERENCES agent_gateway_tokens(token_id)
+);
+
 CREATE TABLE IF NOT EXISTS bases (
     base_id TEXT PRIMARY KEY,
     provider TEXT NOT NULL,
@@ -2170,6 +2193,180 @@ def agent_gateway_create_enrollment(conn, body) -> tuple[dict, int]:
         "note": "Store this token locally on the agent machine. MIS stores only a hash and will not show it again.",
         "next_steps": agent_gateway_launch_steps(agent_id, workspace_id, runtime_type, body.get("base_url")),
     }, 201
+
+
+def agent_gateway_request_enrollment(conn, body) -> tuple[dict, int]:
+    workspace_id = normalize_workspace_id(body.get("workspace_id") or "local-demo")
+    agent_id = body.get("agent_id") or stable_id("agt_remote", body.get("name") or "remote-agent", workspace_id)
+    runtime_type = coerce_choice(body.get("runtime_type") or body.get("runtime"), VALID_RUNTIME_TYPES, "mock")
+    scopes = parse_scope_list(body.get("scopes") or body.get("allowed_scopes") or [
+        "agents:heartbeat",
+        "tasks:read",
+        "tasks:claim",
+        "runs:write",
+        "toolcalls:write",
+        "evaluations:submit",
+        "audit:write",
+    ])
+    if not scopes:
+        return {"error": "at least one valid scope is required", "valid_scopes": sorted(VALID_AGENT_GATEWAY_SCOPES)}, 400
+    name = redact_text(body.get("name") or agent_id, 120)
+    role = redact_text(body.get("role") or "Remote AI Digital Employee", 120)
+    reason = redact_text(body.get("reason") or "Remote agent enrollment request.", 360)
+    now = now_iso()
+    request_id = body.get("request_id") or stable_id("enroll_req", workspace_id, agent_id, now)
+    task_id = stable_id("tsk_enroll_req", request_id)
+    run_id = stable_id("run_enroll_req", request_id)
+    approval_id = stable_id("ap_enroll_req", request_id)
+    ensure_gateway_agent(conn, agent_id, name=name, role=role, runtime_type=runtime_type)
+    upsert_task(conn, {
+        "task_id": task_id,
+        "workspace_id": workspace_id,
+        "title": f"Remote agent enrollment request: {name}",
+        "description": reason,
+        "requester_id": body.get("requester_id") or "usr_founder",
+        "owner_agent_id": agent_id,
+        "collaborator_agent_ids": json.dumps([], ensure_ascii=False),
+        "status": "waiting_approval",
+        "priority": "high",
+        "due_date": body.get("due_date"),
+        "acceptance_criteria": "Human approver must approve before any enrollment token is issued.",
+        "risk_level": "high",
+        "budget_limit_usd": 0,
+        "created_at": now,
+        "updated_at": now,
+    }, "agent-gateway-enrollment")
+    upsert_run(conn, {
+        "run_id": run_id,
+        "workspace_id": workspace_id,
+        "task_id": task_id,
+        "agent_id": agent_id,
+        "runtime_type": runtime_type,
+        "status": "waiting_approval",
+        "started_at": now,
+        "ended_at": None,
+        "duration_ms": None,
+        "input_summary": f"Enrollment request for {agent_id} with {len(scopes)} scope(s).",
+        "output_summary": None,
+        "model_provider": "agent-gateway",
+        "model_name": "enrollment-request",
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "reasoning_tokens": 0,
+        "cost_usd": 0,
+        "error_type": None,
+        "error_message": None,
+        "trace_id": new_id("trace"),
+        "parent_run_id": None,
+        "delegation_id": stable_id("del_enroll_req", request_id),
+        "approval_required": 1,
+        "created_at": now,
+    }, "agent-gateway-enrollment", {"scopes": scopes, "token_omitted": True})
+    approval = {
+        "approval_id": approval_id,
+        "task_id": task_id,
+        "run_id": run_id,
+        "tool_call_id": None,
+        "requested_by_agent_id": agent_id,
+        "approver_user_id": body.get("approver_user_id") or "usr_founder",
+        "decision": "pending",
+        "reason": f"Approve scoped enrollment for {agent_id}: {reason}",
+        "expires_at": (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=2)).isoformat(),
+        "created_at": now,
+        "decided_at": None,
+    }
+    conn.execute(
+        """INSERT OR REPLACE INTO approvals(approval_id,task_id,run_id,tool_call_id,requested_by_agent_id,approver_user_id,decision,reason,expires_at,created_at,decided_at)
+        VALUES(:approval_id,:task_id,:run_id,:tool_call_id,:requested_by_agent_id,:approver_user_id,:decision,:reason,:expires_at,:created_at,:decided_at)""",
+        approval,
+    )
+    request = {
+        "request_id": request_id,
+        "approval_id": approval_id,
+        "task_id": task_id,
+        "run_id": run_id,
+        "workspace_id": workspace_id,
+        "agent_id": agent_id,
+        "name": name,
+        "role": role,
+        "runtime_type": runtime_type,
+        "scopes_json": json.dumps(scopes, ensure_ascii=False),
+        "reason": reason,
+        "status": "pending",
+        "token_id": None,
+        "created_at": now,
+        "updated_at": now,
+        "decided_at": None,
+    }
+    conn.execute(
+        """INSERT OR REPLACE INTO agent_gateway_enrollment_requests(request_id,approval_id,task_id,run_id,workspace_id,agent_id,name,role,runtime_type,scopes_json,reason,status,token_id,created_at,updated_at,decided_at)
+        VALUES(:request_id,:approval_id,:task_id,:run_id,:workspace_id,:agent_id,:name,:role,:runtime_type,:scopes_json,:reason,:status,:token_id,:created_at,:updated_at,:decided_at)""",
+        request,
+    )
+    runtime_event(conn, "rtc_agent_gateway_local", "agent.enrollment.request", "waiting_approval", run_id=run_id, task_id=task_id, agent_id=agent_id, output_summary=f"Enrollment request {request_id} is pending approval.")
+    audit(conn, "agent", agent_id, "agent_gateway.enrollment_request", "agent_gateway_enrollment_requests", request_id, None, {k: v for k, v in request.items() if k != "scopes_json"}, {"scopes": scopes, "token_omitted": True})
+    return {
+        "request": {**{k: v for k, v in request.items() if k != "scopes_json"}, "scopes": scopes},
+        "approval": approval,
+        "token_issued": False,
+        "token_omitted": True,
+    }, 201
+
+
+def sync_enrollment_request_decision(conn, approval_id: str, decision: str):
+    row = conn.execute("SELECT * FROM agent_gateway_enrollment_requests WHERE approval_id=?", (approval_id,)).fetchone()
+    if not row:
+        return
+    status = "approved" if decision == "approved" else "rejected" if decision == "rejected" else row["status"]
+    conn.execute(
+        "UPDATE agent_gateway_enrollment_requests SET status=?, decided_at=?, updated_at=? WHERE request_id=?",
+        (status, now_iso(), now_iso(), row["request_id"]),
+    )
+    audit(conn, "user", "usr_founder", f"agent_gateway.enrollment_request_{decision}", "agent_gateway_enrollment_requests", row["request_id"], dict(row), {"status": status}, {"approval_id": approval_id, "token_omitted": True})
+
+
+def agent_gateway_issue_approved_enrollment(conn, body) -> tuple[dict, int]:
+    request_id = body.get("request_id")
+    approval_id = body.get("approval_id")
+    if not request_id and not approval_id:
+        return {"error": "request_id or approval_id is required"}, 400
+    if request_id:
+        request = conn.execute("SELECT * FROM agent_gateway_enrollment_requests WHERE request_id=?", (request_id,)).fetchone()
+    else:
+        request = conn.execute("SELECT * FROM agent_gateway_enrollment_requests WHERE approval_id=?", (approval_id,)).fetchone()
+    if not request:
+        return {"error": "not found", "message": "Enrollment request not found."}, 404
+    approval = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (request["approval_id"],)).fetchone()
+    if not approval or approval["decision"] != "approved":
+        return {"error": "approval_required", "message": "Enrollment request must be approved before issuing a token.", "approval_id": request["approval_id"]}, 409
+    if request["status"] == "issued":
+        return {"issued": False, "token_id": request["token_id"], "request_id": request["request_id"], "token_omitted": True}, 200
+    scopes = parse_scope_list(request["scopes_json"])
+    created, status = agent_gateway_create_enrollment(conn, {
+        "agent_id": request["agent_id"],
+        "workspace_id": request["workspace_id"],
+        "name": request["name"],
+        "role": request["role"],
+        "runtime_type": request["runtime_type"],
+        "scopes": scopes,
+        "ttl_days": body.get("ttl_days") or 30,
+        "heartbeat_timeout_sec": body.get("heartbeat_timeout_sec") or 300,
+        "label": body.get("label") or f"{request['agent_id']} approved enrollment",
+        "base_url": body.get("base_url"),
+    })
+    if status >= 400:
+        return created, status
+    now = now_iso()
+    before = dict(request)
+    conn.execute(
+        "UPDATE agent_gateway_enrollment_requests SET status='issued', token_id=?, updated_at=?, decided_at=? WHERE request_id=?",
+        (created["token_id"], now, now, request["request_id"]),
+    )
+    after = conn.execute("SELECT * FROM agent_gateway_enrollment_requests WHERE request_id=?", (request["request_id"],)).fetchone()
+    audit(conn, "user", "usr_founder", "agent_gateway.enrollment_issue_approved", "agent_gateway_enrollment_requests", request["request_id"], before, dict(after), {"approval_id": request["approval_id"], "token_id": created["token_id"], "token_omitted": True})
+    created["issued_from_request_id"] = request["request_id"]
+    created["approval_id"] = request["approval_id"]
+    return created, 201
 
 
 def agent_gateway_create_session(conn, headers, body) -> tuple[dict, int]:
@@ -4766,8 +4963,19 @@ class Handler(BaseHTTPRequestHandler):
     def handle_post_api(self, path, body):
         with db() as conn:
             if path.startswith("/api/agent-gateway/"):
+                if path == "/api/agent-gateway/enrollment/request":
+                    payload, status = agent_gateway_request_enrollment(conn, body)
+                    conn.commit()
+                    return self.send_json(payload, status)
                 if path == "/api/agent-gateway/session/create":
                     payload, status = agent_gateway_create_session(conn, self.headers, body)
+                    conn.commit()
+                    return self.send_json(payload, status)
+                if path == "/api/agent-gateway/enrollment/issue-approved":
+                    auth_error = agent_gateway_admin_auth_error(self.headers)
+                    if auth_error:
+                        return self.send_json(auth_error, 401)
+                    payload, status = agent_gateway_issue_approved_enrollment(conn, body)
                     conn.commit()
                     return self.send_json(payload, status)
                 if path == "/api/agent-gateway/enrollment/create":
@@ -5064,6 +5272,7 @@ class Handler(BaseHTTPRequestHandler):
             conn.execute("UPDATE tasks SET status='blocked', updated_at=? WHERE task_id=?", (now_iso(), before["task_id"]))
             audit(conn, "user", "usr_founder", "run.blocked", "runs", before["run_id"], dict(run), {"status": "blocked"}, {"approval_id": approval_id})
         after = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (approval_id,)).fetchone()
+        sync_enrollment_request_decision(conn, approval_id, decision)
         audit(conn, "user", "usr_founder", f"approval.{decision}", "approvals", approval_id, dict(before), dict(after), {})
         conn.commit()
         return self.send_json(dict(after))

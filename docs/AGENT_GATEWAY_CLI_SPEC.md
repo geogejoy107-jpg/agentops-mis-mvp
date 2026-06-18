@@ -141,6 +141,31 @@ The create response also includes a `next_steps` launch packet for the remote ma
 
 This packet is safe to display in the UI because it omits the token value from command strings.
 
+### `agentops enrollment request`
+
+Creates a human approval request before any remote-agent token is issued. This is the safer customer-facing path for unknown machines or contractors.
+
+```bash
+agentops enrollment request \
+  --agent-id agt_customer_worker \
+  --name "Customer Worker" \
+  --runtime mock \
+  --scopes agents:heartbeat,tasks:read,tasks:claim,runs:write,toolcalls:write,evaluations:submit,audit:write \
+  --reason "Customer server worker needs to process assigned MIS tasks"
+```
+
+The response includes `request_id`, `approval_id`, `task_id`, and `run_id`, but no token.
+
+### `agentops enrollment issue-approved`
+
+Issues a one-time-visible token only after the linked approval has been approved.
+
+```bash
+agentops enrollment issue-approved --approval-id ap_123
+```
+
+Maps to `agent_gateway_enrollment_requests`, `approvals`, `tasks`, `runs`, `audit_logs`, and then `agent_gateway_tokens`.
+
 ### `agentops enrollment list`
 
 Lists token metadata, status, scopes, expiry, and heartbeat freshness. It never prints token secrets.
@@ -318,6 +343,8 @@ All endpoints are under the existing local API server.
 GET  /api/agent-gateway/enrollments
 GET  /api/agent-gateway/status
 POST /api/agent-gateway/enrollment/create
+POST /api/agent-gateway/enrollment/request
+POST /api/agent-gateway/enrollment/issue-approved
 POST /api/agent-gateway/enrollment/revoke
 POST /api/agent-gateway/enrollment/rotate
 POST /api/agent-gateway/session/create
@@ -537,6 +564,8 @@ Current implementation:
 - Task pull, task claim, run start, run heartbeat, tool call, approval, memory, evaluation, and audit write paths enforce the run/task workspace boundary.
 - `POST /api/agent-gateway/enrollment/revoke` revokes tokens.
 - `POST /api/agent-gateway/enrollment/rotate` revokes an active token and returns a one-time replacement token.
+- `POST /api/agent-gateway/enrollment/request` creates task/run/approval/request ledger rows without issuing a token.
+- `POST /api/agent-gateway/enrollment/issue-approved` issues the token only after the linked approval is approved.
 - `POST /api/agent-gateway/session/create` mints a short-lived session token from a valid enrollment token or local API key.
 - Session tokens inherit agent/workspace bindings and a subset of parent scopes.
 - Session tokens cannot mint replacement sessions.
@@ -547,6 +576,8 @@ Current endpoint scope map:
 
 | Endpoint | Required scope |
 | --- | --- |
+| `POST /api/agent-gateway/enrollment/request` | local request path; no token issued |
+| `POST /api/agent-gateway/enrollment/issue-approved` | admin/local approval authority |
 | `POST /api/agent-gateway/session/create` | valid enrollment token or local API key |
 | `POST /api/agent-gateway/register` | `agents:write` |
 | `POST /api/agent-gateway/heartbeat` | `agents:heartbeat` |
@@ -568,7 +599,7 @@ Future product versions should add:
 - Short-lived session refresh policy and revocation UI.
 - Workspace-level RBAC.
 - Connector-specific scoped credentials.
-- Remote agent enrollment and revocation.
+- Hosted customer enrollment policy UI.
 - mTLS or signed heartbeats for server-side agents.
 - Trust registry for external runtimes.
 
@@ -654,6 +685,7 @@ python3 scripts/enrollment_launch_steps_smoke.py
 python3 scripts/remote_launch_packet_worker_smoke.py
 python3 scripts/agent_gateway_scope_matrix_smoke.py
 python3 scripts/agent_gateway_session_smoke.py
+python3 scripts/enrollment_approval_workflow_smoke.py
 ```
 
 This helper creates a scoped token, creates a normal MIS task for that agent, runs `scripts/agent_worker.py --once` with the token, verifies run/tool/eval evidence, and revokes the token by default. It does not print the raw token.
@@ -664,10 +696,11 @@ The launch-steps helper verifies create/rotate responses include safe remote-wor
 The remote launch-packet helper uses the returned environment shape to run a real worker and verify run/tool/evaluation ledger evidence.
 The scope-matrix helper verifies an observer token can heartbeat/pull/audit but receives `403 forbidden` for claim/run/tool/artifact writes.
 The session helper verifies an enrollment token can mint a narrowed short-lived session, that the session can heartbeat/pull tasks, cannot mint another session, and is rejected after expiry.
+The enrollment-approval helper verifies request-before-token behavior: request returns no token, premature issue is rejected, approval unlocks token issue, and the issued token can heartbeat.
 
 Remaining future work:
 
-- Production enrollment approval workflow.
+- Hosted customer enrollment policy UI.
 - Session revocation UI and refresh policy.
 - Hosted multi-tenant isolation and full RBAC.
 - Reconnection backoff policy.

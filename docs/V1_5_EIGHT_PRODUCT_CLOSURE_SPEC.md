@@ -159,6 +159,11 @@ Current v1.5 implementation:
   - scoped by endpoint permissions,
   - revocable.
 - Active tokens can be rotated; the old token is revoked and the replacement token is shown once.
+- Customer-facing enrollment requests can be created without issuing a token:
+  - `POST /api/agent-gateway/enrollment/request`
+  - `POST /api/agent-gateway/enrollment/issue-approved`
+  - request creates task/run/approval/request ledger rows
+  - token issue is blocked until the linked approval is approved
 - Enrollment tokens can mint short-lived session tokens through `POST /api/agent-gateway/session/create`.
 - Session tokens inherit the bound `agent_id`, `workspace_id`, and a subset of parent scopes.
 - Session tokens cannot mint replacement sessions and expire automatically.
@@ -205,12 +210,18 @@ Acceptance evidence:
   - session can heartbeat and pull tasks,
   - session cannot mint another session,
   - expired sessions are rejected.
+- `python3 scripts/enrollment_approval_workflow_smoke.py` verified the approval-gated enrollment path:
+  - request returned `request_id`, `approval_id`, `task_id`, and `run_id` but no token,
+  - token issue before approval returned `approval_required`,
+  - approval unlocked one-time token issue,
+  - issued token successfully heartbeated,
+  - cleanup revoked the token.
 
 Remaining product work:
 
 - Session revocation UI and refresh policy.
 - Reconnection/backoff policy.
-- Customer-facing enrollment approval workflow.
+- Hosted customer enrollment policy UI.
 
 ### 5. MVP Security Boundary
 
