@@ -374,6 +374,7 @@ Current v1.5 implementation:
 - Customer projects can export a safe ledger-backed delivery report through `GET /api/workflows/customer-projects/:project_id/report`.
 - Pixel Office surfaces the report link after template-backed project generation.
 - Pixel Office can persist the generated customer project report back into the MIS ledger through the `Archive report to ledger` / `归档报告到账本` action.
+- The report link routes to `/workspace/customer-projects/:project_id/report`, a customer-facing page that renders report metrics, safety boundaries, ledger ids, and markdown content instead of raw JSON.
 
 Acceptance evidence:
 
@@ -411,6 +412,7 @@ Acceptance evidence:
   - report artifact writes `runtime_events` and `audit_logs` with raw report omitted and content hash stored
   - concurrent report/report-artifact smokes passed after changing KB bot project IDs from second-level to microsecond-level timestamps
 - Pixel Office report-archive UI build: `cd ui/start-building-app && npm run build`
+- Customer report page UI build: `cd ui/start-building-app && npm run build`
 
 Remaining product work:
 

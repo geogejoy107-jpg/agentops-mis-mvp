@@ -400,15 +400,13 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
               )}
               {kbResult.project_id && (
                 <div className="flex flex-wrap gap-2 pt-1">
-                  <a
-                    href={kbResult.report_url ? kbResult.report_url.replace("/api/", "/mis-api/") : `/mis-api/workflows/customer-projects/${kbResult.project_id}/report`}
-                    target="_blank"
-                    rel="noreferrer"
+                  <Link
+                    to={`/workspace/customer-projects/${kbResult.project_id}/report`}
                     className="inline-flex rounded px-2.5 py-1.5 text-[10px]"
                     style={{ background: "rgba(34,211,238,0.10)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.22)" }}
                   >
                     {zh ? "打开交付报告" : "Open delivery report"}
-                  </a>
+                  </Link>
                   <button
                     type="button"
                     onClick={persistReportArtifact}

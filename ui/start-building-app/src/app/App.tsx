@@ -18,6 +18,7 @@ import { RuntimeConnectors } from "./components/pages/RuntimeConnectors";
 import { NotionBase } from "./components/pages/NotionBase";
 import { TemplateSwitching } from "./components/pages/TemplateSwitching";
 import { AuditCenter } from "./components/pages/AuditCenter";
+import { CustomerProjectReport } from "./components/pages/CustomerProjectReport";
 import { PreferencesProvider } from "./context/PreferencesContext";
 
 export default function App() {
@@ -34,6 +35,7 @@ export default function App() {
             <Route path="/workspace/approvals" element={<ApprovalsInbox />} />
             <Route path="/workspace/memory" element={<MemoryLibrary />} />
             <Route path="/workspace/reports" element={<Reports />} />
+            <Route path="/workspace/customer-projects/:projectId/report" element={<CustomerProjectReport />} />
             <Route path="/admin" element={<ControlTower />} />
             <Route path="/admin/evaluations" element={<EvaluationRoom />} />
             <Route path="/admin/agents/:id" element={<AgentDetail />} />

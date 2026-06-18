@@ -495,6 +495,7 @@ pending approval: ap_gw_956174266d1a
 
 Pixel Office's customer dispatch panel now loads `GET /api/workflows/customer-task-templates`, applies template defaults to the customer task form, and runs the selected template through `POST /api/workflows/customer-task-templates/run`.
 After a template-backed KB project completes, the same panel also exposes an `Archive report to ledger` / `归档报告到账本` action backed by `POST /api/workflows/customer-projects/:project_id/report-artifact`.
+The report link now opens the customer-facing route `/workspace/customer-projects/:project_id/report`, which renders counts, safety boundary, delivery/report artifact ids, approvals, and the ledger-backed markdown report instead of exposing raw API JSON.
 
 The customer project report smoke passed:
 
@@ -527,6 +528,7 @@ raw_report_omitted: true
 The report artifact is separate from the customer delivery artifact. `GET /api/workflows/customer-projects/:project_id/report` continues to return the delivery artifact as `artifact_id` and returns the persisted report artifact as `report_artifact_id`.
 KB bot customer project IDs now include microseconds so concurrent report/report-artifact smokes do not create duplicate task IDs.
 Frontend verification for the Pixel Office report-archive action: `cd ui/start-building-app && npm run build` passed.
+Frontend verification for the customer-facing report route: `cd ui/start-building-app && npm run build` passed.
 
 The approval decision side-effect smoke passed:
 

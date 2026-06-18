@@ -175,6 +175,29 @@ export interface CustomerProjectReportArtifactResult {
   error?: string | null;
 }
 
+export interface CustomerProjectReportPayload {
+  project_id: string;
+  status: string;
+  markdown: string;
+  counts: {
+    tasks?: number;
+    runs?: number;
+    completed_runs?: number;
+    failed_runs?: number;
+    tool_calls?: number;
+    approvals?: number;
+    pending_approvals?: number;
+    evaluations?: number;
+    memories?: number;
+    artifacts?: number;
+  };
+  artifact_id?: string | null;
+  report_artifact_id?: string | null;
+  approval_ids?: string[];
+  safe_defaults?: Record<string, unknown>;
+  error?: string | null;
+}
+
 export interface CustomerTaskTemplate {
   template_id: string;
   name: string;
@@ -817,6 +840,10 @@ export async function persistCustomerProjectReportArtifact(projectId: string): P
     method: "POST",
     body: JSON.stringify({}),
   });
+}
+
+export async function loadCustomerProjectReport(projectId: string): Promise<CustomerProjectReportPayload> {
+  return apiJson<CustomerProjectReportPayload>(`/workflows/customer-projects/${encodeURIComponent(projectId)}/report`);
 }
 
 export async function loadWorkerStatus(): Promise<WorkerStatusPayload> {
