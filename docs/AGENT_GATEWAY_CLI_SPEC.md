@@ -335,12 +335,34 @@ agentops session create \
 
 Session tokens cannot mint more sessions. They are for worker loops, not for browser users.
 
+### `agentops session list`
+
+Lists short-lived session metadata without secrets.
+
+```bash
+agentops session list
+```
+
+Maps to `GET /api/agent-gateway/sessions`. The response omits `session_hash` and raw token values.
+
+### `agentops session revoke`
+
+Revokes one short-lived session or all active sessions for one agent.
+
+```bash
+agentops session revoke --session-id agtsess_...
+agentops session revoke --agent-id agt_remote_builder
+```
+
+Maps to `POST /api/agent-gateway/session/revoke` and writes runtime/audit evidence.
+
 ## API Endpoint Proposal
 
 All endpoints are under the existing local API server.
 
 ```http
 GET  /api/agent-gateway/enrollments
+GET  /api/agent-gateway/sessions
 GET  /api/agent-gateway/status
 POST /api/agent-gateway/enrollment/create
 POST /api/agent-gateway/enrollment/request
@@ -348,6 +370,7 @@ POST /api/agent-gateway/enrollment/issue-approved
 POST /api/agent-gateway/enrollment/revoke
 POST /api/agent-gateway/enrollment/rotate
 POST /api/agent-gateway/session/create
+POST /api/agent-gateway/session/revoke
 POST /api/agent-gateway/register
 POST /api/agent-gateway/heartbeat
 GET  /api/agent-gateway/tasks/pull
@@ -569,6 +592,9 @@ Current implementation:
 - `POST /api/agent-gateway/session/create` mints a short-lived session token from a valid enrollment token or local API key.
 - Session tokens inherit agent/workspace bindings and a subset of parent scopes.
 - Session tokens cannot mint replacement sessions.
+- `GET /api/agent-gateway/sessions` lists session metadata without `session_hash` or raw token values.
+- `POST /api/agent-gateway/session/revoke` revokes one session or all active sessions for an agent.
+- Revoking an enrollment token also revokes active child sessions.
 - `GET /api/agent-gateway/enrollments` reports heartbeat freshness.
 - Revoked tokens report `heartbeat_state=revoked`, not `fresh` or `stale`.
 
@@ -579,6 +605,8 @@ Current endpoint scope map:
 | `POST /api/agent-gateway/enrollment/request` | local request path; no token issued |
 | `POST /api/agent-gateway/enrollment/issue-approved` | admin/local approval authority |
 | `POST /api/agent-gateway/session/create` | valid enrollment token or local API key |
+| `GET /api/agent-gateway/sessions` | admin/local authority |
+| `POST /api/agent-gateway/session/revoke` | admin/local authority |
 | `POST /api/agent-gateway/register` | `agents:write` |
 | `POST /api/agent-gateway/heartbeat` | `agents:heartbeat` |
 | `GET /api/agent-gateway/tasks/pull` | `tasks:read` |
@@ -596,7 +624,7 @@ Current endpoint scope map:
 
 Future product versions should add:
 
-- Short-lived session refresh policy and revocation UI.
+- Short-lived session refresh policy.
 - Workspace-level RBAC.
 - Connector-specific scoped credentials.
 - Hosted customer enrollment policy UI.
@@ -695,13 +723,13 @@ The CLI status helper verifies `agentops status` reports safe token-bound metada
 The launch-steps helper verifies create/rotate responses include safe remote-worker commands and do not embed the raw token in those commands.
 The remote launch-packet helper uses the returned environment shape to run a real worker and verify run/tool/evaluation ledger evidence.
 The scope-matrix helper verifies an observer token can heartbeat/pull/audit but receives `403 forbidden` for claim/run/tool/artifact writes.
-The session helper verifies an enrollment token can mint a narrowed short-lived session, that the session can heartbeat/pull tasks, cannot mint another session, and is rejected after expiry.
+The session helper verifies an enrollment token can mint a narrowed short-lived session, sessions can be listed without hash leakage, one session can be revoked directly, a session can heartbeat/pull tasks, cannot mint another session, expired sessions are rejected, and parent enrollment revocation cascades to active child sessions.
 The enrollment-approval helper verifies request-before-token behavior: request returns no token, premature issue is rejected, approval unlocks token issue, and the issued token can heartbeat.
 
 Remaining future work:
 
 - Hosted customer enrollment policy UI.
-- Session revocation UI and refresh policy.
+- Session refresh policy.
 - Hosted multi-tenant isolation and full RBAC.
 - Reconnection backoff policy.
 - mTLS or signed heartbeats for server-side agents.

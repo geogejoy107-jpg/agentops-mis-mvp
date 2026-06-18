@@ -300,14 +300,19 @@ The Agent Gateway short-lived session smoke passed:
 
 ```text
 script: python3 scripts/agent_gateway_session_smoke.py
-agent_id: agt_session_smoke_20260618090750
-token_id: agtok_agt_session_smoke_20260618090750_local_demo_6898299be15f
-session_id: agtsess_agt_session_smoke_20260618090750_local_demo_05422c4e9715
-task_id: tsk_session_smoke_20260618090750
+agent_id: agt_session_smoke_20260618125910
+token_id: agtok_agt_session_smoke_20260618125910_local_demo_bdc174771ffa
+session_id: agtsess_agt_session_smoke_20260618125910_local_demo_a40134dc26fc
+revoked_session_id: agtsess_agt_session_smoke_20260618125910_local_demo_eb1886997427
+cascade_session_id: agtsess_agt_session_smoke_20260618125910_local_demo_f192091cd8dc
+task_id: tsk_session_smoke_20260618125910
 auth_mode: agent_session
 session scopes: agents:heartbeat, tasks:read
+session list without hash leakage: passed
+direct session revoke rejected later use: unauthorized
 session cannot mint another session: passed
 expired session rejected: unauthorized
+parent enrollment revoke cascaded sessions: 1
 token_omitted: true
 ```
 
@@ -492,10 +497,21 @@ visible labels:
   审批后发 token
 ```
 
+The `/workspace/agents` short-lived session controls were verified with Playwright snapshot:
+
+```text
+url: http://127.0.0.1:19001/workspace/agents
+visible labels:
+  有效 Session
+  最近短期 Session
+  吊销 session
+```
+
 The UI reads:
 
 ```http
 GET /api/agent-gateway/enrollments
+GET /api/agent-gateway/sessions
 ```
 
 and can call:
@@ -504,6 +520,7 @@ and can call:
 POST /api/agent-gateway/enrollment/create
 POST /api/agent-gateway/enrollment/revoke
 POST /api/agent-gateway/enrollment/rotate
+POST /api/agent-gateway/session/revoke
 ```
 
 Raw tokens are displayed only in the create/rotate response panel and are not persisted in frontend state beyond the current page session.
@@ -557,4 +574,4 @@ planned MIS task
 - The worker does not store full prompts or raw responses.
 - The worker is repo-local; it is not yet a launchd service, pip package, npm package, or signed binary.
 - The UI worker panel now supports one-shot dispatch, local daemon start/stop, daemon state counters, daemon backoff state, daemon log tails, and recent gateway events; it is not a production fleet manager.
-- Remote enrollment token issuance/revocation/rotation, approval-gated enrollment request UI, endpoint-level scope enforcement, short-lived session tokens, scope presets, a first enrollment UI, and minimal Agent Gateway workspace isolation now exist. Full RBAC, hosted multi-tenant isolation, session revocation UI/refresh policy, and hosted enrollment policy UI remain future work.
+- Remote enrollment token issuance/revocation/rotation, approval-gated enrollment request UI, endpoint-level scope enforcement, short-lived session tokens with list/revoke controls, scope presets, a first enrollment UI, and minimal Agent Gateway workspace isolation now exist. Full RBAC, hosted multi-tenant isolation, session refresh policy, and hosted enrollment policy UI remain future work.

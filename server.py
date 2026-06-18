@@ -2454,6 +2454,33 @@ def agent_gateway_enrollment_rows(conn) -> list[dict]:
     return rows
 
 
+def agent_gateway_session_state(row, now_dt: dt.datetime | None = None) -> str:
+    now_dt = now_dt or dt.datetime.now(dt.timezone.utc)
+    status = row.get("status") if hasattr(row, "get") else row["status"]
+    if status != "active":
+        return status or "inactive"
+    expires_at = row.get("expires_at") if hasattr(row, "get") else row["expires_at"]
+    try:
+        if expires_at and dt.datetime.fromisoformat(expires_at) < now_dt:
+            return "expired"
+    except Exception:
+        return status
+    return "active"
+
+
+def agent_gateway_session_rows(conn) -> list[dict]:
+    rows = rows_to_dicts(conn.execute(
+        """SELECT session_id,parent_token_id,workspace_id,agent_id,scopes_json,status,created_at,expires_at,revoked_at,last_used_at
+        FROM agent_gateway_sessions ORDER BY created_at DESC LIMIT 200"""
+    ).fetchall())
+    now_dt = dt.datetime.now(dt.timezone.utc)
+    for row in rows:
+        row["scopes"] = parse_scope_list(row.get("scopes_json"))
+        row.pop("scopes_json", None)
+        row["session_state"] = agent_gateway_session_state(row, now_dt)
+    return rows
+
+
 def agent_gateway_status(conn, headers) -> tuple[dict, int]:
     auth_ctx, auth_error = agent_gateway_auth_context(conn, headers)
     if auth_error:
@@ -2505,11 +2532,40 @@ def agent_gateway_revoke_enrollment(conn, body) -> tuple[dict, int]:
     before = rows_to_dicts(conn.execute(f"SELECT token_id,workspace_id,agent_id,scopes_json,status,label,heartbeat_timeout_sec,created_at,expires_at,revoked_at,last_used_at,last_heartbeat_at FROM agent_gateway_tokens WHERE {where}", (param,)).fetchall())
     now = now_iso()
     conn.execute(f"UPDATE agent_gateway_tokens SET status='revoked', revoked_at=? WHERE {where}", (now, param))
-    changed = conn.total_changes
+    revoked_session_ids: list[str] = []
     for row in before:
+        sessions = rows_to_dicts(conn.execute(
+            "SELECT session_id,parent_token_id,workspace_id,agent_id,scopes_json,status,created_at,expires_at,revoked_at,last_used_at FROM agent_gateway_sessions WHERE parent_token_id=? AND status='active'",
+            (row["token_id"],),
+        ).fetchall())
+        if sessions:
+            conn.execute("UPDATE agent_gateway_sessions SET status='revoked', revoked_at=? WHERE parent_token_id=? AND status='active'", (now, row["token_id"]))
+            revoked_session_ids.extend(session["session_id"] for session in sessions)
+            for session in sessions:
+                audit(conn, "user", "usr_founder", "agent_gateway.session_revoke_cascade", "agent_gateway_sessions", session["session_id"], session, {"status": "revoked", "revoked_at": now}, {"parent_token_id": row["token_id"], "token_omitted": True})
         runtime_event(conn, "rtc_agent_gateway_local", "agent.enrollment.revoke", "completed", agent_id=row["agent_id"], output_summary=f"Revoked token {row['token_id']}.")
         audit(conn, "user", "usr_founder", "agent_gateway.enrollment_revoke", "agent_gateway_tokens", row["token_id"], row, {"status": "revoked", "revoked_at": now}, {"token_omitted": True})
-    return {"revoked": len(before), "changed": changed, "tokens": [row["token_id"] for row in before]}, 200
+    return {"revoked": len(before), "changed": len(before) + len(revoked_session_ids), "tokens": [row["token_id"] for row in before], "sessions_revoked": len(revoked_session_ids), "sessions": revoked_session_ids}, 200
+
+
+def agent_gateway_revoke_session(conn, body) -> tuple[dict, int]:
+    session_id = body.get("session_id")
+    agent_id = body.get("agent_id")
+    if not session_id and not agent_id:
+        return {"error": "session_id or agent_id is required"}, 400
+    where = "session_id=?" if session_id else "agent_id=? AND status='active'"
+    param = session_id or agent_id
+    before = rows_to_dicts(conn.execute(
+        f"""SELECT session_id,parent_token_id,workspace_id,agent_id,scopes_json,status,created_at,expires_at,revoked_at,last_used_at
+        FROM agent_gateway_sessions WHERE {where}""",
+        (param,),
+    ).fetchall())
+    now = now_iso()
+    conn.execute(f"UPDATE agent_gateway_sessions SET status='revoked', revoked_at=? WHERE {where}", (now, param))
+    for row in before:
+        runtime_event(conn, "rtc_agent_gateway_local", "agent.session.revoke", "completed", agent_id=row["agent_id"], output_summary=f"Revoked short-lived session {row['session_id']}.")
+        audit(conn, "user", "usr_founder", "agent_gateway.session_revoke", "agent_gateway_sessions", row["session_id"], row, {"status": "revoked", "revoked_at": now}, {"token_omitted": True})
+    return {"revoked": len(before), "sessions": [row["session_id"] for row in before], "token_omitted": True}, 200
 
 
 def agent_gateway_rotate_enrollment(conn, body) -> tuple[dict, int]:
@@ -4812,6 +4868,11 @@ class Handler(BaseHTTPRequestHandler):
                 if auth_error:
                     return self.send_json(auth_error, 401)
                 return self.send_json({"enrollments": agent_gateway_enrollment_rows(conn), "valid_scopes": sorted(VALID_AGENT_GATEWAY_SCOPES)})
+            if path == "/api/agent-gateway/sessions":
+                auth_error = agent_gateway_admin_auth_error(self.headers)
+                if auth_error:
+                    return self.send_json(auth_error, 401)
+                return self.send_json({"sessions": agent_gateway_session_rows(conn), "valid_scopes": sorted(VALID_AGENT_GATEWAY_SCOPES), "token_omitted": True})
             if path == "/api/agent-gateway/tasks/pull":
                 auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
                 if auth_error:
@@ -4969,6 +5030,13 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send_json(payload, status)
                 if path == "/api/agent-gateway/session/create":
                     payload, status = agent_gateway_create_session(conn, self.headers, body)
+                    conn.commit()
+                    return self.send_json(payload, status)
+                if path == "/api/agent-gateway/session/revoke":
+                    auth_error = agent_gateway_admin_auth_error(self.headers)
+                    if auth_error:
+                        return self.send_json(auth_error, 401)
+                    payload, status = agent_gateway_revoke_session(conn, body)
                     conn.commit()
                     return self.send_json(payload, status)
                 if path == "/api/agent-gateway/enrollment/issue-approved":

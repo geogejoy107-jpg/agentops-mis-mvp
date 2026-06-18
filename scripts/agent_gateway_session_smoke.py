@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify short-lived Agent Gateway sessions inherit scope and expire."""
+"""Verify short-lived Agent Gateway sessions inherit scope, list, revoke, and expire."""
 
 from __future__ import annotations
 
@@ -80,6 +80,40 @@ def smoke(base_url: str, stamp: str) -> dict:
         require(session_token and session_id, f"missing session token: {session}")
         require("audit:write" not in session.get("scopes", []), f"session scopes were not narrowed: {session}")
 
+        status, revoke_session = http_json("POST", base_url, "/api/agent-gateway/session/create", {
+            "ttl_sec": 60,
+            "scopes": ["agents:heartbeat", "tasks:read"],
+        }, token=enrollment_token)
+        require(status == 201, f"revoke session create failed: {status} {revoke_session}")
+        revoke_session_token = revoke_session.get("session_token")
+        revoke_session_id = revoke_session.get("session_id")
+        require(revoke_session_token and revoke_session_id, f"missing revoke session token: {revoke_session}")
+
+        status, cascade_session = http_json("POST", base_url, "/api/agent-gateway/session/create", {
+            "ttl_sec": 60,
+            "scopes": ["agents:heartbeat", "tasks:read"],
+        }, token=enrollment_token)
+        require(status == 201, f"cascade session create failed: {status} {cascade_session}")
+        cascade_session_id = cascade_session.get("session_id")
+        require(cascade_session_id, f"missing cascade session id: {cascade_session}")
+
+        status, listed = http_json("GET", base_url, "/api/agent-gateway/sessions")
+        require(status == 200, f"session list failed: {status} {listed}")
+        session_rows = listed.get("sessions", [])
+        listed_ids = {item.get("session_id") for item in session_rows}
+        require({session_id, revoke_session_id, cascade_session_id}.issubset(listed_ids), f"session list missing ids: {listed_ids}")
+        require(all("session_hash" not in item for item in session_rows), "session list leaked session_hash")
+
+        status, revoked = http_json("POST", base_url, "/api/agent-gateway/session/revoke", {"session_id": revoke_session_id})
+        require(status == 200, f"session revoke failed: {status} {revoked}")
+        require(revoked.get("revoked") == 1 and revoke_session_id in revoked.get("sessions", []), f"session revoke result wrong: {revoked}")
+        status, rejected = http_json("POST", base_url, "/api/agent-gateway/heartbeat", {
+            "status": "idle",
+            "summary": "revoked session heartbeat",
+        }, token=revoke_session_token)
+        require(status == 401, f"revoked session should be rejected: {status} {rejected}")
+        require("revoked" in json.dumps(rejected).lower(), f"revoked session message missing: {rejected}")
+
         status, task = http_json("POST", base_url, "/api/tasks", {
             "task_id": task_id,
             "workspace_id": "local-demo",
@@ -118,14 +152,25 @@ def smoke(base_url: str, stamp: str) -> dict:
         require(status == 401, f"expired session should be rejected: {status} {expired}")
         require("expired" in json.dumps(expired).lower(), f"expired session message missing: {expired}")
 
+        status, revoke_parent = http_json("POST", base_url, "/api/agent-gateway/enrollment/revoke", {"token_id": token_id})
+        require(status == 200, f"enrollment revoke failed: {status} {revoke_parent}")
+        require(revoke_parent.get("sessions_revoked", 0) >= 1, f"parent revoke did not cascade to sessions: {revoke_parent}")
+        require(cascade_session_id in revoke_parent.get("sessions", []), f"cascade session missing from revoke result: {revoke_parent}")
+        token_id = None
+
         return {
             "agent_id": agent_id,
             "task_id": task_id,
-            "token_id": token_id,
+            "token_id": enrollment.get("token_id"),
             "session_id": session_id,
+            "revoked_session_id": revoke_session_id,
+            "cascade_session_id": cascade_session_id,
             "session_scopes": session.get("scopes", []),
             "auth_mode": (gateway_status.get("auth") or {}).get("mode"),
+            "listed_session_count": len(session_rows),
+            "revoke_status": rejected.get("error"),
             "expired_status": expired.get("error"),
+            "cascade_sessions_revoked": revoke_parent.get("sessions_revoked"),
             "token_omitted": True,
         }
     finally:

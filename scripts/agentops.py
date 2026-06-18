@@ -420,6 +420,18 @@ def cmd_session_create(args, client: AgentOpsClient) -> dict:
     return result
 
 
+def cmd_session_list(args, client: AgentOpsClient) -> dict:
+    return client.get("/api/agent-gateway/sessions")
+
+
+def cmd_session_revoke(args, client: AgentOpsClient) -> dict:
+    payload = {
+        "session_id": args.session_id,
+        "agent_id": args.agent_id,
+    }
+    return client.post("/api/agent-gateway/session/revoke", payload)
+
+
 def add_global_args(parser, suppress_defaults: bool = False):
     default = argparse.SUPPRESS if suppress_defaults else None
     parser.add_argument("--base-url", default=default, help="AgentOps MIS base URL. Defaults to env/config/http://127.0.0.1:8787.")
@@ -639,6 +651,12 @@ def build_parser() -> argparse.ArgumentParser:
     session_create.add_argument("--scopes", default=None, help="Optional scope subset for this session.")
     session_create.add_argument("--save-session", action="store_true", help="Save returned session token to local config for this CLI.")
     session_create.set_defaults(handler="session_create")
+    session_list = session_sub.add_parser("list", help="List short-lived session metadata without secrets.")
+    session_list.set_defaults(handler="session_list")
+    session_revoke = session_sub.add_parser("revoke", help="Revoke a session by id or all active sessions for an agent.")
+    session_revoke.add_argument("--session-id", default=None)
+    session_revoke.add_argument("--agent-id", default=None)
+    session_revoke.set_defaults(handler="session_revoke")
 
     return parser
 
@@ -665,6 +683,8 @@ HANDLERS = {
     "enrollment_revoke": cmd_enrollment_revoke,
     "enrollment_rotate": cmd_enrollment_rotate,
     "session_create": cmd_session_create,
+    "session_list": cmd_session_list,
+    "session_revoke": cmd_session_revoke,
 }
 
 

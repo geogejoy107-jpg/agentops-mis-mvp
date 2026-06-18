@@ -167,6 +167,11 @@ Current v1.5 implementation:
 - Enrollment tokens can mint short-lived session tokens through `POST /api/agent-gateway/session/create`.
 - Session tokens inherit the bound `agent_id`, `workspace_id`, and a subset of parent scopes.
 - Session tokens cannot mint replacement sessions and expire automatically.
+- Short-lived sessions can now be listed and revoked:
+  - `GET /api/agent-gateway/sessions`
+  - `POST /api/agent-gateway/session/revoke`
+  - responses expose only metadata and never return `session_hash` or raw token values
+  - enrollment revocation cascades to active child sessions
 - Heartbeat freshness is tracked with explicit lifecycle states:
   - `never_seen`: active token exists but the remote worker has not heartbeated yet.
   - `fresh`: active token has a recent heartbeat inside its timeout window.
@@ -179,6 +184,7 @@ Current v1.5 implementation:
 - `/workspace/agents` exposes a first operator UI for creating, viewing, and revoking scoped enrollment tokens.
 - `/workspace/agents` exposes approval-gated enrollment request controls: request approval, approve/reject enrollment requests, and issue approved tokens.
 - `/workspace/agents` also exposes scope presets and per-token rotation.
+- `/workspace/agents` exposes recent short-lived sessions and can revoke an active session directly.
 - `/workspace/agents` surfaces Agent Gateway readiness/auth mode/scope count/active enrollment/stale heartbeat cards for operators.
 - New/rotated enrollment responses include a safe `next_steps` launch packet for remote machines: env setup, `agentops status`, heartbeat, one-shot worker, and loop worker commands. Commands use an API-key placeholder rather than embedding the raw token.
 
@@ -208,10 +214,13 @@ Acceptance evidence:
   - a worker token can claim and start the same task.
 - `python3 scripts/agent_gateway_session_smoke.py` verified short-lived sessions:
   - an enrollment token mints a narrowed session,
+  - sessions can be listed without leaking `session_hash`,
+  - a session can be revoked directly and is then rejected,
   - session auth reports `agent_session`,
   - session can heartbeat and pull tasks,
   - session cannot mint another session,
-  - expired sessions are rejected.
+  - expired sessions are rejected,
+  - parent enrollment revocation cascades to active child sessions.
 - `python3 scripts/enrollment_approval_workflow_smoke.py` verified the approval-gated enrollment path:
   - request returned `request_id`, `approval_id`, `task_id`, and `run_id` but no token,
   - token issue before approval returned `approval_required`,
@@ -221,7 +230,7 @@ Acceptance evidence:
 
 Remaining product work:
 
-- Session revocation UI and refresh policy.
+- Session refresh policy.
 - Reconnection/backoff policy.
 - Hosted customer enrollment policy UI.
 
@@ -418,9 +427,10 @@ Implemented and verified:
 - Token revocation.
 - Token rotation.
 - Enrollment heartbeat states: `never_seen`, `fresh`, `stale`, and `revoked`.
+- Short-lived session list/revoke API, CLI, and `/workspace/agents` panel.
 - Endpoint-level scope enforcement.
 - Scoped RBAC matrix smoke for observer-vs-worker permissions.
-- Short-lived Agent Gateway sessions.
+- Short-lived Agent Gateway sessions, including metadata listing, direct revocation, and parent-token revoke cascade.
 - Minimal workspace isolation for token-auth Agent Gateway pull/claim/run/write paths.
 - Remote-token worker end-to-end smoke.
 - Remote launch-packet worker end-to-end smoke.

@@ -9,12 +9,14 @@ import {
   issueApprovedAgentGatewayEnrollment,
   loadApprovals,
   loadAgentGatewayEnrollments,
+  loadAgentGatewaySessions,
   loadAgentGatewayStatus,
   loadAgents,
   loadDashboard,
   loadWorkerDaemonLogs,
   loadWorkerStatus,
   revokeAgentGatewayEnrollment,
+  revokeAgentGatewaySession,
   rotateAgentGatewayEnrollment,
   requestAgentGatewayEnrollment,
   startLocalWorkerDaemon,
@@ -88,16 +90,17 @@ export function AIEmployees() {
     scopes: DEFAULT_GATEWAY_SCOPES.join(", "),
   });
   const { data, loading, error, refresh } = useLiveData(async () => {
-    const [metrics, workerStatus, enrollmentPayload, gatewayStatus, approvals, daemonLogs] = await Promise.all([
+    const [metrics, workerStatus, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs] = await Promise.all([
       loadDashboard(),
       loadWorkerStatus(),
       loadAgentGatewayEnrollments(),
+      loadAgentGatewaySessions(),
       loadAgentGatewayStatus(),
       loadApprovals(),
       Promise.all(WORKER_ADAPTERS.map(adapter => loadWorkerDaemonLogs(adapter))),
     ]);
     const agents = await loadAgents(metrics);
-    return { agents, workerStatus, enrollmentPayload, gatewayStatus, approvals, daemonLogs };
+    return { agents, workerStatus, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs };
   }, []);
   const agents = data?.agents || [];
   const workerStatus = data?.workerStatus;
@@ -105,12 +108,14 @@ export function AIEmployees() {
   const selectedDaemonLog = daemonLogs.find(item => item.daemon.adapter === selectedLogAdapter)?.daemon;
   const recentEvents = workerStatus?.recent_events || [];
   const enrollments = data?.enrollmentPayload?.enrollments || [];
+  const sessions = data?.sessionPayload?.sessions || [];
   const gatewayStatus = data?.gatewayStatus;
   const enrollmentApprovals = (data?.approvals || []).filter(item => item.reason.includes("Approve scoped enrollment"));
   const validScopes = data?.enrollmentPayload?.valid_scopes || DEFAULT_GATEWAY_SCOPES;
   const activeAgents = agents.filter(a => a.status === "running").length;
   const activeEnrollments = enrollments.filter(item => item.status === "active").length;
   const staleEnrollments = enrollments.filter(item => item.heartbeat_state === "stale").length;
+  const activeSessions = sessions.filter(item => item.session_state === "active").length;
   const copy = pick(locale, {
     en: {
       title: "AI Employees",
@@ -126,6 +131,7 @@ export function AIEmployees() {
       gatewayScopes: "Allowed scopes",
       activeEnrollments: "Active enrollments",
       staleEnrollments: "Stale heartbeats",
+      activeSessions: "Active sessions",
       yes: "Yes",
       no: "No",
       runs: "Runs",
@@ -202,10 +208,17 @@ export function AIEmployees() {
       runOnceCommand: "Run once",
       runLoopCommand: "Run loop",
       recentEnrollments: "Recent enrollments",
+      recentSessions: "Recent sessions",
       lastHeartbeat: "Last heartbeat",
+      lastUsed: "Last used",
       expires: "Expires",
       tokenId: "Token",
+      sessionId: "Session",
+      parentToken: "Parent token",
+      revokeSession: "Revoke session",
+      revokingSession: "Revoking session...",
       noEnrollments: "No remote enrollments yet.",
+      noSessions: "No short-lived sessions yet.",
     },
     zh: {
       title: "AI 员工",
@@ -221,6 +234,7 @@ export function AIEmployees() {
       gatewayScopes: "权限数量",
       activeEnrollments: "有效接入",
       staleEnrollments: "心跳过期",
+      activeSessions: "有效 Session",
       yes: "是",
       no: "否",
       runs: "运行",
@@ -297,10 +311,17 @@ export function AIEmployees() {
       runOnceCommand: "单轮运行",
       runLoopCommand: "常驻运行",
       recentEnrollments: "最近接入记录",
+      recentSessions: "最近短期 Session",
       lastHeartbeat: "最近心跳",
+      lastUsed: "最近使用",
       expires: "过期时间",
       tokenId: "Token",
+      sessionId: "Session",
+      parentToken: "父 token",
+      revokeSession: "吊销 session",
+      revokingSession: "正在吊销 session...",
       noEnrollments: "还没有远程接入记录。",
+      noSessions: "还没有短期 session。",
     },
   });
 
@@ -473,7 +494,22 @@ export function AIEmployees() {
     setEnrollmentResult(null);
     try {
       const result = await revokeAgentGatewayEnrollment({ token_id: tokenId });
-      setEnrollmentResult(`revoked: ${result.tokens.join(", ") || result.revoked}`);
+      const sessionNote = result.sessions_revoked ? ` · sessions ${result.sessions_revoked}` : "";
+      setEnrollmentResult(`revoked: ${result.tokens.join(", ") || result.revoked}${sessionNote}`);
+      await refresh();
+    } catch (err) {
+      setEnrollmentResult(err instanceof Error ? err.message : String(err));
+    } finally {
+      setEnrollmentAction(null);
+    }
+  };
+
+  const revokeSession = async (sessionId: string) => {
+    setEnrollmentAction(`revoke-session-${sessionId}`);
+    setEnrollmentResult(null);
+    try {
+      const result = await revokeAgentGatewaySession({ session_id: sessionId });
+      setEnrollmentResult(`session revoked: ${result.sessions.join(", ") || result.revoked}`);
       await refresh();
     } catch (err) {
       setEnrollmentResult(err instanceof Error ? err.message : String(err));
@@ -787,6 +823,10 @@ export function AIEmployees() {
               <div className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{copy.staleEnrollments}</div>
               <div className="text-sm font-semibold mt-1" style={{ color: staleEnrollments > 0 ? "var(--mis-warning)" : "var(--mis-text)" }}>{staleEnrollments}</div>
             </div>
+            <div className="rounded-lg px-3 py-2 min-w-28 col-span-2" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+              <div className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{copy.activeSessions}</div>
+              <div className="text-sm font-semibold mt-1" style={{ color: "var(--mis-text)" }}>{activeSessions}</div>
+            </div>
           </div>
         </div>
 
@@ -1079,6 +1119,60 @@ export function AIEmployees() {
                   >
                     {enrollmentAction === `revoke-${item.token_id}` ? <RefreshCw size={12} /> : <Trash2 size={12} />}
                     {enrollmentAction === `revoke-${item.token_id}` ? copy.revokingToken : copy.revokeToken}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="mt-4">
+          <div className="text-[11px] font-semibold mb-2" style={{ color: "var(--mis-text)" }}>{copy.recentSessions}</div>
+          <div className="space-y-2">
+            {sessions.length === 0 && (
+              <div className="text-[11px] rounded-lg px-3 py-3" style={{ color: "var(--mis-muted)", background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                {copy.noSessions}
+              </div>
+            )}
+            {sessions.slice(0, 6).map((item) => (
+              <div key={item.session_id} className="grid grid-cols-[1.1fr_1fr_1.1fr_1.3fr_auto] gap-3 items-center rounded-lg px-3 py-2" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                <div className="min-w-0">
+                  <div className="text-[11px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{item.agent_id}</div>
+                  <div className="text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>{copy.sessionId}: {item.session_id}</div>
+                </div>
+                <div className="flex items-center gap-2 min-w-0">
+                  <StatusBadge status={item.session_state} />
+                  {item.session_state !== item.status && <StatusBadge status={item.status} />}
+                </div>
+                <div className="text-[10px] truncate" style={{ color: "var(--mis-dim)" }}>
+                  {copy.lastUsed}: {item.last_used_at || "—"}
+                </div>
+                <div className="min-w-0">
+                  <div className="text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>
+                    {copy.parentToken}: {item.parent_token_id || "—"}
+                  </div>
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {item.scopes.slice(0, 3).map(scope => (
+                      <span key={scope} className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: "rgba(122,90,248,0.1)", color: "#A78BFA" }}>
+                        {scope}
+                      </span>
+                    ))}
+                    {item.scopes.length > 3 && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: "var(--mis-surface)", color: "var(--mis-muted)" }}>
+                        +{item.scopes.length - 3}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="flex justify-end">
+                  <button
+                    onClick={() => revokeSession(item.session_id)}
+                    disabled={item.session_state !== "active" || Boolean(enrollmentAction)}
+                    className="flex items-center gap-1 text-[11px] px-2.5 py-1.5 rounded disabled:opacity-40"
+                    style={{ background: "rgba(248,113,113,0.1)", color: "#F87171", border: "1px solid rgba(248,113,113,0.22)" }}
+                  >
+                    {enrollmentAction === `revoke-session-${item.session_id}` ? <RefreshCw size={12} /> : <Trash2 size={12} />}
+                    {enrollmentAction === `revoke-session-${item.session_id}` ? copy.revokingSession : copy.revokeSession}
                   </button>
                 </div>
               </div>

@@ -250,6 +250,26 @@ export interface AgentGatewayEnrollmentListPayload {
   valid_scopes: string[];
 }
 
+export interface AgentGatewaySession {
+  session_id: string;
+  parent_token_id?: string | null;
+  workspace_id: string;
+  agent_id: string;
+  scopes: string[];
+  status: string;
+  session_state: string;
+  created_at: string;
+  expires_at: string;
+  revoked_at?: string | null;
+  last_used_at?: string | null;
+}
+
+export interface AgentGatewaySessionListPayload {
+  sessions: AgentGatewaySession[];
+  valid_scopes: string[];
+  token_omitted: boolean;
+}
+
 export interface AgentGatewayStatusPayload {
   provider: string;
   status: string;
@@ -266,6 +286,9 @@ export interface AgentGatewayStatusPayload {
     expires_at?: string;
     last_used_at?: string | null;
     last_heartbeat_at?: string | null;
+    session_id?: string;
+    parent_token_id?: string;
+    session_expires_at?: string;
   };
   valid_scopes: string[];
   token_omitted: boolean;
@@ -337,6 +360,14 @@ export interface AgentGatewayEnrollmentRevokeResult {
   revoked: number;
   changed: number;
   tokens: string[];
+  sessions_revoked?: number;
+  sessions?: string[];
+}
+
+export interface AgentGatewaySessionRevokeResult {
+  revoked: number;
+  sessions: string[];
+  token_omitted: boolean;
 }
 
 function asArray<T>(value: unknown): T[] {
@@ -758,6 +789,22 @@ function normalizeAgentGatewayEnrollment(row: Record<string, unknown>): AgentGat
   };
 }
 
+function normalizeAgentGatewaySession(row: Record<string, unknown>): AgentGatewaySession {
+  return {
+    session_id: String(row.session_id || ""),
+    parent_token_id: row.parent_token_id ? String(row.parent_token_id) : null,
+    workspace_id: String(row.workspace_id || ""),
+    agent_id: String(row.agent_id || ""),
+    scopes: parseJsonArray(row.scopes),
+    status: String(row.status || "unknown"),
+    session_state: String(row.session_state || row.status || "unknown"),
+    created_at: String(row.created_at || ""),
+    expires_at: String(row.expires_at || ""),
+    revoked_at: row.revoked_at ? String(row.revoked_at) : null,
+    last_used_at: row.last_used_at ? String(row.last_used_at) : null,
+  };
+}
+
 function normalizeAgentGatewayStatus(row: Record<string, unknown>): AgentGatewayStatusPayload {
   const auth = (row.auth || {}) as Record<string, unknown>;
   return {
@@ -776,6 +823,9 @@ function normalizeAgentGatewayStatus(row: Record<string, unknown>): AgentGateway
       expires_at: auth.expires_at ? String(auth.expires_at) : undefined,
       last_used_at: auth.last_used_at ? String(auth.last_used_at) : null,
       last_heartbeat_at: auth.last_heartbeat_at ? String(auth.last_heartbeat_at) : null,
+      session_id: auth.session_id ? String(auth.session_id) : undefined,
+      parent_token_id: auth.parent_token_id ? String(auth.parent_token_id) : undefined,
+      session_expires_at: auth.session_expires_at ? String(auth.session_expires_at) : undefined,
     },
     valid_scopes: asArray(row.valid_scopes).map(String),
     token_omitted: boolValue(row.token_omitted),
@@ -817,6 +867,15 @@ export async function loadAgentGatewayEnrollments(): Promise<AgentGatewayEnrollm
   };
 }
 
+export async function loadAgentGatewaySessions(): Promise<AgentGatewaySessionListPayload> {
+  const raw = await apiJson<Record<string, unknown>>("/agent-gateway/sessions");
+  return {
+    sessions: asArray<Record<string, unknown>>(raw.sessions).map(normalizeAgentGatewaySession),
+    valid_scopes: asArray(raw.valid_scopes).map(String),
+    token_omitted: boolValue(raw.token_omitted),
+  };
+}
+
 export async function loadAgentGatewayStatus(): Promise<AgentGatewayStatusPayload> {
   const raw = await apiJson<Record<string, unknown>>("/agent-gateway/status");
   return normalizeAgentGatewayStatus(raw);
@@ -851,6 +910,13 @@ export async function issueApprovedAgentGatewayEnrollment(input: {
 
 export async function revokeAgentGatewayEnrollment(input: { token_id?: string; agent_id?: string }): Promise<AgentGatewayEnrollmentRevokeResult> {
   return apiJson<AgentGatewayEnrollmentRevokeResult>("/agent-gateway/enrollment/revoke", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function revokeAgentGatewaySession(input: { session_id?: string; agent_id?: string }): Promise<AgentGatewaySessionRevokeResult> {
+  return apiJson<AgentGatewaySessionRevokeResult>("/agent-gateway/session/revoke", {
     method: "POST",
     body: JSON.stringify(input),
   });
