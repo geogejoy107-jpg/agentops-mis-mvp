@@ -187,6 +187,7 @@ Current v1.5 implementation:
 - `/workspace/agents` exposes recent short-lived sessions and can revoke an active session directly.
 - `/workspace/agents` surfaces Agent Gateway readiness/auth mode/scope count/active enrollment/stale heartbeat cards for operators.
 - New/rotated enrollment responses include a safe `next_steps` launch packet for remote machines: env setup, `agentops status`, heartbeat, one-shot worker, and loop worker commands. Commands use an API-key placeholder rather than embedding the raw token.
+- Launch-packet worker commands now use `--use-session --session-ttl-sec 900`, so remote workers mint a short-lived session before processing tasks instead of holding the enrollment token in the worker loop.
 
 Acceptance evidence:
 
@@ -198,8 +199,10 @@ Acceptance evidence:
 - Browser verification showed `远程 Agent 接入`, `创建接入 token`, and `最近接入记录` on `/workspace/agents`.
 - Playwright snapshot verified `提交审批申请`, `审批式接入申请`, and `审批后发 token` on `/workspace/agents`.
 - Frontend build verified the `/workspace/agents` Agent Gateway status card.
-- `python3 scripts/enrollment_launch_steps_smoke.py` verified create/rotate launch packets omit raw tokens and include status/worker commands.
-- `python3 scripts/remote_launch_packet_worker_smoke.py` verified the returned launch packet environment can run a scoped worker and write run/tool/evaluation ledger evidence.
+- `python3 scripts/enrollment_launch_steps_smoke.py` verified create/rotate launch packets omit raw tokens and include status/session/worker commands.
+- `python3 scripts/remote_launch_packet_worker_smoke.py` verified the returned launch packet environment can run a scoped worker through a short-lived session and write run/tool/evaluation ledger evidence:
+  - run `run_gw_eed70c81def8`
+  - session `agtsess_agt_launch_packet_worker_20260618150315_local_demo_33826b3d655c`
 - `python3 scripts/enrollment_rotation_smoke.py` verified API and CLI rotation with redacted one-time token output.
 - `python3 scripts/enrollment_health_state_smoke.py` verified the remote enrollment lifecycle `never_seen -> fresh -> stale -> revoked`.
 - `python3 scripts/workspace_isolation_smoke.py` verified:
@@ -423,6 +426,7 @@ Implemented and verified:
 - Agent Gateway safe status check via `GET /api/agent-gateway/status` and `agentops status`.
 - Agent Gateway status surfaced in `/workspace/agents`.
 - Remote enrollment launch packet surfaced in `/workspace/agents` after token creation/rotation.
+- Remote enrollment launch packet worker path now uses short-lived sessions before task processing.
 - Remote enrollment UI.
 - Token revocation.
 - Token rotation.

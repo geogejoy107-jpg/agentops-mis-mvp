@@ -240,10 +240,10 @@ The remote enrollment launch-step smoke passed:
 
 ```text
 script: python3 scripts/enrollment_launch_steps_smoke.py
-agent_id: agt_launch_steps_smoke_20260618085043
-created token: agtok_agt_launch_steps_smoke_20260618085043_local_demo_a18606ef951e
-rotated token: agtok_agt_launch_steps_smoke_20260618085043_local_demo_9226d3f5b36e
-next_steps: env setup, agentops status, heartbeat, one-shot worker, loop worker for Hermes with --confirm-run
+agent_id: agt_launch_steps_smoke_20260618150315
+created token: agtok_agt_launch_steps_smoke_20260618150315_local_demo_ecb243af94eb
+rotated token: agtok_agt_launch_steps_smoke_20260618150315_local_demo_d18914518af4
+next_steps: env setup, agentops status, short-lived session command, heartbeat, one-shot worker, loop worker for Hermes with --confirm-run and --use-session
 raw token in commands: omitted
 ```
 
@@ -251,12 +251,14 @@ The remote launch-packet worker smoke passed:
 
 ```text
 script: python3 scripts/remote_launch_packet_worker_smoke.py
-agent_id: agt_launch_packet_worker_20260618085351
-task_id: tsk_launch_packet_worker_20260618085351
-run_id: run_gw_13a035066321
+agent_id: agt_launch_packet_worker_20260618150315
+task_id: tsk_launch_packet_worker_20260618150315
+run_id: run_gw_eed70c81def8
+session_id: agtsess_agt_launch_packet_worker_20260618150315_local_demo_33826b3d655c
 token mode: agent_token
 tool_calls: 1
 evaluations: 1
+worker used --use-session before processing the task
 token_omitted: true
 ```
 

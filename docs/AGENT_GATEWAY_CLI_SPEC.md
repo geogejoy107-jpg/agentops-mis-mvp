@@ -584,6 +584,9 @@ Current implementation:
 - Token-auth requests cannot override `agent_id` or `workspace_id` through request body, query string, or headers.
 - Gateway endpoints check required scopes.
 - Valid scoped tokens that lack an endpoint scope return `403 forbidden`, not `401 unauthorized`.
+- Enrollment launch packets now recommend minting a short-lived session before worker execution:
+  - `agentops session create --ttl-sec 900 --save-session`
+  - `python3 scripts/agent_worker.py ... --use-session --session-ttl-sec 900`
 - Task pull, task claim, run start, run heartbeat, tool call, approval, memory, evaluation, and audit write paths enforce the run/task workspace boundary.
 - `POST /api/agent-gateway/enrollment/revoke` revokes tokens.
 - `POST /api/agent-gateway/enrollment/rotate` revokes an active token and returns a one-time replacement token.
@@ -720,8 +723,8 @@ This helper creates a scoped token, creates a normal MIS task for that agent, ru
 The workspace isolation helper creates workspace A/B tasks, verifies that the workspace A token cannot pull, claim, start, or write workspace B work, and verifies that normal workspace A execution still succeeds.
 The enrollment health helper verifies `never_seen -> fresh -> stale -> revoked` without printing the raw token.
 The CLI status helper verifies `agentops status` reports safe token-bound metadata, updates to `fresh` after heartbeat, and rejects revoked tokens without leaking the raw token.
-The launch-steps helper verifies create/rotate responses include safe remote-worker commands and do not embed the raw token in those commands.
-The remote launch-packet helper uses the returned environment shape to run a real worker and verify run/tool/evaluation ledger evidence.
+The launch-steps helper verifies create/rotate responses include safe remote-worker commands, a short-lived session command, `--use-session`, and do not embed the raw token in those commands.
+The remote launch-packet helper uses the returned environment shape to run a real worker through `--use-session` and verify run/tool/evaluation ledger evidence.
 The scope-matrix helper verifies an observer token can heartbeat/pull/audit but receives `403 forbidden` for claim/run/tool/artifact writes.
 The session helper verifies an enrollment token can mint a narrowed short-lived session, sessions can be listed without hash leakage, one session can be revoked directly, a session can heartbeat/pull tasks, cannot mint another session, expired sessions are rejected, and parent enrollment revocation cascades to active child sessions.
 The enrollment-approval helper verifies request-before-token behavior: request returns no token, premature issue is rejected, approval unlocks token issue, and the issued token can heartbeat.

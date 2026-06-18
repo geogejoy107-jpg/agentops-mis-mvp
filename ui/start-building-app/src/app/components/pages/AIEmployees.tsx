@@ -204,6 +204,7 @@ export function AIEmployees() {
       launchPacket: "Remote launch packet",
       envSetup: "Environment",
       verifyCommand: "Verify",
+      sessionCommand: "Mint session",
       heartbeatCommand: "Heartbeat",
       runOnceCommand: "Run once",
       runLoopCommand: "Run loop",
@@ -307,6 +308,7 @@ export function AIEmployees() {
       launchPacket: "远程启动指引",
       envSetup: "环境变量",
       verifyCommand: "自检",
+      sessionCommand: "换取短期 Session",
       heartbeatCommand: "心跳",
       runOnceCommand: "单轮运行",
       runLoopCommand: "常驻运行",
@@ -1050,10 +1052,11 @@ export function AIEmployees() {
                   <div className="min-w-0 space-y-2">
                     {[
                       { label: copy.verifyCommand, value: createdToken.next_steps.verify },
+                      { label: copy.sessionCommand, value: createdToken.next_steps.session || "" },
                       { label: copy.heartbeatCommand, value: createdToken.next_steps.heartbeat },
                       { label: copy.runOnceCommand, value: createdToken.next_steps.run_once },
                       { label: copy.runLoopCommand, value: createdToken.next_steps.run_loop },
-                    ].map(item => (
+                    ].filter(item => item.value).map(item => (
                       <div key={item.label}>
                         <div className="text-[10px] mb-1" style={{ color: "var(--mis-muted)" }}>{item.label}</div>
                         <code className="block rounded px-2 py-1 text-[10px] break-all" style={{ background: "var(--mis-surface2)", color: "var(--mis-cyan)", border: "1px solid var(--mis-border)" }}>

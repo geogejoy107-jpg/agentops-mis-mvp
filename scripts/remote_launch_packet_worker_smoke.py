@@ -74,6 +74,7 @@ def smoke(base_url: str, stamp: str) -> dict:
         require(token not in text, "raw token leaked into launch packet")
         require(steps.get("adapter") == "mock", f"launch packet adapter mismatch: {steps}")
         require("agentops status" in text and "scripts/agent_worker.py" in text, f"launch packet missing commands: {steps}")
+        require("agentops session create" in text and "--use-session" in text, f"launch packet missing short-lived session path: {steps}")
 
         status_status, status_payload = http_json("GET", base_url, "/api/agent-gateway/status", token=token)
         require(status_status == 200, f"token status failed: {status_status} {status_payload}")
@@ -99,14 +100,16 @@ def smoke(base_url: str, stamp: str) -> dict:
             "AGENTOPS_AGENT_ID": steps.get("agent_id") or agent_id,
             "AGENTOPS_API_KEY": token,
         })
-        cmd = [sys.executable, "scripts/agent_worker.py", "--once", "--adapter", steps.get("adapter") or "mock"]
+        cmd = [sys.executable, "scripts/agent_worker.py", "--once", "--adapter", steps.get("adapter") or "mock", "--use-session", "--session-ttl-sec", "900"]
         proc = subprocess.run(cmd, cwd=ROOT, env=env, capture_output=True, text=True, timeout=180, check=False)
         require(proc.returncode == 0, f"worker failed: {proc.stderr or proc.stdout}")
         require(token not in proc.stdout and token not in proc.stderr, "worker output leaked raw token")
         worker_result = json.loads(proc.stdout or "{}")
         result = (worker_result.get("results") or [{}])[0]
+        session = worker_result.get("session") or {}
         run_id = result.get("run_id")
         require(run_id, f"worker did not return run_id: {worker_result}")
+        require(session.get("session_id"), f"worker did not mint a session: {worker_result}")
 
         detail_status, detail = http_json("GET", base_url, f"/api/runs/{run_id}")
         require(detail_status == 200, f"run detail failed: {detail_status} {detail}")
@@ -126,6 +129,7 @@ def smoke(base_url: str, stamp: str) -> dict:
             "token_id": token_id,
             "adapter": steps.get("adapter"),
             "status_mode": status_payload.get("auth", {}).get("mode"),
+            "session_id": session.get("session_id"),
             "tool_calls": len(tool_calls),
             "evaluations": len(evaluations),
             "token_omitted": True,

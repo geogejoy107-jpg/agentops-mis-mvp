@@ -199,6 +199,35 @@ class AgentOpsClient:
         return self.request("POST", path, payload=payload, timeout=timeout)
 
 
+def split_csv(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def mint_worker_session(client: AgentOpsClient, args) -> dict:
+    payload = {
+        "workspace_id": client.workspace_id,
+        "agent_id": client.agent_id,
+        "ttl_sec": args.session_ttl_sec,
+    }
+    requested_scopes = split_csv(args.session_scopes)
+    if requested_scopes:
+        payload["scopes"] = requested_scopes
+    session = client.post("/api/agent-gateway/session/create", payload, timeout=30)
+    token = session.get("session_token")
+    if not token:
+        raise RuntimeError("session create did not return a one-time session token")
+    client.api_key = token
+    return {
+        "session_id": session.get("session_id"),
+        "expires_at": session.get("expires_at"),
+        "ttl_sec": session.get("ttl_sec"),
+        "scopes": session.get("scopes") or [],
+        "token_omitted": True,
+    }
+
+
 @dataclass
 class AdapterResult:
     ok: bool
@@ -531,6 +560,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--workspace-id", default=os.environ.get("AGENTOPS_WORKSPACE_ID", DEFAULT_WORKSPACE_ID))
     parser.add_argument("--agent-id", default=os.environ.get("AGENTOPS_AGENT_ID", DEFAULT_AGENT_ID))
     parser.add_argument("--api-key", default=os.environ.get("AGENTOPS_API_KEY", ""))
+    parser.add_argument("--use-session", action="store_true", help="Mint a short-lived Agent Gateway session before running the worker.")
+    parser.add_argument("--session-ttl-sec", type=int, default=int(os.environ.get("AGENTOPS_SESSION_TTL_SEC", "900")), help="Session TTL when --use-session is set.")
+    parser.add_argument("--session-scopes", default=os.environ.get("AGENTOPS_SESSION_SCOPES", ""), help="Optional comma-separated subset for the worker session. Defaults to parent token scopes.")
     parser.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
     parser.add_argument("--status", action="append", default=["planned"], help="Task status to pull. Repeatable.")
     parser.add_argument("--once", action="store_true", help="Process at most one task and exit.")
@@ -564,6 +596,17 @@ def main() -> int:
     results = []
     registered = False
     fatal_failure = False
+    session_info = None
+    if args.use_session:
+        try:
+            state.update(status="minting_session")
+            session_info = mint_worker_session(client, args)
+            state.update(status="session_ready", session_id=session_info.get("session_id"), session_expires_at=session_info.get("expires_at"))
+        except Exception as exc:
+            error = state.record_error(exc)
+            state.stop("failed_session_create")
+            print(json_dumps({"ok": False, "processed": 0, "results": [{**error, "processed": False, "ok": False}], "state": state.data, "session": {"token_omitted": True}}))
+            return 1
     while True:
         if SHOULD_STOP:
             break
@@ -615,7 +658,7 @@ def main() -> int:
     )
     final_status = "stopped" if SHOULD_STOP else "completed" if final_ok else "failed"
     state.stop(final_status)
-    print(json_dumps({"ok": final_ok, "processed": processed, "results": results, "state": state.data}))
+    print(json_dumps({"ok": final_ok, "processed": processed, "results": results, "state": state.data, "session": session_info or {"token_omitted": True}}))
     return 0 if final_ok else 1
 
 

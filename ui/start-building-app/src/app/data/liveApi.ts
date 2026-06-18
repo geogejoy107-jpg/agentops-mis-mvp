@@ -324,6 +324,7 @@ export interface AgentGatewayEnrollmentCreateResult {
     adapter: string;
     env: string[];
     verify: string;
+    session?: string;
     heartbeat: string;
     run_once: string;
     run_loop: string;
