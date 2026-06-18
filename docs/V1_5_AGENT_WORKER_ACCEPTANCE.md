@@ -89,6 +89,7 @@ python3 scripts/worker_stuck_recovery_smoke.py
 python3 scripts/worker_session_refresh_smoke.py
 python3 scripts/worker_adapter_retry_smoke.py
 python3 scripts/customer_task_template_smoke.py
+python3 scripts/customer_project_report_smoke.py
 ```
 
 ## Evidence
@@ -492,6 +493,21 @@ pending approval: ap_gw_956174266d1a
 ```
 
 Pixel Office's customer dispatch panel now loads `GET /api/workflows/customer-task-templates`, applies template defaults to the customer task form, and runs the selected template through `POST /api/workflows/customer-task-templates/run`.
+
+The customer project report smoke passed:
+
+```text
+script: python3 scripts/customer_project_report_smoke.py
+project_id: 20260618155050
+report_url: /api/workflows/customer-projects/20260618155050/report
+tasks: 6
+runs: 6
+tool_calls: 6
+pending approvals: 1
+delivery artifact: art_kb_bot_delivery_20260618155050
+pending approval: ap_gw_3d9c930d4a92
+safety boundary: external_upload=false, credentials_stored=false, raw_documents_stored=false
+```
 
 The approval decision side-effect smoke passed:
 

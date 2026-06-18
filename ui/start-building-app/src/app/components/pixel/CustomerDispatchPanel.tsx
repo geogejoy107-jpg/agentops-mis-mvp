@@ -374,6 +374,17 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
               {kbResult.artifact_id && (
                 <div><span style={{ color: "var(--mis-muted)" }}>{zh ? "交付物：" : "Artifact: "}</span>{kbResult.artifact_id}</div>
               )}
+              {kbResult.project_id && (
+                <a
+                  href={kbResult.report_url ? kbResult.report_url.replace("/api/", "/mis-api/") : `/mis-api/workflows/customer-projects/${kbResult.project_id}/report`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex rounded px-2.5 py-1.5 text-[10px]"
+                  style={{ background: "rgba(34,211,238,0.10)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.22)" }}
+                >
+                  {zh ? "打开交付报告" : "Open delivery report"}
+                </a>
+              )}
               <p className="pt-1 leading-relaxed" style={{ color: "var(--mis-dim)" }}>
                 {zh
                   ? `已按模板创建客户项目闭环：${selectedTemplate?.name || "模板"}。任务、运行、工具调用、外部上传审批、评估、记忆候选、审计和交付摘要已进入 MIS。未上传原始资料或保存凭证。`

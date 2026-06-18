@@ -149,6 +149,7 @@ export interface KbBotProjectWorkflowResult {
   }[];
   safe_defaults?: Record<string, unknown>;
   open_pages?: Record<string, string>;
+  report_url?: string;
   error?: string | null;
 }
 

@@ -4235,9 +4235,133 @@ def run_customer_task_template_workflow(conn, body: dict) -> tuple[dict, int]:
         "workflow": template["workflow"],
         "safe_defaults": template["safe_defaults"],
     }
+    if result.get("project_id"):
+        result["report_url"] = f"/api/workflows/customer-projects/{result['project_id']}/report"
     audit(conn, "user", "usr_customer_demo", "workflow.customer_template.run", "template_packages", template_id, None, {"status": "completed" if result.get("ok", True) else "failed", "workflow": template["workflow"]}, {"template_id": template_id, "dry_run": result.get("dry_run"), "raw_documents_stored": False, "credentials_stored": False})
     conn.commit()
     return result, 201
+
+
+def customer_project_report(conn, project_id: str) -> tuple[dict, int]:
+    project_id = redact_text(project_id, 80)
+    tasks = rows_to_dicts(conn.execute(
+        "SELECT * FROM tasks WHERE task_id LIKE ? ORDER BY task_id",
+        (f"tsk_kb_bot_{project_id}_%",),
+    ).fetchall())
+    if not tasks:
+        return {"error": "project not found", "project_id": project_id}, 404
+    task_ids = [task["task_id"] for task in tasks]
+    placeholders = ",".join("?" for _ in task_ids)
+    runs = rows_to_dicts(conn.execute(
+        f"SELECT * FROM runs WHERE task_id IN ({placeholders}) ORDER BY started_at, run_id",
+        task_ids,
+    ).fetchall())
+    run_ids = [run["run_id"] for run in runs]
+    run_placeholders = ",".join("?" for _ in run_ids) if run_ids else "''"
+    tool_calls = rows_to_dicts(conn.execute(
+        f"SELECT * FROM tool_calls WHERE run_id IN ({run_placeholders}) ORDER BY created_at",
+        run_ids,
+    ).fetchall()) if run_ids else []
+    approvals = rows_to_dicts(conn.execute(
+        f"SELECT * FROM approvals WHERE task_id IN ({placeholders}) ORDER BY created_at",
+        task_ids,
+    ).fetchall())
+    evaluations = rows_to_dicts(conn.execute(
+        f"SELECT * FROM evaluations WHERE task_id IN ({placeholders}) ORDER BY created_at",
+        task_ids,
+    ).fetchall())
+    memories = rows_to_dicts(conn.execute(
+        f"SELECT * FROM memories WHERE task_id IN ({placeholders}) ORDER BY created_at",
+        task_ids,
+    ).fetchall())
+    artifacts = rows_to_dicts(conn.execute(
+        f"SELECT * FROM artifacts WHERE task_id IN ({placeholders}) ORDER BY created_at",
+        task_ids,
+    ).fetchall())
+    completed_runs = [run for run in runs if run.get("status") == "completed"]
+    pending_approvals = [approval for approval in approvals if approval.get("decision") == "pending"]
+    failed_runs = [run for run in runs if run.get("status") in {"failed", "blocked"}]
+    final_artifact = artifacts[-1] if artifacts else None
+
+    lines = [
+        f"# AI 知识库 / 问答机器人交付报告",
+        "",
+        f"- Project ID: `{project_id}`",
+        f"- Tasks: {len(tasks)}",
+        f"- Runs: {len(runs)} total, {len(completed_runs)} completed, {len(failed_runs)} failed/blocked",
+        f"- Tool calls: {len(tool_calls)}",
+        f"- Evaluations: {len(evaluations)}",
+        f"- Memory candidates: {len(memories)}",
+        f"- Artifacts: {len(artifacts)}",
+        f"- Pending approvals: {len(pending_approvals)}",
+        "",
+        "## Safety Boundary",
+        "",
+        "- External upload performed: false",
+        "- Credentials stored in MIS: false",
+        "- Raw documents stored in MIS: false",
+        "- MIS stores summary/hash/ledger evidence only.",
+        "",
+        "## Delivery Artifact",
+        "",
+    ]
+    if final_artifact:
+        lines.extend([
+            f"- Artifact ID: `{final_artifact['artifact_id']}`",
+            f"- Title: {final_artifact['title']}",
+            f"- URI: `{final_artifact['uri']}`",
+            f"- Summary: {final_artifact['summary']}",
+            "",
+        ])
+    else:
+        lines.extend(["- No delivery artifact recorded.", ""])
+    lines.extend(["## Task Ledger", ""])
+    runs_by_task: dict[str, list[dict]] = {}
+    for run in runs:
+        runs_by_task.setdefault(run["task_id"], []).append(run)
+    approvals_by_task: dict[str, list[dict]] = {}
+    for approval in approvals:
+        approvals_by_task.setdefault(approval["task_id"], []).append(approval)
+    for task in tasks:
+        task_runs = runs_by_task.get(task["task_id"], [])
+        task_approvals = approvals_by_task.get(task["task_id"], [])
+        lines.extend([
+            f"### {task['title']}",
+            f"- Task ID: `{task['task_id']}`",
+            f"- Owner: `{task['owner_agent_id']}`",
+            f"- Status: `{task['status']}`",
+            f"- Risk: `{task['risk_level']}`",
+            f"- Runs: {', '.join(f'`{run['run_id']}`' for run in task_runs) if task_runs else 'none'}",
+            f"- Approvals: {', '.join(f'`{approval['approval_id']}` ({approval['decision']})' for approval in task_approvals) if task_approvals else 'none'}",
+            f"- Output: {redact_text((task_runs[-1].get('output_summary') if task_runs else task.get('description')) or '', 260)}",
+            "",
+        ])
+    markdown = "\n".join(lines)
+    return {
+        "project_id": project_id,
+        "status": "ready",
+        "markdown": markdown,
+        "counts": {
+            "tasks": len(tasks),
+            "runs": len(runs),
+            "completed_runs": len(completed_runs),
+            "failed_runs": len(failed_runs),
+            "tool_calls": len(tool_calls),
+            "approvals": len(approvals),
+            "pending_approvals": len(pending_approvals),
+            "evaluations": len(evaluations),
+            "memories": len(memories),
+            "artifacts": len(artifacts),
+        },
+        "artifact_id": final_artifact["artifact_id"] if final_artifact else None,
+        "approval_ids": [approval["approval_id"] for approval in approvals],
+        "safe_defaults": {
+            "external_upload_performed": False,
+            "credentials_stored": False,
+            "raw_documents_stored": False,
+            "summary_hash_only": True,
+        },
+    }, 200
 
 
 def hermes_run_task(conn, body: dict) -> dict:
@@ -5232,6 +5356,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM template_bindings ORDER BY template_id, base_id").fetchall()))
             if path == "/api/workflows/customer-task-templates":
                 return self.send_json({"templates": customer_task_templates(), "safe_defaults": {"raw_documents_stored": False, "credentials_stored": False, "external_upload_requires_approval": True}})
+            if path.startswith("/api/workflows/customer-projects/") and path.endswith("/report"):
+                project_id = path.split("/")[-2]
+                payload, status = customer_project_report(conn, project_id)
+                return self.send_json(payload, status)
             if path == "/api/integrations/openclaw/status":
                 return self.send_json(openclaw_status())
             if path == "/api/integrations/hermes/status":

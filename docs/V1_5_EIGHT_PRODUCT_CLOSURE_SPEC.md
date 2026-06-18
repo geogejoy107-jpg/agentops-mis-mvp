@@ -371,6 +371,8 @@ Current v1.5 implementation:
 - Customer task templates are available through `GET /api/workflows/customer-task-templates`.
 - A selected template can be launched through `POST /api/workflows/customer-task-templates/run`.
 - Pixel Office's customer dispatch panel loads local templates, applies their default title/brief/acceptance criteria, and can run the selected template.
+- Customer projects can export a safe ledger-backed delivery report through `GET /api/workflows/customer-projects/:project_id/report`.
+- Pixel Office surfaces the report link after template-backed project generation.
 
 Acceptance evidence:
 
@@ -395,10 +397,16 @@ Acceptance evidence:
   - final run: `run_gw_cfde4c4822b1`
   - delivery artifact: `art_kb_bot_delivery_20260618154535`
   - pending external-upload approval: `ap_gw_956174266d1a`
+- Customer project report smoke: `python3 scripts/customer_project_report_smoke.py`
+  - project: `20260618155050`
+  - report: `/api/workflows/customer-projects/20260618155050/report`
+  - counts: 6 tasks, 6 runs, 6 tool calls, 1 pending approval, 1 artifact
+  - delivery artifact: `art_kb_bot_delivery_20260618155050`
+  - pending external-upload approval: `ap_gw_3d9c930d4a92`
 
 Remaining product work:
 
-- Better task result pages and report export.
+- Better task result page polish.
 
 ### 8. Productization Track
 
@@ -457,6 +465,7 @@ python3 scripts/worker_stuck_recovery_smoke.py
 python3 scripts/worker_session_refresh_smoke.py
 python3 scripts/worker_adapter_retry_smoke.py
 python3 scripts/customer_task_template_smoke.py
+python3 scripts/customer_project_report_smoke.py
 ```
 
 ## Current Status Summary
@@ -493,6 +502,7 @@ Implemented and verified:
 - Remote launch-packet worker end-to-end smoke.
 - Customer-style knowledge-base bot project smoke with delivery artifact.
 - Customer task template API/UI path with KB bot template smoke.
+- Customer project report export from MIS ledger evidence.
 
 Not yet product-complete:
 
