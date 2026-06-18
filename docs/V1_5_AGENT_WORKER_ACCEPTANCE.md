@@ -82,6 +82,7 @@ python3 scripts/redaction_policy_smoke.py
 python3 scripts/enrollment_launch_steps_smoke.py
 python3 scripts/remote_launch_packet_worker_smoke.py
 python3 scripts/agent_gateway_scope_matrix_smoke.py
+python3 scripts/agent_gateway_session_smoke.py
 ```
 
 ## Evidence
@@ -283,13 +284,28 @@ The Agent Gateway scope matrix smoke passed:
 
 ```text
 script: python3 scripts/agent_gateway_scope_matrix_smoke.py
-observer_agent: agt_scope_observer_20260618090005
-worker_agent: agt_scope_worker_20260618090005
-task_id: tsk_scope_matrix_20260618090005
-run_id: run_gw_3136967d1b44
+observer_agent: agt_scope_observer_20260618090750
+worker_agent: agt_scope_worker_20260618090750
+task_id: tsk_scope_matrix_20260618090750
+run_id: run_gw_f06a070b28da
 observer allowed: agents:heartbeat, tasks:read, audit:write
 observer forbidden: artifact, claim, run_start, tool_call
 HTTP status for missing scope: 403 forbidden
+token_omitted: true
+```
+
+The Agent Gateway short-lived session smoke passed:
+
+```text
+script: python3 scripts/agent_gateway_session_smoke.py
+agent_id: agt_session_smoke_20260618090750
+token_id: agtok_agt_session_smoke_20260618090750_local_demo_6898299be15f
+session_id: agtsess_agt_session_smoke_20260618090750_local_demo_05422c4e9715
+task_id: tsk_session_smoke_20260618090750
+auth_mode: agent_session
+session scopes: agents:heartbeat, tasks:read
+session cannot mint another session: passed
+expired session rejected: unauthorized
 token_omitted: true
 ```
 
@@ -513,4 +529,4 @@ planned MIS task
 - The worker does not store full prompts or raw responses.
 - The worker is repo-local; it is not yet a launchd service, pip package, npm package, or signed binary.
 - The UI worker panel now supports one-shot dispatch, local daemon start/stop, daemon state counters, daemon log tails, and recent gateway events; it is not a production fleet manager.
-- Remote enrollment token issuance/revocation/rotation, endpoint-level scope enforcement, scope presets, a first enrollment UI, and minimal Agent Gateway workspace isolation now exist. Full RBAC, hosted multi-tenant isolation, short-lived sessions, and production enrollment workflows remain future work.
+- Remote enrollment token issuance/revocation/rotation, endpoint-level scope enforcement, short-lived session tokens, scope presets, a first enrollment UI, and minimal Agent Gateway workspace isolation now exist. Full RBAC, hosted multi-tenant isolation, session revocation UI/refresh policy, and production enrollment workflows remain future work.

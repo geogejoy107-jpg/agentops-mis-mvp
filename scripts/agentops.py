@@ -364,6 +364,27 @@ def cmd_enrollment_rotate(args, client: AgentOpsClient) -> dict:
     return result
 
 
+def cmd_session_create(args, client: AgentOpsClient) -> dict:
+    payload = {
+        "workspace_id": client.workspace_id,
+        "agent_id": client.agent_id,
+        "ttl_sec": args.ttl_sec,
+        "scopes": split_csv(args.scopes) if args.scopes else None,
+    }
+    result = client.post("/api/agent-gateway/session/create", payload)
+    if args.save_session and result.get("session_token"):
+        config = load_config()
+        config.update({
+            "base_url": client.base_url,
+            "workspace_id": result.get("workspace_id") or client.workspace_id,
+            "agent_id": result.get("agent_id") or client.agent_id,
+            "api_key": result["session_token"],
+        })
+        save_config(config)
+        result["saved_to"] = str(CONFIG_PATH)
+    return result
+
+
 def add_global_args(parser, suppress_defaults: bool = False):
     default = argparse.SUPPRESS if suppress_defaults else None
     parser.add_argument("--base-url", default=default, help="AgentOps MIS base URL. Defaults to env/config/http://127.0.0.1:8787.")
@@ -558,6 +579,14 @@ def build_parser() -> argparse.ArgumentParser:
     enroll_rotate.add_argument("--save-token", action="store_true", help="Save returned token to local config for this CLI.")
     enroll_rotate.set_defaults(handler="enrollment_rotate")
 
+    session = sub.add_parser("session", help="Short-lived Agent Gateway session commands.")
+    session_sub = session.add_subparsers(dest="action", required=True)
+    session_create = session_sub.add_parser("create", help="Mint a short-lived session from an enrollment token.")
+    session_create.add_argument("--ttl-sec", type=int, default=900)
+    session_create.add_argument("--scopes", default=None, help="Optional scope subset for this session.")
+    session_create.add_argument("--save-session", action="store_true", help="Save returned session token to local config for this CLI.")
+    session_create.set_defaults(handler="session_create")
+
     return parser
 
 
@@ -580,6 +609,7 @@ HANDLERS = {
     "enrollment_list": cmd_enrollment_list,
     "enrollment_revoke": cmd_enrollment_revoke,
     "enrollment_rotate": cmd_enrollment_rotate,
+    "session_create": cmd_session_create,
 }
 
 

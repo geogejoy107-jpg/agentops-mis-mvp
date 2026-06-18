@@ -473,6 +473,22 @@ CREATE TABLE IF NOT EXISTS agent_gateway_tokens (
     FOREIGN KEY(agent_id) REFERENCES agents(agent_id)
 );
 
+CREATE TABLE IF NOT EXISTS agent_gateway_sessions (
+    session_id TEXT PRIMARY KEY,
+    session_hash TEXT NOT NULL UNIQUE,
+    parent_token_id TEXT,
+    workspace_id TEXT NOT NULL,
+    agent_id TEXT NOT NULL,
+    scopes_json TEXT NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL CHECK(status IN ('active','revoked','expired')),
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    revoked_at TEXT,
+    last_used_at TEXT,
+    FOREIGN KEY(parent_token_id) REFERENCES agent_gateway_tokens(token_id),
+    FOREIGN KEY(agent_id) REFERENCES agents(agent_id)
+);
+
 CREATE TABLE IF NOT EXISTS bases (
     base_id TEXT PRIMARY KEY,
     provider TEXT NOT NULL,
@@ -1868,7 +1884,7 @@ def agent_gateway_admin_auth_error(headers) -> dict | None:
     return {"error": "unauthorized", "message": "Admin token is required for Agent Gateway enrollment management."}
 
 
-def agent_gateway_auth_context(conn, headers, required_scope: str | None = None) -> tuple[dict | None, dict | None]:
+def agent_gateway_auth_context(conn, headers, required_scope: str | None = None, allow_session: bool = True) -> tuple[dict | None, dict | None]:
     expected = os.environ.get("AGENTOPS_API_KEY", "").strip()
     supplied = bearer_token(headers)
     if expected and hmac.compare_digest(supplied, expected):
@@ -1881,25 +1897,50 @@ def agent_gateway_auth_context(conn, headers, required_scope: str | None = None)
 
     if supplied:
         row = conn.execute("SELECT * FROM agent_gateway_tokens WHERE token_hash=?", (token_hash(supplied),)).fetchone()
-        if not row:
-            return None, {"error": "unauthorized", "message": "Agent Gateway token is not recognized."}
-        if row["status"] != "active":
-            return None, {"error": "unauthorized", "message": f"Agent Gateway token is {row['status']}."}
-        if row["expires_at"] and row["expires_at"] < now_iso():
-            conn.execute("UPDATE agent_gateway_tokens SET status='expired' WHERE token_id=?", (row["token_id"],))
-            audit(conn, "system", "agent-gateway-auth", "agent_gateway.token_expired", "agent_gateway_tokens", row["token_id"], dict(row), {"status": "expired"}, {})
-            return None, {"error": "unauthorized", "message": "Agent Gateway token is expired."}
-        scopes = parse_scope_list(row["scopes_json"])
-        if required_scope and required_scope not in scopes:
-            return None, {"error": "forbidden", "message": f"Agent token is missing required scope: {required_scope}"}
-        conn.execute("UPDATE agent_gateway_tokens SET last_used_at=? WHERE token_id=?", (now_iso(), row["token_id"]))
-        return {
-            "mode": "agent_token",
-            "token_id": row["token_id"],
-            "agent_id": row["agent_id"],
-            "workspace_id": row["workspace_id"],
-            "scopes": scopes,
-        }, None
+        if row:
+            if row["status"] != "active":
+                return None, {"error": "unauthorized", "message": f"Agent Gateway token is {row['status']}."}
+            if row["expires_at"] and row["expires_at"] < now_iso():
+                conn.execute("UPDATE agent_gateway_tokens SET status='expired' WHERE token_id=?", (row["token_id"],))
+                audit(conn, "system", "agent-gateway-auth", "agent_gateway.token_expired", "agent_gateway_tokens", row["token_id"], dict(row), {"status": "expired"}, {})
+                return None, {"error": "unauthorized", "message": "Agent Gateway token is expired."}
+            scopes = parse_scope_list(row["scopes_json"])
+            if required_scope and required_scope not in scopes:
+                return None, {"error": "forbidden", "message": f"Agent token is missing required scope: {required_scope}"}
+            conn.execute("UPDATE agent_gateway_tokens SET last_used_at=? WHERE token_id=?", (now_iso(), row["token_id"]))
+            return {
+                "mode": "agent_token",
+                "token_id": row["token_id"],
+                "agent_id": row["agent_id"],
+                "workspace_id": row["workspace_id"],
+                "scopes": scopes,
+            }, None
+
+        session = conn.execute("SELECT * FROM agent_gateway_sessions WHERE session_hash=?", (token_hash(supplied),)).fetchone() if allow_session else None
+        if session:
+            if session["status"] != "active":
+                return None, {"error": "unauthorized", "message": f"Agent Gateway session is {session['status']}."}
+            if session["expires_at"] < now_iso():
+                conn.execute("UPDATE agent_gateway_sessions SET status='expired' WHERE session_id=?", (session["session_id"],))
+                audit(conn, "system", "agent-gateway-auth", "agent_gateway.session_expired", "agent_gateway_sessions", session["session_id"], dict(session), {"status": "expired"}, {"token_omitted": True})
+                return None, {"error": "unauthorized", "message": "Agent Gateway session is expired."}
+            scopes = parse_scope_list(session["scopes_json"])
+            if required_scope and required_scope not in scopes:
+                return None, {"error": "forbidden", "message": f"Agent session is missing required scope: {required_scope}"}
+            conn.execute("UPDATE agent_gateway_sessions SET last_used_at=? WHERE session_id=?", (now_iso(), session["session_id"]))
+            return {
+                "mode": "agent_session",
+                "session_id": session["session_id"],
+                "token_id": session["parent_token_id"],
+                "agent_id": session["agent_id"],
+                "workspace_id": session["workspace_id"],
+                "scopes": scopes,
+                "expires_at": session["expires_at"],
+            }, None
+
+        if not allow_session and conn.execute("SELECT 1 FROM agent_gateway_sessions WHERE session_hash=?", (token_hash(supplied),)).fetchone():
+            return None, {"error": "unauthorized", "message": "Agent Gateway session tokens cannot mint new sessions."}
+        return None, {"error": "unauthorized", "message": "Agent Gateway token is not recognized."}
 
     if expected:
         return None, {
@@ -1912,6 +1953,10 @@ def agent_gateway_auth_context(conn, headers, required_scope: str | None = None)
         "workspace_id": headers.get("X-AgentOps-Workspace-Id") or "local-demo",
         "scopes": sorted(VALID_AGENT_GATEWAY_SCOPES),
     }, None
+
+
+def agent_gateway_is_bound_auth(auth_ctx: dict | None) -> bool:
+    return bool(auth_ctx and auth_ctx.get("mode") in {"agent_token", "agent_session"})
 
 
 def agent_gateway_auth_error(headers) -> dict | None:
@@ -1927,7 +1972,7 @@ def agent_gateway_error_status(error: dict | None) -> int:
 def agent_gateway_identity(headers, body=None, qs=None, auth_ctx=None) -> dict:
     body = body or {}
     qs = qs or {}
-    if auth_ctx and auth_ctx.get("mode") == "agent_token":
+    if agent_gateway_is_bound_auth(auth_ctx):
         agent_id = auth_ctx.get("agent_id")
         workspace_id = auth_ctx.get("workspace_id")
     else:
@@ -2127,6 +2172,63 @@ def agent_gateway_create_enrollment(conn, body) -> tuple[dict, int]:
     }, 201
 
 
+def agent_gateway_create_session(conn, headers, body) -> tuple[dict, int]:
+    auth_ctx, auth_error = agent_gateway_auth_context(conn, headers, allow_session=False)
+    if auth_error:
+        return auth_error, agent_gateway_error_status(auth_error)
+    auth_ctx = auth_ctx or {}
+    if auth_ctx.get("mode") == "local_dev_no_token":
+        return {"error": "unauthorized", "message": "A real enrollment token or local API key is required to mint a session."}, 401
+    requested_scopes = parse_scope_list(body.get("scopes"))
+    parent_scopes = parse_scope_list(auth_ctx.get("scopes") or [])
+    scopes = [scope for scope in (requested_scopes or parent_scopes) if scope in parent_scopes]
+    if requested_scopes and len(scopes) != len(requested_scopes):
+        return {"error": "forbidden", "message": "Requested session scopes must be a subset of the parent token scopes."}, 403
+    if not scopes:
+        return {"error": "at least one valid scope is required", "valid_scopes": sorted(VALID_AGENT_GATEWAY_SCOPES)}, 400
+    ttl_sec = int(body.get("ttl_sec") or body.get("ttl_seconds") or 900)
+    ttl_sec = min(max(ttl_sec, 1), 3600)
+    now = now_iso()
+    expires_at = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=ttl_sec)).isoformat()
+    session_token = "agtsess_" + secrets.token_urlsafe(32)
+    session_id = stable_id("agtsess", auth_ctx.get("agent_id") or "agent", auth_ctx.get("workspace_id") or "local-demo", stable_hash(session_token)[:12])
+    row = {
+        "session_id": session_id,
+        "session_hash": token_hash(session_token),
+        "parent_token_id": auth_ctx.get("token_id"),
+        "workspace_id": normalize_workspace_id(auth_ctx.get("workspace_id") or body.get("workspace_id") or "local-demo"),
+        "agent_id": auth_ctx.get("agent_id") or body.get("agent_id"),
+        "scopes_json": json.dumps(scopes, ensure_ascii=False),
+        "status": "active",
+        "created_at": now,
+        "expires_at": expires_at,
+        "revoked_at": None,
+        "last_used_at": None,
+    }
+    if not row["agent_id"]:
+        return {"error": "agent_id is required"}, 400
+    ensure_gateway_agent(conn, row["agent_id"], runtime_type=body.get("runtime_type"))
+    conn.execute(
+        """INSERT INTO agent_gateway_sessions(session_id,session_hash,parent_token_id,workspace_id,agent_id,scopes_json,status,created_at,expires_at,revoked_at,last_used_at)
+        VALUES(:session_id,:session_hash,:parent_token_id,:workspace_id,:agent_id,:scopes_json,:status,:created_at,:expires_at,:revoked_at,:last_used_at)""",
+        row,
+    )
+    runtime_event(conn, "rtc_agent_gateway_local", "agent.session.create", "completed", agent_id=row["agent_id"], output_summary=f"Created short-lived session {session_id}.")
+    audit(conn, "agent", row["agent_id"], "agent_gateway.session_create", "agent_gateway_sessions", session_id, None, {k: v for k, v in row.items() if k != "session_hash"}, {"scopes": scopes, "token_omitted": True})
+    return {
+        "created": True,
+        "session_id": session_id,
+        "agent_id": row["agent_id"],
+        "workspace_id": row["workspace_id"],
+        "scopes": scopes,
+        "expires_at": expires_at,
+        "ttl_sec": ttl_sec,
+        "session_token": session_token,
+        "note": "Session token is shown once. Use it for worker calls, then discard it; MIS stores only a hash.",
+        "token_omitted": False,
+    }, 201
+
+
 def agent_gateway_token_heartbeat_state(row, now_dt: dt.datetime | None = None) -> str:
     now_dt = now_dt or dt.datetime.now(dt.timezone.utc)
     status = row.get("status") if hasattr(row, "get") else row["status"]
@@ -2187,6 +2289,12 @@ def agent_gateway_status(conn, headers) -> tuple[dict, int]:
                 "last_used_at": safe_row.get("last_used_at"),
                 "last_heartbeat_at": safe_row.get("last_heartbeat_at"),
             })
+    if auth_ctx.get("mode") == "agent_session":
+        payload["auth"].update({
+            "session_id": auth_ctx.get("session_id"),
+            "parent_token_id": auth_ctx.get("token_id"),
+            "session_expires_at": auth_ctx.get("expires_at"),
+        })
     return payload, 200
 
 
@@ -4512,7 +4620,7 @@ class Handler(BaseHTTPRequestHandler):
                 if auth_error:
                     return self.send_json(auth_error, agent_gateway_error_status(auth_error))
                 query = dict(qs)
-                if auth_ctx and auth_ctx.get("mode") == "agent_token":
+                if agent_gateway_is_bound_auth(auth_ctx):
                     requested_header_workspace = normalize_workspace_id(self.headers.get("X-AgentOps-Workspace-Id") or auth_ctx["workspace_id"])
                     if requested_header_workspace != auth_ctx["workspace_id"]:
                         return self.send_json({"error": "forbidden", "message": "Agent token cannot use another workspace header."}, 403)
@@ -4658,6 +4766,10 @@ class Handler(BaseHTTPRequestHandler):
     def handle_post_api(self, path, body):
         with db() as conn:
             if path.startswith("/api/agent-gateway/"):
+                if path == "/api/agent-gateway/session/create":
+                    payload, status = agent_gateway_create_session(conn, self.headers, body)
+                    conn.commit()
+                    return self.send_json(payload, status)
                 if path == "/api/agent-gateway/enrollment/create":
                     auth_error = agent_gateway_admin_auth_error(self.headers)
                     if auth_error:
@@ -4698,7 +4810,7 @@ class Handler(BaseHTTPRequestHandler):
                 auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, required_scope)
                 if auth_error:
                     return self.send_json(auth_error, agent_gateway_error_status(auth_error))
-                if auth_ctx and auth_ctx.get("mode") == "agent_token":
+                if agent_gateway_is_bound_auth(auth_ctx):
                     requested_header_workspace = normalize_workspace_id(self.headers.get("X-AgentOps-Workspace-Id") or auth_ctx["workspace_id"])
                     if requested_header_workspace != auth_ctx["workspace_id"]:
                         return self.send_json({"error": "forbidden", "message": "Agent token cannot use another workspace header."}, 403)
@@ -4711,6 +4823,7 @@ class Handler(BaseHTTPRequestHandler):
                     body["agent_id"] = auth_ctx["agent_id"]
                     body["workspace_id"] = auth_ctx["workspace_id"]
                     body["_auth_token_id"] = auth_ctx.get("token_id")
+                    body["_auth_session_id"] = auth_ctx.get("session_id")
                 if path == "/api/agent-gateway/register":
                     payload, status = agent_gateway_register(conn, body)
                 elif path == "/api/agent-gateway/heartbeat":

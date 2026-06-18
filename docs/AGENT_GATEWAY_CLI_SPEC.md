@@ -298,6 +298,18 @@ agentops audit emit \
 
 Maps to `audit_logs`.
 
+### `agentops session create`
+
+Mints a short-lived session token from a scoped enrollment token. The session inherits the bound `agent_id`, `workspace_id`, and a scope subset. It is shown once; MIS stores only a hash.
+
+```bash
+agentops session create \
+  --ttl-sec 900 \
+  --scopes agents:heartbeat,tasks:read,runs:write,toolcalls:write,evaluations:submit,audit:write
+```
+
+Session tokens cannot mint more sessions. They are for worker loops, not for browser users.
+
 ## API Endpoint Proposal
 
 All endpoints are under the existing local API server.
@@ -308,6 +320,7 @@ GET  /api/agent-gateway/status
 POST /api/agent-gateway/enrollment/create
 POST /api/agent-gateway/enrollment/revoke
 POST /api/agent-gateway/enrollment/rotate
+POST /api/agent-gateway/session/create
 POST /api/agent-gateway/register
 POST /api/agent-gateway/heartbeat
 GET  /api/agent-gateway/tasks/pull
@@ -524,6 +537,9 @@ Current implementation:
 - Task pull, task claim, run start, run heartbeat, tool call, approval, memory, evaluation, and audit write paths enforce the run/task workspace boundary.
 - `POST /api/agent-gateway/enrollment/revoke` revokes tokens.
 - `POST /api/agent-gateway/enrollment/rotate` revokes an active token and returns a one-time replacement token.
+- `POST /api/agent-gateway/session/create` mints a short-lived session token from a valid enrollment token or local API key.
+- Session tokens inherit agent/workspace bindings and a subset of parent scopes.
+- Session tokens cannot mint replacement sessions.
 - `GET /api/agent-gateway/enrollments` reports heartbeat freshness.
 - Revoked tokens report `heartbeat_state=revoked`, not `fresh` or `stale`.
 
@@ -531,6 +547,7 @@ Current endpoint scope map:
 
 | Endpoint | Required scope |
 | --- | --- |
+| `POST /api/agent-gateway/session/create` | valid enrollment token or local API key |
 | `POST /api/agent-gateway/register` | `agents:write` |
 | `POST /api/agent-gateway/heartbeat` | `agents:heartbeat` |
 | `GET /api/agent-gateway/tasks/pull` | `tasks:read` |
@@ -548,8 +565,7 @@ Current endpoint scope map:
 
 Future product versions should add:
 
-- Short-lived session tokens.
-- Token rotation.
+- Short-lived session refresh policy and revocation UI.
 - Workspace-level RBAC.
 - Connector-specific scoped credentials.
 - Remote agent enrollment and revocation.
@@ -637,6 +653,7 @@ python3 scripts/agentops_status_smoke.py
 python3 scripts/enrollment_launch_steps_smoke.py
 python3 scripts/remote_launch_packet_worker_smoke.py
 python3 scripts/agent_gateway_scope_matrix_smoke.py
+python3 scripts/agent_gateway_session_smoke.py
 ```
 
 This helper creates a scoped token, creates a normal MIS task for that agent, runs `scripts/agent_worker.py --once` with the token, verifies run/tool/eval evidence, and revokes the token by default. It does not print the raw token.
@@ -646,11 +663,12 @@ The CLI status helper verifies `agentops status` reports safe token-bound metada
 The launch-steps helper verifies create/rotate responses include safe remote-worker commands and do not embed the raw token in those commands.
 The remote launch-packet helper uses the returned environment shape to run a real worker and verify run/tool/evaluation ledger evidence.
 The scope-matrix helper verifies an observer token can heartbeat/pull/audit but receives `403 forbidden` for claim/run/tool/artifact writes.
+The session helper verifies an enrollment token can mint a narrowed short-lived session, that the session can heartbeat/pull tasks, cannot mint another session, and is rejected after expiry.
 
 Remaining future work:
 
 - Production enrollment approval workflow.
-- Short-lived session tokens.
+- Session revocation UI and refresh policy.
 - Hosted multi-tenant isolation and full RBAC.
 - Reconnection backoff policy.
 - mTLS or signed heartbeats for server-side agents.

@@ -156,6 +156,9 @@ Current v1.5 implementation:
   - scoped by endpoint permissions,
   - revocable.
 - Active tokens can be rotated; the old token is revoked and the replacement token is shown once.
+- Enrollment tokens can mint short-lived session tokens through `POST /api/agent-gateway/session/create`.
+- Session tokens inherit the bound `agent_id`, `workspace_id`, and a subset of parent scopes.
+- Session tokens cannot mint replacement sessions and expire automatically.
 - Heartbeat freshness is tracked with explicit lifecycle states:
   - `never_seen`: active token exists but the remote worker has not heartbeated yet.
   - `fresh`: active token has a recent heartbeat inside its timeout window.
@@ -193,10 +196,16 @@ Acceptance evidence:
   - heartbeat, task pull, and audit writes are allowed,
   - claim, run start, tool call, and artifact writes are rejected with HTTP `403 forbidden`,
   - a worker token can claim and start the same task.
+- `python3 scripts/agent_gateway_session_smoke.py` verified short-lived sessions:
+  - an enrollment token mints a narrowed session,
+  - session auth reports `agent_session`,
+  - session can heartbeat and pull tasks,
+  - session cannot mint another session,
+  - expired sessions are rejected.
 
 Remaining product work:
 
-- Short-lived sessions.
+- Session revocation UI and refresh policy.
 - Reconnection/backoff policy.
 - Customer-facing enrollment approval workflow.
 
@@ -209,6 +218,7 @@ Goal:
 Current v1.5 implementation:
 
 - Token hash storage only.
+- Session hash storage only.
 - Raw token values are not written to audit/runtime metadata.
 - Rotation smoke output omits raw token values; raw tokens are still one-time only.
 - Redaction keeps safe operational evidence such as loopback URLs and run/task IDs readable while still hiding email, phone, bearer token, raw `sk-`, and raw `ntn_` secrets.
@@ -369,6 +379,7 @@ python3 scripts/redaction_policy_smoke.py
 python3 scripts/enrollment_launch_steps_smoke.py
 python3 scripts/remote_launch_packet_worker_smoke.py
 python3 scripts/agent_gateway_scope_matrix_smoke.py
+python3 scripts/agent_gateway_session_smoke.py
 ```
 
 ## Current Status Summary
@@ -393,6 +404,7 @@ Implemented and verified:
 - Enrollment heartbeat states: `never_seen`, `fresh`, `stale`, and `revoked`.
 - Endpoint-level scope enforcement.
 - Scoped RBAC matrix smoke for observer-vs-worker permissions.
+- Short-lived Agent Gateway sessions.
 - Minimal workspace isolation for token-auth Agent Gateway pull/claim/run/write paths.
 - Remote-token worker end-to-end smoke.
 - Remote launch-packet worker end-to-end smoke.
@@ -402,6 +414,6 @@ Not yet product-complete:
 
 - Global CLI package.
 - Full RBAC and hosted multi-tenant isolation.
-- Short-lived sessions.
+- Session revocation UI and refresh policy.
 - Production worker fleet manager.
 - Hosted SaaS/commercial deployment layer.
