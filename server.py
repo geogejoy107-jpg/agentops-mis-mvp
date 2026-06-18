@@ -1920,6 +1920,10 @@ def agent_gateway_auth_error(headers) -> dict | None:
         return error
 
 
+def agent_gateway_error_status(error: dict | None) -> int:
+    return 403 if error and error.get("error") == "forbidden" else 401
+
+
 def agent_gateway_identity(headers, body=None, qs=None, auth_ctx=None) -> dict:
     body = body or {}
     qs = qs or {}
@@ -4506,7 +4510,7 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/agent-gateway/tasks/pull":
                 auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
                 if auth_error:
-                    return self.send_json(auth_error, 401)
+                    return self.send_json(auth_error, agent_gateway_error_status(auth_error))
                 query = dict(qs)
                 if auth_ctx and auth_ctx.get("mode") == "agent_token":
                     requested_header_workspace = normalize_workspace_id(self.headers.get("X-AgentOps-Workspace-Id") or auth_ctx["workspace_id"])
@@ -4693,7 +4697,7 @@ class Handler(BaseHTTPRequestHandler):
                     required_scope = "runs:write"
                 auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, required_scope)
                 if auth_error:
-                    return self.send_json(auth_error, 401)
+                    return self.send_json(auth_error, agent_gateway_error_status(auth_error))
                 if auth_ctx and auth_ctx.get("mode") == "agent_token":
                     requested_header_workspace = normalize_workspace_id(self.headers.get("X-AgentOps-Workspace-Id") or auth_ctx["workspace_id"])
                     if requested_header_workspace != auth_ctx["workspace_id"]:

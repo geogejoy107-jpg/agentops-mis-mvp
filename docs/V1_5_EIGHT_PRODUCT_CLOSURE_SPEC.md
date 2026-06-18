@@ -163,6 +163,7 @@ Current v1.5 implementation:
   - `revoked`: revoked token is no longer treated as live even if it has old heartbeat data.
 - Token-auth requests cannot override `agent_id` or `workspace_id` through body, query string, or headers.
 - `tasks` and `runs` now carry `workspace_id`; Agent Gateway pull/claim/start/run-write paths check that boundary.
+- Scope denial returns HTTP `403 forbidden` for valid tokens that lack a required endpoint permission.
 - Agent Gateway can now record customer delivery artifacts with `artifacts:write`, so remote workers can submit report summaries without raw customer content.
 - `/workspace/agents` exposes a first operator UI for creating, viewing, and revoking scoped enrollment tokens.
 - `/workspace/agents` also exposes scope presets and per-token rotation.
@@ -188,6 +189,10 @@ Acceptance evidence:
   - header/query workspace spoofing returns 403,
   - cross-workspace claim/start returns 403,
   - matching workspace claim/start/heartbeat succeeds.
+- `python3 scripts/agent_gateway_scope_matrix_smoke.py` verified observer-scope RBAC:
+  - heartbeat, task pull, and audit writes are allowed,
+  - claim, run start, tool call, and artifact writes are rejected with HTTP `403 forbidden`,
+  - a worker token can claim and start the same task.
 
 Remaining product work:
 
@@ -209,6 +214,7 @@ Current v1.5 implementation:
 - Redaction keeps safe operational evidence such as loopback URLs and run/task IDs readable while still hiding email, phone, bearer token, raw `sk-`, and raw `ntn_` secrets.
 - Minimal workspace isolation is enforced for Agent Gateway token-auth task and run paths.
 - `workspace_id` values are normalized rather than redacted, preventing identifier corruption.
+- Valid scoped tokens missing a required endpoint permission receive HTTP `403 forbidden`, not `401 unauthorized`.
 - Worker output is summarized.
 - Tool args are normalized and redacted.
 - Hermes/OpenClaw real execution requires explicit confirmation.
@@ -362,6 +368,7 @@ python3 scripts/enrollment_health_state_smoke.py
 python3 scripts/redaction_policy_smoke.py
 python3 scripts/enrollment_launch_steps_smoke.py
 python3 scripts/remote_launch_packet_worker_smoke.py
+python3 scripts/agent_gateway_scope_matrix_smoke.py
 ```
 
 ## Current Status Summary
@@ -385,6 +392,7 @@ Implemented and verified:
 - Token rotation.
 - Enrollment heartbeat states: `never_seen`, `fresh`, `stale`, and `revoked`.
 - Endpoint-level scope enforcement.
+- Scoped RBAC matrix smoke for observer-vs-worker permissions.
 - Minimal workspace isolation for token-auth Agent Gateway pull/claim/run/write paths.
 - Remote-token worker end-to-end smoke.
 - Remote launch-packet worker end-to-end smoke.

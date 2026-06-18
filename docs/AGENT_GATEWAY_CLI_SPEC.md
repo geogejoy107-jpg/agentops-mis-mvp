@@ -520,6 +520,7 @@ Current implementation:
 - The token can act only in its bound `workspace_id`.
 - Token-auth requests cannot override `agent_id` or `workspace_id` through request body, query string, or headers.
 - Gateway endpoints check required scopes.
+- Valid scoped tokens that lack an endpoint scope return `403 forbidden`, not `401 unauthorized`.
 - Task pull, task claim, run start, run heartbeat, tool call, approval, memory, evaluation, and audit write paths enforce the run/task workspace boundary.
 - `POST /api/agent-gateway/enrollment/revoke` revokes tokens.
 - `POST /api/agent-gateway/enrollment/rotate` revokes an active token and returns a one-time replacement token.
@@ -635,6 +636,7 @@ python3 scripts/enrollment_health_state_smoke.py
 python3 scripts/agentops_status_smoke.py
 python3 scripts/enrollment_launch_steps_smoke.py
 python3 scripts/remote_launch_packet_worker_smoke.py
+python3 scripts/agent_gateway_scope_matrix_smoke.py
 ```
 
 This helper creates a scoped token, creates a normal MIS task for that agent, runs `scripts/agent_worker.py --once` with the token, verifies run/tool/eval evidence, and revokes the token by default. It does not print the raw token.
@@ -643,6 +645,7 @@ The enrollment health helper verifies `never_seen -> fresh -> stale -> revoked` 
 The CLI status helper verifies `agentops status` reports safe token-bound metadata, updates to `fresh` after heartbeat, and rejects revoked tokens without leaking the raw token.
 The launch-steps helper verifies create/rotate responses include safe remote-worker commands and do not embed the raw token in those commands.
 The remote launch-packet helper uses the returned environment shape to run a real worker and verify run/tool/evaluation ledger evidence.
+The scope-matrix helper verifies an observer token can heartbeat/pull/audit but receives `403 forbidden` for claim/run/tool/artifact writes.
 
 Remaining future work:
 

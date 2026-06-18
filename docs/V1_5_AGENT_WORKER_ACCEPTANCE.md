@@ -81,6 +81,7 @@ python3 scripts/agentops_status_smoke.py
 python3 scripts/redaction_policy_smoke.py
 python3 scripts/enrollment_launch_steps_smoke.py
 python3 scripts/remote_launch_packet_worker_smoke.py
+python3 scripts/agent_gateway_scope_matrix_smoke.py
 ```
 
 ## Evidence
@@ -276,6 +277,20 @@ cross-workspace run start: forbidden
 matching workspace run heartbeat: completed
 token_omitted: true
 latest verified run: run_gw_0b11e7514de6
+```
+
+The Agent Gateway scope matrix smoke passed:
+
+```text
+script: python3 scripts/agent_gateway_scope_matrix_smoke.py
+observer_agent: agt_scope_observer_20260618090005
+worker_agent: agt_scope_worker_20260618090005
+task_id: tsk_scope_matrix_20260618090005
+run_id: run_gw_3136967d1b44
+observer allowed: agents:heartbeat, tasks:read, audit:write
+observer forbidden: artifact, claim, run_start, tool_call
+HTTP status for missing scope: 403 forbidden
+token_omitted: true
 ```
 
 MIS stores token hashes only. Raw token values are shown once at creation time and are not written into audit or runtime events.
