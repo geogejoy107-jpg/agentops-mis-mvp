@@ -185,6 +185,11 @@ Current v1.5 implementation:
   - the first claim moves it to `running` and binds `owner_agent_id`,
   - same-agent repeat claim is idempotent,
   - another agent cannot claim or start the already claimed task.
+- Worker recovery now has a local operator loop:
+  - `GET /api/workers/stuck-tasks` detects stale running worker tasks,
+  - `POST /api/workers/tasks/release` returns a stuck task to `planned`,
+  - linked running runs are marked `blocked` with `WorkerTaskReleased`,
+  - `/workspace/agents` surfaces stuck task count and release controls.
 - Agent Gateway can now record customer delivery artifacts with `artifacts:write`, so remote workers can submit report summaries without raw customer content.
 - `/workspace/agents` exposes a first operator UI for creating, viewing, and revoking scoped enrollment tokens.
 - `/workspace/agents` exposes approval-gated enrollment request controls: request approval, approve/reject enrollment requests, and issue approved tokens.
@@ -226,6 +231,10 @@ Acceptance evidence:
   - repeat claim by the same agent was idempotent,
   - the second worker could not claim or start the claimed task,
   - proof run `run_gw_f3766b73044d`.
+- `python3 scripts/worker_stuck_recovery_smoke.py` verified stuck worker recovery:
+  - stale running worker task was detected,
+  - release returned task `tsk_worker_stuck_20260618152538` to `planned`,
+  - linked run `run_gw_988eb825e20e` was marked `blocked`.
 - `python3 scripts/agent_gateway_session_smoke.py` verified short-lived sessions:
   - an enrollment token mints a narrowed session,
   - sessions can be listed without leaking `session_hash`,
@@ -420,6 +429,7 @@ python3 scripts/remote_launch_packet_worker_smoke.py
 python3 scripts/agent_gateway_scope_matrix_smoke.py
 python3 scripts/agent_gateway_session_smoke.py
 python3 scripts/task_claim_conflict_smoke.py
+python3 scripts/worker_stuck_recovery_smoke.py
 ```
 
 ## Current Status Summary
@@ -447,6 +457,7 @@ Implemented and verified:
 - Endpoint-level scope enforcement.
 - Scoped RBAC matrix smoke for observer-vs-worker permissions.
 - Multi-worker claim conflict guard.
+- Stuck worker task detection and release controls.
 - Short-lived Agent Gateway sessions, including metadata listing, direct revocation, and parent-token revoke cascade.
 - Minimal workspace isolation for token-auth Agent Gateway pull/claim/run/write paths.
 - Remote-token worker end-to-end smoke.

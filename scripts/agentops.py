@@ -303,6 +303,18 @@ def cmd_audit_emit(args, client: AgentOpsClient) -> dict:
     return client.post("/api/agent-gateway/audit", payload)
 
 
+def cmd_worker_stuck(args, client: AgentOpsClient) -> dict:
+    return client.get("/api/workers/stuck-tasks", query={"threshold_sec": args.threshold_sec, "limit": args.limit})
+
+
+def cmd_worker_release(args, client: AgentOpsClient) -> dict:
+    return client.post("/api/workers/tasks/release", {
+        "task_id": args.task_id,
+        "reason": args.reason,
+        "force": args.force,
+    })
+
+
 def cmd_enrollment_create(args, client: AgentOpsClient) -> dict:
     payload = {
         "workspace_id": client.workspace_id,
@@ -594,6 +606,18 @@ def build_parser() -> argparse.ArgumentParser:
     audit_emit.add_argument("--metadata-json", default=None)
     audit_emit.set_defaults(handler="audit_emit")
 
+    worker = sub.add_parser("worker", help="Worker fleet recovery commands.")
+    worker_sub = worker.add_subparsers(dest="action", required=True)
+    worker_stuck = worker_sub.add_parser("stuck", help="List running worker tasks that exceeded a threshold.")
+    worker_stuck.add_argument("--threshold-sec", type=int, default=900)
+    worker_stuck.add_argument("--limit", type=int, default=25)
+    worker_stuck.set_defaults(handler="worker_stuck")
+    worker_release = worker_sub.add_parser("release", help="Release a running worker task back to planned.")
+    worker_release.add_argument("--task-id", required=True)
+    worker_release.add_argument("--reason", default="operator_release")
+    worker_release.add_argument("--force", action="store_true")
+    worker_release.set_defaults(handler="worker_release")
+
     enrollment = sub.add_parser("enrollment", help="Remote/local agent enrollment token commands.")
     enrollment_sub = enrollment.add_subparsers(dest="action", required=True)
     enroll_create = enrollment_sub.add_parser("create", help="Create a scoped one-time-visible agent token.")
@@ -676,6 +700,8 @@ HANDLERS = {
     "memory_propose": cmd_memory_propose,
     "eval_submit": cmd_eval_submit,
     "audit_emit": cmd_audit_emit,
+    "worker_stuck": cmd_worker_stuck,
+    "worker_release": cmd_worker_release,
     "enrollment_create": cmd_enrollment_create,
     "enrollment_request": cmd_enrollment_request,
     "enrollment_issue_approved": cmd_enrollment_issue_approved,

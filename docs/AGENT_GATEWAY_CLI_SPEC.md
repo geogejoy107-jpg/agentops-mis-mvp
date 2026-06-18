@@ -323,6 +323,26 @@ agentops audit emit \
 
 Maps to `audit_logs`.
 
+### `agentops worker stuck`
+
+Lists running worker tasks that exceeded the local recovery threshold. This is an operator view; it does not expose prompts, responses, or tokens.
+
+```bash
+agentops worker stuck --threshold-sec 900 --limit 25
+```
+
+Maps to `GET /api/workers/stuck-tasks`.
+
+### `agentops worker release`
+
+Releases a stuck running task back to `planned` and blocks any linked running run with `WorkerTaskReleased`.
+
+```bash
+agentops worker release --task-id tsk_... --reason "operator recovery"
+```
+
+Maps to `POST /api/workers/tasks/release` and writes runtime/audit evidence.
+
 ### `agentops session create`
 
 Mints a short-lived session token from a scoped enrollment token. The session inherits the bound `agent_id`, `workspace_id`, and a scope subset. It is shown once; MIS stores only a hash.
@@ -593,6 +613,10 @@ Current implementation:
   - repeat claim by the same agent is idempotent,
   - claim or run start by another agent is rejected with `403` or `409`.
 - Task pull, task claim, run start, run heartbeat, tool call, approval, memory, evaluation, and audit write paths enforce the run/task workspace boundary.
+- Worker recovery is operator-visible:
+  - `GET /api/workers/stuck-tasks` lists stale running worker tasks,
+  - `POST /api/workers/tasks/release` returns a stuck task to `planned`,
+  - linked running runs are marked `blocked` with `WorkerTaskReleased`.
 - `POST /api/agent-gateway/enrollment/revoke` revokes tokens.
 - `POST /api/agent-gateway/enrollment/rotate` revokes an active token and returns a one-time replacement token.
 - `POST /api/agent-gateway/enrollment/request` creates task/run/approval/request ledger rows without issuing a token.
@@ -723,6 +747,7 @@ python3 scripts/agent_gateway_scope_matrix_smoke.py
 python3 scripts/agent_gateway_session_smoke.py
 python3 scripts/enrollment_approval_workflow_smoke.py
 python3 scripts/task_claim_conflict_smoke.py
+python3 scripts/worker_stuck_recovery_smoke.py
 ```
 
 This helper creates a scoped token, creates a normal MIS task for that agent, runs `scripts/agent_worker.py --once` with the token, verifies run/tool/eval evidence, and revokes the token by default. It does not print the raw token.
@@ -735,6 +760,7 @@ The scope-matrix helper verifies an observer token can heartbeat/pull/audit but 
 The session helper verifies an enrollment token can mint a narrowed short-lived session, sessions can be listed without hash leakage, one session can be revoked directly, a session can heartbeat/pull tasks, cannot mint another session, expired sessions are rejected, and parent enrollment revocation cascades to active child sessions.
 The enrollment-approval helper verifies request-before-token behavior: request returns no token, premature issue is rejected, approval unlocks token issue, and the issued token can heartbeat.
 The task-claim helper verifies two agents can initially see the same public pool task, the first claim wins, same-agent repeat claim is idempotent, and a second worker cannot claim or start the already claimed task.
+The stuck-recovery helper verifies a stale running worker task is listed, released back to `planned`, and the linked running run is blocked with `WorkerTaskReleased`.
 
 Remaining future work:
 

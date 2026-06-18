@@ -4489,6 +4489,79 @@ def stop_local_worker_daemon(conn, body: dict) -> tuple[dict, int]:
     return {"provider": "agentops-worker", "ok": True, "daemons": stopped}, 200
 
 
+def parse_iso_datetime(value: str | None) -> dt.datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = dt.datetime.fromisoformat(str(value))
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=dt.timezone.utc)
+        return parsed
+    except Exception:
+        return None
+
+
+def worker_stuck_tasks(conn, threshold_sec: int = 900, limit: int = 25) -> list[dict]:
+    threshold_sec = max(int(threshold_sec or 900), 30)
+    limit = min(max(int(limit or 25), 1), 100)
+    now_dt = dt.datetime.now(dt.timezone.utc)
+    cutoff = now_dt - dt.timedelta(seconds=threshold_sec)
+    tasks = rows_to_dicts(conn.execute(
+        """SELECT * FROM tasks
+        WHERE status='running' AND (owner_agent_id LIKE 'agt_worker_%' OR owner_agent_id LIKE 'agt_remote_%' OR owner_agent_id LIKE 'agt_launch_%')
+        ORDER BY updated_at ASC LIMIT ?""",
+        (limit,),
+    ).fetchall())
+    stuck = []
+    for task in tasks:
+        updated = parse_iso_datetime(task.get("updated_at") or task.get("created_at"))
+        age_sec = int((now_dt - updated).total_seconds()) if updated else 0
+        running_run = conn.execute(
+            """SELECT * FROM runs WHERE task_id=? AND status='running' ORDER BY started_at DESC LIMIT 1""",
+            (task["task_id"],),
+        ).fetchone()
+        run_started = parse_iso_datetime(running_run["started_at"]) if running_run else None
+        run_age_sec = int((now_dt - run_started).total_seconds()) if run_started else 0
+        if (updated and updated < cutoff) or (run_started and run_started < cutoff):
+            item = dict(task)
+            item["age_sec"] = max(age_sec, run_age_sec)
+            item["threshold_sec"] = threshold_sec
+            item["running_run_id"] = running_run["run_id"] if running_run else None
+            item["running_run_started_at"] = running_run["started_at"] if running_run else None
+            item["stuck_reason"] = "running_task_exceeded_threshold"
+            stuck.append(item)
+    return stuck
+
+
+def release_worker_task(conn, body: dict) -> tuple[dict, int]:
+    task_id = body.get("task_id")
+    if not task_id:
+        return {"error": "task_id is required"}, 400
+    task = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+    if not task:
+        return {"error": "task not found"}, 404
+    if task["status"] != "running" and not body.get("force"):
+        return {"error": "conflict", "message": f"Task {task_id} is not running.", "status": task["status"]}, 409
+    now = now_iso()
+    before = dict(task)
+    running_runs = rows_to_dicts(conn.execute(
+        "SELECT * FROM runs WHERE task_id=? AND status='running' ORDER BY started_at DESC",
+        (task_id,),
+    ).fetchall())
+    for run in running_runs:
+        conn.execute(
+            """UPDATE runs SET status='blocked', ended_at=?, error_type=?, error_message=?
+            WHERE run_id=? AND status='running'""",
+            (now, "WorkerTaskReleased", "Task was released back to the worker queue by an operator.", run["run_id"]),
+        )
+        runtime_event(conn, "rtc_agent_gateway_local", "worker.task.release_run", "blocked", run_id=run["run_id"], task_id=task_id, agent_id=run["agent_id"], output_summary="Running run blocked because the task was released for recovery.")
+    conn.execute("UPDATE tasks SET status='planned', owner_agent_id=NULL, updated_at=? WHERE task_id=?", (now, task_id))
+    after = dict(conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone())
+    runtime_event(conn, "rtc_agent_gateway_local", "worker.task.release", "completed", task_id=task_id, agent_id=before.get("owner_agent_id"), output_summary=f"Released {task_id} back to planned worker queue.")
+    audit(conn, "user", "usr_founder", "worker.task.release", "tasks", task_id, before, after, {"released_runs": [run["run_id"] for run in running_runs], "reason": redact_text(body.get("reason") or "operator_release", 200)})
+    return {"released": True, "task": after, "released_runs": [run["run_id"] for run in running_runs], "token_omitted": True}, 200
+
+
 def worker_status(conn) -> dict:
     worker_agents = rows_to_dicts(conn.execute(
         """SELECT * FROM agents
@@ -4512,6 +4585,7 @@ def worker_status(conn) -> dict:
     ).fetchall())
     daemons = worker_daemon_status(include_log=False)
     active_daemons = [daemon for daemon in daemons if daemon["running"]]
+    stuck_tasks = worker_stuck_tasks(conn)
     return {
         "provider": "agentops-worker",
         "status": "running" if active_daemons else "ready",
@@ -4519,10 +4593,12 @@ def worker_status(conn) -> dict:
         "running_workers": len([agent for agent in worker_agents if agent.get("status") == "running"]) + len(active_daemons),
         "recent_completed_runs": len([run for run in worker_runs if run.get("status") == "completed"]),
         "pending_worker_tasks": len([task for task in worker_tasks if task.get("status") in ("planned", "backlog")]),
+        "stuck_worker_tasks": len(stuck_tasks),
         "daemons": daemons,
         "workers": worker_agents,
         "recent_runs": worker_runs,
         "recent_tasks": worker_tasks,
+        "stuck_tasks": stuck_tasks,
         "recent_events": worker_events,
     }
 
@@ -5024,6 +5100,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM runtime_events ORDER BY created_at DESC LIMIT 200").fetchall()))
             if path == "/api/workers/status":
                 return self.send_json(worker_status(conn))
+            if path == "/api/workers/stuck-tasks":
+                threshold = int((qs.get("threshold_sec") or ["900"])[0])
+                limit = int((qs.get("limit") or ["25"])[0])
+                return self.send_json({"provider": "agentops-worker", "threshold_sec": max(threshold, 30), "stuck_tasks": worker_stuck_tasks(conn, threshold, limit), "token_omitted": True})
             if path == "/api/workers/local/logs":
                 adapter = coerce_choice((qs.get("adapter") or ["mock"])[0], {"mock", "hermes", "openclaw"}, "mock")
                 return self.send_json({"provider": "agentops-worker", "daemon": read_worker_daemon(adapter, include_log=True)})
@@ -5277,6 +5357,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(payload, status)
             if path == "/api/workers/local/stop":
                 payload, status = stop_local_worker_daemon(conn, body)
+                return self.send_json(payload, status)
+            if path == "/api/workers/tasks/release":
+                payload, status = release_worker_task(conn, body)
+                conn.commit()
                 return self.send_json(payload, status)
             if path == "/api/integrations/openclaw/import":
                 result = import_openclaw(conn)

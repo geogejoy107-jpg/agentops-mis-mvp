@@ -159,11 +159,21 @@ export interface WorkerStatusPayload {
   running_workers: number;
   recent_completed_runs: number;
   pending_worker_tasks: number;
+  stuck_worker_tasks: number;
   daemons: WorkerDaemonStatus[];
   workers: Agent[];
   recent_runs: Run[];
   recent_tasks: Task[];
+  stuck_tasks: StuckWorkerTask[];
   recent_events: Record<string, unknown>[];
+}
+
+export interface StuckWorkerTask extends Task {
+  age_sec?: number;
+  threshold_sec?: number;
+  running_run_id?: string | null;
+  running_run_started_at?: string | null;
+  stuck_reason?: string;
 }
 
 export interface WorkerDaemonStatus {
@@ -227,6 +237,14 @@ export interface WorkerDaemonResult {
 export interface WorkerDaemonLogPayload {
   provider: string;
   daemon: WorkerDaemonStatus;
+}
+
+export interface WorkerTaskReleaseResult {
+  released: boolean;
+  task: Task;
+  released_runs: string[];
+  token_omitted: boolean;
+  error?: string;
 }
 
 export interface AgentGatewayEnrollment {
@@ -724,10 +742,19 @@ export async function loadWorkerStatus(): Promise<WorkerStatusPayload> {
     running_workers: numberValue(raw.running_workers, 0),
     recent_completed_runs: numberValue(raw.recent_completed_runs, 0),
     pending_worker_tasks: numberValue(raw.pending_worker_tasks, 0),
+    stuck_worker_tasks: numberValue(raw.stuck_worker_tasks, 0),
     daemons: asArray<Record<string, unknown>>(raw.daemons).map(normalizeWorkerDaemon),
     workers: asArray<Record<string, unknown>>(raw.workers).map((row) => normalizeAgent(row)),
     recent_runs: asArray<Record<string, unknown>>(raw.recent_runs).map(normalizeRun),
     recent_tasks: asArray<Record<string, unknown>>(raw.recent_tasks).map(normalizeTask),
+    stuck_tasks: asArray<Record<string, unknown>>(raw.stuck_tasks).map((row) => ({
+      ...normalizeTask(row),
+      age_sec: numberValue(row.age_sec, 0),
+      threshold_sec: numberValue(row.threshold_sec, 0),
+      running_run_id: row.running_run_id ? String(row.running_run_id) : null,
+      running_run_started_at: row.running_run_started_at ? String(row.running_run_started_at) : null,
+      stuck_reason: row.stuck_reason ? String(row.stuck_reason) : undefined,
+    })),
     recent_events: asArray<Record<string, unknown>>(raw.recent_events),
   };
 }
@@ -857,6 +884,20 @@ export async function loadWorkerDaemonLogs(adapter: "mock" | "hermes" | "opencla
   return {
     provider: String(raw.provider || "agentops-worker"),
     daemon: normalizeWorkerDaemon((raw.daemon || {}) as Record<string, unknown>),
+  };
+}
+
+export async function releaseWorkerTask(input: { task_id: string; reason?: string; force?: boolean }): Promise<WorkerTaskReleaseResult> {
+  const raw = await apiJson<Record<string, unknown>>("/workers/tasks/release", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  return {
+    released: boolValue(raw.released),
+    task: normalizeTask((raw.task || {}) as Record<string, unknown>),
+    released_runs: asArray(raw.released_runs).map(String),
+    token_omitted: boolValue(raw.token_omitted),
+    error: raw.error ? String(raw.error) : undefined,
   };
 }
 

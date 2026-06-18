@@ -15,6 +15,7 @@ import {
   loadDashboard,
   loadWorkerDaemonLogs,
   loadWorkerStatus,
+  releaseWorkerTask,
   revokeAgentGatewayEnrollment,
   revokeAgentGatewaySession,
   rotateAgentGatewayEnrollment,
@@ -107,6 +108,7 @@ export function AIEmployees() {
   const daemonLogs = data?.daemonLogs || [];
   const selectedDaemonLog = daemonLogs.find(item => item.daemon.adapter === selectedLogAdapter)?.daemon;
   const recentEvents = workerStatus?.recent_events || [];
+  const stuckTasks = workerStatus?.stuck_tasks || [];
   const enrollments = data?.enrollmentPayload?.enrollments || [];
   const sessions = data?.sessionPayload?.sessions || [];
   const gatewayStatus = data?.gatewayStatus;
@@ -144,6 +146,12 @@ export function AIEmployees() {
       workers: "Workers",
       completedRuns: "Completed worker runs",
       pendingTasks: "Pending worker tasks",
+      stuckTasks: "Stuck tasks",
+      releaseTask: "Release",
+      releasingTask: "Releasing...",
+      noStuckTasks: "No stuck running tasks.",
+      age: "Age",
+      linkedRun: "Run",
       dispatchMock: "Run mock once",
       dispatchHermes: "Run Hermes once",
       dispatchOpenClaw: "Run OpenClaw once",
@@ -248,6 +256,12 @@ export function AIEmployees() {
       workers: "Worker",
       completedRuns: "已完成 worker run",
       pendingTasks: "待处理 worker 任务",
+      stuckTasks: "卡住任务",
+      releaseTask: "释放回队列",
+      releasingTask: "正在释放...",
+      noStuckTasks: "暂无卡住的运行中任务。",
+      age: "已运行",
+      linkedRun: "Run",
       dispatchMock: "运行 mock 单轮",
       dispatchHermes: "运行 Hermes 单轮",
       dispatchOpenClaw: "运行 OpenClaw 单轮",
@@ -376,6 +390,23 @@ export function AIEmployees() {
     try {
       const result = await stopLocalWorkerDaemon("all");
       setDispatchResult(`daemon stop: ${result.ok ? "ok" : "failed"}`);
+      await refresh();
+    } catch (err) {
+      setDispatchResult(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDispatching(null);
+    }
+  };
+
+  const releaseStuckTask = async (taskId: string) => {
+    setDispatching(`release-${taskId}`);
+    setDispatchResult(null);
+    try {
+      const result = await releaseWorkerTask({
+        task_id: taskId,
+        reason: locale === "zh" ? "操作台释放卡住 worker 任务" : "Operator released stuck worker task",
+      });
+      setDispatchResult(`${taskId}: ${result.released ? "released" : "not released"} · runs ${result.released_runs.length}`);
       await refresh();
     } catch (err) {
       setDispatchResult(err instanceof Error ? err.message : String(err));
@@ -665,13 +696,45 @@ export function AIEmployees() {
             { label: copy.workers, value: workerStatus?.worker_count ?? "—" },
             { label: copy.completedRuns, value: workerStatus?.recent_completed_runs ?? "—" },
             { label: copy.pendingTasks, value: workerStatus?.pending_worker_tasks ?? "—" },
-            { label: copy.recentRun, value: workerStatus?.recent_runs?.[0]?.run_id || "—" },
+            { label: copy.stuckTasks, value: workerStatus?.stuck_worker_tasks ?? "—", danger: (workerStatus?.stuck_worker_tasks || 0) > 0 },
           ].map((item) => (
             <div key={item.label} className="rounded-lg px-3 py-2" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
               <div className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{item.label}</div>
-              <div className="text-xs font-semibold truncate mt-1" style={{ color: "var(--mis-text)" }}>{item.value}</div>
+              <div className="text-xs font-semibold truncate mt-1" style={{ color: item.danger ? "#F87171" : "var(--mis-text)" }}>{item.value}</div>
             </div>
           ))}
+        </div>
+        <div className="rounded-lg p-3 mt-3" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.stuckTasks}</div>
+            <div className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{copy.recentRun}: {workerStatus?.recent_runs?.[0]?.run_id || "—"}</div>
+          </div>
+          <div className="space-y-2 mt-2">
+            {stuckTasks.length === 0 && (
+              <div className="text-[11px] rounded px-3 py-2" style={{ color: "var(--mis-muted)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                {copy.noStuckTasks}
+              </div>
+            )}
+            {stuckTasks.slice(0, 4).map(task => (
+              <div key={task.task_id} className="grid grid-cols-[1.1fr_0.8fr_0.9fr_auto] gap-3 items-center rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                <div className="min-w-0">
+                  <div className="text-[11px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{task.title}</div>
+                  <div className="text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>{task.task_id} · {task.owner_agent_id || "—"}</div>
+                </div>
+                <div className="text-[10px] truncate" style={{ color: "var(--mis-dim)" }}>{copy.age}: {task.age_sec || 0}s</div>
+                <div className="text-[10px] truncate" style={{ color: "var(--mis-dim)" }}>{copy.linkedRun}: {task.running_run_id || "—"}</div>
+                <button
+                  onClick={() => releaseStuckTask(task.task_id)}
+                  disabled={Boolean(dispatching)}
+                  className="flex items-center gap-1 text-[11px] px-2.5 py-1.5 rounded disabled:opacity-40"
+                  style={{ background: "rgba(251,191,36,0.1)", color: "var(--mis-warning)", border: "1px solid rgba(251,191,36,0.22)" }}
+                >
+                  {dispatching === `release-${task.task_id}` ? <RefreshCw size={12} /> : <Square size={12} />}
+                  {dispatching === `release-${task.task_id}` ? copy.releasingTask : copy.releaseTask}
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
         <div className="grid grid-cols-3 gap-3 mt-3">
           {(workerStatus?.daemons || []).map((daemon) => (

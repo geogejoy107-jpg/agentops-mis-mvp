@@ -85,6 +85,7 @@ python3 scripts/agent_gateway_scope_matrix_smoke.py
 python3 scripts/agent_gateway_session_smoke.py
 python3 scripts/enrollment_approval_workflow_smoke.py
 python3 scripts/task_claim_conflict_smoke.py
+python3 scripts/worker_stuck_recovery_smoke.py
 ```
 
 ## Evidence
@@ -311,6 +312,19 @@ same-agent repeat claim idempotent: true
 second claim status: forbidden
 second start status: forbidden
 run_id: run_gw_f3766b73044d
+token_omitted: true
+```
+
+The worker stuck recovery smoke passed:
+
+```text
+script: python3 scripts/worker_stuck_recovery_smoke.py
+agent_id: agt_worker_stuck_20260618152538
+task_id: tsk_worker_stuck_20260618152538
+run_id: run_gw_988eb825e20e
+task_status_after: planned
+run_status_after: blocked
+released_runs: run_gw_988eb825e20e
 token_omitted: true
 ```
 
@@ -551,9 +565,17 @@ visible labels:
   Worker Fleet 观测
   Daemon 日志
   最近网关事件
+  卡住任务
+  暂无卡住的运行中任务。
   mock
   hermes
   openclaw
+```
+
+The same Playwright snapshot showed release runtime evidence:
+
+```text
+Released tsk_worker_stuck_20260618152332 back to planned worker queue.
 ```
 
 The log API also returned daemon log evidence:
@@ -591,5 +613,5 @@ planned MIS task
 - The worker does not call Dify or Notion.
 - The worker does not store full prompts or raw responses.
 - The worker is repo-local; it is not yet a launchd service, pip package, npm package, or signed binary.
-- The UI worker panel now supports one-shot dispatch, local daemon start/stop, daemon state counters, daemon backoff state, daemon log tails, and recent gateway events; it is not a production fleet manager.
+- The UI worker panel now supports one-shot dispatch, local daemon start/stop, daemon state counters, daemon backoff state, daemon log tails, recent gateway events, and stuck-task release controls; it is not a production fleet manager.
 - Remote enrollment token issuance/revocation/rotation, approval-gated enrollment request UI, endpoint-level scope enforcement, short-lived session tokens with list/revoke controls, scope presets, a first enrollment UI, and minimal Agent Gateway workspace isolation now exist. Full RBAC, hosted multi-tenant isolation, session refresh policy, and hosted enrollment policy UI remain future work.
