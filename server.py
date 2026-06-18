@@ -105,8 +105,9 @@ def redact_text(text: str | None, limit=200) -> str:
     replacements = [
         (r"(?i)(bearer\s+)[a-z0-9._\-]+", r"\1[REDACTED]"),
         (r"(?i)(token|secret|password|api[_-]?key)\s*[:=]\s*['\"]?[^'\"\s,;]+", r"\1=[REDACTED]"),
+        (r"(?i)\b(?:sk-[a-z0-9._\-]+|ntn_[a-z0-9._\-]+)\b", "[SECRET_REDACTED]"),
         (r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", "[EMAIL_REDACTED]"),
-        (r"\+?\d[\d\s().-]{7,}\d", "[PHONE_REDACTED]"),
+        (r"(?<![\w])(?:\+\d{1,3}[\s.-]*)?(?:\(?\d{2,4}\)?[\s.-]+){2,4}\d{2,4}(?![\w])", "[PHONE_REDACTED]"),
     ]
     for pattern, repl in replacements:
         value = re.sub(pattern, repl, value)

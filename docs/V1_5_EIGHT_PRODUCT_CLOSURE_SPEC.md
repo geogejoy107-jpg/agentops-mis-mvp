@@ -203,6 +203,7 @@ Current v1.5 implementation:
 - Token hash storage only.
 - Raw token values are not written to audit/runtime metadata.
 - Rotation smoke output omits raw token values; raw tokens are still one-time only.
+- Redaction keeps safe operational evidence such as loopback URLs and run/task IDs readable while still hiding email, phone, bearer token, raw `sk-`, and raw `ntn_` secrets.
 - Minimal workspace isolation is enforced for Agent Gateway token-auth task and run paths.
 - `workspace_id` values are normalized rather than redacted, preventing identifier corruption.
 - Worker output is summarized.
@@ -214,6 +215,8 @@ Acceptance evidence:
 
 - DB check confirmed no `agtok_` raw token in audit metadata.
 - `agent_gateway_tokens` table has `token_hash`, not raw token.
+- `python3 scripts/redaction_policy_smoke.py` passed.
+- HTTP write/read proof `run_gw_dc141fcaab51` preserved `127.0.0.1:8642` and task id text without `[PHONE_REDACTED]`.
 
 Remaining product work:
 
@@ -353,6 +356,7 @@ python3 scripts/agentops_status_smoke.py
 python3 scripts/remote_agent_token_worker_smoke.py
 python3 scripts/workspace_isolation_smoke.py
 python3 scripts/enrollment_health_state_smoke.py
+python3 scripts/redaction_policy_smoke.py
 ```
 
 ## Current Status Summary

@@ -78,6 +78,7 @@ python3 scripts/approval_decision_side_effect_smoke.py
 python3 scripts/agentops_cli_install_smoke.py
 python3 scripts/enrollment_health_state_smoke.py
 python3 scripts/agentops_status_smoke.py
+python3 scripts/redaction_policy_smoke.py
 ```
 
 ## Evidence
@@ -106,6 +107,15 @@ Latest live adapter recheck:
 ```text
 Hermes:   run_gw_6f995c9de929 completed via agent_worker.hermes, evaluation pass
 OpenClaw: run_gw_c274e7d62b61 completed via agent_worker.openclaw, evaluation pass
+```
+
+Redaction policy recheck:
+
+```text
+script: python3 scripts/redaction_policy_smoke.py
+safe preserved: 127.0.0.1:8642, tsk_worker_hermes_live_20260618065503, run_gw_6f995c9de929
+sensitive redacted: email, phone, bearer, token
+HTTP write/read proof: run_gw_dc141fcaab51 kept loopback URL and task id readable
 ```
 
 The UI-triggered mock worker run was launched from `/workspace/agents` through:
