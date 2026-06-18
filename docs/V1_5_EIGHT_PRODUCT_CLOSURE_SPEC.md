@@ -40,6 +40,8 @@ Current v1.5 implementation:
 - Supports `--once`.
 - Supports loop mode with `--poll-interval` and `--max-tasks`.
 - Supports bounded daemon resilience with `--continue-on-error`, `--max-errors`, local state files, and JSONL iteration logs.
+- Supports configurable idle/error backoff with `--idle-backoff-max`, `--error-backoff-max`, and `--backoff-factor`.
+- Worker state records `consecutive_idle`, `last_sleep_sec`, `next_sleep_sec`, and `last_sleep_reason`.
 - Uses Agent Gateway HTTP API instead of direct SQLite writes.
 - Local daemon supervisor APIs:
   - `GET /api/workers/status`
@@ -52,15 +54,16 @@ Acceptance evidence:
 - Daemon auto-pull run: `run_gw_6ad797929084`
 - Persistent daemon smoke: `max_tasks=0` showed running status and stopped cleanly.
 - Resilience smoke: `python3 scripts/worker_daemon_resilience_smoke.py`
-  - server daemon processed task `tsk_worker_daemon_resilience_20260617184522`
-  - wrote run `run_gw_9ee54d8e4d95`
+  - latest server daemon processed task `tsk_worker_daemon_resilience_20260618091145`
+  - wrote run `run_gw_29d23509f62e`
   - exposed `processed=1`, `iterations=1`, JSONL `worker.iteration`, and local state path
-  - direct bad-URL worker recorded two errors and exited after `max_errors`.
+  - direct bad-URL worker recorded two errors and exited after `max_errors`
+  - direct bad-URL worker exposed `last_sleep_reason=error_backoff` and `last_sleep_sec=0.1`.
 
 Remaining product work:
 
 - launchd/systemd service unit.
-- Full restart policy with supervised relaunch after process death.
+- Full supervised relaunch after process death.
 - Production log rotation.
 - Fleet-level worker management.
 

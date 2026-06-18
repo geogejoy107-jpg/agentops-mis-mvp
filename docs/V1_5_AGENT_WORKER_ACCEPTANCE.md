@@ -168,11 +168,12 @@ The daemon resilience smoke also passed:
 
 ```text
 script: python3 scripts/worker_daemon_resilience_smoke.py
-server daemon task: tsk_worker_daemon_resilience_20260617184522
-server daemon run: run_gw_9ee54d8e4d95
-server daemon state: processed=1 iterations=1 worker_status=completed
+server daemon task: tsk_worker_daemon_resilience_20260618091145
+server daemon run: run_gw_29d23509f62e
+server daemon state: processed=1 iterations=1 worker_status=sleeping
 daemon log: JSONL worker.iteration present
 bad-url direct worker: returncode=1 total_errors=2 consecutive_errors=2 status=failed
+bad-url backoff: last_sleep_reason=error_backoff last_sleep_sec=0.1
 token_omitted: true
 ```
 
@@ -528,5 +529,5 @@ planned MIS task
 - The worker does not call Dify or Notion.
 - The worker does not store full prompts or raw responses.
 - The worker is repo-local; it is not yet a launchd service, pip package, npm package, or signed binary.
-- The UI worker panel now supports one-shot dispatch, local daemon start/stop, daemon state counters, daemon log tails, and recent gateway events; it is not a production fleet manager.
+- The UI worker panel now supports one-shot dispatch, local daemon start/stop, daemon state counters, daemon backoff state, daemon log tails, and recent gateway events; it is not a production fleet manager.
 - Remote enrollment token issuance/revocation/rotation, endpoint-level scope enforcement, short-lived session tokens, scope presets, a first enrollment UI, and minimal Agent Gateway workspace isolation now exist. Full RBAC, hosted multi-tenant isolation, session revocation UI/refresh policy, and production enrollment workflows remain future work.

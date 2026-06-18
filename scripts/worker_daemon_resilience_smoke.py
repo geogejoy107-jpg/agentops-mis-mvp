@@ -139,6 +139,10 @@ def direct_error_recovery_smoke(run_stamp: str) -> dict:
         "http://127.0.0.1:9",
         "--poll-interval",
         "0.1",
+        "--error-backoff-max",
+        "0.2",
+        "--backoff-factor",
+        "2",
         "--max-tasks",
         "0",
         "--continue-on-error",
@@ -155,12 +159,16 @@ def direct_error_recovery_smoke(run_stamp: str) -> dict:
     require(int(state.get("total_errors") or 0) >= 2, f"state did not record two errors: {state}")
     require(state.get("status") in {"failed", "failed_max_errors"}, f"unexpected final error state: {state}")
     require(state.get("last_error"), f"state missing last_error: {state}")
+    require(state.get("last_sleep_reason") == "error_backoff", f"state missing error backoff reason: {state}")
+    require(float(state.get("last_sleep_sec") or 0) > 0, f"state missing backoff sleep seconds: {state}")
     return {
         "state_path": str(state_path),
         "returncode": proc.returncode,
         "total_errors": state.get("total_errors"),
         "consecutive_errors": state.get("consecutive_errors"),
         "status": state.get("status"),
+        "last_sleep_reason": state.get("last_sleep_reason"),
+        "last_sleep_sec": state.get("last_sleep_sec"),
         "token_omitted": True,
     }
 

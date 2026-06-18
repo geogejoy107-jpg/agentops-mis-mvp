@@ -102,8 +102,14 @@ class WorkerState:
             "iterations": 0,
             "total_errors": 0,
             "consecutive_errors": 0,
+            "consecutive_idle": 0,
             "max_errors": args.max_errors,
             "continue_on_error": bool(args.continue_on_error),
+            "backoff_factor": args.backoff_factor,
+            "idle_backoff_max": args.idle_backoff_max,
+            "error_backoff_max": args.error_backoff_max,
+            "last_sleep_sec": 0,
+            "next_sleep_sec": 0,
             "started_at": now_iso(),
             "updated_at": now_iso(),
             "last_heartbeat_at": None,
@@ -120,6 +126,9 @@ class WorkerState:
     def record_result(self, result: dict):
         if result.get("processed"):
             self.data["processed"] = int(self.data.get("processed") or 0) + 1
+            self.data["consecutive_idle"] = 0
+        else:
+            self.data["consecutive_idle"] = int(self.data.get("consecutive_idle") or 0) + 1
         self.data["iterations"] = int(self.data.get("iterations") or 0) + 1
         self.data["consecutive_errors"] = 0
         self.data["last_error"] = None
@@ -352,6 +361,15 @@ def safe_worker_heartbeat(client: AgentOpsClient, args, status: str, summary: st
         pass
 
 
+def backoff_sleep(base_interval: float, cap: float, streak: int, factor: float) -> float:
+    base = max(float(base_interval or 0), 0.0)
+    if base <= 0:
+        return 0.0
+    capped = max(float(cap or base), base)
+    multiplier = max(float(factor or 1.0), 1.0) ** max(int(streak or 1) - 1, 0)
+    return min(base * multiplier, capped)
+
+
 def register_worker(client: AgentOpsClient, adapter: str):
     return client.post("/api/agent-gateway/register", {
         "workspace_id": client.workspace_id,
@@ -517,6 +535,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--status", action="append", default=["planned"], help="Task status to pull. Repeatable.")
     parser.add_argument("--once", action="store_true", help="Process at most one task and exit.")
     parser.add_argument("--poll-interval", type=float, default=5.0)
+    parser.add_argument("--idle-backoff-max", type=float, default=30.0, help="Maximum sleep seconds after consecutive no-task polls.")
+    parser.add_argument("--error-backoff-max", type=float, default=30.0, help="Maximum sleep seconds after consecutive worker errors.")
+    parser.add_argument("--backoff-factor", type=float, default=2.0, help="Exponential backoff factor for idle/error loops.")
     parser.add_argument("--max-tasks", type=int, default=1, help="Maximum tasks to process before exit. Use 0 for no limit.")
     parser.add_argument("--confirm-run", action="store_true", help="Allow live runtime adapter execution.")
     parser.add_argument("--allow-high-risk", action="store_true", help="Allow high/critical risk tasks.")
@@ -562,7 +583,14 @@ def main() -> int:
                 break
             if args.max_tasks and processed >= args.max_tasks:
                 break
-            time.sleep(args.poll_interval)
+            if result.get("processed"):
+                sleep_sec = max(args.poll_interval, 0.0)
+                sleep_reason = "post_task"
+            else:
+                sleep_sec = backoff_sleep(args.poll_interval, args.idle_backoff_max, int(state.data.get("consecutive_idle") or 1), args.backoff_factor)
+                sleep_reason = "idle_backoff"
+            state.update(status="sleeping", last_sleep_sec=sleep_sec, next_sleep_sec=sleep_sec, last_sleep_reason=sleep_reason)
+            time.sleep(sleep_sec)
         except Exception as exc:
             error = state.record_error(exc)
             result = {"processed": False, "ok": False, **error}
@@ -577,7 +605,9 @@ def main() -> int:
                 fatal_failure = True
                 state.stop("failed_max_errors")
                 break
-            time.sleep(min(max(args.poll_interval, 1.0) * int(state.data.get("consecutive_errors") or 1), 30.0))
+            sleep_sec = backoff_sleep(args.poll_interval, args.error_backoff_max, int(state.data.get("consecutive_errors") or 1), args.backoff_factor)
+            state.update(status="sleeping_after_error", last_sleep_sec=sleep_sec, next_sleep_sec=sleep_sec, last_sleep_reason="error_backoff")
+            time.sleep(sleep_sec)
     final_ok = (
         not fatal_failure
         and all(item.get("ok", True) for item in results if item.get("processed"))
