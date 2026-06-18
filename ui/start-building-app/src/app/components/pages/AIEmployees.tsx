@@ -6,6 +6,7 @@ import {
   createAgentGatewayEnrollment,
   dispatchLocalWorkerOnce,
   loadAgentGatewayEnrollments,
+  loadAgentGatewayStatus,
   loadAgents,
   loadDashboard,
   loadWorkerDaemonLogs,
@@ -80,14 +81,15 @@ export function AIEmployees() {
     scopes: DEFAULT_GATEWAY_SCOPES.join(", "),
   });
   const { data, loading, error, refresh } = useLiveData(async () => {
-    const [metrics, workerStatus, enrollmentPayload, daemonLogs] = await Promise.all([
+    const [metrics, workerStatus, enrollmentPayload, gatewayStatus, daemonLogs] = await Promise.all([
       loadDashboard(),
       loadWorkerStatus(),
       loadAgentGatewayEnrollments(),
+      loadAgentGatewayStatus(),
       Promise.all(WORKER_ADAPTERS.map(adapter => loadWorkerDaemonLogs(adapter))),
     ]);
     const agents = await loadAgents(metrics);
-    return { agents, workerStatus, enrollmentPayload, daemonLogs };
+    return { agents, workerStatus, enrollmentPayload, gatewayStatus, daemonLogs };
   }, []);
   const agents = data?.agents || [];
   const workerStatus = data?.workerStatus;
@@ -95,6 +97,7 @@ export function AIEmployees() {
   const selectedDaemonLog = daemonLogs.find(item => item.daemon.adapter === selectedLogAdapter)?.daemon;
   const recentEvents = workerStatus?.recent_events || [];
   const enrollments = data?.enrollmentPayload?.enrollments || [];
+  const gatewayStatus = data?.gatewayStatus;
   const validScopes = data?.enrollmentPayload?.valid_scopes || DEFAULT_GATEWAY_SCOPES;
   const activeAgents = agents.filter(a => a.status === "running").length;
   const activeEnrollments = enrollments.filter(item => item.status === "active").length;
@@ -106,6 +109,16 @@ export function AIEmployees() {
       loading: "Loading live agents...",
       backendUnavailable: "Live backend unavailable",
       refresh: "Refresh live agents",
+      gatewayTitle: "Agent Gateway",
+      gatewaySummary: "Machine-facing API/CLI layer for local and remote agents.",
+      authMode: "Auth mode",
+      authenticated: "Authenticated",
+      gatewayWorkspace: "Workspace",
+      gatewayScopes: "Allowed scopes",
+      activeEnrollments: "Active enrollments",
+      staleEnrollments: "Stale heartbeats",
+      yes: "Yes",
+      no: "No",
       runs: "Runs",
       success: "Success",
       approvals: "Approvals",
@@ -145,8 +158,6 @@ export function AIEmployees() {
       eventAgent: "Agent",
       enrollmentTitle: "Remote Agent Enrollment",
       enrollmentSummary: "Issue scoped tokens for agents running on another laptop or server. The token is shown once; MIS stores only a hash.",
-      activeEnrollments: "Active enrollments",
-      staleEnrollments: "Stale heartbeats",
       createToken: "Create scoped token",
       creatingToken: "Creating token...",
       rotateToken: "Rotate",
@@ -178,6 +189,16 @@ export function AIEmployees() {
       loading: "正在加载实时代理...",
       backendUnavailable: "本地后端不可用",
       refresh: "刷新实时代理",
+      gatewayTitle: "Agent Gateway",
+      gatewaySummary: "给本地和远程 agent 使用的 API/CLI 接入层。",
+      authMode: "认证模式",
+      authenticated: "已认证",
+      gatewayWorkspace: "工作区",
+      gatewayScopes: "权限数量",
+      activeEnrollments: "有效接入",
+      staleEnrollments: "心跳过期",
+      yes: "是",
+      no: "否",
       runs: "运行",
       success: "成功率",
       approvals: "审批",
@@ -217,8 +238,6 @@ export function AIEmployees() {
       eventAgent: "Agent",
       enrollmentTitle: "远程 Agent 接入",
       enrollmentSummary: "给运行在另一台电脑或服务器上的 agent 发放带权限范围的 token。token 只显示一次，MIS 只保存 hash。",
-      activeEnrollments: "有效接入",
-      staleEnrollments: "心跳过期",
       createToken: "创建接入 token",
       creatingToken: "正在创建...",
       rotateToken: "轮换",
@@ -396,6 +415,42 @@ export function AIEmployees() {
         <button onClick={refresh} className="mt-3 text-[11px] px-3 py-1.5 rounded" style={{ background: "rgba(34,211,238,0.12)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.2)" }}>
           {copy.refresh}
         </button>
+      </div>
+
+      <div
+        className="rounded-xl p-4"
+        style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}
+      >
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <ShieldCheck size={14} style={{ color: "var(--mis-cyan)" }} />
+              <h2 className="text-sm font-semibold" style={{ color: "var(--mis-text)" }}>{copy.gatewayTitle}</h2>
+              <StatusBadge status={gatewayStatus?.status || "unknown"} />
+            </div>
+            <p className="text-[11px] mt-1 max-w-2xl" style={{ color: "var(--mis-dim)" }}>{copy.gatewaySummary}</p>
+          </div>
+          <div className="text-right">
+            <div className="text-[10px] uppercase tracking-wide" style={{ color: "var(--mis-muted)" }}>{copy.authMode}</div>
+            <div className="text-xs font-semibold mt-0.5" style={{ color: "var(--mis-text)" }}>
+              {gatewayStatus?.auth.mode || "unknown"}
+            </div>
+          </div>
+        </div>
+        <div className="grid grid-cols-5 gap-3 mt-4">
+          {[
+            { label: copy.authenticated, value: gatewayStatus?.auth.authenticated ? copy.yes : copy.no },
+            { label: copy.gatewayWorkspace, value: gatewayStatus?.auth.workspace_id || "local-demo" },
+            { label: copy.gatewayScopes, value: gatewayStatus?.auth.scopes.length ?? "—" },
+            { label: copy.activeEnrollments, value: activeEnrollments },
+            { label: copy.staleEnrollments, value: staleEnrollments },
+          ].map((item) => (
+            <div key={item.label} className="rounded-lg px-3 py-2" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+              <div className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{item.label}</div>
+              <div className="text-sm font-semibold truncate mt-1" style={{ color: "var(--mis-text)" }}>{item.value}</div>
+            </div>
+          ))}
+        </div>
       </div>
 
       <div

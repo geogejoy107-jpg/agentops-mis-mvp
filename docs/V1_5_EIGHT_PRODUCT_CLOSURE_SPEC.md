@@ -163,6 +163,7 @@ Current v1.5 implementation:
 - Agent Gateway can now record customer delivery artifacts with `artifacts:write`, so remote workers can submit report summaries without raw customer content.
 - `/workspace/agents` exposes a first operator UI for creating, viewing, and revoking scoped enrollment tokens.
 - `/workspace/agents` also exposes scope presets and per-token rotation.
+- `/workspace/agents` surfaces Agent Gateway readiness/auth mode/scope count/active enrollment/stale heartbeat cards for operators.
 
 Acceptance evidence:
 
@@ -172,6 +173,7 @@ Acceptance evidence:
   - repeat run `run_gw_f5635ff603fd`
 - `GET /api/agent-gateway/status` and `agentops status` report safe token-bound auth metadata for remote debugging without printing token secrets.
 - Browser verification showed `远程 Agent 接入`, `创建接入 token`, and `最近接入记录` on `/workspace/agents`.
+- Frontend build verified the `/workspace/agents` Agent Gateway status card.
 - `python3 scripts/enrollment_rotation_smoke.py` verified API and CLI rotation with redacted one-time token output.
 - `python3 scripts/enrollment_health_state_smoke.py` verified the remote enrollment lifecycle `never_seen -> fresh -> stale -> revoked`.
 - `python3 scripts/workspace_isolation_smoke.py` verified:
@@ -226,6 +228,7 @@ Goal:
 Current v1.5 implementation:
 
 - `/workspace/agents` includes:
+  - Agent Gateway status card,
   - worker status panel,
   - one-shot mock/Hermes/OpenClaw dispatch buttons,
   - daemon start/stop controls,
@@ -237,6 +240,7 @@ Current v1.5 implementation:
 - `/admin/tasks/:id` shows delivery artifacts and links related runs to their Run Detail pages.
 - Approval decisions preserve the original approval reason and synchronize linked tool/run/task status: approval completes the tool without overwriting completed run output; rejection blocks the tool, run and task.
 - Browser verification confirmed the controls render.
+- The Agent Gateway card shows gateway readiness, auth mode, workspace, scope count, active enrollments, and stale heartbeats.
 
 Acceptance evidence:
 
@@ -362,6 +366,7 @@ Implemented and verified:
 - Live Tool Call Ledger.
 - Scoped token enrollment.
 - Agent Gateway safe status check via `GET /api/agent-gateway/status` and `agentops status`.
+- Agent Gateway status surfaced in `/workspace/agents`.
 - Remote enrollment UI.
 - Token revocation.
 - Token rotation.

@@ -250,6 +250,27 @@ export interface AgentGatewayEnrollmentListPayload {
   valid_scopes: string[];
 }
 
+export interface AgentGatewayStatusPayload {
+  provider: string;
+  status: string;
+  auth: {
+    mode: string;
+    authenticated: boolean;
+    agent_id: string;
+    workspace_id: string;
+    scopes: string[];
+    token_id?: string;
+    token_status?: string;
+    heartbeat_state?: string;
+    heartbeat_timeout_sec?: number;
+    expires_at?: string;
+    last_used_at?: string | null;
+    last_heartbeat_at?: string | null;
+  };
+  valid_scopes: string[];
+  token_omitted: boolean;
+}
+
 export interface AgentGatewayEnrollmentCreateInput {
   agent_id: string;
   name: string;
@@ -704,6 +725,30 @@ function normalizeAgentGatewayEnrollment(row: Record<string, unknown>): AgentGat
   };
 }
 
+function normalizeAgentGatewayStatus(row: Record<string, unknown>): AgentGatewayStatusPayload {
+  const auth = (row.auth || {}) as Record<string, unknown>;
+  return {
+    provider: String(row.provider || "agent_gateway"),
+    status: String(row.status || "unknown"),
+    auth: {
+      mode: String(auth.mode || "unknown"),
+      authenticated: boolValue(auth.authenticated),
+      agent_id: String(auth.agent_id || ""),
+      workspace_id: String(auth.workspace_id || ""),
+      scopes: parseJsonArray(auth.scopes),
+      token_id: auth.token_id ? String(auth.token_id) : undefined,
+      token_status: auth.token_status ? String(auth.token_status) : undefined,
+      heartbeat_state: auth.heartbeat_state ? String(auth.heartbeat_state) : undefined,
+      heartbeat_timeout_sec: auth.heartbeat_timeout_sec === undefined ? undefined : numberValue(auth.heartbeat_timeout_sec, 0),
+      expires_at: auth.expires_at ? String(auth.expires_at) : undefined,
+      last_used_at: auth.last_used_at ? String(auth.last_used_at) : null,
+      last_heartbeat_at: auth.last_heartbeat_at ? String(auth.last_heartbeat_at) : null,
+    },
+    valid_scopes: asArray(row.valid_scopes).map(String),
+    token_omitted: boolValue(row.token_omitted),
+  };
+}
+
 export async function startLocalWorkerDaemon(input: {
   adapter: "mock" | "hermes" | "openclaw";
   confirm_run?: boolean;
@@ -737,6 +782,11 @@ export async function loadAgentGatewayEnrollments(): Promise<AgentGatewayEnrollm
     enrollments: asArray<Record<string, unknown>>(raw.enrollments).map(normalizeAgentGatewayEnrollment),
     valid_scopes: asArray(raw.valid_scopes).map(String),
   };
+}
+
+export async function loadAgentGatewayStatus(): Promise<AgentGatewayStatusPayload> {
+  const raw = await apiJson<Record<string, unknown>>("/agent-gateway/status");
+  return normalizeAgentGatewayStatus(raw);
 }
 
 export async function createAgentGatewayEnrollment(input: AgentGatewayEnrollmentCreateInput): Promise<AgentGatewayEnrollmentCreateResult> {

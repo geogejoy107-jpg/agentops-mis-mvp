@@ -211,6 +211,13 @@ prefix global args supported: true
 token_omitted: true
 ```
 
+The `/workspace/agents` Agent Gateway status card was added and frontend build passed:
+
+```text
+npm run build
+Agent Gateway card shows ready/auth mode/workspace/scope count/active enrollments/stale heartbeats.
+```
+
 The workspace isolation smoke passed:
 
 ```text
