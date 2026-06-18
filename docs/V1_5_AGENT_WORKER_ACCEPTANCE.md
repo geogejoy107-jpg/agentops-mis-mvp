@@ -87,6 +87,7 @@ python3 scripts/enrollment_approval_workflow_smoke.py
 python3 scripts/task_claim_conflict_smoke.py
 python3 scripts/worker_stuck_recovery_smoke.py
 python3 scripts/worker_session_refresh_smoke.py
+python3 scripts/worker_adapter_retry_smoke.py
 ```
 
 ## Evidence
@@ -358,6 +359,21 @@ task_ids: tsk_session_refresh_20260618153329_1, tsk_session_refresh_202606181533
 run_ids: run_gw_1a886228c52d, run_gw_d43859ff81e3
 session_ids: agtsess_3450b103cb83c3b9, agtsess_42bb9739e19e48f5, agtsess_fb34437996eb3c02
 session_refresh_count: 2
+token_omitted: true
+```
+
+The worker adapter retry smoke passed:
+
+```text
+script: python3 scripts/worker_adapter_retry_smoke.py
+agent_id: agt_adapter_retry_20260618153854
+retry_task_id: tsk_adapter_retry_20260618153854_success
+retry_run_id: run_gw_a572f60ec9f4
+retry_attempt_count: 2
+confirm_gate_task_id: tsk_adapter_retry_20260618153854_confirm_gate
+confirm_gate_run_id: run_gw_9951c583b9a7
+confirm_gate_attempt_count: 1
+confirm_gate_error_type: ConfirmRunRequired
 token_omitted: true
 ```
 

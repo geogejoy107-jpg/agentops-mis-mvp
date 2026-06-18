@@ -70,6 +70,8 @@ AGENTOPS_AGENT_ID=agt_worker_local
 AGENTOPS_API_KEY=
 AGENTOPS_SESSION_TTL_SEC=900
 AGENTOPS_SESSION_REFRESH_MARGIN_SEC=60
+AGENTOPS_ADAPTER_MAX_ATTEMPTS=1
+AGENTOPS_ADAPTER_RETRY_DELAY_SEC=1
 ```
 
 Task selection:
@@ -86,10 +88,13 @@ Adapter execution:
 - `mock`: deterministic local summary, no external runtime.
 - `hermes`: calls `POST /api/integrations/hermes/run-task` with `confirm_run:true` only when worker gets `--confirm-run`.
 - `openclaw`: calls `POST /api/integrations/openclaw/probe` only when worker gets `--confirm-run`.
+- Retryable adapter failures can be retried with `--adapter-max-attempts` and `--adapter-retry-delay-sec`.
+- Safety gates such as missing `--confirm-run` return `ConfirmRunRequired` and are not retried.
 
 Writeback:
 
 - Record one tool call describing the selected adapter and outcome.
+- Tool-call args include `attempt_count`, `max_attempts`, and redacted retry history.
 - Complete or fail the run with a redacted output summary.
 - Submit an evaluation.
 - Emit an audit event.
@@ -229,6 +234,7 @@ Minimum acceptance for v1.5 worker loop:
 13. Dify and Notion endpoints are not called by this worker.
 14. `python3 scripts/worker_daemon_resilience_smoke.py` proves daemon state/log evidence and bounded error recovery.
 15. `python3 scripts/worker_session_refresh_smoke.py` proves a loop worker refreshes short-lived sessions and still completes multiple tasks.
+16. `python3 scripts/worker_adapter_retry_smoke.py` proves retryable adapter failure can succeed on retry and non-retryable safety gates stop after one attempt.
 
 ## Known Limitations
 

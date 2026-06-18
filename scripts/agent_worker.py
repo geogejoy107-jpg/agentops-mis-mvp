@@ -123,6 +123,7 @@ class WorkerState:
             "last_sleep_sec": 0,
             "next_sleep_sec": 0,
             "session_refresh_count": 0,
+            "adapter_max_attempts": args.adapter_max_attempts,
             "started_at": now_iso(),
             "updated_at": now_iso(),
             "last_heartbeat_at": None,
@@ -283,6 +284,10 @@ class AdapterResult:
     duration_ms: int = 0
     output_tokens: int = 0
     target_resource: str | None = None
+    retryable: bool = False
+    attempt_count: int = 1
+    max_attempts: int = 1
+    retry_history: list[dict] | None = None
 
 
 def build_task_prompt(task: dict) -> str:
@@ -301,8 +306,19 @@ def build_task_prompt(task: dict) -> str:
     )
 
 
-def execute_mock(task: dict) -> AdapterResult:
+def execute_mock(task: dict, attempt: int = 1, fail_before_success: int = 0) -> AdapterResult:
     prompt = build_task_prompt(task)
+    if fail_before_success and attempt <= fail_before_success:
+        return AdapterResult(
+            ok=False,
+            output_summary=f"Mock worker simulated transient adapter failure on attempt {attempt}.",
+            prompt_hash=stable_hash(prompt),
+            raw_payload_hash=stable_hash({"adapter": "mock", "task_id": task.get("task_id"), "attempt": attempt, "simulated": True}),
+            error_type="MockTransientFailure",
+            error_message=f"Simulated transient adapter failure before success, attempt {attempt}.",
+            target_resource="local://agentops/mock-worker",
+            retryable=True,
+        )
     summary = f"Mock worker completed task '{redact_text(task.get('title'), 80)}' and produced a safe local execution summary."
     return AdapterResult(
         ok=True,
@@ -323,6 +339,7 @@ def execute_hermes(task: dict, gateway_url: str, model: str, confirm_run: bool) 
             error_type="ConfirmRunRequired",
             error_message="Hermes live execution requires --confirm-run.",
             target_resource=gateway_url.rstrip() + "/v1/chat/completions",
+            retryable=False,
         )
     payload = {
         "model": model,
@@ -351,6 +368,7 @@ def execute_hermes(task: dict, gateway_url: str, model: str, confirm_run: bool) 
             duration_ms=int((time.time() - started) * 1000),
             output_tokens=int(usage.get("completion_tokens") or usage.get("output_tokens") or 0),
             target_resource=gateway_url.rstrip("/") + "/v1/chat/completions",
+            retryable=not bool(visible),
         )
     except Exception as exc:
         return AdapterResult(
@@ -361,6 +379,7 @@ def execute_hermes(task: dict, gateway_url: str, model: str, confirm_run: bool) 
             error_message=redact_text(str(exc), 200),
             duration_ms=int((time.time() - started) * 1000),
             target_resource=gateway_url.rstrip("/") + "/v1/chat/completions",
+            retryable=True,
         )
 
 
@@ -374,6 +393,7 @@ def execute_openclaw(task: dict, binary_path: str, agent_name: str, timeout: int
             error_type="ConfirmRunRequired",
             error_message="OpenClaw live execution requires --confirm-run.",
             target_resource=f"local://openclaw/{agent_name}",
+            retryable=False,
         )
     started = time.time()
     try:
@@ -399,6 +419,7 @@ def execute_openclaw(task: dict, binary_path: str, agent_name: str, timeout: int
             error_message=None if ok else redact_text(proc.stderr or visible or f"exit={proc.returncode}", 200),
             duration_ms=int(meta.get("durationMs") or ((time.time() - started) * 1000)),
             target_resource=f"local://openclaw/{agent_name}",
+            retryable=not ok,
         )
     except Exception as exc:
         return AdapterResult(
@@ -409,7 +430,48 @@ def execute_openclaw(task: dict, binary_path: str, agent_name: str, timeout: int
             error_message=redact_text(str(exc), 200),
             duration_ms=int((time.time() - started) * 1000),
             target_resource=f"local://openclaw/{agent_name}",
+            retryable=True,
         )
+
+
+def execute_adapter_once(task: dict, args, attempt: int) -> AdapterResult:
+    if args.adapter == "mock":
+        return execute_mock(task, attempt=attempt, fail_before_success=args.mock_failures_before_success)
+    if args.adapter == "hermes":
+        return execute_hermes(task, args.hermes_gateway_url, args.hermes_model, args.confirm_run)
+    if args.adapter == "openclaw":
+        return execute_openclaw(task, args.openclaw_bin, args.openclaw_agent, args.openclaw_timeout, args.confirm_run)
+    raise RuntimeError(f"unknown adapter: {args.adapter}")
+
+
+def execute_adapter_with_retries(task: dict, args) -> AdapterResult:
+    max_attempts = min(max(int(args.adapter_max_attempts or 1), 1), 5)
+    retry_delay = max(float(args.adapter_retry_delay_sec or 0), 0.0)
+    history = []
+    result = None
+    for attempt in range(1, max_attempts + 1):
+        result = execute_adapter_once(task, args, attempt)
+        history.append({
+            "attempt": attempt,
+            "ok": result.ok,
+            "error_type": result.error_type,
+            "retryable": result.retryable,
+            "summary": redact_text(result.output_summary, 120),
+        })
+        if result.ok:
+            break
+        if not result.retryable or attempt >= max_attempts:
+            break
+        if retry_delay:
+            time.sleep(retry_delay)
+    if result is None:
+        raise RuntimeError("adapter execution produced no result")
+    result.attempt_count = len(history)
+    result.max_attempts = max_attempts
+    result.retry_history = history
+    if result.attempt_count > 1:
+        result.output_summary = f"{result.output_summary} Adapter attempts: {result.attempt_count}/{max_attempts}."
+    return result
 
 
 def risk_allowed(task: dict, allow_high_risk: bool) -> bool:
@@ -498,14 +560,7 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
     run = run_payload["run"]
     run_id = run["run_id"]
 
-    if args.adapter == "mock":
-        result = execute_mock(task)
-    elif args.adapter == "hermes":
-        result = execute_hermes(task, args.hermes_gateway_url, args.hermes_model, args.confirm_run)
-    elif args.adapter == "openclaw":
-        result = execute_openclaw(task, args.openclaw_bin, args.openclaw_agent, args.openclaw_timeout, args.confirm_run)
-    else:
-        raise RuntimeError(f"unknown adapter: {args.adapter}")
+    result = execute_adapter_with_retries(task, args)
 
     tool_status = "completed" if result.ok else "failed"
     client.post("/api/agent-gateway/tool-calls", {
@@ -521,6 +576,9 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
             "task_id": task_id,
             "adapter": args.adapter,
             "prompt_hash": result.prompt_hash,
+            "attempt_count": result.attempt_count,
+            "max_attempts": result.max_attempts,
+            "retry_history": result.retry_history or [],
             "raw_omitted": True,
         },
         "result_summary": result.output_summary,
@@ -549,6 +607,8 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
             "adapter": args.adapter,
             "requires_completed_run": True,
             "raw_prompt_response_omitted": True,
+            "attempt_count": result.attempt_count,
+            "max_attempts": result.max_attempts,
         },
         "notes": "Worker adapter loop completed." if result.ok else f"Worker adapter loop failed: {result.error_type}",
     })
@@ -578,6 +638,9 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
             "ok": result.ok,
             "prompt_hash": result.prompt_hash,
             "raw_payload_hash": result.raw_payload_hash,
+            "attempt_count": result.attempt_count,
+            "max_attempts": result.max_attempts,
+            "retryable_final": result.retryable,
         },
     })
     client.post("/api/agent-gateway/heartbeat", {
@@ -593,6 +656,7 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
         "run_id": run_id,
         "adapter": args.adapter,
         "ok": result.ok,
+        "attempt_count": result.attempt_count,
         "output_summary": result.output_summary,
         "error_type": result.error_type,
     }
@@ -618,6 +682,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-tasks", type=int, default=1, help="Maximum tasks to process before exit. Use 0 for no limit.")
     parser.add_argument("--confirm-run", action="store_true", help="Allow live runtime adapter execution.")
     parser.add_argument("--allow-high-risk", action="store_true", help="Allow high/critical risk tasks.")
+    parser.add_argument("--adapter-max-attempts", type=int, default=int(os.environ.get("AGENTOPS_ADAPTER_MAX_ATTEMPTS", "1")), help="Maximum adapter execution attempts for retryable failures.")
+    parser.add_argument("--adapter-retry-delay-sec", type=float, default=float(os.environ.get("AGENTOPS_ADAPTER_RETRY_DELAY_SEC", "1")), help="Delay between retryable adapter attempts.")
+    parser.add_argument("--mock-failures-before-success", type=int, default=int(os.environ.get("AGENTOPS_MOCK_FAILURES_BEFORE_SUCCESS", "0")), help="Local test hook: make the mock adapter fail this many retryable attempts before succeeding.")
     parser.add_argument("--hermes-gateway-url", default=os.environ.get("HERMES_GATEWAY_URL", DEFAULT_HERMES_GATEWAY_URL))
     parser.add_argument("--hermes-model", default=os.environ.get("HERMES_MODEL", DEFAULT_HERMES_MODEL))
     parser.add_argument("--openclaw-bin", default=os.environ.get("OPENCLAW_BIN", DEFAULT_OPENCLAW_BIN))

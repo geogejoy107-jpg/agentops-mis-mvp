@@ -81,6 +81,9 @@ Current v1.5 implementation:
   - `hermes`
   - `openclaw`
 - Hermes/OpenClaw real execution requires explicit `--confirm-run`.
+- Retryable adapter failures can be retried with `--adapter-max-attempts` and `--adapter-retry-delay-sec`.
+- Non-retryable safety failures such as `ConfirmRunRequired` do not retry.
+- Tool-call args, evaluation rubric, and audit metadata record `attempt_count`, `max_attempts`, and retry history summaries.
 - Adapter output is summarized and hashed; raw prompt/response is not stored.
 
 Acceptance evidence:
@@ -91,11 +94,14 @@ Acceptance evidence:
 - Live recheck on 2026-06-18:
   - Hermes worker task `tsk_worker_hermes_live_20260618065503` completed as `run_gw_6f995c9de929`.
   - OpenClaw worker task `tsk_worker_openclaw_live_20260618065555` completed as `run_gw_c274e7d62b61`.
+- `python3 scripts/worker_adapter_retry_smoke.py` verified adapter retry behavior:
+  - mock transient failure succeeded after two attempts in `run_gw_a572f60ec9f4`,
+  - Hermes without `--confirm-run` stopped after one non-retryable `ConfirmRunRequired` attempt in `run_gw_9951c583b9a7`,
+  - raw token output remained omitted.
 
 Remaining product work:
 
 - Rich task-to-runtime prompt profiles.
-- Adapter-specific retry handling.
 - Runtime trust registry UI.
 
 ### 3. Repo-Local CLI, Not Global Package Yet
@@ -439,6 +445,7 @@ python3 scripts/agent_gateway_session_smoke.py
 python3 scripts/task_claim_conflict_smoke.py
 python3 scripts/worker_stuck_recovery_smoke.py
 python3 scripts/worker_session_refresh_smoke.py
+python3 scripts/worker_adapter_retry_smoke.py
 ```
 
 ## Current Status Summary
@@ -448,6 +455,7 @@ Implemented and verified:
 - Local worker loop.
 - Local daemon start/stop/status.
 - Mock/Hermes/OpenClaw adapter loop.
+- Adapter retry handling with non-retry safety gate behavior.
 - UI one-shot worker dispatch.
 - UI daemon controls.
 - UI worker fleet telemetry.
