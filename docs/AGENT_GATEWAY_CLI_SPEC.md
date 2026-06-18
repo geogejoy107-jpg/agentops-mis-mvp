@@ -587,6 +587,11 @@ Current implementation:
 - Enrollment launch packets now recommend minting a short-lived session before worker execution:
   - `agentops session create --ttl-sec 900 --save-session`
   - `python3 scripts/agent_worker.py ... --use-session --session-ttl-sec 900`
+- Task claim is guarded for multi-worker use:
+  - public pool tasks may be visible to multiple agents before claim,
+  - first claim moves the task to `running` and binds `owner_agent_id`,
+  - repeat claim by the same agent is idempotent,
+  - claim or run start by another agent is rejected with `403` or `409`.
 - Task pull, task claim, run start, run heartbeat, tool call, approval, memory, evaluation, and audit write paths enforce the run/task workspace boundary.
 - `POST /api/agent-gateway/enrollment/revoke` revokes tokens.
 - `POST /api/agent-gateway/enrollment/rotate` revokes an active token and returns a one-time replacement token.
@@ -717,6 +722,7 @@ python3 scripts/remote_launch_packet_worker_smoke.py
 python3 scripts/agent_gateway_scope_matrix_smoke.py
 python3 scripts/agent_gateway_session_smoke.py
 python3 scripts/enrollment_approval_workflow_smoke.py
+python3 scripts/task_claim_conflict_smoke.py
 ```
 
 This helper creates a scoped token, creates a normal MIS task for that agent, runs `scripts/agent_worker.py --once` with the token, verifies run/tool/eval evidence, and revokes the token by default. It does not print the raw token.
@@ -728,6 +734,7 @@ The remote launch-packet helper uses the returned environment shape to run a rea
 The scope-matrix helper verifies an observer token can heartbeat/pull/audit but receives `403 forbidden` for claim/run/tool/artifact writes.
 The session helper verifies an enrollment token can mint a narrowed short-lived session, sessions can be listed without hash leakage, one session can be revoked directly, a session can heartbeat/pull tasks, cannot mint another session, expired sessions are rejected, and parent enrollment revocation cascades to active child sessions.
 The enrollment-approval helper verifies request-before-token behavior: request returns no token, premature issue is rejected, approval unlocks token issue, and the issued token can heartbeat.
+The task-claim helper verifies two agents can initially see the same public pool task, the first claim wins, same-agent repeat claim is idempotent, and a second worker cannot claim or start the already claimed task.
 
 Remaining future work:
 

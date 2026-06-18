@@ -2662,6 +2662,28 @@ def agent_gateway_pull_tasks(conn, qs, headers, auth_ctx=None) -> tuple[dict, in
     return {"tasks": rows, "count": len(rows), "workspace_id": ident["workspace_id"]}, 200
 
 
+def task_collaborators(task) -> list[str]:
+    try:
+        raw = task["collaborator_agent_ids"]
+    except Exception:
+        raw = task.get("collaborator_agent_ids") if hasattr(task, "get") else None
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+        return [str(item) for item in parsed] if isinstance(parsed, list) else []
+    except Exception:
+        return [item.strip() for item in str(raw).split(",") if item.strip()]
+
+
+def agent_can_access_task(task, agent_id: str) -> bool:
+    try:
+        owner = task["owner_agent_id"]
+    except Exception:
+        owner = task.get("owner_agent_id") if hasattr(task, "get") else None
+    return not owner or owner == agent_id or agent_id in task_collaborators(task)
+
+
 def agent_gateway_claim_task(conn, task_id: str, body) -> tuple[dict, int]:
     ident = agent_gateway_identity({}, body)
     agent_id = ident["agent_id"]
@@ -2675,7 +2697,22 @@ def agent_gateway_claim_task(conn, task_id: str, body) -> tuple[dict, int]:
         return workspace_forbidden("task", task_id, ident["workspace_id"], actual_workspace)
     ensure_gateway_agent(conn, agent_id, runtime_type=body.get("runtime_type"))
     before = dict(task)
-    conn.execute("UPDATE tasks SET owner_agent_id=?, status='running', updated_at=? WHERE task_id=?", (agent_id, now_iso(), task_id))
+    if not agent_can_access_task(task, agent_id):
+        return {"error": "forbidden", "message": f"Task {task_id} is assigned to another agent.", "owner_agent_id": task["owner_agent_id"]}, 403
+    if task["status"] == "running":
+        if task["owner_agent_id"] == agent_id:
+            return {"task": before, "claimed_by": agent_id, "already_claimed": True}, 200
+        return {"error": "conflict", "message": f"Task {task_id} is already running.", "status": task["status"], "owner_agent_id": task["owner_agent_id"]}, 409
+    if task["status"] not in {"planned", "backlog"}:
+        return {"error": "conflict", "message": f"Task {task_id} cannot be claimed from status {task['status']}.", "status": task["status"], "owner_agent_id": task["owner_agent_id"]}, 409
+    cursor = conn.execute(
+        """UPDATE tasks SET owner_agent_id=?, status='running', updated_at=?
+        WHERE task_id=? AND COALESCE(workspace_id,'local-demo')=? AND status IN ('planned','backlog')""",
+        (agent_id, now_iso(), task_id, ident["workspace_id"]),
+    )
+    if cursor.rowcount != 1:
+        current = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+        return {"error": "conflict", "message": f"Task {task_id} was claimed or changed before this claim completed.", "task": dict(current) if current else None}, 409
     after = dict(conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone())
     runtime_event(conn, "rtc_agent_gateway_local", "task.claim", "completed", task_id=task_id, agent_id=agent_id, output_summary=f"{agent_id} claimed {task_id}.")
     audit(conn, "agent", agent_id, "agent_gateway.task_claim", "tasks", task_id, before, after, {"workspace_id": ident["workspace_id"]})
@@ -2694,6 +2731,12 @@ def agent_gateway_start_run(conn, body) -> tuple[dict, int]:
     actual_workspace = row_workspace(task)
     if actual_workspace != ident["workspace_id"]:
         return workspace_forbidden("task", task_id, ident["workspace_id"], actual_workspace)
+    if not agent_can_access_task(task, agent_id):
+        return {"error": "forbidden", "message": f"Task {task_id} is assigned to another agent.", "owner_agent_id": task["owner_agent_id"]}, 403
+    if task["status"] == "running" and task["owner_agent_id"] != agent_id:
+        return {"error": "conflict", "message": f"Task {task_id} is already running.", "status": task["status"], "owner_agent_id": task["owner_agent_id"]}, 409
+    if task["status"] not in {"planned", "backlog", "running"}:
+        return {"error": "conflict", "message": f"Task {task_id} cannot start a run from status {task['status']}.", "status": task["status"], "owner_agent_id": task["owner_agent_id"]}, 409
     ensure_gateway_agent(conn, agent_id, runtime_type=body.get("runtime_type"))
     agent = conn.execute("SELECT * FROM agents WHERE agent_id=?", (agent_id,)).fetchone()
     started = now_iso()
@@ -2725,7 +2768,7 @@ def agent_gateway_start_run(conn, body) -> tuple[dict, int]:
         "created_at": started,
     }
     outcome = upsert_run(conn, row, "agent-gateway", {"workspace_id": ident["workspace_id"], "input_hash": stable_hash(body.get("input_summary") or task["title"])})
-    conn.execute("UPDATE tasks SET status='running', updated_at=? WHERE task_id=?", (now_iso(), task_id))
+    conn.execute("UPDATE tasks SET status='running', owner_agent_id=COALESCE(NULLIF(owner_agent_id,''), ?), updated_at=? WHERE task_id=?", (agent_id, now_iso(), task_id))
     conn.execute("UPDATE agents SET status='running', updated_at=? WHERE agent_id=?", (now_iso(), agent_id))
     runtime_event(conn, "rtc_agent_gateway_local", "run.start", "running", task_id=task_id, run_id=run_id, agent_id=agent_id, input_summary=row["input_summary"])
     return {"run": row, "outcome": outcome}, 201 if outcome == "created" else 200

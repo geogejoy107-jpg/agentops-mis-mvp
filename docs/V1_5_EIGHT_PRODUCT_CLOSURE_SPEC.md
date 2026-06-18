@@ -180,6 +180,11 @@ Current v1.5 implementation:
 - Token-auth requests cannot override `agent_id` or `workspace_id` through body, query string, or headers.
 - `tasks` and `runs` now carry `workspace_id`; Agent Gateway pull/claim/start/run-write paths check that boundary.
 - Scope denial returns HTTP `403 forbidden` for valid tokens that lack a required endpoint permission.
+- Task claim now has a multi-worker guard:
+  - multiple agents may see a public pool task before claim,
+  - the first claim moves it to `running` and binds `owner_agent_id`,
+  - same-agent repeat claim is idempotent,
+  - another agent cannot claim or start the already claimed task.
 - Agent Gateway can now record customer delivery artifacts with `artifacts:write`, so remote workers can submit report summaries without raw customer content.
 - `/workspace/agents` exposes a first operator UI for creating, viewing, and revoking scoped enrollment tokens.
 - `/workspace/agents` exposes approval-gated enrollment request controls: request approval, approve/reject enrollment requests, and issue approved tokens.
@@ -215,6 +220,12 @@ Acceptance evidence:
   - heartbeat, task pull, and audit writes are allowed,
   - claim, run start, tool call, and artifact writes are rejected with HTTP `403 forbidden`,
   - a worker token can claim and start the same task.
+- `python3 scripts/task_claim_conflict_smoke.py` verified multi-worker claim safety:
+  - two agents initially saw the same public pool task,
+  - the first claim won,
+  - repeat claim by the same agent was idempotent,
+  - the second worker could not claim or start the claimed task,
+  - proof run `run_gw_f3766b73044d`.
 - `python3 scripts/agent_gateway_session_smoke.py` verified short-lived sessions:
   - an enrollment token mints a narrowed session,
   - sessions can be listed without leaking `session_hash`,
@@ -408,6 +419,7 @@ python3 scripts/enrollment_launch_steps_smoke.py
 python3 scripts/remote_launch_packet_worker_smoke.py
 python3 scripts/agent_gateway_scope_matrix_smoke.py
 python3 scripts/agent_gateway_session_smoke.py
+python3 scripts/task_claim_conflict_smoke.py
 ```
 
 ## Current Status Summary
@@ -434,6 +446,7 @@ Implemented and verified:
 - Short-lived session list/revoke API, CLI, and `/workspace/agents` panel.
 - Endpoint-level scope enforcement.
 - Scoped RBAC matrix smoke for observer-vs-worker permissions.
+- Multi-worker claim conflict guard.
 - Short-lived Agent Gateway sessions, including metadata listing, direct revocation, and parent-token revoke cascade.
 - Minimal workspace isolation for token-auth Agent Gateway pull/claim/run/write paths.
 - Remote-token worker end-to-end smoke.

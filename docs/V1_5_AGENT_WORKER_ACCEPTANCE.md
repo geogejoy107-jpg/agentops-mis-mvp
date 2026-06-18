@@ -84,6 +84,7 @@ python3 scripts/remote_launch_packet_worker_smoke.py
 python3 scripts/agent_gateway_scope_matrix_smoke.py
 python3 scripts/agent_gateway_session_smoke.py
 python3 scripts/enrollment_approval_workflow_smoke.py
+python3 scripts/task_claim_conflict_smoke.py
 ```
 
 ## Evidence
@@ -295,6 +296,21 @@ run_id: run_gw_f06a070b28da
 observer allowed: agents:heartbeat, tasks:read, audit:write
 observer forbidden: artifact, claim, run_start, tool_call
 HTTP status for missing scope: 403 forbidden
+token_omitted: true
+```
+
+The Agent Gateway task claim conflict smoke passed:
+
+```text
+script: python3 scripts/task_claim_conflict_smoke.py
+task_id: tsk_claim_conflict_20260618151100
+claiming_agent: agt_claim_a_20260618151100
+blocked_agent: agt_claim_b_20260618151100
+both agents saw pool task before claim: true
+same-agent repeat claim idempotent: true
+second claim status: forbidden
+second start status: forbidden
+run_id: run_gw_f3766b73044d
 token_omitted: true
 ```
 
