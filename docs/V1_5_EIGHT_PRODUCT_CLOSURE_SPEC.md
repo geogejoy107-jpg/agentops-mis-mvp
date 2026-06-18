@@ -179,6 +179,7 @@ Acceptance evidence:
 - Browser verification showed `远程 Agent 接入`, `创建接入 token`, and `最近接入记录` on `/workspace/agents`.
 - Frontend build verified the `/workspace/agents` Agent Gateway status card.
 - `python3 scripts/enrollment_launch_steps_smoke.py` verified create/rotate launch packets omit raw tokens and include status/worker commands.
+- `python3 scripts/remote_launch_packet_worker_smoke.py` verified the returned launch packet environment can run a scoped worker and write run/tool/evaluation ledger evidence.
 - `python3 scripts/enrollment_rotation_smoke.py` verified API and CLI rotation with redacted one-time token output.
 - `python3 scripts/enrollment_health_state_smoke.py` verified the remote enrollment lifecycle `never_seen -> fresh -> stale -> revoked`.
 - `python3 scripts/workspace_isolation_smoke.py` verified:
@@ -360,6 +361,7 @@ python3 scripts/workspace_isolation_smoke.py
 python3 scripts/enrollment_health_state_smoke.py
 python3 scripts/redaction_policy_smoke.py
 python3 scripts/enrollment_launch_steps_smoke.py
+python3 scripts/remote_launch_packet_worker_smoke.py
 ```
 
 ## Current Status Summary
@@ -385,6 +387,7 @@ Implemented and verified:
 - Endpoint-level scope enforcement.
 - Minimal workspace isolation for token-auth Agent Gateway pull/claim/run/write paths.
 - Remote-token worker end-to-end smoke.
+- Remote launch-packet worker end-to-end smoke.
 - Customer-style knowledge-base bot project smoke with delivery artifact.
 
 Not yet product-complete:

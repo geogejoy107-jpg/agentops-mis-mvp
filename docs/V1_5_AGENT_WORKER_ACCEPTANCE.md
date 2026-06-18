@@ -80,6 +80,7 @@ python3 scripts/enrollment_health_state_smoke.py
 python3 scripts/agentops_status_smoke.py
 python3 scripts/redaction_policy_smoke.py
 python3 scripts/enrollment_launch_steps_smoke.py
+python3 scripts/remote_launch_packet_worker_smoke.py
 ```
 
 ## Evidence
@@ -240,6 +241,19 @@ created token: agtok_agt_launch_steps_smoke_20260618085043_local_demo_a18606ef95
 rotated token: agtok_agt_launch_steps_smoke_20260618085043_local_demo_9226d3f5b36e
 next_steps: env setup, agentops status, heartbeat, one-shot worker, loop worker for Hermes with --confirm-run
 raw token in commands: omitted
+```
+
+The remote launch-packet worker smoke passed:
+
+```text
+script: python3 scripts/remote_launch_packet_worker_smoke.py
+agent_id: agt_launch_packet_worker_20260618085351
+task_id: tsk_launch_packet_worker_20260618085351
+run_id: run_gw_13a035066321
+token mode: agent_token
+tool_calls: 1
+evaluations: 1
+token_omitted: true
 ```
 
 The `/workspace/agents` Agent Gateway status card was added and frontend build passed:

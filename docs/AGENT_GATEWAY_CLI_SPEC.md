@@ -634,6 +634,7 @@ python3 scripts/workspace_isolation_smoke.py
 python3 scripts/enrollment_health_state_smoke.py
 python3 scripts/agentops_status_smoke.py
 python3 scripts/enrollment_launch_steps_smoke.py
+python3 scripts/remote_launch_packet_worker_smoke.py
 ```
 
 This helper creates a scoped token, creates a normal MIS task for that agent, runs `scripts/agent_worker.py --once` with the token, verifies run/tool/eval evidence, and revokes the token by default. It does not print the raw token.
@@ -641,6 +642,7 @@ The workspace isolation helper creates workspace A/B tasks, verifies that the wo
 The enrollment health helper verifies `never_seen -> fresh -> stale -> revoked` without printing the raw token.
 The CLI status helper verifies `agentops status` reports safe token-bound metadata, updates to `fresh` after heartbeat, and rejects revoked tokens without leaking the raw token.
 The launch-steps helper verifies create/rotate responses include safe remote-worker commands and do not embed the raw token in those commands.
+The remote launch-packet helper uses the returned environment shape to run a real worker and verify run/tool/evaluation ledger evidence.
 
 Remaining future work:
 
