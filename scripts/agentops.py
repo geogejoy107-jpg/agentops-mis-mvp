@@ -47,10 +47,10 @@ def save_config(config: dict):
 def resolved_context(args) -> dict:
     config = load_config()
     return {
-        "base_url": (args.base_url or os.environ.get("AGENTOPS_BASE_URL") or config.get("base_url") or DEFAULT_BASE_URL).rstrip("/"),
-        "api_key": args.api_key if args.api_key is not None else os.environ.get("AGENTOPS_API_KEY", config.get("api_key", "")),
-        "workspace_id": args.workspace_id or os.environ.get("AGENTOPS_WORKSPACE_ID") or config.get("workspace_id") or DEFAULT_WORKSPACE_ID,
-        "agent_id": args.agent_id or os.environ.get("AGENTOPS_AGENT_ID") or config.get("agent_id") or "",
+        "base_url": (getattr(args, "base_url", None) or os.environ.get("AGENTOPS_BASE_URL") or config.get("base_url") or DEFAULT_BASE_URL).rstrip("/"),
+        "api_key": getattr(args, "api_key", None) if getattr(args, "api_key", None) is not None else os.environ.get("AGENTOPS_API_KEY", config.get("api_key", "")),
+        "workspace_id": getattr(args, "workspace_id", None) or os.environ.get("AGENTOPS_WORKSPACE_ID") or config.get("workspace_id") or DEFAULT_WORKSPACE_ID,
+        "agent_id": getattr(args, "agent_id", None) or os.environ.get("AGENTOPS_AGENT_ID") or config.get("agent_id") or "",
     }
 
 
@@ -132,6 +132,10 @@ def cmd_login(args) -> dict:
         "agent_id": config.get("agent_id", ""),
         "has_api_key": bool(config.get("api_key")),
     }
+
+
+def cmd_status(args, client: AgentOpsClient) -> dict:
+    return client.get("/api/agent-gateway/status")
 
 
 def cmd_agent_register(args, client: AgentOpsClient) -> dict:
@@ -360,11 +364,12 @@ def cmd_enrollment_rotate(args, client: AgentOpsClient) -> dict:
     return result
 
 
-def add_global_args(parser):
-    parser.add_argument("--base-url", default=None, help="AgentOps MIS base URL. Defaults to env/config/http://127.0.0.1:8787.")
-    parser.add_argument("--api-key", default=None, help="Local API key. Prefer AGENTOPS_API_KEY for real use.")
-    parser.add_argument("--workspace-id", default=None, help="Workspace id. Defaults to env/config/local-demo.")
-    parser.add_argument("--agent-id", default=None, help="Default agent id for this command.")
+def add_global_args(parser, suppress_defaults: bool = False):
+    default = argparse.SUPPRESS if suppress_defaults else None
+    parser.add_argument("--base-url", default=default, help="AgentOps MIS base URL. Defaults to env/config/http://127.0.0.1:8787.")
+    parser.add_argument("--api-key", default=default, help="Local API key. Prefer AGENTOPS_API_KEY for real use.")
+    parser.add_argument("--workspace-id", default=default, help="Workspace id. Defaults to env/config/local-demo.")
+    parser.add_argument("--agent-id", default=default, help="Default agent id for this command.")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -373,8 +378,12 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="resource", required=True)
 
     login = sub.add_parser("login", help="Store local AgentOps MIS CLI config.")
-    add_global_args(login)
+    add_global_args(login, suppress_defaults=True)
     login.set_defaults(handler="login")
+
+    status = sub.add_parser("status", help="Check Agent Gateway connectivity and safe auth metadata.")
+    add_global_args(status, suppress_defaults=True)
+    status.set_defaults(handler="status")
 
     agent = sub.add_parser("agent", help="Agent identity commands.")
     agent_sub = agent.add_subparsers(dest="action", required=True)
@@ -554,6 +563,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 HANDLERS = {
     "login": lambda args, client: cmd_login(args),
+    "status": cmd_status,
     "agent_register": cmd_agent_register,
     "agent_heartbeat": cmd_agent_heartbeat,
     "task_pull": cmd_task_pull,

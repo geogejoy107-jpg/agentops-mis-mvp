@@ -2089,6 +2089,23 @@ def agent_gateway_create_enrollment(conn, body) -> tuple[dict, int]:
     }, 201
 
 
+def agent_gateway_token_heartbeat_state(row, now_dt: dt.datetime | None = None) -> str:
+    now_dt = now_dt or dt.datetime.now(dt.timezone.utc)
+    status = row.get("status") if hasattr(row, "get") else row["status"]
+    if status != "active":
+        return status or "inactive"
+    heartbeat_at = row.get("last_heartbeat_at") if hasattr(row, "get") else row["last_heartbeat_at"]
+    if not heartbeat_at:
+        return "never_seen"
+    try:
+        seen = dt.datetime.fromisoformat(heartbeat_at)
+        timeout = int((row.get("heartbeat_timeout_sec") if hasattr(row, "get") else row["heartbeat_timeout_sec"]) or 300)
+        stale = (now_dt - seen).total_seconds() > timeout
+    except Exception:
+        stale = False
+    return "stale" if stale else "fresh"
+
+
 def agent_gateway_enrollment_rows(conn) -> list[dict]:
     rows = rows_to_dicts(conn.execute("SELECT token_id,workspace_id,agent_id,scopes_json,status,label,heartbeat_timeout_sec,created_at,expires_at,revoked_at,last_used_at,last_heartbeat_at FROM agent_gateway_tokens ORDER BY created_at DESC LIMIT 200").fetchall())
     now_dt = dt.datetime.now(dt.timezone.utc)
@@ -2096,20 +2113,43 @@ def agent_gateway_enrollment_rows(conn) -> list[dict]:
         scopes = parse_scope_list(row.get("scopes_json"))
         row["scopes"] = scopes
         row.pop("scopes_json", None)
-        if row.get("status") != "active":
-            row["heartbeat_state"] = row.get("status") or "inactive"
-            continue
-        heartbeat_at = row.get("last_heartbeat_at")
-        if not heartbeat_at:
-            row["heartbeat_state"] = "never_seen"
-            continue
-        try:
-            seen = dt.datetime.fromisoformat(heartbeat_at)
-            stale = (now_dt - seen).total_seconds() > int(row.get("heartbeat_timeout_sec") or 300)
-        except Exception:
-            stale = False
-        row["heartbeat_state"] = "stale" if stale else "fresh"
+        row["heartbeat_state"] = agent_gateway_token_heartbeat_state(row, now_dt)
     return rows
+
+
+def agent_gateway_status(conn, headers) -> tuple[dict, int]:
+    auth_ctx, auth_error = agent_gateway_auth_context(conn, headers)
+    if auth_error:
+        return auth_error, 401
+    auth_ctx = auth_ctx or {}
+    payload = {
+        "provider": "agent_gateway",
+        "status": "ready",
+        "auth": {
+            "mode": auth_ctx.get("mode", "unknown"),
+            "authenticated": auth_ctx.get("mode") != "local_dev_no_token",
+            "agent_id": auth_ctx.get("agent_id") or "",
+            "workspace_id": normalize_workspace_id(auth_ctx.get("workspace_id") or "local-demo"),
+            "scopes": auth_ctx.get("scopes") or [],
+        },
+        "valid_scopes": sorted(VALID_AGENT_GATEWAY_SCOPES),
+        "token_omitted": True,
+    }
+    if auth_ctx.get("mode") == "agent_token":
+        token_id = auth_ctx.get("token_id")
+        row = conn.execute("SELECT token_id,workspace_id,agent_id,scopes_json,status,label,heartbeat_timeout_sec,created_at,expires_at,revoked_at,last_used_at,last_heartbeat_at FROM agent_gateway_tokens WHERE token_id=?", (token_id,)).fetchone()
+        if row:
+            safe_row = dict(row)
+            payload["auth"].update({
+                "token_id": safe_row.get("token_id"),
+                "token_status": safe_row.get("status"),
+                "heartbeat_state": agent_gateway_token_heartbeat_state(safe_row),
+                "heartbeat_timeout_sec": safe_row.get("heartbeat_timeout_sec"),
+                "expires_at": safe_row.get("expires_at"),
+                "last_used_at": safe_row.get("last_used_at"),
+                "last_heartbeat_at": safe_row.get("last_heartbeat_at"),
+            })
+    return payload, 200
 
 
 def agent_gateway_revoke_enrollment(conn, body) -> tuple[dict, int]:
@@ -4420,6 +4460,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def handle_get_api(self, path, qs):
         with db() as conn:
+            if path == "/api/agent-gateway/status":
+                payload, status = agent_gateway_status(conn, self.headers)
+                conn.commit()
+                return self.send_json(payload, status)
             if path == "/api/agent-gateway/enrollments":
                 auth_error = agent_gateway_admin_auth_error(self.headers)
                 if auth_error:

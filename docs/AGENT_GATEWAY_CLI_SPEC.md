@@ -68,6 +68,7 @@ Current local MVP implementation:
 ```bash
 ./scripts/agentops --help
 ./scripts/agentops login --base-url http://127.0.0.1:8787 --workspace-id local-demo --agent-id agt_local_worker
+./scripts/agentops status
 ./scripts/agentops enrollment create --agent-id agt_remote_builder --name "Remote Builder" --runtime openclaw
 ```
 
@@ -82,6 +83,16 @@ agentops login --base-url http://127.0.0.1:8787 --workspace local_demo
 ```
 
 v1.4 can support environment-variable auth only. Interactive login is optional.
+
+### `agentops status`
+
+Checks Agent Gateway connectivity and safe auth metadata without pulling tasks or starting runs.
+
+```bash
+agentops status
+```
+
+With a scoped remote-agent token, status returns the auth mode, bound `agent_id`, bound `workspace_id`, allowed scopes, token id, expiry, and heartbeat state. It never returns the raw token or token hash.
 
 ### `agentops agent register`
 
@@ -282,6 +293,7 @@ All endpoints are under the existing local API server.
 
 ```http
 GET  /api/agent-gateway/enrollments
+GET  /api/agent-gateway/status
 POST /api/agent-gateway/enrollment/create
 POST /api/agent-gateway/enrollment/revoke
 POST /api/agent-gateway/enrollment/rotate
@@ -311,6 +323,21 @@ Every write endpoint should accept or infer:
   "request_id": "optional_idempotency_key"
 }
 ```
+
+### `GET /api/agent-gateway/status`
+
+Returns safe gateway readiness and auth metadata for local or remote agents.
+
+Reads:
+
+- `agent_gateway_tokens`
+- `agents`
+
+Never returns:
+
+- raw token value
+- token hash
+- full prompts or raw outputs
 
 ### `POST /api/agent-gateway/register`
 
@@ -594,11 +621,13 @@ Verification helper:
 python3 scripts/remote_agent_token_worker_smoke.py
 python3 scripts/workspace_isolation_smoke.py
 python3 scripts/enrollment_health_state_smoke.py
+python3 scripts/agentops_status_smoke.py
 ```
 
 This helper creates a scoped token, creates a normal MIS task for that agent, runs `scripts/agent_worker.py --once` with the token, verifies run/tool/eval evidence, and revokes the token by default. It does not print the raw token.
 The workspace isolation helper creates workspace A/B tasks, verifies that the workspace A token cannot pull, claim, start, or write workspace B work, and verifies that normal workspace A execution still succeeds.
 The enrollment health helper verifies `never_seen -> fresh -> stale -> revoked` without printing the raw token.
+The CLI status helper verifies `agentops status` reports safe token-bound metadata, updates to `fresh` after heartbeat, and rejects revoked tokens without leaking the raw token.
 
 Remaining future work:
 

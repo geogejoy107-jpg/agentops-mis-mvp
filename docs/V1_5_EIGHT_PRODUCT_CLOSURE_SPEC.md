@@ -104,6 +104,7 @@ Current v1.5 implementation:
 - `scripts/install_agentops_cli.py` installs a local user shim at `~/.local/bin/agentops`.
 - Commands include:
   - `agentops login`
+  - `agentops status`
   - `agentops enrollment create/list/revoke/rotate`
   - `agentops agent register`
   - `agentops agent heartbeat`
@@ -123,6 +124,7 @@ Acceptance evidence:
 - CLI enrollment smoke passed with `agt_remote_cli_smoke`.
 - Revoked token was rejected.
 - Local CLI install smoke passed: `python3 scripts/agentops_cli_install_smoke.py`.
+- CLI status smoke passed: `python3 scripts/agentops_status_smoke.py`.
 - Current machine has `~/.local/bin/agentops` installed as a shim to this repo.
 
 Remaining product work:
@@ -168,6 +170,7 @@ Acceptance evidence:
 - Remote token worker smoke passed:
   - `run_gw_876a7c777841`
   - repeat run `run_gw_f5635ff603fd`
+- `GET /api/agent-gateway/status` and `agentops status` report safe token-bound auth metadata for remote debugging without printing token secrets.
 - Browser verification showed `远程 Agent 接入`, `创建接入 token`, and `最近接入记录` on `/workspace/agents`.
 - `python3 scripts/enrollment_rotation_smoke.py` verified API and CLI rotation with redacted one-time token output.
 - `python3 scripts/enrollment_health_state_smoke.py` verified the remote enrollment lifecycle `never_seen -> fresh -> stale -> revoked`.
@@ -339,6 +342,7 @@ python3 scripts/kb_bot_demo_smoke.py
 python3 scripts/kb_bot_workflow_api_smoke.py
 python3 scripts/approval_decision_side_effect_smoke.py
 python3 scripts/agentops_cli_install_smoke.py
+python3 scripts/agentops_status_smoke.py
 python3 scripts/remote_agent_token_worker_smoke.py
 python3 scripts/workspace_isolation_smoke.py
 python3 scripts/enrollment_health_state_smoke.py
@@ -357,6 +361,7 @@ Implemented and verified:
 - Live Approvals Inbox.
 - Live Tool Call Ledger.
 - Scoped token enrollment.
+- Agent Gateway safe status check via `GET /api/agent-gateway/status` and `agentops status`.
 - Remote enrollment UI.
 - Token revocation.
 - Token rotation.

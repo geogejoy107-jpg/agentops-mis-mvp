@@ -65,6 +65,7 @@ Agent enrollment CLI/API:
 
 ```bash
 ./scripts/agentops enrollment create --agent-id agt_remote_cli_smoke --name "Remote CLI Smoke" --runtime mock --save-token
+./scripts/agentops status
 ./scripts/agentops agent heartbeat --id agt_remote_cli_smoke --status idle
 ./scripts/agentops task pull --agent-id agt_remote_cli_smoke --limit 1 --status planned
 ./scripts/agentops enrollment rotate --token-id agtok_...
@@ -76,6 +77,7 @@ python3 scripts/kb_bot_workflow_api_smoke.py
 python3 scripts/approval_decision_side_effect_smoke.py
 python3 scripts/agentops_cli_install_smoke.py
 python3 scripts/enrollment_health_state_smoke.py
+python3 scripts/agentops_status_smoke.py
 ```
 
 ## Evidence
@@ -196,6 +198,17 @@ token_id: agtok_agt_enroll_health_smoke_20260618064218_local_demo_19b8b6a6325f
 states verified: never_seen -> fresh -> stale -> revoked
 token_omitted: true
 cleanup_revoked: 1
+```
+
+The Agent Gateway CLI status smoke passed:
+
+```text
+script: python3 scripts/agentops_status_smoke.py
+agent_id: agt_status_cli_smoke_20260618064953
+token_id: agtok_agt_status_cli_smoke_20260618064953_local_demo_20bc50880c02
+states verified: never_seen -> fresh, revoked token rejected
+prefix global args supported: true
+token_omitted: true
 ```
 
 The workspace isolation smoke passed:
