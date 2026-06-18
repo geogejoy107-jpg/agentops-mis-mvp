@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
-import { CheckCircle2, Loader2, Play, ShieldCheck } from "lucide-react";
+import { Archive, CheckCircle2, Loader2, Play, ShieldCheck } from "lucide-react";
 import type { Agent } from "../../data/mockData";
 import {
   loadCustomerTaskTemplates,
+  persistCustomerProjectReportArtifact,
   runCustomerTaskTemplateWorkflow,
   runCustomerTaskWorkflow,
   type CustomerTaskTemplate,
+  type CustomerProjectReportArtifactResult,
   type CustomerTaskWorkflowResult,
   type KbBotProjectWorkflowResult,
 } from "../../data/liveApi";
@@ -51,8 +53,10 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
   const [selected, setSelected] = useState<string[]>(defaultSelected);
   const [busy, setBusy] = useState(false);
   const [kbBusy, setKbBusy] = useState(false);
+  const [reportBusy, setReportBusy] = useState(false);
   const [result, setResult] = useState<CustomerTaskWorkflowResult | null>(null);
   const [kbResult, setKbResult] = useState<KbBotProjectWorkflowResult | null>(null);
+  const [reportArtifact, setReportArtifact] = useState<CustomerProjectReportArtifactResult | null>(null);
   const [templates, setTemplates] = useState<CustomerTaskTemplate[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState("tpl_customer_kb_qa_bot");
   const [error, setError] = useState<string | null>(null);
@@ -86,6 +90,10 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
   const selectedTemplate = useMemo(
     () => templates.find((template) => template.template_id === selectedTemplateId),
     [templates, selectedTemplateId],
+  );
+  const kbFinalStep = useMemo(
+    () => kbResult?.results?.[kbResult.results.length - 1],
+    [kbResult],
   );
 
   const applyTemplate = (template: CustomerTaskTemplate) => {
@@ -139,11 +147,27 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
         owner_agent_id: selected[0],
       });
       setKbResult(next);
+      setReportArtifact(null);
       await onRefresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setKbBusy(false);
+    }
+  };
+
+  const persistReportArtifact = async () => {
+    if (!kbResult?.project_id) return;
+    setReportBusy(true);
+    setError(null);
+    try {
+      const next = await persistCustomerProjectReportArtifact(kbResult.project_id);
+      setReportArtifact(next);
+      await onRefresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setReportBusy(false);
     }
   };
 
@@ -176,13 +200,13 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
             )}
           </div>
         )}
-        {kbResult?.task_id && (
+        {(kbResult?.task_id || kbFinalStep?.task_id) && (
           <div className="flex flex-wrap gap-2 text-[11px]">
-            <Link className="rounded px-2.5 py-1.5" style={{ background: "rgba(34,211,238,0.10)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.22)" }} to={`/admin/tasks/${kbResult.task_id}`}>
+            <Link className="rounded px-2.5 py-1.5" style={{ background: "rgba(34,211,238,0.10)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.22)" }} to={`/admin/tasks/${kbResult.task_id || kbFinalStep?.task_id}`}>
               {zh ? "打开项目交付任务" : "Open project delivery task"}
             </Link>
-            {kbResult.run_id && (
-              <Link className="rounded px-2.5 py-1.5" style={{ background: "rgba(168,85,247,0.12)", color: "var(--mis-purple)", border: "1px solid rgba(168,85,247,0.26)" }} to={`/admin/runs/${kbResult.run_id}`}>
+            {(kbResult.run_id || kbFinalStep?.run_id) && (
+              <Link className="rounded px-2.5 py-1.5" style={{ background: "rgba(168,85,247,0.12)", color: "var(--mis-purple)", border: "1px solid rgba(168,85,247,0.26)" }} to={`/admin/runs/${kbResult.run_id || kbFinalStep?.run_id}`}>
                 {zh ? "打开最终运行" : "Open final run"}
               </Link>
             )}
@@ -375,15 +399,30 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
                 <div><span style={{ color: "var(--mis-muted)" }}>{zh ? "交付物：" : "Artifact: "}</span>{kbResult.artifact_id}</div>
               )}
               {kbResult.project_id && (
-                <a
-                  href={kbResult.report_url ? kbResult.report_url.replace("/api/", "/mis-api/") : `/mis-api/workflows/customer-projects/${kbResult.project_id}/report`}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex rounded px-2.5 py-1.5 text-[10px]"
-                  style={{ background: "rgba(34,211,238,0.10)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.22)" }}
-                >
-                  {zh ? "打开交付报告" : "Open delivery report"}
-                </a>
+                <div className="flex flex-wrap gap-2 pt-1">
+                  <a
+                    href={kbResult.report_url ? kbResult.report_url.replace("/api/", "/mis-api/") : `/mis-api/workflows/customer-projects/${kbResult.project_id}/report`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex rounded px-2.5 py-1.5 text-[10px]"
+                    style={{ background: "rgba(34,211,238,0.10)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.22)" }}
+                  >
+                    {zh ? "打开交付报告" : "Open delivery report"}
+                  </a>
+                  <button
+                    type="button"
+                    onClick={persistReportArtifact}
+                    disabled={reportBusy}
+                    className="inline-flex items-center gap-1.5 rounded px-2.5 py-1.5 text-[10px] disabled:opacity-60"
+                    style={{ background: "rgba(42,157,143,0.12)", color: "var(--mis-success)", border: "1px solid rgba(42,157,143,0.25)" }}
+                  >
+                    {reportBusy ? <Loader2 size={12} className="animate-spin" /> : <Archive size={12} />}
+                    {zh ? "归档报告到账本" : "Archive report to ledger"}
+                  </button>
+                </div>
+              )}
+              {reportArtifact?.artifact?.artifact_id && (
+                <div><span style={{ color: "var(--mis-muted)" }}>{zh ? "报告归档：" : "Report artifact: "}</span>{reportArtifact.artifact.artifact_id}</div>
               )}
               <p className="pt-1 leading-relaxed" style={{ color: "var(--mis-dim)" }}>
                 {zh

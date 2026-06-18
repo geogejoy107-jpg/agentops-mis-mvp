@@ -153,6 +153,28 @@ export interface KbBotProjectWorkflowResult {
   error?: string | null;
 }
 
+export interface CustomerProjectReportArtifactResult {
+  ok: boolean;
+  created: boolean;
+  project_id: string;
+  report_url: string;
+  content_hash: string;
+  raw_report_omitted: boolean;
+  token_omitted: boolean;
+  artifact?: {
+    artifact_id: string;
+    task_id?: string | null;
+    run_id?: string | null;
+    artifact_type: string;
+    title: string;
+    uri: string;
+    summary: string;
+    created_at: string;
+  };
+  safe_defaults?: Record<string, unknown>;
+  error?: string | null;
+}
+
 export interface CustomerTaskTemplate {
   template_id: string;
   name: string;
@@ -787,6 +809,13 @@ export async function runCustomerTaskTemplateWorkflow(input: { template_id: stri
   return apiJson<KbBotProjectWorkflowResult & { template?: Record<string, unknown> }>("/workflows/customer-task-templates/run", {
     method: "POST",
     body: JSON.stringify(input),
+  });
+}
+
+export async function persistCustomerProjectReportArtifact(projectId: string): Promise<CustomerProjectReportArtifactResult> {
+  return apiJson<CustomerProjectReportArtifactResult>(`/workflows/customer-projects/${encodeURIComponent(projectId)}/report-artifact`, {
+    method: "POST",
+    body: JSON.stringify({}),
   });
 }
 

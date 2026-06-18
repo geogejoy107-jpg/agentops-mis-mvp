@@ -373,6 +373,7 @@ Current v1.5 implementation:
 - Pixel Office's customer dispatch panel loads local templates, applies their default title/brief/acceptance criteria, and can run the selected template.
 - Customer projects can export a safe ledger-backed delivery report through `GET /api/workflows/customer-projects/:project_id/report`.
 - Pixel Office surfaces the report link after template-backed project generation.
+- Pixel Office can persist the generated customer project report back into the MIS ledger through the `Archive report to ledger` / `归档报告到账本` action.
 
 Acceptance evidence:
 
@@ -409,6 +410,7 @@ Acceptance evidence:
   - delivery artifact remains `art_kb_bot_delivery_20260618180442453801`
   - report artifact writes `runtime_events` and `audit_logs` with raw report omitted and content hash stored
   - concurrent report/report-artifact smokes passed after changing KB bot project IDs from second-level to microsecond-level timestamps
+- Pixel Office report-archive UI build: `cd ui/start-building-app && npm run build`
 
 Remaining product work:
 
