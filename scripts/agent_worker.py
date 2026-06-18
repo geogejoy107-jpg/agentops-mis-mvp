@@ -51,6 +51,18 @@ def now_iso() -> str:
     return dt.datetime.now(dt.timezone.utc).isoformat()
 
 
+def parse_iso_datetime(value: str | None) -> dt.datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = dt.datetime.fromisoformat(str(value))
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=dt.timezone.utc)
+        return parsed
+    except Exception:
+        return None
+
+
 def stable_hash(value) -> str:
     raw = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, sort_keys=True)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
@@ -110,6 +122,7 @@ class WorkerState:
             "error_backoff_max": args.error_backoff_max,
             "last_sleep_sec": 0,
             "next_sleep_sec": 0,
+            "session_refresh_count": 0,
             "started_at": now_iso(),
             "updated_at": now_iso(),
             "last_heartbeat_at": None,
@@ -205,7 +218,9 @@ def split_csv(value: str | None) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
-def mint_worker_session(client: AgentOpsClient, args) -> dict:
+def mint_worker_session(client: AgentOpsClient, args, parent_api_key: str | None = None) -> dict:
+    if parent_api_key:
+        client.api_key = parent_api_key
     payload = {
         "workspace_id": client.workspace_id,
         "agent_id": client.agent_id,
@@ -226,6 +241,35 @@ def mint_worker_session(client: AgentOpsClient, args) -> dict:
         "scopes": session.get("scopes") or [],
         "token_omitted": True,
     }
+
+
+def session_seconds_remaining(session_info: dict | None) -> float:
+    expires = parse_iso_datetime((session_info or {}).get("expires_at"))
+    if not expires:
+        return 0.0
+    return (expires - dt.datetime.now(dt.timezone.utc)).total_seconds()
+
+
+def session_needs_refresh(session_info: dict | None, refresh_margin_sec: float) -> bool:
+    if not session_info:
+        return True
+    return session_seconds_remaining(session_info) <= max(float(refresh_margin_sec or 0), 0.0)
+
+
+def ensure_worker_session(client: AgentOpsClient, args, state: WorkerState, parent_api_key: str, session_info: dict | None, session_history: list[dict]) -> dict:
+    if not session_needs_refresh(session_info, args.session_refresh_margin_sec):
+        return session_info or {}
+    state.update(status="refreshing_session" if session_info else "minting_session")
+    next_session = mint_worker_session(client, args, parent_api_key=parent_api_key)
+    session_history.append(next_session)
+    refresh_count = max(len(session_history) - 1, 0)
+    state.update(
+        status="session_ready",
+        session_id=next_session.get("session_id"),
+        session_expires_at=next_session.get("expires_at"),
+        session_refresh_count=refresh_count,
+    )
+    return next_session
 
 
 @dataclass
@@ -562,6 +606,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--api-key", default=os.environ.get("AGENTOPS_API_KEY", ""))
     parser.add_argument("--use-session", action="store_true", help="Mint a short-lived Agent Gateway session before running the worker.")
     parser.add_argument("--session-ttl-sec", type=int, default=int(os.environ.get("AGENTOPS_SESSION_TTL_SEC", "900")), help="Session TTL when --use-session is set.")
+    parser.add_argument("--session-refresh-margin-sec", type=float, default=float(os.environ.get("AGENTOPS_SESSION_REFRESH_MARGIN_SEC", "60")), help="Refresh the short-lived session when it has this many seconds or less remaining.")
     parser.add_argument("--session-scopes", default=os.environ.get("AGENTOPS_SESSION_SCOPES", ""), help="Optional comma-separated subset for the worker session. Defaults to parent token scopes.")
     parser.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
     parser.add_argument("--status", action="append", default=["planned"], help="Task status to pull. Repeatable.")
@@ -597,20 +642,22 @@ def main() -> int:
     registered = False
     fatal_failure = False
     session_info = None
+    session_history = []
+    parent_api_key = args.api_key
     if args.use_session:
         try:
-            state.update(status="minting_session")
-            session_info = mint_worker_session(client, args)
-            state.update(status="session_ready", session_id=session_info.get("session_id"), session_expires_at=session_info.get("expires_at"))
+            session_info = ensure_worker_session(client, args, state, parent_api_key, session_info, session_history)
         except Exception as exc:
             error = state.record_error(exc)
             state.stop("failed_session_create")
-            print(json_dumps({"ok": False, "processed": 0, "results": [{**error, "processed": False, "ok": False}], "state": state.data, "session": {"token_omitted": True}}))
+            print(json_dumps({"ok": False, "processed": 0, "results": [{**error, "processed": False, "ok": False}], "state": state.data, "session": {"token_omitted": True}, "sessions": session_history}))
             return 1
     while True:
         if SHOULD_STOP:
             break
         try:
+            if args.use_session:
+                session_info = ensure_worker_session(client, args, state, parent_api_key, session_info, session_history)
             if not registered:
                 state.update(status="registering")
                 register_worker(client, args.adapter)
@@ -658,7 +705,7 @@ def main() -> int:
     )
     final_status = "stopped" if SHOULD_STOP else "completed" if final_ok else "failed"
     state.stop(final_status)
-    print(json_dumps({"ok": final_ok, "processed": processed, "results": results, "state": state.data, "session": session_info or {"token_omitted": True}}))
+    print(json_dumps({"ok": final_ok, "processed": processed, "results": results, "state": state.data, "session": session_info or {"token_omitted": True}, "sessions": session_history}))
     return 0 if final_ok else 1
 
 

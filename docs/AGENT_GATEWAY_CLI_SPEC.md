@@ -607,6 +607,7 @@ Current implementation:
 - Enrollment launch packets now recommend minting a short-lived session before worker execution:
   - `agentops session create --ttl-sec 900 --save-session`
   - `python3 scripts/agent_worker.py ... --use-session --session-ttl-sec 900`
+- `scripts/agent_worker.py --use-session` now refreshes short-lived sessions during loop mode before expiry, using the parent enrollment token only in process memory and writing only session metadata to state/output.
 - Task claim is guarded for multi-worker use:
   - public pool tasks may be visible to multiple agents before claim,
   - first claim moves the task to `running` and binds `owner_agent_id`,
@@ -656,7 +657,6 @@ Current endpoint scope map:
 
 Future product versions should add:
 
-- Short-lived session refresh policy.
 - Workspace-level RBAC.
 - Connector-specific scoped credentials.
 - Hosted customer enrollment policy UI.
@@ -748,6 +748,7 @@ python3 scripts/agent_gateway_session_smoke.py
 python3 scripts/enrollment_approval_workflow_smoke.py
 python3 scripts/task_claim_conflict_smoke.py
 python3 scripts/worker_stuck_recovery_smoke.py
+python3 scripts/worker_session_refresh_smoke.py
 ```
 
 This helper creates a scoped token, creates a normal MIS task for that agent, runs `scripts/agent_worker.py --once` with the token, verifies run/tool/eval evidence, and revokes the token by default. It does not print the raw token.
@@ -761,11 +762,11 @@ The session helper verifies an enrollment token can mint a narrowed short-lived 
 The enrollment-approval helper verifies request-before-token behavior: request returns no token, premature issue is rejected, approval unlocks token issue, and the issued token can heartbeat.
 The task-claim helper verifies two agents can initially see the same public pool task, the first claim wins, same-agent repeat claim is idempotent, and a second worker cannot claim or start the already claimed task.
 The stuck-recovery helper verifies a stale running worker task is listed, released back to `planned`, and the linked running run is blocked with `WorkerTaskReleased`.
+The session-refresh helper verifies a loop worker using `--use-session` refreshes short-lived sessions before expiry and still completes multiple tasks with run/tool/evaluation evidence.
 
 Remaining future work:
 
 - Hosted customer enrollment policy UI.
-- Session refresh policy.
 - Hosted multi-tenant isolation and full RBAC.
 - Reconnection backoff policy.
 - mTLS or signed heartbeats for server-side agents.

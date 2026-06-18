@@ -41,7 +41,8 @@ Current v1.5 implementation:
 - Supports loop mode with `--poll-interval` and `--max-tasks`.
 - Supports bounded daemon resilience with `--continue-on-error`, `--max-errors`, local state files, and JSONL iteration logs.
 - Supports configurable idle/error backoff with `--idle-backoff-max`, `--error-backoff-max`, and `--backoff-factor`.
-- Worker state records `consecutive_idle`, `last_sleep_sec`, `next_sleep_sec`, and `last_sleep_reason`.
+- Worker state records `consecutive_idle`, `last_sleep_sec`, `next_sleep_sec`, `last_sleep_reason`, and `session_refresh_count`.
+- `--use-session` workers refresh short-lived Agent Gateway sessions before expiry in loop mode.
 - Uses Agent Gateway HTTP API instead of direct SQLite writes.
 - Local daemon supervisor APIs:
   - `GET /api/workers/status`
@@ -167,6 +168,8 @@ Current v1.5 implementation:
 - Enrollment tokens can mint short-lived session tokens through `POST /api/agent-gateway/session/create`.
 - Session tokens inherit the bound `agent_id`, `workspace_id`, and a subset of parent scopes.
 - Session tokens cannot mint replacement sessions and expire automatically.
+- Worker loop session refresh is supported through `scripts/agent_worker.py --use-session --session-refresh-margin-sec`.
+- The parent enrollment token stays only in worker process memory for refresh; task/register/writeback calls use the short-lived session token.
 - Short-lived sessions can now be listed and revoked:
   - `GET /api/agent-gateway/sessions`
   - `POST /api/agent-gateway/session/revoke`
@@ -235,6 +238,12 @@ Acceptance evidence:
   - stale running worker task was detected,
   - release returned task `tsk_worker_stuck_20260618152538` to `planned`,
   - linked run `run_gw_988eb825e20e` was marked `blocked`.
+- `python3 scripts/worker_session_refresh_smoke.py` verified loop-mode short-lived session refresh:
+  - worker `agt_session_refresh_worker_20260618153329` processed two tasks,
+  - runs `run_gw_1a886228c52d` and `run_gw_d43859ff81e3` completed,
+  - sessions refreshed from `agtsess_3450b103cb83c3b9` through `agtsess_fb34437996eb3c02`,
+  - `session_refresh_count=2`,
+  - raw token output remained omitted.
 - `python3 scripts/agent_gateway_session_smoke.py` verified short-lived sessions:
   - an enrollment token mints a narrowed session,
   - sessions can be listed without leaking `session_hash`,
@@ -253,7 +262,6 @@ Acceptance evidence:
 
 Remaining product work:
 
-- Session refresh policy.
 - Reconnection/backoff policy.
 - Hosted customer enrollment policy UI.
 
@@ -430,6 +438,7 @@ python3 scripts/agent_gateway_scope_matrix_smoke.py
 python3 scripts/agent_gateway_session_smoke.py
 python3 scripts/task_claim_conflict_smoke.py
 python3 scripts/worker_stuck_recovery_smoke.py
+python3 scripts/worker_session_refresh_smoke.py
 ```
 
 ## Current Status Summary
@@ -449,6 +458,7 @@ Implemented and verified:
 - Agent Gateway status surfaced in `/workspace/agents`.
 - Remote enrollment launch packet surfaced in `/workspace/agents` after token creation/rotation.
 - Remote enrollment launch packet worker path now uses short-lived sessions before task processing.
+- Loop-mode workers can refresh short-lived sessions before expiry while continuing to process tasks.
 - Remote enrollment UI.
 - Token revocation.
 - Token rotation.

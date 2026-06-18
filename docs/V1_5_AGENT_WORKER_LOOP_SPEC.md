@@ -68,6 +68,8 @@ AGENTOPS_BASE_URL=http://127.0.0.1:8787
 AGENTOPS_WORKSPACE_ID=local-demo
 AGENTOPS_AGENT_ID=agt_worker_local
 AGENTOPS_API_KEY=
+AGENTOPS_SESSION_TTL_SEC=900
+AGENTOPS_SESSION_REFRESH_MARGIN_SEC=60
 ```
 
 Task selection:
@@ -76,6 +78,8 @@ Task selection:
 - Default statuses: `planned`.
 - Claim through `POST /api/agent-gateway/tasks/:id/claim`.
 - Start run through `POST /api/agent-gateway/runs/start`.
+- When `--use-session` is enabled, mint a short-lived Agent Gateway session before task work and refresh it before expiry in loop mode.
+- Keep the parent enrollment token only in process memory for session refresh; do normal register/pull/claim/writeback calls with the short-lived session token.
 
 Adapter execution:
 
@@ -224,6 +228,7 @@ Minimum acceptance for v1.5 worker loop:
 12. Revoked tokens are rejected.
 13. Dify and Notion endpoints are not called by this worker.
 14. `python3 scripts/worker_daemon_resilience_smoke.py` proves daemon state/log evidence and bounded error recovery.
+15. `python3 scripts/worker_session_refresh_smoke.py` proves a loop worker refreshes short-lived sessions and still completes multiple tasks.
 
 ## Known Limitations
 

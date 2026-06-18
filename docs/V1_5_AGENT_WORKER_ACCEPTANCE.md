@@ -86,6 +86,7 @@ python3 scripts/agent_gateway_session_smoke.py
 python3 scripts/enrollment_approval_workflow_smoke.py
 python3 scripts/task_claim_conflict_smoke.py
 python3 scripts/worker_stuck_recovery_smoke.py
+python3 scripts/worker_session_refresh_smoke.py
 ```
 
 ## Evidence
@@ -345,6 +346,18 @@ direct session revoke rejected later use: unauthorized
 session cannot mint another session: passed
 expired session rejected: unauthorized
 parent enrollment revoke cascaded sessions: 1
+token_omitted: true
+```
+
+The worker session refresh smoke passed:
+
+```text
+script: python3 scripts/worker_session_refresh_smoke.py
+agent_id: agt_session_refresh_worker_20260618153329
+task_ids: tsk_session_refresh_20260618153329_1, tsk_session_refresh_20260618153329_2
+run_ids: run_gw_1a886228c52d, run_gw_d43859ff81e3
+session_ids: agtsess_3450b103cb83c3b9, agtsess_42bb9739e19e48f5, agtsess_fb34437996eb3c02
+session_refresh_count: 2
 token_omitted: true
 ```
 
@@ -614,4 +627,4 @@ planned MIS task
 - The worker does not store full prompts or raw responses.
 - The worker is repo-local; it is not yet a launchd service, pip package, npm package, or signed binary.
 - The UI worker panel now supports one-shot dispatch, local daemon start/stop, daemon state counters, daemon backoff state, daemon log tails, recent gateway events, and stuck-task release controls; it is not a production fleet manager.
-- Remote enrollment token issuance/revocation/rotation, approval-gated enrollment request UI, endpoint-level scope enforcement, short-lived session tokens with list/revoke controls, scope presets, a first enrollment UI, and minimal Agent Gateway workspace isolation now exist. Full RBAC, hosted multi-tenant isolation, session refresh policy, and hosted enrollment policy UI remain future work.
+- Remote enrollment token issuance/revocation/rotation, approval-gated enrollment request UI, endpoint-level scope enforcement, short-lived session tokens with list/revoke controls and worker-loop refresh, scope presets, a first enrollment UI, and minimal Agent Gateway workspace isolation now exist. Full RBAC, hosted multi-tenant isolation, and hosted enrollment policy UI remain future work.
