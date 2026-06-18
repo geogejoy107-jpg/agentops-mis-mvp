@@ -87,6 +87,8 @@ python3 scripts/agentops_status_smoke.py
 | CLI | mock | `tsk_worker_debug_create` | `run_gw_a20e5b2eb6e3` | completed |
 | CLI | hermes | `tsk_worker_hermes_acceptance_20260617145544` | `run_gw_0d793ed6bbac` | completed |
 | CLI | openclaw | `tsk_worker_openclaw_acceptance_20260617145647` | `run_gw_9b2a6550d489` | completed |
+| CLI live recheck | hermes | `tsk_worker_hermes_live_20260618065503` | `run_gw_6f995c9de929` | completed |
+| CLI live recheck | openclaw | `tsk_worker_openclaw_live_20260618065555` | `run_gw_c274e7d62b61` | completed |
 | UI | mock | `tsk_worker_ui_mock_20260617150557_657b7768` | `run_gw_8fae81a1bfa6` | completed |
 | daemon | mock | `tsk_daemon_acceptance_20260617231559` | `run_gw_6ad797929084` | completed |
 | scoped token worker | mock | `tsk_remote_worker_smoke_20260617162927` | `run_gw_876a7c777841` | completed |
@@ -98,6 +100,13 @@ All CLI/live adapter runs produced:
 - one `evaluations` row with `pass`
 - `audit_logs` entries including `agent_worker.task_processed`
 - completed task status
+
+Latest live adapter recheck:
+
+```text
+Hermes:   run_gw_6f995c9de929 completed via agent_worker.hermes, evaluation pass
+OpenClaw: run_gw_c274e7d62b61 completed via agent_worker.openclaw, evaluation pass
+```
 
 The UI-triggered mock worker run was launched from `/workspace/agents` through:
 

@@ -84,6 +84,9 @@ Acceptance evidence:
 - Mock run: `run_gw_a20e5b2eb6e3`
 - Hermes run: `run_gw_0d793ed6bbac`
 - OpenClaw run: `run_gw_9b2a6550d489`
+- Live recheck on 2026-06-18:
+  - Hermes worker task `tsk_worker_hermes_live_20260618065503` completed as `run_gw_6f995c9de929`.
+  - OpenClaw worker task `tsk_worker_openclaw_live_20260618065555` completed as `run_gw_c274e7d62b61`.
 
 Remaining product work:
 
