@@ -90,6 +90,7 @@ python3 scripts/worker_session_refresh_smoke.py
 python3 scripts/worker_adapter_retry_smoke.py
 python3 scripts/customer_task_template_smoke.py
 python3 scripts/customer_project_report_smoke.py
+python3 scripts/customer_project_report_artifact_smoke.py
 ```
 
 ## Evidence
@@ -508,6 +509,22 @@ delivery artifact: art_kb_bot_delivery_20260618155050
 pending approval: ap_gw_3d9c930d4a92
 safety boundary: external_upload=false, credentials_stored=false, raw_documents_stored=false
 ```
+
+The customer project report artifact smoke passed:
+
+```text
+script: python3 scripts/customer_project_report_artifact_smoke.py
+project_id: 20260618180442453801
+delivery artifact: art_kb_bot_delivery_20260618180442453801
+report artifact: art_customer_project_report_20260618180442453801
+report_url: /api/workflows/customer-projects/20260618180442453801/report
+content_hash: f359ab142aec827906a346728c3becc3949290c724f2d6ab26009e26bacb4c81
+audit action: workflow.customer_project.report_artifact
+raw_report_omitted: true
+```
+
+The report artifact is separate from the customer delivery artifact. `GET /api/workflows/customer-projects/:project_id/report` continues to return the delivery artifact as `artifact_id` and returns the persisted report artifact as `report_artifact_id`.
+KB bot customer project IDs now include microseconds so concurrent report/report-artifact smokes do not create duplicate task IDs.
 
 The approval decision side-effect smoke passed:
 

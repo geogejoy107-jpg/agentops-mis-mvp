@@ -22,7 +22,7 @@ from urllib.request import Request, urlopen
 
 
 def now_stamp() -> str:
-    return dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d%H%M%S")
+    return dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d%H%M%S%f")
 
 
 class AgentOpsClient:

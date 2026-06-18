@@ -403,6 +403,12 @@ Acceptance evidence:
   - counts: 6 tasks, 6 runs, 6 tool calls, 1 pending approval, 1 artifact
   - delivery artifact: `art_kb_bot_delivery_20260618155050`
   - pending external-upload approval: `ap_gw_3d9c930d4a92`
+- Customer project report artifact smoke: `python3 scripts/customer_project_report_artifact_smoke.py`
+  - project: `20260618180442453801`
+  - report artifact: `art_customer_project_report_20260618180442453801`
+  - delivery artifact remains `art_kb_bot_delivery_20260618180442453801`
+  - report artifact writes `runtime_events` and `audit_logs` with raw report omitted and content hash stored
+  - concurrent report/report-artifact smokes passed after changing KB bot project IDs from second-level to microsecond-level timestamps
 
 Remaining product work:
 
@@ -466,6 +472,7 @@ python3 scripts/worker_session_refresh_smoke.py
 python3 scripts/worker_adapter_retry_smoke.py
 python3 scripts/customer_task_template_smoke.py
 python3 scripts/customer_project_report_smoke.py
+python3 scripts/customer_project_report_artifact_smoke.py
 ```
 
 ## Current Status Summary

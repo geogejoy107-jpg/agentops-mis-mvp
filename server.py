@@ -4281,7 +4281,9 @@ def customer_project_report(conn, project_id: str) -> tuple[dict, int]:
     completed_runs = [run for run in runs if run.get("status") == "completed"]
     pending_approvals = [approval for approval in approvals if approval.get("decision") == "pending"]
     failed_runs = [run for run in runs if run.get("status") in {"failed", "blocked"}]
-    final_artifact = artifacts[-1] if artifacts else None
+    delivery_artifacts = [artifact for artifact in artifacts if artifact.get("artifact_type") != "customer_project_report"]
+    report_artifacts = [artifact for artifact in artifacts if artifact.get("artifact_type") == "customer_project_report"]
+    final_artifact = delivery_artifacts[-1] if delivery_artifacts else None
 
     lines = [
         f"# AI 知识库 / 问答机器人交付报告",
@@ -4354,6 +4356,7 @@ def customer_project_report(conn, project_id: str) -> tuple[dict, int]:
             "artifacts": len(artifacts),
         },
         "artifact_id": final_artifact["artifact_id"] if final_artifact else None,
+        "report_artifact_id": report_artifacts[-1]["artifact_id"] if report_artifacts else None,
         "approval_ids": [approval["approval_id"] for approval in approvals],
         "safe_defaults": {
             "external_upload_performed": False,
@@ -4362,6 +4365,86 @@ def customer_project_report(conn, project_id: str) -> tuple[dict, int]:
             "summary_hash_only": True,
         },
     }, 200
+
+
+def customer_project_report_artifact(conn, project_id: str) -> tuple[dict, int]:
+    report, status = customer_project_report(conn, project_id)
+    if status != 200:
+        return report, status
+    project_id = report["project_id"]
+    tasks = rows_to_dicts(conn.execute(
+        "SELECT * FROM tasks WHERE task_id LIKE ? ORDER BY task_id",
+        (f"tsk_kb_bot_{project_id}_%",),
+    ).fetchall())
+    final_task = tasks[-1] if tasks else {}
+    final_run = None
+    if final_task:
+        final_run = conn.execute(
+            "SELECT * FROM runs WHERE task_id=? ORDER BY started_at DESC, run_id DESC LIMIT 1",
+            (final_task["task_id"],),
+        ).fetchone()
+    markdown = report.get("markdown") or ""
+    content_hash = stable_hash(markdown)
+    counts = report.get("counts") or {}
+    artifact_id = stable_id("art_customer_project_report", project_id)
+    summary = redact_text(
+        (
+            f"客户项目 {project_id} 交付报告："
+            f"{counts.get('tasks', 0)} tasks, {counts.get('runs', 0)} runs, "
+            f"{counts.get('tool_calls', 0)} tool calls, "
+            f"{counts.get('pending_approvals', 0)} pending approvals. "
+            "Stored as summary/hash ledger evidence only."
+        ),
+        520,
+    )
+    row = {
+        "artifact_id": artifact_id,
+        "task_id": final_task.get("task_id"),
+        "run_id": final_run["run_id"] if final_run else None,
+        "artifact_type": "customer_project_report",
+        "title": f"客户项目交付报告：{project_id}",
+        "uri": f"agentops://customer-projects/{project_id}/report",
+        "summary": summary,
+        "created_at": now_iso(),
+    }
+    before = conn.execute("SELECT * FROM artifacts WHERE artifact_id=?", (artifact_id,)).fetchone()
+    conn.execute(
+        """INSERT OR REPLACE INTO artifacts(artifact_id,task_id,run_id,artifact_type,title,uri,summary,created_at)
+        VALUES(:artifact_id,:task_id,:run_id,:artifact_type,:title,:uri,:summary,:created_at)""",
+        row,
+    )
+    runtime_event(
+        conn,
+        "rtc_agent_gateway_local",
+        "customer_project.report_artifact",
+        "completed",
+        run_id=row["run_id"],
+        task_id=row["task_id"],
+        agent_id=final_task.get("owner_agent_id"),
+        output_summary=summary,
+        raw_payload_hash=content_hash,
+    )
+    metadata = safe_json_metadata({
+        "project_id": project_id,
+        "content_hash": content_hash,
+        "report_url": f"/api/workflows/customer-projects/{project_id}/report",
+        "raw_report_omitted": True,
+        "external_upload_performed": False,
+        "credentials_stored": False,
+        "raw_documents_stored": False,
+    })
+    audit(conn, "system", "customer_project_report", "workflow.customer_project.report_artifact", "artifacts", artifact_id, before, row, metadata)
+    return {
+        "ok": True,
+        "created": before is None,
+        "artifact": row,
+        "project_id": project_id,
+        "report_url": f"/api/workflows/customer-projects/{project_id}/report",
+        "content_hash": content_hash,
+        "raw_report_omitted": True,
+        "token_omitted": True,
+        "safe_defaults": report.get("safe_defaults"),
+    }, 201 if before is None else 200
 
 
 def hermes_run_task(conn, body: dict) -> dict:
@@ -5589,6 +5672,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(run_kb_bot_project_workflow(conn, body), 201)
             if path == "/api/workflows/customer-task-templates/run":
                 payload, status = run_customer_task_template_workflow(conn, body)
+                return self.send_json(payload, status)
+            if path.startswith("/api/workflows/customer-projects/") and path.endswith("/report-artifact"):
+                project_id = path.split("/")[-2]
+                payload, status = customer_project_report_artifact(conn, project_id)
+                conn.commit()
                 return self.send_json(payload, status)
             if path == "/api/workers/local/dispatch-once":
                 return self.send_json(dispatch_local_worker_once(conn, body), 201)
