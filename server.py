@@ -4133,6 +4133,113 @@ def run_kb_bot_project_workflow(conn, body: dict) -> dict:
         return {"provider": "agent-gateway", "workflow": "formal_ai_knowledge_base_qa_bot", "dry_run": False, "ok": False, "error": error}
 
 
+def customer_task_templates() -> list[dict]:
+    return [
+        {
+            "template_id": "tpl_customer_kb_qa_bot",
+            "name": "AI 知识库 / 问答机器人",
+            "name_en": "AI Knowledge Base / Q&A Bot",
+            "workflow": "formal_ai_knowledge_base_qa_bot",
+            "scenario": "customer_delivery",
+            "status": "ready",
+            "risk_level": "high",
+            "priority": "high",
+            "description": "把客户资料清洗成 Markdown/PDF/DOCX，设计 Dify / OpenAI File Search / AnythingLLM 知识库与问答机器人。",
+            "default_title": "搭建正式 AI 知识库 / 问答机器人",
+            "default_description": "客户任务：把原始资料清洗成 Markdown / PDF / DOCX，选择 Dify、OpenAI File Search 或 AnythingLLM，设计分块、Embedding、向量库、来源引用和 AI 问答工作流。",
+            "default_acceptance": "MIS 必须生成任务拆解、运行账本、工具调用、外部上传审批、记忆候选、质量评估和审计证据；不能保存凭证、完整私聊或原始资料全文。",
+            "agent_roles": ["Project Planner", "Document Cleaner", "Knowledge Base Builder", "Q&A Evaluator", "Customer Report Writer"],
+            "required_approvals": ["external_knowledge_upload"],
+            "safe_defaults": {
+                "external_upload_performed": False,
+                "credentials_stored": False,
+                "raw_documents_stored": False,
+                "summary_hash_only": True,
+            },
+            "entrypoint": "POST /api/workflows/customer-task-templates/run",
+        },
+        {
+            "template_id": "tpl_customer_ui_review",
+            "name": "产品 UI 评审与优化建议",
+            "name_en": "Product UI Review and Improvement Brief",
+            "workflow": "customer_task",
+            "scenario": "customer_delivery",
+            "status": "dry_run_or_confirmed_local",
+            "risk_level": "medium",
+            "priority": "high",
+            "description": "让 AI 团队评审一个工作台/页面，输出信息架构、交互、视觉层级和下一步改进清单。",
+            "default_title": "产品工作台 UI 评审与优化建议",
+            "default_description": "请评审当前 AgentOps MIS 工作台：信息架构是否清晰、客户是否知道下一步怎么操作、AI 团队运行证据是否可信，并给出可执行改进建议。",
+            "default_acceptance": "输出客户可读评审摘要、3-5 个优先级改进项、需要人工确认的设计/权限事项，并写入 MIS 任务、运行、评估和审计。",
+            "agent_roles": ["Researcher", "Product Designer", "Evaluator", "Report Writer"],
+            "required_approvals": ["confirmed_local_ai_run"],
+            "safe_defaults": {
+                "external_upload_performed": False,
+                "credentials_stored": False,
+                "raw_documents_stored": False,
+                "summary_hash_only": True,
+            },
+            "entrypoint": "POST /api/workflows/customer-task-templates/run",
+        },
+        {
+            "template_id": "tpl_customer_competitor_research",
+            "name": "竞品调研与产品定位报告",
+            "name_en": "Competitor Research and Product Positioning",
+            "workflow": "customer_task",
+            "scenario": "customer_delivery",
+            "status": "dry_run_or_confirmed_local",
+            "risk_level": "medium",
+            "priority": "medium",
+            "description": "把客户问题拆成调研、对比矩阵、差异化定位、风险和下一步方案。",
+            "default_title": "竞品调研与产品定位报告",
+            "default_description": "请围绕一个产品方向完成结构化竞品调研：竞品列表、核心能力、差异化、风险、MVP 建议和证据要求。",
+            "default_acceptance": "输出结构化报告摘要、对比维度、证据来源要求、可交付物清单，并写入 MIS 账本；需要联网或外部 API 时必须标记为人工审批。",
+            "agent_roles": ["Researcher", "Product Strategist", "Evaluator", "Report Writer"],
+            "required_approvals": ["external_research_or_api_access"],
+            "safe_defaults": {
+                "external_upload_performed": False,
+                "credentials_stored": False,
+                "raw_documents_stored": False,
+                "summary_hash_only": True,
+            },
+            "entrypoint": "POST /api/workflows/customer-task-templates/run",
+        },
+    ]
+
+
+def run_customer_task_template_workflow(conn, body: dict) -> tuple[dict, int]:
+    templates = {template["template_id"]: template for template in customer_task_templates()}
+    template_id = body.get("template_id") or "tpl_customer_kb_qa_bot"
+    template = templates.get(template_id)
+    if not template:
+        return {"error": "template not found", "template_id": template_id, "templates": list(templates)}, 404
+    if template["workflow"] == "formal_ai_knowledge_base_qa_bot":
+        result = run_kb_bot_project_workflow(conn, {**body, "template_id": template_id})
+    else:
+        payload = {
+            "title": body.get("title") or template["default_title"],
+            "description": body.get("description") or template["default_description"],
+            "acceptance_criteria": body.get("acceptance_criteria") or template["default_acceptance"],
+            "priority": body.get("priority") or template["priority"],
+            "risk_level": body.get("risk_level") or template["risk_level"],
+            "template_id": template_id,
+            "workflow_kind": template["workflow"],
+            "selected_agent_ids": body.get("selected_agent_ids") or [],
+            "owner_agent_id": body.get("owner_agent_id"),
+            "confirm_run": bool(body.get("confirm_run")),
+        }
+        result = run_customer_task_workflow(conn, payload)
+    result["template"] = {
+        "template_id": template["template_id"],
+        "name": template["name"],
+        "workflow": template["workflow"],
+        "safe_defaults": template["safe_defaults"],
+    }
+    audit(conn, "user", "usr_customer_demo", "workflow.customer_template.run", "template_packages", template_id, None, {"status": "completed" if result.get("ok", True) else "failed", "workflow": template["workflow"]}, {"template_id": template_id, "dry_run": result.get("dry_run"), "raw_documents_stored": False, "credentials_stored": False})
+    conn.commit()
+    return result, 201
+
+
 def hermes_run_task(conn, body: dict) -> dict:
     cfg = hermes_runtime_config()
     status = hermes_status()
@@ -5123,6 +5230,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM template_packages ORDER BY scenario, name").fetchall()))
             if path == "/api/template-bindings":
                 return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM template_bindings ORDER BY template_id, base_id").fetchall()))
+            if path == "/api/workflows/customer-task-templates":
+                return self.send_json({"templates": customer_task_templates(), "safe_defaults": {"raw_documents_stored": False, "credentials_stored": False, "external_upload_requires_approval": True}})
             if path == "/api/integrations/openclaw/status":
                 return self.send_json(openclaw_status())
             if path == "/api/integrations/hermes/status":
@@ -5350,6 +5459,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(run_customer_task_workflow(conn, body), 201)
             if path == "/api/workflows/kb-bot-project":
                 return self.send_json(run_kb_bot_project_workflow(conn, body), 201)
+            if path == "/api/workflows/customer-task-templates/run":
+                payload, status = run_customer_task_template_workflow(conn, body)
+                return self.send_json(payload, status)
             if path == "/api/workers/local/dispatch-once":
                 return self.send_json(dispatch_local_worker_once(conn, body), 201)
             if path == "/api/workers/local/start":

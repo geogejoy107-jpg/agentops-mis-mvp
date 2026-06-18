@@ -152,6 +152,30 @@ export interface KbBotProjectWorkflowResult {
   error?: string | null;
 }
 
+export interface CustomerTaskTemplate {
+  template_id: string;
+  name: string;
+  name_en?: string;
+  workflow: string;
+  scenario: string;
+  status: string;
+  risk_level: string;
+  priority: string;
+  description: string;
+  default_title: string;
+  default_description: string;
+  default_acceptance: string;
+  agent_roles: string[];
+  required_approvals: string[];
+  safe_defaults: Record<string, unknown>;
+  entrypoint: string;
+}
+
+export interface CustomerTaskTemplateListPayload {
+  templates: CustomerTaskTemplate[];
+  safe_defaults: Record<string, unknown>;
+}
+
 export interface WorkerStatusPayload {
   provider: string;
   status: string;
@@ -730,6 +754,38 @@ export async function runKbBotProjectWorkflow(): Promise<KbBotProjectWorkflowRes
   return apiJson<KbBotProjectWorkflowResult>("/workflows/kb-bot-project", {
     method: "POST",
     body: JSON.stringify({}),
+  });
+}
+
+export async function loadCustomerTaskTemplates(): Promise<CustomerTaskTemplateListPayload> {
+  const raw = await apiJson<Record<string, unknown>>("/workflows/customer-task-templates");
+  return {
+    templates: asArray<Record<string, unknown>>(raw.templates).map((item) => ({
+      template_id: String(item.template_id || ""),
+      name: String(item.name || item.template_id || ""),
+      name_en: item.name_en ? String(item.name_en) : undefined,
+      workflow: String(item.workflow || ""),
+      scenario: String(item.scenario || ""),
+      status: String(item.status || ""),
+      risk_level: String(item.risk_level || "medium"),
+      priority: String(item.priority || "medium"),
+      description: String(item.description || ""),
+      default_title: String(item.default_title || item.name || ""),
+      default_description: String(item.default_description || item.description || ""),
+      default_acceptance: String(item.default_acceptance || ""),
+      agent_roles: asArray(item.agent_roles).map(String),
+      required_approvals: asArray(item.required_approvals).map(String),
+      safe_defaults: (item.safe_defaults || {}) as Record<string, unknown>,
+      entrypoint: String(item.entrypoint || ""),
+    })),
+    safe_defaults: (raw.safe_defaults || {}) as Record<string, unknown>,
+  };
+}
+
+export async function runCustomerTaskTemplateWorkflow(input: { template_id: string; confirm_run?: boolean; selected_agent_ids?: string[]; owner_agent_id?: string }): Promise<KbBotProjectWorkflowResult & { template?: Record<string, unknown> }> {
+  return apiJson<KbBotProjectWorkflowResult & { template?: Record<string, unknown> }>("/workflows/customer-task-templates/run", {
+    method: "POST",
+    body: JSON.stringify(input),
   });
 }
 

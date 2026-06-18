@@ -2,7 +2,14 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 import { CheckCircle2, Loader2, Play, ShieldCheck } from "lucide-react";
 import type { Agent } from "../../data/mockData";
-import { runCustomerTaskWorkflow, runKbBotProjectWorkflow, type CustomerTaskWorkflowResult, type KbBotProjectWorkflowResult } from "../../data/liveApi";
+import {
+  loadCustomerTaskTemplates,
+  runCustomerTaskTemplateWorkflow,
+  runCustomerTaskWorkflow,
+  type CustomerTaskTemplate,
+  type CustomerTaskWorkflowResult,
+  type KbBotProjectWorkflowResult,
+} from "../../data/liveApi";
 import type { PixelLocale } from "./pixelModel";
 
 interface CustomerDispatchPanelProps {
@@ -46,6 +53,8 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
   const [kbBusy, setKbBusy] = useState(false);
   const [result, setResult] = useState<CustomerTaskWorkflowResult | null>(null);
   const [kbResult, setKbResult] = useState<KbBotProjectWorkflowResult | null>(null);
+  const [templates, setTemplates] = useState<CustomerTaskTemplate[]>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState("tpl_customer_kb_qa_bot");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -55,6 +64,39 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
     setDescription((current) => current === other.description || current === "" ? next.description : current);
     setAcceptance((current) => current === other.acceptance || current === "" ? next.acceptance : current);
   }, [locale]);
+
+  useEffect(() => {
+    let cancelled = false;
+    loadCustomerTaskTemplates()
+      .then((payload) => {
+        if (!cancelled) {
+          setTemplates(payload.templates);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setTemplates([]);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const selectedTemplate = useMemo(
+    () => templates.find((template) => template.template_id === selectedTemplateId),
+    [templates, selectedTemplateId],
+  );
+
+  const applyTemplate = (template: CustomerTaskTemplate) => {
+    setSelectedTemplateId(template.template_id);
+    setTitle(template.default_title);
+    setDescription(template.default_description);
+    setAcceptance(template.default_acceptance);
+    if (riskOptions.includes(template.risk_level as (typeof riskOptions)[number])) {
+      setRisk(template.risk_level as (typeof riskOptions)[number]);
+    }
+  };
 
   const toggleAgent = (agentId: string) => {
     setSelected((current) =>
@@ -91,7 +133,11 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
     setKbBusy(true);
     setError(null);
     try {
-      const next = await runKbBotProjectWorkflow();
+      const next = await runCustomerTaskTemplateWorkflow({
+        template_id: selectedTemplateId,
+        selected_agent_ids: selected,
+        owner_agent_id: selected[0],
+      });
       setKbResult(next);
       await onRefresh();
     } catch (err) {
@@ -194,6 +240,41 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
         </div>
       </div>
 
+      {templates.length > 0 && (
+        <div className="mt-4">
+          <div className="mb-2 text-[11px]" style={{ color: "var(--mis-muted)" }}>
+            {zh ? "客户任务模板" : "Customer task templates"}
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-2">
+            {templates.map((template) => {
+              const active = selectedTemplateId === template.template_id;
+              return (
+                <button
+                  key={template.template_id}
+                  type="button"
+                  onClick={() => applyTemplate(template)}
+                  className="rounded p-3 text-left"
+                  style={{
+                    background: active ? "rgba(42,157,143,0.12)" : "var(--mis-surface2)",
+                    border: active ? "1px solid rgba(42,157,143,0.30)" : "1px solid rgba(148,163,184,0.14)",
+                  }}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{zh ? template.name : template.name_en || template.name}</span>
+                    {active && <CheckCircle2 size={12} style={{ color: "var(--mis-success)" }} />}
+                  </div>
+                  <p className="mt-1 line-clamp-2 text-[10px] leading-relaxed" style={{ color: "var(--mis-muted)" }}>{template.description}</p>
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    <span className="rounded px-1.5 py-0.5 text-[9px]" style={{ background: "rgba(34,211,238,0.10)", color: "var(--mis-cyan)" }}>{template.workflow}</span>
+                    <span className="rounded px-1.5 py-0.5 text-[9px]" style={{ background: "rgba(168,85,247,0.10)", color: "var(--mis-purple)" }}>{template.risk_level}</span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       <div className="mt-4">
         <div className="mb-2 text-[11px]" style={{ color: "var(--mis-muted)" }}>
           {zh ? "选择代理团队" : "Choose agent team"}
@@ -242,7 +323,7 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
           style={{ background: "rgba(42,157,143,0.14)", color: "var(--mis-success)", border: "1px solid rgba(42,157,143,0.30)" }}
         >
           {kbBusy ? <Loader2 size={13} className="animate-spin" /> : <CheckCircle2 size={13} />}
-          {zh ? "一键生成知识库机器人项目" : "Generate KB bot project"}
+          {zh ? "按模板生成项目" : "Generate from template"}
         </button>
         <button
           type="button"
@@ -295,8 +376,8 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
               )}
               <p className="pt-1 leading-relaxed" style={{ color: "var(--mis-dim)" }}>
                 {zh
-                  ? "已创建 6 步客户项目闭环：任务、运行、工具调用、外部上传审批、评估、记忆候选、审计和交付摘要。未上传原始资料或保存凭证。"
-                  : "Created a six-step customer project loop: tasks, runs, tool calls, external-upload approval, evaluations, memory candidates, audit and delivery summary. No raw documents or credentials were uploaded."}
+                  ? `已按模板创建客户项目闭环：${selectedTemplate?.name || "模板"}。任务、运行、工具调用、外部上传审批、评估、记忆候选、审计和交付摘要已进入 MIS。未上传原始资料或保存凭证。`
+                  : `Created a template-backed customer project loop: ${selectedTemplate?.name_en || selectedTemplate?.name || "template"}. Tasks, runs, tool calls, external-upload approval, evaluations, memory candidates, audit and delivery summary entered MIS. No raw documents or credentials were uploaded.`}
               </p>
             </div>
           ) : (

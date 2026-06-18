@@ -368,6 +368,9 @@ Current v1.5 implementation:
 - AI knowledge-base / Q&A bot customer demo creates a six-step AI-team project, pending approval for external upload, evaluations, memories, audit events, and a customer delivery artifact through Agent Gateway.
 - Agent Gateway supports `POST /api/agent-gateway/artifacts` and CLI `agentops artifact record` for delivery summaries that store only safe summary/URI/hash metadata.
 - Pixel Office can start the same six-step customer project through `POST /api/workflows/kb-bot-project`, so the classroom/customer flow no longer requires manually running the script.
+- Customer task templates are available through `GET /api/workflows/customer-task-templates`.
+- A selected template can be launched through `POST /api/workflows/customer-task-templates/run`.
+- Pixel Office's customer dispatch panel loads local templates, applies their default title/brief/acceptance criteria, and can run the selected template.
 
 Acceptance evidence:
 
@@ -384,10 +387,17 @@ Acceptance evidence:
   - final run: `run_gw_b365e7e325c6`
   - delivery artifact: `art_kb_bot_delivery_20260617190650`
   - pending external-upload approval: `ap_gw_8002e643f058`
+- Customer task template smoke: `python3 scripts/customer_task_template_smoke.py`
+  - template count: `3`
+  - template: `tpl_customer_kb_qa_bot`
+  - project: `20260618154535`
+  - final task: `tsk_kb_bot_20260618154535_06`
+  - final run: `run_gw_cfde4c4822b1`
+  - delivery artifact: `art_kb_bot_delivery_20260618154535`
+  - pending external-upload approval: `ap_gw_956174266d1a`
 
 Remaining product work:
 
-- Task templates for common customer jobs.
 - Better task result pages and report export.
 
 ### 8. Productization Track
@@ -446,6 +456,7 @@ python3 scripts/task_claim_conflict_smoke.py
 python3 scripts/worker_stuck_recovery_smoke.py
 python3 scripts/worker_session_refresh_smoke.py
 python3 scripts/worker_adapter_retry_smoke.py
+python3 scripts/customer_task_template_smoke.py
 ```
 
 ## Current Status Summary
@@ -481,6 +492,7 @@ Implemented and verified:
 - Remote-token worker end-to-end smoke.
 - Remote launch-packet worker end-to-end smoke.
 - Customer-style knowledge-base bot project smoke with delivery artifact.
+- Customer task template API/UI path with KB bot template smoke.
 
 Not yet product-complete:
 

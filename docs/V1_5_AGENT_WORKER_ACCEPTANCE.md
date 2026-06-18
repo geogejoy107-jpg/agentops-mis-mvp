@@ -88,6 +88,7 @@ python3 scripts/task_claim_conflict_smoke.py
 python3 scripts/worker_stuck_recovery_smoke.py
 python3 scripts/worker_session_refresh_smoke.py
 python3 scripts/worker_adapter_retry_smoke.py
+python3 scripts/customer_task_template_smoke.py
 ```
 
 ## Evidence
@@ -475,6 +476,22 @@ pending approval: ap_gw_8002e643f058
 ```
 
 This is the same path used by Pixel Office's "Generate KB bot project" action.
+
+The customer task template smoke passed:
+
+```text
+script: python3 scripts/customer_task_template_smoke.py
+template_count: 3
+template_id: tpl_customer_kb_qa_bot
+project_id: 20260618154535
+steps: 6
+final task: tsk_kb_bot_20260618154535_06
+final run: run_gw_cfde4c4822b1
+delivery artifact: art_kb_bot_delivery_20260618154535
+pending approval: ap_gw_956174266d1a
+```
+
+Pixel Office's customer dispatch panel now loads `GET /api/workflows/customer-task-templates`, applies template defaults to the customer task form, and runs the selected template through `POST /api/workflows/customer-task-templates/run`.
 
 The approval decision side-effect smoke passed:
 
