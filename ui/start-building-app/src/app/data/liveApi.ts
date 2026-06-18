@@ -309,6 +309,24 @@ export interface AgentGatewayEnrollmentCreateResult {
   };
 }
 
+export interface AgentGatewayEnrollmentRequestResult {
+  request: {
+    request_id: string;
+    approval_id: string;
+    task_id: string;
+    run_id: string;
+    workspace_id: string;
+    agent_id: string;
+    name: string;
+    runtime_type: string;
+    status: string;
+    scopes: string[];
+  };
+  approval: Approval;
+  token_issued: boolean;
+  token_omitted: boolean;
+}
+
 export interface AgentGatewayEnrollmentRotateResult extends AgentGatewayEnrollmentCreateResult {
   rotated: boolean;
   rotated_from_token_id: string;
@@ -636,11 +654,12 @@ export async function loadAgentPerformance(id: string): Promise<AgentPerformance
   };
 }
 
-export async function decideApproval(id: string, decision: "approve" | "reject"): Promise<{ updated: boolean }> {
-  return apiJson<{ updated: boolean }>(`/approvals/${encodeURIComponent(id)}/${decision}`, {
+export async function decideApproval(id: string, decision: "approve" | "reject"): Promise<Approval> {
+  const raw = await apiJson<Record<string, unknown>>(`/approvals/${encodeURIComponent(id)}/${decision}`, {
     method: "POST",
     body: JSON.stringify({}),
   });
+  return normalizeApproval(raw);
 }
 
 export async function runLocalBrief(confirmRun = false): Promise<LocalBriefResult> {
@@ -805,6 +824,26 @@ export async function loadAgentGatewayStatus(): Promise<AgentGatewayStatusPayloa
 
 export async function createAgentGatewayEnrollment(input: AgentGatewayEnrollmentCreateInput): Promise<AgentGatewayEnrollmentCreateResult> {
   return apiJson<AgentGatewayEnrollmentCreateResult>("/agent-gateway/enrollment/create", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function requestAgentGatewayEnrollment(input: AgentGatewayEnrollmentCreateInput & { reason?: string }): Promise<AgentGatewayEnrollmentRequestResult> {
+  return apiJson<AgentGatewayEnrollmentRequestResult>("/agent-gateway/enrollment/request", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function issueApprovedAgentGatewayEnrollment(input: {
+  request_id?: string;
+  approval_id?: string;
+  ttl_days?: number;
+  heartbeat_timeout_sec?: number;
+  label?: string;
+}): Promise<AgentGatewayEnrollmentCreateResult & { issued_from_request_id?: string; approval_id?: string }> {
+  return apiJson<AgentGatewayEnrollmentCreateResult & { issued_from_request_id?: string; approval_id?: string }>("/agent-gateway/enrollment/issue-approved", {
     method: "POST",
     body: JSON.stringify(input),
   });

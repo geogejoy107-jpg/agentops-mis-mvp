@@ -177,6 +177,7 @@ Current v1.5 implementation:
 - Scope denial returns HTTP `403 forbidden` for valid tokens that lack a required endpoint permission.
 - Agent Gateway can now record customer delivery artifacts with `artifacts:write`, so remote workers can submit report summaries without raw customer content.
 - `/workspace/agents` exposes a first operator UI for creating, viewing, and revoking scoped enrollment tokens.
+- `/workspace/agents` exposes approval-gated enrollment request controls: request approval, approve/reject enrollment requests, and issue approved tokens.
 - `/workspace/agents` also exposes scope presets and per-token rotation.
 - `/workspace/agents` surfaces Agent Gateway readiness/auth mode/scope count/active enrollment/stale heartbeat cards for operators.
 - New/rotated enrollment responses include a safe `next_steps` launch packet for remote machines: env setup, `agentops status`, heartbeat, one-shot worker, and loop worker commands. Commands use an API-key placeholder rather than embedding the raw token.
@@ -189,6 +190,7 @@ Acceptance evidence:
   - repeat run `run_gw_f5635ff603fd`
 - `GET /api/agent-gateway/status` and `agentops status` report safe token-bound auth metadata for remote debugging without printing token secrets.
 - Browser verification showed `远程 Agent 接入`, `创建接入 token`, and `最近接入记录` on `/workspace/agents`.
+- Playwright snapshot verified `提交审批申请`, `审批式接入申请`, and `审批后发 token` on `/workspace/agents`.
 - Frontend build verified the `/workspace/agents` Agent Gateway status card.
 - `python3 scripts/enrollment_launch_steps_smoke.py` verified create/rotate launch packets omit raw tokens and include status/worker commands.
 - `python3 scripts/remote_launch_packet_worker_smoke.py` verified the returned launch packet environment can run a scoped worker and write run/tool/evaluation ledger evidence.

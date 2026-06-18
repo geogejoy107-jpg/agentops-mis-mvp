@@ -315,13 +315,13 @@ The enrollment approval workflow smoke passed:
 
 ```text
 script: python3 scripts/enrollment_approval_workflow_smoke.py
-agent_id: agt_enroll_approval_20260618124708
-request_id: enroll_req_e29261903074f63d
-approval_id: ap_enroll_req_enroll_req_e29261903074f63d
-task_id: tsk_enroll_req_enroll_req_e29261903074f63d
-run_id: run_enroll_req_enroll_req_e29261903074f63d
+agent_id: agt_enroll_approval_20260618125200
+request_id: enroll_req_7ff7bdf1124c9a66
+approval_id: ap_enroll_req_enroll_req_7ff7bdf1124c9a66
+task_id: tsk_enroll_req_enroll_req_7ff7bdf1124c9a66
+run_id: run_enroll_req_enroll_req_7ff7bdf1124c9a66
 premature issue: approval_required
-issued token: agtok_agt_enroll_approval_20260618124708_local_demo_e344ba9a7c71
+issued token: agtok_agt_enroll_approval_20260618125200_local_demo_37af34fdcf9a
 issued token heartbeat: idle
 cleanup revoked: 1
 token_omitted: true
@@ -482,6 +482,16 @@ visible labels:
   最近接入记录
 ```
 
+The `/workspace/agents` approval-gated enrollment UI was verified with Playwright snapshot:
+
+```text
+url: http://127.0.0.1:19001/workspace/agents
+visible labels:
+  提交审批申请
+  审批式接入申请
+  审批后发 token
+```
+
 The UI reads:
 
 ```http
@@ -547,4 +557,4 @@ planned MIS task
 - The worker does not store full prompts or raw responses.
 - The worker is repo-local; it is not yet a launchd service, pip package, npm package, or signed binary.
 - The UI worker panel now supports one-shot dispatch, local daemon start/stop, daemon state counters, daemon backoff state, daemon log tails, and recent gateway events; it is not a production fleet manager.
-- Remote enrollment token issuance/revocation/rotation, approval-gated enrollment requests, endpoint-level scope enforcement, short-lived session tokens, scope presets, a first enrollment UI, and minimal Agent Gateway workspace isolation now exist. Full RBAC, hosted multi-tenant isolation, session revocation UI/refresh policy, and hosted enrollment policy UI remain future work.
+- Remote enrollment token issuance/revocation/rotation, approval-gated enrollment request UI, endpoint-level scope enforcement, short-lived session tokens, scope presets, a first enrollment UI, and minimal Agent Gateway workspace isolation now exist. Full RBAC, hosted multi-tenant isolation, session revocation UI/refresh policy, and hosted enrollment policy UI remain future work.

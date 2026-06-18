@@ -4,7 +4,10 @@ import { Bot, Play, RefreshCw, Activity, Power, Square, KeyRound, ShieldCheck, T
 import { StatusBadge } from "../shared/StatusBadge";
 import {
   createAgentGatewayEnrollment,
+  decideApproval,
   dispatchLocalWorkerOnce,
+  issueApprovedAgentGatewayEnrollment,
+  loadApprovals,
   loadAgentGatewayEnrollments,
   loadAgentGatewayStatus,
   loadAgents,
@@ -13,10 +16,12 @@ import {
   loadWorkerStatus,
   revokeAgentGatewayEnrollment,
   rotateAgentGatewayEnrollment,
+  requestAgentGatewayEnrollment,
   startLocalWorkerDaemon,
   stopLocalWorkerDaemon,
   useLiveData,
   type AgentGatewayEnrollmentCreateResult,
+  type AgentGatewayEnrollmentRequestResult,
 } from "../../data/liveApi";
 import { pick, usePreferences } from "../../context/PreferencesContext";
 
@@ -71,6 +76,8 @@ export function AIEmployees() {
   const [enrollmentAction, setEnrollmentAction] = useState<string | null>(null);
   const [enrollmentResult, setEnrollmentResult] = useState<string | null>(null);
   const [createdToken, setCreatedToken] = useState<AgentGatewayEnrollmentCreateResult | null>(null);
+  const [createdRequest, setCreatedRequest] = useState<AgentGatewayEnrollmentRequestResult | null>(null);
+  const [issueApprovalId, setIssueApprovalId] = useState("");
   const [enrollmentForm, setEnrollmentForm] = useState({
     agent_id: "agt_remote_customer_worker",
     name: "Customer Remote Worker",
@@ -81,15 +88,16 @@ export function AIEmployees() {
     scopes: DEFAULT_GATEWAY_SCOPES.join(", "),
   });
   const { data, loading, error, refresh } = useLiveData(async () => {
-    const [metrics, workerStatus, enrollmentPayload, gatewayStatus, daemonLogs] = await Promise.all([
+    const [metrics, workerStatus, enrollmentPayload, gatewayStatus, approvals, daemonLogs] = await Promise.all([
       loadDashboard(),
       loadWorkerStatus(),
       loadAgentGatewayEnrollments(),
       loadAgentGatewayStatus(),
+      loadApprovals(),
       Promise.all(WORKER_ADAPTERS.map(adapter => loadWorkerDaemonLogs(adapter))),
     ]);
     const agents = await loadAgents(metrics);
-    return { agents, workerStatus, enrollmentPayload, gatewayStatus, daemonLogs };
+    return { agents, workerStatus, enrollmentPayload, gatewayStatus, approvals, daemonLogs };
   }, []);
   const agents = data?.agents || [];
   const workerStatus = data?.workerStatus;
@@ -98,6 +106,7 @@ export function AIEmployees() {
   const recentEvents = workerStatus?.recent_events || [];
   const enrollments = data?.enrollmentPayload?.enrollments || [];
   const gatewayStatus = data?.gatewayStatus;
+  const enrollmentApprovals = (data?.approvals || []).filter(item => item.reason.includes("Approve scoped enrollment"));
   const validScopes = data?.enrollmentPayload?.valid_scopes || DEFAULT_GATEWAY_SCOPES;
   const activeAgents = agents.filter(a => a.status === "running").length;
   const activeEnrollments = enrollments.filter(item => item.status === "active").length;
@@ -160,6 +169,15 @@ export function AIEmployees() {
       enrollmentSummary: "Issue scoped tokens for agents running on another laptop or server. The token is shown once; MIS stores only a hash.",
       createToken: "Create scoped token",
       creatingToken: "Creating token...",
+      requestEnrollment: "Request approval",
+      requestingEnrollment: "Requesting...",
+      issueApproved: "Issue approved token",
+      issuingApproved: "Issuing...",
+      approveRequest: "Approve",
+      rejectRequest: "Reject",
+      approvalRequestTitle: "Approval-gated requests",
+      noApprovalRequests: "No enrollment approval requests yet.",
+      requestCreated: "Enrollment request created",
       rotateToken: "Rotate",
       rotatingToken: "Rotating...",
       revokeToken: "Revoke",
@@ -246,6 +264,15 @@ export function AIEmployees() {
       enrollmentSummary: "给运行在另一台电脑或服务器上的 agent 发放带权限范围的 token。token 只显示一次，MIS 只保存 hash。",
       createToken: "创建接入 token",
       creatingToken: "正在创建...",
+      requestEnrollment: "提交审批申请",
+      requestingEnrollment: "正在申请...",
+      issueApproved: "审批后发 token",
+      issuingApproved: "正在发放...",
+      approveRequest: "批准",
+      rejectRequest: "拒绝",
+      approvalRequestTitle: "审批式接入申请",
+      noApprovalRequests: "暂无远程接入审批申请。",
+      requestCreated: "已创建接入申请",
       rotateToken: "轮换",
       rotatingToken: "正在轮换...",
       revokeToken: "吊销",
@@ -367,6 +394,72 @@ export function AIEmployees() {
       });
       setCreatedToken(result);
       setEnrollmentResult(`${result.agent_id}: ${result.token_id}`);
+      await refresh();
+    } catch (err) {
+      setEnrollmentResult(err instanceof Error ? err.message : String(err));
+    } finally {
+      setEnrollmentAction(null);
+    }
+  };
+
+  const requestEnrollment = async () => {
+    setEnrollmentAction("request");
+    setEnrollmentResult(null);
+    setCreatedToken(null);
+    setCreatedRequest(null);
+    try {
+      const result = await requestAgentGatewayEnrollment({
+        agent_id: enrollmentForm.agent_id.trim(),
+        name: enrollmentForm.name.trim(),
+        runtime_type: enrollmentForm.runtime_type,
+        workspace_id: enrollmentForm.workspace_id.trim(),
+        label: `${enrollmentForm.name.trim()} enrollment request`,
+        scopes: scopeList,
+        ttl_days: Number(enrollmentForm.ttl_days) || 30,
+        heartbeat_timeout_sec: Number(enrollmentForm.heartbeat_timeout_sec) || 300,
+        reason: locale === "zh"
+          ? "远程 worker 需要带范围权限来处理已分配的 MIS 任务。"
+          : "Remote worker needs scoped access to process assigned MIS tasks.",
+      });
+      setCreatedRequest(result);
+      setIssueApprovalId(result.approval.approval_id);
+      setEnrollmentResult(`${copy.requestCreated}: ${result.request.request_id}`);
+      await refresh();
+    } catch (err) {
+      setEnrollmentResult(err instanceof Error ? err.message : String(err));
+    } finally {
+      setEnrollmentAction(null);
+    }
+  };
+
+  const issueApprovedEnrollment = async (approvalId = issueApprovalId) => {
+    setEnrollmentAction(`issue-${approvalId || "manual"}`);
+    setEnrollmentResult(null);
+    setCreatedToken(null);
+    try {
+      const result = await issueApprovedAgentGatewayEnrollment({
+        approval_id: approvalId.trim(),
+        ttl_days: Number(enrollmentForm.ttl_days) || 30,
+        heartbeat_timeout_sec: Number(enrollmentForm.heartbeat_timeout_sec) || 300,
+        label: `${enrollmentForm.name.trim()} approved enrollment`,
+      });
+      setCreatedToken(result);
+      setEnrollmentResult(`${result.agent_id}: ${result.token_id}`);
+      await refresh();
+    } catch (err) {
+      setEnrollmentResult(err instanceof Error ? err.message : String(err));
+    } finally {
+      setEnrollmentAction(null);
+    }
+  };
+
+  const decideEnrollmentApproval = async (approvalId: string, decision: "approve" | "reject") => {
+    setEnrollmentAction(`${decision}-${approvalId}`);
+    setEnrollmentResult(null);
+    try {
+      const result = await decideApproval(approvalId, decision);
+      setIssueApprovalId(approvalId);
+      setEnrollmentResult(`${approvalId}: ${result.decision}`);
       await refresh();
     } catch (err) {
       setEnrollmentResult(err instanceof Error ? err.message : String(err));
@@ -769,7 +862,16 @@ export function AIEmployees() {
               style={{ background: "var(--mis-surface2)", color: "var(--mis-text)", border: "1px solid var(--mis-border)" }}
             />
           </label>
-          <div className="flex items-end">
+          <div className="flex items-end gap-2">
+            <button
+              onClick={requestEnrollment}
+              disabled={Boolean(enrollmentAction) || !enrollmentForm.agent_id.trim() || !enrollmentForm.name.trim() || scopeList.length === 0}
+              className="w-full flex items-center justify-center gap-1.5 text-[11px] px-3 py-2 rounded disabled:opacity-50"
+              style={{ background: "rgba(45,212,191,0.12)", color: "var(--mis-success)", border: "1px solid rgba(45,212,191,0.22)" }}
+            >
+              {enrollmentAction === "request" ? <RefreshCw size={12} /> : <ShieldCheck size={12} />}
+              {enrollmentAction === "request" ? copy.requestingEnrollment : copy.requestEnrollment}
+            </button>
             <button
               onClick={createEnrollment}
               disabled={Boolean(enrollmentAction) || !enrollmentForm.agent_id.trim() || !enrollmentForm.name.trim() || scopeList.length === 0}
@@ -781,6 +883,82 @@ export function AIEmployees() {
             </button>
           </div>
         </div>
+
+        {(createdRequest || enrollmentApprovals.length > 0) && (
+          <div className="rounded-lg p-3 mt-4" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.approvalRequestTitle}</div>
+                {createdRequest && (
+                  <div className="text-[10px] mt-1" style={{ color: "var(--mis-dim)" }}>
+                    {createdRequest.request.request_id} · {createdRequest.approval.approval_id} · {copy.tokenShownOnce.replace("Copy this token now. It will not be shown again.", "No token is issued until approval.").replace("请现在复制 token。页面不会再次显示原始 token。", "审批前不会发放 token。")}
+                  </div>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  value={issueApprovalId}
+                  onChange={(event) => setIssueApprovalId(event.target.value)}
+                  placeholder="approval_id"
+                  className="w-56 rounded px-3 py-2 text-xs outline-none"
+                  style={{ background: "var(--mis-bg)", color: "var(--mis-text)", border: "1px solid var(--mis-border)" }}
+                />
+                <button
+                  onClick={() => issueApprovedEnrollment()}
+                  disabled={Boolean(enrollmentAction) || !issueApprovalId.trim()}
+                  className="flex items-center gap-1.5 text-[11px] px-3 py-2 rounded disabled:opacity-50"
+                  style={{ background: "rgba(251,191,36,0.1)", color: "var(--mis-warning)", border: "1px solid rgba(251,191,36,0.25)" }}
+                >
+                  {enrollmentAction?.startsWith("issue-") ? <RefreshCw size={12} /> : <KeyRound size={12} />}
+                  {enrollmentAction?.startsWith("issue-") ? copy.issuingApproved : copy.issueApproved}
+                </button>
+              </div>
+            </div>
+            <div className="space-y-2 mt-3">
+              {enrollmentApprovals.length === 0 && (
+                <div className="text-[11px] rounded px-3 py-3" style={{ color: "var(--mis-muted)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                  {copy.noApprovalRequests}
+                </div>
+              )}
+              {enrollmentApprovals.slice(0, 5).map((approval) => (
+                <div key={approval.approval_id} className="grid grid-cols-[1.1fr_1.3fr_0.8fr_auto] items-center gap-3 rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                  <div className="min-w-0">
+                    <div className="text-[11px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{approval.requested_by_agent_id}</div>
+                    <div className="text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>{approval.approval_id}</div>
+                  </div>
+                  <div className="text-[10px] truncate" style={{ color: "var(--mis-dim)" }}>{approval.reason}</div>
+                  <StatusBadge status={approval.decision} />
+                  <div className="flex justify-end gap-1.5">
+                    <button
+                      onClick={() => decideEnrollmentApproval(approval.approval_id, "approve")}
+                      disabled={approval.decision !== "pending" || Boolean(enrollmentAction)}
+                      className="text-[11px] px-2.5 py-1.5 rounded disabled:opacity-40"
+                      style={{ background: "rgba(45,212,191,0.12)", color: "var(--mis-success)", border: "1px solid rgba(45,212,191,0.2)" }}
+                    >
+                      {enrollmentAction === `approve-${approval.approval_id}` ? copy.creatingToken : copy.approveRequest}
+                    </button>
+                    <button
+                      onClick={() => decideEnrollmentApproval(approval.approval_id, "reject")}
+                      disabled={approval.decision !== "pending" || Boolean(enrollmentAction)}
+                      className="text-[11px] px-2.5 py-1.5 rounded disabled:opacity-40"
+                      style={{ background: "rgba(248,113,113,0.1)", color: "#F87171", border: "1px solid rgba(248,113,113,0.22)" }}
+                    >
+                      {enrollmentAction === `reject-${approval.approval_id}` ? copy.revokingToken : copy.rejectRequest}
+                    </button>
+                    <button
+                      onClick={() => issueApprovedEnrollment(approval.approval_id)}
+                      disabled={approval.decision !== "approved" || Boolean(enrollmentAction)}
+                      className="text-[11px] px-2.5 py-1.5 rounded disabled:opacity-40"
+                      style={{ background: "rgba(251,191,36,0.1)", color: "var(--mis-warning)", border: "1px solid rgba(251,191,36,0.22)" }}
+                    >
+                      {enrollmentAction === `issue-${approval.approval_id}` ? copy.issuingApproved : copy.issueApproved}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="flex flex-wrap gap-1.5 mt-3">
           <span className="text-[10px] px-2 py-1" style={{ color: "var(--mis-muted)" }}>{copy.scopePresets}</span>
