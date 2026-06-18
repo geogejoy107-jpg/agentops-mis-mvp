@@ -2025,6 +2025,38 @@ def agent_gateway_register(conn, body) -> tuple[dict, int]:
     return {"agent": row, "outcome": outcome}, 201 if outcome == "created" else 200
 
 
+def agent_gateway_launch_steps(agent_id: str, workspace_id: str, runtime_type: str, base_url: str | None = None) -> dict:
+    base_url = redact_text(base_url or "http://127.0.0.1:8787", 180)
+    safe_agent_id = redact_text(agent_id, 120)
+    safe_workspace_id = normalize_workspace_id(workspace_id)
+    adapter = coerce_choice(runtime_type, {"mock", "hermes", "openclaw"}, "mock")
+    env = [
+        f"export AGENTOPS_BASE_URL={shlex.quote(base_url)}",
+        f"export AGENTOPS_WORKSPACE_ID={shlex.quote(safe_workspace_id)}",
+        f"export AGENTOPS_AGENT_ID={shlex.quote(safe_agent_id)}",
+        "export AGENTOPS_API_KEY='<paste one-time token here>'",
+    ]
+    confirm_flag = " --confirm-run" if adapter in {"hermes", "openclaw"} else ""
+    return {
+        "token_policy": "Token is shown once. Store it on the agent machine only; MIS stores only a hash.",
+        "base_url": base_url,
+        "agent_id": safe_agent_id,
+        "workspace_id": safe_workspace_id,
+        "adapter": adapter,
+        "env": env,
+        "verify": "agentops status",
+        "heartbeat": "agentops agent heartbeat --status idle --summary 'remote worker connected'",
+        "run_once": f"python3 scripts/agent_worker.py --once --adapter {adapter}{confirm_flag}",
+        "run_loop": f"python3 scripts/agent_worker.py --adapter {adapter}{confirm_flag} --poll-interval 5 --max-tasks 0 --continue-on-error --write-state --jsonl-log",
+        "notes": [
+            "Do not commit AGENTOPS_API_KEY or paste it into issue trackers.",
+            "Use agentops status before pulling tasks.",
+            "Hermes/OpenClaw launch commands include --confirm-run because the selected runtime is intended to execute.",
+        ],
+        "token_omitted": True,
+    }
+
+
 def agent_gateway_create_enrollment(conn, body) -> tuple[dict, int]:
     agent_id = body.get("agent_id") or stable_id("agt_remote", body.get("name") or "remote-agent", body.get("workspace_id") or "local-demo")
     workspace_id = normalize_workspace_id(body.get("workspace_id") or "local-demo")
@@ -2087,6 +2119,7 @@ def agent_gateway_create_enrollment(conn, body) -> tuple[dict, int]:
         "heartbeat_timeout_sec": row["heartbeat_timeout_sec"],
         "token": token,
         "note": "Store this token locally on the agent machine. MIS stores only a hash and will not show it again.",
+        "next_steps": agent_gateway_launch_steps(agent_id, workspace_id, runtime_type, body.get("base_url")),
     }, 201
 
 

@@ -130,6 +130,17 @@ agentops enrollment create --agent-id agt_local_worker --name "Local Worker" --s
 
 `--save-token` writes the returned token to the local CLI config for this machine only.
 
+The create response also includes a `next_steps` launch packet for the remote machine:
+
+- environment variables for `AGENTOPS_BASE_URL`, `AGENTOPS_WORKSPACE_ID`, and `AGENTOPS_AGENT_ID`
+- a placeholder for `AGENTOPS_API_KEY`, never the raw token embedded in a command
+- `agentops status`
+- `agentops agent heartbeat`
+- one-shot `scripts/agent_worker.py --once`
+- loop-mode `scripts/agent_worker.py --max-tasks 0 --continue-on-error`
+
+This packet is safe to display in the UI because it omits the token value from command strings.
+
 ### `agentops enrollment list`
 
 Lists token metadata, status, scopes, expiry, and heartbeat freshness. It never prints token secrets.
@@ -622,12 +633,14 @@ python3 scripts/remote_agent_token_worker_smoke.py
 python3 scripts/workspace_isolation_smoke.py
 python3 scripts/enrollment_health_state_smoke.py
 python3 scripts/agentops_status_smoke.py
+python3 scripts/enrollment_launch_steps_smoke.py
 ```
 
 This helper creates a scoped token, creates a normal MIS task for that agent, runs `scripts/agent_worker.py --once` with the token, verifies run/tool/eval evidence, and revokes the token by default. It does not print the raw token.
 The workspace isolation helper creates workspace A/B tasks, verifies that the workspace A token cannot pull, claim, start, or write workspace B work, and verifies that normal workspace A execution still succeeds.
 The enrollment health helper verifies `never_seen -> fresh -> stale -> revoked` without printing the raw token.
 The CLI status helper verifies `agentops status` reports safe token-bound metadata, updates to `fresh` after heartbeat, and rejects revoked tokens without leaking the raw token.
+The launch-steps helper verifies create/rotate responses include safe remote-worker commands and do not embed the raw token in those commands.
 
 Remaining future work:
 

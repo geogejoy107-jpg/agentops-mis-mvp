@@ -79,6 +79,7 @@ python3 scripts/agentops_cli_install_smoke.py
 python3 scripts/enrollment_health_state_smoke.py
 python3 scripts/agentops_status_smoke.py
 python3 scripts/redaction_policy_smoke.py
+python3 scripts/enrollment_launch_steps_smoke.py
 ```
 
 ## Evidence
@@ -228,6 +229,17 @@ token_id: agtok_agt_status_cli_smoke_20260618064953_local_demo_20bc50880c02
 states verified: never_seen -> fresh, revoked token rejected
 prefix global args supported: true
 token_omitted: true
+```
+
+The remote enrollment launch-step smoke passed:
+
+```text
+script: python3 scripts/enrollment_launch_steps_smoke.py
+agent_id: agt_launch_steps_smoke_20260618085043
+created token: agtok_agt_launch_steps_smoke_20260618085043_local_demo_a18606ef951e
+rotated token: agtok_agt_launch_steps_smoke_20260618085043_local_demo_9226d3f5b36e
+next_steps: env setup, agentops status, heartbeat, one-shot worker, loop worker for Hermes with --confirm-run
+raw token in commands: omitted
 ```
 
 The `/workspace/agents` Agent Gateway status card was added and frontend build passed:

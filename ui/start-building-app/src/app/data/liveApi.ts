@@ -293,6 +293,20 @@ export interface AgentGatewayEnrollmentCreateResult {
   heartbeat_timeout_sec: number;
   token: string;
   note: string;
+  next_steps?: {
+    token_policy: string;
+    base_url: string;
+    agent_id: string;
+    workspace_id: string;
+    adapter: string;
+    env: string[];
+    verify: string;
+    heartbeat: string;
+    run_once: string;
+    run_loop: string;
+    notes: string[];
+    token_omitted: boolean;
+  };
 }
 
 export interface AgentGatewayEnrollmentRotateResult extends AgentGatewayEnrollmentCreateResult {

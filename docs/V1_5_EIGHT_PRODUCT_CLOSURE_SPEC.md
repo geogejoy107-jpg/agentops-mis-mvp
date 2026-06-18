@@ -167,6 +167,7 @@ Current v1.5 implementation:
 - `/workspace/agents` exposes a first operator UI for creating, viewing, and revoking scoped enrollment tokens.
 - `/workspace/agents` also exposes scope presets and per-token rotation.
 - `/workspace/agents` surfaces Agent Gateway readiness/auth mode/scope count/active enrollment/stale heartbeat cards for operators.
+- New/rotated enrollment responses include a safe `next_steps` launch packet for remote machines: env setup, `agentops status`, heartbeat, one-shot worker, and loop worker commands. Commands use an API-key placeholder rather than embedding the raw token.
 
 Acceptance evidence:
 
@@ -177,6 +178,7 @@ Acceptance evidence:
 - `GET /api/agent-gateway/status` and `agentops status` report safe token-bound auth metadata for remote debugging without printing token secrets.
 - Browser verification showed `远程 Agent 接入`, `创建接入 token`, and `最近接入记录` on `/workspace/agents`.
 - Frontend build verified the `/workspace/agents` Agent Gateway status card.
+- `python3 scripts/enrollment_launch_steps_smoke.py` verified create/rotate launch packets omit raw tokens and include status/worker commands.
 - `python3 scripts/enrollment_rotation_smoke.py` verified API and CLI rotation with redacted one-time token output.
 - `python3 scripts/enrollment_health_state_smoke.py` verified the remote enrollment lifecycle `never_seen -> fresh -> stale -> revoked`.
 - `python3 scripts/workspace_isolation_smoke.py` verified:
@@ -357,6 +359,7 @@ python3 scripts/remote_agent_token_worker_smoke.py
 python3 scripts/workspace_isolation_smoke.py
 python3 scripts/enrollment_health_state_smoke.py
 python3 scripts/redaction_policy_smoke.py
+python3 scripts/enrollment_launch_steps_smoke.py
 ```
 
 ## Current Status Summary
@@ -374,6 +377,7 @@ Implemented and verified:
 - Scoped token enrollment.
 - Agent Gateway safe status check via `GET /api/agent-gateway/status` and `agentops status`.
 - Agent Gateway status surfaced in `/workspace/agents`.
+- Remote enrollment launch packet surfaced in `/workspace/agents` after token creation/rotation.
 - Remote enrollment UI.
 - Token revocation.
 - Token rotation.

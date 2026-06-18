@@ -177,6 +177,12 @@ export function AIEmployees() {
       heartbeat: "Heartbeat timeout",
       scopes: "Scopes",
       tokenShownOnce: "Copy this token now. It will not be shown again.",
+      launchPacket: "Remote launch packet",
+      envSetup: "Environment",
+      verifyCommand: "Verify",
+      heartbeatCommand: "Heartbeat",
+      runOnceCommand: "Run once",
+      runLoopCommand: "Run loop",
       recentEnrollments: "Recent enrollments",
       lastHeartbeat: "Last heartbeat",
       expires: "Expires",
@@ -257,6 +263,12 @@ export function AIEmployees() {
       heartbeat: "心跳超时",
       scopes: "权限范围",
       tokenShownOnce: "请现在复制 token。页面不会再次显示原始 token。",
+      launchPacket: "远程启动指引",
+      envSetup: "环境变量",
+      verifyCommand: "自检",
+      heartbeatCommand: "心跳",
+      runOnceCommand: "单轮运行",
+      runLoopCommand: "常驻运行",
       recentEnrollments: "最近接入记录",
       lastHeartbeat: "最近心跳",
       expires: "过期时间",
@@ -804,6 +816,37 @@ export function AIEmployees() {
             <div className="mt-2 text-[10px]" style={{ color: "var(--mis-dim)" }}>
               {createdToken.agent_id} · {createdToken.token_id} · {copy.expires}: {createdToken.expires_at}
             </div>
+            {createdToken.next_steps && (
+              <div className="mt-4 rounded-lg p-3" style={{ background: "var(--mis-bg)", border: "1px solid rgba(251,191,36,0.18)" }}>
+                <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.launchPacket}</div>
+                <div className="text-[10px] mt-1" style={{ color: "var(--mis-muted)" }}>
+                  {createdToken.next_steps.token_policy}
+                </div>
+                <div className="grid grid-cols-2 gap-3 mt-3">
+                  <div className="min-w-0">
+                    <div className="text-[10px] mb-1" style={{ color: "var(--mis-muted)" }}>{copy.envSetup}</div>
+                    <pre className="rounded p-2 text-[10px] whitespace-pre-wrap break-all" style={{ background: "var(--mis-surface2)", color: "var(--mis-dim)", border: "1px solid var(--mis-border)" }}>
+                      {createdToken.next_steps.env.join("\n")}
+                    </pre>
+                  </div>
+                  <div className="min-w-0 space-y-2">
+                    {[
+                      { label: copy.verifyCommand, value: createdToken.next_steps.verify },
+                      { label: copy.heartbeatCommand, value: createdToken.next_steps.heartbeat },
+                      { label: copy.runOnceCommand, value: createdToken.next_steps.run_once },
+                      { label: copy.runLoopCommand, value: createdToken.next_steps.run_loop },
+                    ].map(item => (
+                      <div key={item.label}>
+                        <div className="text-[10px] mb-1" style={{ color: "var(--mis-muted)" }}>{item.label}</div>
+                        <code className="block rounded px-2 py-1 text-[10px] break-all" style={{ background: "var(--mis-surface2)", color: "var(--mis-cyan)", border: "1px solid var(--mis-border)" }}>
+                          {item.value}
+                        </code>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
