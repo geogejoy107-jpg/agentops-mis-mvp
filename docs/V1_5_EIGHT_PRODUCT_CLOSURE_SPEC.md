@@ -81,6 +81,7 @@ Current v1.5 implementation:
   - `hermes`
   - `openclaw`
 - Hermes/OpenClaw real execution requires explicit `--confirm-run`.
+- Hermes adapter timeout is configurable through `--hermes-timeout` / `HERMES_TIMEOUT`; customer worker live dogfood uses a 300s Hermes window.
 - Retryable adapter failures can be retried with `--adapter-max-attempts` and `--adapter-retry-delay-sec`.
 - Non-retryable safety failures such as `ConfirmRunRequired` do not retry.
 - Tool-call args, evaluation rubric, and audit metadata record `attempt_count`, `max_attempts`, and retry history summaries.
@@ -94,6 +95,10 @@ Acceptance evidence:
 - Live recheck on 2026-06-18:
   - Hermes worker task `tsk_worker_hermes_live_20260618065503` completed as `run_gw_6f995c9de929`.
   - OpenClaw worker task `tsk_worker_openclaw_live_20260618065555` completed as `run_gw_c274e7d62b61`.
+- Customer worker live dogfood on 2026-06-20:
+  - Hermes completed customer worker run `run_gw_4b92508d1e33` with artifact `art_customer_worker_task_run_gw_4b92508d1e33`.
+  - OpenClaw completed customer worker run `run_gw_328d56c280fa` with artifact `art_customer_worker_task_run_gw_328d56c280fa`.
+  - Both runs wrote run/tool/evaluation/runtime/audit/artifact evidence.
 - `python3 scripts/worker_adapter_retry_smoke.py` verified adapter retry behavior:
   - mock transient failure succeeded after two attempts in `run_gw_a572f60ec9f4`,
   - Hermes without `--confirm-run` stopped after one non-retryable `ConfirmRunRequired` attempt in `run_gw_9951c583b9a7`,
@@ -530,6 +535,8 @@ Implemented and verified:
 - Read-only CLI worker preflight through `agentops worker preflight`.
 - CLI worker daemon controls through `agentops worker start|stop|logs`.
 - Live adapter daemon starts fail closed without `--confirm-run`.
+- Customer-facing worker task workflow through `POST /api/workflows/customer-worker-task`.
+- Pixel Office customer dispatch can run a task through mock/Hermes/OpenClaw worker adapters and show evidence counts.
 - Mock/Hermes/OpenClaw adapter loop.
 - Adapter retry handling with non-retry safety gate behavior.
 - UI one-shot worker dispatch.

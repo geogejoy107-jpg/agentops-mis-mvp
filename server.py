@@ -5090,14 +5090,22 @@ def dispatch_local_worker_once(conn, body: dict) -> dict:
     ]
     if confirm_run:
         cmd.append("--confirm-run")
+    worker_timeout = 260
     if adapter == "hermes":
-        cmd.extend(["--hermes-gateway-url", os.environ.get("HERMES_GATEWAY_URL", "http://127.0.0.1:8642")])
+        hermes_timeout = int(body.get("hermes_timeout") or os.environ.get("HERMES_TIMEOUT", "300"))
+        worker_timeout = max(hermes_timeout + 80, worker_timeout)
+        cmd.extend([
+            "--hermes-gateway-url",
+            os.environ.get("HERMES_GATEWAY_URL", "http://127.0.0.1:8642"),
+            "--hermes-timeout",
+            str(hermes_timeout),
+        ])
     if adapter == "openclaw":
         cmd.extend(["--openclaw-bin", str(OPENCLAW_BIN), "--openclaw-timeout", "180"])
 
     started = dt.datetime.now(dt.timezone.utc)
     try:
-        proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=260, check=False)
+        proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=worker_timeout, check=False)
         stdout = proc.stdout.strip()
         parsed = json.loads(stdout) if stdout else {}
         ok = proc.returncode == 0 and bool(parsed.get("ok", True))
@@ -5120,6 +5128,122 @@ def dispatch_local_worker_once(conn, body: dict) -> dict:
         "worker_result": parsed,
         "error": error,
     }
+
+
+def run_customer_worker_task_workflow(conn, body: dict) -> tuple[dict, int]:
+    adapter = coerce_choice(body.get("adapter"), {"mock", "hermes", "openclaw"}, "mock")
+    confirm_run = bool(body.get("confirm_run"))
+    title = redact_text(body.get("title") or "客户 Worker 任务", 160)
+    description = redact_text(body.get("description") or "Customer task should be processed by an AgentOps worker.", 800)
+    acceptance = redact_text(body.get("acceptance_criteria") or "Worker must write run, tool, evaluation and audit evidence.", 500)
+    call_id = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d%H%M%S%f")
+    worker_agent_id = body.get("worker_agent_id") or stable_id("agt_customer_worker", adapter, call_id, uuid.uuid4().hex[:8])
+    if adapter in {"hermes", "openclaw"} and not confirm_run:
+        task_id = body.get("task_id") or stable_id("tsk_customer_worker_plan", adapter, title, now_iso())
+        agent_id = worker_agent_id
+        ensure_gateway_agent(conn, agent_id, name=f"Customer {adapter} Worker", role="Customer Task Worker", runtime_type=adapter)
+        now = now_iso()
+        row = {
+            "task_id": task_id,
+            "title": title,
+            "description": description,
+            "requester_id": body.get("requester_id", "usr_customer_demo"),
+            "owner_agent_id": agent_id,
+            "collaborator_agent_ids": json.dumps(body.get("selected_agent_ids") or [], ensure_ascii=False),
+            "status": "planned",
+            "priority": coerce_choice(body.get("priority"), VALID_PRIORITIES, "high"),
+            "due_date": body.get("due_date"),
+            "acceptance_criteria": acceptance,
+            "risk_level": coerce_choice(body.get("risk_level"), VALID_RISK_LEVELS, "medium"),
+            "budget_limit_usd": float(body.get("budget_limit_usd") or 1.0),
+            "created_at": now,
+            "updated_at": now,
+        }
+        upsert_task(conn, row, "customer-worker-task")
+        runtime_event(conn, "rtc_agent_gateway_local", "customer_worker_task.confirm_required", "planned", task_id=task_id, agent_id=agent_id, input_summary=f"{adapter} worker requires confirm_run before live execution.")
+        audit(conn, "user", "usr_customer_demo", "workflow.customer_worker_task.confirm_required", "tasks", task_id, None, row, {"adapter": adapter, "confirm_run": False})
+        conn.commit()
+        return {
+            "provider": "agentops-worker",
+            "workflow": "customer_worker_task",
+            "dry_run": True,
+            "ok": False,
+            "adapter": adapter,
+            "task_id": task_id,
+            "agent_id": agent_id,
+            "requires": {"confirm_run": True},
+            "reason": "confirm_run_required_for_live_adapter",
+            "note": "Task was planned but live Hermes/OpenClaw worker execution requires explicit confirmation.",
+        }, 201
+
+    dispatch = dispatch_local_worker_once(conn, {
+        "adapter": adapter,
+        "confirm_run": confirm_run,
+        "title": title,
+        "description": description,
+        "acceptance_criteria": acceptance,
+        "priority": body.get("priority") or "high",
+        "risk_level": body.get("risk_level") or "medium",
+        "budget_limit_usd": body.get("budget_limit_usd") or 1.0,
+        "requester_id": body.get("requester_id", "usr_customer_demo"),
+        "agent_id": worker_agent_id,
+        "hermes_timeout": body.get("hermes_timeout") or 300,
+    })
+    worker_results = ((dispatch.get("worker_result") or {}).get("results") or [])
+    processed = next((item for item in worker_results if item.get("processed")), worker_results[0] if worker_results else {})
+    run_id = processed.get("run_id")
+    task_id = dispatch.get("task_id") or processed.get("task_id")
+    output_summary = redact_text(processed.get("output_summary") or dispatch.get("error") or "Worker task dispatched.", 1000)
+    artifact_id = None
+    evidence = {
+        "tool_calls": 0,
+        "evaluations": 0,
+        "runtime_events": 0,
+        "audit_logs": 0,
+        "artifacts": 0,
+    }
+    if run_id and task_id:
+        artifact_id = stable_id("art_customer_worker_task", run_id)
+        artifact = {
+            "artifact_id": artifact_id,
+            "task_id": task_id,
+            "run_id": run_id,
+            "artifact_type": "customer_worker_result",
+            "title": f"客户 Worker 交付：{title}",
+            "uri": f"run://{run_id}",
+            "summary": output_summary,
+            "created_at": now_iso(),
+        }
+        conn.execute(
+            """INSERT OR REPLACE INTO artifacts(artifact_id,task_id,run_id,artifact_type,title,uri,summary,created_at)
+            VALUES(:artifact_id,:task_id,:run_id,:artifact_type,:title,:uri,:summary,:created_at)""",
+            artifact,
+        )
+        runtime_event(conn, "rtc_agent_gateway_local", "customer_worker_task.artifact", "completed" if dispatch.get("ok") else "failed", run_id=run_id, task_id=task_id, agent_id=dispatch.get("agent_id"), output_summary=output_summary, raw_payload_hash=stable_hash({"run_id": run_id, "summary": output_summary}))
+        audit(conn, "system", "customer-worker-task", "workflow.customer_worker_task", "artifacts", artifact_id, None, artifact, {"adapter": adapter, "raw_output_omitted": True})
+        conn.commit()
+        evidence = {
+            "tool_calls": conn.execute("SELECT COUNT(*) c FROM tool_calls WHERE run_id=?", (run_id,)).fetchone()["c"],
+            "evaluations": conn.execute("SELECT COUNT(*) c FROM evaluations WHERE run_id=?", (run_id,)).fetchone()["c"],
+            "runtime_events": conn.execute("SELECT COUNT(*) c FROM runtime_events WHERE run_id=? OR task_id=?", (run_id, task_id)).fetchone()["c"],
+            "audit_logs": conn.execute("SELECT COUNT(*) c FROM audit_logs WHERE entity_id IN (?,?,?)", (run_id, task_id, artifact_id)).fetchone()["c"],
+            "artifacts": conn.execute("SELECT COUNT(*) c FROM artifacts WHERE run_id=?", (run_id,)).fetchone()["c"],
+        }
+    return {
+        "provider": "agentops-worker",
+        "workflow": "customer_worker_task",
+        "dry_run": False,
+        "ok": bool(dispatch.get("ok") and run_id),
+        "adapter": adapter,
+        "task_id": task_id,
+        "run_id": run_id,
+        "artifact_id": artifact_id,
+        "duration_ms": dispatch.get("duration_ms"),
+        "output_summary": output_summary,
+        "evidence": evidence,
+        "worker_result": dispatch.get("worker_result"),
+        "error": dispatch.get("error"),
+    }, 201
 
 
 def run_graph(conn, run_id: str) -> dict | None:
@@ -5796,6 +5920,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(run_local_ai_brief(conn, body), 201)
             if path == "/api/workflows/customer-task":
                 return self.send_json(run_customer_task_workflow(conn, body), 201)
+            if path == "/api/workflows/customer-worker-task":
+                payload, status = run_customer_worker_task_workflow(conn, body)
+                return self.send_json(payload, status)
             if path == "/api/workflows/kb-bot-project":
                 return self.send_json(run_kb_bot_project_workflow(conn, body), 201)
             if path == "/api/workflows/customer-task-templates/run":

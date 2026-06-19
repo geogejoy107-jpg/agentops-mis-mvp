@@ -7,6 +7,7 @@ import {
   persistCustomerProjectReportArtifact,
   runCustomerTaskTemplateWorkflow,
   runCustomerTaskWorkflow,
+  runCustomerWorkerTaskWorkflow,
   type CustomerTaskTemplate,
   type CustomerProjectReportArtifactResult,
   type CustomerTaskWorkflowResult,
@@ -21,6 +22,7 @@ interface CustomerDispatchPanelProps {
 }
 
 const riskOptions = ["low", "medium", "high"] as const;
+const workerAdapters = ["mock", "hermes", "openclaw"] as const;
 
 const DEFAULT_COPY = {
   en: {
@@ -52,6 +54,7 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
   const [risk, setRisk] = useState<(typeof riskOptions)[number]>("medium");
   const [selected, setSelected] = useState<string[]>(defaultSelected);
   const [busy, setBusy] = useState(false);
+  const [workerBusy, setWorkerBusy] = useState(false);
   const [kbBusy, setKbBusy] = useState(false);
   const [reportBusy, setReportBusy] = useState(false);
   const [result, setResult] = useState<CustomerTaskWorkflowResult | null>(null);
@@ -59,6 +62,7 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
   const [reportArtifact, setReportArtifact] = useState<CustomerProjectReportArtifactResult | null>(null);
   const [templates, setTemplates] = useState<CustomerTaskTemplate[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState("tpl_customer_kb_qa_bot");
+  const [workerAdapter, setWorkerAdapter] = useState<(typeof workerAdapters)[number]>("hermes");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -153,6 +157,32 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setKbBusy(false);
+    }
+  };
+
+  const runWorkerTask = async (confirmRun: boolean) => {
+    setWorkerBusy(true);
+    setError(null);
+    try {
+      const next = await runCustomerWorkerTaskWorkflow({
+        title,
+        description,
+        acceptance_criteria: acceptance,
+        priority: "high",
+        risk_level: risk,
+        owner_agent_id: selected[0],
+        selected_agent_ids: selected,
+        template_id: selectedTemplateId,
+        workflow_kind: "customer_worker_task",
+        adapter: workerAdapter,
+        confirm_run: confirmRun,
+      });
+      setResult(next);
+      await onRefresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setWorkerBusy(false);
     }
   };
 
@@ -354,6 +384,42 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
       </div>
 
       <div className="mt-4 flex flex-wrap items-center gap-2">
+        <div className="flex items-center gap-1 rounded px-1 py-1" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+          {workerAdapters.map((item) => (
+            <button
+              key={item}
+              type="button"
+              onClick={() => setWorkerAdapter(item)}
+              className="rounded px-2 py-1 text-[10px] capitalize"
+              style={{
+                background: workerAdapter === item ? "rgba(34,211,238,0.14)" : "transparent",
+                color: workerAdapter === item ? "var(--mis-cyan)" : "var(--mis-muted)",
+              }}
+            >
+              {item}
+            </button>
+          ))}
+        </div>
+        <button
+          type="button"
+          onClick={() => runWorkerTask(false)}
+          disabled={workerBusy || !title.trim()}
+          className="inline-flex items-center gap-1.5 rounded px-3 py-2 text-xs disabled:opacity-50"
+          style={{ background: "rgba(148,163,184,0.10)", color: "var(--mis-text)", border: "1px solid rgba(148,163,184,0.20)" }}
+        >
+          {workerBusy ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />}
+          {zh ? "Worker 执行" : "Run worker task"}
+        </button>
+        <button
+          type="button"
+          onClick={() => runWorkerTask(true)}
+          disabled={workerBusy || !title.trim()}
+          className="inline-flex items-center gap-1.5 rounded px-3 py-2 text-xs disabled:opacity-50"
+          style={{ background: "rgba(34,211,238,0.14)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.30)" }}
+        >
+          {workerBusy ? <Loader2 size={13} className="animate-spin" /> : <ShieldCheck size={13} />}
+          {zh ? "确认 Worker 运行" : "Confirm worker run"}
+        </button>
         <button
           type="button"
           onClick={() => submit(false)}
@@ -385,7 +451,7 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
           {zh ? "确认真实运行" : "Confirm real run"}
         </button>
         <span className="text-[10px]" style={{ color: "var(--mis-muted)" }}>
-          {zh ? "真实运行仍需服务端显式开启 HERMES_ALLOW_REAL_RUN。" : "Real run still requires server-side HERMES_ALLOW_REAL_RUN."}
+          {zh ? "mock worker 会真实写入账本；Hermes/OpenClaw 需要显式确认。" : "Mock worker writes real ledger evidence; Hermes/OpenClaw require explicit confirmation."}
         </span>
       </div>
 
@@ -401,6 +467,13 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
               </div>
               <div><span style={{ color: "var(--mis-muted)" }}>{zh ? "任务：" : "Task: "}</span>{result.task_id}</div>
               {result.run_id && <div><span style={{ color: "var(--mis-muted)" }}>{zh ? "运行：" : "Run: "}</span>{result.run_id}</div>}
+              {result.artifact_id && <div><span style={{ color: "var(--mis-muted)" }}>{zh ? "交付物：" : "Artifact: "}</span>{result.artifact_id}</div>}
+              {result.evidence && (
+                <div>
+                  <span style={{ color: "var(--mis-muted)" }}>{zh ? "证据：" : "Evidence: "}</span>
+                  tool {result.evidence.tool_calls || 0} · eval {result.evidence.evaluations || 0} · audit {result.evidence.audit_logs || 0} · artifact {result.evidence.artifacts || 0}
+                </div>
+              )}
               {result.reason && <div><span style={{ color: "var(--mis-muted)" }}>{zh ? "原因：" : "Reason: "}</span>{result.reason}</div>}
               {result.output_summary && <p className="pt-1 leading-relaxed" style={{ color: "var(--mis-dim)" }}>{result.output_summary}</p>}
             </div>

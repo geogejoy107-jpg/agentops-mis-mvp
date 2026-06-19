@@ -870,6 +870,76 @@ token_written: false
 The end-to-end operator/customer runbook is
 `docs/REMOTE_WORKER_OPERATIONS_RUNBOOK.md`.
 
+## Customer Worker Task Workflow
+
+Customer-facing task dispatch now has a direct worker-backed workflow:
+
+```http
+POST /api/workflows/customer-worker-task
+```
+
+This route creates a normal MIS task, executes it through the Agent Gateway
+worker loop, and writes customer-delivery evidence back to:
+
+- `runs`
+- `tool_calls`
+- `evaluations`
+- `runtime_events`
+- `audit_logs`
+- `artifacts` with type `customer_worker_result`
+
+It is intentionally different from the admin-only worker panel: the customer
+provides the goal and acceptance criteria, while the AI employee uses the
+machine-facing Agent Gateway/worker path to do the work.
+
+Latest safe smoke:
+
+```text
+script: python3 scripts/customer_worker_task_workflow_smoke.py
+mock run: run_gw_1a8bc4a76537
+artifact: art_customer_worker_task_run_gw_1a8bc4a76537
+tool_calls: 1
+evaluations: 1
+runtime_events: 8
+audit_logs: 8
+artifacts: 1
+Hermes without confirm_run: planned task, confirm_run_required_for_live_adapter
+```
+
+Latest local live dogfood runs for the current AgentOps MIS project:
+
+```text
+script: python3 scripts/customer_worker_live_dogfood.py --adapter hermes
+run: run_gw_4b92508d1e33
+artifact: art_customer_worker_task_run_gw_4b92508d1e33
+tool_calls: 1
+evaluations: 1
+runtime_events: 8
+audit_logs: 8
+artifacts: 1
+```
+
+```text
+script: python3 scripts/customer_worker_live_dogfood.py --adapter openclaw
+run: run_gw_328d56c280fa
+artifact: art_customer_worker_task_run_gw_328d56c280fa
+tool_calls: 1
+evaluations: 1
+runtime_events: 8
+audit_logs: 8
+artifacts: 1
+```
+
+A real queue collision was found and fixed during this dogfood pass: the first
+Hermes live run picked an older planned confirmation-gate task because it reused
+the same worker agent id. The workflow now creates a unique customer worker
+agent id per dispatch unless explicitly overridden, so each customer task is
+processed by its intended worker queue.
+
+Hermes live execution also exposed a fixed 180s HTTP timeout. The worker now
+supports `--hermes-timeout` / `HERMES_TIMEOUT`, and the customer worker workflow
+passes a 300s Hermes timeout for live dogfood runs.
+
 ## What This Proves
 
 The v1.5 worker loop can process normal MIS tasks, not just connector probes:

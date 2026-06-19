@@ -259,6 +259,9 @@ Workspace isolation smoke 会验证：token 绑定 workspace A 后，只能 pull
 python3 scripts/run_kb_bot_demo.py
 python3 scripts/kb_bot_demo_smoke.py
 python3 scripts/kb_bot_workflow_api_smoke.py
+python3 scripts/customer_worker_task_workflow_smoke.py
+python3 scripts/customer_worker_live_dogfood.py --adapter hermes
+python3 scripts/customer_worker_live_dogfood.py --adapter openclaw
 ```
 
 它会模拟 AI 团队完成“正式 AI 知识库 / 问答机器人”项目：
@@ -269,6 +272,7 @@ python3 scripts/kb_bot_workflow_api_smoke.py
 - 通过 Agent Gateway 登记一份客户交付摘要 artifact，可从任务/运行详情看到。
 - 对 Dify / OpenAI File Search / AnythingLLM 外部上传创建 pending approval，不上传原始资料、不保存凭证。
 - 也可以从 Pixel Office 里的“一键生成知识库机器人项目”按钮触发同一条浏览器工作流，后端接口是 `POST /api/workflows/kb-bot-project`。
+- Pixel Office 的客户派活面板也能触发 `POST /api/workflows/customer-worker-task`：客户任务进入 Agent Gateway worker，mock/Hermes/OpenClaw adapter 执行后写回 run、tool call、evaluation、audit 和 `customer_worker_result` artifact。Hermes/OpenClaw 仍需显式确认。
 
 ## v1.5 Local Agent Worker Loop
 

@@ -111,11 +111,17 @@ export interface CustomerTaskWorkflowInput {
   confirm_run?: boolean;
 }
 
+export interface CustomerWorkerTaskWorkflowInput extends CustomerTaskWorkflowInput {
+  adapter?: "mock" | "hermes" | "openclaw";
+}
+
 export interface CustomerTaskWorkflowResult {
   provider: string;
   workflow: string;
   dry_run: boolean;
   ok?: boolean;
+  adapter?: string;
+  agent_id?: string;
   task_id: string;
   run_id?: string;
   artifact_id?: string | null;
@@ -126,6 +132,13 @@ export interface CustomerTaskWorkflowResult {
   note?: string;
   requires?: Record<string, unknown>;
   selected_agent_ids?: string[];
+  evidence?: {
+    tool_calls?: number;
+    evaluations?: number;
+    runtime_events?: number;
+    audit_logs?: number;
+    artifacts?: number;
+  };
 }
 
 export interface KbBotProjectWorkflowResult {
@@ -827,6 +840,13 @@ export async function runLocalBrief(confirmRun = false): Promise<LocalBriefResul
 
 export async function runCustomerTaskWorkflow(input: CustomerTaskWorkflowInput): Promise<CustomerTaskWorkflowResult> {
   return apiJson<CustomerTaskWorkflowResult>("/workflows/customer-task", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function runCustomerWorkerTaskWorkflow(input: CustomerWorkerTaskWorkflowInput): Promise<CustomerTaskWorkflowResult> {
+  return apiJson<CustomerTaskWorkflowResult>("/workflows/customer-worker-task", {
     method: "POST",
     body: JSON.stringify(input),
   });

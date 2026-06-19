@@ -163,6 +163,33 @@ agentops worker stuck
 agentops worker release --task-id <task_id> --reason "reviewed stale worker"
 ```
 
+## Customer Task API Path
+
+For product dogfooding or customer-facing demos, use the workflow endpoint
+instead of manually creating worker tasks:
+
+```bash
+curl -fsS -X POST http://127.0.0.1:8787/api/workflows/customer-worker-task \
+  -H "Content-Type: application/json" \
+  -d '{
+    "adapter": "mock",
+    "title": "Improve the AgentOps MIS customer workspace",
+    "description": "Use the worker loop to produce product recommendations.",
+    "acceptance_criteria": "Write run, tool, evaluation, audit and artifact evidence."
+  }' | jq .
+```
+
+For local live Hermes/OpenClaw dogfood:
+
+```bash
+python3 scripts/customer_worker_live_dogfood.py --adapter hermes
+python3 scripts/customer_worker_live_dogfood.py --adapter openclaw
+```
+
+This path creates a normal MIS task, executes through the worker adapter, and
+returns the `run_id`, `artifact_id`, and evidence counts. Hermes/OpenClaw live
+execution still requires explicit confirmation inside the workflow call.
+
 ## Revocation And Rotation
 
 List enrollments and sessions:
