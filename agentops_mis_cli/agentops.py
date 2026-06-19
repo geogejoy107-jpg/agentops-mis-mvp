@@ -54,6 +54,25 @@ def resolved_context(args) -> dict:
     }
 
 
+def context_sources(args, config: dict) -> dict:
+    def source_for(flag_name: str, env_name: str, config_key: str, default_value: str = "") -> str:
+        value = getattr(args, flag_name, None)
+        if value:
+            return "flag"
+        if os.environ.get(env_name):
+            return "env"
+        if config.get(config_key):
+            return "config"
+        return "default" if default_value else "missing"
+
+    return {
+        "base_url": source_for("base_url", "AGENTOPS_BASE_URL", "base_url", DEFAULT_BASE_URL),
+        "api_key": source_for("api_key", "AGENTOPS_API_KEY", "api_key"),
+        "workspace_id": source_for("workspace_id", "AGENTOPS_WORKSPACE_ID", "workspace_id", DEFAULT_WORKSPACE_ID),
+        "agent_id": source_for("agent_id", "AGENTOPS_AGENT_ID", "agent_id"),
+    }
+
+
 def emit(data):
     print(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True))
 
@@ -136,6 +155,86 @@ def cmd_login(args) -> dict:
 
 def cmd_status(args, client: AgentOpsClient) -> dict:
     return client.get("/api/agent-gateway/status")
+
+
+def cmd_doctor(args, client: AgentOpsClient) -> dict:
+    config = load_config()
+    sources = context_sources(args, config)
+    checks = []
+    gateway = None
+    workers = None
+
+    try:
+        gateway = client.get("/api/agent-gateway/status")
+        checks.append({
+            "name": "agent_gateway_status",
+            "ok": gateway.get("status") == "ready",
+            "status": gateway.get("status"),
+            "auth_mode": (gateway.get("auth") or {}).get("mode"),
+            "token_omitted": gateway.get("token_omitted") is True,
+        })
+    except RuntimeError as exc:
+        checks.append({
+            "name": "agent_gateway_status",
+            "ok": False,
+            "error": str(exc),
+        })
+
+    try:
+        workers = client.get("/api/workers/status")
+        checks.append({
+            "name": "worker_status",
+            "ok": workers.get("status") == "ready",
+            "status": workers.get("status"),
+            "worker_count": workers.get("worker_count"),
+            "running_workers": workers.get("running_workers"),
+            "stuck_worker_tasks": workers.get("stuck_worker_tasks"),
+        })
+    except RuntimeError as exc:
+        checks.append({
+            "name": "worker_status",
+            "ok": False,
+            "error": str(exc),
+        })
+
+    has_token = bool(client.api_key)
+    setup_hints = []
+    if not has_token:
+        setup_hints.append("No AGENTOPS_API_KEY/config token detected. Local dev may still work, but remote agents should use a scoped enrollment token or short-lived session.")
+    if not client.agent_id:
+        setup_hints.append("No agent id resolved. Set AGENTOPS_AGENT_ID or run agentops login --agent-id ... before remote worker use.")
+    if gateway and not (gateway.get("auth") or {}).get("authenticated") and has_token:
+        setup_hints.append("A token was provided but Agent Gateway did not authenticate it; rotate or re-enroll the agent.")
+    if workers and workers.get("stuck_worker_tasks", 0):
+        setup_hints.append("Stuck worker tasks detected. Run agentops worker stuck and agentops worker release after review.")
+
+    return {
+        "ok": all(item.get("ok") for item in checks),
+        "command": "agentops doctor",
+        "base_url": client.base_url,
+        "workspace_id": client.workspace_id,
+        "agent_id": client.agent_id,
+        "config_path": str(CONFIG_PATH),
+        "config_exists": CONFIG_PATH.exists(),
+        "auth": {
+            "has_api_key": has_token,
+            "api_key_source": sources["api_key"],
+            "base_url_source": sources["base_url"],
+            "workspace_id_source": sources["workspace_id"],
+            "agent_id_source": sources["agent_id"],
+            "token_omitted": True,
+        },
+        "checks": checks,
+        "gateway": gateway,
+        "worker_summary": {
+            "status": workers.get("status") if workers else None,
+            "worker_count": workers.get("worker_count") if workers else None,
+            "running_workers": workers.get("running_workers") if workers else None,
+            "pending_worker_tasks": workers.get("pending_worker_tasks") if workers else None,
+            "stuck_worker_tasks": workers.get("stuck_worker_tasks") if workers else None,
+        },
+        "setup_hints": setup_hints,
+    }
 
 
 def cmd_agent_register(args, client: AgentOpsClient) -> dict:
@@ -465,6 +564,10 @@ def build_parser() -> argparse.ArgumentParser:
     add_global_args(status, suppress_defaults=True)
     status.set_defaults(handler="status")
 
+    doctor = sub.add_parser("doctor", help="Diagnose local/remote agent CLI setup without printing secrets.")
+    add_global_args(doctor, suppress_defaults=True)
+    doctor.set_defaults(handler="doctor")
+
     agent = sub.add_parser("agent", help="Agent identity commands.")
     agent_sub = agent.add_subparsers(dest="action", required=True)
     register = agent_sub.add_parser("register", help="Register or update an AI digital employee.")
@@ -688,6 +791,7 @@ def build_parser() -> argparse.ArgumentParser:
 HANDLERS = {
     "login": lambda args, client: cmd_login(args),
     "status": cmd_status,
+    "doctor": cmd_doctor,
     "agent_register": cmd_agent_register,
     "agent_heartbeat": cmd_agent_heartbeat,
     "task_pull": cmd_task_pull,

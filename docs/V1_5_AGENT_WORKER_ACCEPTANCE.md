@@ -65,6 +65,7 @@ Agent enrollment CLI/API:
 
 ```bash
 ./scripts/agentops enrollment create --agent-id agt_remote_cli_smoke --name "Remote CLI Smoke" --runtime mock --save-token
+./scripts/agentops doctor
 ./scripts/agentops status
 ./scripts/agentops agent heartbeat --id agt_remote_cli_smoke --status idle
 ./scripts/agentops task pull --agent-id agt_remote_cli_smoke --limit 1 --status planned
@@ -76,6 +77,7 @@ python3 scripts/kb_bot_demo_smoke.py
 python3 scripts/kb_bot_workflow_api_smoke.py
 python3 scripts/approval_decision_side_effect_smoke.py
 python3 scripts/agentops_cli_install_smoke.py
+python3 scripts/agentops_doctor_smoke.py
 python3 scripts/enrollment_health_state_smoke.py
 python3 scripts/agentops_status_smoke.py
 python3 scripts/redaction_policy_smoke.py
@@ -625,12 +627,23 @@ The pip editable CLI package smoke passed:
 ```text
 script: python3 scripts/agentops_pip_install_smoke.py
 install: uv pip install <repo>, building/installing the local source package
+build dependencies: offline backend, no setuptools/wheel download required
 command: temporary venv/bin/agentops
 help: passed
 login: passed without writing token
 status: provider agent_gateway
 token_omitted: true
 token_written: false
+```
+
+The CLI doctor smoke passed:
+
+```text
+script: python3 scripts/agentops_doctor_smoke.py
+local mode: ok, api_key_source missing, token_omitted true
+env scoped-token mode: ok, api_key_source env, token_omitted true
+token_leaked: false
+cleanup: revoked scoped token
 ```
 
 On this machine, `python3 scripts/install_agentops_cli.py --force` installed:
@@ -643,6 +656,7 @@ For remote machines with Python, the package path is now:
 
 ```bash
 python3 -m pip install .
+agentops doctor
 agentops status
 ```
 

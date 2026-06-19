@@ -117,8 +117,10 @@ Current v1.5 implementation:
 - `scripts/install_agentops_cli.py` installs a local user shim at `~/.local/bin/agentops`.
 - `pyproject.toml` exposes `agentops` as a Python console script through package `agentops-mis-cli`.
 - `scripts/agentops` remains a repo-local compatibility wrapper around `python -m agentops_mis_cli`.
+- `agentops_mis_cli/_build_backend.py` builds the pure-Python CLI package without downloading setuptools/wheel, which keeps local/remote source installs usable in restricted networks.
 - Commands include:
   - `agentops login`
+  - `agentops doctor`
   - `agentops status`
   - `agentops enrollment create/list/revoke/rotate`
   - `agentops agent register`
@@ -139,7 +141,8 @@ Acceptance evidence:
 - CLI enrollment smoke passed with `agt_remote_cli_smoke`.
 - Revoked token was rejected.
 - Local CLI install smoke passed: `python3 scripts/agentops_cli_install_smoke.py`.
-- Pip editable install smoke passed: `python3 scripts/agentops_pip_install_smoke.py`.
+- Pip source-package install smoke passed: `python3 scripts/agentops_pip_install_smoke.py`.
+- CLI doctor smoke passed: `python3 scripts/agentops_doctor_smoke.py`.
 - CLI status smoke passed: `python3 scripts/agentops_status_smoke.py`.
 - Current machine has `~/.local/bin/agentops` installed as a shim to this repo.
 
@@ -482,6 +485,7 @@ python3 scripts/kb_bot_workflow_api_smoke.py
 python3 scripts/approval_decision_side_effect_smoke.py
 python3 scripts/agentops_cli_install_smoke.py
 python3 scripts/agentops_pip_install_smoke.py
+python3 scripts/agentops_doctor_smoke.py
 python3 scripts/agentops_status_smoke.py
 python3 scripts/remote_agent_token_worker_smoke.py
 python3 scripts/workspace_isolation_smoke.py
@@ -506,6 +510,7 @@ Implemented and verified:
 
 - Local worker loop.
 - Installable Python `agentops` CLI package through `pyproject.toml`.
+- Read-only `agentops doctor` setup diagnostic for local/remote agent machines.
 - Local daemon start/stop/status.
 - Mock/Hermes/OpenClaw adapter loop.
 - Adapter retry handling with non-retry safety gate behavior.

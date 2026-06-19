@@ -169,6 +169,7 @@ python3 scripts/install_agentops_cli.py
 agentops --help
 python3 -m pip install -e .
 python3 -m pip install .
+agentops doctor
 agentops status
 ./scripts/agentops login --base-url http://127.0.0.1:8787 --workspace-id local-demo --agent-id agt_local_worker
 ./scripts/agentops agent register --id agt_local_worker --name "Local Worker" --role "AI Digital Employee"
@@ -184,15 +185,19 @@ python3 -m pip install -e .
 # or, for a source-package style install:
 python3 -m pip install .
 agentops --help
+agentops doctor
 agentops status
 ```
 
 This install path is intended for local/remote agent machines that already have a Python environment. It keeps the same JSON output contract and still reads auth from env/config; it does not create tokens by itself.
+The package uses a tiny offline build backend, so `python3 -m pip install .` does not need to download setuptools or wheel during local source installs.
 
 已支持：
 
 ```text
 agentops login
+agentops doctor
+agentops status
 agentops enrollment create/list/revoke/rotate
 agentops agent register
 agentops agent heartbeat
@@ -229,6 +234,7 @@ python3 scripts/remote_agent_token_worker_smoke.py
 python3 scripts/enrollment_rotation_smoke.py
 python3 scripts/workspace_isolation_smoke.py
 python3 scripts/agentops_pip_install_smoke.py
+python3 scripts/agentops_doctor_smoke.py
 ```
 
 它会创建 scoped token、创建一个普通 MIS 任务、用 token 跑 `scripts/agent_worker.py --once`、验证 run/tool/eval 证据，并默认吊销 token。

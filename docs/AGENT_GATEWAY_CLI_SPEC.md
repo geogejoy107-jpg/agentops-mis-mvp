@@ -70,12 +70,13 @@ Current local MVP implementation:
 python3 -m pip install -e .
 python3 -m pip install .
 agentops --help
+agentops doctor
 ./scripts/agentops login --base-url http://127.0.0.1:8787 --workspace-id local-demo --agent-id agt_local_worker
 ./scripts/agentops status
 ./scripts/agentops enrollment create --agent-id agt_remote_builder --name "Remote Builder" --runtime openclaw
 ```
 
-The implementation lives in `agentops_mis_cli/agentops.py`, with `scripts/agentops` as a repo-local compatibility wrapper. `pyproject.toml` also exposes the same command through the `agentops-mis-cli` Python console script for pip source installs on local or remote agent machines. It uses only Python standard library modules and reads configuration from environment variables or `~/.agentops/config.json`.
+The implementation lives in `agentops_mis_cli/agentops.py`, with `scripts/agentops` as a repo-local compatibility wrapper. `pyproject.toml` also exposes the same command through the `agentops-mis-cli` Python console script for pip source installs on local or remote agent machines. It uses only Python standard library modules, includes a tiny offline build backend, and reads configuration from environment variables or `~/.agentops/config.json`.
 
 ### `agentops login`
 
@@ -96,6 +97,24 @@ agentops status
 ```
 
 With a scoped remote-agent token, status returns the auth mode, bound `agent_id`, bound `workspace_id`, allowed scopes, token id, expiry, and heartbeat state. It never returns the raw token or token hash.
+
+### `agentops doctor`
+
+Runs a read-only setup diagnostic for local and remote agent machines.
+
+It reports:
+
+- resolved base URL, workspace, agent id, and config path;
+- whether an API key/session token is present without printing it;
+- auth source category: flag, env, config, default, or missing;
+- Agent Gateway status and token omission proof;
+- worker provider status, worker count, running workers, pending tasks, and stuck tasks;
+- setup hints for missing token, missing agent id, rejected token, or stuck worker recovery.
+
+```bash
+agentops doctor
+AGENTOPS_API_KEY=agtok_... AGENTOPS_AGENT_ID=agt_remote_builder agentops doctor
+```
 
 ### `agentops agent register`
 
@@ -744,6 +763,7 @@ python3 scripts/remote_agent_token_worker_smoke.py
 python3 scripts/workspace_isolation_smoke.py
 python3 scripts/enrollment_health_state_smoke.py
 python3 scripts/agentops_pip_install_smoke.py
+python3 scripts/agentops_doctor_smoke.py
 python3 scripts/agentops_status_smoke.py
 python3 scripts/enrollment_launch_steps_smoke.py
 python3 scripts/remote_launch_packet_worker_smoke.py
@@ -760,6 +780,7 @@ This helper creates a scoped token, creates a normal MIS task for that agent, ru
 The workspace isolation helper creates workspace A/B tasks, verifies that the workspace A token cannot pull, claim, start, or write workspace B work, and verifies that normal workspace A execution still succeeds.
 The enrollment health helper verifies `never_seen -> fresh -> stale -> revoked` without printing the raw token.
 The CLI status helper verifies `agentops status` reports safe token-bound metadata, updates to `fresh` after heartbeat, and rejects revoked tokens without leaking the raw token.
+The CLI doctor helper verifies `agentops doctor` works in local no-token mode and scoped env-token mode, checks Gateway/worker status, and confirms the raw token is omitted from output.
 The launch-steps helper verifies create/rotate responses include safe remote-worker commands, a short-lived session command, `--use-session`, and do not embed the raw token in those commands.
 The remote launch-packet helper uses the returned environment shape to run a real worker through `--use-session` and verify run/tool/evaluation ledger evidence.
 The scope-matrix helper verifies an observer token can heartbeat/pull/audit but receives `403 forbidden` for claim/run/tool/artifact writes.
