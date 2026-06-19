@@ -661,6 +661,16 @@ token_leaked: false
 cleanup: revoked scoped token
 ```
 
+The CLI worker status smoke passed:
+
+```text
+script: python3 scripts/agentops_worker_status_smoke.py
+command: ./scripts/agentops worker status
+provider: agentops-worker
+daemon summary: present
+secret_leaked: false
+```
+
 On this machine, `python3 scripts/install_agentops_cli.py --force` installed:
 
 ```text

@@ -235,6 +235,7 @@ python3 scripts/enrollment_rotation_smoke.py
 python3 scripts/workspace_isolation_smoke.py
 python3 scripts/agentops_pip_install_smoke.py
 python3 scripts/agentops_doctor_smoke.py
+python3 scripts/agentops_worker_status_smoke.py
 ```
 
 它会创建 scoped token、创建一个普通 MIS 任务、用 token 跑 `scripts/agent_worker.py --once`、验证 run/tool/eval 证据，并默认吊销 token。
@@ -247,6 +248,7 @@ Workspace isolation smoke 会验证：token 绑定 workspace A 后，只能 pull
 - token 绑定 `agent_id`，不能冒充其他 agent。
 - token 绑定 `workspace_id`，不能通过 header/query/body 切换到其他 workspace。
 - API 会检查 endpoint scope，例如 `tasks:read`、`runs:write`、`audit:write`。
+- `./scripts/agentops worker status` 可从命令行查看 worker fleet、daemon、pending task 和 stuck task 状态。
 - `./scripts/agentops enrollment revoke --agent-id agt_remote_builder` 可吊销该 agent 的 active token。
 
 知识库机器人客户任务演示：
