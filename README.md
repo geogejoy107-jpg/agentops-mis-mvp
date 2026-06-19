@@ -268,9 +268,20 @@ python3 scripts/kb_bot_workflow_api_smoke.py
 
 ## v1.5 Local Agent Worker Loop
 
-`scripts/agent_worker.py` 是 repo-local worker daemon v0.1。它通过 Agent Gateway API 拉取普通 MIS 任务，认领后调用 adapter，并把 run/tool/eval/audit 写回 MIS。
+`agentops-worker` 是可安装的 worker daemon 命令。它通过 Agent Gateway API 拉取普通 MIS 任务，认领后调用 adapter，并把 run/tool/eval/audit 写回 MIS。`scripts/agent_worker.py` 仍保留为 repo-local 兼容 wrapper，供本地 UI/smoke 继续使用。
 
 8 点产品闭环目标与总 spec 见 `docs/V1_5_EIGHT_PRODUCT_CLOSURE_SPEC.md`。
+
+客户/远程机器安装后运行：
+
+```bash
+python3 -m pip install .
+agentops doctor
+agentops-worker --once --adapter mock --agent-id agt_worker_local
+agentops-worker --adapter mock --poll-interval 5 --max-tasks 0 --continue-on-error --write-state --jsonl-log
+```
+
+安装版 worker 默认把 state 写入 `~/.agentops/workers`；repo 内 wrapper 默认写入 `.agentops_runtime/workers`。可用 `AGENTOPS_WORKER_RUNTIME_DIR` 覆盖 state 目录，用 `AGENTOPS_WORKER_CWD` 覆盖 OpenClaw adapter 的执行目录。
 
 单轮 mock：
 

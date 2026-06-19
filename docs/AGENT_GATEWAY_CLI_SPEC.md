@@ -158,8 +158,9 @@ The create response also includes a `next_steps` launch packet for the remote ma
 - a placeholder for `AGENTOPS_API_KEY`, never the raw token embedded in a command
 - `agentops status`
 - `agentops agent heartbeat`
-- one-shot `scripts/agent_worker.py --once`
-- loop-mode `scripts/agent_worker.py --max-tasks 0 --continue-on-error`
+- one-shot `agentops-worker --once`
+- loop-mode `agentops-worker --max-tasks 0 --continue-on-error`
+- repo-local fallback commands using `python3 scripts/agent_worker.py ...`
 
 This packet is safe to display in the UI because it omits the token value from command strings.
 
@@ -774,6 +775,7 @@ python3 scripts/task_claim_conflict_smoke.py
 python3 scripts/worker_stuck_recovery_smoke.py
 python3 scripts/worker_session_refresh_smoke.py
 python3 scripts/worker_adapter_retry_smoke.py
+python3 scripts/agentops_worker_package_smoke.py
 ```
 
 This helper creates a scoped token, creates a normal MIS task for that agent, runs `scripts/agent_worker.py --once` with the token, verifies run/tool/eval evidence, and revokes the token by default. It does not print the raw token.
@@ -788,6 +790,7 @@ The session helper verifies an enrollment token can mint a narrowed short-lived 
 The enrollment-approval helper verifies request-before-token behavior: request returns no token, premature issue is rejected, approval unlocks token issue, and the issued token can heartbeat.
 The task-claim helper verifies two agents can initially see the same public pool task, the first claim wins, same-agent repeat claim is idempotent, and a second worker cannot claim or start the already claimed task.
 The stuck-recovery helper verifies a stale running worker task is listed, released back to `planned`, and the linked running run is blocked with `WorkerTaskReleased`.
+The worker package helper installs the Python source package into a temporary venv, verifies `agentops-worker --help`, then runs a one-shot no-task worker loop against a local stub Agent Gateway. It proves the installable worker can register, pull, heartbeat, write state outside the repo, and omit token values.
 The session-refresh helper verifies a loop worker using `--use-session` refreshes short-lived sessions before expiry and still completes multiple tasks with run/tool/evaluation evidence.
 The adapter-retry helper verifies retryable adapter failures can succeed after retry, while non-retryable safety gates such as missing `--confirm-run` stop after one attempt and still write failed run/tool/evaluation evidence.
 

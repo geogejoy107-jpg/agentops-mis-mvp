@@ -636,6 +636,19 @@ token_omitted: true
 token_written: false
 ```
 
+The pip worker package smoke passed:
+
+```text
+script: python3 scripts/agentops_worker_package_smoke.py
+install: uv pip install <repo>, building/installing the local source package
+command: temporary venv/bin/agentops-worker
+help: passed
+one-shot no-task loop: passed against a local Agent Gateway stub
+gateway requests: register, tasks/pull, heartbeat
+state_written: true, outside repo temp dir
+token_omitted: true
+```
+
 The CLI doctor smoke passed:
 
 ```text
@@ -658,6 +671,7 @@ For remote machines with Python, the package path is now:
 python3 -m pip install .
 agentops doctor
 agentops status
+agentops-worker --once --adapter mock --use-session --session-ttl-sec 900
 ```
 
 This keeps the same env/config auth model and JSON output contract as `./scripts/agentops`.

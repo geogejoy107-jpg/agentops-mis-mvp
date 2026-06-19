@@ -49,6 +49,7 @@ def _entry_points() -> str:
     return "\n".join([
         "[console_scripts]",
         "agentops = agentops_mis_cli.cli:main",
+        "agentops-worker = agentops_mis_cli.worker:main",
         "",
     ])
 

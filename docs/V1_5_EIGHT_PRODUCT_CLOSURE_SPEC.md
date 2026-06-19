@@ -485,6 +485,7 @@ python3 scripts/kb_bot_workflow_api_smoke.py
 python3 scripts/approval_decision_side_effect_smoke.py
 python3 scripts/agentops_cli_install_smoke.py
 python3 scripts/agentops_pip_install_smoke.py
+python3 scripts/agentops_worker_package_smoke.py
 python3 scripts/agentops_doctor_smoke.py
 python3 scripts/agentops_status_smoke.py
 python3 scripts/remote_agent_token_worker_smoke.py
