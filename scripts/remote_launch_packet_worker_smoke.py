@@ -74,6 +74,7 @@ def smoke(base_url: str, stamp: str) -> dict:
         require(token not in text, "raw token leaked into launch packet")
         require(steps.get("adapter") == "mock", f"launch packet adapter mismatch: {steps}")
         require("agentops status" in text and "agentops-worker" in text, f"launch packet missing product commands: {steps}")
+        require("agentops-worker preflight" in text, f"launch packet missing adapter preflight command: {steps}")
         require("service-template --manager launchd" in text and "service-template --manager systemd" in text, f"launch packet missing service template commands: {steps}")
         require("scripts/agent_worker.py" in text, f"launch packet missing repo fallback commands: {steps}")
         require("agentops session create" in text and "--use-session" in text, f"launch packet missing short-lived session path: {steps}")

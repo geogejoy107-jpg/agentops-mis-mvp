@@ -44,6 +44,7 @@ def assert_safe_launch_steps(payload: dict, expected_adapter: str) -> dict:
     require(token not in text, "raw token leaked into next_steps")
     require("<paste one-time token here>" in text, "next_steps should use a token placeholder")
     require("agentops status" in text, "next_steps missing agentops status")
+    require("agentops-worker preflight" in text, "next_steps missing worker preflight command")
     require("agentops session create" in text, "next_steps missing short-lived session command")
     require("python3 -m pip install ." in text, "next_steps missing package install command")
     require("agentops-worker" in text, "next_steps missing installable worker launch command")

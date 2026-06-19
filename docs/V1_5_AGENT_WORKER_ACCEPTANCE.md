@@ -263,7 +263,7 @@ script: python3 scripts/enrollment_launch_steps_smoke.py
 agent_id: agt_launch_steps_smoke_20260618150315
 created token: agtok_agt_launch_steps_smoke_20260618150315_local_demo_ecb243af94eb
 rotated token: agtok_agt_launch_steps_smoke_20260618150315_local_demo_d18914518af4
-next_steps: package install, env setup, agentops status, short-lived session command, heartbeat, one-shot agentops-worker, loop agentops-worker, launchd/systemd service template commands, repo fallback worker for Hermes with --confirm-run and --use-session
+next_steps: package install, env setup, agentops status, adapter preflight, short-lived session command, heartbeat, one-shot agentops-worker, loop agentops-worker, launchd/systemd service template commands, repo fallback worker for Hermes with --confirm-run and --use-session
 raw token in commands: omitted
 ```
 
@@ -643,6 +643,7 @@ script: python3 scripts/agentops_worker_package_smoke.py
 install: uv pip install <repo>, building/installing the local source package
 command: temporary venv/bin/agentops-worker
 help: passed
+preflight: passed, read-only, token omitted
 one-shot no-task loop: passed against a local Agent Gateway stub
 gateway requests: register, tasks/pull, heartbeat
 state_written: true, outside repo temp dir

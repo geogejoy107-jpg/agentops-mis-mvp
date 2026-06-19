@@ -212,7 +212,7 @@ Current v1.5 implementation:
 - `/workspace/agents` exposes recent short-lived sessions and can revoke an active session directly.
 - `/workspace/agents` surfaces Agent Gateway readiness/auth mode/scope count/active enrollment/stale heartbeat cards for operators.
 - `/workspace/agents` now includes an operator readiness strip for self-dogfooding and customer operations. It explains local worker mode, confirmed Hermes/OpenClaw live dispatch, remote agent entry, and stuck-task recovery before the detailed gateway/worker/enrollment panels.
-- New/rotated enrollment responses include a safe `next_steps` launch packet for remote machines: package install, env setup, `agentops status`, heartbeat, one-shot `agentops-worker`, loop `agentops-worker`, launchd/systemd template commands, and repo-local fallback worker commands. Commands use an API-key placeholder rather than embedding the raw token.
+- New/rotated enrollment responses include a safe `next_steps` launch packet for remote machines: package install, env setup, `agentops status`, `agentops-worker preflight`, heartbeat, one-shot `agentops-worker`, loop `agentops-worker`, launchd/systemd template commands, and repo-local fallback worker commands. Commands use an API-key placeholder rather than embedding the raw token.
 - Launch-packet worker commands now use `--use-session --session-ttl-sec 900`, so remote workers mint a short-lived session before processing tasks instead of holding the enrollment token in the worker loop.
 
 Acceptance evidence:
@@ -525,7 +525,7 @@ Implemented and verified:
 - Agent Gateway status surfaced in `/workspace/agents`.
 - Operator readiness strip surfaced in `/workspace/agents`.
 - Remote enrollment launch packet surfaced in `/workspace/agents` after token creation/rotation.
-- Remote enrollment launch packet worker path now uses the installable `agentops-worker` command and short-lived sessions before task processing; repo-local `scripts/agent_worker.py` is shown only as a fallback. Long-running worker setup can render launchd/systemd templates, but template installation is still manual.
+- Remote enrollment launch packet worker path now uses the installable `agentops-worker` command, read-only adapter preflight, and short-lived sessions before task processing; repo-local `scripts/agent_worker.py` is shown only as a fallback. Long-running worker setup can render launchd/systemd templates, but template installation is still manual.
 - Loop-mode workers can refresh short-lived sessions before expiry while continuing to process tasks.
 - Remote enrollment UI.
 - Token revocation.

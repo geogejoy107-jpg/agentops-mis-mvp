@@ -853,10 +853,133 @@ def render_service_template(argv: list[str]) -> int:
     return 0
 
 
+def preflight_http_json(url: str, timeout: int = 5) -> tuple[bool, int | None, dict]:
+    try:
+        req = Request(url, headers={"Accept": "application/json"}, method="GET")
+        with urlopen(req, timeout=timeout) as res:
+            raw = res.read().decode("utf-8")
+            try:
+                payload = json.loads(raw) if raw else {}
+            except json.JSONDecodeError:
+                payload = {"raw_summary": redact_text(raw, 200)}
+            return True, res.status, payload
+    except HTTPError as exc:
+        try:
+            payload = json.loads(exc.read().decode("utf-8"))
+        except Exception:
+            payload = {"error": redact_text(str(exc), 200)}
+        return False, exc.code, payload
+    except Exception as exc:
+        return False, None, safe_error(exc)
+
+
+def check_gateway_preflight(args) -> dict:
+    client = AgentOpsClient(args.base_url, args.workspace_id, args.agent_id, args.api_key)
+    try:
+        status = client.get("/api/agent-gateway/status")
+        return {
+            "ok": True,
+            "mode": ((status.get("auth") or {}).get("mode") or "local"),
+            "agent_id": (status.get("auth") or {}).get("agent_id") or args.agent_id,
+            "workspace_id": (status.get("auth") or {}).get("workspace_id") or args.workspace_id,
+            "scope_count": len((status.get("auth") or {}).get("scopes") or []),
+            "token_omitted": True,
+        }
+    except Exception as exc:
+        return {"ok": False, **safe_error(exc), "token_omitted": True}
+
+
+def check_adapter_preflight(args) -> dict:
+    if args.adapter == "mock":
+        return {
+            "ok": True,
+            "adapter": "mock",
+            "target_resource": "local://agentops/mock-worker",
+            "live_execution_performed": False,
+        }
+    if args.adapter == "hermes":
+        gateway_url = args.hermes_gateway_url.rstrip("/")
+        health_ok, health_status, health_payload = preflight_http_json(f"{gateway_url}/health", timeout=args.timeout)
+        models_ok, models_status, models_payload = preflight_http_json(f"{gateway_url}/v1/models", timeout=args.timeout)
+        return {
+            "ok": bool(health_ok or models_ok),
+            "adapter": "hermes",
+            "target_resource": gateway_url,
+            "health": {"ok": health_ok, "status": health_status, "summary": redact_text(health_payload, 200)},
+            "models": {"ok": models_ok, "status": models_status, "summary": redact_text(models_payload, 200)},
+            "live_execution_performed": False,
+        }
+    binary = Path(args.openclaw_bin).expanduser()
+    exists = binary.exists()
+    executable = os.access(binary, os.X_OK) if exists else False
+    version_summary = ""
+    version_ok = False
+    if exists and executable:
+        try:
+            proc = subprocess.run(
+                [str(binary), "--version"],
+                cwd=DEFAULT_WORKER_CWD,
+                capture_output=True,
+                text=True,
+                timeout=min(max(int(args.timeout or 5), 1), 20),
+                check=False,
+            )
+            version_ok = proc.returncode == 0
+            version_summary = redact_text(proc.stdout or proc.stderr or f"exit={proc.returncode}", 200)
+        except Exception as exc:
+            version_summary = redact_text(str(exc), 200)
+    return {
+        "ok": bool(exists and executable),
+        "adapter": "openclaw",
+        "binary_path": str(binary),
+        "binary_exists": exists,
+        "binary_executable": executable,
+        "version_ok": version_ok,
+        "version_summary": version_summary,
+        "live_execution_performed": False,
+    }
+
+
+def build_preflight_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Run a read-only AgentOps worker adapter preflight.")
+    parser.add_argument("--base-url", default=os.environ.get("AGENTOPS_BASE_URL", DEFAULT_BASE_URL))
+    parser.add_argument("--workspace-id", default=os.environ.get("AGENTOPS_WORKSPACE_ID", DEFAULT_WORKSPACE_ID))
+    parser.add_argument("--agent-id", default=os.environ.get("AGENTOPS_AGENT_ID", DEFAULT_AGENT_ID))
+    parser.add_argument("--api-key", default=os.environ.get("AGENTOPS_API_KEY", ""))
+    parser.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
+    parser.add_argument("--hermes-gateway-url", default=os.environ.get("HERMES_GATEWAY_URL", DEFAULT_HERMES_GATEWAY_URL))
+    parser.add_argument("--openclaw-bin", default=os.environ.get("OPENCLAW_BIN", DEFAULT_OPENCLAW_BIN))
+    parser.add_argument("--timeout", type=int, default=5)
+    return parser
+
+
+def run_preflight(argv: list[str]) -> int:
+    args = build_preflight_parser().parse_args(argv)
+    gateway = check_gateway_preflight(args)
+    adapter = check_adapter_preflight(args)
+    ok = bool(gateway.get("ok") and adapter.get("ok"))
+    payload = {
+        "ok": ok,
+        "provider": "agentops-worker",
+        "agent_id": args.agent_id,
+        "workspace_id": args.workspace_id,
+        "adapter": args.adapter,
+        "gateway": gateway,
+        "adapter_preflight": adapter,
+        "live_execution_performed": False,
+        "raw_prompt_response_omitted": True,
+        "token_omitted": True,
+    }
+    print(json_dumps(payload))
+    return 0 if ok else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv[:1] == ["service-template"]:
         return render_service_template(argv[1:])
+    if argv[:1] == ["preflight"]:
+        return run_preflight(argv[1:])
     args = build_parser().parse_args(argv)
     signal.signal(signal.SIGTERM, handle_stop_signal)
     signal.signal(signal.SIGINT, handle_stop_signal)

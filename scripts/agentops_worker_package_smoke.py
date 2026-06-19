@@ -32,6 +32,17 @@ class SmokeGateway(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         SmokeGateway.requests.append({"method": "GET", "path": self.path})
+        if self.path.startswith("/api/agent-gateway/status"):
+            self._send(200, {
+                "auth": {
+                    "mode": "local_dev",
+                    "agent_id": "agt_worker_package_smoke",
+                    "workspace_id": "local-demo",
+                    "scopes": [],
+                    "token_omitted": True,
+                }
+            })
+            return
         if self.path.startswith("/api/agent-gateway/tasks/pull"):
             self._send(200, {"tasks": []})
             return
@@ -109,6 +120,22 @@ def main() -> int:
             cwd=tmp_path,
             env=env,
         )
+        preflight_run = run(
+            [
+                str(worker),
+                "preflight",
+                "--adapter",
+                "mock",
+                "--base-url",
+                base_url,
+                "--workspace-id",
+                "local-demo",
+                "--agent-id",
+                "agt_worker_package_smoke",
+            ],
+            cwd=tmp_path,
+            env=env,
+        )
         launchd_run = run(
             [
                 str(worker),
@@ -154,11 +181,20 @@ def main() -> int:
                 state_payload = json.loads(state_path.read_text(encoding="utf-8"))
             except json.JSONDecodeError:
                 pass
+        preflight_payload = {}
+        try:
+            preflight_payload = json.loads(preflight_run.stdout) if preflight_run.stdout.strip() else {}
+        except json.JSONDecodeError:
+            pass
 
         ok = (
             install.returncode == 0
             and help_run.returncode == 0
             and "Run an AgentOps MIS worker loop" in help_run.stdout
+            and preflight_run.returncode == 0
+            and preflight_payload.get("ok") is True
+            and preflight_payload.get("live_execution_performed") is False
+            and preflight_payload.get("token_omitted") is True
             and once_run.returncode == 0
             and once_payload.get("ok") is True
             and once_payload.get("processed") == 0
@@ -181,6 +217,7 @@ def main() -> int:
             "ok": ok,
             "install_returncode": install.returncode,
             "help_returncode": help_run.returncode,
+            "preflight_returncode": preflight_run.returncode,
             "once_returncode": once_run.returncode,
             "launchd_template_returncode": launchd_run.returncode,
             "systemd_template_returncode": systemd_run.returncode,
@@ -195,6 +232,8 @@ def main() -> int:
         if not ok:
             print("install stderr:", install.stderr[-1200:], file=sys.stderr)
             print("help stderr:", help_run.stderr[-1200:], file=sys.stderr)
+            print("preflight stdout:", preflight_run.stdout[-1200:], file=sys.stderr)
+            print("preflight stderr:", preflight_run.stderr[-1200:], file=sys.stderr)
             print("once stdout:", once_run.stdout[-1200:], file=sys.stderr)
             print("once stderr:", once_run.stderr[-1200:], file=sys.stderr)
             print("launchd stderr:", launchd_run.stderr[-1200:], file=sys.stderr)

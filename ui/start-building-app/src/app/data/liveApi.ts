@@ -443,6 +443,7 @@ export interface AgentGatewayEnrollmentCreateResult {
     install?: string;
     env: string[];
     verify: string;
+    preflight?: string;
     session?: string;
     heartbeat: string;
     run_once: string;

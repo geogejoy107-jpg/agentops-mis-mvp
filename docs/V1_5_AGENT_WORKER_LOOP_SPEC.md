@@ -157,6 +157,7 @@ Behavior:
 - Server-started daemons run with `--continue-on-error` and bounded `--max-errors` so one transient API/adapter failure does not silently kill the loop.
 - Hermes/OpenClaw daemon start requires `confirm_run:true`.
 - Duplicate starts are idempotent if the daemon is already running.
+- Remote machines can run `agentops-worker preflight --adapter ...` before starting a loop; it performs read-only Gateway/adapter checks without executing a task or writing ledger rows.
 
 `POST /api/workers/local/stop` stops one adapter or all adapters:
 

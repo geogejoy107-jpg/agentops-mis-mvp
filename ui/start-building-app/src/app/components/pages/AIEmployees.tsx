@@ -216,6 +216,7 @@ export function AIEmployees() {
       envSetup: "Environment",
       installCommand: "Install",
       verifyCommand: "Verify",
+      preflightCommand: "Preflight",
       sessionCommand: "Mint session",
       heartbeatCommand: "Heartbeat",
       runOnceCommand: "Run once",
@@ -346,6 +347,7 @@ export function AIEmployees() {
       envSetup: "环境变量",
       installCommand: "安装",
       verifyCommand: "自检",
+      preflightCommand: "预检",
       sessionCommand: "换取短期 Session",
       heartbeatCommand: "心跳",
       runOnceCommand: "单轮运行",
@@ -1231,6 +1233,7 @@ export function AIEmployees() {
                     {[
                       { label: copy.installCommand, value: createdToken.next_steps.install || "" },
                       { label: copy.verifyCommand, value: createdToken.next_steps.verify },
+                      { label: copy.preflightCommand, value: createdToken.next_steps.preflight || "" },
                       { label: copy.sessionCommand, value: createdToken.next_steps.session || "" },
                       { label: copy.heartbeatCommand, value: createdToken.next_steps.heartbeat },
                       { label: copy.runOnceCommand, value: createdToken.next_steps.run_once },
