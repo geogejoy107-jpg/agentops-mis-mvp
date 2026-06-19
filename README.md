@@ -249,6 +249,7 @@ Workspace isolation smoke 会验证：token 绑定 workspace A 后，只能 pull
 - token 绑定 `workspace_id`，不能通过 header/query/body 切换到其他 workspace。
 - API 会检查 endpoint scope，例如 `tasks:read`、`runs:write`、`audit:write`。
 - `./scripts/agentops worker status` 可从命令行查看 worker fleet、daemon、pending task 和 stuck task 状态。
+- `./scripts/agentops worker preflight --adapter mock|hermes|openclaw` 可从主 CLI 执行只读 Gateway/adapter 预检，不拉任务、不写账本、不触发 live runtime。
 - `./scripts/agentops worker start|stop|logs` 可从命令行控制本地 worker daemon；Hermes/OpenClaw start 必须显式 `--confirm-run`。
 - `./scripts/agentops enrollment revoke --agent-id agt_remote_builder` 可吊销该 agent 的 active token。
 
@@ -280,6 +281,7 @@ python3 scripts/kb_bot_workflow_api_smoke.py
 ```bash
 python3 -m pip install .
 agentops doctor
+agentops worker preflight --adapter mock --agent-id agt_worker_local
 agentops-worker preflight --adapter mock --agent-id agt_worker_local
 agentops-worker --once --adapter mock --agent-id agt_worker_local
 agentops-worker --adapter mock --poll-interval 5 --max-tasks 0 --continue-on-error --write-state --jsonl-log
@@ -289,7 +291,8 @@ agentops-worker service-template --manager systemd --adapter mock --agent-id agt
 
 安装版 worker 默认把 state 写入 `~/.agentops/workers`；repo 内 wrapper 默认写入 `.agentops_runtime/workers`。可用 `AGENTOPS_WORKER_RUNTIME_DIR` 覆盖 state 目录，用 `AGENTOPS_WORKER_CWD` 覆盖 OpenClaw adapter 的执行目录。
 `service-template` 只生成带 token placeholder 的 launchd/systemd 模板，不会自动安装、加载服务，也不会写入真实 token。
-`preflight` 是只读 adapter 预检：检查 Gateway/adapter 可用性，不执行真实任务、不写账本、不保存 prompt/response。
+`agentops worker preflight` 和 `agentops-worker preflight` 都是只读 adapter 预检：检查 Gateway/adapter 可用性，不执行真实任务、不写账本、不保存 prompt/response。
+完整本地/远程 worker 运维路径见 `docs/REMOTE_WORKER_OPERATIONS_RUNBOOK.md`。
 
 单轮 mock：
 
@@ -357,7 +360,7 @@ python3 scripts/worker_daemon_resilience_smoke.py
 - 不保存完整 prompt、raw response、credentials、transcripts。
 - Hermes/OpenClaw 真实执行必须显式传 `--confirm-run`。
 - 页面 daemon 控制是本地录屏/自用 supervisor；现在有 state/JSONL/error counters 和 bounded continue-on-error，但仍不是 launchd/systemd 或远程 fleet manager。
-- 当前仍是 repo-local worker，不是全局安装包；远程 enrollment 已有 MVP UI/API/CLI、scope preset、token rotation 和最小 workspace isolation，但还不是完整 RBAC、short-lived session 和 hosted 多租户产品。
+- worker 已可通过 Python source package 安装为 `agentops-worker`，也保留 repo-local wrapper；远程 enrollment 已有 MVP UI/API/CLI、scope preset、token rotation、short-lived session 和最小 workspace isolation，但还不是完整 RBAC、hosted 多租户产品或签名安装器。
 
 Dify 可以作为本地或客户服务器上的 agent 工具层，而不是 MIS 的替代品。MIS 负责记录任务、运行、工具、审批、评估和审计；Dify 负责知识库/工作流/问答应用。查看 Dify 当前信任域和配置：
 

@@ -414,6 +414,36 @@ def cmd_worker_logs(args, client: AgentOpsClient) -> dict:
     return client.get("/api/workers/local/logs", query={"adapter": args.adapter})
 
 
+def cmd_worker_preflight(args, client: AgentOpsClient) -> dict:
+    from . import worker as worker_mod
+
+    check_args = argparse.Namespace(
+        base_url=client.base_url,
+        workspace_id=client.workspace_id,
+        agent_id=args.agent_id or client.agent_id or worker_mod.DEFAULT_AGENT_ID,
+        api_key=client.api_key,
+        adapter=args.adapter,
+        timeout=args.timeout,
+        hermes_gateway_url=args.hermes_gateway_url,
+        openclaw_bin=args.openclaw_bin,
+    )
+    gateway = worker_mod.check_gateway_preflight(check_args)
+    adapter = worker_mod.check_adapter_preflight(check_args)
+    return {
+        "provider": "agentops-worker",
+        "command": "agentops worker preflight",
+        "ok": bool(gateway.get("ok") and adapter.get("ok")),
+        "adapter": args.adapter,
+        "base_url": client.base_url,
+        "workspace_id": client.workspace_id,
+        "agent_id": check_args.agent_id,
+        "gateway_preflight": gateway,
+        "adapter_preflight": adapter,
+        "live_execution_performed": False,
+        "token_omitted": True,
+    }
+
+
 def cmd_worker_start(args, client: AgentOpsClient) -> dict:
     payload = {
         "adapter": args.adapter,
@@ -743,6 +773,13 @@ def build_parser() -> argparse.ArgumentParser:
     worker_logs = worker_sub.add_parser("logs", help="Show local worker daemon metadata and log tail.")
     worker_logs.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
     worker_logs.set_defaults(handler="worker_logs")
+    worker_preflight = worker_sub.add_parser("preflight", help="Run read-only Gateway and adapter readiness checks.")
+    worker_preflight.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
+    worker_preflight.add_argument("--agent-id", default=None)
+    worker_preflight.add_argument("--timeout", type=int, default=5)
+    worker_preflight.add_argument("--hermes-gateway-url", default=os.environ.get("HERMES_GATEWAY_URL", "http://127.0.0.1:8642"))
+    worker_preflight.add_argument("--openclaw-bin", default=os.environ.get("OPENCLAW_BIN", "/opt/homebrew/bin/openclaw"))
+    worker_preflight.set_defaults(handler="worker_preflight")
     worker_start = worker_sub.add_parser("start", help="Start a local worker daemon through the MIS supervisor.")
     worker_start.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
     worker_start.add_argument("--agent-id", default=None)
@@ -851,6 +888,7 @@ HANDLERS = {
     "audit_emit": cmd_audit_emit,
     "worker_status": cmd_worker_status,
     "worker_logs": cmd_worker_logs,
+    "worker_preflight": cmd_worker_preflight,
     "worker_start": cmd_worker_start,
     "worker_stop": cmd_worker_stop,
     "worker_stuck": cmd_worker_stuck,

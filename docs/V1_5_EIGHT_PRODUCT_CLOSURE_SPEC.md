@@ -135,6 +135,13 @@ Current v1.5 implementation:
   - `agentops memory propose`
   - `agentops eval submit`
   - `agentops audit emit`
+  - `agentops worker status`
+  - `agentops worker preflight`
+  - `agentops worker start`
+  - `agentops worker logs`
+  - `agentops worker stop`
+  - `agentops worker stuck`
+  - `agentops worker release`
 
 Acceptance evidence:
 
@@ -145,7 +152,9 @@ Acceptance evidence:
 - CLI doctor smoke passed: `python3 scripts/agentops_doctor_smoke.py`.
 - CLI status smoke passed: `python3 scripts/agentops_status_smoke.py`.
 - CLI worker status smoke passed: `python3 scripts/agentops_worker_status_smoke.py`.
+- CLI worker preflight smoke passed: `python3 scripts/agentops_worker_preflight_smoke.py`.
 - CLI worker daemon controls smoke passed: `python3 scripts/agentops_worker_daemon_cli_smoke.py`.
+- Live adapter confirm gate smoke passed: `python3 scripts/worker_live_confirm_gate_smoke.py`.
 - Current machine has `~/.local/bin/agentops` installed as a shim to this repo.
 
 Remaining product work:
@@ -518,7 +527,9 @@ Implemented and verified:
 - Read-only `agentops doctor` setup diagnostic for local/remote agent machines.
 - Local daemon start/stop/status.
 - CLI worker fleet status through `agentops worker status`.
+- Read-only CLI worker preflight through `agentops worker preflight`.
 - CLI worker daemon controls through `agentops worker start|stop|logs`.
+- Live adapter daemon starts fail closed without `--confirm-run`.
 - Mock/Hermes/OpenClaw adapter loop.
 - Adapter retry handling with non-retry safety gate behavior.
 - UI one-shot worker dispatch.

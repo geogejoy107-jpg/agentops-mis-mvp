@@ -158,6 +158,7 @@ The create response also includes a `next_steps` launch packet for the remote ma
 - a placeholder for `AGENTOPS_API_KEY`, never the raw token embedded in a command
 - `agentops status`
 - `agentops-worker preflight`
+- `agentops worker preflight`
 - `agentops agent heartbeat`
 - one-shot `agentops-worker --once`
 - loop-mode `agentops-worker --max-tasks 0 --continue-on-error`
@@ -357,6 +358,23 @@ agentops worker status
 ```
 
 It is read-only and does not print raw tokens.
+
+### `agentops worker preflight`
+
+Runs read-only Gateway and adapter readiness checks from the main operator CLI.
+It does not pull a task, claim work, start a run, execute a runtime, or write
+ledger rows.
+
+```bash
+agentops worker preflight --adapter mock
+agentops worker preflight --adapter hermes
+agentops worker preflight --adapter openclaw
+```
+
+For Hermes it checks the configured OpenAI-compatible gateway health/models
+endpoints. For OpenClaw it checks whether the binary is present and executable,
+and attempts a version read only. The result includes
+`live_execution_performed:false`.
 
 ### `agentops worker start`
 
@@ -830,7 +848,9 @@ The enrollment health helper verifies `never_seen -> fresh -> stale -> revoked` 
 The CLI status helper verifies `agentops status` reports safe token-bound metadata, updates to `fresh` after heartbeat, and rejects revoked tokens without leaking the raw token.
 The CLI doctor helper verifies `agentops doctor` works in local no-token mode and scoped env-token mode, checks Gateway/worker status, and confirms the raw token is omitted from output.
 The CLI worker-status helper verifies `agentops worker status` returns the worker fleet/daemon summary without token leakage.
+The CLI worker-preflight helper verifies `agentops worker preflight` returns read-only Gateway/adapter readiness JSON with `live_execution_performed=false`.
 The CLI worker-daemon helper verifies `agentops worker start/status/logs/stop` can manage a mock daemon without leaking secrets.
+The live-confirm-gate helper verifies `agentops worker start --adapter hermes|openclaw` fails closed without `--confirm-run`.
 The launch-steps helper verifies create/rotate responses include safe remote-worker commands, a short-lived session command, `--use-session`, and do not embed the raw token in those commands.
 The remote launch-packet helper uses the returned environment shape to run a real worker through `--use-session` and verify run/tool/evaluation ledger evidence.
 The scope-matrix helper verifies an observer token can heartbeat/pull/audit but receives `403 forbidden` for claim/run/tool/artifact writes.

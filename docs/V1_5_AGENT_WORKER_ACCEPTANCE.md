@@ -822,6 +822,54 @@ The operator readiness strip is intentionally product-facing rather than develop
 
 `python3 scripts/demo_acceptance.py` also passed after this UI change.
 
+## Operator CLI Preflight And Live Gate
+
+The main `agentops` CLI now exposes the same read-only adapter preflight path
+as `agentops-worker`:
+
+```bash
+agentops worker preflight --adapter mock
+agentops worker preflight --adapter hermes
+agentops worker preflight --adapter openclaw
+```
+
+The preflight command checks Agent Gateway plus adapter readiness and returns
+`live_execution_performed=false`; it does not pull a task, claim work, start a
+run, execute a runtime, or write ledger rows.
+
+Latest smoke evidence:
+
+```text
+script: python3 scripts/agentops_worker_preflight_smoke.py
+mock_ready: true
+hermes_preflight_returned: true
+live_execution_performed: false
+secret_leaked: false
+```
+
+Hermes/OpenClaw local daemon starts also fail closed without explicit
+confirmation:
+
+```text
+script: python3 scripts/worker_live_confirm_gate_smoke.py
+hermes: blocked without --confirm-run
+openclaw: blocked without --confirm-run
+secret_leaked: false
+```
+
+The pip source-package smoke now verifies installed `agentops worker preflight`
+as well as installed `agentops worker status/logs`:
+
+```text
+script: python3 scripts/agentops_pip_install_smoke.py
+worker_preflight_provider: agentops-worker
+worker_preflight_live_execution_performed: false
+token_written: false
+```
+
+The end-to-end operator/customer runbook is
+`docs/REMOTE_WORKER_OPERATIONS_RUNBOOK.md`.
+
 ## What This Proves
 
 The v1.5 worker loop can process normal MIS tasks, not just connector probes:
