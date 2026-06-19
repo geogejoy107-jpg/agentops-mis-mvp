@@ -375,6 +375,9 @@ Current v1.5 implementation:
 - Pixel Office surfaces the report link after template-backed project generation.
 - Pixel Office can persist the generated customer project report back into the MIS ledger through the `Archive report to ledger` / `归档报告到账本` action.
 - The report link routes to `/workspace/customer-projects/:project_id/report`, a customer-facing page that renders report metrics, safety boundaries, ledger ids, and markdown content instead of raw JSON.
+- Reports can list recent customer projects through `GET /api/workflows/customer-projects`, so users can return to previous delivery reports and archive status.
+- The same worker loop is now used for product dogfooding: Hermes/OpenClaw reviewed AgentOps MIS itself from a customer/one-person-company owner perspective and wrote run/tool/evaluation evidence.
+- Task creation now returns a clear `400 owner_agent_not_found` when an administrator assigns work to an unregistered agent, instead of surfacing a database foreign-key failure.
 
 Acceptance evidence:
 
@@ -413,6 +416,15 @@ Acceptance evidence:
   - concurrent report/report-artifact smokes passed after changing KB bot project IDs from second-level to microsecond-level timestamps
 - Pixel Office report-archive UI build: `cd ui/start-building-app && npm run build`
 - Customer report page UI build: `cd ui/start-building-app && npm run build`
+- Customer project index smoke: `python3 scripts/customer_project_index_smoke.py`
+  - project: `20260619050143610862`
+  - status: `waiting_approval`
+  - total projects: `23`
+- Task owner validation smoke: `python3 scripts/task_owner_validation_smoke.py`
+  - missing owner agent returns `400 owner_agent_not_found`
+- Product dogfooding worker runs:
+  - Hermes: `tsk_selfdev_ux_review_hermes_20260619045910757742` -> `run_gw_eb4df4e82235`
+  - OpenClaw: `tsk_selfdev_ux_review_openclaw_20260619045910757742` -> `run_gw_8160a11a2323`
 
 Remaining product work:
 

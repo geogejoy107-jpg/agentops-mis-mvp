@@ -198,6 +198,36 @@ export interface CustomerProjectReportPayload {
   error?: string | null;
 }
 
+export interface CustomerProjectSummary {
+  project_id: string;
+  title: string;
+  status: string;
+  task_count: number;
+  completed_tasks: number;
+  failed_or_blocked_tasks: number;
+  run_count: number;
+  completed_runs: number;
+  pending_approvals: number;
+  artifact_count: number;
+  last_task_id?: string | null;
+  last_run_id?: string | null;
+  delivery_artifact_id?: string | null;
+  report_artifact_id?: string | null;
+  approval_ids?: string[];
+  created_at?: string;
+  updated_at?: string;
+  report_url: string;
+  ui_report_url: string;
+  safe_defaults?: Record<string, unknown>;
+}
+
+export interface CustomerProjectIndexPayload {
+  projects: CustomerProjectSummary[];
+  total: number;
+  limit: number;
+  safe_defaults?: Record<string, unknown>;
+}
+
 export interface CustomerTaskTemplate {
   template_id: string;
   name: string;
@@ -844,6 +874,10 @@ export async function persistCustomerProjectReportArtifact(projectId: string): P
 
 export async function loadCustomerProjectReport(projectId: string): Promise<CustomerProjectReportPayload> {
   return apiJson<CustomerProjectReportPayload>(`/workflows/customer-projects/${encodeURIComponent(projectId)}/report`);
+}
+
+export async function loadCustomerProjects(limit = 25): Promise<CustomerProjectIndexPayload> {
+  return apiJson<CustomerProjectIndexPayload>(`/workflows/customer-projects?limit=${encodeURIComponent(String(limit))}`);
 }
 
 export async function loadWorkerStatus(): Promise<WorkerStatusPayload> {

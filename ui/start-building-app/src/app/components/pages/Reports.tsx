@@ -1,5 +1,8 @@
 import { BarChart, Bar, AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell } from "recharts";
+import { Link } from "react-router";
 import { dashboardMetrics, agents, tasks, evaluations } from "../../data/mockData";
+import { loadCustomerProjects, useLiveData } from "../../data/liveApi";
+import { usePreferences } from "../../context/PreferencesContext";
 
 const taskStatusDist = [
   { name: "Running",          value: tasks.filter(t => t.status === "running").length,          color: "#22D3EE" },
@@ -24,11 +27,65 @@ const evalScores = evaluations.map(e => ({
 }));
 
 export function Reports() {
+  const { locale } = usePreferences();
+  const zh = locale === "zh";
+  const customerProjects = useLiveData(() => loadCustomerProjects(8), []);
+  const projects = customerProjects.data?.projects || [];
+
   return (
     <div className="space-y-6 w-full">
       <div>
-        <h1 className="text-lg font-semibold" style={{ color: "var(--mis-text)" }}>Reports</h1>
-        <p className="text-xs mt-0.5" style={{ color: "var(--mis-dim)" }}>Sprint summary · June 2026</p>
+        <h1 className="text-lg font-semibold" style={{ color: "var(--mis-text)" }}>{zh ? "报告" : "Reports"}</h1>
+        <p className="text-xs mt-0.5" style={{ color: "var(--mis-dim)" }}>{zh ? "客户交付报告 · 运行绩效 · 质量评估" : "Customer delivery reports · runtime performance · quality evaluation"}</p>
+      </div>
+
+      <div className="rounded-xl p-4" style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}>
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="text-xs font-semibold" style={{ color: "var(--mis-text)" }}>{zh ? "客户项目报告" : "Customer project reports"}</div>
+            <div className="text-[11px] mt-0.5" style={{ color: "var(--mis-muted)" }}>
+              {zh ? "从 MIS 账本推导，可打开交付报告并查看是否已归档。" : "Derived from the MIS ledger. Open delivery reports and see whether they are archived."}
+            </div>
+          </div>
+          <Link to="/workspace/pixel-office" className="text-[11px] rounded px-3 py-1.5" style={{ background: "rgba(34,211,238,0.10)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.22)" }}>
+            {zh ? "创建新项目" : "Create project"}
+          </Link>
+        </div>
+        <div className="mt-3 grid grid-cols-1 xl:grid-cols-2 gap-2">
+          {customerProjects.loading && (
+            <div className="text-[11px]" style={{ color: "var(--mis-dim)" }}>{zh ? "正在加载项目..." : "Loading projects..."}</div>
+          )}
+          {customerProjects.error && (
+            <div className="text-[11px]" style={{ color: "#FCA5A5" }}>{customerProjects.error}</div>
+          )}
+          {!customerProjects.loading && !customerProjects.error && projects.length === 0 && (
+            <div className="text-[11px]" style={{ color: "var(--mis-dim)" }}>{zh ? "还没有客户项目。" : "No customer projects yet."}</div>
+          )}
+          {projects.map((project) => (
+            <Link
+              key={project.project_id}
+              to={project.ui_report_url}
+              className="rounded-lg p-3 hover:opacity-85"
+              style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <div className="text-xs font-semibold" style={{ color: "var(--mis-text)" }}>{project.title}</div>
+                  <div className="mt-1 text-[10px]" style={{ color: "var(--mis-muted)" }}>{project.project_id}</div>
+                </div>
+                <span className="rounded px-2 py-1 text-[10px]" style={{ color: project.status === "waiting_approval" ? "var(--mis-warning)" : "var(--mis-success)", background: "rgba(148,163,184,0.10)" }}>
+                  {project.status}
+                </span>
+              </div>
+              <div className="mt-2 grid grid-cols-4 gap-2 text-[10px]" style={{ color: "var(--mis-dim)" }}>
+                <div>{zh ? "任务" : "Tasks"}<br /><span style={{ color: "var(--mis-text)" }}>{project.task_count}</span></div>
+                <div>{zh ? "运行" : "Runs"}<br /><span style={{ color: "var(--mis-text)" }}>{project.run_count}</span></div>
+                <div>{zh ? "审批" : "Approvals"}<br /><span style={{ color: "var(--mis-text)" }}>{project.pending_approvals}</span></div>
+                <div>{zh ? "归档" : "Archive"}<br /><span style={{ color: "var(--mis-text)" }}>{project.report_artifact_id ? "yes" : "no"}</span></div>
+              </div>
+            </Link>
+          ))}
+        </div>
       </div>
 
       {/* Summary strip */}

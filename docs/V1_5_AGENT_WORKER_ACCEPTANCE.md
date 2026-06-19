@@ -91,6 +91,8 @@ python3 scripts/worker_adapter_retry_smoke.py
 python3 scripts/customer_task_template_smoke.py
 python3 scripts/customer_project_report_smoke.py
 python3 scripts/customer_project_report_artifact_smoke.py
+python3 scripts/customer_project_index_smoke.py
+python3 scripts/task_owner_validation_smoke.py
 ```
 
 ## Evidence
@@ -529,6 +531,45 @@ The report artifact is separate from the customer delivery artifact. `GET /api/w
 KB bot customer project IDs now include microseconds so concurrent report/report-artifact smokes do not create duplicate task IDs.
 Frontend verification for the Pixel Office report-archive action: `cd ui/start-building-app && npm run build` passed.
 Frontend verification for the customer-facing report route: `cd ui/start-building-app && npm run build` passed.
+
+The customer project index smoke passed:
+
+```text
+script: python3 scripts/customer_project_index_smoke.py
+project_id: 20260619050143610862
+indexed: true
+status: waiting_approval
+delivery artifact: art_kb_bot_delivery_20260619050143610862
+pending approvals: 1
+total projects: 23
+```
+
+The task owner validation smoke passed:
+
+```text
+script: python3 scripts/task_owner_validation_smoke.py
+status: 400
+error: owner_agent_not_found
+owner_agent_id: agt_missing_owner_validation_smoke
+```
+
+The product dogfooding run used AgentOps MIS to develop/review AgentOps MIS itself:
+
+```text
+Hermes worker:
+task: tsk_selfdev_ux_review_hermes_20260619045910757742
+run: run_gw_eb4df4e82235
+tool: agent_worker.hermes completed
+evaluation: eval_gw_run_gw_eb4df4e82235_rule pass
+finding: Pixel Office dispatch lacks next-step/context guidance for non-technical owners.
+
+OpenClaw worker:
+task: tsk_selfdev_ux_review_openclaw_20260619045910757742
+run: run_gw_8160a11a2323
+tool: agent_worker.openclaw completed
+evaluation: eval_gw_run_gw_8160a11a2323_rule pass
+finding: First-time users may not recognize how to start real work; homepage/dashboard should surface a direct start path.
+```
 
 The approval decision side-effect smoke passed:
 

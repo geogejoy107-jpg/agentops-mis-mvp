@@ -4367,6 +4367,103 @@ def customer_project_report(conn, project_id: str) -> tuple[dict, int]:
     }, 200
 
 
+def customer_projects_index(conn, limit: int = 25) -> dict:
+    tasks = rows_to_dicts(conn.execute(
+        "SELECT * FROM tasks WHERE task_id LIKE 'tsk_kb_bot_%' ORDER BY created_at DESC, task_id DESC"
+    ).fetchall())
+    projects: dict[str, dict] = {}
+    for task in tasks:
+        match = re.match(r"^tsk_kb_bot_(.+)_\d{2}$", task["task_id"])
+        if not match:
+            continue
+        project_id = match.group(1)
+        project = projects.setdefault(project_id, {
+            "project_id": project_id,
+            "title": "AI 知识库 / 问答机器人",
+            "task_ids": [],
+            "task_count": 0,
+            "completed_tasks": 0,
+            "failed_or_blocked_tasks": 0,
+            "last_task_id": None,
+            "last_run_id": None,
+            "delivery_artifact_id": None,
+            "report_artifact_id": None,
+            "approval_ids": [],
+            "pending_approvals": 0,
+            "created_at": task.get("created_at"),
+            "updated_at": task.get("updated_at") or task.get("created_at"),
+            "report_url": f"/api/workflows/customer-projects/{project_id}/report",
+            "ui_report_url": f"/workspace/customer-projects/{project_id}/report",
+            "safe_defaults": {
+                "external_upload_performed": False,
+                "credentials_stored": False,
+                "raw_documents_stored": False,
+                "summary_hash_only": True,
+            },
+        })
+        project["task_ids"].append(task["task_id"])
+        project["task_count"] += 1
+        project["last_task_id"] = max(project["last_task_id"] or task["task_id"], task["task_id"])
+        if task.get("status") == "completed":
+            project["completed_tasks"] += 1
+        if task.get("status") in {"failed", "blocked"}:
+            project["failed_or_blocked_tasks"] += 1
+        created_at = task.get("created_at")
+        updated_at = task.get("updated_at") or created_at
+        if created_at and (not project.get("created_at") or created_at < project["created_at"]):
+            project["created_at"] = created_at
+        if updated_at and (not project.get("updated_at") or updated_at > project["updated_at"]):
+            project["updated_at"] = updated_at
+
+    for project in projects.values():
+        task_ids = project.pop("task_ids")
+        placeholders = ",".join("?" for _ in task_ids)
+        runs = rows_to_dicts(conn.execute(
+            f"SELECT * FROM runs WHERE task_id IN ({placeholders}) ORDER BY started_at DESC, run_id DESC",
+            task_ids,
+        ).fetchall())
+        approvals = rows_to_dicts(conn.execute(
+            f"SELECT * FROM approvals WHERE task_id IN ({placeholders}) ORDER BY created_at DESC",
+            task_ids,
+        ).fetchall())
+        artifacts = rows_to_dicts(conn.execute(
+            f"SELECT * FROM artifacts WHERE task_id IN ({placeholders}) ORDER BY created_at DESC",
+            task_ids,
+        ).fetchall())
+        delivery_artifact = next((artifact for artifact in artifacts if artifact.get("artifact_type") != "customer_project_report"), None)
+        report_artifact = next((artifact for artifact in artifacts if artifact.get("artifact_type") == "customer_project_report"), None)
+        project["run_count"] = len(runs)
+        project["completed_runs"] = len([run for run in runs if run.get("status") == "completed"])
+        project["last_run_id"] = runs[0]["run_id"] if runs else None
+        project["approval_ids"] = [approval["approval_id"] for approval in approvals]
+        project["pending_approvals"] = len([approval for approval in approvals if approval.get("decision") == "pending"])
+        project["artifact_count"] = len(artifacts)
+        project["delivery_artifact_id"] = delivery_artifact["artifact_id"] if delivery_artifact else None
+        project["report_artifact_id"] = report_artifact["artifact_id"] if report_artifact else None
+        if project["failed_or_blocked_tasks"]:
+            project["status"] = "needs_attention"
+        elif project["pending_approvals"]:
+            project["status"] = "waiting_approval"
+        elif project["completed_tasks"] >= project["task_count"]:
+            project["status"] = "ready"
+        else:
+            project["status"] = "in_progress"
+
+    ordered = sorted(projects.values(), key=lambda row: row.get("updated_at") or "", reverse=True)
+    limit = max(1, min(int(limit or 25), 100))
+    return {
+        "projects": ordered[:limit],
+        "total": len(ordered),
+        "limit": limit,
+        "safe_defaults": {
+            "external_upload_performed": False,
+            "credentials_stored": False,
+            "raw_documents_stored": False,
+            "summary_hash_only": True,
+        },
+    }
+
+
 def customer_project_report_artifact(conn, project_id: str) -> tuple[dict, int]:
     report, status = customer_project_report(conn, project_id)
     if status != 200:
@@ -5439,6 +5536,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM template_bindings ORDER BY template_id, base_id").fetchall()))
             if path == "/api/workflows/customer-task-templates":
                 return self.send_json({"templates": customer_task_templates(), "safe_defaults": {"raw_documents_stored": False, "credentials_stored": False, "external_upload_requires_approval": True}})
+            if path == "/api/workflows/customer-projects":
+                limit = int((qs.get("limit") or ["25"])[0])
+                return self.send_json(customer_projects_index(conn, limit))
             if path.startswith("/api/workflows/customer-projects/") and path.endswith("/report"):
                 project_id = path.split("/")[-2]
                 payload, status = customer_project_report(conn, project_id)
@@ -5600,13 +5700,23 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/tasks":
                 task_id = body.get("task_id") or new_id("tsk")
                 now = now_iso()
+                owner_agent_id = body.get("owner_agent_id", "agt_research")
+                if owner_agent_id:
+                    owner_exists = conn.execute("SELECT 1 FROM agents WHERE agent_id=?", (owner_agent_id,)).fetchone()
+                    if not owner_exists:
+                        return self.send_json({
+                            "error": "owner_agent_not_found",
+                            "message": f"Task owner agent does not exist: {owner_agent_id}",
+                            "owner_agent_id": owner_agent_id,
+                            "hint": "Register the agent first or choose an existing agent before creating the task.",
+                        }, 400)
                 row = {
                     "task_id": task_id,
                     "workspace_id": normalize_workspace_id(body.get("workspace_id") or "local-demo"),
                     "title": body.get("title", "New Task"),
                     "description": body.get("description", ""),
                     "requester_id": body.get("requester_id", "usr_founder"),
-                    "owner_agent_id": body.get("owner_agent_id", "agt_research"),
+                    "owner_agent_id": owner_agent_id,
                     "collaborator_agent_ids": json.dumps(body.get("collaborator_agent_ids", []), ensure_ascii=False),
                     "status": body.get("status", "planned"),
                     "priority": body.get("priority", "medium"),
