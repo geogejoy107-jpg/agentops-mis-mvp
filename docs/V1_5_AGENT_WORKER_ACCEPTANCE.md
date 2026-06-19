@@ -671,6 +671,15 @@ daemon summary: present
 secret_leaked: false
 ```
 
+The CLI worker daemon smoke passed:
+
+```text
+script: python3 scripts/agentops_worker_daemon_cli_smoke.py
+commands: ./scripts/agentops worker start/status/logs/stop
+adapter: mock
+secret_leaked: false
+```
+
 On this machine, `python3 scripts/install_agentops_cli.py --force` installed:
 
 ```text

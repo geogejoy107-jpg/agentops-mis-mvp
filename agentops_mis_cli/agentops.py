@@ -410,6 +410,29 @@ def cmd_worker_status(args, client: AgentOpsClient) -> dict:
     return client.get("/api/workers/status")
 
 
+def cmd_worker_logs(args, client: AgentOpsClient) -> dict:
+    return client.get("/api/workers/local/logs", query={"adapter": args.adapter})
+
+
+def cmd_worker_start(args, client: AgentOpsClient) -> dict:
+    payload = {
+        "adapter": args.adapter,
+        "agent_id": args.agent_id,
+        "poll_interval": args.poll_interval,
+        "max_tasks": args.max_tasks,
+        "max_errors": args.max_errors,
+        "status": args.status or ["planned"],
+        "confirm_run": bool(args.confirm_run),
+    }
+    if args.openclaw_timeout is not None:
+        payload["openclaw_timeout"] = args.openclaw_timeout
+    return client.post("/api/workers/local/start", payload)
+
+
+def cmd_worker_stop(args, client: AgentOpsClient) -> dict:
+    return client.post("/api/workers/local/stop", {"adapter": args.adapter})
+
+
 def cmd_worker_release(args, client: AgentOpsClient) -> dict:
     return client.post("/api/workers/tasks/release", {
         "task_id": args.task_id,
@@ -717,6 +740,22 @@ def build_parser() -> argparse.ArgumentParser:
     worker_sub = worker.add_subparsers(dest="action", required=True)
     worker_status = worker_sub.add_parser("status", help="Show worker fleet, daemon, pending task and stuck-task status.")
     worker_status.set_defaults(handler="worker_status")
+    worker_logs = worker_sub.add_parser("logs", help="Show local worker daemon metadata and log tail.")
+    worker_logs.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
+    worker_logs.set_defaults(handler="worker_logs")
+    worker_start = worker_sub.add_parser("start", help="Start a local worker daemon through the MIS supervisor.")
+    worker_start.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
+    worker_start.add_argument("--agent-id", default=None)
+    worker_start.add_argument("--poll-interval", type=float, default=5.0)
+    worker_start.add_argument("--max-tasks", type=int, default=0)
+    worker_start.add_argument("--max-errors", type=int, default=5)
+    worker_start.add_argument("--status", action="append", default=None)
+    worker_start.add_argument("--confirm-run", action="store_true", help="Required for Hermes/OpenClaw live daemons.")
+    worker_start.add_argument("--openclaw-timeout", type=int, default=None)
+    worker_start.set_defaults(handler="worker_start")
+    worker_stop = worker_sub.add_parser("stop", help="Stop one local worker daemon or all daemons.")
+    worker_stop.add_argument("--adapter", choices=["mock", "hermes", "openclaw", "all"], default="all")
+    worker_stop.set_defaults(handler="worker_stop")
     worker_stuck = worker_sub.add_parser("stuck", help="List running worker tasks that exceeded a threshold.")
     worker_stuck.add_argument("--threshold-sec", type=int, default=900)
     worker_stuck.add_argument("--limit", type=int, default=25)
@@ -811,6 +850,9 @@ HANDLERS = {
     "eval_submit": cmd_eval_submit,
     "audit_emit": cmd_audit_emit,
     "worker_status": cmd_worker_status,
+    "worker_logs": cmd_worker_logs,
+    "worker_start": cmd_worker_start,
+    "worker_stop": cmd_worker_stop,
     "worker_stuck": cmd_worker_stuck,
     "worker_release": cmd_worker_release,
     "enrollment_create": cmd_enrollment_create,

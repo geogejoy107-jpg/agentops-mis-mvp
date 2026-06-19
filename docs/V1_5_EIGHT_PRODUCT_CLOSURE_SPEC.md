@@ -145,6 +145,7 @@ Acceptance evidence:
 - CLI doctor smoke passed: `python3 scripts/agentops_doctor_smoke.py`.
 - CLI status smoke passed: `python3 scripts/agentops_status_smoke.py`.
 - CLI worker status smoke passed: `python3 scripts/agentops_worker_status_smoke.py`.
+- CLI worker daemon controls smoke passed: `python3 scripts/agentops_worker_daemon_cli_smoke.py`.
 - Current machine has `~/.local/bin/agentops` installed as a shim to this repo.
 
 Remaining product work:
@@ -489,6 +490,7 @@ python3 scripts/agentops_pip_install_smoke.py
 python3 scripts/agentops_worker_package_smoke.py
 python3 scripts/agentops_doctor_smoke.py
 python3 scripts/agentops_worker_status_smoke.py
+python3 scripts/agentops_worker_daemon_cli_smoke.py
 python3 scripts/agentops_status_smoke.py
 python3 scripts/remote_agent_token_worker_smoke.py
 python3 scripts/workspace_isolation_smoke.py
@@ -516,6 +518,7 @@ Implemented and verified:
 - Read-only `agentops doctor` setup diagnostic for local/remote agent machines.
 - Local daemon start/stop/status.
 - CLI worker fleet status through `agentops worker status`.
+- CLI worker daemon controls through `agentops worker start|stop|logs`.
 - Mock/Hermes/OpenClaw adapter loop.
 - Adapter retry handling with non-retry safety gate behavior.
 - UI one-shot worker dispatch.

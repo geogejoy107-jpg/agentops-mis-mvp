@@ -358,6 +358,38 @@ agentops worker status
 
 It is read-only and does not print raw tokens.
 
+### `agentops worker start`
+
+Starts a local worker daemon through the MIS supervisor. `mock` can start directly; `hermes` and `openclaw` require explicit `--confirm-run`.
+
+```bash
+agentops worker start --adapter mock --poll-interval 5 --max-tasks 0
+agentops worker start --adapter hermes --confirm-run --poll-interval 5 --max-tasks 0
+```
+
+Maps to `POST /api/workers/local/start`.
+
+### `agentops worker logs`
+
+Returns daemon metadata and a bounded log tail for one adapter.
+
+```bash
+agentops worker logs --adapter mock
+```
+
+Maps to `GET /api/workers/local/logs`.
+
+### `agentops worker stop`
+
+Stops one local daemon or all local daemons.
+
+```bash
+agentops worker stop --adapter mock
+agentops worker stop --adapter all
+```
+
+Maps to `POST /api/workers/local/stop`.
+
 ### `agentops worker stuck`
 
 Lists running worker tasks that exceeded the local recovery threshold. This is an operator view; it does not expose prompts, responses, or tokens.
@@ -778,6 +810,7 @@ python3 scripts/enrollment_health_state_smoke.py
 python3 scripts/agentops_pip_install_smoke.py
 python3 scripts/agentops_doctor_smoke.py
 python3 scripts/agentops_worker_status_smoke.py
+python3 scripts/agentops_worker_daemon_cli_smoke.py
 python3 scripts/agentops_status_smoke.py
 python3 scripts/enrollment_launch_steps_smoke.py
 python3 scripts/remote_launch_packet_worker_smoke.py
@@ -797,6 +830,7 @@ The enrollment health helper verifies `never_seen -> fresh -> stale -> revoked` 
 The CLI status helper verifies `agentops status` reports safe token-bound metadata, updates to `fresh` after heartbeat, and rejects revoked tokens without leaking the raw token.
 The CLI doctor helper verifies `agentops doctor` works in local no-token mode and scoped env-token mode, checks Gateway/worker status, and confirms the raw token is omitted from output.
 The CLI worker-status helper verifies `agentops worker status` returns the worker fleet/daemon summary without token leakage.
+The CLI worker-daemon helper verifies `agentops worker start/status/logs/stop` can manage a mock daemon without leaking secrets.
 The launch-steps helper verifies create/rotate responses include safe remote-worker commands, a short-lived session command, `--use-session`, and do not embed the raw token in those commands.
 The remote launch-packet helper uses the returned environment shape to run a real worker through `--use-session` and verify run/tool/evaluation ledger evidence.
 The scope-matrix helper verifies an observer token can heartbeat/pull/audit but receives `403 forbidden` for claim/run/tool/artifact writes.

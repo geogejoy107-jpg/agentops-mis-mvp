@@ -65,10 +65,12 @@ def main() -> int:
         )
         status_run = run([str(agentops), "status"], cwd=tmp_path, env=env)
         worker_status_run = run([str(agentops), "worker", "status"], cwd=tmp_path, env=env)
+        worker_logs_run = run([str(agentops), "worker", "logs", "--adapter", "mock"], cwd=tmp_path, env=env)
 
         login_payload = {}
         status_payload = {}
         worker_status_payload = {}
+        worker_logs_payload = {}
         try:
             login_payload = json.loads(login_run.stdout) if login_run.stdout.strip() else {}
         except json.JSONDecodeError:
@@ -79,6 +81,10 @@ def main() -> int:
             pass
         try:
             worker_status_payload = json.loads(worker_status_run.stdout) if worker_status_run.stdout.strip() else {}
+        except json.JSONDecodeError:
+            pass
+        try:
+            worker_logs_payload = json.loads(worker_logs_run.stdout) if worker_logs_run.stdout.strip() else {}
         except json.JSONDecodeError:
             pass
 
@@ -94,6 +100,8 @@ def main() -> int:
             and status_payload.get("token_omitted") is True
             and worker_status_run.returncode == 0
             and worker_status_payload.get("provider") == "agentops-worker"
+            and worker_logs_run.returncode == 0
+            and worker_logs_payload.get("provider") == "agentops-worker"
         )
         print(json.dumps({
             "ok": ok,
@@ -103,12 +111,14 @@ def main() -> int:
             "login_returncode": login_run.returncode,
             "status_returncode": status_run.returncode,
             "worker_status_returncode": worker_status_run.returncode,
+            "worker_logs_returncode": worker_logs_run.returncode,
             "command": str(agentops),
             "config_path": str(config_path),
             "config_created": config_path.exists(),
             "token_written": bool(login_payload.get("has_api_key")),
             "status_provider": status_payload.get("provider"),
             "worker_status_provider": worker_status_payload.get("provider"),
+            "worker_logs_provider": worker_logs_payload.get("provider"),
             "token_omitted": status_payload.get("token_omitted"),
             "venv_tool": "uv" if uv else "venv",
         }, ensure_ascii=False, indent=2, sort_keys=True))
@@ -118,6 +128,7 @@ def main() -> int:
             print("login stderr:", login_run.stderr[-1200:], file=sys.stderr)
             print("status stderr:", status_run.stderr[-1200:], file=sys.stderr)
             print("worker status stderr:", worker_status_run.stderr[-1200:], file=sys.stderr)
+            print("worker logs stderr:", worker_logs_run.stderr[-1200:], file=sys.stderr)
         return 0 if ok else 1
 
 

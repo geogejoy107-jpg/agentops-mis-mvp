@@ -249,6 +249,7 @@ Workspace isolation smoke 会验证：token 绑定 workspace A 后，只能 pull
 - token 绑定 `workspace_id`，不能通过 header/query/body 切换到其他 workspace。
 - API 会检查 endpoint scope，例如 `tasks:read`、`runs:write`、`audit:write`。
 - `./scripts/agentops worker status` 可从命令行查看 worker fleet、daemon、pending task 和 stuck task 状态。
+- `./scripts/agentops worker start|stop|logs` 可从命令行控制本地 worker daemon；Hermes/OpenClaw start 必须显式 `--confirm-run`。
 - `./scripts/agentops enrollment revoke --agent-id agt_remote_builder` 可吊销该 agent 的 active token。
 
 知识库机器人客户任务演示：
