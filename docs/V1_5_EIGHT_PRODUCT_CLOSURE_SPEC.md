@@ -104,7 +104,7 @@ Remaining product work:
 - Rich task-to-runtime prompt profiles.
 - Runtime trust registry UI.
 
-### 3. Repo-Local CLI, Not Global Package Yet
+### 3. Installable CLI Package
 
 Goal:
 
@@ -113,8 +113,10 @@ Goal:
 Current v1.5 implementation:
 
 - `scripts/agentops`
-- `scripts/agentops.py`
+- `agentops_mis_cli/agentops.py`
 - `scripts/install_agentops_cli.py` installs a local user shim at `~/.local/bin/agentops`.
+- `pyproject.toml` exposes `agentops` as a Python console script through package `agentops-mis-cli`.
+- `scripts/agentops` remains a repo-local compatibility wrapper around `python -m agentops_mis_cli`.
 - Commands include:
   - `agentops login`
   - `agentops status`
@@ -137,12 +139,13 @@ Acceptance evidence:
 - CLI enrollment smoke passed with `agt_remote_cli_smoke`.
 - Revoked token was rejected.
 - Local CLI install smoke passed: `python3 scripts/agentops_cli_install_smoke.py`.
+- Pip editable install smoke passed: `python3 scripts/agentops_pip_install_smoke.py`.
 - CLI status smoke passed: `python3 scripts/agentops_status_smoke.py`.
 - Current machine has `~/.local/bin/agentops` installed as a shim to this repo.
 
 Remaining product work:
 
-- pip/Homebrew/npm packaging.
+- Published pip/Homebrew/npm packaging.
 - Signed binary or installer.
 
 ### 4. Remote Agent Entry Shape
@@ -478,6 +481,7 @@ python3 scripts/kb_bot_demo_smoke.py
 python3 scripts/kb_bot_workflow_api_smoke.py
 python3 scripts/approval_decision_side_effect_smoke.py
 python3 scripts/agentops_cli_install_smoke.py
+python3 scripts/agentops_pip_install_smoke.py
 python3 scripts/agentops_status_smoke.py
 python3 scripts/remote_agent_token_worker_smoke.py
 python3 scripts/workspace_isolation_smoke.py
@@ -501,6 +505,7 @@ python3 scripts/customer_project_report_artifact_smoke.py
 Implemented and verified:
 
 - Local worker loop.
+- Installable Python `agentops` CLI package through `pyproject.toml`.
 - Local daemon start/stop/status.
 - Mock/Hermes/OpenClaw adapter loop.
 - Adapter retry handling with non-retry safety gate behavior.
@@ -535,7 +540,7 @@ Implemented and verified:
 
 Not yet product-complete:
 
-- Global CLI package.
+- Published global CLI distribution.
 - Full RBAC and hosted multi-tenant isolation.
 - Production worker fleet manager.
 - Hosted SaaS/commercial deployment layer.

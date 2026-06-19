@@ -1,0 +1,114 @@
+#!/usr/bin/env python3
+"""Smoke-test pip source installation of the AgentOps CLI package."""
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def run(cmd: list[str], *, cwd: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        cmd,
+        cwd=cwd,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=90,
+        check=False,
+    )
+
+
+def main() -> int:
+    with tempfile.TemporaryDirectory(prefix="agentops-pip-install-") as tmp:
+        tmp_path = Path(tmp)
+        venv_path = tmp_path / "venv"
+        config_path = tmp_path / "config.json"
+        env = os.environ.copy()
+        env["AGENTOPS_CONFIG"] = str(config_path)
+        env.pop("AGENTOPS_API_KEY", None)
+
+        uv = shutil.which("uv")
+        create_cmd = [uv, "venv", str(venv_path)] if uv else [sys.executable, "-m", "venv", str(venv_path)]
+        create = run(create_cmd, cwd=ROOT, env=env)
+        if create.returncode != 0:
+            print(create.stderr or create.stdout, file=sys.stderr)
+            return 1
+
+        bin_dir = venv_path / ("Scripts" if os.name == "nt" else "bin")
+        python = bin_dir / "python"
+        agentops = bin_dir / "agentops"
+
+        install_cmd = [uv, "pip", "install", "--python", str(python), str(ROOT)] if uv else [str(python), "-m", "pip", "install", str(ROOT)]
+        install = run(install_cmd, cwd=tmp_path, env=env)
+        help_run = run([str(agentops), "--help"], cwd=tmp_path, env=env)
+        login_run = run(
+            [
+                str(agentops),
+                "login",
+                "--base-url",
+                "http://127.0.0.1:8787",
+                "--workspace-id",
+                "local-demo",
+                "--agent-id",
+                "agt_pip_cli_smoke",
+            ],
+            cwd=tmp_path,
+            env=env,
+        )
+        status_run = run([str(agentops), "status"], cwd=tmp_path, env=env)
+
+        login_payload = {}
+        status_payload = {}
+        try:
+            login_payload = json.loads(login_run.stdout) if login_run.stdout.strip() else {}
+        except json.JSONDecodeError:
+            pass
+        try:
+            status_payload = json.loads(status_run.stdout) if status_run.stdout.strip() else {}
+        except json.JSONDecodeError:
+            pass
+
+        ok = (
+            install.returncode == 0
+            and help_run.returncode == 0
+            and "AgentOps MIS local Agent Gateway CLI" in help_run.stdout
+            and login_run.returncode == 0
+            and login_payload.get("ok") is True
+            and login_payload.get("has_api_key") is False
+            and status_run.returncode == 0
+            and status_payload.get("provider") == "agent_gateway"
+            and status_payload.get("token_omitted") is True
+        )
+        print(json.dumps({
+            "ok": ok,
+            "install_returncode": install.returncode,
+            "install_mode": "source_wheel",
+            "help_returncode": help_run.returncode,
+            "login_returncode": login_run.returncode,
+            "status_returncode": status_run.returncode,
+            "command": str(agentops),
+            "config_path": str(config_path),
+            "config_created": config_path.exists(),
+            "token_written": bool(login_payload.get("has_api_key")),
+            "status_provider": status_payload.get("provider"),
+            "token_omitted": status_payload.get("token_omitted"),
+            "venv_tool": "uv" if uv else "venv",
+        }, ensure_ascii=False, indent=2, sort_keys=True))
+        if not ok:
+            print("pip install stderr:", install.stderr[-1200:], file=sys.stderr)
+            print("help stderr:", help_run.stderr[-1200:], file=sys.stderr)
+            print("login stderr:", login_run.stderr[-1200:], file=sys.stderr)
+            print("status stderr:", status_run.stderr[-1200:], file=sys.stderr)
+        return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,3 +1,4 @@
 #!/usr/bin/env sh
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
-exec python3 "$SCRIPT_DIR/agentops.py" "$@"
+ROOT_DIR="$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)"
+PYTHONPATH="$ROOT_DIR${PYTHONPATH:+:$PYTHONPATH}" exec python3 -m agentops_mis_cli "$@"

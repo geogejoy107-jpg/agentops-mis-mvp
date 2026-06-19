@@ -1,6 +1,8 @@
 .DS_Store
 __pycache__/
 *.py[cod]
+*.egg-info/
+build/
 
 # Local runtime state and imported personal run ledgers.
 agentops_mis.db

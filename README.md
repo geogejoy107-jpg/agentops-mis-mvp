@@ -161,18 +161,33 @@ v1.3 当前默认使用原创 React/CSS Pixel Operating Map，不复制 Star-Off
 
 v1.4 增加了最小 Agent Gateway/API slice，用于让本机或远程 AI 员工通过 CLI/API/MCP 写入 MIS，而不是让 agent 操作浏览器 UI。
 
-本地 CLI wrapper：
+本地 CLI wrapper / 可安装 CLI：
 
 ```bash
 ./scripts/agentops --help
 python3 scripts/install_agentops_cli.py
 agentops --help
+python3 -m pip install -e .
+python3 -m pip install .
+agentops status
 ./scripts/agentops login --base-url http://127.0.0.1:8787 --workspace-id local-demo --agent-id agt_local_worker
 ./scripts/agentops agent register --id agt_local_worker --name "Local Worker" --role "AI Digital Employee"
 ./scripts/agentops task pull --agent-id agt_local_worker
 ```
 
 `scripts/install_agentops_cli.py` installs a small local shim at `~/.local/bin/agentops`. It does not store tokens; auth remains env/config based.
+
+`pyproject.toml` also exposes the same command through a Python console script:
+
+```bash
+python3 -m pip install -e .
+# or, for a source-package style install:
+python3 -m pip install .
+agentops --help
+agentops status
+```
+
+This install path is intended for local/remote agent machines that already have a Python environment. It keeps the same JSON output contract and still reads auth from env/config; it does not create tokens by itself.
 
 已支持：
 
@@ -213,6 +228,7 @@ agentops audit emit
 python3 scripts/remote_agent_token_worker_smoke.py
 python3 scripts/enrollment_rotation_smoke.py
 python3 scripts/workspace_isolation_smoke.py
+python3 scripts/agentops_pip_install_smoke.py
 ```
 
 它会创建 scoped token、创建一个普通 MIS 任务、用 token 跑 `scripts/agent_worker.py --once`、验证 run/tool/eval 证据，并默认吊销 token。

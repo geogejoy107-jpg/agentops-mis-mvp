@@ -67,19 +67,22 @@ Current local MVP implementation:
 
 ```bash
 ./scripts/agentops --help
+python3 -m pip install -e .
+python3 -m pip install .
+agentops --help
 ./scripts/agentops login --base-url http://127.0.0.1:8787 --workspace-id local-demo --agent-id agt_local_worker
 ./scripts/agentops status
 ./scripts/agentops enrollment create --agent-id agt_remote_builder --name "Remote Builder" --runtime openclaw
 ```
 
-The implementation lives in `scripts/agentops.py`, with `scripts/agentops` as a shell wrapper. It uses only Python standard library modules and reads configuration from environment variables or `~/.agentops/config.json`.
+The implementation lives in `agentops_mis_cli/agentops.py`, with `scripts/agentops` as a repo-local compatibility wrapper. `pyproject.toml` also exposes the same command through the `agentops-mis-cli` Python console script for pip source installs on local or remote agent machines. It uses only Python standard library modules and reads configuration from environment variables or `~/.agentops/config.json`.
 
 ### `agentops login`
 
 Stores a local API key or local token for the current workspace.
 
 ```bash
-agentops login --base-url http://127.0.0.1:8787 --workspace local_demo
+agentops login --base-url http://127.0.0.1:8787 --workspace-id local-demo
 ```
 
 v1.4 can support environment-variable auth only. Interactive login is optional.
@@ -692,9 +695,9 @@ Add a small `agentops` CLI wrapper that can:
 - Print JSON responses.
 - Avoid writing secrets to logs.
 
-The first implementation can be a Python script under `scripts/` or a small package later.
+The first implementation can be a Python script under `scripts/` or a small installable package.
 
-Status: implemented as `scripts/agentops.py` and `scripts/agentops`.
+Status: implemented as `agentops_mis_cli/agentops.py`, `scripts/agentops`, and the editable Python package entry in `pyproject.toml` / `agentops_mis_cli`.
 
 ### Step 3: Backend Endpoints
 
@@ -740,6 +743,7 @@ Verification helper:
 python3 scripts/remote_agent_token_worker_smoke.py
 python3 scripts/workspace_isolation_smoke.py
 python3 scripts/enrollment_health_state_smoke.py
+python3 scripts/agentops_pip_install_smoke.py
 python3 scripts/agentops_status_smoke.py
 python3 scripts/enrollment_launch_steps_smoke.py
 python3 scripts/remote_launch_packet_worker_smoke.py

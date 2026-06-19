@@ -620,11 +620,33 @@ temporary shim help: passed
 token_written: false
 ```
 
+The pip editable CLI package smoke passed:
+
+```text
+script: python3 scripts/agentops_pip_install_smoke.py
+install: uv pip install <repo>, building/installing the local source package
+command: temporary venv/bin/agentops
+help: passed
+login: passed without writing token
+status: provider agent_gateway
+token_omitted: true
+token_written: false
+```
+
 On this machine, `python3 scripts/install_agentops_cli.py --force` installed:
 
 ```text
 ~/.local/bin/agentops -> repo scripts/agentops shim
 ```
+
+For remote machines with Python, the package path is now:
+
+```bash
+python3 -m pip install .
+agentops status
+```
+
+This keeps the same env/config auth model and JSON output contract as `./scripts/agentops`.
 
 Latest repeat run after adding the enrollment UI:
 

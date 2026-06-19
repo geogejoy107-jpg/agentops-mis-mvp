@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentops-mis-cli"
+version = "0.1.0"
+description = "Installable AgentOps MIS Agent Gateway CLI wrapper."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Proprietary local MVP" }
+authors = [
+  { name = "AgentOps MIS" }
+]
+dependencies = []
+
+[project.scripts]
+agentops = "agentops_mis_cli.cli:main"
+
+[tool.setuptools]
+packages = ["agentops_mis_cli"]
