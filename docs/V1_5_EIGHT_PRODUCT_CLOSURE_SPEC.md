@@ -140,6 +140,7 @@ Current v1.5 implementation:
   - `agentops memory propose`
   - `agentops eval submit`
   - `agentops audit emit`
+  - `agentops workflow customer-worker-task`
   - `agentops worker status`
   - `agentops worker preflight`
   - `agentops worker start`
@@ -159,6 +160,7 @@ Acceptance evidence:
 - CLI worker status smoke passed: `python3 scripts/agentops_worker_status_smoke.py`.
 - CLI worker preflight smoke passed: `python3 scripts/agentops_worker_preflight_smoke.py`.
 - CLI worker daemon controls smoke passed: `python3 scripts/agentops_worker_daemon_cli_smoke.py`.
+- CLI customer worker workflow smoke passed: `python3 scripts/agentops_customer_worker_cli_smoke.py`.
 - Live adapter confirm gate smoke passed: `python3 scripts/worker_live_confirm_gate_smoke.py`.
 - Current machine has `~/.local/bin/agentops` installed as a shim to this repo.
 
@@ -536,6 +538,7 @@ Implemented and verified:
 - CLI worker daemon controls through `agentops worker start|stop|logs`.
 - Live adapter daemon starts fail closed without `--confirm-run`.
 - Customer-facing worker task workflow through `POST /api/workflows/customer-worker-task`.
+- Customer-facing worker task CLI through `agentops workflow customer-worker-task`.
 - Pixel Office customer dispatch can run a task through mock/Hermes/OpenClaw worker adapters and show evidence counts.
 - Mock/Hermes/OpenClaw adapter loop.
 - Adapter retry handling with non-retry safety gate behavior.

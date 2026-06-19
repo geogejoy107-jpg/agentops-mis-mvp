@@ -906,6 +906,22 @@ artifacts: 1
 Hermes without confirm_run: planned task, confirm_run_required_for_live_adapter
 ```
 
+Latest CLI smoke:
+
+```text
+script: python3 scripts/agentops_customer_worker_cli_smoke.py
+command: ./scripts/agentops workflow customer-worker-task
+mock run: run_gw_c42822816a69
+artifact: art_customer_worker_task_run_gw_c42822816a69
+tool_calls: 1
+evaluations: 1
+runtime_events: 8
+audit_logs: 8
+artifacts: 1
+Hermes without confirm_run: planned task, confirm_run_required_for_live_adapter
+secret_leaked: false
+```
+
 Latest local live dogfood runs for the current AgentOps MIS project:
 
 ```text

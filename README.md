@@ -264,6 +264,16 @@ python3 scripts/customer_worker_live_dogfood.py --adapter hermes
 python3 scripts/customer_worker_live_dogfood.py --adapter openclaw
 ```
 
+CLI 方式从客户/外部 agent 侧派发 worker 任务：
+
+```bash
+./scripts/agentops workflow customer-worker-task \
+  --adapter mock \
+  --title "优化 AgentOps MIS 客户工作台" \
+  --description "以客户视角审视任务创建、AI 执行、审批、评估、审计和交付报告闭环。" \
+  --acceptance "必须返回 run、tool、evaluation、audit 和 artifact 证据。"
+```
+
 它会模拟 AI 团队完成“正式 AI 知识库 / 问答机器人”项目：
 
 - 注册 Project Planner、Document Cleaner、Knowledge Base Builder、Q&A Evaluator、Customer Report Writer。

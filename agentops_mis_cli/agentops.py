@@ -402,6 +402,22 @@ def cmd_audit_emit(args, client: AgentOpsClient) -> dict:
     return client.post("/api/agent-gateway/audit", payload)
 
 
+def cmd_workflow_customer_worker_task(args, client: AgentOpsClient) -> dict:
+    payload = {
+        "adapter": args.adapter,
+        "confirm_run": bool(args.confirm_run),
+        "title": args.title,
+        "description": args.description,
+        "acceptance_criteria": args.acceptance,
+        "priority": args.priority,
+        "risk_level": args.risk,
+        "selected_agent_ids": args.selected_agent_id or [],
+        "worker_agent_id": args.worker_agent_id,
+        "hermes_timeout": args.hermes_timeout,
+    }
+    return client.post("/api/workflows/customer-worker-task", payload)
+
+
 def cmd_worker_stuck(args, client: AgentOpsClient) -> dict:
     return client.get("/api/workers/stuck-tasks", query={"threshold_sec": args.threshold_sec, "limit": args.limit})
 
@@ -766,6 +782,21 @@ def build_parser() -> argparse.ArgumentParser:
     audit_emit.add_argument("--metadata-json", default=None)
     audit_emit.set_defaults(handler="audit_emit")
 
+    workflow = sub.add_parser("workflow", help="Customer-facing workflow commands.")
+    workflow_sub = workflow.add_subparsers(dest="action", required=True)
+    customer_worker = workflow_sub.add_parser("customer-worker-task", help="Dispatch a customer task through the AgentOps worker loop.")
+    customer_worker.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
+    customer_worker.add_argument("--confirm-run", action="store_true", help="Required for Hermes/OpenClaw live execution.")
+    customer_worker.add_argument("--title", required=True)
+    customer_worker.add_argument("--description", required=True)
+    customer_worker.add_argument("--acceptance", default="Worker must write run, tool, evaluation, audit and artifact evidence.")
+    customer_worker.add_argument("--priority", choices=["low", "medium", "high", "critical"], default="high")
+    customer_worker.add_argument("--risk", choices=["low", "medium", "high", "critical"], default="medium")
+    customer_worker.add_argument("--selected-agent-id", action="append", default=None, help="Optional business agent id to record as selected context. Repeatable.")
+    customer_worker.add_argument("--worker-agent-id", default=None, help="Optional exact worker agent id. Defaults to a unique id per dispatch.")
+    customer_worker.add_argument("--hermes-timeout", type=int, default=300)
+    customer_worker.set_defaults(handler="workflow_customer_worker_task")
+
     worker = sub.add_parser("worker", help="Worker fleet recovery commands.")
     worker_sub = worker.add_subparsers(dest="action", required=True)
     worker_status = worker_sub.add_parser("status", help="Show worker fleet, daemon, pending task and stuck-task status.")
@@ -886,6 +917,7 @@ HANDLERS = {
     "memory_propose": cmd_memory_propose,
     "eval_submit": cmd_eval_submit,
     "audit_emit": cmd_audit_emit,
+    "workflow_customer_worker_task": cmd_workflow_customer_worker_task,
     "worker_status": cmd_worker_status,
     "worker_logs": cmd_worker_logs,
     "worker_preflight": cmd_worker_preflight,

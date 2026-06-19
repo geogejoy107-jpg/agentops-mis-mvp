@@ -349,6 +349,35 @@ agentops audit emit \
 
 Maps to `audit_logs`.
 
+### `agentops workflow customer-worker-task`
+
+Dispatches a customer-facing task through the AgentOps worker loop. This is the
+CLI/API shape for the product usage model where a customer or external agent
+sends work to the MIS, and the AI digital employee uses Agent Gateway/worker to
+execute it.
+
+```bash
+agentops workflow customer-worker-task \
+  --adapter mock \
+  --title "Improve the customer workspace" \
+  --description "Review task creation, AI execution, approval, evaluation, audit and delivery report flow." \
+  --acceptance "Return run, tool, evaluation, audit and artifact evidence."
+```
+
+Hermes/OpenClaw live execution still requires explicit confirmation:
+
+```bash
+agentops workflow customer-worker-task \
+  --adapter openclaw \
+  --confirm-run \
+  --title "Optimize AgentOps MIS customer workspace" \
+  --description "Use local OpenClaw to produce product recommendations."
+```
+
+Maps to `POST /api/workflows/customer-worker-task` and returns `task_id`,
+`run_id`, `artifact_id`, and evidence counts. It must not print raw tokens,
+full prompts, full raw model responses, credentials, or private transcripts.
+
 ### `agentops worker status`
 
 Returns the same safe worker fleet summary used by `/workspace/agents`: worker count, running workers, pending worker tasks, stuck worker tasks, daemon state, recent worker runs, and recent Gateway events.
@@ -840,6 +869,7 @@ python3 scripts/worker_stuck_recovery_smoke.py
 python3 scripts/worker_session_refresh_smoke.py
 python3 scripts/worker_adapter_retry_smoke.py
 python3 scripts/agentops_worker_package_smoke.py
+python3 scripts/agentops_customer_worker_cli_smoke.py
 ```
 
 This helper creates a scoped token, creates a normal MIS task for that agent, runs `scripts/agent_worker.py --once` with the token, verifies run/tool/eval evidence, and revokes the token by default. It does not print the raw token.
@@ -851,6 +881,7 @@ The CLI worker-status helper verifies `agentops worker status` returns the worke
 The CLI worker-preflight helper verifies `agentops worker preflight` returns read-only Gateway/adapter readiness JSON with `live_execution_performed=false`.
 The CLI worker-daemon helper verifies `agentops worker start/status/logs/stop` can manage a mock daemon without leaking secrets.
 The live-confirm-gate helper verifies `agentops worker start --adapter hermes|openclaw` fails closed without `--confirm-run`.
+The customer-worker CLI helper verifies `agentops workflow customer-worker-task` creates a real mock worker run with run/tool/evaluation/audit/artifact evidence and keeps Hermes live execution gated by confirmation.
 The launch-steps helper verifies create/rotate responses include safe remote-worker commands, a short-lived session command, `--use-session`, and do not embed the raw token in those commands.
 The remote launch-packet helper uses the returned environment shape to run a real worker through `--use-session` and verify run/tool/evaluation ledger evidence.
 The scope-matrix helper verifies an observer token can heartbeat/pull/audit but receives `403 forbidden` for claim/run/tool/artifact writes.

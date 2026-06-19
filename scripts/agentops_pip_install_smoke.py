@@ -67,6 +67,7 @@ def main() -> int:
         worker_status_run = run([str(agentops), "worker", "status"], cwd=tmp_path, env=env)
         worker_preflight_run = run([str(agentops), "worker", "preflight", "--adapter", "mock"], cwd=tmp_path, env=env)
         worker_logs_run = run([str(agentops), "worker", "logs", "--adapter", "mock"], cwd=tmp_path, env=env)
+        workflow_help_run = run([str(agentops), "workflow", "customer-worker-task", "--help"], cwd=tmp_path, env=env)
 
         login_payload = {}
         status_payload = {}
@@ -111,6 +112,8 @@ def main() -> int:
             and worker_preflight_payload.get("live_execution_performed") is False
             and worker_logs_run.returncode == 0
             and worker_logs_payload.get("provider") == "agentops-worker"
+            and workflow_help_run.returncode == 0
+            and "customer-worker-task" in workflow_help_run.stdout
         )
         print(json.dumps({
             "ok": ok,
@@ -122,6 +125,7 @@ def main() -> int:
             "worker_status_returncode": worker_status_run.returncode,
             "worker_preflight_returncode": worker_preflight_run.returncode,
             "worker_logs_returncode": worker_logs_run.returncode,
+            "workflow_help_returncode": workflow_help_run.returncode,
             "command": str(agentops),
             "config_path": str(config_path),
             "config_created": config_path.exists(),
@@ -142,6 +146,7 @@ def main() -> int:
             print("worker status stderr:", worker_status_run.stderr[-1200:], file=sys.stderr)
             print("worker preflight stderr:", worker_preflight_run.stderr[-1200:], file=sys.stderr)
             print("worker logs stderr:", worker_logs_run.stderr[-1200:], file=sys.stderr)
+            print("workflow help stderr:", workflow_help_run.stderr[-1200:], file=sys.stderr)
         return 0 if ok else 1
 
 
