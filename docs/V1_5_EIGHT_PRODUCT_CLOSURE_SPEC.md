@@ -180,7 +180,7 @@ Current v1.5 implementation:
 - Enrollment tokens can mint short-lived session tokens through `POST /api/agent-gateway/session/create`.
 - Session tokens inherit the bound `agent_id`, `workspace_id`, and a subset of parent scopes.
 - Session tokens cannot mint replacement sessions and expire automatically.
-- Worker loop session refresh is supported through `scripts/agent_worker.py --use-session --session-refresh-margin-sec`.
+- Worker loop session refresh is supported through `agentops-worker --use-session --session-refresh-margin-sec`; `scripts/agent_worker.py` remains a repo-local compatibility wrapper.
 - The parent enrollment token stays only in worker process memory for refresh; task/register/writeback calls use the short-lived session token.
 - Short-lived sessions can now be listed and revoked:
   - `GET /api/agent-gateway/sessions`
@@ -212,7 +212,7 @@ Current v1.5 implementation:
 - `/workspace/agents` exposes recent short-lived sessions and can revoke an active session directly.
 - `/workspace/agents` surfaces Agent Gateway readiness/auth mode/scope count/active enrollment/stale heartbeat cards for operators.
 - `/workspace/agents` now includes an operator readiness strip for self-dogfooding and customer operations. It explains local worker mode, confirmed Hermes/OpenClaw live dispatch, remote agent entry, and stuck-task recovery before the detailed gateway/worker/enrollment panels.
-- New/rotated enrollment responses include a safe `next_steps` launch packet for remote machines: env setup, `agentops status`, heartbeat, one-shot worker, and loop worker commands. Commands use an API-key placeholder rather than embedding the raw token.
+- New/rotated enrollment responses include a safe `next_steps` launch packet for remote machines: package install, env setup, `agentops status`, heartbeat, one-shot `agentops-worker`, loop `agentops-worker`, and repo-local fallback worker commands. Commands use an API-key placeholder rather than embedding the raw token.
 - Launch-packet worker commands now use `--use-session --session-ttl-sec 900`, so remote workers mint a short-lived session before processing tasks instead of holding the enrollment token in the worker loop.
 
 Acceptance evidence:
@@ -525,7 +525,7 @@ Implemented and verified:
 - Agent Gateway status surfaced in `/workspace/agents`.
 - Operator readiness strip surfaced in `/workspace/agents`.
 - Remote enrollment launch packet surfaced in `/workspace/agents` after token creation/rotation.
-- Remote enrollment launch packet worker path now uses short-lived sessions before task processing.
+- Remote enrollment launch packet worker path now uses the installable `agentops-worker` command and short-lived sessions before task processing; repo-local `scripts/agent_worker.py` is shown only as a fallback.
 - Loop-mode workers can refresh short-lived sessions before expiry while continuing to process tasks.
 - Remote enrollment UI.
 - Token revocation.

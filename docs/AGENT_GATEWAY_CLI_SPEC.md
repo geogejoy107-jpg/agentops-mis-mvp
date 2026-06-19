@@ -629,8 +629,8 @@ Current implementation:
 - Valid scoped tokens that lack an endpoint scope return `403 forbidden`, not `401 unauthorized`.
 - Enrollment launch packets now recommend minting a short-lived session before worker execution:
   - `agentops session create --ttl-sec 900 --save-session`
-  - `python3 scripts/agent_worker.py ... --use-session --session-ttl-sec 900`
-- `scripts/agent_worker.py --use-session` now refreshes short-lived sessions during loop mode before expiry, using the parent enrollment token only in process memory and writing only session metadata to state/output.
+  - `agentops-worker ... --use-session --session-ttl-sec 900`
+- `agentops-worker --use-session` now refreshes short-lived sessions during loop mode before expiry, using the parent enrollment token only in process memory and writing only session metadata to state/output. `scripts/agent_worker.py` remains a repo-local compatibility wrapper.
 - Task claim is guarded for multi-worker use:
   - public pool tasks may be visible to multiple agents before claim,
   - first claim moves the task to `running` and binds `owner_agent_id`,

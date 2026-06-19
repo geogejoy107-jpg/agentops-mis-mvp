@@ -214,11 +214,13 @@ export function AIEmployees() {
       tokenShownOnce: "Copy this token now. It will not be shown again.",
       launchPacket: "Remote launch packet",
       envSetup: "Environment",
+      installCommand: "Install",
       verifyCommand: "Verify",
       sessionCommand: "Mint session",
       heartbeatCommand: "Heartbeat",
       runOnceCommand: "Run once",
       runLoopCommand: "Run loop",
+      fallbackCommand: "Repo fallback",
       recentEnrollments: "Recent enrollments",
       recentSessions: "Recent sessions",
       lastHeartbeat: "Last heartbeat",
@@ -340,11 +342,13 @@ export function AIEmployees() {
       tokenShownOnce: "请现在复制 token。页面不会再次显示原始 token。",
       launchPacket: "远程启动指引",
       envSetup: "环境变量",
+      installCommand: "安装",
       verifyCommand: "自检",
       sessionCommand: "换取短期 Session",
       heartbeatCommand: "心跳",
       runOnceCommand: "单轮运行",
       runLoopCommand: "常驻运行",
+      fallbackCommand: "仓库内备用",
       recentEnrollments: "最近接入记录",
       recentSessions: "最近短期 Session",
       lastHeartbeat: "最近心跳",
@@ -1221,11 +1225,13 @@ export function AIEmployees() {
                   </div>
                   <div className="min-w-0 space-y-2">
                     {[
+                      { label: copy.installCommand, value: createdToken.next_steps.install || "" },
                       { label: copy.verifyCommand, value: createdToken.next_steps.verify },
                       { label: copy.sessionCommand, value: createdToken.next_steps.session || "" },
                       { label: copy.heartbeatCommand, value: createdToken.next_steps.heartbeat },
                       { label: copy.runOnceCommand, value: createdToken.next_steps.run_once },
                       { label: copy.runLoopCommand, value: createdToken.next_steps.run_loop },
+                      { label: copy.fallbackCommand, value: createdToken.next_steps.repo_fallback_run_once || "" },
                     ].filter(item => item.value).map(item => (
                       <div key={item.label}>
                         <div className="text-[10px] mb-1" style={{ color: "var(--mis-muted)" }}>{item.label}</div>

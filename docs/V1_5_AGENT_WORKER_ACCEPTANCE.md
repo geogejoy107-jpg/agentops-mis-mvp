@@ -263,7 +263,7 @@ script: python3 scripts/enrollment_launch_steps_smoke.py
 agent_id: agt_launch_steps_smoke_20260618150315
 created token: agtok_agt_launch_steps_smoke_20260618150315_local_demo_ecb243af94eb
 rotated token: agtok_agt_launch_steps_smoke_20260618150315_local_demo_d18914518af4
-next_steps: env setup, agentops status, short-lived session command, heartbeat, one-shot worker, loop worker for Hermes with --confirm-run and --use-session
+next_steps: package install, env setup, agentops status, short-lived session command, heartbeat, one-shot agentops-worker, loop agentops-worker, repo fallback worker for Hermes with --confirm-run and --use-session
 raw token in commands: omitted
 ```
 

@@ -440,12 +440,15 @@ export interface AgentGatewayEnrollmentCreateResult {
     agent_id: string;
     workspace_id: string;
     adapter: string;
+    install?: string;
     env: string[];
     verify: string;
     session?: string;
     heartbeat: string;
     run_once: string;
     run_loop: string;
+    repo_fallback_run_once?: string;
+    repo_fallback_run_loop?: string;
     notes: string[];
     token_omitted: boolean;
   };

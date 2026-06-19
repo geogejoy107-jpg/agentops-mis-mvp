@@ -2109,22 +2109,29 @@ def agent_gateway_launch_steps(agent_id: str, workspace_id: str, runtime_type: s
         "export AGENTOPS_API_KEY='<paste one-time token here>'",
     ]
     confirm_flag = " --confirm-run" if adapter in {"hermes", "openclaw"} else ""
+    run_once = f"agentops-worker --once --adapter {adapter}{confirm_flag} --use-session --session-ttl-sec 900"
+    run_loop = f"agentops-worker --adapter {adapter}{confirm_flag} --use-session --session-ttl-sec 900 --poll-interval 5 --max-tasks 0 --continue-on-error --write-state --jsonl-log"
     return {
         "token_policy": "Token is shown once. Store it on the agent machine only; MIS stores only a hash.",
         "base_url": base_url,
         "agent_id": safe_agent_id,
         "workspace_id": safe_workspace_id,
         "adapter": adapter,
+        "install": "python3 -m pip install .",
         "env": env,
         "verify": "agentops status",
         "heartbeat": "agentops agent heartbeat --status idle --summary 'remote worker connected'",
         "session": "agentops session create --ttl-sec 900 --save-session",
-        "run_once": f"python3 scripts/agent_worker.py --once --adapter {adapter}{confirm_flag} --use-session --session-ttl-sec 900",
-        "run_loop": f"python3 scripts/agent_worker.py --adapter {adapter}{confirm_flag} --use-session --session-ttl-sec 900 --poll-interval 5 --max-tasks 0 --continue-on-error --write-state --jsonl-log",
+        "run_once": run_once,
+        "run_loop": run_loop,
+        "repo_fallback_run_once": f"python3 scripts/agent_worker.py --once --adapter {adapter}{confirm_flag} --use-session --session-ttl-sec 900",
+        "repo_fallback_run_loop": f"python3 scripts/agent_worker.py --adapter {adapter}{confirm_flag} --use-session --session-ttl-sec 900 --poll-interval 5 --max-tasks 0 --continue-on-error --write-state --jsonl-log",
         "notes": [
             "Do not commit AGENTOPS_API_KEY or paste it into issue trackers.",
+            "Install the source package on the agent machine first; the product command is agentops-worker.",
             "Use agentops status before pulling tasks.",
             "Worker launch commands mint a short-lived session before processing tasks; the enrollment token should remain local and revocable.",
+            "Repo-local scripts/agent_worker.py commands are included only as development fallbacks.",
             "Hermes/OpenClaw launch commands include --confirm-run because the selected runtime is intended to execute.",
         ],
         "token_omitted": True,

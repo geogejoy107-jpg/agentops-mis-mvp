@@ -45,7 +45,9 @@ def assert_safe_launch_steps(payload: dict, expected_adapter: str) -> dict:
     require("<paste one-time token here>" in text, "next_steps should use a token placeholder")
     require("agentops status" in text, "next_steps missing agentops status")
     require("agentops session create" in text, "next_steps missing short-lived session command")
-    require("scripts/agent_worker.py" in text, "next_steps missing worker launch command")
+    require("python3 -m pip install ." in text, "next_steps missing package install command")
+    require("agentops-worker" in text, "next_steps missing installable worker launch command")
+    require("scripts/agent_worker.py" in text, "next_steps missing repo fallback worker command")
     require("--use-session" in text, "worker launch command should mint a short-lived session")
     require(steps.get("adapter") == expected_adapter, f"next_steps adapter mismatch: {steps}")
     if expected_adapter in {"hermes", "openclaw"}:

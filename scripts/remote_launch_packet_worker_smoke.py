@@ -73,7 +73,8 @@ def smoke(base_url: str, stamp: str) -> dict:
         text = launch_text(steps)
         require(token not in text, "raw token leaked into launch packet")
         require(steps.get("adapter") == "mock", f"launch packet adapter mismatch: {steps}")
-        require("agentops status" in text and "scripts/agent_worker.py" in text, f"launch packet missing commands: {steps}")
+        require("agentops status" in text and "agentops-worker" in text, f"launch packet missing product commands: {steps}")
+        require("scripts/agent_worker.py" in text, f"launch packet missing repo fallback commands: {steps}")
         require("agentops session create" in text and "--use-session" in text, f"launch packet missing short-lived session path: {steps}")
 
         status_status, status_payload = http_json("GET", base_url, "/api/agent-gateway/status", token=token)
@@ -100,7 +101,17 @@ def smoke(base_url: str, stamp: str) -> dict:
             "AGENTOPS_AGENT_ID": steps.get("agent_id") or agent_id,
             "AGENTOPS_API_KEY": token,
         })
-        cmd = [sys.executable, "scripts/agent_worker.py", "--once", "--adapter", steps.get("adapter") or "mock", "--use-session", "--session-ttl-sec", "900"]
+        cmd = [
+            sys.executable,
+            "-m",
+            "agentops_mis_cli.worker",
+            "--once",
+            "--adapter",
+            steps.get("adapter") or "mock",
+            "--use-session",
+            "--session-ttl-sec",
+            "900",
+        ]
         proc = subprocess.run(cmd, cwd=ROOT, env=env, capture_output=True, text=True, timeout=180, check=False)
         require(proc.returncode == 0, f"worker failed: {proc.stderr or proc.stdout}")
         require(token not in proc.stdout and token not in proc.stderr, "worker output leaked raw token")
