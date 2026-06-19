@@ -425,6 +425,10 @@ Acceptance evidence:
 - Product dogfooding worker runs:
   - Hermes: `tsk_selfdev_ux_review_hermes_20260619045910757742` -> `run_gw_eb4df4e82235`
   - OpenClaw: `tsk_selfdev_ux_review_openclaw_20260619045910757742` -> `run_gw_8160a11a2323`
+- Dogfooding follow-up UI build:
+  - Workspace Home direct start strip: customer project, worker readiness, delivery reports
+  - Pixel Office owner guide: choose template, dispatch AI team, approve/deliver
+  - verified by `cd ui/start-building-app && npm run build`
 
 Remaining product work:
 

@@ -571,6 +571,22 @@ evaluation: eval_gw_run_gw_8160a11a2323_rule pass
 finding: First-time users may not recognize how to start real work; homepage/dashboard should surface a direct start path.
 ```
 
+Dogfooding follow-up implemented:
+
+```text
+Workspace Home now exposes a direct start strip:
+- Start a customer project
+- Check worker readiness
+- Open delivery reports
+
+Pixel Office customer dispatch now includes a three-step owner guide:
+- Choose a template
+- Dispatch to AI team
+- Approve and deliver
+
+verification: cd ui/start-building-app && npm run build
+```
+
 The approval decision side-effect smoke passed:
 
 ```text

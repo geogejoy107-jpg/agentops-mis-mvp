@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
-import { Archive, CheckCircle2, Loader2, Play, ShieldCheck } from "lucide-react";
+import { Archive, CheckCircle2, ClipboardCheck, Loader2, Play, ShieldCheck } from "lucide-react";
 import type { Agent } from "../../data/mockData";
 import {
   loadCustomerTaskTemplates,
@@ -212,6 +212,31 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
             )}
           </div>
         )}
+      </div>
+
+      <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-2">
+        {[
+          {
+            title: zh ? "1. 选择模板" : "1. Choose a template",
+            body: zh ? "先选一个客户项目模板，系统会填好标题、任务说明和验收标准。" : "Pick a customer project template; MIS fills the title, brief and acceptance criteria.",
+          },
+          {
+            title: zh ? "2. 派给 AI 团队" : "2. Dispatch to AI team",
+            body: zh ? "选择 Hermes / OpenClaw / 本地 worker，点击生成项目，任务会进入运行账本。" : "Select Hermes, OpenClaw or local workers, then generate the project into the run ledger.",
+          },
+          {
+            title: zh ? "3. 审批与交付" : "3. Approve and deliver",
+            body: zh ? "查看报告、处理外部上传审批，并把最终报告归档到 MIS 账本。" : "Open the report, handle external-upload approvals and archive the final report to the MIS ledger.",
+          },
+        ].map((step) => (
+          <div key={step.title} className="rounded p-3" style={{ background: "var(--mis-surface2)", border: "1px solid rgba(148,163,184,0.14)" }}>
+            <div className="flex items-center gap-2 text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>
+              <ClipboardCheck size={13} style={{ color: "var(--mis-cyan)" }} />
+              {step.title}
+            </div>
+            <p className="mt-1 text-[10px] leading-relaxed" style={{ color: "var(--mis-dim)" }}>{step.body}</p>
+          </div>
+        ))}
       </div>
 
       <div className="mt-4 grid grid-cols-1 xl:grid-cols-3 gap-3">

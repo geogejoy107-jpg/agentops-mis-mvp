@@ -133,6 +133,45 @@ export function WorkspaceHome() {
       {loading && <p className="text-xs" style={{ color: "var(--mis-muted)" }}>Loading live MIS state...</p>}
       {error && <p className="text-xs" style={{ color: "#F87171" }}>Live backend unavailable: {error}</p>}
 
+      <section className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        {[
+          {
+            to: "/workspace/pixel-office",
+            icon: <Play size={15} />,
+            title: "Start a customer project",
+            body: "Choose a template, assign AI workers, and generate a ledger-backed delivery.",
+            color: "var(--mis-cyan)",
+          },
+          {
+            to: "/workspace/agents",
+            icon: <TerminalSquare size={15} />,
+            title: "Check worker readiness",
+            body: "See Hermes, OpenClaw, local daemon and remote agent enrollment state.",
+            color: "var(--mis-purple)",
+          },
+          {
+            to: "/workspace/reports",
+            icon: <CheckCircle size={15} />,
+            title: "Open delivery reports",
+            body: "Return to customer project reports and confirm report artifact archive status.",
+            color: "var(--mis-success)",
+          },
+        ].map((item) => (
+          <Link
+            key={item.to}
+            to={item.to}
+            className="rounded-lg p-3 hover:opacity-85"
+            style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}
+          >
+            <div className="flex items-center gap-2 text-xs font-semibold" style={{ color: "var(--mis-text)" }}>
+              <span style={{ color: item.color }}>{item.icon}</span>
+              {item.title}
+            </div>
+            <p className="mt-1 text-[11px] leading-relaxed" style={{ color: "var(--mis-dim)" }}>{item.body}</p>
+          </Link>
+        ))}
+      </section>
+
       <div className="grid grid-cols-12 gap-4 items-start">
         <section
           className="col-span-12 xl:col-span-8 rounded-lg overflow-hidden"
