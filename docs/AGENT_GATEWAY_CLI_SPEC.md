@@ -140,7 +140,7 @@ agentops enrollment create \
   --agent-id agt_remote_builder \
   --name "Remote Builder" \
   --runtime openclaw \
-  --scopes agents:write,agents:heartbeat,tasks:read,tasks:claim,runs:write,toolcalls:write,artifacts:write,evaluations:submit,audit:write \
+  --scopes agents:write,agents:heartbeat,tasks:create,tasks:read,tasks:claim,runs:write,toolcalls:write,artifacts:write,evaluations:submit,audit:write \
   --ttl-days 30
 ```
 
@@ -176,7 +176,7 @@ agentops enrollment request \
   --agent-id agt_customer_worker \
   --name "Customer Worker" \
   --runtime mock \
-  --scopes agents:heartbeat,tasks:read,tasks:claim,runs:write,toolcalls:write,evaluations:submit,audit:write \
+  --scopes agents:heartbeat,tasks:create,tasks:read,tasks:claim,runs:write,toolcalls:write,evaluations:submit,audit:write \
   --reason "Customer server worker needs to process assigned MIS tasks"
 ```
 
@@ -718,6 +718,7 @@ Scopes should be explicit:
 
 ```text
 agents:write
+tasks:create
 tasks:read
 tasks:claim
 runs:write
@@ -737,6 +738,7 @@ Current implementation:
 - The token can act only as its bound `agent_id`.
 - The token can act only in its bound `workspace_id`.
 - Token-auth requests cannot override `agent_id` or `workspace_id` through request body, query string, or headers.
+- Token-auth task creation is bound to the token's own `agent_id` and `workspace_id`; a remote agent cannot create work as another agent or another workspace.
 - Gateway endpoints check required scopes.
 - Valid scoped tokens that lack an endpoint scope return `403 forbidden`, not `401 unauthorized`.
 - Enrollment launch packets now recommend minting a short-lived session before worker execution:
@@ -777,6 +779,7 @@ Current endpoint scope map:
 | `POST /api/agent-gateway/session/revoke` | admin/local authority |
 | `POST /api/agent-gateway/register` | `agents:write` |
 | `POST /api/agent-gateway/heartbeat` | `agents:heartbeat` |
+| `POST /api/agent-gateway/tasks` | `tasks:create` |
 | `GET /api/agent-gateway/tasks/pull` | `tasks:read` |
 | `POST /api/agent-gateway/tasks/:id/claim` | `tasks:claim` |
 | `POST /api/agent-gateway/runs/start` | `runs:write` |
@@ -892,6 +895,7 @@ python3 scripts/worker_adapter_retry_smoke.py
 python3 scripts/agentops_worker_package_smoke.py
 python3 scripts/agentops_customer_worker_cli_smoke.py
 python3 scripts/agentops_task_create_cli_smoke.py
+python3 scripts/agent_gateway_task_create_scope_smoke.py
 ```
 
 This helper creates a scoped token, creates a normal MIS task for that agent, runs `scripts/agent_worker.py --once` with the token, verifies run/tool/eval evidence, and revokes the token by default. It does not print the raw token.
@@ -905,6 +909,7 @@ The CLI worker-daemon helper verifies `agentops worker start/status/logs/stop` c
 The live-confirm-gate helper verifies `agentops worker start --adapter hermes|openclaw` fails closed without `--confirm-run`.
 The customer-worker CLI helper verifies `agentops workflow customer-worker-task` creates a real mock worker run with run/tool/evaluation/audit/artifact evidence and keeps Hermes live execution gated by confirmation.
 The task-create CLI helper verifies `agentops task create` can create a normal customer/API task, then a worker can pull it and write run/tool/evaluation evidence without leaking token-like values.
+The task-create scope helper verifies scoped tokens need `tasks:create`, cannot create tasks as another agent, and cannot cross workspace boundaries.
 The launch-steps helper verifies create/rotate responses include safe remote-worker commands, a short-lived session command, `--use-session`, and do not embed the raw token in those commands.
 The remote launch-packet helper uses the returned environment shape to run a real worker through `--use-session` and verify run/tool/evaluation ledger evidence.
 The scope-matrix helper verifies an observer token can heartbeat/pull/audit but receives `403 forbidden` for claim/run/tool/artifact writes.

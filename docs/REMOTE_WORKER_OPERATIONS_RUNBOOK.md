@@ -183,6 +183,11 @@ Then the same remote worker can consume it:
 agentops-worker --once --adapter mock --agent-id agt_remote_builder
 ```
 
+For scoped remote tokens, `agentops task create` maps to
+`POST /api/agent-gateway/tasks` and requires `tasks:create`. The Gateway binds
+the created task to the token's own `agent_id` and `workspace_id`; attempts to
+assign work as another agent or another workspace are rejected with `403`.
+
 ## Customer Task API Path
 
 For product dogfooding or customer-facing demos, use the workflow endpoint
@@ -243,6 +248,7 @@ python3 -m py_compile server.py scripts/*.py agentops_mis_cli/*.py
 python3 scripts/agentops_worker_preflight_smoke.py
 python3 scripts/worker_live_confirm_gate_smoke.py
 python3 scripts/remote_launch_packet_worker_smoke.py
+python3 scripts/agent_gateway_task_create_scope_smoke.py
 python3 scripts/demo_acceptance.py
 git diff --check
 ```
@@ -252,4 +258,5 @@ The expected proof is:
 - `agentops worker preflight` returns JSON and `live_execution_performed=false`.
 - Hermes/OpenClaw daemon starts without `--confirm-run` fail closed.
 - Remote launch packet commands can create ledger evidence through Agent Gateway.
+- Scoped task creation requires `tasks:create` and rejects agent/workspace impersonation.
 - Demo acceptance remains safe and reproducible.

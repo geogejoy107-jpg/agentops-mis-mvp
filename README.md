@@ -243,6 +243,7 @@ python3 scripts/agentops_pip_install_smoke.py
 python3 scripts/agentops_doctor_smoke.py
 python3 scripts/agentops_worker_status_smoke.py
 python3 scripts/agentops_task_create_cli_smoke.py
+python3 scripts/agent_gateway_task_create_scope_smoke.py
 ```
 
 它会创建 scoped token、创建一个普通 MIS 任务、用 token 跑 `scripts/agent_worker.py --once`、验证 run/tool/eval 证据，并默认吊销 token。
@@ -254,7 +255,7 @@ Workspace isolation smoke 会验证：token 绑定 workspace A 后，只能 pull
 - enrollment token 只在创建响应里显示一次，MIS 只存 hash。
 - token 绑定 `agent_id`，不能冒充其他 agent。
 - token 绑定 `workspace_id`，不能通过 header/query/body 切换到其他 workspace。
-- API 会检查 endpoint scope，例如 `tasks:read`、`runs:write`、`audit:write`。
+- API 会检查 endpoint scope，例如 `tasks:create`、`tasks:read`、`runs:write`、`audit:write`。
 - `./scripts/agentops worker status` 可从命令行查看 worker fleet、daemon、pending task 和 stuck task 状态。
 - `./scripts/agentops worker preflight --adapter mock|hermes|openclaw` 可从主 CLI 执行只读 Gateway/adapter 预检，不拉任务、不写账本、不触发 live runtime。
 - `./scripts/agentops worker start|stop|logs` 可从命令行控制本地 worker daemon；Hermes/OpenClaw start 必须显式 `--confirm-run`。

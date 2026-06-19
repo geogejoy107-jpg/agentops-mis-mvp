@@ -1851,6 +1851,7 @@ def safe_json_metadata(value):
 VALID_AGENT_GATEWAY_SCOPES = {
     "agents:write",
     "agents:heartbeat",
+    "tasks:create",
     "tasks:read",
     "tasks:claim",
     "runs:write",
@@ -2156,6 +2157,7 @@ def agent_gateway_create_enrollment(conn, body) -> tuple[dict, int]:
     scopes = parse_scope_list(body.get("scopes") or body.get("allowed_scopes") or [
         "agents:write",
         "agents:heartbeat",
+        "tasks:create",
         "tasks:read",
         "tasks:claim",
         "runs:write",
@@ -2221,6 +2223,7 @@ def agent_gateway_request_enrollment(conn, body) -> tuple[dict, int]:
     runtime_type = coerce_choice(body.get("runtime_type") or body.get("runtime"), VALID_RUNTIME_TYPES, "mock")
     scopes = parse_scope_list(body.get("scopes") or body.get("allowed_scopes") or [
         "agents:heartbeat",
+        "tasks:create",
         "tasks:read",
         "tasks:claim",
         "runs:write",
@@ -5839,6 +5842,7 @@ class Handler(BaseHTTPRequestHandler):
                 scope_by_path = {
                     "/api/agent-gateway/register": "agents:write",
                     "/api/agent-gateway/heartbeat": "agents:heartbeat",
+                    "/api/agent-gateway/tasks": "tasks:create",
                     "/api/agent-gateway/runs/start": "runs:write",
                     "/api/agent-gateway/tool-calls": "toolcalls:write",
                     "/api/agent-gateway/artifacts": "artifacts:write",
@@ -5860,6 +5864,8 @@ class Handler(BaseHTTPRequestHandler):
                     if requested_header_workspace != auth_ctx["workspace_id"]:
                         return self.send_json({"error": "forbidden", "message": "Agent token cannot use another workspace header."}, 403)
                     requested_agent = body.get("agent_id") or body.get("requested_by_agent_id")
+                    if path == "/api/agent-gateway/tasks":
+                        requested_agent = body.get("owner_agent_id") or requested_agent
                     if requested_agent and requested_agent != auth_ctx["agent_id"]:
                         return self.send_json({"error": "forbidden", "message": "Agent token cannot act as another agent."}, 403)
                     requested_workspace = normalize_workspace_id(body.get("workspace_id") or auth_ctx["workspace_id"])
@@ -5867,12 +5873,17 @@ class Handler(BaseHTTPRequestHandler):
                         return self.send_json({"error": "forbidden", "message": "Agent token cannot act in another workspace."}, 403)
                     body["agent_id"] = auth_ctx["agent_id"]
                     body["workspace_id"] = auth_ctx["workspace_id"]
+                    if path == "/api/agent-gateway/tasks":
+                        body["owner_agent_id"] = auth_ctx["agent_id"]
                     body["_auth_token_id"] = auth_ctx.get("token_id")
                     body["_auth_session_id"] = auth_ctx.get("session_id")
                 if path == "/api/agent-gateway/register":
                     payload, status = agent_gateway_register(conn, body)
                 elif path == "/api/agent-gateway/heartbeat":
                     payload, status = agent_gateway_heartbeat(conn, body)
+                elif path == "/api/agent-gateway/tasks":
+                    body["source"] = "agent-gateway"
+                    payload, status = create_task_api(conn, body)
                 elif path.startswith("/api/agent-gateway/tasks/") and path.endswith("/claim"):
                     task_id = path.split("/")[-2]
                     payload, status = agent_gateway_claim_task(conn, task_id, body)

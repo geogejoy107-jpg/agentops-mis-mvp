@@ -80,6 +80,7 @@ python3 scripts/approval_decision_side_effect_smoke.py
 python3 scripts/agentops_cli_install_smoke.py
 python3 scripts/agentops_doctor_smoke.py
 python3 scripts/agentops_task_create_cli_smoke.py
+python3 scripts/agent_gateway_task_create_scope_smoke.py
 python3 scripts/enrollment_health_state_smoke.py
 python3 scripts/agentops_status_smoke.py
 python3 scripts/redaction_policy_smoke.py
@@ -938,7 +939,19 @@ run_status: completed
 token_omitted: true
 ```
 
-Repeat verification during final acceptance also passed with run `run_gw_5541ca84e4fc`.
+Repeat verification during final acceptance also passed with run `run_gw_32d433dee013`.
+
+Latest scoped Gateway task-create smoke:
+
+```text
+script: python3 scripts/agent_gateway_task_create_scope_smoke.py
+task: tsk_gateway_task_create_scope_20260619190748215805
+allowed token had tasks:create
+missing tasks:create scope: rejected
+other agent impersonation: rejected
+other workspace impersonation: rejected
+token_omitted: true
+```
 
 Latest local live dogfood runs for the current AgentOps MIS project:
 
