@@ -105,6 +105,8 @@ python3 scripts/task_owner_validation_smoke.py
 | CLI live recheck | hermes | `tsk_worker_hermes_live_20260618065503` | `run_gw_6f995c9de929` | completed |
 | CLI live recheck | openclaw | `tsk_worker_openclaw_live_20260618065555` | `run_gw_c274e7d62b61` | completed |
 | UI | mock | `tsk_worker_ui_mock_20260617150557_657b7768` | `run_gw_8fae81a1bfa6` | completed |
+| UI dogfooding | hermes | `tsk_worker_ui_hermes_20260619051023_9265c786` | `run_gw_3b0185dbc228` | failed with `HermesExecutionFailed` and audit/eval evidence |
+| UI dogfooding | openclaw | `tsk_worker_ui_openclaw_20260619051334_df7525db` | `run_gw_dc4baad1a546` | completed |
 | daemon | mock | `tsk_daemon_acceptance_20260617231559` | `run_gw_6ad797929084` | completed |
 | scoped token worker | mock | `tsk_remote_worker_smoke_20260617162927` | `run_gw_876a7c777841` | completed |
 
@@ -121,6 +123,13 @@ Latest live adapter recheck:
 ```text
 Hermes:   run_gw_6f995c9de929 completed via agent_worker.hermes, evaluation pass
 OpenClaw: run_gw_c274e7d62b61 completed via agent_worker.openclaw, evaluation pass
+```
+
+Latest self-dogfooding operator readiness check:
+
+```text
+Hermes:   run_gw_3b0185dbc228 failed after 180s with HermesExecutionFailed, evaluation fail, audit evidence present
+OpenClaw: run_gw_dc4baad1a546 completed via agent_worker.openclaw, evaluation pass, audit evidence present
 ```
 
 Redaction policy recheck:
@@ -702,6 +711,11 @@ The `/workspace/agents` worker fleet telemetry UI was verified in the in-app bro
 ```text
 url: http://127.0.0.1:19001/workspace/agents
 visible labels:
+  运营就绪
+  本地 worker 循环
+  真实运行派发
+  远程 agent 接入
+  恢复队列
   Worker Fleet 观测
   Daemon 日志
   最近网关事件
@@ -728,6 +742,13 @@ log_tail_lines: 80
 log_path_present: true
 ```
 
+The operator readiness strip is intentionally product-facing rather than developer-only. It makes the self-dogfooding model explicit:
+
+- local worker loop: safe `mock` dry-run versus confirmed Hermes/OpenClaw live dispatch;
+- real runtime dispatch: Hermes/OpenClaw adapter runs are normal MIS tasks and write ledger evidence;
+- remote agent entry: scoped enrollment token, short-lived session, heartbeat, and workspace-bound permissions;
+- recovery queue: stale running tasks can be released back to planned with linked run/audit evidence.
+
 `python3 scripts/demo_acceptance.py` also passed after this UI change.
 
 ## What This Proves
@@ -753,5 +774,5 @@ planned MIS task
 - The worker does not call Dify or Notion.
 - The worker does not store full prompts or raw responses.
 - The worker is repo-local; it is not yet a launchd service, pip package, npm package, or signed binary.
-- The UI worker panel now supports one-shot dispatch, local daemon start/stop, daemon state counters, daemon backoff state, daemon log tails, recent gateway events, and stuck-task release controls; it is not a production fleet manager.
+- The UI worker panel now supports one-shot dispatch, local daemon start/stop, daemon state counters, daemon backoff state, daemon log tails, recent gateway events, operator readiness cards, and stuck-task release controls; it is not a production fleet manager.
 - Remote enrollment token issuance/revocation/rotation, approval-gated enrollment request UI, endpoint-level scope enforcement, short-lived session tokens with list/revoke controls and worker-loop refresh, scope presets, a first enrollment UI, and minimal Agent Gateway workspace isolation now exist. Full RBAC, hosted multi-tenant isolation, and hosted enrollment policy UI remain future work.

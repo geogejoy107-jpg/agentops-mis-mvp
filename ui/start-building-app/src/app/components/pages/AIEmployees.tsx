@@ -1,6 +1,6 @@
 import { Link } from "react-router";
 import { useState } from "react";
-import { Bot, Play, RefreshCw, Activity, Power, Square, KeyRound, ShieldCheck, Trash2, RotateCw } from "lucide-react";
+import { AlertTriangle, Bot, CheckCircle2, Play, RefreshCw, Activity, Power, Square, KeyRound, ShieldCheck, Trash2, RotateCw } from "lucide-react";
 import { StatusBadge } from "../shared/StatusBadge";
 import {
   createAgentGatewayEnrollment,
@@ -118,6 +118,9 @@ export function AIEmployees() {
   const activeEnrollments = enrollments.filter(item => item.status === "active").length;
   const staleEnrollments = enrollments.filter(item => item.heartbeat_state === "stale").length;
   const activeSessions = sessions.filter(item => item.session_state === "active").length;
+  const runningDaemons = (workerStatus?.daemons || []).filter(daemon => daemon.running).length;
+  const stuckWorkerCount = Number(workerStatus?.stuck_worker_tasks || stuckTasks.length || 0);
+  const gatewayReady = Boolean(gatewayStatus?.auth.authenticated || ["ready", "ok", "authenticated"].includes(gatewayStatus?.status || ""));
   const copy = pick(locale, {
     en: {
       title: "AI Employees",
@@ -228,6 +231,22 @@ export function AIEmployees() {
       revokingSession: "Revoking session...",
       noEnrollments: "No remote enrollments yet.",
       noSessions: "No short-lived sessions yet.",
+      operatorTitle: "Operator Readiness",
+      operatorSummary: "Use this page as the one-person company control tower: assign work, run local AI workers, enroll remote machines, and recover stuck tasks without leaving the MIS ledger.",
+      modeLocalTitle: "Local worker loop",
+      modeLocalBody: "Mock is safe for dry-runs; Hermes and OpenClaw buttons require explicit live confirmation and write run/tool/eval/audit evidence.",
+      modeLiveTitle: "Real runtime dispatch",
+      modeLiveBody: "Hermes/OpenClaw adapters execute normal MIS tasks, not isolated demos. Results are summarized, hashed, and recorded in the ledger.",
+      modeRemoteTitle: "Remote agent entry",
+      modeRemoteBody: "External machines use scoped enrollment tokens, short-lived sessions, heartbeat, and workspace-bound permissions.",
+      modeRecoveryTitle: "Recovery queue",
+      modeRecoveryBody: "Stale running worker tasks can be released back to planned; linked runs are blocked with audit evidence.",
+      statusRunning: "running",
+      statusReady: "ready",
+      statusConfirm: "confirm required",
+      statusAttention: "attention",
+      statusClear: "clear",
+      statusSetup: "setup",
     },
     zh: {
       title: "AI 员工",
@@ -338,8 +357,58 @@ export function AIEmployees() {
       revokingSession: "正在吊销 session...",
       noEnrollments: "还没有远程接入记录。",
       noSessions: "还没有短期 session。",
+      operatorTitle: "运营就绪",
+      operatorSummary: "把这一页当成一人公司的 AI 团队控制塔：派活、运行本地 worker、接入远程机器、恢复卡住任务，全都进入 MIS 账本。",
+      modeLocalTitle: "本地 worker 循环",
+      modeLocalBody: "mock 用于安全 dry-run；Hermes 和 OpenClaw 按钮需要显式确认真跑，并写入 run/tool/eval/audit 证据。",
+      modeLiveTitle: "真实运行派发",
+      modeLiveBody: "Hermes/OpenClaw adapter 执行的是普通 MIS 任务，不是孤立演示；结果会摘要、hash，并记录到账本。",
+      modeRemoteTitle: "远程 agent 接入",
+      modeRemoteBody: "其他电脑或服务器用带权限范围的接入 token、短期 session、心跳和工作区绑定权限接入。",
+      modeRecoveryTitle: "恢复队列",
+      modeRecoveryBody: "卡住的运行中 worker 任务可以释放回 planned；关联 run 会标记 blocked 并留下审计证据。",
+      statusRunning: "运行中",
+      statusReady: "就绪",
+      statusConfirm: "需确认",
+      statusAttention: "需处理",
+      statusClear: "正常",
+      statusSetup: "待配置",
     },
   });
+  const operatorReadiness = [
+    {
+      title: copy.modeLocalTitle,
+      body: copy.modeLocalBody,
+      status: runningDaemons > 0 ? "running" : "ready",
+      label: runningDaemons > 0 ? copy.statusRunning : copy.statusReady,
+      attention: false,
+      meta: `${runningDaemons}/${workerStatus?.worker_count ?? 0} ${copy.workers}`,
+    },
+    {
+      title: copy.modeLiveTitle,
+      body: copy.modeLiveBody,
+      status: "pending_approval",
+      label: copy.statusConfirm,
+      attention: false,
+      meta: "Hermes · OpenClaw",
+    },
+    {
+      title: copy.modeRemoteTitle,
+      body: copy.modeRemoteBody,
+      status: gatewayReady && activeEnrollments > 0 ? "ready" : "planned",
+      label: gatewayReady && activeEnrollments > 0 ? copy.statusReady : copy.statusSetup,
+      attention: !gatewayReady || staleEnrollments > 0,
+      meta: `${activeEnrollments} ${copy.activeEnrollments} · ${activeSessions} ${copy.activeSessions}`,
+    },
+    {
+      title: copy.modeRecoveryTitle,
+      body: copy.modeRecoveryBody,
+      status: stuckWorkerCount > 0 ? "blocked" : "pass",
+      label: stuckWorkerCount > 0 ? copy.statusAttention : copy.statusClear,
+      attention: stuckWorkerCount > 0,
+      meta: `${stuckWorkerCount} ${copy.stuckTasks}`,
+    },
+  ];
 
   const runWorkerOnce = async (adapter: "mock" | "hermes" | "openclaw") => {
     setDispatching(adapter);
@@ -589,6 +658,44 @@ export function AIEmployees() {
         <button onClick={refresh} className="mt-3 text-[11px] px-3 py-1.5 rounded" style={{ background: "rgba(34,211,238,0.12)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.2)" }}>
           {copy.refresh}
         </button>
+      </div>
+
+      <div
+        className="rounded-xl p-4"
+        style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}
+      >
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <CheckCircle2 size={14} style={{ color: "var(--mis-success)" }} />
+              <h2 className="text-sm font-semibold" style={{ color: "var(--mis-text)" }}>{copy.operatorTitle}</h2>
+            </div>
+            <p className="text-[11px] mt-1 max-w-3xl" style={{ color: "var(--mis-dim)" }}>{copy.operatorSummary}</p>
+          </div>
+          <StatusBadge status={gatewayReady ? "ready" : "planned"} label={gatewayReady ? copy.statusReady : copy.statusSetup} />
+        </div>
+        <div className="grid grid-cols-4 gap-3 mt-4">
+          {operatorReadiness.map(item => (
+            <div
+              key={item.title}
+              className="rounded-lg px-3 py-3"
+              style={{
+                background: item.attention ? "rgba(251,191,36,0.08)" : "var(--mis-surface2)",
+                border: item.attention ? "1px solid rgba(251,191,36,0.28)" : "1px solid var(--mis-border)",
+              }}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  {item.attention ? <AlertTriangle size={13} style={{ color: "var(--mis-warning)" }} /> : <CheckCircle2 size={13} style={{ color: "var(--mis-success)" }} />}
+                  <div className="text-[11px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{item.title}</div>
+                </div>
+                <StatusBadge status={item.status} label={item.label} />
+              </div>
+              <p className="text-[10px] mt-2 leading-relaxed" style={{ color: "var(--mis-dim)" }}>{item.body}</p>
+              <div className="text-[10px] mt-2 truncate" style={{ color: "var(--mis-muted)" }}>{item.meta}</div>
+            </div>
+          ))}
+        </div>
       </div>
 
       <div

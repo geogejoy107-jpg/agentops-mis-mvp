@@ -205,6 +205,7 @@ Current v1.5 implementation:
 - `/workspace/agents` also exposes scope presets and per-token rotation.
 - `/workspace/agents` exposes recent short-lived sessions and can revoke an active session directly.
 - `/workspace/agents` surfaces Agent Gateway readiness/auth mode/scope count/active enrollment/stale heartbeat cards for operators.
+- `/workspace/agents` now includes an operator readiness strip for self-dogfooding and customer operations. It explains local worker mode, confirmed Hermes/OpenClaw live dispatch, remote agent entry, and stuck-task recovery before the detailed gateway/worker/enrollment panels.
 - New/rotated enrollment responses include a safe `next_steps` launch packet for remote machines: env setup, `agentops status`, heartbeat, one-shot worker, and loop worker commands. Commands use an API-key placeholder rather than embedding the raw token.
 - Launch-packet worker commands now use `--use-session --session-ttl-sec 900`, so remote workers mint a short-lived session before processing tasks instead of holding the enrollment token in the worker loop.
 
@@ -511,6 +512,7 @@ Implemented and verified:
 - Scoped token enrollment.
 - Agent Gateway safe status check via `GET /api/agent-gateway/status` and `agentops status`.
 - Agent Gateway status surfaced in `/workspace/agents`.
+- Operator readiness strip surfaced in `/workspace/agents`.
 - Remote enrollment launch packet surfaced in `/workspace/agents` after token creation/rotation.
 - Remote enrollment launch packet worker path now uses short-lived sessions before task processing.
 - Loop-mode workers can refresh short-lived sessions before expiry while continuing to process tasks.
@@ -535,6 +537,5 @@ Not yet product-complete:
 
 - Global CLI package.
 - Full RBAC and hosted multi-tenant isolation.
-- Session revocation UI and refresh policy.
 - Production worker fleet manager.
 - Hosted SaaS/commercial deployment layer.
