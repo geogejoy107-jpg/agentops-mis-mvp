@@ -2111,6 +2111,12 @@ def agent_gateway_launch_steps(agent_id: str, workspace_id: str, runtime_type: s
     confirm_flag = " --confirm-run" if adapter in {"hermes", "openclaw"} else ""
     run_once = f"agentops-worker --once --adapter {adapter}{confirm_flag} --use-session --session-ttl-sec 900"
     run_loop = f"agentops-worker --adapter {adapter}{confirm_flag} --use-session --session-ttl-sec 900 --poll-interval 5 --max-tasks 0 --continue-on-error --write-state --jsonl-log"
+    template_args = (
+        f"--adapter {adapter}{confirm_flag} "
+        f"--base-url {shlex.quote(base_url)} "
+        f"--workspace-id {shlex.quote(safe_workspace_id)} "
+        f"--agent-id {shlex.quote(safe_agent_id)}"
+    )
     return {
         "token_policy": "Token is shown once. Store it on the agent machine only; MIS stores only a hash.",
         "base_url": base_url,
@@ -2124,6 +2130,8 @@ def agent_gateway_launch_steps(agent_id: str, workspace_id: str, runtime_type: s
         "session": "agentops session create --ttl-sec 900 --save-session",
         "run_once": run_once,
         "run_loop": run_loop,
+        "launchd_template": f"agentops-worker service-template --manager launchd {template_args} > ~/Library/LaunchAgents/local.agentops.worker.{safe_agent_id}.plist",
+        "systemd_template": f"agentops-worker service-template --manager systemd {template_args} > ~/.config/systemd/user/agentops-worker-{safe_agent_id}.service",
         "repo_fallback_run_once": f"python3 scripts/agent_worker.py --once --adapter {adapter}{confirm_flag} --use-session --session-ttl-sec 900",
         "repo_fallback_run_loop": f"python3 scripts/agent_worker.py --adapter {adapter}{confirm_flag} --use-session --session-ttl-sec 900 --poll-interval 5 --max-tasks 0 --continue-on-error --write-state --jsonl-log",
         "notes": [
@@ -2131,6 +2139,7 @@ def agent_gateway_launch_steps(agent_id: str, workspace_id: str, runtime_type: s
             "Install the source package on the agent machine first; the product command is agentops-worker.",
             "Use agentops status before pulling tasks.",
             "Worker launch commands mint a short-lived session before processing tasks; the enrollment token should remain local and revocable.",
+            "Service template commands render launchd/systemd files with a token placeholder; replace it only on the agent machine.",
             "Repo-local scripts/agent_worker.py commands are included only as development fallbacks.",
             "Hermes/OpenClaw launch commands include --confirm-run because the selected runtime is intended to execute.",
         ],

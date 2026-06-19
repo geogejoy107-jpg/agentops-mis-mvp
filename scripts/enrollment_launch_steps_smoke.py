@@ -47,6 +47,8 @@ def assert_safe_launch_steps(payload: dict, expected_adapter: str) -> dict:
     require("agentops session create" in text, "next_steps missing short-lived session command")
     require("python3 -m pip install ." in text, "next_steps missing package install command")
     require("agentops-worker" in text, "next_steps missing installable worker launch command")
+    require("service-template --manager launchd" in text, "next_steps missing launchd service template command")
+    require("service-template --manager systemd" in text, "next_steps missing systemd service template command")
     require("scripts/agent_worker.py" in text, "next_steps missing repo fallback worker command")
     require("--use-session" in text, "worker launch command should mint a short-lived session")
     require(steps.get("adapter") == expected_adapter, f"next_steps adapter mismatch: {steps}")

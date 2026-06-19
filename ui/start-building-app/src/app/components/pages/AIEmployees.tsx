@@ -220,6 +220,8 @@ export function AIEmployees() {
       heartbeatCommand: "Heartbeat",
       runOnceCommand: "Run once",
       runLoopCommand: "Run loop",
+      launchdTemplate: "launchd template",
+      systemdTemplate: "systemd template",
       fallbackCommand: "Repo fallback",
       recentEnrollments: "Recent enrollments",
       recentSessions: "Recent sessions",
@@ -348,6 +350,8 @@ export function AIEmployees() {
       heartbeatCommand: "心跳",
       runOnceCommand: "单轮运行",
       runLoopCommand: "常驻运行",
+      launchdTemplate: "launchd 模板",
+      systemdTemplate: "systemd 模板",
       fallbackCommand: "仓库内备用",
       recentEnrollments: "最近接入记录",
       recentSessions: "最近短期 Session",
@@ -1231,6 +1235,8 @@ export function AIEmployees() {
                       { label: copy.heartbeatCommand, value: createdToken.next_steps.heartbeat },
                       { label: copy.runOnceCommand, value: createdToken.next_steps.run_once },
                       { label: copy.runLoopCommand, value: createdToken.next_steps.run_loop },
+                      { label: copy.launchdTemplate, value: createdToken.next_steps.launchd_template || "" },
+                      { label: copy.systemdTemplate, value: createdToken.next_steps.systemd_template || "" },
                       { label: copy.fallbackCommand, value: createdToken.next_steps.repo_fallback_run_once || "" },
                     ].filter(item => item.value).map(item => (
                       <div key={item.label}>

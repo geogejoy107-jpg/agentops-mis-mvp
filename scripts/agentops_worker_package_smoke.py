@@ -109,6 +109,38 @@ def main() -> int:
             cwd=tmp_path,
             env=env,
         )
+        launchd_run = run(
+            [
+                str(worker),
+                "service-template",
+                "--manager",
+                "launchd",
+                "--adapter",
+                "mock",
+                "--agent-id",
+                "agt_worker_package_smoke",
+                "--base-url",
+                base_url,
+            ],
+            cwd=tmp_path,
+            env=env,
+        )
+        systemd_run = run(
+            [
+                str(worker),
+                "service-template",
+                "--manager",
+                "systemd",
+                "--adapter",
+                "mock",
+                "--agent-id",
+                "agt_worker_package_smoke",
+                "--base-url",
+                base_url,
+            ],
+            cwd=tmp_path,
+            env=env,
+        )
 
         once_payload = {}
         try:
@@ -136,12 +168,22 @@ def main() -> int:
             and any(item.get("path") == "/api/agent-gateway/register" for item in SmokeGateway.requests)
             and any(str(item.get("path")).startswith("/api/agent-gateway/tasks/pull") for item in SmokeGateway.requests)
             and any(item.get("path") == "/api/agent-gateway/heartbeat" for item in SmokeGateway.requests)
+            and launchd_run.returncode == 0
+            and "KeepAlive" in launchd_run.stdout
+            and "agentops-worker" in launchd_run.stdout
+            and "paste one-time token here" in launchd_run.stdout
+            and systemd_run.returncode == 0
+            and "Restart=always" in systemd_run.stdout
+            and "agentops-worker" in systemd_run.stdout
+            and "paste one-time token here" in systemd_run.stdout
         )
         print(json.dumps({
             "ok": ok,
             "install_returncode": install.returncode,
             "help_returncode": help_run.returncode,
             "once_returncode": once_run.returncode,
+            "launchd_template_returncode": launchd_run.returncode,
+            "systemd_template_returncode": systemd_run.returncode,
             "command": str(worker),
             "state_path": str(state_path),
             "state_written": state_path.exists(),
@@ -155,6 +197,8 @@ def main() -> int:
             print("help stderr:", help_run.stderr[-1200:], file=sys.stderr)
             print("once stdout:", once_run.stdout[-1200:], file=sys.stderr)
             print("once stderr:", once_run.stderr[-1200:], file=sys.stderr)
+            print("launchd stderr:", launchd_run.stderr[-1200:], file=sys.stderr)
+            print("systemd stderr:", systemd_run.stderr[-1200:], file=sys.stderr)
         server.shutdown()
         return 0 if ok else 1
 

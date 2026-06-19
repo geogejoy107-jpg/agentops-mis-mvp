@@ -14,9 +14,11 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import html
 import hashlib
 import json
 import os
+import re
 import shlex
 import signal
 import subprocess
@@ -718,8 +720,144 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main() -> int:
-    args = build_parser().parse_args()
+def service_label(agent_id: str) -> str:
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "-", agent_id or DEFAULT_AGENT_ID).strip("-")
+    return f"local.agentops.worker.{safe or 'agent'}"
+
+
+def build_worker_command(args) -> list[str]:
+    command = [
+        "agentops-worker",
+        "--adapter",
+        args.adapter,
+        "--use-session",
+        "--session-ttl-sec",
+        str(args.session_ttl_sec),
+        "--session-refresh-margin-sec",
+        str(args.session_refresh_margin_sec),
+        "--poll-interval",
+        str(args.poll_interval),
+        "--max-tasks",
+        "0",
+        "--continue-on-error",
+        "--write-state",
+        "--jsonl-log",
+    ]
+    if args.confirm_run:
+        command.append("--confirm-run")
+    return command
+
+
+def render_launchd_template(args) -> str:
+    label = args.label or service_label(args.agent_id)
+    runtime_dir = args.runtime_dir or "~/Library/Application Support/AgentOpsMIS/workers"
+    log_path = args.log_path or f"~/Library/Logs/{label}.log"
+    env_values = {
+        "AGENTOPS_BASE_URL": args.base_url,
+        "AGENTOPS_WORKSPACE_ID": args.workspace_id,
+        "AGENTOPS_AGENT_ID": args.agent_id,
+        "AGENTOPS_API_KEY": args.api_key_placeholder,
+        "AGENTOPS_WORKER_RUNTIME_DIR": runtime_dir,
+        "AGENTOPS_WORKER_CWD": args.working_directory,
+    }
+    program_args = ["/usr/bin/env", *build_worker_command(args)]
+    arg_items = "\n".join(f"    <string>{html.escape(item)}</string>" for item in program_args)
+    env_items = "\n".join(
+        f"    <key>{html.escape(key)}</key>\n    <string>{html.escape(str(value))}</string>"
+        for key, value in env_values.items()
+    )
+    return f"""<?xml version=\"1.0\" encoding=\"UTF-8\"?>
+<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">
+<plist version=\"1.0\">
+<dict>
+  <key>Label</key>
+  <string>{html.escape(label)}</string>
+  <key>ProgramArguments</key>
+  <array>
+{arg_items}
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+{env_items}
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>{html.escape(log_path)}</string>
+  <key>StandardErrorPath</key>
+  <string>{html.escape(log_path)}</string>
+</dict>
+</plist>
+"""
+
+
+def render_systemd_template(args) -> str:
+    label = args.label or service_label(args.agent_id)
+    runtime_dir = args.runtime_dir or "%h/.agentops/workers"
+    log_path = args.log_path or "%h/.agentops/agentops-worker.log"
+    env_values = {
+        "AGENTOPS_BASE_URL": args.base_url,
+        "AGENTOPS_WORKSPACE_ID": args.workspace_id,
+        "AGENTOPS_AGENT_ID": args.agent_id,
+        "AGENTOPS_API_KEY": args.api_key_placeholder,
+        "AGENTOPS_WORKER_RUNTIME_DIR": runtime_dir,
+        "AGENTOPS_WORKER_CWD": args.working_directory,
+    }
+    env_lines = "\n".join(f"Environment={shlex.quote(f'{key}={value}')}" for key, value in env_values.items())
+    command = " ".join(shlex.quote(part) for part in build_worker_command(args))
+    return f"""[Unit]
+Description=AgentOps MIS Worker ({label})
+After=network-online.target
+
+[Service]
+Type=simple
+{env_lines}
+ExecStart=/usr/bin/env {command}
+Restart=always
+RestartSec=5
+StandardOutput=append:{log_path}
+StandardError=append:{log_path}
+
+[Install]
+WantedBy=default.target
+"""
+
+
+def build_service_template_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Render a safe launchd/systemd template for agentops-worker.")
+    parser.add_argument("--manager", choices=["launchd", "systemd"], required=True)
+    parser.add_argument("--base-url", default=os.environ.get("AGENTOPS_BASE_URL", DEFAULT_BASE_URL))
+    parser.add_argument("--workspace-id", default=os.environ.get("AGENTOPS_WORKSPACE_ID", DEFAULT_WORKSPACE_ID))
+    parser.add_argument("--agent-id", default=os.environ.get("AGENTOPS_AGENT_ID", DEFAULT_AGENT_ID))
+    parser.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
+    parser.add_argument("--confirm-run", action="store_true")
+    parser.add_argument("--session-ttl-sec", type=int, default=900)
+    parser.add_argument("--session-refresh-margin-sec", type=float, default=60)
+    parser.add_argument("--poll-interval", type=float, default=5.0)
+    parser.add_argument("--label", default="")
+    parser.add_argument("--working-directory", default=str(DEFAULT_WORKER_CWD))
+    parser.add_argument("--runtime-dir", default="")
+    parser.add_argument("--log-path", default="")
+    parser.add_argument("--api-key-placeholder", default="<paste one-time token here>")
+    return parser
+
+
+def render_service_template(argv: list[str]) -> int:
+    args = build_service_template_parser().parse_args(argv)
+    if args.manager == "launchd":
+        sys.stdout.write(render_launchd_template(args))
+    else:
+        sys.stdout.write(render_systemd_template(args))
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv[:1] == ["service-template"]:
+        return render_service_template(argv[1:])
+    args = build_parser().parse_args(argv)
     signal.signal(signal.SIGTERM, handle_stop_signal)
     signal.signal(signal.SIGINT, handle_stop_signal)
     client = AgentOpsClient(args.base_url, args.workspace_id, args.agent_id, args.api_key)

@@ -447,6 +447,8 @@ export interface AgentGatewayEnrollmentCreateResult {
     heartbeat: string;
     run_once: string;
     run_loop: string;
+    launchd_template?: string;
+    systemd_template?: string;
     repo_fallback_run_once?: string;
     repo_fallback_run_loop?: string;
     notes: string[];

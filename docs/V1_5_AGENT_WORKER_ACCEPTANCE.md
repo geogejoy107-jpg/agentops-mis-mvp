@@ -263,7 +263,7 @@ script: python3 scripts/enrollment_launch_steps_smoke.py
 agent_id: agt_launch_steps_smoke_20260618150315
 created token: agtok_agt_launch_steps_smoke_20260618150315_local_demo_ecb243af94eb
 rotated token: agtok_agt_launch_steps_smoke_20260618150315_local_demo_d18914518af4
-next_steps: package install, env setup, agentops status, short-lived session command, heartbeat, one-shot agentops-worker, loop agentops-worker, repo fallback worker for Hermes with --confirm-run and --use-session
+next_steps: package install, env setup, agentops status, short-lived session command, heartbeat, one-shot agentops-worker, loop agentops-worker, launchd/systemd service template commands, repo fallback worker for Hermes with --confirm-run and --use-session
 raw token in commands: omitted
 ```
 
@@ -647,6 +647,7 @@ one-shot no-task loop: passed against a local Agent Gateway stub
 gateway requests: register, tasks/pull, heartbeat
 state_written: true, outside repo temp dir
 token_omitted: true
+service templates: launchd KeepAlive and systemd Restart=always rendered with token placeholder only
 ```
 
 The CLI doctor smoke passed:
@@ -823,6 +824,6 @@ planned MIS task
 - Hermes/OpenClaw live execution requires `--confirm-run`.
 - The worker does not call Dify or Notion.
 - The worker does not store full prompts or raw responses.
-- The worker is repo-local; it is not yet a launchd service, pip package, npm package, or signed binary.
+- The worker is installable as a Python source package and can render launchd/systemd templates; it is not yet an npm package, signed binary, or one-command OS service installer.
 - The UI worker panel now supports one-shot dispatch, local daemon start/stop, daemon state counters, daemon backoff state, daemon log tails, recent gateway events, operator readiness cards, and stuck-task release controls; it is not a production fleet manager.
 - Remote enrollment token issuance/revocation/rotation, approval-gated enrollment request UI, endpoint-level scope enforcement, short-lived session tokens with list/revoke controls and worker-loop refresh, scope presets, a first enrollment UI, and minimal Agent Gateway workspace isolation now exist. Full RBAC, hosted multi-tenant isolation, and hosted enrollment policy UI remain future work.

@@ -239,7 +239,7 @@ Minimum acceptance for v1.5 worker loop:
 ## Known Limitations
 
 - No global package install.
-- Local daemon supervision is repo-local and process-based; no launchd/systemd unit.
+- Local daemon supervision is repo-local and process-based. Remote machines can render launchd/systemd templates with `agentops-worker service-template`, but v1.5 does not yet install/load those units automatically.
 - No process relaunch after daemon death.
 - Scope enforcement and workspace isolation are still MVP-level, not full hosted RBAC.
 - UI controls are local self-use/recording controls, not a production fleet manager.
