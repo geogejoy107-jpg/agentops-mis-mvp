@@ -237,6 +237,27 @@ agentops agent heartbeat --agent-id agt_kb_researcher --status running
 
 Maps to `agents` and `audit_logs`.
 
+### `agentops task create`
+
+Creates a normal MIS task that local or remote agents can pull through the
+Gateway. This is the customer/API-facing path when an external system wants to
+assign work without using the browser UI.
+
+```bash
+agentops task create \
+  --title "Build a knowledge-base Q&A bot" \
+  --description "Clean source material, build the KB, run test questions, and submit a delivery report." \
+  --owner-agent-id agt_kb_researcher \
+  --priority high \
+  --risk medium \
+  --acceptance "Worker must write run, tool call, evaluation and audit evidence."
+```
+
+Maps to `POST /api/tasks`, writes `tasks`, `runtime_events`, and
+`audit_logs`, and returns JSON with `operation`, `outcome`, `task_id`, and the
+redacted task row. Repeated calls with the same `task_id` update the same task
+instead of creating duplicates.
+
 ### `agentops task pull`
 
 Returns available tasks for the agent based on role, scope, and workspace policy.
@@ -870,6 +891,7 @@ python3 scripts/worker_session_refresh_smoke.py
 python3 scripts/worker_adapter_retry_smoke.py
 python3 scripts/agentops_worker_package_smoke.py
 python3 scripts/agentops_customer_worker_cli_smoke.py
+python3 scripts/agentops_task_create_cli_smoke.py
 ```
 
 This helper creates a scoped token, creates a normal MIS task for that agent, runs `scripts/agent_worker.py --once` with the token, verifies run/tool/eval evidence, and revokes the token by default. It does not print the raw token.
@@ -882,6 +904,7 @@ The CLI worker-preflight helper verifies `agentops worker preflight` returns rea
 The CLI worker-daemon helper verifies `agentops worker start/status/logs/stop` can manage a mock daemon without leaking secrets.
 The live-confirm-gate helper verifies `agentops worker start --adapter hermes|openclaw` fails closed without `--confirm-run`.
 The customer-worker CLI helper verifies `agentops workflow customer-worker-task` creates a real mock worker run with run/tool/evaluation/audit/artifact evidence and keeps Hermes live execution gated by confirmation.
+The task-create CLI helper verifies `agentops task create` can create a normal customer/API task, then a worker can pull it and write run/tool/evaluation evidence without leaking token-like values.
 The launch-steps helper verifies create/rotate responses include safe remote-worker commands, a short-lived session command, `--use-session`, and do not embed the raw token in those commands.
 The remote launch-packet helper uses the returned environment shape to run a real worker through `--use-session` and verify run/tool/evaluation ledger evidence.
 The scope-matrix helper verifies an observer token can heartbeat/pull/audit but receives `403 forbidden` for claim/run/tool/artifact writes.

@@ -163,6 +163,26 @@ agentops worker stuck
 agentops worker release --task-id <task_id> --reason "reviewed stale worker"
 ```
 
+Machine-facing task creation can come from a local script, another server, or an
+external agent process. Use the CLI when the caller should not operate the
+browser UI:
+
+```bash
+agentops task create \
+  --title "Build a knowledge-base Q&A bot" \
+  --description "Clean source docs, create a KB, run test questions, and submit a delivery report." \
+  --owner-agent-id agt_remote_builder \
+  --priority high \
+  --risk medium \
+  --acceptance "Worker must write run, tool call, evaluation and audit evidence."
+```
+
+Then the same remote worker can consume it:
+
+```bash
+agentops-worker --once --adapter mock --agent-id agt_remote_builder
+```
+
 ## Customer Task API Path
 
 For product dogfooding or customer-facing demos, use the workflow endpoint

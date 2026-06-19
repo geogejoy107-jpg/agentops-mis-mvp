@@ -173,6 +173,11 @@ agentops doctor
 agentops status
 ./scripts/agentops login --base-url http://127.0.0.1:8787 --workspace-id local-demo --agent-id agt_local_worker
 ./scripts/agentops agent register --id agt_local_worker --name "Local Worker" --role "AI Digital Employee"
+./scripts/agentops task create \
+  --title "客户提交的 AI 知识库任务" \
+  --description "清洗资料、建立知识库、返回可验收的问答机器人交付摘要。" \
+  --owner-agent-id agt_local_worker \
+  --acceptance "必须写入 run/tool/evaluation/audit 证据。"
 ./scripts/agentops task pull --agent-id agt_local_worker
 ```
 
@@ -201,6 +206,7 @@ agentops status
 agentops enrollment create/list/revoke/rotate
 agentops agent register
 agentops agent heartbeat
+agentops task create
 agentops task pull
 agentops task claim
 agentops run start
@@ -236,6 +242,7 @@ python3 scripts/workspace_isolation_smoke.py
 python3 scripts/agentops_pip_install_smoke.py
 python3 scripts/agentops_doctor_smoke.py
 python3 scripts/agentops_worker_status_smoke.py
+python3 scripts/agentops_task_create_cli_smoke.py
 ```
 
 它会创建 scoped token、创建一个普通 MIS 任务、用 token 跑 `scripts/agent_worker.py --once`、验证 run/tool/eval 证据，并默认吊销 token。
@@ -273,6 +280,21 @@ CLI 方式从客户/外部 agent 侧派发 worker 任务：
   --description "以客户视角审视任务创建、AI 执行、审批、评估、审计和交付报告闭环。" \
   --acceptance "必须返回 run、tool、evaluation、audit 和 artifact 证据。"
 ```
+
+更底层的 agent/API 方式是先创建普通 MIS 任务，再由 worker 拉取执行：
+
+```bash
+./scripts/agentops task create \
+  --title "优化 AgentOps MIS 客户工作台" \
+  --description "以客户视角审视任务创建、AI 执行、审批、评估、审计和交付报告闭环。" \
+  --owner-agent-id agt_local_worker \
+  --priority high \
+  --risk medium
+
+agentops-worker --once --adapter mock --agent-id agt_local_worker
+```
+
+这条路径用于本地或远程 agent 接入：浏览器 UI 给人看、审批和复盘；agent 使用 CLI/API 创建/拉取/认领任务并写回证据。
 
 它会模拟 AI 团队完成“正式 AI 知识库 / 问答机器人”项目：
 

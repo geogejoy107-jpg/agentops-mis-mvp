@@ -275,6 +275,25 @@ def cmd_task_pull(args, client: AgentOpsClient) -> dict:
     return client.get("/api/agent-gateway/tasks/pull", query=query)
 
 
+def cmd_task_create(args, client: AgentOpsClient) -> dict:
+    payload = {
+        "workspace_id": client.workspace_id,
+        "task_id": args.task_id,
+        "title": args.title,
+        "description": args.description,
+        "requester_id": args.requester_id,
+        "owner_agent_id": args.owner_agent_id or client.agent_id,
+        "collaborator_agent_ids": args.collaborator_agent_id or [],
+        "status": args.status,
+        "priority": args.priority,
+        "due_date": args.due_date,
+        "acceptance_criteria": args.acceptance,
+        "risk_level": args.risk,
+        "budget_limit_usd": args.budget,
+    }
+    return client.post("/api/tasks", payload)
+
+
 def cmd_task_claim(args, client: AgentOpsClient) -> dict:
     payload = {
         "workspace_id": client.workspace_id,
@@ -665,6 +684,21 @@ def build_parser() -> argparse.ArgumentParser:
 
     task = sub.add_parser("task", help="Task pull/claim commands.")
     task_sub = task.add_subparsers(dest="action", required=True)
+    create = task_sub.add_parser("create", help="Create a normal MIS task for agents/workers.")
+    create.add_argument("--task-id", default=None)
+    create.add_argument("--title", required=True)
+    create.add_argument("--description", default="")
+    create.add_argument("--requester-id", default="usr_customer_demo")
+    create.add_argument("--owner-agent-id", default=None)
+    create.add_argument("--collaborator-agent-id", action="append", default=None, help="Optional collaborator agent id. Repeatable.")
+    create.add_argument("--status", default="planned", choices=["backlog", "planned", "running", "waiting_approval", "blocked", "completed", "failed", "canceled"])
+    create.add_argument("--priority", default="medium", choices=["low", "medium", "high", "critical"])
+    create.add_argument("--due-date", default=None)
+    create.add_argument("--acceptance", default="Worker must satisfy task acceptance criteria and write ledger evidence.")
+    create.add_argument("--risk", default="medium", choices=["low", "medium", "high", "critical"])
+    create.add_argument("--budget", type=float, default=3.0)
+    create.set_defaults(handler="task_create")
+
     pull = task_sub.add_parser("pull", help="Pull available tasks for an agent.")
     pull.add_argument("--agent-id", default=None)
     pull.add_argument("--limit", type=int, default=10)
@@ -907,6 +941,7 @@ HANDLERS = {
     "doctor": cmd_doctor,
     "agent_register": cmd_agent_register,
     "agent_heartbeat": cmd_agent_heartbeat,
+    "task_create": cmd_task_create,
     "task_pull": cmd_task_pull,
     "task_claim": cmd_task_claim,
     "run_start": cmd_run_start,

@@ -2680,6 +2680,88 @@ def agent_gateway_pull_tasks(conn, qs, headers, auth_ctx=None) -> tuple[dict, in
     return {"tasks": rows, "count": len(rows), "workspace_id": ident["workspace_id"]}, 200
 
 
+def create_task_api(conn, body: dict) -> tuple[dict, int]:
+    now = now_iso()
+    title = redact_text(body.get("title") or "New MIS task", 160)
+    description = redact_text(body.get("description") or "", 1200)
+    acceptance = redact_text(
+        body.get("acceptance_criteria") or body.get("acceptance") or "Worker must satisfy task acceptance criteria and write ledger evidence.",
+        600,
+    )
+    owner_agent_id = body.get("owner_agent_id")
+    if owner_agent_id is None:
+        owner_agent_id = body.get("agent_id") or "agt_research"
+    owner_agent_id = str(owner_agent_id or "").strip()
+    if owner_agent_id:
+        owner_exists = conn.execute("SELECT 1 FROM agents WHERE agent_id=?", (owner_agent_id,)).fetchone()
+        if not owner_exists:
+            return {
+                "error": "owner_agent_not_found",
+                "message": f"Task owner agent does not exist: {owner_agent_id}",
+                "owner_agent_id": owner_agent_id,
+                "hint": "Register the agent first or choose an existing agent before creating the task.",
+            }, 400
+
+    collaborators = body.get("collaborator_agent_ids") or []
+    if isinstance(collaborators, str):
+        collaborators = [item.strip() for item in collaborators.split(",") if item.strip()]
+    elif not isinstance(collaborators, list):
+        collaborators = []
+    collaborators = [redact_text(str(item), 120) for item in collaborators if str(item).strip()]
+
+    task_id = body.get("task_id") or new_id("tsk")
+    before = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+    row = {
+        "task_id": task_id,
+        "workspace_id": normalize_workspace_id(body.get("workspace_id") or "local-demo"),
+        "title": title,
+        "description": description,
+        "requester_id": redact_text(body.get("requester_id") or "usr_customer_demo", 120),
+        "owner_agent_id": owner_agent_id,
+        "collaborator_agent_ids": json.dumps(collaborators, ensure_ascii=False),
+        "status": coerce_choice(body.get("status"), VALID_TASK_STATUSES, "planned"),
+        "priority": coerce_choice(body.get("priority"), VALID_PRIORITIES, "medium"),
+        "due_date": body.get("due_date"),
+        "acceptance_criteria": acceptance,
+        "risk_level": coerce_choice(body.get("risk_level"), VALID_RISK_LEVELS, "medium"),
+        "budget_limit_usd": float(body.get("budget_limit_usd") or 3.0),
+        "created_at": before["created_at"] if before else now,
+        "updated_at": now,
+    }
+    outcome = upsert_task(conn, row, "task-api")
+    runtime_event(
+        conn,
+        "rtc_agent_gateway_local",
+        "task.create" if outcome == "created" else "task.update",
+        row["status"],
+        task_id=task_id,
+        agent_id=owner_agent_id or None,
+        input_summary=f"Task {outcome} through API/CLI: {title}",
+        raw_payload_hash=stable_hash({"task_id": task_id, "title": title, "owner_agent_id": owner_agent_id}),
+    )
+    audit(
+        conn,
+        "user",
+        row["requester_id"],
+        "task.api_create" if outcome == "created" else "task.api_update",
+        "tasks",
+        task_id,
+        dict(before) if before else None,
+        row,
+        {"workspace_id": row["workspace_id"], "source": body.get("source") or "api", "raw_payload_omitted": True},
+    )
+    return {
+        "ok": True,
+        "provider": "agentops-mis",
+        "operation": "task_create",
+        "outcome": outcome,
+        "task": row,
+        "task_id": task_id,
+        "workspace_id": row["workspace_id"],
+        "token_omitted": True,
+    }, 200 if before else 201
+
+
 def task_collaborators(task) -> list[str]:
     try:
         raw = task["collaborator_agent_ids"]
@@ -5840,40 +5922,9 @@ class Handler(BaseHTTPRequestHandler):
                 conn.commit()
                 return self.send_json(row, 201)
             if path == "/api/tasks":
-                task_id = body.get("task_id") or new_id("tsk")
-                now = now_iso()
-                owner_agent_id = body.get("owner_agent_id", "agt_research")
-                if owner_agent_id:
-                    owner_exists = conn.execute("SELECT 1 FROM agents WHERE agent_id=?", (owner_agent_id,)).fetchone()
-                    if not owner_exists:
-                        return self.send_json({
-                            "error": "owner_agent_not_found",
-                            "message": f"Task owner agent does not exist: {owner_agent_id}",
-                            "owner_agent_id": owner_agent_id,
-                            "hint": "Register the agent first or choose an existing agent before creating the task.",
-                        }, 400)
-                row = {
-                    "task_id": task_id,
-                    "workspace_id": normalize_workspace_id(body.get("workspace_id") or "local-demo"),
-                    "title": body.get("title", "New Task"),
-                    "description": body.get("description", ""),
-                    "requester_id": body.get("requester_id", "usr_founder"),
-                    "owner_agent_id": owner_agent_id,
-                    "collaborator_agent_ids": json.dumps(body.get("collaborator_agent_ids", []), ensure_ascii=False),
-                    "status": body.get("status", "planned"),
-                    "priority": body.get("priority", "medium"),
-                    "due_date": body.get("due_date"),
-                    "acceptance_criteria": body.get("acceptance_criteria", "Must satisfy task acceptance criteria and pass quality gate."),
-                    "risk_level": body.get("risk_level", "medium"),
-                    "budget_limit_usd": float(body.get("budget_limit_usd", 3.0)),
-                    "created_at": now,
-                    "updated_at": now,
-                }
-                conn.execute("""INSERT INTO tasks(task_id,workspace_id,title,description,requester_id,owner_agent_id,collaborator_agent_ids,status,priority,due_date,acceptance_criteria,risk_level,budget_limit_usd,created_at,updated_at)
-                    VALUES(:task_id,:workspace_id,:title,:description,:requester_id,:owner_agent_id,:collaborator_agent_ids,:status,:priority,:due_date,:acceptance_criteria,:risk_level,:budget_limit_usd,:created_at,:updated_at)""", row)
-                audit(conn, "user", "usr_founder", "task.create", "tasks", task_id, None, row, {})
+                payload, status = create_task_api(conn, body)
                 conn.commit()
-                return self.send_json(row, 201)
+                return self.send_json(payload, status)
             if path == "/api/mock-runs/start":
                 result = start_mock_run(conn, body)
                 conn.commit()

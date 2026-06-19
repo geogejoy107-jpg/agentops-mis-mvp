@@ -130,6 +130,7 @@ Current v1.5 implementation:
   - `agentops enrollment create/list/revoke/rotate`
   - `agentops agent register`
   - `agentops agent heartbeat`
+  - `agentops task create`
   - `agentops task pull`
   - `agentops task claim`
   - `agentops run start`
@@ -539,6 +540,7 @@ Implemented and verified:
 - Live adapter daemon starts fail closed without `--confirm-run`.
 - Customer-facing worker task workflow through `POST /api/workflows/customer-worker-task`.
 - Customer-facing worker task CLI through `agentops workflow customer-worker-task`.
+- Customer/API-facing normal task creation through `POST /api/tasks` and `agentops task create`, followed by worker pull/claim/writeback.
 - Pixel Office customer dispatch can run a task through mock/Hermes/OpenClaw worker adapters and show evidence counts.
 - Mock/Hermes/OpenClaw adapter loop.
 - Adapter retry handling with non-retry safety gate behavior.

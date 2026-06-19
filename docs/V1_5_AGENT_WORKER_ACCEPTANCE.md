@@ -68,6 +68,7 @@ Agent enrollment CLI/API:
 ./scripts/agentops doctor
 ./scripts/agentops status
 ./scripts/agentops agent heartbeat --id agt_remote_cli_smoke --status idle
+./scripts/agentops task create --title "Customer task" --owner-agent-id agt_remote_cli_smoke
 ./scripts/agentops task pull --agent-id agt_remote_cli_smoke --limit 1 --status planned
 ./scripts/agentops enrollment rotate --token-id agtok_...
 ./scripts/agentops enrollment revoke --token-id agtok_...
@@ -78,6 +79,7 @@ python3 scripts/kb_bot_workflow_api_smoke.py
 python3 scripts/approval_decision_side_effect_smoke.py
 python3 scripts/agentops_cli_install_smoke.py
 python3 scripts/agentops_doctor_smoke.py
+python3 scripts/agentops_task_create_cli_smoke.py
 python3 scripts/enrollment_health_state_smoke.py
 python3 scripts/agentops_status_smoke.py
 python3 scripts/redaction_policy_smoke.py
@@ -921,6 +923,22 @@ artifacts: 1
 Hermes without confirm_run: planned task, confirm_run_required_for_live_adapter
 secret_leaked: false
 ```
+
+Latest task-create CLI smoke:
+
+```text
+script: python3 scripts/agentops_task_create_cli_smoke.py
+command: ./scripts/agentops task create -> scripts/agent_worker.py --once
+task: tsk_task_create_cli_smoke_20260619185821167609
+run: run_gw_cf5f926cf3d0
+tool_calls: 1
+evaluations: 1
+task_status: completed
+run_status: completed
+token_omitted: true
+```
+
+Repeat verification during final acceptance also passed with run `run_gw_5541ca84e4fc`.
 
 Latest local live dogfood runs for the current AgentOps MIS project:
 
