@@ -149,6 +149,29 @@ Before loading either service, replace `<paste one-time token here>` locally on
 the worker machine. Do not commit the generated service file if it contains a
 real token.
 
+Run a read-only service check before loading or troubleshooting a worker
+service:
+
+```bash
+agentops-worker service-check \
+  --manager launchd \
+  --adapter mock \
+  --agent-id agt_remote_builder
+```
+
+```bash
+agentops worker service-check \
+  --manager systemd \
+  --adapter mock \
+  --agent-id agt_remote_builder \
+  --service-path ~/.config/systemd/user/agentops-worker-agt_remote_builder.service
+```
+
+The check inspects the service file and OS service status only. It does not
+install, load, unload, restart, or execute the worker. It omits raw service file
+content and fails closed if token-like values such as enrollment/session/API
+tokens are detected in a generated file.
+
 ## Operations Loop
 
 1. Human creates or assigns a task in AgentOps MIS.
@@ -271,6 +294,8 @@ git diff --check
 The expected proof is:
 
 - `agentops worker preflight` returns JSON and `live_execution_performed=false`.
+- `agentops worker service-check` returns JSON, omits raw service content, and
+  detects token-like values without printing them.
 - Hermes/OpenClaw daemon starts without `--confirm-run` fail closed.
 - Remote launch packet commands can create ledger evidence through Agent Gateway.
 - Scoped task creation requires `tasks:create` and rejects agent/workspace impersonation.

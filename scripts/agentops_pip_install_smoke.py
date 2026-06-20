@@ -66,6 +66,7 @@ def main() -> int:
         status_run = run([str(agentops), "status"], cwd=tmp_path, env=env)
         worker_status_run = run([str(agentops), "worker", "status"], cwd=tmp_path, env=env)
         worker_preflight_run = run([str(agentops), "worker", "preflight", "--adapter", "mock"], cwd=tmp_path, env=env)
+        worker_service_check_help_run = run([str(agentops), "worker", "service-check", "--help"], cwd=tmp_path, env=env)
         worker_logs_run = run([str(agentops), "worker", "logs", "--adapter", "mock"], cwd=tmp_path, env=env)
         task_create_help_run = run([str(agentops), "task", "create", "--help"], cwd=tmp_path, env=env)
         workflow_run_task_help_run = run([str(agentops), "workflow", "run-task", "--help"], cwd=tmp_path, env=env)
@@ -112,6 +113,8 @@ def main() -> int:
             and worker_preflight_run.returncode == 0
             and worker_preflight_payload.get("provider") == "agentops-worker"
             and worker_preflight_payload.get("live_execution_performed") is False
+            and worker_service_check_help_run.returncode == 0
+            and "usage: agentops worker service-check" in worker_service_check_help_run.stdout
             and worker_logs_run.returncode == 0
             and worker_logs_payload.get("provider") == "agentops-worker"
             and task_create_help_run.returncode == 0
@@ -131,6 +134,7 @@ def main() -> int:
             "status_returncode": status_run.returncode,
             "worker_status_returncode": worker_status_run.returncode,
             "worker_preflight_returncode": worker_preflight_run.returncode,
+            "worker_service_check_help_returncode": worker_service_check_help_run.returncode,
             "worker_logs_returncode": worker_logs_run.returncode,
             "task_create_help_returncode": task_create_help_run.returncode,
             "workflow_run_task_help_returncode": workflow_run_task_help_run.returncode,
@@ -154,6 +158,7 @@ def main() -> int:
             print("status stderr:", status_run.stderr[-1200:], file=sys.stderr)
             print("worker status stderr:", worker_status_run.stderr[-1200:], file=sys.stderr)
             print("worker preflight stderr:", worker_preflight_run.stderr[-1200:], file=sys.stderr)
+            print("worker service-check help stderr:", worker_service_check_help_run.stderr[-1200:], file=sys.stderr)
             print("worker logs stderr:", worker_logs_run.stderr[-1200:], file=sys.stderr)
             print("task create help stderr:", task_create_help_run.stderr[-1200:], file=sys.stderr)
             print("workflow run-task help stderr:", workflow_run_task_help_run.stderr[-1200:], file=sys.stderr)

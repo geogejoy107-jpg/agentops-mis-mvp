@@ -1050,6 +1050,22 @@ OpenClaw customer worker run, verifies that live execution is rejected before
 adapter invocation, and then restores the connector to `trusted`. The trust
 decision writes runtime event and audit evidence; it does not store secrets.
 
+Latest worker service diagnostics smoke:
+
+```text
+script: python3 scripts/agentops_worker_service_check_smoke.py
+direct_ok: true
+cli_ok: true
+unsafe_detected: true
+failures: []
+```
+
+`agentops-worker service-check` and `agentops worker service-check` now provide
+read-only launchd/systemd diagnostics for agent machines. The check validates a
+generated worker service template, confirms raw service content is omitted, and
+fails closed when token-like values are present without printing those values.
+It does not install, load, restart, or execute a service.
+
 The `/workspace/agents` UI now exposes the same customer-worker path that the
 CLI and Pixel Office use: a human creates a normal business task, chooses
 mock/Hermes/OpenClaw, and MIS displays the resulting task, run, artifact, and
@@ -1089,6 +1105,6 @@ planned MIS task
 - Runtime connectors can be marked trusted, review-required, or blocked; blocked Hermes/OpenClaw connectors prevent confirmed live customer worker execution.
 - The worker does not call Dify or Notion.
 - The worker does not store full prompts or raw responses.
-- The worker is installable as a Python source package and can render launchd/systemd templates; it is not yet an npm package, signed binary, or one-command OS service installer.
+- The worker is installable as a Python source package and can render/check launchd/systemd templates; it is not yet an npm package, signed binary, or one-command OS service installer.
 - The UI worker panel now supports one-shot dispatch, local daemon start/stop, daemon state counters, daemon backoff state, daemon log tails, recent gateway events, operator readiness cards, and stuck-task release controls; it is not a production fleet manager.
 - Remote enrollment token issuance/revocation/rotation, approval-gated enrollment request UI, endpoint-level scope enforcement, short-lived session tokens with list/revoke controls and worker-loop refresh, scope presets, a first enrollment UI, and minimal Agent Gateway workspace isolation now exist. Full RBAC, hosted multi-tenant isolation, and hosted enrollment policy UI remain future work.

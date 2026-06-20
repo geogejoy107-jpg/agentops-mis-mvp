@@ -625,6 +625,24 @@ def cmd_worker_preflight(args, client: AgentOpsClient) -> dict:
     }
 
 
+def cmd_worker_service_check(args, client: AgentOpsClient) -> dict:
+    from . import worker as worker_mod
+
+    check_args = argparse.Namespace(
+        manager=args.manager,
+        workspace_id=client.workspace_id,
+        agent_id=args.agent_id or client.agent_id or worker_mod.DEFAULT_AGENT_ID,
+        adapter=args.adapter,
+        label=args.label or "",
+        service_path=args.service_path or "",
+        api_key_placeholder=args.api_key_placeholder,
+        timeout=args.timeout,
+    )
+    payload = worker_mod.check_service_installation(check_args)
+    payload["command"] = "agentops worker service-check"
+    return payload
+
+
 def cmd_worker_start(args, client: AgentOpsClient) -> dict:
     payload = {
         "adapter": args.adapter,
@@ -1014,6 +1032,15 @@ def build_parser() -> argparse.ArgumentParser:
     worker_preflight.add_argument("--hermes-gateway-url", default=os.environ.get("HERMES_GATEWAY_URL", "http://127.0.0.1:8642"))
     worker_preflight.add_argument("--openclaw-bin", default=os.environ.get("OPENCLAW_BIN", "/opt/homebrew/bin/openclaw"))
     worker_preflight.set_defaults(handler="worker_preflight")
+    worker_service_check = worker_sub.add_parser("service-check", help="Read-only check for a launchd/systemd worker service file.")
+    worker_service_check.add_argument("--manager", choices=["launchd", "systemd"], required=True)
+    worker_service_check.add_argument("--agent-id", default=None)
+    worker_service_check.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
+    worker_service_check.add_argument("--label", default="")
+    worker_service_check.add_argument("--service-path", default="")
+    worker_service_check.add_argument("--api-key-placeholder", default="<paste one-time token here>")
+    worker_service_check.add_argument("--timeout", type=int, default=5)
+    worker_service_check.set_defaults(handler="worker_service_check")
     worker_start = worker_sub.add_parser("start", help="Start a local worker daemon through the MIS supervisor.")
     worker_start.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
     worker_start.add_argument("--agent-id", default=None)
@@ -1126,6 +1153,7 @@ HANDLERS = {
     "worker_status": cmd_worker_status,
     "worker_logs": cmd_worker_logs,
     "worker_preflight": cmd_worker_preflight,
+    "worker_service_check": cmd_worker_service_check,
     "worker_start": cmd_worker_start,
     "worker_stop": cmd_worker_stop,
     "worker_stuck": cmd_worker_stuck,

@@ -20,6 +20,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import signal
 import subprocess
 import sys
@@ -845,6 +846,150 @@ def build_service_template_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def default_service_path(manager: str, agent_id: str, label: str = "") -> Path:
+    safe_agent = re.sub(r"[^A-Za-z0-9_.-]+", "-", agent_id or DEFAULT_AGENT_ID).strip("-") or "agent"
+    if manager == "launchd":
+        service_name = label or service_label(agent_id)
+        return Path("~/Library/LaunchAgents").expanduser() / f"{service_name}.plist"
+    return Path("~/.config/systemd/user").expanduser() / f"agentops-worker-{safe_agent}.service"
+
+
+def read_service_file(path: Path) -> tuple[bool, str]:
+    try:
+        return True, path.read_text(encoding="utf-8", errors="replace")
+    except FileNotFoundError:
+        return False, ""
+    except Exception as exc:
+        return False, f"READ_ERROR:{redact_text(str(exc), 200)}"
+
+
+def launchd_status(label: str, timeout: int) -> dict:
+    try:
+        target = f"gui/{os.getuid()}/{label}"
+        proc = subprocess.run(
+            ["launchctl", "print", target],
+            capture_output=True,
+            text=True,
+            timeout=max(1, min(timeout, 20)),
+            check=False,
+        )
+        summary = redact_text((proc.stdout or proc.stderr or "").strip(), 600)
+        return {
+            "checked": True,
+            "manager": "launchd",
+            "label": label,
+            "loaded": proc.returncode == 0,
+            "returncode": proc.returncode,
+            "summary": summary,
+        }
+    except Exception as exc:
+        return {"checked": True, "manager": "launchd", "label": label, "loaded": False, **safe_error(exc)}
+
+
+def systemd_status(unit: str, timeout: int) -> dict:
+    if not shutil.which("systemctl"):
+        return {"checked": True, "manager": "systemd", "unit": unit, "available": False, "loaded": False, "summary": "systemctl is not available."}
+    try:
+        proc = subprocess.run(
+            ["systemctl", "--user", "show", unit, "--property=LoadState,ActiveState,SubState,UnitFileState", "--no-pager"],
+            capture_output=True,
+            text=True,
+            timeout=max(1, min(timeout, 20)),
+            check=False,
+        )
+        fields = {}
+        for line in (proc.stdout or "").splitlines():
+            if "=" in line:
+                key, value = line.split("=", 1)
+                fields[key] = value
+        return {
+            "checked": True,
+            "manager": "systemd",
+            "unit": unit,
+            "available": True,
+            "loaded": fields.get("LoadState") == "loaded",
+            "active_state": fields.get("ActiveState"),
+            "sub_state": fields.get("SubState"),
+            "unit_file_state": fields.get("UnitFileState"),
+            "returncode": proc.returncode,
+            "summary": redact_text(proc.stderr or proc.stdout or "", 600),
+        }
+    except Exception as exc:
+        return {"checked": True, "manager": "systemd", "unit": unit, "available": True, "loaded": False, **safe_error(exc)}
+
+
+def check_service_installation(args) -> dict:
+    label = args.label or service_label(args.agent_id)
+    service_path = Path(args.service_path).expanduser() if args.service_path else default_service_path(args.manager, args.agent_id, label)
+    exists, content = read_service_file(service_path)
+    token_like_detected = bool(re.search(r"(agtok_|agtsess_|sk-|ntn_)", content))
+    placeholder_present = args.api_key_placeholder in content if exists else False
+    command_has_worker = "agentops-worker" in content
+    adapter_present = args.adapter in content
+    use_session_present = "--use-session" in content
+    confirm_gate_ok = args.adapter == "mock" or "--confirm-run" in content
+    if args.manager == "launchd":
+        service_status = launchd_status(label, args.timeout)
+    else:
+        unit = service_path.name
+        service_status = systemd_status(unit, args.timeout)
+    ok = bool(exists and command_has_worker and adapter_present and use_session_present and confirm_gate_ok and not token_like_detected)
+    hints = []
+    if not exists:
+        hints.append("Render a template with agentops-worker service-template and write it to service_path.")
+    if token_like_detected:
+        hints.append("Replace raw tokens with a local environment-only secret flow; do not commit service files with real tokens.")
+    if args.adapter != "mock" and not confirm_gate_ok:
+        hints.append("Hermes/OpenClaw services need --confirm-run only when the operator intentionally allows live execution.")
+    if exists and not service_status.get("loaded"):
+        hints.append("Service file exists but does not appear loaded; load it manually on the agent machine after review.")
+    return {
+        "ok": ok,
+        "provider": "agentops-worker",
+        "command": "agentops-worker service-check",
+        "manager": args.manager,
+        "label": label,
+        "agent_id": args.agent_id,
+        "workspace_id": args.workspace_id,
+        "adapter": args.adapter,
+        "service_path": str(service_path),
+        "service_file": {
+            "exists": exists,
+            "command_has_worker": command_has_worker,
+            "adapter_present": adapter_present,
+            "use_session_present": use_session_present,
+            "confirm_gate_ok": confirm_gate_ok,
+            "placeholder_present": placeholder_present,
+            "token_like_detected": token_like_detected,
+            "raw_content_omitted": True,
+        },
+        "service_status": service_status,
+        "setup_hints": hints,
+        "live_execution_performed": False,
+        "token_omitted": True,
+    }
+
+
+def build_service_check_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Read-only check for an agentops-worker launchd/systemd service file.")
+    parser.add_argument("--manager", choices=["launchd", "systemd"], required=True)
+    parser.add_argument("--workspace-id", default=os.environ.get("AGENTOPS_WORKSPACE_ID", DEFAULT_WORKSPACE_ID))
+    parser.add_argument("--agent-id", default=os.environ.get("AGENTOPS_AGENT_ID", DEFAULT_AGENT_ID))
+    parser.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
+    parser.add_argument("--label", default="")
+    parser.add_argument("--service-path", default="")
+    parser.add_argument("--api-key-placeholder", default="<paste one-time token here>")
+    parser.add_argument("--timeout", type=int, default=5)
+    return parser
+
+
+def run_service_check(argv: list[str]) -> int:
+    args = build_service_check_parser().parse_args(argv)
+    payload = check_service_installation(args)
+    print(json_dumps(payload))
+    return 0 if payload.get("ok") else 1
+
+
 def render_service_template(argv: list[str]) -> int:
     args = build_service_template_parser().parse_args(argv)
     if args.manager == "launchd":
@@ -979,6 +1124,8 @@ def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv[:1] == ["service-template"]:
         return render_service_template(argv[1:])
+    if argv[:1] == ["service-check"]:
+        return run_service_check(argv[1:])
     if argv[:1] == ["preflight"]:
         return run_preflight(argv[1:])
     args = build_parser().parse_args(argv)

@@ -63,7 +63,7 @@ Acceptance evidence:
 
 Remaining product work:
 
-- one-command launchd/systemd service installation and OS-specific restart diagnostics. v1.5 now has safe template generation through `agentops-worker service-template`, but does not install or load units automatically.
+- one-command launchd/systemd service installation. v1.5 now has safe template generation through `agentops-worker service-template` plus read-only OS-specific diagnostics through `agentops-worker service-check`, but does not install, load, restart, or mutate units automatically.
 - Full supervised relaunch after process death.
 - Production log rotation.
 - Fleet-level worker management.
@@ -179,6 +179,7 @@ Acceptance evidence:
 - CLI status smoke passed: `python3 scripts/agentops_status_smoke.py`.
 - CLI worker status smoke passed: `python3 scripts/agentops_worker_status_smoke.py`.
 - CLI worker preflight smoke passed: `python3 scripts/agentops_worker_preflight_smoke.py`.
+- CLI worker service diagnostics smoke passed: `python3 scripts/agentops_worker_service_check_smoke.py`.
 - CLI worker daemon controls smoke passed: `python3 scripts/agentops_worker_daemon_cli_smoke.py`.
 - CLI customer worker workflow smoke passed: `python3 scripts/agentops_customer_worker_cli_smoke.py`.
 - Live adapter confirm gate smoke passed: `python3 scripts/worker_live_confirm_gate_smoke.py`.
@@ -557,6 +558,7 @@ Implemented and verified:
 - Local daemon start/stop/status.
 - CLI worker fleet status through `agentops worker status`.
 - Read-only CLI worker preflight through `agentops worker preflight`.
+- Read-only CLI worker service diagnostics through `agentops worker service-check`.
 - CLI worker daemon controls through `agentops worker start|stop|logs`.
 - Live adapter daemon starts fail closed without `--confirm-run`.
 - Customer-facing worker task workflow through `POST /api/workflows/customer-worker-task`.
@@ -577,7 +579,7 @@ Implemented and verified:
 - Agent Gateway status surfaced in `/workspace/agents`.
 - Operator readiness strip surfaced in `/workspace/agents`.
 - Remote enrollment launch packet surfaced in `/workspace/agents` after token creation/rotation.
-- Remote enrollment launch packet worker path now uses the installable `agentops-worker` command, read-only adapter preflight, and short-lived sessions before task processing; repo-local `scripts/agent_worker.py` is shown only as a fallback. Long-running worker setup can render launchd/systemd templates, but template installation is still manual.
+- Remote enrollment launch packet worker path now uses the installable `agentops-worker` command, read-only adapter preflight, read-only service diagnostics, and short-lived sessions before task processing; repo-local `scripts/agent_worker.py` is shown only as a fallback. Long-running worker setup can render and check launchd/systemd templates, but template installation/loading is still manual.
 - Loop-mode workers can refresh short-lived sessions before expiry while continuing to process tasks.
 - Remote enrollment UI.
 - Token revocation.
