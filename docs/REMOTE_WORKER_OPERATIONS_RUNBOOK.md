@@ -244,6 +244,18 @@ This creates the task through Agent Gateway, executes one worker iteration, and
 returns `task_id`, `run_id`, status, and evidence counts. Hermes/OpenClaw still
 require explicit `--confirm-run`.
 
+For predefined customer delivery workflows, external agents and operators can
+avoid browser UI entirely:
+
+```bash
+agentops workflow templates
+agentops workflow run-template --template-id tpl_customer_kb_qa_bot
+```
+
+This maps to the customer task template API and returns project, task, run,
+artifact, approval, and report URL evidence while preserving the same safe
+summary/hash storage policy.
+
 For scoped remote tokens, `agentops task create` maps to
 `POST /api/agent-gateway/tasks` and requires `tasks:create`. The Gateway binds
 the created task to the token's own `agent_id` and `workspace_id`; attempts to

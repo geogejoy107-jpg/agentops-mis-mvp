@@ -445,6 +445,31 @@ def cmd_workflow_customer_worker_task(args, client: AgentOpsClient) -> dict:
     return client.post("/api/workflows/customer-worker-task", payload)
 
 
+def cmd_workflow_templates(args, client: AgentOpsClient) -> dict:
+    return client.get("/api/workflows/customer-task-templates")
+
+
+def cmd_workflow_run_template(args, client: AgentOpsClient) -> dict:
+    payload = {
+        "template_id": args.template_id,
+        "confirm_run": bool(args.confirm_run),
+        "selected_agent_ids": args.selected_agent_id or [],
+    }
+    if args.title:
+        payload["title"] = args.title
+    if args.description:
+        payload["description"] = args.description
+    if args.acceptance:
+        payload["acceptance_criteria"] = args.acceptance
+    if args.priority:
+        payload["priority"] = args.priority
+    if args.risk:
+        payload["risk_level"] = args.risk
+    if args.owner_agent_id:
+        payload["owner_agent_id"] = args.owner_agent_id
+    return client.post("/api/workflows/customer-task-templates/run", payload)
+
+
 def cmd_workflow_run_task(args, client: AgentOpsClient) -> dict:
     from . import worker as worker_mod
 
@@ -1010,6 +1035,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     workflow = sub.add_parser("workflow", help="Customer-facing workflow commands.")
     workflow_sub = workflow.add_subparsers(dest="action", required=True)
+    templates_cmd = workflow_sub.add_parser("templates", help="List customer task templates.")
+    templates_cmd.set_defaults(handler="workflow_templates")
+    run_template = workflow_sub.add_parser("run-template", help="Run a customer task template through the MIS workflow layer.")
+    run_template.add_argument("--template-id", default="tpl_customer_kb_qa_bot")
+    run_template.add_argument("--confirm-run", action="store_true", help="Required only for templates that execute a live local runtime.")
+    run_template.add_argument("--title", default="")
+    run_template.add_argument("--description", default="")
+    run_template.add_argument("--acceptance", default="")
+    run_template.add_argument("--priority", choices=["low", "medium", "high", "critical"], default=None)
+    run_template.add_argument("--risk", choices=["low", "medium", "high", "critical"], default=None)
+    run_template.add_argument("--selected-agent-id", action="append", default=None)
+    run_template.add_argument("--owner-agent-id", default=None)
+    run_template.set_defaults(handler="workflow_run_template")
     customer_worker = workflow_sub.add_parser("customer-worker-task", help="Dispatch a customer task through the AgentOps worker loop.")
     customer_worker.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
     customer_worker.add_argument("--confirm-run", action="store_true", help="Required for Hermes/OpenClaw live execution.")
@@ -1194,6 +1232,8 @@ HANDLERS = {
     "memory_propose": cmd_memory_propose,
     "eval_submit": cmd_eval_submit,
     "audit_emit": cmd_audit_emit,
+    "workflow_templates": cmd_workflow_templates,
+    "workflow_run_template": cmd_workflow_run_template,
     "workflow_customer_worker_task": cmd_workflow_customer_worker_task,
     "workflow_run_task": cmd_workflow_run_task,
     "worker_status": cmd_worker_status,

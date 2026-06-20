@@ -159,6 +159,8 @@ Current v1.5 implementation:
   - `agentops memory propose`
   - `agentops eval submit`
   - `agentops audit emit`
+  - `agentops workflow templates`
+  - `agentops workflow run-template`
   - `agentops workflow customer-worker-task`
   - `agentops workflow run-task`
   - `agentops worker status`
@@ -183,6 +185,7 @@ Acceptance evidence:
 - CLI worker service diagnostics smoke passed: `python3 scripts/agentops_worker_service_check_smoke.py`.
 - CLI worker daemon controls smoke passed: `python3 scripts/agentops_worker_daemon_cli_smoke.py`.
 - CLI customer worker workflow smoke passed: `python3 scripts/agentops_customer_worker_cli_smoke.py`.
+- CLI customer template workflow smoke passed: `python3 scripts/agentops_workflow_template_cli_smoke.py`.
 - Live adapter confirm gate smoke passed: `python3 scripts/worker_live_confirm_gate_smoke.py`.
 - Current machine has `~/.local/bin/agentops` installed as a shim to this repo.
 
@@ -426,6 +429,9 @@ Current v1.5 implementation:
 - Pixel Office can start the same six-step customer project through `POST /api/workflows/kb-bot-project`, so the classroom/customer flow no longer requires manually running the script.
 - Customer task templates are available through `GET /api/workflows/customer-task-templates`.
 - A selected template can be launched through `POST /api/workflows/customer-task-templates/run`.
+- External agents and operators can list and launch those templates through
+  `agentops workflow templates` and `agentops workflow run-template`, which
+  keeps machine-facing dispatch on CLI/API instead of browser UI clicks.
 - Pixel Office's customer dispatch panel loads local templates, applies their default title/brief/acceptance criteria, and can run the selected template.
 - Customer projects can export a safe ledger-backed delivery report through `GET /api/workflows/customer-projects/:project_id/report`.
 - Pixel Office surfaces the report link after template-backed project generation.
@@ -458,6 +464,17 @@ Acceptance evidence:
   - final run: `run_gw_cfde4c4822b1`
   - delivery artifact: `art_kb_bot_delivery_20260618154535`
   - pending external-upload approval: `ap_gw_956174266d1a`
+- Customer template workflow CLI smoke:
+  `python3 scripts/agentops_workflow_template_cli_smoke.py`
+  - commands: `agentops workflow templates`, `agentops workflow run-template`
+  - template count: `3`
+  - project: `20260620165509944069`
+  - final task: `tsk_kb_bot_20260620165509944069_06`
+  - final run: `run_gw_5efecc40662f`
+  - delivery artifact: `art_kb_bot_delivery_20260620165509944069`
+  - pending external-upload approval: `ap_gw_63ba94be6f35`
+  - report URL: `/api/workflows/customer-projects/20260620165509944069/report`
+  - secret leakage check: `false`
 - Customer project report smoke: `python3 scripts/customer_project_report_smoke.py`
   - project: `20260618155050`
   - report: `/api/workflows/customer-projects/20260618155050/report`
@@ -552,6 +569,7 @@ python3 scripts/worker_stuck_recovery_smoke.py
 python3 scripts/worker_session_refresh_smoke.py
 python3 scripts/worker_adapter_retry_smoke.py
 python3 scripts/customer_task_template_smoke.py
+python3 scripts/agentops_workflow_template_cli_smoke.py
 python3 scripts/customer_project_report_smoke.py
 python3 scripts/customer_project_report_artifact_smoke.py
 ```
@@ -573,6 +591,8 @@ Implemented and verified:
 - Live adapter daemon starts fail closed without `--confirm-run`.
 - Customer-facing worker task workflow through `POST /api/workflows/customer-worker-task`.
 - Customer-facing worker task CLI through `agentops workflow customer-worker-task`.
+- Customer-facing template list/run CLI through `agentops workflow templates`
+  and `agentops workflow run-template`.
 - One-command scoped task create + worker execution through `agentops workflow run-task`.
 - Customer/API-facing normal task creation through `POST /api/tasks`, scoped Gateway task creation through `POST /api/agent-gateway/tasks`, and CLI `agentops task create`, followed by worker pull/claim/writeback.
 - Scoped Gateway task creation requires `tasks:create` and binds remote tokens to their own `agent_id`/`workspace_id`.

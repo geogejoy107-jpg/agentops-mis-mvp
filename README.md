@@ -312,6 +312,15 @@ agentops-worker --once --adapter mock --agent-id agt_local_worker
 
 Hermes/OpenClaw 真实执行仍必须显式加 `--confirm-run`。
 
+预定义客户项目模板也可以不经过浏览器，直接给本地/远程 agent 或脚本调用：
+
+```bash
+./scripts/agentops workflow templates
+./scripts/agentops workflow run-template --template-id tpl_customer_kb_qa_bot
+```
+
+这会走 `GET /api/workflows/customer-task-templates` 和 `POST /api/workflows/customer-task-templates/run`，返回 project/task/run/artifact/approval/report URL 等账本证据。
+
 它会模拟 AI 团队完成“正式 AI 知识库 / 问答机器人”项目：
 
 - 注册 Project Planner、Document Cleaner、Knowledge Base Builder、Q&A Evaluator、Customer Report Writer。

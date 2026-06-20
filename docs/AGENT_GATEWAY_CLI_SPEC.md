@@ -374,6 +374,39 @@ agentops audit emit \
 
 Maps to `audit_logs`.
 
+### `agentops workflow templates`
+
+Lists customer-facing workflow templates in JSON for humans, scripts, or
+external agents. This is the machine-readable version of the Pixel Office
+template picker.
+
+```bash
+agentops workflow templates
+```
+
+Maps to `GET /api/workflows/customer-task-templates`. It is read-only and must
+not print raw tokens, credentials, private transcripts, or customer documents.
+
+### `agentops workflow run-template`
+
+Runs a selected customer workflow template through the same MIS workflow layer
+used by Pixel Office. This is the preferred CLI/API path when a customer or
+external agent wants to launch a predefined delivery workflow without operating
+the browser UI.
+
+```bash
+agentops workflow run-template \
+  --template-id tpl_customer_kb_qa_bot \
+  --title "Build a formal AI knowledge-base Q&A bot" \
+  --description "Clean source docs, prepare the KB workflow, run test questions, and submit a delivery report."
+```
+
+Maps to `POST /api/workflows/customer-task-templates/run` and returns
+`project_id`, `task_id`, `run_id`, `artifact_id`, pending approval ids, and a
+customer report URL when available. The command stores only safe summaries,
+hashes, and ledger ids; it must not print or persist raw customer documents,
+full prompts, full model responses, tokens, or credentials.
+
 ### `agentops workflow customer-worker-task`
 
 Dispatches a customer-facing task through the AgentOps worker loop. This is the

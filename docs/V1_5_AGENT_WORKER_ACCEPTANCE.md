@@ -510,7 +510,26 @@ delivery artifact: art_kb_bot_delivery_20260618154535
 pending approval: ap_gw_956174266d1a
 ```
 
+The customer task template CLI smoke passed:
+
+```text
+script: python3 scripts/agentops_workflow_template_cli_smoke.py
+commands:
+  ./scripts/agentops workflow templates
+  ./scripts/agentops workflow run-template --template-id tpl_customer_kb_qa_bot
+template_count: 3
+project_id: 20260620165509944069
+steps: 6
+final task: tsk_kb_bot_20260620165509944069_06
+final run: run_gw_5efecc40662f
+delivery artifact: art_kb_bot_delivery_20260620165509944069
+pending approval: ap_gw_63ba94be6f35
+report_url: /api/workflows/customer-projects/20260620165509944069/report
+secret_leaked: false
+```
+
 Pixel Office's customer dispatch panel now loads `GET /api/workflows/customer-task-templates`, applies template defaults to the customer task form, and runs the selected template through `POST /api/workflows/customer-task-templates/run`.
+The same template list/run path is available to external agents and operators through `agentops workflow templates` and `agentops workflow run-template`, so the browser is not required for machine-facing dispatch.
 After a template-backed KB project completes, the same panel also exposes an `Archive report to ledger` / `归档报告到账本` action backed by `POST /api/workflows/customer-projects/:project_id/report-artifact`.
 The report link now opens the customer-facing route `/workspace/customer-projects/:project_id/report`, which renders counts, safety boundary, delivery/report artifact ids, approvals, and the ledger-backed markdown report instead of exposing raw API JSON.
 
