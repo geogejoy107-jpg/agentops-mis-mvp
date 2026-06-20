@@ -217,6 +217,7 @@ agentops approval request
 agentops memory propose
 agentops eval submit
 agentops audit emit
+agentops workflow run-task
 ```
 
 远程/外部 agent 最小接入：
@@ -244,6 +245,7 @@ python3 scripts/agentops_doctor_smoke.py
 python3 scripts/agentops_worker_status_smoke.py
 python3 scripts/agentops_task_create_cli_smoke.py
 python3 scripts/agent_gateway_task_create_scope_smoke.py
+python3 scripts/agentops_workflow_run_task_smoke.py
 ```
 
 它会创建 scoped token、创建一个普通 MIS 任务、用 token 跑 `scripts/agent_worker.py --once`、验证 run/tool/eval 证据，并默认吊销 token。
@@ -296,6 +298,18 @@ agentops-worker --once --adapter mock --agent-id agt_local_worker
 ```
 
 这条路径用于本地或远程 agent 接入：浏览器 UI 给人看、审批和复盘；agent 使用 CLI/API 创建/拉取/认领任务并写回证据。
+
+也可以用一条 CLI 命令完成“创建普通任务并执行一次 worker”：
+
+```bash
+./scripts/agentops workflow run-task \
+  --adapter mock \
+  --worker-agent-id agt_local_worker \
+  --title "优化 AgentOps MIS 客户工作台" \
+  --description "以客户视角审视任务创建、AI 执行、审批、评估、审计和交付报告闭环。"
+```
+
+Hermes/OpenClaw 真实执行仍必须显式加 `--confirm-run`。
 
 它会模拟 AI 团队完成“正式 AI 知识库 / 问答机器人”项目：
 

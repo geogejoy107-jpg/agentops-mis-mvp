@@ -81,6 +81,7 @@ python3 scripts/agentops_cli_install_smoke.py
 python3 scripts/agentops_doctor_smoke.py
 python3 scripts/agentops_task_create_cli_smoke.py
 python3 scripts/agent_gateway_task_create_scope_smoke.py
+python3 scripts/agentops_workflow_run_task_smoke.py
 python3 scripts/enrollment_health_state_smoke.py
 python3 scripts/agentops_status_smoke.py
 python3 scripts/redaction_policy_smoke.py
@@ -951,6 +952,19 @@ missing tasks:create scope: rejected
 other agent impersonation: rejected
 other workspace impersonation: rejected
 token_omitted: true
+```
+
+Latest one-command workflow run-task smoke:
+
+```text
+script: python3 scripts/agentops_workflow_run_task_smoke.py
+command: ./scripts/agentops workflow run-task
+mock task: tsk_6f3a92928acf
+mock run: run_gw_d640cf0bba6c
+tool_calls: 1
+evaluations: 1
+Hermes without confirm_run: planned task tsk_983fbfb28103, confirm_run_required_for_live_adapter
+secret_leaked: false
 ```
 
 Latest local live dogfood runs for the current AgentOps MIS project:

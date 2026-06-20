@@ -10,10 +10,14 @@ so local agents can parse them.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import datetime as dt
+import io
 import json
 import os
 import stat
 import sys
+import uuid
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -90,6 +94,10 @@ def split_csv(value: str | None) -> list[str]:
     if not value:
         return []
     return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def now_stamp() -> str:
+    return dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d%H%M%S%f")
 
 
 class AgentOpsClient:
@@ -435,6 +443,144 @@ def cmd_workflow_customer_worker_task(args, client: AgentOpsClient) -> dict:
         "hermes_timeout": args.hermes_timeout,
     }
     return client.post("/api/workflows/customer-worker-task", payload)
+
+
+def cmd_workflow_run_task(args, client: AgentOpsClient) -> dict:
+    from . import worker as worker_mod
+
+    worker_agent_id = args.worker_agent_id or client.agent_id or f"agt_cli_workflow_{args.adapter}_{now_stamp()}_{uuid.uuid4().hex[:6]}"
+    register_result = None
+    register_error = None
+    try:
+        register_result = client.post("/api/agent-gateway/register", {
+            "workspace_id": client.workspace_id,
+            "agent_id": worker_agent_id,
+            "name": args.worker_name or f"{args.adapter} Workflow Worker",
+            "role": "Workflow Task Worker",
+            "runtime_type": args.adapter,
+            "model_provider": args.adapter,
+            "model_name": args.adapter,
+            "description": "Registered by agentops workflow run-task.",
+        })
+    except RuntimeError as exc:
+        register_error = str(exc)
+    if args.adapter in {"hermes", "openclaw"} and not args.confirm_run:
+        created = client.post("/api/agent-gateway/tasks", {
+            "workspace_id": client.workspace_id,
+            "task_id": args.task_id,
+            "title": args.title,
+            "description": args.description,
+            "requester_id": args.requester_id,
+            "owner_agent_id": worker_agent_id,
+            "status": "planned",
+            "priority": args.priority,
+            "acceptance_criteria": args.acceptance,
+            "risk_level": args.risk,
+            "budget_limit_usd": args.budget,
+        })
+        return {
+            "ok": False,
+            "dry_run": True,
+            "provider": "agentops-worker",
+            "workflow": "run_task",
+            "adapter": args.adapter,
+            "task_id": created.get("task_id"),
+            "agent_id": worker_agent_id,
+            "reason": "confirm_run_required_for_live_adapter",
+            "requires": {"confirm_run": True},
+            "created_task": created,
+            "agent_register": register_result,
+            "agent_register_error": register_error,
+            "token_omitted": True,
+        }
+
+    created = client.post("/api/agent-gateway/tasks", {
+        "workspace_id": client.workspace_id,
+        "task_id": args.task_id,
+        "title": args.title,
+        "description": args.description,
+        "requester_id": args.requester_id,
+        "owner_agent_id": worker_agent_id,
+        "status": "planned",
+        "priority": args.priority,
+        "acceptance_criteria": args.acceptance,
+        "risk_level": args.risk,
+        "budget_limit_usd": args.budget,
+    })
+    task_id = created.get("task_id")
+    worker_argv = [
+        "--base-url",
+        client.base_url,
+        "--workspace-id",
+        client.workspace_id,
+        "--agent-id",
+        worker_agent_id,
+        "--api-key",
+        client.api_key,
+        "--adapter",
+        args.adapter,
+        "--once",
+        "--status",
+        "planned",
+        "--adapter-max-attempts",
+        str(args.adapter_max_attempts),
+        "--adapter-retry-delay-sec",
+        str(args.adapter_retry_delay_sec),
+    ]
+    if args.confirm_run:
+        worker_argv.append("--confirm-run")
+    if args.use_session:
+        worker_argv.extend(["--use-session", "--session-ttl-sec", str(args.session_ttl_sec)])
+    if args.hermes_gateway_url:
+        worker_argv.extend(["--hermes-gateway-url", args.hermes_gateway_url])
+    if args.hermes_timeout is not None:
+        worker_argv.extend(["--hermes-timeout", str(args.hermes_timeout)])
+    if args.openclaw_bin:
+        worker_argv.extend(["--openclaw-bin", args.openclaw_bin])
+    if args.openclaw_timeout is not None:
+        worker_argv.extend(["--openclaw-timeout", str(args.openclaw_timeout)])
+
+    stdout = io.StringIO()
+    with contextlib.redirect_stdout(stdout):
+        exit_code = worker_mod.main(worker_argv)
+    raw_worker_output = stdout.getvalue().strip()
+    try:
+        worker_result = json.loads(raw_worker_output) if raw_worker_output else {}
+    except json.JSONDecodeError:
+        worker_result = {"raw_output_summary": raw_worker_output[:500]}
+
+    first_result = ((worker_result.get("results") or [{}])[0] or {})
+    run_id = first_result.get("run_id")
+    run_detail = client.get(f"/api/runs/{run_id}") if run_id else None
+    task_detail = client.get(f"/api/tasks/{task_id}") if task_id else None
+    evidence = {
+        "tool_calls": len((run_detail or {}).get("tool_calls") or []),
+        "evaluations": len((run_detail or {}).get("evaluations") or []),
+        "approvals": len((run_detail or {}).get("approvals") or []),
+        "artifacts": len((run_detail or {}).get("artifacts") or []),
+    }
+    run = (run_detail or {}).get("run") or {}
+    return {
+        "ok": bool(exit_code == 0 and worker_result.get("ok") is True and run_id),
+        "dry_run": False,
+        "provider": "agentops-worker",
+        "workflow": "run_task",
+        "adapter": args.adapter,
+        "agent_id": worker_agent_id,
+        "task_id": task_id,
+        "run_id": run_id,
+        "worker_exit_code": exit_code,
+        "worker_processed": worker_result.get("processed"),
+        "run_status": run.get("status"),
+        "task_status": ((task_detail or {}).get("task") or {}).get("status"),
+        "evidence": evidence,
+        "created_task": created,
+        "agent_register": register_result,
+        "agent_register_error": register_error,
+        "worker_result": worker_result,
+        "raw_worker_output_omitted": True,
+        "token_omitted": True,
+    }
 
 
 def cmd_worker_stuck(args, client: AgentOpsClient) -> dict:
@@ -831,6 +977,29 @@ def build_parser() -> argparse.ArgumentParser:
     customer_worker.add_argument("--hermes-timeout", type=int, default=300)
     customer_worker.set_defaults(handler="workflow_customer_worker_task")
 
+    run_task = workflow_sub.add_parser("run-task", help="Create a normal MIS task and execute one local worker iteration.")
+    run_task.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
+    run_task.add_argument("--confirm-run", action="store_true", help="Required for Hermes/OpenClaw live execution.")
+    run_task.add_argument("--task-id", default=None)
+    run_task.add_argument("--title", required=True)
+    run_task.add_argument("--description", required=True)
+    run_task.add_argument("--acceptance", default="Worker must write run, tool, evaluation and audit evidence.")
+    run_task.add_argument("--requester-id", default="usr_customer_demo")
+    run_task.add_argument("--worker-agent-id", default=None)
+    run_task.add_argument("--worker-name", default=None)
+    run_task.add_argument("--priority", choices=["low", "medium", "high", "critical"], default="high")
+    run_task.add_argument("--risk", choices=["low", "medium", "high", "critical"], default="medium")
+    run_task.add_argument("--budget", type=float, default=3.0)
+    run_task.add_argument("--use-session", action="store_true", help="Mint a short-lived session before worker execution.")
+    run_task.add_argument("--session-ttl-sec", type=int, default=900)
+    run_task.add_argument("--adapter-max-attempts", type=int, default=1)
+    run_task.add_argument("--adapter-retry-delay-sec", type=float, default=1.0)
+    run_task.add_argument("--hermes-gateway-url", default=os.environ.get("HERMES_GATEWAY_URL", "http://127.0.0.1:8642"))
+    run_task.add_argument("--hermes-timeout", type=int, default=300)
+    run_task.add_argument("--openclaw-bin", default=os.environ.get("OPENCLAW_BIN", "/opt/homebrew/bin/openclaw"))
+    run_task.add_argument("--openclaw-timeout", type=int, default=180)
+    run_task.set_defaults(handler="workflow_run_task")
+
     worker = sub.add_parser("worker", help="Worker fleet recovery commands.")
     worker_sub = worker.add_subparsers(dest="action", required=True)
     worker_status = worker_sub.add_parser("status", help="Show worker fleet, daemon, pending task and stuck-task status.")
@@ -953,6 +1122,7 @@ HANDLERS = {
     "eval_submit": cmd_eval_submit,
     "audit_emit": cmd_audit_emit,
     "workflow_customer_worker_task": cmd_workflow_customer_worker_task,
+    "workflow_run_task": cmd_workflow_run_task,
     "worker_status": cmd_worker_status,
     "worker_logs": cmd_worker_logs,
     "worker_preflight": cmd_worker_preflight,

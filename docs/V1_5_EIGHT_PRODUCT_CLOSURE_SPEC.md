@@ -142,6 +142,7 @@ Current v1.5 implementation:
   - `agentops eval submit`
   - `agentops audit emit`
   - `agentops workflow customer-worker-task`
+  - `agentops workflow run-task`
   - `agentops worker status`
   - `agentops worker preflight`
   - `agentops worker start`
@@ -540,6 +541,7 @@ Implemented and verified:
 - Live adapter daemon starts fail closed without `--confirm-run`.
 - Customer-facing worker task workflow through `POST /api/workflows/customer-worker-task`.
 - Customer-facing worker task CLI through `agentops workflow customer-worker-task`.
+- One-command scoped task create + worker execution through `agentops workflow run-task`.
 - Customer/API-facing normal task creation through `POST /api/tasks`, scoped Gateway task creation through `POST /api/agent-gateway/tasks`, and CLI `agentops task create`, followed by worker pull/claim/writeback.
 - Scoped Gateway task creation requires `tasks:create` and binds remote tokens to their own `agent_id`/`workspace_id`.
 - Pixel Office customer dispatch can run a task through mock/Hermes/OpenClaw worker adapters and show evidence counts.

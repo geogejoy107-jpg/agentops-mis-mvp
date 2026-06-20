@@ -68,6 +68,7 @@ def main() -> int:
         worker_preflight_run = run([str(agentops), "worker", "preflight", "--adapter", "mock"], cwd=tmp_path, env=env)
         worker_logs_run = run([str(agentops), "worker", "logs", "--adapter", "mock"], cwd=tmp_path, env=env)
         task_create_help_run = run([str(agentops), "task", "create", "--help"], cwd=tmp_path, env=env)
+        workflow_run_task_help_run = run([str(agentops), "workflow", "run-task", "--help"], cwd=tmp_path, env=env)
         workflow_help_run = run([str(agentops), "workflow", "customer-worker-task", "--help"], cwd=tmp_path, env=env)
 
         login_payload = {}
@@ -116,6 +117,8 @@ def main() -> int:
             and task_create_help_run.returncode == 0
             and "usage: agentops task create" in task_create_help_run.stdout
             and "--owner-agent-id" in task_create_help_run.stdout
+            and workflow_run_task_help_run.returncode == 0
+            and "usage: agentops workflow run-task" in workflow_run_task_help_run.stdout
             and workflow_help_run.returncode == 0
             and "customer-worker-task" in workflow_help_run.stdout
         )
@@ -130,6 +133,7 @@ def main() -> int:
             "worker_preflight_returncode": worker_preflight_run.returncode,
             "worker_logs_returncode": worker_logs_run.returncode,
             "task_create_help_returncode": task_create_help_run.returncode,
+            "workflow_run_task_help_returncode": workflow_run_task_help_run.returncode,
             "workflow_help_returncode": workflow_help_run.returncode,
             "command": str(agentops),
             "config_path": str(config_path),
@@ -152,6 +156,7 @@ def main() -> int:
             print("worker preflight stderr:", worker_preflight_run.stderr[-1200:], file=sys.stderr)
             print("worker logs stderr:", worker_logs_run.stderr[-1200:], file=sys.stderr)
             print("task create help stderr:", task_create_help_run.stderr[-1200:], file=sys.stderr)
+            print("workflow run-task help stderr:", workflow_run_task_help_run.stderr[-1200:], file=sys.stderr)
             print("workflow help stderr:", workflow_help_run.stderr[-1200:], file=sys.stderr)
         return 0 if ok else 1
 

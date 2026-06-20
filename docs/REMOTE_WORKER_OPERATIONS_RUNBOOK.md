@@ -183,6 +183,20 @@ Then the same remote worker can consume it:
 agentops-worker --once --adapter mock --agent-id agt_remote_builder
 ```
 
+For a one-command local/customer execution, use:
+
+```bash
+agentops workflow run-task \
+  --adapter mock \
+  --worker-agent-id agt_remote_builder \
+  --title "Build a knowledge-base Q&A bot" \
+  --description "Clean source docs, create a KB, run test questions, and submit a delivery report."
+```
+
+This creates the task through Agent Gateway, executes one worker iteration, and
+returns `task_id`, `run_id`, status, and evidence counts. Hermes/OpenClaw still
+require explicit `--confirm-run`.
+
 For scoped remote tokens, `agentops task create` maps to
 `POST /api/agent-gateway/tasks` and requires `tasks:create`. The Gateway binds
 the created task to the token's own `agent_id` and `workspace_id`; attempts to
@@ -249,6 +263,7 @@ python3 scripts/agentops_worker_preflight_smoke.py
 python3 scripts/worker_live_confirm_gate_smoke.py
 python3 scripts/remote_launch_packet_worker_smoke.py
 python3 scripts/agent_gateway_task_create_scope_smoke.py
+python3 scripts/agentops_workflow_run_task_smoke.py
 python3 scripts/demo_acceptance.py
 git diff --check
 ```
@@ -259,4 +274,5 @@ The expected proof is:
 - Hermes/OpenClaw daemon starts without `--confirm-run` fail closed.
 - Remote launch packet commands can create ledger evidence through Agent Gateway.
 - Scoped task creation requires `tasks:create` and rejects agent/workspace impersonation.
+- `agentops workflow run-task` creates a task, executes one worker iteration, and returns evidence.
 - Demo acceptance remains safe and reproducible.

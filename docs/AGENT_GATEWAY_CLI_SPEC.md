@@ -253,10 +253,12 @@ agentops task create \
   --acceptance "Worker must write run, tool call, evaluation and audit evidence."
 ```
 
-Maps to `POST /api/tasks`, writes `tasks`, `runtime_events`, and
-`audit_logs`, and returns JSON with `operation`, `outcome`, `task_id`, and the
-redacted task row. Repeated calls with the same `task_id` update the same task
-instead of creating duplicates.
+Maps to `POST /api/agent-gateway/tasks` for CLI/remote-agent use, writes
+`tasks`, `runtime_events`, and `audit_logs`, and returns JSON with `operation`,
+`outcome`, `task_id`, and the redacted task row. Scoped tokens require
+`tasks:create` and cannot create tasks as another agent or workspace. Repeated
+calls with the same `task_id` update the same task instead of creating
+duplicates.
 
 ### `agentops task pull`
 
@@ -398,6 +400,39 @@ agentops workflow customer-worker-task \
 Maps to `POST /api/workflows/customer-worker-task` and returns `task_id`,
 `run_id`, `artifact_id`, and evidence counts. It must not print raw tokens,
 full prompts, full raw model responses, credentials, or private transcripts.
+
+### `agentops workflow run-task`
+
+Creates a normal MIS task through the scoped Agent Gateway path, executes one
+local worker iteration, then returns the task/run ids plus tool/evaluation
+evidence. This is the compact CLI path for a customer, script, or external
+agent that wants one command instead of manually chaining `task create` and
+`agentops-worker --once`.
+
+```bash
+agentops workflow run-task \
+  --adapter mock \
+  --worker-agent-id agt_remote_builder \
+  --title "Improve the customer workspace" \
+  --description "Review task creation, AI execution, approval, evaluation, audit and delivery report flow."
+```
+
+Hermes/OpenClaw live execution still requires explicit confirmation:
+
+```bash
+agentops workflow run-task \
+  --adapter openclaw \
+  --confirm-run \
+  --worker-agent-id agt_openclaw_builder \
+  --title "Optimize AgentOps MIS customer workspace" \
+  --description "Use local OpenClaw to produce product recommendations."
+```
+
+The command returns JSON with `task_id`, `run_id`, `run_status`,
+`task_status`, `evidence`, and `token_omitted:true`. It must not print raw
+tokens, full prompts, full raw model responses, credentials, or private
+transcripts. Without `--confirm-run`, Hermes/OpenClaw create a planned task but
+do not execute the live adapter.
 
 ### `agentops worker status`
 
