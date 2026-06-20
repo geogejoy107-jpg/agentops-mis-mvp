@@ -991,6 +991,26 @@ audit_logs: 8
 artifacts: 1
 ```
 
+Latest combined live dogfood run after adding the `/workspace/agents` customer task dispatch entry:
+
+```text
+script: python3 scripts/customer_worker_live_dogfood.py --adapter hermes --adapter openclaw
+title: 用真实 Hermes / OpenClaw 优化 AgentOps MIS 客户工作台
+Hermes run: run_gw_2d0834183ca0
+Hermes artifact: art_customer_worker_task_run_gw_2d0834183ca0
+Hermes evidence: tool_calls 1, evaluations 1, runtime_events 8, audit_logs 8, artifacts 1
+OpenClaw run: run_gw_409f4f1d3063
+OpenClaw artifact: art_customer_worker_task_run_gw_409f4f1d3063
+OpenClaw evidence: tool_calls 1, evaluations 1, runtime_events 8, audit_logs 8, artifacts 1
+failures: []
+```
+
+The `/workspace/agents` UI now exposes the same customer-worker path that the
+CLI and Pixel Office use: a human creates a normal business task, chooses
+mock/Hermes/OpenClaw, and MIS displays the resulting task, run, artifact, and
+evidence counts. This is still governed by the same live confirmation boundary:
+mock is safe by default, while Hermes/OpenClaw require explicit confirmation.
+
 A real queue collision was found and fixed during this dogfood pass: the first
 Hermes live run picked an older planned confirmation-gate task because it reused
 the same worker agent id. The workflow now creates a unique customer worker

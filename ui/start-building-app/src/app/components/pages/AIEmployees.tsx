@@ -19,12 +19,14 @@ import {
   revokeAgentGatewayEnrollment,
   revokeAgentGatewaySession,
   rotateAgentGatewayEnrollment,
+  runCustomerWorkerTaskWorkflow,
   requestAgentGatewayEnrollment,
   startLocalWorkerDaemon,
   stopLocalWorkerDaemon,
   useLiveData,
   type AgentGatewayEnrollmentCreateResult,
   type AgentGatewayEnrollmentRequestResult,
+  type CustomerTaskWorkflowResult,
 } from "../../data/liveApi";
 import { pick, usePreferences } from "../../context/PreferencesContext";
 
@@ -41,6 +43,7 @@ const RUNTIME_COLOR: Record<string, string> = {
 
 const DEFAULT_GATEWAY_SCOPES = [
   "agents:heartbeat",
+  "tasks:create",
   "tasks:read",
   "tasks:claim",
   "runs:write",
@@ -65,7 +68,7 @@ const GATEWAY_SCOPE_PRESETS = [
   },
   {
     id: "full",
-    scopes: ["agents:write", "agents:heartbeat", "tasks:read", "tasks:claim", "runs:write", "toolcalls:write", "artifacts:write", "approvals:request", "memories:propose", "evaluations:submit", "audit:write"],
+    scopes: ["agents:write", "agents:heartbeat", "tasks:create", "tasks:read", "tasks:claim", "runs:write", "toolcalls:write", "artifacts:write", "approvals:request", "memories:propose", "evaluations:submit", "audit:write"],
   },
 ];
 
@@ -75,6 +78,20 @@ export function AIEmployees() {
   const { locale } = usePreferences();
   const [dispatching, setDispatching] = useState<string | null>(null);
   const [dispatchResult, setDispatchResult] = useState<string | null>(null);
+  const [customerTaskBusy, setCustomerTaskBusy] = useState(false);
+  const [customerTaskError, setCustomerTaskError] = useState<string | null>(null);
+  const [customerTaskResult, setCustomerTaskResult] = useState<CustomerTaskWorkflowResult | null>(null);
+  const [customerTaskForm, setCustomerTaskForm] = useState<{
+    adapter: (typeof WORKER_ADAPTERS)[number];
+    title: string;
+    description: string;
+  }>({
+    adapter: "mock",
+    title: locale === "zh" ? "优化 Pixel Office 工作台" : "Improve the Pixel Office workspace",
+    description: locale === "zh"
+      ? "请 AI 团队从客户视角审视 Pixel Office：让像素风更精致，流程更清楚，同时保持 MIS 账本、审批和运行证据可见。"
+      : "Ask the AI team to review Pixel Office from a customer perspective: improve the pixel style, clarify the flow, and keep MIS ledger, approvals, and run evidence visible.",
+  });
   const [selectedLogAdapter, setSelectedLogAdapter] = useState<(typeof WORKER_ADAPTERS)[number]>("mock");
   const [enrollmentAction, setEnrollmentAction] = useState<string | null>(null);
   const [enrollmentResult, setEnrollmentResult] = useState<string | null>(null);
@@ -146,6 +163,22 @@ export function AIEmployees() {
       more: "more",
       workerTitle: "Local Worker Loop",
       workerSummary: "Pulls normal MIS tasks, executes through mock / Hermes / OpenClaw, and writes run · tool · eval · audit.",
+      customerTaskTitle: "Customer Task Dispatch",
+      customerTaskSummary: "Create a normal MIS task, let an agent worker execute it through the selected adapter, then inspect ledger evidence.",
+      taskTitleLabel: "Task title",
+      taskDescriptionLabel: "Task description",
+      adapterLabel: "Runtime adapter",
+      runSafeTask: "Run safe plan",
+      confirmLiveTask: "Confirm live run",
+      customerTaskRunning: "Running task...",
+      confirmLiveHint: "Hermes/OpenClaw require explicit confirmation before live execution. Mock is the safe default.",
+      taskId: "Task",
+      runId: "Run",
+      artifactId: "Artifact",
+      evidence: "Evidence",
+      openTask: "Open task",
+      openRun: "Open run",
+      outputSummary: "Output",
       workers: "Workers",
       completedRuns: "Completed worker runs",
       pendingTasks: "Pending worker tasks",
@@ -277,6 +310,22 @@ export function AIEmployees() {
       more: "项更多",
       workerTitle: "本地 Worker 循环",
       workerSummary: "自动拉取普通 MIS 任务，通过 mock / Hermes / OpenClaw 执行，并写回 run · tool · eval · audit。",
+      customerTaskTitle: "客户任务派发",
+      customerTaskSummary: "创建一个普通 MIS 任务，让 agent worker 通过选定 adapter 执行，再查看账本证据。",
+      taskTitleLabel: "任务标题",
+      taskDescriptionLabel: "任务描述",
+      adapterLabel: "运行 adapter",
+      runSafeTask: "安全运行 / dry-run",
+      confirmLiveTask: "确认真实运行",
+      customerTaskRunning: "任务运行中...",
+      confirmLiveHint: "Hermes/OpenClaw 真实执行前必须显式确认。mock 是安全默认。",
+      taskId: "任务",
+      runId: "Run",
+      artifactId: "Artifact",
+      evidence: "证据",
+      openTask: "打开任务",
+      openRun: "打开 Run",
+      outputSummary: "输出",
       workers: "Worker",
       completedRuns: "已完成 worker run",
       pendingTasks: "待处理 worker 任务",
@@ -419,6 +468,45 @@ export function AIEmployees() {
       meta: `${stuckWorkerCount} ${copy.stuckTasks}`,
     },
   ];
+
+  const updateCustomerTaskText = (field: "title" | "description", value: string) => {
+    setCustomerTaskForm(prev => ({ ...prev, [field]: value }));
+  };
+
+  const updateCustomerTaskAdapter = (adapter: (typeof WORKER_ADAPTERS)[number]) => {
+    setCustomerTaskForm(prev => ({ ...prev, adapter }));
+  };
+
+  const runCustomerTask = async (confirmRun: boolean) => {
+    setCustomerTaskBusy(true);
+    setCustomerTaskError(null);
+    setCustomerTaskResult(null);
+    try {
+      const title = customerTaskForm.title.trim() || (locale === "zh" ? "客户 AI 任务" : "Customer AI task");
+      const result = await runCustomerWorkerTaskWorkflow({
+        adapter: customerTaskForm.adapter,
+        confirm_run: confirmRun,
+        title,
+        description: customerTaskForm.description.trim() || title,
+        acceptance_criteria: locale === "zh"
+          ? "Worker 必须创建 run/tool/eval/audit 证据，并返回可展示的任务摘要。"
+          : "Worker must create run/tool/eval/audit evidence and return a demonstrable task summary.",
+        priority: "high",
+        risk_level: customerTaskForm.adapter === "mock" ? "low" : "medium",
+        selected_agent_ids: [],
+        workflow_kind: "ui_agent_workspace_customer_dispatch",
+      });
+      setCustomerTaskResult(result);
+      setDispatchResult(`${customerTaskForm.adapter}: ${result.ok ? "ok" : result.dry_run ? "dry-run" : "failed"} · ${result.run_id || result.task_id}`);
+      await refresh();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setCustomerTaskError(message);
+      setDispatchResult(message);
+    } finally {
+      setCustomerTaskBusy(false);
+    }
+  };
 
   const runWorkerOnce = async (adapter: "mock" | "hermes" | "openclaw") => {
     setDispatching(adapter);
@@ -668,6 +756,147 @@ export function AIEmployees() {
         <button onClick={refresh} className="mt-3 text-[11px] px-3 py-1.5 rounded" style={{ background: "rgba(34,211,238,0.12)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.2)" }}>
           {copy.refresh}
         </button>
+      </div>
+
+      <div
+        className="rounded-xl p-4"
+        style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}
+      >
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <Bot size={14} style={{ color: "var(--mis-cyan)" }} />
+              <h2 className="text-sm font-semibold" style={{ color: "var(--mis-text)" }}>{copy.customerTaskTitle}</h2>
+              <StatusBadge
+                status={customerTaskResult?.ok ? "completed" : customerTaskResult?.dry_run ? "planned" : customerTaskResult ? "failed" : "ready"}
+              />
+            </div>
+            <p className="text-[11px] mt-1 max-w-3xl" style={{ color: "var(--mis-dim)" }}>{copy.customerTaskSummary}</p>
+            <p className="text-[10px] mt-1 max-w-3xl" style={{ color: "var(--mis-muted)" }}>{copy.confirmLiveHint}</p>
+          </div>
+          <div className="flex gap-2 shrink-0">
+            <button
+              onClick={() => runCustomerTask(false)}
+              disabled={customerTaskBusy}
+              className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded disabled:opacity-50"
+              style={{ background: "rgba(34,211,238,0.12)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.2)" }}
+            >
+              {customerTaskBusy ? <RefreshCw size={12} /> : <Play size={12} />}
+              {customerTaskBusy ? copy.customerTaskRunning : copy.runSafeTask}
+            </button>
+            <button
+              onClick={() => runCustomerTask(true)}
+              disabled={customerTaskBusy}
+              className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded disabled:opacity-50"
+              style={{ background: "rgba(45,212,191,0.12)", color: "var(--mis-success)", border: "1px solid rgba(45,212,191,0.22)" }}
+            >
+              {customerTaskBusy ? <RefreshCw size={12} /> : <ShieldCheck size={12} />}
+              {customerTaskBusy ? copy.customerTaskRunning : copy.confirmLiveTask}
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-[1fr_180px] gap-3 mt-4">
+          <label className="text-[10px] uppercase" style={{ color: "var(--mis-muted)" }}>
+            {copy.taskTitleLabel}
+            <input
+              value={customerTaskForm.title}
+              onChange={(event) => updateCustomerTaskText("title", event.target.value)}
+              className="mt-1 w-full rounded px-3 py-2 text-xs outline-none"
+              style={{ background: "var(--mis-surface2)", color: "var(--mis-text)", border: "1px solid var(--mis-border)" }}
+            />
+          </label>
+          <label className="text-[10px] uppercase" style={{ color: "var(--mis-muted)" }}>
+            {copy.adapterLabel}
+            <select
+              value={customerTaskForm.adapter}
+              onChange={(event) => updateCustomerTaskAdapter(event.target.value as (typeof WORKER_ADAPTERS)[number])}
+              className="mt-1 w-full rounded px-3 py-2 text-xs outline-none"
+              style={{ background: "var(--mis-surface2)", color: "var(--mis-text)", border: "1px solid var(--mis-border)" }}
+            >
+              {WORKER_ADAPTERS.map(adapter => (
+                <option key={adapter} value={adapter}>{adapter}</option>
+              ))}
+            </select>
+          </label>
+          <label className="col-span-2 text-[10px] uppercase" style={{ color: "var(--mis-muted)" }}>
+            {copy.taskDescriptionLabel}
+            <textarea
+              value={customerTaskForm.description}
+              onChange={(event) => updateCustomerTaskText("description", event.target.value)}
+              rows={3}
+              className="mt-1 w-full rounded px-3 py-2 text-xs outline-none resize-none"
+              style={{ background: "var(--mis-surface2)", color: "var(--mis-text)", border: "1px solid var(--mis-border)" }}
+            />
+          </label>
+        </div>
+
+        {(customerTaskError || customerTaskResult) && (
+          <div
+            className="rounded-lg p-3 mt-4"
+            style={{
+              background: customerTaskError ? "rgba(248,113,113,0.08)" : "var(--mis-surface2)",
+              border: customerTaskError ? "1px solid rgba(248,113,113,0.22)" : "1px solid var(--mis-border)",
+            }}
+          >
+            {customerTaskError && (
+              <div className="text-[11px]" style={{ color: "#F87171" }}>{customerTaskError}</div>
+            )}
+            {customerTaskResult && (
+              <div className="space-y-3">
+                <div className="grid grid-cols-4 gap-2">
+                  <div className="rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                    <div className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{copy.taskId}</div>
+                    <div className="text-[11px] font-semibold truncate mt-1" style={{ color: "var(--mis-text)" }}>{customerTaskResult.task_id}</div>
+                  </div>
+                  <div className="rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                    <div className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{copy.runId}</div>
+                    <div className="text-[11px] font-semibold truncate mt-1" style={{ color: "var(--mis-text)" }}>{customerTaskResult.run_id || "—"}</div>
+                  </div>
+                  <div className="rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                    <div className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{copy.artifactId}</div>
+                    <div className="text-[11px] font-semibold truncate mt-1" style={{ color: "var(--mis-text)" }}>{customerTaskResult.artifact_id || "—"}</div>
+                  </div>
+                  <div className="rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                    <div className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{copy.runtime}</div>
+                    <div className="text-[11px] font-semibold truncate mt-1" style={{ color: "var(--mis-text)" }}>{customerTaskResult.adapter || customerTaskForm.adapter}</div>
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  {customerTaskResult.task_id && (
+                    <Link
+                      to={`/admin/tasks/${customerTaskResult.task_id}`}
+                      className="text-[11px] px-3 py-1.5 rounded"
+                      style={{ background: "rgba(34,211,238,0.12)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.2)" }}
+                    >
+                      {copy.openTask}
+                    </Link>
+                  )}
+                  {customerTaskResult.run_id && (
+                    <Link
+                      to={`/admin/runs/${customerTaskResult.run_id}`}
+                      className="text-[11px] px-3 py-1.5 rounded"
+                      style={{ background: "rgba(45,212,191,0.12)", color: "var(--mis-success)", border: "1px solid rgba(45,212,191,0.22)" }}
+                    >
+                      {copy.openRun}
+                    </Link>
+                  )}
+                  {Object.entries(customerTaskResult.evidence || {}).map(([key, value]) => (
+                    <span key={key} className="text-[10px] px-2 py-1 rounded" style={{ background: "var(--mis-bg)", color: "var(--mis-muted)", border: "1px solid var(--mis-border)" }}>
+                      {copy.evidence}: {key} {value ?? 0}
+                    </span>
+                  ))}
+                </div>
+                {(customerTaskResult.output_summary || customerTaskResult.reason || customerTaskResult.error) && (
+                  <div className="text-[11px] leading-relaxed rounded px-3 py-2" style={{ background: "var(--mis-bg)", color: customerTaskResult.error ? "#F87171" : "var(--mis-dim)", border: "1px solid var(--mis-border)" }}>
+                    <span className="font-semibold" style={{ color: "var(--mis-text)" }}>{copy.outputSummary}: </span>
+                    {customerTaskResult.output_summary || customerTaskResult.reason || customerTaskResult.error}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <div
