@@ -283,7 +283,14 @@ List enrollments and sessions:
 ```bash
 agentops enrollment list
 agentops session list
+agentops worker status
 ```
+
+`agentops worker status` is the operator's single fleet view. In addition to
+local daemon state, it summarizes remote worker enrollments, heartbeat states
+(`never_seen`, `fresh`, `stale`), active short-lived sessions, and stuck tasks.
+It omits raw token/session identifiers and returns only safe refs for machine
+diagnostics.
 
 Revoke one session:
 
@@ -311,6 +318,7 @@ python3 scripts/worker_live_confirm_gate_smoke.py
 python3 scripts/remote_launch_packet_worker_smoke.py
 python3 scripts/agent_gateway_task_create_scope_smoke.py
 python3 scripts/agentops_workflow_run_task_smoke.py
+python3 scripts/worker_remote_fleet_status_smoke.py
 python3 scripts/demo_acceptance.py
 git diff --check
 ```
@@ -324,6 +332,8 @@ The expected proof is:
   detects token-like values without printing them.
 - Hermes/OpenClaw daemon starts without `--confirm-run` fail closed.
 - Remote launch packet commands can create ledger evidence through Agent Gateway.
+- `agentops worker status` reports remote worker heartbeat/session health without
+  leaking token/session identifiers.
 - Scoped task creation requires `tasks:create` and rejects agent/workspace impersonation.
 - `agentops workflow run-task` creates a task, executes one worker iteration, and returns evidence.
 - Demo acceptance remains safe and reproducible.

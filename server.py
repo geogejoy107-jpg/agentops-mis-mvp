@@ -2571,6 +2571,92 @@ def agent_gateway_session_rows(conn) -> list[dict]:
     return rows
 
 
+def worker_remote_fleet_summary(conn) -> dict:
+    enrollments = agent_gateway_enrollment_rows(conn)
+    sessions = agent_gateway_session_rows(conn)
+    remote_agent_ids = sorted({row.get("agent_id") for row in enrollments if row.get("agent_id")})
+    agents = {}
+    if remote_agent_ids:
+        placeholders = ",".join("?" for _ in remote_agent_ids)
+        agents = {
+            row["agent_id"]: row
+            for row in rows_to_dicts(conn.execute(
+                f"SELECT agent_id,name,role,runtime_type,status,updated_at FROM agents WHERE agent_id IN ({placeholders})",
+                tuple(remote_agent_ids),
+            ).fetchall())
+        }
+    active_sessions_by_agent: dict[str, int] = {}
+    session_state_counts: dict[str, int] = {}
+    for session in sessions:
+        state = session.get("session_state") or session.get("status") or "unknown"
+        session_state_counts[state] = session_state_counts.get(state, 0) + 1
+        if state == "active" and session.get("agent_id"):
+            active_sessions_by_agent[session["agent_id"]] = active_sessions_by_agent.get(session["agent_id"], 0) + 1
+    heartbeat_counts: dict[str, int] = {}
+    token_status_counts: dict[str, int] = {}
+    remote_workers = []
+    for enrollment in enrollments:
+        heartbeat_state = enrollment.get("heartbeat_state") or "unknown"
+        token_status = enrollment.get("status") or "unknown"
+        heartbeat_counts[heartbeat_state] = heartbeat_counts.get(heartbeat_state, 0) + 1
+        token_status_counts[token_status] = token_status_counts.get(token_status, 0) + 1
+        agent = agents.get(enrollment.get("agent_id")) or {}
+        remote_workers.append({
+            "token_ref": stable_id("token_ref", enrollment.get("token_id") or "")[-12:] if enrollment.get("token_id") else "",
+            "token_id_omitted": True,
+            "workspace_id": enrollment.get("workspace_id"),
+            "agent_id": enrollment.get("agent_id"),
+            "agent_name": agent.get("name") or enrollment.get("label") or enrollment.get("agent_id"),
+            "runtime_type": agent.get("runtime_type") or "external",
+            "agent_status": agent.get("status"),
+            "token_status": token_status,
+            "heartbeat_state": heartbeat_state,
+            "heartbeat_timeout_sec": enrollment.get("heartbeat_timeout_sec"),
+            "last_heartbeat_at": enrollment.get("last_heartbeat_at"),
+            "last_used_at": enrollment.get("last_used_at"),
+            "expires_at": enrollment.get("expires_at"),
+            "scope_count": len(enrollment.get("scopes") or []),
+            "active_session_count": active_sessions_by_agent.get(enrollment.get("agent_id"), 0),
+        })
+    active_enrollments = [item for item in remote_workers if item.get("token_status") == "active"]
+    stale_enrollments = [item for item in remote_workers if item.get("heartbeat_state") == "stale"]
+    never_seen_enrollments = [item for item in remote_workers if item.get("heartbeat_state") == "never_seen"]
+    fresh_enrollments = [item for item in remote_workers if item.get("heartbeat_state") == "fresh"]
+    health_status = "attention" if stale_enrollments else "ready"
+    if active_enrollments and not fresh_enrollments and len(never_seen_enrollments) == len(active_enrollments):
+        health_status = "waiting_for_heartbeat"
+    return {
+        "status": health_status,
+        "remote_worker_count": len(active_enrollments),
+        "total_remote_enrollments": len(remote_workers),
+        "active_enrollments": len(active_enrollments),
+        "fresh_enrollments": len(fresh_enrollments),
+        "stale_enrollments": len(stale_enrollments),
+        "never_seen_enrollments": len(never_seen_enrollments),
+        "active_sessions": session_state_counts.get("active", 0),
+        "expired_sessions": session_state_counts.get("expired", 0),
+        "revoked_sessions": session_state_counts.get("revoked", 0),
+        "heartbeat_state_counts": heartbeat_counts,
+        "token_status_counts": token_status_counts,
+        "session_state_counts": session_state_counts,
+        "remote_workers": remote_workers[:50],
+        "recent_sessions": [{
+            "session_ref": stable_id("session_ref", session.get("session_id") or "")[-12:] if session.get("session_id") else "",
+            "session_id_omitted": True,
+            "parent_token_ref": stable_id("token_ref", session.get("parent_token_id") or "")[-12:] if session.get("parent_token_id") else "",
+            "workspace_id": session.get("workspace_id"),
+            "agent_id": session.get("agent_id"),
+            "status": session.get("status"),
+            "session_state": session.get("session_state"),
+            "created_at": session.get("created_at"),
+            "expires_at": session.get("expires_at"),
+            "last_used_at": session.get("last_used_at"),
+            "scope_count": len(session.get("scopes") or []),
+        } for session in sessions[:25]],
+        "token_omitted": True,
+    }
+
+
 def agent_gateway_status(conn, headers) -> tuple[dict, int]:
     auth_ctx, auth_error = agent_gateway_auth_context(conn, headers)
     if auth_error:
@@ -5167,14 +5253,23 @@ def worker_status(conn) -> dict:
     daemons = worker_daemon_status(include_log=False)
     active_daemons = [daemon for daemon in daemons if daemon["running"]]
     stuck_tasks = worker_stuck_tasks(conn)
+    remote_fleet = worker_remote_fleet_summary(conn)
     return {
         "provider": "agentops-worker",
-        "status": "running" if active_daemons else "ready",
+        "status": "attention" if remote_fleet.get("stale_enrollments") else "running" if active_daemons else "ready",
         "worker_count": len(worker_agents),
         "running_workers": len([agent for agent in worker_agents if agent.get("status") == "running"]) + len(active_daemons),
         "recent_completed_runs": len([run for run in worker_runs if run.get("status") == "completed"]),
         "pending_worker_tasks": len([task for task in worker_tasks if task.get("status") in ("planned", "backlog")]),
         "stuck_worker_tasks": len(stuck_tasks),
+        "remote_worker_count": remote_fleet.get("remote_worker_count", 0),
+        "total_remote_enrollments": remote_fleet.get("total_remote_enrollments", 0),
+        "active_remote_enrollments": remote_fleet.get("active_enrollments", 0),
+        "fresh_remote_enrollments": remote_fleet.get("fresh_enrollments", 0),
+        "stale_remote_enrollments": remote_fleet.get("stale_enrollments", 0),
+        "never_seen_remote_enrollments": remote_fleet.get("never_seen_enrollments", 0),
+        "active_remote_sessions": remote_fleet.get("active_sessions", 0),
+        "remote_worker_health": remote_fleet,
         "daemons": daemons,
         "workers": worker_agents,
         "recent_runs": worker_runs,

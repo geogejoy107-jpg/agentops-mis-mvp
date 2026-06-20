@@ -50,9 +50,12 @@ def main() -> int:
         ok = (
             proc.returncode == 0
             and payload.get("provider") == "agentops-worker"
-            and payload.get("status") in {"ready", "running"}
+            and payload.get("status") in {"ready", "running", "attention"}
             and isinstance(payload.get("daemons"), list)
             and isinstance(payload.get("workers"), list)
+            and isinstance(payload.get("remote_worker_health"), dict)
+            and isinstance(payload.get("remote_worker_count"), int)
+            and payload.get("remote_worker_health", {}).get("token_omitted") is True
             and not leaked_secret(text)
         )
         print(json.dumps({
@@ -64,6 +67,9 @@ def main() -> int:
             "running_workers": payload.get("running_workers"),
             "pending_worker_tasks": payload.get("pending_worker_tasks"),
             "stuck_worker_tasks": payload.get("stuck_worker_tasks"),
+            "remote_worker_count": payload.get("remote_worker_count"),
+            "stale_remote_enrollments": payload.get("stale_remote_enrollments"),
+            "active_remote_sessions": payload.get("active_remote_sessions"),
             "daemon_count": len(payload.get("daemons") or []),
             "secret_leaked": leaked_secret(text),
         }, ensure_ascii=False, indent=2, sort_keys=True))

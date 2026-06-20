@@ -275,6 +275,14 @@ export interface WorkerStatusPayload {
   recent_completed_runs: number;
   pending_worker_tasks: number;
   stuck_worker_tasks: number;
+  remote_worker_count: number;
+  total_remote_enrollments: number;
+  active_remote_enrollments: number;
+  fresh_remote_enrollments: number;
+  stale_remote_enrollments: number;
+  never_seen_remote_enrollments: number;
+  active_remote_sessions: number;
+  remote_worker_health: Record<string, unknown>;
   daemons: WorkerDaemonStatus[];
   workers: Agent[];
   recent_runs: Run[];
@@ -928,6 +936,14 @@ export async function loadWorkerStatus(): Promise<WorkerStatusPayload> {
     recent_completed_runs: numberValue(raw.recent_completed_runs, 0),
     pending_worker_tasks: numberValue(raw.pending_worker_tasks, 0),
     stuck_worker_tasks: numberValue(raw.stuck_worker_tasks, 0),
+    remote_worker_count: numberValue(raw.remote_worker_count, 0),
+    total_remote_enrollments: numberValue(raw.total_remote_enrollments, 0),
+    active_remote_enrollments: numberValue(raw.active_remote_enrollments, 0),
+    fresh_remote_enrollments: numberValue(raw.fresh_remote_enrollments, 0),
+    stale_remote_enrollments: numberValue(raw.stale_remote_enrollments, 0),
+    never_seen_remote_enrollments: numberValue(raw.never_seen_remote_enrollments, 0),
+    active_remote_sessions: numberValue(raw.active_remote_sessions, 0),
+    remote_worker_health: typeof raw.remote_worker_health === "object" && raw.remote_worker_health !== null ? raw.remote_worker_health as Record<string, unknown> : {},
     daemons: asArray<Record<string, unknown>>(raw.daemons).map(normalizeWorkerDaemon),
     workers: asArray<Record<string, unknown>>(raw.workers).map((row) => normalizeAgent(row)),
     recent_runs: asArray<Record<string, unknown>>(raw.recent_runs).map(normalizeRun),

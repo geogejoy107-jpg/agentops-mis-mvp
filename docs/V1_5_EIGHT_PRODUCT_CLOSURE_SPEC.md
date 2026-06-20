@@ -245,6 +245,12 @@ Current v1.5 implementation:
   - `POST /api/workers/tasks/release` returns a stuck task to `planned`,
   - linked running runs are marked `blocked` with `WorkerTaskReleased`,
   - `/workspace/agents` surfaces stuck task count and release controls.
+- `GET /api/workers/status` and `agentops worker status` now summarize remote worker fleet health from enrollment/session metadata:
+  - active remote worker count,
+  - total historical enrollments,
+  - fresh/stale/never-seen heartbeat counts,
+  - active short-lived session counts,
+  - recent remote worker rows with token/session IDs omitted.
 - Agent Gateway can now record customer delivery artifacts with `artifacts:write`, so remote workers can submit report summaries without raw customer content.
 - `/workspace/agents` exposes a first operator UI for creating, viewing, and revoking scoped enrollment tokens.
 - `/workspace/agents` exposes approval-gated enrollment request controls: request approval, approve/reject enrollment requests, and issue approved tokens.
@@ -297,6 +303,7 @@ Acceptance evidence:
   - sessions refreshed from `agtsess_3450b103cb83c3b9` through `agtsess_fb34437996eb3c02`,
   - `session_refresh_count=2`,
   - raw token output remained omitted.
+- `python3 scripts/worker_remote_fleet_status_smoke.py` verified `agentops worker status` shows a remote worker through `never_seen -> fresh -> stale`, counts active sessions, and omits raw token/session identifiers.
 - `python3 scripts/agent_gateway_session_smoke.py` verified short-lived sessions:
   - an enrollment token mints a narrowed session,
   - sessions can be listed without leaking `session_hash`,
@@ -558,6 +565,7 @@ Implemented and verified:
 - Read-only `agentops doctor` setup diagnostic for local/remote agent machines.
 - Local daemon start/stop/status.
 - CLI worker fleet status through `agentops worker status`.
+- Remote worker fleet health is included in `agentops worker status` without token/session ID leakage.
 - Read-only CLI worker preflight through `agentops worker preflight`.
 - Dry-run-by-default worker service file installation through `agentops worker service-install`.
 - Read-only CLI worker service diagnostics through `agentops worker service-check`.

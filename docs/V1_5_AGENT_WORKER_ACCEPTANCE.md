@@ -1085,6 +1085,23 @@ service file with `0600` permissions, refuses to overwrite existing files unless
 `--overwrite` is present, and blocks token-like placeholders without leaking
 them. It still does not load launchd/systemd or execute the worker.
 
+Latest remote worker fleet status smoke:
+
+```text
+script: python3 scripts/worker_remote_fleet_status_smoke.py
+states: never_seen -> fresh -> stale
+active_sessions: 1
+token_omitted: true
+secret_leaked: false
+```
+
+`GET /api/workers/status` and `agentops worker status` now include remote worker
+fleet health derived from scoped enrollment and short-lived session metadata:
+active remote worker count, total enrollment count, heartbeat state counts,
+active session count, and recent remote worker rows. Token and session IDs are
+represented only by short irreversible refs, so `agtok_` / `agtsess_` shaped
+values do not appear in the worker status output.
+
 The `/workspace/agents` UI now exposes the same customer-worker path that the
 CLI and Pixel Office use: a human creates a normal business task, chooses
 mock/Hermes/OpenClaw, and MIS displays the resulting task, run, artifact, and
@@ -1125,5 +1142,5 @@ planned MIS task
 - The worker does not call Dify or Notion.
 - The worker does not store full prompts or raw responses.
 - The worker is installable as a Python source package and can render/write/check launchd/systemd templates; it is not yet an npm package, signed binary, or automatic OS service loader/relauncher.
-- The UI worker panel now supports one-shot dispatch, local daemon start/stop, daemon state counters, daemon backoff state, daemon log tails, recent gateway events, operator readiness cards, and stuck-task release controls; it is not a production fleet manager.
+- The UI/CLI worker status path now supports one-shot dispatch, local daemon start/stop, daemon state counters, daemon backoff state, daemon log tails, recent gateway events, remote enrollment/session health summaries, operator readiness cards, and stuck-task release controls; it is not a production fleet manager.
 - Remote enrollment token issuance/revocation/rotation, approval-gated enrollment request UI, endpoint-level scope enforcement, short-lived session tokens with list/revoke controls and worker-loop refresh, scope presets, a first enrollment UI, and minimal Agent Gateway workspace isolation now exist. Full RBAC, hosted multi-tenant isolation, and hosted enrollment policy UI remain future work.
