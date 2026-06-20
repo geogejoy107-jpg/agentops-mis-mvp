@@ -76,6 +76,8 @@ def smoke(base_url: str, stamp: str) -> dict:
         require("agentops status" in text and "agentops-worker" in text, f"launch packet missing product commands: {steps}")
         require("agentops-worker preflight" in text, f"launch packet missing adapter preflight command: {steps}")
         require("service-template --manager launchd" in text and "service-template --manager systemd" in text, f"launch packet missing service template commands: {steps}")
+        require("service-install --manager launchd" in text and "service-install --manager systemd" in text, f"launch packet missing service install commands: {steps}")
+        require("service-check --manager launchd" in text and "service-check --manager systemd" in text, f"launch packet missing service check commands: {steps}")
         require("scripts/agent_worker.py" in text, f"launch packet missing repo fallback commands: {steps}")
         require("agentops session create" in text and "--use-session" in text, f"launch packet missing short-lived session path: {steps}")
 

@@ -846,12 +846,35 @@ def build_service_template_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def render_service_template_for_args(args) -> str:
+    if args.manager == "launchd":
+        return render_launchd_template(args)
+    return render_systemd_template(args)
+
+
 def default_service_path(manager: str, agent_id: str, label: str = "") -> Path:
     safe_agent = re.sub(r"[^A-Za-z0-9_.-]+", "-", agent_id or DEFAULT_AGENT_ID).strip("-") or "agent"
     if manager == "launchd":
         service_name = label or service_label(agent_id)
         return Path("~/Library/LaunchAgents").expanduser() / f"{service_name}.plist"
     return Path("~/.config/systemd/user").expanduser() / f"agentops-worker-{safe_agent}.service"
+
+
+def service_load_commands(manager: str, path: Path, label: str) -> dict:
+    if manager == "launchd":
+        domain = f"gui/{os.getuid()}"
+        return {
+            "load": ["launchctl", "bootstrap", domain, str(path)],
+            "unload": ["launchctl", "bootout", domain, str(path)],
+            "status": ["launchctl", "print", f"{domain}/{label}"],
+        }
+    unit = path.name
+    return {
+        "daemon_reload": ["systemctl", "--user", "daemon-reload"],
+        "enable_now": ["systemctl", "--user", "enable", "--now", unit],
+        "disable_now": ["systemctl", "--user", "disable", "--now", unit],
+        "status": ["systemctl", "--user", "status", unit, "--no-pager"],
+    }
 
 
 def read_service_file(path: Path) -> tuple[bool, str]:
@@ -990,12 +1013,118 @@ def run_service_check(argv: list[str]) -> int:
     return 0 if payload.get("ok") else 1
 
 
+def install_service_file(args) -> dict:
+    label = args.label or service_label(args.agent_id)
+    service_path = Path(args.service_path).expanduser() if args.service_path else default_service_path(args.manager, args.agent_id, label)
+    template = render_service_template_for_args(args)
+    token_like_detected = bool(re.search(r"(agtok_|agtsess_|sk-|ntn_)", template))
+    exists_before = service_path.exists()
+    safe_to_write = not token_like_detected and (not exists_before or bool(args.overwrite))
+    wrote = False
+    write_error = None
+    if args.confirm_install and safe_to_write:
+        try:
+            service_path.parent.mkdir(parents=True, exist_ok=True)
+            service_path.write_text(template, encoding="utf-8")
+            service_path.chmod(0o600)
+            wrote = True
+        except Exception as exc:
+            write_error = safe_error(exc)
+    check_args = argparse.Namespace(
+        manager=args.manager,
+        workspace_id=args.workspace_id,
+        agent_id=args.agent_id,
+        adapter=args.adapter,
+        label=label,
+        service_path=str(service_path),
+        api_key_placeholder=args.api_key_placeholder,
+        timeout=args.timeout,
+    )
+    service_check = check_service_installation(check_args) if service_path.exists() else {
+        "ok": False,
+        "service_file": {
+            "exists": False,
+            "raw_content_omitted": True,
+            "token_like_detected": token_like_detected,
+        },
+    }
+    setup_hints = []
+    if not args.confirm_install:
+        setup_hints.append("Dry-run only. Re-run with --confirm-install to write the service file.")
+    if exists_before and not args.overwrite:
+        setup_hints.append("Service file already exists. Pass --overwrite only after reviewing the current file.")
+    if token_like_detected:
+        setup_hints.append("Refusing to write a service template containing token-like values.")
+    if wrote:
+        setup_hints.append("Review the service file locally, configure secrets outside git, then load it manually if desired.")
+    if write_error:
+        setup_hints.append("Service file write failed; inspect permissions on the target directory.")
+    ok = bool((not args.confirm_install and not token_like_detected) or (wrote and service_check.get("ok") is True))
+    if args.confirm_install and (exists_before and not args.overwrite):
+        ok = False
+    if write_error:
+        ok = False
+    return {
+        "ok": ok,
+        "provider": "agentops-worker",
+        "command": "agentops-worker service-install",
+        "manager": args.manager,
+        "dry_run": not bool(args.confirm_install),
+        "confirmed_install": bool(args.confirm_install),
+        "wrote": wrote,
+        "overwrite": bool(args.overwrite),
+        "exists_before": exists_before,
+        "agent_id": args.agent_id,
+        "workspace_id": args.workspace_id,
+        "adapter": args.adapter,
+        "service_path": str(service_path),
+        "service_file_mode": "0600" if wrote else None,
+        "template_hash": stable_hash(template),
+        "template_bytes": len(template.encode("utf-8")),
+        "service_check": service_check,
+        "load_commands": service_load_commands(args.manager, service_path, label),
+        "setup_hints": setup_hints,
+        "write_error": write_error,
+        "live_execution_performed": False,
+        "service_loaded": False,
+        "raw_content_omitted": True,
+        "token_omitted": True,
+    }
+
+
+def build_service_install_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Dry-run or write a safe agentops-worker launchd/systemd service file.")
+    parser.add_argument("--manager", choices=["launchd", "systemd"], required=True)
+    parser.add_argument("--base-url", default=os.environ.get("AGENTOPS_BASE_URL", DEFAULT_BASE_URL))
+    parser.add_argument("--workspace-id", default=os.environ.get("AGENTOPS_WORKSPACE_ID", DEFAULT_WORKSPACE_ID))
+    parser.add_argument("--agent-id", default=os.environ.get("AGENTOPS_AGENT_ID", DEFAULT_AGENT_ID))
+    parser.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
+    parser.add_argument("--confirm-run", action="store_true")
+    parser.add_argument("--session-ttl-sec", type=int, default=900)
+    parser.add_argument("--session-refresh-margin-sec", type=float, default=60)
+    parser.add_argument("--poll-interval", type=float, default=5.0)
+    parser.add_argument("--label", default="")
+    parser.add_argument("--working-directory", default=str(DEFAULT_WORKER_CWD))
+    parser.add_argument("--runtime-dir", default="")
+    parser.add_argument("--log-path", default="")
+    parser.add_argument("--api-key-placeholder", default="<paste one-time token here>")
+    parser.add_argument("--service-path", default="")
+    parser.add_argument("--confirm-install", action="store_true", help="Write the service file. Default is dry-run.")
+    parser.add_argument("--overwrite", action="store_true", help="Replace an existing service file after local review.")
+    parser.add_argument("--timeout", type=int, default=5)
+    return parser
+
+
+def run_service_install(argv: list[str]) -> int:
+    args = build_service_install_parser().parse_args(argv)
+    payload = install_service_file(args)
+    print(json_dumps(payload))
+    return 0 if payload.get("ok") else 1
+
+
 def render_service_template(argv: list[str]) -> int:
     args = build_service_template_parser().parse_args(argv)
-    if args.manager == "launchd":
-        sys.stdout.write(render_launchd_template(args))
-    else:
-        sys.stdout.write(render_systemd_template(args))
+    sys.stdout.write(render_service_template_for_args(args))
     return 0
 
 
@@ -1124,6 +1253,8 @@ def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv[:1] == ["service-template"]:
         return render_service_template(argv[1:])
+    if argv[:1] == ["service-install"]:
+        return run_service_install(argv[1:])
     if argv[:1] == ["service-check"]:
         return run_service_check(argv[1:])
     if argv[:1] == ["preflight"]:

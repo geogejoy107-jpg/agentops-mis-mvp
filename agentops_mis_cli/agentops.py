@@ -643,6 +643,34 @@ def cmd_worker_service_check(args, client: AgentOpsClient) -> dict:
     return payload
 
 
+def cmd_worker_service_install(args, client: AgentOpsClient) -> dict:
+    from . import worker as worker_mod
+
+    install_args = argparse.Namespace(
+        manager=args.manager,
+        base_url=client.base_url,
+        workspace_id=client.workspace_id,
+        agent_id=args.agent_id or client.agent_id or worker_mod.DEFAULT_AGENT_ID,
+        adapter=args.adapter,
+        confirm_run=bool(args.confirm_run),
+        session_ttl_sec=args.session_ttl_sec,
+        session_refresh_margin_sec=args.session_refresh_margin_sec,
+        poll_interval=args.poll_interval,
+        label=args.label or "",
+        working_directory=args.working_directory,
+        runtime_dir=args.runtime_dir or "",
+        log_path=args.log_path or "",
+        api_key_placeholder=args.api_key_placeholder,
+        service_path=args.service_path or "",
+        confirm_install=bool(args.confirm_install),
+        overwrite=bool(args.overwrite),
+        timeout=args.timeout,
+    )
+    payload = worker_mod.install_service_file(install_args)
+    payload["command"] = "agentops worker service-install"
+    return payload
+
+
 def cmd_worker_start(args, client: AgentOpsClient) -> dict:
     payload = {
         "adapter": args.adapter,
@@ -1041,6 +1069,24 @@ def build_parser() -> argparse.ArgumentParser:
     worker_service_check.add_argument("--api-key-placeholder", default="<paste one-time token here>")
     worker_service_check.add_argument("--timeout", type=int, default=5)
     worker_service_check.set_defaults(handler="worker_service_check")
+    worker_service_install = worker_sub.add_parser("service-install", help="Dry-run or write a safe launchd/systemd worker service file.")
+    worker_service_install.add_argument("--manager", choices=["launchd", "systemd"], required=True)
+    worker_service_install.add_argument("--agent-id", default=None)
+    worker_service_install.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
+    worker_service_install.add_argument("--confirm-run", action="store_true")
+    worker_service_install.add_argument("--session-ttl-sec", type=int, default=900)
+    worker_service_install.add_argument("--session-refresh-margin-sec", type=float, default=60)
+    worker_service_install.add_argument("--poll-interval", type=float, default=5.0)
+    worker_service_install.add_argument("--label", default="")
+    worker_service_install.add_argument("--working-directory", default=str(Path.cwd()))
+    worker_service_install.add_argument("--runtime-dir", default="")
+    worker_service_install.add_argument("--log-path", default="")
+    worker_service_install.add_argument("--api-key-placeholder", default="<paste one-time token here>")
+    worker_service_install.add_argument("--service-path", default="")
+    worker_service_install.add_argument("--confirm-install", action="store_true", help="Write the service file. Default is dry-run.")
+    worker_service_install.add_argument("--overwrite", action="store_true")
+    worker_service_install.add_argument("--timeout", type=int, default=5)
+    worker_service_install.set_defaults(handler="worker_service_install")
     worker_start = worker_sub.add_parser("start", help="Start a local worker daemon through the MIS supervisor.")
     worker_start.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
     worker_start.add_argument("--agent-id", default=None)
@@ -1154,6 +1200,7 @@ HANDLERS = {
     "worker_logs": cmd_worker_logs,
     "worker_preflight": cmd_worker_preflight,
     "worker_service_check": cmd_worker_service_check,
+    "worker_service_install": cmd_worker_service_install,
     "worker_start": cmd_worker_start,
     "worker_stop": cmd_worker_stop,
     "worker_stuck": cmd_worker_stuck,

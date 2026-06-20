@@ -267,7 +267,7 @@ script: python3 scripts/enrollment_launch_steps_smoke.py
 agent_id: agt_launch_steps_smoke_20260618150315
 created token: agtok_agt_launch_steps_smoke_20260618150315_local_demo_ecb243af94eb
 rotated token: agtok_agt_launch_steps_smoke_20260618150315_local_demo_d18914518af4
-next_steps: package install, env setup, agentops status, adapter preflight, short-lived session command, heartbeat, one-shot agentops-worker, loop agentops-worker, launchd/systemd service template commands, repo fallback worker for Hermes with --confirm-run and --use-session
+next_steps: package install, env setup, agentops status, adapter preflight, short-lived session command, heartbeat, one-shot agentops-worker, loop agentops-worker, launchd/systemd service template/install/check commands, repo fallback worker for Hermes with --confirm-run and --use-session
 raw token in commands: omitted
 ```
 
@@ -1066,6 +1066,25 @@ generated worker service template, confirms raw service content is omitted, and
 fails closed when token-like values are present without printing those values.
 It does not install, load, restart, or execute a service.
 
+Latest worker service install smoke:
+
+```text
+script: python3 scripts/agentops_worker_service_install_smoke.py
+dry_run_ok: true
+install_wrote: true
+wrapper_wrote: true
+unsafe_blocked: true
+failures: []
+```
+
+`agentops-worker service-install` and `agentops worker service-install` now add
+a dry-run-by-default installation path for long-running agent machines. Without
+`--confirm-install` the command only returns the target path, template hash, and
+manual load commands. With `--confirm-install` it writes a placeholder-based
+service file with `0600` permissions, refuses to overwrite existing files unless
+`--overwrite` is present, and blocks token-like placeholders without leaking
+them. It still does not load launchd/systemd or execute the worker.
+
 The `/workspace/agents` UI now exposes the same customer-worker path that the
 CLI and Pixel Office use: a human creates a normal business task, chooses
 mock/Hermes/OpenClaw, and MIS displays the resulting task, run, artifact, and
@@ -1105,6 +1124,6 @@ planned MIS task
 - Runtime connectors can be marked trusted, review-required, or blocked; blocked Hermes/OpenClaw connectors prevent confirmed live customer worker execution.
 - The worker does not call Dify or Notion.
 - The worker does not store full prompts or raw responses.
-- The worker is installable as a Python source package and can render/check launchd/systemd templates; it is not yet an npm package, signed binary, or one-command OS service installer.
+- The worker is installable as a Python source package and can render/write/check launchd/systemd templates; it is not yet an npm package, signed binary, or automatic OS service loader/relauncher.
 - The UI worker panel now supports one-shot dispatch, local daemon start/stop, daemon state counters, daemon backoff state, daemon log tails, recent gateway events, operator readiness cards, and stuck-task release controls; it is not a production fleet manager.
 - Remote enrollment token issuance/revocation/rotation, approval-gated enrollment request UI, endpoint-level scope enforcement, short-lived session tokens with list/revoke controls and worker-loop refresh, scope presets, a first enrollment UI, and minimal Agent Gateway workspace isolation now exist. Full RBAC, hosted multi-tenant isolation, and hosted enrollment policy UI remain future work.

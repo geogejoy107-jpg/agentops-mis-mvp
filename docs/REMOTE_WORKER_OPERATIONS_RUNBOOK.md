@@ -149,6 +149,30 @@ Before loading either service, replace `<paste one-time token here>` locally on
 the worker machine. Do not commit the generated service file if it contains a
 real token.
 
+For a safer product-style install path, first preview the service file target:
+
+```bash
+agentops-worker service-install \
+  --manager launchd \
+  --adapter mock \
+  --agent-id agt_remote_builder
+```
+
+Then explicitly confirm the file write after reviewing the plan:
+
+```bash
+agentops-worker service-install \
+  --manager launchd \
+  --adapter mock \
+  --agent-id agt_remote_builder \
+  --confirm-install
+```
+
+`service-install` writes only the same placeholder-based template with `0600`
+permissions. It does not write a real token, load launchd/systemd, restart a
+service, or execute the worker. If a target service file already exists, pass
+`--overwrite` only after reviewing the existing file locally.
+
 Run a read-only service check before loading or troubleshooting a worker
 service:
 
@@ -294,6 +318,8 @@ git diff --check
 The expected proof is:
 
 - `agentops worker preflight` returns JSON and `live_execution_performed=false`.
+- `agentops worker service-install` defaults to dry-run and only writes a
+  placeholder template when `--confirm-install` is present.
 - `agentops worker service-check` returns JSON, omits raw service content, and
   detects token-like values without printing them.
 - Hermes/OpenClaw daemon starts without `--confirm-run` fail closed.

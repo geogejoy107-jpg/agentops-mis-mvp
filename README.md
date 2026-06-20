@@ -338,13 +338,17 @@ agentops-worker preflight --adapter mock --agent-id agt_worker_local
 agentops-worker --once --adapter mock --agent-id agt_worker_local
 agentops-worker --adapter mock --poll-interval 5 --max-tasks 0 --continue-on-error --write-state --jsonl-log
 agentops-worker service-template --manager launchd --adapter mock --agent-id agt_worker_local > ~/Library/LaunchAgents/local.agentops.worker.agt_worker_local.plist
+agentops-worker service-install --manager launchd --adapter mock --agent-id agt_worker_local
+agentops-worker service-install --manager launchd --adapter mock --agent-id agt_worker_local --confirm-install
 agentops-worker service-template --manager systemd --adapter mock --agent-id agt_worker_local > ~/.config/systemd/user/agentops-worker-agt_worker_local.service
 agentops-worker service-check --manager launchd --adapter mock --agent-id agt_worker_local
 agentops worker service-check --manager launchd --adapter mock --agent-id agt_worker_local
+agentops worker service-install --manager launchd --adapter mock --agent-id agt_worker_local
 ```
 
 安装版 worker 默认把 state 写入 `~/.agentops/workers`；repo 内 wrapper 默认写入 `.agentops_runtime/workers`。可用 `AGENTOPS_WORKER_RUNTIME_DIR` 覆盖 state 目录，用 `AGENTOPS_WORKER_CWD` 覆盖 OpenClaw adapter 的执行目录。
 `service-template` 只生成带 token placeholder 的 launchd/systemd 模板，不会自动安装、加载服务，也不会写入真实 token。
+`agentops-worker service-install` 和 `agentops worker service-install` 默认只做 dry-run；加 `--confirm-install` 后才把安全模板写到 launchd/systemd 路径，文件权限为 `0600`，仍不会写入真实 token、不会加载服务、不会启动 worker。
 `agentops worker preflight` 和 `agentops-worker preflight` 都是只读 adapter 预检：检查 Gateway/adapter 可用性，不执行真实任务、不写账本、不保存 prompt/response。
 `agentops-worker service-check` 和 `agentops worker service-check` 是只读服务诊断：检查 launchd/systemd 模板文件、adapter 参数、session/confirm-run 保护、服务加载状态和 token-like 泄露风险，不会安装、加载、重启服务，也不会打印服务文件原文。
 完整本地/远程 worker 运维路径见 `docs/REMOTE_WORKER_OPERATIONS_RUNBOOK.md`。
