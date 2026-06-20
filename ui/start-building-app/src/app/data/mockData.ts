@@ -155,6 +155,9 @@ export interface RuntimeConnector {
   last_checked: string;
   real_run_enabled: boolean;
   confirm_required: boolean;
+  trust_status?: string;
+  trust_note?: string;
+  trust_updated_at?: string;
   endpoint: string;
   import_count?: number;
   last_event?: string;

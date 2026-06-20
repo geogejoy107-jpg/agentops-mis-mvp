@@ -727,6 +727,9 @@ export function normalizeConnector(row: Record<string, unknown>): RuntimeConnect
     last_checked: String(row.last_health_at || row.updated_at || row.created_at || new Date().toISOString()),
     real_run_enabled: boolValue(row.allow_real_run),
     confirm_required: boolValue(row.require_confirm_run),
+    trust_status: String(row.trust_status || "trusted"),
+    trust_note: row.trust_note ? String(row.trust_note) : undefined,
+    trust_updated_at: row.trust_updated_at ? String(row.trust_updated_at) : undefined,
     endpoint: String(row.base_url || row.binary_path || ""),
     import_count: undefined,
     last_event: row.last_error ? String(row.last_error) : undefined,
@@ -769,6 +772,13 @@ export async function loadMemories(): Promise<Memory[]> {
 
 export async function loadRuntimeConnectors(): Promise<RuntimeConnector[]> {
   return (await apiJson<Record<string, unknown>[]>("/runtime-connectors")).map(normalizeConnector);
+}
+
+export async function updateRuntimeConnectorTrust(connectorId: string, input: { trust_status: "trusted" | "review_required" | "blocked"; trust_note?: string }): Promise<{ connector: Record<string, unknown>; token_omitted: boolean }> {
+  return apiJson<{ connector: Record<string, unknown>; token_omitted: boolean }>(`/runtime-connectors/${encodeURIComponent(connectorId)}/trust`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
 }
 
 export async function loadAudit(): Promise<AuditLog[]> {

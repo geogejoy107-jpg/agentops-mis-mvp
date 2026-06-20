@@ -80,7 +80,14 @@ Current v1.5 implementation:
   - `mock`
   - `hermes`
   - `openclaw`
+- Runtime connectors now include a minimal trust registry:
+  - `trust_status`: `trusted`, `review_required`, or `blocked`
+  - `trust_note`
+  - `trust_updated_at`
+  - `POST /api/runtime-connectors/:id/trust`
+  - `/admin/connectors` trust controls
 - Hermes/OpenClaw real execution requires explicit `--confirm-run`.
+- Hermes/OpenClaw customer worker live execution is blocked when the linked runtime connector has `trust_status=blocked`.
 - Hermes adapter timeout is configurable through `--hermes-timeout` / `HERMES_TIMEOUT`; customer worker live dogfood uses a 300s Hermes window.
 - Retryable adapter failures can be retried with `--adapter-max-attempts` and `--adapter-retry-delay-sec`.
 - Non-retryable safety failures such as `ConfirmRunRequired` do not retry.
@@ -104,6 +111,12 @@ Acceptance evidence:
   - Hermes completed `run_gw_5d998a53e469`.
   - OpenClaw completed `run_gw_4c3b2d5b43ac`.
   - Each customer worker result now includes tool/evaluation/runtime/audit/artifact evidence plus memory candidate and pending delivery approval evidence.
+- Runtime connector trust smoke:
+  - `python3 scripts/runtime_connector_trust_smoke.py`
+  - blocked `rtc_openclaw_local`
+  - OpenClaw customer worker live execution returned `runtime_connector_trust_blocked`
+  - blocked task `tsk_customer_worker_trust_blocked_30651ba025db2763`
+  - restored `rtc_openclaw_local` to `trusted`.
 - `python3 scripts/worker_adapter_retry_smoke.py` verified adapter retry behavior:
   - mock transient failure succeeded after two attempts in `run_gw_a572f60ec9f4`,
   - Hermes without `--confirm-run` stopped after one non-retryable `ConfirmRunRequired` attempt in `run_gw_9951c583b9a7`,
@@ -112,7 +125,7 @@ Acceptance evidence:
 Remaining product work:
 
 - Rich task-to-runtime prompt profiles.
-- Runtime trust registry UI.
+- Rich runtime trust policy beyond the current trusted/review/blocked MVP.
 
 ### 3. Installable CLI Package
 
@@ -322,6 +335,7 @@ Current v1.5 implementation:
 - Worker output is summarized.
 - Tool args are normalized and redacted.
 - Hermes/OpenClaw real execution requires explicit confirmation.
+- Runtime connector trust registry can block a live Hermes/OpenClaw customer worker before adapter execution.
 - `.agentops_runtime/`, local DB, node modules, and build output are gitignored.
 
 Acceptance evidence:
@@ -336,7 +350,7 @@ Remaining product work:
 - Full RBAC.
 - Multi-tenant hosted isolation beyond this local SQLite MVP.
 - Secret manager.
-- Connector trust registry UI.
+- Rich connector trust policy UI beyond the current local trusted/review/blocked controls.
 
 ### 6. UI Operation Loop
 
@@ -360,6 +374,7 @@ Current v1.5 implementation:
 - Approval decisions preserve the original approval reason and synchronize linked tool/run/task status: approval completes the tool without overwriting completed run output; rejection blocks the tool, run and task.
 - Browser verification confirmed the controls render.
 - The Agent Gateway card shows gateway readiness, auth mode, workspace, scope count, active enrollments, and stale heartbeats.
+- `/admin/connectors` shows runtime trust controls for trusted/review/blocked decisions.
 
 Acceptance evidence:
 

@@ -262,6 +262,7 @@ Workspace isolation smoke 会验证：token 绑定 workspace A 后，只能 pull
 - `./scripts/agentops worker preflight --adapter mock|hermes|openclaw` 可从主 CLI 执行只读 Gateway/adapter 预检，不拉任务、不写账本、不触发 live runtime。
 - `./scripts/agentops worker start|stop|logs` 可从命令行控制本地 worker daemon；Hermes/OpenClaw start 必须显式 `--confirm-run`。
 - `./scripts/agentops enrollment revoke --agent-id agt_remote_builder` 可吊销该 agent 的 active token。
+- `/admin/connectors` 可把 runtime connector 标记为 trusted / review_required / blocked；blocked 的 Hermes/OpenClaw connector 会阻止 confirmed customer worker live execution，并写入 runtime event 与 audit。
 
 知识库机器人客户任务演示：
 

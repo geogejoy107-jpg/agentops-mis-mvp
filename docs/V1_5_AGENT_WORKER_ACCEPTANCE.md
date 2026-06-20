@@ -1034,6 +1034,22 @@ finishes. The run remains the machine execution record; the task moves into
 human delivery review through normal approval UI instead of treating raw adapter
 output as automatically accepted.
 
+Latest runtime connector trust registry smoke:
+
+```text
+script: python3 scripts/runtime_connector_trust_smoke.py
+connector: rtc_openclaw_local
+blocked_task: tsk_customer_worker_trust_blocked_30651ba025db2763
+blocked_reason: runtime_connector_trust_blocked
+restore_status: 200
+failures: []
+```
+
+The smoke marks the OpenClaw runtime connector `blocked`, attempts a confirmed
+OpenClaw customer worker run, verifies that live execution is rejected before
+adapter invocation, and then restores the connector to `trusted`. The trust
+decision writes runtime event and audit evidence; it does not store secrets.
+
 The `/workspace/agents` UI now exposes the same customer-worker path that the
 CLI and Pixel Office use: a human creates a normal business task, chooses
 mock/Hermes/OpenClaw, and MIS displays the resulting task, run, artifact, and
@@ -1070,6 +1086,7 @@ planned MIS task
 ## Boundaries
 
 - Hermes/OpenClaw live execution requires `--confirm-run`.
+- Runtime connectors can be marked trusted, review-required, or blocked; blocked Hermes/OpenClaw connectors prevent confirmed live customer worker execution.
 - The worker does not call Dify or Notion.
 - The worker does not store full prompts or raw responses.
 - The worker is installable as a Python source package and can render launchd/systemd templates; it is not yet an npm package, signed binary, or one-command OS service installer.

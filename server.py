@@ -428,6 +428,9 @@ CREATE TABLE IF NOT EXISTS runtime_connectors (
     status TEXT NOT NULL,
     allow_real_run INTEGER NOT NULL DEFAULT 0,
     require_confirm_run INTEGER NOT NULL DEFAULT 1,
+    trust_status TEXT NOT NULL DEFAULT 'trusted',
+    trust_note TEXT,
+    trust_updated_at TEXT,
     last_health_at TEXT,
     last_error TEXT,
     created_at TEXT NOT NULL,
@@ -726,6 +729,9 @@ def ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str):
 def ensure_schema_migrations(conn: sqlite3.Connection):
     ensure_column(conn, "tasks", "workspace_id", "workspace_id TEXT NOT NULL DEFAULT 'local-demo'")
     ensure_column(conn, "runs", "workspace_id", "workspace_id TEXT NOT NULL DEFAULT 'local-demo'")
+    ensure_column(conn, "runtime_connectors", "trust_status", "trust_status TEXT NOT NULL DEFAULT 'trusted'")
+    ensure_column(conn, "runtime_connectors", "trust_note", "trust_note TEXT")
+    ensure_column(conn, "runtime_connectors", "trust_updated_at", "trust_updated_at TEXT")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_workspace ON tasks(workspace_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_workspace ON runs(workspace_id)")
 
@@ -848,6 +854,9 @@ def runtime_connector_rows() -> list[dict]:
             "status": "available",
             "allow_real_run": 1,
             "require_confirm_run": 1,
+            "trust_status": "trusted",
+            "trust_note": None,
+            "trust_updated_at": now,
             "last_health_at": now,
             "last_error": None,
             "created_at": now,
@@ -863,6 +872,9 @@ def runtime_connector_rows() -> list[dict]:
             "status": "available" if OPENCLAW_BIN.exists() else "unavailable",
             "allow_real_run": 1,
             "require_confirm_run": 1,
+            "trust_status": "trusted",
+            "trust_note": None,
+            "trust_updated_at": now,
             "last_health_at": now,
             "last_error": None if OPENCLAW_BIN.exists() else f"missing {OPENCLAW_BIN}",
             "created_at": now,
@@ -878,6 +890,9 @@ def runtime_connector_rows() -> list[dict]:
             "status": "unknown",
             "allow_real_run": 1 if hermes["allow_real_run"] else 0,
             "require_confirm_run": 1 if hermes["require_confirm_run"] else 0,
+            "trust_status": "trusted",
+            "trust_note": None,
+            "trust_updated_at": now,
             "last_health_at": None,
             "last_error": None,
             "created_at": now,
@@ -893,6 +908,9 @@ def runtime_connector_rows() -> list[dict]:
             "status": "available" if Path(agnes["binary_path"]).exists() else "unavailable",
             "allow_real_run": 1 if hermes["allow_real_run"] else 0,
             "require_confirm_run": 1 if hermes["require_confirm_run"] else 0,
+            "trust_status": "trusted",
+            "trust_note": None,
+            "trust_updated_at": now,
             "last_health_at": None,
             "last_error": None if Path(agnes["binary_path"]).exists() else "AGNESFALLBACK_BIN not found.",
             "created_at": now,
@@ -908,6 +926,9 @@ def runtime_connector_rows() -> list[dict]:
             "status": "unknown",
             "allow_real_run": 1 if hermes["allow_real_run"] else 0,
             "require_confirm_run": 1 if hermes["require_confirm_run"] else 0,
+            "trust_status": "trusted",
+            "trust_note": None,
+            "trust_updated_at": now,
             "last_health_at": None,
             "last_error": None,
             "created_at": now,
@@ -932,6 +953,44 @@ def upsert_runtime_connector(conn, row: dict):
             VALUES(:runtime_connector_id,:provider,:connector_type,:profile_name,:base_url,:binary_path,:status,:allow_real_run,:require_confirm_run,:last_health_at,:last_error,:created_at,:updated_at)""",
             row,
         )
+
+
+def runtime_connector_for_adapter(adapter: str) -> str | None:
+    if adapter == "hermes":
+        return "rtc_hermes_default_gateway"
+    if adapter == "openclaw":
+        return "rtc_openclaw_local"
+    if adapter == "mock":
+        return "rtc_agent_gateway_local"
+    return None
+
+
+def runtime_connector_trust(conn, connector_id: str | None) -> dict | None:
+    if not connector_id:
+        return None
+    refresh_runtime_connectors(conn)
+    row = conn.execute("SELECT * FROM runtime_connectors WHERE runtime_connector_id=?", (connector_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def update_runtime_connector_trust(conn, connector_id: str, body: dict) -> tuple[dict, int]:
+    refresh_runtime_connectors(conn)
+    before = conn.execute("SELECT * FROM runtime_connectors WHERE runtime_connector_id=?", (connector_id,)).fetchone()
+    if not before:
+        return {"error": "not_found", "message": f"Runtime connector {connector_id} was not found."}, 404
+    trust_status = coerce_choice(body.get("trust_status") or body.get("status"), {"trusted", "review_required", "blocked"}, "review_required")
+    trust_note = redact_text(body.get("trust_note") or body.get("note") or f"Runtime connector marked {trust_status}.", 300)
+    now = now_iso()
+    conn.execute(
+        """UPDATE runtime_connectors
+        SET trust_status=?, trust_note=?, trust_updated_at=?, updated_at=?
+        WHERE runtime_connector_id=?""",
+        (trust_status, trust_note, now, now, connector_id),
+    )
+    after = conn.execute("SELECT * FROM runtime_connectors WHERE runtime_connector_id=?", (connector_id,)).fetchone()
+    runtime_event(conn, connector_id, "runtime_connector.trust_update", trust_status, output_summary=trust_note)
+    audit(conn, "user", "usr_founder", "runtime_connector.trust_update", "runtime_connectors", connector_id, dict(before), dict(after), {"trust_status": trust_status, "raw_secret_omitted": True})
+    return {"connector": dict(after), "token_omitted": True}, 200
 
 
 def runtime_event(conn, connector_id, event_type, status, **kwargs):
@@ -5223,6 +5282,51 @@ def run_customer_worker_task_workflow(conn, body: dict) -> tuple[dict, int]:
     acceptance = redact_text(body.get("acceptance_criteria") or "Worker must write run, tool, evaluation and audit evidence.", 500)
     call_id = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d%H%M%S%f")
     worker_agent_id = body.get("worker_agent_id") or stable_id("agt_customer_worker", adapter, call_id, uuid.uuid4().hex[:8])
+    connector_id = runtime_connector_for_adapter(adapter)
+    connector_trust = runtime_connector_trust(conn, connector_id)
+    if adapter in {"hermes", "openclaw"} and confirm_run and connector_trust and connector_trust.get("trust_status") == "blocked":
+        task_id = body.get("task_id") or stable_id("tsk_customer_worker_trust_blocked", adapter, title, now_iso())
+        agent_id = worker_agent_id
+        ensure_gateway_agent(conn, agent_id, name=f"Customer {adapter} Worker", role="Customer Task Worker", runtime_type=adapter)
+        now = now_iso()
+        row = {
+            "task_id": task_id,
+            "title": title,
+            "description": description,
+            "requester_id": body.get("requester_id", "usr_customer_demo"),
+            "owner_agent_id": agent_id,
+            "collaborator_agent_ids": json.dumps(body.get("selected_agent_ids") or [], ensure_ascii=False),
+            "status": "blocked",
+            "priority": coerce_choice(body.get("priority"), VALID_PRIORITIES, "high"),
+            "due_date": body.get("due_date"),
+            "acceptance_criteria": acceptance,
+            "risk_level": coerce_choice(body.get("risk_level"), VALID_RISK_LEVELS, "medium"),
+            "budget_limit_usd": float(body.get("budget_limit_usd") or 1.0),
+            "created_at": now,
+            "updated_at": now,
+        }
+        upsert_task(conn, row, "customer-worker-task")
+        reason = redact_text(
+            connector_trust.get("trust_note")
+            or f"{adapter} live execution is blocked by runtime connector trust policy.",
+            260,
+        )
+        runtime_event(conn, connector_id, "customer_worker_task.trust_blocked", "blocked", task_id=task_id, agent_id=agent_id, input_summary=f"{adapter} worker live execution blocked by trust registry.", output_summary=reason)
+        audit(conn, "system", "runtime-trust-registry", "workflow.customer_worker_task.trust_blocked", "tasks", task_id, None, row, {"adapter": adapter, "connector_id": connector_id, "trust_status": "blocked", "raw_output_omitted": True})
+        conn.commit()
+        return {
+            "provider": "agentops-worker",
+            "workflow": "customer_worker_task",
+            "dry_run": True,
+            "ok": False,
+            "adapter": adapter,
+            "task_id": task_id,
+            "agent_id": agent_id,
+            "connector_id": connector_id,
+            "trust_status": "blocked",
+            "reason": "runtime_connector_trust_blocked",
+            "note": reason,
+        }, 409
     if adapter in {"hermes", "openclaw"} and not confirm_run:
         task_id = body.get("task_id") or stable_id("tsk_customer_worker_plan", adapter, title, now_iso())
         agent_id = worker_agent_id
@@ -5994,6 +6098,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(row, 201)
             if path == "/api/tasks":
                 payload, status = create_task_api(conn, body)
+                conn.commit()
+                return self.send_json(payload, status)
+            if path.startswith("/api/runtime-connectors/") and path.endswith("/trust"):
+                connector_id = path.split("/")[-2]
+                payload, status = update_runtime_connector_trust(conn, connector_id, body)
                 conn.commit()
                 return self.send_json(payload, status)
             if path == "/api/mock-runs/start":
