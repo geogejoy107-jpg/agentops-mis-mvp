@@ -1005,6 +1005,35 @@ OpenClaw evidence: tool_calls 1, evaluations 1, runtime_events 8, audit_logs 8, 
 failures: []
 ```
 
+Latest governance-closure verification for generic customer worker tasks:
+
+```text
+script: python3 scripts/customer_worker_task_workflow_smoke.py
+mock run: run_gw_161d789c4469
+mock artifact: art_customer_worker_task_run_gw_161d789c4469
+mock evidence: tool_calls 1, evaluations 1, runtime_events 10, audit_logs 10, artifacts 1, memories 2, approvals 1
+confirm gate task: tsk_customer_worker_plan_b76345a484f55007
+failures: []
+```
+
+```text
+script: python3 scripts/customer_worker_live_dogfood.py --adapter hermes --adapter openclaw
+title: 用真实 Hermes / OpenClaw 优化 AgentOps MIS 客户工作台
+Hermes run: run_gw_5d998a53e469
+Hermes artifact: art_customer_worker_task_run_gw_5d998a53e469
+Hermes evidence: tool_calls 1, evaluations 1, runtime_events 10, audit_logs 10, artifacts 1, memories 2, approvals 1
+OpenClaw run: run_gw_4c3b2d5b43ac
+OpenClaw artifact: art_customer_worker_task_run_gw_4c3b2d5b43ac
+OpenClaw evidence: tool_calls 1, evaluations 1, runtime_events 10, audit_logs 10, artifacts 1, memories 2, approvals 1
+failures: []
+```
+
+Generic customer worker tasks now create a customer delivery artifact, a memory
+candidate, and a pending delivery acceptance approval after the worker run
+finishes. The run remains the machine execution record; the task moves into
+human delivery review through normal approval UI instead of treating raw adapter
+output as automatically accepted.
+
 The `/workspace/agents` UI now exposes the same customer-worker path that the
 CLI and Pixel Office use: a human creates a normal business task, chooses
 mock/Hermes/OpenClaw, and MIS displays the resulting task, run, artifact, and

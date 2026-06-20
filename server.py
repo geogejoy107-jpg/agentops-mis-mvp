@@ -5286,6 +5286,8 @@ def run_customer_worker_task_workflow(conn, body: dict) -> tuple[dict, int]:
         "runtime_events": 0,
         "audit_logs": 0,
         "artifacts": 0,
+        "memories": 0,
+        "approvals": 0,
     }
     if run_id and task_id:
         artifact_id = stable_id("art_customer_worker_task", run_id)
@@ -5306,13 +5308,71 @@ def run_customer_worker_task_workflow(conn, body: dict) -> tuple[dict, int]:
         )
         runtime_event(conn, "rtc_agent_gateway_local", "customer_worker_task.artifact", "completed" if dispatch.get("ok") else "failed", run_id=run_id, task_id=task_id, agent_id=dispatch.get("agent_id"), output_summary=output_summary, raw_payload_hash=stable_hash({"run_id": run_id, "summary": output_summary}))
         audit(conn, "system", "customer-worker-task", "workflow.customer_worker_task", "artifacts", artifact_id, None, artifact, {"adapter": adapter, "raw_output_omitted": True})
+        memory_id = stable_id("mem_customer_worker_task", run_id)
+        memory_text = (
+            f"Customer worker task '{title}' produced artifact {artifact_id}. "
+            f"Review the summarized result before reusing it as a project pattern: {output_summary}"
+        )
+        memory_outcome = upsert_memory_candidate(
+            conn,
+            {
+                "memory_id": memory_id,
+                "scope": "project",
+                "memory_type": "artifact_summary",
+                "canonical_text": redact_text(memory_text, 360),
+                "source_type": "run_log",
+                "source_ref": run_id,
+                "project_id": body.get("project_id") or "proj_mvp",
+                "task_id": task_id,
+                "agent_id": dispatch.get("agent_id"),
+                "confidence": 0.72 if dispatch.get("ok") else 0.48,
+                "review_status": "candidate",
+                "owner_user_id": "usr_founder",
+                "ttl_review_due_at": (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=30)).isoformat(),
+                "supersedes_memory_id": None,
+                "access_tags": json.dumps(["customer-worker", adapter, "review"], ensure_ascii=False),
+                "created_at": now_iso(),
+                "updated_at": now_iso(),
+            },
+            "customer-worker-task",
+        )
+        runtime_event(conn, "rtc_agent_gateway_local", "customer_worker_task.memory", "completed", run_id=run_id, task_id=task_id, agent_id=dispatch.get("agent_id"), output_summary=f"Memory candidate {memory_id} {memory_outcome}.")
+        delivery_approval_id = stable_id("ap_customer_worker_delivery", run_id)
+        delivery_approval = {
+            "approval_id": delivery_approval_id,
+            "task_id": task_id,
+            "run_id": run_id,
+            "tool_call_id": None,
+            "requested_by_agent_id": dispatch.get("agent_id"),
+            "approver_user_id": body.get("approver_user_id") or "usr_founder",
+            "decision": "pending",
+            "reason": redact_text(
+                body.get("delivery_approval_reason")
+                or "Customer delivery acceptance is required before publishing, external upload, or treating this worker result as approved.",
+                260,
+            ),
+            "expires_at": (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=2)).isoformat(),
+            "created_at": now_iso(),
+            "decided_at": None,
+        }
+        existing_approval = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (delivery_approval_id,)).fetchone()
+        conn.execute(
+            """INSERT OR REPLACE INTO approvals(approval_id,task_id,run_id,tool_call_id,requested_by_agent_id,approver_user_id,decision,reason,expires_at,created_at,decided_at)
+            VALUES(:approval_id,:task_id,:run_id,:tool_call_id,:requested_by_agent_id,:approver_user_id,:decision,:reason,:expires_at,:created_at,:decided_at)""",
+            delivery_approval,
+        )
+        conn.execute("UPDATE tasks SET status='waiting_approval', updated_at=? WHERE task_id=? AND status='completed'", (now_iso(), task_id))
+        runtime_event(conn, "rtc_agent_gateway_local", "customer_worker_task.delivery_approval", "waiting_approval", run_id=run_id, task_id=task_id, agent_id=dispatch.get("agent_id"), output_summary=delivery_approval["reason"])
+        audit(conn, "system", "customer-worker-task", "workflow.customer_worker_task.delivery_approval", "approvals", delivery_approval_id, dict(existing_approval) if existing_approval else None, delivery_approval, {"adapter": adapter, "raw_output_omitted": True})
         conn.commit()
         evidence = {
             "tool_calls": conn.execute("SELECT COUNT(*) c FROM tool_calls WHERE run_id=?", (run_id,)).fetchone()["c"],
             "evaluations": conn.execute("SELECT COUNT(*) c FROM evaluations WHERE run_id=?", (run_id,)).fetchone()["c"],
             "runtime_events": conn.execute("SELECT COUNT(*) c FROM runtime_events WHERE run_id=? OR task_id=?", (run_id, task_id)).fetchone()["c"],
-            "audit_logs": conn.execute("SELECT COUNT(*) c FROM audit_logs WHERE entity_id IN (?,?,?)", (run_id, task_id, artifact_id)).fetchone()["c"],
+            "audit_logs": conn.execute("SELECT COUNT(*) c FROM audit_logs WHERE entity_id IN (?,?,?,?,?)", (run_id, task_id, artifact_id, memory_id, delivery_approval_id)).fetchone()["c"],
             "artifacts": conn.execute("SELECT COUNT(*) c FROM artifacts WHERE run_id=?", (run_id,)).fetchone()["c"],
+            "memories": conn.execute("SELECT COUNT(*) c FROM memories WHERE source_ref=? OR task_id=?", (run_id, task_id)).fetchone()["c"],
+            "approvals": conn.execute("SELECT COUNT(*) c FROM approvals WHERE run_id=? OR task_id=?", (run_id, task_id)).fetchone()["c"],
         }
     return {
         "provider": "agentops-worker",

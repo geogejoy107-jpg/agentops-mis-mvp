@@ -138,6 +138,8 @@ export interface CustomerTaskWorkflowResult {
     runtime_events?: number;
     audit_logs?: number;
     artifacts?: number;
+    memories?: number;
+    approvals?: number;
   };
 }
 

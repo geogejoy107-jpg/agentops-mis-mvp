@@ -99,6 +99,11 @@ Acceptance evidence:
   - Hermes completed customer worker run `run_gw_4b92508d1e33` with artifact `art_customer_worker_task_run_gw_4b92508d1e33`.
   - OpenClaw completed customer worker run `run_gw_328d56c280fa` with artifact `art_customer_worker_task_run_gw_328d56c280fa`.
   - Both runs wrote run/tool/evaluation/runtime/audit/artifact evidence.
+- Generic customer worker governance closure on 2026-06-20:
+  - Mock completed `run_gw_161d789c4469`.
+  - Hermes completed `run_gw_5d998a53e469`.
+  - OpenClaw completed `run_gw_4c3b2d5b43ac`.
+  - Each customer worker result now includes tool/evaluation/runtime/audit/artifact evidence plus memory candidate and pending delivery approval evidence.
 - `python3 scripts/worker_adapter_retry_smoke.py` verified adapter retry behavior:
   - mock transient failure succeeded after two attempts in `run_gw_a572f60ec9f4`,
   - Hermes without `--confirm-run` stopped after one non-retryable `ConfirmRunRequired` attempt in `run_gw_9951c583b9a7`,

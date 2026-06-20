@@ -17,7 +17,7 @@ DOGFOOD_DESCRIPTION = (
 )
 DOGFOOD_ACCEPTANCE = (
     "必须给出可执行的产品建议；必须说明哪些由 agent worker 解决，哪些由 MIS UI/权限/审计解决；"
-    "必须写入 runs、tool_calls、evaluations、audit_logs 和 customer_worker_result artifact。"
+    "必须写入 runs、tool_calls、evaluations、audit_logs、memory candidate、delivery approval 和 customer_worker_result artifact。"
 )
 
 
@@ -65,6 +65,8 @@ def run_adapter(base_url: str, adapter: str, failures: list[str]) -> dict:
     require(evidence.get("evaluations", 0) >= 1, f"{adapter} missing eval evidence: {evidence}", failures)
     require(evidence.get("audit_logs", 0) >= 1, f"{adapter} missing audit evidence: {evidence}", failures)
     require(evidence.get("artifacts", 0) >= 1, f"{adapter} missing artifact evidence: {evidence}", failures)
+    require(evidence.get("memories", 0) >= 1, f"{adapter} missing memory evidence: {evidence}", failures)
+    require(evidence.get("approvals", 0) >= 1, f"{adapter} missing approval evidence: {evidence}", failures)
     return result
 
 

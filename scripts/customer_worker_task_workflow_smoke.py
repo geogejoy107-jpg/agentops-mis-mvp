@@ -41,7 +41,7 @@ def main() -> int:
         "adapter": "mock",
         "title": "客户侧 Worker 闭环验收",
         "description": "以客户视角创建一个真实可执行的 MIS 任务，并要求本地 worker 写回账本证据。",
-        "acceptance_criteria": "必须产生 run、tool call、evaluation、audit 和 customer_worker_result artifact。",
+        "acceptance_criteria": "必须产生 run、tool call、evaluation、audit、memory candidate、delivery approval 和 customer_worker_result artifact。",
         "priority": "high",
         "risk_level": "medium",
         "selected_agent_ids": ["agt_worker_local"],
@@ -60,6 +60,8 @@ def main() -> int:
     require(evidence.get("runtime_events", 0) >= 1, f"missing runtime event evidence: {evidence}", failures)
     require(evidence.get("audit_logs", 0) >= 1, f"missing audit evidence: {evidence}", failures)
     require(evidence.get("artifacts", 0) >= 1, f"missing artifact evidence: {evidence}", failures)
+    require(evidence.get("memories", 0) >= 1, f"missing memory candidate evidence: {evidence}", failures)
+    require(evidence.get("approvals", 0) >= 1, f"missing delivery approval evidence: {evidence}", failures)
 
     if result.get("task_id"):
         status, task_detail = http_json("GET", args.base_url, f"/api/tasks/{result['task_id']}")
@@ -70,6 +72,7 @@ def main() -> int:
         require(status == 200, f"run detail failed: {status} {run_detail}", failures)
         require(len(run_detail.get("tool_calls") or []) >= 1, "run detail missing tool call", failures)
         require(len(run_detail.get("evaluations") or []) >= 1, "run detail missing evaluation", failures)
+        require(len(run_detail.get("approvals") or []) >= 1, "run detail missing delivery approval", failures)
 
     status, confirm_gate = http_json("POST", args.base_url, "/api/workflows/customer-worker-task", {
         "adapter": "hermes",
