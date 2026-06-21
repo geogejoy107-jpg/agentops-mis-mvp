@@ -1,0 +1,167 @@
+{
+  "sceneVersion": "2.0.0",
+  "artDirection": "night-shift-agent-campus",
+  "tileSize": 16,
+  "map": {
+    "width": 100,
+    "height": 100,
+    "projection": "orthographic",
+    "background": "#17212b"
+  },
+  "zones": [
+    {
+      "id": "control_tower",
+      "label": "Control Tower",
+      "route": "/admin",
+      "rect": { "x": 3, "y": 4, "w": 18, "h": 13 },
+      "roomTheme": "control_tower",
+      "metricBinding": "dashboard",
+      "spawnPoints": ["control_console"]
+    },
+    {
+      "id": "agent_lobby",
+      "label": "Agent Lobby",
+      "route": "/workspace/agents",
+      "rect": { "x": 25, "y": 6, "w": 17, "h": 14 },
+      "roomTheme": "agent_lobby",
+      "metricBinding": "totalAgents",
+      "spawnPoints": ["lobby_left", "lobby_right"]
+    },
+    {
+      "id": "task_hall",
+      "label": "Task Hall",
+      "route": "/workspace/tasks",
+      "rect": { "x": 46, "y": 5, "w": 24, "h": 21 },
+      "roomTheme": "task_hall",
+      "metricBinding": "tasks",
+      "spawnPoints": ["task_board", "dispatch_desk"]
+    },
+    {
+      "id": "run_stream",
+      "label": "Run Stream",
+      "route": "/admin/runs",
+      "rect": { "x": 73, "y": 6, "w": 22, "h": 14 },
+      "roomTheme": "run_stream",
+      "metricBinding": "totalRuns",
+      "spawnPoints": ["stream_console"]
+    },
+    {
+      "id": "runtime_lab",
+      "label": "Runtime Lab",
+      "route": "/admin/connectors",
+      "rect": { "x": 6, "y": 25, "w": 23, "h": 18 },
+      "roomTheme": "runtime_lab",
+      "metricBinding": "runtimeHealth",
+      "spawnPoints": ["runtime_terminal_a", "runtime_terminal_b"]
+    },
+    {
+      "id": "tool_workshop",
+      "label": "Tool Workshop",
+      "route": "/admin/toolcalls",
+      "rect": { "x": 33, "y": 29, "w": 20, "h": 17 },
+      "roomTheme": "tool_workshop",
+      "metricBinding": "toolCalls",
+      "spawnPoints": ["tool_bench"]
+    },
+    {
+      "id": "approval_gate",
+      "label": "Approval Gate",
+      "route": "/workspace/approvals",
+      "rect": { "x": 58, "y": 32, "w": 18, "h": 16 },
+      "roomTheme": "approval_gate",
+      "metricBinding": "pendingApprovals",
+      "spawnPoints": ["approval_queue", "approval_exit"]
+    },
+    {
+      "id": "evaluation_room",
+      "label": "Evaluation Room",
+      "route": "/admin/evaluations",
+      "rect": { "x": 79, "y": 28, "w": 17, "h": 18 },
+      "roomTheme": "evaluation_room",
+      "metricBinding": "failedQualityGates",
+      "spawnPoints": ["review_table"]
+    },
+    {
+      "id": "memory_archive",
+      "label": "Memory Archive",
+      "route": "/workspace/memory",
+      "rect": { "x": 6, "y": 51, "w": 22, "h": 19 },
+      "roomTheme": "memory_archive",
+      "metricBinding": "memoryCandidates",
+      "spawnPoints": ["archive_desk", "archive_shelf"]
+    },
+    {
+      "id": "external_base_dock",
+      "label": "External Base Dock",
+      "route": "/admin/bases/notion",
+      "rect": { "x": 33, "y": 56, "w": 22, "h": 18 },
+      "roomTheme": "external_base_dock",
+      "metricBinding": "externalSyncState",
+      "spawnPoints": ["dock_terminal", "loading_rail"]
+    },
+    {
+      "id": "audit_vault",
+      "label": "Audit Vault",
+      "route": "/admin/audit",
+      "rect": { "x": 59, "y": 56, "w": 18, "h": 17 },
+      "roomTheme": "audit_vault",
+      "metricBinding": "auditEvents",
+      "spawnPoints": ["vault_terminal"]
+    },
+    {
+      "id": "incident_corner",
+      "label": "Incident Corner",
+      "route": "/admin/runs",
+      "rect": { "x": 81, "y": 55, "w": 16, "h": 18 },
+      "roomTheme": "incident_corner",
+      "metricBinding": "failedRuns",
+      "spawnPoints": ["incident_console"]
+    },
+    {
+      "id": "template_market",
+      "label": "Template Market",
+      "route": "/admin/templates",
+      "rect": { "x": 37, "y": 80, "w": 26, "h": 13 },
+      "roomTheme": "template_market",
+      "metricBinding": "templates",
+      "spawnPoints": ["template_kiosk_a", "template_kiosk_b", "template_kiosk_c"]
+    }
+  ],
+  "paths": [
+    { "id": "north_corridor", "rect": { "x": 2, "y": 20, "w": 96, "h": 5 } },
+    { "id": "middle_corridor", "rect": { "x": 2, "y": 47, "w": 96, "h": 5 } },
+    { "id": "south_corridor", "rect": { "x": 2, "y": 74, "w": 96, "h": 5 } },
+    { "id": "west_spine", "rect": { "x": 29, "y": 20, "w": 4, "h": 59 } },
+    { "id": "center_spine", "rect": { "x": 54.8, "y": 20, "w": 4, "h": 59 } },
+    { "id": "east_spine", "rect": { "x": 76.8, "y": 20, "w": 4, "h": 59 } }
+  ],
+  "spawnPoints": [
+    { "id": "control_console", "zoneId": "control_tower", "x": 12, "y": 10 },
+    { "id": "lobby_left", "zoneId": "agent_lobby", "x": 29, "y": 14 },
+    { "id": "lobby_right", "zoneId": "agent_lobby", "x": 37, "y": 14 },
+    { "id": "task_board", "zoneId": "task_hall", "x": 52, "y": 17 },
+    { "id": "dispatch_desk", "zoneId": "task_hall", "x": 64, "y": 20 },
+    { "id": "stream_console", "zoneId": "run_stream", "x": 84, "y": 14 },
+    { "id": "runtime_terminal_a", "zoneId": "runtime_lab", "x": 14, "y": 35 },
+    { "id": "runtime_terminal_b", "zoneId": "runtime_lab", "x": 23, "y": 35 },
+    { "id": "tool_bench", "zoneId": "tool_workshop", "x": 43, "y": 40 },
+    { "id": "approval_queue", "zoneId": "approval_gate", "x": 63, "y": 41 },
+    { "id": "approval_exit", "zoneId": "approval_gate", "x": 71, "y": 41 },
+    { "id": "review_table", "zoneId": "evaluation_room", "x": 88, "y": 39 },
+    { "id": "archive_desk", "zoneId": "memory_archive", "x": 17, "y": 64 },
+    { "id": "archive_shelf", "zoneId": "memory_archive", "x": 23, "y": 58 },
+    { "id": "dock_terminal", "zoneId": "external_base_dock", "x": 45, "y": 65 },
+    { "id": "loading_rail", "zoneId": "external_base_dock", "x": 52, "y": 69 },
+    { "id": "vault_terminal", "zoneId": "audit_vault", "x": 68, "y": 65 },
+    { "id": "incident_console", "zoneId": "incident_corner", "x": 89, "y": 65 },
+    { "id": "template_kiosk_a", "zoneId": "template_market", "x": 44, "y": 88 },
+    { "id": "template_kiosk_b", "zoneId": "template_market", "x": 50, "y": 88 },
+    { "id": "template_kiosk_c", "zoneId": "template_market", "x": 57, "y": 88 }
+  ],
+  "interactions": {
+    "singleClick": "inspect",
+    "doubleClick": "openFormalRoute",
+    "agentClick": "inspectAgent",
+    "alertClick": "openEvidence"
+  }
+}
