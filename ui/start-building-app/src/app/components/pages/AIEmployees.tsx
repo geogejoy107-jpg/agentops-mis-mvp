@@ -13,9 +13,11 @@ import {
   loadAgentGatewayStatus,
   loadAgents,
   loadDashboard,
+  loadStuckWorkflowJobs,
   loadWorkerDaemonLogs,
   loadWorkerStatus,
   loadWorkflowJobs,
+  markWorkflowJobFailed,
   releaseWorkerTask,
   revokeAgentGatewayEnrollment,
   revokeAgentGatewaySession,
@@ -85,6 +87,8 @@ export function AIEmployees() {
   const [customerTaskError, setCustomerTaskError] = useState<string | null>(null);
   const [customerTaskResult, setCustomerTaskResult] = useState<CustomerTaskWorkflowResult | null>(null);
   const [customerTaskJob, setCustomerTaskJob] = useState<WorkflowJob | null>(null);
+  const [workflowJobAction, setWorkflowJobAction] = useState<string | null>(null);
+  const [workflowJobResult, setWorkflowJobResult] = useState<string | null>(null);
   const [customerTaskForm, setCustomerTaskForm] = useState<{
     adapter: (typeof WORKER_ADAPTERS)[number];
     title: string;
@@ -112,7 +116,7 @@ export function AIEmployees() {
     scopes: DEFAULT_GATEWAY_SCOPES.join(", "),
   });
   const { data, loading, error, refresh } = useLiveData(async () => {
-    const [metrics, workerStatus, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs] = await Promise.all([
+    const [metrics, workerStatus, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs] = await Promise.all([
       loadDashboard(),
       loadWorkerStatus(),
       loadAgentGatewayEnrollments(),
@@ -121,15 +125,17 @@ export function AIEmployees() {
       loadApprovals(),
       Promise.all(WORKER_ADAPTERS.map(adapter => loadWorkerDaemonLogs(adapter))),
       loadWorkflowJobs(8),
+      loadStuckWorkflowJobs(30, 8),
     ]);
     const agents = await loadAgents(metrics);
-    return { agents, workerStatus, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs };
+    return { agents, workerStatus, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs };
   }, []);
   const agents = data?.agents || [];
   const workerStatus = data?.workerStatus;
   const daemonLogs = data?.daemonLogs || [];
   const selectedDaemonLog = daemonLogs.find(item => item.daemon.adapter === selectedLogAdapter)?.daemon;
   const workflowJobs = data?.workflowJobs?.jobs || [];
+  const stuckWorkflowJobs = data?.stuckWorkflowJobs?.stuck_jobs || [];
   const recentEvents = workerStatus?.recent_events || [];
   const stuckTasks = workerStatus?.stuck_tasks || [];
   const enrollments = data?.enrollmentPayload?.enrollments || [];
@@ -191,6 +197,11 @@ export function AIEmployees() {
       workflowJobsTitle: "Async Workflow Jobs",
       workflowJobsSummary: "Recent customer worker/template jobs submitted through the machine-facing Agent Gateway path.",
       noWorkflowJobs: "No workflow jobs yet.",
+      stuckWorkflowJobsTitle: "Stuck Workflow Jobs",
+      stuckWorkflowJobsSummary: "Queued or running workflow jobs older than the recovery threshold.",
+      noStuckWorkflowJobs: "No stuck workflow jobs.",
+      markJobFailed: "Mark failed",
+      markingJobFailed: "Marking...",
       outputSummary: "Output",
       workers: "Workers",
       completedRuns: "Completed worker runs",
@@ -345,6 +356,11 @@ export function AIEmployees() {
       workflowJobsTitle: "异步 Workflow Jobs",
       workflowJobsSummary: "最近通过 Agent Gateway 机器接口提交的客户 worker / 模板任务。",
       noWorkflowJobs: "还没有异步任务。",
+      stuckWorkflowJobsTitle: "卡住的 Workflow Jobs",
+      stuckWorkflowJobsSummary: "超过恢复阈值仍处于 queued/running 的 workflow job。",
+      noStuckWorkflowJobs: "暂无卡住的 workflow job。",
+      markJobFailed: "标记 failed",
+      markingJobFailed: "正在标记...",
       outputSummary: "输出",
       workers: "Worker",
       completedRuns: "已完成 worker run",
@@ -558,6 +574,23 @@ export function AIEmployees() {
       setDispatchResult(message);
     } finally {
       setCustomerTaskBusy(false);
+    }
+  };
+
+  const markStuckWorkflowJobFailed = async (jobId: string) => {
+    setWorkflowJobAction(jobId);
+    setWorkflowJobResult(null);
+    try {
+      const result = await markWorkflowJobFailed(
+        jobId,
+        locale === "zh" ? "操作台标记卡住 workflow job 为 failed" : "Operator marked stuck workflow job as failed",
+      );
+      setWorkflowJobResult(`${jobId}: ${result.marked_failed ? "failed" : result.reason || "not changed"}`);
+      await refresh();
+    } catch (err) {
+      setWorkflowJobResult(err instanceof Error ? err.message : String(err));
+    } finally {
+      setWorkflowJobAction(null);
     }
   };
 
@@ -992,6 +1025,11 @@ export function AIEmployees() {
             <div>
               <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.workflowJobsTitle}</div>
               <div className="text-[10px] mt-1" style={{ color: "var(--mis-muted)" }}>{copy.workflowJobsSummary}</div>
+              {workflowJobResult && (
+                <div className="text-[10px] mt-1" style={{ color: workflowJobResult.includes("failed") ? "var(--mis-success)" : "var(--mis-warning)" }}>
+                  {workflowJobResult}
+                </div>
+              )}
             </div>
             <button
               onClick={refresh}
@@ -1002,6 +1040,50 @@ export function AIEmployees() {
               {copy.refresh}
             </button>
           </div>
+
+          <div className="rounded-lg p-3 mt-3" style={{ background: stuckWorkflowJobs.length > 0 ? "rgba(251,191,36,0.08)" : "var(--mis-bg)", border: stuckWorkflowJobs.length > 0 ? "1px solid rgba(251,191,36,0.24)" : "1px solid var(--mis-border)" }}>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-1.5">
+                  <AlertTriangle size={13} style={{ color: stuckWorkflowJobs.length > 0 ? "var(--mis-warning)" : "var(--mis-muted)" }} />
+                  <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.stuckWorkflowJobsTitle}</div>
+                </div>
+                <div className="text-[10px] mt-1" style={{ color: "var(--mis-muted)" }}>{copy.stuckWorkflowJobsSummary}</div>
+              </div>
+              <StatusBadge status={stuckWorkflowJobs.length > 0 ? "blocked" : "pass"} label={String(stuckWorkflowJobs.length)} />
+            </div>
+            <div className="space-y-2 mt-3">
+              {stuckWorkflowJobs.length === 0 && (
+                <div className="text-[11px] rounded px-3 py-2" style={{ color: "var(--mis-muted)", background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                  {copy.noStuckWorkflowJobs}
+                </div>
+              )}
+              {stuckWorkflowJobs.slice(0, 4).map((job) => (
+                <div key={job.job_id} className="grid grid-cols-[1.1fr_0.7fr_0.7fr_auto] gap-3 items-center rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                  <div className="min-w-0">
+                    <div className="text-[11px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{job.title || job.job_id}</div>
+                    <div className="text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>{job.job_id} · {job.workflow_type}</div>
+                  </div>
+                  <div className="text-[10px] truncate" style={{ color: "var(--mis-dim)" }}>
+                    {job.adapter || "default"} · {job.status}
+                  </div>
+                  <div className="text-[10px] truncate" style={{ color: "var(--mis-dim)" }}>
+                    {copy.age}: {job.age_sec || 0}s
+                  </div>
+                  <button
+                    onClick={() => markStuckWorkflowJobFailed(job.job_id)}
+                    disabled={Boolean(workflowJobAction)}
+                    className="flex items-center gap-1 text-[11px] px-2.5 py-1.5 rounded disabled:opacity-40"
+                    style={{ background: "rgba(248,113,113,0.1)", color: "#F87171", border: "1px solid rgba(248,113,113,0.22)" }}
+                  >
+                    {workflowJobAction === job.job_id ? <RefreshCw size={12} /> : <Square size={12} />}
+                    {workflowJobAction === job.job_id ? copy.markingJobFailed : copy.markJobFailed}
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+
           <div className="space-y-2 mt-3">
             {workflowJobs.length === 0 && (
               <div className="text-[11px] rounded px-3 py-2" style={{ color: "var(--mis-muted)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>

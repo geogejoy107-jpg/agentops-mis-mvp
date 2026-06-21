@@ -289,6 +289,9 @@ export interface WorkflowJob {
   result?: Partial<CustomerTaskWorkflowResult & KbBotProjectWorkflowResult>;
   raw_request_omitted?: boolean;
   token_omitted?: boolean;
+  age_sec?: number;
+  threshold_sec?: number;
+  stuck_reason?: string;
 }
 
 export interface WorkflowJobSubmitPayload {
@@ -303,6 +306,23 @@ export interface WorkflowJobSubmitPayload {
 
 export interface WorkflowJobListPayload {
   jobs: WorkflowJob[];
+  token_omitted?: boolean;
+}
+
+export interface WorkflowJobStuckPayload {
+  provider: string;
+  threshold_sec: number;
+  stuck_jobs: WorkflowJob[];
+  token_omitted?: boolean;
+}
+
+export interface WorkflowJobMarkFailedPayload {
+  ok: boolean;
+  provider?: string;
+  job_id: string;
+  job?: WorkflowJob;
+  marked_failed?: boolean;
+  reason?: string;
   token_omitted?: boolean;
 }
 
@@ -980,8 +1000,19 @@ export async function loadWorkflowJobs(limit = 8): Promise<WorkflowJobListPayloa
   return apiJson<WorkflowJobListPayload>(`/workflows/jobs?limit=${encodeURIComponent(String(limit))}`);
 }
 
+export async function loadStuckWorkflowJobs(thresholdSec = 900, limit = 25): Promise<WorkflowJobStuckPayload> {
+  return apiJson<WorkflowJobStuckPayload>(`/workflows/jobs/stuck?threshold_sec=${encodeURIComponent(String(thresholdSec))}&limit=${encodeURIComponent(String(limit))}`);
+}
+
 export async function loadWorkflowJob(jobId: string): Promise<{ job: WorkflowJob; token_omitted?: boolean }> {
   return apiJson<{ job: WorkflowJob; token_omitted?: boolean }>(`/workflows/jobs/${encodeURIComponent(jobId)}`);
+}
+
+export async function markWorkflowJobFailed(jobId: string, reason: string): Promise<WorkflowJobMarkFailedPayload> {
+  return apiJson<WorkflowJobMarkFailedPayload>(`/workflows/jobs/${encodeURIComponent(jobId)}/mark-failed`, {
+    method: "POST",
+    body: JSON.stringify({ reason, actor_id: "usr_operator" }),
+  });
 }
 
 export async function persistCustomerProjectReportArtifact(projectId: string): Promise<CustomerProjectReportArtifactResult> {

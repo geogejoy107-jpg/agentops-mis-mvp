@@ -1034,6 +1034,18 @@ final_status: failed
 secret_leaked: false
 ```
 
+Latest `/workspace/agents` workflow job recovery UI verification:
+
+```text
+page: http://127.0.0.1:19001/workspace/agents
+synthetic stale job: wfjob_ui_stuck_recovery_20260621102100
+Playwright snapshot found: 卡住的 Workflow Jobs, job row, 标记 failed
+clicked: 标记 failed
+API status: failed
+error_message: 操作台标记卡住 workflow job 为 failed
+token_omitted: true
+```
+
 Latest task-create CLI smoke:
 
 ```text
