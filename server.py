@@ -768,6 +768,12 @@ CREATE TABLE IF NOT EXISTS agent_plans (
     verification_plan TEXT,
     rollback_plan TEXT,
     status TEXT NOT NULL CHECK(status IN ('draft','submitted','approved','rejected','superseded')),
+    plan_version INTEGER NOT NULL DEFAULT 1,
+    plan_hash TEXT,
+    verified_at TEXT,
+    verification_result_hash TEXT,
+    approved_by_user_id TEXT,
+    approved_at TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     FOREIGN KEY(task_id) REFERENCES tasks(task_id),
@@ -788,6 +794,8 @@ CREATE TABLE IF NOT EXISTS plan_evidence_manifests (
     evaluation_ids_json TEXT NOT NULL DEFAULT '[]',
     artifact_ids_json TEXT NOT NULL DEFAULT '[]',
     audit_ids_json TEXT NOT NULL DEFAULT '[]',
+    plan_hash TEXT,
+    verification_result_hash TEXT,
     status TEXT NOT NULL CHECK(status IN ('submitted','verified','warning','blocked')),
     verification_json TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL,
@@ -892,10 +900,19 @@ def ensure_schema_migrations(conn: sqlite3.Connection):
     ensure_column(conn, "evaluation_case_runs", "reviewed_by_user_id", "reviewed_by_user_id TEXT")
     ensure_column(conn, "evaluation_case_runs", "review_note", "review_note TEXT")
     ensure_column(conn, "evaluation_case_runs", "reviewed_at", "reviewed_at TEXT")
+    ensure_column(conn, "agent_plans", "plan_version", "plan_version INTEGER NOT NULL DEFAULT 1")
+    ensure_column(conn, "agent_plans", "plan_hash", "plan_hash TEXT")
+    ensure_column(conn, "agent_plans", "verified_at", "verified_at TEXT")
+    ensure_column(conn, "agent_plans", "verification_result_hash", "verification_result_hash TEXT")
+    ensure_column(conn, "agent_plans", "approved_by_user_id", "approved_by_user_id TEXT")
+    ensure_column(conn, "agent_plans", "approved_at", "approved_at TEXT")
+    ensure_column(conn, "plan_evidence_manifests", "plan_hash", "plan_hash TEXT")
+    ensure_column(conn, "plan_evidence_manifests", "verification_result_hash", "verification_result_hash TEXT")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_workspace ON tasks(workspace_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_workspace ON runs(workspace_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_workflow_jobs_status ON workflow_jobs(status, created_at)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_plans_workspace ON agent_plans(workspace_id, created_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_plans_hash ON agent_plans(plan_hash)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_eval_case_runs_review ON evaluation_case_runs(review_status, pass_fail)")
     ensure_knowledge_fts(conn)
 
@@ -3642,6 +3659,101 @@ def agent_gateway_list_approvals(conn: sqlite3.Connection, qs: dict, headers, au
     }, 200
 
 
+def agent_gateway_get_approval(conn: sqlite3.Connection, approval_id: str, headers, auth_ctx=None) -> tuple[dict, int]:
+    ident = agent_gateway_identity(headers, auth_ctx=auth_ctx)
+    row = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (approval_id,)).fetchone()
+    if not row:
+        return {"error": "not_found", "message": f"approval {approval_id} not found", "token_omitted": True}, 404
+    approval = dict(row)
+    task_row = conn.execute("SELECT * FROM tasks WHERE task_id=?", (approval.get("task_id") or "",)).fetchone() if approval.get("task_id") else None
+    run_row = conn.execute("SELECT * FROM runs WHERE run_id=?", (approval.get("run_id") or "",)).fetchone() if approval.get("run_id") else None
+    task = dict(task_row) if task_row else None
+    run = dict(run_row) if run_row else None
+    workspace_id = normalize_workspace_id((task or {}).get("workspace_id") or (run or {}).get("workspace_id") or "local-demo")
+    if workspace_id != ident["workspace_id"]:
+        return workspace_forbidden("approvals", approval_id, ident["workspace_id"], workspace_id)
+    if agent_gateway_is_bound_auth(auth_ctx):
+        visible = (
+            (task and (
+                task.get("owner_agent_id") in {None, "", ident["agent_id"]}
+                or ident["agent_id"] in parse_json_array(task.get("collaborator_agent_ids"))
+            ))
+            or (run and run.get("agent_id") == ident["agent_id"])
+            or approval.get("requested_by_agent_id") == ident["agent_id"]
+        )
+        if not visible:
+            return {"error": "forbidden", "message": "Agent token cannot inspect this approval.", "token_omitted": True}, 403
+    tool_call = conn.execute("SELECT * FROM tool_calls WHERE tool_call_id=?", (approval.get("tool_call_id") or "",)).fetchone() if approval.get("tool_call_id") else None
+    run_id = approval.get("run_id")
+    task_id = approval.get("task_id")
+    evidence = {
+        "tool_calls": scalar_count(conn, "SELECT COUNT(*) FROM tool_calls WHERE run_id=? OR run_id IN (SELECT run_id FROM runs WHERE task_id=?)", (run_id or "", task_id or "")),
+        "evaluations": scalar_count(conn, "SELECT COUNT(*) FROM evaluations WHERE run_id=? OR task_id=?", (run_id or "", task_id or "")),
+        "artifacts": scalar_count(conn, "SELECT COUNT(*) FROM artifacts WHERE run_id=? OR task_id=?", (run_id or "", task_id or "")),
+        "audit_logs": scalar_count(conn, "SELECT COUNT(*) FROM audit_logs WHERE entity_id IN (?,?,?)", (approval_id, run_id or "", task_id or "")),
+        "plan_evidence_manifests": scalar_count(conn, "SELECT COUNT(*) FROM plan_evidence_manifests WHERE run_id=? OR task_id=?", (run_id or "", task_id or "")),
+        "failed_evaluations": scalar_count(conn, "SELECT COUNT(*) FROM evaluations WHERE (run_id=? OR task_id=?) AND pass_fail='fail'", (run_id or "", task_id or "")),
+        "open_failed_case_runs": conn.execute(
+            """SELECT COUNT(*) c FROM evaluation_case_runs ecr
+            JOIN evaluation_case_candidates c ON c.case_id=ecr.case_id
+            WHERE (ecr.run_id=? OR c.task_id=?) AND ecr.pass_fail='fail' AND ecr.review_status IN ('open','investigating')""",
+            (run_id or "", task_id or ""),
+        ).fetchone()["c"],
+    }
+    reason = approval.get("reason") or ""
+    approval_kind = (
+        "commander_synthesis" if commander_synthesis_approval(approval)
+        else "customer_delivery" if customer_delivery_approval_requires_manifest(approval)
+        else "tool_call" if approval.get("tool_call_id")
+        else "delivery_or_run"
+    )
+    delivery_gate = delivery_manifest_gate(conn, run_id) if run_id and approval_kind in {"customer_delivery", "delivery_or_run"} else None
+    risks: list[dict] = []
+    if re.search(r"external|upload|publish|customer|delivery", reason, re.I):
+        risks.append({"id": "external_or_delivery_gate", "status": "warn", "summary": "Approval may publish, upload, or mark customer-facing work as accepted."})
+    if evidence["failed_evaluations"] or evidence["open_failed_case_runs"]:
+        risks.append({"id": "failed_quality_evidence", "status": "fail", "summary": "Failed evaluation evidence is still open for this approval."})
+    if delivery_gate and not delivery_gate.get("pass"):
+        risks.append({"id": "plan_evidence_gate", "status": "fail", "summary": delivery_gate.get("message") or "Verified plan evidence is missing."})
+    if approval.get("decision") != "pending":
+        risks.append({"id": "already_decided", "status": "info", "summary": f"Approval is already {approval.get('decision')}."})
+    status = "blocked" if any(item["status"] == "fail" for item in risks) else "attention" if risks else "ready"
+    return {
+        "provider": "agentops-approval",
+        "operation": "approval_inspect",
+        "status": status,
+        "approval": approval,
+        "approval_kind": approval_kind,
+        "task": task,
+        "run": run,
+        "tool_call": dict(tool_call) if tool_call else None,
+        "evidence": evidence,
+        "delivery_approval_gate": delivery_gate,
+        "risks": risks,
+        "recommended_actions": [
+            f"agentops approval approve --approval-id {approval_id}",
+            f"agentops approval reject --approval-id {approval_id}",
+        ] if approval.get("decision") == "pending" else ["agentops approval list --decision pending"],
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
+        "gateway_scope": {
+            "required_scope": "tasks:read",
+            "workspace_id": ident["workspace_id"],
+            "agent_id": ident["agent_id"],
+            "auth_mode": (auth_ctx or {}).get("mode") or "unknown",
+            "bound_visibility_enforced": agent_gateway_is_bound_auth(auth_ctx),
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }, 200
+
+
 def agent_gateway_list_memories(conn: sqlite3.Connection, qs: dict, headers, auth_ctx=None) -> tuple[dict, int]:
     ident = agent_gateway_identity(headers, qs=qs, auth_ctx=auth_ctx)
     limit = min(max(int((qs.get("limit") or ["25"])[0]), 1), 200)
@@ -3959,6 +4071,39 @@ def load_json_list_field(row: sqlite3.Row | dict, field: str) -> list:
     return parsed if isinstance(parsed, list) else []
 
 
+def row_field(row: sqlite3.Row | dict | None, field: str, default=None):
+    if row is None:
+        return default
+    try:
+        return row[field]
+    except Exception:
+        return row.get(field, default) if hasattr(row, "get") else default
+
+
+def agent_plan_contract(row: sqlite3.Row | dict) -> dict:
+    return {
+        "workspace_id": row_field(row, "workspace_id"),
+        "task_id": row_field(row, "task_id"),
+        "run_id": row_field(row, "run_id"),
+        "agent_id": row_field(row, "agent_id"),
+        "task_understanding": row_field(row, "task_understanding") or "",
+        "referenced_specs": load_json_list_field(row, "referenced_specs_json"),
+        "referenced_memories": load_json_list_field(row, "referenced_memories_json"),
+        "referenced_bases": load_json_list_field(row, "referenced_bases_json"),
+        "proposed_files_to_change": load_json_list_field(row, "proposed_files_to_change_json"),
+        "risk_level": row_field(row, "risk_level"),
+        "approval_required": bool(row_field(row, "approval_required")),
+        "execution_steps": load_json_list_field(row, "execution_steps_json"),
+        "verification_plan": row_field(row, "verification_plan") or "",
+        "rollback_plan": row_field(row, "rollback_plan") or "",
+        "plan_version": int(row_field(row, "plan_version", 1) or 1),
+    }
+
+
+def compute_agent_plan_hash(row: sqlite3.Row | dict) -> str:
+    return stable_hash(agent_plan_contract(row))
+
+
 def verify_agent_plan_row(row: sqlite3.Row | dict) -> dict:
     specs = load_json_list_field(row, "referenced_specs_json")
     memories = load_json_list_field(row, "referenced_memories_json")
@@ -3978,8 +4123,10 @@ def verify_agent_plan_row(row: sqlite3.Row | dict) -> dict:
         {"id": "file_scope", "ok": bool(files) or risk == "low", "message": "Non-low work names proposed files or surfaces."},
     ]
     failed = [check for check in checks if not check["ok"]]
+    plan_hash = row_field(row, "plan_hash") or compute_agent_plan_hash(row)
     return {
         "pass": not failed,
+        "plan_hash": plan_hash,
         "checks": checks,
         "failed_checks": failed,
         "summary": {
@@ -3995,18 +4142,43 @@ def verify_agent_plan_row(row: sqlite3.Row | dict) -> dict:
     }
 
 
+def agent_plan_verification_hash(plan_id: str, verification: dict) -> str:
+    return stable_hash({
+        "plan_id": plan_id,
+        "plan_hash": verification.get("plan_hash"),
+        "pass": verification.get("pass"),
+        "failed_checks": [check.get("id") for check in verification.get("failed_checks") or []],
+        "summary": verification.get("summary") or {},
+    })
+
+
+def persist_agent_plan_verification(conn: sqlite3.Connection, plan_id: str, verification: dict) -> tuple[dict, str]:
+    verification_hash = agent_plan_verification_hash(plan_id, verification)
+    now = now_iso()
+    conn.execute(
+        """UPDATE agent_plans
+        SET plan_hash=COALESCE(plan_hash, ?), verified_at=?, verification_result_hash=?, updated_at=?
+        WHERE plan_id=?""",
+        (verification.get("plan_hash"), now, verification_hash, now, plan_id),
+    )
+    row = dict(conn.execute("SELECT * FROM agent_plans WHERE plan_id=?", (plan_id,)).fetchone())
+    return row, verification_hash
+
+
 def verify_agent_plan(conn: sqlite3.Connection, plan_id: str, headers=None, auth_ctx=None) -> tuple[dict, int]:
     payload, status = get_agent_plan(conn, plan_id, headers, auth_ctx)
     if status != 200:
         return payload, status
     row = payload["agent_plan"]
     verification = verify_agent_plan_row(row)
+    row, verification_hash = persist_agent_plan_verification(conn, plan_id, verification)
     return {
         "provider": "agentops-agent-plan",
         "operation": "agent_plan_verify",
         "plan_id": plan_id,
         "agent_plan": row,
         "verification": verification,
+        "verification_result_hash": verification_hash,
         "token_omitted": True,
     }, 200
 
@@ -4036,6 +4208,15 @@ def agent_gateway_create_agent_plan(conn: sqlite3.Connection, body) -> tuple[dic
     if not understanding:
         return {"error": "task_understanding is required"}, 400
     risk = coerce_choice(body.get("risk_level"), VALID_RISK_LEVELS, "medium")
+    requested_status = body.get("status") or "submitted"
+    if requested_status not in {"draft", "submitted"}:
+        return {
+            "error": "plan_status_transition_required",
+            "message": "Agent-created plans may only start as draft or submitted. Human/admin approval must be a separate transition.",
+            "requested_status": redact_text(requested_status, 80),
+            "allowed_create_statuses": ["draft", "submitted"],
+            "token_omitted": True,
+        }, 400
     row = {
         "plan_id": body.get("plan_id") or stable_id("plan", agent_id, task_id or run_id or stable_hash(understanding)[:12], now_iso()),
         "workspace_id": ident["workspace_id"],
@@ -4052,21 +4233,30 @@ def agent_gateway_create_agent_plan(conn: sqlite3.Connection, body) -> tuple[dic
         "execution_steps_json": json.dumps(safe_json_list(body.get("execution_steps")), ensure_ascii=False),
         "verification_plan": redact_text(body.get("verification_plan"), 800) if body.get("verification_plan") else None,
         "rollback_plan": redact_text(body.get("rollback_plan"), 800) if body.get("rollback_plan") else None,
-        "status": coerce_choice(body.get("status"), {"draft", "submitted", "approved", "rejected", "superseded"}, "submitted"),
+        "status": requested_status,
+        "plan_version": int(body.get("plan_version") or 1),
+        "plan_hash": None,
+        "verified_at": None,
+        "verification_result_hash": None,
+        "approved_by_user_id": None,
+        "approved_at": None,
         "created_at": now_iso(),
         "updated_at": now_iso(),
     }
+    row["plan_hash"] = compute_agent_plan_hash(row)
     conn.execute(
         """INSERT INTO agent_plans(plan_id,workspace_id,task_id,run_id,agent_id,task_understanding,referenced_specs_json,
         referenced_memories_json,referenced_bases_json,proposed_files_to_change_json,risk_level,approval_required,
-        execution_steps_json,verification_plan,rollback_plan,status,created_at,updated_at)
+        execution_steps_json,verification_plan,rollback_plan,status,plan_version,plan_hash,verified_at,verification_result_hash,
+        approved_by_user_id,approved_at,created_at,updated_at)
         VALUES(:plan_id,:workspace_id,:task_id,:run_id,:agent_id,:task_understanding,:referenced_specs_json,
         :referenced_memories_json,:referenced_bases_json,:proposed_files_to_change_json,:risk_level,:approval_required,
-        :execution_steps_json,:verification_plan,:rollback_plan,:status,:created_at,:updated_at)""",
+        :execution_steps_json,:verification_plan,:rollback_plan,:status,:plan_version,:plan_hash,:verified_at,:verification_result_hash,
+        :approved_by_user_id,:approved_at,:created_at,:updated_at)""",
         row,
     )
-    audit(conn, "agent", agent_id, "agent_gateway.agent_plan_create", "agent_plans", row["plan_id"], None, row, {"raw_omitted": True})
-    runtime_event(conn, "rtc_agent_gateway_local", "agent_plan.create", "completed", run_id=run_id, task_id=task_id, agent_id=agent_id, output_summary=understanding)
+    audit(conn, "agent", agent_id, "agent_gateway.agent_plan_create", "agent_plans", row["plan_id"], None, row, {"raw_omitted": True, "plan_hash": row["plan_hash"]})
+    runtime_event(conn, "rtc_agent_gateway_local", "agent_plan.create", "completed", run_id=run_id, task_id=task_id, agent_id=agent_id, output_summary=f"Agent plan {row['plan_id']} submitted with plan_hash={row['plan_hash'][:12]}.")
     return {"agent_plan": row, "token_omitted": True}, 201
 
 
@@ -4199,6 +4389,8 @@ def verify_plan_evidence_manifest_row(conn: sqlite3.Connection, manifest: sqlite
     checks = [
         {"id": "plan_exists", "ok": bool(plan), "message": "Manifest references an existing agent_plan."},
         {"id": "plan_verifies", "ok": bool(plan_verification.get("pass")), "message": "Referenced agent_plan passes method-block verification."},
+        {"id": "plan_hash_bound", "ok": bool(row_field(manifest, "plan_hash")) if plan else True, "message": "Manifest stores the immutable plan_hash observed at submission time."},
+        {"id": "plan_hash_match", "ok": bool(not plan or not row_field(manifest, "plan_hash") or row_field(manifest, "plan_hash") == (row_field(plan, "plan_hash") or compute_agent_plan_hash(plan))), "message": "Manifest plan_hash still matches the referenced agent_plan."},
         {"id": "run_exists", "ok": bool(run), "message": "Manifest references an existing run."},
         {"id": "task_exists", "ok": bool(task), "message": "Manifest task exists."},
         {"id": "workspace_match", "ok": bool(plan and run and plan["workspace_id"] == manifest["workspace_id"] == run["workspace_id"]), "message": "Plan, manifest and run are in the same workspace."},
@@ -4421,6 +4613,8 @@ def agent_gateway_create_plan_evidence_manifest(conn: sqlite3.Connection, body) 
         return {"error": "forbidden", "message": "Manifest run_id must match the run pinned by the agent_plan."}, 403
     if plan["agent_id"] != run["agent_id"]:
         return {"error": "forbidden", "message": "Manifest requires agent_plan.agent_id to match run.agent_id."}, 403
+    plan_verification = verify_agent_plan_row(plan)
+    plan, verification_hash = persist_agent_plan_verification(conn, plan_id, plan_verification)
     expected_steps = safe_json_list(body.get("expected_steps")) or load_json_list_field(plan, "execution_steps_json")
     row = {
         "manifest_id": body.get("manifest_id") or stable_id("pem", plan_id, run_id, now_iso()),
@@ -4435,6 +4629,8 @@ def agent_gateway_create_plan_evidence_manifest(conn: sqlite3.Connection, body) 
         "evaluation_ids_json": json.dumps(safe_json_list(body.get("evaluation_ids")), ensure_ascii=False),
         "artifact_ids_json": json.dumps(safe_json_list(body.get("artifact_ids")), ensure_ascii=False),
         "audit_ids_json": json.dumps(safe_json_list(body.get("audit_ids")), ensure_ascii=False),
+        "plan_hash": plan["plan_hash"] or compute_agent_plan_hash(plan),
+        "verification_result_hash": plan["verification_result_hash"] or verification_hash,
         "status": "submitted",
         "verification_json": "{}",
         "created_at": now_iso(),
@@ -4442,9 +4638,9 @@ def agent_gateway_create_plan_evidence_manifest(conn: sqlite3.Connection, body) 
     }
     conn.execute(
         """INSERT INTO plan_evidence_manifests(manifest_id,workspace_id,plan_id,task_id,run_id,agent_id,mismatch_policy,
-        expected_steps_json,tool_call_ids_json,evaluation_ids_json,artifact_ids_json,audit_ids_json,status,verification_json,created_at,updated_at)
+        expected_steps_json,tool_call_ids_json,evaluation_ids_json,artifact_ids_json,audit_ids_json,plan_hash,verification_result_hash,status,verification_json,created_at,updated_at)
         VALUES(:manifest_id,:workspace_id,:plan_id,:task_id,:run_id,:agent_id,:mismatch_policy,
-        :expected_steps_json,:tool_call_ids_json,:evaluation_ids_json,:artifact_ids_json,:audit_ids_json,:status,:verification_json,:created_at,:updated_at)""",
+        :expected_steps_json,:tool_call_ids_json,:evaluation_ids_json,:artifact_ids_json,:audit_ids_json,:plan_hash,:verification_result_hash,:status,:verification_json,:created_at,:updated_at)""",
         row,
     )
     audit(conn, "agent", row["agent_id"], "agent_gateway.plan_evidence_manifest_create", "plan_evidence_manifests", row["manifest_id"], None, row, {"raw_omitted": True})
@@ -5042,6 +5238,238 @@ def review_evaluation_case_run(conn: sqlite3.Connection, case_run_id: str, body,
         "token_omitted": True,
         "live_execution_performed": False,
     }, 200
+
+
+def evaluation_case_run_remediation_task(conn: sqlite3.Connection, case_run_id: str, body, headers=None) -> tuple[dict, int]:
+    confirm_create = bool(body.get("confirm_create"))
+    actor_id = redact_text(body.get("actor_id") or body.get("requester_id") or "usr_founder", 120)
+    workspace_id = normalize_workspace_id((headers or {}).get("X-AgentOps-Workspace-Id") or body.get("workspace_id") or "local-demo")
+    row = conn.execute(
+        """SELECT ecr.*, c.title AS case_title, c.case_type, c.task_id AS source_task_id,
+                  c.run_id AS source_case_run_id, c.agent_id AS case_agent_id, c.source_type,
+                  c.source_ref, c.input_summary, c.expected_output_summary, c.failure_mode
+           FROM evaluation_case_runs ecr
+           JOIN evaluation_case_candidates c ON c.case_id=ecr.case_id
+           WHERE ecr.case_run_id=?""",
+        (case_run_id,),
+    ).fetchone()
+    if not row:
+        return {"error": "not_found", "message": f"evaluation case run {case_run_id} not found", "token_omitted": True}, 404
+    if row["workspace_id"] != workspace_id:
+        return workspace_forbidden("evaluation_case_runs", case_run_id, workspace_id, row["workspace_id"])
+    if row["pass_fail"] != "fail":
+        return {
+            "error": "not_failed",
+            "message": "Only failed evaluation case runs can be converted into remediation task candidates.",
+            "case_run": evaluation_case_run_public(row),
+            "token_omitted": True,
+        }, 409
+
+    try:
+        checks = json.loads(row["checks_json"] or "{}")
+    except Exception:
+        checks = {}
+    failed_checks = [str(key) for key, value in checks.items() if value is False]
+    owner_candidates = [
+        body.get("owner_agent_id"),
+        row["case_agent_id"],
+        row["created_by_agent_id"],
+        "agt_builder",
+        "agt_research",
+    ]
+    owner_agent_id = None
+    for candidate in owner_candidates:
+        candidate = str(candidate or "").strip()
+        if candidate and conn.execute("SELECT 1 FROM agents WHERE agent_id=?", (candidate,)).fetchone():
+            owner_agent_id = candidate
+            break
+    task_id = body.get("task_id") or stable_id("tsk_evalcase_fix", case_run_id)
+    title = redact_text(body.get("title") or f"Fix failed benchmark: {row['case_title'] or row['case_id']}", 160)
+    description_parts = [
+        f"Failed evaluation case run: {case_run_id}",
+        f"Case: {row['case_id']} ({row['case_type']})",
+        f"Score: {row['score']} via {row['runner_type']}",
+    ]
+    if row["source_task_id"]:
+        description_parts.append(f"Source task: {row['source_task_id']}")
+    if failed_checks:
+        description_parts.append(f"Failed checks: {', '.join(failed_checks[:8])}")
+    if row["failure_mode"]:
+        description_parts.append(f"Failure mode: {row['failure_mode']}")
+    if row["expected_output_summary"]:
+        description_parts.append(f"Expected: {row['expected_output_summary']}")
+    project_id = commander_safe_text(body.get("project_id") or stable_id("proj_evalcase_remediation", workspace_id, row["case_id"]), 80)
+    plan_id = commander_safe_text(body.get("plan_id") or stable_id("cmdplan_evalcase_remediation", case_run_id), 80)
+    lane_id = commander_safe_text(body.get("lane_id") or "benchmark-remediation", 80)
+    goal = commander_safe_text(
+        body.get("goal")
+        or f"Remediate failed evaluation case {row['case_id']} and restore the local benchmark gate.",
+        500,
+    )
+    scope = commander_safe_text(body.get("scope") or ". ".join(description_parts), 360)
+    avoid_scope = commander_safe_text(
+        body.get("avoid_scope")
+        or "Do not auto-approve the failed benchmark, call live adapters, expose raw prompts, or broaden beyond the failed gate without a new plan.",
+        360,
+    )
+    verification_commands = [
+        f"agentops eval run-cases --case-id {row['case_id']} --confirm-run",
+        f"agentops eval case-runs --case-id {row['case_id']} --limit 5",
+        "agentops review queue --limit 12",
+    ]
+    description = commander_work_package_description(
+        goal,
+        {
+            "lane_id": lane_id,
+            "scope": scope,
+            "avoid_scope": avoid_scope,
+            "verification": verification_commands,
+        },
+        [row["source_task_id"]] if row["source_task_id"] else [],
+        project_id,
+        plan_id,
+    )
+    if body.get("description"):
+        description = redact_text(f"{description} Operator note: {body.get('description')}", 1200)
+    acceptance = redact_text(
+        body.get("acceptance_criteria")
+        or (
+            f"Investigate evaluation case run {case_run_id}, implement or document the fix, "
+            f"rerun `agentops eval run-cases --case-id {row['case_id']} --confirm-run`, "
+            "and attach ledger evidence before closing."
+        ),
+        600,
+    )
+    risk_level = coerce_choice(body.get("risk_level") or ("critical" if len(failed_checks) >= 3 else "high"), VALID_RISK_LEVELS, "high")
+    priority = coerce_choice(body.get("priority") or ("critical" if risk_level == "critical" else "high"), VALID_PRIORITIES, "high")
+    task_body = {
+        "task_id": task_id,
+        "workspace_id": workspace_id,
+        "title": title,
+        "description": description,
+        "requester_id": actor_id,
+        "owner_agent_id": owner_agent_id,
+        "collaborator_agent_ids": ["agt_qa"] if owner_agent_id != "agt_qa" and conn.execute("SELECT 1 FROM agents WHERE agent_id='agt_qa'").fetchone() else [],
+        "status": "planned",
+        "priority": priority,
+        "risk_level": risk_level,
+        "budget_limit_usd": float(body.get("budget_limit_usd") or 3.0),
+        "acceptance_criteria": acceptance,
+        "source": "evaluation_case_run_remediation",
+    }
+    existing = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+    draft = {
+        "task_id": task_id,
+        "workspace_id": workspace_id,
+        "title": title,
+        "description": description,
+        "owner_agent_id": owner_agent_id,
+        "collaborator_agent_ids": task_body["collaborator_agent_ids"],
+        "status": "planned",
+        "priority": priority,
+        "risk_level": risk_level,
+        "acceptance_criteria": acceptance,
+        "source_case_run_id": case_run_id,
+        "case_id": row["case_id"],
+        "project_id": project_id,
+        "plan_id": plan_id,
+        "lane_id": lane_id,
+        "commander_work_package": True,
+        "source_task_id": row["source_task_id"],
+        "source_run_id": row["run_id"],
+        "failed_checks": failed_checks,
+        "verification_commands": verification_commands,
+    }
+    safety = {
+        "read_only": not confirm_create or bool(existing),
+        "ledger_mutated": False,
+        "live_execution_performed": False,
+        "raw_prompt_omitted": True,
+        "raw_response_omitted": True,
+        "token_omitted": True,
+    }
+    if not confirm_create:
+        return {
+            "provider": "agentops-evaluation",
+            "operation": "evaluation_case_run_remediation_task",
+            "status": "preview",
+            "created": False,
+            "workspace_id": workspace_id,
+            "task": draft,
+            "case_run": evaluation_case_run_public(row),
+            "next_actions": [
+                f"Run `agentops eval remediate-case-run --case-run-id {case_run_id} --confirm-create` to create the task.",
+                f"Then dispatch it with `agentops commander dispatch-package --task-id {task_id} --adapter mock`.",
+                f"After remediation, run `agentops eval run-cases --case-id {row['case_id']} --confirm-run`.",
+            ],
+            "safety": safety,
+            "token_omitted": True,
+        }, 200
+    if existing:
+        return {
+            "provider": "agentops-evaluation",
+            "operation": "evaluation_case_run_remediation_task",
+            "status": "already_exists",
+            "created": False,
+            "workspace_id": workspace_id,
+            "task_id": task_id,
+            "task": dict(existing),
+            "project_id": project_id,
+            "plan_id": plan_id,
+            "commander_work_package": (existing["description"] or "").startswith("Commander project:"),
+            "case_run": evaluation_case_run_public(row),
+            "safety": safety,
+            "token_omitted": True,
+        }, 200
+    payload, status = create_task_api(conn, task_body)
+    if status >= 400:
+        return payload, status
+    created_task = payload.get("task") or draft
+    runtime_event(
+        conn,
+        "rtc_agent_gateway_local",
+        "evaluation_case_run.remediation_task",
+        "created",
+        run_id=row["run_id"],
+        task_id=task_id,
+        agent_id=owner_agent_id,
+        input_summary=f"Failed evaluation case run {case_run_id}",
+        output_summary=f"Remediation task created for case {row['case_id']}.",
+        raw_payload_hash=stable_hash({"case_run_id": case_run_id, "task_id": task_id, "failed_checks": failed_checks}),
+    )
+    audit(conn, "user", actor_id, "evaluation_case_run.remediation_task_create", "tasks", task_id, None, created_task, {
+        "case_run_id": case_run_id,
+        "case_id": row["case_id"],
+        "project_id": project_id,
+        "plan_id": plan_id,
+        "lane_id": lane_id,
+        "source_task_id": row["source_task_id"],
+        "source_run_id": row["run_id"],
+        "raw_content_omitted": True,
+        "token_omitted": True,
+    })
+    safety["read_only"] = False
+    safety["ledger_mutated"] = True
+    return {
+        "provider": "agentops-evaluation",
+        "operation": "evaluation_case_run_remediation_task",
+        "status": "created",
+        "created": True,
+        "workspace_id": workspace_id,
+        "project_id": project_id,
+        "plan_id": plan_id,
+        "commander_work_package": True,
+        "task_id": task_id,
+        "task": created_task,
+        "case_run": evaluation_case_run_public(row),
+        "next_actions": [
+            f"Read the work package: agentops commander packages --project-id {project_id} --limit 5",
+            f"Dispatch through Agent Gateway: agentops commander dispatch-package --task-id {task_id} --adapter mock",
+            f"After remediation, run `agentops eval run-cases --case-id {row['case_id']} --confirm-run`.",
+        ],
+        "safety": safety,
+        "token_omitted": True,
+    }, 201
 
 
 def propose_evaluation_case_candidate(conn: sqlite3.Connection, body, headers=None) -> tuple[dict, int]:
@@ -7912,8 +8340,9 @@ def human_review_queue(conn, limit: int = 20) -> dict:
                 "approvals_url": "/workspace/approvals",
             },
             "next_action": next_action,
-            "cli_action": f"agentops approval approve --approval-id {approval_id}",
+            "cli_action": f"agentops approval inspect --approval-id {approval_id}",
             "alternate_cli_action": f"agentops approval reject --approval-id {approval_id}",
+            "approve_cli_action": f"agentops approval approve --approval-id {approval_id}",
             "priority": 95 if approval_kind == "commander_synthesis" else 90,
         })
 
@@ -8023,8 +8452,8 @@ def human_review_queue(conn, limit: int = 20) -> dict:
                 "run_url": f"/admin/runs/{row.get('run_id')}" if row.get("run_id") else None,
                 "evaluation_room_url": "/admin/evaluations",
             },
-            "next_action": "Investigate this failed benchmark before promoting the related workflow, memory, or customer delivery.",
-            "cli_action": f"agentops eval review-case-run --case-run-id {case_run_id} --status acknowledged --note 'Investigated and accepted for this local run.'",
+            "next_action": "Preview a remediation task, then confirm creation only after an operator accepts the work package.",
+            "cli_action": f"agentops eval remediate-case-run --case-run-id {case_run_id}",
             "alternate_cli_action": f"agentops eval run-cases --case-id {case_id}",
             "priority": 92,
         })
@@ -8060,11 +8489,15 @@ def human_review_queue(conn, limit: int = 20) -> dict:
             },
             "next_action": next_action,
             "cli_action": (
-                f"agentops approval approve --approval-id {pending_ids[0]}"
+                f"agentops approval inspect --approval-id {pending_ids[0]}"
                 if pending_ids else f"agentops workflow delivery-board --limit {min(limit, 20)}"
             ),
             "alternate_cli_action": (
                 f"agentops approval reject --approval-id {pending_ids[0]}"
+                if pending_ids else None
+            ),
+            "approve_cli_action": (
+                f"agentops approval approve --approval-id {pending_ids[0]}"
                 if pending_ids else None
             ),
             "priority": 84 if row.get("status") == "waiting_approval" else 80 if row.get("status") == "needs_attention" else 60,
@@ -10900,7 +11333,7 @@ def commander_synthesis_lifecycle(conn: sqlite3.Connection, limit: int = 5) -> d
             next_action = "Revise or rerun the work packages before promoting."
         elif latest_approval.get("decision") == "pending":
             status = "review_pending"
-            next_action = f"agentops approval approve --approval-id {latest_approval.get('approval_id')}"
+            next_action = f"agentops approval inspect --approval-id {latest_approval.get('approval_id')}"
         else:
             status = "needs_review_gate"
             next_action = "Recreate synthesis with --confirm-create to generate a review gate."
@@ -11648,7 +12081,7 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             priority = 89
         elif status == "waiting_approval":
             pending_ids = delivery.get("pending_approval_ids") or []
-            command = f"agentops approval approve --approval-id {pending_ids[0]}" if pending_ids else "agentops workflow delivery-board --limit 12"
+            command = f"agentops approval inspect --approval-id {pending_ids[0]}" if pending_ids else "agentops workflow delivery-board --limit 12"
             severity = "attention"
             priority = 82
         else:
@@ -12783,6 +13216,14 @@ class Handler(BaseHTTPRequestHandler):
                 payload, status = agent_gateway_list_approvals(conn, query, self.headers, auth_ctx)
                 conn.commit()
                 return self.send_json(payload, status)
+            if path.startswith("/api/agent-gateway/approvals/"):
+                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                if auth_error:
+                    return self.send_json(auth_error, agent_gateway_error_status(auth_error))
+                approval_id = path.split("/")[-1]
+                payload, status = agent_gateway_get_approval(conn, approval_id, self.headers, auth_ctx)
+                conn.rollback()
+                return self.send_json(payload, status)
             if path == "/api/agent-gateway/memories":
                 auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
                 if auth_error:
@@ -13245,6 +13686,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(payload, status)
             if path == "/api/evaluation-cases/run":
                 payload, status = run_evaluation_cases(conn, body, self.headers)
+                conn.commit()
+                return self.send_json(payload, status)
+            if path.startswith("/api/evaluation-case-runs/") and path.endswith("/remediation-task"):
+                case_run_id = path.split("/")[-2]
+                payload, status = evaluation_case_run_remediation_task(conn, case_run_id, body, self.headers)
                 conn.commit()
                 return self.send_json(payload, status)
             if path.startswith("/api/evaluation-case-runs/") and path.endswith("/review"):

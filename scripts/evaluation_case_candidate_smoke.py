@@ -105,6 +105,37 @@ def db_counts(conn: sqlite3.Connection, case_id: str) -> dict:
     }
 
 
+def remediation_task_counts(conn: sqlite3.Connection, task_id: str) -> dict:
+    return {
+        "tasks": int(conn.execute("SELECT COUNT(*) FROM tasks WHERE task_id=?", (task_id,)).fetchone()[0] or 0),
+        "runs": int(conn.execute("SELECT COUNT(*) FROM runs WHERE task_id=?", (task_id,)).fetchone()[0] or 0),
+        "tool_calls": int(conn.execute("SELECT COUNT(*) FROM tool_calls WHERE run_id IN (SELECT run_id FROM runs WHERE task_id=?)", (task_id,)).fetchone()[0] or 0),
+        "evaluations": int(conn.execute("SELECT COUNT(*) FROM evaluations WHERE task_id=?", (task_id,)).fetchone()[0] or 0),
+        "artifacts": int(conn.execute("SELECT COUNT(*) FROM artifacts WHERE task_id=?", (task_id,)).fetchone()[0] or 0),
+        "task_audit_logs": int(conn.execute(
+            "SELECT COUNT(*) FROM audit_logs WHERE entity_type='tasks' AND entity_id=?",
+            (task_id,),
+        ).fetchone()[0] or 0),
+        "remediation_audit_logs": int(conn.execute(
+            "SELECT COUNT(*) FROM audit_logs WHERE entity_type='tasks' AND entity_id=? AND action='evaluation_case_run.remediation_task_create'",
+            (task_id,),
+        ).fetchone()[0] or 0),
+        "remediation_runtime_events": int(conn.execute(
+            "SELECT COUNT(*) FROM runtime_events WHERE task_id=? AND event_type='evaluation_case_run.remediation_task'",
+            (task_id,),
+        ).fetchone()[0] or 0),
+    }
+
+
+def synthesis_artifact_counts(conn: sqlite3.Connection, artifact_id: str) -> dict:
+    return {
+        "artifacts": int(conn.execute("SELECT COUNT(*) FROM artifacts WHERE artifact_id=?", (artifact_id,)).fetchone()[0] or 0),
+        "approvals": int(conn.execute("SELECT COUNT(*) FROM approvals WHERE approval_id LIKE 'ap_cmd_synthesis_%' AND reason LIKE ?", (f"%{artifact_id}%",)).fetchone()[0] or 0),
+        "runtime_events": int(conn.execute("SELECT COUNT(*) FROM runtime_events WHERE event_type LIKE 'commander.work_package_synthesis%' AND raw_payload_hash IS NOT NULL").fetchone()[0] or 0),
+        "audit_logs": int(conn.execute("SELECT COUNT(*) FROM audit_logs WHERE action LIKE 'commander.work_package_synthesis%' AND metadata_json LIKE ?", (f"%{artifact_id}%",)).fetchone()[0] or 0),
+    }
+
+
 def source_run(conn: sqlite3.Connection) -> dict:
     row = conn.execute(
         """SELECT r.run_id, r.task_id, r.agent_id, e.evaluation_id
@@ -253,7 +284,169 @@ def main() -> int:
         transcripts.append(json.dumps(queue_payload, ensure_ascii=False))
         require(queue_status == 200, f"review queue failed: {queue_status} {queue_payload}")
         require((queue_payload.get("summary") or {}).get("failed_evaluation_case_runs", 0) >= 1, f"failed benchmark summary missing: {queue_payload}")
-        require(any(item.get("item_type") == "evaluation_case_run" and item.get("case_id") == fail_case_id for item in queue_payload.get("review_items", [])), f"failed benchmark item missing from review queue: {queue_payload}")
+        failed_queue_items = [
+            item for item in queue_payload.get("review_items", [])
+            if item.get("item_type") == "evaluation_case_run" and item.get("case_id") == fail_case_id
+        ]
+        require(failed_queue_items, f"failed benchmark item missing from review queue: {queue_payload}")
+        require(
+            "eval remediate-case-run" in (failed_queue_items[0].get("cli_action") or ""),
+            f"failed benchmark item did not point at remediation preview: {failed_queue_items[0]}",
+        )
+        remediation_preview = run_cli([
+            "eval",
+            "remediate-case-run",
+            "--case-run-id",
+            fail_case_run_id,
+        ])
+        transcripts.extend([remediation_preview.stdout, remediation_preview.stderr])
+        remediation_preview_payload = load_json(remediation_preview)
+        require(remediation_preview.returncode == 0, f"remediation preview failed: {remediation_preview.stderr or remediation_preview.stdout}")
+        require(remediation_preview_payload.get("status") == "preview", f"remediation preview status wrong: {remediation_preview_payload}")
+        require(remediation_preview_payload.get("safety", {}).get("ledger_mutated") is False, f"remediation preview mutated ledger: {remediation_preview_payload}")
+        remediation_task_id = remediation_preview_payload.get("task", {}).get("task_id")
+        require(bool(remediation_task_id), f"remediation preview missing task id: {remediation_preview_payload}")
+        conn = sqlite3.connect(DEFAULT_DB)
+        try:
+            require(remediation_task_counts(conn, remediation_task_id)["tasks"] == 0, "remediation preview created a task")
+        finally:
+            conn.close()
+
+        remediation_created = run_cli([
+            "eval",
+            "remediate-case-run",
+            "--case-run-id",
+            fail_case_run_id,
+            "--confirm-create",
+        ])
+        transcripts.extend([remediation_created.stdout, remediation_created.stderr])
+        remediation_created_payload = load_json(remediation_created)
+        require(remediation_created.returncode == 0, f"remediation create failed: {remediation_created.stderr or remediation_created.stdout}")
+        require(remediation_created_payload.get("status") == "created", f"remediation create status wrong: {remediation_created_payload}")
+        require(remediation_created_payload.get("created") is True, f"remediation create flag wrong: {remediation_created_payload}")
+        require(remediation_created_payload.get("task_id") == remediation_task_id, f"remediation task id changed: {remediation_created_payload}")
+        require(remediation_created_payload.get("commander_work_package") is True, f"remediation did not create commander work package: {remediation_created_payload}")
+        require(remediation_created_payload.get("safety", {}).get("ledger_mutated") is True, f"remediation create did not report ledger mutation: {remediation_created_payload}")
+        remediation_project_id = remediation_created_payload.get("project_id")
+        require(bool(remediation_project_id), f"remediation missing project id: {remediation_created_payload}")
+        conn = sqlite3.connect(DEFAULT_DB)
+        try:
+            remediation_counts = remediation_task_counts(conn, remediation_task_id)
+            require(remediation_counts["tasks"] == 1, f"remediation task missing: {remediation_counts}")
+            require(remediation_counts["task_audit_logs"] >= 2, f"remediation task audit missing: {remediation_counts}")
+            require(remediation_counts["remediation_audit_logs"] >= 1, f"remediation audit missing: {remediation_counts}")
+            require(remediation_counts["remediation_runtime_events"] >= 1, f"remediation runtime event missing: {remediation_counts}")
+        finally:
+            conn.close()
+
+        commander_readback = run_cli([
+            "commander",
+            "packages",
+            "--project-id",
+            remediation_project_id,
+            "--limit",
+            "5",
+        ])
+        transcripts.extend([commander_readback.stdout, commander_readback.stderr])
+        commander_readback_payload = load_json(commander_readback)
+        require(commander_readback.returncode == 0, f"commander readback failed: {commander_readback.stderr or commander_readback.stdout}")
+        require(commander_readback_payload.get("operation") == "work_packages_readback", f"commander readback operation wrong: {commander_readback_payload}")
+        commander_packages = commander_readback_payload.get("work_packages") or []
+        require(any(item.get("task_id") == remediation_task_id for item in commander_packages), f"remediation task missing from commander packages: {commander_readback_payload}")
+        remediation_package = next(item for item in commander_packages if item.get("task_id") == remediation_task_id)
+        require(remediation_package.get("package_status") == "planned", f"remediation package status wrong: {remediation_package}")
+        require("commander dispatch-package" in (remediation_package.get("recommended_action") or ""), f"remediation package next action wrong: {remediation_package}")
+        require(commander_readback_payload.get("safety", {}).get("ledger_mutated") is False, f"commander readback mutated ledger: {commander_readback_payload}")
+
+        dispatch = run_cli([
+            "commander",
+            "dispatch-package",
+            "--task-id",
+            remediation_task_id,
+            "--adapter",
+            "mock",
+        ], timeout=220)
+        transcripts.extend([dispatch.stdout, dispatch.stderr])
+        dispatch_payload = load_json(dispatch)
+        require(dispatch.returncode == 0, f"remediation dispatch failed: {dispatch.stderr or dispatch.stdout}")
+        require(dispatch_payload.get("operation") == "work_package_dispatch", f"remediation dispatch operation wrong: {dispatch_payload}")
+        require(dispatch_payload.get("ok") is True, f"remediation dispatch not ok: {dispatch_payload}")
+        require(dispatch_payload.get("run_id"), f"remediation dispatch missing run id: {dispatch_payload}")
+        require(dispatch_payload.get("safety", {}).get("run_created") is True, f"remediation dispatch did not create run: {dispatch_payload}")
+        require(dispatch_payload.get("live_execution_performed") is False, f"remediation dispatch marked live execution: {dispatch_payload}")
+        conn = sqlite3.connect(DEFAULT_DB)
+        try:
+            remediation_after_dispatch = remediation_task_counts(conn, remediation_task_id)
+            require(remediation_after_dispatch["runs"] >= 1, f"remediation dispatch missing run evidence: {remediation_after_dispatch}")
+            require(remediation_after_dispatch["tool_calls"] >= 1, f"remediation dispatch missing tool evidence: {remediation_after_dispatch}")
+            require(remediation_after_dispatch["evaluations"] >= 1, f"remediation dispatch missing evaluation evidence: {remediation_after_dispatch}")
+            require(remediation_after_dispatch["artifacts"] >= 1, f"remediation dispatch missing artifact evidence: {remediation_after_dispatch}")
+        finally:
+            conn.close()
+
+        commander_ready = run_cli([
+            "commander",
+            "packages",
+            "--project-id",
+            remediation_project_id,
+            "--status",
+            "ready_for_review",
+            "--limit",
+            "5",
+        ])
+        transcripts.extend([commander_ready.stdout, commander_ready.stderr])
+        commander_ready_payload = load_json(commander_ready)
+        require(commander_ready.returncode == 0, f"commander ready readback failed: {commander_ready.stderr or commander_ready.stdout}")
+        ready_packages = commander_ready_payload.get("work_packages") or []
+        require(any(item.get("task_id") == remediation_task_id for item in ready_packages), f"remediation package not ready after dispatch: {commander_ready_payload}")
+
+        synthesis_preview = run_cli([
+            "commander",
+            "synthesize",
+            "--project-id",
+            remediation_project_id,
+            "--status",
+            "ready_for_review",
+            "--limit",
+            "5",
+        ])
+        transcripts.extend([synthesis_preview.stdout, synthesis_preview.stderr])
+        synthesis_preview_payload = load_json(synthesis_preview)
+        require(synthesis_preview.returncode == 0, f"synthesis preview failed: {synthesis_preview.stderr or synthesis_preview.stdout}")
+        require(synthesis_preview_payload.get("status") == "preview", f"synthesis preview status wrong: {synthesis_preview_payload}")
+        require(synthesis_preview_payload.get("package_count") == 1, f"synthesis preview package count wrong: {synthesis_preview_payload}")
+        require(synthesis_preview_payload.get("safety", {}).get("ledger_mutated") is False, f"synthesis preview mutated ledger: {synthesis_preview_payload}")
+
+        synthesis_created = run_cli([
+            "commander",
+            "synthesize",
+            "--project-id",
+            remediation_project_id,
+            "--status",
+            "ready_for_review",
+            "--limit",
+            "5",
+            "--confirm-create",
+        ])
+        transcripts.extend([synthesis_created.stdout, synthesis_created.stderr])
+        synthesis_created_payload = load_json(synthesis_created)
+        require(synthesis_created.returncode == 0, f"synthesis create failed: {synthesis_created.stderr or synthesis_created.stdout}")
+        require(synthesis_created_payload.get("status") == "created", f"synthesis create status wrong: {synthesis_created_payload}")
+        synthesis_artifact_id = synthesis_created_payload.get("artifact_id") or ""
+        require(synthesis_artifact_id.startswith("art_cmd_synthesis_"), f"synthesis artifact id wrong: {synthesis_created_payload}")
+        require((synthesis_created_payload.get("approval_id") or "").startswith("ap_cmd_synthesis_"), f"synthesis approval id wrong: {synthesis_created_payload}")
+        require(synthesis_created_payload.get("safety", {}).get("artifact_created") is True, f"synthesis artifact safety wrong: {synthesis_created_payload}")
+        require(synthesis_created_payload.get("live_execution_performed") is False, f"synthesis marked live execution: {synthesis_created_payload}")
+        conn = sqlite3.connect(DEFAULT_DB)
+        try:
+            synthesis_counts = synthesis_artifact_counts(conn, synthesis_artifact_id)
+            require(synthesis_counts["artifacts"] == 1, f"synthesis artifact missing: {synthesis_counts}")
+            require(synthesis_counts["approvals"] == 1, f"synthesis approval missing: {synthesis_counts}")
+            require(synthesis_counts["runtime_events"] >= 1, f"synthesis runtime event missing: {synthesis_counts}")
+            require(synthesis_counts["audit_logs"] >= 1, f"synthesis audit missing: {synthesis_counts}")
+        finally:
+            conn.close()
+
         acknowledged = run_cli([
             "eval",
             "review-case-run",

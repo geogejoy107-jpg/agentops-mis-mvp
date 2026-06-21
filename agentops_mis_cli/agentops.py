@@ -718,6 +718,10 @@ def cmd_approval_list(args, client: AgentOpsClient) -> dict:
     }
 
 
+def cmd_approval_inspect(args, client: AgentOpsClient) -> dict:
+    return client.get(f"/api/agent-gateway/approvals/{args.approval_id}")
+
+
 def cmd_approval_decide(args, client: AgentOpsClient) -> dict:
     action = "approve" if args.handler == "approval_approve" else "reject"
     response = client.post(f"/api/approvals/{args.approval_id}/{action}", {})
@@ -839,6 +843,23 @@ def cmd_eval_review_case_run(args, client: AgentOpsClient) -> dict:
         "review_status": args.status,
         "review_note": args.note,
         "reviewed_by_user_id": args.actor_id,
+    })
+
+
+def cmd_eval_remediate_case_run(args, client: AgentOpsClient) -> dict:
+    return client.post(f"/api/evaluation-case-runs/{args.case_run_id}/remediation-task", {
+        "workspace_id": client.workspace_id,
+        "task_id": args.task_id,
+        "title": args.title,
+        "project_id": args.project_id,
+        "plan_id": args.plan_id,
+        "lane_id": args.lane_id,
+        "owner_agent_id": args.owner_agent_id,
+        "priority": args.priority,
+        "risk_level": args.risk_level,
+        "budget_limit_usd": args.budget_limit_usd,
+        "actor_id": args.actor_id,
+        "confirm_create": bool(args.confirm_create),
     })
 
 
@@ -1714,7 +1735,7 @@ def build_parser() -> argparse.ArgumentParser:
     agent_plan_create.add_argument("--execution-steps-json", default=None)
     agent_plan_create.add_argument("--verification-plan", default="")
     agent_plan_create.add_argument("--rollback-plan", default="")
-    agent_plan_create.add_argument("--status", default="submitted", choices=["draft", "submitted", "approved", "rejected", "superseded"])
+    agent_plan_create.add_argument("--status", default="submitted", choices=["draft", "submitted"])
     agent_plan_create.set_defaults(handler="agent_plan_create")
     agent_plan_list = agent_plan_sub.add_parser("list", help="List submitted agent plans.")
     agent_plan_list.add_argument("--task-id", default=None)
@@ -1768,6 +1789,9 @@ def build_parser() -> argparse.ArgumentParser:
     approval_list.add_argument("--run-id", default=None)
     approval_list.add_argument("--limit", type=int, default=25)
     approval_list.set_defaults(handler="approval_list")
+    approval_inspect = approval_sub.add_parser("inspect", help="Inspect approval evidence and risk before deciding.")
+    approval_inspect.add_argument("--approval-id", required=True)
+    approval_inspect.set_defaults(handler="approval_inspect")
     approval_approve = approval_sub.add_parser("approve", help="Approve an approval gate and sync linked ledger rows.")
     approval_approve.add_argument("--approval-id", required=True)
     approval_approve.set_defaults(handler="approval_approve")
@@ -1847,6 +1871,20 @@ def build_parser() -> argparse.ArgumentParser:
     review_case_run.add_argument("--note", default="Reviewed from agentops CLI.")
     review_case_run.add_argument("--actor-id", default="usr_operator")
     review_case_run.set_defaults(handler="eval_review_case_run")
+    remediate_case_run = eval_sub.add_parser("remediate-case-run", help="Preview or create a normal MIS task from a failed evaluation case run.")
+    remediate_case_run.add_argument("--case-run-id", required=True)
+    remediate_case_run.add_argument("--task-id", default=None)
+    remediate_case_run.add_argument("--title", default=None)
+    remediate_case_run.add_argument("--project-id", default=None)
+    remediate_case_run.add_argument("--plan-id", default=None)
+    remediate_case_run.add_argument("--lane-id", default=None)
+    remediate_case_run.add_argument("--owner-agent-id", default=None)
+    remediate_case_run.add_argument("--priority", default=None, choices=["low", "medium", "high", "critical"])
+    remediate_case_run.add_argument("--risk-level", default=None, choices=["low", "medium", "high", "critical"])
+    remediate_case_run.add_argument("--budget-limit-usd", type=float, default=None)
+    remediate_case_run.add_argument("--actor-id", default="usr_founder")
+    remediate_case_run.add_argument("--confirm-create", action="store_true")
+    remediate_case_run.set_defaults(handler="eval_remediate_case_run")
     propose_case = eval_sub.add_parser("propose-case", help="Preview or create an evaluation case candidate from run/eval/artifact evidence.")
     propose_case.add_argument("--case-id", default=None)
     propose_case.add_argument("--source-type", default=None, choices=["evaluation", "customer_delivery", "run", "artifact", "manual", "commander_synthesis"])
@@ -2190,6 +2228,7 @@ HANDLERS = {
     "plan_evidence_get": cmd_plan_evidence_get,
     "plan_evidence_verify": cmd_plan_evidence_verify,
     "approval_list": cmd_approval_list,
+    "approval_inspect": cmd_approval_inspect,
     "approval_approve": cmd_approval_decide,
     "approval_reject": cmd_approval_decide,
     "approval_request": cmd_approval_request,
@@ -2201,6 +2240,7 @@ HANDLERS = {
     "eval_cases": cmd_eval_cases,
     "eval_case_runs": cmd_eval_case_runs,
     "eval_review_case_run": cmd_eval_review_case_run,
+    "eval_remediate_case_run": cmd_eval_remediate_case_run,
     "eval_propose_case": cmd_eval_propose_case,
     "eval_approve_case": cmd_eval_review_case,
     "eval_reject_case": cmd_eval_review_case,

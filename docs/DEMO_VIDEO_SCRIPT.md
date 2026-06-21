@@ -59,6 +59,7 @@ Recording steps:
 ./scripts/agentops review queue --limit 12
 ./scripts/agentops workflow delivery-board --limit 10
 ./scripts/agentops approval list --decision pending --limit 10
+./scripts/agentops approval inspect --approval-id <approval_id>
 ./scripts/agentops approval approve --approval-id <approval_id>
 ./scripts/agentops memory list --status candidate --limit 10
 ./scripts/agentops memory approve --memory-id <memory_id>
@@ -72,7 +73,7 @@ Then return to:
 
 - `/workspace/agents`: Human Review Queue / 人工审核队列 shows pending approvals, memory candidates, customer deliveries and recommended CLI actions in one operator queue. Approval and memory items can be approved/rejected inline; those decisions intentionally write audit/ledger evidence.
 - `/workspace/reports`: customer delivery board and report links.
-- `/workspace/approvals`: approval gate, or show the same decision through `agentops approval approve/reject`.
+- `/workspace/approvals`: approval gate, or show the same evidence-first decision flow through `agentops approval inspect` followed by explicit `approve/reject`.
 - `/memory`: memory candidate review, or show the same decision through `agentops memory approve/reject`.
 - `/runs`: latest worker run.
 - `/evaluations`: rule result.

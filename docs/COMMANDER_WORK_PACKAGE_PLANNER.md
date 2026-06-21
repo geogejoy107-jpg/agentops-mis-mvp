@@ -13,6 +13,7 @@ It is the product version of the current development workflow: a commander decom
 - The planner does not execute Hermes, OpenClaw, Dify, Notion, shell, or browser actions.
 - Work-package dispatch is explicit and targeted by `task_id`; it runs through the Agent Gateway worker loop, not an ad hoc backend shortcut.
 - Mock dispatch is safe for local demos. Hermes/OpenClaw dispatch requires explicit `confirm_run:true` / `--confirm-run`.
+- Failed benchmark remediation can enter the same loop: `agentops eval remediate-case-run --case-run-id ... --confirm-create` creates a normal task whose description follows the Commander work-package contract.
 - Stored text is redacted and bounded; raw prompts, credentials, tokens, raw model responses, and private transcripts are not stored.
 - Confirmed planning writes normal MIS task rows plus runtime/audit evidence.
 
@@ -50,6 +51,20 @@ curl -s "http://127.0.0.1:8787/api/commander/work-packages?project_id=proj_x&lim
 The readback endpoint is read-only. It reconstructs work-package state from
 normal MIS `tasks`, links the latest run, counts evidence rows, and returns a
 recommended next action for each lane.
+
+Failed evaluation-case runs can be converted into one-package Commander
+remediation plans:
+
+```bash
+curl -s -X POST http://127.0.0.1:8787/api/evaluation-case-runs/ecr_123/remediation-task \
+  -H "Content-Type: application/json" \
+  -d '{"confirm_create":true}' | jq .
+
+curl -s "http://127.0.0.1:8787/api/commander/work-packages?project_id=proj_evalcase_remediation_x&limit=5" | jq .
+```
+
+This conversion creates a planned work package only after confirmation. It
+does not rerun the benchmark, approve the failure, or execute Hermes/OpenClaw.
 
 Dispatch one persisted package through the mock worker:
 
@@ -151,6 +166,14 @@ Read persisted packages:
 ./scripts/agentops commander packages --project-id proj_x --limit 25
 ```
 
+Create a Commander-compatible remediation package from a failed benchmark:
+
+```bash
+./scripts/agentops eval remediate-case-run --case-run-id ecr_123
+./scripts/agentops eval remediate-case-run --case-run-id ecr_123 --confirm-create
+./scripts/agentops commander packages --project-id proj_evalcase_remediation_x --limit 5
+```
+
 Dispatch a package:
 
 ```bash
@@ -199,6 +222,7 @@ Then review the generated gate:
 
 ```bash
 ./scripts/agentops review queue --limit 10
+./scripts/agentops approval inspect --approval-id ap_cmd_synthesis_x
 ./scripts/agentops approval approve --approval-id ap_cmd_synthesis_x
 ```
 

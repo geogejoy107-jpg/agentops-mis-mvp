@@ -157,6 +157,12 @@ def validate_queue(payload: dict, label: str, failures: list[str]) -> None:
         require(bool(item.get("item_id")), f"{label} item id missing: {item}", failures)
         require(bool(item.get("next_action")), f"{label} next action missing: {item}", failures)
         require(bool(item.get("cli_action")), f"{label} cli action missing: {item}", failures)
+        if item.get("item_type") in {"approval", "customer_delivery"}:
+            require(
+                not str(item.get("cli_action") or "").startswith("agentops approval approve --approval-id"),
+                f"{label} approval item should inspect before approve: {item}",
+                failures,
+            )
         require(isinstance(item.get("priority"), int), f"{label} item priority missing: {item}", failures)
 
 

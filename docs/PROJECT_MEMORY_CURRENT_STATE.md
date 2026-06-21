@@ -1,0 +1,259 @@
+# AgentOps MIS 当前项目记忆与事实基线
+
+> 状态日期：2026-06-21  
+> 审计基准：`8d1827e00629bdca4779794121ca4a31dfa3f1e1`  
+> 开发主线：`codex/agent-gateway-kb-demo`  
+> 相对 `main`：ahead 109 / behind 0  
+> 审计分支：`audit/v1-5-agent-gateway-hardening`
+
+## 1. 基准更新
+
+旧 `main` 只代表早期 Python + SQLite + Mock Runtime 原型，已经不能代表当前项目。
+
+审计开始时用户提供的本地基准是：
+
+```text
+dd5e83c9a390519c28efa4b260f428a55974b5ef
+Add scoped gateway review queue
+```
+
+审计进行期间，远端开发主线继续前进了 3 个 commit，当前冻结审计基准为：
+
+```text
+8d1827e00629bdca4779794121ca4a31dfa3f1e1
+Add agent work method knowledge block
+```
+
+后续产品判断、Codex 任务和架构审计必须显式写出基准 SHA，不能再默认以旧 `main` 推断项目能力。
+
+## 2. 一句话产品定位
+
+AgentOps MIS 是本地优先、可扩展到远程 Agent 的 AI 团队管理控制面：
+
+> 人类使用浏览器创建目标、监督、审批、复盘和交付；Agent 使用 CLI、API、未来 MCP 接口读取项目方法、检索知识、拉取任务、执行工作并把证据写回 MIS。
+
+它不替代 Hermes、OpenClaw、Codex、LangGraph、CrewAI、JiuwenSwarm、Dify 或其他 runtime；它负责跨 runtime 的统一治理。
+
+## 3. 当前权威链路
+
+```text
+Project Spec / Agent Workflow / Base Index
+→ Knowledge Search
+→ Agent Plan
+→ Task
+→ Run
+→ Tool Call
+→ Approval
+→ Artifact
+→ Evaluation
+→ Memory Candidate
+→ Audit
+```
+
+MIS SQLite/API 是权威账本。Pixel Office、Notion、Dify、外部知识库和 Runtime 内部日志都不能替代 MIS 的审批与审计权威。
+
+## 4. 当前真实架构
+
+```text
+Human Browser Console
+  ├─ goals / tasks / fleet
+  ├─ review / approvals / memory
+  ├─ delivery / reports / audit
+  └─ Pixel Office visualizer
+              │
+              ▼
+AgentOps MIS Control Plane
+  ├─ Python HTTP server
+  ├─ SQLite ledger
+  ├─ Agent Gateway token/session/enrollment
+  ├─ workflow jobs / commander inbox / review queue
+  ├─ runtime connectors and trust
+  ├─ agent plans
+  └─ Markdown + SQLite FTS5 knowledge index
+              │
+              ▼
+Machine Interface
+  ├─ agentops CLI
+  ├─ agentops-worker
+  └─ future MCP
+              │
+       Mock / Hermes / OpenClaw
+```
+
+## 5. 已实现能力
+
+### Agent Gateway
+
+- scoped enrollment token；
+- hash-only credential storage；
+- token rotation/revocation；
+- short-lived session；
+- heartbeat 与 health state；
+- workspace/agent binding；
+- scope matrix；
+- task pull/claim；
+- run start/heartbeat；
+- tool/artifact/evaluation/audit/memory/approval 写回；
+- scoped tasks/runs/artifacts/approvals/memories/review queue readback。
+
+### CLI 与 Worker
+
+- installable `agentops`；
+- installable `agentops-worker`；
+- offline PEP 517 backend；
+- once/loop/daemon；
+- retry/backoff；
+- session refresh；
+- stuck recovery；
+- launchd/systemd template/install/check；
+- Mock/Hermes/OpenClaw adapter。
+
+### Commander 与交付
+
+- local readiness；
+- worker status/fleet；
+- adapter readiness；
+- commander project board；
+- integration inbox；
+- workflow jobs；
+- human review queue；
+- customer delivery board；
+- KB bot demo；
+- customer project report/artifact。
+
+### Agent Work Method Block v0
+
+- `PROJECT_SPEC.md`；
+- `AGENT_WORKFLOW.md`；
+- `BASE_INDEX.md`；
+- `secret_registry.md`；
+- `knowledge/shared/`；
+- `knowledge/bases/`；
+- `knowledge/runbooks/`；
+- `agent_plans`；
+- `knowledge_documents`；
+- SQLite FTS5 `knowledge_fts`；
+- knowledge/agent-plan API 与 CLI；
+- `READ → PLAN → RETRIEVE → COMPARE → EXECUTE → VERIFY → RECORD` 方法协议。
+
+## 6. 当前准确的 P0 状态
+
+| P0 | 当前状态 | 结论 |
+|---|---|---|
+| Agent Method Block | v0 已实现 | 已有 spec/workflow/base/plan/verify，但尚未强制绑定 run/delivery，也没有不可变 plan hash |
+| Shared Knowledge Index | v0 已实现 | 已有 Markdown + SQLite FTS5，但仍缺 chunking、ACL、workspace 隔离、检索评测、Repo Map 和 hybrid retrieval |
+| Real Local Runtime | 大部分实现 | Mock/Hermes/OpenClaw、daemon、remote worker、retry、session、recovery 已有 |
+| Approval Wall | 部分实现 | 审批记录/UI/CLI/review queue 已有；prepared action/action hash/checkpoint/resume 尚未闭合 |
+| Local Coding Template | 未完成 | 尚缺 worktree、localization、patch/test artifact、独立 verifier 和 merge gate |
+
+## 7. 当前不能过度宣称的能力
+
+### Approval
+
+可以说：
+
+```text
+已有人类审核中心、审批记录、审计和交付/记忆审核。
+```
+
+不能说：
+
+```text
+任意真实工具动作都能在审批后从 checkpoint 精确恢复并恰好执行一次。
+```
+
+### Knowledge
+
+可以说：
+
+```text
+已有本地 Markdown + FTS5 知识索引和 Agent Plan。
+```
+
+不能说：
+
+```text
+已经是多租户、强 ACL、语义检索完备的企业知识中台。
+```
+
+### Commercial deployment
+
+当前适合：
+
+```text
+loopback、本地自用、课程演示、受控 dogfood、单客户验证。
+```
+
+当前不适合：
+
+```text
+匿名局域网、公网暴露、多租户 SaaS、真实高风险副作用自动执行。
+```
+
+## 8. 当前最重要的风险
+
+1. Agent Plan 可创建但尚未成为真实执行硬门；
+2. Agent 可以提交 `approved` 状态的计划，审批角色尚未分离；
+3. Plan verify 只检查非空字段，不验证引用对象真实存在；
+4. generic approval 仍未恢复具体 prepared action；
+5. Runtime 内部工具行为未逐动作进入 MIS；
+6. Worker redaction 仍需统一和强化；
+7. 非 loopback/shared 部署仍可 fail-open；
+8. collaborator 权限仍使用 JSON 文本 `LIKE`；
+9. knowledge search 目前是全项目公共索引，没有 workspace/ACL filter；
+10. SQLite 尚未启用 WAL/busy timeout；
+11. HEAD 没有自动 CI status；
+12. 根目录许可证与第三方 provenance 尚未完成。
+
+## 9. 当前代码规模事实
+
+```text
+server.py                         ≈ 10k lines
+agentops_mis_cli/agentops.py      ≈ 1.8k lines
+agentops_mis_cli/worker.py        ≈ 1.3k lines
+AIEmployees.tsx                   > 1.3k lines
+liveApi.ts                        > 2.2k lines
+```
+
+下一阶段应绞杀式拆分，而不是大爆炸重写，也不应继续把横向功能塞进单文件。
+
+## 10. 近期唯一正确主线
+
+```text
+冻结横向功能
+→ 修复执行与权限正确性
+→ 建立 CI 和性能基线
+→ 形成 v1.5 RC
+→ 合并 main
+→ 补齐 durable approval 与 coding template
+→ 扩展 Research Lab Template
+```
+
+## 11. 远期愿景继续保留
+
+- 一人公司模板；
+- 科研团队 / AI for Science；
+- GPU、服务器、实验、模型、数据集、论文；
+- Agent work package 与团队项目板；
+- JiuwenSwarm / LangGraph / CrewAI adapters；
+- Agent/Skill/Template Marketplace；
+- Agent 雇佣、评价、计费和安全沙箱；
+- SaaS、BYOC、私有化与企业审计；
+- AI 时代公司操作系统。
+
+当前 Gateway、Worker、Method Block、Knowledge Index、Review Queue 和 Evidence Ledger 是这些长期能力的共同底座。
+
+## 12. 后续 Codex 必读规则
+
+任何修改前必须：
+
+1. 写明当前 branch 和 SHA；
+2. 读取本文件、Project Spec、Agent Workflow、Base Index 和相关 spec；
+3. 搜索现有实现，不得平行再造；
+4. 创建并验证 Agent Plan；
+5. 引用真实存在的 spec、memory、base 和文件；
+6. 给出验证与回滚；
+7. 保留 workspace、scope、audit、redaction、confirm-run 边界；
+8. 不提交数据库、credential、原始 prompt/response、私聊和客户原文；
+9. 不以状态改成 completed 代替真实执行证据；
+10. 不以文档中的历史通过记录代替当前 HEAD 的 CI。

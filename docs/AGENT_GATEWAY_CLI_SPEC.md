@@ -1066,18 +1066,30 @@ but remote workers and machine-facing CLI flows should use the Agent Gateway
 path and must omit raw token/session values.
 
 Failed benchmark runs are read-only risk items, not approval objects. Operators
-should inspect the linked run/task, then mark the risk lifecycle explicitly.
-Acknowledged or waived failed benchmark runs remain in the evidence ledger but
-no longer block the review/action queues.
+should inspect the linked run/task, preview a remediation task, and only then
+confirm creation of a normal MIS work item that is also readable as a
+Commander work package. Acknowledged or waived failed benchmark runs remain in
+the evidence ledger but no longer block the review/action queues.
 
 ```bash
 agentops eval case-runs --pass-fail fail --review-status open
+agentops eval remediate-case-run --case-run-id ecr_123
+agentops eval remediate-case-run --case-run-id ecr_123 --confirm-create
+agentops commander packages --project-id proj_evalcase_remediation_x --limit 5
+agentops commander dispatch-package --task-id tsk_evalcase_fix_x --adapter mock
 agentops eval review-case-run \
   --case-run-id ecr_123 \
   --status acknowledged \
   --note "Investigated and accepted for this local run."
 ```
 
+`remediate-case-run` maps to
+`POST /api/evaluation-case-runs/:case_run_id/remediation-task`. It previews by
+default and creates a planned task only with `--confirm-create`; it never calls
+Hermes/OpenClaw or changes code by itself. Confirmed remediation tasks use the
+Commander work-package description contract, so they can be read with
+`agentops commander packages`, dispatched with `agentops commander
+dispatch-package`, batched, and synthesized through the normal Commander loop.
 Reruns still require the explicit `agentops eval run-cases` path.
 
 ### `agentops operator action-plan`
@@ -1111,12 +1123,15 @@ agentops eval run-cases --case-id evalcase_123 --confirm-run
 agentops eval run-cases --task-id tsk_123 --confirm-run
 agentops eval case-runs --case-id evalcase_123 --limit 5
 agentops eval case-runs --task-id tsk_123 --limit 10
+agentops eval remediate-case-run --case-run-id ecr_123
+agentops eval remediate-case-run --case-run-id ecr_123 --confirm-create
 ```
 
 Maps to `POST /api/evaluation-cases/propose`, `GET /api/evaluation-cases`,
 `GET /api/evaluation-case-runs`,
 `POST /api/evaluation-cases/:case_id/approve|reject`, and
-`POST /api/evaluation-cases/run`.
+`POST /api/evaluation-cases/run`. Failed case-run remediation maps to
+`POST /api/evaluation-case-runs/:case_run_id/remediation-task`.
 
 Writes only after explicit confirmation or review:
 
@@ -1135,6 +1150,11 @@ previews without mutation unless `--confirm-run` is provided, and the v1 runner
 uses `rule` or `llm_mock` checks rather than calling Hermes/OpenClaw live.
 `case-runs` is read-only evidence readback for the local benchmark ledger and
 returns bounded summaries plus run/evaluation/artifact ids.
+`remediate-case-run` converts a failed benchmark into a planned task candidate:
+preview returns a deterministic Commander-compatible task draft, and
+`--confirm-create` writes a normal task plus runtime/audit evidence. Existing
+deterministic remediation task ids are returned as `already_exists` instead of
+silently updating work.
 
 Customer worker tasks automatically run task-bound approved evaluation cases
 after a worker completes, then include `evaluation_case_runs` in the returned

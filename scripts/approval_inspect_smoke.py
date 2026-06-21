@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify the read-only operator action-plan API and CLI."""
+"""Verify approval inspection is read-only and evidence-first."""
 
 from __future__ import annotations
 
@@ -9,9 +9,11 @@ import os
 import re
 import sqlite3
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 
@@ -29,8 +31,11 @@ SECRET_PATTERNS = [
 ]
 
 
-def http_json(base_url: str, path: str) -> tuple[int, dict]:
-    req = Request(base_url.rstrip("/") + path, headers={"Content-Type": "application/json"}, method="GET")
+def http_json(base_url: str, path: str, query: dict | None = None) -> tuple[int, dict]:
+    suffix = path
+    if query:
+        suffix += "?" + urlencode({key: value for key, value in query.items() if value is not None})
+    req = Request(base_url.rstrip("/") + suffix, headers={"Content-Type": "application/json"}, method="GET")
     try:
         with urlopen(req, timeout=60) as res:
             raw = res.read().decode("utf-8")
@@ -42,7 +47,7 @@ def http_json(base_url: str, path: str) -> tuple[int, dict]:
         except Exception:
             return exc.code, {"raw": raw}
     except URLError as exc:
-        raise RuntimeError(f"Cannot reach {base_url}{path}: {exc.reason}") from exc
+        raise RuntimeError(f"Cannot reach {base_url}{suffix}: {exc.reason}") from exc
 
 
 def run_cli(base_url: str, args: list[str], env: dict[str, str]) -> subprocess.CompletedProcess[str]:
@@ -82,14 +87,11 @@ def db_fingerprint(db_path: Path) -> dict | None:
         result = {}
         for table, timestamp_col in [
             ("approvals", "created_at"),
-            ("memories", "updated_at"),
-            ("artifacts", "created_at"),
             ("tasks", "updated_at"),
             ("runs", "created_at"),
             ("tool_calls", "created_at"),
             ("evaluations", "created_at"),
-            ("evaluation_case_candidates", "updated_at"),
-            ("evaluation_case_runs", "created_at"),
+            ("artifacts", "created_at"),
             ("audit_logs", "created_at"),
             ("runtime_events", "created_at"),
         ]:
@@ -103,62 +105,41 @@ def db_fingerprint(db_path: Path) -> dict | None:
         conn.close()
 
 
-def validate_plan(payload: dict, label: str, failures: list[str], limit: int) -> None:
-    require(payload.get("provider") == "agentops-operator", f"{label} provider mismatch: {payload}", failures)
-    require(payload.get("operation") == "action_plan", f"{label} operation mismatch: {payload}", failures)
-    require(payload.get("status") in {"blocked", "attention", "ready"}, f"{label} bad status: {payload}", failures)
+def first_approval_id(base_url: str) -> tuple[str | None, dict]:
+    for decision in ("pending", None):
+        status, payload = http_json(base_url, "/api/agent-gateway/approvals", {"decision": decision, "limit": 1})
+        if status != 200:
+            return None, payload
+        rows = payload.get("approvals") or []
+        if rows:
+            return rows[0].get("approval_id"), payload
+    return None, {}
+
+
+def validate_inspect(payload: dict, label: str, approval_id: str, failures: list[str]) -> None:
+    require(payload.get("provider") == "agentops-approval", f"{label} provider mismatch: {payload}", failures)
+    require(payload.get("operation") == "approval_inspect", f"{label} operation mismatch: {payload}", failures)
+    require(payload.get("status") in {"ready", "attention", "blocked"}, f"{label} bad status: {payload}", failures)
     require(payload.get("token_omitted") is True, f"{label} token omission missing", failures)
+    approval = payload.get("approval") or {}
+    require(approval.get("approval_id") == approval_id, f"{label} approval id mismatch: {approval}", failures)
+    evidence = payload.get("evidence") or {}
+    for key in ["tool_calls", "evaluations", "artifacts", "audit_logs", "plan_evidence_manifests", "failed_evaluations", "open_failed_case_runs"]:
+        require(isinstance(evidence.get(key), int), f"{label} evidence.{key} missing: {evidence}", failures)
     safety = payload.get("safety") or {}
     require(safety.get("read_only") is True, f"{label} read_only missing: {safety}", failures)
-    require(safety.get("ledger_mutated") is False, f"{label} must not mutate ledger: {safety}", failures)
-    require(safety.get("live_execution_performed") is False, f"{label} must not run live work: {safety}", failures)
-    require(safety.get("raw_prompt_omitted") is True, f"{label} raw prompt omission missing", failures)
-    require(safety.get("raw_response_omitted") is True, f"{label} raw response omission missing", failures)
-    summary = payload.get("summary") or {}
-    for key in [
-        "actions",
-        "blocked",
-        "attention",
-        "ready",
-        "review_items_total",
-        "failed_evaluation_case_runs",
-        "waiting_deliveries",
-        "needs_attention_deliveries",
-        "stuck_worker_tasks",
-        "stuck_workflow_jobs",
-    ]:
-        require(isinstance(summary.get(key), int), f"{label} summary.{key} missing: {summary}", failures)
-    require(isinstance(summary.get("recommended_adapter"), str), f"{label} recommended_adapter missing: {summary}", failures)
-    actions = payload.get("actions")
-    require(isinstance(actions, list), f"{label} actions missing", failures)
-    require(len(actions) <= limit, f"{label} ignored limit: {len(actions)} > {limit}", failures)
-    require(bool(payload.get("top_commands")), f"{label} top_commands missing", failures)
-    require(isinstance(payload.get("source_status"), dict), f"{label} source_status missing", failures)
-    for action in actions or []:
-        require(bool(action.get("action_id")), f"{label} action_id missing: {action}", failures)
-        require(action.get("severity") in {"blocked", "attention", "ready", "info"}, f"{label} bad severity: {action}", failures)
-        require(isinstance(action.get("priority"), int), f"{label} priority missing: {action}", failures)
-        require(bool(action.get("title")), f"{label} title missing: {action}", failures)
-        require(bool(action.get("command")), f"{label} command missing: {action}", failures)
-        require(
-            not str(action.get("command") or "").startswith("agentops approval approve --approval-id"),
-            f"{label} action should inspect approval before approve: {action}",
-            failures,
-        )
-        require(bool(action.get("source")), f"{label} source missing: {action}", failures)
-    for command in payload.get("top_commands") or []:
-        require(
-            not str(command or "").startswith("agentops approval approve --approval-id"),
-            f"{label} top command should inspect approval before approve: {command}",
-            failures,
-        )
+    require(safety.get("ledger_mutated") is False, f"{label} ledger mutation flag mismatch: {safety}", failures)
+    require(safety.get("live_execution_performed") is False, f"{label} live execution flag mismatch: {safety}", failures)
+    require(safety.get("raw_prompt_omitted") is True, f"{label} prompt omission missing: {safety}", failures)
+    require(safety.get("raw_response_omitted") is True, f"{label} response omission missing: {safety}", failures)
+    require(isinstance(payload.get("recommended_actions"), list), f"{label} recommended_actions missing", failures)
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Verify operator action plan API and CLI.")
+    parser = argparse.ArgumentParser(description="Verify read-only approval inspect API and CLI.")
     parser.add_argument("--base-url", default=os.environ.get("AGENTOPS_BASE_URL", "http://127.0.0.1:8787"))
     parser.add_argument("--db-path", default=str(DEFAULT_DB))
-    parser.add_argument("--limit", type=int, default=10)
+    parser.add_argument("--approval-id", default=None)
     parser.add_argument("--skip-cli", action="store_true")
     args = parser.parse_args()
 
@@ -166,36 +147,44 @@ def main() -> int:
     outputs: list[str] = []
     db_path = Path(args.db_path)
     before = db_fingerprint(db_path)
+    approval_id = args.approval_id
+    list_payload = {}
+    if not approval_id:
+        approval_id, list_payload = first_approval_id(args.base_url)
+    require(bool(approval_id), f"no approval available to inspect: {list_payload}", failures)
+    if not approval_id:
+        print(json.dumps({"ok": False, "failures": failures}, ensure_ascii=False, indent=2))
+        return 1
 
-    status, payload = http_json(args.base_url, f"/api/operator/action-plan?limit={args.limit}")
+    status, payload = http_json(args.base_url, f"/api/agent-gateway/approvals/{approval_id}")
     require(status == 200, f"API status mismatch: {status} {payload}", failures)
-    validate_plan(payload, "api", failures, args.limit)
+    validate_inspect(payload, "api", approval_id, failures)
     outputs.append(json.dumps(payload, ensure_ascii=False))
 
     cli_payload: dict = {}
     if not args.skip_cli:
-        with tempfile.TemporaryDirectory(prefix="agentops-operator-plan-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="agentops-approval-inspect-") as tmp:
             env = os.environ.copy()
             env["AGENTOPS_CONFIG"] = str(Path(tmp) / "config.json")
             env.pop("AGENTOPS_API_KEY", None)
-            proc = run_cli(args.base_url, ["operator", "action-plan", "--limit", str(args.limit)], env)
+            proc = run_cli(args.base_url, ["approval", "inspect", "--approval-id", approval_id], env)
             outputs.extend([proc.stdout, proc.stderr])
             cli_payload = load_json(proc)
             require(proc.returncode == 0, f"CLI failed: {proc.stderr or proc.stdout}", failures)
-            validate_plan(cli_payload, "cli", failures, args.limit)
+            validate_inspect(cli_payload, "cli", approval_id, failures)
 
     after = db_fingerprint(db_path)
     db_unchanged = bool(before is not None and after is not None and before == after)
     if before is not None and after is not None:
-        require(db_unchanged, "operator action plan changed database fingerprint", failures)
+        require(db_unchanged, "approval inspect changed database fingerprint", failures)
     secret_leaked = leaked_secret("\n".join(outputs))
-    require(not secret_leaked, "operator action plan leaked token-like material", failures)
+    require(not secret_leaked, "approval inspect leaked token-like material", failures)
 
     print(json.dumps({
         "ok": not failures,
+        "approval_id": approval_id,
         "api_status": payload.get("status"),
-        "summary": payload.get("summary"),
-        "top_commands": payload.get("top_commands", [])[:3],
+        "approval_kind": payload.get("approval_kind"),
         "cli_checked": not args.skip_cli,
         "cli_status": cli_payload.get("status"),
         "db_fingerprint_checked": before is not None and after is not None,
@@ -204,7 +193,7 @@ def main() -> int:
         "failures": failures,
     }, ensure_ascii=False, indent=2, sort_keys=True))
     if failures:
-        print(json.dumps(payload, ensure_ascii=False, indent=2)[:3000])
+        print(json.dumps(payload, ensure_ascii=False, indent=2)[:3000], file=sys.stderr)
     return 0 if not failures else 1
 
 
