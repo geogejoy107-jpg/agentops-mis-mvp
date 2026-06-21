@@ -15,6 +15,7 @@ import {
   loadDashboard,
   loadIntegrationInbox,
   loadLocalReadiness,
+  loadSecurityProductionReadiness,
   loadStuckWorkflowJobs,
   loadWorkerAdapterReadiness,
   loadWorkerDaemonLogs,
@@ -124,12 +125,13 @@ export function AIEmployees() {
     scopes: DEFAULT_GATEWAY_SCOPES.join(", "),
   });
   const { data, loading, error, refresh } = useLiveData(async () => {
-    const [metrics, workerStatus, workerFleet, adapterReadiness, localReadiness, integrationInbox, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs] = await Promise.all([
+    const [metrics, workerStatus, workerFleet, adapterReadiness, localReadiness, securityReadiness, integrationInbox, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs] = await Promise.all([
       loadDashboard(),
       loadWorkerStatus(),
       loadWorkerFleet(),
       loadWorkerAdapterReadiness(),
       loadLocalReadiness(),
+      loadSecurityProductionReadiness(),
       loadIntegrationInbox({ bucket: integrationInboxBucket, limit: 20 }),
       loadAgentGatewayEnrollments(),
       loadAgentGatewaySessions(),
@@ -140,13 +142,14 @@ export function AIEmployees() {
       loadStuckWorkflowJobs(30, 8),
     ]);
     const agents = await loadAgents(metrics);
-    return { agents, workerStatus, workerFleet, adapterReadiness, localReadiness, integrationInbox, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs };
+    return { agents, workerStatus, workerFleet, adapterReadiness, localReadiness, securityReadiness, integrationInbox, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs };
   }, [integrationInboxBucket]);
   const agents = data?.agents || [];
   const workerStatus = data?.workerStatus;
   const workerFleet = data?.workerFleet;
   const adapterReadiness = data?.adapterReadiness;
   const localReadiness = data?.localReadiness;
+  const securityReadiness = data?.securityReadiness;
   const integrationInbox = data?.integrationInbox;
   const localEvidence = localReadiness?.evidence;
   const localReadinessActions = localReadiness?.next_actions || [];
@@ -261,6 +264,10 @@ export function AIEmployees() {
       gatewaySummary: "Machine-facing API/CLI layer for local and remote agents.",
       authMode: "Auth mode",
       authenticated: "Authenticated",
+      productionSecurity: "Production security",
+      productionReady: "Production ready",
+      localDevOnly: "Local demo only",
+      securityGate: "Security gate",
       gatewayWorkspace: "Workspace",
       gatewayScopes: "Allowed scopes",
       activeEnrollments: "Active enrollments",
@@ -487,6 +494,10 @@ export function AIEmployees() {
       gatewaySummary: "给本地和远程 agent 使用的 API/CLI 接入层。",
       authMode: "认证模式",
       authenticated: "已认证",
+      productionSecurity: "生产安全",
+      productionReady: "生产就绪",
+      localDevOnly: "仅本地演示",
+      securityGate: "安全 Gate",
       gatewayWorkspace: "工作区",
       gatewayScopes: "权限数量",
       activeEnrollments: "有效接入",
@@ -1966,6 +1977,31 @@ export function AIEmployees() {
               <div className="text-sm font-semibold truncate mt-1" style={{ color: "var(--mis-text)" }}>{item.value}</div>
             </div>
           ))}
+        </div>
+        <div className="rounded-lg p-3 mt-3" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+          <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.productionSecurity}</div>
+                <StatusBadge status={securityReadiness?.status || "unknown"} label={securityReadiness?.production_ready ? copy.productionReady : copy.localDevOnly} />
+              </div>
+              <div className="text-[10px] mt-1 line-clamp-2" style={{ color: "var(--mis-muted)" }}>
+                {securityReadiness?.contract || "local_dev_no_token is local-only"}
+              </div>
+            </div>
+            <StatusBadge status={securityReadiness?.safety?.read_only ? "pass" : "fail"} label={securityReadiness?.safety?.read_only ? copy.readOnlyProof : copy.statusAttention} />
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-3">
+            {(securityReadiness?.gates || []).slice(0, 4).map((gate) => (
+              <div key={gate.id} className="rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-[10px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{gate.label || copy.securityGate}</div>
+                  <StatusBadge status={gate.status} />
+                </div>
+                <div className="text-[10px] mt-1 line-clamp-2" style={{ color: "var(--mis-muted)" }}>{gate.detail}</div>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
 

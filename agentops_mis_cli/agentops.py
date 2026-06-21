@@ -288,6 +288,10 @@ def cmd_commander_inbox(args, client: AgentOpsClient) -> dict:
     return client.get(path)
 
 
+def cmd_security_production_readiness(args, client: AgentOpsClient) -> dict:
+    return client.get("/api/security/production-readiness")
+
+
 def cmd_agent_register(args, client: AgentOpsClient) -> dict:
     payload = {
         "workspace_id": client.workspace_id,
@@ -1061,6 +1065,11 @@ def build_parser() -> argparse.ArgumentParser:
     commander_inbox.add_argument("--threshold-sec", type=int, default=900)
     commander_inbox.set_defaults(handler="commander_inbox")
 
+    security = sub.add_parser("security", help="Read-only security and production-readiness checks.")
+    security_sub = security.add_subparsers(dest="action", required=True)
+    security_prod = security_sub.add_parser("production-readiness", help="Show whether the local Gateway is safe for shared/production use.")
+    security_prod.set_defaults(handler="security_production_readiness")
+
     agent = sub.add_parser("agent", help="Agent identity commands.")
     agent_sub = agent.add_subparsers(dest="action", required=True)
     register = agent_sub.add_parser("register", help="Register or update an AI digital employee.")
@@ -1464,6 +1473,7 @@ HANDLERS = {
     "local_readiness": cmd_local_readiness,
     "commander_board": cmd_commander_board,
     "commander_inbox": cmd_commander_inbox,
+    "security_production_readiness": cmd_security_production_readiness,
     "agent_register": cmd_agent_register,
     "agent_heartbeat": cmd_agent_heartbeat,
     "task_create": cmd_task_create,

@@ -61,13 +61,17 @@ def validate(payload: dict) -> None:
     require(payload.get("token_omitted") is True, "token omission proof missing")
     gates = payload.get("gates") or []
     gate_ids = {gate.get("id") for gate in gates}
-    for gate_id in {"agent_gateway", "worker_fleet", "adapter_route", "knowledge_memory", "evidence_chain", "runbook"}:
+    for gate_id in {"agent_gateway", "worker_fleet", "production_security", "adapter_route", "knowledge_memory", "evidence_chain", "runbook"}:
         require(gate_id in gate_ids, f"missing gate {gate_id}: {payload}")
     evidence = payload.get("evidence") or {}
     for key in ["tasks", "runs", "tool_calls", "evaluations", "audit_logs", "artifacts", "memories", "approvals", "closed_loop_runs"]:
         require(isinstance(evidence.get(key), int), f"missing evidence count {key}: {evidence}")
     require(isinstance(payload.get("next_actions"), list), "next_actions must be a list")
     require(payload.get("contract") and "single local" in payload.get("contract"), "local contract missing")
+    security = payload.get("security_production_readiness") or {}
+    require(security.get("operation") == "production_readiness", f"security readiness missing: {security}")
+    require(security.get("token_omitted") is True, "security readiness token omission proof missing")
+    require(security.get("live_execution_performed") is False, "security readiness must not execute live work")
 
 
 def main() -> int:

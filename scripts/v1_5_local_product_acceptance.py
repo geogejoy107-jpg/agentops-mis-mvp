@@ -165,7 +165,7 @@ def validate_local_readiness(acc: Acceptance, label: str, payload: dict[str, Any
     gates = payload.get("gates")
     acc.require(isinstance(gates, list) and bool(gates), f"{label}: gates present", len(gates or []))
     gate_ids = {gate.get("id") for gate in gates or [] if isinstance(gate, dict)}
-    for gate_id in {"agent_gateway", "worker_fleet", "adapter_route", "runbook"}:
+    for gate_id in {"agent_gateway", "worker_fleet", "production_security", "adapter_route", "runbook"}:
         acc.require(gate_id in gate_ids, f"{label}: gate {gate_id} present", sorted(gate_ids))
     gate_statuses = [gate.get("status") for gate in gates or [] if isinstance(gate, dict)]
     acc.require(all(status in KNOWN_GATE_STATUSES for status in gate_statuses), f"{label}: gate statuses known", gate_statuses)
@@ -177,6 +177,10 @@ def validate_local_readiness(acc: Acceptance, label: str, payload: dict[str, Any
         if key in evidence:
             acc.require(isinstance(evidence.get(key), int), f"{label}: evidence {key} integer", evidence.get(key))
     acc.require((payload.get("adapter_readiness") or {}).get("recommended_adapter") in KNOWN_ADAPTERS, f"{label}: recommended adapter known", payload.get("adapter_readiness"))
+    security = payload.get("security_production_readiness") or {}
+    acc.require(security.get("operation") == "production_readiness", f"{label}: security readiness operation", security)
+    validate_token_omission(acc, f"{label}: security readiness", security)
+    validate_no_live_execution(acc, f"{label}: security readiness", security)
 
 
 def validate_worker_status(acc: Acceptance, label: str, payload: dict[str, Any]) -> None:

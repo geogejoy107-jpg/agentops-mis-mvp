@@ -372,6 +372,18 @@ Use this before asking a remote OpenClaw/Hermes/Dify-style worker to execute
 work. The browser UI should confirm what happened; the worker should still pull,
 claim, run, and write evidence through CLI/API.
 
+Before using the same server beyond a local demo machine, run:
+
+```bash
+agentops security production-readiness
+```
+
+Default `local_dev_no_token` mode is intentionally allowed for classroom/demo
+recording and local self-use, but it is not production-ready. Shared or hosted
+deployment must configure authenticated Agent Gateway access and an admin key
+for enrollment management. The check is read-only: it does not start workers,
+create tokens, call Hermes/OpenClaw, or write ledger rows.
+
 Revoke one session:
 
 ```bash
@@ -429,6 +441,9 @@ The expected proof is:
   `fleet_health.recommended_actions`.
 - `agentops worker fleet` reports normalized fleet lanes with health,
   heartbeat/session state, safe refs, and next actions, without executing work.
+- `agentops security production-readiness` reports the local-dev vs production
+  security boundary and marks no-token local mode as non-production without
+  breaking safe local demos.
 - Scoped task creation requires `tasks:create` and rejects agent/workspace impersonation.
 - `agentops workflow run-task` creates a task, executes one worker iteration, and returns evidence.
 - Demo acceptance remains safe and reproducible.

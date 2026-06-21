@@ -2745,6 +2745,83 @@ def agent_gateway_status(conn, headers) -> tuple[dict, int]:
     return payload, 200
 
 
+def truthy_env(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def security_production_readiness(conn: sqlite3.Connection, headers) -> dict:
+    gateway, gateway_status_code = agent_gateway_status(conn, headers)
+    auth = gateway.get("auth") or {}
+    auth_mode = auth.get("mode") or "unknown"
+    api_key_configured = bool(os.environ.get("AGENTOPS_API_KEY", "").strip())
+    admin_key_configured = bool(os.environ.get("AGENTOPS_ADMIN_KEY", "").strip())
+    production_requested = (
+        os.environ.get("AGENTOPS_DEPLOYMENT_MODE", "").strip().lower() == "production"
+        or truthy_env("AGENTOPS_REQUIRE_PRODUCTION_SECURITY")
+    )
+    bound_or_global_auth = auth_mode in {"global_api_key", "agent_token", "agent_session"}
+    dev_no_token = auth_mode == "local_dev_no_token"
+    gates = [
+        {
+            "id": "agent_gateway_auth",
+            "label": "Agent Gateway authenticated mode",
+            "status": "pass" if bound_or_global_auth else "fail" if production_requested else "warn",
+            "ok": bound_or_global_auth,
+            "detail": f"auth_mode={auth_mode}",
+            "next_action": "Configure a local Gateway API key or use scoped enrollment/session tokens for non-local use.",
+        },
+        {
+            "id": "admin_key",
+            "label": "Admin enrollment key",
+            "status": "pass" if admin_key_configured else "fail" if production_requested else "warn",
+            "ok": admin_key_configured,
+            "detail": "AGENTOPS_ADMIN_KEY configured" if admin_key_configured else "Agent enrollment admin endpoints are open in local-dev mode.",
+            "next_action": "Set AGENTOPS_ADMIN_KEY before shared or hosted deployment.",
+        },
+        {
+            "id": "scoped_agent_tokens",
+            "label": "Scoped agent token/session model",
+            "status": "pass",
+            "ok": True,
+            "detail": "Agent tokens and short-lived sessions are available; raw token hashes are not exposed by status APIs.",
+            "next_action": "Use agentops enrollment request/create and agentops session create for remote workers.",
+        },
+        {
+            "id": "local_dev_boundary",
+            "label": "Local-dev boundary",
+            "status": "fail" if production_requested and dev_no_token else "warn" if dev_no_token else "pass",
+            "ok": not dev_no_token,
+            "detail": "local_dev_no_token is allowed for local demos only." if dev_no_token else "request uses authenticated Agent Gateway mode.",
+            "next_action": "Do not expose this service beyond 127.0.0.1 until authenticated mode is configured.",
+        },
+    ]
+    failures = [gate for gate in gates if gate["status"] == "fail"]
+    warnings = [gate for gate in gates if gate["status"] == "warn"]
+    status = "blocked" if failures else "attention" if warnings else "ready"
+    return {
+        "provider": "agentops-security",
+        "operation": "production_readiness",
+        "status": status,
+        "production_ready": status == "ready",
+        "production_requested": production_requested,
+        "auth_mode": auth_mode,
+        "gateway_status_code": gateway_status_code,
+        "gates": gates,
+        "next_actions": [gate["next_action"] for gate in gates if gate["status"] in {"fail", "warn"}] or [
+            "Keep using scoped tokens/sessions for remote workers and rotate credentials regularly.",
+        ],
+        "contract": "local_dev_no_token is acceptable for local classroom/demo use only; production/shared deployment must use authenticated Agent Gateway and admin keys",
+        "safety": {
+            "read_only": True,
+            "live_execution_performed": False,
+            "token_omitted": True,
+            "raw_prompt_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+
+
 def agent_gateway_revoke_enrollment(conn, body) -> tuple[dict, int]:
     token_id = body.get("token_id")
     agent_id = body.get("agent_id")
@@ -7092,6 +7169,7 @@ def recent_closed_loop_run_count(conn: sqlite3.Connection, limit: int = 250) -> 
 
 def local_readiness(conn: sqlite3.Connection, headers) -> dict:
     gateway, gateway_status_code = agent_gateway_status(conn, headers)
+    security = security_production_readiness(conn, headers)
     worker = worker_status(conn)
     adapter_summary = worker.get("adapter_readiness") or {}
     adapter_payload = worker_adapter_readiness(conn)
@@ -7143,6 +7221,14 @@ def local_readiness(conn: sqlite3.Connection, headers) -> dict:
             "next_action": "agentops worker status",
         },
         {
+            "id": "production_security",
+            "label": "Production security boundary",
+            "ok": security.get("production_ready") is True,
+            "status": security.get("status") or "unknown",
+            "detail": security.get("contract") or f"auth_mode={security.get('auth_mode')}",
+            "next_action": "agentops security production-readiness",
+        },
+        {
             "id": "adapter_route",
             "label": "Mock/Hermes/OpenClaw route selection",
             "ok": adapter_summary.get("recommended_adapter") in {"mock", "hermes", "openclaw"},
@@ -7188,6 +7274,7 @@ def local_readiness(conn: sqlite3.Connection, headers) -> dict:
         "evidence": evidence,
         "adapter_readiness": adapter_payload.get("summary"),
         "worker_fleet_health": worker.get("fleet_health"),
+        "security_production_readiness": security,
         "gateway": gateway,
         "docs": doc_status,
         "ui_routes": {
@@ -7873,6 +7960,10 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/local/readiness":
                 payload = local_readiness(conn, self.headers)
                 conn.commit()
+                return self.send_json(payload)
+            if path == "/api/security/production-readiness":
+                payload = security_production_readiness(conn, self.headers)
+                conn.rollback()
                 return self.send_json(payload)
             if path == "/api/commander/project-board":
                 payload = commander_project_board(conn, self.headers)

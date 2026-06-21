@@ -715,6 +715,36 @@ export interface AgentGatewayStatusPayload {
   token_omitted: boolean;
 }
 
+export interface SecurityProductionGate {
+  id: string;
+  label: string;
+  status: string;
+  ok: boolean;
+  detail: string;
+  next_action: string;
+}
+
+export interface SecurityProductionReadinessPayload {
+  provider: string;
+  operation: string;
+  status: string;
+  production_ready: boolean;
+  production_requested: boolean;
+  auth_mode: string;
+  gateway_status_code: number;
+  gates: SecurityProductionGate[];
+  next_actions: string[];
+  contract?: string;
+  safety: {
+    read_only: boolean;
+    live_execution_performed: boolean;
+    token_omitted: boolean;
+    raw_prompt_omitted: boolean;
+  };
+  token_omitted: boolean;
+  live_execution_performed: boolean;
+}
+
 export interface AgentGatewayEnrollmentCreateInput {
   agent_id: string;
   name: string;
@@ -1803,6 +1833,56 @@ export async function loadAgentGatewaySessions(): Promise<AgentGatewaySessionLis
 export async function loadAgentGatewayStatus(): Promise<AgentGatewayStatusPayload> {
   const raw = await apiJson<Record<string, unknown>>("/agent-gateway/status");
   return normalizeAgentGatewayStatus(raw);
+}
+
+export async function loadSecurityProductionReadiness(): Promise<SecurityProductionReadinessPayload> {
+  const raw = await optionalApiJson<Record<string, unknown>>("/security/production-readiness", {
+    provider: "agentops-security",
+    operation: "production_readiness",
+    status: "unavailable",
+    production_ready: false,
+    production_requested: false,
+    auth_mode: "unknown",
+    gateway_status_code: 0,
+    gates: [],
+    next_actions: ["agentops security production-readiness"],
+    safety: {
+      read_only: true,
+      live_execution_performed: false,
+      token_omitted: true,
+      raw_prompt_omitted: true,
+    },
+    token_omitted: true,
+    live_execution_performed: false,
+  });
+  const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
+  return {
+    provider: String(raw.provider || "agentops-security"),
+    operation: String(raw.operation || "production_readiness"),
+    status: String(raw.status || "unknown"),
+    production_ready: boolValue(raw.production_ready),
+    production_requested: boolValue(raw.production_requested),
+    auth_mode: String(raw.auth_mode || "unknown"),
+    gateway_status_code: numberValue(raw.gateway_status_code, 0),
+    gates: asArray<Record<string, unknown>>(raw.gates).map((gate) => ({
+      id: String(gate.id || ""),
+      label: String(gate.label || gate.id || ""),
+      status: String(gate.status || "unknown"),
+      ok: boolValue(gate.ok),
+      detail: String(gate.detail || ""),
+      next_action: String(gate.next_action || ""),
+    })).filter((gate) => gate.id || gate.label),
+    next_actions: asArray<unknown>(raw.next_actions).map(String).filter(Boolean),
+    contract: raw.contract ? String(raw.contract) : undefined,
+    safety: {
+      read_only: boolValue(safetyRaw.read_only),
+      live_execution_performed: boolValue(safetyRaw.live_execution_performed),
+      token_omitted: boolValue(safetyRaw.token_omitted),
+      raw_prompt_omitted: boolValue(safetyRaw.raw_prompt_omitted),
+    },
+    token_omitted: boolValue(raw.token_omitted),
+    live_execution_performed: boolValue(raw.live_execution_performed),
+  };
 }
 
 export async function createAgentGatewayEnrollment(input: AgentGatewayEnrollmentCreateInput): Promise<AgentGatewayEnrollmentCreateResult> {
