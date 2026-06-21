@@ -6014,7 +6014,51 @@ def agent_gateway_record_tool_call(conn, body) -> tuple[dict, int]:
         conn.execute("UPDATE runs SET approval_required=1, status='waiting_approval' WHERE run_id=?", (run_id,))
         conn.execute("UPDATE tasks SET status='waiting_approval', updated_at=? WHERE task_id=?", (now_iso(), run["task_id"]))
     runtime_event(conn, "rtc_agent_gateway_local", "tool_call.record", status, run_id=run_id, task_id=run["task_id"], agent_id=agent_id, output_summary=f"{tool_name}: {row['result_summary'] or status}", raw_payload_hash=stable_hash(args))
-    return {"tool_call": row, "outcome": outcome}, 201 if outcome == "created" else 200
+    prepared_action_payload = None
+    if body.get("prepare_action"):
+        prepare_body = {
+            "workspace_id": row_workspace(run),
+            "agent_id": agent_id,
+            "requested_by_agent_id": agent_id,
+            "run_id": run_id,
+            "tool_call_id": row["tool_call_id"],
+            "action_type": body.get("action_type") or tool_name,
+            "normalized_args_json": args,
+            "target_resource": row.get("target_resource"),
+            "risk_level": risk,
+            "policy_version": body.get("policy_version") or "approval-wall-v1",
+            "checkpoint": body.get("checkpoint") or body.get("checkpoint_json") or {
+                "run_id": run_id,
+                "tool_call_id": row["tool_call_id"],
+                "tool_status": status,
+                "checkpoint": "after_toolcall_record_before_side_effect_resume",
+            },
+            "idempotency_key": body.get("idempotency_key") or stable_hash({
+                "run_id": run_id,
+                "tool_call_id": row["tool_call_id"],
+                "tool_name": tool_name,
+                "args": args,
+            })[:32],
+            "reason": body.get("approval_reason") or body.get("reason") or f"Prepared action required for {risk} risk tool call {tool_name}.",
+            "approver_user_id": body.get("approver_user_id") or "usr_founder",
+        }
+        prepared_action_payload, _prepared_status = agent_gateway_prepare_action(conn, prepare_body)
+    response = {"tool_call": row, "outcome": outcome}
+    if prepared_action_payload:
+        response["approval_wall"] = {
+            "prepared_action": prepared_action_payload.get("prepared_action"),
+            "approval": prepared_action_payload.get("approval"),
+            "resume_contract": prepared_action_payload.get("resume_contract"),
+            "operation": prepared_action_payload.get("operation"),
+            "outcome": prepared_action_payload.get("outcome"),
+            "token_omitted": True,
+        }
+        response["next_action"] = (
+            f"agentops approval inspect --approval-id {prepared_action_payload.get('approval', {}).get('approval_id')} && "
+            f"agentops approval approve --approval-id {prepared_action_payload.get('approval', {}).get('approval_id')} && "
+            f"agentops approval prepared-action resume --action-id {prepared_action_payload.get('prepared_action', {}).get('action_id')} --provider-side-effect-id <id>"
+        )
+    return response, 201 if outcome == "created" else 200
 
 
 def prepared_action_hash_payload(row: dict) -> dict:
@@ -14388,6 +14432,8 @@ def operator_loop_audit(conn: sqlite3.Connection, headers, qs=None) -> dict:
     loop_audit_count = len(loop_readback.get("audit_logs") or [])
     loop_pending_approvals = 0
     loop_approval_count = 0
+    loop_approval_rows: list[dict] = []
+    loop_memory_rows: list[dict] = []
     loop_memory_candidates = 0
     loop_approved_memories = 0
     if loop_scoped:
@@ -14401,9 +14447,10 @@ def operator_loop_audit(conn: sqlite3.Connection, headers, qs=None) -> dict:
             approval_params.extend(loop_task_ids)
         if approval_where:
             approval_rows = rows_to_dicts(conn.execute(
-                "SELECT approval_id, decision FROM approvals WHERE " + " OR ".join(approval_where),
-                approval_params,
+                "SELECT approval_id, task_id, run_id, tool_call_id, requested_by_agent_id, decision, reason, created_at, decided_at FROM approvals WHERE " + " OR ".join(approval_where) + " ORDER BY created_at DESC LIMIT ?",
+                [*approval_params, limit],
             ).fetchall())
+            loop_approval_rows = approval_rows[:limit]
             loop_approval_count = len(approval_rows)
             loop_pending_approvals = len([row for row in approval_rows if (row.get("decision") or "pending") == "pending"])
         memory_refs = [f"loop://{loop_id}", *loop_artifact_ids]
@@ -14417,9 +14464,10 @@ def operator_loop_audit(conn: sqlite3.Connection, headers, qs=None) -> dict:
             memory_params.extend(loop_task_ids)
         if memory_where:
             memory_rows = rows_to_dicts(conn.execute(
-                "SELECT memory_id, review_status FROM memories WHERE " + " OR ".join(memory_where),
-                memory_params,
+                "SELECT DISTINCT memory_id, scope, memory_type, canonical_text, source_type, source_ref, task_id, agent_id, confidence, review_status, created_at, updated_at FROM memories WHERE " + " OR ".join(memory_where) + " ORDER BY updated_at DESC LIMIT ?",
+                [*memory_params, limit],
             ).fetchall())
+            loop_memory_rows = memory_rows[:limit]
             loop_memory_candidates = len([row for row in memory_rows if (row.get("review_status") or "candidate") == "candidate"])
             loop_approved_memories = len([row for row in memory_rows if row.get("review_status") == "approved"])
 
@@ -14629,6 +14677,63 @@ def operator_loop_audit(conn: sqlite3.Connection, headers, qs=None) -> dict:
                 "status": loop_readback.get("status"),
                 "summary": loop_summary,
             },
+        },
+        "loop_record": {
+            "status": (
+                "unscoped"
+                if not loop_scoped
+                else "waiting_approval"
+                if loop_pending_approvals
+                else "waiting_memory_review"
+                if loop_memory_candidates
+                else "ready"
+                if loop_audit_count > 0 and loop_approved_memories > 0
+                else "missing_memory"
+            ),
+            "loop_id": loop_id or None,
+            "memory_reviews": [
+                {
+                    "memory_id": row.get("memory_id"),
+                    "scope": row.get("scope"),
+                    "memory_type": row.get("memory_type"),
+                    "review_status": row.get("review_status"),
+                    "source_type": row.get("source_type"),
+                    "source_ref": row.get("source_ref"),
+                    "task_id": row.get("task_id"),
+                    "agent_id": row.get("agent_id"),
+                    "confidence": row.get("confidence"),
+                    "summary": redact_text(row.get("canonical_text"), 220),
+                    "created_at": row.get("created_at"),
+                    "updated_at": row.get("updated_at"),
+                    "approve_command": f"agentops memory approve --memory-id {row.get('memory_id')}",
+                    "reject_command": f"agentops memory reject --memory-id {row.get('memory_id')}",
+                    "token_omitted": True,
+                }
+                for row in loop_memory_rows
+            ],
+            "approval_reviews": [
+                {
+                    "approval_id": row.get("approval_id"),
+                    "task_id": row.get("task_id"),
+                    "run_id": row.get("run_id"),
+                    "tool_call_id": row.get("tool_call_id"),
+                    "requested_by_agent_id": row.get("requested_by_agent_id"),
+                    "decision": row.get("decision"),
+                    "reason": redact_text(row.get("reason"), 220),
+                    "created_at": row.get("created_at"),
+                    "decided_at": row.get("decided_at"),
+                    "approve_command": f"agentops approval approve --approval-id {row.get('approval_id')}",
+                    "reject_command": f"agentops approval reject --approval-id {row.get('approval_id')}",
+                    "token_omitted": True,
+                }
+                for row in loop_approval_rows
+            ],
+            "candidate_count": loop_memory_candidates,
+            "approved_count": loop_approved_memories,
+            "pending_approval_count": loop_pending_approvals,
+            "next_action": record_command,
+            "review_queue_command": "agentops review queue --limit 20",
+            "token_omitted": True,
         },
         "loop_readback": loop_readback,
         "contract": "read-only loop audit; it observes the method block and recommends explicit CLI/API actions without creating plans, approvals, runs, memories, or audit rows",

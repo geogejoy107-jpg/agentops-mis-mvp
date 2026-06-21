@@ -204,10 +204,12 @@ def main() -> int:
             first_audit = run_cli(["operator", "loop-audit", "--loop-id", loop_id, "--limit", "10"], base_url, outputs)
             first_payload = load_json(first_audit.stdout)
             first_record = record_step(first_payload)
+            first_loop_record = first_payload.get("loop_record") or {}
             require(first_audit.returncode == 0, f"first loop-audit failed: {first_audit.stderr or first_audit.stdout}", failures)
             require(first_payload.get("status") == "attention", f"loop without memory should need RECORD attention: {first_payload}", failures)
             require(first_record.get("status") == "attention", f"record should wait for loop memory: {first_record}", failures)
             require((first_payload.get("summary") or {}).get("loop_approved_memories") == 0, f"unexpected approved loop memory: {first_payload}", failures)
+            require(first_loop_record.get("status") == "missing_memory", f"loop_record should report missing memory before proposal: {first_loop_record}", failures)
             require("--type loop_record" in (first_record.get("command") or ""), f"record command should request loop_record: {first_record}", failures)
 
             agent_id = (ledger.get("registered_agents") or ["agt_loop_supervisor_local_demo_hermes_openclaw"])[0]
@@ -247,9 +249,12 @@ def main() -> int:
             candidate_audit = run_cli(["operator", "loop-audit", "--loop-id", loop_id, "--limit", "10"], base_url, outputs)
             candidate_payload = load_json(candidate_audit.stdout)
             candidate_record = record_step(candidate_payload)
+            candidate_loop_record = candidate_payload.get("loop_record") or {}
             require(candidate_payload.get("status") == "attention", f"candidate loop memory should still require review: {candidate_payload}", failures)
             require(candidate_record.get("status") == "attention", f"record should not pass while memory is candidate: {candidate_record}", failures)
             require((candidate_payload.get("summary") or {}).get("loop_memory_candidates") == 1, f"candidate should be counted: {candidate_payload}", failures)
+            require(candidate_loop_record.get("status") == "waiting_memory_review", f"loop_record should wait on memory review: {candidate_loop_record}", failures)
+            require(any(row.get("memory_id") == memory_id for row in (candidate_loop_record.get("memory_reviews") or [])), f"candidate memory row missing from loop_record: {candidate_loop_record}", failures)
 
             approved = run_cli(["memory", "approve", "--memory-id", memory_id], base_url, outputs)
             approved_payload = load_json(approved.stdout)
@@ -260,12 +265,15 @@ def main() -> int:
             final_payload = load_json(final_audit.stdout)
             final_summary = final_payload.get("summary") or {}
             final_record = record_step(final_payload)
+            final_loop_record = final_payload.get("loop_record") or {}
             require(final_audit.returncode == 0, f"final loop-audit failed: {final_audit.stderr or final_audit.stdout}", failures)
             require(final_payload.get("status") == "ready", f"approved loop memory should close audit: {final_payload}", failures)
             require(final_summary.get("pass") == 7, f"expected 7/7 gates passing: {final_summary}", failures)
             require(final_record.get("status") == "pass", f"record gate should pass: {final_record}", failures)
             require(final_summary.get("loop_approved_memories") == 1, f"approved loop memory should be counted: {final_summary}", failures)
             require(final_summary.get("loop_memory_candidates") == 0, f"no loop candidates should remain: {final_summary}", failures)
+            require(final_loop_record.get("status") == "ready", f"loop_record should be ready after approval: {final_loop_record}", failures)
+            require(any(row.get("memory_id") == memory_id and row.get("review_status") == "approved" for row in (final_loop_record.get("memory_reviews") or [])), f"approved memory row missing from loop_record: {final_loop_record}", failures)
 
             for path in loop_runtime_paths(loop_id):
                 require(path.exists(), f"missing loop runtime artifact: {path}", failures)

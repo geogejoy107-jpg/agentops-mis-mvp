@@ -156,6 +156,11 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
     loop_readback = payload.get("loop_readback") or {}
     require(loop_readback.get("operation") == "hermes_openclaw_loop_readback", f"{label} loop readback missing: {loop_readback}", failures)
     require(loop_readback.get("token_omitted") is True, f"{label} loop readback token omission missing", failures)
+    loop_record = payload.get("loop_record") or {}
+    require(isinstance(loop_record, dict), f"{label} loop_record missing: {payload}", failures)
+    require(loop_record.get("token_omitted") is True, f"{label} loop_record token omission missing: {loop_record}", failures)
+    require(isinstance(loop_record.get("memory_reviews") or [], list), f"{label} loop_record memory_reviews missing: {loop_record}", failures)
+    require(isinstance(loop_record.get("approval_reviews") or [], list), f"{label} loop_record approval_reviews missing: {loop_record}", failures)
     loop_runs = int(summary.get("loop_runs") or 0)
     loop_verified = int(summary.get("loop_verified_plan_evidence_manifests") or 0)
     loop_blocked = int(summary.get("loop_blocked_plan_evidence_manifests") or 0)
@@ -166,6 +171,9 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
             require(step_status.get(step_id) == "pass", f"{label} scoped loop step {step_id} should pass: {step_status}", failures)
         if step_status.get("record") == "pass":
             require(int(summary.get("loop_approved_memories") or 0) > 0, f"{label} record pass requires approved loop memory: {summary}", failures)
+            approved_rows = [row for row in (loop_record.get("memory_reviews") or []) if row.get("review_status") == "approved"]
+            require(bool(approved_rows), f"{label} record pass should expose approved loop memory rows: {loop_record}", failures)
+            require(loop_record.get("status") == "ready", f"{label} loop_record should be ready when RECORD passes: {loop_record}", failures)
 
 
 def main() -> int:

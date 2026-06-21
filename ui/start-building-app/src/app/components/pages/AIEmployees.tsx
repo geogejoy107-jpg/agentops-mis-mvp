@@ -120,6 +120,25 @@ const GATEWAY_SCOPE_PRESETS = [
 
 const WORKER_ADAPTERS = ["mock", "hermes", "openclaw"] as const;
 
+function loopIdFromUri(uri: unknown): string | null {
+  const value = String(uri || "");
+  const match = value.match(/^loop:\/\/([^/]+)/);
+  return match?.[1] || null;
+}
+
+function latestLoopIdFromReadback(readback?: HermesOpenClawLoopReadbackPayload): string {
+  if (readback?.loop_id) return String(readback.loop_id);
+  for (const artifact of readback?.artifacts || []) {
+    const loopId = loopIdFromUri(artifact.uri);
+    if (loopId) return loopId;
+  }
+  for (const run of readback?.runs || []) {
+    const loopId = loopIdFromUri(run.delegation_id);
+    if (loopId) return loopId;
+  }
+  return "";
+}
+
 export function AIEmployees() {
   const { locale } = usePreferences();
   const [dispatching, setDispatching] = useState<string | null>(null);
@@ -146,6 +165,8 @@ export function AIEmployees() {
   const [workflowJobResult, setWorkflowJobResult] = useState<string | null>(null);
   const [reviewAction, setReviewAction] = useState<string | null>(null);
   const [reviewResult, setReviewResult] = useState<string | null>(null);
+  const [loopRecordAction, setLoopRecordAction] = useState<string | null>(null);
+  const [loopRecordResult, setLoopRecordResult] = useState<string | null>(null);
   const [commanderPlannerBusy, setCommanderPlannerBusy] = useState(false);
   const [commanderPlannerError, setCommanderPlannerError] = useState<string | null>(null);
   const [commanderPlannerResult, setCommanderPlannerResult] = useState<CommanderWorkPackagePlanPayload | null>(null);
@@ -189,7 +210,7 @@ export function AIEmployees() {
     scopes: DEFAULT_GATEWAY_SCOPES.join(", "),
   });
   const { data, loading, error, refresh } = useLiveData(async () => {
-    const [metrics, demoReadiness, workerStatus, workerFleet, workerHygiene, adapterReadiness, localReadiness, operatorActionPlan, operatorLoopAudit, securityReadiness, integrationInbox, commanderWorkPackages, reviewQueue, customerDeliveryBoard, loopLaneReadback, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs] = await Promise.all([
+    const [metrics, demoReadiness, workerStatus, workerFleet, workerHygiene, adapterReadiness, localReadiness, operatorActionPlan, securityReadiness, integrationInbox, commanderWorkPackages, reviewQueue, customerDeliveryBoard, loopLaneReadback, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs] = await Promise.all([
       loadDashboard(),
       loadDemoReadiness(),
       loadWorkerStatus(),
@@ -198,7 +219,6 @@ export function AIEmployees() {
       loadWorkerAdapterReadiness(),
       loadLocalReadiness(),
       loadOperatorActionPlan(12),
-      loadOperatorLoopAudit(12),
       loadSecurityProductionReadiness(),
       loadIntegrationInbox({ bucket: integrationInboxBucket, limit: 20 }),
       loadCommanderWorkPackages({ limit: 8 }),
@@ -213,6 +233,8 @@ export function AIEmployees() {
       loadWorkflowJobs(8),
       loadStuckWorkflowJobs(30, 8),
     ]);
+    const scopedLoopId = latestLoopIdFromReadback(loopLaneReadback);
+    const operatorLoopAudit = await loadOperatorLoopAudit(12, scopedLoopId);
     const agents = await loadAgents(metrics);
     return { agents, demoReadiness, workerStatus, workerFleet, workerHygiene, adapterReadiness, localReadiness, operatorActionPlan, operatorLoopAudit, securityReadiness, integrationInbox, commanderWorkPackages, reviewQueue, customerDeliveryBoard, loopLaneReadback, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs };
   }, [integrationInboxBucket]);
@@ -319,6 +341,16 @@ export function AIEmployees() {
       shotsReady: "Shots ready",
       loopAuditTitle: "Loop audit",
       loopAuditSummary: "READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD gates across Agent Plans, evidence manifests, reviews, memory and audit.",
+      loopRecordTitle: "Loop RECORD closure",
+      loopRecordSummary: "Scoped readback for the latest Hermes/OpenClaw loop: memory candidates, approval blockers, and the exact review command to close RECORD.",
+      loopMemoryReview: "Memory review",
+      loopApprovalReview: "Approval review",
+      noLoopRecordItems: "No loop-specific review rows. Follow the next gate command to create a loop_record memory.",
+      approveCommand: "Approve command",
+      rejectCommand: "Reject command",
+      loopRecordApproveConfirm: "Approve this loop RECORD review item?",
+      loopRecordRejectConfirm: "Reject this loop RECORD review item?",
+      scopedLoopId: "Scoped loop",
       methodBlock: "Method block",
       nextGateAction: "Next gate action",
       actionQueueTitle: "Operator action queue",
@@ -670,6 +702,16 @@ export function AIEmployees() {
       shotsReady: "镜头就绪",
       loopAuditTitle: "Loop 审计",
       loopAuditSummary: "围绕 Agent Plan、证据清单、评审、记忆和审计账本检查 READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD。",
+      loopRecordTitle: "Loop RECORD 闭环",
+      loopRecordSummary: "最近 Hermes/OpenClaw loop 的 scoped 回读：记忆候选、审批阻塞项，以及关闭 RECORD 的精确评审命令。",
+      loopMemoryReview: "记忆评审",
+      loopApprovalReview: "审批评审",
+      noLoopRecordItems: "暂无 loop 专属评审行；请按下一步 Gate 命令创建 loop_record 记忆。",
+      approveCommand: "批准命令",
+      rejectCommand: "拒绝命令",
+      loopRecordApproveConfirm: "确认批准这条 Loop RECORD 评审项？",
+      loopRecordRejectConfirm: "确认拒绝这条 Loop RECORD 评审项？",
+      scopedLoopId: "Scoped loop",
       methodBlock: "方法块",
       nextGateAction: "下一步 Gate 动作",
       actionQueueTitle: "Operator 动作队列",
@@ -1113,6 +1155,11 @@ export function AIEmployees() {
   const loopAuditSteps = operatorLoopAudit?.steps || [];
   const loopAuditSummary = operatorLoopAudit?.summary;
   const loopAuditNextAction = operatorLoopAudit?.next_actions?.[0] || "agentops operator loop-audit --limit 20";
+  const loopRecord = operatorLoopAudit?.loop_record;
+  const loopRecordMemories = loopRecord?.memory_reviews || [];
+  const loopRecordApprovals = loopRecord?.approval_reviews || [];
+  const loopRecordItems = [...loopRecordMemories, ...loopRecordApprovals];
+  const recordStep = loopAuditSteps.find((step) => step.id === "record");
   const orderedActionQueue = [
     ...actionQueueOrder.map(id => actionQueueCandidates.find(item => item.id === id)).filter(Boolean),
     ...actionQueueCandidates.filter(item => !actionQueueOrder.includes(item.id)),
@@ -1700,6 +1747,29 @@ export function AIEmployees() {
       setReviewResult(err instanceof Error ? err.message : String(err));
     } finally {
       setReviewAction(null);
+    }
+  };
+
+  const handleLoopRecordDecision = async (kind: "memory" | "approval", id: string, decision: "approve" | "reject") => {
+    if (!id) return;
+    const confirmed = window.confirm(decision === "approve" ? copy.loopRecordApproveConfirm : copy.loopRecordRejectConfirm);
+    if (!confirmed) return;
+    const actionKey = `loop-record-${kind}-${id}-${decision}`;
+    setLoopRecordAction(actionKey);
+    setLoopRecordResult(null);
+    try {
+      if (kind === "memory") {
+        const result = await decideMemory(id, decision);
+        setLoopRecordResult(`${copy.loopMemoryReview}: ${result.memory_id} -> ${result.review_status}`);
+      } else {
+        const result = await decideApproval(id, decision);
+        setLoopRecordResult(`${copy.loopApprovalReview}: ${result.approval_id} -> ${result.decision}`);
+      }
+      await refresh();
+    } catch (err) {
+      setLoopRecordResult(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoopRecordAction(null);
     }
   };
 
@@ -2652,7 +2722,7 @@ export function AIEmployees() {
               { label: copy.loopReadback, value: `${loopAuditSummary?.loop_verified_plan_evidence_manifests ?? 0}/${loopAuditSummary?.loop_runs ?? 0}`, status: (loopAuditSummary?.loop_blocked_plan_evidence_manifests || 0) > 0 ? "blocked" : (loopAuditSummary?.loop_verified_plan_evidence_manifests || 0) > 0 ? "pass" : "attention" },
               { label: copy.agentPlan, value: loopAuditSummary?.verified_agent_plans ?? 0, status: (loopAuditSummary?.verified_agent_plans || 0) > 0 ? "pass" : "attention" },
               { label: copy.planEvidence, value: loopAuditSummary?.verified_plan_evidence_manifests ?? 0, status: (loopAuditSummary?.evidence_gap_runs || 0) > 0 ? "blocked" : (loopAuditSummary?.verified_plan_evidence_manifests || 0) > 0 ? "pass" : "attention" },
-              { label: copy.memoryApprovalCounts, value: `${loopAuditSummary?.memory_candidates ?? 0}/${loopAuditSummary?.pending_approvals ?? 0}`, status: ((loopAuditSummary?.memory_candidates || 0) + (loopAuditSummary?.pending_approvals || 0)) > 0 ? "attention" : "pass" },
+              { label: copy.memoryApprovalCounts, value: `${loopAuditSummary?.loop_memory_candidates ?? loopAuditSummary?.memory_candidates ?? 0}/${loopAuditSummary?.loop_pending_approvals ?? loopAuditSummary?.pending_approvals ?? 0}`, status: ((loopAuditSummary?.loop_memory_candidates ?? loopAuditSummary?.memory_candidates ?? 0) + (loopAuditSummary?.loop_pending_approvals ?? loopAuditSummary?.pending_approvals ?? 0)) > 0 ? "attention" : "pass" },
             ].map((item) => (
               <div key={item.label} className="rounded px-2 py-1" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
                 <div className="text-[9px]" style={{ color: "var(--mis-muted)" }}>{item.label}</div>
@@ -2692,6 +2762,76 @@ export function AIEmployees() {
               <div className="text-[10px] font-semibold truncate" style={{ color: "var(--mis-cyan)" }}>{loopAuditNextAction}</div>
             </div>
             <StatusBadge status={operatorLoopAudit?.token_omitted && !operatorLoopAudit?.live_execution_performed ? "pass" : "attention"} label={operatorLoopAudit?.token_omitted ? copy.tokenOmittedProof : copy.statusAttention} />
+          </div>
+          <div className="mt-3 rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+            <div className="flex flex-col md:flex-row md:items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 size={12} style={{ color: loopRecord?.status === "ready" ? "var(--mis-success)" : "var(--mis-warning)" }} />
+                  <div className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.loopRecordTitle}</div>
+                  <StatusBadge status={loopRecord?.status || recordStep?.status || "unknown"} />
+                </div>
+                <div className="text-[10px] mt-1" style={{ color: "var(--mis-muted)" }}>{copy.loopRecordSummary}</div>
+                <div className="text-[9px] mt-1 truncate" style={{ color: "var(--mis-dim)" }}>
+                  {copy.scopedLoopId}: {loopRecord?.loop_id || operatorLoopAudit?.loop_id || loopLaneReadback?.loop_id || "—"}
+                </div>
+              </div>
+              <div className="flex items-center gap-1.5 flex-wrap shrink-0">
+                <StatusBadge status={(loopRecord?.candidate_count || 0) > 0 ? "attention" : "pass"} label={`${copy.loopMemoryReview}: ${loopRecord?.candidate_count ?? 0}/${loopRecord?.approved_count ?? 0}`} />
+                <StatusBadge status={(loopRecord?.pending_approval_count || 0) > 0 ? "attention" : "pass"} label={`${copy.loopApprovalReview}: ${loopRecord?.pending_approval_count ?? 0}`} />
+              </div>
+            </div>
+            <div className="mt-2 space-y-1.5">
+              {loopRecordItems.length === 0 && (
+                <div className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{copy.noLoopRecordItems}</div>
+              )}
+              {loopRecordItems.slice(0, 4).map((item) => {
+                const isMemory = "memory_id" in item;
+                const itemId = isMemory ? item.memory_id : item.approval_id;
+                const itemStatus = isMemory ? item.review_status : item.decision;
+                const title = isMemory ? `${copy.loopMemoryReview}: ${item.memory_type || "memory"}` : `${copy.loopApprovalReview}: ${item.tool_call_id || item.run_id || "approval"}`;
+                const summary = isMemory ? item.summary : item.reason;
+                const approveCommand = item.approve_command || "";
+                const rejectCommand = item.reject_command || "";
+                return (
+                  <div key={itemId} className="rounded px-2 py-1.5" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <div className="text-[10px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{title}</div>
+                          <StatusBadge status={itemStatus} />
+                        </div>
+                        <div className="text-[9px] mt-0.5 truncate" style={{ color: "var(--mis-muted)" }}>{itemId} · {isMemory ? item.source_ref || item.task_id || "loop memory" : item.run_id || item.task_id || "loop approval"}</div>
+                        {summary && <div className="text-[9px] mt-0.5 line-clamp-2" style={{ color: "var(--mis-dim)" }}>{summary}</div>}
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {approveCommand && (
+                          <button
+                            onClick={() => void copyIntakeCommand(approveCommand)}
+                            className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded"
+                            style={{ background: "rgba(42,157,143,0.12)", color: "var(--mis-success)", border: "1px solid rgba(42,157,143,0.22)" }}
+                          >
+                            <Copy size={10} />
+                            {copiedIntakeCommand === approveCommand ? copy.copiedCommand : copy.approveCommand}
+                          </button>
+                        )}
+                        {rejectCommand && (
+                          <button
+                            onClick={() => void copyIntakeCommand(rejectCommand)}
+                            className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded"
+                            style={{ background: "rgba(248,113,113,0.10)", color: "#F87171", border: "1px solid rgba(248,113,113,0.18)" }}
+                          >
+                            <Copy size={10} />
+                            {copiedIntakeCommand === rejectCommand ? copy.copiedCommand : copy.rejectCommand}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="text-[10px] mt-2 truncate" style={{ color: "var(--mis-cyan)" }}>{copy.nextAction}: {loopRecord?.next_action || loopAuditNextAction}</div>
           </div>
         </div>
 

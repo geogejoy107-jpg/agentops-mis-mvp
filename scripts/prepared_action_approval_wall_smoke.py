@@ -97,38 +97,27 @@ def main() -> int:
     run_id = run_payload.get("run", {}).get("run_id") or run_payload.get("run_id")
     require(bool(run_id), f"run_id missing: {run_payload}", failures)
 
-    status, tool_payload = http_json(args.base_url, "/api/agent-gateway/tool-calls", {
-        "workspace_id": "local-demo",
-        "agent_id": agent_id,
-        "run_id": run_id,
-        "tool_name": "external.publish",
-        "tool_category": "custom",
-        "risk_level": "critical",
-        "status": "waiting_approval",
-        "args": {"operation": "publish", "target": "mock://customer/delivery", "raw_payload_stored": False},
-        "target_resource": "mock://customer/delivery",
-        "result_summary": "Prepared publish action is waiting for human approval.",
-    })
-    outputs.append(json.dumps(tool_payload, ensure_ascii=False))
-    require(status in {200, 201}, f"tool call record failed: {status} {tool_payload}", failures)
-    tool_call_id = (tool_payload.get("tool_call") or {}).get("tool_call_id")
-    require(bool(tool_call_id), f"tool_call_id missing: {tool_payload}", failures)
-
-    returncode, prepare_payload, raw = run_cli(args.base_url, [
-        "approval", "prepared-action", "create",
+    returncode, tool_payload, raw = run_cli(args.base_url, [
+        "toolcall", "record",
         "--run-id", run_id,
-        "--tool-call-id", tool_call_id,
         "--agent-id", agent_id,
-        "--action-type", "external.publish",
+        "--tool", "external.publish",
+        "--category", "custom",
+        "--risk", "critical",
+        "--status", "waiting_approval",
+        "--target", "mock://customer/delivery",
         "--args-json", '{"operation":"publish","target":"mock://customer/delivery","raw_payload_stored":false}',
-        "--target-resource", "mock://customer/delivery",
-        "--risk-level", "critical",
-        "--checkpoint-json", f'{{"run_id":"{run_id}","tool_call_id":"{tool_call_id}","checkpoint":"before_external_publish"}}',
+        "--summary", "Prepared publish action is waiting for human approval.",
+        "--prepare-action",
+        "--checkpoint-json", f'{{"run_id":"{run_id}","checkpoint":"before_external_publish"}}',
         "--idempotency-key", f"prepared-action-smoke-{stamp}",
-        "--reason", "Smoke prepared action requires exact approval before external publish.",
+        "--approval-reason", "Smoke prepared action requires exact approval before external publish.",
     ])
     outputs.append(raw)
-    require(returncode == 0, f"prepared action CLI failed: {raw}", failures)
+    require(returncode == 0, f"toolcall prepared-action CLI failed: {raw}", failures)
+    tool_call_id = (tool_payload.get("tool_call") or {}).get("tool_call_id")
+    require(bool(tool_call_id), f"tool_call_id missing: {tool_payload}", failures)
+    prepare_payload = tool_payload.get("approval_wall") or {}
     prepared_action = prepare_payload.get("prepared_action") or {}
     approval = prepare_payload.get("approval") or {}
     action_id = prepared_action.get("action_id")
@@ -137,6 +126,7 @@ def main() -> int:
     require(bool(action_id and approval_id and action_hash), f"prepared action fields missing: {prepare_payload}", failures)
     require(prepared_action.get("status") == "prepared", f"prepared action not prepared: {prepared_action}", failures)
     require(approval.get("decision") == "pending", f"approval not pending: {approval}", failures)
+    require("approval prepared-action resume" in (tool_payload.get("next_action") or ""), f"toolcall did not return prepared-action next action: {tool_payload}", failures)
 
     returncode, inspect_payload, raw = run_cli(args.base_url, ["approval", "inspect", "--approval-id", approval_id])
     outputs.append(raw)

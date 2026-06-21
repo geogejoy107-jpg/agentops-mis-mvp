@@ -170,6 +170,13 @@ idempotency key into an immutable `action_hash`, then creates a linked pending
 approval. It updates the run/task/tool call to `waiting_approval` and omits raw
 prompts, raw responses, credentials, and full external payloads.
 
+`POST /api/agent-gateway/tool-calls` also accepts `prepare_action:true`. This
+records the tool-call evidence and creates the linked prepared action plus
+approval in the same transaction, returning `approval_wall.prepared_action`,
+the approval, and a `next_action` command chain for inspect, approve and exact
+resume. This is the preferred Agent Gateway path for high/critical external
+tool calls.
+
 `GET /api/agent-gateway/prepared-actions/:id` verifies that the current stored
 prepared action still hashes to the approved `action_hash`. `POST
 /api/agent-gateway/prepared-actions/:id/resume` resumes only after the linked
@@ -205,6 +212,11 @@ global gaps remain background context instead of overriding the loop result.
 The RECORD gate is also scoped: it passes only after the loop has audit/readback
 evidence, no loop-local pending approval or memory candidate, and at least one
 approved loop memory record.
+For scoped loop audits, the response also includes `loop_record`: safe
+`memory_reviews` and `approval_reviews` rows, candidate/approved/pending
+counts, and exact approve/reject CLI commands so `/workspace/agents` can show
+the human review action required to close RECORD without exposing raw prompts,
+responses, or tokens.
 This lets the operator distinguish a globally busy review queue from a specific
 loop whose output has already been reviewed into durable memory.
 It never creates plans, runs, approvals, memories, or audit rows; it only

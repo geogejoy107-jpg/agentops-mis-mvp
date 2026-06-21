@@ -346,6 +346,10 @@ Agent Plans and manifests, while global legacy gaps remain background context.
 The record gate is scoped too: it passes only when the loop has audit/readback
 evidence, no loop-local pending approval or memory candidate, and at least one
 approved loop memory record.
+The payload includes a `loop_record` section with safe memory/approval review
+rows, candidate/approved/pending counts, and exact approve/reject commands for
+the scoped loop. This is what the `/workspace/agents` Loop Audit panel uses to
+show the human review action that closes RECORD.
 It recommends explicit next commands but does not create runs, approvals,
 memories, audit rows, or live adapter work.
 
@@ -378,6 +382,25 @@ Approval only authorizes the prepared action; it does not perform the side
 effect. Resume checks that approval is approved, the hash still matches and the
 action has not been consumed, then records provider side-effect evidence exactly
 once. Replay returns `prepared_action_already_consumed`.
+
+For high-risk tool calls, agents should usually create the gate while recording
+the tool call:
+
+```bash
+agentops toolcall record \
+  --run-id run_123 \
+  --tool external.publish \
+  --category custom \
+  --risk critical \
+  --status waiting_approval \
+  --args-json '{"target":"mock://customer/delivery","raw_payload_stored":false}' \
+  --prepare-action \
+  --checkpoint-json '{"checkpoint":"before_external_publish"}' \
+  --idempotency-key publish-run-123
+```
+
+The response includes `approval_wall.prepared_action`, the linked approval, and
+a precise `next_action` command chain for inspect, approve, and exact resume.
 
 ### `agentops task claim`
 

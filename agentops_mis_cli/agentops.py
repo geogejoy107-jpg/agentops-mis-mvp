@@ -645,6 +645,13 @@ def cmd_toolcall_record(args, client: AgentOpsClient) -> dict:
         "target_resource": args.target,
         "args": parse_json_value(args.args_json, {"summary": args.args_summary or "redacted"}),
         "result_summary": args.summary,
+        "prepare_action": bool(args.prepare_action),
+        "action_type": args.action_type,
+        "policy_version": args.policy_version,
+        "checkpoint": parse_json_value(args.checkpoint_json, {}),
+        "idempotency_key": args.idempotency_key,
+        "approval_reason": args.approval_reason,
+        "approver_user_id": args.approver,
     }
     return client.post("/api/agent-gateway/tool-calls", payload)
 
@@ -1837,6 +1844,13 @@ def build_parser() -> argparse.ArgumentParser:
     record.add_argument("--args-json", default=None)
     record.add_argument("--args-summary", default=None)
     record.add_argument("--summary", default="")
+    record.add_argument("--prepare-action", action="store_true", help="Create a linked prepared action and approval gate for exact resume.")
+    record.add_argument("--action-type", default=None, help="Prepared action type. Defaults to --tool.")
+    record.add_argument("--policy-version", default="approval-wall-v1")
+    record.add_argument("--checkpoint-json", default="{}")
+    record.add_argument("--idempotency-key", default=None)
+    record.add_argument("--approval-reason", default=None)
+    record.add_argument("--approver", default="usr_founder")
     record.set_defaults(handler="toolcall_record")
 
     artifact = sub.add_parser("artifact", help="Artifact evidence commands.")

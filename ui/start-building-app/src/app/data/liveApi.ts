@@ -1192,6 +1192,52 @@ export interface OperatorLoopAuditStep {
   token_omitted?: boolean;
 }
 
+export interface OperatorLoopRecordMemoryReview {
+  memory_id: string;
+  scope?: string;
+  memory_type?: string;
+  review_status: string;
+  source_type?: string;
+  source_ref?: string | null;
+  task_id?: string | null;
+  agent_id?: string | null;
+  confidence?: number;
+  summary?: string;
+  created_at?: string | null;
+  updated_at?: string | null;
+  approve_command?: string;
+  reject_command?: string;
+  token_omitted?: boolean;
+}
+
+export interface OperatorLoopRecordApprovalReview {
+  approval_id: string;
+  task_id?: string | null;
+  run_id?: string | null;
+  tool_call_id?: string | null;
+  requested_by_agent_id?: string | null;
+  decision: string;
+  reason?: string;
+  created_at?: string | null;
+  decided_at?: string | null;
+  approve_command?: string;
+  reject_command?: string;
+  token_omitted?: boolean;
+}
+
+export interface OperatorLoopRecordPayload {
+  status: string;
+  loop_id?: string | null;
+  memory_reviews: OperatorLoopRecordMemoryReview[];
+  approval_reviews: OperatorLoopRecordApprovalReview[];
+  candidate_count: number;
+  approved_count: number;
+  pending_approval_count: number;
+  next_action?: string;
+  review_queue_command?: string;
+  token_omitted?: boolean;
+}
+
 export interface OperatorLoopAuditPayload {
   provider: string;
   operation: string;
@@ -1214,12 +1260,16 @@ export interface OperatorLoopAuditPayload {
     loop_blocked_plan_evidence_manifests: number;
     pending_approvals: number;
     memory_candidates: number;
+    loop_memory_candidates: number;
+    loop_approved_memories: number;
+    loop_pending_approvals: number;
     audit_logs: number;
   };
   steps: OperatorLoopAuditStep[];
   next_actions: string[];
   source_status: Record<string, string | undefined>;
   sources?: Record<string, unknown>;
+  loop_record?: OperatorLoopRecordPayload;
   loop_readback?: HermesOpenClawLoopReadbackPayload | Record<string, unknown>;
   safety: {
     read_only: boolean;
@@ -3618,6 +3668,7 @@ export async function loadOperatorLoopAudit(limit = 12, loopId = ""): Promise<Op
   });
   const summaryRaw = typeof raw.summary === "object" && raw.summary !== null ? raw.summary as Record<string, unknown> : {};
   const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
+  const loopRecordRaw = typeof raw.loop_record === "object" && raw.loop_record !== null ? raw.loop_record as Record<string, unknown> : {};
   return {
     provider: String(raw.provider || "agentops-operator"),
     operation: String(raw.operation || "loop_audit"),
@@ -3640,6 +3691,9 @@ export async function loadOperatorLoopAudit(limit = 12, loopId = ""): Promise<Op
       loop_blocked_plan_evidence_manifests: numberValue(summaryRaw.loop_blocked_plan_evidence_manifests, 0),
       pending_approvals: numberValue(summaryRaw.pending_approvals, 0),
       memory_candidates: numberValue(summaryRaw.memory_candidates, 0),
+      loop_memory_candidates: numberValue(summaryRaw.loop_memory_candidates, 0),
+      loop_approved_memories: numberValue(summaryRaw.loop_approved_memories, 0),
+      loop_pending_approvals: numberValue(summaryRaw.loop_pending_approvals, 0),
       audit_logs: numberValue(summaryRaw.audit_logs, 0),
     },
     steps: asArray<Record<string, unknown>>(raw.steps).map((step) => ({
@@ -3655,6 +3709,47 @@ export async function loadOperatorLoopAudit(limit = 12, loopId = ""): Promise<Op
     next_actions: asArray<unknown>(raw.next_actions).map(String).filter(Boolean),
     source_status: typeof raw.source_status === "object" && raw.source_status !== null ? raw.source_status as Record<string, string | undefined> : {},
     sources: typeof raw.sources === "object" && raw.sources !== null ? raw.sources as Record<string, unknown> : undefined,
+    loop_record: {
+      status: String(loopRecordRaw.status || (loopId ? "unknown" : "unscoped")),
+      loop_id: loopRecordRaw.loop_id ? String(loopRecordRaw.loop_id) : null,
+      memory_reviews: asArray<Record<string, unknown>>(loopRecordRaw.memory_reviews).map((item) => ({
+        memory_id: String(item.memory_id || ""),
+        scope: item.scope ? String(item.scope) : undefined,
+        memory_type: item.memory_type ? String(item.memory_type) : undefined,
+        review_status: String(item.review_status || "candidate"),
+        source_type: item.source_type ? String(item.source_type) : undefined,
+        source_ref: item.source_ref ? String(item.source_ref) : null,
+        task_id: item.task_id ? String(item.task_id) : null,
+        agent_id: item.agent_id ? String(item.agent_id) : null,
+        confidence: item.confidence === undefined || item.confidence === null ? undefined : numberValue(item.confidence, 0),
+        summary: item.summary ? String(item.summary) : undefined,
+        created_at: item.created_at ? String(item.created_at) : null,
+        updated_at: item.updated_at ? String(item.updated_at) : null,
+        approve_command: item.approve_command ? String(item.approve_command) : undefined,
+        reject_command: item.reject_command ? String(item.reject_command) : undefined,
+        token_omitted: item.token_omitted === undefined ? undefined : boolValue(item.token_omitted),
+      })).filter((item) => item.memory_id),
+      approval_reviews: asArray<Record<string, unknown>>(loopRecordRaw.approval_reviews).map((item) => ({
+        approval_id: String(item.approval_id || ""),
+        task_id: item.task_id ? String(item.task_id) : null,
+        run_id: item.run_id ? String(item.run_id) : null,
+        tool_call_id: item.tool_call_id ? String(item.tool_call_id) : null,
+        requested_by_agent_id: item.requested_by_agent_id ? String(item.requested_by_agent_id) : null,
+        decision: String(item.decision || "pending"),
+        reason: item.reason ? String(item.reason) : undefined,
+        created_at: item.created_at ? String(item.created_at) : null,
+        decided_at: item.decided_at ? String(item.decided_at) : null,
+        approve_command: item.approve_command ? String(item.approve_command) : undefined,
+        reject_command: item.reject_command ? String(item.reject_command) : undefined,
+        token_omitted: item.token_omitted === undefined ? undefined : boolValue(item.token_omitted),
+      })).filter((item) => item.approval_id),
+      candidate_count: numberValue(loopRecordRaw.candidate_count, 0),
+      approved_count: numberValue(loopRecordRaw.approved_count, 0),
+      pending_approval_count: numberValue(loopRecordRaw.pending_approval_count, 0),
+      next_action: loopRecordRaw.next_action ? String(loopRecordRaw.next_action) : undefined,
+      review_queue_command: loopRecordRaw.review_queue_command ? String(loopRecordRaw.review_queue_command) : undefined,
+      token_omitted: loopRecordRaw.token_omitted === undefined ? undefined : boolValue(loopRecordRaw.token_omitted),
+    },
     loop_readback: typeof raw.loop_readback === "object" && raw.loop_readback !== null ? raw.loop_readback as Record<string, unknown> : undefined,
     safety: {
       read_only: boolValue(safetyRaw.read_only),
