@@ -362,8 +362,8 @@ Current CI scope:
 
 - Python syntax and `git diff --check`.
 - Credential-free redaction, SQLite pragma and startup security smokes.
-- Isolated local server on `127.0.0.1:8787` with `AGENTOPS_DB_PATH` under the
-  GitHub runner temp directory.
+- Isolated local server on `127.0.0.1:8787` with `AGENTOPS_DB_PATH` set to
+  `/tmp/agentops_ci.db` on the ephemeral GitHub runner.
 - Agent Plan integrity, run-start plan gate, exact collaborator scoping,
   operator task intake/action plan, Agent Gateway scope, task-claim conflict,
   workspace isolation and v1.5 local product acceptance.

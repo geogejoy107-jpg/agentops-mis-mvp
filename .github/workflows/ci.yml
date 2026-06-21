@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      AGENTOPS_DB_PATH: ${{ runner.temp }}/agentops_ci.db
+      AGENTOPS_DB_PATH: /tmp/agentops_ci.db
       AGENTOPS_HOST: 127.0.0.1
       AGENTOPS_PORT: "8787"
       AGENTOPS_BASE_URL: http://127.0.0.1:8787
