@@ -15,6 +15,7 @@ import {
   loadDashboard,
   loadWorkerDaemonLogs,
   loadWorkerStatus,
+  loadWorkflowJobs,
   releaseWorkerTask,
   revokeAgentGatewayEnrollment,
   revokeAgentGatewaySession,
@@ -23,10 +24,12 @@ import {
   requestAgentGatewayEnrollment,
   startLocalWorkerDaemon,
   stopLocalWorkerDaemon,
+  submitCustomerWorkerTaskJob,
   useLiveData,
   type AgentGatewayEnrollmentCreateResult,
   type AgentGatewayEnrollmentRequestResult,
   type CustomerTaskWorkflowResult,
+  type WorkflowJob,
 } from "../../data/liveApi";
 import { pick, usePreferences } from "../../context/PreferencesContext";
 
@@ -81,6 +84,7 @@ export function AIEmployees() {
   const [customerTaskBusy, setCustomerTaskBusy] = useState(false);
   const [customerTaskError, setCustomerTaskError] = useState<string | null>(null);
   const [customerTaskResult, setCustomerTaskResult] = useState<CustomerTaskWorkflowResult | null>(null);
+  const [customerTaskJob, setCustomerTaskJob] = useState<WorkflowJob | null>(null);
   const [customerTaskForm, setCustomerTaskForm] = useState<{
     adapter: (typeof WORKER_ADAPTERS)[number];
     title: string;
@@ -108,7 +112,7 @@ export function AIEmployees() {
     scopes: DEFAULT_GATEWAY_SCOPES.join(", "),
   });
   const { data, loading, error, refresh } = useLiveData(async () => {
-    const [metrics, workerStatus, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs] = await Promise.all([
+    const [metrics, workerStatus, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs] = await Promise.all([
       loadDashboard(),
       loadWorkerStatus(),
       loadAgentGatewayEnrollments(),
@@ -116,14 +120,16 @@ export function AIEmployees() {
       loadAgentGatewayStatus(),
       loadApprovals(),
       Promise.all(WORKER_ADAPTERS.map(adapter => loadWorkerDaemonLogs(adapter))),
+      loadWorkflowJobs(8),
     ]);
     const agents = await loadAgents(metrics);
-    return { agents, workerStatus, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs };
+    return { agents, workerStatus, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs };
   }, []);
   const agents = data?.agents || [];
   const workerStatus = data?.workerStatus;
   const daemonLogs = data?.daemonLogs || [];
   const selectedDaemonLog = daemonLogs.find(item => item.daemon.adapter === selectedLogAdapter)?.daemon;
+  const workflowJobs = data?.workflowJobs?.jobs || [];
   const recentEvents = workerStatus?.recent_events || [];
   const stuckTasks = workerStatus?.stuck_tasks || [];
   const enrollments = data?.enrollmentPayload?.enrollments || [];
@@ -170,14 +176,21 @@ export function AIEmployees() {
       adapterLabel: "Runtime adapter",
       runSafeTask: "Run safe plan",
       confirmLiveTask: "Confirm live run",
+      submitAsyncTask: "Submit async job",
       customerTaskRunning: "Running task...",
       confirmLiveHint: "Hermes/OpenClaw require explicit confirmation before live execution. Mock is the safe default.",
+      asyncTaskHint: "Use async jobs for long Hermes/OpenClaw work; the ledger records job status, run, artifact, eval and audit evidence.",
       taskId: "Task",
+      jobId: "Job",
+      jobType: "Workflow",
       runId: "Run",
       artifactId: "Artifact",
       evidence: "Evidence",
       openTask: "Open task",
       openRun: "Open run",
+      workflowJobsTitle: "Async Workflow Jobs",
+      workflowJobsSummary: "Recent customer worker/template jobs submitted through the machine-facing Agent Gateway path.",
+      noWorkflowJobs: "No workflow jobs yet.",
       outputSummary: "Output",
       workers: "Workers",
       completedRuns: "Completed worker runs",
@@ -317,14 +330,21 @@ export function AIEmployees() {
       adapterLabel: "运行 adapter",
       runSafeTask: "安全运行 / dry-run",
       confirmLiveTask: "确认真实运行",
+      submitAsyncTask: "异步提交 Job",
       customerTaskRunning: "任务运行中...",
       confirmLiveHint: "Hermes/OpenClaw 真实执行前必须显式确认。mock 是安全默认。",
+      asyncTaskHint: "长时间 Hermes/OpenClaw 工作建议用异步 Job；账本会记录 job 状态、run、artifact、评估和审计证据。",
       taskId: "任务",
+      jobId: "Job",
+      jobType: "工作流",
       runId: "Run",
       artifactId: "Artifact",
       evidence: "证据",
       openTask: "打开任务",
       openRun: "打开 Run",
+      workflowJobsTitle: "异步 Workflow Jobs",
+      workflowJobsSummary: "最近通过 Agent Gateway 机器接口提交的客户 worker / 模板任务。",
+      noWorkflowJobs: "还没有异步任务。",
       outputSummary: "输出",
       workers: "Worker",
       completedRuns: "已完成 worker run",
@@ -481,6 +501,7 @@ export function AIEmployees() {
     setCustomerTaskBusy(true);
     setCustomerTaskError(null);
     setCustomerTaskResult(null);
+    setCustomerTaskJob(null);
     try {
       const title = customerTaskForm.title.trim() || (locale === "zh" ? "客户 AI 任务" : "Customer AI task");
       const result = await runCustomerWorkerTaskWorkflow({
@@ -498,6 +519,38 @@ export function AIEmployees() {
       });
       setCustomerTaskResult(result);
       setDispatchResult(`${customerTaskForm.adapter}: ${result.ok ? "ok" : result.dry_run ? "dry-run" : "failed"} · ${result.run_id || result.task_id}`);
+      await refresh();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setCustomerTaskError(message);
+      setDispatchResult(message);
+    } finally {
+      setCustomerTaskBusy(false);
+    }
+  };
+
+  const submitCustomerTaskAsync = async () => {
+    setCustomerTaskBusy(true);
+    setCustomerTaskError(null);
+    setCustomerTaskResult(null);
+    setCustomerTaskJob(null);
+    try {
+      const title = customerTaskForm.title.trim() || (locale === "zh" ? "客户 AI 任务" : "Customer AI task");
+      const result = await submitCustomerWorkerTaskJob({
+        adapter: customerTaskForm.adapter,
+        confirm_run: customerTaskForm.adapter !== "mock",
+        title,
+        description: customerTaskForm.description.trim() || title,
+        acceptance_criteria: locale === "zh"
+          ? "Worker 必须通过异步 Job 创建 run/tool/eval/audit/artifact/memory/approval 证据。"
+          : "Worker must create run/tool/eval/audit/artifact/memory/approval evidence through the async job.",
+        priority: "high",
+        risk_level: customerTaskForm.adapter === "mock" ? "low" : "medium",
+        selected_agent_ids: [],
+        workflow_kind: "ui_agent_workspace_customer_dispatch_async",
+      });
+      setCustomerTaskJob(result.job);
+      setDispatchResult(`job: ${result.job_id} · ${result.job.status}`);
       await refresh();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -774,7 +827,7 @@ export function AIEmployees() {
             <p className="text-[11px] mt-1 max-w-3xl" style={{ color: "var(--mis-dim)" }}>{copy.customerTaskSummary}</p>
             <p className="text-[10px] mt-1 max-w-3xl" style={{ color: "var(--mis-muted)" }}>{copy.confirmLiveHint}</p>
           </div>
-          <div className="flex gap-2 shrink-0">
+          <div className="flex gap-2 shrink-0 flex-wrap justify-end">
             <button
               onClick={() => runCustomerTask(false)}
               disabled={customerTaskBusy}
@@ -792,6 +845,15 @@ export function AIEmployees() {
             >
               {customerTaskBusy ? <RefreshCw size={12} /> : <ShieldCheck size={12} />}
               {customerTaskBusy ? copy.customerTaskRunning : copy.confirmLiveTask}
+            </button>
+            <button
+              onClick={submitCustomerTaskAsync}
+              disabled={customerTaskBusy}
+              className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded disabled:opacity-50"
+              style={{ background: "rgba(251,191,36,0.12)", color: "var(--mis-warning)", border: "1px solid rgba(251,191,36,0.24)" }}
+            >
+              {customerTaskBusy ? <RefreshCw size={12} /> : <Activity size={12} />}
+              {customerTaskBusy ? copy.customerTaskRunning : copy.submitAsyncTask}
             </button>
           </div>
         </div>
@@ -831,7 +893,9 @@ export function AIEmployees() {
           </label>
         </div>
 
-        {(customerTaskError || customerTaskResult) && (
+        <div className="text-[10px] mt-3" style={{ color: "var(--mis-muted)" }}>{copy.asyncTaskHint}</div>
+
+        {(customerTaskError || customerTaskResult || customerTaskJob) && (
           <div
             className="rounded-lg p-3 mt-4"
             style={{
@@ -841,6 +905,31 @@ export function AIEmployees() {
           >
             {customerTaskError && (
               <div className="text-[11px]" style={{ color: "#F87171" }}>{customerTaskError}</div>
+            )}
+            {customerTaskJob && (
+              <div className="space-y-3">
+                <div className="grid grid-cols-4 gap-2">
+                  <div className="rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                    <div className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{copy.jobId}</div>
+                    <div className="text-[11px] font-semibold truncate mt-1" style={{ color: "var(--mis-text)" }}>{customerTaskJob.job_id}</div>
+                  </div>
+                  <div className="rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                    <div className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{copy.jobType}</div>
+                    <div className="text-[11px] font-semibold truncate mt-1" style={{ color: "var(--mis-text)" }}>{customerTaskJob.workflow_type}</div>
+                  </div>
+                  <div className="rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                    <div className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{copy.adapterLabel}</div>
+                    <div className="text-[11px] font-semibold truncate mt-1" style={{ color: "var(--mis-text)" }}>{customerTaskJob.adapter || customerTaskForm.adapter}</div>
+                  </div>
+                  <div className="rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                    <div className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{copy.eventStatus}</div>
+                    <div className="mt-1"><StatusBadge status={customerTaskJob.status} /></div>
+                  </div>
+                </div>
+                <div className="text-[11px] leading-relaxed rounded px-3 py-2" style={{ background: "var(--mis-bg)", color: "var(--mis-dim)", border: "1px solid var(--mis-border)" }}>
+                  {customerTaskJob.input_summary || customerTaskJob.title}
+                </div>
+              </div>
             )}
             {customerTaskResult && (
               <div className="space-y-3">
@@ -897,6 +986,57 @@ export function AIEmployees() {
             )}
           </div>
         )}
+
+        <div className="rounded-lg p-3 mt-4" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.workflowJobsTitle}</div>
+              <div className="text-[10px] mt-1" style={{ color: "var(--mis-muted)" }}>{copy.workflowJobsSummary}</div>
+            </div>
+            <button
+              onClick={refresh}
+              className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded"
+              style={{ background: "rgba(34,211,238,0.12)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.2)" }}
+            >
+              <RefreshCw size={12} />
+              {copy.refresh}
+            </button>
+          </div>
+          <div className="space-y-2 mt-3">
+            {workflowJobs.length === 0 && (
+              <div className="text-[11px] rounded px-3 py-2" style={{ color: "var(--mis-muted)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                {copy.noWorkflowJobs}
+              </div>
+            )}
+            {workflowJobs.slice(0, 6).map((job) => (
+              <div key={job.job_id} className="grid grid-cols-[1.1fr_0.8fr_0.8fr_auto] gap-3 items-center rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                <div className="min-w-0">
+                  <div className="text-[11px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{job.title || job.job_id}</div>
+                  <div className="text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>{job.job_id} · {job.workflow_type}</div>
+                </div>
+                <div className="text-[10px] truncate" style={{ color: "var(--mis-dim)" }}>
+                  {job.adapter || "default"} · {job.confirm_run ? "live" : "safe"}
+                </div>
+                <div className="flex items-center gap-2 min-w-0">
+                  <StatusBadge status={job.status} />
+                  <span className="text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>{job.updated_at || job.created_at}</span>
+                </div>
+                <div className="flex gap-1.5 justify-end">
+                  {job.result_task_id && (
+                    <Link to={`/admin/tasks/${job.result_task_id}`} className="text-[10px] px-2 py-1 rounded" style={{ background: "rgba(34,211,238,0.1)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.18)" }}>
+                      {copy.taskId}
+                    </Link>
+                  )}
+                  {job.result_run_id && (
+                    <Link to={`/admin/runs/${job.result_run_id}`} className="text-[10px] px-2 py-1 rounded" style={{ background: "rgba(45,212,191,0.1)", color: "var(--mis-success)", border: "1px solid rgba(45,212,191,0.18)" }}>
+                      {copy.runId}
+                    </Link>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
 
       <div

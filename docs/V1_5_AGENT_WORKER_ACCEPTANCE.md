@@ -1010,6 +1010,19 @@ evidence: tool_calls 1, evaluations 1, runtime_events 10, audit_logs 10, artifac
 secret_leaked: false
 ```
 
+Latest `/workspace/agents` UI async job verification:
+
+```text
+page: http://127.0.0.1:19001/workspace/agents
+Playwright snapshot found: 异步提交 Job, 异步 Workflow Jobs, recent wfjob rows
+clicked: 异步提交 Job
+created job: wfjob_883db124baf5
+status via API: completed
+run: run_gw_d6265c5457f5
+artifact: art_customer_worker_task_run_gw_d6265c5457f5
+evidence: tool_calls 1, evaluations 1, runtime_events 10, audit_logs 10, artifacts 1, memories 2, approvals 1
+```
+
 Latest task-create CLI smoke:
 
 ```text

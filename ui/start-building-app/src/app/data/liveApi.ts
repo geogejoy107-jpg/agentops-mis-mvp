@@ -911,6 +911,13 @@ export async function runCustomerWorkerTaskWorkflow(input: CustomerWorkerTaskWor
   });
 }
 
+export async function submitCustomerWorkerTaskJob(input: CustomerWorkerTaskWorkflowInput): Promise<WorkflowJobSubmitPayload> {
+  return apiJson<WorkflowJobSubmitPayload>("/workflows/customer-worker-task/submit", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
 export async function runKbBotProjectWorkflow(): Promise<KbBotProjectWorkflowResult> {
   return apiJson<KbBotProjectWorkflowResult>("/workflows/kb-bot-project", {
     method: "POST",
