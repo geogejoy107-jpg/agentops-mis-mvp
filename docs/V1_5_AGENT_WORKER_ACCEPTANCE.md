@@ -1321,6 +1321,11 @@ trust status, target resource, availability checks, `summary.recommended_adapter
 and `live_execution_performed:false`. This lets a local or remote agent decide
 which adapter path is currently usable before pulling customer work.
 
+Confirmed live customer-worker dispatch now consumes that readiness signal. If a
+selected Hermes/OpenClaw adapter is `unavailable` or `blocked`, MIS returns
+`reason: adapter_not_ready`, creates a blocked recovery task, records
+runtime/audit evidence, and does not execute the runtime.
+
 The `/workspace/agents` UI now exposes the same customer-worker path that the
 CLI and Pixel Office use: a human creates a normal business task, chooses
 mock/Hermes/OpenClaw, and MIS displays the resulting task, run, artifact, and
@@ -1368,4 +1373,7 @@ planned MIS task
 - The worker readiness API/CLI now returns adapter route readiness for
   mock/Hermes/OpenClaw without executing live work, so external agents can choose
   a viable route before starting a task.
+- Confirmed customer-worker dispatch now fails early with `adapter_not_ready`
+  when the selected live adapter is unavailable, instead of producing an opaque
+  worker execution failure.
 - Remote enrollment token issuance/revocation/rotation, approval-gated enrollment request UI, endpoint-level scope enforcement, short-lived session tokens with list/revoke controls and worker-loop refresh, scope presets, a first enrollment UI, and minimal Agent Gateway workspace isolation now exist. Full RBAC, hosted multi-tenant isolation, and hosted enrollment policy UI remain future work.

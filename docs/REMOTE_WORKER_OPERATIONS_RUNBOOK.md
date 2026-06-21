@@ -334,6 +334,10 @@ agentops worker status
 `agentops worker readiness` is the route-selection check. It returns the safe
 readiness for `mock`, `hermes`, and `openclaw`, including runtime connector
 trust status and a recommended adapter. It never executes live runtime work.
+Confirmed customer-worker dispatch uses the same readiness signal: when a live
+Hermes/OpenClaw adapter is unavailable or blocked, MIS returns
+`reason: adapter_not_ready`, writes a blocked recovery task plus audit evidence,
+and does not execute the runtime.
 
 `agentops worker status` is the operator's single fleet view. In addition to
 local daemon state, it summarizes remote worker enrollments, heartbeat states
@@ -378,6 +382,7 @@ Use these lightweight checks before a demo or customer handoff:
 python3 -m py_compile server.py scripts/*.py agentops_mis_cli/*.py
 python3 scripts/agentops_worker_preflight_smoke.py
 python3 scripts/worker_adapter_readiness_smoke.py
+python3 scripts/customer_worker_adapter_not_ready_smoke.py
 python3 scripts/worker_live_confirm_gate_smoke.py
 python3 scripts/remote_launch_packet_worker_smoke.py
 python3 scripts/agent_gateway_task_create_scope_smoke.py
@@ -393,6 +398,8 @@ The expected proof is:
 - `agentops worker readiness` returns all adapter routes, includes
   `summary.recommended_adapter`, and still reports
   `live_execution_performed=false`.
+- Confirmed customer worker dispatch returns `adapter_not_ready` before live
+  execution when a selected Hermes/OpenClaw adapter is unavailable.
 - `agentops worker service-install` defaults to dry-run and only writes a
   placeholder template when `--confirm-install` is present.
 - `agentops worker service-check` returns JSON, omits raw service content, and

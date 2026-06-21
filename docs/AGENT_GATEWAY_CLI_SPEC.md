@@ -600,6 +600,12 @@ tokens, full prompts, full raw model responses, credentials, or private
 transcripts. Without `--confirm-run`, Hermes/OpenClaw create a planned task but
 do not execute the live adapter.
 
+With `--confirm-run`, live Hermes/OpenClaw dispatch first checks the worker
+adapter readiness route. If the selected live adapter is `unavailable` or
+`blocked`, MIS returns `reason: adapter_not_ready`, creates a blocked recovery
+task, records runtime/audit evidence, and does not execute the runtime. This
+keeps confirmed customer work from failing later as an opaque worker crash.
+
 ### `agentops worker status`
 
 Returns the same safe worker fleet summary used by `/workspace/agents`: worker

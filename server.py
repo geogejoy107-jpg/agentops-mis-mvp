@@ -6171,6 +6171,7 @@ def run_customer_worker_task_workflow(conn, body: dict) -> tuple[dict, int]:
     worker_agent_id = body.get("worker_agent_id") or stable_id("agt_customer_worker", adapter, call_id, uuid.uuid4().hex[:8])
     connector_id = runtime_connector_for_adapter(adapter)
     connector_trust = runtime_connector_trust(conn, connector_id)
+    adapter_readiness = (worker_adapter_readiness(conn).get("adapters") or {}).get(adapter) or {}
     if adapter in {"hermes", "openclaw"} and confirm_run and connector_trust and connector_trust.get("trust_status") == "blocked":
         task_id = body.get("task_id") or stable_id("tsk_customer_worker_trust_blocked", adapter, title, now_iso())
         agent_id = worker_agent_id
@@ -6213,6 +6214,57 @@ def run_customer_worker_task_workflow(conn, body: dict) -> tuple[dict, int]:
             "trust_status": "blocked",
             "reason": "runtime_connector_trust_blocked",
             "note": reason,
+        }, 409
+    if adapter in {"hermes", "openclaw"} and confirm_run and adapter_readiness.get("readiness") in {"unavailable", "blocked"}:
+        task_id = body.get("task_id") or stable_id("tsk_customer_worker_adapter_not_ready", adapter, title, now_iso())
+        agent_id = worker_agent_id
+        ensure_gateway_agent(conn, agent_id, name=f"Customer {adapter} Worker", role="Customer Task Worker", runtime_type=adapter)
+        now = now_iso()
+        row = {
+            "task_id": task_id,
+            "title": title,
+            "description": description,
+            "requester_id": body.get("requester_id", "usr_customer_demo"),
+            "owner_agent_id": agent_id,
+            "collaborator_agent_ids": json.dumps(body.get("selected_agent_ids") or [], ensure_ascii=False),
+            "status": "blocked",
+            "priority": coerce_choice(body.get("priority"), VALID_PRIORITIES, "high"),
+            "due_date": body.get("due_date"),
+            "acceptance_criteria": acceptance,
+            "risk_level": coerce_choice(body.get("risk_level"), VALID_RISK_LEVELS, "medium"),
+            "budget_limit_usd": float(body.get("budget_limit_usd") or 1.0),
+            "created_at": now,
+            "updated_at": now,
+        }
+        upsert_task(conn, row, "customer-worker-task")
+        reason = redact_text(
+            adapter_readiness.get("last_error")
+            or f"{adapter} adapter is not ready for confirmed live execution.",
+            260,
+        )
+        runtime_event(conn, connector_id, "customer_worker_task.adapter_not_ready", "blocked", task_id=task_id, agent_id=agent_id, input_summary=f"{adapter} worker live execution blocked by adapter readiness.", output_summary=reason)
+        audit(conn, "system", "worker-adapter-readiness", "workflow.customer_worker_task.adapter_not_ready", "tasks", task_id, None, row, {
+            "adapter": adapter,
+            "connector_id": connector_id,
+            "readiness": adapter_readiness.get("readiness"),
+            "recommended_action": adapter_readiness.get("recommended_action"),
+            "raw_output_omitted": True,
+        })
+        conn.commit()
+        return {
+            "provider": "agentops-worker",
+            "workflow": "customer_worker_task",
+            "dry_run": True,
+            "ok": False,
+            "adapter": adapter,
+            "task_id": task_id,
+            "agent_id": agent_id,
+            "connector_id": connector_id,
+            "reason": "adapter_not_ready",
+            "readiness": adapter_readiness.get("readiness"),
+            "recommended_action": adapter_readiness.get("recommended_action"),
+            "note": reason,
+            "token_omitted": True,
         }, 409
     if adapter in {"hermes", "openclaw"} and not confirm_run:
         task_id = body.get("task_id") or stable_id("tsk_customer_worker_plan", adapter, title, now_iso())
