@@ -16,6 +16,8 @@ human/admin APIs:
 | Task list/detail | `repo_list_workspace_tasks`, `repo_get_workspace_task`, `repo_task_detail` | `GET /api/tasks`, `GET /api/tasks/:id` | `python3 scripts/storage_boundary_sqlite_smoke.py` |
 | Run list/detail/export | `repo_list_workspace_runs`, `repo_get_workspace_run`, `repo_run_detail` | `GET /api/runs`, `GET /api/runs/export`, `GET /api/runs/:id` | `python3 scripts/storage_boundary_sqlite_smoke.py` |
 | Memory list/export/review lookup | `repo_list_workspace_memories`, `repo_get_workspace_memory` | `GET /api/memories`, `GET /api/memories/export`, memory approve/reject | `python3 scripts/storage_boundary_sqlite_smoke.py` |
+| Approval/evaluation/artifact lists | `repo_list_workspace_approvals`, `repo_list_workspace_evaluations`, `repo_list_workspace_artifacts` | `GET /api/approvals`, `GET /api/evaluations`, `GET /api/artifacts` | `python3 scripts/storage_boundary_sqlite_smoke.py` |
+| Audit list | `repo_list_workspace_audit` | `GET /api/audit` | `python3 scripts/storage_boundary_sqlite_smoke.py` |
 
 The helpers deliberately keep the existing SQLite row shape and ordering. They
 only centralize workspace filters and detail assembly so a future adapter can
@@ -25,10 +27,9 @@ match behavior before Postgres is introduced.
 
 | Candidate | Why next | Required proof before Postgres |
 | --- | --- | --- |
-| Approval/evaluation/artifact list helpers | They join tasks/runs for workspace isolation and are user-visible ledgers | Helper smoke plus existing workspace RBAC smoke |
-| Audit query helper | Audit evidence is part of Team/Enterprise compliance surface | Helper smoke proving task/run/job metadata scoping |
 | Agent Gateway read helpers | CLI/API/MCP are the durable agent contract | Scope matrix and workspace isolation smokes |
 | Workflow job repository | BYOC deployments need stuck-job recovery and retention | Job recovery smoke against isolated SQLite |
+| Write-path repositories | Postgres parity needs create/update behavior centralized after read helpers are locked | Existing workflow smokes plus isolated write helper smoke |
 
 ## Postgres Parity Rule
 

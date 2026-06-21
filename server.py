@@ -2690,6 +2690,59 @@ def repo_get_workspace_memory(conn: sqlite3.Connection, workspace_id: str, memor
     ).fetchone()
 
 
+def repo_list_workspace_approvals(conn: sqlite3.Connection, workspace_id: str):
+    return conn.execute(
+        """SELECT ap.* FROM approvals ap
+        LEFT JOIN tasks t ON t.task_id=ap.task_id
+        LEFT JOIN runs r ON r.run_id=ap.run_id
+        WHERE COALESCE(t.workspace_id,r.workspace_id,'local-demo')=?
+        ORDER BY ap.created_at DESC""",
+        (normalize_workspace_id(workspace_id),),
+    ).fetchall()
+
+
+def repo_list_workspace_evaluations(conn: sqlite3.Connection, workspace_id: str):
+    return conn.execute(
+        """SELECT ev.* FROM evaluations ev
+        LEFT JOIN tasks t ON t.task_id=ev.task_id
+        LEFT JOIN runs r ON r.run_id=ev.run_id
+        WHERE COALESCE(t.workspace_id,r.workspace_id,'local-demo')=?
+        ORDER BY ev.created_at DESC""",
+        (normalize_workspace_id(workspace_id),),
+    ).fetchall()
+
+
+def repo_list_workspace_artifacts(conn: sqlite3.Connection, workspace_id: str):
+    return conn.execute(
+        """SELECT art.* FROM artifacts art
+        LEFT JOIN tasks t ON t.task_id=art.task_id
+        LEFT JOIN runs r ON r.run_id=art.run_id
+        WHERE COALESCE(t.workspace_id,r.workspace_id,'local-demo')=?
+        ORDER BY art.created_at DESC""",
+        (normalize_workspace_id(workspace_id),),
+    ).fetchall()
+
+
+def repo_list_workspace_audit(conn: sqlite3.Connection, workspace_id: str, limit: int = 200):
+    workspace_id = normalize_workspace_id(workspace_id)
+    return conn.execute(
+        """SELECT a.* FROM audit_logs a
+        WHERE
+          (a.entity_type='tasks' AND EXISTS (
+            SELECT 1 FROM tasks t WHERE t.task_id=a.entity_id AND COALESCE(t.workspace_id,'local-demo')=?
+          ))
+          OR (a.entity_type='runs' AND EXISTS (
+            SELECT 1 FROM runs r WHERE r.run_id=a.entity_id AND COALESCE(r.workspace_id,'local-demo')=?
+          ))
+          OR (a.entity_type='workflow_jobs' AND EXISTS (
+            SELECT 1 FROM workflow_jobs j WHERE j.job_id=a.entity_id AND COALESCE(j.workspace_id,'local-demo')=?
+          ))
+          OR a.metadata_json LIKE ?
+        ORDER BY a.created_at DESC LIMIT ?""",
+        (workspace_id, workspace_id, workspace_id, f'%"workspace_id": "{workspace_id}"%', int(limit)),
+    ).fetchall()
+
+
 def normalize_workspace_id(value) -> str:
     raw = str(value or "local-demo").strip()[:120]
     normalized = re.sub(r"[^A-Za-z0-9_.:-]+", "_", raw).strip("_")
@@ -11081,14 +11134,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(payload, status)
             if path == "/api/approvals":
                 workspace_id = request_workspace(self.headers, qs)
-                return self.send_json(rows_to_dicts(conn.execute(
-                    """SELECT ap.* FROM approvals ap
-                    LEFT JOIN tasks t ON t.task_id=ap.task_id
-                    LEFT JOIN runs r ON r.run_id=ap.run_id
-                    WHERE COALESCE(t.workspace_id,r.workspace_id,'local-demo')=?
-                    ORDER BY ap.created_at DESC""",
-                    (workspace_id,),
-                ).fetchall()))
+                return self.send_json(rows_to_dicts(repo_list_workspace_approvals(conn, workspace_id)))
             if path == "/api/memories":
                 workspace_id = request_workspace(self.headers, qs)
                 return self.send_json(rows_to_dicts(repo_list_workspace_memories(conn, workspace_id)))
@@ -11097,42 +11143,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(rows_to_dicts(repo_list_workspace_memories(conn, workspace_id)))
             if path == "/api/evaluations":
                 workspace_id = request_workspace(self.headers, qs)
-                return self.send_json(rows_to_dicts(conn.execute(
-                    """SELECT ev.* FROM evaluations ev
-                    LEFT JOIN tasks t ON t.task_id=ev.task_id
-                    LEFT JOIN runs r ON r.run_id=ev.run_id
-                    WHERE COALESCE(t.workspace_id,r.workspace_id,'local-demo')=?
-                    ORDER BY ev.created_at DESC""",
-                    (workspace_id,),
-                ).fetchall()))
+                return self.send_json(rows_to_dicts(repo_list_workspace_evaluations(conn, workspace_id)))
             if path == "/api/artifacts":
                 workspace_id = request_workspace(self.headers, qs)
-                return self.send_json(rows_to_dicts(conn.execute(
-                    """SELECT art.* FROM artifacts art
-                    LEFT JOIN tasks t ON t.task_id=art.task_id
-                    LEFT JOIN runs r ON r.run_id=art.run_id
-                    WHERE COALESCE(t.workspace_id,r.workspace_id,'local-demo')=?
-                    ORDER BY art.created_at DESC""",
-                    (workspace_id,),
-                ).fetchall()))
+                return self.send_json(rows_to_dicts(repo_list_workspace_artifacts(conn, workspace_id)))
             if path == "/api/audit":
                 workspace_id = request_workspace(self.headers, qs)
-                return self.send_json(rows_to_dicts(conn.execute(
-                    """SELECT a.* FROM audit_logs a
-                    WHERE
-                      (a.entity_type='tasks' AND EXISTS (
-                        SELECT 1 FROM tasks t WHERE t.task_id=a.entity_id AND COALESCE(t.workspace_id,'local-demo')=?
-                      ))
-                      OR (a.entity_type='runs' AND EXISTS (
-                        SELECT 1 FROM runs r WHERE r.run_id=a.entity_id AND COALESCE(r.workspace_id,'local-demo')=?
-                      ))
-                      OR (a.entity_type='workflow_jobs' AND EXISTS (
-                        SELECT 1 FROM workflow_jobs j WHERE j.job_id=a.entity_id AND COALESCE(j.workspace_id,'local-demo')=?
-                      ))
-                      OR a.metadata_json LIKE ?
-                    ORDER BY a.created_at DESC LIMIT 200""",
-                    (workspace_id, workspace_id, workspace_id, f'%"workspace_id": "{workspace_id}"%'),
-                ).fetchall()))
+                return self.send_json(rows_to_dicts(repo_list_workspace_audit(conn, workspace_id)))
             if path == "/api/review/queue":
                 limit = int((qs.get("limit") or ["20"])[0])
                 return self.send_json(human_review_queue(conn, limit))

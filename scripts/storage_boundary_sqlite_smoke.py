@@ -67,6 +67,58 @@ def main() -> int:
                 require(status == 201, f"task create failed: {status} {payload}")
             run_a = server.start_mock_run(conn, {"task_id": task_a, "agent_id": agent_a})["run_id"]
             run_b = server.start_mock_run(conn, {"task_id": task_b, "agent_id": agent_b})["run_id"]
+            approval_a, status = server.agent_gateway_request_approval(conn, {
+                "workspace_id": workspace_a,
+                "agent_id": agent_a,
+                "run_id": run_a,
+                "reason": "Storage boundary approval A.",
+            })
+            require(status == 201, f"approval A request failed: {status} {approval_a}")
+            approval_b, status = server.agent_gateway_request_approval(conn, {
+                "workspace_id": workspace_b,
+                "agent_id": agent_b,
+                "run_id": run_b,
+                "reason": "Storage boundary approval B.",
+            })
+            require(status == 201, f"approval B request failed: {status} {approval_b}")
+            evaluation_a, status = server.agent_gateway_eval_submit(conn, {
+                "workspace_id": workspace_a,
+                "agent_id": agent_a,
+                "run_id": run_a,
+                "score": 0.91,
+                "pass_fail": "pass",
+                "notes": "Storage boundary evaluation A.",
+            })
+            require(status == 201, f"evaluation A submit failed: {status} {evaluation_a}")
+            evaluation_b, status = server.agent_gateway_eval_submit(conn, {
+                "workspace_id": workspace_b,
+                "agent_id": agent_b,
+                "run_id": run_b,
+                "score": 0.92,
+                "pass_fail": "pass",
+                "notes": "Storage boundary evaluation B.",
+            })
+            require(status == 201, f"evaluation B submit failed: {status} {evaluation_b}")
+            artifact_a, status = server.agent_gateway_record_artifact(conn, {
+                "workspace_id": workspace_a,
+                "agent_id": agent_a,
+                "run_id": run_a,
+                "artifact_type": "report",
+                "title": "Storage Boundary Artifact A",
+                "summary": "Storage boundary artifact A.",
+                "content_hash": "hash_storage_a",
+            })
+            require(status == 201, f"artifact A record failed: {status} {artifact_a}")
+            artifact_b, status = server.agent_gateway_record_artifact(conn, {
+                "workspace_id": workspace_b,
+                "agent_id": agent_b,
+                "run_id": run_b,
+                "artifact_type": "report",
+                "title": "Storage Boundary Artifact B",
+                "summary": "Storage boundary artifact B.",
+                "content_hash": "hash_storage_b",
+            })
+            require(status == 201, f"artifact B record failed: {status} {artifact_b}")
             memory_a, status = server.agent_gateway_memory_propose(conn, {
                 "workspace_id": workspace_a,
                 "agent_id": agent_a,
@@ -116,6 +168,27 @@ def main() -> int:
             require(server.repo_get_workspace_memory(conn, workspace_a, memory_id_a), "memory helper missed workspace A memory")
             require(not server.repo_get_workspace_memory(conn, workspace_a, memory_id_b), "memory helper exposed workspace B memory")
 
+            approval_id_a = approval_a["approval"]["approval_id"]
+            approval_id_b = approval_b["approval"]["approval_id"]
+            approval_ids = ids(server.repo_list_workspace_approvals(conn, workspace_a), "approval_id")
+            require(approval_id_a in approval_ids and approval_id_b not in approval_ids, f"approval helper leaked workspace rows: {approval_ids}")
+
+            evaluation_id_a = evaluation_a["evaluation"]["evaluation_id"]
+            evaluation_id_b = evaluation_b["evaluation"]["evaluation_id"]
+            evaluation_ids = ids(server.repo_list_workspace_evaluations(conn, workspace_a), "evaluation_id")
+            require(evaluation_id_a in evaluation_ids and evaluation_id_b not in evaluation_ids, f"evaluation helper leaked workspace rows: {evaluation_ids}")
+
+            artifact_id_a = artifact_a["artifact"]["artifact_id"]
+            artifact_id_b = artifact_b["artifact"]["artifact_id"]
+            artifact_ids = ids(server.repo_list_workspace_artifacts(conn, workspace_a), "artifact_id")
+            require(artifact_id_a in artifact_ids and artifact_id_b not in artifact_ids, f"artifact helper leaked workspace rows: {artifact_ids}")
+
+            audit_rows = server.repo_list_workspace_audit(conn, workspace_a)
+            audit_text = json.dumps([dict(row) for row in audit_rows], ensure_ascii=False, sort_keys=True)
+            require(task_a in audit_text or run_a in audit_text, "audit helper missed workspace A task/run evidence")
+            require(artifact_id_a in audit_text, "audit helper missed workspace A metadata evidence")
+            require(task_b not in audit_text and run_b not in audit_text and artifact_id_b not in audit_text, "audit helper leaked workspace B evidence")
+
         print(json.dumps({
             "ok": True,
             "db_path": "isolated_tmp" if owned_db else os.environ.get("AGENTOPS_DB_PATH"),
@@ -126,6 +199,10 @@ def main() -> int:
                 "repo_get_workspace_run",
                 "repo_list_workspace_memories",
                 "repo_get_workspace_memory",
+                "repo_list_workspace_approvals",
+                "repo_list_workspace_evaluations",
+                "repo_list_workspace_artifacts",
+                "repo_list_workspace_audit",
             ],
             "workspace_a": workspace_a,
             "workspace_b": workspace_b,
