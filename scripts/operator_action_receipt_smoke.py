@@ -202,7 +202,12 @@ def main() -> int:
             outputs.append(json.dumps(action_plan, ensure_ascii=False))
             require(status == 200, f"action-plan status mismatch: {status} {action_plan}", failures)
             plan_summary = action_plan.get("summary") or {}
+            receipt_coverage = action_plan.get("receipt_coverage") or {}
             require(int(plan_summary.get("receipt_lookup_window") or 0) > int((action_plan.get("action_receipts") or {}).get("summary", {}).get("receipts") or 0), f"action-plan lookup should be deeper than display receipts: {plan_summary}", failures)
+            require(int(receipt_coverage.get("verified") or 0) >= 1, f"receipt coverage lacks verified action: {receipt_coverage}", failures)
+            require(int(receipt_coverage.get("stale") or 0) >= 1, f"receipt coverage lacks stale action: {receipt_coverage}", failures)
+            require(int(receipt_coverage.get("missing") or 0) >= 1, f"receipt coverage lacks missing actions: {receipt_coverage}", failures)
+            require(receipt_coverage.get("status") == "attention", f"receipt coverage should require attention while stale/missing exist: {receipt_coverage}", failures)
             require((action_plan.get("source_status") or {}).get("action_receipts") == "ready", f"action-plan receipt source missing: {action_plan.get('source_status')}", failures)
             plan_receipts = action_plan.get("action_receipts") or {}
             require(plan_receipts.get("operation") == "operator_action_receipts", f"action-plan receipt payload missing: {plan_receipts}", failures)
@@ -235,7 +240,10 @@ def main() -> int:
             require(status == 200, f"loop-audit status mismatch: {status} {loop_audit}", failures)
             loop_summary = loop_audit.get("summary") or {}
             require(int(loop_summary.get("receipt_verified_actions") or 0) >= 1, f"loop-audit verified action receipt count missing: {loop_summary}", failures)
+            require(int(loop_summary.get("receipt_coverage_percent") or 0) == int(receipt_coverage.get("coverage_percent") or 0), f"loop-audit receipt coverage percent mismatch: {loop_summary} {receipt_coverage}", failures)
             loop_receipts = ((loop_audit.get("sources") or {}).get("action_receipts") or {})
+            loop_receipt_coverage = loop_receipts.get("coverage") or {}
+            require(loop_receipt_coverage.get("status") == receipt_coverage.get("status"), f"loop-audit receipt coverage source mismatch: {loop_receipt_coverage} {receipt_coverage}", failures)
             require(loop_receipts.get("status") == "ready", f"loop-audit receipt source missing: {loop_receipts}", failures)
             record_step = next((step for step in loop_audit.get("steps") or [] if step.get("id") == "record"), {})
             record_evidence = record_step.get("evidence") or {}
