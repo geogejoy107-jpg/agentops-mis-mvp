@@ -337,7 +337,9 @@ This is acceptable for one local repository and one trusted project. It is not a
 
 **Severity: Merge Blocker**
 
-The audited commit has no status checks. The repository contains many smoke scripts, but they are not automatically required before merge.
+The original audited commit had no status checks. The branch now includes a
+first deterministic GitHub Actions workflow at `.github/workflows/ci.yml`, but
+repository branch protection still needs to require those checks before merge.
 
 Minimum CI:
 
@@ -355,6 +357,19 @@ secret scan
 ```
 
 Live Hermes/OpenClaw tests should remain protected local/manual jobs.
+
+Current CI scope:
+
+- Python syntax and `git diff --check`.
+- Credential-free redaction, SQLite pragma and startup security smokes.
+- Isolated local server on `127.0.0.1:8787` with `AGENTOPS_DB_PATH` under the
+  GitHub runner temp directory.
+- Agent Plan integrity, run-start plan gate, exact collaborator scoping,
+  operator task intake/action plan, Agent Gateway scope, task-claim conflict,
+  workspace isolation and v1.5 local product acceptance.
+- UI `npm ci` and `npm run build` for `ui/start-building-app`.
+- Live Hermes/OpenClaw/Dify/Notion paths are explicitly disabled in CI env and
+  remain manual protected acceptance lanes.
 
 ## B0-11: SQLite is not configured for current concurrency
 

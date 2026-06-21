@@ -229,11 +229,28 @@ useful command-center summary       <1 s
 
 ## 10. Automated CI
 
-- [ ] Add GitHub Actions.
+- [x] Add GitHub Actions.
 - [ ] Require checks before merge.
-- [ ] Use clean temporary database/runtime directories.
-- [ ] Keep deterministic CI credential-free.
-- [ ] Keep live Hermes/OpenClaw as protected local/manual jobs.
+- [x] Use clean temporary database/runtime directories.
+- [x] Keep deterministic CI credential-free.
+- [x] Keep live Hermes/OpenClaw as protected local/manual jobs.
+
+Current automation:
+
+```text
+.github/workflows/ci.yml
+backend-deterministic: py_compile, diff-check, redaction, SQLite pragmas,
+startup security, production readiness, Agent Plan integrity, run-start plan
+gate, exact collaborator scoping, operator task intake, operator action plan,
+Gateway scope matrix, scoped reads, task-claim conflict, workspace isolation,
+and v1.5 local product acceptance against a temporary SQLite DB.
+
+ui-build: npm ci + npm run build under ui/start-building-app.
+```
+
+The workflow intentionally keeps Hermes/OpenClaw live runtime work out of CI.
+Those checks remain protected local/manual acceptance commands with explicit
+confirmation and no default credentials.
 
 Minimum jobs:
 

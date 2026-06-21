@@ -1,0 +1,121 @@
+name: AgentOps MIS CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - "codex/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agentops-mis-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend-deterministic:
+    name: Backend deterministic smokes
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      AGENTOPS_DB_PATH: ${{ runner.temp }}/agentops_ci.db
+      AGENTOPS_HOST: 127.0.0.1
+      AGENTOPS_PORT: "8787"
+      AGENTOPS_BASE_URL: http://127.0.0.1:8787
+      AGENTOPS_DEPLOYMENT_MODE: local
+      HERMES_ALLOW_REAL_RUN: "false"
+      HERMES_REQUIRE_CONFIRM_RUN: "true"
+      DIFY_ALLOW_REAL_UPLOAD: "false"
+      NOTION_TOKEN: ""
+      NOTION_PARENT_PAGE_ID: ""
+      NOTION_DATABASE_ID: ""
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Syntax and diff checks
+        run: |
+          set -euo pipefail
+          python3 -m py_compile server.py agentops_mis_cli/*.py scripts/*.py
+          git diff --check
+
+      - name: Offline safety smokes
+        run: |
+          set -euo pipefail
+          python3 scripts/redaction_policy_smoke.py
+          python3 scripts/sqlite_pragmas_smoke.py
+          python3 scripts/startup_security_guard_smoke.py
+
+      - name: Start isolated local server
+        run: |
+          set -euo pipefail
+          python3 server.py --host 127.0.0.1 --port 8787 > "$RUNNER_TEMP/agentops-server.log" 2>&1 &
+          echo "$!" > "$RUNNER_TEMP/agentops-server.pid"
+          for attempt in $(seq 1 60); do
+            if curl -fsS "$AGENTOPS_BASE_URL/api/agent-gateway/status" >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/agentops-server.log"
+          exit 1
+
+      - name: Server-backed smoke suite
+        run: |
+          set -euo pipefail
+          python3 scripts/security_production_readiness_smoke.py --base-url "$AGENTOPS_BASE_URL"
+          python3 scripts/agentops_doctor_smoke.py
+          python3 scripts/agent_plan_integrity_smoke.py --base-url "$AGENTOPS_BASE_URL"
+          python3 scripts/run_start_plan_gate_smoke.py --base-url "$AGENTOPS_BASE_URL"
+          python3 scripts/collaborator_exact_scope_smoke.py "$AGENTOPS_BASE_URL"
+          python3 scripts/operator_task_intake_smoke.py
+          python3 scripts/operator_action_plan_smoke.py --base-url "$AGENTOPS_BASE_URL"
+          python3 scripts/agent_gateway_scope_matrix_smoke.py --base-url "$AGENTOPS_BASE_URL"
+          python3 scripts/agent_gateway_scoped_read_smoke.py
+          python3 scripts/task_claim_conflict_smoke.py --base-url "$AGENTOPS_BASE_URL"
+          python3 scripts/workspace_isolation_smoke.py --base-url "$AGENTOPS_BASE_URL"
+          python3 scripts/v1_5_local_product_acceptance.py --base-url "$AGENTOPS_BASE_URL"
+
+      - name: Stop local server
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/agentops-server.pid" ]; then
+            kill "$(cat "$RUNNER_TEMP/agentops-server.pid")" 2>/dev/null || true
+          fi
+
+      - name: Upload server log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentops-server-log
+          path: ${{ runner.temp }}/agentops-server.log
+          if-no-files-found: ignore
+
+  ui-build:
+    name: UI build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: ui/start-building-app/package-lock.json
+
+      - name: Install and build
+        working-directory: ui/start-building-app
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
