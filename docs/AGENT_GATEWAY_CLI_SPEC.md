@@ -1282,6 +1282,19 @@ checks assignment, verified Agent Plan, knowledge/spec references, base
 references, and high-risk approval boundaries before the task is pulled.
 
 ```bash
+agentops operator action-receipts --limit 12
+agentops operator action-receipts --limit 8 --plan-limit 20
+```
+
+Maps to `GET /api/operator/action-receipts` plus read-only action-plan receipt
+coverage. This command does not record receipts and must not mutate ledger
+rows. It returns recent receipt rows, `receipt_coverage` with
+required/verified/stale/missing counts, `action_plan_status`, top commands, and
+safety flags. Use it when a CLI operator needs the same Action Queue receipt
+health that `/workspace/agents` shows before deciding which explicit recovery
+command to run.
+
+```bash
 agentops operator intake-checklist --limit 12
 ```
 

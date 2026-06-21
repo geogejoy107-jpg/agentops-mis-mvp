@@ -319,6 +319,28 @@ def cmd_operator_action_plan(args, client: AgentOpsClient) -> dict:
     return client.get("/api/operator/action-plan", query={"limit": args.limit})
 
 
+def cmd_operator_action_receipts(args, client: AgentOpsClient) -> dict:
+    receipts = client.get("/api/operator/action-receipts", query={"limit": args.limit})
+    action_plan = client.get("/api/operator/action-plan", query={"limit": args.plan_limit})
+    coverage = action_plan.get("receipt_coverage") or {}
+    return {
+        **receipts,
+        "operation": "operator_action_receipts_cli",
+        "receipt_coverage": coverage,
+        "action_plan_status": action_plan.get("status"),
+        "action_plan_top_commands": action_plan.get("top_commands") or [],
+        "contract": "read-only operator action receipt ledger plus action-plan coverage; recording receipts remains explicit API/UI work",
+        "safety": {
+            **(receipts.get("safety") or {}),
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
+
+
 def cmd_operator_loop_audit(args, client: AgentOpsClient) -> dict:
     return client.get("/api/operator/loop-audit", query={"limit": args.limit, "loop_id": args.loop_id or None})
 
@@ -1629,6 +1651,10 @@ def build_parser() -> argparse.ArgumentParser:
     operator_plan = operator_sub.add_parser("action-plan", help="Show the prioritized next safe CLI/UI actions.")
     operator_plan.add_argument("--limit", type=int, default=12)
     operator_plan.set_defaults(handler="operator_action_plan")
+    operator_receipts = operator_sub.add_parser("action-receipts", help="Read Action Queue receipt ledger rows plus action-plan coverage.")
+    operator_receipts.add_argument("--limit", type=int, default=12)
+    operator_receipts.add_argument("--plan-limit", type=int, default=12)
+    operator_receipts.set_defaults(handler="operator_action_receipts")
     operator_loop = operator_sub.add_parser("loop-audit", help="Audit the READ/PLAN/RETRIEVE/COMPARE/EXECUTE/VERIFY/RECORD loop contract.")
     operator_loop.add_argument("--loop-id", default=None)
     operator_loop.add_argument("--limit", type=int, default=12)
@@ -2392,6 +2418,7 @@ HANDLERS = {
     "local_readiness": cmd_local_readiness,
     "demo_readiness": cmd_demo_readiness,
     "operator_action_plan": cmd_operator_action_plan,
+    "operator_action_receipts": cmd_operator_action_receipts,
     "operator_loop_audit": cmd_operator_loop_audit,
     "operator_intake_checklist": cmd_operator_intake_checklist,
     "operator_remediate_evidence_gap": cmd_operator_remediate_evidence_gap,
