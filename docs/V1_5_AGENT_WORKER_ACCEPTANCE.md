@@ -554,12 +554,23 @@ Async workflow job smoke passed:
 script: python3 scripts/agentops_workflow_async_job_smoke.py
 command:
   ./scripts/agentops workflow run-template --template-id tpl_customer_ui_review --adapter mock --async-job
-  ./scripts/agentops workflow job-status --job-id wfjob_a76f1997b46a --wait
-job: wfjob_a76f1997b46a
-run: run_gw_cb2eca6b737c
-artifact: art_customer_worker_task_run_gw_cb2eca6b737c
+  ./scripts/agentops workflow job-status --job-id wfjob_6cfffb10338d --wait
+job: wfjob_6cfffb10338d
+run: run_gw_8eb6ebe95392
+artifact: art_customer_worker_task_run_gw_8eb6ebe95392
 evidence: tool_calls=1, evaluations=1, audit_logs=10, artifacts=1, memories=2, approvals=1
 secret_leaked: false
+```
+
+Pixel Office async job UI verification passed:
+
+```text
+page: /workspace/pixel-office
+build: cd ui/start-building-app && npm run build
+browser check: Playwright snapshot
+visible region: 异步 Workflow Jobs
+visible evidence: job status, adapter/template id, task link, run link, artifact id
+latest visible job: wfjob_6cfffb10338d -> run_gw_8eb6ebe95392
 ```
 
 The customer project report smoke passed:

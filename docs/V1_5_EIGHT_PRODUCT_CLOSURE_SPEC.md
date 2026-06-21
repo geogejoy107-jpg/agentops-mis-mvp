@@ -440,6 +440,9 @@ Current v1.5 implementation:
   `agentops workflow run-template --async-job` and polled through
   `agentops workflow job-status --wait`, avoiding brittle long-lived HTTP
   requests while preserving ledger evidence.
+- Pixel Office surfaces recent async workflow jobs in the customer dispatch
+  panel, including job status, adapter/template id, final task/run links, and
+  artifact id.
 - Pixel Office's customer dispatch panel loads local templates, applies their default title/brief/acceptance criteria, and can run the selected template.
 - Customer projects can export a safe ledger-backed delivery report through `GET /api/workflows/customer-projects/:project_id/report`.
 - Pixel Office surfaces the report link after template-backed project generation.
@@ -491,10 +494,14 @@ Acceptance evidence:
   - both wrote tool/evaluation/audit/artifact/memory/approval evidence
 - Async customer template workflow smoke:
   `python3 scripts/agentops_workflow_async_job_smoke.py`
-  - job: `wfjob_a76f1997b46a`
-  - run: `run_gw_cb2eca6b737c`
-  - artifact: `art_customer_worker_task_run_gw_cb2eca6b737c`
+  - job: `wfjob_6cfffb10338d`
+  - run: `run_gw_8eb6ebe95392`
+  - artifact: `art_customer_worker_task_run_gw_8eb6ebe95392`
   - evidence: tool/evaluation/audit/artifact/memory/approval rows present
+- Pixel Office async job UI build/snapshot:
+  - `cd ui/start-building-app && npm run build`
+  - Playwright snapshot on `/workspace/pixel-office` shows `异步 Workflow Jobs`
+    with job `wfjob_6cfffb10338d`, run link `run_gw_8eb6ebe95392`, and artifact id
 - Customer project report smoke: `python3 scripts/customer_project_report_smoke.py`
   - project: `20260618155050`
   - report: `/api/workflows/customer-projects/20260618155050/report`
@@ -591,6 +598,7 @@ python3 scripts/worker_adapter_retry_smoke.py
 python3 scripts/customer_task_template_smoke.py
 python3 scripts/agentops_workflow_template_cli_smoke.py
 python3 scripts/agentops_workflow_async_job_smoke.py
+cd ui/start-building-app && npm run build
 # Optional live/local-runtime evidence, not part of default CI because it can take several minutes:
 python3 scripts/template_worker_live_dogfood.py --adapter openclaw
 python3 scripts/template_worker_live_dogfood.py --adapter hermes
@@ -623,6 +631,8 @@ Implemented and verified:
 - Async customer template jobs through
   `agentops workflow run-template --async-job` and
   `agentops workflow job-status --wait`.
+- Pixel Office customer dispatch panel can display recent async workflow jobs
+  and link to their final task/run evidence.
 - One-command scoped task create + worker execution through `agentops workflow run-task`.
 - Customer/API-facing normal task creation through `POST /api/tasks`, scoped Gateway task creation through `POST /api/agent-gateway/tasks`, and CLI `agentops task create`, followed by worker pull/claim/writeback.
 - Scoped Gateway task creation requires `tasks:create` and binds remote tokens to their own `agent_id`/`workspace_id`.

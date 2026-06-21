@@ -1,17 +1,20 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
-import { Archive, CheckCircle2, ClipboardCheck, Loader2, Play, ShieldCheck } from "lucide-react";
+import { Archive, CheckCircle2, ClipboardCheck, Clock3, Loader2, Play, RefreshCw, ShieldCheck } from "lucide-react";
 import type { Agent } from "../../data/mockData";
 import {
+  loadWorkflowJobs,
   loadCustomerTaskTemplates,
   persistCustomerProjectReportArtifact,
   runCustomerTaskTemplateWorkflow,
   runCustomerTaskWorkflow,
   runCustomerWorkerTaskWorkflow,
+  submitCustomerTaskTemplateJob,
   type CustomerTaskTemplate,
   type CustomerProjectReportArtifactResult,
   type CustomerTaskWorkflowResult,
   type KbBotProjectWorkflowResult,
+  type WorkflowJob,
 } from "../../data/liveApi";
 import type { PixelLocale } from "./pixelModel";
 
@@ -57,9 +60,11 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
   const [workerBusy, setWorkerBusy] = useState(false);
   const [kbBusy, setKbBusy] = useState(false);
   const [reportBusy, setReportBusy] = useState(false);
+  const [jobBusy, setJobBusy] = useState(false);
   const [result, setResult] = useState<CustomerTaskWorkflowResult | null>(null);
   const [kbResult, setKbResult] = useState<KbBotProjectWorkflowResult | null>(null);
   const [reportArtifact, setReportArtifact] = useState<CustomerProjectReportArtifactResult | null>(null);
+  const [workflowJobs, setWorkflowJobs] = useState<WorkflowJob[]>([]);
   const [templates, setTemplates] = useState<CustomerTaskTemplate[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState("tpl_customer_kb_qa_bot");
   const [workerAdapter, setWorkerAdapter] = useState<(typeof workerAdapters)[number]>("hermes");
@@ -89,6 +94,15 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  const refreshWorkflowJobs = async () => {
+    const payload = await loadWorkflowJobs(6);
+    setWorkflowJobs(payload.jobs || []);
+  };
+
+  useEffect(() => {
+    void refreshWorkflowJobs().catch(() => setWorkflowJobs([]));
   }, []);
 
   const selectedTemplate = useMemo(
@@ -183,6 +197,32 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setWorkerBusy(false);
+    }
+  };
+
+  const submitAsyncTemplateJob = async () => {
+    setJobBusy(true);
+    setError(null);
+    try {
+      const next = await submitCustomerTaskTemplateJob({
+        template_id: selectedTemplateId,
+        adapter: workerAdapter,
+        confirm_run: true,
+        selected_agent_ids: selected,
+        owner_agent_id: selected[0],
+        title,
+        description,
+        acceptance_criteria: acceptance,
+        priority: "high",
+        risk_level: risk,
+      });
+      setWorkflowJobs((current) => [next.job, ...current.filter((job) => job.job_id !== next.job_id)].slice(0, 6));
+      await onRefresh();
+      await refreshWorkflowJobs();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setJobBusy(false);
     }
   };
 
@@ -442,6 +482,16 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
         </button>
         <button
           type="button"
+          onClick={submitAsyncTemplateJob}
+          disabled={jobBusy || !title.trim()}
+          className="inline-flex items-center gap-1.5 rounded px-3 py-2 text-xs disabled:opacity-50"
+          style={{ background: "rgba(168,85,247,0.14)", color: "var(--mis-purple)", border: "1px solid rgba(168,85,247,0.30)" }}
+        >
+          {jobBusy ? <Loader2 size={13} className="animate-spin" /> : <Clock3 size={13} />}
+          {zh ? "异步提交 Worker Job" : "Submit async worker job"}
+        </button>
+        <button
+          type="button"
           onClick={() => submit(true)}
           disabled={busy || !title.trim()}
           className="inline-flex items-center gap-1.5 rounded px-3 py-2 text-xs disabled:opacity-50"
@@ -451,8 +501,59 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
           {zh ? "确认真实运行" : "Confirm real run"}
         </button>
         <span className="text-[10px]" style={{ color: "var(--mis-muted)" }}>
-          {zh ? "mock worker 会真实写入账本；Hermes/OpenClaw 需要显式确认。" : "Mock worker writes real ledger evidence; Hermes/OpenClaw require explicit confirmation."}
+          {zh ? "mock worker 会真实写入账本；Hermes/OpenClaw 需要显式确认。长任务建议用异步 Job。" : "Mock worker writes real ledger evidence; Hermes/OpenClaw require explicit confirmation. Use async jobs for long runs."}
         </span>
+      </div>
+
+      <div className="mt-4 rounded p-3" style={{ background: "var(--mis-surface2)", border: "1px solid rgba(148,163,184,0.14)" }}>
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2 text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>
+              <Clock3 size={13} style={{ color: "var(--mis-purple)" }} />
+              {zh ? "异步 Workflow Jobs" : "Async workflow jobs"}
+            </div>
+            <p className="mt-1 text-[10px]" style={{ color: "var(--mis-muted)" }}>
+              {zh ? "长时间 Hermes/OpenClaw 任务先提交 job，再从账本轮询结果。" : "Long Hermes/OpenClaw runs submit a job first, then poll ledger-backed results."}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => refreshWorkflowJobs().catch((err) => setError(err instanceof Error ? err.message : String(err)))}
+            className="inline-flex items-center gap-1.5 rounded px-2.5 py-1.5 text-[10px]"
+            style={{ background: "rgba(148,163,184,0.10)", color: "var(--mis-text)", border: "1px solid rgba(148,163,184,0.18)" }}
+          >
+            <RefreshCw size={12} />
+            {zh ? "刷新" : "Refresh"}
+          </button>
+        </div>
+        <div className="mt-3 grid grid-cols-1 lg:grid-cols-2 gap-2">
+          {workflowJobs.length === 0 ? (
+            <div className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{zh ? "暂无异步任务。" : "No async jobs yet."}</div>
+          ) : workflowJobs.map((job) => (
+            <div key={job.job_id} className="rounded p-2" style={{ background: "var(--mis-surface)", border: "1px solid rgba(148,163,184,0.12)" }}>
+              <div className="flex items-center justify-between gap-2">
+                <span className="truncate text-[11px] font-medium" style={{ color: "var(--mis-text)" }}>{job.title || job.template_id || job.job_id}</span>
+                <span
+                  className="rounded px-1.5 py-0.5 text-[9px]"
+                  style={{
+                    background: job.status === "completed" ? "rgba(42,157,143,0.12)" : job.status === "failed" ? "rgba(248,113,113,0.12)" : "rgba(251,191,36,0.12)",
+                    color: job.status === "completed" ? "var(--mis-success)" : job.status === "failed" ? "#FCA5A5" : "#FBBF24",
+                  }}
+                >
+                  {job.status}
+                </span>
+              </div>
+              <div className="mt-1 text-[10px]" style={{ color: "var(--mis-muted)" }}>{job.job_id} · {job.adapter || "default"} · {job.template_id}</div>
+              {job.input_summary && <p className="mt-1 line-clamp-2 text-[10px] leading-relaxed" style={{ color: "var(--mis-dim)" }}>{job.input_summary}</p>}
+              <div className="mt-2 flex flex-wrap gap-2 text-[10px]">
+                {job.result_task_id && <Link style={{ color: "var(--mis-cyan)" }} to={`/admin/tasks/${job.result_task_id}`}>{zh ? "任务" : "Task"}</Link>}
+                {job.result_run_id && <Link style={{ color: "var(--mis-purple)" }} to={`/admin/runs/${job.result_run_id}`}>{zh ? "运行" : "Run"}</Link>}
+                {job.result_artifact_id && <span style={{ color: "var(--mis-success)" }}>{job.result_artifact_id}</span>}
+                {job.error_message && <span style={{ color: "#FCA5A5" }}>{job.error_message}</span>}
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
 
       {(result || error) && (

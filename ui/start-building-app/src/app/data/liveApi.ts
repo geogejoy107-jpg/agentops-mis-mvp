@@ -267,6 +267,45 @@ export interface CustomerTaskTemplateListPayload {
   safe_defaults: Record<string, unknown>;
 }
 
+export interface WorkflowJob {
+  job_id: string;
+  workspace_id?: string;
+  workflow_type: string;
+  status: "queued" | "running" | "completed" | "failed" | string;
+  template_id?: string | null;
+  adapter?: string | null;
+  confirm_run?: boolean;
+  title?: string | null;
+  input_summary?: string | null;
+  request_hash?: string | null;
+  result_task_id?: string | null;
+  result_run_id?: string | null;
+  result_artifact_id?: string | null;
+  error_message?: string | null;
+  created_at?: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+  updated_at?: string;
+  result?: Partial<CustomerTaskWorkflowResult & KbBotProjectWorkflowResult>;
+  raw_request_omitted?: boolean;
+  token_omitted?: boolean;
+}
+
+export interface WorkflowJobSubmitPayload {
+  ok: boolean;
+  provider: string;
+  job_id: string;
+  status_url: string;
+  job: WorkflowJob;
+  raw_request_omitted: boolean;
+  token_omitted: boolean;
+}
+
+export interface WorkflowJobListPayload {
+  jobs: WorkflowJob[];
+  token_omitted?: boolean;
+}
+
 export interface WorkerStatusPayload {
   provider: string;
   status: string;
@@ -909,6 +948,33 @@ export async function runCustomerTaskTemplateWorkflow(input: { template_id: stri
     method: "POST",
     body: JSON.stringify(input),
   });
+}
+
+export async function submitCustomerTaskTemplateJob(input: {
+  template_id: string;
+  adapter?: "mock" | "hermes" | "openclaw";
+  confirm_run?: boolean;
+  selected_agent_ids?: string[];
+  owner_agent_id?: string;
+  worker_agent_id?: string;
+  title?: string;
+  description?: string;
+  acceptance_criteria?: string;
+  priority?: string;
+  risk_level?: string;
+}): Promise<WorkflowJobSubmitPayload> {
+  return apiJson<WorkflowJobSubmitPayload>("/workflows/customer-task-templates/submit", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function loadWorkflowJobs(limit = 8): Promise<WorkflowJobListPayload> {
+  return apiJson<WorkflowJobListPayload>(`/workflows/jobs?limit=${encodeURIComponent(String(limit))}`);
+}
+
+export async function loadWorkflowJob(jobId: string): Promise<{ job: WorkflowJob; token_omitted?: boolean }> {
+  return apiJson<{ job: WorkflowJob; token_omitted?: boolean }>(`/workflows/jobs/${encodeURIComponent(jobId)}`);
 }
 
 export async function persistCustomerProjectReportArtifact(projectId: string): Promise<CustomerProjectReportArtifactResult> {
