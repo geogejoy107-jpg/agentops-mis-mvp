@@ -1186,12 +1186,27 @@ export interface OperatorActionPlanPayload {
     action_receipts_failed: number;
     receipt_required_actions: number;
     receipt_verified_actions: number;
+    receipt_missing_actions: number;
     receipt_missing_verified_actions: number;
     receipt_stale_actions: number;
+    receipt_coverage_percent: number;
+    receipt_lookup_window: number;
   };
   actions: OperatorActionPlanItem[];
   top_commands: string[];
   source_status: Record<string, string | undefined>;
+  receipt_coverage?: {
+    required: number;
+    verified: number;
+    stale: number;
+    missing: number;
+    missing_verified: number;
+    coverage_percent: number;
+    status: string;
+    lookup_window: number;
+    display_receipts: number;
+    token_omitted?: boolean;
+  };
   execution_evidence?: ExecutionEvidenceGapsPayload;
   task_intake?: TaskIntakeChecklistPayload;
   dispatch_evidence?: Record<string, unknown>;
@@ -3828,8 +3843,11 @@ export async function loadOperatorActionPlan(limit = 12): Promise<OperatorAction
       action_receipts_failed: numberValue(summaryRaw.action_receipts_failed, 0),
       receipt_required_actions: numberValue(summaryRaw.receipt_required_actions, 0),
       receipt_verified_actions: numberValue(summaryRaw.receipt_verified_actions, 0),
+      receipt_missing_actions: numberValue(summaryRaw.receipt_missing_actions, 0),
       receipt_missing_verified_actions: numberValue(summaryRaw.receipt_missing_verified_actions, 0),
       receipt_stale_actions: numberValue(summaryRaw.receipt_stale_actions, 0),
+      receipt_coverage_percent: numberValue(summaryRaw.receipt_coverage_percent, 0),
+      receipt_lookup_window: numberValue(summaryRaw.receipt_lookup_window, 0),
     },
     actions: asArray<Record<string, unknown>>(raw.actions).map((item) => ({
       action_id: String(item.action_id || item.command || item.title || ""),
@@ -3858,6 +3876,18 @@ export async function loadOperatorActionPlan(limit = 12): Promise<OperatorAction
     })).filter((item) => item.command),
     top_commands: asArray<unknown>(raw.top_commands).map(String).filter(Boolean),
     source_status: typeof raw.source_status === "object" && raw.source_status !== null ? raw.source_status as Record<string, string | undefined> : {},
+    receipt_coverage: typeof raw.receipt_coverage === "object" && raw.receipt_coverage !== null ? {
+      required: numberValue((raw.receipt_coverage as Record<string, unknown>).required, 0),
+      verified: numberValue((raw.receipt_coverage as Record<string, unknown>).verified, 0),
+      stale: numberValue((raw.receipt_coverage as Record<string, unknown>).stale, 0),
+      missing: numberValue((raw.receipt_coverage as Record<string, unknown>).missing, 0),
+      missing_verified: numberValue((raw.receipt_coverage as Record<string, unknown>).missing_verified, 0),
+      coverage_percent: numberValue((raw.receipt_coverage as Record<string, unknown>).coverage_percent, 0),
+      status: String((raw.receipt_coverage as Record<string, unknown>).status || "unknown"),
+      lookup_window: numberValue((raw.receipt_coverage as Record<string, unknown>).lookup_window, 0),
+      display_receipts: numberValue((raw.receipt_coverage as Record<string, unknown>).display_receipts, 0),
+      token_omitted: boolValue((raw.receipt_coverage as Record<string, unknown>).token_omitted),
+    } : undefined,
     execution_evidence: normalizeExecutionEvidenceGaps(raw.execution_evidence),
     task_intake: normalizeTaskIntakeChecklist(raw.task_intake),
     dispatch_evidence: typeof raw.dispatch_evidence === "object" && raw.dispatch_evidence !== null ? raw.dispatch_evidence as Record<string, unknown> : undefined,

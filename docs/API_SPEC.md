@@ -155,6 +155,10 @@ Indexed documents carry `workspace_id`, `project_id`, `access_level`, `scope`,
 indexed as `workspace_id=global` and `access_level=internal`; future
 customer-private imports must use a concrete workspace id. Search results return
 redacted snippets and hashes only, never raw document bodies.
+The filesystem indexer explicitly excludes generated outputs, caches, runtime
+logs, raw customer folders, local databases, env/key material and other
+credential-like paths; incremental reindex reports `incremental_noop:true` when
+unchanged documents do not rewrite the index.
 
 Agent Gateway search requires `knowledge:read` and is non-mutating: `refresh`
 requests are reported as skipped so read scope cannot update the index. Explicit

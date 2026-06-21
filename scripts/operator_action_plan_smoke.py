@@ -159,10 +159,20 @@ def validate_plan(payload: dict, label: str, failures: list[str], limit: int) ->
         "action_receipts_failed",
         "receipt_required_actions",
         "receipt_verified_actions",
+        "receipt_missing_actions",
         "receipt_missing_verified_actions",
         "receipt_stale_actions",
+        "receipt_coverage_percent",
+        "receipt_lookup_window",
     ]:
         require(isinstance(summary.get(key), int), f"{label} summary.{key} missing: {summary}", failures)
+    receipt_coverage = payload.get("receipt_coverage") or {}
+    require(receipt_coverage.get("required") == summary.get("receipt_required_actions"), f"{label} receipt coverage required mismatch: {receipt_coverage} {summary}", failures)
+    require(receipt_coverage.get("verified") == summary.get("receipt_verified_actions"), f"{label} receipt coverage verified mismatch: {receipt_coverage} {summary}", failures)
+    require(receipt_coverage.get("stale") == summary.get("receipt_stale_actions"), f"{label} receipt coverage stale mismatch: {receipt_coverage} {summary}", failures)
+    require(receipt_coverage.get("missing") == summary.get("receipt_missing_actions"), f"{label} receipt coverage missing mismatch: {receipt_coverage} {summary}", failures)
+    require(receipt_coverage.get("coverage_percent") == summary.get("receipt_coverage_percent"), f"{label} receipt coverage percent mismatch: {receipt_coverage} {summary}", failures)
+    require(receipt_coverage.get("status") in {"ready", "attention"}, f"{label} receipt coverage status wrong: {receipt_coverage}", failures)
     require(isinstance(summary.get("recommended_adapter"), str), f"{label} recommended_adapter missing: {summary}", failures)
     actions = payload.get("actions")
     require(isinstance(actions, list), f"{label} actions missing", failures)

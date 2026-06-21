@@ -4315,7 +4315,63 @@ def knowledge_access_level(path: Path) -> str:
     return "internal"
 
 
-def iter_knowledge_markdown_files() -> list[Path]:
+KNOWLEDGE_EXCLUDED_DIR_PARTS = {
+    ".git",
+    ".pytest_cache",
+    ".mypy_cache",
+    "__pycache__",
+    "node_modules",
+    "dist",
+    "build",
+    "outputs",
+    "runtime",
+    "logs",
+    "tmp",
+    "temp",
+    "private",
+    "customer_private",
+    "raw_customer",
+    "transcripts",
+    "attachments",
+}
+
+KNOWLEDGE_EXCLUDED_FILENAMES = {
+    ".env",
+    ".env.local",
+    ".env.production",
+    "agentops_mis.db",
+}
+
+KNOWLEDGE_EXCLUDED_SUFFIXES = {
+    ".db",
+    ".sqlite",
+    ".sqlite3",
+    ".jsonl",
+    ".log",
+    ".pem",
+    ".key",
+}
+
+
+def knowledge_path_exclusion_reason(path: Path) -> str | None:
+    try:
+        rel = path.resolve().relative_to(ROOT)
+    except Exception:
+        return "outside_repo"
+    parts = set(rel.parts)
+    matched_parts = sorted(parts & KNOWLEDGE_EXCLUDED_DIR_PARTS)
+    if matched_parts:
+        return f"excluded_dir:{matched_parts[0]}"
+    if path.name in KNOWLEDGE_EXCLUDED_FILENAMES:
+        return f"excluded_filename:{path.name}"
+    if path.suffix.lower() in KNOWLEDGE_EXCLUDED_SUFFIXES:
+        return f"excluded_suffix:{path.suffix.lower()}"
+    if path.name.startswith("."):
+        return "hidden_file"
+    return None
+
+
+def collect_knowledge_markdown_files() -> tuple[list[Path], list[dict]]:
     candidates: list[Path] = []
     for name in ["PROJECT_SPEC.md", "AGENT_WORKFLOW.md", "BASE_INDEX.md", "secret_registry.md"]:
         path = ROOT / name
@@ -4326,16 +4382,31 @@ def iter_knowledge_markdown_files() -> list[Path]:
             candidates.extend(sorted(base.rglob("*.md")))
     unique = []
     seen = set()
+    excluded: list[dict] = []
     for path in candidates:
         try:
             resolved = path.resolve()
             resolved.relative_to(ROOT)
         except Exception:
+            excluded.append({"path": str(path), "reason": "outside_repo"})
             continue
-        if resolved not in seen and ".git" not in resolved.parts and "node_modules" not in resolved.parts:
+        reason = knowledge_path_exclusion_reason(resolved)
+        if reason:
+            try:
+                rel = str(resolved.relative_to(ROOT))
+            except Exception:
+                rel = str(resolved)
+            excluded.append({"path": rel, "reason": reason})
+            continue
+        if resolved not in seen:
             seen.add(resolved)
             unique.append(resolved)
-    return unique
+    return unique, excluded
+
+
+def iter_knowledge_markdown_files() -> list[Path]:
+    included, _excluded = collect_knowledge_markdown_files()
+    return included
 
 
 def sync_knowledge_index(conn: sqlite3.Connection, rebuild: bool = False) -> dict:
@@ -4348,7 +4419,8 @@ def sync_knowledge_index(conn: sqlite3.Connection, rebuild: bool = False) -> dic
     changed = 0
     deleted = 0
     seen_doc_ids = set()
-    for path in iter_knowledge_markdown_files():
+    knowledge_files, excluded_files = collect_knowledge_markdown_files()
+    for path in knowledge_files:
         try:
             content = path.read_text(encoding="utf-8")
         except Exception:
@@ -4400,7 +4472,15 @@ def sync_knowledge_index(conn: sqlite3.Connection, rebuild: bool = False) -> dic
         if fts_available:
             conn.execute("DELETE FROM knowledge_fts WHERE doc_id=?", (stale_id,))
         deleted += 1
-    return {"indexed": indexed, "changed": changed, "deleted": deleted, "fts_available": fts_available}
+    return {
+        "indexed": indexed,
+        "changed": changed,
+        "deleted": deleted,
+        "excluded": len(excluded_files),
+        "excluded_reasons": sorted({item["reason"] for item in excluded_files}),
+        "incremental_noop": changed == 0 and deleted == 0 and not rebuild,
+        "fts_available": fts_available,
+    }
 
 
 def fts_query(raw: str) -> str:
@@ -5780,10 +5860,8 @@ def operator_action_receipt_public(row: sqlite3.Row) -> dict:
     }
 
 
-def list_operator_action_receipts(conn: sqlite3.Connection, qs, headers=None) -> dict:
-    headers = headers or {}
-    workspace_id = normalize_workspace_id((qs.get("workspace_id") or [headers.get("X-AgentOps-Workspace-Id") or "local-demo"])[0])
-    limit = min(max(int((qs.get("limit") or ["12"])[0]), 1), 50)
+def operator_action_receipt_rows(conn: sqlite3.Connection, workspace_id: str, limit: int) -> list[dict]:
+    limit = min(max(int(limit), 1), 1000)
     rows = conn.execute(
         """SELECT audit_id, actor_id, entity_id, metadata_json, tamper_chain_hash, created_at
         FROM audit_logs
@@ -5792,10 +5870,17 @@ def list_operator_action_receipts(conn: sqlite3.Connection, qs, headers=None) ->
         LIMIT ?""",
         (max(limit * 3, limit),),
     ).fetchall()
-    receipts = [
+    return [
         receipt for receipt in (operator_action_receipt_public(row) for row in rows)
         if receipt.get("workspace_id") == workspace_id
     ][:limit]
+
+
+def list_operator_action_receipts(conn: sqlite3.Connection, qs, headers=None) -> dict:
+    headers = headers or {}
+    workspace_id = normalize_workspace_id((qs.get("workspace_id") or [headers.get("X-AgentOps-Workspace-Id") or "local-demo"])[0])
+    limit = min(max(int((qs.get("limit") or ["12"])[0]), 1), 50)
+    receipts = operator_action_receipt_rows(conn, workspace_id, limit)
     summary = {
         "receipts": len(receipts),
         "recorded": sum(1 for item in receipts if item.get("status") == "recorded"),
@@ -14457,7 +14542,8 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
     dispatch_evidence = operator_dispatch_evidence_lane(conn, workspace_id, limit=max(limit, 8))
     action_receipts = list_operator_action_receipts(conn, {"limit": [str(max(limit, 8))], "workspace_id": [workspace_id]}, headers)
     action_receipt_summary = action_receipts.get("summary") or {}
-    receipt_rows = action_receipts.get("receipts") or []
+    receipt_lookup_limit = min(max(max(limit, 8) * 40, 200), 1000)
+    receipt_rows = operator_action_receipt_rows(conn, workspace_id, receipt_lookup_limit)
 
     actions: list[dict] = []
 
@@ -14796,6 +14882,28 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
     receipt_required_actions = [item for item in deduped if item.get("receipt_required")]
     receipt_verified_actions = [item for item in receipt_required_actions if item.get("receipt_verified")]
     receipt_stale_actions = [item for item in receipt_required_actions if item.get("receipt_status") == "stale"]
+    receipt_missing_actions = [
+        item for item in receipt_required_actions
+        if not item.get("receipt_verified") and item.get("receipt_status") != "stale"
+    ]
+    receipt_required_count = len(receipt_required_actions)
+    receipt_verified_count = len(receipt_verified_actions)
+    receipt_stale_count = len(receipt_stale_actions)
+    receipt_missing_count = len(receipt_missing_actions)
+    receipt_coverage_percent = round((receipt_verified_count / receipt_required_count) * 100) if receipt_required_count else 100
+    receipt_coverage_status = "ready" if receipt_missing_count == 0 and receipt_stale_count == 0 else "attention"
+    receipt_coverage = {
+        "required": receipt_required_count,
+        "verified": receipt_verified_count,
+        "stale": receipt_stale_count,
+        "missing": receipt_missing_count,
+        "missing_verified": receipt_required_count - receipt_verified_count,
+        "coverage_percent": receipt_coverage_percent,
+        "status": receipt_coverage_status,
+        "lookup_window": len(receipt_rows),
+        "display_receipts": action_receipt_summary.get("receipts", 0),
+        "token_omitted": True,
+    }
     status = "blocked" if blocked else "attention" if attention else "ready"
     return {
         "provider": "agentops-operator",
@@ -14844,11 +14952,15 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             "action_receipts_recorded": action_receipt_summary.get("recorded", 0),
             "action_receipts_verified": action_receipt_summary.get("verified", 0),
             "action_receipts_failed": action_receipt_summary.get("failed", 0),
-            "receipt_required_actions": len(receipt_required_actions),
-            "receipt_verified_actions": len(receipt_verified_actions),
-            "receipt_missing_verified_actions": len(receipt_required_actions) - len(receipt_verified_actions),
-            "receipt_stale_actions": len(receipt_stale_actions),
+            "receipt_required_actions": receipt_required_count,
+            "receipt_verified_actions": receipt_verified_count,
+            "receipt_missing_actions": receipt_missing_count,
+            "receipt_missing_verified_actions": receipt_required_count - receipt_verified_count,
+            "receipt_stale_actions": receipt_stale_count,
+            "receipt_coverage_percent": receipt_coverage_percent,
+            "receipt_lookup_window": len(receipt_rows),
         },
+        "receipt_coverage": receipt_coverage,
         "actions": deduped,
         "top_commands": [item["command"] for item in deduped[:5]],
         "source_status": {
@@ -14897,6 +15009,7 @@ def operator_loop_audit(conn: sqlite3.Connection, headers, qs=None) -> dict:
     dispatch_summary = dispatch_evidence.get("summary") or {}
     action_receipts = action_plan.get("action_receipts") or {}
     action_receipt_summary = action_receipts.get("summary") or {}
+    receipt_coverage = action_plan.get("receipt_coverage") or {}
     source_status = action_plan.get("source_status") or {}
     loop_readback = hermes_openclaw_loop_readback(conn, loop_id=loop_id or None, limit=limit)
     loop_summary = loop_readback.get("summary") or {}
@@ -15130,6 +15243,13 @@ def operator_loop_audit(conn: sqlite3.Connection, headers, qs=None) -> dict:
             "action_receipts_recorded": action_receipt_summary.get("recorded", 0),
             "action_receipts_verified": action_receipt_summary.get("verified", 0),
             "action_receipts_failed": action_receipt_summary.get("failed", 0),
+            "receipt_required_actions": summary.get("receipt_required_actions", 0),
+            "receipt_verified_actions": summary.get("receipt_verified_actions", 0),
+            "receipt_missing_actions": summary.get("receipt_missing_actions", 0),
+            "receipt_stale_actions": summary.get("receipt_stale_actions", 0),
+            "receipt_coverage_percent": summary.get("receipt_coverage_percent", 0),
+            "receipt_coverage_status": receipt_coverage.get("status"),
+            "receipt_lookup_window": summary.get("receipt_lookup_window", 0),
         },
         record_command,
         "review_memory_audit:action_receipts",
@@ -15162,6 +15282,12 @@ def operator_loop_audit(conn: sqlite3.Connection, headers, qs=None) -> dict:
             "memory_candidates": memory_candidates,
             "action_receipts": action_receipt_summary.get("receipts", 0),
             "action_receipts_verified": action_receipt_summary.get("verified", 0),
+            "receipt_verified_actions": summary.get("receipt_verified_actions", 0),
+            "receipt_missing_actions": summary.get("receipt_missing_actions", 0),
+            "receipt_stale_actions": summary.get("receipt_stale_actions", 0),
+            "receipt_coverage_percent": summary.get("receipt_coverage_percent", 0),
+            "receipt_coverage_status": receipt_coverage.get("status"),
+            "receipt_lookup_window": summary.get("receipt_lookup_window", 0),
             "loop_memory_candidates": loop_memory_candidates,
             "loop_approved_memories": loop_approved_memories,
             "loop_pending_approvals": loop_pending_approvals,
@@ -15192,6 +15318,7 @@ def operator_loop_audit(conn: sqlite3.Connection, headers, qs=None) -> dict:
                 "status": action_receipts.get("status"),
                 "summary": action_receipt_summary,
                 "recent": action_receipts.get("receipts") or [],
+                "coverage": receipt_coverage,
             },
             "loop_readback": {
                 "status": loop_readback.get("status"),

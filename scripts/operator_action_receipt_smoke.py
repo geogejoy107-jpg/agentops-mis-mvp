@@ -174,25 +174,40 @@ def main() -> int:
                 stale_item = stale_receipt.get("receipt") or {}
                 require(stale_item.get("action_signature") == stale_payload["action_signature"], f"stale action signature mismatch: {stale_item}", failures)
 
+            unrelated_writes = 35
+            for index in range(unrelated_writes):
+                noise_payload = {
+                    "action_command": f"agentops unrelated-receipt-noise --index {index}",
+                    "verify_command": "agentops operator action-plan --limit 20",
+                    "action_id": f"smoke:unrelated:{index}",
+                    "action_signature": f"smoke_unrelated_signature_{index}",
+                    "source": "smoke.operator_action_queue.unrelated",
+                    "status": "recorded",
+                    "result_summary": "Noise receipt used to prove action-plan lookup is deeper than recent display rows.",
+                }
+                status, noise_receipt = http_json(base_url, "/api/operator/action-receipts", "POST", noise_payload)
+                outputs.append(json.dumps(noise_receipt, ensure_ascii=False))
+                require(status == 201, f"noise POST status mismatch at {index}: {status} {noise_receipt}", failures)
+
             status, readback = http_json(base_url, "/api/operator/action-receipts?limit=5")
             outputs.append(json.dumps(readback, ensure_ascii=False))
             require(status == 200, f"GET status mismatch: {status} {readback}", failures)
             require(readback.get("operation") == "operator_action_receipts", f"wrong readback operation: {readback}", failures)
             summary = readback.get("summary") or {}
-            require(int(summary.get("verified") or 0) >= 1, f"verified count missing: {summary}", failures)
+            require(int(summary.get("recorded") or 0) == 5, f"recent receipt display should contain latest noise receipts: {summary}", failures)
             receipt_ids = {row.get("receipt_id") for row in readback.get("receipts") or []}
-            require(item.get("receipt_id") in receipt_ids, f"receipt missing from readback: {readback}", failures)
+            require(item.get("receipt_id") not in receipt_ids, f"target receipt should be older than recent display rows: {readback}", failures)
 
             status, action_plan = http_json(base_url, "/api/operator/action-plan?limit=30")
             outputs.append(json.dumps(action_plan, ensure_ascii=False))
             require(status == 200, f"action-plan status mismatch: {status} {action_plan}", failures)
             plan_summary = action_plan.get("summary") or {}
-            require(int(plan_summary.get("action_receipts_verified") or 0) >= 1, f"action-plan verified receipt count missing: {plan_summary}", failures)
+            require(int(plan_summary.get("receipt_lookup_window") or 0) > int((action_plan.get("action_receipts") or {}).get("summary", {}).get("receipts") or 0), f"action-plan lookup should be deeper than display receipts: {plan_summary}", failures)
             require((action_plan.get("source_status") or {}).get("action_receipts") == "ready", f"action-plan receipt source missing: {action_plan.get('source_status')}", failures)
             plan_receipts = action_plan.get("action_receipts") or {}
             require(plan_receipts.get("operation") == "operator_action_receipts", f"action-plan receipt payload missing: {plan_receipts}", failures)
             plan_receipt_ids = {row.get("receipt_id") for row in plan_receipts.get("receipts") or []}
-            require(item.get("receipt_id") in plan_receipt_ids, f"receipt missing from action-plan source: {plan_receipts}", failures)
+            require(item.get("receipt_id") not in plan_receipt_ids, f"target receipt should be outside action-plan display source: {plan_receipts}", failures)
             matched_action = next((row for row in action_plan.get("actions") or [] if row.get("command") == payload["action_command"]), {})
             require(matched_action.get("receipt_status") == "verified", f"action-plan action receipt status missing: {matched_action}", failures)
             require(matched_action.get("receipt_verified") is True, f"action-plan action receipt proof missing: {matched_action}", failures)
@@ -215,19 +230,20 @@ def main() -> int:
                 require(int(stale_action.get("receipt_priority_boost") or 0) == 8, f"stale receipt should keep priority boost: {stale_action}", failures)
                 require(stale_action.get("receipt_id") == stale_item.get("receipt_id"), f"stale receipt id mismatch: {stale_action}", failures)
 
-            status, loop_audit = http_json(base_url, "/api/operator/loop-audit?limit=8")
+            status, loop_audit = http_json(base_url, "/api/operator/loop-audit?limit=30")
             outputs.append(json.dumps(loop_audit, ensure_ascii=False))
             require(status == 200, f"loop-audit status mismatch: {status} {loop_audit}", failures)
             loop_summary = loop_audit.get("summary") or {}
-            require(int(loop_summary.get("action_receipts_verified") or 0) >= 1, f"loop-audit verified receipt count missing: {loop_summary}", failures)
+            require(int(loop_summary.get("receipt_verified_actions") or 0) >= 1, f"loop-audit verified action receipt count missing: {loop_summary}", failures)
             loop_receipts = ((loop_audit.get("sources") or {}).get("action_receipts") or {})
             require(loop_receipts.get("status") == "ready", f"loop-audit receipt source missing: {loop_receipts}", failures)
             record_step = next((step for step in loop_audit.get("steps") or [] if step.get("id") == "record"), {})
             record_evidence = record_step.get("evidence") or {}
-            require(int(record_evidence.get("action_receipts_verified") or 0) >= 1, f"RECORD evidence lacks verified receipt: {record_evidence}", failures)
+            require(int(record_evidence.get("receipt_verified_actions") or 0) >= 1, f"RECORD evidence lacks verified action receipt: {record_evidence}", failures)
+            require(int(record_evidence.get("receipt_lookup_window") or 0) >= int(record_evidence.get("action_receipts") or 0), f"RECORD evidence lacks deeper receipt lookup: {record_evidence}", failures)
 
             after = db_counts(db_path)
-            expected_writes = 1 + (1 if stale_payload else 0)
+            expected_writes = 1 + (1 if stale_payload else 0) + unrelated_writes
             require(after["audit_logs"] == before["audit_logs"] + expected_writes, f"audit count did not increase by {expected_writes}: {before} -> {after}", failures)
             require(after["runtime_events"] == before["runtime_events"] + expected_writes, f"runtime count did not increase by {expected_writes}: {before} -> {after}", failures)
             require(not leaked_secret("\n".join(outputs)), "receipt output leaked token-like material", failures)

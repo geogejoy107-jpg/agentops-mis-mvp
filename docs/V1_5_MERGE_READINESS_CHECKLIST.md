@@ -78,13 +78,13 @@ python3 scripts/customer_worker_external_write_gate_smoke.py
 - [x] Repo-global doctrine is separated from customer-private knowledge.
 - [x] Remote/scoped search enforces authorization.
 - [ ] Candidate/rejected memory is not treated as authority.
-- [ ] Index excludes credentials, databases, runtime logs, caches and raw customer files.
+- [x] Index excludes credentials, databases, runtime logs, caches and raw customer files.
 - [x] Redaction occurs before indexing.
 - [x] Search returns source path, hash, scope and retrieval ID.
 - [ ] Add heading-aware chunks rather than only full-document rows.
 - [ ] Add a Chinese/English retrieval test set.
 - [ ] Record Recall@5, MRR and p95.
-- [ ] Reindex is incremental and no-op for unchanged documents.
+- [x] Reindex is incremental and no-op for unchanged documents.
 - [ ] Fallback search does not silently reduce to title/summary-only without reporting it.
 
 Required checks:

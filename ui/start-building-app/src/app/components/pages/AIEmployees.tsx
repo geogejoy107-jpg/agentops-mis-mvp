@@ -256,6 +256,7 @@ export function AIEmployees() {
   const operatorLoopAudit = data?.operatorLoopAudit as OperatorLoopAuditPayload | undefined;
   const operatorPlanActions = operatorActionPlan?.actions || [];
   const operatorPlanSummary = operatorActionPlan?.summary;
+  const operatorReceiptCoverage = operatorActionPlan?.receipt_coverage;
   const operatorEvidenceGaps = operatorActionPlan?.execution_evidence?.gaps || [];
   const taskIntakeChecklist = operatorActionPlan?.task_intake;
   const taskIntakeSummary = taskIntakeChecklist?.summary;
@@ -3134,6 +3135,7 @@ export function AIEmployees() {
                 {operatorPlanSummary && ` · synth ${operatorPlanSummary.evidence_synthesis_ready_runs}/${operatorPlanSummary.evidence_synthesis_pending_runs}/${operatorPlanSummary.evidence_synthesis_promoted_runs}`}
                 {operatorPlanSummary && ` · close ${operatorPlanSummary.evidence_gap_closure_ready_runs}/${operatorPlanSummary.closed_evidence_gap_runs}/${operatorPlanSummary.waived_evidence_gap_runs}`}
                 {operatorPlanSummary && ` · intake ${operatorPlanSummary.task_intake_ready}/${operatorPlanSummary.task_intake_blocked}/${operatorPlanSummary.task_intake_attention}`}
+                {operatorReceiptCoverage && ` · receipt coverage ${operatorReceiptCoverage.verified}/${operatorReceiptCoverage.required} · stale ${operatorReceiptCoverage.stale} · missing ${operatorReceiptCoverage.missing} · ${operatorReceiptCoverage.coverage_percent}%`}
                 {operatorActionReceipts?.summary && ` · ${copy.actionReceipts.toLowerCase()} ${operatorActionReceipts.summary.receipts}/${operatorActionReceipts.summary.verified}`}
               </p>
             </div>

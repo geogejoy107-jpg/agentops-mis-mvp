@@ -141,6 +141,8 @@ def main() -> int:
     redaction_marker = f"KnowledgeRedactionSmoke{stamp}"
     fake_secret = "sk-" + f"knowledgeScopeSecret{stamp}"
     temp_doc = ROOT / "knowledge" / "runbooks" / f"knowledge_scope_redaction_{stamp}.md"
+    temp_excluded_dir = ROOT / "knowledge" / "raw_customer"
+    temp_excluded_doc = temp_excluded_dir / f"raw_customer_scope_{stamp}.md"
 
     with tempfile.TemporaryDirectory(prefix="agentops-knowledge-scope-") as tmp:
         db_path = Path(tmp) / "agentops_mis.db"
@@ -161,6 +163,11 @@ def main() -> int:
         token_id = None
         try:
             wait_ready(base_url, proc)
+            temp_excluded_dir.mkdir(parents=True, exist_ok=True)
+            temp_excluded_doc.write_text(
+                f"# Raw Customer Fixture\n\n{marker_b} should never be indexed from raw customer files.\n",
+                encoding="utf-8",
+            )
             temp_doc.write_text(
                 f"# Knowledge Scope Redaction Smoke\n\n{redaction_marker} must redact {fake_secret} before indexing.\n",
                 encoding="utf-8",
@@ -182,6 +189,8 @@ def main() -> int:
             outputs.append(raw)
             require(status == 200, f"knowledge index failed: {status} {indexed}", failures)
             require(indexed.get("token_omitted") is True, f"token omission missing: {indexed}", failures)
+            require(int(indexed.get("excluded") or 0) >= 1, f"excluded count missing: {indexed}", failures)
+            require("excluded_dir:raw_customer" in set(indexed.get("excluded_reasons") or []), f"raw customer exclusion reason missing: {indexed}", failures)
 
             status, redacted_search, raw = http_json(base_url, "/api/agent-gateway/knowledge/search", token=token, workspace=workspace_a, query={"q": redaction_marker, "limit": 5})
             outputs.append(raw)
@@ -190,6 +199,18 @@ def main() -> int:
             require(redaction_marker in redaction_text, f"redaction smoke doc missing: {redacted_search}", failures)
             require(fake_secret not in redaction_text, "raw fake secret appeared in search output", failures)
             require("[SECRET_REDACTED]" in redaction_text, f"redacted marker missing from search output: {redacted_search}", failures)
+
+            status, excluded_search, raw = http_json(base_url, "/api/agent-gateway/knowledge/search", token=token, workspace=workspace_a, query={"q": marker_b, "limit": 10})
+            outputs.append(raw)
+            require(status == 200, f"excluded raw customer search failed: {status} {excluded_search}", failures)
+            require(not any("raw_customer" in str(row.get("path") or "") for row in excluded_search.get("results") or []), f"raw customer file leaked into search: {excluded_search}", failures)
+
+            status, noop_index, raw = http_json(base_url, "/api/agent-gateway/knowledge/index", "POST", {"rebuild": False}, token=token, workspace=workspace_a)
+            outputs.append(raw)
+            require(status == 200, f"incremental index failed: {status} {noop_index}", failures)
+            require(noop_index.get("changed") == 0, f"incremental index changed unchanged docs: {noop_index}", failures)
+            require(noop_index.get("deleted") == 0, f"incremental index deleted unchanged docs: {noop_index}", failures)
+            require(noop_index.get("incremental_noop") is True, f"incremental no-op flag missing: {noop_index}", failures)
 
             insert_private_doc(db_path, workspace_a, "kdoc_private_a", marker_a)
             insert_private_doc(db_path, workspace_b, "kdoc_private_b", marker_b)
@@ -234,6 +255,11 @@ def main() -> int:
             try:
                 temp_doc.unlink()
             except FileNotFoundError:
+                pass
+            try:
+                temp_excluded_doc.unlink()
+                temp_excluded_dir.rmdir()
+            except OSError:
                 pass
             proc.terminate()
             try:
