@@ -1457,6 +1457,41 @@ planned MIS task
 - Async template worker submit now uses the same live-route gate.
 - Remote enrollment token issuance/revocation/rotation, approval-gated enrollment request UI, endpoint-level scope enforcement, short-lived session tokens with list/revoke controls and worker-loop refresh, scope presets, a first enrollment UI, and minimal Agent Gateway workspace isolation now exist. Full RBAC, hosted multi-tenant isolation, and hosted enrollment policy UI remain future work.
 
+## 2026-06-22 Fleet Hygiene Recovery
+
+Worker fleet management now has a safe hygiene path:
+
+```bash
+agentops worker hygiene
+agentops worker hygiene --apply --confirm-cleanup
+```
+
+The default path is read-only and reports:
+
+- running worker tasks that exceeded the stuck threshold;
+- active remote enrollments that have never heartbeated after the enrollment age
+  threshold;
+- safe recommended actions, with `token_omitted:true` and
+  `live_execution_performed:false`.
+
+The confirmed apply path releases stale running tasks back to `planned`, blocks
+linked running runs, revokes never-seen enrollments, cascades child sessions, and
+writes runtime/audit evidence. It does not execute Hermes/OpenClaw live work.
+
+Validated on the local demo server:
+
+```text
+python3 scripts/worker_fleet_hygiene_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/v1_5_demo_readiness_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/v1_5_local_product_acceptance.py --base-url http://127.0.0.1:8787
+python3 scripts/remote_worker_product_acceptance.py --base-url http://127.0.0.1:8787
+```
+
+The hygiene run cleared historical stuck worker tasks and never-seen demo
+enrollments so `agentops worker status` reports `fleet_health.overall=ready`.
+`worker status` also redacts historical token/session-like ids in recent runtime
+events before returning them to CLI/UI clients.
+
 ## 2026-06-22 Remote Worker Scope Baseline
 
 The worker now writes `agent_plan`, `plan_evidence_manifest`, `artifact`,

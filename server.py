@@ -115,6 +115,7 @@ def redact_full_text(text: str | None) -> str:
         (r"(?i)(bearer\s+)[a-z0-9._\-]+", r"\1[REDACTED]"),
         (r"(?i)(token|secret|password|api[_-]?key)\s*[:=]\s*['\"]?[^'\"\s,;]+", r"\1=[REDACTED]"),
         (r"(?i)\b(?:sk-[a-z0-9._\-]+|ntn_[a-z0-9._\-]+)\b", "[SECRET_REDACTED]"),
+        (r"\b(?:agtok|agtsess)_[A-Za-z0-9_-]+\b", "[AGENT_TOKEN_REF_REDACTED]"),
         (r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", "[EMAIL_REDACTED]"),
         (r"(?<![\w])(?:\+\d{1,3}[\s.-]*)?(?:\(?\d{2,4}\)?[\s.-]+){2,4}\d{2,4}(?![\w])", "[PHONE_REDACTED]"),
     ]
@@ -2429,7 +2430,7 @@ def agent_gateway_create_enrollment(conn, body) -> tuple[dict, int]:
         VALUES(:token_id,:token_hash,:workspace_id,:agent_id,:scopes_json,:status,:label,:heartbeat_timeout_sec,:created_at,:expires_at,:revoked_at,:last_used_at,:last_heartbeat_at)""",
         row,
     )
-    runtime_event(conn, "rtc_agent_gateway_local", "agent.enrollment.create", "completed", agent_id=agent_id, output_summary=f"Created scoped token {row['token_id']}.")
+    runtime_event(conn, "rtc_agent_gateway_local", "agent.enrollment.create", "completed", agent_id=agent_id, output_summary=f"Created scoped token ref {stable_id('token_ref', row['token_id'])[-12:]}.")
     audit(conn, "user", "usr_founder", "agent_gateway.enrollment_create", "agent_gateway_tokens", row["token_id"], None, {k: v for k, v in row.items() if k != "token_hash"}, {"scopes": scopes, "token_omitted": True})
     return {
         "created": True,
@@ -2668,7 +2669,7 @@ def agent_gateway_create_session(conn, headers, body) -> tuple[dict, int]:
         VALUES(:session_id,:session_hash,:parent_token_id,:workspace_id,:agent_id,:scopes_json,:status,:created_at,:expires_at,:revoked_at,:last_used_at)""",
         row,
     )
-    runtime_event(conn, "rtc_agent_gateway_local", "agent.session.create", "completed", agent_id=row["agent_id"], output_summary=f"Created short-lived session {session_id}.")
+    runtime_event(conn, "rtc_agent_gateway_local", "agent.session.create", "completed", agent_id=row["agent_id"], output_summary=f"Created short-lived session ref {stable_id('session_ref', session_id)[-12:]}.")
     audit(conn, "agent", row["agent_id"], "agent_gateway.session_create", "agent_gateway_sessions", session_id, None, {k: v for k, v in row.items() if k != "session_hash"}, {"scopes": scopes, "token_omitted": True})
     return {
         "created": True,
@@ -2964,7 +2965,7 @@ def agent_gateway_revoke_enrollment(conn, body) -> tuple[dict, int]:
             revoked_session_ids.extend(session["session_id"] for session in sessions)
             for session in sessions:
                 audit(conn, "user", "usr_founder", "agent_gateway.session_revoke_cascade", "agent_gateway_sessions", session["session_id"], session, {"status": "revoked", "revoked_at": now}, {"parent_token_id": row["token_id"], "token_omitted": True})
-        runtime_event(conn, "rtc_agent_gateway_local", "agent.enrollment.revoke", "completed", agent_id=row["agent_id"], output_summary=f"Revoked token {row['token_id']}.")
+        runtime_event(conn, "rtc_agent_gateway_local", "agent.enrollment.revoke", "completed", agent_id=row["agent_id"], output_summary=f"Revoked token ref {stable_id('token_ref', row['token_id'])[-12:]}.")
         audit(conn, "user", "usr_founder", "agent_gateway.enrollment_revoke", "agent_gateway_tokens", row["token_id"], row, {"status": "revoked", "revoked_at": now}, {"token_omitted": True})
     return {"revoked": len(before), "changed": len(before) + len(revoked_session_ids), "tokens": [row["token_id"] for row in before], "sessions_revoked": len(revoked_session_ids), "sessions": revoked_session_ids}, 200
 
@@ -2984,7 +2985,7 @@ def agent_gateway_revoke_session(conn, body) -> tuple[dict, int]:
     now = now_iso()
     conn.execute(f"UPDATE agent_gateway_sessions SET status='revoked', revoked_at=? WHERE {where}", (now, param))
     for row in before:
-        runtime_event(conn, "rtc_agent_gateway_local", "agent.session.revoke", "completed", agent_id=row["agent_id"], output_summary=f"Revoked short-lived session {row['session_id']}.")
+        runtime_event(conn, "rtc_agent_gateway_local", "agent.session.revoke", "completed", agent_id=row["agent_id"], output_summary=f"Revoked short-lived session ref {stable_id('session_ref', row['session_id'])[-12:]}.")
         audit(conn, "user", "usr_founder", "agent_gateway.session_revoke", "agent_gateway_sessions", row["session_id"], row, {"status": "revoked", "revoked_at": now}, {"token_omitted": True})
     return {"revoked": len(before), "sessions": [row["session_id"] for row in before], "token_omitted": True}, 200
 
@@ -3017,7 +3018,7 @@ def agent_gateway_rotate_enrollment(conn, body) -> tuple[dict, int]:
         return {"error": "at least one valid scope is required", "valid_scopes": sorted(VALID_AGENT_GATEWAY_SCOPES)}, 400
     now = now_iso()
     conn.execute("UPDATE agent_gateway_tokens SET status='revoked', revoked_at=? WHERE token_id=?", (now, old["token_id"]))
-    runtime_event(conn, "rtc_agent_gateway_local", "agent.enrollment.rotate_revoke", "completed", agent_id=old["agent_id"], output_summary=f"Revoked old token {old['token_id']} during rotation.")
+    runtime_event(conn, "rtc_agent_gateway_local", "agent.enrollment.rotate_revoke", "completed", agent_id=old["agent_id"], output_summary=f"Revoked old token ref {stable_id('token_ref', old['token_id'])[-12:]} during rotation.")
     audit(conn, "user", "usr_founder", "agent_gateway.enrollment_rotate_revoke", "agent_gateway_tokens", old["token_id"], old, {"status": "revoked", "revoked_at": now}, {"token_omitted": True})
 
     create_body = {
@@ -3037,7 +3038,7 @@ def agent_gateway_rotate_enrollment(conn, body) -> tuple[dict, int]:
     created["rotated"] = True
     created["rotated_from_token_id"] = old["token_id"]
     created["revoked"] = 1
-    runtime_event(conn, "rtc_agent_gateway_local", "agent.enrollment.rotate", "completed", agent_id=old["agent_id"], output_summary=f"Rotated enrollment token {old['token_id']} -> {created['token_id']}.")
+    runtime_event(conn, "rtc_agent_gateway_local", "agent.enrollment.rotate", "completed", agent_id=old["agent_id"], output_summary=f"Rotated enrollment token refs {stable_id('token_ref', old['token_id'])[-12:]} -> {stable_id('token_ref', created['token_id'])[-12:]}.")
     audit(conn, "user", "usr_founder", "agent_gateway.enrollment_rotate", "agent_gateway_tokens", created["token_id"], {"token_id": old["token_id"], "status": "active"}, {"token_id": created["token_id"], "status": "active"}, {"token_omitted": True, "rotated_from_token_id": old["token_id"]})
     return created, 201
 
@@ -7557,6 +7558,114 @@ def release_worker_task(conn, body: dict) -> tuple[dict, int]:
     return {"released": True, "task": after, "released_runs": [run["run_id"] for run in running_runs], "token_omitted": True}, 200
 
 
+def worker_stale_never_seen_enrollments(conn, enrollment_age_sec: int = 900, limit: int = 25) -> list[dict]:
+    enrollment_age_sec = max(int(enrollment_age_sec or 900), 0)
+    limit = min(max(int(limit or 25), 1), 100)
+    now_dt = dt.datetime.now(dt.timezone.utc)
+    cutoff = now_dt - dt.timedelta(seconds=enrollment_age_sec)
+    rows = agent_gateway_enrollment_rows(conn)
+    stale: list[dict] = []
+    for row in rows:
+        if row.get("status") != "active" or row.get("heartbeat_state") != "never_seen":
+            continue
+        created = parse_iso_datetime(row.get("created_at"))
+        age_sec = int((now_dt - created).total_seconds()) if created else 0
+        if created and created <= cutoff:
+            item = dict(row)
+            item["age_sec"] = age_sec
+            item["threshold_sec"] = enrollment_age_sec
+            item["stale_reason"] = "active_enrollment_never_heartbeated"
+            stale.append(item)
+        if len(stale) >= limit:
+            break
+    return stale
+
+
+def worker_fleet_hygiene(conn, body: dict | None = None, *, apply: bool = False) -> tuple[dict, int]:
+    body = body or {}
+    threshold_raw = body.get("threshold_sec")
+    enrollment_age_raw = body.get("enrollment_age_sec")
+    limit_raw = body.get("limit")
+    threshold_sec = max(int(threshold_raw if threshold_raw is not None else 900), 30)
+    enrollment_age_sec = max(int(enrollment_age_raw if enrollment_age_raw is not None else 900), 0)
+    limit = min(max(int(limit_raw if limit_raw is not None else 25), 1), 100)
+    stuck_tasks = worker_stuck_tasks(conn, threshold_sec, limit)
+    stale_enrollments = worker_stale_never_seen_enrollments(conn, enrollment_age_sec, limit)
+    plan = {
+        "provider": "agentops-worker",
+        "operation": "fleet_hygiene",
+        "status": "actionable" if stuck_tasks or stale_enrollments else "ready",
+        "threshold_sec": threshold_sec,
+        "enrollment_age_sec": enrollment_age_sec,
+        "summary": {
+            "stuck_tasks": len(stuck_tasks),
+            "stale_never_seen_enrollments": len(stale_enrollments),
+            "actions_available": len(stuck_tasks) + len(stale_enrollments),
+        },
+        "stuck_tasks": stuck_tasks,
+        "stale_never_seen_enrollments": stale_enrollments,
+        "recommended_actions": [
+            "agentops worker hygiene --apply --confirm-cleanup",
+        ] if stuck_tasks or stale_enrollments else ["agentops worker status"],
+        "safety": {
+            "read_only": not apply,
+            "requires_confirm_cleanup": True,
+            "live_execution_performed": False,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+    if not apply:
+        return plan, 200
+    if body.get("confirm_cleanup") is not True:
+        plan["applied"] = False
+        plan["error"] = "confirm_cleanup_required"
+        return plan, 409
+
+    released: list[dict] = []
+    revoked: list[dict] = []
+    errors: list[dict] = []
+    for task in stuck_tasks:
+        payload, status = release_worker_task(conn, {
+            "task_id": task["task_id"],
+            "reason": body.get("release_reason") or "fleet_hygiene_cleanup",
+        })
+        if status == 200:
+            released.append({"task_id": task["task_id"], "released_runs": payload.get("released_runs", [])})
+        else:
+            errors.append({"kind": "task_release", "task_id": task.get("task_id"), "status": status, "error": payload})
+    for enrollment in stale_enrollments:
+        payload, status = agent_gateway_revoke_enrollment(conn, {"token_id": enrollment["token_id"]})
+        if status == 200:
+            revoked.append({
+                "token_id": enrollment["token_id"],
+                "agent_id": enrollment.get("agent_id"),
+                "sessions_revoked": payload.get("sessions_revoked", 0),
+            })
+        else:
+            errors.append({"kind": "enrollment_revoke", "token_id": enrollment.get("token_id"), "status": status, "error": payload})
+
+    applied = {
+        **plan,
+        "status": "completed" if not errors else "attention",
+        "applied": True,
+        "released_tasks": released,
+        "revoked_enrollments": revoked,
+        "errors": errors,
+    }
+    applied["summary"] = {
+        **plan["summary"],
+        "released_tasks": len(released),
+        "revoked_enrollments": len(revoked),
+        "errors": len(errors),
+    }
+    applied["safety"] = {**plan["safety"], "read_only": False}
+    runtime_event(conn, "rtc_agent_gateway_local", "worker.fleet_hygiene", applied["status"], output_summary=f"Fleet hygiene released {len(released)} task(s) and revoked {len(revoked)} enrollment(s).")
+    audit(conn, "user", "usr_founder", "worker.fleet_hygiene", "workers", "fleet", None, {"summary": applied["summary"]}, {"token_omitted": True, "live_execution_performed": False})
+    return applied, 200 if not errors else 207
+
+
 def worker_fleet_health(payload: dict) -> dict:
     remote = payload.get("remote_worker_health") or {}
     daemons = payload.get("daemons") or []
@@ -7844,6 +7953,10 @@ def worker_status(conn) -> dict:
         WHERE agent_id LIKE 'agt_worker_%' OR event_type IN ('task.pull','task.claim','run.start','run.heartbeat','tool_call.record','evaluation.submit','audit.emit')
         ORDER BY created_at DESC LIMIT 40"""
     ).fetchall())
+    for event in worker_events:
+        for key in ("input_summary", "output_summary", "error_message", "metadata_json"):
+            if event.get(key):
+                event[key] = redact_full_text(event[key])
     daemons = worker_daemon_status(include_log=False)
     active_daemons = [daemon for daemon in daemons if daemon["running"]]
     stuck_tasks = worker_stuck_tasks(conn)
@@ -10061,6 +10174,16 @@ class Handler(BaseHTTPRequestHandler):
                 threshold = int((qs.get("threshold_sec") or ["900"])[0])
                 limit = int((qs.get("limit") or ["25"])[0])
                 return self.send_json({"provider": "agentops-worker", "threshold_sec": max(threshold, 30), "stuck_tasks": worker_stuck_tasks(conn, threshold, limit), "token_omitted": True})
+            if path == "/api/workers/fleet/hygiene":
+                threshold = int((qs.get("threshold_sec") or ["900"])[0])
+                enrollment_age = int((qs.get("enrollment_age_sec") or ["900"])[0])
+                limit = int((qs.get("limit") or ["25"])[0])
+                payload, status = worker_fleet_hygiene(conn, {
+                    "threshold_sec": threshold,
+                    "enrollment_age_sec": enrollment_age,
+                    "limit": limit,
+                }, apply=False)
+                return self.send_json(payload, status)
             if path == "/api/workers/local/logs":
                 adapter = coerce_choice((qs.get("adapter") or ["mock"])[0], {"mock", "hermes", "openclaw"}, "mock")
                 return self.send_json({"provider": "agentops-worker", "daemon": read_worker_daemon(adapter, include_log=True)})
@@ -10385,6 +10508,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(payload, status)
             if path == "/api/workers/tasks/release":
                 payload, status = release_worker_task(conn, body)
+                conn.commit()
+                return self.send_json(payload, status)
+            if path == "/api/workers/fleet/hygiene":
+                payload, status = worker_fleet_hygiene(conn, body, apply=bool(body.get("apply")))
                 conn.commit()
                 return self.send_json(payload, status)
             if path == "/api/integrations/openclaw/import":

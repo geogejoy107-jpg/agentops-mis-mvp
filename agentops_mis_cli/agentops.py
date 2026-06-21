@@ -1106,6 +1106,20 @@ def cmd_worker_release(args, client: AgentOpsClient) -> dict:
     })
 
 
+def cmd_worker_hygiene(args, client: AgentOpsClient) -> dict:
+    payload = {
+        "threshold_sec": args.threshold_sec,
+        "enrollment_age_sec": args.enrollment_age_sec,
+        "limit": args.limit,
+    }
+    if args.apply:
+        payload["apply"] = True
+        payload["confirm_cleanup"] = bool(args.confirm_cleanup)
+        payload["release_reason"] = args.reason
+        return client.post("/api/workers/fleet/hygiene", payload)
+    return client.get("/api/workers/fleet/hygiene", query=payload)
+
+
 def cmd_enrollment_create(args, client: AgentOpsClient) -> dict:
     payload = {
         "workspace_id": client.workspace_id,
@@ -1738,6 +1752,14 @@ def build_parser() -> argparse.ArgumentParser:
     worker_release.add_argument("--reason", default="operator_release")
     worker_release.add_argument("--force", action="store_true")
     worker_release.set_defaults(handler="worker_release")
+    worker_hygiene = worker_sub.add_parser("hygiene", help="Plan or apply fleet cleanup for stuck tasks and never-seen enrollments.")
+    worker_hygiene.add_argument("--threshold-sec", type=int, default=900)
+    worker_hygiene.add_argument("--enrollment-age-sec", type=int, default=900)
+    worker_hygiene.add_argument("--limit", type=int, default=25)
+    worker_hygiene.add_argument("--reason", default="fleet_hygiene_cleanup")
+    worker_hygiene.add_argument("--apply", action="store_true", help="Apply cleanup actions. Default is read-only.")
+    worker_hygiene.add_argument("--confirm-cleanup", action="store_true", help="Required with --apply.")
+    worker_hygiene.set_defaults(handler="worker_hygiene")
 
     enrollment = sub.add_parser("enrollment", help="Remote/local agent enrollment token commands.")
     enrollment_sub = enrollment.add_subparsers(dest="action", required=True)
@@ -1871,6 +1893,7 @@ HANDLERS = {
     "worker_stop": cmd_worker_stop,
     "worker_stuck": cmd_worker_stuck,
     "worker_release": cmd_worker_release,
+    "worker_hygiene": cmd_worker_hygiene,
     "enrollment_create": cmd_enrollment_create,
     "enrollment_request": cmd_enrollment_request,
     "enrollment_issue_approved": cmd_enrollment_issue_approved,

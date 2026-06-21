@@ -217,6 +217,15 @@ agentops worker stuck
 agentops worker release --task-id <task_id> --reason "reviewed stale worker"
 ```
 
+For routine demo/customer cleanup, use fleet hygiene first. It is read-only by
+default and requires an explicit confirmation before it releases stale tasks or
+revokes never-seen enrollments:
+
+```bash
+agentops worker hygiene
+agentops worker hygiene --apply --confirm-cleanup
+```
+
 Machine-facing task creation can come from a local script, another server, or an
 external agent process. Use the CLI when the caller should not operate the
 browser UI:
@@ -401,6 +410,13 @@ gate for agent operators and scripts:
   `agentops worker stuck`, `agentops workflow stuck-jobs`,
   `agentops worker preflight --adapter mock`, or `agentops enrollment list`
 
+`agentops worker hygiene` wraps the two most common fleet recovery actions in a
+safe operator flow. The `GET`/default CLI path only reports stuck worker tasks
+and active enrollments that never heartbeated after the age threshold. The
+confirmed apply path releases those tasks back to `planned`, blocks any linked
+running runs, revokes stale enrollment tokens, cascades active child sessions,
+and writes runtime/audit evidence. It never executes live Hermes/OpenClaw work.
+
 Use this before asking a remote OpenClaw/Hermes/Dify-style worker to execute
 work. The browser UI should confirm what happened; the worker should still pull,
 claim, run, and write evidence through CLI/API.
@@ -451,6 +467,7 @@ python3 scripts/remote_launch_packet_worker_smoke.py
 python3 scripts/agent_gateway_task_create_scope_smoke.py
 python3 scripts/agentops_workflow_run_task_smoke.py
 python3 scripts/worker_remote_fleet_status_smoke.py
+python3 scripts/worker_fleet_hygiene_smoke.py
 python3 scripts/demo_acceptance.py
 git diff --check
 ```
@@ -477,6 +494,8 @@ The expected proof is:
   `fleet_health.recommended_actions`.
 - `agentops worker fleet` reports normalized fleet lanes with health,
   heartbeat/session state, safe refs, and next actions, without executing work.
+- `agentops worker hygiene` is read-only by default, requires
+  `--apply --confirm-cleanup` for cleanup, and records recovery evidence.
 - `agentops security production-readiness` reports the local-dev vs production
   security boundary and marks no-token local mode as non-production without
   breaking safe local demos.
