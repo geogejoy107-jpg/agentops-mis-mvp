@@ -173,7 +173,11 @@ approvals, or audit rows.
 `POST /api/operator/execution-evidence/remediation-task` previews or creates a
 Commander-compatible remediation package for one run gap. Preview is read-only;
 `confirm_create:true` writes one deterministic planned task plus runtime/audit
-evidence and returns `already_exists` for repeated calls.
+evidence and returns `already_exists` for repeated calls. Once the package is
+dispatched and carries tool/evaluation/artifact/audit plus verified
+plan-evidence rows, `GET /api/operator/action-plan` reports the source gap with
+`remediation_status=verified` and includes `remediated_evidence_gap_runs` /
+`blocked_evidence_gap_runs` in its summary.
 
 ## Plan Evidence Manifests
 

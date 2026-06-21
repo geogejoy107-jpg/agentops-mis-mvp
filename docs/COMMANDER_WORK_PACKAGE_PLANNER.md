@@ -210,7 +210,10 @@ the loop ledger is complete. The next command is
 `agentops operator remediate-evidence-gap --run-id <run_id>`; it previews a
 Commander work package by default, and `--confirm-create` writes a deterministic
 planned task that can then be dispatched through the normal Commander package
-path.
+path. After dispatch writes a full evidence chain including
+`plan_evidence_manifests`, the operator source marks that gap
+`remediation_status=verified` so the command center can review the legacy debt
+without keeping it in the blocked lane.
 
 Dispatch a package:
 

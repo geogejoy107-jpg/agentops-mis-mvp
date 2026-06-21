@@ -136,6 +136,8 @@ def validate_plan(payload: dict, label: str, failures: list[str], limit: int) ->
         "missing_plan_runs",
         "missing_plan_evidence_manifests",
         "unverified_plan_evidence_manifests",
+        "remediated_evidence_gap_runs",
+        "blocked_evidence_gap_runs",
     ]:
         require(isinstance(summary.get(key), int), f"{label} summary.{key} missing: {summary}", failures)
     require(isinstance(summary.get("recommended_adapter"), str), f"{label} recommended_adapter missing: {summary}", failures)

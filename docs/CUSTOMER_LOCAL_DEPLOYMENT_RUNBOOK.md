@@ -57,6 +57,19 @@ export AGENTOPS_DEPLOYMENT_MODE=production
 agentops security production-readiness
 ```
 
+Non-loopback binding is fail-closed. To bind beyond loopback for a controlled
+single-customer deployment, set all three controls before starting the server:
+
+```bash
+export AGENTOPS_ALLOW_NON_LOOPBACK=true
+export AGENTOPS_API_KEY="<local gateway key>"
+export AGENTOPS_ADMIN_KEY="<admin enrollment key>"
+python3 server.py --host 0.0.0.0 --port 8787
+```
+
+Without the explicit opt-in and both keys, `server.py` exits before binding.
+Loopback local demos remain unchanged.
+
 Rules:
 
 - Never commit `.env`, `agentops_mis.db`, `.agentops_runtime`, service files

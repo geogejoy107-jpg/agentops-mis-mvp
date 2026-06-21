@@ -3101,16 +3101,91 @@ def truthy_env(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def deployment_mode(env=None) -> str:
+    env = env or os.environ
+    return str(env.get("AGENTOPS_DEPLOYMENT_MODE", "") or "local").strip().lower() or "local"
+
+
+def production_security_requested(env=None) -> bool:
+    env = env or os.environ
+    mode = deployment_mode(env)
+    return mode in {"production", "prod", "shared", "hosted"} or str(env.get("AGENTOPS_REQUIRE_PRODUCTION_SECURITY", "")).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def non_loopback_opt_in(env=None) -> bool:
+    env = env or os.environ
+    return str(env.get("AGENTOPS_ALLOW_NON_LOOPBACK", "")).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def host_is_loopback(host: str | None) -> bool:
+    value = (host or "").strip().lower()
+    if value in {"", "localhost", "127.0.0.1", "::1"}:
+        return True
+    if value in {"0.0.0.0", "::"}:
+        return False
+    try:
+        return ipaddress.ip_address(value).is_loopback
+    except ValueError:
+        return value.endswith(".localhost")
+
+
+def startup_security_assessment(host: str, env=None) -> dict:
+    env = env or os.environ
+    mode = deployment_mode(env)
+    non_loopback = not host_is_loopback(host)
+    production_requested = production_security_requested(env)
+    allow_non_loopback = non_loopback_opt_in(env)
+    api_key_configured = bool(str(env.get("AGENTOPS_API_KEY", "")).strip())
+    admin_key_configured = bool(str(env.get("AGENTOPS_ADMIN_KEY", "")).strip())
+    failures: list[dict] = []
+    warnings: list[dict] = []
+    if non_loopback and not allow_non_loopback:
+        failures.append({
+            "id": "non_loopback_requires_opt_in",
+            "message": "Non-loopback binding requires an explicit non-loopback opt-in.",
+        })
+    if (non_loopback or production_requested) and not api_key_configured:
+        failures.append({
+            "id": "agent_gateway_auth_required",
+            "message": "Non-local or production/shared deployment requires a Gateway API key.",
+        })
+    if (non_loopback or production_requested) and not admin_key_configured:
+        failures.append({
+            "id": "admin_auth_required",
+            "message": "Non-local or production/shared deployment requires an admin key.",
+        })
+    if not failures and not production_requested and host_is_loopback(host) and not api_key_configured:
+        warnings.append({
+            "id": "local_dev_no_token",
+            "message": "Loopback local-dev mode is allowed without a Gateway API key.",
+        })
+    return {
+        "ok": not failures,
+        "status": "blocked" if failures else "attention" if warnings else "ready",
+        "host": host,
+        "deployment_mode": mode,
+        "non_loopback": non_loopback,
+        "production_requested": production_requested,
+        "allow_non_loopback": allow_non_loopback,
+        "api_key_configured": api_key_configured,
+        "admin_key_configured": admin_key_configured,
+        "failures": failures,
+        "warnings": warnings,
+        "contract": "loopback local-dev may run without tokens; non-loopback or production/shared startup requires explicit opt-in plus Agent Gateway and admin keys",
+        "token_omitted": True,
+    }
+
+
 def security_production_readiness(conn: sqlite3.Connection, headers) -> dict:
     gateway, gateway_status_code = agent_gateway_status(conn, headers)
     auth = gateway.get("auth") or {}
     auth_mode = auth.get("mode") or "unknown"
     api_key_configured = bool(os.environ.get("AGENTOPS_API_KEY", "").strip())
     admin_key_configured = bool(os.environ.get("AGENTOPS_ADMIN_KEY", "").strip())
-    production_requested = (
-        os.environ.get("AGENTOPS_DEPLOYMENT_MODE", "").strip().lower() == "production"
-        or truthy_env("AGENTOPS_REQUIRE_PRODUCTION_SECURITY")
-    )
+    production_requested = production_security_requested()
+    host_header = (headers.get("Host") if headers else "") or ""
+    host_without_port = host_header.rsplit(":", 1)[0] if ":" in host_header and not host_header.startswith("[") else host_header.strip("[]")
+    startup = startup_security_assessment(host_without_port or "127.0.0.1")
     bound_or_global_auth = auth_mode in {"global_api_key", "agent_token", "agent_session"}
     dev_no_token = auth_mode == "local_dev_no_token"
     gates = [
@@ -3140,10 +3215,10 @@ def security_production_readiness(conn: sqlite3.Connection, headers) -> dict:
         },
         {
             "id": "local_dev_boundary",
-            "label": "Local-dev boundary",
-            "status": "fail" if production_requested and dev_no_token else "warn" if dev_no_token else "pass",
-            "ok": not dev_no_token,
-            "detail": "local_dev_no_token is allowed for local demos only." if dev_no_token else "request uses authenticated Agent Gateway mode.",
+            "label": "Local-dev and bind boundary",
+            "status": "fail" if (production_requested and dev_no_token) or startup["failures"] else "warn" if dev_no_token or startup["warnings"] else "pass",
+            "ok": not dev_no_token and not startup["failures"],
+            "detail": "local_dev_no_token is allowed for local demos only." if dev_no_token else f"startup_status={startup['status']}",
             "next_action": "Do not expose this service beyond 127.0.0.1 until authenticated mode is configured.",
         },
     ]
@@ -3156,6 +3231,8 @@ def security_production_readiness(conn: sqlite3.Connection, headers) -> dict:
         "status": status,
         "production_ready": status == "ready",
         "production_requested": production_requested,
+        "deployment_mode": deployment_mode(),
+        "startup_security": startup,
         "auth_mode": auth_mode,
         "gateway_status_code": gateway_status_code,
         "gates": gates,
@@ -4514,6 +4591,60 @@ def delivery_manifest_gate(conn: sqlite3.Connection, run_id: str | None) -> dict
     }
 
 
+def commander_project_synthesis_state(conn: sqlite3.Connection, project_id: str | None) -> dict:
+    project_id = commander_safe_text(project_id or "", 120)
+    if not project_id:
+        return {"status": "empty", "artifact_id": None, "approval_id": None, "memory_candidates": 0, "delivery_artifacts": 0}
+    row = conn.execute(
+        """SELECT artifact_id, task_id, run_id, title, summary, created_at
+        FROM artifacts
+        WHERE artifact_type='commander_synthesis_report'
+          AND (title LIKE ? OR uri LIKE ? OR summary LIKE ?)
+        ORDER BY created_at DESC
+        LIMIT 1""",
+        (f"%{project_id}%", f"%{project_id}%", f"%{project_id}%"),
+    ).fetchone()
+    if not row:
+        return {"status": "empty", "artifact_id": None, "approval_id": None, "memory_candidates": 0, "delivery_artifacts": 0}
+    artifact = dict(row)
+    artifact_id = artifact.get("artifact_id")
+    approval = conn.execute(
+        """SELECT approval_id, decision, created_at, decided_at, reason
+        FROM approvals
+        WHERE approval_id LIKE 'ap_cmd_synthesis%' AND reason LIKE ?
+        ORDER BY created_at DESC
+        LIMIT 1""",
+        (f"%artifact_id={artifact_id}%",),
+    ).fetchone()
+    approval_data = dict(approval) if approval else {}
+    memory_count = scalar_count(conn, "SELECT COUNT(*) FROM memories WHERE source_ref=?", (artifact_id,))
+    delivery_count = scalar_count(
+        conn,
+        "SELECT COUNT(*) FROM audit_logs WHERE action='commander.work_package_synthesis_promote_delivery' AND metadata_json LIKE ?",
+        (f"%{artifact_id}%",),
+    )
+    if delivery_count:
+        status = "promoted"
+    elif memory_count:
+        status = "memory_pending_review"
+    elif approval_data.get("decision") == "approved":
+        status = "approved_not_promoted"
+    elif approval_data.get("decision") == "pending":
+        status = "review_pending"
+    else:
+        status = "needs_review_gate"
+    return {
+        "status": status,
+        "artifact_id": artifact_id,
+        "approval_id": approval_data.get("approval_id"),
+        "approval_decision": approval_data.get("decision"),
+        "memory_candidates": memory_count,
+        "delivery_artifacts": delivery_count,
+        "artifact": artifact,
+        "token_omitted": True,
+    }
+
+
 def operator_execution_evidence_gaps(conn: sqlite3.Connection, workspace_id: str, limit: int = 8) -> dict:
     limit = max(1, min(int(limit or 8), 25))
     rows = conn.execute(
@@ -4538,6 +4669,14 @@ def operator_execution_evidence_gaps(conn: sqlite3.Connection, workspace_id: str
         "missing_evaluation_evidence_runs": 0,
         "missing_artifact_evidence_runs": 0,
         "missing_audit_evidence_runs": 0,
+        "remediation_package_runs": 0,
+        "remediation_ready_runs": 0,
+        "blocked_gap_runs": 0,
+        "attention_gap_runs": 0,
+        "ready_gap_runs": 0,
+        "synthesis_ready_runs": 0,
+        "synthesis_pending_runs": 0,
+        "synthesis_promoted_runs": 0,
     }
     for row in rows:
         inspected += 1
@@ -4574,12 +4713,60 @@ def operator_execution_evidence_gaps(conn: sqlite3.Connection, workspace_id: str
         remediation_task_id = stable_id("tsk_exec_evidence_fix", workspace_id, row["run_id"])
         existing_remediation = conn.execute("SELECT * FROM tasks WHERE task_id=?", (remediation_task_id,)).fetchone()
         existing_package = commander_work_package_from_task(conn, existing_remediation) if existing_remediation else None
+        remediation_status = None
+        remediation_evidence_counts = {}
+        remediation_synthesis = {}
         if existing_package:
             package_status = existing_package.get("package_status")
+            remediation_evidence_counts = existing_package.get("evidence_counts") or {}
+            remediation_has_full_chain = all(int(remediation_evidence_counts.get(key) or 0) >= 1 for key in ["tool_calls", "evaluations", "artifacts", "audit_logs", "plan_evidence_manifests"])
+            if package_status == "ready_for_review" and remediation_has_full_chain:
+                remediation_status = "verified"
+            elif package_status == "ready_for_review":
+                remediation_status = "ready_for_review"
+            else:
+                remediation_status = package_status or "active"
+            summary["remediation_package_runs"] += 1
+            if remediation_status in {"verified", "ready_for_review"}:
+                summary["remediation_ready_runs"] += 1
             command = existing_package.get("recommended_action") or f"agentops commander packages --project-id {existing_package.get('project_id')} --limit 5"
             severity = "blocked" if package_status == "blocked" else "attention" if package_status in {"planned", "still_running", "needs_evidence"} else "ready"
             priority = 90 if severity == "blocked" else 86 if severity == "attention" else 70
-            next_action = f"Continue existing execution-evidence remediation package ({package_status})."
+            next_action = (
+                "Review the verified remediation package and decide whether to preserve the legacy source-run waiver."
+                if remediation_status == "verified"
+                else f"Continue existing execution-evidence remediation package ({package_status})."
+            )
+            if remediation_status == "verified":
+                project_id = existing_package.get("project_id")
+                plan_id = existing_package.get("plan_id")
+                remediation_synthesis = commander_project_synthesis_state(conn, project_id)
+                synthesis_status = remediation_synthesis.get("status")
+                stable_artifact_id = stable_id("art_cmd_synthesis", workspace_id, project_id or "execution_evidence", plan_id or "")
+                if synthesis_status == "empty":
+                    command = f"agentops commander synthesize --project-id {project_id} --status ready_for_review --artifact-id {stable_artifact_id} --confirm-create"
+                    severity = "ready"
+                    priority = 78
+                    next_action = "Synthesize the verified remediation package into a review-gated Commander artifact."
+                    summary["synthesis_ready_runs"] += 1
+                elif synthesis_status == "review_pending":
+                    command = f"agentops approval inspect --approval-id {remediation_synthesis.get('approval_id')}"
+                    severity = "attention"
+                    priority = 82
+                    next_action = "Inspect the Commander synthesis review before promotion."
+                    summary["synthesis_pending_runs"] += 1
+                elif synthesis_status == "approved_not_promoted":
+                    command = f"agentops commander promote-synthesis --artifact-id {remediation_synthesis.get('artifact_id')} --approval-id {remediation_synthesis.get('approval_id')} --mode both --confirm-promote"
+                    severity = "attention"
+                    priority = 84
+                    next_action = "Promote approved remediation synthesis into memory and customer delivery evidence."
+                    summary["synthesis_pending_runs"] += 1
+                elif synthesis_status in {"promoted", "memory_pending_review"}:
+                    command = "agentops workflow delivery-board --limit 12"
+                    severity = "ready"
+                    priority = 72
+                    next_action = "Review promoted remediation outputs on the delivery board and memory queue."
+                    summary["synthesis_promoted_runs"] += 1
         if "missing_agent_plan_binding" in gap_types:
             if not existing_package:
                 command = f"agentops operator remediate-evidence-gap --run-id {row['run_id']}"
@@ -4618,6 +4805,11 @@ def operator_execution_evidence_gaps(conn: sqlite3.Connection, workspace_id: str
             "manifest_failed_checks": [item.get("id") for item in ((manifest_verification or {}).get("failed_checks") or [])],
             "remediation_task_id": remediation_task_id if existing_package else None,
             "remediation_package_status": (existing_package or {}).get("package_status") if existing_package else None,
+            "remediation_status": remediation_status,
+            "remediation_evidence_counts": remediation_evidence_counts,
+            "remediation_synthesis_status": remediation_synthesis.get("status"),
+            "remediation_synthesis_artifact_id": remediation_synthesis.get("artifact_id"),
+            "remediation_synthesis_approval_id": remediation_synthesis.get("approval_id"),
             "gap_types": gap_types,
             "missing_evidence": missing_evidence,
             "evidence_counts": counts,
@@ -4628,13 +4820,19 @@ def operator_execution_evidence_gaps(conn: sqlite3.Connection, workspace_id: str
             "ui_route": f"/admin/runs/{row['run_id']}",
             "token_omitted": True,
         })
+        if severity == "blocked":
+            summary["blocked_gap_runs"] += 1
+        elif severity == "attention":
+            summary["attention_gap_runs"] += 1
+        else:
+            summary["ready_gap_runs"] += 1
         if len(gaps) >= limit:
             break
     summary["inspected_runs"] = inspected
     summary["gap_runs"] = len(gaps)
-    if summary["missing_plan_runs"] or summary["unverified_manifest_runs"]:
+    if summary["blocked_gap_runs"]:
         status = "blocked"
-    elif summary["missing_manifest_runs"] or summary["gap_runs"]:
+    elif summary["attention_gap_runs"] or summary["gap_runs"]:
         status = "attention"
     else:
         status = "ready"
@@ -12885,6 +13083,11 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
                 "manifest_id": item.get("manifest_id"),
                 "remediation_task_id": item.get("remediation_task_id"),
                 "remediation_package_status": item.get("remediation_package_status"),
+                "remediation_status": item.get("remediation_status"),
+                "remediation_evidence_counts": item.get("remediation_evidence_counts") or {},
+                "remediation_synthesis_status": item.get("remediation_synthesis_status"),
+                "remediation_synthesis_artifact_id": item.get("remediation_synthesis_artifact_id"),
+                "remediation_synthesis_approval_id": item.get("remediation_synthesis_approval_id"),
                 "gap_types": item.get("gap_types") or [],
                 "missing_evidence": item.get("missing_evidence") or [],
                 "evidence_counts": item.get("evidence_counts") or {},
@@ -12932,6 +13135,11 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             "missing_plan_runs": (evidence_gaps.get("summary") or {}).get("missing_plan_runs", 0),
             "missing_plan_evidence_manifests": (evidence_gaps.get("summary") or {}).get("missing_manifest_runs", 0),
             "unverified_plan_evidence_manifests": (evidence_gaps.get("summary") or {}).get("unverified_manifest_runs", 0),
+            "remediated_evidence_gap_runs": (evidence_gaps.get("summary") or {}).get("remediation_ready_runs", 0),
+            "blocked_evidence_gap_runs": (evidence_gaps.get("summary") or {}).get("blocked_gap_runs", 0),
+            "evidence_synthesis_ready_runs": (evidence_gaps.get("summary") or {}).get("synthesis_ready_runs", 0),
+            "evidence_synthesis_pending_runs": (evidence_gaps.get("summary") or {}).get("synthesis_pending_runs", 0),
+            "evidence_synthesis_promoted_runs": (evidence_gaps.get("summary") or {}).get("synthesis_promoted_runs", 0),
         },
         "actions": deduped,
         "top_commands": [item["command"] for item in deduped[:5]],
@@ -14955,6 +15163,15 @@ def main():
     parser.add_argument("--reset", action="store_true", help="Reset SQLite database and seed data, then exit unless --serve is also set")
     parser.add_argument("--serve", action="store_true", help="Serve after reset")
     args = parser.parse_args()
+    if args.serve or not args.reset:
+        startup_security = startup_security_assessment(args.host)
+        if not startup_security["ok"]:
+            print(json.dumps({
+                "error": "unsafe_startup_configuration",
+                "message": "AgentOps MIS refused to bind with unsafe shared/production security settings.",
+                **startup_security,
+            }, ensure_ascii=False, indent=2), file=sys.stderr)
+            raise SystemExit(2)
     if args.reset:
         seed(reset=True)
         print(f"Reset and seeded {DB_PATH}")

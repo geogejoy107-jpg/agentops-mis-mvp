@@ -445,6 +445,11 @@ deployment must configure authenticated Agent Gateway access and an admin key
 for enrollment management. The check is read-only: it does not start workers,
 create tokens, call Hermes/OpenClaw, or write ledger rows.
 
+Server startup also enforces this boundary. Binding to `0.0.0.0`, `::`, or any
+non-loopback address requires explicit non-loopback opt-in plus Gateway and
+admin keys; production/shared mode requires the same keys even on loopback. An
+unsafe startup exits before the HTTP server binds.
+
 Revoke one session:
 
 ```bash

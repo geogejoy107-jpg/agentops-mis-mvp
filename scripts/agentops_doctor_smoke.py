@@ -45,6 +45,11 @@ def main() -> int:
 
         local_doctor = run([str(CLI), "doctor"], env=env)
         local_payload = load_json(local_doctor)
+        production_env = env.copy()
+        production_env["AGENTOPS_DEPLOYMENT_MODE"] = "production"
+        production_env.pop("AGENTOPS_API_KEY", None)
+        production_doctor = run([str(CLI), "doctor"], env=production_env)
+        production_payload = load_json(production_doctor)
 
         create = run([
             str(CLI),
@@ -79,6 +84,10 @@ def main() -> int:
             and local_payload.get("ok") is True
             and local_payload.get("auth", {}).get("api_key_source") == "missing"
             and local_payload.get("auth", {}).get("token_omitted") is True
+            and production_doctor.returncode == 0
+            and production_payload.get("ok") is False
+            and (production_payload.get("deployment_safety") or {}).get("ok") is False
+            and (production_payload.get("deployment_safety") or {}).get("production_requested") is True
             and create.returncode == 0
             and bool(token)
             and token_doctor.returncode == 0
@@ -95,6 +104,9 @@ def main() -> int:
             "token_id": token_id,
             "local_doctor_returncode": local_doctor.returncode,
             "local_auth_source": local_payload.get("auth", {}).get("api_key_source"),
+            "production_doctor_returncode": production_doctor.returncode,
+            "production_doctor_ok": production_payload.get("ok"),
+            "production_deployment_safety": production_payload.get("deployment_safety"),
             "token_doctor_returncode": token_doctor.returncode,
             "token_auth_source": token_payload.get("auth", {}).get("api_key_source"),
             "token_omitted": token_payload.get("auth", {}).get("token_omitted") is True and token_payload.get("gateway", {}).get("token_omitted") is True,
@@ -104,6 +116,7 @@ def main() -> int:
         }, ensure_ascii=False, indent=2, sort_keys=True))
         if not ok:
             print("local stderr:", local_doctor.stderr[-1200:], file=sys.stderr)
+            print("production stderr:", production_doctor.stderr[-1200:], file=sys.stderr)
             print("create stderr:", create.stderr[-1200:], file=sys.stderr)
             print("token stderr:", token_doctor.stderr[-1200:], file=sys.stderr)
             if revoke:

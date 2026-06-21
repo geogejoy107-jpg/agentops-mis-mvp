@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import sqlite3
 import subprocess
 import tempfile
@@ -168,21 +169,95 @@ def main() -> int:
         require(cli_repeat.returncode == 0, f"CLI repeat failed: {cli_repeat.stderr or cli_repeat.stdout}", failures)
         require(repeat_payload.get("status") == "already_exists", f"repeat create not idempotent: {repeat_payload}", failures)
 
+        dispatch = run_cli(args.base_url, ["commander", "dispatch-package", "--task-id", str(task_id), "--adapter", "mock"], env)
+        outputs.extend([dispatch.stdout, dispatch.stderr])
+        dispatch_payload = load_json(dispatch)
+        require(dispatch.returncode == 0, f"CLI dispatch failed: {dispatch.stderr or dispatch.stdout}", failures)
+        require(dispatch_payload.get("ok") is True, f"dispatch not ok: {dispatch_payload}", failures)
+        require(dispatch_payload.get("run_id"), f"dispatch missing run id: {dispatch_payload}", failures)
+        dispatch_evidence = dispatch_payload.get("evidence") or {}
+        for key in ["tool_calls", "evaluations", "artifacts", "audit_logs", "plan_evidence_manifests"]:
+            require(int(dispatch_evidence.get(key) or 0) >= 1, f"dispatch evidence missing {key}: {dispatch_payload}", failures)
+
     package_status, packages = http_json(args.base_url, "GET", f"/api/commander/work-packages?project_id={project_id}&limit=5")
     outputs.append(json.dumps(packages, ensure_ascii=False))
     require(package_status == 200, f"package readback failed: {package_status} {packages}", failures)
     package_items = packages.get("work_packages") or []
     require(any(item.get("task_id") == task_id for item in package_items), f"created package missing from readback: {packages}", failures)
     matched = next((item for item in package_items if item.get("task_id") == task_id), {})
-    require(matched.get("package_status") == "planned", f"package not planned: {matched}", failures)
-    require("commander dispatch-package" in (matched.get("recommended_action") or ""), f"package dispatch next action missing: {matched}", failures)
+    require(matched.get("package_status") == "ready_for_review", f"package not ready after dispatch: {matched}", failures)
+    require("task get" in (matched.get("recommended_action") or ""), f"package review next action missing: {matched}", failures)
 
     post_status, post_plan = http_json(args.base_url, "GET", "/api/operator/action-plan?limit=20")
     outputs.append(json.dumps(post_plan, ensure_ascii=False))
     require(post_status == 200, f"post-create action-plan failed: {post_status} {post_plan}", failures)
     post_gap = next((item for item in (post_plan.get("execution_evidence") or {}).get("gaps") or [] if item.get("run_id") == run_id), {})
     require(post_gap.get("remediation_task_id") == task_id, f"post-create gap did not link remediation task: {post_gap}", failures)
-    require(str(post_gap.get("command") or "").startswith("agentops commander dispatch-package --task-id "), f"post-create gap did not advance to dispatch: {post_gap}", failures)
+    require(post_gap.get("remediation_status") == "verified", f"post-dispatch gap did not verify remediation package: {post_gap}", failures)
+    require(post_gap.get("severity") == "ready", f"post-dispatch gap did not become ready: {post_gap}", failures)
+    synthesize_command = str(post_gap.get("command") or "")
+    require(synthesize_command.startswith("agentops commander synthesize --project-id "), f"post-dispatch gap did not recommend synthesis: {post_gap}", failures)
+    remediation_counts = post_gap.get("remediation_evidence_counts") or {}
+    for key in ["tool_calls", "evaluations", "artifacts", "audit_logs", "plan_evidence_manifests"]:
+        require(int(remediation_counts.get(key) or 0) >= 1, f"post-dispatch remediation evidence missing {key}: {post_gap}", failures)
+
+    with tempfile.TemporaryDirectory(prefix="agentops-evidence-synthesis-") as tmp:
+        env = os.environ.copy()
+        env["AGENTOPS_CONFIG"] = str(Path(tmp) / "config.json")
+        env.pop("AGENTOPS_API_KEY", None)
+
+        synth_args = shlex.split(synthesize_command)
+        if synth_args and synth_args[0] == "agentops":
+            synth_args = synth_args[1:]
+        synthesis = run_cli(args.base_url, synth_args, env)
+        outputs.extend([synthesis.stdout, synthesis.stderr])
+        synthesis_payload = load_json(synthesis)
+        require(synthesis.returncode == 0, f"synthesis command failed: {synthesis.stderr or synthesis.stdout}", failures)
+        require(synthesis_payload.get("status") == "created", f"synthesis not created: {synthesis_payload}", failures)
+        artifact_id = synthesis_payload.get("artifact_id")
+        approval_id = synthesis_payload.get("approval_id")
+        require(str(artifact_id or "").startswith("art_cmd_synthesis_"), f"synthesis artifact missing: {synthesis_payload}", failures)
+        require(str(approval_id or "").startswith("ap_cmd_synthesis_"), f"synthesis approval missing: {synthesis_payload}", failures)
+
+        pending_status, pending_plan = http_json(args.base_url, "GET", "/api/operator/action-plan?limit=20")
+        outputs.append(json.dumps(pending_plan, ensure_ascii=False))
+        require(pending_status == 200, f"pending action-plan failed: {pending_status} {pending_plan}", failures)
+        pending_gap = next((item for item in (pending_plan.get("execution_evidence") or {}).get("gaps") or [] if item.get("run_id") == run_id), {})
+        require(pending_gap.get("remediation_synthesis_status") == "review_pending", f"gap not waiting on synthesis review: {pending_gap}", failures)
+        require(str(pending_gap.get("command") or "").startswith("agentops approval inspect --approval-id "), f"gap did not recommend approval inspect: {pending_gap}", failures)
+
+        approve_status, approved = http_json(args.base_url, "POST", f"/api/approvals/{approval_id}/approve", {})
+        outputs.append(json.dumps(approved, ensure_ascii=False))
+        require(approve_status == 200, f"approval failed: {approve_status} {approved}", failures)
+        require(approved.get("decision") == "approved", f"approval did not approve synthesis: {approved}", failures)
+
+        approved_status, approved_plan = http_json(args.base_url, "GET", "/api/operator/action-plan?limit=20")
+        outputs.append(json.dumps(approved_plan, ensure_ascii=False))
+        require(approved_status == 200, f"approved action-plan failed: {approved_status} {approved_plan}", failures)
+        approved_gap = next((item for item in (approved_plan.get("execution_evidence") or {}).get("gaps") or [] if item.get("run_id") == run_id), {})
+        require(approved_gap.get("remediation_synthesis_status") == "approved_not_promoted", f"gap not ready to promote: {approved_gap}", failures)
+        promote_command = str(approved_gap.get("command") or "")
+        require(promote_command.startswith("agentops commander promote-synthesis --artifact-id "), f"gap did not recommend promotion: {approved_gap}", failures)
+
+        promote_args = shlex.split(promote_command)
+        if promote_args and promote_args[0] == "agentops":
+            promote_args = promote_args[1:]
+        promoted = run_cli(args.base_url, promote_args, env)
+        outputs.extend([promoted.stdout, promoted.stderr])
+        promoted_payload = load_json(promoted)
+        require(promoted.returncode == 0, f"promotion command failed: {promoted.stderr or promoted.stdout}", failures)
+        require(promoted_payload.get("status") == "promoted", f"synthesis not promoted: {promoted_payload}", failures)
+        promoted_rows = promoted_payload.get("created") or {}
+        require(promoted_rows.get("memory_id"), f"promotion missing memory candidate: {promoted_payload}", failures)
+        require(promoted_rows.get("delivery_artifact_id"), f"promotion missing delivery artifact: {promoted_payload}", failures)
+
+    promoted_status, promoted_plan = http_json(args.base_url, "GET", "/api/operator/action-plan?limit=20")
+    outputs.append(json.dumps(promoted_plan, ensure_ascii=False))
+    require(promoted_status == 200, f"promoted action-plan failed: {promoted_status} {promoted_plan}", failures)
+    promoted_gap = next((item for item in (promoted_plan.get("execution_evidence") or {}).get("gaps") or [] if item.get("run_id") == run_id), {})
+    require(promoted_gap.get("remediation_synthesis_status") in {"promoted", "memory_pending_review"}, f"gap did not record promoted synthesis: {promoted_gap}", failures)
+    promoted_summary = promoted_plan.get("summary") or {}
+    require(int(promoted_summary.get("evidence_synthesis_promoted_runs") or 0) >= 1, f"promoted summary missing: {promoted_summary}", failures)
 
     after_create = db_fingerprint(db_path)
     if before is not None and after_create is not None:

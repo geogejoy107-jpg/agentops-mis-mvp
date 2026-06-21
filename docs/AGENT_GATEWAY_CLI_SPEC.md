@@ -1150,7 +1150,11 @@ The remediation command previews a Commander-compatible work package by
 default. `--confirm-create` writes a deterministic planned task, runtime event,
 and audit row; repeated confirmed calls return `already_exists`. The resulting
 task can be dispatched with `agentops commander dispatch-package --task-id ...
---adapter mock`. Failed-benchmark remediation is a first-class
+--adapter mock`. After mock dispatch writes tool/evaluation/artifact/audit and
+verified plan-evidence rows, the `execution_evidence` gap remains visible as
+legacy source-run debt but reports `remediation_status=verified`,
+increments `remediated_evidence_gap_runs`, and drops from blocked severity to a
+ready review item. Failed-benchmark remediation is a first-class
 `remediation_loop` source: once a failed evaluation case becomes a Commander
 work package, the action plan reports remediation package counts,
 ready-for-review counts, pending synthesis reviews, promoted delivery/memory

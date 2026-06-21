@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import urllib.error
 import urllib.request
@@ -57,6 +58,9 @@ def validate(payload: dict, label: str) -> None:
     require(payload.get("status") in {"ready", "attention", "blocked"}, f"{label} bad status: {payload.get('status')}")
     require(payload.get("token_omitted") is True, f"{label} token omission proof missing")
     require(payload.get("live_execution_performed") is False, f"{label} must not execute live work")
+    startup = payload.get("startup_security") or {}
+    require(startup.get("token_omitted") is True, f"{label} startup token omission missing")
+    require(startup.get("status") in {"ready", "attention", "blocked"}, f"{label} bad startup status: {startup}")
     gates = payload.get("gates") or []
     gate_ids = {gate.get("id") for gate in gates if isinstance(gate, dict)}
     for gate_id in {"agent_gateway_auth", "admin_key", "scoped_agent_tokens", "local_dev_boundary"}:

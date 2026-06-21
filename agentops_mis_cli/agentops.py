@@ -21,7 +21,7 @@ import time
 import uuid
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 
 from agentops_mis_cli.redaction import redact_text
@@ -122,6 +122,23 @@ def now_stamp() -> str:
     return dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d%H%M%S%f")
 
 
+def cli_truthy_env(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def cli_deployment_mode() -> str:
+    return os.environ.get("AGENTOPS_DEPLOYMENT_MODE", "local").strip().lower() or "local"
+
+
+def cli_host_is_loopback(url: str) -> bool:
+    host = (urlparse(url).hostname or "").strip().lower()
+    if host in {"", "localhost", "127.0.0.1", "::1"}:
+        return True
+    if host in {"0.0.0.0", "::"}:
+        return False
+    return host.endswith(".localhost")
+
+
 class AgentOpsClient:
     def __init__(self, context: dict):
         self.base_url = context["base_url"].rstrip("/")
@@ -194,6 +211,20 @@ def cmd_doctor(args, client: AgentOpsClient) -> dict:
     checks = []
     gateway = None
     workers = None
+    mode = cli_deployment_mode()
+    production_requested = mode in {"production", "prod", "shared", "hosted"} or cli_truthy_env("AGENTOPS_REQUIRE_PRODUCTION_SECURITY")
+    non_loopback_target = not cli_host_is_loopback(client.base_url)
+    has_token = bool(client.api_key)
+
+    checks.append({
+        "name": "shared_deployment_auth_guard",
+        "ok": not ((non_loopback_target or production_requested) and not has_token),
+        "status": "blocked" if (non_loopback_target or production_requested) and not has_token else "ready",
+        "deployment_mode": mode,
+        "non_loopback_target": non_loopback_target,
+        "has_api_key": has_token,
+        "token_omitted": True,
+    })
 
     try:
         gateway = client.get("/api/agent-gateway/status")
@@ -228,10 +259,11 @@ def cmd_doctor(args, client: AgentOpsClient) -> dict:
             "error": str(exc),
         })
 
-    has_token = bool(client.api_key)
     setup_hints = []
     if not has_token:
         setup_hints.append("No AGENTOPS_API_KEY/config token detected. Local dev may still work, but remote agents should use a scoped enrollment token or short-lived session.")
+    if (non_loopback_target or production_requested) and not has_token:
+        setup_hints.append("Unsafe shared/production target: configure AGENTOPS_API_KEY or scoped token before using this base URL.")
     if not client.agent_id:
         setup_hints.append("No agent id resolved. Set AGENTOPS_AGENT_ID or run agentops login --agent-id ... before remote worker use.")
     if gateway and not (gateway.get("auth") or {}).get("authenticated") and has_token:
@@ -253,6 +285,13 @@ def cmd_doctor(args, client: AgentOpsClient) -> dict:
             "base_url_source": sources["base_url"],
             "workspace_id_source": sources["workspace_id"],
             "agent_id_source": sources["agent_id"],
+            "token_omitted": True,
+        },
+        "deployment_safety": {
+            "deployment_mode": mode,
+            "production_requested": production_requested,
+            "non_loopback_target": non_loopback_target,
+            "ok": not ((non_loopback_target or production_requested) and not has_token),
             "token_omitted": True,
         },
         "checks": checks,
