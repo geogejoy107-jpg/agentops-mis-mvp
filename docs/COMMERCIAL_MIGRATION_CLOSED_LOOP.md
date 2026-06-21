@@ -109,12 +109,18 @@ Must be true:
 
 - SQLite access is isolated behind repository/helper functions for the flows
   being migrated.
+- Initial workspace-scoped task/run/memory reads are mapped in
+  `docs/STORAGE_BOUNDARY_MAP.md`.
 - Schema changes have repeatable migrations and isolated smoke tests using
   `AGENTOPS_DB_PATH`.
 - Postgres is introduced as an adapter target after SQLite behavior is locked by
   tests.
 - Verification includes local acceptance against a temporary SQLite database
-  before any Postgres work starts.
+  before any Postgres work starts:
+
+```bash
+python3 scripts/storage_boundary_sqlite_smoke.py
+```
 
 ### Gate 4: UI/API Parity Before Next.js
 

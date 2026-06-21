@@ -113,6 +113,7 @@ Commercial migration planning/readiness changes:
 ```bash
 python3 scripts/commercial_migration_readiness.py
 python3 scripts/commercial_entitlements_smoke.py
+python3 scripts/storage_boundary_sqlite_smoke.py
 git diff --check
 ```
 

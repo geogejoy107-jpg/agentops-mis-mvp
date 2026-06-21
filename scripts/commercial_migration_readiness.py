@@ -101,6 +101,7 @@ def main() -> int:
         "docs/TECHNICAL_SOLUTION.md",
         "docs/PARALLEL_PRODUCT_DELIVERY_BRANCH_PLAN.md",
         "docs/CODEX_NEXTJS_HANDOFF_PROMPT.md",
+        "docs/STORAGE_BOUNDARY_MAP.md",
     ]
     required_stack = [
         "server.py",
@@ -162,6 +163,13 @@ def main() -> int:
             "Postgres migration is behind a storage-boundary gate",
         ),
         check(
+            "storage_boundary_surface_exists",
+            file_contains("docs/STORAGE_BOUNDARY_MAP.md", "repo_list_workspace_tasks")
+            and file_contains("server.py", "repo_list_workspace_tasks")
+            and (ROOT / "scripts" / "storage_boundary_sqlite_smoke.py").exists(),
+            "workspace-scoped task/run/memory helpers and isolated SQLite smoke are present",
+        ),
+        check(
             "blocked_generated_or_runtime_artifacts_absent",
             not blocked_paths,
             "blocked_paths=" + json.dumps(blocked_paths, ensure_ascii=False),
@@ -198,8 +206,8 @@ def main() -> int:
         {
             "id": "gate_3",
             "name": "Storage Boundary Before Postgres",
-            "status": "planned",
-            "verify": ["isolated SQLite acceptance with AGENTOPS_DB_PATH"],
+            "status": "next",
+            "verify": ["python3 scripts/storage_boundary_sqlite_smoke.py"],
         },
         {
             "id": "gate_4",
