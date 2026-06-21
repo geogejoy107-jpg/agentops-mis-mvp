@@ -4,6 +4,7 @@ import { AlertTriangle, Bot, CheckCircle2, Play, RefreshCw, Activity, Power, Squ
 import { StatusBadge } from "../shared/StatusBadge";
 import {
   createAgentGatewayEnrollment,
+  closeExecutionEvidenceGap,
   decideApproval,
   decideEvaluationCase,
   decideMemory,
@@ -310,6 +311,8 @@ export function AIEmployees() {
       resetOrder: "Reset order",
       moveUp: "Move up",
       moveDown: "Move down",
+      closeEvidenceGap: "Close gap",
+      closingEvidenceGap: "Closing...",
       localReadinessTitle: "Local Readiness",
       localReadinessSummary: "Read-only proof that this local MIS workspace can be operated without leaking tokens or triggering live work.",
       localReadinessOverall: "Overall status",
@@ -630,6 +633,8 @@ export function AIEmployees() {
       resetOrder: "重置顺序",
       moveUp: "上移",
       moveDown: "下移",
+      closeEvidenceGap: "关闭缺口",
+      closingEvidenceGap: "关闭中...",
       localReadinessTitle: "本地就绪",
       localReadinessSummary: "只读证明：这个本地 MIS 工作区可运行，同时不泄露 token，也不会触发真实执行。",
       localReadinessOverall: "整体状态",
@@ -994,12 +999,15 @@ export function AIEmployees() {
     { bucket: "late_or_stale", label: copy.lateOrStale, count: integrationInboxSummary?.late_or_stale ?? 0 },
     { bucket: "needs_memory_review", label: copy.memoryReview, count: integrationInboxSummary?.needs_memory_review ?? 0 },
   ];
+  const isCloseEvidenceGapCommand = (action: string) => action.startsWith("agentops operator close-evidence-gap --run-id ");
+  const actionQueueCandidateScore = (action: string) => isCloseEvidenceGapCommand(action) ? 100 : 0;
   const actionQueueCandidates = [
     ...operatorPlanActions.map((item) => ({
       id: `operator:${item.action_id}`,
       action: item.command,
       source: `${copy.operatorTitle} · ${item.lane}`,
       status: item.severity || operatorActionPlan?.status || "attention",
+      operatorAction: item,
     })),
     ...recommendedActions.map((action, index) => ({
       id: `fleet:${index}:${action}`,
@@ -1028,7 +1036,7 @@ export function AIEmployees() {
   ].filter((candidate, index, list) => (
     candidate.action &&
     list.findIndex(item => item.action === candidate.action) === index
-  )).slice(0, 8);
+  )).sort((left, right) => actionQueueCandidateScore(right.action) - actionQueueCandidateScore(left.action)).slice(0, 8);
   const actionQueueKey = actionQueueCandidates.map(item => item.id).join("|");
   const orderedActionQueue = [
     ...actionQueueOrder.map(id => actionQueueCandidates.find(item => item.id === id)).filter(Boolean),
@@ -1065,6 +1073,55 @@ export function AIEmployees() {
     const [moved] = next.splice(index, 1);
     next.splice(targetIndex, 0, moved);
     setActionQueueOrder(next);
+  };
+
+  const readCommandFlag = (command: string, flag: string) => {
+    const parts = command.split(/\s+/).filter(Boolean);
+    const index = parts.indexOf(flag);
+    if (index < 0 || index + 1 >= parts.length) return "";
+    return parts[index + 1] || "";
+  };
+
+  const closeGapDetailsForAction = (item: (typeof actionQueueCandidates)[number]) => {
+    const command = item.action || "";
+    if (!isCloseEvidenceGapCommand(command)) return null;
+    const evidence = item.operatorAction?.evidence || {};
+    const readEvidence = (key: string) => {
+      const value = evidence[key];
+      return typeof value === "string" ? value : "";
+    };
+    const decisionRaw = readCommandFlag(command, "--decision") || "accepted_remediation";
+    const decision = decisionRaw === "waived" || decisionRaw === "reopen" ? decisionRaw : "accepted_remediation";
+    const runId = readCommandFlag(command, "--run-id") || readEvidence("run_id");
+    if (!runId) return null;
+    return {
+      runId,
+      decision,
+      synthesisArtifactId: readCommandFlag(command, "--synthesis-artifact-id") || readEvidence("remediation_synthesis_artifact_id"),
+      remediationTaskId: readCommandFlag(command, "--remediation-task-id") || readEvidence("remediation_task_id"),
+    };
+  };
+
+  const closeEvidenceGapFromQueue = async (item: (typeof actionQueueCandidates)[number]) => {
+    const details = closeGapDetailsForAction(item);
+    if (!details) return;
+    setDispatching(`close-gap:${details.runId}`);
+    setDispatchResult(null);
+    try {
+      const result = await closeExecutionEvidenceGap({
+        run_id: details.runId,
+        decision: details.decision,
+        synthesis_artifact_id: details.synthesisArtifactId || undefined,
+        remediation_task_id: details.remediationTaskId || undefined,
+        confirm_close: true,
+      });
+      setDispatchResult(`${copy.closeEvidenceGap}: ${result.status} · ${result.run_id || details.runId}`);
+      await refresh();
+    } catch (err) {
+      setDispatchResult(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDispatching(null);
+    }
   };
 
   const updateCustomerTaskText = (field: "title" | "description", value: string) => {
@@ -2425,65 +2482,81 @@ export function AIEmployees() {
                 {copy.noRecommendedActions}
               </div>
             )}
-            {visibleActionQueue.map((item, index) => (
-              <div
-                key={item.id}
-                draggable
-                onDragStart={(event) => {
-                  event.dataTransfer.effectAllowed = "move";
-                  event.dataTransfer.setData("text/plain", item.id);
-                  setDraggedActionId(item.id);
-                }}
-                onDragOver={(event) => {
-                  event.preventDefault();
-                  event.dataTransfer.dropEffect = "move";
-                }}
-                onDrop={(event) => {
-                  event.preventDefault();
-                  const activeId = event.dataTransfer.getData("text/plain") || draggedActionId;
-                  if (activeId) moveActionQueueItem(activeId, item.id);
-                  setDraggedActionId(null);
-                }}
-                onDragEnd={() => setDraggedActionId(null)}
-                className="grid grid-cols-[auto_1fr] sm:grid-cols-[auto_1fr_auto] items-center gap-2 rounded px-3 py-2 cursor-grab active:cursor-grabbing"
-                style={{
-                  background: draggedActionId === item.id ? "rgba(34,211,238,0.08)" : "var(--mis-bg)",
-                  border: draggedActionId === item.id ? "1px solid rgba(34,211,238,0.32)" : "1px solid var(--mis-border)",
-                }}
-                title={copy.dragToReorder}
-              >
-                <GripVertical size={14} style={{ color: "var(--mis-muted)" }} />
-                <div className="min-w-0">
-                  <div className="text-[11px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{item.action}</div>
-                  <div className="text-[10px] truncate mt-0.5" style={{ color: "var(--mis-muted)" }}>
-                    {copy.actionSource}: {item.source}
+            {visibleActionQueue.map((item, index) => {
+              const closeGapDetails = closeGapDetailsForAction(item);
+              const closeGapBusy = Boolean(closeGapDetails && dispatching === `close-gap:${closeGapDetails.runId}`);
+              return (
+                <div
+                  key={item.id}
+                  draggable
+                  onDragStart={(event) => {
+                    event.dataTransfer.effectAllowed = "move";
+                    event.dataTransfer.setData("text/plain", item.id);
+                    setDraggedActionId(item.id);
+                  }}
+                  onDragOver={(event) => {
+                    event.preventDefault();
+                    event.dataTransfer.dropEffect = "move";
+                  }}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    const activeId = event.dataTransfer.getData("text/plain") || draggedActionId;
+                    if (activeId) moveActionQueueItem(activeId, item.id);
+                    setDraggedActionId(null);
+                  }}
+                  onDragEnd={() => setDraggedActionId(null)}
+                  className="grid grid-cols-[auto_1fr] sm:grid-cols-[auto_1fr_auto] items-center gap-2 rounded px-3 py-2 cursor-grab active:cursor-grabbing"
+                  style={{
+                    background: draggedActionId === item.id ? "rgba(34,211,238,0.08)" : "var(--mis-bg)",
+                    border: draggedActionId === item.id ? "1px solid rgba(34,211,238,0.32)" : "1px solid var(--mis-border)",
+                  }}
+                  title={copy.dragToReorder}
+                >
+                  <GripVertical size={14} style={{ color: "var(--mis-muted)" }} />
+                  <div className="min-w-0">
+                    <div className="text-[11px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{item.action}</div>
+                    <div className="text-[10px] truncate mt-0.5" style={{ color: "var(--mis-muted)" }}>
+                      {copy.actionSource}: {item.source}
+                    </div>
+                  </div>
+                  <div className="col-span-2 sm:col-span-1 flex items-center gap-1.5 justify-end">
+                    {closeGapDetails && (
+                      <button
+                        onClick={() => void closeEvidenceGapFromQueue(item)}
+                        disabled={Boolean(dispatching)}
+                        className="inline-flex items-center gap-1 text-[10px] px-2 h-6 rounded disabled:opacity-50"
+                        style={{ background: "rgba(45,212,191,0.10)", color: "var(--mis-success)", border: "1px solid rgba(45,212,191,0.20)" }}
+                        title={copy.closeEvidenceGap}
+                      >
+                        {closeGapBusy ? <RefreshCw size={10} /> : <CheckCircle2 size={10} />}
+                        {closeGapBusy ? copy.closingEvidenceGap : copy.closeEvidenceGap}
+                      </button>
+                    )}
+                    <StatusBadge status={item.status} />
+                    <button
+                      onClick={() => nudgeActionQueueItem(item.id, -1)}
+                      disabled={index === 0}
+                      className="text-[10px] w-6 h-6 rounded disabled:opacity-30"
+                      style={{ color: "var(--mis-dim)", background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}
+                      aria-label={copy.moveUp}
+                      title={copy.moveUp}
+                    >
+                      ↑
+                    </button>
+                    <button
+                      onClick={() => nudgeActionQueueItem(item.id, 1)}
+                      disabled={index === visibleActionQueue.length - 1}
+                      className="text-[10px] w-6 h-6 rounded disabled:opacity-30"
+                      style={{ color: "var(--mis-dim)", background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}
+                      aria-label={copy.moveDown}
+                      title={copy.moveDown}
+                    >
+                      ↓
+                    </button>
                   </div>
                 </div>
-                <div className="col-span-2 sm:col-span-1 flex items-center gap-1.5 justify-end">
-                  <StatusBadge status={item.status} />
-                  <button
-                    onClick={() => nudgeActionQueueItem(item.id, -1)}
-                    disabled={index === 0}
-                    className="text-[10px] w-6 h-6 rounded disabled:opacity-30"
-                    style={{ color: "var(--mis-dim)", background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}
-                    aria-label={copy.moveUp}
-                    title={copy.moveUp}
-                  >
-                    ↑
-                  </button>
-                  <button
-                    onClick={() => nudgeActionQueueItem(item.id, 1)}
-                    disabled={index === visibleActionQueue.length - 1}
-                    className="text-[10px] w-6 h-6 rounded disabled:opacity-30"
-                    style={{ color: "var(--mis-dim)", background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}
-                    aria-label={copy.moveDown}
-                    title={copy.moveDown}
-                  >
-                    ↓
-                  </button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
 

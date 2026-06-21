@@ -3099,6 +3099,56 @@ export async function promoteCommanderSynthesis(input: {
   };
 }
 
+export async function closeExecutionEvidenceGap(input: {
+  run_id: string;
+  decision?: "accepted_remediation" | "waived" | "reopen";
+  reason?: string;
+  note?: string;
+  synthesis_artifact_id?: string;
+  remediation_task_id?: string;
+  confirm_close?: boolean;
+}): Promise<ExecutionEvidenceGapDecisionPayload> {
+  const raw = await apiJsonWithStatuses<Record<string, unknown>>("/operator/execution-evidence/close-gap", {
+    method: "POST",
+    body: JSON.stringify({
+      run_id: input.run_id,
+      decision: input.decision || "accepted_remediation",
+      reason: input.reason,
+      note: input.note,
+      synthesis_artifact_id: input.synthesis_artifact_id,
+      remediation_task_id: input.remediation_task_id,
+      confirm_close: Boolean(input.confirm_close),
+    }),
+  }, [400, 409]);
+  const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
+  return {
+    provider: raw.provider ? String(raw.provider) : undefined,
+    operation: raw.operation ? String(raw.operation) : undefined,
+    ok: raw.ok === undefined ? undefined : boolValue(raw.ok),
+    status: String(raw.status || raw.error || "unknown"),
+    error: raw.error ? String(raw.error) : undefined,
+    message: raw.message ? String(raw.message) : undefined,
+    closed: raw.closed === undefined ? undefined : boolValue(raw.closed),
+    workspace_id: raw.workspace_id ? String(raw.workspace_id) : undefined,
+    run_id: raw.run_id ? String(raw.run_id) : input.run_id,
+    decision: typeof raw.decision === "object" && raw.decision !== null ? raw.decision as Record<string, unknown> : undefined,
+    gap: typeof raw.gap === "object" && raw.gap !== null ? raw.gap as Record<string, unknown> : null,
+    next_actions: asArray(raw.next_actions).map(String),
+    recommended_action: raw.recommended_action ? String(raw.recommended_action) : undefined,
+    safety: {
+      read_only: safetyRaw.read_only === undefined ? undefined : boolValue(safetyRaw.read_only),
+      ledger_mutated: safetyRaw.ledger_mutated === undefined ? undefined : boolValue(safetyRaw.ledger_mutated),
+      live_execution_performed: safetyRaw.live_execution_performed === undefined ? undefined : boolValue(safetyRaw.live_execution_performed),
+      raw_note_omitted: safetyRaw.raw_note_omitted === undefined ? undefined : boolValue(safetyRaw.raw_note_omitted),
+      raw_prompt_omitted: safetyRaw.raw_prompt_omitted === undefined ? undefined : boolValue(safetyRaw.raw_prompt_omitted),
+      raw_response_omitted: safetyRaw.raw_response_omitted === undefined ? undefined : boolValue(safetyRaw.raw_response_omitted),
+      token_omitted: safetyRaw.token_omitted === undefined ? undefined : boolValue(safetyRaw.token_omitted),
+    },
+    token_omitted: raw.token_omitted === undefined ? undefined : boolValue(raw.token_omitted),
+    live_execution_performed: raw.live_execution_performed === undefined ? undefined : boolValue(raw.live_execution_performed),
+  };
+}
+
 export async function loadReviewQueue(limit = 12): Promise<ReviewQueuePayload> {
   const raw = await optionalApiJson<Record<string, unknown>>(`/review/queue?limit=${encodeURIComponent(String(limit))}`, {
     provider: "agentops-review",
