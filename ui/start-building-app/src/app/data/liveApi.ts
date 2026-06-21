@@ -1035,6 +1035,10 @@ export interface OperatorActionPlanPayload {
     remediation_pending_reviews: number;
     remediation_promoted_memories: number;
     remediation_promoted_deliveries: number;
+    evidence_gap_runs: number;
+    missing_plan_runs: number;
+    missing_plan_evidence_manifests: number;
+    unverified_plan_evidence_manifests: number;
   };
   actions: OperatorActionPlanItem[];
   top_commands: string[];
@@ -3190,6 +3194,10 @@ export async function loadOperatorActionPlan(limit = 12): Promise<OperatorAction
       remediation_pending_reviews: numberValue(summaryRaw.remediation_pending_reviews, 0),
       remediation_promoted_memories: numberValue(summaryRaw.remediation_promoted_memories, 0),
       remediation_promoted_deliveries: numberValue(summaryRaw.remediation_promoted_deliveries, 0),
+      evidence_gap_runs: numberValue(summaryRaw.evidence_gap_runs, 0),
+      missing_plan_runs: numberValue(summaryRaw.missing_plan_runs, 0),
+      missing_plan_evidence_manifests: numberValue(summaryRaw.missing_plan_evidence_manifests, 0),
+      unverified_plan_evidence_manifests: numberValue(summaryRaw.unverified_plan_evidence_manifests, 0),
     },
     actions: asArray<Record<string, unknown>>(raw.actions).map((item) => ({
       action_id: String(item.action_id || item.command || item.title || ""),

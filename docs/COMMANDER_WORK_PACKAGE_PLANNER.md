@@ -202,6 +202,12 @@ Once promoted, `operator action-plan` reports the remediation source as
 `remediation_promoted_deliveries`, and stops asking for duplicate synthesis of
 that already promoted remediation project.
 
+The same operator plan also exposes an `execution_evidence` audit source. It is
+read-only and points the commander at completed/failed runs that still lack a
+plan binding, verified plan-evidence manifest, or tool/evaluation/artifact/audit
+evidence, so remediation packages do not become customer-facing output before
+the loop ledger is complete.
+
 Dispatch a package:
 
 ```bash

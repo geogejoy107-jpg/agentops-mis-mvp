@@ -90,6 +90,8 @@ def db_fingerprint(db_path: Path) -> dict | None:
             ("evaluations", "created_at"),
             ("evaluation_case_candidates", "updated_at"),
             ("evaluation_case_runs", "created_at"),
+            ("agent_plans", "updated_at"),
+            ("plan_evidence_manifests", "updated_at"),
             ("audit_logs", "created_at"),
             ("runtime_events", "created_at"),
         ]:
@@ -130,6 +132,10 @@ def validate_plan(payload: dict, label: str, failures: list[str], limit: int) ->
         "remediation_ready_for_review",
         "remediation_pending_reviews",
         "remediation_promoted_deliveries",
+        "evidence_gap_runs",
+        "missing_plan_runs",
+        "missing_plan_evidence_manifests",
+        "unverified_plan_evidence_manifests",
     ]:
         require(isinstance(summary.get(key), int), f"{label} summary.{key} missing: {summary}", failures)
     require(isinstance(summary.get("recommended_adapter"), str), f"{label} recommended_adapter missing: {summary}", failures)
@@ -139,6 +145,14 @@ def validate_plan(payload: dict, label: str, failures: list[str], limit: int) ->
     require(bool(payload.get("top_commands")), f"{label} top_commands missing", failures)
     require(isinstance(payload.get("source_status"), dict), f"{label} source_status missing", failures)
     require("remediation_loop" in (payload.get("source_status") or {}), f"{label} remediation source status missing: {payload.get('source_status')}", failures)
+    require("execution_evidence" in (payload.get("source_status") or {}), f"{label} execution evidence source status missing: {payload.get('source_status')}", failures)
+    evidence_source = payload.get("execution_evidence") or {}
+    require(evidence_source.get("operation") == "execution_evidence_gaps", f"{label} execution evidence payload missing: {evidence_source}", failures)
+    evidence_summary = evidence_source.get("summary") or {}
+    require(isinstance(evidence_summary.get("gap_runs"), int), f"{label} execution evidence gap count missing: {evidence_summary}", failures)
+    evidence_safety = evidence_source.get("safety") or {}
+    require(evidence_safety.get("read_only") is True, f"{label} execution evidence read_only missing: {evidence_safety}", failures)
+    require(evidence_safety.get("ledger_mutated") is False, f"{label} execution evidence must not mutate ledger: {evidence_safety}", failures)
     for action in actions or []:
         require(bool(action.get("action_id")), f"{label} action_id missing: {action}", failures)
         require(action.get("severity") in {"blocked", "attention", "ready", "info"}, f"{label} bad severity: {action}", failures)

@@ -1120,7 +1120,8 @@ Reruns still require the explicit `agentops eval run-cases` path.
 
 Returns the prioritized operator command-center plan as JSON. It merges the
 review queue, customer delivery board, worker fleet status, adapter readiness,
-and commander inbox into safe next CLI/UI actions.
+commander inbox, execution-evidence gaps, and remediation loop into safe next
+CLI/UI actions.
 
 ```bash
 agentops operator action-plan --limit 12
@@ -1130,11 +1131,18 @@ Maps to `GET /api/operator/action-plan`. This is read-only: it must not start a
 worker, approve a gate, upload data, or call Hermes/OpenClaw. It returns
 `top_commands`, `actions[]`, source statuses, safety flags, and
 `token_omitted:true` so a local admin, remote operator, or future commander
-agent can decide which explicit command to run next. Failed-benchmark
-remediation is a first-class `remediation_loop` source: once a failed
-evaluation case becomes a Commander work package, the action plan reports
-remediation package counts, ready-for-review counts, pending synthesis reviews,
-and read-only next commands for `/workspace/agents`.
+agent can decide which explicit command to run next. `execution_evidence` is a
+read-only audit source for the loop contract: it inspects recent completed or
+failed runs for missing `agent_plan_id` / `plan_hash`, missing or unverified
+`plan_evidence_manifests`, and missing tool/evaluation/artifact/audit rows. It
+reports summary counters such as `evidence_gap_runs`, `missing_plan_runs`,
+`missing_plan_evidence_manifests`, and
+`unverified_plan_evidence_manifests`, then suggests explicit inspection or
+manifest commands without mutating the ledger. Failed-benchmark remediation is
+a first-class `remediation_loop` source: once a failed evaluation case becomes
+a Commander work package, the action plan reports remediation package counts,
+ready-for-review counts, pending synthesis reviews, promoted delivery/memory
+counts, and read-only next commands for `/workspace/agents`.
 
 ### `agentops eval propose-case`
 

@@ -4525,6 +4525,134 @@ def delivery_manifest_gate(conn: sqlite3.Connection, run_id: str | None) -> dict
     }
 
 
+def operator_execution_evidence_gaps(conn: sqlite3.Connection, workspace_id: str, limit: int = 8) -> dict:
+    limit = max(1, min(int(limit or 8), 25))
+    rows = conn.execute(
+        """SELECT r.*, t.title AS task_title, t.status AS task_status
+        FROM runs r
+        LEFT JOIN tasks t ON t.task_id=r.task_id
+        WHERE COALESCE(r.workspace_id,'local-demo')=?
+          AND r.status IN ('completed','failed')
+        ORDER BY COALESCE(r.ended_at, r.started_at, r.created_at) DESC
+        LIMIT ?""",
+        (workspace_id, limit * 3),
+    ).fetchall()
+    inspected = 0
+    gaps: list[dict] = []
+    summary = {
+        "inspected_runs": 0,
+        "gap_runs": 0,
+        "missing_plan_runs": 0,
+        "missing_manifest_runs": 0,
+        "unverified_manifest_runs": 0,
+        "missing_tool_evidence_runs": 0,
+        "missing_evaluation_evidence_runs": 0,
+        "missing_artifact_evidence_runs": 0,
+        "missing_audit_evidence_runs": 0,
+    }
+    for row in rows:
+        inspected += 1
+        counts = commander_evidence_counts(conn, task_id=row["task_id"], run_id=row["run_id"])
+        manifest = latest_plan_evidence_manifest_for_run(conn, row["run_id"])
+        manifest_verification = verify_plan_evidence_manifest_row(conn, manifest) if manifest else None
+        latest_plan = None
+        if not row["agent_plan_id"]:
+            latest_plan = latest_agent_plan_for_run(conn, row)
+        plan_id = row["agent_plan_id"] or (latest_plan["plan_id"] if latest_plan else None)
+        gap_types: list[str] = []
+        missing_evidence: list[str] = []
+        if not row["agent_plan_id"] or not row["plan_hash"]:
+            gap_types.append("missing_agent_plan_binding")
+            summary["missing_plan_runs"] += 1
+        if not manifest:
+            gap_types.append("missing_plan_evidence_manifest")
+            summary["missing_manifest_runs"] += 1
+        elif not bool((manifest_verification or {}).get("pass")):
+            gap_types.append("unverified_plan_evidence_manifest")
+            summary["unverified_manifest_runs"] += 1
+        for key, gap_type, summary_key in [
+            ("tool_calls", "missing_tool_evidence", "missing_tool_evidence_runs"),
+            ("evaluations", "missing_evaluation_evidence", "missing_evaluation_evidence_runs"),
+            ("artifacts", "missing_artifact_evidence", "missing_artifact_evidence_runs"),
+            ("audit_logs", "missing_audit_evidence", "missing_audit_evidence_runs"),
+        ]:
+            if int(counts.get(key) or 0) <= 0:
+                gap_types.append(gap_type)
+                missing_evidence.append(key)
+                summary[summary_key] += 1
+        if not gap_types:
+            continue
+        if "missing_agent_plan_binding" in gap_types:
+            command = f"agentops run graph --run-id {row['run_id']}"
+            severity = "blocked"
+            priority = 95
+            next_action = "Inspect the run graph, then create a matching agent_plan before accepting this legacy execution."
+        elif manifest and manifest_verification and not manifest_verification.get("pass"):
+            command = f"agentops plan-evidence verify --manifest-id {manifest['manifest_id']}"
+            severity = "blocked"
+            priority = 92
+            next_action = "Re-verify the manifest and repair missing ledger evidence before delivery."
+        elif plan_id and not missing_evidence:
+            command = f"agentops plan-evidence create --plan-id {plan_id} --run-id {row['run_id']} --mismatch-policy block"
+            severity = "attention"
+            priority = 88
+            next_action = "Create a blocking plan_evidence_manifest for this completed run."
+        else:
+            command = f"agentops run graph --run-id {row['run_id']}"
+            severity = "attention"
+            priority = 84
+            next_action = "Inspect the run graph and add the missing tool/evaluation/artifact/audit evidence before manifesting."
+        gaps.append({
+            "run_id": row["run_id"],
+            "task_id": row["task_id"],
+            "agent_id": row["agent_id"],
+            "task_title": redact_text(row["task_title"] or row["input_summary"] or row["run_id"], 180),
+            "run_status": row["status"],
+            "task_status": row["task_status"],
+            "plan_id": plan_id,
+            "plan_hash": row["plan_hash"],
+            "manifest_id": manifest["manifest_id"] if manifest else None,
+            "manifest_status": (manifest_verification or {}).get("status") if manifest_verification else None,
+            "manifest_failed_checks": [item.get("id") for item in ((manifest_verification or {}).get("failed_checks") or [])],
+            "gap_types": gap_types,
+            "missing_evidence": missing_evidence,
+            "evidence_counts": counts,
+            "severity": severity,
+            "priority": priority,
+            "command": command,
+            "next_action": next_action,
+            "ui_route": f"/admin/runs/{row['run_id']}",
+            "token_omitted": True,
+        })
+        if len(gaps) >= limit:
+            break
+    summary["inspected_runs"] = inspected
+    summary["gap_runs"] = len(gaps)
+    if summary["missing_plan_runs"] or summary["unverified_manifest_runs"]:
+        status = "blocked"
+    elif summary["missing_manifest_runs"] or summary["gap_runs"]:
+        status = "attention"
+    else:
+        status = "ready"
+    return {
+        "provider": "agentops-operator",
+        "operation": "execution_evidence_gaps",
+        "status": status,
+        "workspace_id": workspace_id,
+        "summary": summary,
+        "gaps": gaps,
+        "next_actions": [item["command"] for item in gaps[:5]] or ["agentops run list --status completed --limit 10"],
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+
+
 def latest_agent_plan_for_run(conn: sqlite3.Connection, run: sqlite3.Row) -> sqlite3.Row | None:
     return conn.execute(
         """SELECT * FROM agent_plans
@@ -12318,6 +12446,7 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
     delivery_board = customer_delivery_board(conn, limit=max(limit, 8))
     inbox = commander_integration_inbox(conn, headers, {"bucket": ["all"], "limit": [str(max(limit, 12))]})
     remediation_loop = evaluation_case_remediation_loop(conn, workspace_id, limit=max(limit, 8))
+    evidence_gaps = operator_execution_evidence_gaps(conn, workspace_id, limit=max(limit, 8))
 
     actions: list[dict] = []
 
@@ -12485,6 +12614,28 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             evidence=item.get("evidence") or {},
         )
 
+    for item in (evidence_gaps.get("gaps") or [])[:limit]:
+        add_action(
+            "execution_evidence",
+            item.get("task_title") or item.get("run_id") or "Execution evidence gap",
+            item.get("command") or "agentops run list --status completed --limit 10",
+            priority=int(item.get("priority") or 84),
+            severity=item.get("severity") or "attention",
+            source="execution_evidence_gaps",
+            summary=item.get("next_action") or ", ".join(item.get("gap_types") or []),
+            ui_route=item.get("ui_route") or f"/admin/runs/{item.get('run_id')}",
+            evidence={
+                "task_id": item.get("task_id"),
+                "run_id": item.get("run_id"),
+                "agent_id": item.get("agent_id"),
+                "plan_id": item.get("plan_id"),
+                "manifest_id": item.get("manifest_id"),
+                "gap_types": item.get("gap_types") or [],
+                "missing_evidence": item.get("missing_evidence") or [],
+                "evidence_counts": item.get("evidence_counts") or {},
+            },
+        )
+
     deduped: list[dict] = []
     seen: set[tuple[str, str | None]] = set()
     severity_rank = {"blocked": 3, "attention": 2, "ready": 1, "info": 0}
@@ -12522,6 +12673,10 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             "remediation_pending_reviews": (remediation_loop.get("summary") or {}).get("pending_reviews", 0),
             "remediation_promoted_memories": (remediation_loop.get("summary") or {}).get("promoted_memory_candidates", 0),
             "remediation_promoted_deliveries": (remediation_loop.get("summary") or {}).get("promoted_delivery_artifacts", 0),
+            "evidence_gap_runs": (evidence_gaps.get("summary") or {}).get("gap_runs", 0),
+            "missing_plan_runs": (evidence_gaps.get("summary") or {}).get("missing_plan_runs", 0),
+            "missing_plan_evidence_manifests": (evidence_gaps.get("summary") or {}).get("missing_manifest_runs", 0),
+            "unverified_plan_evidence_manifests": (evidence_gaps.get("summary") or {}).get("unverified_manifest_runs", 0),
         },
         "actions": deduped,
         "top_commands": [item["command"] for item in deduped[:5]],
@@ -12532,8 +12687,10 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             "commander_inbox": inbox.get("status"),
             "adapter_readiness": adapter_readiness.get("status"),
             "remediation_loop": remediation_loop.get("status"),
+            "execution_evidence": evidence_gaps.get("status"),
         },
         "remediation_loop": remediation_loop,
+        "execution_evidence": evidence_gaps,
         "contract": "read-only operator action plan; execution stays in explicit CLI/API commands and live adapters still require confirmation",
         "safety": {
             "read_only": True,

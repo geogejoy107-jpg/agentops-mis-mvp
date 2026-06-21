@@ -163,6 +163,13 @@ workspace, task, and agent and passes verification. Pass `agent_plan_id` in the
 run-start request to make the binding explicit; the run stores `agent_plan_id`
 and `plan_hash` for later plan-evidence manifest checks.
 
+`GET /api/operator/action-plan` includes a read-only `execution_evidence`
+source. It audits recent completed or failed runs for missing plan bindings,
+missing/unverified plan-evidence manifests, and missing tool, evaluation,
+artifact, or audit evidence. The response summarizes the gap counts and returns
+explicit CLI inspection/manifest commands; it does not create plans, manifests,
+approvals, or audit rows.
+
 ## Plan Evidence Manifests
 
 ```http
