@@ -271,8 +271,8 @@ can inspect the queue without opening the browser UI.
 agentops task list --status planned --owner-agent-id agt_kb_researcher --limit 20
 ```
 
-Maps to `GET /api/tasks` with CLI-side filtering. It is read-only and returns
-`token_omitted:true`.
+Maps to `GET /api/agent-gateway/tasks` with scoped workspace and agent
+visibility. It is read-only and returns `token_omitted:true`.
 
 ### `agentops task get`
 
@@ -335,7 +335,8 @@ agentops run list --task-id tsk_clean_sources --limit 5
 agentops run list --agent-id agt_kb_researcher --status completed
 ```
 
-Maps to `GET /api/runs`.
+Maps to `GET /api/agent-gateway/runs`. With scoped tokens, only runs attached
+to visible tasks, or runs owned by the token's agent, are returned.
 
 ### `agentops run get`
 
@@ -354,7 +355,7 @@ Returns parent/child delegation context for one run.
 agentops run graph --run-id run_123
 ```
 
-Maps to `GET /api/runs/:id/graph`.
+Maps to `GET /api/agent-gateway/runs/:id/graph`.
 
 ### `agentops toolcall record`
 
@@ -728,11 +729,17 @@ POST /api/agent-gateway/session/create
 POST /api/agent-gateway/session/revoke
 POST /api/agent-gateway/register
 POST /api/agent-gateway/heartbeat
+GET  /api/agent-gateway/tasks
 GET  /api/agent-gateway/tasks/pull
+GET  /api/agent-gateway/tasks/:id
 POST /api/agent-gateway/tasks/:id/claim
+GET  /api/agent-gateway/runs
+GET  /api/agent-gateway/runs/:id
+GET  /api/agent-gateway/runs/:id/graph
 POST /api/agent-gateway/runs/start
 POST /api/agent-gateway/runs/:id/heartbeat
 POST /api/agent-gateway/tool-calls
+GET  /api/agent-gateway/artifacts
 POST /api/agent-gateway/artifacts
 POST /api/agent-gateway/approvals/request
 POST /api/agent-gateway/memories/propose
@@ -868,8 +875,8 @@ agentops artifact list --task-id tsk_clean_sources --limit 10
 agentops artifact list --run-id run_123 --type customer_worker_result
 ```
 
-Maps to `GET /api/artifacts` with CLI-side filtering and returns
-`token_omitted:true`.
+Maps to `GET /api/agent-gateway/artifacts` with scoped task/run visibility and
+returns `token_omitted:true`.
 
 ### `POST /api/agent-gateway/approvals/request`
 
@@ -993,11 +1000,17 @@ Current endpoint scope map:
 | `POST /api/agent-gateway/register` | `agents:write` |
 | `POST /api/agent-gateway/heartbeat` | `agents:heartbeat` |
 | `POST /api/agent-gateway/tasks` | `tasks:create` |
+| `GET /api/agent-gateway/tasks` | `tasks:read` |
 | `GET /api/agent-gateway/tasks/pull` | `tasks:read` |
+| `GET /api/agent-gateway/tasks/:id` | `tasks:read` |
 | `POST /api/agent-gateway/tasks/:id/claim` | `tasks:claim` |
+| `GET /api/agent-gateway/runs` | `tasks:read` |
+| `GET /api/agent-gateway/runs/:id` | `tasks:read` |
+| `GET /api/agent-gateway/runs/:id/graph` | `tasks:read` |
 | `POST /api/agent-gateway/runs/start` | `runs:write` |
 | `POST /api/agent-gateway/runs/:id/heartbeat` | `runs:write` |
 | `POST /api/agent-gateway/tool-calls` | `toolcalls:write` |
+| `GET /api/agent-gateway/artifacts` | `tasks:read` |
 | `POST /api/agent-gateway/artifacts` | `artifacts:write` |
 | `POST /api/agent-gateway/approvals/request` | `approvals:request` |
 | `POST /api/agent-gateway/memories/propose` | `memories:propose` |

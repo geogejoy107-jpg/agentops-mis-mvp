@@ -324,31 +324,19 @@ def cmd_task_create(args, client: AgentOpsClient) -> dict:
 
 
 def cmd_task_list(args, client: AgentOpsClient) -> dict:
-    rows = client.get("/api/tasks")
-    if not isinstance(rows, list):
-        rows = []
-    if args.status:
-        statuses = set(args.status)
-        rows = [row for row in rows if row.get("status") in statuses]
-    if args.owner_agent_id:
-        rows = [row for row in rows if row.get("owner_agent_id") == args.owner_agent_id]
-    if args.requester_id:
-        rows = [row for row in rows if row.get("requester_id") == args.requester_id]
-    rows = apply_limit(rows, args.limit)
-    return {
-        "provider": "agentops-mis",
-        "operation": "task_list",
-        "count": len(rows),
-        "tasks": rows,
-        "workspace_id": client.workspace_id,
-        "token_omitted": True,
+    query = {
+        "limit": args.limit,
+        "status": args.status,
+        "owner_agent_id": args.owner_agent_id,
+        "requester_id": args.requester_id,
     }
+    return client.get("/api/agent-gateway/tasks", query=query)
 
 
 def cmd_task_get(args, client: AgentOpsClient) -> dict:
-    payload = client.get(f"/api/tasks/{args.task_id}")
+    payload = client.get(f"/api/agent-gateway/tasks/{args.task_id}")
     return {
-        "provider": "agentops-mis",
+        "provider": payload.get("provider") or "agentops-mis",
         "operation": "task_get",
         "task_id": args.task_id,
         "task": payload.get("task"),
@@ -395,28 +383,16 @@ def cmd_run_list(args, client: AgentOpsClient) -> dict:
     query = {
         "task_id": args.task_id,
         "agent_id": args.agent_id,
+        "status": args.status,
+        "limit": args.limit,
     }
-    rows = client.get("/api/runs", query=query)
-    if not isinstance(rows, list):
-        rows = []
-    if args.status:
-        statuses = set(args.status)
-        rows = [row for row in rows if row.get("status") in statuses]
-    rows = apply_limit(rows, args.limit)
-    return {
-        "provider": "agentops-mis",
-        "operation": "run_list",
-        "count": len(rows),
-        "runs": rows,
-        "workspace_id": client.workspace_id,
-        "token_omitted": True,
-    }
+    return client.get("/api/agent-gateway/runs", query=query)
 
 
 def cmd_run_get(args, client: AgentOpsClient) -> dict:
-    payload = client.get(f"/api/runs/{args.run_id}")
+    payload = client.get(f"/api/agent-gateway/runs/{args.run_id}")
     return {
-        "provider": "agentops-mis",
+        "provider": payload.get("provider") or "agentops-mis",
         "operation": "run_get",
         "run_id": args.run_id,
         "run": payload.get("run"),
@@ -435,8 +411,8 @@ def cmd_run_get(args, client: AgentOpsClient) -> dict:
 
 
 def cmd_run_graph(args, client: AgentOpsClient) -> dict:
-    payload = client.get(f"/api/runs/{args.run_id}/graph")
-    payload["provider"] = "agentops-mis"
+    payload = client.get(f"/api/agent-gateway/runs/{args.run_id}/graph")
+    payload["provider"] = payload.get("provider") or "agentops-mis"
     payload["operation"] = "run_graph"
     payload["token_omitted"] = True
     return payload
@@ -489,24 +465,13 @@ def cmd_artifact_record(args, client: AgentOpsClient) -> dict:
 
 
 def cmd_artifact_list(args, client: AgentOpsClient) -> dict:
-    rows = client.get("/api/artifacts")
-    if not isinstance(rows, list):
-        rows = []
-    if args.task_id:
-        rows = [row for row in rows if row.get("task_id") == args.task_id]
-    if args.run_id:
-        rows = [row for row in rows if row.get("run_id") == args.run_id]
-    if args.type:
-        rows = [row for row in rows if row.get("artifact_type") == args.type]
-    rows = apply_limit(rows, args.limit)
-    return {
-        "provider": "agentops-mis",
-        "operation": "artifact_list",
-        "count": len(rows),
-        "artifacts": rows,
-        "workspace_id": client.workspace_id,
-        "token_omitted": True,
+    query = {
+        "task_id": args.task_id,
+        "run_id": args.run_id,
+        "type": args.type,
+        "limit": args.limit,
     }
+    return client.get("/api/agent-gateway/artifacts", query=query)
 
 
 def cmd_approval_request(args, client: AgentOpsClient) -> dict:

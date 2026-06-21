@@ -1076,6 +1076,21 @@ run evidence: tool_calls 1, approvals 1, evaluations 1, artifacts 1
 secret_leaked: false
 ```
 
+Latest scoped Agent Gateway readback smoke:
+
+```text
+script: python3 scripts/agent_gateway_scoped_read_smoke.py
+workspace A: ws_read_a_20260621103754750346
+workspace B: ws_read_b_20260621103754750346
+task A: tsk_scoped_read_a_20260621103754750346
+task B read with workspace A token: forbidden
+run: run_gw_6068ddc0b9bd
+artifact: art_gw_run_gw_6068ddc0b9bd_scoped_read_fixture_artifact
+commands/endpoints verified: GET /api/agent-gateway/tasks, tasks/:id, runs, runs/:id, runs/:id/graph, artifacts
+scope: tasks:read, constrained to token workspace and visible task/run/artifact evidence
+secret_leaked: false
+```
+
 Latest scoped Gateway task-create smoke:
 
 ```text

@@ -2964,6 +2964,183 @@ def agent_can_access_task(task, agent_id: str) -> bool:
     return not owner or owner == agent_id or agent_id in task_collaborators(task)
 
 
+def task_detail_payload(conn: sqlite3.Connection, task_id: str) -> dict | None:
+    task = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+    if not task:
+        return None
+    data = {"task": dict(task)}
+    for table in ["runs", "approvals", "evaluations", "memories", "artifacts"]:
+        data[table] = rows_to_dicts(conn.execute(f"SELECT * FROM {table} WHERE task_id=? ORDER BY created_at DESC", (task_id,)).fetchall())
+    return data
+
+
+def run_detail_payload(conn: sqlite3.Connection, run_id: str) -> dict | None:
+    run = conn.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
+    if not run:
+        return None
+    return {
+        "run": dict(run),
+        "tool_calls": rows_to_dicts(conn.execute("SELECT * FROM tool_calls WHERE run_id=? ORDER BY created_at", (run_id,)).fetchall()),
+        "approvals": rows_to_dicts(conn.execute("SELECT * FROM approvals WHERE run_id=? ORDER BY created_at", (run_id,)).fetchall()),
+        "evaluations": rows_to_dicts(conn.execute("SELECT * FROM evaluations WHERE run_id=? ORDER BY created_at", (run_id,)).fetchall()),
+        "artifacts": rows_to_dicts(conn.execute("SELECT * FROM artifacts WHERE run_id=? ORDER BY created_at", (run_id,)).fetchall()),
+    }
+
+
+def agent_gateway_visible_task_sql(ident: dict, auth_ctx: dict | None) -> tuple[str, list]:
+    sql = "COALESCE(workspace_id,'local-demo')=?"
+    params: list = [ident["workspace_id"]]
+    if agent_gateway_is_bound_auth(auth_ctx):
+        sql += " AND (owner_agent_id=? OR collaborator_agent_ids LIKE ? OR owner_agent_id IS NULL OR owner_agent_id='')"
+        params.extend([ident["agent_id"], f"%{ident['agent_id']}%"])
+    return sql, params
+
+
+def agent_gateway_task_read_access(conn: sqlite3.Connection, task_id: str, ident: dict, auth_ctx: dict | None) -> tuple[sqlite3.Row | None, tuple[dict, int] | None]:
+    task = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+    if not task:
+        return None, ({"error": "task not found"}, 404)
+    actual_workspace = row_workspace(task)
+    if actual_workspace != ident["workspace_id"]:
+        return task, workspace_forbidden("task", task_id, ident["workspace_id"], actual_workspace)
+    if agent_gateway_is_bound_auth(auth_ctx) and not agent_can_access_task(task, ident["agent_id"]):
+        return task, ({"error": "forbidden", "message": f"Task {task_id} is not visible to this agent."}, 403)
+    return task, None
+
+
+def agent_gateway_run_read_access(conn: sqlite3.Connection, run_id: str, ident: dict, auth_ctx: dict | None) -> tuple[sqlite3.Row | None, tuple[dict, int] | None]:
+    run = conn.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
+    if not run:
+        return None, ({"error": "run not found"}, 404)
+    actual_workspace = row_workspace(run)
+    if actual_workspace != ident["workspace_id"]:
+        return run, workspace_forbidden("run", run_id, ident["workspace_id"], actual_workspace)
+    if agent_gateway_is_bound_auth(auth_ctx):
+        task_id = run["task_id"]
+        if task_id:
+            _task, access_error = agent_gateway_task_read_access(conn, task_id, ident, auth_ctx)
+            if access_error:
+                return run, access_error
+        elif run["agent_id"] != ident["agent_id"]:
+            return run, ({"error": "forbidden", "message": "Run is not visible to this agent."}, 403)
+    return run, None
+
+
+def agent_gateway_list_tasks(conn: sqlite3.Connection, qs: dict, headers, auth_ctx=None) -> tuple[dict, int]:
+    ident = agent_gateway_identity(headers, qs=qs, auth_ctx=auth_ctx)
+    limit = min(max(int((qs.get("limit") or ["25"])[0]), 1), 200)
+    where, params = agent_gateway_visible_task_sql(ident, auth_ctx)
+    statuses = qs.get("status") or []
+    statuses = [coerce_choice(status, VALID_TASK_STATUSES, "planned") for status in statuses]
+    if statuses:
+        where += " AND status IN (" + ",".join("?" for _ in statuses) + ")"
+        params.extend(statuses)
+    owner = (qs.get("owner_agent_id") or [None])[0]
+    if owner and not agent_gateway_is_bound_auth(auth_ctx):
+        where += " AND owner_agent_id=?"
+        params.append(owner)
+    requester = (qs.get("requester_id") or [None])[0]
+    if requester:
+        where += " AND requester_id=?"
+        params.append(requester)
+    rows = rows_to_dicts(conn.execute(f"SELECT * FROM tasks WHERE {where} ORDER BY created_at DESC LIMIT ?", [*params, limit]).fetchall())
+    return {"provider": "agent_gateway", "operation": "task_list", "tasks": rows, "count": len(rows), "workspace_id": ident["workspace_id"], "token_omitted": True}, 200
+
+
+def agent_gateway_get_task(conn: sqlite3.Connection, task_id: str, headers, auth_ctx=None) -> tuple[dict, int]:
+    ident = agent_gateway_identity(headers, auth_ctx=auth_ctx)
+    _task, access_error = agent_gateway_task_read_access(conn, task_id, ident, auth_ctx)
+    if access_error:
+        return access_error
+    data = task_detail_payload(conn, task_id) or {}
+    data.update({"provider": "agent_gateway", "operation": "task_get", "workspace_id": ident["workspace_id"], "token_omitted": True})
+    return data, 200
+
+
+def agent_gateway_list_runs(conn: sqlite3.Connection, qs: dict, headers, auth_ctx=None) -> tuple[dict, int]:
+    ident = agent_gateway_identity(headers, qs=qs, auth_ctx=auth_ctx)
+    limit = min(max(int((qs.get("limit") or ["25"])[0]), 1), 200)
+    where = ["COALESCE(r.workspace_id,'local-demo')=?"]
+    params: list = [ident["workspace_id"]]
+    if "task_id" in qs:
+        task_id = qs["task_id"][0]
+        _task, access_error = agent_gateway_task_read_access(conn, task_id, ident, auth_ctx)
+        if access_error:
+            return access_error
+        where.append("r.task_id=?")
+        params.append(task_id)
+    if "agent_id" in qs and not agent_gateway_is_bound_auth(auth_ctx):
+        where.append("r.agent_id=?")
+        params.append(qs["agent_id"][0])
+    if agent_gateway_is_bound_auth(auth_ctx):
+        where.append("(t.owner_agent_id=? OR t.collaborator_agent_ids LIKE ? OR t.owner_agent_id IS NULL OR t.owner_agent_id='' OR r.agent_id=?)")
+        params.extend([ident["agent_id"], f"%{ident['agent_id']}%", ident["agent_id"]])
+    statuses = qs.get("status") or []
+    statuses = [coerce_choice(status, {"running", "completed", "failed", "blocked", "waiting_approval"}, "running") for status in statuses]
+    if statuses:
+        where.append("r.status IN (" + ",".join("?" for _ in statuses) + ")")
+        params.extend(statuses)
+    sql = "SELECT r.* FROM runs r LEFT JOIN tasks t ON t.task_id=r.task_id WHERE " + " AND ".join(where) + " ORDER BY r.created_at DESC LIMIT ?"
+    rows = rows_to_dicts(conn.execute(sql, [*params, limit]).fetchall())
+    return {"provider": "agent_gateway", "operation": "run_list", "runs": rows, "count": len(rows), "workspace_id": ident["workspace_id"], "token_omitted": True}, 200
+
+
+def agent_gateway_get_run(conn: sqlite3.Connection, run_id: str, headers, auth_ctx=None) -> tuple[dict, int]:
+    ident = agent_gateway_identity(headers, auth_ctx=auth_ctx)
+    _run, access_error = agent_gateway_run_read_access(conn, run_id, ident, auth_ctx)
+    if access_error:
+        return access_error
+    data = run_detail_payload(conn, run_id) or {}
+    data.update({"provider": "agent_gateway", "operation": "run_get", "workspace_id": ident["workspace_id"], "token_omitted": True})
+    return data, 200
+
+
+def agent_gateway_get_run_graph(conn: sqlite3.Connection, run_id: str, headers, auth_ctx=None) -> tuple[dict, int]:
+    ident = agent_gateway_identity(headers, auth_ctx=auth_ctx)
+    _run, access_error = agent_gateway_run_read_access(conn, run_id, ident, auth_ctx)
+    if access_error:
+        return access_error
+    data = run_graph(conn, run_id)
+    if not data:
+        return {"error": "not found"}, 404
+    data.update({"provider": "agent_gateway", "operation": "run_graph", "workspace_id": ident["workspace_id"], "token_omitted": True})
+    return data, 200
+
+
+def agent_gateway_list_artifacts(conn: sqlite3.Connection, qs: dict, headers, auth_ctx=None) -> tuple[dict, int]:
+    ident = agent_gateway_identity(headers, qs=qs, auth_ctx=auth_ctx)
+    limit = min(max(int((qs.get("limit") or ["25"])[0]), 1), 200)
+    where = ["COALESCE(t.workspace_id,r.workspace_id,'local-demo')=?"]
+    params: list = [ident["workspace_id"]]
+    if "task_id" in qs:
+        task_id = qs["task_id"][0]
+        _task, access_error = agent_gateway_task_read_access(conn, task_id, ident, auth_ctx)
+        if access_error:
+            return access_error
+        where.append("a.task_id=?")
+        params.append(task_id)
+    if "run_id" in qs:
+        run_id = qs["run_id"][0]
+        _run, access_error = agent_gateway_run_read_access(conn, run_id, ident, auth_ctx)
+        if access_error:
+            return access_error
+        where.append("a.run_id=?")
+        params.append(run_id)
+    if "type" in qs:
+        where.append("a.artifact_type=?")
+        params.append(qs["type"][0])
+    if agent_gateway_is_bound_auth(auth_ctx):
+        where.append("(a.task_id IS NOT NULL OR a.run_id IS NOT NULL)")
+        where.append("(t.owner_agent_id=? OR t.collaborator_agent_ids LIKE ? OR t.owner_agent_id IS NULL OR t.owner_agent_id='' OR r.agent_id=?)")
+        params.extend([ident["agent_id"], f"%{ident['agent_id']}%", ident["agent_id"]])
+    sql = """SELECT a.* FROM artifacts a
+        LEFT JOIN tasks t ON t.task_id=a.task_id
+        LEFT JOIN runs r ON r.run_id=a.run_id
+        WHERE """ + " AND ".join(where) + " ORDER BY a.created_at DESC LIMIT ?"
+    rows = rows_to_dicts(conn.execute(sql, [*params, limit]).fetchall())
+    return {"provider": "agent_gateway", "operation": "artifact_list", "artifacts": rows, "count": len(rows), "workspace_id": ident["workspace_id"], "token_omitted": True}, 200
+
+
 def agent_gateway_claim_task(conn, task_id: str, body) -> tuple[dict, int]:
     ident = agent_gateway_identity({}, body)
     agent_id = ident["agent_id"]
@@ -6251,6 +6428,90 @@ class Handler(BaseHTTPRequestHandler):
                     if auth_ctx and auth_ctx.get("workspace_id") and not query.get("workspace_id"):
                         query["workspace_id"] = [auth_ctx["workspace_id"]]
                 payload, status = agent_gateway_pull_tasks(conn, query, self.headers, auth_ctx)
+                conn.commit()
+                return self.send_json(payload, status)
+            if path == "/api/agent-gateway/tasks":
+                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                if auth_error:
+                    return self.send_json(auth_error, agent_gateway_error_status(auth_error))
+                query = dict(qs)
+                if agent_gateway_is_bound_auth(auth_ctx):
+                    requested_header_workspace = normalize_workspace_id(self.headers.get("X-AgentOps-Workspace-Id") or auth_ctx["workspace_id"])
+                    if requested_header_workspace != auth_ctx["workspace_id"]:
+                        return self.send_json({"error": "forbidden", "message": "Agent token cannot use another workspace header."}, 403)
+                    requested_workspace = requested_workspace_from_qs(query, auth_ctx["workspace_id"])
+                    if requested_workspace != auth_ctx["workspace_id"]:
+                        return self.send_json({"error": "forbidden", "message": "Agent token cannot list tasks from another workspace."}, 403)
+                    query["workspace_id"] = [auth_ctx["workspace_id"]]
+                payload, status = agent_gateway_list_tasks(conn, query, self.headers, auth_ctx)
+                conn.commit()
+                return self.send_json(payload, status)
+            if path.startswith("/api/agent-gateway/tasks/") and "/" not in path[len("/api/agent-gateway/tasks/"):].strip("/"):
+                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                if auth_error:
+                    return self.send_json(auth_error, agent_gateway_error_status(auth_error))
+                if agent_gateway_is_bound_auth(auth_ctx):
+                    requested_header_workspace = normalize_workspace_id(self.headers.get("X-AgentOps-Workspace-Id") or auth_ctx["workspace_id"])
+                    if requested_header_workspace != auth_ctx["workspace_id"]:
+                        return self.send_json({"error": "forbidden", "message": "Agent token cannot use another workspace header."}, 403)
+                task_id = path.split("/")[-1]
+                payload, status = agent_gateway_get_task(conn, task_id, self.headers, auth_ctx)
+                conn.commit()
+                return self.send_json(payload, status)
+            if path == "/api/agent-gateway/runs":
+                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                if auth_error:
+                    return self.send_json(auth_error, agent_gateway_error_status(auth_error))
+                query = dict(qs)
+                if agent_gateway_is_bound_auth(auth_ctx):
+                    requested_header_workspace = normalize_workspace_id(self.headers.get("X-AgentOps-Workspace-Id") or auth_ctx["workspace_id"])
+                    if requested_header_workspace != auth_ctx["workspace_id"]:
+                        return self.send_json({"error": "forbidden", "message": "Agent token cannot use another workspace header."}, 403)
+                    requested_workspace = requested_workspace_from_qs(query, auth_ctx["workspace_id"])
+                    if requested_workspace != auth_ctx["workspace_id"]:
+                        return self.send_json({"error": "forbidden", "message": "Agent token cannot list runs from another workspace."}, 403)
+                    query["workspace_id"] = [auth_ctx["workspace_id"]]
+                payload, status = agent_gateway_list_runs(conn, query, self.headers, auth_ctx)
+                conn.commit()
+                return self.send_json(payload, status)
+            if path.startswith("/api/agent-gateway/runs/") and path.endswith("/graph"):
+                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                if auth_error:
+                    return self.send_json(auth_error, agent_gateway_error_status(auth_error))
+                if agent_gateway_is_bound_auth(auth_ctx):
+                    requested_header_workspace = normalize_workspace_id(self.headers.get("X-AgentOps-Workspace-Id") or auth_ctx["workspace_id"])
+                    if requested_header_workspace != auth_ctx["workspace_id"]:
+                        return self.send_json({"error": "forbidden", "message": "Agent token cannot use another workspace header."}, 403)
+                run_id = path.split("/")[-2]
+                payload, status = agent_gateway_get_run_graph(conn, run_id, self.headers, auth_ctx)
+                conn.commit()
+                return self.send_json(payload, status)
+            if path.startswith("/api/agent-gateway/runs/") and "/" not in path[len("/api/agent-gateway/runs/"):].strip("/"):
+                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                if auth_error:
+                    return self.send_json(auth_error, agent_gateway_error_status(auth_error))
+                if agent_gateway_is_bound_auth(auth_ctx):
+                    requested_header_workspace = normalize_workspace_id(self.headers.get("X-AgentOps-Workspace-Id") or auth_ctx["workspace_id"])
+                    if requested_header_workspace != auth_ctx["workspace_id"]:
+                        return self.send_json({"error": "forbidden", "message": "Agent token cannot use another workspace header."}, 403)
+                run_id = path.split("/")[-1]
+                payload, status = agent_gateway_get_run(conn, run_id, self.headers, auth_ctx)
+                conn.commit()
+                return self.send_json(payload, status)
+            if path == "/api/agent-gateway/artifacts":
+                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                if auth_error:
+                    return self.send_json(auth_error, agent_gateway_error_status(auth_error))
+                query = dict(qs)
+                if agent_gateway_is_bound_auth(auth_ctx):
+                    requested_header_workspace = normalize_workspace_id(self.headers.get("X-AgentOps-Workspace-Id") or auth_ctx["workspace_id"])
+                    if requested_header_workspace != auth_ctx["workspace_id"]:
+                        return self.send_json({"error": "forbidden", "message": "Agent token cannot use another workspace header."}, 403)
+                    requested_workspace = requested_workspace_from_qs(query, auth_ctx["workspace_id"])
+                    if requested_workspace != auth_ctx["workspace_id"]:
+                        return self.send_json({"error": "forbidden", "message": "Agent token cannot list artifacts from another workspace."}, 403)
+                    query["workspace_id"] = [auth_ctx["workspace_id"]]
+                payload, status = agent_gateway_list_artifacts(conn, query, self.headers, auth_ctx)
                 conn.commit()
                 return self.send_json(payload, status)
             if path == "/api/agents":

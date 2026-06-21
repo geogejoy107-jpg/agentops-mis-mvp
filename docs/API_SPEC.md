@@ -69,6 +69,24 @@ GET /api/runs/export
 /api/runs?agent_id=agt_research
 ```
 
+## Agent Gateway Scoped Readback
+
+For machine-facing agents and remote workers, prefer the scoped Agent Gateway
+read endpoints over the local UI/demo list endpoints:
+
+```http
+GET /api/agent-gateway/tasks
+GET /api/agent-gateway/tasks/:id
+GET /api/agent-gateway/runs
+GET /api/agent-gateway/runs/:id
+GET /api/agent-gateway/runs/:id/graph
+GET /api/agent-gateway/artifacts
+```
+
+These require `tasks:read` for scoped tokens and are constrained to the token's
+workspace plus tasks/runs/artifacts visible to the bound agent. The browser UI
+may still use the local list endpoints for the single-machine demo.
+
 ## Tool Calls
 
 ```http
