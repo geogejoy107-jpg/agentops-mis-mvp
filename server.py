@@ -159,6 +159,8 @@ def db() -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA busy_timeout = 30000")
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA synchronous = NORMAL")
     return conn
 
 
@@ -11384,6 +11386,207 @@ def commander_synthesis_lifecycle(conn: sqlite3.Connection, limit: int = 5) -> d
     }
 
 
+def evaluation_case_remediation_loop(conn: sqlite3.Connection, workspace_id: str, limit: int = 8) -> dict:
+    limit = max(1, min(int(limit or 8), 25))
+    rows = conn.execute(
+        """SELECT *
+        FROM tasks
+        WHERE COALESCE(workspace_id,'local-demo')=?
+          AND description LIKE 'Commander project: proj_evalcase_remediation%'
+        ORDER BY updated_at DESC, created_at DESC
+        LIMIT ?""",
+        (workspace_id, limit),
+    ).fetchall()
+    packages = [commander_work_package_from_task(conn, row) for row in rows]
+    project_ids = [pkg.get("project_id") for pkg in packages if pkg.get("project_id")]
+    status_counts: dict[str, int] = {}
+    for pkg in packages:
+        key = pkg.get("package_status") or "unknown"
+        status_counts[key] = status_counts.get(key, 0) + 1
+
+    synthesis_rows: list[dict] = []
+    if project_ids:
+        clauses = " OR ".join(["title LIKE ? OR uri LIKE ? OR summary LIKE ?" for _ in project_ids])
+        params: list = []
+        for project_id in project_ids:
+            params.extend([f"%{project_id}%", f"%{project_id}%", f"%{project_id}%"])
+        synthesis_rows = rows_to_dicts(conn.execute(
+            f"""SELECT artifact_id, task_id, run_id, title, summary, created_at
+            FROM artifacts
+            WHERE artifact_type='commander_synthesis_report'
+              AND ({clauses})
+            ORDER BY created_at DESC
+            LIMIT ?""",
+            [*params, limit],
+        ).fetchall())
+
+    synthesis_items = []
+    pending_reviews = 0
+    approved_not_promoted = 0
+    promoted_deliveries = 0
+    promoted_memories = 0
+    for row in synthesis_rows:
+        artifact_id = row.get("artifact_id")
+        approval = conn.execute(
+            """SELECT approval_id, decision, created_at, decided_at, reason
+            FROM approvals
+            WHERE approval_id LIKE 'ap_cmd_synthesis%' AND reason LIKE ?
+            ORDER BY created_at DESC
+            LIMIT 1""",
+            (f"%artifact_id={artifact_id}%",),
+        ).fetchone()
+        approval_data = dict(approval) if approval else {}
+        memory_count = scalar_count(conn, "SELECT COUNT(*) FROM memories WHERE source_ref=?", (artifact_id,))
+        delivery_count = scalar_count(
+            conn,
+            "SELECT COUNT(*) FROM audit_logs WHERE action='commander.work_package_synthesis_promote_delivery' AND metadata_json LIKE ?",
+            (f"%{artifact_id}%",),
+        )
+        if delivery_count:
+            status = "promoted"
+            promoted_deliveries += delivery_count
+            next_action = "agentops workflow delivery-board --limit 12"
+        elif memory_count:
+            status = "memory_pending_review"
+            promoted_memories += memory_count
+            next_action = "agentops review queue --limit 12"
+        elif approval_data.get("decision") == "approved":
+            status = "approved_not_promoted"
+            approved_not_promoted += 1
+            next_action = f"agentops commander promote-synthesis --artifact-id {artifact_id} --approval-id {approval_data.get('approval_id')} --confirm-promote"
+        elif approval_data.get("decision") == "pending":
+            status = "review_pending"
+            pending_reviews += 1
+            next_action = f"agentops approval inspect --approval-id {approval_data.get('approval_id')}"
+        else:
+            status = "needs_review_gate"
+            next_action = "agentops commander synthesize --status ready_for_review --confirm-create"
+        synthesis_items.append({
+            "artifact_id": artifact_id,
+            "task_id": row.get("task_id"),
+            "run_id": row.get("run_id"),
+            "title": commander_safe_text(row.get("title"), 160),
+            "status": status,
+            "approval_id": approval_data.get("approval_id"),
+            "approval_decision": approval_data.get("decision"),
+            "memory_candidates": memory_count,
+            "delivery_artifacts": delivery_count,
+            "created_at": row.get("created_at"),
+            "summary": redact_text(row.get("summary") or "", 240),
+            "next_action": next_action,
+        })
+
+    actions = []
+    for pkg in packages:
+        package_status = pkg.get("package_status")
+        project_id = pkg.get("project_id")
+        if package_status == "planned":
+            command = f"agentops commander dispatch-package --task-id {pkg.get('task_id')} --adapter mock"
+            severity = "attention"
+            priority = 88
+            title = "Dispatch failed-benchmark remediation package"
+        elif package_status == "ready_for_review":
+            command = f"agentops commander synthesize --project-id {project_id} --status ready_for_review --confirm-create"
+            severity = "attention"
+            priority = 87
+            title = "Synthesize failed-benchmark remediation evidence"
+        elif package_status == "blocked":
+            command = "agentops commander inbox --bucket blocked --limit 5"
+            severity = "blocked"
+            priority = 91
+            title = "Investigate blocked benchmark remediation package"
+        else:
+            continue
+        actions.append({
+            "title": title,
+            "command": command,
+            "severity": severity,
+            "priority": priority,
+            "summary": (
+                f"project={project_id}; package_status={package_status}; "
+                f"evidence={json.dumps(pkg.get('evidence_counts') or {}, ensure_ascii=False, sort_keys=True)}"
+            ),
+            "ui_route": f"/admin/tasks/{pkg.get('task_id')}",
+            "evidence": {
+                "task_id": pkg.get("task_id"),
+                "run_id": (pkg.get("latest_run") or {}).get("run_id"),
+                "project_id": project_id,
+                "plan_id": pkg.get("plan_id"),
+                "package_status": package_status,
+                "evidence_counts": pkg.get("evidence_counts") or {},
+            },
+        })
+
+    for item in synthesis_items:
+        status = item.get("status")
+        if status not in {"review_pending", "approved_not_promoted", "memory_pending_review"}:
+            continue
+        actions.append({
+            "title": "Review failed-benchmark remediation synthesis" if status == "review_pending" else "Promote failed-benchmark remediation synthesis",
+            "command": item.get("next_action"),
+            "severity": "attention",
+            "priority": 93 if status == "review_pending" else 90,
+            "summary": item.get("summary") or item.get("title") or "",
+            "ui_route": f"/admin/runs/{item.get('run_id')}" if item.get("run_id") else "/workspace/agents",
+            "evidence": {
+                "artifact_id": item.get("artifact_id"),
+                "approval_id": item.get("approval_id"),
+                "task_id": item.get("task_id"),
+                "run_id": item.get("run_id"),
+                "synthesis_status": status,
+            },
+        })
+
+    if pending_reviews:
+        status = "review_pending"
+    elif approved_not_promoted:
+        status = "promotion_available"
+    elif status_counts.get("blocked"):
+        status = "blocked"
+    elif status_counts.get("ready_for_review"):
+        status = "ready_for_synthesis"
+    elif status_counts.get("planned"):
+        status = "planned"
+    elif promoted_deliveries or promoted_memories:
+        status = "promoted"
+    elif packages:
+        status = "active"
+    else:
+        status = "empty"
+
+    return {
+        "provider": "agentops-evaluation",
+        "operation": "evaluation_case_remediation_loop",
+        "status": status,
+        "workspace_id": workspace_id,
+        "summary": {
+            "remediation_packages": len(packages),
+            "planned": int(status_counts.get("planned") or 0),
+            "ready_for_review": int(status_counts.get("ready_for_review") or 0),
+            "blocked": int(status_counts.get("blocked") or 0),
+            "synthesis_reports": len(synthesis_items),
+            "pending_reviews": pending_reviews,
+            "approved_not_promoted": approved_not_promoted,
+            "promoted_memory_candidates": promoted_memories,
+            "promoted_delivery_artifacts": promoted_deliveries,
+        },
+        "packages": packages,
+        "synthesis": synthesis_items,
+        "actions": actions[:limit],
+        "next_actions": [item["command"] for item in actions[:5] if item.get("command")] or ["agentops eval case-runs --pass-fail fail --review-status open"],
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "token_omitted": True,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+
+
 def commander_evidence_counts(conn: sqlite3.Connection, task_id=None, run_id=None, artifact_id=None) -> dict:
     counts = {
         "runs": 0,
@@ -12005,11 +12208,13 @@ def local_readiness(conn: sqlite3.Connection, headers) -> dict:
 def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
     qs = qs or {}
     limit = min(max(int((qs.get("limit") or ["12"])[0]), 1), 30)
+    workspace_id = normalize_workspace_id(headers.get("X-AgentOps-Workspace-Id") or "local-demo")
     review = human_review_queue(conn, limit=max(limit, 12))
     fleet = worker_fleet_view(conn)
     adapter_readiness = worker_adapter_readiness(conn, refresh=False)
     delivery_board = customer_delivery_board(conn, limit=max(limit, 8))
     inbox = commander_integration_inbox(conn, headers, {"bucket": ["all"], "limit": [str(max(limit, 12))]})
+    remediation_loop = evaluation_case_remediation_loop(conn, workspace_id, limit=max(limit, 8))
 
     actions: list[dict] = []
 
@@ -12164,6 +12369,19 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             },
         )
 
+    for item in (remediation_loop.get("actions") or [])[:limit]:
+        add_action(
+            "remediation_loop",
+            item.get("title") or "Failed benchmark remediation loop",
+            item.get("command") or "agentops eval case-runs --pass-fail fail --review-status open",
+            priority=int(item.get("priority") or 86),
+            severity=item.get("severity") or "attention",
+            source="evaluation_case_remediation_loop",
+            summary=item.get("summary") or "",
+            ui_route=item.get("ui_route") or "/workspace/agents",
+            evidence=item.get("evidence") or {},
+        )
+
     deduped: list[dict] = []
     seen: set[tuple[str, str | None]] = set()
     severity_rank = {"blocked": 3, "attention": 2, "ready": 1, "info": 0}
@@ -12183,7 +12401,7 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
         "provider": "agentops-operator",
         "operation": "action_plan",
         "status": status,
-        "workspace_id": normalize_workspace_id(headers.get("X-AgentOps-Workspace-Id") or "local-demo"),
+        "workspace_id": workspace_id,
         "summary": {
             "actions": len(deduped),
             "blocked": len(blocked),
@@ -12196,6 +12414,10 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             "stuck_worker_tasks": fleet_summary.get("stuck_worker_tasks", 0),
             "stuck_workflow_jobs": fleet_summary.get("stuck_workflow_jobs", 0),
             "recommended_adapter": recommended_adapter,
+            "remediation_packages": (remediation_loop.get("summary") or {}).get("remediation_packages", 0),
+            "remediation_ready_for_review": (remediation_loop.get("summary") or {}).get("ready_for_review", 0),
+            "remediation_pending_reviews": (remediation_loop.get("summary") or {}).get("pending_reviews", 0),
+            "remediation_promoted_deliveries": (remediation_loop.get("summary") or {}).get("promoted_delivery_artifacts", 0),
         },
         "actions": deduped,
         "top_commands": [item["command"] for item in deduped[:5]],
@@ -12205,7 +12427,9 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             "worker_fleet": fleet.get("status"),
             "commander_inbox": inbox.get("status"),
             "adapter_readiness": adapter_readiness.get("status"),
+            "remediation_loop": remediation_loop.get("status"),
         },
+        "remediation_loop": remediation_loop,
         "contract": "read-only operator action plan; execution stays in explicit CLI/API commands and live adapters still require confirmation",
         "safety": {
             "read_only": True,
