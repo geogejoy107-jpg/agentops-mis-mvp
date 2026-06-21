@@ -1129,7 +1129,7 @@ export function AIEmployees() {
           </div>
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 mt-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 mt-4">
           {[
             { label: copy.overallFleetHealth, value: fleetHealth?.overall || workerStatus?.status || "—", status: fleetHealth?.overall || workerStatus?.status || "unknown" },
             { label: copy.daemonStatus, value: `${runningDaemons}/${workerStatus?.daemons?.length ?? 0}`, status: runningDaemons > 0 ? "running" : "ready" },
@@ -1243,7 +1243,7 @@ export function AIEmployees() {
             <StatusBadge status={localReadiness?.ok ? "pass" : "blocked"} label={`${localReadinessReadyGates}/${localReadinessGates.length || 0}`} />
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mt-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-2 mt-3">
             {[
               { label: copy.localReadinessOverall, value: localReadiness?.status || "—", status: localReadiness?.status || "unknown" },
               { label: copy.evidenceChains, value: localEvidence?.closed_loop_runs ?? "—", status: localEvidence?.has_task_run_tool_eval_audit_artifact_chain ? "pass" : "attention" },
@@ -1289,7 +1289,7 @@ export function AIEmployees() {
             <StatusBadge status={(integrationInboxSummary?.blocked || 0) > 0 ? "blocked" : (integrationInboxSummary?.ready_for_review || 0) > 0 ? "attention" : "pass"} label={String(integrationInboxSummary?.total ?? 0)} />
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mt-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-2 mt-3">
             {[
               { label: copy.readyForReview, value: integrationInboxSummary?.ready_for_review ?? 0, status: (integrationInboxSummary?.ready_for_review || 0) > 0 ? "ready" : "pass" },
               { label: copy.stillRunning, value: integrationInboxSummary?.still_running ?? 0, status: (integrationInboxSummary?.still_running || 0) > 0 ? "running" : "pass" },
@@ -1442,7 +1442,7 @@ export function AIEmployees() {
                 <StatusBadge status="never_seen" label={`${copy.heartbeatNeverSeen}: ${workerStatus?.never_seen_remote_enrollments ?? 0}`} />
               </div>
             </div>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2 mt-3">
               {[
                 { label: copy.totalEnrollments, value: workerStatus?.total_remote_enrollments ?? 0 },
                 { label: copy.activeEnrollments, value: workerStatus?.active_remote_enrollments ?? 0 },
@@ -1631,7 +1631,7 @@ export function AIEmployees() {
             )}
             {customerTaskJob && (
               <div className="space-y-3">
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2">
                   <div className="rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
                     <div className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{copy.jobId}</div>
                     <div className="text-[11px] font-semibold truncate mt-1" style={{ color: "var(--mis-text)" }}>{customerTaskJob.job_id}</div>
@@ -1656,7 +1656,7 @@ export function AIEmployees() {
             )}
             {customerTaskResult && (
               <div className="space-y-3">
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2">
                   <div className="rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
                     <div className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{copy.taskId}</div>
                     <div className="text-[11px] font-semibold truncate mt-1" style={{ color: "var(--mis-text)" }}>{customerTaskResult.task_id}</div>
@@ -1872,7 +1872,7 @@ export function AIEmployees() {
                   </div>
                   <StatusBadge status={item.readiness} />
                 </div>
-                <div className="grid grid-cols-2 gap-2 mt-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
                   <div className="rounded px-2 py-1" style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}>
                     <div className="text-[9px]" style={{ color: "var(--mis-muted)" }}>{copy.trustStatus}</div>
                     <div className="text-[10px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{item.trust_status || "—"}</div>
@@ -1924,7 +1924,7 @@ export function AIEmployees() {
             </div>
           </div>
         </div>
-        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3 mt-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3 mt-4">
           {[
             { label: copy.authenticated, value: gatewayStatus?.auth.authenticated ? copy.yes : copy.no },
             { label: copy.gatewayWorkspace, value: gatewayStatus?.auth.workspace_id || "local-demo" },
@@ -2004,7 +2004,7 @@ export function AIEmployees() {
             {dispatching === "stop-daemons" ? copy.stopping : copy.stopDaemons}
           </button>
         </div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 mt-4">
           {[
             { label: copy.workers, value: workerStatus?.worker_count ?? "—" },
             { label: copy.completedRuns, value: workerStatus?.recent_completed_runs ?? "—" },
@@ -2065,7 +2065,7 @@ export function AIEmployees() {
               <div className="text-[10px] mt-0.5 truncate" style={{ color: "var(--mis-dim)" }}>
                 {copy.pid}: {daemon.pid || "—"} · {daemon.agent_id || "—"}
               </div>
-              <div className="grid grid-cols-3 gap-1 mt-2">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-1 mt-2">
                 <div className="rounded px-1.5 py-1" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
                   <div className="text-[9px]" style={{ color: "var(--mis-muted)" }}>{copy.processed}</div>
                   <div className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{daemon.processed ?? 0}</div>
@@ -2198,7 +2198,7 @@ export function AIEmployees() {
               </div>
             )}
           </div>
-          <div className="grid grid-cols-2 gap-2 shrink-0 w-full sm:w-auto">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 shrink-0 w-full sm:w-auto">
             <div className="rounded-lg px-3 py-2 min-w-28" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
               <div className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{copy.activeEnrollments}</div>
               <div className="text-sm font-semibold mt-1" style={{ color: "var(--mis-text)" }}>{activeEnrollments}</div>
@@ -2207,7 +2207,7 @@ export function AIEmployees() {
               <div className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{copy.staleEnrollments}</div>
               <div className="text-sm font-semibold mt-1" style={{ color: staleEnrollments > 0 ? "var(--mis-warning)" : "var(--mis-text)" }}>{staleEnrollments}</div>
             </div>
-            <div className="rounded-lg px-3 py-2 min-w-28 col-span-2" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+            <div className="rounded-lg px-3 py-2 min-w-28 sm:col-span-2" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
               <div className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{copy.activeSessions}</div>
               <div className="text-sm font-semibold mt-1" style={{ color: "var(--mis-text)" }}>{activeSessions}</div>
             </div>
@@ -2615,7 +2615,7 @@ export function AIEmployees() {
               </div>
 
               {/* Stats row */}
-              <div className="grid grid-cols-3 gap-2 mb-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-3">
                 <div>
                   <div className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{copy.runs}</div>
                   <div className="text-xs font-semibold" style={{ color: "var(--mis-text)" }}>{agent.run_count}</div>
