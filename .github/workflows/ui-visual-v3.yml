@@ -33,8 +33,10 @@ jobs:
         run: npm ci
       - name: Build
         run: npm run build
-      - name: Install Chromium
-        run: npx --yes playwright@1.53.1 install --with-deps chromium
+      - name: Install visual test browser
+        run: |
+          npm install --no-save playwright@1.53.1
+          npx playwright install --with-deps chromium
       - name: Start Vite
         run: nohup npm run dev -- --host 127.0.0.1 > /tmp/agentops-ui-v3.log 2>&1 &
       - name: Wait for UI
@@ -50,8 +52,20 @@ jobs:
       - name: Capture screenshots
         run: |
           mkdir -p visual-artifacts
-          npx --yes playwright@1.53.1 screenshot --full-page http://127.0.0.1:5173/workspace/pixel-office visual-artifacts/pixel-office-v3.png
-          npx --yes playwright@1.53.1 screenshot --full-page http://127.0.0.1:5173/workspace visual-artifacts/workspace-v3.png
+          node --input-type=module <<'NODE'
+          import { chromium } from "playwright";
+          const browser = await chromium.launch({ headless: true });
+          const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+          await page.goto("http://127.0.0.1:5173/workspace/pixel-office", { waitUntil: "networkidle" });
+          await page.screenshot({ path: "visual-artifacts/pixel-office-page-v3.png" });
+          const label = page.getByText(/Night-shift Agent Campus|夜班 Agent 园区/).first();
+          await label.scrollIntoViewIfNeeded();
+          const section = label.locator("xpath=ancestor::section[1]");
+          await section.screenshot({ path: "visual-artifacts/pixel-office-map-v3.png", animations: "disabled" });
+          await page.goto("http://127.0.0.1:5173/workspace", { waitUntil: "networkidle" });
+          await page.screenshot({ path: "visual-artifacts/workspace-v3.png" });
+          await browser.close();
+          NODE
       - name: Upload visual review
         uses: actions/upload-artifact@v4
         with:
