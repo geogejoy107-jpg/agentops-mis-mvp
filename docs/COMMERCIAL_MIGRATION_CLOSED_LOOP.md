@@ -1,0 +1,245 @@
+# Commercial Migration Closed Loop
+
+## Final Target
+
+AgentOps MIS should become a commercial-ready, local-first and BYOC-capable AI
+workforce control plane without breaking the current working product line.
+
+The target state is:
+
+- Humans use the browser workspace/admin console for dispatch, supervision,
+  approval, delivery review, memory review, and operations.
+- Agents use Agent Gateway CLI/API/MCP for execution and evidence writeback.
+- The Python control plane remains valid until a replacement passes parity
+  gates. There is no big-bang rewrite.
+- SQLite remains the default Free Local ledger. Postgres is introduced through a
+  storage boundary for Team Governance and Enterprise/BYOC.
+- Vite/React remains the current product UI. Next.js is a formal engineering
+  target only after the UI/API parity gate is green.
+- Commercial release replaces demo-only visual assets with original Pixel Office
+  assets and keeps Star-Office assets out of public/commercial distribution.
+- Every migration step has a reversible branch, a named verification command,
+  and a rollback path.
+
+## Closed Loop
+
+Each commercial migration increment follows the same loop:
+
+```text
+Frame -> Slice -> Implement -> Verify -> Record -> Integrate -> Reassess
+```
+
+| Step | Required output | Stop condition |
+| --- | --- | --- |
+| Frame | One user/business capability and one technical boundary | The slice needs secrets, hosted infra, or asset rights that are not available |
+| Slice | A branch/worktree with owned files and conflict rules | The slice rewrites shared contracts without a parity test |
+| Implement | Small docs/code/schema changes behind current behavior | The change breaks local-first demo or Agent Gateway execution |
+| Verify | Readiness/smoke command output and `git diff --check` | Token-like material, local DBs, `dist`, or `node_modules` appear in the diff |
+| Record | README/docs/runbook update with evidence and remaining gaps | The evidence cannot be reproduced from a clean clone |
+| Integrate | Merge after phase gate is green | The integration branch loses local Python/SQLite functionality |
+| Reassess | Next slice selected from the gate matrix | The next step depends on an unresolved product decision |
+
+## Phase Gates
+
+### Gate 0: Isolated Commercial Track
+
+Purpose: create a commercial migration lane that cannot disturb the current
+mainline.
+
+Must be true:
+
+- Work happens on `codex/commercial-migration-closed-loop` or a child branch.
+- Current local `codex/agent-gateway-kb-demo` changes are not modified by this
+  lane.
+- The lane has this document and the readiness checker.
+- Verification passes:
+
+```bash
+python3 scripts/commercial_migration_readiness.py
+git diff --check
+```
+
+### Gate 1: Product Packaging and Entitlement
+
+Purpose: make the product shape sellable without changing core runtime behavior.
+
+Must be true:
+
+- `Free Local`, `Pro Workspace`, `Team Governance`, and `Enterprise/BYOC`
+  entitlements are mapped to capabilities, limits, and enforcement points.
+- The app can report its current edition and disabled capabilities without
+  contacting a billing provider.
+- Local development stays fully usable without external auth or billing.
+- Verification includes entitlement unit/smoke coverage and token-omission
+  checks.
+
+### Gate 2: Production Safety Baseline
+
+Purpose: make shared or customer deployment fail closed.
+
+Must be true:
+
+- `agentops security production-readiness` clearly distinguishes local demo mode
+  from production/shared deployment.
+- Admin/API auth, scoped agent sessions, workspace isolation, approval policy,
+  and audit evidence have smoke coverage.
+- Live Hermes/OpenClaw execution still requires readiness and explicit
+  confirmation.
+- Verification includes:
+
+```bash
+python3 scripts/security_production_readiness_smoke.py
+python3 scripts/agent_gateway_scope_matrix_smoke.py
+python3 scripts/workspace_isolation_smoke.py
+python3 scripts/enrollment_approval_workflow_smoke.py
+```
+
+### Gate 3: Storage Boundary Before Postgres
+
+Purpose: prepare Postgres without forking product logic.
+
+Must be true:
+
+- SQLite access is isolated behind repository/helper functions for the flows
+  being migrated.
+- Schema changes have repeatable migrations and isolated smoke tests using
+  `AGENTOPS_DB_PATH`.
+- Postgres is introduced as an adapter target after SQLite behavior is locked by
+  tests.
+- Verification includes local acceptance against a temporary SQLite database
+  before any Postgres work starts.
+
+### Gate 4: UI/API Parity Before Next.js
+
+Purpose: prevent a frontend rewrite from becoming a product regression.
+
+Must be true:
+
+- Current Vite/React routes and API calls have a page-by-page parity checklist.
+- Next.js work starts in a separate app or worktree and consumes the same API
+  semantics first.
+- No route is retired until customer dispatch, worker console, reports,
+  approvals, memory, and audit paths are verified in both UIs or explicitly
+  deferred.
+- Verification includes current Vite build and Playwright snapshots before a
+  Next.js route is accepted.
+
+### Gate 5: BYOC / Enterprise Deployment
+
+Purpose: make customer-owned deployment operationally credible.
+
+Must be true:
+
+- Deployment mode, backup/restore, retention, signed export, SSO/RBAC hooks, and
+  private connector policy are documented and smoke-tested where local
+  simulation is possible.
+- Postgres adapter and migrations pass the same core ledger acceptance used for
+  SQLite.
+- Runtime connectors remain policy-gated and do not store raw secrets, raw
+  prompts, raw responses, or private transcripts by default.
+
+## Technology Decisions
+
+| Area | Current product line | Commercial migration target | Gate |
+| --- | --- | --- | --- |
+| Backend/control plane | Python `server.py` + stdlib HTTP | Keep until API parity and production safety pass; split services later only if pressure is real | 2 |
+| Agent execution | Agent Gateway CLI/API/MCP | Keep as the durable agent contract | 1 |
+| UI | Vite + React + TypeScript | Next.js App Router only after parity gate | 4 |
+| Database | SQLite | SQLite Free Local, Postgres Team/Enterprise adapter | 3 |
+| ORM | Direct SQLite helpers | Adapter/repository boundary first; Prisma/Drizzle only if Next.js owns backend | 3/4 |
+| Auth | Local dev/admin key/scoped agent sessions | Production auth, SSO hooks, workspace RBAC | 2/5 |
+| Billing | None | Entitlement config first, billing provider later | 1 |
+| Assets | Original Pixel Office plus demo-only Star-Office visualizer boundary | Original commercial-safe Pixel Office asset pack | 1 |
+
+## Branch Strategy
+
+Recommended branches:
+
+- `codex/commercial-migration-closed-loop`: integration lane for the migration
+  plan, gates, and readiness checks.
+- `codex/commercial-entitlements`: edition config, capability gates, and product
+  packaging.
+- `codex/commercial-production-safety`: production readiness, auth hardening,
+  workspace isolation, and audit policy.
+- `codex/storage-boundary-postgres`: SQLite boundary and Postgres migration
+  preparation.
+- `codex/nextjs-parity-spike`: Next.js parity experiment after current UI/API
+  behavior is locked.
+- `codex/pixel-office-commercial-assets`: commercial-safe visual asset
+  replacement.
+
+Commercial work should merge in this order:
+
+1. Closed-loop docs and readiness.
+2. Entitlements and product packaging.
+3. Production safety baseline.
+4. Storage boundary.
+5. Commercial asset replacement.
+6. Next.js parity spike.
+7. Postgres adapter.
+8. BYOC deployment hardening.
+
+## Rollback Rules
+
+- A commercial branch can be abandoned without touching `main` or
+  `codex/agent-gateway-kb-demo`.
+- If a Next.js route fails parity, keep Vite/React as canonical and record the
+  gap.
+- If Postgres adapter behavior diverges, keep SQLite canonical and add a failing
+  adapter test before retrying.
+- If entitlement gates block local demo usage, revert the gate and keep the
+  edition logic read-only until the product path is smooth.
+- If asset replacement slows core product work, keep the non-commercial visual
+  demo behind documentation boundaries and ship commercial-safe unbranded UI
+  first.
+
+## First Three Work Packages
+
+### WP1: Entitlement Skeleton
+
+Deliver:
+
+- Edition config file with `free_local`, `pro_workspace`, `team_governance`,
+  and `enterprise_byoc`.
+- Read-only API and CLI output showing current edition and capability flags.
+- Smoke test proving disabled capabilities fail closed without billing secrets.
+
+Initial status:
+
+- Example config: `config/entitlements.example.json`
+- API: `GET /api/commercial/entitlements`
+- CLI: `agentops commercial entitlements`
+- Smoke: `python3 scripts/commercial_entitlements_smoke.py`
+
+### WP2: Production Safety Contract
+
+Deliver:
+
+- Production readiness output expanded with edition, auth, workspace, retention,
+  backup, live-runtime, and audit checks.
+- Documentation that states which checks are warnings in local demo mode and
+  failures in production mode.
+- Smoke tests for local and production-requested modes.
+
+### WP3: Storage Boundary Map
+
+Deliver:
+
+- A table mapping high-churn SQLite access paths to future repository helpers.
+- One low-risk helper extraction with identical tests.
+- A Postgres migration design note that does not introduce Postgres dependency
+  yet.
+
+## Definition of Done
+
+The commercial migration closed loop is considered established when:
+
+- This document is linked from README and the parallel branch plan.
+- `python3 scripts/commercial_migration_readiness.py` returns
+  `overall_status: "ready"` on the commercial branch.
+- The readiness output names the current branch, phase gates, verification
+  commands, and blocked artifacts.
+- `git diff --check` passes.
+- No local DB, runtime log, generated service file, `dist`, `node_modules`,
+  `.env`, raw credential, raw prompt, raw model response, or private transcript
+  is introduced by the migration lane.

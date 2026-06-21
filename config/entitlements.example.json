@@ -1,0 +1,5 @@
+{
+  "edition": "free_local",
+  "notes": "Copy to a local, gitignored path and point AGENTOPS_ENTITLEMENTS_PATH at it if you need to test another edition. This file contains no secrets.",
+  "overrides": {}
+}

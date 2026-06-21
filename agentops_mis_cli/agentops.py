@@ -326,6 +326,10 @@ def cmd_security_production_readiness(args, client: AgentOpsClient) -> dict:
     return client.get("/api/security/production-readiness")
 
 
+def cmd_commercial_entitlements(args, client: AgentOpsClient) -> dict:
+    return client.get("/api/commercial/entitlements")
+
+
 def cmd_agent_register(args, client: AgentOpsClient) -> dict:
     payload = {
         "workspace_id": client.workspace_id,
@@ -1370,6 +1374,11 @@ def build_parser() -> argparse.ArgumentParser:
     security_prod = security_sub.add_parser("production-readiness", help="Show whether the local Gateway is safe for shared/production use.")
     security_prod.set_defaults(handler="security_production_readiness")
 
+    commercial = sub.add_parser("commercial", help="Read-only commercial packaging and entitlement commands.")
+    commercial_sub = commercial.add_subparsers(dest="action", required=True)
+    commercial_entitlements = commercial_sub.add_parser("entitlements", help="Show current edition and capability gates.")
+    commercial_entitlements.set_defaults(handler="commercial_entitlements")
+
     agent = sub.add_parser("agent", help="Agent identity commands.")
     agent_sub = agent.add_subparsers(dest="action", required=True)
     register = agent_sub.add_parser("register", help="Register or update an AI digital employee.")
@@ -1920,6 +1929,7 @@ HANDLERS = {
     "commander_packages": cmd_commander_packages,
     "review_queue": cmd_review_queue,
     "security_production_readiness": cmd_security_production_readiness,
+    "commercial_entitlements": cmd_commercial_entitlements,
     "agent_register": cmd_agent_register,
     "agent_heartbeat": cmd_agent_heartbeat,
     "task_create": cmd_task_create,

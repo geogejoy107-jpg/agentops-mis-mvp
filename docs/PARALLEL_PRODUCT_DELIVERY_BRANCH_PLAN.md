@@ -30,6 +30,7 @@ The product contract stays fixed:
 | `codex/rbac-workspace-hardening` | Workspace isolation, token scopes, approval policy | `server.py` Agent Gateway auth helpers, `docs/AGENT_GATEWAY_CLI_SPEC.md`, scope/security smoke scripts | Pixel map visual design |
 | `codex/worker-fleet-console` | Worker fleet UI, readiness, health, stuck recovery | `/workspace/agents` UI files, `GET /api/workers/status`, `GET /api/workers/adapter-readiness`, worker status smoke scripts | Customer report content model |
 | `codex/product-docs-demo` | Demo script, classroom recording, product packaging docs | `docs/DEMO_*`, `docs/V1_5_*`, `README.md`, runbooks | Runtime execution code except doc fixes |
+| `codex/commercial-migration-closed-loop` | Commercial/BYOC migration loop, phase gates, technology migration policy, readiness checks | `docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md`, `docs/TECHNICAL_SOLUTION.md`, `docs/PRICING_AND_ENTITLEMENT_DRAFT.md`, `README.md`, `scripts/commercial_migration_readiness.py` | Runtime behavior, UI redesign, schema changes, billing provider integration |
 
 If a thread must touch a file outside its primary files, it should write the
 reason in its final summary and keep the edit small.
@@ -42,11 +43,15 @@ reason in its final summary and keep the edit small.
 4. `codex/worker-fleet-console`
 5. `codex/customer-task-flow`
 6. `codex/product-docs-demo`
+7. `codex/commercial-migration-closed-loop`
 
 The local-first branch defines the practical open-source baseline and should
 merge first. RBAC and remote worker changes affect the base contract, so merge
 them before UI polish and demo documentation. Product docs should merge last so
-screenshots and scripts reflect the final behavior.
+screenshots and scripts reflect the final behavior. The commercial migration
+closed-loop branch should merge after the local product surface is stable enough
+to become the baseline for entitlement, production-safety, storage-boundary, and
+Next.js/Postgres parity gates.
 
 ## Shared Verification Baseline
 
@@ -98,6 +103,14 @@ Frontend changes:
 cd ui/start-building-app
 npm install
 npm run build
+```
+
+Commercial migration planning/readiness changes:
+
+```bash
+python3 scripts/commercial_migration_readiness.py
+python3 scripts/commercial_entitlements_smoke.py
+git diff --check
 ```
 
 Live Hermes/OpenClaw dogfood is optional for most branches and should only run

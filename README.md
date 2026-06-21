@@ -21,6 +21,32 @@
 
 用户指定 Next.js + TypeScript + Tailwind 为优先技术栈。本沙盒环境无法稳定安装 npm 依赖，因此这个包提供一个 **零依赖 Python + SQLite + HTML/JS/CSS 的可运行参考实现**，用于验证 MIS 数据模型、流程和页面信息架构。`docs/CODEX_NEXTJS_HANDOFF_PROMPT.md` 是给本地 Codex/Pro 的 Next.js 版本实现提示词。
 
+## 商业迁移闭环
+
+商业化不是立刻推倒 Python/SQLite/Vite 当前线，而是走可验证的阶段门：
+
+- 当前 Python control plane 和 Agent Gateway CLI/API/MCP 继续作为权威执行与证据写入路径。
+- SQLite 继续作为 Free Local 默认账本；Postgres 在 storage boundary gate 之后进入 Team/Enterprise/BYOC。
+- Vite/React 继续作为当前产品 UI；Next.js 在 UI/API parity gate 之后再进入正式迁移。
+- Star-Office 相关素材保持 demo-only 边界；商业/公开版本必须换成原创 Pixel Office assets。
+
+入口文档：
+
+- `docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md`
+
+只读 readiness 检查：
+
+```bash
+python3 scripts/commercial_migration_readiness.py
+```
+
+当前商业 entitlement 只读状态面：
+
+```bash
+agentops commercial entitlements
+python3 scripts/commercial_entitlements_smoke.py
+```
+
 ## 快速运行
 
 ```bash

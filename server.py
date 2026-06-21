@@ -44,6 +44,7 @@ KNOWLEDGE_DIR = ROOT / "knowledge"
 OPENCLAW_HOME = Path.home() / ".openclaw"
 HERMES_HOME = Path.home() / ".hermes"
 OPENCLAW_BIN = Path("/opt/homebrew/bin/openclaw")
+DEFAULT_ENTITLEMENTS_PATH = ROOT / "config" / "entitlements.local.json"
 
 RISKY_TOOLS = {
     "shell.exec",
@@ -60,6 +61,88 @@ VALID_RISK_LEVELS = {"low", "medium", "high", "critical"}
 VALID_PRIORITIES = {"low", "medium", "high", "critical"}
 VALID_TOOL_CATEGORIES = {"browser", "github", "file", "shell", "email", "notion", "discord", "database", "mcp", "custom"}
 VALID_RUNTIME_TYPES = {"mock", "claude_code", "codex", "openhands", "crewai", "langgraph", "openclaw", "hermes"}
+
+ENTITLEMENT_EDITIONS = {
+    "free_local": {
+        "label": "Free Local",
+        "capabilities": {
+            "single_workspace": True,
+            "sqlite_ledger": True,
+            "mock_runtime": True,
+            "openclaw_import": True,
+            "hermes_health": True,
+            "notion_dry_run": True,
+            "manual_export": True,
+            "local_dev_admin": True,
+            "multi_project": False,
+            "runtime_connector_profiles": False,
+            "notion_confirmed_export": False,
+            "report_templates": False,
+            "longer_audit_retention": False,
+            "rbac": False,
+            "approval_policies": False,
+            "connector_scopes": False,
+            "agent_performance_reviews": False,
+            "quality_gate_dashboards": False,
+            "shared_memory_review": False,
+            "sso_hooks": False,
+            "postgres_adapter": False,
+            "signed_audit_exports": False,
+            "custom_connector_sdk": False,
+        },
+    },
+    "pro_workspace": {
+        "label": "Pro Workspace",
+        "inherits": "free_local",
+        "capabilities": {
+            "multi_project": True,
+            "runtime_connector_profiles": True,
+            "notion_confirmed_export": True,
+            "report_templates": True,
+            "longer_audit_retention": True,
+        },
+    },
+    "team_governance": {
+        "label": "Team Governance",
+        "inherits": "pro_workspace",
+        "capabilities": {
+            "rbac": True,
+            "approval_policies": True,
+            "connector_scopes": True,
+            "agent_performance_reviews": True,
+            "quality_gate_dashboards": True,
+            "shared_memory_review": True,
+        },
+    },
+    "enterprise_byoc": {
+        "label": "Enterprise / BYOC",
+        "inherits": "team_governance",
+        "capabilities": {
+            "sso_hooks": True,
+            "postgres_adapter": True,
+            "signed_audit_exports": True,
+            "custom_connector_sdk": True,
+        },
+    },
+}
+
+COMMERCIAL_CAPABILITY_GATES = {
+    "multi_project": "pro_workspace",
+    "runtime_connector_profiles": "pro_workspace",
+    "notion_confirmed_export": "pro_workspace",
+    "report_templates": "pro_workspace",
+    "longer_audit_retention": "pro_workspace",
+    "rbac": "team_governance",
+    "approval_policies": "team_governance",
+    "connector_scopes": "team_governance",
+    "agent_performance_reviews": "team_governance",
+    "quality_gate_dashboards": "team_governance",
+    "shared_memory_review": "team_governance",
+    "sso_hooks": "enterprise_byoc",
+    "postgres_adapter": "enterprise_byoc",
+    "signed_audit_exports": "enterprise_byoc",
+    "custom_connector_sdk": "enterprise_byoc",
+}
 
 
 def now_iso() -> str:
@@ -88,6 +171,73 @@ def read_json_file(path: Path, default):
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return default
+
+
+def normalized_edition(value: str | None) -> str:
+    candidate = (value or "").strip().lower().replace("-", "_")
+    return candidate if candidate in ENTITLEMENT_EDITIONS else "free_local"
+
+
+def inherited_capabilities(edition: str) -> dict:
+    config = ENTITLEMENT_EDITIONS.get(edition) or ENTITLEMENT_EDITIONS["free_local"]
+    inherited = inherited_capabilities(config["inherits"]) if config.get("inherits") else {}
+    merged = dict(inherited)
+    merged.update(config.get("capabilities") or {})
+    return merged
+
+
+def entitlement_status(headers) -> dict:
+    config_path = Path(os.environ.get("AGENTOPS_ENTITLEMENTS_PATH") or DEFAULT_ENTITLEMENTS_PATH).expanduser()
+    config = read_json_file(config_path, {}) if config_path.exists() else {}
+    env_edition = os.environ.get("AGENTOPS_EDITION")
+    edition = normalized_edition(env_edition or config.get("edition"))
+    edition_source = "env" if env_edition else "config" if config.get("edition") else "default"
+    capabilities = inherited_capabilities(edition)
+    overrides = config.get("overrides") if isinstance(config.get("overrides"), dict) else {}
+    for key, value in overrides.items():
+        if key in capabilities and isinstance(value, bool):
+            capabilities[key] = value
+    gates = []
+    for capability, required_edition in sorted(COMMERCIAL_CAPABILITY_GATES.items()):
+        enabled = bool(capabilities.get(capability))
+        gates.append({
+            "capability": capability,
+            "required_edition": required_edition,
+            "enabled": enabled,
+            "status": "enabled" if enabled else "disabled",
+            "enforcement": "read_only_preview",
+        })
+    return {
+        "provider": "agentops-commercial",
+        "operation": "entitlement_status",
+        "status": "ready",
+        "edition": edition,
+        "edition_label": ENTITLEMENT_EDITIONS[edition]["label"],
+        "edition_source": edition_source,
+        "workspace_id": normalize_workspace_id(headers.get("X-AgentOps-Workspace-Id") or "local-demo") if headers else "local-demo",
+        "config": {
+            "path": str(config_path),
+            "loaded": bool(config),
+            "overrides_loaded": bool(overrides),
+            "example_path": str(ROOT / "config" / "entitlements.example.json"),
+        },
+        "capabilities": capabilities,
+        "gates": gates,
+        "next_actions": [
+            "Keep this surface read-only until entitlement smoke tests cover fail-closed behavior.",
+            "Add enforcement only at explicit product boundaries, not inside low-level ledger writes.",
+            "Do not add billing-provider calls until local edition gates are stable.",
+        ],
+        "contract": "Entitlements are local read-only capability gates first; billing integration comes after product gates are stable.",
+        "safety": {
+            "read_only": True,
+            "live_execution_performed": False,
+            "token_omitted": True,
+            "billing_call_performed": False,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
 
 
 def split_provider_model(model, default_provider="unknown"):
@@ -10418,6 +10568,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(payload)
             if path == "/api/security/production-readiness":
                 payload = security_production_readiness(conn, self.headers)
+                conn.rollback()
+                return self.send_json(payload)
+            if path == "/api/commercial/entitlements":
+                payload = entitlement_status(self.headers)
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/demo/readiness":
