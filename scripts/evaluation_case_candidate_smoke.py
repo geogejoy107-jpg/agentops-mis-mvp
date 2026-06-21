@@ -447,6 +447,17 @@ def main() -> int:
         finally:
             conn.close()
 
+        operator_status, operator_payload = http_json("GET", "/api/operator/action-plan?limit=20")
+        transcripts.append(json.dumps(operator_payload, ensure_ascii=False))
+        require(operator_status == 200, f"operator action plan failed: {operator_status} {operator_payload}")
+        operator_summary = operator_payload.get("summary") or {}
+        require(operator_summary.get("remediation_packages", 0) >= 1, f"operator remediation package count missing: {operator_payload}")
+        require(operator_summary.get("remediation_pending_reviews", 0) >= 1, f"operator remediation pending review missing: {operator_payload}")
+        require((operator_payload.get("source_status") or {}).get("remediation_loop") == "review_pending", f"operator remediation status wrong: {operator_payload}")
+        remediation_loop = operator_payload.get("remediation_loop") or {}
+        require(bool(remediation_loop.get("actions")), f"operator remediation loop action missing: {operator_payload}")
+        require(operator_payload.get("safety", {}).get("ledger_mutated") is False, f"operator action plan mutated ledger flag: {operator_payload}")
+
         acknowledged = run_cli([
             "eval",
             "review-case-run",

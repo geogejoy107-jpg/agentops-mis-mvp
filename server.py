@@ -11427,6 +11427,10 @@ def evaluation_case_remediation_loop(conn: sqlite3.Connection, workspace_id: str
     promoted_memories = 0
     for row in synthesis_rows:
         artifact_id = row.get("artifact_id")
+        project_id = ""
+        title_value = row.get("title") or ""
+        if title_value.startswith("Commander synthesis:"):
+            project_id = commander_safe_text(title_value.split(":", 1)[1].strip(), 120)
         approval = conn.execute(
             """SELECT approval_id, decision, created_at, decided_at, reason
             FROM approvals
@@ -11467,6 +11471,7 @@ def evaluation_case_remediation_loop(conn: sqlite3.Connection, workspace_id: str
             "run_id": row.get("run_id"),
             "title": commander_safe_text(row.get("title"), 160),
             "status": status,
+            "project_id": project_id,
             "approval_id": approval_data.get("approval_id"),
             "approval_decision": approval_data.get("decision"),
             "memory_candidates": memory_count,
@@ -11521,9 +11526,12 @@ def evaluation_case_remediation_loop(conn: sqlite3.Connection, workspace_id: str
         status = item.get("status")
         if status not in {"review_pending", "approved_not_promoted", "memory_pending_review"}:
             continue
+        command = item.get("next_action")
+        if status == "review_pending" and item.get("project_id"):
+            command = f"agentops commander packages --project-id {item.get('project_id')} --limit 5"
         actions.append({
             "title": "Review failed-benchmark remediation synthesis" if status == "review_pending" else "Promote failed-benchmark remediation synthesis",
-            "command": item.get("next_action"),
+            "command": command,
             "severity": "attention",
             "priority": 93 if status == "review_pending" else 90,
             "summary": item.get("summary") or item.get("title") or "",
@@ -11531,6 +11539,7 @@ def evaluation_case_remediation_loop(conn: sqlite3.Connection, workspace_id: str
             "evidence": {
                 "artifact_id": item.get("artifact_id"),
                 "approval_id": item.get("approval_id"),
+                "project_id": item.get("project_id"),
                 "task_id": item.get("task_id"),
                 "run_id": item.get("run_id"),
                 "synthesis_status": status,

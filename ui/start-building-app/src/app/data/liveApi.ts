@@ -1030,6 +1030,10 @@ export interface OperatorActionPlanPayload {
     stuck_worker_tasks: number;
     stuck_workflow_jobs: number;
     recommended_adapter: string;
+    remediation_packages: number;
+    remediation_ready_for_review: number;
+    remediation_pending_reviews: number;
+    remediation_promoted_deliveries: number;
   };
   actions: OperatorActionPlanItem[];
   top_commands: string[];
@@ -3180,6 +3184,10 @@ export async function loadOperatorActionPlan(limit = 12): Promise<OperatorAction
       stuck_worker_tasks: numberValue(summaryRaw.stuck_worker_tasks, 0),
       stuck_workflow_jobs: numberValue(summaryRaw.stuck_workflow_jobs, 0),
       recommended_adapter: String(summaryRaw.recommended_adapter || "mock"),
+      remediation_packages: numberValue(summaryRaw.remediation_packages, 0),
+      remediation_ready_for_review: numberValue(summaryRaw.remediation_ready_for_review, 0),
+      remediation_pending_reviews: numberValue(summaryRaw.remediation_pending_reviews, 0),
+      remediation_promoted_deliveries: numberValue(summaryRaw.remediation_promoted_deliveries, 0),
     },
     actions: asArray<Record<string, unknown>>(raw.actions).map((item) => ({
       action_id: String(item.action_id || item.command || item.title || ""),

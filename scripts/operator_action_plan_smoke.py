@@ -126,6 +126,10 @@ def validate_plan(payload: dict, label: str, failures: list[str], limit: int) ->
         "needs_attention_deliveries",
         "stuck_worker_tasks",
         "stuck_workflow_jobs",
+        "remediation_packages",
+        "remediation_ready_for_review",
+        "remediation_pending_reviews",
+        "remediation_promoted_deliveries",
     ]:
         require(isinstance(summary.get(key), int), f"{label} summary.{key} missing: {summary}", failures)
     require(isinstance(summary.get("recommended_adapter"), str), f"{label} recommended_adapter missing: {summary}", failures)
@@ -134,6 +138,7 @@ def validate_plan(payload: dict, label: str, failures: list[str], limit: int) ->
     require(len(actions) <= limit, f"{label} ignored limit: {len(actions)} > {limit}", failures)
     require(bool(payload.get("top_commands")), f"{label} top_commands missing", failures)
     require(isinstance(payload.get("source_status"), dict), f"{label} source_status missing", failures)
+    require("remediation_loop" in (payload.get("source_status") or {}), f"{label} remediation source status missing: {payload.get('source_status')}", failures)
     for action in actions or []:
         require(bool(action.get("action_id")), f"{label} action_id missing: {action}", failures)
         require(action.get("severity") in {"blocked", "attention", "ready", "info"}, f"{label} bad severity: {action}", failures)
