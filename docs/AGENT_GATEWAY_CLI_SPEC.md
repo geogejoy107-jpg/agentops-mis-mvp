@@ -1066,8 +1066,19 @@ but remote workers and machine-facing CLI flows should use the Agent Gateway
 path and must omit raw token/session values.
 
 Failed benchmark runs are read-only risk items, not approval objects. Operators
-should inspect the linked run/task or use `agentops eval case-runs --pass-fail
-fail`; reruns still require the explicit `agentops eval run-cases` path.
+should inspect the linked run/task, then mark the risk lifecycle explicitly.
+Acknowledged or waived failed benchmark runs remain in the evidence ledger but
+no longer block the review/action queues.
+
+```bash
+agentops eval case-runs --pass-fail fail --review-status open
+agentops eval review-case-run \
+  --case-run-id ecr_123 \
+  --status acknowledged \
+  --note "Investigated and accepted for this local run."
+```
+
+Reruns still require the explicit `agentops eval run-cases` path.
 
 ### `agentops operator action-plan`
 

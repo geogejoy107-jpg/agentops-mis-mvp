@@ -442,6 +442,10 @@ CREATE TABLE IF NOT EXISTS evaluation_case_runs (
     score REAL NOT NULL DEFAULT 0,
     pass_fail TEXT NOT NULL CHECK(pass_fail IN ('pass','fail')),
     checks_json TEXT NOT NULL DEFAULT '{}',
+    review_status TEXT NOT NULL DEFAULT 'open',
+    reviewed_by_user_id TEXT,
+    review_note TEXT,
+    reviewed_at TEXT,
     created_by_agent_id TEXT,
     created_at TEXT NOT NULL,
     FOREIGN KEY(case_id) REFERENCES evaluation_case_candidates(case_id),
@@ -884,10 +888,15 @@ def ensure_schema_migrations(conn: sqlite3.Connection):
     ensure_column(conn, "runtime_connectors", "trust_status", "trust_status TEXT NOT NULL DEFAULT 'trusted'")
     ensure_column(conn, "runtime_connectors", "trust_note", "trust_note TEXT")
     ensure_column(conn, "runtime_connectors", "trust_updated_at", "trust_updated_at TEXT")
+    ensure_column(conn, "evaluation_case_runs", "review_status", "review_status TEXT NOT NULL DEFAULT 'open'")
+    ensure_column(conn, "evaluation_case_runs", "reviewed_by_user_id", "reviewed_by_user_id TEXT")
+    ensure_column(conn, "evaluation_case_runs", "review_note", "review_note TEXT")
+    ensure_column(conn, "evaluation_case_runs", "reviewed_at", "reviewed_at TEXT")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_workspace ON tasks(workspace_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_workspace ON runs(workspace_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_workflow_jobs_status ON workflow_jobs(status, created_at)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_plans_workspace ON agent_plans(workspace_id, created_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_eval_case_runs_review ON evaluation_case_runs(review_status, pass_fail)")
     ensure_knowledge_fts(conn)
 
 
@@ -4912,6 +4921,10 @@ def list_evaluation_case_runs(conn: sqlite3.Connection, qs: dict | None = None, 
     if "pass_fail" in qs:
         where.append("ecr.pass_fail=?")
         params.append(coerce_choice(qs["pass_fail"][0], {"pass", "fail"}, "pass"))
+    if "review_status" in qs:
+        statuses = [coerce_choice(status, {"open", "investigating", "acknowledged", "waived"}, "open") for status in qs.get("review_status", [])]
+        where.append("ecr.review_status IN (" + ",".join("?" for _ in statuses) + ")")
+        params.extend(statuses)
     rows = rows_to_dicts(conn.execute(
         f"""SELECT ecr.*, c.title AS case_title, c.case_type, c.task_id, c.source_type, c.source_ref
         FROM evaluation_case_runs ecr
@@ -4925,12 +4938,14 @@ def list_evaluation_case_runs(conn: sqlite3.Connection, qs: dict | None = None, 
         "total": scalar_count(conn, "SELECT COUNT(*) FROM evaluation_case_runs WHERE workspace_id=?", (workspace_id,)),
         "passed": scalar_count(conn, "SELECT COUNT(*) FROM evaluation_case_runs WHERE workspace_id=? AND pass_fail='pass'", (workspace_id,)),
         "failed": scalar_count(conn, "SELECT COUNT(*) FROM evaluation_case_runs WHERE workspace_id=? AND pass_fail='fail'", (workspace_id,)),
+        "open_failed": scalar_count(conn, "SELECT COUNT(*) FROM evaluation_case_runs WHERE workspace_id=? AND pass_fail='fail' AND review_status IN ('open','investigating')", (workspace_id,)),
+        "acknowledged_failed": scalar_count(conn, "SELECT COUNT(*) FROM evaluation_case_runs WHERE workspace_id=? AND pass_fail='fail' AND review_status IN ('acknowledged','waived')", (workspace_id,)),
         "returned": len(rows),
     }
     return {
         "provider": "agentops-evaluation",
         "operation": "evaluation_case_runs",
-        "status": "attention" if summary["failed"] else "ready" if summary["total"] else "empty",
+        "status": "attention" if summary["open_failed"] else "ready" if summary["total"] else "empty",
         "workspace_id": workspace_id,
         "limit": limit,
         "summary": summary,
@@ -4977,6 +4992,56 @@ def evaluation_case_runs_for_run(conn: sqlite3.Connection, run, limit: int = 12)
         (run["run_id"], run["run_id"], run["task_id"], limit),
     ).fetchall())
     return [evaluation_case_run_public(row) for row in rows]
+
+
+def review_evaluation_case_run(conn: sqlite3.Connection, case_run_id: str, body, headers=None) -> tuple[dict, int]:
+    status = coerce_choice(body.get("review_status") or body.get("status"), {"open", "investigating", "acknowledged", "waived"}, "acknowledged")
+    actor_id = body.get("reviewed_by_user_id") or body.get("actor_id") or "usr_operator"
+    note = redact_text(body.get("review_note") or body.get("note") or "", 500)
+    row = conn.execute("SELECT * FROM evaluation_case_runs WHERE case_run_id=?", (case_run_id,)).fetchone()
+    if not row:
+        return {"error": "not_found", "message": f"evaluation case run {case_run_id} not found", "token_omitted": True}, 404
+    workspace_id = normalize_workspace_id((headers or {}).get("X-AgentOps-Workspace-Id") or body.get("workspace_id") or "local-demo")
+    if row["workspace_id"] != workspace_id:
+        return workspace_forbidden("evaluation_case_runs", case_run_id, workspace_id, row["workspace_id"])
+    before = dict(row)
+    now = now_iso()
+    conn.execute(
+        """UPDATE evaluation_case_runs
+           SET review_status=?, reviewed_by_user_id=?, review_note=?, reviewed_at=?
+           WHERE case_run_id=?""",
+        (status, actor_id, note, now, case_run_id),
+    )
+    after = dict(conn.execute("SELECT * FROM evaluation_case_runs WHERE case_run_id=?", (case_run_id,)).fetchone())
+    audit(conn, "user", actor_id, "evaluation_case_run.review", "evaluation_case_runs", case_run_id, before, after, {
+        "review_status": status,
+        "note_omitted": not bool(note),
+        "token_omitted": True,
+    })
+    runtime_event(
+        conn,
+        "rtc_agent_gateway_local",
+        "evaluation_case_run.review",
+        "completed",
+        run_id=after.get("run_id"),
+        agent_id=after.get("created_by_agent_id"),
+        output_summary=f"Evaluation case run {case_run_id} marked {status}.",
+    )
+    return {
+        "provider": "agentops-evaluation",
+        "operation": "evaluation_case_run_review",
+        "status": status,
+        "case_run": evaluation_case_run_public(after),
+        "safety": {
+            "ledger_mutated": True,
+            "live_execution_performed": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }, 200
 
 
 def propose_evaluation_case_candidate(conn: sqlite3.Connection, body, headers=None) -> tuple[dict, int]:
@@ -7753,7 +7818,7 @@ def human_review_queue(conn, limit: int = 20) -> dict:
     approval_total = conn.execute("SELECT COUNT(*) c FROM approvals WHERE decision='pending'").fetchone()["c"]
     memory_total = conn.execute("SELECT COUNT(*) c FROM memories WHERE review_status='candidate'").fetchone()["c"]
     eval_case_total = conn.execute("SELECT COUNT(*) c FROM evaluation_case_candidates WHERE review_status='candidate'").fetchone()["c"]
-    failed_eval_case_run_total = conn.execute("SELECT COUNT(*) c FROM evaluation_case_runs WHERE pass_fail='fail'").fetchone()["c"]
+    failed_eval_case_run_total = conn.execute("SELECT COUNT(*) c FROM evaluation_case_runs WHERE pass_fail='fail' AND review_status IN ('open','investigating')").fetchone()["c"]
     approvals = rows_to_dicts(conn.execute(
         """SELECT approval_id, task_id, run_id, tool_call_id, requested_by_agent_id,
                   approver_user_id, decision, reason, expires_at, created_at, decided_at
@@ -7787,11 +7852,12 @@ def human_review_queue(conn, limit: int = 20) -> dict:
     failed_eval_case_runs = rows_to_dicts(conn.execute(
         """SELECT ecr.case_run_id, ecr.case_id, ecr.workspace_id, ecr.run_id, ecr.evaluation_id,
                   ecr.artifact_id, ecr.runner_type, ecr.status, ecr.score, ecr.pass_fail,
-                  ecr.checks_json, ecr.created_by_agent_id, ecr.created_at,
+                  ecr.checks_json, ecr.review_status, ecr.reviewed_by_user_id,
+                  ecr.review_note, ecr.reviewed_at, ecr.created_by_agent_id, ecr.created_at,
                   c.title AS case_title, c.case_type, c.task_id, c.agent_id, c.source_type, c.source_ref
            FROM evaluation_case_runs ecr
            JOIN evaluation_case_candidates c ON c.case_id=ecr.case_id
-           WHERE ecr.pass_fail='fail'
+           WHERE ecr.pass_fail='fail' AND ecr.review_status IN ('open','investigating')
            ORDER BY ecr.created_at DESC
            LIMIT ?""",
         (per_lane_limit,),
@@ -7935,6 +8001,7 @@ def human_review_queue(conn, limit: int = 20) -> dict:
             "item_type": "evaluation_case_run",
             "item_id": case_run_id,
             "status": row.get("pass_fail"),
+            "review_status": row.get("review_status"),
             "kind": row.get("case_type"),
             "title": f"Benchmark failed: {row.get('case_title') or case_id}",
             "summary": redact_text(summary, 260),
@@ -7949,6 +8016,7 @@ def human_review_queue(conn, limit: int = 20) -> dict:
             "source_ref": row.get("source_ref"),
             "created_at": row.get("created_at"),
             "updated_at": row.get("created_at"),
+            "reviewed_at": row.get("reviewed_at"),
             "score": row.get("score"),
             "links": {
                 "task_url": f"/admin/tasks/{row.get('task_id')}" if row.get("task_id") else None,
@@ -7956,7 +8024,7 @@ def human_review_queue(conn, limit: int = 20) -> dict:
                 "evaluation_room_url": "/admin/evaluations",
             },
             "next_action": "Investigate this failed benchmark before promoting the related workflow, memory, or customer delivery.",
-            "cli_action": f"agentops eval case-runs --case-id {case_id} --pass-fail fail",
+            "cli_action": f"agentops eval review-case-run --case-run-id {case_run_id} --status acknowledged --note 'Investigated and accepted for this local run.'",
             "alternate_cli_action": f"agentops eval run-cases --case-id {case_id}",
             "priority": 92,
         })
@@ -13177,6 +13245,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(payload, status)
             if path == "/api/evaluation-cases/run":
                 payload, status = run_evaluation_cases(conn, body, self.headers)
+                conn.commit()
+                return self.send_json(payload, status)
+            if path.startswith("/api/evaluation-case-runs/") and path.endswith("/review"):
+                case_run_id = path.split("/")[-2]
+                payload, status = review_evaluation_case_run(conn, case_run_id, body, self.headers)
                 conn.commit()
                 return self.send_json(payload, status)
             if path.startswith("/api/evaluation-cases/") and path.endswith("/approve"):

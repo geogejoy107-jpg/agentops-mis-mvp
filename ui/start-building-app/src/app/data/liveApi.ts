@@ -963,6 +963,7 @@ export interface ReviewQueueItem {
   item_type: "approval" | "memory_candidate" | "customer_delivery" | string;
   item_id: string;
   status: string;
+  review_status?: string;
   kind?: string | null;
   title: string;
   summary?: string;
@@ -1106,6 +1107,10 @@ export interface EvaluationCaseRun {
   status: string;
   score: number;
   pass_fail: "pass" | "fail";
+  review_status?: string;
+  reviewed_by_user_id?: string | null;
+  review_note?: string | null;
+  reviewed_at?: string | null;
   checks?: Record<string, unknown>;
   case_title?: string;
   case_type?: string;
@@ -1751,6 +1756,10 @@ export function normalizeEvaluationCaseRun(row: Record<string, unknown>): Evalua
     status: String(row.status || "preview"),
     score: numberValue(row.score, 0),
     pass_fail: String(row.pass_fail || "fail") === "pass" ? "pass" : "fail",
+    review_status: row.review_status ? String(row.review_status) : "open",
+    reviewed_by_user_id: row.reviewed_by_user_id ? String(row.reviewed_by_user_id) : null,
+    review_note: row.review_note ? String(row.review_note) : null,
+    reviewed_at: row.reviewed_at ? String(row.reviewed_at) : null,
     checks,
     case_title: row.case_title ? String(row.case_title) : undefined,
     case_type: row.case_type ? String(row.case_type) : undefined,
@@ -3096,6 +3105,7 @@ export async function loadReviewQueue(limit = 12): Promise<ReviewQueuePayload> {
       item_type: String(item.item_type || "review_item"),
       item_id: String(item.item_id || item.approval_id || item.memory_id || item.artifact_id || ""),
       status: String(item.status || "unknown"),
+      review_status: item.review_status ? String(item.review_status) : undefined,
       kind: item.kind ? String(item.kind) : null,
       title: String(item.title || item.item_id || "Review item"),
       summary: item.summary ? String(item.summary) : undefined,

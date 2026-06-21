@@ -829,6 +829,16 @@ def cmd_eval_case_runs(args, client: AgentOpsClient) -> dict:
         "run_id": args.run_id,
         "task_id": args.task_id,
         "pass_fail": args.pass_fail,
+        "review_status": args.review_status,
+    })
+
+
+def cmd_eval_review_case_run(args, client: AgentOpsClient) -> dict:
+    return client.post(f"/api/evaluation-case-runs/{args.case_run_id}/review", {
+        "workspace_id": client.workspace_id,
+        "review_status": args.status,
+        "review_note": args.note,
+        "reviewed_by_user_id": args.actor_id,
     })
 
 
@@ -1829,7 +1839,14 @@ def build_parser() -> argparse.ArgumentParser:
     case_runs.add_argument("--run-id", default=None)
     case_runs.add_argument("--task-id", default=None)
     case_runs.add_argument("--pass-fail", default=None, choices=["pass", "fail"])
+    case_runs.add_argument("--review-status", default=None, choices=["open", "investigating", "acknowledged", "waived"])
     case_runs.set_defaults(handler="eval_case_runs")
+    review_case_run = eval_sub.add_parser("review-case-run", help="Mark a failed evaluation case run as investigating, acknowledged, waived, or open.")
+    review_case_run.add_argument("--case-run-id", required=True)
+    review_case_run.add_argument("--status", default="acknowledged", choices=["open", "investigating", "acknowledged", "waived"])
+    review_case_run.add_argument("--note", default="Reviewed from agentops CLI.")
+    review_case_run.add_argument("--actor-id", default="usr_operator")
+    review_case_run.set_defaults(handler="eval_review_case_run")
     propose_case = eval_sub.add_parser("propose-case", help="Preview or create an evaluation case candidate from run/eval/artifact evidence.")
     propose_case.add_argument("--case-id", default=None)
     propose_case.add_argument("--source-type", default=None, choices=["evaluation", "customer_delivery", "run", "artifact", "manual", "commander_synthesis"])
@@ -2183,6 +2200,7 @@ HANDLERS = {
     "eval_submit": cmd_eval_submit,
     "eval_cases": cmd_eval_cases,
     "eval_case_runs": cmd_eval_case_runs,
+    "eval_review_case_run": cmd_eval_review_case_run,
     "eval_propose_case": cmd_eval_propose_case,
     "eval_approve_case": cmd_eval_review_case,
     "eval_reject_case": cmd_eval_review_case,

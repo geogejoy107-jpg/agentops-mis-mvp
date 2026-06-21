@@ -31,6 +31,10 @@ runner. The supported management primitives are:
   `agentops operator action-plan` merge review items, failed benchmark runs,
   customer delivery gates, worker fleet recovery, adapter readiness, and
   commander inbox state into a prioritized read-only next-action queue.
+- Failed benchmark run handling: `agentops eval review-case-run` can mark a
+  failed `evaluation_case_runs` row as `investigating`, `acknowledged`,
+  `waived`, or `open`; acknowledged/waived rows stay in the ledger but stop
+  blocking review/action queues.
 - Commander project board: `GET /api/commander/project-board` summarizes
   local readiness, worker health, recent work packages, pending approvals,
   artifacts, memory candidates, workflow jobs, integration gates, and safe next

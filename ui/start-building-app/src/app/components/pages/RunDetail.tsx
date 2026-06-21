@@ -202,6 +202,7 @@ export function RunDetail() {
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   <span className="text-[10px] rounded px-1.5 py-0.5" style={{ color: "var(--mis-cyan)", background: "rgba(34,211,238,0.10)" }}>{caseRun.case_type || caseRun.runner_type}</span>
                   <span className="text-[10px] rounded px-1.5 py-0.5" style={{ color: "var(--mis-success)", background: "rgba(45,212,191,0.10)" }}>{Math.round((caseRun.score <= 1 ? caseRun.score * 100 : caseRun.score))}/100</span>
+                  <span className="text-[10px] rounded px-1.5 py-0.5" style={{ color: "var(--mis-muted)", background: "var(--mis-bg)" }}>{caseRun.review_status || "open"}</span>
                 </div>
                 <div className="mt-2 text-[10px] font-mono truncate" style={{ color: "var(--mis-muted)" }}>
                   {caseRun.run_id && caseRun.run_id !== run.run_id ? <Link to={`/admin/runs/${caseRun.run_id}`} style={{ color: "var(--mis-cyan)" }}>{caseRun.run_id}</Link> : caseRun.case_id}

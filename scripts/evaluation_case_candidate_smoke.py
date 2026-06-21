@@ -247,11 +247,35 @@ def main() -> int:
         fail_run_payload = load_json(fail_run)
         require(fail_run.returncode == 0, f"fail case run failed: {fail_run.stderr or fail_run.stdout}")
         require(fail_run_payload.get("summary", {}).get("failed", 0) >= 1, f"strict benchmark did not fail: {fail_run_payload}")
+        fail_case_run_id = (fail_run_payload.get("case_runs") or [{}])[0].get("case_run_id")
+        require(bool(fail_case_run_id), f"missing failed case_run_id: {fail_run_payload}")
         queue_status, queue_payload = http_json("GET", "/api/review/queue?limit=20")
         transcripts.append(json.dumps(queue_payload, ensure_ascii=False))
         require(queue_status == 200, f"review queue failed: {queue_status} {queue_payload}")
         require((queue_payload.get("summary") or {}).get("failed_evaluation_case_runs", 0) >= 1, f"failed benchmark summary missing: {queue_payload}")
         require(any(item.get("item_type") == "evaluation_case_run" and item.get("case_id") == fail_case_id for item in queue_payload.get("review_items", [])), f"failed benchmark item missing from review queue: {queue_payload}")
+        acknowledged = run_cli([
+            "eval",
+            "review-case-run",
+            "--case-run-id",
+            fail_case_run_id,
+            "--status",
+            "acknowledged",
+            "--note",
+            "Smoke intentionally failed this benchmark and acknowledged the risk.",
+        ])
+        transcripts.extend([acknowledged.stdout, acknowledged.stderr])
+        acknowledged_payload = load_json(acknowledged)
+        require(acknowledged.returncode == 0, f"case run acknowledge failed: {acknowledged.stderr or acknowledged.stdout}")
+        require(acknowledged_payload.get("case_run", {}).get("review_status") == "acknowledged", f"case run acknowledge status wrong: {acknowledged_payload}")
+        acknowledged_list = run_cli(["eval", "case-runs", "--case-id", fail_case_id, "--review-status", "acknowledged", "--limit", "5"])
+        transcripts.extend([acknowledged_list.stdout, acknowledged_list.stderr])
+        acknowledged_list_payload = load_json(acknowledged_list)
+        require(any(item.get("case_run_id") == fail_case_run_id for item in acknowledged_list_payload.get("case_runs", [])), f"acknowledged case run missing from list: {acknowledged_list_payload}")
+        queue_after_status, queue_after_payload = http_json("GET", "/api/review/queue?limit=40")
+        transcripts.append(json.dumps(queue_after_payload, ensure_ascii=False))
+        require(queue_after_status == 200, f"review queue after acknowledge failed: {queue_after_status} {queue_after_payload}")
+        require(not any(item.get("item_type") == "evaluation_case_run" and item.get("case_run_id") == fail_case_run_id for item in queue_after_payload.get("review_items", [])), f"acknowledged benchmark still in review queue: {queue_after_payload}")
 
         conn = sqlite3.connect(DEFAULT_DB)
         try:
