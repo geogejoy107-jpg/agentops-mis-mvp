@@ -157,6 +157,9 @@ export function AIEmployees() {
   const unavailableAdapters = adapterReadiness?.summary.unavailable_adapters || workerStatus?.adapter_readiness?.unavailable_adapters || [];
   const blockedAdapters = adapterReadiness?.summary.blocked_adapters || workerStatus?.adapter_readiness?.blocked_adapters || [];
   const recommendedAdapter = adapterReadiness?.summary.recommended_adapter || workerStatus?.adapter_readiness?.recommended_adapter || "mock";
+  const selectedAdapterRoute = adapterReadiness?.adapters?.[customerTaskForm.adapter];
+  const selectedAdapterLiveBlocked = customerTaskForm.adapter !== "mock" && ["unavailable", "blocked"].includes(selectedAdapterRoute?.readiness || "");
+  const selectedAdapterIsReady = customerTaskForm.adapter === "mock" || selectedAdapterRoute?.readiness === "ready" || selectedAdapterRoute?.readiness === "review_required";
   const gatewayReady = Boolean(gatewayStatus?.auth.authenticated || ["ready", "ok", "authenticated"].includes(gatewayStatus?.status || ""));
   const copy = pick(locale, {
     en: {
@@ -194,6 +197,8 @@ export function AIEmployees() {
       customerTaskRunning: "Running task...",
       confirmLiveHint: "Hermes/OpenClaw require explicit confirmation before live execution. Mock is the safe default.",
       asyncTaskHint: "Use async jobs for long Hermes/OpenClaw work; the ledger records job status, run, artifact, eval and audit evidence.",
+      selectedAdapterReady: "Selected route is ready for this dispatch.",
+      selectedAdapterBlocked: "Selected live route is not ready. Use the next action before confirming a real run.",
       taskId: "Task",
       jobId: "Job",
       jobType: "Workflow",
@@ -361,6 +366,8 @@ export function AIEmployees() {
       customerTaskRunning: "任务运行中...",
       confirmLiveHint: "Hermes/OpenClaw 真实执行前必须显式确认。mock 是安全默认。",
       asyncTaskHint: "长时间 Hermes/OpenClaw 工作建议用异步 Job；账本会记录 job 状态、run、artifact、评估和审计证据。",
+      selectedAdapterReady: "当前选中的路由可以用于这次派发。",
+      selectedAdapterBlocked: "当前真实运行路由未就绪。请先执行下一步动作，再确认真跑。",
       taskId: "任务",
       jobId: "Job",
       jobType: "工作流",
@@ -916,7 +923,7 @@ export function AIEmployees() {
             </button>
             <button
               onClick={() => runCustomerTask(true)}
-              disabled={customerTaskBusy}
+              disabled={customerTaskBusy || selectedAdapterLiveBlocked}
               className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded disabled:opacity-50"
               style={{ background: "rgba(45,212,191,0.12)", color: "var(--mis-success)", border: "1px solid rgba(45,212,191,0.22)" }}
             >
@@ -968,6 +975,38 @@ export function AIEmployees() {
               style={{ background: "var(--mis-surface2)", color: "var(--mis-text)", border: "1px solid var(--mis-border)" }}
             />
           </label>
+        </div>
+
+        <div
+          className="rounded-lg p-3 mt-3"
+          style={{
+            background: selectedAdapterLiveBlocked ? "rgba(248,113,113,0.08)" : "var(--mis-surface2)",
+            border: selectedAdapterLiveBlocked ? "1px solid rgba(248,113,113,0.22)" : "1px solid var(--mis-border)",
+          }}
+        >
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-1.5 min-w-0">
+              {selectedAdapterLiveBlocked ? <AlertTriangle size={13} style={{ color: "#F87171" }} /> : <CheckCircle2 size={13} style={{ color: "var(--mis-success)" }} />}
+              <div className="text-[11px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>
+                {customerTaskForm.adapter} · {selectedAdapterIsReady ? copy.selectedAdapterReady : copy.selectedAdapterBlocked}
+              </div>
+            </div>
+            <StatusBadge status={selectedAdapterRoute?.readiness || "unknown"} />
+          </div>
+          <div className="grid grid-cols-3 gap-2 mt-2">
+            <div className="rounded px-2 py-1" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+              <div className="text-[9px]" style={{ color: "var(--mis-muted)" }}>{copy.trustStatus}</div>
+              <div className="text-[10px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{selectedAdapterRoute?.trust_status || "—"}</div>
+            </div>
+            <div className="rounded px-2 py-1" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+              <div className="text-[9px]" style={{ color: "var(--mis-muted)" }}>{copy.targetResource}</div>
+              <div className="text-[10px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{selectedAdapterRoute?.target_resource || "—"}</div>
+            </div>
+            <div className="rounded px-2 py-1" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+              <div className="text-[9px]" style={{ color: "var(--mis-muted)" }}>{copy.nextAction}</div>
+              <div className="text-[10px] font-semibold truncate" style={{ color: "var(--mis-cyan)" }}>{selectedAdapterRoute?.recommended_action || "agentops worker readiness"}</div>
+            </div>
+          </div>
         </div>
 
         <div className="text-[10px] mt-3" style={{ color: "var(--mis-muted)" }}>{copy.asyncTaskHint}</div>

@@ -1322,7 +1322,9 @@ and `live_execution_performed:false`. This lets a local or remote agent decide
 which adapter path is currently usable before pulling customer work.
 The `/workspace/agents` operator console now renders the same adapter route
 state, including trust status, target resource, live-ready marker, and the next
-safe CLI action for each adapter.
+safe CLI action for each adapter. The customer dispatch form also shows the
+selected adapter's route readiness and disables confirmed live dispatch when the
+selected Hermes/OpenClaw route is unavailable or blocked.
 
 Confirmed live customer-worker dispatch now consumes that readiness signal. If a
 selected Hermes/OpenClaw adapter is `unavailable` or `blocked`, MIS returns
@@ -1378,6 +1380,8 @@ planned MIS task
   a viable route before starting a task.
 - The `/workspace/agents` UI now surfaces that route-readiness state for human
   operators without changing the machine-facing execution contract.
+- The same page surfaces selected-adapter readiness inside the customer dispatch
+  form, so a human operator sees the live-route gate before pressing confirm.
 - Confirmed customer-worker dispatch now fails early with `adapter_not_ready`
   when the selected live adapter is unavailable, instead of producing an opaque
   worker execution failure.

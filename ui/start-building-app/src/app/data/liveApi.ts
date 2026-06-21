@@ -129,6 +129,8 @@ export interface CustomerTaskWorkflowResult {
   output_summary?: string;
   error?: string | null;
   reason?: string;
+  readiness?: string;
+  recommended_action?: string;
   note?: string;
   requires?: Record<string, unknown>;
   selected_agent_ids?: string[];
