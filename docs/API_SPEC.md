@@ -159,6 +159,11 @@ The filesystem indexer explicitly excludes generated outputs, caches, runtime
 logs, raw customer folders, local databases, env/key material and other
 credential-like paths; incremental reindex reports `incremental_noop:true` when
 unchanged documents do not rewrite the index.
+Search responses include `search_quality` with `fallback_used`,
+`fallback_reason`, `searched_fields`, `content_body_searched`, `result_quality`
+and a warning when FTS5 falls back to `LIKE`. Agents must treat
+`metadata_summary_like` as degraded retrieval, not as authoritative full-text
+evidence.
 
 Agent Gateway search requires `knowledge:read` and is non-mutating: `refresh`
 requests are reported as skipped so read scope cannot update the index. Explicit

@@ -199,6 +199,22 @@ def main() -> int:
             require(redaction_marker in redaction_text, f"redaction smoke doc missing: {redacted_search}", failures)
             require(fake_secret not in redaction_text, "raw fake secret appeared in search output", failures)
             require("[SECRET_REDACTED]" in redaction_text, f"redacted marker missing from search output: {redacted_search}", failures)
+            fts_quality = redacted_search.get("search_quality") or {}
+            require(fts_quality.get("search_mode") == "fts5", f"normal knowledge search should report fts5 quality: {fts_quality}", failures)
+            require(fts_quality.get("fallback_used") is False, f"normal knowledge search should not report fallback: {fts_quality}", failures)
+            require(fts_quality.get("content_body_searched") is True, f"normal knowledge search should report body search: {fts_quality}", failures)
+
+            status, fallback_search, raw = http_json(base_url, "/api/agent-gateway/knowledge/search", token=token, workspace=workspace_a, query={"q": "!!!", "limit": 5})
+            outputs.append(raw)
+            require(status == 200, f"fallback search failed: {status} {fallback_search}", failures)
+            fallback_quality = fallback_search.get("search_quality") or {}
+            require(fallback_search.get("search_mode") == "like", f"fallback search_mode not explicit: {fallback_search}", failures)
+            require(fallback_quality.get("fallback_used") is True, f"fallback flag missing: {fallback_quality}", failures)
+            require(fallback_quality.get("fallback_reason") == "empty_fts_query", f"fallback reason missing: {fallback_quality}", failures)
+            require(fallback_quality.get("content_body_searched") is False, f"fallback should report no body search: {fallback_quality}", failures)
+            require(fallback_quality.get("result_quality") == "metadata_summary_like", f"fallback result quality missing: {fallback_quality}", failures)
+            require("content_summary" in set(fallback_quality.get("searched_fields") or []), f"fallback searched_fields missing summary disclosure: {fallback_quality}", failures)
+            require(bool(fallback_quality.get("warning")), f"fallback warning missing: {fallback_quality}", failures)
 
             status, excluded_search, raw = http_json(base_url, "/api/agent-gateway/knowledge/search", token=token, workspace=workspace_a, query={"q": marker_b, "limit": 10})
             outputs.append(raw)

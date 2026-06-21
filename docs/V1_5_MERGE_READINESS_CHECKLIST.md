@@ -85,7 +85,7 @@ python3 scripts/customer_worker_external_write_gate_smoke.py
 - [ ] Add a Chinese/English retrieval test set.
 - [ ] Record Recall@5, MRR and p95.
 - [x] Reindex is incremental and no-op for unchanged documents.
-- [ ] Fallback search does not silently reduce to title/summary-only without reporting it.
+- [x] Fallback search does not silently reduce to title/summary-only without reporting it.
 
 Required checks:
 

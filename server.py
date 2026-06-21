@@ -4544,25 +4544,60 @@ def knowledge_search(conn: sqlite3.Connection, qs: dict, headers=None, auth_ctx=
     }
     rows = []
     search_mode = "recent"
+    search_quality = {
+        "search_mode": search_mode,
+        "fts_available": None,
+        "fallback_used": False,
+        "fallback_reason": None,
+        "searched_fields": ["updated_at"],
+        "content_body_searched": False,
+        "result_quality": "recent_index_rows",
+        "warning": None,
+        "token_omitted": True,
+    }
     visibility_sql, visibility_params, visibility = knowledge_visibility_filter(auth_ctx)
     if query:
-        search_mode = "fts5" if ensure_knowledge_fts(conn) else "like"
-        try:
-            match = fts_query(query)
-            if not match:
-                raise sqlite3.OperationalError("empty fts query")
-            rows = rows_to_dicts(conn.execute(
-                f"""SELECT kd.*, snippet(knowledge_fts, 3, '', '', ' ... ', 18) AS snippet, bm25(knowledge_fts) AS rank
-                FROM knowledge_fts
-                JOIN knowledge_documents kd ON kd.doc_id=knowledge_fts.doc_id
-                WHERE knowledge_fts MATCH ?
-                {visibility_sql}
-                ORDER BY rank LIMIT ?""",
-                [match, *visibility_params, limit],
-            ).fetchall())
-        except sqlite3.OperationalError:
+        fts_available = ensure_knowledge_fts(conn)
+        search_mode = "fts5" if fts_available else "like"
+        search_quality.update({
+            "search_mode": search_mode,
+            "fts_available": fts_available,
+            "searched_fields": ["knowledge_fts.content", "knowledge_fts.title", "knowledge_fts.path"] if fts_available else ["title", "path", "content_summary"],
+            "content_body_searched": bool(fts_available),
+            "result_quality": "full_text_fts5" if fts_available else "metadata_summary_like",
+            "warning": None if fts_available else "FTS5 is unavailable; fallback searches only title, path and redacted summaries.",
+        })
+        fts_error = None
+        if fts_available:
+            try:
+                match = fts_query(query)
+                if not match:
+                    raise sqlite3.OperationalError("empty_fts_query")
+                rows = rows_to_dicts(conn.execute(
+                    f"""SELECT kd.*, snippet(knowledge_fts, 3, '', '', ' ... ', 18) AS snippet, bm25(knowledge_fts) AS rank
+                    FROM knowledge_fts
+                    JOIN knowledge_documents kd ON kd.doc_id=knowledge_fts.doc_id
+                    WHERE knowledge_fts MATCH ?
+                    {visibility_sql}
+                    ORDER BY rank LIMIT ?""",
+                    [match, *visibility_params, limit],
+                ).fetchall())
+            except sqlite3.OperationalError as exc:
+                fts_error = str(exc) or "fts_query_failed"
+        if not fts_available or fts_error:
             like = f"%{query}%"
             search_mode = "like"
+            fallback_reason = "fts_unavailable" if not fts_available else fts_error
+            search_quality.update({
+                "search_mode": search_mode,
+                "fts_available": fts_available,
+                "fallback_used": True,
+                "fallback_reason": fallback_reason,
+                "searched_fields": ["title", "path", "content_summary"],
+                "content_body_searched": False,
+                "result_quality": "metadata_summary_like",
+                "warning": "Fallback search is degraded: only title, path and redacted summaries were searched.",
+            })
             plain_visibility_sql = visibility_sql.replace("kd.", "")
             rows = rows_to_dicts(conn.execute(
                 f"""SELECT *, content_summary AS snippet, 0 AS rank FROM knowledge_documents
@@ -4585,6 +4620,7 @@ def knowledge_search(conn: sqlite3.Connection, qs: dict, headers=None, auth_ctx=
         "operation": "knowledge_search",
         "query": query,
         "search_mode": search_mode,
+        "search_quality": search_quality,
         "results": rows,
         "count": len(rows),
         "index": index_result or index_state,
