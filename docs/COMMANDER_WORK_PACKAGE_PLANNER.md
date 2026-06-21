@@ -206,7 +206,11 @@ The same operator plan also exposes an `execution_evidence` audit source. It is
 read-only and points the commander at completed/failed runs that still lack a
 plan binding, verified plan-evidence manifest, or tool/evaluation/artifact/audit
 evidence, so remediation packages do not become customer-facing output before
-the loop ledger is complete.
+the loop ledger is complete. The next command is
+`agentops operator remediate-evidence-gap --run-id <run_id>`; it previews a
+Commander work package by default, and `--confirm-create` writes a deterministic
+planned task that can then be dispatched through the normal Commander package
+path.
 
 Dispatch a package:
 

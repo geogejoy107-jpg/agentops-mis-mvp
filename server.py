@@ -34,6 +34,9 @@ from urllib.parse import parse_qs, urlparse
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
+from agentops_mis_cli.redaction import redact_full_text as shared_redact_full_text
+from agentops_mis_cli.redaction import redact_text as shared_redact_text
+
 ROOT = Path(__file__).resolve().parent
 DB_PATH = Path(os.environ.get("AGENTOPS_DB_PATH") or (ROOT / "agentops_mis.db"))
 STATIC_DIR = ROOT / "static"
@@ -103,25 +106,11 @@ def split_provider_model(model, default_provider="unknown"):
 
 
 def redact_text(text: str | None, limit=200) -> str:
-    value = str(text or "")
-    value = redact_full_text(value)
-    value = re.sub(r"\s+", " ", value).strip()
-    return value[:limit]
+    return shared_redact_text(text, limit)
 
 
 def redact_full_text(text: str | None) -> str:
-    value = str(text or "")
-    replacements = [
-        (r"(?i)(bearer\s+)[a-z0-9._\-]+", r"\1[REDACTED]"),
-        (r"(?i)(token|secret|password|api[_-]?key)\s*[:=]\s*['\"]?[^'\"\s,;]+", r"\1=[REDACTED]"),
-        (r"(?i)\b(?:sk-[a-z0-9._\-]+|ntn_[a-z0-9._\-]+)\b", "[SECRET_REDACTED]"),
-        (r"\b(?:agtok|agtsess)_[A-Za-z0-9_-]+\b", "[AGENT_TOKEN_REF_REDACTED]"),
-        (r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", "[EMAIL_REDACTED]"),
-        (r"(?<![\w])(?:\+\d{1,3}[\s.-]*)?(?:\(?\d{2,4}\)?[\s.-]+){2,4}\d{2,4}(?![\w])", "[PHONE_REDACTED]"),
-    ]
-    for pattern, repl in replacements:
-        value = re.sub(pattern, repl, value)
-    return value
+    return shared_redact_full_text(text)
 
 
 def parse_ms(value):
@@ -4582,26 +4571,39 @@ def operator_execution_evidence_gaps(conn: sqlite3.Connection, workspace_id: str
                 summary[summary_key] += 1
         if not gap_types:
             continue
+        remediation_task_id = stable_id("tsk_exec_evidence_fix", workspace_id, row["run_id"])
+        existing_remediation = conn.execute("SELECT * FROM tasks WHERE task_id=?", (remediation_task_id,)).fetchone()
+        existing_package = commander_work_package_from_task(conn, existing_remediation) if existing_remediation else None
+        if existing_package:
+            package_status = existing_package.get("package_status")
+            command = existing_package.get("recommended_action") or f"agentops commander packages --project-id {existing_package.get('project_id')} --limit 5"
+            severity = "blocked" if package_status == "blocked" else "attention" if package_status in {"planned", "still_running", "needs_evidence"} else "ready"
+            priority = 90 if severity == "blocked" else 86 if severity == "attention" else 70
+            next_action = f"Continue existing execution-evidence remediation package ({package_status})."
         if "missing_agent_plan_binding" in gap_types:
-            command = f"agentops run graph --run-id {row['run_id']}"
-            severity = "blocked"
-            priority = 95
-            next_action = "Inspect the run graph, then create a matching agent_plan before accepting this legacy execution."
+            if not existing_package:
+                command = f"agentops operator remediate-evidence-gap --run-id {row['run_id']}"
+                severity = "blocked"
+                priority = 95
+                next_action = "Preview a Commander remediation package for this legacy execution, then confirm-create before dispatch."
         elif manifest and manifest_verification and not manifest_verification.get("pass"):
-            command = f"agentops plan-evidence verify --manifest-id {manifest['manifest_id']}"
-            severity = "blocked"
-            priority = 92
-            next_action = "Re-verify the manifest and repair missing ledger evidence before delivery."
+            if not existing_package:
+                command = f"agentops operator remediate-evidence-gap --run-id {row['run_id']}"
+                severity = "blocked"
+                priority = 92
+                next_action = "Preview a remediation package for the blocked manifest checks before delivery."
         elif plan_id and not missing_evidence:
-            command = f"agentops plan-evidence create --plan-id {plan_id} --run-id {row['run_id']} --mismatch-policy block"
-            severity = "attention"
-            priority = 88
-            next_action = "Create a blocking plan_evidence_manifest for this completed run."
+            if not existing_package:
+                command = f"agentops operator remediate-evidence-gap --run-id {row['run_id']}"
+                severity = "attention"
+                priority = 88
+                next_action = "Preview a remediation package or create the blocking plan_evidence_manifest explicitly."
         else:
-            command = f"agentops run graph --run-id {row['run_id']}"
-            severity = "attention"
-            priority = 84
-            next_action = "Inspect the run graph and add the missing tool/evaluation/artifact/audit evidence before manifesting."
+            if not existing_package:
+                command = f"agentops operator remediate-evidence-gap --run-id {row['run_id']}"
+                severity = "attention"
+                priority = 84
+                next_action = "Preview a remediation package for missing tool/evaluation/artifact/audit evidence before manifesting."
         gaps.append({
             "run_id": row["run_id"],
             "task_id": row["task_id"],
@@ -4614,6 +4616,8 @@ def operator_execution_evidence_gaps(conn: sqlite3.Connection, workspace_id: str
             "manifest_id": manifest["manifest_id"] if manifest else None,
             "manifest_status": (manifest_verification or {}).get("status") if manifest_verification else None,
             "manifest_failed_checks": [item.get("id") for item in ((manifest_verification or {}).get("failed_checks") or [])],
+            "remediation_task_id": remediation_task_id if existing_package else None,
+            "remediation_package_status": (existing_package or {}).get("package_status") if existing_package else None,
             "gap_types": gap_types,
             "missing_evidence": missing_evidence,
             "evidence_counts": counts,
@@ -4651,6 +4655,255 @@ def operator_execution_evidence_gaps(conn: sqlite3.Connection, workspace_id: str
         "token_omitted": True,
         "live_execution_performed": False,
     }
+
+
+def operator_execution_evidence_remediation_task(conn: sqlite3.Connection, body: dict, headers=None) -> tuple[dict, int]:
+    headers = headers or {}
+    workspace_id = normalize_workspace_id(body.get("workspace_id") or headers.get("X-AgentOps-Workspace-Id") or "local-demo")
+    run_id = str(body.get("run_id") or "").strip()
+    confirm_create = bool(body.get("confirm_create"))
+    actor_id = redact_text(body.get("actor_id") or "usr_founder", 120)
+    if not run_id:
+        return {"error": "run_id_required", "message": "run_id is required.", "token_omitted": True}, 400
+    run = conn.execute(
+        """SELECT r.*, t.title AS task_title, t.status AS task_status, t.description AS task_description
+        FROM runs r
+        LEFT JOIN tasks t ON t.task_id=r.task_id
+        WHERE r.run_id=?""",
+        (run_id,),
+    ).fetchone()
+    if not run:
+        return {"error": "run_not_found", "run_id": run_id, "token_omitted": True}, 404
+    if row_workspace(run) != workspace_id:
+        return workspace_forbidden("run", run_id, workspace_id, row_workspace(run))
+    gap_index = operator_execution_evidence_gaps(conn, workspace_id, limit=25)
+    gap = next((item for item in gap_index.get("gaps") or [] if item.get("run_id") == run_id), None)
+    if not gap:
+        return {
+            "provider": "agentops-operator",
+            "operation": "execution_evidence_remediation_task",
+            "status": "no_gap",
+            "created": False,
+            "workspace_id": workspace_id,
+            "run_id": run_id,
+            "message": "No execution evidence gap was found for this run.",
+            "safety": {
+                "read_only": True,
+                "ledger_mutated": False,
+                "live_execution_performed": False,
+                "raw_prompt_omitted": True,
+                "raw_response_omitted": True,
+                "token_omitted": True,
+            },
+            "token_omitted": True,
+        }, 200
+
+    owner_candidates = [
+        body.get("owner_agent_id"),
+        run["agent_id"],
+        "agt_qa",
+        "agt_builder",
+        "agt_research",
+    ]
+    owner_agent_id = None
+    for candidate in owner_candidates:
+        candidate = str(candidate or "").strip()
+        if candidate and conn.execute("SELECT 1 FROM agents WHERE agent_id=?", (candidate,)).fetchone():
+            owner_agent_id = candidate
+            break
+    task_id = commander_safe_text(body.get("task_id") or stable_id("tsk_exec_evidence_fix", workspace_id, run_id), 80)
+    existing = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+    project_id = commander_safe_text(body.get("project_id") or stable_id("proj_execution_evidence", workspace_id, run_id), 80)
+    plan_id = commander_safe_text(body.get("plan_id") or stable_id("cmdplan_execution_evidence", run_id), 80)
+    lane_id = commander_safe_text(body.get("lane_id") or "execution-evidence", 80)
+    gap_types = [str(item) for item in (gap.get("gap_types") or [])]
+    missing_evidence = [str(item) for item in (gap.get("missing_evidence") or [])]
+    manifest_id = gap.get("manifest_id")
+    source_title = run["task_title"] or run["input_summary"] or run_id
+    title = redact_text(body.get("title") or f"Close execution evidence gap: {source_title}", 160)
+    goal = commander_safe_text(
+        body.get("goal")
+        or f"Close the execution evidence gap for run {run_id} before the result can be trusted or delivered.",
+        500,
+    )
+    scope = commander_safe_text(
+        body.get("scope")
+        or (
+            f"Run: {run_id}. Source task: {run['task_id']}. Agent: {run['agent_id']}. "
+            f"Run status: {run['status']}. Gap types: {', '.join(gap_types) or 'unknown'}."
+        ),
+        360,
+    )
+    avoid_scope = commander_safe_text(
+        body.get("avoid_scope")
+        or "Do not fabricate evidence, approve delivery, call live adapters, or rewrite historical run output without a new explicit plan.",
+        360,
+    )
+    verification_commands = [
+        f"agentops run graph --run-id {run_id}",
+        f"agentops operator action-plan --limit 20",
+    ]
+    if gap.get("plan_id") and not missing_evidence and not manifest_id:
+        verification_commands.insert(1, f"agentops plan-evidence create --plan-id {gap.get('plan_id')} --run-id {run_id} --mismatch-policy block")
+    elif manifest_id:
+        verification_commands.insert(1, f"agentops plan-evidence verify --manifest-id {manifest_id}")
+    else:
+        verification_commands.insert(1, "agentops agent-plan create ... && agentops agent-plan verify --plan-id <plan_id>")
+    description = commander_work_package_description(
+        goal,
+        {
+            "lane_id": lane_id,
+            "scope": scope,
+            "avoid_scope": avoid_scope,
+            "verification": verification_commands,
+        },
+        [run["task_id"]] if run["task_id"] else [],
+        project_id,
+        plan_id,
+    )
+    if body.get("description"):
+        description = redact_text(f"{description} Operator note: {body.get('description')}", 1200)
+    acceptance = redact_text(
+        body.get("acceptance_criteria")
+        or (
+            f"Run {run_id} has a verified Agent Plan binding and verified plan_evidence_manifest, "
+            "with tool/evaluation/artifact/audit evidence present or an explicit operator waiver recorded."
+        ),
+        600,
+    )
+    risk_level = coerce_choice(body.get("risk_level") or ("critical" if "missing_agent_plan_binding" in gap_types else "high"), VALID_RISK_LEVELS, "high")
+    priority = coerce_choice(body.get("priority") or ("critical" if risk_level == "critical" else "high"), VALID_PRIORITIES, "high")
+    draft = {
+        "task_id": task_id,
+        "workspace_id": workspace_id,
+        "title": title,
+        "description": description,
+        "owner_agent_id": owner_agent_id,
+        "collaborator_agent_ids": ["agt_qa"] if owner_agent_id != "agt_qa" and conn.execute("SELECT 1 FROM agents WHERE agent_id='agt_qa'").fetchone() else [],
+        "status": "planned",
+        "priority": priority,
+        "risk_level": risk_level,
+        "acceptance_criteria": acceptance,
+        "source": "execution_evidence_gap_remediation",
+        "source_task_id": run["task_id"],
+        "source_run_id": run_id,
+        "project_id": project_id,
+        "plan_id": plan_id,
+        "lane_id": lane_id,
+        "commander_work_package": True,
+        "gap_types": gap_types,
+        "missing_evidence": missing_evidence,
+        "manifest_id": manifest_id,
+        "verification_commands": verification_commands,
+    }
+    safety = {
+        "read_only": not confirm_create or bool(existing),
+        "ledger_mutated": False,
+        "live_execution_performed": False,
+        "raw_prompt_omitted": True,
+        "raw_response_omitted": True,
+        "token_omitted": True,
+    }
+    if not confirm_create:
+        return {
+            "provider": "agentops-operator",
+            "operation": "execution_evidence_remediation_task",
+            "status": "preview",
+            "created": False,
+            "workspace_id": workspace_id,
+            "run_id": run_id,
+            "gap": gap,
+            "task": draft,
+            "next_actions": [
+                f"agentops operator remediate-evidence-gap --run-id {run_id} --confirm-create",
+                f"agentops commander dispatch-package --task-id {task_id} --adapter mock",
+                f"agentops operator action-plan --limit 20",
+            ],
+            "safety": safety,
+            "token_omitted": True,
+        }, 200
+    if existing:
+        return {
+            "provider": "agentops-operator",
+            "operation": "execution_evidence_remediation_task",
+            "status": "already_exists",
+            "created": False,
+            "workspace_id": workspace_id,
+            "run_id": run_id,
+            "task_id": task_id,
+            "task": dict(existing),
+            "project_id": project_id,
+            "plan_id": plan_id,
+            "commander_work_package": (existing["description"] or "").startswith("Commander project:"),
+            "gap": gap,
+            "safety": safety,
+            "token_omitted": True,
+        }, 200
+    payload, status = create_task_api(conn, {
+        "task_id": task_id,
+        "workspace_id": workspace_id,
+        "title": title,
+        "description": description,
+        "requester_id": actor_id,
+        "owner_agent_id": owner_agent_id,
+        "collaborator_agent_ids": draft["collaborator_agent_ids"],
+        "status": "planned",
+        "priority": priority,
+        "risk_level": risk_level,
+        "budget_limit_usd": float(body.get("budget_limit_usd") or 3.0),
+        "acceptance_criteria": acceptance,
+        "source": "execution_evidence_gap_remediation",
+    })
+    if status >= 400:
+        return payload, status
+    created_task = payload.get("task") or draft
+    runtime_event(
+        conn,
+        "rtc_agent_gateway_local",
+        "execution_evidence.remediation_task",
+        "created",
+        run_id=run_id,
+        task_id=task_id,
+        agent_id=owner_agent_id,
+        input_summary=f"Execution evidence gap for run {run_id}",
+        output_summary=f"Remediation task created for evidence gaps: {', '.join(gap_types) or 'unknown'}.",
+        raw_payload_hash=stable_hash({"run_id": run_id, "task_id": task_id, "gap_types": gap_types, "missing_evidence": missing_evidence}),
+    )
+    audit(conn, "user", actor_id, "execution_evidence.remediation_task_create", "tasks", task_id, None, created_task, {
+        "project_id": project_id,
+        "plan_id": plan_id,
+        "lane_id": lane_id,
+        "source_task_id": run["task_id"],
+        "source_run_id": run_id,
+        "gap_types": gap_types,
+        "missing_evidence": missing_evidence,
+        "manifest_id": manifest_id,
+        "raw_content_omitted": True,
+        "token_omitted": True,
+    })
+    safety["read_only"] = False
+    safety["ledger_mutated"] = True
+    return {
+        "provider": "agentops-operator",
+        "operation": "execution_evidence_remediation_task",
+        "status": "created",
+        "created": True,
+        "workspace_id": workspace_id,
+        "project_id": project_id,
+        "plan_id": plan_id,
+        "commander_work_package": True,
+        "run_id": run_id,
+        "task_id": task_id,
+        "task": created_task,
+        "gap": gap,
+        "next_actions": [
+            f"agentops commander packages --project-id {project_id} --limit 5",
+            f"agentops commander dispatch-package --task-id {task_id} --adapter mock",
+            f"agentops operator action-plan --limit 20",
+        ],
+        "safety": safety,
+        "token_omitted": True,
+    }, 201
 
 
 def latest_agent_plan_for_run(conn: sqlite3.Connection, run: sqlite3.Row) -> sqlite3.Row | None:
@@ -12630,6 +12883,8 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
                 "agent_id": item.get("agent_id"),
                 "plan_id": item.get("plan_id"),
                 "manifest_id": item.get("manifest_id"),
+                "remediation_task_id": item.get("remediation_task_id"),
+                "remediation_package_status": item.get("remediation_package_status"),
                 "gap_types": item.get("gap_types") or [],
                 "missing_evidence": item.get("missing_evidence") or [],
                 "evidence_counts": item.get("evidence_counts") or {},
@@ -14088,6 +14343,10 @@ class Handler(BaseHTTPRequestHandler):
             if path.startswith("/api/commander/work-packages/") and path.endswith("/dispatch"):
                 task_id = path.split("/")[-2]
                 payload, status = commander_dispatch_work_package(conn, task_id, body, self.headers)
+                conn.commit()
+                return self.send_json(payload, status)
+            if path == "/api/operator/execution-evidence/remediation-task":
+                payload, status = operator_execution_evidence_remediation_task(conn, body, self.headers)
                 conn.commit()
                 return self.send_json(payload, status)
             if path == "/api/agents":

@@ -24,6 +24,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from agentops_mis_cli.redaction import redact_text
+
 
 DEFAULT_BASE_URL = "http://127.0.0.1:8787"
 DEFAULT_WORKSPACE_ID = "local-demo"
@@ -149,9 +151,9 @@ class AgentOpsClient:
                 return json.loads(raw) if raw else {}
         except HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"{method} {path} failed: {exc.code} {detail}") from exc
+            raise RuntimeError(f"{method} {path} failed: {exc.code} {redact_text(detail, 1200)}") from exc
         except URLError as exc:
-            raise RuntimeError(f"Cannot reach {url}: {exc.reason}") from exc
+            raise RuntimeError(f"Cannot reach {redact_text(url, 500)}: {redact_text(str(exc.reason), 500)}") from exc
 
     def get(self, path: str, query: dict | None = None):
         return self.request("GET", path, query=query)
@@ -276,6 +278,24 @@ def cmd_demo_readiness(args, client: AgentOpsClient) -> dict:
 
 def cmd_operator_action_plan(args, client: AgentOpsClient) -> dict:
     return client.get("/api/operator/action-plan", query={"limit": args.limit})
+
+
+def cmd_operator_remediate_evidence_gap(args, client: AgentOpsClient) -> dict:
+    return client.post("/api/operator/execution-evidence/remediation-task", {
+        "workspace_id": client.workspace_id,
+        "run_id": args.run_id,
+        "task_id": args.task_id,
+        "title": args.title,
+        "project_id": args.project_id,
+        "plan_id": args.plan_id,
+        "lane_id": args.lane_id,
+        "owner_agent_id": args.owner_agent_id,
+        "priority": args.priority,
+        "risk_level": args.risk_level,
+        "budget_limit_usd": args.budget_limit_usd,
+        "actor_id": args.actor_id,
+        "confirm_create": bool(args.confirm_create),
+    })
 
 
 def cmd_commander_board(args, client: AgentOpsClient) -> dict:
@@ -1500,6 +1520,20 @@ def build_parser() -> argparse.ArgumentParser:
     operator_plan = operator_sub.add_parser("action-plan", help="Show the prioritized next safe CLI/UI actions.")
     operator_plan.add_argument("--limit", type=int, default=12)
     operator_plan.set_defaults(handler="operator_action_plan")
+    evidence_gap = operator_sub.add_parser("remediate-evidence-gap", help="Preview or create a Commander package for a run execution-evidence gap.")
+    evidence_gap.add_argument("--run-id", required=True)
+    evidence_gap.add_argument("--task-id", default=None)
+    evidence_gap.add_argument("--title", default=None)
+    evidence_gap.add_argument("--project-id", default=None)
+    evidence_gap.add_argument("--plan-id", default=None)
+    evidence_gap.add_argument("--lane-id", default=None)
+    evidence_gap.add_argument("--owner-agent-id", default=None)
+    evidence_gap.add_argument("--priority", default=None, choices=["low", "medium", "high", "critical"])
+    evidence_gap.add_argument("--risk-level", default=None, choices=["low", "medium", "high", "critical"])
+    evidence_gap.add_argument("--budget-limit-usd", type=float, default=None)
+    evidence_gap.add_argument("--actor-id", default="usr_founder")
+    evidence_gap.add_argument("--confirm-create", action="store_true")
+    evidence_gap.set_defaults(handler="operator_remediate_evidence_gap")
 
     commander = sub.add_parser("commander", help="Commander planning, dispatch and readback commands.")
     commander_sub = commander.add_subparsers(dest="action", required=True)
@@ -2194,6 +2228,7 @@ HANDLERS = {
     "local_readiness": cmd_local_readiness,
     "demo_readiness": cmd_demo_readiness,
     "operator_action_plan": cmd_operator_action_plan,
+    "operator_remediate_evidence_gap": cmd_operator_remediate_evidence_gap,
     "commander_board": cmd_commander_board,
     "commander_inbox": cmd_commander_inbox,
     "commander_plan": cmd_commander_plan,
@@ -2291,7 +2326,7 @@ def main(argv=None) -> int:
     try:
         result = HANDLERS[args.handler](args, client)
     except RuntimeError as exc:
-        eprint(str(exc))
+        eprint(redact_text(str(exc), 1200))
         return 1
     emit(result)
     return 0

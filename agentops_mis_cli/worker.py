@@ -31,6 +31,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from agentops_mis_cli.redaction import redact_text
+
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = PACKAGE_ROOT if (PACKAGE_ROOT / "server.py").exists() else None
@@ -89,24 +91,6 @@ def parse_iso_datetime(value: str | None) -> dt.datetime | None:
 def stable_hash(value) -> str:
     raw = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, sort_keys=True)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
-
-
-def redact_text(value, limit: int = 200) -> str:
-    text = "" if value is None else str(value)
-    text = " ".join(text.replace("\r", " ").replace("\n", " ").split())
-    secrets = [
-        "sk-",
-        "ntn_",
-        "Bearer ",
-        "Authorization:",
-        "api_key",
-        "password",
-        "token",
-    ]
-    for marker in secrets:
-        if marker.lower() in text.lower():
-            text = text.replace(marker, f"{marker[:2]}[REDACTED]")
-    return text[:limit]
 
 
 def json_dumps(data) -> str:

@@ -167,8 +167,13 @@ and `plan_hash` for later plan-evidence manifest checks.
 source. It audits recent completed or failed runs for missing plan bindings,
 missing/unverified plan-evidence manifests, and missing tool, evaluation,
 artifact, or audit evidence. The response summarizes the gap counts and returns
-explicit CLI inspection/manifest commands; it does not create plans, manifests,
+explicit remediation-preview commands; it does not create plans, manifests,
 approvals, or audit rows.
+
+`POST /api/operator/execution-evidence/remediation-task` previews or creates a
+Commander-compatible remediation package for one run gap. Preview is read-only;
+`confirm_create:true` writes one deterministic planned task plus runtime/audit
+evidence and returns `already_exists` for repeated calls.
 
 ## Plan Evidence Manifests
 

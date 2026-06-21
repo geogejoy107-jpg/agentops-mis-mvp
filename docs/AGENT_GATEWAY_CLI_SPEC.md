@@ -1137,10 +1137,22 @@ failed runs for missing `agent_plan_id` / `plan_hash`, missing or unverified
 `plan_evidence_manifests`, and missing tool/evaluation/artifact/audit rows. It
 reports summary counters such as `evidence_gap_runs`, `missing_plan_runs`,
 `missing_plan_evidence_manifests`, and
-`unverified_plan_evidence_manifests`, then suggests explicit inspection or
-manifest commands without mutating the ledger. Failed-benchmark remediation is
-a first-class `remediation_loop` source: once a failed evaluation case becomes
-a Commander work package, the action plan reports remediation package counts,
+`unverified_plan_evidence_manifests`, then suggests
+`agentops operator remediate-evidence-gap --run-id <run_id>` without mutating
+the ledger.
+
+```bash
+agentops operator remediate-evidence-gap --run-id run_123
+agentops operator remediate-evidence-gap --run-id run_123 --confirm-create
+```
+
+The remediation command previews a Commander-compatible work package by
+default. `--confirm-create` writes a deterministic planned task, runtime event,
+and audit row; repeated confirmed calls return `already_exists`. The resulting
+task can be dispatched with `agentops commander dispatch-package --task-id ...
+--adapter mock`. Failed-benchmark remediation is a first-class
+`remediation_loop` source: once a failed evaluation case becomes a Commander
+work package, the action plan reports remediation package counts,
 ready-for-review counts, pending synthesis reviews, promoted delivery/memory
 counts, and read-only next commands for `/workspace/agents`.
 

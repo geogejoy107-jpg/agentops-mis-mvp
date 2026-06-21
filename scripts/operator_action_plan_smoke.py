@@ -164,6 +164,17 @@ def validate_plan(payload: dict, label: str, failures: list[str], limit: int) ->
             f"{label} action should inspect approval before approve: {action}",
             failures,
         )
+        if action.get("source") == "execution_evidence_gaps":
+            command = str(action.get("command") or "")
+            require(
+                command.startswith("agentops operator remediate-evidence-gap --run-id ")
+                or command.startswith("agentops commander dispatch-package --task-id ")
+                or command.startswith("agentops task get --task-id ")
+                or command.startswith("agentops run get --run-id ")
+                or command.startswith("agentops commander inbox"),
+                f"{label} execution evidence action should preview remediation package: {action}",
+                failures,
+            )
         require(bool(action.get("source")), f"{label} source missing: {action}", failures)
     for command in payload.get("top_commands") or []:
         require(
