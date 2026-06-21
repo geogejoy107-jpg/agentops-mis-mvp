@@ -13,6 +13,7 @@ import {
   loadAgentGatewayStatus,
   loadAgents,
   loadDashboard,
+  loadDemoReadiness,
   loadIntegrationInbox,
   loadLocalReadiness,
   loadSecurityProductionReadiness,
@@ -125,8 +126,9 @@ export function AIEmployees() {
     scopes: DEFAULT_GATEWAY_SCOPES.join(", "),
   });
   const { data, loading, error, refresh } = useLiveData(async () => {
-    const [metrics, workerStatus, workerFleet, adapterReadiness, localReadiness, securityReadiness, integrationInbox, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs] = await Promise.all([
+    const [metrics, demoReadiness, workerStatus, workerFleet, adapterReadiness, localReadiness, securityReadiness, integrationInbox, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs] = await Promise.all([
       loadDashboard(),
+      loadDemoReadiness(),
       loadWorkerStatus(),
       loadWorkerFleet(),
       loadWorkerAdapterReadiness(),
@@ -142,9 +144,10 @@ export function AIEmployees() {
       loadStuckWorkflowJobs(30, 8),
     ]);
     const agents = await loadAgents(metrics);
-    return { agents, workerStatus, workerFleet, adapterReadiness, localReadiness, securityReadiness, integrationInbox, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs };
+    return { agents, demoReadiness, workerStatus, workerFleet, adapterReadiness, localReadiness, securityReadiness, integrationInbox, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs };
   }, [integrationInboxBucket]);
   const agents = data?.agents || [];
+  const demoReadiness = data?.demoReadiness;
   const workerStatus = data?.workerStatus;
   const workerFleet = data?.workerFleet;
   const adapterReadiness = data?.adapterReadiness;
@@ -213,6 +216,10 @@ export function AIEmployees() {
       refresh: "Refresh live agents",
       commandCenterTitle: "Worker Fleet Console",
       commandCenterSummary: "Adapter readiness, daemon capacity, remote heartbeat/session health, stuck recovery, and the next safe CLI/API action.",
+      demoReadinessTitle: "Demo readiness",
+      demoReadinessSummary: "Canonical v1.5 recording path: readiness, security boundary, fleet lanes, async inbox, customer task loop, and run ledger evidence.",
+      demoReady: "Demo ready",
+      shotsReady: "Shots ready",
       actionQueueTitle: "Operator action queue",
       actionQueueSummary: "Drag to reorder your next checks. Use arrows as the precise fallback.",
       actionSource: "Source",
@@ -443,6 +450,10 @@ export function AIEmployees() {
       refresh: "刷新实时代理",
       commandCenterTitle: "Worker Fleet 控制台",
       commandCenterSummary: "集中查看 adapter 就绪、daemon 容量、远程心跳/session、卡住恢复和下一步安全 CLI/API 动作。",
+      demoReadinessTitle: "Demo 就绪",
+      demoReadinessSummary: "v1.5 录屏主路径：本地就绪、安全边界、Fleet 队伍、异步 Inbox、客户任务闭环、Run 账本证据。",
+      demoReady: "可录 Demo",
+      shotsReady: "镜头就绪",
       actionQueueTitle: "Operator 动作队列",
       actionQueueSummary: "拖拽调整下一步检查顺序；也可以用箭头精确移动。",
       actionSource: "来源",
@@ -1178,6 +1189,50 @@ export function AIEmployees() {
               </div>
             </div>
           ))}
+        </div>
+
+        <div className="rounded-lg p-3 mt-4" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+          <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 size={13} style={{ color: demoReadiness?.demo_ready ? "var(--mis-success)" : "var(--mis-warning)" }} />
+                <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.demoReadinessTitle}</div>
+                <StatusBadge status={demoReadiness?.status || "unknown"} label={demoReadiness?.demo_ready ? copy.demoReady : copy.statusAttention} />
+              </div>
+              <p className="text-[10px] mt-1 max-w-3xl" style={{ color: "var(--mis-dim)" }}>{copy.demoReadinessSummary}</p>
+              {demoReadiness?.contract && (
+                <p className="text-[10px] mt-1 max-w-3xl" style={{ color: "var(--mis-muted)" }}>{copy.contract}: {demoReadiness.contract}</p>
+              )}
+            </div>
+            <StatusBadge status={demoReadiness?.production_ready ? "ready" : "attention"} label={demoReadiness?.production_ready ? copy.productionReady : copy.localDevOnly} />
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3">
+            {[
+              { label: copy.shotsReady, value: `${demoReadiness?.summary.ready_shots ?? 0}/${demoReadiness?.summary.shot_count ?? 0}`, status: demoReadiness?.demo_ready ? "ready" : "attention" },
+              { label: copy.evidenceChains, value: demoReadiness?.summary.closed_loop_runs ?? 0, status: (demoReadiness?.summary.closed_loop_runs || 0) > 0 ? "pass" : "attention" },
+              { label: copy.fleetLanes, value: demoReadiness?.summary.fleet_lanes ?? 0, status: (demoReadiness?.summary.fleet_lanes || 0) > 0 ? "pass" : "attention" },
+              { label: copy.readyForReview, value: demoReadiness?.summary.ready_inbox_items ?? 0, status: (demoReadiness?.summary.ready_inbox_items || 0) > 0 ? "ready" : "planned" },
+            ].map((item) => (
+              <div key={item.label} className="rounded px-2 py-1" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                <div className="text-[9px]" style={{ color: "var(--mis-muted)" }}>{item.label}</div>
+                <div className="flex items-center justify-between gap-2 mt-0.5">
+                  <div className="text-[10px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{item.value}</div>
+                  <StatusBadge status={item.status} />
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-3">
+            {(demoReadiness?.shots || []).slice(0, 6).map((shot) => (
+              <div key={shot.id} className="rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-[10px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{shot.label}</div>
+                  <StatusBadge status={shot.ok ? "pass" : shot.status} />
+                </div>
+                <div className="text-[10px] mt-1 truncate" style={{ color: "var(--mis-muted)" }}>{shot.route || shot.command || "—"}</div>
+              </div>
+            ))}
+          </div>
         </div>
 
         <div className="rounded-lg p-3 mt-4" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>

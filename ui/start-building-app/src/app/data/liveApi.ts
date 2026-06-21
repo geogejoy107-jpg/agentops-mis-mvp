@@ -745,6 +745,48 @@ export interface SecurityProductionReadinessPayload {
   live_execution_performed: boolean;
 }
 
+export interface DemoReadinessShot {
+  id: string;
+  label: string;
+  route?: string;
+  command?: string;
+  status: string;
+  ok: boolean;
+  detail: string;
+  next_action: string;
+}
+
+export interface DemoReadinessPayload {
+  provider: string;
+  operation: string;
+  status: string;
+  demo_ready: boolean;
+  production_ready: boolean;
+  summary: {
+    shot_count: number;
+    ready_shots: number;
+    blocker_count: number;
+    warning_count: number;
+    closed_loop_runs: number;
+    customer_worker_artifacts: number;
+    fleet_lanes: number;
+    ready_inbox_items: number;
+  };
+  shots: DemoReadinessShot[];
+  next_actions: string[];
+  references?: Record<string, string>;
+  contract?: string;
+  safety: {
+    read_only: boolean;
+    ledger_mutated: boolean;
+    live_execution_performed: boolean;
+    token_omitted: boolean;
+    raw_prompt_omitted: boolean;
+  };
+  token_omitted: boolean;
+  live_execution_performed: boolean;
+}
+
 export interface AgentGatewayEnrollmentCreateInput {
   agent_id: string;
   name: string;
@@ -1876,6 +1918,69 @@ export async function loadSecurityProductionReadiness(): Promise<SecurityProduct
     contract: raw.contract ? String(raw.contract) : undefined,
     safety: {
       read_only: boolValue(safetyRaw.read_only),
+      live_execution_performed: boolValue(safetyRaw.live_execution_performed),
+      token_omitted: boolValue(safetyRaw.token_omitted),
+      raw_prompt_omitted: boolValue(safetyRaw.raw_prompt_omitted),
+    },
+    token_omitted: boolValue(raw.token_omitted),
+    live_execution_performed: boolValue(raw.live_execution_performed),
+  };
+}
+
+export async function loadDemoReadiness(): Promise<DemoReadinessPayload> {
+  const raw = await optionalApiJson<Record<string, unknown>>("/demo/readiness", {
+    provider: "agentops-demo",
+    operation: "v1_5_demo_readiness",
+    status: "unavailable",
+    demo_ready: false,
+    production_ready: false,
+    summary: {},
+    shots: [],
+    next_actions: ["agentops demo readiness"],
+    safety: {
+      read_only: true,
+      ledger_mutated: false,
+      live_execution_performed: false,
+      token_omitted: true,
+      raw_prompt_omitted: true,
+    },
+    token_omitted: true,
+    live_execution_performed: false,
+  });
+  const summaryRaw = typeof raw.summary === "object" && raw.summary !== null ? raw.summary as Record<string, unknown> : {};
+  const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
+  return {
+    provider: String(raw.provider || "agentops-demo"),
+    operation: String(raw.operation || "v1_5_demo_readiness"),
+    status: String(raw.status || "unknown"),
+    demo_ready: boolValue(raw.demo_ready),
+    production_ready: boolValue(raw.production_ready),
+    summary: {
+      shot_count: numberValue(summaryRaw.shot_count, 0),
+      ready_shots: numberValue(summaryRaw.ready_shots, 0),
+      blocker_count: numberValue(summaryRaw.blocker_count, 0),
+      warning_count: numberValue(summaryRaw.warning_count, 0),
+      closed_loop_runs: numberValue(summaryRaw.closed_loop_runs, 0),
+      customer_worker_artifacts: numberValue(summaryRaw.customer_worker_artifacts, 0),
+      fleet_lanes: numberValue(summaryRaw.fleet_lanes, 0),
+      ready_inbox_items: numberValue(summaryRaw.ready_inbox_items, 0),
+    },
+    shots: asArray<Record<string, unknown>>(raw.shots).map((shot) => ({
+      id: String(shot.id || ""),
+      label: String(shot.label || shot.id || ""),
+      route: shot.route ? String(shot.route) : undefined,
+      command: shot.command ? String(shot.command) : undefined,
+      status: String(shot.status || "unknown"),
+      ok: boolValue(shot.ok),
+      detail: String(shot.detail || ""),
+      next_action: String(shot.next_action || ""),
+    })).filter((shot) => shot.id || shot.label),
+    next_actions: asArray<unknown>(raw.next_actions).map(String).filter(Boolean),
+    references: typeof raw.references === "object" && raw.references !== null ? raw.references as Record<string, string> : undefined,
+    contract: raw.contract ? String(raw.contract) : undefined,
+    safety: {
+      read_only: boolValue(safetyRaw.read_only),
+      ledger_mutated: boolValue(safetyRaw.ledger_mutated),
       live_execution_performed: boolValue(safetyRaw.live_execution_performed),
       token_omitted: boolValue(safetyRaw.token_omitted),
       raw_prompt_omitted: boolValue(safetyRaw.raw_prompt_omitted),

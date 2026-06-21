@@ -171,6 +171,7 @@ python3 -m pip install -e .
 python3 -m pip install .
 agentops doctor
 agentops status
+agentops demo readiness
 agentops local readiness
 ./scripts/agentops login --base-url http://127.0.0.1:8787 --workspace-id local-demo --agent-id agt_local_worker
 ./scripts/agentops agent register --id agt_local_worker --name "Local Worker" --role "AI Digital Employee"
@@ -259,6 +260,7 @@ Workspace isolation smoke 会验证：token 绑定 workspace A 后，只能 pull
 - token 绑定 `agent_id`，不能冒充其他 agent。
 - token 绑定 `workspace_id`，不能通过 header/query/body 切换到其他 workspace。
 - API 会检查 endpoint scope，例如 `tasks:create`、`tasks:read`、`runs:write`、`audit:write`。
+- `./scripts/agentops demo readiness` 可查看 v1.5 录屏主路径是否齐备：local readiness、安全边界、worker fleet lanes、async inbox、客户任务闭环和 run ledger 证据。它只读，不启动 worker、不写账本、不触发 live runtime。
 - `./scripts/agentops worker status` 可从命令行查看 worker fleet、daemon、pending task 和 stuck task 状态。
 - `./scripts/agentops local readiness` 可查看单机开源版闭环体检：Agent Gateway、worker route、memory/knowledge、approval、task->run->tool/eval/audit/artifact 证据、runbook 是否齐备。它只读，不启动 worker、不拉任务、不触发 Hermes/OpenClaw live runtime。
 - `./scripts/agentops worker preflight --adapter mock|hermes|openclaw` 可从主 CLI 执行只读 Gateway/adapter 预检，不拉任务、不写账本、不触发 live runtime。

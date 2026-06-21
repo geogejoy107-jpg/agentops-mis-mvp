@@ -270,6 +270,10 @@ def cmd_local_readiness(args, client: AgentOpsClient) -> dict:
     return client.get("/api/local/readiness")
 
 
+def cmd_demo_readiness(args, client: AgentOpsClient) -> dict:
+    return client.get("/api/demo/readiness")
+
+
 def cmd_commander_board(args, client: AgentOpsClient) -> dict:
     return client.get("/api/commander/project-board")
 
@@ -1055,6 +1059,11 @@ def build_parser() -> argparse.ArgumentParser:
     local_readiness = local_sub.add_parser("readiness", help="Show end-to-end local MIS readiness and evidence closure.")
     local_readiness.set_defaults(handler="local_readiness")
 
+    demo = sub.add_parser("demo", help="Read-only demo and recording readiness commands.")
+    demo_sub = demo.add_subparsers(dest="action", required=True)
+    demo_readiness = demo_sub.add_parser("readiness", help="Show the canonical v1.5 classroom recording path readiness.")
+    demo_readiness.set_defaults(handler="demo_readiness")
+
     commander = sub.add_parser("commander", help="Read-only commander surface readback commands.")
     commander_sub = commander.add_subparsers(dest="action", required=True)
     commander_board = commander_sub.add_parser("board", help="Read the Commander project board.")
@@ -1471,6 +1480,7 @@ HANDLERS = {
     "status": cmd_status,
     "doctor": cmd_doctor,
     "local_readiness": cmd_local_readiness,
+    "demo_readiness": cmd_demo_readiness,
     "commander_board": cmd_commander_board,
     "commander_inbox": cmd_commander_inbox,
     "security_production_readiness": cmd_security_production_readiness,

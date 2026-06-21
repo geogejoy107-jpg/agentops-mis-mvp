@@ -8,6 +8,7 @@ AgentOps MIS is not another agent builder. It is a local-first management inform
 
 Open `/workspace/agents`. Show:
 
+- Demo readiness: a read-only canonical v1.5 recording checklist that ties together local readiness, security boundary, worker fleet lanes, async inbox, customer task loop and run ledger evidence.
 - Local readiness: a read-only proof that the local workspace has Agent Gateway, worker, adapter route, approval, memory and evidence-chain coverage without starting live work.
 - Commander project board / worker fleet view: current worker health, adapter readiness, pending/stuck work and recommended next CLI/API action.
 - Async workflow jobs: long Hermes/OpenClaw work can be submitted, polled and recovered instead of held open in a brittle synchronous request.
@@ -48,7 +49,11 @@ Suggested narration:
 Recording steps:
 
 ```bash
+./scripts/agentops demo readiness
 ./scripts/agentops local readiness
+./scripts/agentops security production-readiness
+./scripts/agentops worker fleet
+./scripts/agentops commander inbox --bucket ready_for_review --limit 5
 ./scripts/agentops workflow customer-worker-task --adapter mock
 ./scripts/agentops workflow customer-worker-task --adapter openclaw --confirm-run --async-job
 ./scripts/agentops workflow job-status --job-id <job_id> --wait

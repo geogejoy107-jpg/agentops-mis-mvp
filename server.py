@@ -6481,6 +6481,125 @@ def worker_fleet_view(conn) -> dict:
     }
 
 
+def demo_readiness(conn: sqlite3.Connection, headers) -> dict:
+    local = local_readiness(conn, headers)
+    conn.rollback()
+    security = security_production_readiness(conn, headers)
+    conn.rollback()
+    fleet = worker_fleet_view(conn)
+    conn.rollback()
+    inbox = commander_integration_inbox(conn, headers, {"bucket": ["ready_for_review"], "limit": ["5"]})
+    conn.rollback()
+    board = commander_project_board(conn, headers)
+    conn.rollback()
+    evidence = local.get("evidence") or {}
+    inbox_summary = inbox.get("summary") or {}
+    fleet_summary = fleet.get("summary") or {}
+
+    shots = [
+        {
+            "id": "local_readiness",
+            "label": "Local readiness",
+            "route": "/workspace/agents",
+            "command": "agentops local readiness",
+            "status": local.get("status"),
+            "ok": local.get("status") in {"ready", "attention"},
+            "detail": f"{evidence.get('closed_loop_runs', 0)} closed-loop run(s); token omitted={local.get('token_omitted') is True}",
+            "next_action": "Open /workspace/agents and show Local Readiness.",
+        },
+        {
+            "id": "security_boundary",
+            "label": "Security boundary",
+            "route": "/workspace/agents",
+            "command": "agentops security production-readiness",
+            "status": security.get("status"),
+            "ok": security.get("status") in {"ready", "attention"},
+            "detail": f"auth_mode={security.get('auth_mode')}; production_ready={security.get('production_ready')}",
+            "next_action": "Explain local demo mode versus production/shared deployment.",
+        },
+        {
+            "id": "worker_fleet",
+            "label": "Worker fleet lanes",
+            "route": "/workspace/agents",
+            "command": "agentops worker fleet",
+            "status": fleet.get("status"),
+            "ok": fleet.get("status") in {"ready", "attention"},
+            "detail": f"{fleet_summary.get('lane_count', 0)} lane(s); {fleet_summary.get('running_local_daemons', 0)} local daemon(s) running",
+            "next_action": "Show normalized local/remote worker lanes and next actions.",
+        },
+        {
+            "id": "commander_inbox",
+            "label": "Async integration inbox",
+            "route": "/workspace/agents",
+            "command": "agentops commander inbox --bucket ready_for_review --limit 5",
+            "status": inbox.get("status"),
+            "ok": isinstance(inbox.get("inbox_items"), list),
+            "detail": f"{inbox_summary.get('items_returned', 0)} ready item(s) returned; total={inbox_summary.get('total', 0)}",
+            "next_action": "Show ready/blocked/stale/memory queue filtering.",
+        },
+        {
+            "id": "customer_task_loop",
+            "label": "Customer worker loop",
+            "route": "/workspace/agents",
+            "command": "agentops workflow customer-worker-task --adapter mock --title ... --description ...",
+            "status": "ready" if int(evidence.get("customer_worker_artifacts") or 0) > 0 else "attention",
+            "ok": int(evidence.get("customer_worker_artifacts") or 0) > 0 and int(evidence.get("closed_loop_runs") or 0) > 0,
+            "detail": f"{evidence.get('customer_worker_artifacts', 0)} customer worker artifact(s)",
+            "next_action": "Run mock for safe recording, then explain confirmed Hermes/OpenClaw mode.",
+        },
+        {
+            "id": "run_ledger_evidence",
+            "label": "Run ledger evidence",
+            "route": "/admin/runs",
+            "command": "agentops run list --limit 5",
+            "status": "ready" if int(evidence.get("closed_loop_runs") or 0) > 0 else "attention",
+            "ok": int(evidence.get("closed_loop_runs") or 0) > 0,
+            "detail": f"{evidence.get('runs', 0)} run(s), {evidence.get('tool_calls', 0)} tool call(s), {evidence.get('evaluations', 0)} eval(s), {evidence.get('audit_logs', 0)} audit log(s)",
+            "next_action": "Open a recent worker run and show task/tool/eval/audit/artifact chain.",
+        },
+    ]
+    demo_ready = all(shot["ok"] for shot in shots)
+    blockers = [shot for shot in shots if not shot["ok"]]
+    warning_count = len([shot for shot in shots if shot.get("status") == "attention"])
+    return {
+        "provider": "agentops-demo",
+        "operation": "v1_5_demo_readiness",
+        "status": "ready" if demo_ready else "attention",
+        "demo_ready": demo_ready,
+        "production_ready": bool(security.get("production_ready")),
+        "summary": {
+            "shot_count": len(shots),
+            "ready_shots": len([shot for shot in shots if shot["ok"]]),
+            "blocker_count": len(blockers),
+            "warning_count": warning_count,
+            "closed_loop_runs": evidence.get("closed_loop_runs", 0),
+            "customer_worker_artifacts": evidence.get("customer_worker_artifacts", 0),
+            "fleet_lanes": fleet_summary.get("lane_count", 0),
+            "ready_inbox_items": inbox_summary.get("items_returned", 0),
+        },
+        "shots": shots,
+        "next_actions": [shot["next_action"] for shot in blockers] or [
+            "Open /workspace/agents and record local readiness, security boundary, fleet lanes, async inbox, and customer worker dispatch.",
+            "Keep Hermes/OpenClaw live execution behind explicit confirm_run.",
+        ],
+        "references": {
+            "video_script": "docs/DEMO_VIDEO_SCRIPT.md",
+            "runbook": "docs/REMOTE_WORKER_OPERATIONS_RUNBOOK.md",
+            "acceptance": "python3 scripts/v1_5_local_product_acceptance.py --base-url http://127.0.0.1:8787",
+        },
+        "contract": "read-only canonical v1.5 demo readiness; does not start workers, call live runtimes, create tasks, or store prompts/tokens",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "token_omitted": True,
+            "raw_prompt_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+
+
 def scalar_count(conn: sqlite3.Connection, sql: str, params=()) -> int:
     row = conn.execute(sql, params).fetchone()
     return int((row[0] if row else 0) or 0)
@@ -7963,6 +8082,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(payload)
             if path == "/api/security/production-readiness":
                 payload = security_production_readiness(conn, self.headers)
+                conn.rollback()
+                return self.send_json(payload)
+            if path == "/api/demo/readiness":
+                payload = demo_readiness(conn, self.headers)
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/commander/project-board":
