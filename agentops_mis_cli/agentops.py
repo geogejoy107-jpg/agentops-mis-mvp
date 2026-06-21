@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import datetime as dt
+import hashlib
 import io
 import json
 import os
@@ -329,7 +330,7 @@ def cmd_operator_action_receipts(args, client: AgentOpsClient) -> dict:
         "receipt_coverage": coverage,
         "action_plan_status": action_plan.get("status"),
         "action_plan_top_commands": action_plan.get("top_commands") or [],
-        "contract": "read-only operator action receipt ledger plus action-plan coverage; recording receipts remains explicit API/UI work",
+        "contract": "read-only operator action receipt ledger plus action-plan coverage; recording receipts requires explicit POST/UI or agentops operator record-action-receipt --confirm-record",
         "safety": {
             **(receipts.get("safety") or {}),
             "read_only": True,
@@ -337,6 +338,60 @@ def cmd_operator_action_receipts(args, client: AgentOpsClient) -> dict:
             "live_execution_performed": False,
             "token_omitted": True,
         },
+        "token_omitted": True,
+    }
+
+
+def cmd_operator_record_action_receipt(args, client: AgentOpsClient) -> dict:
+    action_command = str(args.action_command or "").strip()
+    verify_command = str(args.verify_command or "").strip()
+    payload = {
+        "workspace_id": client.workspace_id,
+        "actor_id": args.actor_id,
+        "action_command": action_command,
+        "verify_command": verify_command,
+        "action_id": args.action_id,
+        "action_signature": args.action_signature,
+        "source": args.source,
+        "status": args.status,
+        "result_summary": args.result_summary,
+    }
+    if not args.confirm_record:
+        return {
+            "provider": "agentops-operator",
+            "operation": "operator_action_receipt_cli_preview",
+            "status": "preview",
+            "recorded": False,
+            "workspace_id": client.workspace_id,
+            "payload_preview": {
+                **{key: value for key, value in payload.items() if value not in (None, "")},
+                "action_command": redact_text(action_command, 500),
+                "verify_command": redact_text(verify_command, 500) if verify_command else None,
+                "action_hash": hashlib.sha256(action_command.encode("utf-8")).hexdigest() if action_command else None,
+                "verify_hash": hashlib.sha256(verify_command.encode("utf-8")).hexdigest() if verify_command else None,
+            },
+            "next_actions": [
+                "rerun this command with --confirm-record to append an audited receipt",
+                "agentops operator action-receipts --limit 12",
+                "agentops operator loop-audit --limit 20",
+            ],
+            "contract": "preview-only; does not POST, does not execute action_command or verify_command, and does not mutate the ledger",
+            "safety": {
+                "read_only": True,
+                "ledger_mutated": False,
+                "live_execution_performed": False,
+                "raw_prompt_omitted": True,
+                "raw_response_omitted": True,
+                "token_omitted": True,
+            },
+            "token_omitted": True,
+        }
+    result = client.post("/api/operator/action-receipts", payload)
+    return {
+        **result,
+        "cli_operation": "operator_record_action_receipt",
+        "confirm_record": True,
+        "contract": "confirmed append-only receipt record; CLI never executes action_command or verify_command",
         "token_omitted": True,
     }
 
@@ -1655,6 +1710,17 @@ def build_parser() -> argparse.ArgumentParser:
     operator_receipts.add_argument("--limit", type=int, default=12)
     operator_receipts.add_argument("--plan-limit", type=int, default=12)
     operator_receipts.set_defaults(handler="operator_action_receipts")
+    operator_record_receipt = operator_sub.add_parser("record-action-receipt", help="Preview or append an audited Action Queue receipt without executing commands.")
+    operator_record_receipt.add_argument("--action-command", required=True, help="The exact recovery/action command that was run or inspected.")
+    operator_record_receipt.add_argument("--verify-command", default="", help="The acceptance-check command paired with the action.")
+    operator_record_receipt.add_argument("--status", default="recorded", choices=["recorded", "verified", "failed", "skipped"])
+    operator_record_receipt.add_argument("--result-summary", default="")
+    operator_record_receipt.add_argument("--action-id", default="")
+    operator_record_receipt.add_argument("--action-signature", default="")
+    operator_record_receipt.add_argument("--source", default="agentops_cli.operator_record_action_receipt")
+    operator_record_receipt.add_argument("--actor-id", default="usr_founder")
+    operator_record_receipt.add_argument("--confirm-record", action="store_true", help="Actually append runtime/audit receipt evidence. Default is preview only.")
+    operator_record_receipt.set_defaults(handler="operator_record_action_receipt")
     operator_loop = operator_sub.add_parser("loop-audit", help="Audit the READ/PLAN/RETRIEVE/COMPARE/EXECUTE/VERIFY/RECORD loop contract.")
     operator_loop.add_argument("--loop-id", default=None)
     operator_loop.add_argument("--limit", type=int, default=12)
@@ -2419,6 +2485,7 @@ HANDLERS = {
     "demo_readiness": cmd_demo_readiness,
     "operator_action_plan": cmd_operator_action_plan,
     "operator_action_receipts": cmd_operator_action_receipts,
+    "operator_record_action_receipt": cmd_operator_record_action_receipt,
     "operator_loop_audit": cmd_operator_loop_audit,
     "operator_intake_checklist": cmd_operator_intake_checklist,
     "operator_remediate_evidence_gap": cmd_operator_remediate_evidence_gap,

@@ -77,7 +77,7 @@ python3 scripts/customer_worker_external_write_gate_smoke.py
 - [x] Knowledge documents carry workspace/project/access metadata where required.
 - [x] Repo-global doctrine is separated from customer-private knowledge.
 - [x] Remote/scoped search enforces authorization.
-- [ ] Candidate/rejected memory is not treated as authority.
+- [x] Candidate/rejected memory is not treated as authority.
 - [x] Index excludes credentials, databases, runtime logs, caches and raw customer files.
 - [x] Redaction occurs before indexing.
 - [x] Search returns source path, hash, scope and retrieval ID.

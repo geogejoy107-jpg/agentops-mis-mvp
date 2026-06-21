@@ -4725,7 +4725,62 @@ def compute_agent_plan_hash(row: sqlite3.Row | dict) -> str:
     return stable_hash(agent_plan_contract(row))
 
 
-def verify_agent_plan_row(row: sqlite3.Row | dict) -> dict:
+def resolve_agent_plan_memory_authority(conn: sqlite3.Connection | None, row: sqlite3.Row | dict, refs: list) -> dict:
+    if conn is None:
+        return {
+            "checked": False,
+            "ok": True,
+            "approved": [],
+            "non_authoritative": [],
+            "missing": [],
+            "knowledge_context": [str(item) for item in refs if item],
+            "message": "Memory authority was not checked because no database connection was supplied.",
+            "token_omitted": True,
+        }
+    approved: list[dict] = []
+    non_authoritative: list[dict] = []
+    missing: list[str] = []
+    knowledge_context: list[str] = []
+    for item in refs:
+        ref = str(item or "").strip()
+        if not ref:
+            continue
+        memory = conn.execute(
+            """SELECT memory_id, review_status, scope, memory_type, task_id, agent_id, source_ref
+            FROM memories WHERE memory_id=?""",
+            (ref,),
+        ).fetchone()
+        if memory:
+            memory_info = {
+                "memory_id": memory["memory_id"],
+                "review_status": memory["review_status"],
+                "scope": memory["scope"],
+                "memory_type": memory["memory_type"],
+                "task_id": memory["task_id"],
+                "agent_id": memory["agent_id"],
+            }
+            if memory["review_status"] == "approved":
+                approved.append(memory_info)
+            else:
+                non_authoritative.append(memory_info)
+            continue
+        if ref.startswith("mem_"):
+            missing.append(ref)
+            continue
+        knowledge_context.append(ref)
+    return {
+        "checked": True,
+        "ok": not non_authoritative and not missing,
+        "approved": approved,
+        "non_authoritative": non_authoritative,
+        "missing": missing,
+        "knowledge_context": knowledge_context,
+        "message": "Memory ids must exist and be approved; knowledge-path context is allowed but is not treated as approved memory authority.",
+        "token_omitted": True,
+    }
+
+
+def verify_agent_plan_row(row: sqlite3.Row | dict, conn: sqlite3.Connection | None = None) -> dict:
     specs = load_json_list_field(row, "referenced_specs_json")
     memories = load_json_list_field(row, "referenced_memories_json")
     bases = load_json_list_field(row, "referenced_bases_json")
@@ -4733,9 +4788,11 @@ def verify_agent_plan_row(row: sqlite3.Row | dict) -> dict:
     steps = load_json_list_field(row, "execution_steps_json")
     risk = row["risk_level"]
     approval_required = bool(row["approval_required"])
+    memory_authority = resolve_agent_plan_memory_authority(conn, row, memories)
     checks = [
         {"id": "read_specs", "ok": bool(specs), "message": "Plan references specs or workflow docs."},
         {"id": "retrieve_memory", "ok": bool(memories), "message": "Plan references memory, knowledge, or failure-case context."},
+        {"id": "memory_authority", "ok": bool(memory_authority.get("ok")), "message": "Referenced memory ids exist and are approved before acting as authority.", "details": memory_authority},
         {"id": "compare_bases", "ok": bool(bases), "message": "Plan references base constraints or reusable foundations."},
         {"id": "execution_steps", "ok": len(steps) >= 3, "message": "Plan includes concrete execution steps."},
         {"id": "verification_plan", "ok": bool(str(row["verification_plan"] or "").strip()), "message": "Plan includes verification path."},
@@ -4753,6 +4810,10 @@ def verify_agent_plan_row(row: sqlite3.Row | dict) -> dict:
         "summary": {
             "referenced_specs": len(specs),
             "referenced_memories": len(memories),
+            "approved_memory_refs": len(memory_authority.get("approved") or []),
+            "non_authoritative_memory_refs": len(memory_authority.get("non_authoritative") or []),
+            "missing_memory_refs": len(memory_authority.get("missing") or []),
+            "knowledge_context_refs": len(memory_authority.get("knowledge_context") or []),
             "referenced_bases": len(bases),
             "proposed_files_to_change": len(files),
             "execution_steps": len(steps),
@@ -4791,7 +4852,7 @@ def verify_agent_plan(conn: sqlite3.Connection, plan_id: str, headers=None, auth
     if status != 200:
         return payload, status
     row = payload["agent_plan"]
-    verification = verify_agent_plan_row(row)
+    verification = verify_agent_plan_row(row, conn)
     row, verification_hash = persist_agent_plan_verification(conn, plan_id, verification)
     return {
         "provider": "agentops-agent-plan",
@@ -4988,7 +5049,7 @@ def verify_plan_evidence_manifest_row(conn: sqlite3.Connection, manifest: sqlite
     run = conn.execute("SELECT * FROM runs WHERE run_id=?", (manifest["run_id"],)).fetchone()
     task = conn.execute("SELECT * FROM tasks WHERE task_id=?", (manifest["task_id"],)).fetchone() if manifest["task_id"] else None
     evidence = plan_evidence_rows(conn, manifest)
-    plan_verification = verify_agent_plan_row(plan) if plan else {"pass": False, "checks": []}
+    plan_verification = verify_agent_plan_row(plan, conn) if plan else {"pass": False, "checks": []}
     expected_steps = load_json_list_field(manifest, "expected_steps_json")
     tool_rows = evidence["tool_calls"]
     eval_rows = evidence["evaluations"]
@@ -6122,7 +6183,7 @@ def agent_gateway_create_plan_evidence_manifest(conn: sqlite3.Connection, body) 
         return {"error": "forbidden", "message": "Manifest run_id must match the run pinned by the agent_plan."}, 403
     if plan["agent_id"] != run["agent_id"]:
         return {"error": "forbidden", "message": "Manifest requires agent_plan.agent_id to match run.agent_id."}, 403
-    plan_verification = verify_agent_plan_row(plan)
+    plan_verification = verify_agent_plan_row(plan, conn)
     plan, verification_hash = persist_agent_plan_verification(conn, plan_id, plan_verification)
     expected_steps = safe_json_list(body.get("expected_steps")) or load_json_list_field(plan, "execution_steps_json")
     row = {
@@ -6207,7 +6268,7 @@ def resolve_agent_plan_for_run(conn: sqlite3.Connection, body: dict, task: sqlit
             "current_plan_hash": current_hash,
             "token_omitted": True,
         }, 409)
-    verification = verify_agent_plan_row(plan)
+    verification = verify_agent_plan_row(plan, conn)
     if not verification.get("pass"):
         return None, ({
             "error": "agent_plan_verification_failed",
@@ -14281,7 +14342,7 @@ def latest_task_agent_plan(conn: sqlite3.Connection, task_id: str, agent_ids: li
 def task_intake_item_for_row(conn: sqlite3.Connection, row: sqlite3.Row | dict) -> dict:
     assigned_agent_ids = task_assigned_agent_ids(row)
     plan = latest_task_agent_plan(conn, row_field(row, "task_id"), assigned_agent_ids)
-    verification = verify_agent_plan_row(plan) if plan else None
+    verification = verify_agent_plan_row(plan, conn) if plan else None
     plan_verified = bool(plan and row_field(plan, "verified_at") and (verification or {}).get("pass"))
     referenced_specs = load_json_list_field(plan, "referenced_specs_json") if plan else []
     referenced_memories = load_json_list_field(plan, "referenced_memories_json") if plan else []
@@ -14639,6 +14700,21 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
         action_signature = stable_id("op_action_sig", lane, title, ui_route or "", source)[-18:]
         action_id = stable_id("op_action", lane, title, command, ui_route or "")[-18:]
         receipt, receipt_match = latest_receipt_for_action(command, action_id, action_signature)
+        def receipt_record_command(status: str, *, confirm: bool = False, summary: str = "") -> str:
+            parts = [
+                "agentops", "operator", "record-action-receipt",
+                "--action-command", command,
+                "--action-id", action_id,
+                "--action-signature", action_signature,
+                "--status", status,
+            ]
+            if verify_command:
+                parts.extend(["--verify-command", verify_command])
+            if summary:
+                parts.extend(["--result-summary", summary])
+            if confirm:
+                parts.append("--confirm-record")
+            return " ".join(shlex.quote(str(part)) for part in parts if part is not None)
         receipt_underlying_status = str((receipt or {}).get("status") or "missing")
         receipt_status = "stale" if receipt_match == "stale" else receipt_underlying_status
         receipt_verified = receipt_match == "current" and receipt_underlying_status == "verified"
@@ -14661,6 +14737,9 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             "summary": redact_text(summary, 360),
             "command": redact_text(command, 260),
             "verify_command": redact_text(verify_command, 260) if verify_command else None,
+            "receipt_record_command": redact_text(receipt_record_command("recorded"), 900),
+            "receipt_record_confirm_command": redact_text(receipt_record_command("recorded", confirm=True), 900),
+            "receipt_verify_record_command": redact_text(receipt_record_command("verified", confirm=True, summary="Action and verification completed."), 900),
             "ui_route": ui_route,
             "source": source,
             "evidence": evidence or {},
@@ -14685,6 +14764,9 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
                 "verify_hash": (receipt or {}).get("verify_hash"),
                 "source": (receipt or {}).get("source"),
                 "priority_boost": receipt_priority_boost,
+                "record_command": redact_text(receipt_record_command("recorded"), 900),
+                "record_confirm_command": redact_text(receipt_record_command("recorded", confirm=True), 900),
+                "verify_record_command": redact_text(receipt_record_command("verified", confirm=True, summary="Action and verification completed."), 900),
             },
             "token_omitted": True,
         })
@@ -15504,7 +15586,7 @@ def request_base_url(headers=None) -> str | None:
 
 def worker_dispatch_evidence_summary(conn: sqlite3.Connection, task_id: str, run_id: str | None, plan_id: str | None, manifest_id: str | None) -> dict:
     plan = conn.execute("SELECT * FROM agent_plans WHERE plan_id=?", (plan_id,)).fetchone() if plan_id else None
-    plan_verification = verify_agent_plan_row(plan) if plan else {"pass": False, "checks": []}
+    plan_verification = verify_agent_plan_row(plan, conn) if plan else {"pass": False, "checks": []}
     manifest = conn.execute("SELECT * FROM plan_evidence_manifests WHERE manifest_id=?", (manifest_id,)).fetchone() if manifest_id else None
     if not manifest and run_id:
         manifest = latest_plan_evidence_manifest_for_run(conn, run_id)

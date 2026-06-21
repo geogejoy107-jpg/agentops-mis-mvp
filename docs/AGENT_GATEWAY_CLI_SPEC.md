@@ -1279,7 +1279,12 @@ reports summary counters such as `evidence_gap_runs`, `missing_plan_runs`,
 `agentops operator remediate-evidence-gap --run-id <run_id>` without mutating
 the ledger. `task_intake` is the pre-run source for planned/backlog tasks: it
 checks assignment, verified Agent Plan, knowledge/spec references, base
-references, and high-risk approval boundaries before the task is pulled.
+references, and high-risk approval boundaries before the task is pulled. Each
+receipt-required `actions[]` row also includes `receipt_record_command`
+(preview-only), `receipt_record_confirm_command` (append a recorded receipt),
+and `receipt_verify_record_command` (append a verified action/VERIFY receipt)
+so a human, Hermes, OpenClaw, or Codex operator can close the RECORD gate
+through the same audited CLI path.
 
 ```bash
 agentops operator action-receipts --limit 12
@@ -1293,6 +1298,27 @@ required/verified/stale/missing counts, `action_plan_status`, top commands, and
 safety flags. Use it when a CLI operator needs the same Action Queue receipt
 health that `/workspace/agents` shows before deciding which explicit recovery
 command to run.
+
+```bash
+agentops operator record-action-receipt \
+  --action-command "agentops operator action-plan --limit 20" \
+  --verify-command "agentops operator loop-audit --limit 20" \
+  --status verified
+
+agentops operator record-action-receipt \
+  --action-command "agentops operator action-plan --limit 20" \
+  --verify-command "agentops operator loop-audit --limit 20" \
+  --status verified \
+  --confirm-record
+```
+
+Maps to `POST /api/operator/action-receipts` only when `--confirm-record` is
+present. Without confirmation it returns
+`operator_action_receipt_cli_preview`, hashes the supplied action/verify
+commands, and does not mutate the ledger. With confirmation it appends
+`operator.action_queue_receipt` runtime/audit evidence, still never executing
+`action_command` or `verify_command`. Valid statuses are `recorded`,
+`verified`, `failed`, and `skipped`.
 
 ```bash
 agentops operator intake-checklist --limit 12

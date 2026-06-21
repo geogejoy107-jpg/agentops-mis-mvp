@@ -201,8 +201,11 @@ GET  /api/agent-gateway/agent-plans/:plan_id/verify
 ```
 
 `GET /verify` checks that the plan names specs, retrieval/memory context, bases,
-execution steps, verification, rollback, risk and file scope. It is read-only;
-future recorded verification decisions should use a write-scoped endpoint.
+execution steps, verification, rollback, risk and file scope. Real `memory_id`
+references count as authority only when the memory exists and has
+`review_status=approved`; `candidate`, `rejected`, `stale` or missing memory ids
+fail the `memory_authority` gate. Knowledge paths may still be used as context,
+but they are reported separately from approved memory authority.
 
 `POST /api/agent-gateway/runs/start` is plan-bound: it rejects execution with
 `428 agent_plan_required` unless the selected Agent Plan matches the run's
@@ -280,7 +283,11 @@ command text. They do not execute shell commands, call live runtimes, or persist
 raw tokens. `action-plan` includes the `action_receipts` source and receipt
 counts in its summary; `loop-audit` includes the same source in RECORD evidence
 so the operator can see whether recovery actions were followed by explicit
-verification steps.
+verification steps. Each receipt-required `action-plan.actions[]` row also
+includes `receipt_record_command` for preview-only CLI recording,
+`receipt_record_confirm_command` for confirmed append-only recording, and
+`receipt_verify_record_command` for recording a verified action/VERIFY pair;
+these command strings never execute the recovery or VERIFY commands themselves.
 
 `GET /api/agent-gateway/tasks/pull?enforce_intake=true` applies the same gate
 at worker pull time: blocked planned/backlog tasks are omitted from `tasks[]`

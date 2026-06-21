@@ -137,6 +137,111 @@ def main() -> int:
     require(rejected_status == 400, f"approved plan create should fail: {rejected_status} {rejected_payload}", failures)
     require(rejected_payload.get("error") == "plan_status_transition_required", f"wrong rejection payload: {rejected_payload}", failures)
 
+    memory_status, memory_payload = http_json(args.base_url, "/api/agent-gateway/memories/propose", {
+        "workspace_id": "local-demo",
+        "agent_id": agent_id,
+        "task_id": task_id,
+        "canonical_text": "Candidate memory must not authorize execution until approved.",
+        "memory_type": "risk",
+        "source_type": "run_log",
+        "source_ref": f"agent_plan_integrity:{stamp}",
+        "confidence": 0.81,
+    })
+    outputs.append(json.dumps(memory_payload, ensure_ascii=False))
+    candidate_memory_id = (memory_payload.get("memory") or {}).get("memory_id")
+    require(memory_status in {200, 201}, f"memory propose failed: {memory_status} {memory_payload}", failures)
+    require(bool(candidate_memory_id), f"candidate memory id missing: {memory_payload}", failures)
+    require((memory_payload.get("memory") or {}).get("review_status") == "candidate", f"memory should start as candidate: {memory_payload}", failures)
+
+    candidate_plan = run([
+        "agent-plan",
+        "create",
+        "--agent-id",
+        agent_id,
+        "--task-id",
+        task_id,
+        "--task-understanding",
+        "Create a plan that incorrectly treats candidate memory as authority.",
+        "--referenced-specs",
+        "PROJECT_SPEC.md,AGENT_WORKFLOW.md",
+        "--referenced-memories",
+        str(candidate_memory_id),
+        "--referenced-bases",
+        "base_local_tasks",
+        "--proposed-files-to-change",
+        "server.py",
+        "--risk",
+        "medium",
+        "--execution-steps",
+        "READ,PLAN,RETRIEVE,VERIFY",
+        "--verification-plan",
+        "Candidate memory must fail authority verification.",
+        "--rollback-plan",
+        "Approve the memory or use knowledge context instead.",
+    ], args.base_url, agent_id)
+    outputs.extend([candidate_plan.stdout, candidate_plan.stderr])
+    candidate_plan_payload = load_json(candidate_plan)
+    candidate_plan_id = (candidate_plan_payload.get("agent_plan") or {}).get("plan_id")
+    require(candidate_plan.returncode == 0, f"candidate-memory plan create failed unexpectedly: {candidate_plan.stderr or candidate_plan.stdout}", failures)
+    require(bool(candidate_plan_id), f"candidate-memory plan id missing: {candidate_plan_payload}", failures)
+
+    candidate_verify = run(["agent-plan", "verify", "--plan-id", str(candidate_plan_id)], args.base_url, agent_id)
+    outputs.extend([candidate_verify.stdout, candidate_verify.stderr])
+    candidate_verify_payload = load_json(candidate_verify)
+    candidate_verification = candidate_verify_payload.get("verification") or {}
+    failed_ids = {check.get("id") for check in candidate_verification.get("failed_checks") or []}
+    candidate_summary = candidate_verification.get("summary") or {}
+    require(candidate_verify.returncode == 0, f"candidate-memory plan verify command failed: {candidate_verify.stderr or candidate_verify.stdout}", failures)
+    require(candidate_verification.get("pass") is False, f"candidate memory should not verify as authority: {candidate_verify_payload}", failures)
+    require("memory_authority" in failed_ids, f"memory_authority check should fail for candidate memory: {candidate_verify_payload}", failures)
+    require(int(candidate_summary.get("non_authoritative_memory_refs") or 0) >= 1, f"non-authoritative memory count missing: {candidate_summary}", failures)
+
+    approved_status, approved_memory = http_json(args.base_url, f"/api/memories/{candidate_memory_id}/approve", {})
+    outputs.append(json.dumps(approved_memory, ensure_ascii=False))
+    require(approved_status == 200, f"memory approve failed: {approved_status} {approved_memory}", failures)
+    require(approved_memory.get("review_status") == "approved", f"memory not approved: {approved_memory}", failures)
+
+    approved_plan = run([
+        "agent-plan",
+        "create",
+        "--agent-id",
+        agent_id,
+        "--task-id",
+        task_id,
+        "--task-understanding",
+        "Create a plan that references an approved memory authority.",
+        "--referenced-specs",
+        "PROJECT_SPEC.md,AGENT_WORKFLOW.md",
+        "--referenced-memories",
+        str(candidate_memory_id),
+        "--referenced-bases",
+        "base_local_tasks",
+        "--proposed-files-to-change",
+        "server.py",
+        "--risk",
+        "medium",
+        "--execution-steps",
+        "READ,PLAN,RETRIEVE,VERIFY",
+        "--verification-plan",
+        "Approved memory should pass authority verification.",
+        "--rollback-plan",
+        "Reopen memory review if evidence is stale.",
+    ], args.base_url, agent_id)
+    outputs.extend([approved_plan.stdout, approved_plan.stderr])
+    approved_plan_payload = load_json(approved_plan)
+    approved_plan_id = (approved_plan_payload.get("agent_plan") or {}).get("plan_id")
+    require(approved_plan.returncode == 0, f"approved-memory plan create failed: {approved_plan.stderr or approved_plan.stdout}", failures)
+    require(bool(approved_plan_id), f"approved-memory plan id missing: {approved_plan_payload}", failures)
+
+    approved_verify = run(["agent-plan", "verify", "--plan-id", str(approved_plan_id)], args.base_url, agent_id)
+    outputs.extend([approved_verify.stdout, approved_verify.stderr])
+    approved_verify_payload = load_json(approved_verify)
+    approved_verification = approved_verify_payload.get("verification") or {}
+    approved_summary = approved_verification.get("summary") or {}
+    require(approved_verify.returncode == 0, f"approved-memory plan verify failed: {approved_verify.stderr or approved_verify.stdout}", failures)
+    require(approved_verification.get("pass") is True, f"approved memory should verify as authority: {approved_verify_payload}", failures)
+    require(int(approved_summary.get("approved_memory_refs") or 0) >= 1, f"approved memory count missing: {approved_summary}", failures)
+
     created = run([
         "agent-plan",
         "create",
@@ -192,6 +297,8 @@ def main() -> int:
         "task_id": task_id,
         "plan_id": plan_id,
         "self_approved_rejected": rejected_status == 400,
+        "candidate_memory_rejected": "memory_authority" in failed_ids,
+        "approved_memory_verified": bool((approved_verify_payload.get("verification") or {}).get("pass")),
         "plan_hash": plan_hash,
         "verification_result_hash": verified_plan.get("verification_result_hash"),
         "failures": failures,
