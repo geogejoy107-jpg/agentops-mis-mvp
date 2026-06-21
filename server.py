@@ -2788,6 +2788,38 @@ def repo_list_workspace_stuck_workflow_jobs(conn: sqlite3.Connection, workspace_
     return stuck
 
 
+def repo_list_gateway_enrollments(conn: sqlite3.Connection, workspace_id: str | None = None, limit: int = 200):
+    where = ""
+    params: list = []
+    if workspace_id:
+        where = " WHERE COALESCE(workspace_id,'local-demo')=?"
+        params.append(normalize_workspace_id(workspace_id))
+    params.append(min(max(int(limit or 200), 1), 500))
+    return conn.execute(
+        """SELECT token_id,workspace_id,agent_id,scopes_json,status,label,heartbeat_timeout_sec,created_at,expires_at,revoked_at,last_used_at,last_heartbeat_at
+        FROM agent_gateway_tokens"""
+        + where
+        + " ORDER BY created_at DESC LIMIT ?",
+        params,
+    ).fetchall()
+
+
+def repo_list_gateway_sessions(conn: sqlite3.Connection, workspace_id: str | None = None, limit: int = 200):
+    where = ""
+    params: list = []
+    if workspace_id:
+        where = " WHERE COALESCE(workspace_id,'local-demo')=?"
+        params.append(normalize_workspace_id(workspace_id))
+    params.append(min(max(int(limit or 200), 1), 500))
+    return conn.execute(
+        """SELECT session_id,parent_token_id,workspace_id,agent_id,scopes_json,status,created_at,expires_at,revoked_at,last_used_at
+        FROM agent_gateway_sessions"""
+        + where
+        + " ORDER BY created_at DESC LIMIT ?",
+        params,
+    ).fetchall()
+
+
 def normalize_workspace_id(value) -> str:
     raw = str(value or "local-demo").strip()[:120]
     normalized = re.sub(r"[^A-Za-z0-9_.:-]+", "_", raw).strip("_")
@@ -3253,17 +3285,7 @@ def agent_gateway_token_heartbeat_state(row, now_dt: dt.datetime | None = None) 
 
 
 def agent_gateway_enrollment_rows(conn, workspace_id: str | None = None) -> list[dict]:
-    where = ""
-    params: list[str] = []
-    if workspace_id:
-        where = " WHERE COALESCE(workspace_id,'local-demo')=?"
-        params.append(normalize_workspace_id(workspace_id))
-    rows = rows_to_dicts(conn.execute(
-        "SELECT token_id,workspace_id,agent_id,scopes_json,status,label,heartbeat_timeout_sec,created_at,expires_at,revoked_at,last_used_at,last_heartbeat_at FROM agent_gateway_tokens"
-        + where
-        + " ORDER BY created_at DESC LIMIT 200",
-        params,
-    ).fetchall())
+    rows = rows_to_dicts(repo_list_gateway_enrollments(conn, workspace_id))
     now_dt = dt.datetime.now(dt.timezone.utc)
     for row in rows:
         scopes = parse_scope_list(row.get("scopes_json"))
@@ -3288,18 +3310,7 @@ def agent_gateway_session_state(row, now_dt: dt.datetime | None = None) -> str:
 
 
 def agent_gateway_session_rows(conn, workspace_id: str | None = None) -> list[dict]:
-    where = ""
-    params: list[str] = []
-    if workspace_id:
-        where = " WHERE COALESCE(workspace_id,'local-demo')=?"
-        params.append(normalize_workspace_id(workspace_id))
-    rows = rows_to_dicts(conn.execute(
-        """SELECT session_id,parent_token_id,workspace_id,agent_id,scopes_json,status,created_at,expires_at,revoked_at,last_used_at
-        FROM agent_gateway_sessions"""
-        + where
-        + " ORDER BY created_at DESC LIMIT 200",
-        params,
-    ).fetchall())
+    rows = rows_to_dicts(repo_list_gateway_sessions(conn, workspace_id))
     now_dt = dt.datetime.now(dt.timezone.utc)
     for row in rows:
         row["scopes"] = parse_scope_list(row.get("scopes_json"))

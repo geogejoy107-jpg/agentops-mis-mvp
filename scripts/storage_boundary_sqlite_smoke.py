@@ -42,6 +42,10 @@ def main() -> int:
     task_b = "tsk_storage_b"
     job_a = "wfjob_storage_a"
     job_b = "wfjob_storage_b"
+    token_id_a = ""
+    token_id_b = ""
+    session_id_a = ""
+    session_id_b = ""
 
     try:
         server.init_schema()
@@ -52,6 +56,38 @@ def main() -> int:
             )
             server.ensure_gateway_agent(conn, agent_a, runtime_type="mock")
             server.ensure_gateway_agent(conn, agent_b, runtime_type="mock")
+            enrollment_a, status = server.agent_gateway_create_enrollment(conn, {
+                "workspace_id": workspace_a,
+                "agent_id": agent_a,
+                "name": "Storage Boundary Agent A",
+                "runtime_type": "mock",
+                "scopes": ["tasks:read", "agents:heartbeat"],
+                "ttl_days": 1,
+            })
+            require(status == 201, f"enrollment A create failed: {status} {enrollment_a}")
+            enrollment_b, status = server.agent_gateway_create_enrollment(conn, {
+                "workspace_id": workspace_b,
+                "agent_id": agent_b,
+                "name": "Storage Boundary Agent B",
+                "runtime_type": "mock",
+                "scopes": ["tasks:read", "agents:heartbeat"],
+                "ttl_days": 1,
+            })
+            require(status == 201, f"enrollment B create failed: {status} {enrollment_b}")
+            token_id_a = enrollment_a["token_id"]
+            token_id_b = enrollment_b["token_id"]
+            session_a, status = server.agent_gateway_create_session(conn, {
+                "Authorization": f"Bearer {enrollment_a['token']}",
+                "X-AgentOps-Workspace-Id": workspace_a,
+            }, {"ttl_sec": 120, "scopes": ["tasks:read"]})
+            require(status == 201, f"session A create failed: {status} {session_a}")
+            session_b, status = server.agent_gateway_create_session(conn, {
+                "Authorization": f"Bearer {enrollment_b['token']}",
+                "X-AgentOps-Workspace-Id": workspace_b,
+            }, {"ttl_sec": 120, "scopes": ["tasks:read"]})
+            require(status == 201, f"session B create failed: {status} {session_b}")
+            session_id_a = session_a["session_id"]
+            session_id_b = session_b["session_id"]
             for workspace_id, agent_id, task_id in [
                 (workspace_a, agent_a, task_a),
                 (workspace_b, agent_b, task_b),
@@ -241,6 +277,15 @@ def main() -> int:
             remaining_stuck_ids = {row["job_id"] for row in server.repo_list_workspace_stuck_workflow_jobs(conn, workspace_a, threshold_sec=30, limit=20)}
             require(job_a not in remaining_stuck_ids and job_b not in remaining_stuck_ids, f"marked/cross workflow job still leaked as stuck: {remaining_stuck_ids}")
 
+            enrollment_ids = ids(server.repo_list_gateway_enrollments(conn, workspace_a), "token_id")
+            require(token_id_a in enrollment_ids and token_id_b not in enrollment_ids, f"gateway enrollment helper leaked workspace rows: {enrollment_ids}")
+            enrollment_rows = [dict(row) for row in server.repo_list_gateway_enrollments(conn, workspace_a)]
+            require(all("token_hash" not in row for row in enrollment_rows), f"gateway enrollment helper exposed token_hash: {enrollment_rows}")
+            session_ids = ids(server.repo_list_gateway_sessions(conn, workspace_a), "session_id")
+            require(session_id_a in session_ids and session_id_b not in session_ids, f"gateway session helper leaked workspace rows: {session_ids}")
+            session_rows = [dict(row) for row in server.repo_list_gateway_sessions(conn, workspace_a)]
+            require(all("session_hash" not in row for row in session_rows), f"gateway session helper exposed session_hash: {session_rows}")
+
         print(json.dumps({
             "ok": True,
             "db_path": "isolated_tmp" if owned_db else os.environ.get("AGENTOPS_DB_PATH"),
@@ -258,6 +303,8 @@ def main() -> int:
                 "repo_list_workspace_workflow_jobs",
                 "repo_get_workspace_workflow_job",
                 "repo_list_workspace_stuck_workflow_jobs",
+                "repo_list_gateway_enrollments",
+                "repo_list_gateway_sessions",
             ],
             "workspace_a": workspace_a,
             "workspace_b": workspace_b,
@@ -265,6 +312,8 @@ def main() -> int:
             "run_b": run_b,
             "workflow_job_a": job_a,
             "workflow_job_b": job_b,
+            "gateway_enrollment_a": token_id_a,
+            "gateway_session_a": session_id_a,
             "token_omitted": True,
             "raw_prompt_omitted": True,
         }, ensure_ascii=False, indent=2, sort_keys=True))
