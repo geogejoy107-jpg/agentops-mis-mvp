@@ -264,6 +264,12 @@ def main() -> int:
             artifact_id_b = artifact_b["artifact"]["artifact_id"]
             artifact_ids = ids(server.repo_list_workspace_artifacts(conn, workspace_a), "artifact_id")
             require(artifact_id_a in artifact_ids and artifact_id_b not in artifact_ids, f"artifact helper leaked workspace rows: {artifact_ids}")
+            gateway_artifact_ids = ids(server.repo_list_agent_gateway_artifacts(conn, workspace_a, agent_id=agent_a, bound_visibility=True, limit=20), "artifact_id")
+            require(artifact_id_a in gateway_artifact_ids and artifact_id_b not in gateway_artifact_ids, f"gateway artifact helper leaked workspace rows: {gateway_artifact_ids}")
+            gateway_approval_ids = ids(server.repo_list_agent_gateway_approvals(conn, workspace_a, agent_id=agent_a, bound_visibility=True, decisions=["pending"], limit=20), "approval_id")
+            require(approval_id_a in gateway_approval_ids and approval_id_b not in gateway_approval_ids, f"gateway approval helper leaked workspace rows: {gateway_approval_ids}")
+            gateway_memory_ids = ids(server.repo_list_agent_gateway_memories(conn, workspace_a, agent_id=agent_a, bound_visibility=True, statuses=["candidate"], limit=20), "memory_id")
+            require(memory_id_a in gateway_memory_ids and memory_id_b not in gateway_memory_ids, f"gateway memory helper leaked workspace rows: {gateway_memory_ids}")
 
             audit_rows = server.repo_list_workspace_audit(conn, workspace_a)
             audit_text = json.dumps([dict(row) for row in audit_rows], ensure_ascii=False, sort_keys=True)
@@ -323,6 +329,9 @@ def main() -> int:
                 "repo_get_agent_gateway_task",
                 "repo_list_agent_gateway_runs",
                 "repo_get_agent_gateway_run",
+                "repo_list_agent_gateway_artifacts",
+                "repo_list_agent_gateway_approvals",
+                "repo_list_agent_gateway_memories",
             ],
             "workspace_a": workspace_a,
             "workspace_b": workspace_b,
