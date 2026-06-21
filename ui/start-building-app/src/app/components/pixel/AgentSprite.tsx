@@ -18,6 +18,14 @@ const riskColor: Record<PixelAgent["risk"], string> = {
 };
 
 function agentPosition(zone: PixelZoneDefinition, index: number) {
+  if (zone.id === "task_hall") {
+    const offsets = [
+      { x: 0.14, y: 0.74 }, { x: 0.38, y: 0.74 }, { x: 0.62, y: 0.74 },
+      { x: 0.84, y: 0.74 }, { x: 0.51, y: 0.56 },
+    ];
+    const point = offsets[index % offsets.length];
+    return { left: `${zone.x + zone.w * point.x}%`, top: `${zone.y + zone.h * point.y}%` };
+  }
   const point = zoneCenter(zone, index);
   return { left: `${point.x}%`, top: `${point.y}%` };
 }
