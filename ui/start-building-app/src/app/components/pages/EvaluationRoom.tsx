@@ -131,7 +131,8 @@ export function EvaluationRoom() {
   const total = evaluations.length;
   const passed = evaluations.filter((evaluation) => evaluation.pass_fail === "pass").length;
   const failed = total - passed;
-  const averageScore = total ? Math.round(evaluations.reduce((sum, evaluation) => sum + evaluation.score, 0) / total) : 0;
+  const rawAverageScore = total ? evaluations.reduce((sum, evaluation) => sum + evaluation.score, 0) / total : 0;
+  const averageScore = Math.round(rawAverageScore <= 1 ? rawAverageScore * 100 : rawAverageScore);
   const failedRuns = runs.filter((run) => ["failed", "error", "blocked", "timeout"].includes(run.status));
   const handleCaseDecision = async (caseId: string, decision: "approve" | "reject") => {
     const action = `${decision}-${caseId}`;
