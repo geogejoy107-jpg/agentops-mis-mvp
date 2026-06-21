@@ -120,11 +120,12 @@ def main() -> int:
             status, seed_plan = http_json(base_url, "/api/operator/action-plan?limit=30")
             outputs.append(json.dumps(seed_plan, ensure_ascii=False))
             require(status == 200, f"seed action-plan status mismatch: {status} {seed_plan}", failures)
-            seed_action = next((item for item in seed_plan.get("actions") or [] if item.get("command")), {})
+            seed_action = next((item for item in seed_plan.get("actions") or [] if item.get("command") and item.get("receipt_required") is True), {})
             stale_seed_action = next((
                 item for item in seed_plan.get("actions") or []
                 if item.get("command")
                 and item.get("action_signature")
+                and item.get("receipt_required") is True
                 and item.get("command") != seed_action.get("command")
             ), {})
             action_command = str(seed_action.get("command") or "agentops worker status")
@@ -203,6 +204,10 @@ def main() -> int:
             require(status == 200, f"action-plan status mismatch: {status} {action_plan}", failures)
             plan_summary = action_plan.get("summary") or {}
             receipt_coverage = action_plan.get("receipt_coverage") or {}
+            coverage_action = next((row for row in action_plan.get("actions") or [] if row.get("source") == "receipt_coverage"), {})
+            require(bool(coverage_action), f"receipt coverage recovery action missing: {action_plan.get('actions')}", failures)
+            require(coverage_action.get("receipt_required") is False, f"coverage recovery action should not require receipt: {coverage_action}", failures)
+            require(coverage_action.get("verify_command") == "agentops operator loop-audit --limit 20", f"coverage recovery verify command wrong: {coverage_action}", failures)
             require(int(plan_summary.get("receipt_lookup_window") or 0) > int((action_plan.get("action_receipts") or {}).get("summary", {}).get("receipts") or 0), f"action-plan lookup should be deeper than display receipts: {plan_summary}", failures)
             require(int(receipt_coverage.get("verified") or 0) >= 1, f"receipt coverage lacks verified action: {receipt_coverage}", failures)
             require(int(receipt_coverage.get("stale") or 0) >= 1, f"receipt coverage lacks stale action: {receipt_coverage}", failures)

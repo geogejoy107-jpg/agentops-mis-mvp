@@ -14904,6 +14904,53 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
         "display_receipts": action_receipt_summary.get("receipts", 0),
         "token_omitted": True,
     }
+    if receipt_coverage_status != "ready":
+        recovery_command = "agentops operator action-plan --limit 20"
+        recovery_action_id = stable_id("op_action", "receipt_coverage", recovery_command, receipt_required_count, receipt_verified_count, receipt_stale_count, receipt_missing_count)[-18:]
+        recovery_action = {
+            "action_id": recovery_action_id,
+            "action_signature": stable_id("op_action_sig", "receipt_coverage", "action_queue_receipts")[-18:],
+            "lane": "receipt_coverage",
+            "severity": "attention",
+            "priority": 98,
+            "base_priority": 98,
+            "receipt_priority_boost": 0,
+            "title": "Record or refresh Action Queue receipts",
+            "summary": (
+                f"Receipt coverage {receipt_verified_count}/{receipt_required_count}; "
+                f"stale={receipt_stale_count}; missing={receipt_missing_count}. "
+                "Use /workspace/agents receipt buttons after running the queued recovery commands."
+            ),
+            "command": recovery_command,
+            "verify_command": "agentops operator loop-audit --limit 20",
+            "ui_route": "/workspace/agents",
+            "source": "receipt_coverage",
+            "evidence": receipt_coverage,
+            "receipt_required": False,
+            "receipt_status": "skipped",
+            "receipt_underlying_status": "skipped",
+            "receipt_match": "missing",
+            "receipt_current": False,
+            "receipt_verified": False,
+            "receipt_id": None,
+            "receipt_hash": None,
+            "receipt_state": {
+                "required": False,
+                "status": "skipped",
+                "underlying_status": "skipped",
+                "match": "missing",
+                "current": False,
+                "verified": False,
+                "priority_boost": 0,
+            },
+            "token_omitted": True,
+        }
+        if not any(item.get("source") == "receipt_coverage" for item in deduped):
+            deduped = [recovery_action, *deduped]
+            if len(deduped) > limit:
+                deduped = deduped[:limit]
+            blocked = [item for item in deduped if item.get("severity") == "blocked"]
+            attention = [item for item in deduped if item.get("severity") == "attention"]
     status = "blocked" if blocked else "attention" if attention else "ready"
     return {
         "provider": "agentops-operator",

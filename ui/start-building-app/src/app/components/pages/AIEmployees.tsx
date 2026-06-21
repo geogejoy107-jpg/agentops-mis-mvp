@@ -1173,11 +1173,13 @@ export function AIEmployees() {
       (wantedSignature && wantedSignature === String(receipt.action_signature || "").trim())
     ));
   };
-  const candidateReceiptVerified = (candidate: { action: string; actionSignature?: string | null; receiptVerified?: boolean }) => (
+  const candidateReceiptVerified = (candidate: { action: string; actionSignature?: string | null; receiptRequired?: boolean; receiptVerified?: boolean }) => (
+    candidate.receiptRequired === false ? true :
     typeof candidate.receiptVerified === "boolean" ? candidate.receiptVerified : latestReceiptForAction(candidate.action, candidate.actionSignature)?.status === "verified"
   );
-  const actionQueueCandidateScore = (candidate: { id: string; action: string; actionSignature?: string | null; receiptVerified?: boolean }) => (
+  const actionQueueCandidateScore = (candidate: { id: string; action: string; actionSignature?: string | null; receiptRequired?: boolean; receiptVerified?: boolean; isReceiptCoverageRecovery?: boolean }) => (
     isCloseEvidenceGapCommand(candidate.action) ? 120 :
+    candidate.isReceiptCoverageRecovery ? 115 :
     candidate.id.startsWith("loop-first-issue:") ? 110 :
     !candidateReceiptVerified(candidate) ? 80 :
     0
@@ -1198,10 +1200,12 @@ export function AIEmployees() {
       operatorAction: item,
       verifyAction: item.verify_command || (isCloseEvidenceGapCommand(item.command) ? "agentops operator action-plan --limit 20" : undefined),
       actionSignature: item.action_signature,
+      receiptRequired: item.receipt_required,
       receiptStatus: item.receipt_status,
       receiptVerified: item.receipt_verified,
       receiptHash: item.receipt_hash,
       receiptId: item.receipt_id,
+      isReceiptCoverageRecovery: item.source === "receipt_coverage",
     })),
     ...recommendedActions.map((action, index) => ({
       id: `fleet:${index}:${action}`,

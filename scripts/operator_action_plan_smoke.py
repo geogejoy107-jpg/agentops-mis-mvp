@@ -244,7 +244,13 @@ def validate_plan(payload: dict, label: str, failures: list[str], limit: int) ->
         require(bool(action.get("title")), f"{label} title missing: {action}", failures)
         require(bool(action.get("command")), f"{label} command missing: {action}", failures)
         require(bool(action.get("action_signature")), f"{label} action_signature missing: {action}", failures)
-        require(action.get("receipt_required") is True, f"{label} receipt_required missing: {action}", failures)
+        require(isinstance(action.get("receipt_required"), bool), f"{label} receipt_required missing: {action}", failures)
+        if action.get("source") == "receipt_coverage":
+            require(action.get("receipt_required") is False, f"{label} receipt coverage action should not require its own receipt: {action}", failures)
+            require(action.get("lane") == "receipt_coverage", f"{label} receipt coverage lane wrong: {action}", failures)
+            require(action.get("verify_command") == "agentops operator loop-audit --limit 20", f"{label} receipt coverage verify command wrong: {action}", failures)
+        else:
+            require(action.get("receipt_required") is True, f"{label} ordinary action should require receipt: {action}", failures)
         require(action.get("receipt_status") in {"missing", "recorded", "verified", "failed", "skipped", "stale"}, f"{label} bad receipt_status: {action}", failures)
         require(action.get("receipt_match") in {"missing", "current", "stale"}, f"{label} bad receipt_match: {action}", failures)
         require(isinstance(action.get("receipt_current"), bool), f"{label} receipt_current missing: {action}", failures)
