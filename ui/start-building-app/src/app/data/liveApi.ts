@@ -1181,6 +1181,58 @@ export interface OperatorActionPlanPayload {
   live_execution_performed?: boolean;
 }
 
+export interface OperatorLoopAuditStep {
+  id: string;
+  label: string;
+  status: string;
+  message?: string;
+  evidence: Record<string, unknown>;
+  command: string;
+  source: string;
+  token_omitted?: boolean;
+}
+
+export interface OperatorLoopAuditPayload {
+  provider: string;
+  operation: string;
+  status: string;
+  workspace_id: string;
+  loop_id?: string | null;
+  method: string;
+  summary: {
+    steps: number;
+    pass: number;
+    attention: number;
+    blocked: number;
+    knowledge_documents: number;
+    verified_agent_plans: number;
+    plan_bound_runs: number;
+    verified_plan_evidence_manifests: number;
+    evidence_gap_runs: number;
+    loop_runs: number;
+    loop_verified_plan_evidence_manifests: number;
+    loop_blocked_plan_evidence_manifests: number;
+    pending_approvals: number;
+    memory_candidates: number;
+    audit_logs: number;
+  };
+  steps: OperatorLoopAuditStep[];
+  next_actions: string[];
+  source_status: Record<string, string | undefined>;
+  sources?: Record<string, unknown>;
+  loop_readback?: HermesOpenClawLoopReadbackPayload | Record<string, unknown>;
+  safety: {
+    read_only: boolean;
+    ledger_mutated: boolean;
+    live_execution_performed: boolean;
+    raw_prompt_omitted: boolean;
+    raw_response_omitted: boolean;
+    token_omitted: boolean;
+  };
+  token_omitted?: boolean;
+  live_execution_performed?: boolean;
+}
+
 export interface EvaluationCaseCandidate {
   case_id: string;
   workspace_id: string;
@@ -3526,6 +3578,84 @@ export async function loadOperatorActionPlan(limit = 12): Promise<OperatorAction
     execution_evidence: normalizeExecutionEvidenceGaps(raw.execution_evidence),
     task_intake: normalizeTaskIntakeChecklist(raw.task_intake),
     dispatch_evidence: typeof raw.dispatch_evidence === "object" && raw.dispatch_evidence !== null ? raw.dispatch_evidence as Record<string, unknown> : undefined,
+    safety: {
+      read_only: boolValue(safetyRaw.read_only),
+      ledger_mutated: boolValue(safetyRaw.ledger_mutated),
+      live_execution_performed: boolValue(safetyRaw.live_execution_performed),
+      raw_prompt_omitted: boolValue(safetyRaw.raw_prompt_omitted),
+      raw_response_omitted: boolValue(safetyRaw.raw_response_omitted),
+      token_omitted: boolValue(safetyRaw.token_omitted),
+    },
+    token_omitted: boolValue(raw.token_omitted),
+    live_execution_performed: boolValue(raw.live_execution_performed),
+  };
+}
+
+export async function loadOperatorLoopAudit(limit = 12, loopId = ""): Promise<OperatorLoopAuditPayload> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (loopId) params.set("loop_id", loopId);
+  const raw = await optionalApiJson<Record<string, unknown>>(`/operator/loop-audit?${params.toString()}`, {
+    provider: "agentops-operator",
+    operation: "loop_audit",
+    status: "unavailable",
+    workspace_id: "local-demo",
+    loop_id: loopId || null,
+    method: "READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD",
+    summary: {},
+    steps: [],
+    next_actions: [],
+    source_status: {},
+    safety: {
+      read_only: true,
+      ledger_mutated: false,
+      live_execution_performed: false,
+      raw_prompt_omitted: true,
+      raw_response_omitted: true,
+      token_omitted: true,
+    },
+    token_omitted: true,
+    live_execution_performed: false,
+  });
+  const summaryRaw = typeof raw.summary === "object" && raw.summary !== null ? raw.summary as Record<string, unknown> : {};
+  const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
+  return {
+    provider: String(raw.provider || "agentops-operator"),
+    operation: String(raw.operation || "loop_audit"),
+    status: String(raw.status || "unknown"),
+    workspace_id: String(raw.workspace_id || "local-demo"),
+    loop_id: raw.loop_id ? String(raw.loop_id) : null,
+    method: String(raw.method || "READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD"),
+    summary: {
+      steps: numberValue(summaryRaw.steps, 0),
+      pass: numberValue(summaryRaw.pass, 0),
+      attention: numberValue(summaryRaw.attention, 0),
+      blocked: numberValue(summaryRaw.blocked, 0),
+      knowledge_documents: numberValue(summaryRaw.knowledge_documents, 0),
+      verified_agent_plans: numberValue(summaryRaw.verified_agent_plans, 0),
+      plan_bound_runs: numberValue(summaryRaw.plan_bound_runs, 0),
+      verified_plan_evidence_manifests: numberValue(summaryRaw.verified_plan_evidence_manifests, 0),
+      evidence_gap_runs: numberValue(summaryRaw.evidence_gap_runs, 0),
+      loop_runs: numberValue(summaryRaw.loop_runs, 0),
+      loop_verified_plan_evidence_manifests: numberValue(summaryRaw.loop_verified_plan_evidence_manifests, 0),
+      loop_blocked_plan_evidence_manifests: numberValue(summaryRaw.loop_blocked_plan_evidence_manifests, 0),
+      pending_approvals: numberValue(summaryRaw.pending_approvals, 0),
+      memory_candidates: numberValue(summaryRaw.memory_candidates, 0),
+      audit_logs: numberValue(summaryRaw.audit_logs, 0),
+    },
+    steps: asArray<Record<string, unknown>>(raw.steps).map((step) => ({
+      id: String(step.id || ""),
+      label: String(step.label || step.id || ""),
+      status: String(step.status || "attention"),
+      message: step.message ? String(step.message) : undefined,
+      evidence: typeof step.evidence === "object" && step.evidence !== null ? step.evidence as Record<string, unknown> : {},
+      command: String(step.command || ""),
+      source: String(step.source || ""),
+      token_omitted: step.token_omitted === undefined ? undefined : boolValue(step.token_omitted),
+    })).filter((step) => step.id),
+    next_actions: asArray<unknown>(raw.next_actions).map(String).filter(Boolean),
+    source_status: typeof raw.source_status === "object" && raw.source_status !== null ? raw.source_status as Record<string, string | undefined> : {},
+    sources: typeof raw.sources === "object" && raw.sources !== null ? raw.sources as Record<string, unknown> : undefined,
+    loop_readback: typeof raw.loop_readback === "object" && raw.loop_readback !== null ? raw.loop_readback as Record<string, unknown> : undefined,
     safety: {
       read_only: boolValue(safetyRaw.read_only),
       ledger_mutated: boolValue(safetyRaw.ledger_mutated),
