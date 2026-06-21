@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { ArrowRight, Layers3, Route } from "lucide-react";
 import { AgentSprite } from "./AgentSprite";
+import { PixelCampusBackdrop } from "./PixelCampusBackdrop";
 import { PixelZone } from "./PixelZone";
 import { TaskCardSprite } from "./TaskCardSprite";
 import { ZoneInspector } from "./ZoneInspector";
@@ -61,18 +62,37 @@ export function PixelOperatingMap({ agents, taskCards, metrics, onOpenRoute, com
           0%, 100% { opacity: .24; }
           50% { opacity: .82; }
         }
+        @keyframes pixelAgentIdle {
+          0%, 100% { transform: translateY(0); }
+          50% { transform: translateY(-1px); }
+        }
+        @keyframes pixelAgentWork {
+          0%, 100% { transform: translateY(0) rotate(-1deg); }
+          50% { transform: translateY(-2px) rotate(1deg); }
+        }
+        @keyframes pixelAgentWait {
+          0%, 100% { transform: translateY(0); opacity: .82; }
+          50% { transform: translateY(-1px); opacity: 1; }
+        }
+        @keyframes pixelAgentAlert {
+          0%, 100% { transform: translateX(-1px); }
+          50% { transform: translateX(1px); }
+        }
       `}</style>
 
       <section className={compact ? "w-full" : "col-span-12 xl:col-span-8"}>
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <div>
-            <div className="inline-flex items-center gap-1.5 rounded px-2 py-1 text-[10px] uppercase tracking-wide" style={{ background: "rgba(34,211,238,0.10)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.22)" }}>
+            <div
+              className="inline-flex items-center gap-1.5 border px-2 py-1 text-[10px] uppercase tracking-wide"
+              style={{ background: "rgba(34,211,238,0.10)", color: "var(--mis-cyan)", borderColor: "rgba(34,211,238,0.22)", boxShadow: "2px 2px 0 rgba(2,6,23,.3)" }}
+            >
               <Layers3 size={12} />
-              Native React / CSS floor
+              Original Pixel Campus v2
             </div>
             {!compact && (
               <p className="mt-1 text-[11px]" style={{ color: "var(--mis-dim)" }}>
-                Click once to inspect a zone. Double-click a zone, task card or agent trail to open the formal MIS page.
+                The map is a live MIS visualizer: rooms, agents and alerts are derived from the same operating data as the formal pages.
               </p>
             )}
           </div>
@@ -83,8 +103,8 @@ export function PixelOperatingMap({ agents, taskCards, metrics, onOpenRoute, com
                   key={zone.id}
                   type="button"
                   onClick={() => handleSelectZone(zone)}
-                  className="rounded px-2 py-1 hover:opacity-80"
-                  style={{ background: "var(--mis-surface2)", border: "1px solid rgba(148,163,184,0.16)" }}
+                  className="border px-2 py-1 hover:opacity-80"
+                  style={{ background: "var(--mis-surface2)", borderColor: "rgba(148,163,184,0.16)", boxShadow: "2px 2px 0 rgba(2,6,23,.28)" }}
                 >
                   {zone.label}: <span style={{ color: "var(--mis-cyan)" }}>{count}</span>
                 </button>
@@ -94,51 +114,36 @@ export function PixelOperatingMap({ agents, taskCards, metrics, onOpenRoute, com
         </div>
 
         <div
-          className="relative overflow-hidden rounded-lg"
+          className="relative overflow-hidden"
           style={{
             minHeight: compact ? 280 : 560,
             aspectRatio: "16 / 10",
-            background:
-              "radial-gradient(circle at 18% 20%, rgba(34,211,238,0.08), transparent 28%), radial-gradient(circle at 78% 18%, rgba(168,85,247,0.08), transparent 26%), linear-gradient(135deg, rgba(15,23,42,0.98), rgba(2,6,23,0.98))",
-            border: "1px solid var(--mis-border)",
-            boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.03), 0 20px 60px rgba(0,0,0,0.28)",
+            background: "#17212b",
+            border: "2px solid rgba(51,65,85,.9)",
+            boxShadow: "inset 0 0 0 2px rgba(2,6,23,.72), 0 20px 60px rgba(0,0,0,0.34), 6px 7px 0 rgba(2,6,23,.42)",
+            imageRendering: "pixelated",
           }}
           onClick={() => {
             if (!compact) setSelectedAgent(null);
           }}
         >
-          <div
-            className="absolute inset-0 opacity-50"
-            style={{
-              backgroundImage:
-                "linear-gradient(rgba(148,163,184,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(148,163,184,0.05) 1px, transparent 1px)",
-              backgroundSize: "24px 24px",
-            }}
-          />
-          <div
-            className="absolute inset-0 opacity-30"
-            style={{
-              backgroundImage:
-                "linear-gradient(45deg, transparent 49%, rgba(34,211,238,0.08) 50%, transparent 51%), linear-gradient(-45deg, transparent 49%, rgba(168,85,247,0.08) 50%, transparent 51%)",
-              backgroundSize: "96px 96px",
-            }}
-          />
+          <PixelCampusBackdrop />
 
           <div
-            className="absolute h-2 w-2 rounded-sm"
+            className="absolute z-[2] h-2 w-2"
             style={{ background: "var(--mis-cyan)", boxShadow: "0 0 14px var(--mis-cyan)", animation: "pixelPacketA 8s linear infinite" }}
           />
           <div
-            className="absolute h-2 w-2 rounded-sm"
+            className="absolute z-[2] h-2 w-2"
             style={{ background: "var(--mis-purple)", boxShadow: "0 0 14px var(--mis-purple)", animation: "pixelPacketB 9s linear infinite" }}
           />
           <div
-            className="absolute left-[50%] top-[48%] h-[1px] w-[38%] origin-left rotate-12"
-            style={{ background: "linear-gradient(90deg, rgba(34,211,238,0), rgba(34,211,238,0.42), rgba(34,211,238,0))", animation: "pixelPulse 2.8s ease-in-out infinite" }}
+            className="absolute left-[50%] top-[48%] z-[2] h-[1px] w-[38%] origin-left rotate-12"
+            style={{ background: "linear-gradient(90deg, rgba(34,211,238,0), rgba(34,211,238,0.34), rgba(34,211,238,0))", animation: "pixelPulse 2.8s ease-in-out infinite" }}
           />
           <div
-            className="absolute left-[21%] top-[42%] h-[1px] w-[39%] origin-left -rotate-12"
-            style={{ background: "linear-gradient(90deg, rgba(168,85,247,0), rgba(168,85,247,0.4), rgba(168,85,247,0))", animation: "pixelPulse 3.4s ease-in-out infinite" }}
+            className="absolute left-[21%] top-[42%] z-[2] h-[1px] w-[39%] origin-left -rotate-12"
+            style={{ background: "linear-gradient(90deg, rgba(168,85,247,0), rgba(168,85,247,0.32), rgba(168,85,247,0))", animation: "pixelPulse 3.4s ease-in-out infinite" }}
           />
 
           {PIXEL_ZONES.map((zone) => (
@@ -167,7 +172,10 @@ export function PixelOperatingMap({ agents, taskCards, metrics, onOpenRoute, com
             />
           ))}
 
-          <div className="absolute left-3 bottom-3 right-3 z-30 flex flex-wrap items-center justify-between gap-2 rounded-lg px-3 py-2" style={{ background: "rgba(2,6,23,0.72)", border: "1px solid rgba(148,163,184,0.16)", backdropFilter: "blur(8px)" }}>
+          <div
+            className="absolute bottom-3 left-3 right-3 z-30 flex flex-wrap items-center justify-between gap-2 border px-3 py-2"
+            style={{ background: "rgba(2,6,23,0.82)", borderColor: "rgba(148,163,184,0.2)", backdropFilter: "blur(6px)", boxShadow: "3px 3px 0 rgba(2,6,23,.38)" }}
+          >
             <div className="flex flex-wrap items-center gap-2 text-[10px]" style={{ color: "var(--mis-muted)" }}>
               <span className="inline-flex items-center gap-1"><span className="h-2 w-2" style={{ background: "var(--mis-cyan)" }} /> Running</span>
               <span className="inline-flex items-center gap-1"><span className="h-2 w-2" style={{ background: "#FBBF24" }} /> Approval</span>
@@ -181,8 +189,8 @@ export function PixelOperatingMap({ agents, taskCards, metrics, onOpenRoute, com
                   event.stopPropagation();
                   onOpenRoute(selectedAgent?.routeToDetail || selectedZone.route);
                 }}
-                className="inline-flex items-center gap-1.5 rounded px-2 py-1 text-[10px]"
-                style={{ background: "rgba(34,211,238,0.10)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.25)" }}
+                className="inline-flex items-center gap-1.5 border px-2 py-1 text-[10px]"
+                style={{ background: "rgba(34,211,238,0.10)", color: "var(--mis-cyan)", borderColor: "rgba(34,211,238,0.25)" }}
               >
                 <Route size={12} />
                 Open formal page
