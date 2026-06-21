@@ -8,7 +8,7 @@ purpose: >-
 defaults:
   repository: geogejoy107-jpg/agentops-mis-mvp
   branch: codex/agent-gateway-kb-demo
-  commit: 4dd4d1a49e499675fe13ec72b915553669f12d3c
+  commit: b20ab81f86a7f0b41516453360e3cff00753c6a7
   workspace_id: local-demo
   project_id: agentops-mis
   token_budget: 4000
