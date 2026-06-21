@@ -1,0 +1,280 @@
+schema_version: "0.1"
+suite: mis-context-engineer-v0
+status: prototype
+purpose: >-
+  Verify authority, scope, provenance, temporal, conflict, deduplication,
+  repository-localization, redaction, and token-budget behavior before runtime integration.
+
+defaults:
+  repository: geogejoy107-jpg/agentops-mis-mvp
+  branch: codex/agent-gateway-kb-demo
+  commit: 4dd4d1a49e499675fe13ec72b915553669f12d3c
+  workspace_id: local-demo
+  project_id: agentops-mis
+  token_budget: 4000
+  writeback_mode: candidate_only
+  semantic_retrieval: false
+
+metrics:
+  - authority_precision
+  - retrieval_coverage
+  - scope_violations
+  - stale_memory_selected
+  - conflicts_detected
+  - duplicate_proposals
+  - token_budget_used
+  - manifest_valid
+
+cases:
+  - id: authority_candidate_conflict
+    objective: Determine the current project milestone.
+    fixtures:
+      - source_ref: docs/project/PROJECT_STATE.md
+        authority_class: approved_project_state
+        workspace_id: local-demo
+        version: 89a29e9805cdfaa064b0cfe99198dfa1afaf6578
+        summary: Current milestone is v1.5 hardening before horizontal expansion.
+      - source_ref: chat:idea-001
+        authority_class: chat_source
+        workspace_id: local-demo
+        version: chat-summary-hash-001
+        summary: Start the Research Lab feature immediately as the top priority.
+    expect:
+      included:
+        - docs/project/PROJECT_STATE.md
+      excluded:
+        - source_ref: chat:idea-001
+          reason_code: candidate_not_authority
+      conflict_count: 1
+      current_fact: v1.5 hardening before horizontal expansion
+      canonical_write_count: 0
+
+  - id: cross_workspace_leakage
+    objective: Retrieve the project's approved deployment policy.
+    fixtures:
+      - source_ref: memory:local-policy
+        authority_class: approved_memory
+        workspace_id: local-demo
+        access_tags: [local-demo, project-owner]
+        version: mem-local-v2
+        summary: Loopback local use is currently allowed.
+      - source_ref: memory:customer-b-policy
+        authority_class: approved_memory
+        workspace_id: customer-b
+        access_tags: [customer-b, private]
+        version: mem-customer-b-v1
+        summary: Customer B private deployment configuration.
+    expect:
+      included:
+        - memory:local-policy
+      excluded:
+        - source_ref: memory:customer-b-policy
+          reason_code: scope_denied
+      scope_violations: 0
+      manifest_scope_gate_applied: true
+
+  - id: superseded_current_state
+    objective: State the current authentication rule.
+    fixtures:
+      - source_ref: memory:auth-v1
+        authority_class: approved_memory
+        workspace_id: local-demo
+        version: auth-v1
+        valid_from: "2026-05-01T00:00:00Z"
+        valid_to: "2026-06-01T00:00:00Z"
+        relationship: superseded
+        summary: Non-loopback mode may start without authentication.
+      - source_ref: decision:auth-v2
+        authority_class: approved_project_state
+        workspace_id: local-demo
+        version: decision-auth-v2
+        valid_from: "2026-06-01T00:00:00Z"
+        valid_to: null
+        relationship: updates
+        summary: Non-loopback production mode fails closed without configured authentication.
+    expect:
+      included:
+        - decision:auth-v2
+      excluded:
+        - source_ref: memory:auth-v1
+          reason_code: superseded
+      stale_memory_selected: 0
+
+  - id: historical_as_of_retrieval
+    objective: What authentication rule applied on 2026-05-20?
+    historical_as_of: "2026-05-20T12:00:00Z"
+    fixtures:
+      - source_ref: memory:auth-v1
+        authority_class: approved_memory
+        workspace_id: local-demo
+        version: auth-v1
+        valid_from: "2026-05-01T00:00:00Z"
+        valid_to: "2026-06-01T00:00:00Z"
+        summary: Non-loopback mode may start without authentication.
+      - source_ref: decision:auth-v2
+        authority_class: approved_project_state
+        workspace_id: local-demo
+        version: decision-auth-v2
+        valid_from: "2026-06-01T00:00:00Z"
+        valid_to: null
+        summary: Non-loopback production mode fails closed without configured authentication.
+    expect:
+      included:
+        - memory:auth-v1
+      excluded:
+        - source_ref: decision:auth-v2
+          reason_code: historical_mismatch
+      current_state_claim_allowed: false
+
+  - id: missing_git_commit_blocks_code_claims
+    objective: Describe the exact implementation of the current worker loop.
+    override:
+      commit: Unknown
+    fixtures:
+      - source_ref: chat:worker-description
+        authority_class: chat_source
+        workspace_id: local-demo
+        version: chat-worker-hash
+        summary: The worker probably executes four jobs concurrently.
+    expect:
+      included: []
+      unresolved_questions:
+        - Verify the exact Git commit before making code-state claims.
+      blocker: missing_git_context
+      canonical_write_count: 0
+
+  - id: strict_token_budget
+    objective: Prepare context to review Agent Plan hard binding.
+    override:
+      token_budget: 900
+    fixtures:
+      - source_ref: docs/project/DECISIONS.md
+        authority_class: approved_project_state
+        workspace_id: local-demo
+        version: ad5916fda36d2bc1d6b6bb8bbedb97100485ac14
+        token_estimate: 260
+        summary: Accepted authority and priority decisions.
+      - source_ref: docs/project/BACKLOG.md
+        authority_class: approved_project_state
+        workspace_id: local-demo
+        version: d471a7cee82eed79d4a3da20f2c35dad535af688
+        token_estimate: 240
+        summary: P0-01 through P0-03 acceptance criteria.
+      - source_ref: code:agent-plan-create
+        authority_class: git_fact
+        workspace_id: local-demo
+        version: 4dd4d1a49e499675fe13ec72b915553669f12d3c
+        token_estimate: 330
+        summary: Relevant implementation slice.
+      - source_ref: external:general-memory-survey
+        authority_class: external_research
+        workspace_id: local-demo
+        version: survey-v1
+        token_estimate: 700
+        summary: General survey with weak task specificity.
+    expect:
+      included:
+        - docs/project/DECISIONS.md
+        - docs/project/BACKLOG.md
+        - code:agent-plan-create
+      excluded:
+        - source_ref: external:general-memory-survey
+          reason_code: token_budget
+      budget_overflow: false
+
+  - id: duplicate_memory_proposal
+    objective: Propose a durable lesson about candidate memory.
+    fixtures:
+      - source_ref: decision:D-002
+        authority_class: approved_project_state
+        workspace_id: local-demo
+        version: D-002
+        summary: Candidate memory cannot become authority automatically.
+      - source_ref: run:lesson-duplicated
+        authority_class: mis_execution_fact
+        workspace_id: local-demo
+        version: run-lesson-hash
+        summary: Automatically captured memory must remain candidate until review.
+    expect:
+      relationship: duplicate_of
+      target_memory_ids:
+        - decision:D-002
+      new_memory_proposal_count: 0
+      duplicate_proposals: 0
+
+  - id: equal_authority_conflict
+    objective: Determine the approved release date.
+    fixtures:
+      - source_ref: decision:release-date-a
+        authority_class: approved_project_state
+        workspace_id: local-demo
+        version: release-a
+        summary: Release date is 2026-06-28.
+      - source_ref: decision:release-date-b
+        authority_class: approved_project_state
+        workspace_id: local-demo
+        version: release-b
+        summary: Release date is 2026-07-05.
+    expect:
+      conflict_count: 1
+      conflict_status: unresolved
+      final_release_date: null
+      unresolved_questions:
+        - Which accepted decision supersedes the other?
+
+  - id: repository_localization
+    objective: Change the Plan-to-Run binding and verify it.
+    fixtures:
+      - source_ref: code:server-agent-plan
+        authority_class: git_fact
+        workspace_id: local-demo
+        version: 4dd4d1a49e499675fe13ec72b915553669f12d3c
+        symbol: verify_agent_plan_row
+        summary: Agent Plan verification implementation.
+      - source_ref: code:server-run-create
+        authority_class: git_fact
+        workspace_id: local-demo
+        version: 4dd4d1a49e499675fe13ec72b915553669f12d3c
+        symbol: run creation path
+        summary: Run creation and binding implementation.
+      - source_ref: test:plan-evidence-smoke
+        authority_class: git_fact
+        workspace_id: local-demo
+        version: 4dd4d1a49e499675fe13ec72b915553669f12d3c
+        summary: Relevant plan evidence smoke test.
+      - source_ref: code:unrelated-pixel-art
+        authority_class: git_fact
+        workspace_id: local-demo
+        version: 4dd4d1a49e499675fe13ec72b915553669f12d3c
+        summary: Unrelated Pixel Office art direction.
+    expect:
+      included:
+        - code:server-agent-plan
+        - code:server-run-create
+        - test:plan-evidence-smoke
+      excluded:
+        - source_ref: code:unrelated-pixel-art
+          reason_code: other
+      relevant_test_present: true
+
+  - id: secret_redaction
+    objective: Summarize a connector failure safely.
+    fixtures:
+      - source_ref: run:connector-failure
+        authority_class: mis_execution_fact
+        workspace_id: local-demo
+        version: run-connector-failure-hash
+        contains:
+          - api_key
+          - access_token
+          - error_message
+        summary: Connector returned unauthorized with secret-bearing diagnostic fields.
+    expect:
+      included:
+        - run:connector-failure
+      redacted_fields:
+        - api_key
+        - access_token
+      secrets_omitted: true
+      raw_content_retained: false
+      chain_of_thought_omitted: true
