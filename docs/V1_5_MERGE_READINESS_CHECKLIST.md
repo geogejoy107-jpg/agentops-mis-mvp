@@ -170,9 +170,11 @@ python3 scripts/agent_gateway_review_queue_smoke.py
 
 Current v1.5 hardening status: `GET /api/workers/adapter-readiness` and
 `agentops worker readiness` expose `runtime-capability-manifest-v1` for mock,
-Hermes and OpenClaw. Hermes/OpenClaw remain `ledger_summary_only` and
-`restricted_until_runtime_tool_events`; this is a disclosed governance boundary,
-not full internal runtime tracing.
+Hermes and OpenClaw. Worker tool-call risk now consumes the manifest:
+Hermes/OpenClaw are recorded at a medium risk floor with
+`ledger_summary_only`, `restricted_until_runtime_tool_events`, and
+`requires_prepared_action_for_external_write` metadata. This is a disclosed
+governance boundary, not full internal runtime tracing.
 
 ```bash
 python3 scripts/runtime_connector_trust_smoke.py

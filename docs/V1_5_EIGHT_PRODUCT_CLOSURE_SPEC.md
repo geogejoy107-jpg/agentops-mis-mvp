@@ -153,6 +153,11 @@ Current v1.5 implementation:
 - Retryable adapter failures can be retried with `--adapter-max-attempts` and `--adapter-retry-delay-sec`.
 - Non-retryable safety failures such as `ConfirmRunRequired` do not retry.
 - Tool-call args, evaluation rubric, and audit metadata record `attempt_count`, `max_attempts`, and retry history summaries.
+- Worker tool-call risk now respects adapter capability manifests: mock remains
+  low risk, while Hermes/OpenClaw have a medium `risk_floor` and record
+  `observation_level`, `commercial_readiness`, and
+  `requires_prepared_action_for_external_write` in tool-call args, evaluation
+  rubric, and audit metadata.
 - Adapter output is summarized and hashed; raw prompt/response is not stored.
 - `GET /api/workers/adapter-readiness` and `agentops worker readiness` expose
   these manifests to operators and external agents without executing live work.

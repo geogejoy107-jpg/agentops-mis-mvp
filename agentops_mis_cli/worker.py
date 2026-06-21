@@ -485,6 +485,43 @@ def risk_allowed(task: dict, allow_high_risk: bool) -> bool:
     return allow_high_risk or (task.get("risk_level") or "medium") in {"low", "medium"}
 
 
+RISK_ORDER = {"low": 0, "medium": 1, "high": 2, "critical": 3}
+
+
+def max_risk(*values: str | None) -> str:
+    selected = "low"
+    for value in values:
+        risk = str(value or "low").lower()
+        if risk not in RISK_ORDER:
+            risk = "low"
+        if RISK_ORDER[risk] > RISK_ORDER[selected]:
+            selected = risk
+    return selected
+
+
+def adapter_capability_profile(adapter: str) -> dict:
+    if adapter == "mock":
+        return {
+            "observation_level": "structured_ledger",
+            "risk_floor": "low",
+            "commercial_readiness": "local_demo_ready",
+            "requires_prepared_action_for_external_write": False,
+        }
+    if adapter in {"hermes", "openclaw"}:
+        return {
+            "observation_level": "ledger_summary_only",
+            "risk_floor": "medium",
+            "commercial_readiness": "restricted_until_runtime_tool_events",
+            "requires_prepared_action_for_external_write": True,
+        }
+    return {
+        "observation_level": "ledger_summary_only",
+        "risk_floor": "medium",
+        "commercial_readiness": "unknown_runtime",
+        "requires_prepared_action_for_external_write": True,
+    }
+
+
 def emit_jsonl(args, payload: dict):
     if args.jsonl_log:
         print(json.dumps(payload, ensure_ascii=False, sort_keys=True), flush=True)
@@ -631,6 +668,8 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
     run_id = run["run_id"]
 
     result = execute_adapter_with_retries(task, args)
+    capability = adapter_capability_profile(args.adapter)
+    tool_risk = max_risk(task.get("risk_level"), capability.get("risk_floor"))
 
     tool_status = "completed" if result.ok else "failed"
     tool_payload = client.post("/api/agent-gateway/tool-calls", {
@@ -639,7 +678,7 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
         "agent_id": client.agent_id,
         "tool_name": f"agent_worker.{args.adapter}",
         "tool_category": "custom",
-        "risk_level": "low",
+        "risk_level": tool_risk,
         "status": tool_status,
         "target_resource": result.target_resource,
         "args": {
@@ -649,6 +688,11 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
             "attempt_count": result.attempt_count,
             "max_attempts": result.max_attempts,
             "retry_history": result.retry_history or [],
+            "observation_level": capability.get("observation_level"),
+            "risk_floor": capability.get("risk_floor"),
+            "effective_risk_level": tool_risk,
+            "commercial_readiness": capability.get("commercial_readiness"),
+            "requires_prepared_action_for_external_write": capability.get("requires_prepared_action_for_external_write"),
             "raw_omitted": True,
         },
         "result_summary": result.output_summary,
@@ -680,6 +724,11 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
             "raw_prompt_response_omitted": True,
             "attempt_count": result.attempt_count,
             "max_attempts": result.max_attempts,
+            "observation_level": capability.get("observation_level"),
+            "risk_floor": capability.get("risk_floor"),
+            "effective_risk_level": tool_risk,
+            "commercial_readiness": capability.get("commercial_readiness"),
+            "requires_prepared_action_for_external_write": capability.get("requires_prepared_action_for_external_write"),
         },
         "notes": "Worker adapter loop completed." if result.ok else f"Worker adapter loop failed: {result.error_type}",
     })
@@ -731,6 +780,11 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
             "attempt_count": result.attempt_count,
             "max_attempts": result.max_attempts,
             "retryable_final": result.retryable,
+            "observation_level": capability.get("observation_level"),
+            "risk_floor": capability.get("risk_floor"),
+            "effective_risk_level": tool_risk,
+            "commercial_readiness": capability.get("commercial_readiness"),
+            "requires_prepared_action_for_external_write": capability.get("requires_prepared_action_for_external_write"),
         },
     })
     manifest_payload = create_worker_plan_manifest(client, plan_id, run_id, tool_call_id, evaluation_id, artifact_id)

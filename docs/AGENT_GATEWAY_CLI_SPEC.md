@@ -885,6 +885,12 @@ runtime internal tool events can be ingested. For shared/commercial deployment,
 external writes from opaque runtimes must be routed through guarded MIS tools
 and prepared actions.
 
+The worker loop also uses this manifest when it writes `agent_worker.<adapter>`
+tool-call evidence. Mock remains low risk; Hermes/OpenClaw record at least a
+medium risk floor and include the observation level, commercial restriction, and
+prepared-action requirement in tool-call args, evaluation rubric, and audit
+metadata.
+
 Use `agentops worker readiness` when an operator or external agent needs to
 choose a route. Use `agentops worker preflight --adapter <name>` when debugging
 one specific adapter.

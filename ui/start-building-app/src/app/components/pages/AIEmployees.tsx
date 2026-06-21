@@ -348,6 +348,11 @@ export function AIEmployees() {
       loopRecordAuditTrail: "Audit trail",
       gateEvidenceGaps: "Gaps",
       gateEvidenceProof: "Proof",
+      loopChainTitle: "Latest loop chain",
+      copyFirstGateIssue: "Copy first issue",
+      firstGateIssue: "First issue",
+      allGatesPassing: "All gates passing",
+      verifyAfterAction: "Verify",
       noLoopRecordItems: "No loop-specific review rows. Follow the next gate command to create a loop_record memory.",
       approveCommand: "Approve command",
       rejectCommand: "Reject command",
@@ -715,6 +720,11 @@ export function AIEmployees() {
       loopRecordAuditTrail: "审计链",
       gateEvidenceGaps: "缺口",
       gateEvidenceProof: "证明",
+      loopChainTitle: "最新 Loop 链路",
+      copyFirstGateIssue: "复制首个异常",
+      firstGateIssue: "首个异常",
+      allGatesPassing: "全部 Gate 通过",
+      verifyAfterAction: "验收",
       noLoopRecordItems: "暂无 loop 专属评审行；请按下一步 Gate 命令创建 loop_record 记忆。",
       approveCommand: "批准命令",
       rejectCommand: "拒绝命令",
@@ -1125,8 +1135,23 @@ export function AIEmployees() {
     { bucket: "needs_memory_review", label: copy.memoryReview, count: integrationInboxSummary?.needs_memory_review ?? 0 },
   ];
   const isCloseEvidenceGapCommand = (action: string) => action.startsWith("agentops operator close-evidence-gap --run-id ");
-  const actionQueueCandidateScore = (action: string) => isCloseEvidenceGapCommand(action) ? 100 : 0;
+  const loopAuditSteps = operatorLoopAudit?.steps || [];
+  const loopAuditSummary = operatorLoopAudit?.summary;
+  const loopAuditNextAction = operatorLoopAudit?.next_actions?.[0] || "agentops operator loop-audit --limit 20";
+  const firstLoopIssueStep = loopAuditSteps.find((step) => step.status !== "pass");
+  const actionQueueCandidateScore = (candidate: { id: string; action: string }) => (
+    isCloseEvidenceGapCommand(candidate.action) ? 100 :
+    candidate.id.startsWith("loop-first-issue:") ? 90 :
+    0
+  );
   const actionQueueCandidates = [
+    ...(firstLoopIssueStep?.command ? [{
+      id: `loop-first-issue:${firstLoopIssueStep.id}:${firstLoopIssueStep.command}`,
+      action: firstLoopIssueStep.command,
+      source: `${copy.loopChainTitle} · ${firstLoopIssueStep.label} · ${firstLoopIssueStep.source || copy.actionSource}`,
+      status: firstLoopIssueStep.status,
+      verifyAction: loopAuditNextAction,
+    }] : []),
     ...operatorPlanActions.map((item) => ({
       id: `operator:${item.action_id}`,
       action: item.command,
@@ -1161,12 +1186,9 @@ export function AIEmployees() {
   ].filter((candidate, index, list) => (
     candidate.action &&
     list.findIndex(item => item.action === candidate.action) === index
-  )).sort((left, right) => actionQueueCandidateScore(right.action) - actionQueueCandidateScore(left.action)).slice(0, 8);
+  )).sort((left, right) => actionQueueCandidateScore(right) - actionQueueCandidateScore(left)).slice(0, 8);
   const actionQueueKey = actionQueueCandidates.map(item => item.id).join("|");
   const dispatchEvidenceActions = operatorPlanActions.filter(item => item.lane === "dispatch_evidence").slice(0, 4);
-  const loopAuditSteps = operatorLoopAudit?.steps || [];
-  const loopAuditSummary = operatorLoopAudit?.summary;
-  const loopAuditNextAction = operatorLoopAudit?.next_actions?.[0] || "agentops operator loop-audit --limit 20";
   const loopRecord = operatorLoopAudit?.loop_record;
   const loopRecordMemories = loopRecord?.memory_reviews || [];
   const loopRecordApprovals = loopRecord?.approval_reviews || [];
@@ -2745,6 +2767,62 @@ export function AIEmployees() {
               </div>
             ))}
           </div>
+          {loopAuditSteps.length > 0 && (
+            <div className="mt-3 rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.loopChainTitle}</div>
+                  <div className="text-[8px] mt-0.5 truncate" style={{ color: firstLoopIssueStep ? "var(--mis-warning)" : "var(--mis-muted)" }}>
+                    {firstLoopIssueStep ? `${copy.firstGateIssue}: ${firstLoopIssueStep.label} · ${firstLoopIssueStep.source || "—"}` : copy.allGatesPassing}
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {firstLoopIssueStep?.command ? (
+                    <button
+                      onClick={() => void copyIntakeCommand(firstLoopIssueStep.command)}
+                      className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded"
+                      style={{ color: "var(--mis-cyan)", background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}
+                      title={firstLoopIssueStep.command}
+                    >
+                      <Copy size={9} />
+                      {copiedIntakeCommand === firstLoopIssueStep.command ? copy.copiedCommand : copy.copyFirstGateIssue}
+                    </button>
+                  ) : (
+                    <StatusBadge status="pass" label={copy.allGatesPassing} />
+                  )}
+                  <StatusBadge status={operatorLoopAudit?.status || "unknown"} />
+                </div>
+              </div>
+              <div className="mt-2 overflow-x-auto">
+                <div className="flex items-stretch gap-1 min-w-max">
+                  {loopAuditSteps.map((step, index) => (
+                    <div key={step.id} className="flex items-center gap-1">
+                      <button
+                        onClick={() => void copyIntakeCommand(step.command)}
+                        className="min-w-[108px] text-left rounded px-2 py-1.5"
+                        style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}
+                        title={step.command}
+                      >
+                        <div className="flex items-center justify-between gap-1">
+                          <span className="text-[9px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{step.label}</span>
+                          <StatusBadge status={step.status} />
+                        </div>
+                        <div className="text-[8px] mt-1 truncate" style={{ color: "var(--mis-muted)" }}>
+                          {step.source || copy.actionSource}
+                        </div>
+                        <div className="text-[8px] mt-0.5 truncate" style={{ color: copiedIntakeCommand === step.command ? "var(--mis-success)" : "var(--mis-cyan)" }}>
+                          {copiedIntakeCommand === step.command ? copy.copiedCommand : copy.copyCommand}
+                        </div>
+                      </button>
+                      {index < loopAuditSteps.length - 1 && (
+                        <div className="text-[10px]" style={{ color: "var(--mis-dim)" }}>-&gt;</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-2 mt-3">
             {loopAuditSteps.map((step) => {
               const evidenceEntries = Object.entries(step.evidence || {});
@@ -3020,6 +3098,22 @@ export function AIEmployees() {
                     <div className="text-[10px] truncate mt-0.5" style={{ color: "var(--mis-muted)" }}>
                       {copy.actionSource}: {item.source}
                     </div>
+                    {"verifyAction" in item && item.verifyAction && (
+                      <div className="flex items-center gap-1.5 mt-0.5 min-w-0">
+                        <div className="text-[10px] truncate" style={{ color: "var(--mis-cyan)" }}>
+                          {copy.verifyAfterAction}: {item.verifyAction}
+                        </div>
+                        <button
+                          onClick={() => void copyIntakeCommand(item.verifyAction)}
+                          className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded shrink-0"
+                          style={{ color: "var(--mis-cyan)", background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}
+                          title={item.verifyAction}
+                        >
+                          <Copy size={9} />
+                          {copiedIntakeCommand === item.verifyAction ? copy.copiedCommand : copy.copyCommand}
+                        </button>
+                      </div>
+                    )}
                   </div>
                   <div className="col-span-2 sm:col-span-1 flex items-center gap-1.5 justify-end">
                     {closeGapDetails && (

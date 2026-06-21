@@ -137,7 +137,12 @@ def verify_non_retry_failure(base_url: str, worker_result: dict) -> dict:
     tool = next((item for item in tool_calls if item.get("tool_name") == "agent_worker.hermes"), {})
     args = tool_args(tool)
     require(tool.get("status") == "failed", f"non-retry tool call should fail: {tool_calls}")
+    require(tool.get("risk_level") == "medium", f"Hermes runtime tool call should use capability risk floor, not low: {tool}")
     require(args.get("attempt_count") == 1 and args.get("max_attempts") == 3, f"non-retry args missing attempt metadata: {args}")
+    require(args.get("observation_level") == "ledger_summary_only", f"Hermes observation level missing from tool args: {args}")
+    require(args.get("risk_floor") == "medium" and args.get("effective_risk_level") == "medium", f"Hermes risk floor missing from tool args: {args}")
+    require(args.get("commercial_readiness") == "restricted_until_runtime_tool_events", f"Hermes commercial restriction missing from tool args: {args}")
+    require(args.get("requires_prepared_action_for_external_write") is True, f"Hermes prepared-action requirement missing from tool args: {args}")
     history = args.get("retry_history") or []
     require(len(history) == 1 and history[0].get("retryable") is False, f"non-retry history invalid: {history}")
     return {
@@ -162,7 +167,9 @@ def smoke(base_url: str, stamp: str) -> dict:
             "scopes": [
                 "agents:write",
                 "agents:heartbeat",
+                "agent_plans:read",
                 "agent_plans:write",
+                "plan_evidence:read",
                 "plan_evidence:write",
                 "tasks:read",
                 "tasks:claim",
@@ -185,8 +192,11 @@ def smoke(base_url: str, stamp: str) -> dict:
         create_task(base_url, agent_id, retry_task_id, "adapter retry transient success smoke")
         retry_worker = run_worker(base_url, agent_id, token, [
             "--once",
+            "--no-enforce-intake",
             "--adapter",
             "mock",
+            "--task-id",
+            retry_task_id,
             "--adapter-max-attempts",
             "2",
             "--adapter-retry-delay-sec",
@@ -200,8 +210,11 @@ def smoke(base_url: str, stamp: str) -> dict:
         create_task(base_url, agent_id, gate_task_id, "adapter retry confirm gate smoke")
         gate_worker = run_worker(base_url, agent_id, token, [
             "--once",
+            "--no-enforce-intake",
             "--adapter",
             "hermes",
+            "--task-id",
+            gate_task_id,
             "--adapter-max-attempts",
             "3",
             "--adapter-retry-delay-sec",

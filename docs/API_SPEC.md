@@ -132,6 +132,9 @@ The manifest schema is `runtime-capability-manifest-v1`. Mock is currently
 `ledger_summary_only` and `restricted_until_runtime_tool_events` until internal
 runtime tool events are ingested or risky external writes are routed through
 prepared actions.
+Worker-created `agent_worker.<adapter>` tool calls consume the same manifest:
+Hermes/OpenClaw record at least a medium risk floor plus observation and
+commercial restriction metadata instead of being treated as always low risk.
 
 ## Knowledge Search
 
