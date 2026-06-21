@@ -25,6 +25,7 @@ import {
   loadIntegrationInbox,
   loadLocalReadiness,
   loadOperatorActionPlan,
+  loadOperatorLoopAudit,
   loadReviewQueue,
   loadSecurityProductionReadiness,
   loadStuckWorkflowJobs,
@@ -63,6 +64,7 @@ import {
   type HermesOpenClawLoopReadbackPayload,
   type HermesOpenClawLoopWorkflowResult,
   type OperatorActionPlanPayload,
+  type OperatorLoopAuditPayload,
   type ReviewQueuePayload,
   type TaskIntakeChecklistItem,
   type WorkerAdapterName,
@@ -187,7 +189,7 @@ export function AIEmployees() {
     scopes: DEFAULT_GATEWAY_SCOPES.join(", "),
   });
   const { data, loading, error, refresh } = useLiveData(async () => {
-    const [metrics, demoReadiness, workerStatus, workerFleet, workerHygiene, adapterReadiness, localReadiness, operatorActionPlan, securityReadiness, integrationInbox, commanderWorkPackages, reviewQueue, customerDeliveryBoard, loopLaneReadback, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs] = await Promise.all([
+    const [metrics, demoReadiness, workerStatus, workerFleet, workerHygiene, adapterReadiness, localReadiness, operatorActionPlan, operatorLoopAudit, securityReadiness, integrationInbox, commanderWorkPackages, reviewQueue, customerDeliveryBoard, loopLaneReadback, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs] = await Promise.all([
       loadDashboard(),
       loadDemoReadiness(),
       loadWorkerStatus(),
@@ -196,6 +198,7 @@ export function AIEmployees() {
       loadWorkerAdapterReadiness(),
       loadLocalReadiness(),
       loadOperatorActionPlan(12),
+      loadOperatorLoopAudit(12),
       loadSecurityProductionReadiness(),
       loadIntegrationInbox({ bucket: integrationInboxBucket, limit: 20 }),
       loadCommanderWorkPackages({ limit: 8 }),
@@ -211,7 +214,7 @@ export function AIEmployees() {
       loadStuckWorkflowJobs(30, 8),
     ]);
     const agents = await loadAgents(metrics);
-    return { agents, demoReadiness, workerStatus, workerFleet, workerHygiene, adapterReadiness, localReadiness, operatorActionPlan, securityReadiness, integrationInbox, commanderWorkPackages, reviewQueue, customerDeliveryBoard, loopLaneReadback, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs };
+    return { agents, demoReadiness, workerStatus, workerFleet, workerHygiene, adapterReadiness, localReadiness, operatorActionPlan, operatorLoopAudit, securityReadiness, integrationInbox, commanderWorkPackages, reviewQueue, customerDeliveryBoard, loopLaneReadback, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs };
   }, [integrationInboxBucket]);
   const agents = data?.agents || [];
   const demoReadiness = data?.demoReadiness;
@@ -222,6 +225,7 @@ export function AIEmployees() {
   const adapterReadiness = data?.adapterReadiness;
   const localReadiness = data?.localReadiness;
   const operatorActionPlan = data?.operatorActionPlan as OperatorActionPlanPayload | undefined;
+  const operatorLoopAudit = data?.operatorLoopAudit as OperatorLoopAuditPayload | undefined;
   const operatorPlanActions = operatorActionPlan?.actions || [];
   const operatorPlanSummary = operatorActionPlan?.summary;
   const operatorEvidenceGaps = operatorActionPlan?.execution_evidence?.gaps || [];
@@ -313,6 +317,10 @@ export function AIEmployees() {
       demoReadinessSummary: "Canonical v1.5 recording path: readiness, security boundary, fleet lanes, async inbox, customer task loop, and run ledger evidence.",
       demoReady: "Demo ready",
       shotsReady: "Shots ready",
+      loopAuditTitle: "Loop audit",
+      loopAuditSummary: "READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD gates across Agent Plans, evidence manifests, reviews, memory and audit.",
+      methodBlock: "Method block",
+      nextGateAction: "Next gate action",
       actionQueueTitle: "Operator action queue",
       actionQueueSummary: "Drag to reorder your next checks. Use arrows as the precise fallback.",
       actionSource: "Source",
@@ -660,6 +668,10 @@ export function AIEmployees() {
       demoReadinessSummary: "v1.5 录屏主路径：本地就绪、安全边界、Fleet 队伍、异步 Inbox、客户任务闭环、Run 账本证据。",
       demoReady: "可录 Demo",
       shotsReady: "镜头就绪",
+      loopAuditTitle: "Loop 审计",
+      loopAuditSummary: "围绕 Agent Plan、证据清单、评审、记忆和审计账本检查 READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD。",
+      methodBlock: "方法块",
+      nextGateAction: "下一步 Gate 动作",
       actionQueueTitle: "Operator 动作队列",
       actionQueueSummary: "拖拽调整下一步检查顺序；也可以用箭头精确移动。",
       actionSource: "来源",
@@ -1098,6 +1110,9 @@ export function AIEmployees() {
   )).sort((left, right) => actionQueueCandidateScore(right.action) - actionQueueCandidateScore(left.action)).slice(0, 8);
   const actionQueueKey = actionQueueCandidates.map(item => item.id).join("|");
   const dispatchEvidenceActions = operatorPlanActions.filter(item => item.lane === "dispatch_evidence").slice(0, 4);
+  const loopAuditSteps = operatorLoopAudit?.steps || [];
+  const loopAuditSummary = operatorLoopAudit?.summary;
+  const loopAuditNextAction = operatorLoopAudit?.next_actions?.[0] || "agentops operator loop-audit --limit 20";
   const orderedActionQueue = [
     ...actionQueueOrder.map(id => actionQueueCandidates.find(item => item.id === id)).filter(Boolean),
     ...actionQueueCandidates.filter(item => !actionQueueOrder.includes(item.id)),
@@ -2612,6 +2627,71 @@ export function AIEmployees() {
                 <div className="text-[10px] mt-1 truncate" style={{ color: "var(--mis-muted)" }}>{shot.route || shot.command || "—"}</div>
               </div>
             ))}
+          </div>
+        </div>
+
+        <div className="rounded-lg p-3 mt-4" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+          <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <Activity size={13} style={{ color: operatorLoopAudit?.status === "blocked" ? "var(--mis-warning)" : "var(--mis-cyan)" }} />
+                <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.loopAuditTitle}</div>
+                <StatusBadge status={operatorLoopAudit?.status || "unknown"} />
+              </div>
+              <p className="text-[10px] mt-1 max-w-4xl" style={{ color: "var(--mis-dim)" }}>
+                {copy.loopAuditSummary}
+              </p>
+              <div className="text-[10px] mt-1 truncate" style={{ color: "var(--mis-muted)" }}>
+                {copy.methodBlock}: {operatorLoopAudit?.method || "READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD"}
+              </div>
+            </div>
+            <StatusBadge status={operatorLoopAudit?.safety?.read_only && !operatorLoopAudit?.safety?.ledger_mutated ? "pass" : "attention"} label={operatorLoopAudit?.safety?.read_only ? copy.safetyProof : copy.statusAttention} />
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3">
+            {[
+              { label: copy.loopReadback, value: `${loopAuditSummary?.loop_verified_plan_evidence_manifests ?? 0}/${loopAuditSummary?.loop_runs ?? 0}`, status: (loopAuditSummary?.loop_blocked_plan_evidence_manifests || 0) > 0 ? "blocked" : (loopAuditSummary?.loop_verified_plan_evidence_manifests || 0) > 0 ? "pass" : "attention" },
+              { label: copy.agentPlan, value: loopAuditSummary?.verified_agent_plans ?? 0, status: (loopAuditSummary?.verified_agent_plans || 0) > 0 ? "pass" : "attention" },
+              { label: copy.planEvidence, value: loopAuditSummary?.verified_plan_evidence_manifests ?? 0, status: (loopAuditSummary?.evidence_gap_runs || 0) > 0 ? "blocked" : (loopAuditSummary?.verified_plan_evidence_manifests || 0) > 0 ? "pass" : "attention" },
+              { label: copy.memoryApprovalCounts, value: `${loopAuditSummary?.memory_candidates ?? 0}/${loopAuditSummary?.pending_approvals ?? 0}`, status: ((loopAuditSummary?.memory_candidates || 0) + (loopAuditSummary?.pending_approvals || 0)) > 0 ? "attention" : "pass" },
+            ].map((item) => (
+              <div key={item.label} className="rounded px-2 py-1" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                <div className="text-[9px]" style={{ color: "var(--mis-muted)" }}>{item.label}</div>
+                <div className="flex items-center justify-between gap-2 mt-0.5">
+                  <div className="text-[10px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{item.value}</div>
+                  <StatusBadge status={item.status} />
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-2 mt-3">
+            {loopAuditSteps.map((step) => {
+              const evidenceEntries = Object.entries(step.evidence || {}).slice(0, 3);
+              return (
+                <div key={step.id} className="rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-[10px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{step.label}</div>
+                    <StatusBadge status={step.status} />
+                  </div>
+                  <div className="text-[9px] mt-1 line-clamp-2" style={{ color: "var(--mis-muted)" }}>{step.message || step.source}</div>
+                  {evidenceEntries.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-2">
+                      {evidenceEntries.map(([key, value]) => (
+                        <span key={key} className="text-[9px] px-1.5 py-0.5 rounded" style={{ color: "var(--mis-dim)", background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                          {key}: {String(value)}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          <div className="mt-3 rounded px-3 py-2 flex flex-col sm:flex-row sm:items-center justify-between gap-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+            <div className="min-w-0">
+              <div className="text-[9px]" style={{ color: "var(--mis-muted)" }}>{copy.nextGateAction}</div>
+              <div className="text-[10px] font-semibold truncate" style={{ color: "var(--mis-cyan)" }}>{loopAuditNextAction}</div>
+            </div>
+            <StatusBadge status={operatorLoopAudit?.token_omitted && !operatorLoopAudit?.live_execution_performed ? "pass" : "attention"} label={operatorLoopAudit?.token_omitted ? copy.tokenOmittedProof : copy.statusAttention} />
           </div>
         </div>
 
