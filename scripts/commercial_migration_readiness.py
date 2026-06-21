@@ -192,6 +192,7 @@ def main() -> int:
                 "python3 scripts/agent_gateway_scope_matrix_smoke.py",
                 "python3 scripts/workspace_isolation_smoke.py",
                 "python3 scripts/workspace_rbac_governance_smoke.py",
+                "python3 scripts/workspace_memory_session_governance_smoke.py",
             ],
         },
         {

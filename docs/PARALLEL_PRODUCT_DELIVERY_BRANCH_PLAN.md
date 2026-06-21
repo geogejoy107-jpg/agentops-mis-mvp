@@ -75,6 +75,7 @@ python3 scripts/agent_gateway_scope_matrix_smoke.py
 python3 scripts/agent_gateway_session_smoke.py
 python3 scripts/workspace_isolation_smoke.py
 python3 scripts/workspace_rbac_governance_smoke.py
+python3 scripts/workspace_memory_session_governance_smoke.py
 python3 scripts/enrollment_approval_workflow_smoke.py
 python3 scripts/remote_agent_token_worker_smoke.py
 ```

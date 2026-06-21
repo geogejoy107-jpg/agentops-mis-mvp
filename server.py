@@ -549,6 +549,7 @@ CREATE TABLE IF NOT EXISTS approvals (
 
 CREATE TABLE IF NOT EXISTS memories (
     memory_id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL DEFAULT 'local-demo',
     scope TEXT NOT NULL CHECK(scope IN ('task','project','org')),
     memory_type TEXT NOT NULL CHECK(memory_type IN ('policy','sop','decision','commitment','risk','failure_case','project_context','customer_preference','agent_lesson','artifact_summary')),
     canonical_text TEXT NOT NULL,
@@ -952,6 +953,7 @@ CREATE INDEX IF NOT EXISTS idx_tool_calls_risk ON tool_calls(risk_level);
 CREATE INDEX IF NOT EXISTS idx_approvals_decision ON approvals(decision);
 CREATE INDEX IF NOT EXISTS idx_memories_status ON memories(review_status);
 CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope);
+CREATE INDEX IF NOT EXISTS idx_memories_workspace ON memories(workspace_id, updated_at);
 CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_logs(entity_type, entity_id);
 CREATE INDEX IF NOT EXISTS idx_runtime_events_connector ON runtime_events(runtime_connector_id);
 CREATE INDEX IF NOT EXISTS idx_agent_gateway_tokens_agent ON agent_gateway_tokens(agent_id);
@@ -1012,11 +1014,22 @@ def ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str):
 def ensure_schema_migrations(conn: sqlite3.Connection):
     ensure_column(conn, "tasks", "workspace_id", "workspace_id TEXT NOT NULL DEFAULT 'local-demo'")
     ensure_column(conn, "runs", "workspace_id", "workspace_id TEXT NOT NULL DEFAULT 'local-demo'")
+    ensure_column(conn, "memories", "workspace_id", "workspace_id TEXT NOT NULL DEFAULT 'local-demo'")
     ensure_column(conn, "runtime_connectors", "trust_status", "trust_status TEXT NOT NULL DEFAULT 'trusted'")
     ensure_column(conn, "runtime_connectors", "trust_note", "trust_note TEXT")
     ensure_column(conn, "runtime_connectors", "trust_updated_at", "trust_updated_at TEXT")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_workspace ON tasks(workspace_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_workspace ON runs(workspace_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_workspace ON memories(workspace_id, updated_at)")
+    conn.execute(
+        """UPDATE memories
+        SET workspace_id=(
+            SELECT COALESCE(tasks.workspace_id,'local-demo') FROM tasks WHERE tasks.task_id=memories.task_id
+        )
+        WHERE task_id IS NOT NULL
+          AND EXISTS (SELECT 1 FROM tasks WHERE tasks.task_id=memories.task_id)
+          AND COALESCE(workspace_id,'local-demo')='local-demo'"""
+    )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_workflow_jobs_status ON workflow_jobs(status, created_at)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_plans_workspace ON agent_plans(workspace_id, created_at)")
     ensure_knowledge_fts(conn)
@@ -1784,6 +1797,14 @@ def upsert_evaluation(conn, row: dict, actor_id="adapter-import") -> str:
 
 
 def upsert_memory_candidate(conn, row: dict, actor_id="adapter-import") -> str:
+    if not row.get("workspace_id"):
+        workspace_id = "local-demo"
+        if row.get("task_id"):
+            task = conn.execute("SELECT workspace_id FROM tasks WHERE task_id=?", (row.get("task_id"),)).fetchone()
+            workspace_id = row_workspace(task) if task else workspace_id
+        row["workspace_id"] = workspace_id
+    else:
+        row["workspace_id"] = normalize_workspace_id(row.get("workspace_id"))
     before = conn.execute("SELECT * FROM memories WHERE memory_id=?", (row["memory_id"],)).fetchone()
     if before:
         if actor_id == "openclaw-import":
@@ -1791,7 +1812,7 @@ def upsert_memory_candidate(conn, row: dict, actor_id="adapter-import") -> str:
         if row_unchanged(before, row, {"created_at", "updated_at", "ttl_review_due_at"}):
             return "unchanged"
         conn.execute(
-            """UPDATE memories SET scope=:scope, memory_type=:memory_type, canonical_text=:canonical_text,
+            """UPDATE memories SET workspace_id=:workspace_id, scope=:scope, memory_type=:memory_type, canonical_text=:canonical_text,
             source_type=:source_type, source_ref=:source_ref, project_id=:project_id, task_id=:task_id,
             agent_id=:agent_id, confidence=:confidence, review_status=:review_status, owner_user_id=:owner_user_id,
             ttl_review_due_at=:ttl_review_due_at, supersedes_memory_id=:supersedes_memory_id,
@@ -1801,8 +1822,8 @@ def upsert_memory_candidate(conn, row: dict, actor_id="adapter-import") -> str:
         action = "memory.update"
     else:
         conn.execute(
-            """INSERT INTO memories(memory_id,scope,memory_type,canonical_text,source_type,source_ref,project_id,task_id,agent_id,confidence,review_status,owner_user_id,ttl_review_due_at,supersedes_memory_id,access_tags,created_at,updated_at)
-            VALUES(:memory_id,:scope,:memory_type,:canonical_text,:source_type,:source_ref,:project_id,:task_id,:agent_id,:confidence,:review_status,:owner_user_id,:ttl_review_due_at,:supersedes_memory_id,:access_tags,:created_at,:updated_at)""",
+            """INSERT INTO memories(memory_id,workspace_id,scope,memory_type,canonical_text,source_type,source_ref,project_id,task_id,agent_id,confidence,review_status,owner_user_id,ttl_review_due_at,supersedes_memory_id,access_tags,created_at,updated_at)
+            VALUES(:memory_id,:workspace_id,:scope,:memory_type,:canonical_text,:source_type,:source_ref,:project_id,:task_id,:agent_id,:confidence,:review_status,:owner_user_id,:ttl_review_due_at,:supersedes_memory_id,:access_tags,:created_at,:updated_at)""",
             row,
         )
         action = "memory.propose"
@@ -2585,6 +2606,12 @@ def request_workspace(headers, qs: dict | None = None, fallback: str = "local-de
     return normalize_workspace_id(value)
 
 
+def optional_request_workspace(headers, qs: dict | None = None) -> str | None:
+    qs = qs or {}
+    value = (qs.get("workspace_id") or [None])[0] or (headers.get("X-AgentOps-Workspace-Id") if headers else None)
+    return normalize_workspace_id(value) if value else None
+
+
 def workspace_hidden(entity_type: str, entity_id: str) -> dict:
     return {"error": "not found", "message": f"{entity_type} not found in requested workspace.", "entity_id": entity_id}
 
@@ -3060,8 +3087,18 @@ def agent_gateway_token_heartbeat_state(row, now_dt: dt.datetime | None = None) 
     return "stale" if stale else "fresh"
 
 
-def agent_gateway_enrollment_rows(conn) -> list[dict]:
-    rows = rows_to_dicts(conn.execute("SELECT token_id,workspace_id,agent_id,scopes_json,status,label,heartbeat_timeout_sec,created_at,expires_at,revoked_at,last_used_at,last_heartbeat_at FROM agent_gateway_tokens ORDER BY created_at DESC LIMIT 200").fetchall())
+def agent_gateway_enrollment_rows(conn, workspace_id: str | None = None) -> list[dict]:
+    where = ""
+    params: list[str] = []
+    if workspace_id:
+        where = " WHERE COALESCE(workspace_id,'local-demo')=?"
+        params.append(normalize_workspace_id(workspace_id))
+    rows = rows_to_dicts(conn.execute(
+        "SELECT token_id,workspace_id,agent_id,scopes_json,status,label,heartbeat_timeout_sec,created_at,expires_at,revoked_at,last_used_at,last_heartbeat_at FROM agent_gateway_tokens"
+        + where
+        + " ORDER BY created_at DESC LIMIT 200",
+        params,
+    ).fetchall())
     now_dt = dt.datetime.now(dt.timezone.utc)
     for row in rows:
         scopes = parse_scope_list(row.get("scopes_json"))
@@ -3085,10 +3122,18 @@ def agent_gateway_session_state(row, now_dt: dt.datetime | None = None) -> str:
     return "active"
 
 
-def agent_gateway_session_rows(conn) -> list[dict]:
+def agent_gateway_session_rows(conn, workspace_id: str | None = None) -> list[dict]:
+    where = ""
+    params: list[str] = []
+    if workspace_id:
+        where = " WHERE COALESCE(workspace_id,'local-demo')=?"
+        params.append(normalize_workspace_id(workspace_id))
     rows = rows_to_dicts(conn.execute(
         """SELECT session_id,parent_token_id,workspace_id,agent_id,scopes_json,status,created_at,expires_at,revoked_at,last_used_at
-        FROM agent_gateway_sessions ORDER BY created_at DESC LIMIT 200"""
+        FROM agent_gateway_sessions"""
+        + where
+        + " ORDER BY created_at DESC LIMIT 200",
+        params,
     ).fetchall())
     now_dt = dt.datetime.now(dt.timezone.utc)
     for row in rows:
@@ -3784,7 +3829,7 @@ def agent_gateway_list_approvals(conn: sqlite3.Connection, qs: dict, headers, au
 def agent_gateway_list_memories(conn: sqlite3.Connection, qs: dict, headers, auth_ctx=None) -> tuple[dict, int]:
     ident = agent_gateway_identity(headers, qs=qs, auth_ctx=auth_ctx)
     limit = min(max(int((qs.get("limit") or ["25"])[0]), 1), 200)
-    where = ["COALESCE(t.workspace_id,'local-demo')=?"]
+    where = ["COALESCE(m.workspace_id,t.workspace_id,'local-demo')=?"]
     params: list = [ident["workspace_id"]]
     if "task_id" in qs:
         task_id = qs["task_id"][0]
@@ -4875,6 +4920,7 @@ def agent_gateway_memory_propose(conn, body) -> tuple[dict, int]:
     memory_id = body.get("memory_id") or stable_id("mem_gw", agent_id, task_id or "project", stable_hash(text)[:12])
     row = {
         "memory_id": memory_id,
+        "workspace_id": ident["workspace_id"],
         "scope": coerce_choice(body.get("scope"), {"task", "project", "org"}, "project"),
         "memory_type": coerce_choice(body.get("memory_type"), {"policy", "sop", "decision", "commitment", "risk", "failure_case", "project_context", "customer_preference", "agent_lesson", "artifact_summary"}, "artifact_summary"),
         "canonical_text": redact_text(text, 360),
@@ -10658,12 +10704,24 @@ class Handler(BaseHTTPRequestHandler):
                 auth_error = agent_gateway_admin_auth_error(self.headers)
                 if auth_error:
                     return self.send_json(auth_error, 401)
-                return self.send_json({"enrollments": agent_gateway_enrollment_rows(conn), "valid_scopes": sorted(VALID_AGENT_GATEWAY_SCOPES)})
+                workspace_id = optional_request_workspace(self.headers, qs)
+                return self.send_json({
+                    "enrollments": agent_gateway_enrollment_rows(conn, workspace_id),
+                    "workspace_id": workspace_id,
+                    "valid_scopes": sorted(VALID_AGENT_GATEWAY_SCOPES),
+                    "token_omitted": True,
+                })
             if path == "/api/agent-gateway/sessions":
                 auth_error = agent_gateway_admin_auth_error(self.headers)
                 if auth_error:
                     return self.send_json(auth_error, 401)
-                return self.send_json({"sessions": agent_gateway_session_rows(conn), "valid_scopes": sorted(VALID_AGENT_GATEWAY_SCOPES), "token_omitted": True})
+                workspace_id = optional_request_workspace(self.headers, qs)
+                return self.send_json({
+                    "sessions": agent_gateway_session_rows(conn, workspace_id),
+                    "workspace_id": workspace_id,
+                    "valid_scopes": sorted(VALID_AGENT_GATEWAY_SCOPES),
+                    "token_omitted": True,
+                })
             if path == "/api/agent-gateway/tasks/pull":
                 auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
                 if auth_error:
@@ -10976,9 +11034,17 @@ class Handler(BaseHTTPRequestHandler):
                     (workspace_id,),
                 ).fetchall()))
             if path == "/api/memories":
-                return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM memories ORDER BY created_at DESC").fetchall()))
+                workspace_id = request_workspace(self.headers, qs)
+                return self.send_json(rows_to_dicts(conn.execute(
+                    "SELECT * FROM memories WHERE COALESCE(workspace_id,'local-demo')=? ORDER BY created_at DESC",
+                    (workspace_id,),
+                ).fetchall()))
             if path == "/api/memories/export":
-                return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM memories ORDER BY created_at DESC").fetchall()))
+                workspace_id = request_workspace(self.headers, qs)
+                return self.send_json(rows_to_dicts(conn.execute(
+                    "SELECT * FROM memories WHERE COALESCE(workspace_id,'local-demo')=? ORDER BY created_at DESC",
+                    (workspace_id,),
+                ).fetchall()))
             if path == "/api/evaluations":
                 workspace_id = request_workspace(self.headers, qs)
                 return self.send_json(rows_to_dicts(conn.execute(
@@ -11327,10 +11393,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.decide_approval(conn, approval_id, "rejected")
             if path.startswith("/api/memories/") and path.endswith("/approve"):
                 memory_id = path.split("/")[-2]
-                return self.review_memory(conn, memory_id, "approved")
+                return self.review_memory(conn, memory_id, "approved", request_workspace(self.headers, {"workspace_id": [body.get("workspace_id")]} if body.get("workspace_id") else None))
             if path.startswith("/api/memories/") and path.endswith("/reject"):
                 memory_id = path.split("/")[-2]
-                return self.review_memory(conn, memory_id, "rejected")
+                return self.review_memory(conn, memory_id, "rejected", request_workspace(self.headers, {"workspace_id": [body.get("workspace_id")]} if body.get("workspace_id") else None))
             if path == "/api/evaluations/run-rule-check":
                 run_id = body.get("run_id")
                 run = conn.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
@@ -11518,10 +11584,14 @@ class Handler(BaseHTTPRequestHandler):
         conn.commit()
         return self.send_json(dict(after))
 
-    def review_memory(self, conn, memory_id, status):
-        before = conn.execute("SELECT * FROM memories WHERE memory_id=?", (memory_id,)).fetchone()
+    def review_memory(self, conn, memory_id, status, workspace_id=None):
+        workspace_id = normalize_workspace_id(workspace_id or "local-demo")
+        before = conn.execute(
+            "SELECT * FROM memories WHERE memory_id=? AND COALESCE(workspace_id,'local-demo')=?",
+            (memory_id, workspace_id),
+        ).fetchone()
         if not before:
-            return self.send_json({"error": "not found"}, 404)
+            return self.send_json(workspace_hidden("memory", memory_id), 404)
         conn.execute("UPDATE memories SET review_status=?, updated_at=? WHERE memory_id=?", (status, now_iso(), memory_id))
         after = conn.execute("SELECT * FROM memories WHERE memory_id=?", (memory_id,)).fetchone()
         audit(conn, "user", "usr_founder", f"memory.{status}", "memories", memory_id, dict(before), dict(after), {})

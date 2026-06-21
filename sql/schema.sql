@@ -118,6 +118,7 @@ CREATE TABLE IF NOT EXISTS approvals (
 
 CREATE TABLE IF NOT EXISTS memories (
     memory_id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL DEFAULT 'local-demo',
     scope TEXT NOT NULL CHECK(scope IN ('task','project','org')),
     memory_type TEXT NOT NULL CHECK(memory_type IN ('policy','sop','decision','commitment','risk','failure_case','project_context','customer_preference','agent_lesson','artifact_summary')),
     canonical_text TEXT NOT NULL,
@@ -193,6 +194,7 @@ CREATE INDEX IF NOT EXISTS idx_tool_calls_risk ON tool_calls(risk_level);
 CREATE INDEX IF NOT EXISTS idx_approvals_decision ON approvals(decision);
 CREATE INDEX IF NOT EXISTS idx_memories_status ON memories(review_status);
 CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope);
+CREATE INDEX IF NOT EXISTS idx_memories_workspace ON memories(workspace_id, updated_at);
 CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_logs(entity_type, entity_id);
 
 -- The executable schema in server.py also initializes the Agent Work Method
