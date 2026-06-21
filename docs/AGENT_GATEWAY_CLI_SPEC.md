@@ -156,7 +156,7 @@ agentops enrollment create \
   --agent-id agt_remote_builder \
   --name "Remote Builder" \
   --runtime openclaw \
-  --scopes agents:write,agents:heartbeat,knowledge:read,agent_plans:read,agent_plans:write,plan_evidence:read,plan_evidence:write,tasks:create,tasks:read,tasks:claim,runs:write,toolcalls:write,artifacts:write,evaluations:submit,audit:write \
+  --scopes agents:write,agents:heartbeat,knowledge:read,agent_plans:read,agent_plans:write,plan_evidence:read,plan_evidence:write,tasks:create,tasks:read,tasks:claim,runs:write,toolcalls:write,artifacts:write,memories:propose,evaluations:submit,audit:write \
   --ttl-days 30
 ```
 
@@ -194,7 +194,7 @@ agentops enrollment request \
   --agent-id agt_customer_worker \
   --name "Customer Worker" \
   --runtime mock \
-  --scopes agents:heartbeat,knowledge:read,agent_plans:read,agent_plans:write,plan_evidence:read,plan_evidence:write,tasks:create,tasks:read,tasks:claim,runs:write,toolcalls:write,evaluations:submit,audit:write \
+  --scopes agents:heartbeat,knowledge:read,agent_plans:read,agent_plans:write,plan_evidence:read,plan_evidence:write,tasks:create,tasks:read,tasks:claim,runs:write,toolcalls:write,artifacts:write,memories:propose,evaluations:submit,audit:write \
   --reason "Customer server worker needs to process assigned MIS tasks"
 ```
 
@@ -1123,6 +1123,12 @@ Scopes should be explicit:
 
 ```text
 agents:write
+agents:heartbeat
+knowledge:read
+agent_plans:read
+agent_plans:write
+plan_evidence:read
+plan_evidence:write
 tasks:create
 tasks:read
 tasks:claim

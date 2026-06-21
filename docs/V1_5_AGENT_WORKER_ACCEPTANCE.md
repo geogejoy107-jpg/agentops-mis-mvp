@@ -1456,3 +1456,50 @@ planned MIS task
   instead of accepting a job that cannot run.
 - Async template worker submit now uses the same live-route gate.
 - Remote enrollment token issuance/revocation/rotation, approval-gated enrollment request UI, endpoint-level scope enforcement, short-lived session tokens with list/revoke controls and worker-loop refresh, scope presets, a first enrollment UI, and minimal Agent Gateway workspace isolation now exist. Full RBAC, hosted multi-tenant isolation, and hosted enrollment policy UI remain future work.
+
+## 2026-06-22 Remote Worker Scope Baseline
+
+The worker now writes `agent_plan`, `plan_evidence_manifest`, `artifact`,
+`memory`, evaluation, tool-call, run, and audit evidence for normal task
+execution. Therefore the product worker scope baseline for both direct
+enrollment and approval-gated enrollment includes:
+
+```text
+agents:heartbeat
+knowledge:read
+agent_plans:read
+agent_plans:write
+plan_evidence:read
+plan_evidence:write
+tasks:create
+tasks:read
+tasks:claim
+runs:write
+toolcalls:write
+artifacts:write
+memories:propose
+evaluations:submit
+audit:write
+```
+
+`agents:write` is additionally used by admin/operator-created launch packets.
+
+Validated on the running local server:
+
+```text
+python3 scripts/remote_worker_product_acceptance.py --base-url http://127.0.0.1:8787
+python3 scripts/worker_session_refresh_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/enrollment_approval_workflow_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/v1_5_local_product_acceptance.py --base-url http://127.0.0.1:8787
+```
+
+Observed evidence:
+
+- launch-packet worker session path passed with mock run evidence and
+  `token_omitted:true`;
+- session refresh processed two tasks and refreshed short-lived sessions;
+- approval-gated enrollment still blocks premature token issue and then issues a
+  usable scoped token after approval;
+- local product acceptance remains non-live. If the long-running demo server has
+  active workers, ledger count drift is now reported as concurrent environment
+  activity instead of mislabeling the read-only acceptance runner as mutating.

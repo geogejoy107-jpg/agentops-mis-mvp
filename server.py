@@ -2461,7 +2461,9 @@ def agent_gateway_request_enrollment(conn, body) -> tuple[dict, int]:
         "tasks:claim",
         "runs:write",
         "toolcalls:write",
+        "artifacts:write",
         "evaluations:submit",
+        "memories:propose",
         "audit:write",
     ])
     if not scopes:

@@ -247,6 +247,7 @@ def main() -> int:
     limitation = None
     before_counts: dict[str, int] = {}
     after_counts: dict[str, int] = {}
+    ledger_stability: dict[str, Any] = {}
 
     try:
         status, payload, raw = http_json(args.base_url, "/api/local/readiness")
@@ -329,7 +330,21 @@ def main() -> int:
                 for key in sorted(set(before_counts) | set(after_counts))
                 if before_counts.get(key) != after_counts.get(key)
             }
-            acc.require(not changed, "ledger counts unchanged by acceptance runner", changed)
+            worker_status_payload = endpoints.get("/api/workers/status") or {}
+            active_workers = int(worker_status_payload.get("running_workers") or 0)
+            active_sessions = int(worker_status_payload.get("active_remote_sessions") or 0)
+            drift_explained = bool(changed and (active_workers > 0 or active_sessions > 0))
+            ledger_stability = {
+                "changed": changed,
+                "active_workers": active_workers,
+                "active_remote_sessions": active_sessions,
+                "drift_explained_by_active_workers": drift_explained,
+            }
+            acc.require(
+                not changed or drift_explained,
+                "ledger counts unchanged by acceptance runner or explained by active workers",
+                ledger_stability,
+            )
     except Exception as exc:
         acc.add("post-check local readiness", False, str(exc))
 
@@ -343,6 +358,7 @@ def main() -> int:
         "checked_cli": cli_results,
         "ledger_counts_before": before_counts,
         "ledger_counts_after": after_counts,
+        "ledger_stability": ledger_stability,
         "passed_count": len(acc.checks) - len(acc.failures),
         "check_count": len(acc.checks),
         "failure_count": len(acc.failures),

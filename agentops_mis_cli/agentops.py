@@ -1758,7 +1758,7 @@ def build_parser() -> argparse.ArgumentParser:
     enroll_request.add_argument("--name", default="Remote Agent")
     enroll_request.add_argument("--role", default="Remote AI Digital Employee")
     enroll_request.add_argument("--runtime", default="mock")
-    enroll_request.add_argument("--scopes", default="agents:heartbeat,knowledge:read,agent_plans:read,agent_plans:write,plan_evidence:read,plan_evidence:write,tasks:create,tasks:read,tasks:claim,runs:write,toolcalls:write,evaluations:submit,audit:write")
+    enroll_request.add_argument("--scopes", default="agents:heartbeat,knowledge:read,agent_plans:read,agent_plans:write,plan_evidence:read,plan_evidence:write,tasks:create,tasks:read,tasks:claim,runs:write,toolcalls:write,artifacts:write,memories:propose,evaluations:submit,audit:write")
     enroll_request.add_argument("--reason", default="Remote worker needs scoped access to process assigned MIS tasks.")
     enroll_request.set_defaults(handler="enrollment_request")
 
