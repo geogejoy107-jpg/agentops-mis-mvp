@@ -1,10 +1,11 @@
 import { Link } from "react-router";
 import { useEffect, useState } from "react";
-import { AlertTriangle, Bot, CheckCircle2, Play, RefreshCw, Activity, Power, Square, KeyRound, ShieldCheck, Trash2, RotateCw, Inbox, GripVertical } from "lucide-react";
+import { AlertTriangle, Bot, CheckCircle2, Play, RefreshCw, Activity, Power, Square, KeyRound, ShieldCheck, Trash2, RotateCw, Inbox, GripVertical, XCircle } from "lucide-react";
 import { StatusBadge } from "../shared/StatusBadge";
 import {
   createAgentGatewayEnrollment,
   decideApproval,
+  decideMemory,
   dispatchLocalWorkerOnce,
   issueApprovedAgentGatewayEnrollment,
   loadApprovals,
@@ -100,6 +101,8 @@ export function AIEmployees() {
   const [customerTaskJob, setCustomerTaskJob] = useState<WorkflowJob | null>(null);
   const [workflowJobAction, setWorkflowJobAction] = useState<string | null>(null);
   const [workflowJobResult, setWorkflowJobResult] = useState<string | null>(null);
+  const [reviewAction, setReviewAction] = useState<string | null>(null);
+  const [reviewResult, setReviewResult] = useState<string | null>(null);
   const [actionQueueOrder, setActionQueueOrder] = useState<string[]>([]);
   const [draggedActionId, setDraggedActionId] = useState<string | null>(null);
   const [customerTaskForm, setCustomerTaskForm] = useState<{
@@ -254,6 +257,11 @@ export function AIEmployees() {
       reviewQueueTitle: "Human Review Queue",
       reviewQueueSummary: "One operator queue for approvals, memory candidates and customer deliveries. Handle returned work first without waiting for every worker lane.",
       reviewQueueEmpty: "No review items. Keep dispatching or watch the async inbox.",
+      reviewActionResult: "Review action",
+      reviewApprove: "Approve",
+      reviewReject: "Reject",
+      reviewReadbackProof: "Queue readback",
+      reviewDecisionAuditProof: "Decisions write audit",
       pendingApprovals: "Pending approvals",
       memoryCandidates: "Memory candidates",
       waitingDeliveries: "Waiting deliveries",
@@ -505,6 +513,11 @@ export function AIEmployees() {
       reviewQueueTitle: "人工审核队列",
       reviewQueueSummary: "把审批、候选记忆和客户交付聚合成一个 operator 队列；哪个 worker 先回来，就先处理哪个。",
       reviewQueueEmpty: "暂无待审事项。可以继续派发任务，或观察异步 Inbox。",
+      reviewActionResult: "审核动作",
+      reviewApprove: "批准",
+      reviewReject: "拒绝",
+      reviewReadbackProof: "队列读取",
+      reviewDecisionAuditProof: "决策写入审计",
       pendingApprovals: "待审批",
       memoryCandidates: "候选记忆",
       waitingDeliveries: "待交付审批",
@@ -1011,6 +1024,28 @@ export function AIEmployees() {
     }
   };
 
+  const handleReviewDecision = async (item: ReviewQueuePayload["review_items"][number], decision: "approve" | "reject") => {
+    const actionKey = `${item.item_type}-${item.item_id}-${decision}`;
+    setReviewAction(actionKey);
+    setReviewResult(null);
+    try {
+      if (item.item_type === "approval") {
+        await decideApproval(item.item_id, decision);
+      } else if (item.item_type === "memory_candidate") {
+        await decideMemory(item.item_id, decision);
+      } else {
+        setReviewResult(`${copy.reviewActionResult}: ${item.item_type} ${item.item_id}`);
+        return;
+      }
+      setReviewResult(`${copy.reviewActionResult}: ${item.item_type} ${item.item_id} -> ${decision}`);
+      await refresh();
+    } catch (err) {
+      setReviewResult(err instanceof Error ? err.message : String(err));
+    } finally {
+      setReviewAction(null);
+    }
+  };
+
   const updateEnrollmentForm = (field: keyof typeof enrollmentForm, value: string) => {
     setEnrollmentForm(prev => ({ ...prev, [field]: value }));
   };
@@ -1211,9 +1246,9 @@ export function AIEmployees() {
             <p className="text-[11px] mt-1 max-w-3xl" style={{ color: "var(--mis-dim)" }}>{copy.reviewQueueSummary}</p>
           </div>
           <div className="flex flex-wrap gap-1.5 lg:justify-end">
-            <StatusBadge status={reviewQueueSafety?.read_only ? "pass" : "fail"} label={`${copy.readOnlyProof}: ${reviewQueueSafety?.read_only ? copy.yes : copy.no}`} />
+            <StatusBadge status={reviewQueueSafety?.read_only ? "pass" : "fail"} label={`${copy.reviewReadbackProof}: ${reviewQueueSafety?.read_only ? copy.yes : copy.no}`} />
             <StatusBadge status={reviewQueueSafety?.ledger_mutated === false ? "pass" : "fail"} label={`${copy.ledgerMutationProof}: ${reviewQueueSafety?.ledger_mutated === false ? copy.yes : copy.no}`} />
-            <StatusBadge status={reviewQueueSafety?.live_execution_performed === false ? "pass" : "fail"} label={`${copy.liveExecutionProof}: ${reviewQueueSafety?.live_execution_performed === false ? copy.yes : copy.no}`} />
+            <StatusBadge status="attention" label={copy.reviewDecisionAuditProof} />
           </div>
         </div>
 
@@ -1235,6 +1270,11 @@ export function AIEmployees() {
         </div>
 
         <div className="space-y-2 mt-3">
+          {reviewResult && (
+            <div className="text-[11px] rounded px-3 py-2" style={{ color: reviewResult.includes("Error") ? "#F87171" : "var(--mis-cyan)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+              {reviewResult}
+            </div>
+          )}
           {reviewQueueItems.length === 0 && (
             <div className="text-[11px] rounded px-3 py-2" style={{ color: "var(--mis-muted)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
               {copy.reviewQueueEmpty}
@@ -1269,6 +1309,26 @@ export function AIEmployees() {
                   )}
                   {item.links?.report_url && (
                     <Link to={item.links.report_url} className="text-[10px] px-2 py-1 rounded" style={{ background: "rgba(251,191,36,0.10)", color: "var(--mis-warning)", border: "1px solid rgba(251,191,36,0.20)" }}>{copy.openReport}</Link>
+                  )}
+                  {((item.item_type === "approval" && item.status === "pending") || (item.item_type === "memory_candidate" && item.status === "candidate")) && (
+                    <>
+                      <button
+                        onClick={() => void handleReviewDecision(item, "approve")}
+                        disabled={Boolean(reviewAction)}
+                        className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded disabled:opacity-50"
+                        style={{ background: "rgba(42,157,143,0.15)", color: "var(--mis-success)", border: "1px solid rgba(42,157,143,0.2)" }}
+                      >
+                        <CheckCircle2 size={11} /> {reviewAction === `${item.item_type}-${item.item_id}-approve` ? copy.dispatching : copy.reviewApprove}
+                      </button>
+                      <button
+                        onClick={() => void handleReviewDecision(item, "reject")}
+                        disabled={Boolean(reviewAction)}
+                        className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded disabled:opacity-50"
+                        style={{ background: "rgba(248,113,113,0.12)", color: "#F87171", border: "1px solid rgba(248,113,113,0.2)" }}
+                      >
+                        <XCircle size={11} /> {reviewAction === `${item.item_type}-${item.item_id}-reject` ? copy.dispatching : copy.reviewReject}
+                      </button>
+                    </>
                   )}
                 </div>
               </div>

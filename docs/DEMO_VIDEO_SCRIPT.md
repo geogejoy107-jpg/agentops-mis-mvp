@@ -70,7 +70,7 @@ Recording steps:
 
 Then return to:
 
-- `/workspace/agents`: Human Review Queue / 人工审核队列 shows pending approvals, memory candidates, customer deliveries and recommended CLI actions in one operator queue.
+- `/workspace/agents`: Human Review Queue / 人工审核队列 shows pending approvals, memory candidates, customer deliveries and recommended CLI actions in one operator queue. Approval and memory items can be approved/rejected inline; those decisions intentionally write audit/ledger evidence.
 - `/workspace/reports`: customer delivery board and report links.
 - `/workspace/approvals`: approval gate, or show the same decision through `agentops approval approve/reject`.
 - `/memory`: memory candidate review, or show the same decision through `agentops memory approve/reject`.

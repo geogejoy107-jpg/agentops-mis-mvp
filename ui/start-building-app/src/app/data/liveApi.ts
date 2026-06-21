@@ -1337,6 +1337,14 @@ export async function decideApproval(id: string, decision: "approve" | "reject")
   return normalizeApproval(raw);
 }
 
+export async function decideMemory(id: string, decision: "approve" | "reject"): Promise<Memory> {
+  const raw = await apiJson<Record<string, unknown>>(`/memories/${encodeURIComponent(id)}/${decision}`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+  return normalizeMemory(raw);
+}
+
 export async function runLocalBrief(confirmRun = false): Promise<LocalBriefResult> {
   return apiJson<LocalBriefResult>("/workflows/local-brief", {
     method: "POST",
