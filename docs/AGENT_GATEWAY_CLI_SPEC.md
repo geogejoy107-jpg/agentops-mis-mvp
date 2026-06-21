@@ -627,6 +627,34 @@ It is read-only and does not print raw tokens. The response also includes
 This makes the CLI/API layer usable by external workers and automation scripts,
 not only by a human browsing the admin UI.
 
+### `agentops worker readiness`
+
+Returns read-only readiness for all worker adapters in one response. It checks
+the AgentOps mock worker, Hermes gateway availability, OpenClaw CLI
+availability, and runtime connector trust status. It does not pull tasks,
+execute models, write ledger rows, or print raw tokens.
+
+```bash
+agentops worker readiness
+```
+
+The response includes:
+
+- `summary.ready_adapters`
+- `summary.live_ready_adapters`
+- `summary.review_required_adapters`
+- `summary.blocked_adapters`
+- `summary.unavailable_adapters`
+- `summary.recommended_adapter`
+- per-adapter `readiness`: `ready`, `review_required`, `blocked`, or
+  `unavailable`
+- per-adapter `recommended_action`
+- `live_execution_performed:false`
+
+Use `agentops worker readiness` when an operator or external agent needs to
+choose a route. Use `agentops worker preflight --adapter <name>` when debugging
+one specific adapter.
+
 ### `agentops worker preflight`
 
 Runs read-only Gateway and adapter readiness checks from the main operator CLI.

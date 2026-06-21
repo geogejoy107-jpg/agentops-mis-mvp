@@ -327,8 +327,13 @@ List enrollments and sessions:
 ```bash
 agentops enrollment list
 agentops session list
+agentops worker readiness
 agentops worker status
 ```
+
+`agentops worker readiness` is the route-selection check. It returns the safe
+readiness for `mock`, `hermes`, and `openclaw`, including runtime connector
+trust status and a recommended adapter. It never executes live runtime work.
 
 `agentops worker status` is the operator's single fleet view. In addition to
 local daemon state, it summarizes remote worker enrollments, heartbeat states
@@ -372,6 +377,7 @@ Use these lightweight checks before a demo or customer handoff:
 ```bash
 python3 -m py_compile server.py scripts/*.py agentops_mis_cli/*.py
 python3 scripts/agentops_worker_preflight_smoke.py
+python3 scripts/worker_adapter_readiness_smoke.py
 python3 scripts/worker_live_confirm_gate_smoke.py
 python3 scripts/remote_launch_packet_worker_smoke.py
 python3 scripts/agent_gateway_task_create_scope_smoke.py
@@ -384,6 +390,9 @@ git diff --check
 The expected proof is:
 
 - `agentops worker preflight` returns JSON and `live_execution_performed=false`.
+- `agentops worker readiness` returns all adapter routes, includes
+  `summary.recommended_adapter`, and still reports
+  `live_execution_performed=false`.
 - `agentops worker service-install` defaults to dry-run and only writes a
   placeholder template when `--confirm-install` is present.
 - `agentops worker service-check` returns JSON, omits raw service content, and

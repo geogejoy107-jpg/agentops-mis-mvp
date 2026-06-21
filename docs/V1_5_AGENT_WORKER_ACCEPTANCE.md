@@ -1314,6 +1314,13 @@ This is the product boundary for debugging with real OpenClaw/Hermes/remote
 agents: the browser can supervise results, but workers should consume CLI/API
 health, pull tasks, claim runs, and write evidence through Agent Gateway.
 
+`GET /api/workers/adapter-readiness` and `agentops worker readiness` now expose
+the route-selection layer for workers. It reports `mock`, `hermes`, and
+`openclaw` readiness in one safe read-only payload, including runtime connector
+trust status, target resource, availability checks, `summary.recommended_adapter`,
+and `live_execution_performed:false`. This lets a local or remote agent decide
+which adapter path is currently usable before pulling customer work.
+
 The `/workspace/agents` UI now exposes the same customer-worker path that the
 CLI and Pixel Office use: a human creates a normal business task, chooses
 mock/Hermes/OpenClaw, and MIS displays the resulting task, run, artifact, and
@@ -1358,4 +1365,7 @@ planned MIS task
 - The worker status API/CLI now returns `fleet_health` gates and recommended
   CLI actions, so external agents and operator scripts can reason about whether
   the worker fleet is ready without scraping the browser UI.
+- The worker readiness API/CLI now returns adapter route readiness for
+  mock/Hermes/OpenClaw without executing live work, so external agents can choose
+  a viable route before starting a task.
 - Remote enrollment token issuance/revocation/rotation, approval-gated enrollment request UI, endpoint-level scope enforcement, short-lived session tokens with list/revoke controls and worker-loop refresh, scope presets, a first enrollment UI, and minimal Agent Gateway workspace isolation now exist. Full RBAC, hosted multi-tenant isolation, and hosted enrollment policy UI remain future work.

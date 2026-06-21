@@ -63,6 +63,7 @@ def main() -> int:
             and isinstance(payload.get("remote_worker_health"), dict)
             and isinstance(payload.get("remote_worker_count"), int)
             and payload.get("remote_worker_health", {}).get("token_omitted") is True
+            and (payload.get("adapter_readiness") or {}).get("recommended_adapter") in {"mock", "hermes", "openclaw"}
             and not leaked_secret(text)
         )
         print(json.dumps({
@@ -80,6 +81,7 @@ def main() -> int:
             "fleet_overall": payload.get("fleet_health", {}).get("overall"),
             "fleet_gate_count": len(payload.get("fleet_health", {}).get("gates") or []),
             "fleet_actions": payload.get("fleet_health", {}).get("recommended_actions"),
+            "recommended_adapter": (payload.get("adapter_readiness") or {}).get("recommended_adapter"),
             "daemon_count": len(payload.get("daemons") or []),
             "secret_leaked": leaked_secret(text),
         }, ensure_ascii=False, indent=2, sort_keys=True))

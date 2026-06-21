@@ -754,6 +754,10 @@ def cmd_worker_status(args, client: AgentOpsClient) -> dict:
     return client.get("/api/workers/status")
 
 
+def cmd_worker_readiness(args, client: AgentOpsClient) -> dict:
+    return client.get("/api/workers/adapter-readiness")
+
+
 def cmd_worker_logs(args, client: AgentOpsClient) -> dict:
     return client.get("/api/workers/local/logs", query={"adapter": args.adapter})
 
@@ -1281,6 +1285,8 @@ def build_parser() -> argparse.ArgumentParser:
     worker_sub = worker.add_subparsers(dest="action", required=True)
     worker_status = worker_sub.add_parser("status", help="Show worker fleet, daemon, pending task and stuck-task status.")
     worker_status.set_defaults(handler="worker_status")
+    worker_readiness = worker_sub.add_parser("readiness", help="Show read-only mock/Hermes/OpenClaw adapter readiness.")
+    worker_readiness.set_defaults(handler="worker_readiness")
     worker_logs = worker_sub.add_parser("logs", help="Show local worker daemon metadata and log tail.")
     worker_logs.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
     worker_logs.set_defaults(handler="worker_logs")
@@ -1439,6 +1445,7 @@ HANDLERS = {
     "workflow_customer_worker_task": cmd_workflow_customer_worker_task,
     "workflow_run_task": cmd_workflow_run_task,
     "worker_status": cmd_worker_status,
+    "worker_readiness": cmd_worker_readiness,
     "worker_logs": cmd_worker_logs,
     "worker_preflight": cmd_worker_preflight,
     "worker_service_check": cmd_worker_service_check,

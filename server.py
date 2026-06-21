@@ -5887,6 +5887,119 @@ def worker_fleet_health(payload: dict) -> dict:
     }
 
 
+def worker_adapter_readiness(conn) -> dict:
+    refresh_runtime_connectors(conn)
+    hermes = hermes_status()
+    openclaw = openclaw_status()
+
+    def trust_for(adapter: str) -> dict:
+        connector_id = runtime_connector_for_adapter(adapter)
+        trust = runtime_connector_trust(conn, connector_id) if connector_id else None
+        return {
+            "connector_id": connector_id,
+            "trust_status": (trust or {}).get("trust_status") or "trusted",
+            "trust_note": redact_text((trust or {}).get("trust_note"), 160) if (trust or {}).get("trust_note") else None,
+            "require_confirm_run": bool((trust or {}).get("require_confirm_run", 1)),
+        }
+
+    def readiness_from_checks(available: bool, trust: dict) -> tuple[str, bool]:
+        if trust.get("trust_status") == "blocked":
+            return "blocked", False
+        if not available:
+            return "unavailable", False
+        if trust.get("trust_status") == "review_required":
+            return "review_required", True
+        return "ready", True
+
+    adapters = {}
+
+    mock_trust = trust_for("mock")
+    mock_readiness, mock_ok = readiness_from_checks(True, mock_trust)
+    adapters["mock"] = {
+        "adapter": "mock",
+        "ok": mock_ok,
+        "readiness": mock_readiness,
+        "connector_id": mock_trust.get("connector_id"),
+        "trust_status": mock_trust.get("trust_status"),
+        "requires_confirm_run": False,
+        "target_resource": "local://agentops/mock-worker",
+        "checks": {"available": True, "live_execution_performed": False},
+        "recommended_action": "agentops workflow run-task --adapter mock",
+        "token_omitted": True,
+    }
+
+    hermes_trust = trust_for("hermes")
+    hermes_available = bool(hermes.get("api_listening"))
+    hermes_readiness, hermes_ok = readiness_from_checks(hermes_available, hermes_trust)
+    adapters["hermes"] = {
+        "adapter": "hermes",
+        "ok": hermes_ok,
+        "readiness": hermes_readiness,
+        "connector_id": hermes_trust.get("connector_id"),
+        "trust_status": hermes_trust.get("trust_status"),
+        "requires_confirm_run": True,
+        "target_resource": hermes.get("gateway_url"),
+        "checks": {
+            "api_listening": hermes_available,
+            "api_port": hermes.get("api_port"),
+            "config_exists": bool(hermes.get("config_exists")),
+            "auth_exists": bool(hermes.get("auth_exists")),
+            "live_execution_performed": False,
+        },
+        "recommended_action": "agentops worker preflight --adapter hermes" if not hermes_available else "agentops workflow run-task --adapter hermes --confirm-run",
+        "last_error": None if hermes_available else "Hermes API gateway is not listening.",
+        "token_omitted": True,
+    }
+
+    openclaw_trust = trust_for("openclaw")
+    openclaw_available = bool(openclaw.get("cli_exists")) and os.access(OPENCLAW_BIN, os.X_OK)
+    openclaw_readiness, openclaw_ok = readiness_from_checks(openclaw_available, openclaw_trust)
+    adapters["openclaw"] = {
+        "adapter": "openclaw",
+        "ok": openclaw_ok,
+        "readiness": openclaw_readiness,
+        "connector_id": openclaw_trust.get("connector_id"),
+        "trust_status": openclaw_trust.get("trust_status"),
+        "requires_confirm_run": True,
+        "target_resource": str(OPENCLAW_BIN),
+        "checks": {
+            "binary_exists": bool(openclaw.get("cli_exists")),
+            "binary_executable": os.access(OPENCLAW_BIN, os.X_OK) if OPENCLAW_BIN.exists() else False,
+            "config_exists": bool(openclaw.get("config_exists")),
+            "agents_count": int(openclaw.get("agents_count") or 0),
+            "cron_jobs_count": int(openclaw.get("cron_jobs_count") or 0),
+            "live_execution_performed": False,
+        },
+        "recommended_action": "agentops worker preflight --adapter openclaw" if not openclaw_available else "agentops workflow run-task --adapter openclaw --confirm-run",
+        "last_error": None if openclaw_available else f"OpenClaw binary unavailable at {OPENCLAW_BIN}.",
+        "token_omitted": True,
+    }
+
+    ready = [name for name, item in adapters.items() if item.get("readiness") == "ready"]
+    review_required = [name for name, item in adapters.items() if item.get("readiness") == "review_required"]
+    blocked = [name for name, item in adapters.items() if item.get("readiness") == "blocked"]
+    unavailable = [name for name, item in adapters.items() if item.get("readiness") == "unavailable"]
+    live_ready = [name for name in ready if name != "mock"]
+    recommended_adapter = "openclaw" if "openclaw" in ready else "hermes" if "hermes" in ready else "mock"
+    summary_status = "ready" if live_ready else "degraded" if ready else "blocked"
+    return {
+        "provider": "agentops-worker",
+        "status": summary_status,
+        "summary": {
+            "ready_adapters": ready,
+            "live_ready_adapters": live_ready,
+            "review_required_adapters": review_required,
+            "blocked_adapters": blocked,
+            "unavailable_adapters": unavailable,
+            "recommended_adapter": recommended_adapter,
+        },
+        "adapters": adapters,
+        "contract": "read-only adapter readiness; use Agent Gateway CLI/API for execution and confirm live Hermes/OpenClaw runs explicitly",
+        "live_execution_performed": False,
+        "token_omitted": True,
+    }
+
+
 def worker_status(conn) -> dict:
     worker_agents = rows_to_dicts(conn.execute(
         """SELECT * FROM agents
@@ -5913,6 +6026,7 @@ def worker_status(conn) -> dict:
     stuck_tasks = worker_stuck_tasks(conn)
     remote_fleet = worker_remote_fleet_summary(conn)
     stuck_workflow_jobs = workflow_stuck_jobs(conn, threshold_sec=900, limit=5)
+    adapter_readiness = worker_adapter_readiness(conn)
     payload = {
         "provider": "agentops-worker",
         "status": "attention" if remote_fleet.get("stale_enrollments") else "running" if active_daemons else "ready",
@@ -5930,6 +6044,7 @@ def worker_status(conn) -> dict:
         "never_seen_remote_enrollments": remote_fleet.get("never_seen_enrollments", 0),
         "active_remote_sessions": remote_fleet.get("active_sessions", 0),
         "remote_worker_health": remote_fleet,
+        "adapter_readiness": adapter_readiness.get("summary"),
         "daemons": daemons,
         "workers": worker_agents,
         "recent_runs": worker_runs,
@@ -6758,6 +6873,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM runtime_events ORDER BY created_at DESC LIMIT 200").fetchall()))
             if path == "/api/workers/status":
                 return self.send_json(worker_status(conn))
+            if path == "/api/workers/adapter-readiness":
+                payload = worker_adapter_readiness(conn)
+                conn.commit()
+                return self.send_json(payload)
             if path == "/api/workers/stuck-tasks":
                 threshold = int((qs.get("threshold_sec") or ["900"])[0])
                 limit = int((qs.get("limit") or ["25"])[0])
