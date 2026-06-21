@@ -157,6 +157,10 @@ def validate_plan(payload: dict, label: str, failures: list[str], limit: int) ->
         "action_receipts_recorded",
         "action_receipts_verified",
         "action_receipts_failed",
+        "receipt_required_actions",
+        "receipt_verified_actions",
+        "receipt_missing_verified_actions",
+        "receipt_stale_actions",
     ]:
         require(isinstance(summary.get(key), int), f"{label} summary.{key} missing: {summary}", failures)
     require(isinstance(summary.get("recommended_adapter"), str), f"{label} recommended_adapter missing: {summary}", failures)
@@ -224,8 +228,25 @@ def validate_plan(payload: dict, label: str, failures: list[str], limit: int) ->
         require(bool(action.get("action_id")), f"{label} action_id missing: {action}", failures)
         require(action.get("severity") in {"blocked", "attention", "ready", "info"}, f"{label} bad severity: {action}", failures)
         require(isinstance(action.get("priority"), int), f"{label} priority missing: {action}", failures)
+        require(isinstance(action.get("base_priority"), int), f"{label} base_priority missing: {action}", failures)
+        require(isinstance(action.get("receipt_priority_boost"), int), f"{label} receipt_priority_boost missing: {action}", failures)
+        require(action.get("priority") == action.get("base_priority") + action.get("receipt_priority_boost"), f"{label} receipt priority math wrong: {action}", failures)
         require(bool(action.get("title")), f"{label} title missing: {action}", failures)
         require(bool(action.get("command")), f"{label} command missing: {action}", failures)
+        require(bool(action.get("action_signature")), f"{label} action_signature missing: {action}", failures)
+        require(action.get("receipt_required") is True, f"{label} receipt_required missing: {action}", failures)
+        require(action.get("receipt_status") in {"missing", "recorded", "verified", "failed", "skipped", "stale"}, f"{label} bad receipt_status: {action}", failures)
+        require(action.get("receipt_match") in {"missing", "current", "stale"}, f"{label} bad receipt_match: {action}", failures)
+        require(isinstance(action.get("receipt_current"), bool), f"{label} receipt_current missing: {action}", failures)
+        require(isinstance(action.get("receipt_verified"), bool), f"{label} receipt_verified missing: {action}", failures)
+        receipt_state = action.get("receipt_state") or {}
+        require(receipt_state.get("status") == action.get("receipt_status"), f"{label} receipt_state mismatch: {action}", failures)
+        require(receipt_state.get("match") == action.get("receipt_match"), f"{label} receipt_state match mismatch: {action}", failures)
+        require(receipt_state.get("current") == action.get("receipt_current"), f"{label} receipt_state current mismatch: {action}", failures)
+        require(receipt_state.get("verified") == action.get("receipt_verified"), f"{label} receipt_state verified mismatch: {action}", failures)
+        if action.get("receipt_verified"):
+            require(bool(action.get("receipt_id")), f"{label} verified receipt_id missing: {action}", failures)
+            require(bool(action.get("receipt_hash")), f"{label} verified receipt_hash missing: {action}", failures)
         require(
             not str(action.get("command") or "").startswith("agentops approval approve --approval-id"),
             f"{label} action should inspect approval before approve: {action}",

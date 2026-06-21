@@ -1040,15 +1040,28 @@ export interface ReviewQueuePayload {
 
 export interface OperatorActionPlanItem {
   action_id: string;
+  action_signature?: string | null;
   lane: string;
   severity: string;
   priority: number;
   title: string;
   summary?: string;
   command: string;
+  verify_command?: string | null;
   ui_route?: string | null;
   source: string;
   evidence?: Record<string, unknown>;
+  base_priority?: number;
+  receipt_priority_boost?: number;
+  receipt_required?: boolean;
+  receipt_status?: string;
+  receipt_underlying_status?: string;
+  receipt_match?: string;
+  receipt_current?: boolean;
+  receipt_verified?: boolean;
+  receipt_id?: string | null;
+  receipt_hash?: string | null;
+  receipt_state?: Record<string, unknown>;
 }
 
 export interface ExecutionEvidenceGapItem {
@@ -1171,6 +1184,10 @@ export interface OperatorActionPlanPayload {
     action_receipts_recorded: number;
     action_receipts_verified: number;
     action_receipts_failed: number;
+    receipt_required_actions: number;
+    receipt_verified_actions: number;
+    receipt_missing_verified_actions: number;
+    receipt_stale_actions: number;
   };
   actions: OperatorActionPlanItem[];
   top_commands: string[];
@@ -1199,6 +1216,7 @@ export interface OperatorActionReceipt {
   status: string;
   source: string;
   action_id?: string | null;
+  action_signature?: string | null;
   action_command?: string | null;
   action_hash?: string | null;
   verify_command?: string | null;
@@ -3639,6 +3657,7 @@ function normalizeOperatorActionReceipt(raw: Record<string, unknown>): OperatorA
     status: String(raw.status || "recorded"),
     source: String(raw.source || "operator_action_queue"),
     action_id: raw.action_id ? String(raw.action_id) : null,
+    action_signature: raw.action_signature ? String(raw.action_signature) : null,
     action_command: raw.action_command ? String(raw.action_command) : null,
     action_hash: raw.action_hash ? String(raw.action_hash) : null,
     verify_command: raw.verify_command ? String(raw.verify_command) : null,
@@ -3699,6 +3718,7 @@ export async function recordOperatorActionReceipt(input: {
   action_command: string;
   verify_command?: string;
   action_id?: string;
+  action_signature?: string;
   source?: string;
   status?: "recorded" | "verified" | "failed" | "skipped";
   result_summary?: string;
@@ -3709,6 +3729,7 @@ export async function recordOperatorActionReceipt(input: {
       action_command: input.action_command,
       verify_command: input.verify_command,
       action_id: input.action_id,
+      action_signature: input.action_signature,
       source: input.source,
       status: input.status || "recorded",
       result_summary: input.result_summary,
@@ -3805,18 +3826,35 @@ export async function loadOperatorActionPlan(limit = 12): Promise<OperatorAction
       action_receipts_recorded: numberValue(summaryRaw.action_receipts_recorded, 0),
       action_receipts_verified: numberValue(summaryRaw.action_receipts_verified, 0),
       action_receipts_failed: numberValue(summaryRaw.action_receipts_failed, 0),
+      receipt_required_actions: numberValue(summaryRaw.receipt_required_actions, 0),
+      receipt_verified_actions: numberValue(summaryRaw.receipt_verified_actions, 0),
+      receipt_missing_verified_actions: numberValue(summaryRaw.receipt_missing_verified_actions, 0),
+      receipt_stale_actions: numberValue(summaryRaw.receipt_stale_actions, 0),
     },
     actions: asArray<Record<string, unknown>>(raw.actions).map((item) => ({
       action_id: String(item.action_id || item.command || item.title || ""),
+      action_signature: item.action_signature ? String(item.action_signature) : null,
       lane: String(item.lane || "operator"),
       severity: String(item.severity || "attention"),
       priority: numberValue(item.priority, 0),
+      base_priority: numberValue(item.base_priority, numberValue(item.priority, 0)),
+      receipt_priority_boost: numberValue(item.receipt_priority_boost, 0),
       title: String(item.title || item.command || "Operator action"),
       summary: item.summary ? String(item.summary) : undefined,
       command: String(item.command || ""),
+      verify_command: item.verify_command ? String(item.verify_command) : null,
       ui_route: item.ui_route ? String(item.ui_route) : null,
       source: String(item.source || "operator"),
       evidence: typeof item.evidence === "object" && item.evidence !== null ? item.evidence as Record<string, unknown> : undefined,
+      receipt_required: boolValue(item.receipt_required),
+      receipt_status: String(item.receipt_status || "missing"),
+      receipt_underlying_status: item.receipt_underlying_status ? String(item.receipt_underlying_status) : undefined,
+      receipt_match: item.receipt_match ? String(item.receipt_match) : undefined,
+      receipt_current: item.receipt_current === undefined ? undefined : boolValue(item.receipt_current),
+      receipt_verified: boolValue(item.receipt_verified),
+      receipt_id: item.receipt_id ? String(item.receipt_id) : null,
+      receipt_hash: item.receipt_hash ? String(item.receipt_hash) : null,
+      receipt_state: typeof item.receipt_state === "object" && item.receipt_state !== null ? item.receipt_state as Record<string, unknown> : undefined,
     })).filter((item) => item.command),
     top_commands: asArray<unknown>(raw.top_commands).map(String).filter(Boolean),
     source_status: typeof raw.source_status === "object" && raw.source_status !== null ? raw.source_status as Record<string, string | undefined> : {},

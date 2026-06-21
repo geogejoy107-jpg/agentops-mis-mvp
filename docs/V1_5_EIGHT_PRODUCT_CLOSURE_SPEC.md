@@ -62,6 +62,10 @@ product exposes:
   embedded back into `operator action-plan` and `operator loop-audit`, so copied
   recovery commands can be paired with VERIFY commands and preserved in the
   audit/runtime ledger.
+- Knowledge search now carries workspace/project/access metadata. Repo doctrine
+  is indexed as `global/internal`, scoped Agent Gateway tokens can only retrieve
+  `global` plus their own workspace documents, and redaction happens before FTS
+  indexing or snippet return.
 - CLI/API-first execution for agents, with browser pages reserved for command,
   supervision, approval, and review.
 - Real Hermes/OpenClaw dogfood evidence in the ledger, cited by run ID and

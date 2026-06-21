@@ -865,6 +865,9 @@ CREATE TABLE IF NOT EXISTS plan_evidence_manifests (
 
 CREATE TABLE IF NOT EXISTS knowledge_documents (
     doc_id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL DEFAULT 'global',
+    project_id TEXT,
+    access_level TEXT NOT NULL DEFAULT 'internal',
     path TEXT NOT NULL UNIQUE,
     title TEXT NOT NULL,
     category TEXT NOT NULL,
@@ -1035,6 +1038,9 @@ def ensure_schema_migrations(conn: sqlite3.Connection):
     ensure_column(conn, "agent_plans", "approved_at", "approved_at TEXT")
     ensure_column(conn, "plan_evidence_manifests", "plan_hash", "plan_hash TEXT")
     ensure_column(conn, "plan_evidence_manifests", "verification_result_hash", "verification_result_hash TEXT")
+    ensure_column(conn, "knowledge_documents", "workspace_id", "workspace_id TEXT NOT NULL DEFAULT 'global'")
+    ensure_column(conn, "knowledge_documents", "project_id", "project_id TEXT")
+    ensure_column(conn, "knowledge_documents", "access_level", "access_level TEXT NOT NULL DEFAULT 'internal'")
     conn.execute(
         """CREATE TABLE IF NOT EXISTS prepared_actions (
             action_id TEXT PRIMARY KEY,
@@ -1078,6 +1084,7 @@ def ensure_schema_migrations(conn: sqlite3.Connection):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_prepared_actions_hash ON prepared_actions(action_hash)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_status ON memories(review_status)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_documents_workspace ON knowledge_documents(workspace_id, access_level)")
     ensure_knowledge_fts(conn)
 
 
@@ -4290,6 +4297,24 @@ def knowledge_scope(path: Path) -> str:
     return "project"
 
 
+def knowledge_project_id(path: Path) -> str:
+    try:
+        rel = path.relative_to(ROOT)
+    except ValueError:
+        return "external"
+    if rel.parts[:2] == ("knowledge", "bases") and len(rel.parts) >= 3:
+        return f"base:{rel.parts[2]}"
+    if rel.parts[:2] == ("knowledge", "runbooks"):
+        return "runbooks"
+    return "agentops-mis"
+
+
+def knowledge_access_level(path: Path) -> str:
+    # Repo-managed knowledge is internal product doctrine. Customer-private
+    # knowledge should be imported later with a concrete workspace_id.
+    return "internal"
+
+
 def iter_knowledge_markdown_files() -> list[Path]:
     candidates: list[Path] = []
     for name in ["PROJECT_SPEC.md", "AGENT_WORKFLOW.md", "BASE_INDEX.md", "secret_registry.md"]:
@@ -4341,6 +4366,9 @@ def sync_knowledge_index(conn: sqlite3.Connection, rebuild: bool = False) -> dic
         now = now_iso()
         row = {
             "doc_id": doc_id,
+            "workspace_id": "global",
+            "project_id": knowledge_project_id(path),
+            "access_level": knowledge_access_level(path),
             "path": rel,
             "title": title,
             "category": knowledge_category(path),
@@ -4351,9 +4379,10 @@ def sync_knowledge_index(conn: sqlite3.Connection, rebuild: bool = False) -> dic
             "updated_at": now,
         }
         conn.execute(
-            """INSERT INTO knowledge_documents(doc_id,path,title,category,scope,source_hash,content_summary,indexed_at,updated_at)
-            VALUES(:doc_id,:path,:title,:category,:scope,:source_hash,:content_summary,:indexed_at,:updated_at)
+            """INSERT INTO knowledge_documents(doc_id,workspace_id,project_id,access_level,path,title,category,scope,source_hash,content_summary,indexed_at,updated_at)
+            VALUES(:doc_id,:workspace_id,:project_id,:access_level,:path,:title,:category,:scope,:source_hash,:content_summary,:indexed_at,:updated_at)
             ON CONFLICT(doc_id) DO UPDATE SET
+                workspace_id=excluded.workspace_id,project_id=excluded.project_id,access_level=excluded.access_level,
                 path=excluded.path,title=excluded.title,category=excluded.category,scope=excluded.scope,
                 source_hash=excluded.source_hash,content_summary=excluded.content_summary,updated_at=excluded.updated_at""",
             row,
@@ -4380,6 +4409,42 @@ def fts_query(raw: str) -> str:
     return " OR ".join(terms[:8])
 
 
+def knowledge_visibility_filter(auth_ctx=None) -> tuple[str, list[str], dict]:
+    if auth_ctx and agent_gateway_is_bound_auth(auth_ctx):
+        workspace_id = normalize_workspace_id(auth_ctx.get("workspace_id") or "local-demo")
+        return (
+            " AND (kd.workspace_id='global' OR kd.workspace_id=?)",
+            [workspace_id],
+            {
+                "bound_visibility_enforced": True,
+                "workspace_id": workspace_id,
+                "visible_workspaces": ["global", workspace_id],
+                "access_levels": ["internal", "private"],
+            },
+        )
+    return (
+        "",
+        [],
+        {
+            "bound_visibility_enforced": False,
+            "workspace_id": None,
+            "visible_workspaces": ["*"],
+            "access_levels": ["*"],
+        },
+    )
+
+
+def enrich_knowledge_results(rows: list[dict], query: str) -> list[dict]:
+    enriched = []
+    for index, row in enumerate(rows, start=1):
+        item = dict(row)
+        item["retrieval_id"] = stable_id("kret", query or "recent", item.get("doc_id"), item.get("source_hash"), index)
+        item["raw_content_omitted"] = True
+        item["token_omitted"] = True
+        enriched.append(item)
+    return enriched
+
+
 def knowledge_search(conn: sqlite3.Connection, qs: dict, headers=None, auth_ctx=None) -> tuple[dict, int]:
     query = (qs.get("q") or qs.get("query") or [""])[0].strip()
     limit = min(max(int((qs.get("limit") or ["10"])[0]), 1), 50)
@@ -4399,6 +4464,7 @@ def knowledge_search(conn: sqlite3.Connection, qs: dict, headers=None, auth_ctx=
     }
     rows = []
     search_mode = "recent"
+    visibility_sql, visibility_params, visibility = knowledge_visibility_filter(auth_ctx)
     if query:
         search_mode = "fts5" if ensure_knowledge_fts(conn) else "like"
         try:
@@ -4406,27 +4472,34 @@ def knowledge_search(conn: sqlite3.Connection, qs: dict, headers=None, auth_ctx=
             if not match:
                 raise sqlite3.OperationalError("empty fts query")
             rows = rows_to_dicts(conn.execute(
-                """SELECT kd.*, snippet(knowledge_fts, 3, '', '', ' ... ', 18) AS snippet, bm25(knowledge_fts) AS rank
+                f"""SELECT kd.*, snippet(knowledge_fts, 3, '', '', ' ... ', 18) AS snippet, bm25(knowledge_fts) AS rank
                 FROM knowledge_fts
                 JOIN knowledge_documents kd ON kd.doc_id=knowledge_fts.doc_id
                 WHERE knowledge_fts MATCH ?
+                {visibility_sql}
                 ORDER BY rank LIMIT ?""",
-                (match, limit),
+                [match, *visibility_params, limit],
             ).fetchall())
         except sqlite3.OperationalError:
             like = f"%{query}%"
             search_mode = "like"
+            plain_visibility_sql = visibility_sql.replace("kd.", "")
             rows = rows_to_dicts(conn.execute(
-                """SELECT *, content_summary AS snippet, 0 AS rank FROM knowledge_documents
-                WHERE title LIKE ? OR path LIKE ? OR content_summary LIKE ?
+                f"""SELECT *, content_summary AS snippet, 0 AS rank FROM knowledge_documents
+                WHERE (title LIKE ? OR path LIKE ? OR content_summary LIKE ?)
+                {plain_visibility_sql}
                 ORDER BY updated_at DESC LIMIT ?""",
-                (like, like, like, limit),
+                [like, like, like, *visibility_params, limit],
             ).fetchall())
     else:
+        plain_visibility_sql = visibility_sql.replace("kd.", "")
         rows = rows_to_dicts(conn.execute(
-            "SELECT *, content_summary AS snippet, 0 AS rank FROM knowledge_documents ORDER BY updated_at DESC LIMIT ?",
-            (limit,),
+            f"""SELECT *, content_summary AS snippet, 0 AS rank FROM knowledge_documents
+            WHERE 1=1 {plain_visibility_sql}
+            ORDER BY updated_at DESC LIMIT ?""",
+            [*visibility_params, limit],
         ).fetchall())
+    rows = enrich_knowledge_results(rows, query)
     return {
         "provider": "agentops-knowledge",
         "operation": "knowledge_search",
@@ -4435,6 +4508,7 @@ def knowledge_search(conn: sqlite3.Connection, qs: dict, headers=None, auth_ctx=
         "results": rows,
         "count": len(rows),
         "index": index_result or index_state,
+        "visibility": visibility,
         "token_omitted": True,
     }, 200
 
@@ -5694,6 +5768,7 @@ def operator_action_receipt_public(row: sqlite3.Row) -> dict:
         "status": metadata.get("status") or "recorded",
         "source": metadata.get("source") or "operator_action_queue",
         "action_id": metadata.get("action_id"),
+        "action_signature": metadata.get("action_signature"),
         "action_command": metadata.get("action_command"),
         "action_hash": metadata.get("action_hash"),
         "verify_command": metadata.get("verify_command"),
@@ -5753,6 +5828,7 @@ def record_operator_action_receipt(conn: sqlite3.Connection, body: dict, headers
     actor_id = redact_text(body.get("actor_id") or "usr_founder", 120)
     raw_action = str(body.get("action_command") or body.get("action") or "").strip()
     raw_verify = str(body.get("verify_command") or body.get("verify_action") or "").strip()
+    raw_signature = str(body.get("action_signature") or "").strip()
     if not raw_action:
         return {"error": "action_command_required", "message": "action_command is required.", "token_omitted": True}, 400
     status = str(body.get("status") or "recorded").strip().lower()
@@ -5772,6 +5848,7 @@ def record_operator_action_receipt(conn: sqlite3.Connection, body: dict, headers
         "status": status,
         "source": redact_text(body.get("source") or "operator_action_queue", 160),
         "action_id": redact_text(body.get("action_id") or "", 160) or None,
+        "action_signature": redact_text(raw_signature, 180) if raw_signature else None,
         "action_command": redact_text(raw_action, 500),
         "action_hash": action_hash,
         "verify_command": redact_text(raw_verify, 500) if raw_verify else None,
@@ -14380,8 +14457,47 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
     dispatch_evidence = operator_dispatch_evidence_lane(conn, workspace_id, limit=max(limit, 8))
     action_receipts = list_operator_action_receipts(conn, {"limit": [str(max(limit, 8))], "workspace_id": [workspace_id]}, headers)
     action_receipt_summary = action_receipts.get("summary") or {}
+    receipt_rows = action_receipts.get("receipts") or []
 
     actions: list[dict] = []
+
+    def inferred_verify_command(lane: str, command: str) -> str | None:
+        command = (command or "").strip()
+        if command.startswith("agentops operator close-evidence-gap --run-id "):
+            return "agentops operator action-plan --limit 20"
+        if lane == "worker_fleet":
+            return "agentops worker status"
+        if lane == "runtime_route":
+            return "agentops worker readiness"
+        if lane == "async_inbox":
+            return "agentops commander inbox --limit 5"
+        if lane == "customer_delivery":
+            return "agentops workflow delivery-board --limit 12"
+        if lane == "task_intake":
+            return "agentops operator intake-checklist --limit 20"
+        if lane in {"execution_evidence", "dispatch_evidence", "remediation_loop", "review"}:
+            return "agentops operator action-plan --limit 20"
+        return None
+
+    def latest_receipt_for_action(command: str, action_id: str, action_signature: str) -> tuple[dict | None, str]:
+        current_action = command.strip()
+        current_action_hash = stable_hash(current_action)
+        action_ids = {action_id, f"operator:{action_id}"}
+        stale_candidate: dict | None = None
+        for receipt in receipt_rows:
+            receipt_action = str(receipt.get("action_command") or "").strip()
+            receipt_action_hash = str(receipt.get("action_hash") or "").strip()
+            if receipt_action == current_action or receipt_action_hash == current_action_hash:
+                return receipt, "current"
+            receipt_signature = str(receipt.get("action_signature") or "").strip()
+            receipt_action_id = str(receipt.get("action_id") or "").strip()
+            if receipt_signature and receipt_signature == action_signature:
+                stale_candidate = stale_candidate or receipt
+            elif receipt_action_id and receipt_action_id in action_ids:
+                stale_candidate = stale_candidate or receipt
+        if stale_candidate:
+            return stale_candidate, "stale"
+        return None, "missing"
 
     def add_action(
         lane: str,
@@ -14397,18 +14513,57 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
     ) -> None:
         if not command:
             return
+        verify_command = inferred_verify_command(lane, command)
+        action_signature = stable_id("op_action_sig", lane, title, ui_route or "", source)[-18:]
         action_id = stable_id("op_action", lane, title, command, ui_route or "")[-18:]
+        receipt, receipt_match = latest_receipt_for_action(command, action_id, action_signature)
+        receipt_underlying_status = str((receipt or {}).get("status") or "missing")
+        receipt_status = "stale" if receipt_match == "stale" else receipt_underlying_status
+        receipt_verified = receipt_match == "current" and receipt_underlying_status == "verified"
+        receipt_hash = (
+            (receipt or {}).get("tamper_chain_hash")
+            or (receipt or {}).get("verify_hash")
+            or (receipt or {}).get("action_hash")
+            or (receipt or {}).get("audit_id")
+        )
+        receipt_priority_boost = 0 if receipt_verified else 8
         actions.append({
             "action_id": action_id,
+            "action_signature": action_signature,
             "lane": lane,
             "severity": severity,
-            "priority": int(priority),
+            "priority": int(priority) + receipt_priority_boost,
+            "base_priority": int(priority),
+            "receipt_priority_boost": receipt_priority_boost,
             "title": redact_text(title, 180),
             "summary": redact_text(summary, 360),
             "command": redact_text(command, 260),
+            "verify_command": redact_text(verify_command, 260) if verify_command else None,
             "ui_route": ui_route,
             "source": source,
             "evidence": evidence or {},
+            "receipt_required": True,
+            "receipt_status": receipt_status,
+            "receipt_underlying_status": receipt_underlying_status,
+            "receipt_match": receipt_match,
+            "receipt_current": receipt_match == "current",
+            "receipt_verified": receipt_verified,
+            "receipt_id": (receipt or {}).get("receipt_id"),
+            "receipt_hash": receipt_hash,
+            "receipt_state": {
+                "required": True,
+                "status": receipt_status,
+                "underlying_status": receipt_underlying_status,
+                "match": receipt_match,
+                "current": receipt_match == "current",
+                "verified": receipt_verified,
+                "receipt_id": (receipt or {}).get("receipt_id"),
+                "receipt_hash": receipt_hash,
+                "action_hash": (receipt or {}).get("action_hash"),
+                "verify_hash": (receipt or {}).get("verify_hash"),
+                "source": (receipt or {}).get("source"),
+                "priority_boost": receipt_priority_boost,
+            },
             "token_omitted": True,
         })
 
@@ -14638,6 +14793,9 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
 
     blocked = [item for item in deduped if item.get("severity") == "blocked"]
     attention = [item for item in deduped if item.get("severity") == "attention"]
+    receipt_required_actions = [item for item in deduped if item.get("receipt_required")]
+    receipt_verified_actions = [item for item in receipt_required_actions if item.get("receipt_verified")]
+    receipt_stale_actions = [item for item in receipt_required_actions if item.get("receipt_status") == "stale"]
     status = "blocked" if blocked else "attention" if attention else "ready"
     return {
         "provider": "agentops-operator",
@@ -14686,6 +14844,10 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             "action_receipts_recorded": action_receipt_summary.get("recorded", 0),
             "action_receipts_verified": action_receipt_summary.get("verified", 0),
             "action_receipts_failed": action_receipt_summary.get("failed", 0),
+            "receipt_required_actions": len(receipt_required_actions),
+            "receipt_verified_actions": len(receipt_verified_actions),
+            "receipt_missing_verified_actions": len(receipt_required_actions) - len(receipt_verified_actions),
+            "receipt_stale_actions": len(receipt_stale_actions),
         },
         "actions": deduped,
         "top_commands": [item["command"] for item in deduped[:5]],
@@ -16294,7 +16456,16 @@ class Handler(BaseHTTPRequestHandler):
                 auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "knowledge:read")
                 if auth_error:
                     return self.send_json(auth_error, agent_gateway_error_status(auth_error))
-                payload, status = knowledge_search(conn, dict(qs), self.headers, auth_ctx)
+                query = dict(qs)
+                if agent_gateway_is_bound_auth(auth_ctx):
+                    requested_header_workspace = normalize_workspace_id(self.headers.get("X-AgentOps-Workspace-Id") or auth_ctx["workspace_id"])
+                    if requested_header_workspace != auth_ctx["workspace_id"]:
+                        return self.send_json({"error": "forbidden", "message": "Agent token cannot use another workspace header."}, 403)
+                    requested_workspace = requested_workspace_from_qs(query, auth_ctx["workspace_id"])
+                    if requested_workspace != auth_ctx["workspace_id"]:
+                        return self.send_json({"error": "forbidden", "message": "Agent token cannot search knowledge from another workspace."}, 403)
+                    query["workspace_id"] = [auth_ctx["workspace_id"]]
+                payload, status = knowledge_search(conn, query, self.headers, auth_ctx)
                 conn.commit()
                 return self.send_json(payload, status)
             if path == "/api/agent-gateway/agent-plans":

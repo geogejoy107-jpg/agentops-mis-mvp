@@ -117,10 +117,23 @@ def main() -> int:
         try:
             wait_ready(base_url, proc)
             before = db_counts(db_path)
+            status, seed_plan = http_json(base_url, "/api/operator/action-plan?limit=30")
+            outputs.append(json.dumps(seed_plan, ensure_ascii=False))
+            require(status == 200, f"seed action-plan status mismatch: {status} {seed_plan}", failures)
+            seed_action = next((item for item in seed_plan.get("actions") or [] if item.get("command")), {})
+            stale_seed_action = next((
+                item for item in seed_plan.get("actions") or []
+                if item.get("command")
+                and item.get("action_signature")
+                and item.get("command") != seed_action.get("command")
+            ), {})
+            action_command = str(seed_action.get("command") or "agentops worker status")
+            verify_command = str(seed_action.get("verify_command") or "agentops operator action-plan --limit 20")
             payload = {
-                "action_command": "agentops worker status",
-                "verify_command": "agentops operator action-plan --limit 20",
-                "action_id": "smoke:fleet:worker-status",
+                "action_command": action_command,
+                "verify_command": verify_command,
+                "action_id": str(seed_action.get("action_id") or "smoke:operator-action"),
+                "action_signature": str(seed_action.get("action_signature") or ""),
                 "source": "smoke.operator_action_queue",
                 "status": "verified",
                 "result_summary": "Smoke verified action queue receipt recording.",
@@ -139,8 +152,27 @@ def main() -> int:
             require(bool(item.get("tamper_chain_hash")), f"tamper hash missing: {receipt}", failures)
             require(item.get("action_command") == payload["action_command"], f"action command mismatch: {item}", failures)
             require(item.get("verify_command") == payload["verify_command"], f"verify command mismatch: {item}", failures)
+            require(item.get("action_signature") == payload["action_signature"], f"action signature mismatch: {item}", failures)
             require(bool(item.get("action_hash")), f"action hash missing: {item}", failures)
             require(bool(item.get("verify_hash")), f"verify hash missing: {item}", failures)
+
+            stale_payload = None
+            stale_item = None
+            if stale_seed_action:
+                stale_payload = {
+                    "action_command": f"agentops stale-receipt-placeholder --action-id {stale_seed_action.get('action_id')}",
+                    "verify_command": str(stale_seed_action.get("verify_command") or "agentops operator action-plan --limit 20"),
+                    "action_id": str(stale_seed_action.get("action_id") or "smoke:stale-action"),
+                    "action_signature": str(stale_seed_action.get("action_signature") or ""),
+                    "source": "smoke.operator_action_queue.stale",
+                    "status": "verified",
+                    "result_summary": "Smoke stale receipt should not verify the current action command.",
+                }
+                status, stale_receipt = http_json(base_url, "/api/operator/action-receipts", "POST", stale_payload)
+                outputs.append(json.dumps(stale_receipt, ensure_ascii=False))
+                require(status == 201, f"stale POST status mismatch: {status} {stale_receipt}", failures)
+                stale_item = stale_receipt.get("receipt") or {}
+                require(stale_item.get("action_signature") == stale_payload["action_signature"], f"stale action signature mismatch: {stale_item}", failures)
 
             status, readback = http_json(base_url, "/api/operator/action-receipts?limit=5")
             outputs.append(json.dumps(readback, ensure_ascii=False))
@@ -151,7 +183,7 @@ def main() -> int:
             receipt_ids = {row.get("receipt_id") for row in readback.get("receipts") or []}
             require(item.get("receipt_id") in receipt_ids, f"receipt missing from readback: {readback}", failures)
 
-            status, action_plan = http_json(base_url, "/api/operator/action-plan?limit=8")
+            status, action_plan = http_json(base_url, "/api/operator/action-plan?limit=30")
             outputs.append(json.dumps(action_plan, ensure_ascii=False))
             require(status == 200, f"action-plan status mismatch: {status} {action_plan}", failures)
             plan_summary = action_plan.get("summary") or {}
@@ -161,6 +193,27 @@ def main() -> int:
             require(plan_receipts.get("operation") == "operator_action_receipts", f"action-plan receipt payload missing: {plan_receipts}", failures)
             plan_receipt_ids = {row.get("receipt_id") for row in plan_receipts.get("receipts") or []}
             require(item.get("receipt_id") in plan_receipt_ids, f"receipt missing from action-plan source: {plan_receipts}", failures)
+            matched_action = next((row for row in action_plan.get("actions") or [] if row.get("command") == payload["action_command"]), {})
+            require(matched_action.get("receipt_status") == "verified", f"action-plan action receipt status missing: {matched_action}", failures)
+            require(matched_action.get("receipt_verified") is True, f"action-plan action receipt proof missing: {matched_action}", failures)
+            require(matched_action.get("receipt_id") == item.get("receipt_id"), f"action-plan action receipt id mismatch: {matched_action}", failures)
+            require(bool(matched_action.get("receipt_hash")), f"action-plan action receipt hash missing: {matched_action}", failures)
+            shared_verify = [
+                row for row in action_plan.get("actions") or []
+                if row.get("command") != payload["action_command"]
+                and row.get("verify_command") == payload["verify_command"]
+            ]
+            for other in shared_verify:
+                require(other.get("receipt_verified") is False, f"shared verify command should not verify another action: {other}", failures)
+                require(other.get("receipt_match") != "current", f"shared verify command should not create current match: {other}", failures)
+                require(int(other.get("receipt_priority_boost") or 0) == 8, f"shared verify action should keep receipt boost: {other}", failures)
+            if stale_payload:
+                stale_action = next((row for row in action_plan.get("actions") or [] if row.get("action_signature") == stale_payload["action_signature"]), {})
+                require(stale_action.get("receipt_status") == "stale", f"stale receipt should not verify current action: {stale_action}", failures)
+                require(stale_action.get("receipt_verified") is False, f"stale receipt verified current action: {stale_action}", failures)
+                require(stale_action.get("receipt_match") == "stale", f"stale receipt match missing: {stale_action}", failures)
+                require(int(stale_action.get("receipt_priority_boost") or 0) == 8, f"stale receipt should keep priority boost: {stale_action}", failures)
+                require(stale_action.get("receipt_id") == stale_item.get("receipt_id"), f"stale receipt id mismatch: {stale_action}", failures)
 
             status, loop_audit = http_json(base_url, "/api/operator/loop-audit?limit=8")
             outputs.append(json.dumps(loop_audit, ensure_ascii=False))
@@ -174,8 +227,9 @@ def main() -> int:
             require(int(record_evidence.get("action_receipts_verified") or 0) >= 1, f"RECORD evidence lacks verified receipt: {record_evidence}", failures)
 
             after = db_counts(db_path)
-            require(after["audit_logs"] == before["audit_logs"] + 1, f"audit count did not increase once: {before} -> {after}", failures)
-            require(after["runtime_events"] == before["runtime_events"] + 1, f"runtime count did not increase once: {before} -> {after}", failures)
+            expected_writes = 1 + (1 if stale_payload else 0)
+            require(after["audit_logs"] == before["audit_logs"] + expected_writes, f"audit count did not increase by {expected_writes}: {before} -> {after}", failures)
+            require(after["runtime_events"] == before["runtime_events"] + expected_writes, f"runtime count did not increase by {expected_writes}: {before} -> {after}", failures)
             require(not leaked_secret("\n".join(outputs)), "receipt output leaked token-like material", failures)
         finally:
             proc.terminate()

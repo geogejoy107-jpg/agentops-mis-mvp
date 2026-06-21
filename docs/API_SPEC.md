@@ -150,10 +150,18 @@ into SQLite FTS5. If FTS5 is unavailable, search falls back to a plain SQLite
 `LIKE` query. This is intentionally the first stage before embeddings or a
 vector database.
 
+Indexed documents carry `workspace_id`, `project_id`, `access_level`, `scope`,
+`source_hash`, and search-time `retrieval_id` metadata. Repo-managed doctrine is
+indexed as `workspace_id=global` and `access_level=internal`; future
+customer-private imports must use a concrete workspace id. Search results return
+redacted snippets and hashes only, never raw document bodies.
+
 Agent Gateway search requires `knowledge:read` and is non-mutating: `refresh`
 requests are reported as skipped so read scope cannot update the index. Explicit
 index refresh uses `POST /api/agent-gateway/knowledge/index` and requires
-`knowledge:write`.
+`knowledge:write`. Bound Agent Gateway tokens can see only `global` knowledge
+plus documents whose `workspace_id` matches the token workspace; workspace header
+or query spoofing returns `403`.
 
 ## Agent Plans
 

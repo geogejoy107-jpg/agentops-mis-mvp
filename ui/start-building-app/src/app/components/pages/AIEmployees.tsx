@@ -1163,21 +1163,22 @@ export function AIEmployees() {
   const receiptShortHash = (receipt?: { tamper_chain_hash?: string; action_hash?: string | null; verify_hash?: string | null; audit_id?: string }) => (
     (receipt?.tamper_chain_hash || receipt?.verify_hash || receipt?.action_hash || receipt?.audit_id || "").slice(0, 12)
   );
-  const latestReceiptForCommands = (...commands: Array<string | undefined | null>) => {
-    const wanted = new Set(commands.map(command => String(command || "").trim()).filter(Boolean));
-    if (!wanted.size) return undefined;
+  const latestReceiptForAction = (action: string, actionSignature?: string | null) => {
+    const wantedAction = String(action || "").trim();
+    const wantedSignature = String(actionSignature || "").trim();
+    if (!wantedAction && !wantedSignature) return undefined;
     return actionReceiptRows.find(receipt => (
-      wanted.has(String(receipt.action_command || "").trim()) ||
-      wanted.has(String(receipt.verify_command || "").trim())
+      (wantedAction && wantedAction === String(receipt.action_command || "").trim()) ||
+      (wantedSignature && wantedSignature === String(receipt.action_signature || "").trim())
     ));
   };
-  const hasVerifiedReceiptForCommands = (...commands: Array<string | undefined | null>) => (
-    latestReceiptForCommands(...commands)?.status === "verified"
+  const candidateReceiptVerified = (candidate: { action: string; actionSignature?: string | null; receiptVerified?: boolean }) => (
+    typeof candidate.receiptVerified === "boolean" ? candidate.receiptVerified : latestReceiptForAction(candidate.action, candidate.actionSignature)?.status === "verified"
   );
-  const actionQueueCandidateScore = (candidate: { id: string; action: string; verifyAction?: string }) => (
+  const actionQueueCandidateScore = (candidate: { id: string; action: string; actionSignature?: string | null; receiptVerified?: boolean }) => (
     isCloseEvidenceGapCommand(candidate.action) ? 120 :
     candidate.id.startsWith("loop-first-issue:") ? 110 :
-    !hasVerifiedReceiptForCommands(candidate.action, candidate.verifyAction) ? 80 :
+    !candidateReceiptVerified(candidate) ? 80 :
     0
   );
   const actionQueueCandidates = [
@@ -1194,7 +1195,12 @@ export function AIEmployees() {
       source: `${copy.operatorTitle} · ${item.lane}`,
       status: item.severity || operatorActionPlan?.status || "attention",
       operatorAction: item,
-      ...(isCloseEvidenceGapCommand(item.command) ? { verifyAction: "agentops operator action-plan --limit 20" } : {}),
+      verifyAction: item.verify_command || (isCloseEvidenceGapCommand(item.command) ? "agentops operator action-plan --limit 20" : undefined),
+      actionSignature: item.action_signature,
+      receiptStatus: item.receipt_status,
+      receiptVerified: item.receipt_verified,
+      receiptHash: item.receipt_hash,
+      receiptId: item.receipt_id,
     })),
     ...recommendedActions.map((action, index) => ({
       id: `fleet:${index}:${action}`,
@@ -1229,7 +1235,7 @@ export function AIEmployees() {
     list.findIndex(item => item.action === candidate.action) === index
   )).sort((left, right) => actionQueueCandidateScore(right) - actionQueueCandidateScore(left)).slice(0, 8);
   const actionReceiptKey = actionQueueCandidates.map(item => (
-    `${item.id}:${hasVerifiedReceiptForCommands(item.action, "verifyAction" in item ? item.verifyAction : undefined) ? "verified" : "missing"}`
+    `${item.id}:${candidateReceiptVerified(item) ? "verified" : "missing"}`
   )).join("|");
   const actionQueueKey = `${actionQueueCandidates.map(item => item.id).join("|")}::${actionReceiptKey}`;
   const dispatchEvidenceActions = operatorPlanActions.filter(item => item.lane === "dispatch_evidence").slice(0, 4);
@@ -1430,6 +1436,7 @@ export function AIEmployees() {
         action_command: item.action,
         verify_command: verifyAction || undefined,
         action_id: item.id,
+        action_signature: "actionSignature" in item ? item.actionSignature || undefined : undefined,
         source: item.source,
         status,
         result_summary: status === "verified"
@@ -2868,7 +2875,7 @@ export function AIEmployees() {
               <div className="mt-2 overflow-x-auto">
                 <div className="flex items-stretch gap-1 min-w-max">
                   {loopAuditSteps.map((step, index) => {
-                    const stepReceipt = latestReceiptForCommands(step.command);
+                    const stepReceipt = latestReceiptForAction(step.command);
                     const stepReceiptHash = receiptShortHash(stepReceipt);
                     return (
                       <div key={step.id} className="flex items-center gap-1">
@@ -3150,9 +3157,12 @@ export function AIEmployees() {
               const verifyAction = "verifyAction" in item ? item.verifyAction : undefined;
               const recordBusy = receiptAction === `action-receipt:recorded:${item.id}`;
               const verifyBusy = receiptAction === `action-receipt:verified:${item.id}`;
-              const queueReceipt = latestReceiptForCommands(item.action, verifyAction);
-              const queueReceiptHash = receiptShortHash(queueReceipt);
-              const queueNeedsReceipt = queueReceipt?.status !== "verified";
+              const queueReceipt = latestReceiptForAction(item.action, "actionSignature" in item ? item.actionSignature : undefined);
+              const backendReceiptStatus = "receiptStatus" in item ? item.receiptStatus : undefined;
+              const backendReceiptHash = "receiptHash" in item ? item.receiptHash : undefined;
+              const queueReceiptStatus = backendReceiptStatus || queueReceipt?.status;
+              const queueReceiptHash = receiptShortHash(queueReceipt) || String(backendReceiptHash || "").slice(0, 12);
+              const queueNeedsReceipt = !candidateReceiptVerified(item);
               return (
                 <div
                   key={item.id}
@@ -3202,9 +3212,9 @@ export function AIEmployees() {
                         </button>
                       </div>
                     )}
-                    {queueReceipt && (
-                      <div className="text-[10px] mt-0.5 truncate" style={{ color: "var(--mis-success)" }}>
-                        {copy.receiptProof}: {queueReceipt.status} · {queueReceiptHash}
+                    {queueReceiptStatus && queueReceiptStatus !== "missing" && (
+                      <div className="text-[10px] mt-0.5 truncate" style={{ color: queueReceiptStatus === "verified" ? "var(--mis-success)" : "var(--mis-warning)" }}>
+                        {copy.receiptProof}: {queueReceiptStatus} · {queueReceiptHash}
                       </div>
                     )}
                     {queueNeedsReceipt && (

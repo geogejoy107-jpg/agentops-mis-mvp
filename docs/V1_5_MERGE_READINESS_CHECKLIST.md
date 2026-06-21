@@ -74,13 +74,13 @@ python3 scripts/customer_worker_external_write_gate_smoke.py
 
 ## 3. Knowledge safety and quality
 
-- [ ] Knowledge documents carry workspace/project/access metadata where required.
-- [ ] Repo-global doctrine is separated from customer-private knowledge.
-- [ ] Remote/scoped search enforces authorization.
+- [x] Knowledge documents carry workspace/project/access metadata where required.
+- [x] Repo-global doctrine is separated from customer-private knowledge.
+- [x] Remote/scoped search enforces authorization.
 - [ ] Candidate/rejected memory is not treated as authority.
 - [ ] Index excludes credentials, databases, runtime logs, caches and raw customer files.
-- [ ] Redaction occurs before indexing.
-- [ ] Search returns source path, hash, scope and retrieval ID.
+- [x] Redaction occurs before indexing.
+- [x] Search returns source path, hash, scope and retrieval ID.
 - [ ] Add heading-aware chunks rather than only full-document rows.
 - [ ] Add a Chinese/English retrieval test set.
 - [ ] Record Recall@5, MRR and p95.
