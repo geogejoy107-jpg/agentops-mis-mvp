@@ -1,19 +1,28 @@
 import { Link } from "react-router";
 import { Activity, ArrowRight, CheckCircle2, ClipboardCheck, Gauge, XCircle } from "lucide-react";
-import { agents, evaluations, runs, tasks } from "../../data/mockData";
+import {
+  loadAgents,
+  loadEvaluationCaseCandidates,
+  loadEvaluations,
+  loadRuns,
+  loadTasks,
+  useLiveData,
+} from "../../data/liveApi";
 import { StatusBadge } from "../shared/StatusBadge";
 import { pick, usePreferences } from "../../context/PreferencesContext";
 
-function agentName(agentId: string) {
-  return agents.find((agent) => agent.agent_id === agentId)?.name || agentId;
-}
-
-function taskTitle(taskId: string) {
-  return tasks.find((task) => task.task_id === taskId)?.title || taskId;
-}
-
 export function EvaluationRoom() {
   const { locale } = usePreferences();
+  const { data, loading, error, refresh } = useLiveData(async () => {
+    const [agents, tasks, runs, evaluations, cases] = await Promise.all([
+      loadAgents(),
+      loadTasks(),
+      loadRuns(),
+      loadEvaluations(),
+      loadEvaluationCaseCandidates({ status: "candidate", limit: 8 }),
+    ]);
+    return { agents, tasks, runs, evaluations, cases };
+  }, []);
   const copy = pick(locale, {
     en: {
       title: "Evaluation Room",
@@ -36,6 +45,12 @@ export function EvaluationRoom() {
       noFailedRuns: "No failed runs in the current demo state.",
       runtimeFailure: "Runtime failure",
       future: "Future v1.4/v1.5 can add evaluator filters, score trends and trace replay once the run ledger emits richer evaluator payloads.",
+      caseCandidates: "Regression case candidates",
+      caseCandidatesBody: "Approved failures, customer delivery reviews and Commander synthesis reports can become reusable test cases only after human review.",
+      noCases: "No candidate evaluation cases yet.",
+      refresh: "Refresh",
+      loading: "Loading live evaluation ledger...",
+      error: "Evaluation API error",
     },
     zh: {
       title: "评估室",
@@ -58,8 +73,21 @@ export function EvaluationRoom() {
       noFailedRuns: "当前演示状态没有失败运行。",
       runtimeFailure: "运行失败",
       future: "后续 v1.4/v1.5 可以在运行账本输出更丰富评估载荷后，增加评估器筛选、分数趋势和 trace replay。",
+      caseCandidates: "回归用例候选",
+      caseCandidatesBody: "失败评估、客户交付复核和 Commander 合并报告，都必须先进入人工审核，才能变成可复用测试用例。",
+      noCases: "暂无候选评估用例。",
+      refresh: "刷新",
+      loading: "正在加载真实评估账本...",
+      error: "评估 API 错误",
     },
   });
+  const agents = data?.agents || [];
+  const tasks = data?.tasks || [];
+  const runs = data?.runs || [];
+  const evaluations = data?.evaluations || [];
+  const cases = data?.cases;
+  const agentName = (agentId: string) => agents.find((agent) => agent.agent_id === agentId)?.name || agentId;
+  const taskTitle = (taskId: string) => tasks.find((task) => task.task_id === taskId)?.title || taskId;
   const total = evaluations.length;
   const passed = evaluations.filter((evaluation) => evaluation.pass_fail === "pass").length;
   const failed = total - passed;
@@ -95,7 +123,20 @@ export function EvaluationRoom() {
           {copy.runLedger}
           <ArrowRight size={13} />
         </Link>
+        <button
+          onClick={() => void refresh()}
+          className="inline-flex items-center gap-1.5 rounded px-3 py-1.5 text-xs"
+          style={{ background: "var(--mis-surface2)", color: "var(--mis-text)", border: "1px solid var(--mis-border)" }}
+        >
+          {copy.refresh}
+        </button>
       </div>
+
+      {(loading || error) && (
+        <div className="rounded px-3 py-2 text-xs" style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)", color: error ? "#F87171" : "var(--mis-muted)" }}>
+          {error ? `${copy.error}: ${error}` : copy.loading}
+        </div>
+      )}
 
       <section className="grid grid-cols-2 xl:grid-cols-4 gap-3">
         {scoreTiles.map((tile) => {
@@ -185,6 +226,56 @@ export function EvaluationRoom() {
             {copy.future}
           </div>
         </aside>
+      </section>
+
+      <section className="rounded-lg overflow-hidden" style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}>
+        <div className="p-4 border-b" style={{ borderColor: "var(--mis-border)" }}>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-2 text-sm font-semibold" style={{ color: "var(--mis-text)" }}>
+                <ClipboardCheck size={15} style={{ color: "var(--mis-cyan)" }} />
+                {copy.caseCandidates}
+              </div>
+              <p className="mt-1 text-[11px]" style={{ color: "var(--mis-dim)" }}>
+                {copy.caseCandidatesBody}
+              </p>
+            </div>
+            <StatusBadge status={cases?.status || "unknown"} />
+          </div>
+        </div>
+        <div className="divide-y" style={{ borderColor: "var(--mis-border)" }}>
+          {(cases?.cases || []).length === 0 && (
+            <div className="p-4 text-[11px]" style={{ color: "var(--mis-muted)" }}>{copy.noCases}</div>
+          )}
+          {(cases?.cases || []).map((item) => (
+            <div key={item.case_id} className="p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-[10px]" style={{ color: "var(--mis-cyan)" }}>{item.case_id}</span>
+                    <StatusBadge status={item.review_status} />
+                    <StatusBadge status={item.case_type} />
+                  </div>
+                  <div className="mt-1 text-sm font-medium truncate" style={{ color: "var(--mis-text)" }}>{item.title}</div>
+                  <p className="mt-1 text-[11px] leading-relaxed line-clamp-2" style={{ color: "var(--mis-dim)" }}>
+                    {item.expected_output_summary || item.input_summary || item.failure_mode || item.source_type}
+                  </p>
+                  <div className="mt-2 text-[10px]" style={{ color: "var(--mis-muted)" }}>
+                    {item.source_type} · {item.agent_id || "agent: —"} · {item.updated_at ? new Date(item.updated_at).toLocaleString() : "—"}
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {item.task_id && (
+                    <Link to={`/admin/tasks/${item.task_id}`} className="text-[10px] px-2 py-1 rounded" style={{ background: "rgba(34,211,238,0.10)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.18)" }}>Task</Link>
+                  )}
+                  {item.run_id && (
+                    <Link to={`/admin/runs/${item.run_id}`} className="text-[10px] px-2 py-1 rounded" style={{ background: "rgba(45,212,191,0.10)", color: "var(--mis-success)", border: "1px solid rgba(45,212,191,0.18)" }}>Run</Link>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
       </section>
     </div>
   );

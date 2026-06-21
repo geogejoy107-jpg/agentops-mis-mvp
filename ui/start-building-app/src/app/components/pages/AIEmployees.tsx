@@ -5,6 +5,7 @@ import { StatusBadge } from "../shared/StatusBadge";
 import {
   createAgentGatewayEnrollment,
   decideApproval,
+  decideEvaluationCase,
   decideMemory,
   dispatchCommanderWorkPackage,
   dispatchCommanderWorkPackageBatch,
@@ -1437,6 +1438,8 @@ export function AIEmployees() {
         await decideApproval(item.item_id, decision);
       } else if (item.item_type === "memory_candidate") {
         await decideMemory(item.item_id, decision);
+      } else if (item.item_type === "evaluation_case_candidate") {
+        await decideEvaluationCase(item.item_id, decision);
       } else {
         setReviewResult(`${copy.reviewActionResult}: ${item.item_type} ${item.item_id}`);
         return;
@@ -1946,7 +1949,7 @@ export function AIEmployees() {
                   {item.links?.report_url && (
                     <Link to={item.links.report_url} className="text-[10px] px-2 py-1 rounded" style={{ background: "rgba(251,191,36,0.10)", color: "var(--mis-warning)", border: "1px solid rgba(251,191,36,0.20)" }}>{copy.openReport}</Link>
                   )}
-                  {((item.item_type === "approval" && item.status === "pending") || (item.item_type === "memory_candidate" && item.status === "candidate")) && (
+                  {((item.item_type === "approval" && item.status === "pending") || (item.item_type === "memory_candidate" && item.status === "candidate") || (item.item_type === "evaluation_case_candidate" && item.status === "candidate")) && (
                     <>
                       <button
                         onClick={() => void handleReviewDecision(item, "approve")}

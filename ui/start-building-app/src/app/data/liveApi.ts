@@ -941,6 +941,7 @@ export interface CommanderSynthesisPromotionPayload {
 export interface ReviewQueueSummary {
   pending_approvals: number;
   memory_candidates: number;
+  evaluation_case_candidates?: number;
   ready_deliveries: number;
   waiting_deliveries: number;
   needs_attention_deliveries: number;
@@ -951,6 +952,7 @@ export interface ReviewQueueSummary {
   returned_items: number;
   retrieved_pending_approvals?: number;
   retrieved_memory_candidates?: number;
+  retrieved_evaluation_case_candidates?: number;
 }
 
 export interface ReviewQueueItem {
@@ -991,6 +993,56 @@ export interface ReviewQueuePayload {
     token_omitted: boolean;
   };
   token_omitted?: boolean;
+}
+
+export interface EvaluationCaseCandidate {
+  case_id: string;
+  workspace_id: string;
+  source_type: string;
+  source_ref?: string | null;
+  task_id?: string | null;
+  run_id?: string | null;
+  artifact_id?: string | null;
+  evaluation_id?: string | null;
+  agent_id?: string | null;
+  case_type: string;
+  title: string;
+  input_summary?: string | null;
+  expected_output_summary?: string | null;
+  failure_mode?: string | null;
+  confidence: number;
+  review_status: string;
+  created_by_agent_id?: string | null;
+  owner_user_id?: string | null;
+  created_at: string;
+  updated_at: string;
+  rubric?: Record<string, unknown>;
+  token_omitted?: boolean;
+}
+
+export interface EvaluationCaseCandidatesPayload {
+  provider: string;
+  operation: string;
+  status: string;
+  workspace_id: string;
+  limit: number;
+  summary: {
+    candidate: number;
+    approved: number;
+    rejected: number;
+    returned: number;
+  };
+  cases: EvaluationCaseCandidate[];
+  next_actions: string[];
+  safety: {
+    read_only: boolean;
+    ledger_mutated: boolean;
+    live_execution_performed: boolean;
+    raw_prompt_omitted: boolean;
+    raw_response_omitted: boolean;
+    token_omitted: boolean;
+  };
+  token_omitted: boolean;
 }
 
 export interface StuckWorkerTask extends Task {
@@ -1553,6 +1605,34 @@ export function normalizeEvaluation(row: Record<string, unknown>): Evaluation {
   };
 }
 
+export function normalizeEvaluationCaseCandidate(row: Record<string, unknown>): EvaluationCaseCandidate {
+  const rubric = typeof row.rubric === "object" && row.rubric !== null ? row.rubric as Record<string, unknown> : {};
+  return {
+    case_id: String(row.case_id || ""),
+    workspace_id: String(row.workspace_id || "local-demo"),
+    source_type: String(row.source_type || "manual"),
+    source_ref: row.source_ref ? String(row.source_ref) : null,
+    task_id: row.task_id ? String(row.task_id) : null,
+    run_id: row.run_id ? String(row.run_id) : null,
+    artifact_id: row.artifact_id ? String(row.artifact_id) : null,
+    evaluation_id: row.evaluation_id ? String(row.evaluation_id) : null,
+    agent_id: row.agent_id ? String(row.agent_id) : null,
+    case_type: String(row.case_type || "quality"),
+    title: String(row.title || row.case_id || "Evaluation case"),
+    input_summary: row.input_summary ? String(row.input_summary) : null,
+    expected_output_summary: row.expected_output_summary ? String(row.expected_output_summary) : null,
+    failure_mode: row.failure_mode ? String(row.failure_mode) : null,
+    confidence: numberValue(row.confidence, 0),
+    review_status: String(row.review_status || "candidate"),
+    created_by_agent_id: row.created_by_agent_id ? String(row.created_by_agent_id) : null,
+    owner_user_id: row.owner_user_id ? String(row.owner_user_id) : null,
+    created_at: String(row.created_at || ""),
+    updated_at: String(row.updated_at || row.created_at || ""),
+    rubric,
+    token_omitted: boolValue(row.token_omitted),
+  };
+}
+
 export function normalizeToolCall(row: Record<string, unknown>): ToolCall {
   return {
     tool_call_id: String(row.tool_call_id || ""),
@@ -1623,6 +1703,70 @@ export async function loadTasks(): Promise<Task[]> {
 
 export async function loadRuns(query = ""): Promise<Run[]> {
   return (await apiJson<Record<string, unknown>[]>(`/runs${query}`)).map(normalizeRun);
+}
+
+export async function loadEvaluations(): Promise<Evaluation[]> {
+  return (await apiJson<Record<string, unknown>[]>("/evaluations")).map(normalizeEvaluation);
+}
+
+export async function loadEvaluationCaseCandidates(input: {
+  status?: string;
+  limit?: number;
+  run_id?: string;
+  task_id?: string;
+  artifact_id?: string;
+} = {}): Promise<EvaluationCaseCandidatesPayload> {
+  const params = new URLSearchParams();
+  params.set("status", input.status || "candidate");
+  params.set("limit", String(input.limit || 25));
+  if (input.run_id) params.set("run_id", input.run_id);
+  if (input.task_id) params.set("task_id", input.task_id);
+  if (input.artifact_id) params.set("artifact_id", input.artifact_id);
+  const raw = await optionalApiJson<Record<string, unknown>>(`/evaluation-cases?${params.toString()}`, {
+    provider: "agentops-evaluation",
+    operation: "evaluation_case_candidates",
+    status: "unavailable",
+    workspace_id: "local-demo",
+    limit: input.limit || 25,
+    summary: {},
+    cases: [],
+    next_actions: [],
+    safety: {
+      read_only: true,
+      ledger_mutated: false,
+      live_execution_performed: false,
+      raw_prompt_omitted: true,
+      raw_response_omitted: true,
+      token_omitted: true,
+    },
+    token_omitted: true,
+  });
+  const summaryRaw = typeof raw.summary === "object" && raw.summary !== null ? raw.summary as Record<string, unknown> : {};
+  const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
+  return {
+    provider: String(raw.provider || "agentops-evaluation"),
+    operation: String(raw.operation || "evaluation_case_candidates"),
+    status: String(raw.status || "unknown"),
+    workspace_id: String(raw.workspace_id || "local-demo"),
+    limit: numberValue(raw.limit, input.limit || 25),
+    summary: {
+      candidate: numberValue(summaryRaw.candidate, 0),
+      approved: numberValue(summaryRaw.approved, 0),
+      rejected: numberValue(summaryRaw.rejected, 0),
+      returned: numberValue(summaryRaw.returned, 0),
+    },
+    cases: asArray<Record<string, unknown>>(raw.cases).map(normalizeEvaluationCaseCandidate),
+    next_actions: asArray(raw.next_actions).map(String),
+    safety: {
+      read_only: boolValue(safetyRaw.read_only),
+      ledger_mutated: boolValue(safetyRaw.ledger_mutated),
+      live_execution_performed: boolValue(safetyRaw.live_execution_performed),
+      raw_prompt_omitted: boolValue(safetyRaw.raw_prompt_omitted),
+      raw_response_omitted: boolValue(safetyRaw.raw_response_omitted),
+      token_omitted: boolValue(safetyRaw.token_omitted),
+    },
+    token_omitted: boolValue(raw.token_omitted),
+  };
 }
 
 export async function loadApprovals(): Promise<Approval[]> {
@@ -1716,6 +1860,13 @@ export async function decideMemory(id: string, decision: "approve" | "reject"): 
     body: JSON.stringify({}),
   });
   return normalizeMemory(raw);
+}
+
+export async function decideEvaluationCase(id: string, decision: "approve" | "reject"): Promise<Record<string, unknown>> {
+  return apiJson<Record<string, unknown>>(`/evaluation-cases/${encodeURIComponent(id)}/${decision}`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
 }
 
 export async function runLocalBrief(confirmRun = false): Promise<LocalBriefResult> {
@@ -2694,6 +2845,7 @@ export async function loadReviewQueue(limit = 12): Promise<ReviewQueuePayload> {
     summary: {
       pending_approvals: numberValue(summaryRaw.pending_approvals, 0),
       memory_candidates: numberValue(summaryRaw.memory_candidates, 0),
+      evaluation_case_candidates: numberValue(summaryRaw.evaluation_case_candidates, 0),
       ready_deliveries: numberValue(summaryRaw.ready_deliveries, 0),
       waiting_deliveries: numberValue(summaryRaw.waiting_deliveries, 0),
       needs_attention_deliveries: numberValue(summaryRaw.needs_attention_deliveries, 0),
@@ -2704,6 +2856,7 @@ export async function loadReviewQueue(limit = 12): Promise<ReviewQueuePayload> {
       returned_items: numberValue(summaryRaw.returned_items, 0),
       retrieved_pending_approvals: numberValue(summaryRaw.retrieved_pending_approvals, 0),
       retrieved_memory_candidates: numberValue(summaryRaw.retrieved_memory_candidates, 0),
+      retrieved_evaluation_case_candidates: numberValue(summaryRaw.retrieved_evaluation_case_candidates, 0),
     },
     review_items: asArray<Record<string, unknown>>(raw.review_items).map((item) => ({
       item_type: String(item.item_type || "review_item"),

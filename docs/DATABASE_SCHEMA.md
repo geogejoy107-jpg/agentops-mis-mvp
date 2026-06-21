@@ -156,6 +156,30 @@ CREATE TABLE IF NOT EXISTS evaluations (
     FOREIGN KEY(agent_id) REFERENCES agents(agent_id)
 );
 
+CREATE TABLE IF NOT EXISTS evaluation_case_candidates (
+    case_id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL DEFAULT 'local-demo',
+    source_type TEXT NOT NULL CHECK(source_type IN ('evaluation','customer_delivery','run','artifact','manual','commander_synthesis')),
+    source_ref TEXT,
+    task_id TEXT,
+    run_id TEXT,
+    artifact_id TEXT,
+    evaluation_id TEXT,
+    agent_id TEXT,
+    case_type TEXT NOT NULL CHECK(case_type IN ('regression','golden','safety','quality','cost','tool_use','memory')),
+    title TEXT NOT NULL,
+    input_summary TEXT,
+    expected_output_summary TEXT,
+    rubric_json TEXT NOT NULL DEFAULT '{}',
+    failure_mode TEXT,
+    confidence REAL NOT NULL DEFAULT 0.5,
+    review_status TEXT NOT NULL CHECK(review_status IN ('candidate','approved','rejected','stale','superseded')),
+    created_by_agent_id TEXT,
+    owner_user_id TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS artifacts (
     artifact_id TEXT PRIMARY KEY,
     task_id TEXT,

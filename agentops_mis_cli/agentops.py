@@ -806,6 +806,45 @@ def cmd_eval_submit(args, client: AgentOpsClient) -> dict:
     return client.post("/api/agent-gateway/evaluations/submit", payload)
 
 
+def cmd_eval_cases(args, client: AgentOpsClient) -> dict:
+    return client.get("/api/evaluation-cases", query={
+        "workspace_id": client.workspace_id,
+        "status": args.status,
+        "limit": args.limit,
+        "run_id": args.run_id,
+        "task_id": args.task_id,
+        "artifact_id": args.artifact_id,
+    })
+
+
+def cmd_eval_propose_case(args, client: AgentOpsClient) -> dict:
+    payload = {
+        "workspace_id": client.workspace_id,
+        "case_id": args.case_id,
+        "source_type": args.source_type,
+        "source_ref": args.source_ref,
+        "evaluation_id": args.evaluation_id,
+        "artifact_id": args.artifact_id,
+        "run_id": args.run_id,
+        "task_id": args.task_id,
+        "agent_id": args.agent_id,
+        "case_type": args.case_type,
+        "title": args.title,
+        "input_summary": args.input_summary,
+        "expected_output_summary": args.expected_output_summary,
+        "failure_mode": args.failure_mode,
+        "confidence": args.confidence,
+        "rubric": parse_json_value(args.rubric_json, None),
+        "confirm_create": bool(args.confirm_create),
+    }
+    return client.post("/api/evaluation-cases/propose", payload)
+
+
+def cmd_eval_review_case(args, client: AgentOpsClient) -> dict:
+    action = "approve" if args.handler == "eval_approve_case" else "reject"
+    return client.post(f"/api/evaluation-cases/{args.case_id}/{action}", {})
+
+
 def cmd_audit_emit(args, client: AgentOpsClient) -> dict:
     payload = {
         "workspace_id": client.workspace_id,
@@ -1737,6 +1776,37 @@ def build_parser() -> argparse.ArgumentParser:
     submit.add_argument("--rubric-json", default=None)
     submit.add_argument("--notes", default="Submitted through agentops CLI.")
     submit.set_defaults(handler="eval_submit")
+    cases = eval_sub.add_parser("cases", help="List evaluation case candidates.")
+    cases.add_argument("--status", default="candidate", choices=["candidate", "approved", "rejected", "stale", "superseded"])
+    cases.add_argument("--limit", type=int, default=25)
+    cases.add_argument("--run-id", default=None)
+    cases.add_argument("--task-id", default=None)
+    cases.add_argument("--artifact-id", default=None)
+    cases.set_defaults(handler="eval_cases")
+    propose_case = eval_sub.add_parser("propose-case", help="Preview or create an evaluation case candidate from run/eval/artifact evidence.")
+    propose_case.add_argument("--case-id", default=None)
+    propose_case.add_argument("--source-type", default=None, choices=["evaluation", "customer_delivery", "run", "artifact", "manual", "commander_synthesis"])
+    propose_case.add_argument("--source-ref", default=None)
+    propose_case.add_argument("--evaluation-id", default=None)
+    propose_case.add_argument("--artifact-id", default=None)
+    propose_case.add_argument("--run-id", default=None)
+    propose_case.add_argument("--task-id", default=None)
+    propose_case.add_argument("--agent-id", default=None)
+    propose_case.add_argument("--case-type", default=None, choices=["regression", "golden", "safety", "quality", "cost", "tool_use", "memory"])
+    propose_case.add_argument("--title", default=None)
+    propose_case.add_argument("--input-summary", default=None)
+    propose_case.add_argument("--expected-output-summary", default=None)
+    propose_case.add_argument("--failure-mode", default=None)
+    propose_case.add_argument("--confidence", type=float, default=0.72)
+    propose_case.add_argument("--rubric-json", default=None)
+    propose_case.add_argument("--confirm-create", action="store_true")
+    propose_case.set_defaults(handler="eval_propose_case")
+    approve_case = eval_sub.add_parser("approve-case", help="Approve an evaluation case candidate for future regression use.")
+    approve_case.add_argument("--case-id", required=True)
+    approve_case.set_defaults(handler="eval_approve_case")
+    reject_case = eval_sub.add_parser("reject-case", help="Reject a noisy evaluation case candidate.")
+    reject_case.add_argument("--case-id", required=True)
+    reject_case.set_defaults(handler="eval_reject_case")
 
     audit_parser = sub.add_parser("audit", help="Audit commands.")
     audit_sub = audit_parser.add_subparsers(dest="action", required=True)
@@ -2049,6 +2119,10 @@ HANDLERS = {
     "memory_reject": cmd_memory_decide,
     "memory_propose": cmd_memory_propose,
     "eval_submit": cmd_eval_submit,
+    "eval_cases": cmd_eval_cases,
+    "eval_propose_case": cmd_eval_propose_case,
+    "eval_approve_case": cmd_eval_review_case,
+    "eval_reject_case": cmd_eval_review_case,
     "audit_emit": cmd_audit_emit,
     "workflow_templates": cmd_workflow_templates,
     "workflow_delivery_board": cmd_workflow_delivery_board,

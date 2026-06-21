@@ -89,6 +89,7 @@ def db_fingerprint(db_path: Path) -> dict | None:
             ("runs", "created_at"),
             ("tool_calls", "created_at"),
             ("evaluations", "created_at"),
+            ("evaluation_case_candidates", "updated_at"),
             ("audit_logs", "created_at"),
             ("runtime_events", "created_at"),
         ]
@@ -124,12 +125,14 @@ def validate_queue(payload: dict, label: str, failures: list[str]) -> None:
     for key in [
         "pending_approvals",
         "memory_candidates",
+        "evaluation_case_candidates",
         "ready_deliveries",
         "waiting_deliveries",
         "needs_attention_deliveries",
         "commander_synthesis_pending_reviews",
         "commander_synthesis_promotion_available",
         "commander_synthesis_memory_reviews",
+        "retrieved_evaluation_case_candidates",
         "review_items_total",
         "returned_items",
     ]:
@@ -140,10 +143,12 @@ def validate_queue(payload: dict, label: str, failures: list[str]) -> None:
     require(isinstance(payload.get("next_actions"), list) and payload.get("next_actions"), f"{label} next_actions missing", failures)
     gate_ids = {gate.get("id") for gate in payload.get("gates") or []}
     require("commander_synthesis_lifecycle_visible" in gate_ids, f"{label} commander synthesis gate missing: {payload.get('gates')}", failures)
+    require("evaluation_case_candidates_visible" in gate_ids, f"{label} evaluation case gate missing: {payload.get('gates')}", failures)
     lanes = payload.get("lanes") or {}
     require(isinstance(lanes.get("commander_synthesis"), list), f"{label} commander synthesis lane missing: {lanes}", failures)
+    require(isinstance(lanes.get("evaluation_case_candidates"), list), f"{label} evaluation case lane missing: {lanes}", failures)
     for item in payload.get("review_items") or []:
-        require(item.get("item_type") in {"approval", "memory_candidate", "customer_delivery", "commander_synthesis"}, f"{label} bad item type: {item}", failures)
+        require(item.get("item_type") in {"approval", "memory_candidate", "customer_delivery", "commander_synthesis", "evaluation_case_candidate"}, f"{label} bad item type: {item}", failures)
         require(bool(item.get("item_id")), f"{label} item id missing: {item}", failures)
         require(bool(item.get("next_action")), f"{label} next action missing: {item}", failures)
         require(bool(item.get("cli_action")), f"{label} cli action missing: {item}", failures)

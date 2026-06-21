@@ -1051,7 +1051,8 @@ returns `token_omitted:true`.
 ### `agentops review queue`
 
 Returns the combined human review queue as JSON: pending approvals, candidate
-memories, and customer delivery items that need human attention.
+memories, evaluation case candidates, Commander synthesis actions, and customer
+delivery items that need human attention.
 
 ```bash
 agentops review queue --limit 12
@@ -1062,6 +1063,31 @@ Maps to `GET /api/agent-gateway/review/queue`. Scoped tokens require
 visibility rules. The local browser UI can still use `GET /api/review/queue`,
 but remote workers and machine-facing CLI flows should use the Agent Gateway
 path and must omit raw token/session values.
+
+### `agentops eval propose-case`
+
+Previews or creates a review-gated evaluation case candidate from existing
+ledger evidence. Omit `--confirm-create` for a read-only preview.
+
+```bash
+agentops eval propose-case --evaluation-id eval_123
+agentops eval propose-case --run-id run_123 --case-type regression --confirm-create
+agentops eval cases --status candidate --limit 20
+agentops eval approve-case --case-id evalcase_123
+```
+
+Maps to `POST /api/evaluation-cases/propose`, `GET /api/evaluation-cases`,
+and `POST /api/evaluation-cases/:case_id/approve|reject`.
+
+Writes only after explicit confirmation or review:
+
+- `evaluation_case_candidates`
+- `runtime_events`
+- `audit_logs`
+
+Raw prompts, raw responses, credentials, and full private transcripts remain
+omitted; candidates carry bounded summaries, source refs, confidence, rubric,
+and review status.
 
 ### `POST /api/agent-gateway/approvals/request`
 

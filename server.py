@@ -401,6 +401,35 @@ CREATE TABLE IF NOT EXISTS evaluations (
     FOREIGN KEY(agent_id) REFERENCES agents(agent_id)
 );
 
+CREATE TABLE IF NOT EXISTS evaluation_case_candidates (
+    case_id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL DEFAULT 'local-demo',
+    source_type TEXT NOT NULL CHECK(source_type IN ('evaluation','customer_delivery','run','artifact','manual','commander_synthesis')),
+    source_ref TEXT,
+    task_id TEXT,
+    run_id TEXT,
+    artifact_id TEXT,
+    evaluation_id TEXT,
+    agent_id TEXT,
+    case_type TEXT NOT NULL CHECK(case_type IN ('regression','golden','safety','quality','cost','tool_use','memory')),
+    title TEXT NOT NULL,
+    input_summary TEXT,
+    expected_output_summary TEXT,
+    rubric_json TEXT NOT NULL DEFAULT '{}',
+    failure_mode TEXT,
+    confidence REAL NOT NULL DEFAULT 0.5,
+    review_status TEXT NOT NULL CHECK(review_status IN ('candidate','approved','rejected','stale','superseded')),
+    created_by_agent_id TEXT,
+    owner_user_id TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY(task_id) REFERENCES tasks(task_id),
+    FOREIGN KEY(run_id) REFERENCES runs(run_id),
+    FOREIGN KEY(artifact_id) REFERENCES artifacts(artifact_id),
+    FOREIGN KEY(evaluation_id) REFERENCES evaluations(evaluation_id),
+    FOREIGN KEY(agent_id) REFERENCES agents(agent_id)
+);
+
 CREATE TABLE IF NOT EXISTS artifacts (
     artifact_id TEXT PRIMARY KEY,
     task_id TEXT,
@@ -766,6 +795,9 @@ CREATE INDEX IF NOT EXISTS idx_tool_calls_risk ON tool_calls(risk_level);
 CREATE INDEX IF NOT EXISTS idx_approvals_decision ON approvals(decision);
 CREATE INDEX IF NOT EXISTS idx_memories_status ON memories(review_status);
 CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope);
+CREATE INDEX IF NOT EXISTS idx_eval_case_status ON evaluation_case_candidates(review_status);
+CREATE INDEX IF NOT EXISTS idx_eval_case_run ON evaluation_case_candidates(run_id);
+CREATE INDEX IF NOT EXISTS idx_eval_case_source ON evaluation_case_candidates(source_type, source_ref);
 CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_logs(entity_type, entity_id);
 CREATE INDEX IF NOT EXISTS idx_runtime_events_connector ON runtime_events(runtime_connector_id);
 CREATE INDEX IF NOT EXISTS idx_agent_gateway_tokens_agent ON agent_gateway_tokens(agent_id);
@@ -4422,6 +4454,7 @@ def agent_gateway_review_queue(conn: sqlite3.Connection, qs: dict, headers, auth
     lanes = payload.get("lanes") or {}
     pending_approvals = [item for item in lanes.get("pending_approvals", []) if visible(item)]
     memory_candidates = [item for item in lanes.get("memory_candidates", []) if visible(item)]
+    evaluation_case_candidates = [item for item in lanes.get("evaluation_case_candidates", []) if visible(item)]
     customer_deliveries = [item for item in lanes.get("customer_deliveries", []) if visible(item)]
     commander_synthesis = [item for item in lanes.get("commander_synthesis", []) if visible(item)]
     review_items = visible_review_items[:limit]
@@ -4430,12 +4463,14 @@ def agent_gateway_review_queue(conn: sqlite3.Connection, qs: dict, headers, auth
     payload["lanes"] = {
         "pending_approvals": pending_approvals[:limit],
         "memory_candidates": memory_candidates[:limit],
+        "evaluation_case_candidates": evaluation_case_candidates[:limit],
         "customer_deliveries": customer_deliveries[:limit],
         "commander_synthesis": commander_synthesis[:limit],
     }
     payload["summary"] = {
         "pending_approvals": len(pending_approvals),
         "memory_candidates": len(memory_candidates),
+        "evaluation_case_candidates": len(evaluation_case_candidates),
         "ready_deliveries": len([item for item in customer_deliveries if item.get("status") == "ready"]),
         "waiting_deliveries": len([item for item in customer_deliveries if item.get("status") == "waiting_approval"]),
         "needs_attention_deliveries": len([item for item in customer_deliveries if item.get("status") == "needs_attention"]),
@@ -4446,10 +4481,12 @@ def agent_gateway_review_queue(conn: sqlite3.Connection, qs: dict, headers, auth
         "returned_items": len(review_items),
         "retrieved_pending_approvals": len(pending_approvals[:limit]),
         "retrieved_memory_candidates": len(memory_candidates[:limit]),
+        "retrieved_evaluation_case_candidates": len(evaluation_case_candidates[:limit]),
     }
     if any(payload["summary"].get(key, 0) for key in [
         "pending_approvals",
         "memory_candidates",
+        "evaluation_case_candidates",
         "waiting_deliveries",
         "needs_attention_deliveries",
         "commander_synthesis_promotion_available",
@@ -4750,6 +4787,264 @@ def agent_gateway_eval_submit(conn, body) -> tuple[dict, int]:
     outcome = upsert_evaluation(conn, row, "agent-gateway")
     runtime_event(conn, "rtc_agent_gateway_local", "evaluation.submit", pass_fail, run_id=run_id, task_id=row["task_id"], agent_id=row["agent_id"], output_summary=row["notes"])
     return {"evaluation": row, "outcome": outcome}, 201 if outcome == "created" else 200
+
+
+def evaluation_case_candidate_public(row) -> dict:
+    data = dict(row)
+    try:
+        data["rubric"] = json.loads(data.get("rubric_json") or "{}")
+    except Exception:
+        data["rubric"] = {}
+    data["token_omitted"] = True
+    return data
+
+
+def list_evaluation_case_candidates(conn: sqlite3.Connection, qs: dict | None = None, headers=None) -> tuple[dict, int]:
+    qs = qs or {}
+    workspace_id = normalize_workspace_id((qs.get("workspace_id") or [None])[0] or (headers or {}).get("X-AgentOps-Workspace-Id") or "local-demo")
+    limit = min(max(int((qs.get("limit") or ["25"])[0]), 1), 100)
+    statuses = [coerce_choice(status, {"candidate", "approved", "rejected", "stale", "superseded"}, "candidate") for status in (qs.get("status") or ["candidate"])]
+    where = ["workspace_id=?", "review_status IN (" + ",".join("?" for _ in statuses) + ")"]
+    params: list = [workspace_id, *statuses]
+    if "run_id" in qs:
+        where.append("run_id=?")
+        params.append(qs["run_id"][0])
+    if "task_id" in qs:
+        where.append("task_id=?")
+        params.append(qs["task_id"][0])
+    if "artifact_id" in qs:
+        where.append("artifact_id=?")
+        params.append(qs["artifact_id"][0])
+    rows = rows_to_dicts(conn.execute(
+        f"""SELECT * FROM evaluation_case_candidates
+        WHERE {' AND '.join(where)}
+        ORDER BY updated_at DESC
+        LIMIT ?""",
+        [*params, limit],
+    ).fetchall())
+    summary = {
+        "candidate": scalar_count(conn, "SELECT COUNT(*) FROM evaluation_case_candidates WHERE workspace_id=? AND review_status='candidate'", (workspace_id,)),
+        "approved": scalar_count(conn, "SELECT COUNT(*) FROM evaluation_case_candidates WHERE workspace_id=? AND review_status='approved'", (workspace_id,)),
+        "rejected": scalar_count(conn, "SELECT COUNT(*) FROM evaluation_case_candidates WHERE workspace_id=? AND review_status='rejected'", (workspace_id,)),
+        "returned": len(rows),
+    }
+    return {
+        "provider": "agentops-evaluation",
+        "operation": "evaluation_case_candidates",
+        "status": "attention" if summary["candidate"] else "ready" if summary["approved"] else "empty",
+        "workspace_id": workspace_id,
+        "limit": limit,
+        "summary": summary,
+        "cases": [evaluation_case_candidate_public(row) for row in rows],
+        "gates": [
+            {"id": "candidate_review_required", "label": "Evaluation cases require review", "ok": True, "value": summary["candidate"]},
+            {"id": "safe_readback", "label": "Read-only safe readback", "ok": True, "value": "summary/hash only"},
+        ],
+        "next_actions": [
+            "Review candidate evaluation cases before using them as regression checks.",
+            "Use `agentops eval cases --status candidate` to inspect pending cases.",
+        ],
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }, 200
+
+
+def propose_evaluation_case_candidate(conn: sqlite3.Connection, body, headers=None) -> tuple[dict, int]:
+    workspace_id = normalize_workspace_id(body.get("workspace_id") or (headers or {}).get("X-AgentOps-Workspace-Id") or "local-demo")
+    now = now_iso()
+    evaluation = None
+    run = None
+    task = None
+    artifact = None
+    evaluation_id = body.get("evaluation_id")
+    artifact_id = body.get("artifact_id")
+    run_id = body.get("run_id")
+    task_id = body.get("task_id")
+    if evaluation_id:
+        evaluation = conn.execute("SELECT * FROM evaluations WHERE evaluation_id=?", (evaluation_id,)).fetchone()
+        if not evaluation:
+            return {"error": "evaluation_not_found", "evaluation_id": evaluation_id}, 404
+        run_id = run_id or evaluation["run_id"]
+        task_id = task_id or evaluation["task_id"]
+    if artifact_id:
+        artifact = conn.execute("SELECT * FROM artifacts WHERE artifact_id=?", (artifact_id,)).fetchone()
+        if not artifact:
+            return {"error": "artifact_not_found", "artifact_id": artifact_id}, 404
+        run_id = run_id or artifact["run_id"]
+        task_id = task_id or artifact["task_id"]
+    if run_id:
+        run = conn.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
+        if not run:
+            return {"error": "run_not_found", "run_id": run_id}, 404
+        if row_workspace(run) != workspace_id:
+            return workspace_forbidden("run", run_id, workspace_id, row_workspace(run))
+        task_id = task_id or run["task_id"]
+    if task_id:
+        task = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+        if not task:
+            return {"error": "task_not_found", "task_id": task_id}, 404
+        if row_workspace(task) != workspace_id:
+            return workspace_forbidden("task", task_id, workspace_id, row_workspace(task))
+    if artifact and not run_id and not task_id:
+        workspace_id = normalize_workspace_id(body.get("workspace_id") or "local-demo")
+    if not any([evaluation, artifact, run, task, body.get("title")]):
+        return {"error": "source_required", "message": "Provide evaluation_id, artifact_id, run_id, task_id, or a manual title."}, 400
+
+    if evaluation:
+        default_case_type = "regression" if evaluation["pass_fail"] == "fail" else "golden"
+        default_failure = "failed_evaluation" if evaluation["pass_fail"] == "fail" else None
+        source_type = "evaluation"
+        source_ref = evaluation_id
+    elif artifact and (artifact["artifact_type"] in {"customer_worker_result", "customer_delivery_report", "customer_project_report"} or (artifact_id or "").startswith("art_customer_")):
+        default_case_type = "golden"
+        default_failure = None
+        source_type = "customer_delivery"
+        source_ref = artifact_id
+    elif artifact:
+        default_case_type = "quality"
+        default_failure = None
+        source_type = "artifact"
+        source_ref = artifact_id
+    elif run:
+        default_case_type = "regression" if run["status"] in {"failed", "blocked", "timeout", "error"} else "golden"
+        default_failure = run["error_type"] or run["status"] if default_case_type == "regression" else None
+        source_type = "run"
+        source_ref = run_id
+    else:
+        default_case_type = "quality"
+        default_failure = None
+        source_type = "manual"
+        source_ref = body.get("source_ref") or stable_hash(body.get("title") or now)[:16]
+
+    source_type = coerce_choice(body.get("source_type"), {"evaluation", "customer_delivery", "run", "artifact", "manual", "commander_synthesis"}, source_type)
+    case_type = coerce_choice(body.get("case_type"), {"regression", "golden", "safety", "quality", "cost", "tool_use", "memory"}, default_case_type)
+    title = redact_text(
+        body.get("title")
+        or (task["title"] if task else None)
+        or (artifact["title"] if artifact else None)
+        or f"{case_type.title()} case from {source_type}",
+        180,
+    )
+    input_summary = redact_text(
+        body.get("input_summary")
+        or (run["input_summary"] if run else None)
+        or (task["description"] if task else None)
+        or "",
+        700,
+    )
+    expected_output_summary = redact_text(
+        body.get("expected_output_summary")
+        or (run["output_summary"] if run and run["output_summary"] else None)
+        or (artifact["summary"] if artifact else None)
+        or (task["acceptance_criteria"] if task else None)
+        or "",
+        700,
+    )
+    rubric = safe_json_metadata(body.get("rubric") or body.get("rubric_json") or {
+        "source_type": source_type,
+        "case_type": case_type,
+        "acceptance_criteria_present": bool(task and task["acceptance_criteria"]),
+        "expected_output_summary_required": True,
+    })
+    confidence = max(0.0, min(float(body.get("confidence") if body.get("confidence") is not None else 0.72), 1.0))
+    row = {
+        "case_id": body.get("case_id") or stable_id("evalcase", workspace_id, source_type, source_ref or "", case_type),
+        "workspace_id": workspace_id,
+        "source_type": source_type,
+        "source_ref": redact_text(source_ref, 180) if source_ref else None,
+        "task_id": task_id,
+        "run_id": run_id,
+        "artifact_id": artifact_id,
+        "evaluation_id": evaluation_id,
+        "agent_id": body.get("agent_id") or (run["agent_id"] if run else task["owner_agent_id"] if task else None),
+        "case_type": case_type,
+        "title": title,
+        "input_summary": input_summary,
+        "expected_output_summary": expected_output_summary,
+        "rubric_json": json.dumps(rubric, ensure_ascii=False),
+        "failure_mode": redact_text(body.get("failure_mode") or default_failure or "", 180) or None,
+        "confidence": confidence,
+        "review_status": "candidate",
+        "created_by_agent_id": body.get("created_by_agent_id") or body.get("agent_id") or "commander",
+        "owner_user_id": body.get("owner_user_id") or "usr_founder",
+        "created_at": now,
+        "updated_at": now,
+    }
+    if not body.get("confirm_create"):
+        return {
+            "provider": "agentops-evaluation",
+            "operation": "evaluation_case_candidate_propose",
+            "status": "preview",
+            "created": False,
+            "case": evaluation_case_candidate_public(row),
+            "safety": {
+                "ledger_mutated": False,
+                "live_execution_performed": False,
+                "raw_prompt_omitted": True,
+                "raw_response_omitted": True,
+                "token_omitted": True,
+            },
+            "token_omitted": True,
+        }, 200
+    before = conn.execute("SELECT * FROM evaluation_case_candidates WHERE case_id=?", (row["case_id"],)).fetchone()
+    if before:
+        conn.execute(
+            """UPDATE evaluation_case_candidates SET source_type=:source_type,source_ref=:source_ref,task_id=:task_id,
+            run_id=:run_id,artifact_id=:artifact_id,evaluation_id=:evaluation_id,agent_id=:agent_id,case_type=:case_type,
+            title=:title,input_summary=:input_summary,expected_output_summary=:expected_output_summary,rubric_json=:rubric_json,
+            failure_mode=:failure_mode,confidence=:confidence,review_status=:review_status,created_by_agent_id=:created_by_agent_id,
+            owner_user_id=:owner_user_id,updated_at=:updated_at WHERE case_id=:case_id""",
+            row,
+        )
+        outcome = "updated"
+    else:
+        conn.execute(
+            """INSERT INTO evaluation_case_candidates(case_id,workspace_id,source_type,source_ref,task_id,run_id,artifact_id,
+            evaluation_id,agent_id,case_type,title,input_summary,expected_output_summary,rubric_json,failure_mode,
+            confidence,review_status,created_by_agent_id,owner_user_id,created_at,updated_at)
+            VALUES(:case_id,:workspace_id,:source_type,:source_ref,:task_id,:run_id,:artifact_id,
+            :evaluation_id,:agent_id,:case_type,:title,:input_summary,:expected_output_summary,:rubric_json,:failure_mode,
+            :confidence,:review_status,:created_by_agent_id,:owner_user_id,:created_at,:updated_at)""",
+            row,
+        )
+        outcome = "created"
+    after = conn.execute("SELECT * FROM evaluation_case_candidates WHERE case_id=?", (row["case_id"],)).fetchone()
+    runtime_event(
+        conn,
+        "rtc_agent_gateway_local",
+        "evaluation_case_candidate.propose",
+        "candidate",
+        run_id=run_id,
+        task_id=task_id,
+        agent_id=row["agent_id"],
+        input_summary=f"Evaluation case candidate from {source_type}:{source_ref}",
+        output_summary=title,
+        raw_payload_hash=stable_hash({"case_id": row["case_id"], "source_type": source_type, "source_ref": source_ref}),
+    )
+    audit(conn, "user", row["owner_user_id"], f"evaluation_case_candidate.{outcome}", "evaluation_case_candidates", row["case_id"], dict(before) if before else None, dict(after), {"raw_content_omitted": True})
+    return {
+        "provider": "agentops-evaluation",
+        "operation": "evaluation_case_candidate_propose",
+        "status": "candidate",
+        "created": outcome == "created",
+        "outcome": outcome,
+        "case": evaluation_case_candidate_public(after),
+        "safety": {
+            "ledger_mutated": True,
+            "live_execution_performed": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }, 201 if outcome == "created" else 200
 
 
 def agent_gateway_record_artifact(conn, body) -> tuple[dict, int]:
@@ -6767,6 +7062,13 @@ def customer_delivery_board(conn, limit: int = 12) -> dict:
         evidence = {
             "tool_calls": conn.execute("SELECT COUNT(*) c FROM tool_calls WHERE run_id=?", (run_id or "",)).fetchone()["c"] if run_id else 0,
             "evaluations": len(evaluations),
+            "evaluation_case_candidates": conn.execute(
+                """SELECT COUNT(*) c FROM evaluation_case_candidates
+                WHERE (run_id IS NOT NULL AND run_id=?)
+                   OR (artifact_id IS NOT NULL AND artifact_id=?)
+                   OR (source_ref IS NOT NULL AND source_ref IN (?,?))""",
+                (run_id or "", artifact_id or "", run_id or "", artifact_id or ""),
+            ).fetchone()["c"],
             "runtime_events": conn.execute("SELECT COUNT(*) c FROM runtime_events WHERE run_id=? OR task_id=?", (run_id or "", task_id or "")).fetchone()["c"] if task_id or run_id else 0,
             "audit_logs": conn.execute(
                 "SELECT COUNT(*) c FROM audit_logs WHERE entity_id IN (?,?,?)",
@@ -6797,7 +7099,11 @@ def customer_delivery_board(conn, limit: int = 12) -> dict:
             next_action = "Create and verify a plan_evidence_manifest before approving customer delivery."
         elif run_status in {"failed", "blocked", "timeout", "error"} or task_status in {"failed", "blocked"} or failed_eval:
             status = "needs_attention"
-            next_action = "Review failed evaluation/run evidence before delivery."
+            next_action = (
+                "Propose an evaluation case candidate from this failed evidence before delivery."
+                if evidence["evaluation_case_candidates"] == 0 else
+                "Review failed evaluation/run evidence and the linked evaluation case candidate before delivery."
+            )
         elif pending_approvals or task_status == "waiting_approval":
             status = "waiting_approval"
             next_action = "Open Approvals and decide the customer delivery gate."
@@ -6847,6 +7153,7 @@ def customer_delivery_board(conn, limit: int = 12) -> dict:
                 "failed": len(failed_eval),
                 "latest_score": evaluations[0]["score"] if evaluations else None,
                 "latest_pass_fail": evaluations[0]["pass_fail"] if evaluations else None,
+                "case_candidates": evidence["evaluation_case_candidates"],
             },
             "delivery_approval_gate": delivery_gate,
             "evidence": evidence,
@@ -7035,6 +7342,7 @@ def human_review_queue(conn, limit: int = 20) -> dict:
     per_lane_limit = max(limit, 10)
     approval_total = conn.execute("SELECT COUNT(*) c FROM approvals WHERE decision='pending'").fetchone()["c"]
     memory_total = conn.execute("SELECT COUNT(*) c FROM memories WHERE review_status='candidate'").fetchone()["c"]
+    eval_case_total = conn.execute("SELECT COUNT(*) c FROM evaluation_case_candidates WHERE review_status='candidate'").fetchone()["c"]
     approvals = rows_to_dicts(conn.execute(
         """SELECT approval_id, task_id, run_id, tool_call_id, requested_by_agent_id,
                   approver_user_id, decision, reason, expires_at, created_at, decided_at
@@ -7049,6 +7357,17 @@ def human_review_queue(conn, limit: int = 20) -> dict:
                   project_id, task_id, agent_id, confidence, review_status, access_tags,
                   created_at, updated_at
            FROM memories
+           WHERE review_status='candidate'
+           ORDER BY updated_at DESC
+           LIMIT ?""",
+        (per_lane_limit,),
+    ).fetchall())
+    eval_cases = rows_to_dicts(conn.execute(
+        """SELECT case_id, workspace_id, source_type, source_ref, task_id, run_id, artifact_id,
+                  evaluation_id, agent_id, case_type, title, input_summary, expected_output_summary,
+                  failure_mode, confidence, review_status, created_by_agent_id, owner_user_id,
+                  created_at, updated_at
+           FROM evaluation_case_candidates
            WHERE review_status='candidate'
            ORDER BY updated_at DESC
            LIMIT ?""",
@@ -7140,6 +7459,42 @@ def human_review_queue(conn, limit: int = 20) -> dict:
             "cli_action": f"agentops memory approve --memory-id {memory_id}",
             "alternate_cli_action": f"agentops memory reject --memory-id {memory_id}",
             "priority": 70,
+        })
+
+    for row in eval_cases:
+        case_id = row.get("case_id")
+        summary_parts = [
+            row.get("input_summary") or "",
+            row.get("expected_output_summary") or "",
+        ]
+        if row.get("failure_mode"):
+            summary_parts.append(f"failure_mode={row.get('failure_mode')}")
+        items.append({
+            "item_type": "evaluation_case_candidate",
+            "item_id": case_id,
+            "status": row.get("review_status"),
+            "kind": row.get("case_type"),
+            "title": f"Evaluation case candidate: {row.get('title')}",
+            "summary": redact_text(" | ".join(part for part in summary_parts if part), 260),
+            "task_id": row.get("task_id"),
+            "run_id": row.get("run_id"),
+            "agent_id": row.get("agent_id") or row.get("created_by_agent_id"),
+            "artifact_id": row.get("artifact_id"),
+            "evaluation_id": row.get("evaluation_id"),
+            "source_type": row.get("source_type"),
+            "source_ref": row.get("source_ref"),
+            "created_at": row.get("created_at"),
+            "updated_at": row.get("updated_at") or row.get("created_at"),
+            "confidence": row.get("confidence"),
+            "links": {
+                "task_url": f"/admin/tasks/{row.get('task_id')}" if row.get("task_id") else None,
+                "run_url": f"/admin/runs/{row.get('run_id')}" if row.get("run_id") else None,
+                "report_url": "/workspace/reports" if row.get("artifact_id") else None,
+            },
+            "next_action": "Approve useful regression/golden cases or reject noisy evaluation examples.",
+            "cli_action": f"agentops eval approve-case --case-id {case_id}",
+            "alternate_cli_action": f"agentops eval reject-case --case-id {case_id}",
+            "priority": 72,
         })
 
     for row in delivery_focus:
@@ -7239,6 +7594,7 @@ def human_review_queue(conn, limit: int = 20) -> dict:
     summary = {
         "pending_approvals": int(approval_total or 0),
         "memory_candidates": int(memory_total or 0),
+        "evaluation_case_candidates": int(eval_case_total or 0),
         "ready_deliveries": int(delivery_summary.get("ready") or 0),
         "waiting_deliveries": int(delivery_summary.get("waiting_approval") or 0),
         "needs_attention_deliveries": int(delivery_summary.get("needs_attention") or 0),
@@ -7249,10 +7605,12 @@ def human_review_queue(conn, limit: int = 20) -> dict:
         "returned_items": len(review_items),
         "retrieved_pending_approvals": len(approvals),
         "retrieved_memory_candidates": len(memories),
+        "retrieved_evaluation_case_candidates": len(eval_cases),
     }
     if (
         summary["pending_approvals"]
         or summary["memory_candidates"]
+        or summary["evaluation_case_candidates"]
         or summary["waiting_deliveries"]
         or summary["needs_attention_deliveries"]
         or summary["commander_synthesis_promotion_available"]
@@ -7283,12 +7641,14 @@ def human_review_queue(conn, limit: int = 20) -> dict:
         "lanes": {
             "pending_approvals": safe_approvals,
             "memory_candidates": safe_memories,
+            "evaluation_case_candidates": eval_cases,
             "customer_deliveries": delivery_focus,
             "commander_synthesis": synthesis_action_focus,
         },
         "gates": [
             {"id": "pending_approvals_visible", "label": "Pending approvals visible", "ok": True, "value": summary["pending_approvals"]},
             {"id": "memory_candidates_visible", "label": "Memory candidates visible", "ok": True, "value": summary["memory_candidates"]},
+            {"id": "evaluation_case_candidates_visible", "label": "Evaluation case candidates visible", "ok": True, "value": summary["evaluation_case_candidates"]},
             {"id": "delivery_board_visible", "label": "Delivery board visible", "ok": True, "value": len(delivery_focus)},
             {"id": "commander_synthesis_lifecycle_visible", "label": "Commander synthesis lifecycle visible", "ok": True, "value": len(synthesis_action_focus)},
             {"id": "safe_readback", "label": "Read-only safe readback", "ok": True, "value": "summary/hash only"},
@@ -7296,6 +7656,7 @@ def human_review_queue(conn, limit: int = 20) -> dict:
         "next_actions": [
             "Start with the first review item; do not wait for slower workers if this item is ready.",
             "Promote approved Commander synthesis reports only after the linked review approval is approved.",
+            "Approve only evaluation case candidates that are reusable as regression or golden checks.",
             "Use `agentops review queue` for the combined queue, then approve/reject individual gates.",
             "Use `agentops commander inbox` for async worker lane state and `agentops workflow delivery-board` for customer handoff.",
         ],
@@ -11731,6 +12092,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM memories ORDER BY created_at DESC").fetchall()))
             if path == "/api/evaluations":
                 return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM evaluations ORDER BY created_at DESC").fetchall()))
+            if path == "/api/evaluation-cases":
+                payload, status = list_evaluation_case_candidates(conn, dict(qs), self.headers)
+                return self.send_json(payload, status)
             if path == "/api/artifacts":
                 return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM artifacts ORDER BY created_at DESC").fetchall()))
             if path == "/api/audit":
@@ -12072,6 +12436,16 @@ class Handler(BaseHTTPRequestHandler):
                 evaluate_run(conn, run, task)
                 conn.commit()
                 return self.send_json({"created": True})
+            if path == "/api/evaluation-cases/propose":
+                payload, status = propose_evaluation_case_candidate(conn, body, self.headers)
+                conn.commit()
+                return self.send_json(payload, status)
+            if path.startswith("/api/evaluation-cases/") and path.endswith("/approve"):
+                case_id = path.split("/")[-2]
+                return self.review_evaluation_case(conn, case_id, "approved")
+            if path.startswith("/api/evaluation-cases/") and path.endswith("/reject"):
+                case_id = path.split("/")[-2]
+                return self.review_evaluation_case(conn, case_id, "rejected")
             if path == "/api/workflows/local-brief":
                 return self.send_json(run_local_ai_brief(conn, body), 201)
             if path == "/api/workflows/customer-task":
@@ -12283,6 +12657,27 @@ class Handler(BaseHTTPRequestHandler):
         audit(conn, "user", "usr_founder", f"memory.{status}", "memories", memory_id, dict(before), dict(after), {})
         conn.commit()
         return self.send_json(dict(after))
+
+    def review_evaluation_case(self, conn, case_id, status):
+        before = conn.execute("SELECT * FROM evaluation_case_candidates WHERE case_id=?", (case_id,)).fetchone()
+        if not before:
+            return self.send_json({"error": "not found"}, 404)
+        conn.execute("UPDATE evaluation_case_candidates SET review_status=?, updated_at=? WHERE case_id=?", (status, now_iso(), case_id))
+        after = conn.execute("SELECT * FROM evaluation_case_candidates WHERE case_id=?", (case_id,)).fetchone()
+        runtime_event(
+            conn,
+            "rtc_agent_gateway_local",
+            "evaluation_case_candidate.review",
+            status,
+            run_id=before["run_id"],
+            task_id=before["task_id"],
+            agent_id=before["agent_id"],
+            input_summary=f"Evaluation case candidate {case_id} review decision.",
+            output_summary=f"Evaluation case candidate was {status}.",
+        )
+        audit(conn, "user", "usr_founder", f"evaluation_case_candidate.{status}", "evaluation_case_candidates", case_id, dict(before), dict(after), {})
+        conn.commit()
+        return self.send_json(evaluation_case_candidate_public(after))
 
 
 def start_mock_run(conn, body):
