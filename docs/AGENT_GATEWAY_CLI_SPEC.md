@@ -497,6 +497,21 @@ result JSON. This is the preferred product path for customer-visible long
 runtime work because the browser and CLI can observe status without pretending
 the agent is a human UI user or holding a fragile synchronous request open.
 
+Workflow job recovery commands:
+
+```bash
+agentops workflow stuck-jobs --threshold-sec 900 --limit 25
+agentops workflow job-mark-failed \
+  --job-id wfjob_... \
+  --reason "Gateway process died during live run; operator reviewed ledger."
+```
+
+`stuck-jobs` maps to `GET /api/workflows/jobs/stuck`. `job-mark-failed` maps to
+`POST /api/workflows/jobs/:job_id/mark-failed`. This is an operator recovery
+path for jobs left in `queued` or `running` after a server restart, runtime
+crash, or gateway disconnect. It does not delete evidence or claim success; it
+marks the job failed and writes runtime/audit evidence.
+
 ### `agentops workflow run-task`
 
 Creates a normal MIS task through the scoped Agent Gateway path, executes one

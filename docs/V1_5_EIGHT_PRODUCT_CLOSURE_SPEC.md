@@ -634,6 +634,9 @@ Implemented and verified:
 - Async customer-facing worker task workflow through
   `POST /api/workflows/customer-worker-task/submit` plus
   `GET /api/workflows/jobs/:job_id`.
+- Workflow job recovery through `GET /api/workflows/jobs/stuck`,
+  `POST /api/workflows/jobs/:job_id/mark-failed`, `agentops workflow
+  stuck-jobs`, and `agentops workflow job-mark-failed`.
 - Customer-facing worker task CLI through `agentops workflow customer-worker-task`.
 - Long customer worker tasks can use `agentops workflow customer-worker-task
   --async-job` and `agentops workflow job-status --wait`, which keeps Hermes

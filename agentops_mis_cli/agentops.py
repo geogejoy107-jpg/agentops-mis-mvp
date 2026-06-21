@@ -509,6 +509,17 @@ def cmd_workflow_job_status(args, client: AgentOpsClient) -> dict:
     return result
 
 
+def cmd_workflow_stuck_jobs(args, client: AgentOpsClient) -> dict:
+    return client.get("/api/workflows/jobs/stuck", query={"threshold_sec": args.threshold_sec, "limit": args.limit})
+
+
+def cmd_workflow_job_mark_failed(args, client: AgentOpsClient) -> dict:
+    return client.post(
+        f"/api/workflows/jobs/{args.job_id}/mark-failed",
+        {"reason": args.reason, "actor_id": args.actor_id},
+    )
+
+
 def cmd_workflow_run_task(args, client: AgentOpsClient) -> dict:
     from . import worker as worker_mod
 
@@ -1099,6 +1110,15 @@ def build_parser() -> argparse.ArgumentParser:
     job_status.add_argument("--poll-interval", type=float, default=1.0)
     job_status.add_argument("--timeout", type=int, default=120)
     job_status.set_defaults(handler="workflow_job_status")
+    stuck_jobs = workflow_sub.add_parser("stuck-jobs", help="List queued/running workflow jobs that exceeded a threshold.")
+    stuck_jobs.add_argument("--threshold-sec", type=int, default=900)
+    stuck_jobs.add_argument("--limit", type=int, default=25)
+    stuck_jobs.set_defaults(handler="workflow_stuck_jobs")
+    job_mark_failed = workflow_sub.add_parser("job-mark-failed", help="Mark a stale queued/running workflow job as failed after operator review.")
+    job_mark_failed.add_argument("--job-id", required=True)
+    job_mark_failed.add_argument("--reason", default="Operator marked stale workflow job as failed.")
+    job_mark_failed.add_argument("--actor-id", default="usr_operator")
+    job_mark_failed.set_defaults(handler="workflow_job_mark_failed")
     customer_worker = workflow_sub.add_parser("customer-worker-task", help="Dispatch a customer task through the AgentOps worker loop.")
     customer_worker.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
     customer_worker.add_argument("--confirm-run", action="store_true", help="Required for Hermes/OpenClaw live execution.")
@@ -1287,6 +1307,8 @@ HANDLERS = {
     "workflow_templates": cmd_workflow_templates,
     "workflow_run_template": cmd_workflow_run_template,
     "workflow_job_status": cmd_workflow_job_status,
+    "workflow_stuck_jobs": cmd_workflow_stuck_jobs,
+    "workflow_job_mark_failed": cmd_workflow_job_mark_failed,
     "workflow_customer_worker_task": cmd_workflow_customer_worker_task,
     "workflow_run_task": cmd_workflow_run_task,
     "worker_status": cmd_worker_status,

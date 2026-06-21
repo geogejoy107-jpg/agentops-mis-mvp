@@ -120,7 +120,9 @@ POST /api/workflows/customer-worker-task/submit
 POST /api/workflows/customer-task-templates/run
 POST /api/workflows/customer-task-templates/submit
 GET  /api/workflows/jobs
+GET  /api/workflows/jobs/stuck
 GET  /api/workflows/jobs/:job_id
+POST /api/workflows/jobs/:job_id/mark-failed
 ```
 
 `/customer-worker-task` executes a customer task through the Agent Gateway
@@ -130,6 +132,10 @@ queues the same workflow as a `workflow_jobs` row and returns immediately with a
 outlive a short browser or CLI request. Job records store status, request hash,
 safe summaries, result ids, and safe result JSON; they must not store raw
 prompts, raw responses, credentials, tokens, or private transcripts.
+
+`/workflows/jobs/stuck` lists queued/running jobs older than a threshold.
+`/mark-failed` is an operator recovery action for stale jobs; it marks the job
+failed and writes runtime/audit evidence without deleting result history.
 
 ## Audit
 

@@ -4582,6 +4582,79 @@ def workflow_job_public(row: sqlite3.Row | dict | None) -> dict | None:
     }
 
 
+def _parse_iso_datetime(value: str | None) -> dt.datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = dt.datetime.fromisoformat(value)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=dt.timezone.utc)
+        return parsed
+    except Exception:
+        return None
+
+
+def workflow_stuck_jobs(conn, threshold_sec: int = 900, limit: int = 25) -> list[dict]:
+    threshold_sec = max(int(threshold_sec or 900), 30)
+    limit = min(max(int(limit or 25), 1), 200)
+    now_dt = dt.datetime.now(dt.timezone.utc)
+    rows = conn.execute(
+        "SELECT * FROM workflow_jobs WHERE status IN ('queued','running') ORDER BY updated_at ASC LIMIT 500"
+    ).fetchall()
+    stuck: list[dict] = []
+    for row in rows:
+        data = workflow_job_public(row) or {}
+        anchor = (
+            _parse_iso_datetime(data.get("updated_at"))
+            or _parse_iso_datetime(data.get("started_at"))
+            or _parse_iso_datetime(data.get("created_at"))
+            or now_dt
+        )
+        age_sec = max(int((now_dt - anchor).total_seconds()), 0)
+        if age_sec >= threshold_sec:
+            data["age_sec"] = age_sec
+            data["threshold_sec"] = threshold_sec
+            data["stuck_reason"] = "workflow_job_exceeded_threshold"
+            stuck.append(data)
+        if len(stuck) >= limit:
+            break
+    return stuck
+
+
+def mark_workflow_job_failed(conn, job_id: str, body: dict) -> tuple[dict, int]:
+    job_id = redact_text(job_id, 120)
+    before = conn.execute("SELECT * FROM workflow_jobs WHERE job_id=?", (job_id,)).fetchone()
+    if not before:
+        return {"error": "not found", "job_id": job_id}, 404
+    if before["status"] not in {"queued", "running"}:
+        return {
+            "ok": False,
+            "reason": "workflow_job_not_active",
+            "job": workflow_job_public(before),
+            "token_omitted": True,
+        }, 409
+    reason = redact_text(body.get("reason") or "Operator marked stale workflow job as failed.", 300)
+    now = now_iso()
+    conn.execute(
+        """UPDATE workflow_jobs
+        SET status='failed', error_message=?, completed_at=?, updated_at=?
+        WHERE job_id=?""",
+        (reason, now, now, job_id),
+    )
+    runtime_event(conn, "rtc_agent_gateway_local", "workflow_job.operator_failed", "failed", output_summary=f"Workflow job {job_id} marked failed.", error_message=reason)
+    after = conn.execute("SELECT * FROM workflow_jobs WHERE job_id=?", (job_id,)).fetchone()
+    audit(conn, "user", body.get("actor_id") or "usr_operator", "workflow.job.mark_failed", "workflow_jobs", job_id, dict(before), dict(after) if after else {"status": "failed"}, {"raw_request_omitted": True, "reason": reason})
+    conn.commit()
+    return {
+        "ok": True,
+        "provider": "agentops-workflow-job",
+        "job": workflow_job_public(after),
+        "job_id": job_id,
+        "marked_failed": True,
+        "token_omitted": True,
+    }, 200
+
+
 def run_workflow_job_background(job_id: str, body: dict) -> None:
     started = now_iso()
     try:
@@ -6272,6 +6345,15 @@ class Handler(BaseHTTPRequestHandler):
                 limit = min(int((qs.get("limit") or ["50"])[0]), 200)
                 rows = conn.execute("SELECT * FROM workflow_jobs ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
                 return self.send_json({"jobs": [workflow_job_public(row) for row in rows], "token_omitted": True})
+            if path == "/api/workflows/jobs/stuck":
+                threshold = int((qs.get("threshold_sec") or ["900"])[0])
+                limit = int((qs.get("limit") or ["25"])[0])
+                return self.send_json({
+                    "provider": "agentops-workflow-job",
+                    "threshold_sec": max(threshold, 30),
+                    "stuck_jobs": workflow_stuck_jobs(conn, threshold, limit),
+                    "token_omitted": True,
+                })
             if path.startswith("/api/workflows/jobs/"):
                 job_id = path.split("/")[-1]
                 row = conn.execute("SELECT * FROM workflow_jobs WHERE job_id=?", (job_id,)).fetchone()
@@ -6533,6 +6615,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(payload, status)
             if path == "/api/workflows/customer-task-templates/submit":
                 payload, status = submit_customer_task_template_job(conn, body)
+                return self.send_json(payload, status)
+            if path.startswith("/api/workflows/jobs/") and path.endswith("/mark-failed"):
+                job_id = path.split("/")[-2]
+                payload, status = mark_workflow_job_failed(conn, job_id, body)
                 return self.send_json(payload, status)
             if path.startswith("/api/workflows/customer-projects/") and path.endswith("/report-artifact"):
                 project_id = path.split("/")[-2]

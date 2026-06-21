@@ -1023,6 +1023,17 @@ artifact: art_customer_worker_task_run_gw_d6265c5457f5
 evidence: tool_calls 1, evaluations 1, runtime_events 10, audit_logs 10, artifacts 1, memories 2, approvals 1
 ```
 
+Latest workflow job stuck recovery smoke:
+
+```text
+script: python3 scripts/workflow_job_stuck_recovery_smoke.py
+stale job: wfjob_stuck_smoke_20260621101938286295
+agentops workflow stuck-jobs: listed stale queued/running job
+agentops workflow job-mark-failed: marked job failed after operator review
+final_status: failed
+secret_leaked: false
+```
+
 Latest task-create CLI smoke:
 
 ```text
