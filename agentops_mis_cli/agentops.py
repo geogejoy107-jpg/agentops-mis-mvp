@@ -270,6 +270,14 @@ def cmd_local_readiness(args, client: AgentOpsClient) -> dict:
     return client.get("/api/local/readiness")
 
 
+def cmd_commander_board(args, client: AgentOpsClient) -> dict:
+    return client.get("/api/commander/project-board")
+
+
+def cmd_commander_inbox(args, client: AgentOpsClient) -> dict:
+    return client.get("/api/commander/integration-inbox")
+
+
 def cmd_agent_register(args, client: AgentOpsClient) -> dict:
     payload = {
         "workspace_id": client.workspace_id,
@@ -1029,6 +1037,13 @@ def build_parser() -> argparse.ArgumentParser:
     local_readiness = local_sub.add_parser("readiness", help="Show end-to-end local MIS readiness and evidence closure.")
     local_readiness.set_defaults(handler="local_readiness")
 
+    commander = sub.add_parser("commander", help="Read-only commander surface readback commands.")
+    commander_sub = commander.add_subparsers(dest="action", required=True)
+    commander_board = commander_sub.add_parser("board", help="Read the Commander project board.")
+    commander_board.set_defaults(handler="commander_board")
+    commander_inbox = commander_sub.add_parser("inbox", help="Read the Commander integration inbox.")
+    commander_inbox.set_defaults(handler="commander_inbox")
+
     agent = sub.add_parser("agent", help="Agent identity commands.")
     agent_sub = agent.add_subparsers(dest="action", required=True)
     register = agent_sub.add_parser("register", help="Register or update an AI digital employee.")
@@ -1428,6 +1443,8 @@ HANDLERS = {
     "status": cmd_status,
     "doctor": cmd_doctor,
     "local_readiness": cmd_local_readiness,
+    "commander_board": cmd_commander_board,
+    "commander_inbox": cmd_commander_inbox,
     "agent_register": cmd_agent_register,
     "agent_heartbeat": cmd_agent_heartbeat,
     "task_create": cmd_task_create,

@@ -19,6 +19,34 @@ Result: passed.
 - OpenClaw CLI: `/opt/homebrew/bin/openclaw`
 - Dify and Notion: not used in this acceptance pass.
 
+## Commander-Style Async Management Model
+
+v1.5 is now documented as a local-first commander console, not just a worker
+runner. The supported management primitives are:
+
+- Local readiness: `GET /api/local/readiness` and `agentops local readiness`
+  provide a read-only local closure check across Agent Gateway, worker fleet,
+  adapter routes, evidence chains, memory, approvals, docs, and UI routes.
+- Commander project board: `GET /api/commander/project-board` summarizes
+  local readiness, worker health, recent work packages, pending approvals,
+  artifacts, memory candidates, workflow jobs, integration gates, and safe next
+  actions without mutating the ledger or executing live work.
+- Async workflow management: long Hermes/OpenClaw/customer-template work can be
+  submitted as workflow jobs, polled, listed, and recovered through
+  `POST /api/workflows/customer-worker-task/submit`,
+  `GET /api/workflows/jobs`, `GET /api/workflows/jobs/:job_id`,
+  `GET /api/workflows/jobs/stuck`, and
+  `POST /api/workflows/jobs/:job_id/mark-failed`.
+- Async integration inbox: `GET /api/commander/integration-inbox` provides a
+  read-only commander queue for returned worker results, running lanes, blocked
+  work, stale work and memory-review items.
+- CLI/API-first agent execution: humans use browser pages for dispatch,
+  supervision, approval, and review; agents execute through Agent Gateway
+  CLI/API/MCP and write run/tool/evaluation/audit/artifact evidence.
+- Real Hermes/OpenClaw dogfood evidence: completed live runs are cited by run
+  ID only, with summaries/artifact hashes in the ledger and no credentials, raw
+  prompts, raw model responses, or private transcripts in the docs.
+
 ## Worker Commands Run
 
 Mock adapter:
@@ -1143,6 +1171,22 @@ failures: []
 contract: agents execute through Agent Gateway CLI/API; the browser only dispatches, supervises, approves, and reads delivery evidence.
 ```
 
+Latest live commander-management proof runs for the current AgentOps MIS project:
+
+```text
+source: local MIS ledger, not hard-coded test fixtures
+execution contract: Agent Gateway CLI/API-first live dogfood; browser is commander oversight only
+OpenClaw run: run_gw_5f4a3320a4d3
+OpenClaw task: tsk_worker_ui_openclaw_20260621114057_4f5cbc75
+OpenClaw status: completed
+OpenClaw evidence: tool_calls 1, evaluations 1, audit references 3, artifacts 1
+Hermes run: run_gw_f7fe3a78cadb
+Hermes task: tsk_worker_ui_hermes_20260621114203_9e6cc64a
+Hermes status: completed
+Hermes evidence: tool_calls 2, evaluations 1, audit references 6, artifacts 2
+safety: credentials, raw prompts, raw model responses, and private transcripts omitted
+```
+
 Previous CLI/API-first local live dogfood runs:
 
 ```text
@@ -1390,6 +1434,8 @@ planned MIS task
 - Hermes/OpenClaw live execution requires `--confirm-run`.
 - Runtime connectors can be marked trusted, review-required, or blocked; blocked Hermes/OpenClaw connectors prevent confirmed live customer worker execution.
 - The worker does not call Dify or Notion.
+- Dify live sync, Notion live/bidirectional sync, hosted SaaS billing, and
+  hosted multi-tenant operations remain excluded from this v1.5 acceptance.
 - The worker does not store full prompts or raw responses.
 - The worker is installable as a Python source package and can render/write/check launchd/systemd templates; it is not yet an npm package, signed binary, or automatic OS service loader/relauncher.
 - The UI/CLI worker status path now supports one-shot dispatch, local daemon start/stop, daemon state counters, daemon backoff state, daemon log tails, recent gateway events, remote enrollment/session health summaries, operator readiness cards, and stuck-task release controls; it is not a production fleet manager.

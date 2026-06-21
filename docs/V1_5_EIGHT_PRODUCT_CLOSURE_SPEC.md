@@ -34,6 +34,27 @@ normal customer task can be dispatched through the machine-facing contract and
 then become visible in the human-facing ledger, approvals, evaluations, audit,
 and artifact views.
 
+v1.5 also makes the human operator role explicit as a commander-style async
+management loop. The commander does not need to hold a single synchronous
+request open while Hermes, OpenClaw, or a remote worker finishes. Instead, the
+product exposes:
+
+- Local readiness through `GET /api/local/readiness` and `agentops local
+  readiness`.
+- A commander project board through `GET /api/commander/project-board` with
+  readiness, worker health, recent work packages, pending approvals, artifacts,
+  memory candidates, workflow jobs, integration gates, and recommended next
+  actions.
+- Async workflow job submission, polling, listing, stuck-job detection, and
+  operator mark-failed recovery for customer worker and template jobs.
+- An async integration inbox at `GET /api/commander/integration-inbox` for
+  returned worker results, running lanes, blocked work, stale work and memory
+  review.
+- CLI/API-first execution for agents, with browser pages reserved for command,
+  supervision, approval, and review.
+- Real Hermes/OpenClaw dogfood evidence in the ledger, cited by run ID and
+  summarized metadata only.
+
 Parallel product work should use
 `docs/PARALLEL_PRODUCT_DELIVERY_BRANCH_PLAN.md` as the branch ownership and
 handoff map. It keeps remote worker, customer task flow, RBAC, fleet console,
@@ -125,6 +146,11 @@ Acceptance evidence:
   - OpenClaw completed `run_gw_7ede8c8cc5c9` with artifact `art_customer_worker_task_run_gw_7ede8c8cc5c9`.
   - Hermes completed `run_gw_1e864c5f6b18` with artifact `art_customer_worker_task_run_gw_1e864c5f6b18`.
   - Both runs used Agent Gateway CLI/API execution, not browser automation, and wrote tool/evaluation/runtime/audit/artifact/memory/approval evidence.
+- Latest commander-management live proof on 2026-06-21:
+  - OpenClaw completed `run_gw_5f4a3320a4d3` from task `tsk_worker_ui_openclaw_20260621114057_4f5cbc75`.
+  - Hermes completed `run_gw_f7fe3a78cadb` from task `tsk_worker_ui_hermes_20260621114203_9e6cc64a`.
+  - The local ledger shows completed status plus tool/evaluation/audit/artifact evidence for both runs.
+  - These are real live run IDs, not hard-coded fixtures; docs cite IDs and counts only, without raw prompts, raw responses, credentials, or private transcripts.
 - Generic customer worker governance closure on 2026-06-20:
   - Mock completed `run_gw_161d789c4469`.
   - Hermes completed `run_gw_5d998a53e469`.
@@ -400,6 +426,9 @@ Current v1.5 implementation:
   - daemon status cards.
   - remote agent enrollment token panel.
   - worker fleet telemetry with daemon log tails and recent Agent Gateway events.
+- `/workspace/agents` also surfaces local readiness, adapter route readiness,
+  async workflow jobs, stuck workflow-job recovery, and the async integration
+  inbox for commander review of work that returns at different speeds.
 - `/workspace/approvals` reads live approvals from the backend and can approve/reject through the real API.
 - `/admin/toolcalls` reads live tool-call evidence from the backend instead of mock data.
 - `/admin/tasks/:id` shows delivery artifacts and links related runs to their Run Detail pages.
@@ -648,6 +677,11 @@ Implemented and verified:
 - Workflow job recovery through `GET /api/workflows/jobs/stuck`,
   `POST /api/workflows/jobs/:job_id/mark-failed`, `agentops workflow
   stuck-jobs`, and `agentops workflow job-mark-failed`.
+- Local readiness through `GET /api/local/readiness` and
+  `agentops local readiness`.
+- Commander project board through `GET /api/commander/project-board`.
+- Async integration inbox through `GET /api/commander/integration-inbox`,
+  `agentops commander inbox`, and the `/workspace/agents` commander panel.
 - Customer-facing worker task CLI through `agentops workflow customer-worker-task`.
 - Long customer worker tasks can use `agentops workflow customer-worker-task
   --async-job` and `agentops workflow job-status --wait`, which keeps Hermes

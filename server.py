@@ -6445,6 +6445,435 @@ def commander_project_board(conn: sqlite3.Connection, headers) -> dict:
     }
 
 
+COMMANDER_INBOX_BUCKETS = ["ready_for_review", "still_running", "blocked", "late_or_stale", "needs_memory_review"]
+
+
+def commander_age_sec(*values) -> int | None:
+    now_dt = dt.datetime.now(dt.timezone.utc)
+    for value in values:
+        parsed = parse_iso_datetime(value)
+        if parsed:
+            return max(int((now_dt - parsed).total_seconds()), 0)
+    return None
+
+
+def commander_count(conn: sqlite3.Connection, sql: str, params=()) -> int:
+    return int((conn.execute(sql, params).fetchone() or [0])[0] or 0)
+
+
+def commander_evidence_counts(conn: sqlite3.Connection, task_id=None, run_id=None, artifact_id=None) -> dict:
+    counts = {
+        "artifacts": 0,
+        "evaluations": 0,
+        "audit_logs": 0,
+        "approvals": 0,
+        "pending_approvals": 0,
+        "tool_calls": 0,
+        "runtime_events": 0,
+        "memories": 0,
+    }
+    if run_id:
+        counts["artifacts"] += commander_count(conn, "SELECT COUNT(*) FROM artifacts WHERE run_id=?", (run_id,))
+        counts["evaluations"] += commander_count(conn, "SELECT COUNT(*) FROM evaluations WHERE run_id=?", (run_id,))
+        counts["tool_calls"] += commander_count(conn, "SELECT COUNT(*) FROM tool_calls WHERE run_id=?", (run_id,))
+        counts["runtime_events"] += commander_count(conn, "SELECT COUNT(*) FROM runtime_events WHERE run_id=?", (run_id,))
+    if task_id:
+        counts["artifacts"] += commander_count(conn, "SELECT COUNT(*) FROM artifacts WHERE task_id=? AND (run_id IS NULL OR run_id<>?)", (task_id, run_id or ""))
+        counts["evaluations"] += commander_count(conn, "SELECT COUNT(*) FROM evaluations WHERE task_id=? AND (run_id IS NULL OR run_id<>?)", (task_id, run_id or ""))
+        counts["runtime_events"] += commander_count(conn, "SELECT COUNT(*) FROM runtime_events WHERE task_id=? AND (run_id IS NULL OR run_id<>?)", (task_id, run_id or ""))
+        counts["memories"] += commander_count(conn, "SELECT COUNT(*) FROM memories WHERE task_id=?", (task_id,))
+    if run_id or task_id:
+        counts["approvals"] = commander_count(
+            conn,
+            "SELECT COUNT(*) FROM approvals WHERE (? IS NOT NULL AND run_id=?) OR (? IS NOT NULL AND task_id=?)",
+            (run_id, run_id, task_id, task_id),
+        )
+        counts["pending_approvals"] = commander_count(
+            conn,
+            "SELECT COUNT(*) FROM approvals WHERE decision='pending' AND ((? IS NOT NULL AND run_id=?) OR (? IS NOT NULL AND task_id=?))",
+            (run_id, run_id, task_id, task_id),
+        )
+    audit_terms = []
+    audit_params = []
+    for entity_type, entity_id in [("tasks", task_id), ("runs", run_id), ("artifacts", artifact_id)]:
+        if entity_id:
+            audit_terms.append("(entity_type=? AND entity_id=?)")
+            audit_params.extend([entity_type, entity_id])
+    if audit_terms:
+        counts["audit_logs"] = commander_count(conn, f"SELECT COUNT(*) FROM audit_logs WHERE {' OR '.join(audit_terms)}", audit_params)
+    return counts
+
+
+def commander_inbox_item(bucket: str, row: dict, title: str, recommended_action: str, conn: sqlite3.Connection, artifact_id=None) -> dict:
+    task_id = row.get("task_id") or row.get("result_task_id")
+    run_id = row.get("run_id") or row.get("result_run_id")
+    job_id = row.get("job_id")
+    artifact_id = artifact_id or row.get("artifact_id") or row.get("result_artifact_id")
+    item_id = f"{bucket}:{job_id or run_id or task_id or artifact_id or row.get('memory_id')}"
+    return {
+        "item_id": item_id,
+        "bucket": bucket,
+        "title": commander_safe_text(title, 180),
+        "status": row.get("status") or row.get("task_status") or row.get("review_status"),
+        "task_id": task_id,
+        "run_id": run_id,
+        "job_id": job_id,
+        "artifact_id": artifact_id,
+        "agent_id": row.get("agent_id"),
+        "owner_agent_id": row.get("owner_agent_id") or row.get("agent_id"),
+        "age_sec": commander_age_sec(row.get("updated_at"), row.get("started_at"), row.get("created_at")),
+        "evidence_counts": commander_evidence_counts(conn, task_id=task_id, run_id=run_id, artifact_id=artifact_id),
+        "recommended_action": recommended_action,
+        "created_at": row.get("created_at"),
+        "updated_at": row.get("updated_at") or row.get("completed_at") or row.get("ended_at") or row.get("created_at"),
+    }
+
+
+def commander_integration_inbox(conn: sqlite3.Connection, headers) -> dict:
+    threshold_sec = 900
+    item_limit = 20
+    per_bucket_limit = 8
+    cutoff_iso = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=threshold_sec)).isoformat()
+    items: list[dict] = []
+    seen: set[str] = set()
+
+    def add(item: dict) -> None:
+        item_id = item.get("item_id")
+        if item_id in seen or len(items) >= item_limit:
+            return
+        seen.add(item_id)
+        items.append(item)
+
+    ready_run_rows = rows_to_dicts(conn.execute(
+        """SELECT r.run_id, r.task_id, r.agent_id, r.status, r.started_at, r.ended_at, r.created_at,
+                  COALESCE(r.ended_at, r.created_at) AS updated_at, r.output_summary,
+                  t.title AS task_title, t.status AS task_status, t.owner_agent_id,
+                  (SELECT artifact_id FROM artifacts a WHERE a.run_id=r.run_id ORDER BY a.created_at DESC LIMIT 1) AS artifact_id
+        FROM runs r
+        JOIN tasks t ON t.task_id=r.task_id
+        WHERE r.status='completed'
+          AND (r.approval_required=1 OR t.status='waiting_approval'
+               OR EXISTS (SELECT 1 FROM approvals ap WHERE ap.run_id=r.run_id AND ap.decision='pending'))
+          AND (EXISTS (SELECT 1 FROM artifacts a WHERE a.run_id=r.run_id)
+               OR EXISTS (SELECT 1 FROM evaluations e WHERE e.run_id=r.run_id)
+               OR EXISTS (SELECT 1 FROM audit_logs al WHERE al.entity_type='runs' AND al.entity_id=r.run_id))
+        ORDER BY r.created_at DESC
+        LIMIT ?""",
+        (per_bucket_limit,),
+    ).fetchall())
+    for row in ready_run_rows:
+        add(commander_inbox_item(
+            "ready_for_review",
+            row,
+            row.get("task_title") or row.get("output_summary") or row.get("run_id"),
+            "Review evidence, resolve pending approval, and decide whether this worker output is ready for delivery.",
+            conn,
+            artifact_id=row.get("artifact_id"),
+        ))
+
+    ready_job_rows = rows_to_dicts(conn.execute(
+        """SELECT j.job_id, j.workflow_type, j.status, j.title, j.result_task_id, j.result_run_id, j.result_artifact_id,
+                  j.created_at, j.updated_at, j.completed_at, t.owner_agent_id, r.agent_id
+        FROM workflow_jobs j
+        LEFT JOIN tasks t ON t.task_id=j.result_task_id
+        LEFT JOIN runs r ON r.run_id=j.result_run_id
+        WHERE j.status='completed'
+          AND j.result_artifact_id IS NOT NULL
+          AND (t.status='waiting_approval'
+               OR EXISTS (SELECT 1 FROM approvals ap WHERE ap.task_id=j.result_task_id AND ap.decision='pending')
+               OR EXISTS (SELECT 1 FROM approvals ap WHERE ap.run_id=j.result_run_id AND ap.decision='pending'))
+        ORDER BY j.updated_at DESC
+        LIMIT ?""",
+        (per_bucket_limit,),
+    ).fetchall())
+    for row in ready_job_rows:
+        add(commander_inbox_item(
+            "ready_for_review",
+            row,
+            row.get("title") or f"Completed workflow job {row.get('job_id')}",
+            "Open the completed job result, inspect the linked artifact, and approve or reject delivery.",
+            conn,
+        ))
+
+    running_job_rows = rows_to_dicts(conn.execute(
+        """SELECT job_id, workflow_type, status, title, result_task_id, result_run_id, result_artifact_id,
+                  adapter, created_at, started_at, updated_at
+        FROM workflow_jobs
+        WHERE status IN ('queued','running') AND updated_at>=?
+        ORDER BY updated_at ASC
+        LIMIT ?""",
+        (cutoff_iso, per_bucket_limit),
+    ).fetchall())
+    for row in running_job_rows:
+        add(commander_inbox_item(
+            "still_running",
+            row,
+            row.get("title") or f"{row.get('workflow_type')} job {row.get('job_id')}",
+            "Let the async workflow continue, or check job status if the commander needs a delivery ETA.",
+            conn,
+        ))
+
+    running_task_rows = rows_to_dicts(conn.execute(
+        """SELECT task_id, title, status, owner_agent_id, created_at, updated_at
+        FROM tasks
+        WHERE status='running' AND updated_at>=?
+        ORDER BY updated_at ASC
+        LIMIT ?""",
+        (cutoff_iso, per_bucket_limit),
+    ).fetchall())
+    for row in running_task_rows:
+        add(commander_inbox_item(
+            "still_running",
+            row,
+            row.get("title") or row.get("task_id"),
+            "Monitor the assigned worker and wait for run or artifact evidence before reviewing.",
+            conn,
+        ))
+
+    running_run_rows = rows_to_dicts(conn.execute(
+        """SELECT r.run_id, r.task_id, r.agent_id, r.status, r.started_at, r.created_at,
+                  COALESCE(r.started_at, r.created_at) AS updated_at, t.title AS task_title, t.owner_agent_id
+        FROM runs r
+        JOIN tasks t ON t.task_id=r.task_id
+        WHERE r.status IN ('queued','running') AND COALESCE(r.started_at, r.created_at)>=?
+        ORDER BY COALESCE(r.started_at, r.created_at) ASC
+        LIMIT ?""",
+        (cutoff_iso, per_bucket_limit),
+    ).fetchall())
+    for row in running_run_rows:
+        add(commander_inbox_item(
+            "still_running",
+            row,
+            row.get("task_title") or row.get("run_id"),
+            "Wait for the run to finish, then review its evidence chain.",
+            conn,
+        ))
+
+    blocked_job_rows = rows_to_dicts(conn.execute(
+        """SELECT job_id, workflow_type, status, title, result_task_id, result_run_id, result_artifact_id,
+                  error_message, created_at, started_at, completed_at, updated_at
+        FROM workflow_jobs
+        WHERE status='failed'
+        ORDER BY updated_at DESC
+        LIMIT ?""",
+        (per_bucket_limit,),
+    ).fetchall())
+    for row in blocked_job_rows:
+        add(commander_inbox_item(
+            "blocked",
+            row,
+            row.get("title") or row.get("error_message") or f"Failed job {row.get('job_id')}",
+            "Inspect the job error, choose retry or mark-failed recovery, and assign a follow-up worker if needed.",
+            conn,
+        ))
+
+    blocked_task_rows = rows_to_dicts(conn.execute(
+        """SELECT task_id, title, status, owner_agent_id, created_at, updated_at
+        FROM tasks
+        WHERE status IN ('blocked','failed')
+        ORDER BY updated_at DESC
+        LIMIT ?""",
+        (per_bucket_limit,),
+    ).fetchall())
+    for row in blocked_task_rows:
+        add(commander_inbox_item(
+            "blocked",
+            row,
+            row.get("title") or row.get("task_id"),
+            "Review failure evidence, unblock requirements, or reassign the task.",
+            conn,
+        ))
+
+    blocked_run_rows = rows_to_dicts(conn.execute(
+        """SELECT r.run_id, r.task_id, r.agent_id, r.status, r.error_message, r.started_at, r.ended_at, r.created_at,
+                  COALESCE(r.ended_at, r.created_at) AS updated_at, t.title AS task_title, t.owner_agent_id
+        FROM runs r
+        JOIN tasks t ON t.task_id=r.task_id
+        WHERE r.status IN ('blocked','failed')
+        ORDER BY COALESCE(r.ended_at, r.created_at) DESC
+        LIMIT ?""",
+        (per_bucket_limit,),
+    ).fetchall())
+    for row in blocked_run_rows:
+        add(commander_inbox_item(
+            "blocked",
+            row,
+            row.get("task_title") or row.get("error_message") or row.get("run_id"),
+            "Inspect run error evidence and decide whether to retry, reject, or create a recovery task.",
+            conn,
+        ))
+
+    stale_job_rows = rows_to_dicts(conn.execute(
+        """SELECT job_id, workflow_type, status, title, result_task_id, result_run_id, result_artifact_id,
+                  created_at, started_at, updated_at
+        FROM workflow_jobs
+        WHERE status IN ('queued','running') AND updated_at<?
+        ORDER BY updated_at ASC
+        LIMIT ?""",
+        (cutoff_iso, per_bucket_limit),
+    ).fetchall())
+    for row in stale_job_rows:
+        add(commander_inbox_item(
+            "late_or_stale",
+            row,
+            row.get("title") or f"Stale workflow job {row.get('job_id')}",
+            "Check job status and use workflow stuck recovery if it has exceeded the async threshold.",
+            conn,
+        ))
+
+    stale_task_rows = rows_to_dicts(conn.execute(
+        """SELECT task_id, title, status, owner_agent_id, created_at, updated_at
+        FROM tasks
+        WHERE status='running' AND updated_at<?
+        ORDER BY updated_at ASC
+        LIMIT ?""",
+        (cutoff_iso, per_bucket_limit),
+    ).fetchall())
+    for row in stale_task_rows:
+        add(commander_inbox_item(
+            "late_or_stale",
+            row,
+            row.get("title") or row.get("task_id"),
+            "Contact or release the worker because the running task exceeded the freshness threshold.",
+            conn,
+        ))
+
+    stale_run_rows = rows_to_dicts(conn.execute(
+        """SELECT r.run_id, r.task_id, r.agent_id, r.status, r.started_at, r.created_at,
+                  COALESCE(r.started_at, r.created_at) AS updated_at, t.title AS task_title, t.owner_agent_id
+        FROM runs r
+        JOIN tasks t ON t.task_id=r.task_id
+        WHERE r.status IN ('queued','running') AND COALESCE(r.started_at, r.created_at)<?
+        ORDER BY COALESCE(r.started_at, r.created_at) ASC
+        LIMIT ?""",
+        (cutoff_iso, per_bucket_limit),
+    ).fetchall())
+    for row in stale_run_rows:
+        add(commander_inbox_item(
+            "late_or_stale",
+            row,
+            row.get("task_title") or f"Stale run {row.get('run_id')}",
+            "Investigate the runtime, then block or recover the run if no worker is still active.",
+            conn,
+        ))
+
+    memory_rows = rows_to_dicts(conn.execute(
+        """SELECT memory_id, task_id, agent_id, review_status, memory_type, canonical_text,
+                  source_ref, created_at, updated_at
+        FROM memories
+        WHERE review_status IN ('candidate','stale') OR (ttl_review_due_at IS NOT NULL AND ttl_review_due_at<?)
+        ORDER BY updated_at DESC
+        LIMIT ?""",
+        (now_iso(), per_bucket_limit),
+    ).fetchall())
+    for row in memory_rows:
+        item = commander_inbox_item(
+            "needs_memory_review",
+            row,
+            f"{row.get('memory_type')}: {row.get('canonical_text')}",
+            "Review the memory candidate before allowing it to become durable commander context.",
+            conn,
+        )
+        item["memory_id"] = row.get("memory_id")
+        add(item)
+
+    returned_summary = {bucket: 0 for bucket in COMMANDER_INBOX_BUCKETS}
+    for item in items:
+        returned_summary[item["bucket"]] += 1
+
+    ready_total = commander_count(
+        conn,
+        """SELECT COUNT(*)
+        FROM runs r
+        JOIN tasks t ON t.task_id=r.task_id
+        WHERE r.status='completed'
+          AND (r.approval_required=1 OR t.status='waiting_approval'
+               OR EXISTS (SELECT 1 FROM approvals ap WHERE ap.run_id=r.run_id AND ap.decision='pending'))
+          AND (EXISTS (SELECT 1 FROM artifacts a WHERE a.run_id=r.run_id)
+               OR EXISTS (SELECT 1 FROM evaluations e WHERE e.run_id=r.run_id)
+               OR EXISTS (SELECT 1 FROM audit_logs al WHERE al.entity_type='runs' AND al.entity_id=r.run_id))"""
+    )
+    ready_total += commander_count(
+        conn,
+        """SELECT COUNT(*)
+        FROM workflow_jobs j
+        LEFT JOIN tasks t ON t.task_id=j.result_task_id
+        WHERE j.status='completed'
+          AND j.result_artifact_id IS NOT NULL
+          AND (t.status='waiting_approval'
+               OR EXISTS (SELECT 1 FROM approvals ap WHERE ap.task_id=j.result_task_id AND ap.decision='pending')
+               OR EXISTS (SELECT 1 FROM approvals ap WHERE ap.run_id=j.result_run_id AND ap.decision='pending'))"""
+    )
+
+    still_running_total = commander_count(conn, "SELECT COUNT(*) FROM workflow_jobs WHERE status IN ('queued','running') AND updated_at>=?", (cutoff_iso,))
+    still_running_total += commander_count(conn, "SELECT COUNT(*) FROM tasks WHERE status='running' AND updated_at>=?", (cutoff_iso,))
+    still_running_total += commander_count(conn, "SELECT COUNT(*) FROM runs WHERE status IN ('queued','running') AND COALESCE(started_at, created_at)>=?", (cutoff_iso,))
+
+    blocked_total = commander_count(conn, "SELECT COUNT(*) FROM workflow_jobs WHERE status='failed'")
+    blocked_total += commander_count(conn, "SELECT COUNT(*) FROM tasks WHERE status IN ('blocked','failed')")
+    blocked_total += commander_count(conn, "SELECT COUNT(*) FROM runs WHERE status IN ('blocked','failed')")
+    late_total = commander_count(conn, "SELECT COUNT(*) FROM workflow_jobs WHERE status IN ('queued','running') AND updated_at<?", (cutoff_iso,))
+    late_total += commander_count(conn, "SELECT COUNT(*) FROM tasks WHERE status='running' AND updated_at<?", (cutoff_iso,))
+    late_total += commander_count(conn, "SELECT COUNT(*) FROM runs WHERE status IN ('queued','running') AND COALESCE(started_at, created_at)<?", (cutoff_iso,))
+    memory_review_total = commander_count(
+        conn,
+        "SELECT COUNT(*) FROM memories WHERE review_status IN ('candidate','stale') OR (ttl_review_due_at IS NOT NULL AND ttl_review_due_at<?)",
+        (now_iso(),),
+    )
+    bucket_totals = {
+        "ready_for_review": ready_total,
+        "still_running": still_running_total,
+        "blocked": blocked_total,
+        "late_or_stale": late_total,
+        "needs_memory_review": memory_review_total,
+    }
+    recommended_next_actions = []
+    if ready_total:
+        recommended_next_actions.append("Review ready worker results and resolve pending delivery approvals.")
+    if late_total:
+        recommended_next_actions.append("Open stuck workflow recovery and mark stale jobs failed or reassign them.")
+    if blocked_total:
+        recommended_next_actions.append("Inspect blocked tasks/runs, then retry, reject, or create a recovery package.")
+    if memory_review_total:
+        recommended_next_actions.append("Review memory candidates before promoting them into durable project context.")
+    if still_running_total:
+        recommended_next_actions.append("Let active worker lanes continue while reviewing completed inbox items.")
+    if not recommended_next_actions:
+        recommended_next_actions = ["Dispatch the next customer worker task or review the commander project board."]
+
+    status = "blocked" if blocked_total or late_total else "attention" if items else "ready"
+    return {
+        "provider": "agentops-commander",
+        "operation": "integration_inbox",
+        "status": status,
+        "token_omitted": True,
+        "live_execution_performed": False,
+        "workspace_id": normalize_workspace_id(headers.get("X-AgentOps-Workspace-Id") or "local-demo"),
+        "threshold_sec": threshold_sec,
+        "summary": {
+            **bucket_totals,
+            "buckets": bucket_totals,
+            "returned_buckets": returned_summary,
+            "items_returned": len(items),
+            "item_limit": item_limit,
+            "total": sum(bucket_totals.values()),
+            "blocked_total": blocked_total,
+            "late_or_stale_total": late_total,
+        },
+        "inbox_items": items,
+        "recommended_next_actions": recommended_next_actions[:8],
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "task_created": False,
+            "run_created": False,
+            "job_created": False,
+            "token_omitted": True,
+            "raw_prompt_omitted": True,
+        },
+    }
+
+
 def recent_closed_loop_run_count(conn: sqlite3.Connection, limit: int = 250) -> int:
     candidate_rows = conn.execute(
         """SELECT r.run_id FROM runs r
@@ -7256,6 +7685,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(payload)
             if path == "/api/commander/project-board":
                 payload = commander_project_board(conn, self.headers)
+                conn.rollback()
+                return self.send_json(payload)
+            if path == "/api/commander/integration-inbox":
+                payload = commander_integration_inbox(conn, self.headers)
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/agent-gateway/enrollments":

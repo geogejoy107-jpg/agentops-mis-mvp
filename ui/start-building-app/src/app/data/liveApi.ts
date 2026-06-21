@@ -460,6 +460,49 @@ export interface LocalReadinessPayload {
   live_execution_performed: boolean;
 }
 
+export interface IntegrationInboxSummary {
+  ready_for_review: number;
+  still_running: number;
+  blocked: number;
+  late_or_stale: number;
+  needs_memory_review: number;
+  total: number;
+}
+
+export interface IntegrationInboxItem {
+  item_id: string;
+  bucket: string;
+  title: string;
+  status: string;
+  task_id?: string | null;
+  run_id?: string | null;
+  job_id?: string | null;
+  artifact_id?: string | null;
+  agent_id?: string | null;
+  owner_agent_id?: string | null;
+  age_sec: number;
+  evidence?: Record<string, unknown>;
+  recommended_action?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface IntegrationInboxPayload {
+  provider: string;
+  operation: string;
+  status: string;
+  token_omitted: boolean;
+  live_execution_performed: boolean;
+  summary: IntegrationInboxSummary;
+  inbox_items: IntegrationInboxItem[];
+  recommended_next_actions: string[];
+  safety: {
+    read_only: boolean;
+    ledger_mutated: boolean;
+    raw_prompt_omitted: boolean;
+  };
+}
+
 export interface StuckWorkerTask extends Task {
   age_sec?: number;
   threshold_sec?: number;
@@ -716,6 +759,19 @@ export async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
     headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
     ...init,
   });
+  if (!res.ok) {
+    throw new Error(`${res.status} ${res.statusText}: ${await res.text()}`);
+  }
+  return res.json() as Promise<T>;
+}
+
+async function optionalApiJson<T>(path: string, fallback: T): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    headers: { "Content-Type": "application/json" },
+  });
+  if (res.status === 404) {
+    return fallback;
+  }
   if (!res.ok) {
     throw new Error(`${res.status} ${res.statusText}: ${await res.text()}`);
   }
@@ -1198,7 +1254,19 @@ export async function loadWorkerStatus(): Promise<WorkerStatusPayload> {
 }
 
 export async function loadLocalReadiness(): Promise<LocalReadinessPayload> {
-  const raw = await apiJson<Record<string, unknown>>("/local/readiness");
+  const raw = await optionalApiJson<Record<string, unknown>>("/local/readiness", {
+    provider: "agentops-local",
+    operation: "local_readiness",
+    status: "unavailable",
+    ok: false,
+    gates: [],
+    evidence: {},
+    next_actions: [],
+    adapter_readiness: {},
+    token_omitted: true,
+    live_execution_performed: false,
+    fallback_reason: "endpoint_not_available",
+  });
   const evidenceRaw = typeof raw.evidence === "object" && raw.evidence !== null ? raw.evidence as Record<string, unknown> : {};
   const adapterReadiness = typeof raw.adapter_readiness === "object" && raw.adapter_readiness !== null ? raw.adapter_readiness as WorkerAdapterReadinessSummary : {};
   return {
@@ -1242,6 +1310,70 @@ export async function loadLocalReadiness(): Promise<LocalReadinessPayload> {
     contract: raw.contract ? String(raw.contract) : undefined,
     token_omitted: boolValue(raw.token_omitted),
     live_execution_performed: boolValue(raw.live_execution_performed),
+  };
+}
+
+export async function loadIntegrationInbox(): Promise<IntegrationInboxPayload> {
+  const raw = await optionalApiJson<Record<string, unknown>>("/commander/integration-inbox", {
+    provider: "agentops-commander",
+    operation: "integration_inbox",
+    status: "unavailable",
+    token_omitted: true,
+    live_execution_performed: false,
+    summary: {},
+    inbox_items: [],
+    recommended_next_actions: [],
+    safety: {
+      read_only: true,
+      ledger_mutated: false,
+      raw_prompt_omitted: true,
+    },
+    fallback_reason: "endpoint_not_available",
+  });
+  const summaryRaw = typeof raw.summary === "object" && raw.summary !== null ? raw.summary as Record<string, unknown> : {};
+  const bucketRaw = typeof summaryRaw.buckets === "object" && summaryRaw.buckets !== null ? summaryRaw.buckets as Record<string, unknown> : summaryRaw;
+  const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
+  return {
+    provider: String(raw.provider || "agentops-commander"),
+    operation: String(raw.operation || "integration_inbox"),
+    status: String(raw.status || "unknown"),
+    token_omitted: boolValue(raw.token_omitted),
+    live_execution_performed: boolValue(raw.live_execution_performed),
+    summary: {
+      ready_for_review: numberValue(bucketRaw.ready_for_review, 0),
+      still_running: numberValue(bucketRaw.still_running, 0),
+      blocked: numberValue(bucketRaw.blocked, 0),
+      late_or_stale: numberValue(bucketRaw.late_or_stale, 0),
+      needs_memory_review: numberValue(bucketRaw.needs_memory_review, 0),
+      total: numberValue(summaryRaw.total, Object.values(bucketRaw).reduce((sum, value) => sum + numberValue(value, 0), 0)),
+    },
+    inbox_items: asArray<Record<string, unknown>>(raw.inbox_items).map((item) => ({
+      item_id: String(item.item_id || item.job_id || item.run_id || item.task_id || ""),
+      bucket: String(item.bucket || "unknown"),
+      title: String(item.title || item.item_id || "Untitled inbox item"),
+      status: String(item.status || "unknown"),
+      task_id: item.task_id ? String(item.task_id) : null,
+      run_id: item.run_id ? String(item.run_id) : null,
+      job_id: item.job_id ? String(item.job_id) : null,
+      artifact_id: item.artifact_id ? String(item.artifact_id) : null,
+      agent_id: item.agent_id ? String(item.agent_id) : null,
+      owner_agent_id: item.owner_agent_id ? String(item.owner_agent_id) : null,
+      age_sec: numberValue(item.age_sec, 0),
+      evidence: typeof item.evidence === "object" && item.evidence !== null
+        ? item.evidence as Record<string, unknown>
+        : typeof item.evidence_counts === "object" && item.evidence_counts !== null
+          ? item.evidence_counts as Record<string, unknown>
+          : undefined,
+      recommended_action: item.recommended_action ? String(item.recommended_action) : undefined,
+      created_at: item.created_at ? String(item.created_at) : undefined,
+      updated_at: item.updated_at ? String(item.updated_at) : undefined,
+    })).filter((item) => item.item_id || item.title),
+    recommended_next_actions: asArray<unknown>(raw.recommended_next_actions).map((item) => String(item)).filter(Boolean),
+    safety: {
+      read_only: boolValue(safetyRaw.read_only),
+      ledger_mutated: boolValue(safetyRaw.ledger_mutated),
+      raw_prompt_omitted: boolValue(safetyRaw.raw_prompt_omitted),
+    },
   };
 }
 

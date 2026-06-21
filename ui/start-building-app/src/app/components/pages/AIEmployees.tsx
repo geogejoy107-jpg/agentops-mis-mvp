@@ -1,6 +1,6 @@
 import { Link } from "react-router";
-import { useState } from "react";
-import { AlertTriangle, Bot, CheckCircle2, Play, RefreshCw, Activity, Power, Square, KeyRound, ShieldCheck, Trash2, RotateCw } from "lucide-react";
+import { useEffect, useState } from "react";
+import { AlertTriangle, Bot, CheckCircle2, Play, RefreshCw, Activity, Power, Square, KeyRound, ShieldCheck, Trash2, RotateCw, Inbox, GripVertical } from "lucide-react";
 import { StatusBadge } from "../shared/StatusBadge";
 import {
   createAgentGatewayEnrollment,
@@ -13,6 +13,7 @@ import {
   loadAgentGatewayStatus,
   loadAgents,
   loadDashboard,
+  loadIntegrationInbox,
   loadLocalReadiness,
   loadStuckWorkflowJobs,
   loadWorkerAdapterReadiness,
@@ -92,6 +93,8 @@ export function AIEmployees() {
   const [customerTaskJob, setCustomerTaskJob] = useState<WorkflowJob | null>(null);
   const [workflowJobAction, setWorkflowJobAction] = useState<string | null>(null);
   const [workflowJobResult, setWorkflowJobResult] = useState<string | null>(null);
+  const [actionQueueOrder, setActionQueueOrder] = useState<string[]>([]);
+  const [draggedActionId, setDraggedActionId] = useState<string | null>(null);
   const [customerTaskForm, setCustomerTaskForm] = useState<{
     adapter: (typeof WORKER_ADAPTERS)[number];
     title: string;
@@ -119,11 +122,12 @@ export function AIEmployees() {
     scopes: DEFAULT_GATEWAY_SCOPES.join(", "),
   });
   const { data, loading, error, refresh } = useLiveData(async () => {
-    const [metrics, workerStatus, adapterReadiness, localReadiness, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs] = await Promise.all([
+    const [metrics, workerStatus, adapterReadiness, localReadiness, integrationInbox, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs] = await Promise.all([
       loadDashboard(),
       loadWorkerStatus(),
       loadWorkerAdapterReadiness(),
       loadLocalReadiness(),
+      loadIntegrationInbox(),
       loadAgentGatewayEnrollments(),
       loadAgentGatewaySessions(),
       loadAgentGatewayStatus(),
@@ -133,17 +137,29 @@ export function AIEmployees() {
       loadStuckWorkflowJobs(30, 8),
     ]);
     const agents = await loadAgents(metrics);
-    return { agents, workerStatus, adapterReadiness, localReadiness, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs };
+    return { agents, workerStatus, adapterReadiness, localReadiness, integrationInbox, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs };
   }, []);
   const agents = data?.agents || [];
   const workerStatus = data?.workerStatus;
   const adapterReadiness = data?.adapterReadiness;
   const localReadiness = data?.localReadiness;
+  const integrationInbox = data?.integrationInbox;
   const localEvidence = localReadiness?.evidence;
   const localReadinessActions = localReadiness?.next_actions || [];
   const localReadinessGates = localReadiness?.gates || [];
   const localReadinessReadyGates = localReadinessGates.filter(gate => gate.ok).length;
   const localSafetyOk = Boolean(localReadiness?.token_omitted && localReadiness?.live_execution_performed === false);
+  const integrationInboxSummary = integrationInbox?.summary;
+  const integrationInboxItems = integrationInbox?.inbox_items || [];
+  const integrationInboxActions = integrationInbox?.recommended_next_actions || [];
+  const integrationInboxSafety = integrationInbox?.safety;
+  const integrationInboxSafe = Boolean(
+    integrationInbox?.token_omitted &&
+    integrationInbox?.live_execution_performed === false &&
+    integrationInboxSafety?.read_only &&
+    integrationInboxSafety?.ledger_mutated === false &&
+    integrationInboxSafety?.raw_prompt_omitted,
+  );
   const fleetHealth = workerStatus?.fleet_health;
   const fleetGates = fleetHealth?.gates || [];
   const recommendedActions = fleetHealth?.recommended_actions || [];
@@ -188,6 +204,13 @@ export function AIEmployees() {
       refresh: "Refresh live agents",
       commandCenterTitle: "Worker Fleet Console",
       commandCenterSummary: "Adapter readiness, daemon capacity, remote heartbeat/session health, stuck recovery, and the next safe CLI/API action.",
+      actionQueueTitle: "Operator action queue",
+      actionQueueSummary: "Drag to reorder your next checks. Use arrows as the precise fallback.",
+      actionSource: "Source",
+      dragToReorder: "Drag to reorder",
+      resetOrder: "Reset order",
+      moveUp: "Move up",
+      moveDown: "Move down",
       localReadinessTitle: "Local Readiness",
       localReadinessSummary: "Read-only proof that this local MIS workspace can be operated without leaking tokens or triggering live work.",
       localReadinessOverall: "Overall status",
@@ -196,6 +219,20 @@ export function AIEmployees() {
       safetyProof: "Safety proof",
       tokenOmittedProof: "Token omitted",
       liveExecutionProof: "Live execution not performed",
+      integrationInboxTitle: "Async Integration Inbox",
+      integrationInboxSummary: "Commander queue for worker results arriving at different speeds: review ready work, watch running jobs, and recover blocked items.",
+      readyForReview: "Ready",
+      stillRunning: "Running",
+      blockedItems: "Blocked",
+      lateOrStale: "Late/stale",
+      memoryReview: "Memory review",
+      inboxEmpty: "No async integration items yet.",
+      readOnlyProof: "Read-only",
+      ledgerMutationProof: "Ledger unchanged",
+      rawPromptProof: "Raw prompt omitted",
+      itemAge: "Age",
+      itemOwner: "Owner",
+      itemBucket: "Bucket",
       overallFleetHealth: "Fleet health",
       healthGates: "Health gates",
       recommendedActions: "Recommended actions",
@@ -383,6 +420,13 @@ export function AIEmployees() {
       refresh: "刷新实时代理",
       commandCenterTitle: "Worker Fleet 控制台",
       commandCenterSummary: "集中查看 adapter 就绪、daemon 容量、远程心跳/session、卡住恢复和下一步安全 CLI/API 动作。",
+      actionQueueTitle: "Operator 动作队列",
+      actionQueueSummary: "拖拽调整下一步检查顺序；也可以用箭头精确移动。",
+      actionSource: "来源",
+      dragToReorder: "拖拽排序",
+      resetOrder: "重置顺序",
+      moveUp: "上移",
+      moveDown: "下移",
       localReadinessTitle: "本地就绪",
       localReadinessSummary: "只读证明：这个本地 MIS 工作区可运行，同时不泄露 token，也不会触发真实执行。",
       localReadinessOverall: "整体状态",
@@ -391,6 +435,20 @@ export function AIEmployees() {
       safetyProof: "安全证明",
       tokenOmittedProof: "Token 已省略",
       liveExecutionProof: "未执行真实任务",
+      integrationInboxTitle: "异步集成 Inbox",
+      integrationInboxSummary: "Commander 用来处理不同速度 worker 回报的队列：审阅已完成工作、观察运行中 job、恢复阻塞项。",
+      readyForReview: "待审阅",
+      stillRunning: "运行中",
+      blockedItems: "阻塞",
+      lateOrStale: "超时/陈旧",
+      memoryReview: "记忆审查",
+      inboxEmpty: "暂无异步集成事项。",
+      readOnlyProof: "只读",
+      ledgerMutationProof: "账本未修改",
+      rawPromptProof: "原始 Prompt 已省略",
+      itemAge: "耗时",
+      itemOwner: "负责人",
+      itemBucket: "分组",
       overallFleetHealth: "Fleet 健康",
       healthGates: "健康 Gate",
       recommendedActions: "推荐动作",
@@ -625,6 +683,66 @@ export function AIEmployees() {
         : "local mock worker";
     return { item, liveReady, attention, checkSummary };
   });
+  const actionQueueCandidates = [
+    ...recommendedActions.map((action, index) => ({
+      id: `fleet:${index}:${action}`,
+      action,
+      source: copy.overallFleetHealth,
+      status: fleetHealth?.overall || "attention",
+    })),
+    ...integrationInboxActions.map((action, index) => ({
+      id: `inbox:${index}:${action}`,
+      action,
+      source: copy.integrationInboxTitle,
+      status: integrationInbox?.status || "attention",
+    })),
+    ...localReadinessActions.map((action, index) => ({
+      id: `local:${index}:${action}`,
+      action,
+      source: copy.localReadinessTitle,
+      status: localReadiness?.status || "attention",
+    })),
+  ].filter((candidate, index, list) => (
+    candidate.action &&
+    list.findIndex(item => item.action === candidate.action) === index
+  )).slice(0, 8);
+  const actionQueueKey = actionQueueCandidates.map(item => item.id).join("|");
+  const orderedActionQueue = [
+    ...actionQueueOrder.map(id => actionQueueCandidates.find(item => item.id === id)).filter(Boolean),
+    ...actionQueueCandidates.filter(item => !actionQueueOrder.includes(item.id)),
+  ].slice(0, 8);
+  const visibleActionQueue = orderedActionQueue.filter(Boolean) as typeof actionQueueCandidates;
+
+  useEffect(() => {
+    const nextIds = actionQueueCandidates.map(item => item.id);
+    setActionQueueOrder(prev => {
+      const kept = prev.filter(id => nextIds.includes(id));
+      const added = nextIds.filter(id => !kept.includes(id));
+      return [...kept, ...added].slice(0, 8);
+    });
+  }, [actionQueueKey]);
+
+  const moveActionQueueItem = (activeId: string, targetId: string) => {
+    const ids = orderedActionQueue.map(item => item?.id).filter(Boolean) as string[];
+    const activeIndex = ids.indexOf(activeId);
+    const targetIndex = ids.indexOf(targetId);
+    if (activeIndex < 0 || targetIndex < 0 || activeIndex === targetIndex) return;
+    const next = [...ids];
+    const [moved] = next.splice(activeIndex, 1);
+    next.splice(targetIndex, 0, moved);
+    setActionQueueOrder(next);
+  };
+
+  const nudgeActionQueueItem = (id: string, direction: -1 | 1) => {
+    const ids = orderedActionQueue.map(item => item?.id).filter(Boolean) as string[];
+    const index = ids.indexOf(id);
+    const targetIndex = index + direction;
+    if (index < 0 || targetIndex < 0 || targetIndex >= ids.length) return;
+    const next = [...ids];
+    const [moved] = next.splice(index, 1);
+    next.splice(targetIndex, 0, moved);
+    setActionQueueOrder(next);
+  };
 
   const updateCustomerTaskText = (field: "title" | "description", value: string) => {
     setCustomerTaskForm(prev => ({ ...prev, [field]: value }));
@@ -950,6 +1068,15 @@ export function AIEmployees() {
     return value === null || value === undefined || value === "" ? fallback : String(value);
   };
 
+  const formatAge = (ageSec?: number) => {
+    const seconds = Number(ageSec || 0);
+    if (!Number.isFinite(seconds) || seconds <= 0) return "—";
+    if (seconds < 60) return `${Math.round(seconds)}s`;
+    if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
+    if (seconds < 86400) return `${Math.round(seconds / 3600)}h`;
+    return `${Math.round(seconds / 86400)}d`;
+  };
+
   return (
     <div className="space-y-5 w-full">
       {/* Header */}
@@ -989,7 +1116,7 @@ export function AIEmployees() {
           </div>
         </div>
 
-        <div className="grid grid-cols-6 gap-3 mt-4">
+        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 mt-4">
           {[
             { label: copy.overallFleetHealth, value: fleetHealth?.overall || workerStatus?.status || "—", status: fleetHealth?.overall || workerStatus?.status || "unknown" },
             { label: copy.daemonStatus, value: `${runningDaemons}/${workerStatus?.daemons?.length ?? 0}`, status: runningDaemons > 0 ? "running" : "ready" },
@@ -1006,6 +1133,83 @@ export function AIEmployees() {
               </div>
             </div>
           ))}
+        </div>
+
+        <div className="rounded-lg p-3 mt-4" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="flex items-center gap-2">
+                <GripVertical size={13} style={{ color: "var(--mis-cyan)" }} />
+                <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.actionQueueTitle}</div>
+              </div>
+              <p className="text-[10px] mt-1" style={{ color: "var(--mis-muted)" }}>{copy.actionQueueSummary}</p>
+            </div>
+            <button
+              onClick={() => setActionQueueOrder(actionQueueCandidates.map(item => item.id))}
+              className="text-[10px] px-2 py-1 rounded"
+              style={{ color: "var(--mis-muted)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}
+            >
+              {copy.resetOrder}
+            </button>
+          </div>
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-2 mt-3">
+            {visibleActionQueue.length === 0 && (
+              <div className="text-[11px] rounded px-3 py-2" style={{ color: "var(--mis-muted)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                {copy.noRecommendedActions}
+              </div>
+            )}
+            {visibleActionQueue.map((item, index) => (
+              <div
+                key={item.id}
+                draggable
+                onDragStart={() => setDraggedActionId(item.id)}
+                onDragOver={(event) => event.preventDefault()}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  if (draggedActionId) moveActionQueueItem(draggedActionId, item.id);
+                  setDraggedActionId(null);
+                }}
+                onDragEnd={() => setDraggedActionId(null)}
+                className="grid grid-cols-[auto_1fr_auto] items-center gap-2 rounded px-3 py-2 cursor-grab active:cursor-grabbing"
+                style={{
+                  background: draggedActionId === item.id ? "rgba(34,211,238,0.08)" : "var(--mis-bg)",
+                  border: draggedActionId === item.id ? "1px solid rgba(34,211,238,0.32)" : "1px solid var(--mis-border)",
+                }}
+                title={copy.dragToReorder}
+              >
+                <GripVertical size={14} style={{ color: "var(--mis-muted)" }} />
+                <div className="min-w-0">
+                  <div className="text-[11px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{item.action}</div>
+                  <div className="text-[10px] truncate mt-0.5" style={{ color: "var(--mis-muted)" }}>
+                    {copy.actionSource}: {item.source}
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <StatusBadge status={item.status} />
+                  <button
+                    onClick={() => nudgeActionQueueItem(item.id, -1)}
+                    disabled={index === 0}
+                    className="text-[10px] w-6 h-6 rounded disabled:opacity-30"
+                    style={{ color: "var(--mis-dim)", background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}
+                    aria-label={copy.moveUp}
+                    title={copy.moveUp}
+                  >
+                    ↑
+                  </button>
+                  <button
+                    onClick={() => nudgeActionQueueItem(item.id, 1)}
+                    disabled={index === visibleActionQueue.length - 1}
+                    className="text-[10px] w-6 h-6 rounded disabled:opacity-30"
+                    style={{ color: "var(--mis-dim)", background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}
+                    aria-label={copy.moveDown}
+                    title={copy.moveDown}
+                  >
+                    ↓
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
 
         <div className="rounded-lg p-3 mt-4" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
@@ -1054,6 +1258,91 @@ export function AIEmployees() {
                 <span key={action} className="text-[10px] px-2 py-1 rounded truncate max-w-full" style={{ color: "var(--mis-cyan)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
                   {copy.nextAction}: {action}
                 </span>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-lg p-3 mt-4" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <Inbox size={13} style={{ color: integrationInboxSafe ? "var(--mis-success)" : "var(--mis-cyan)" }} />
+                <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.integrationInboxTitle}</div>
+                <StatusBadge status={integrationInbox?.status || "unknown"} />
+              </div>
+              <p className="text-[10px] mt-1 max-w-3xl" style={{ color: "var(--mis-dim)" }}>{copy.integrationInboxSummary}</p>
+            </div>
+            <StatusBadge status={(integrationInboxSummary?.blocked || 0) > 0 ? "blocked" : (integrationInboxSummary?.ready_for_review || 0) > 0 ? "attention" : "pass"} label={String(integrationInboxSummary?.total ?? 0)} />
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mt-3">
+            {[
+              { label: copy.readyForReview, value: integrationInboxSummary?.ready_for_review ?? 0, status: (integrationInboxSummary?.ready_for_review || 0) > 0 ? "ready" : "pass" },
+              { label: copy.stillRunning, value: integrationInboxSummary?.still_running ?? 0, status: (integrationInboxSummary?.still_running || 0) > 0 ? "running" : "pass" },
+              { label: copy.blockedItems, value: integrationInboxSummary?.blocked ?? 0, status: (integrationInboxSummary?.blocked || 0) > 0 ? "blocked" : "pass" },
+              { label: copy.lateOrStale, value: integrationInboxSummary?.late_or_stale ?? 0, status: (integrationInboxSummary?.late_or_stale || 0) > 0 ? "stale" : "pass" },
+              { label: copy.memoryReview, value: integrationInboxSummary?.needs_memory_review ?? 0, status: (integrationInboxSummary?.needs_memory_review || 0) > 0 ? "candidate" : "pass" },
+            ].map((item) => (
+              <div key={item.label} className="rounded px-2 py-1" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                <div className="text-[9px]" style={{ color: "var(--mis-muted)" }}>{item.label}</div>
+                <div className="flex items-center justify-between gap-2 mt-0.5">
+                  <div className="text-[10px] font-semibold truncate" style={{ color: item.status === "blocked" ? "#F87171" : "var(--mis-text)" }}>{item.value}</div>
+                  <StatusBadge status={item.status} />
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="grid grid-cols-1 xl:grid-cols-[1.35fr_0.85fr] gap-3 mt-3">
+            <div className="space-y-2 min-w-0">
+              {integrationInboxItems.length === 0 && (
+                <div className="text-[11px] rounded px-3 py-2" style={{ color: "var(--mis-muted)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                  {copy.inboxEmpty}
+                </div>
+              )}
+              {integrationInboxItems.slice(0, 5).map((item) => {
+                const primaryRef = item.task_id || item.run_id || item.job_id || item.artifact_id || item.item_id;
+                return (
+                  <div key={item.item_id || primaryRef} className="grid grid-cols-[1fr_auto] gap-3 rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div className="text-[11px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{item.title}</div>
+                        <StatusBadge status={item.status} />
+                      </div>
+                      <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1 text-[10px]" style={{ color: "var(--mis-muted)" }}>
+                        <span>{copy.itemBucket}: {item.bucket || "—"}</span>
+                        <span>{copy.itemAge}: {formatAge(item.age_sec)}</span>
+                        <span>{copy.itemOwner}: {item.owner_agent_id || item.agent_id || "—"}</span>
+                      </div>
+                      {item.recommended_action && (
+                        <div className="text-[10px] truncate mt-1" style={{ color: "var(--mis-cyan)" }}>
+                          {copy.nextAction}: {item.recommended_action}
+                        </div>
+                      )}
+                      <div className="flex flex-wrap gap-1.5 mt-1">
+                        {item.task_id && <Link className="text-[10px]" style={{ color: "var(--mis-cyan)" }} to={`/admin/tasks/${item.task_id}`}>{copy.taskId}: {item.task_id}</Link>}
+                        {item.run_id && <Link className="text-[10px]" style={{ color: "var(--mis-cyan)" }} to={`/admin/runs/${item.run_id}`}>{copy.runId}: {item.run_id}</Link>}
+                        {item.job_id && <span className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{copy.jobId}: {item.job_id}</span>}
+                        {item.artifact_id && <span className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{copy.artifactId}: {item.artifact_id}</span>}
+                      </div>
+                    </div>
+                    <StatusBadge status={item.bucket || "unknown"} label={item.bucket || "—"} />
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="space-y-2 min-w-0">
+              <div className="flex flex-wrap gap-1.5">
+                <StatusBadge status={integrationInboxSafety?.read_only ? "pass" : "fail"} label={`${copy.readOnlyProof}: ${integrationInboxSafety?.read_only ? copy.yes : copy.no}`} />
+                <StatusBadge status={integrationInboxSafety?.ledger_mutated === false ? "pass" : "fail"} label={`${copy.ledgerMutationProof}: ${integrationInboxSafety?.ledger_mutated === false ? copy.yes : copy.no}`} />
+                <StatusBadge status={integrationInboxSafety?.raw_prompt_omitted ? "pass" : "fail"} label={`${copy.rawPromptProof}: ${integrationInboxSafety?.raw_prompt_omitted ? copy.yes : copy.no}`} />
+              </div>
+              {(integrationInboxActions.length > 0 ? integrationInboxActions : [copy.noRecommendedActions]).slice(0, 4).map((action) => (
+                <div key={action} className="text-[11px] rounded px-3 py-2 truncate" style={{ color: "var(--mis-cyan)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                  {action}
+                </div>
               ))}
             </div>
           </div>
