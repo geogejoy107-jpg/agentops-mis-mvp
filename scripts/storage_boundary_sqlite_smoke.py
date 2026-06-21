@@ -40,6 +40,8 @@ def main() -> int:
     agent_b = "agt_storage_b"
     task_a = "tsk_storage_a"
     task_b = "tsk_storage_b"
+    write_task = "tsk_storage_write"
+    write_run = "run_storage_write"
     job_a = "wfjob_storage_a"
     job_b = "wfjob_storage_b"
     token_id_a = ""
@@ -241,6 +243,68 @@ def main() -> int:
             require(server.repo_get_agent_gateway_run(conn, workspace_a, run_a), "gateway run helper missed workspace A run")
             require(not server.repo_get_agent_gateway_run(conn, workspace_a, run_b), "gateway run helper exposed workspace B run")
 
+            write_now = server.now_iso()
+            write_task_row = {
+                "task_id": write_task,
+                "workspace_id": workspace_a,
+                "title": "Storage write boundary task",
+                "description": "Created through repo_upsert_task.",
+                "requester_id": "usr_founder",
+                "owner_agent_id": agent_a,
+                "collaborator_agent_ids": "[]",
+                "status": "planned",
+                "priority": "medium",
+                "due_date": None,
+                "acceptance_criteria": "Write helper smoke must create and update task rows.",
+                "risk_level": "low",
+                "budget_limit_usd": 1.0,
+                "created_at": write_now,
+                "updated_at": write_now,
+            }
+            before_task, task_outcome = server.repo_upsert_task(conn, dict(write_task_row))
+            require(before_task is None and task_outcome == "created", f"task write helper create failed: {task_outcome}")
+            write_task_row["status"] = "running"
+            write_task_row["updated_at"] = server.now_iso()
+            before_task, task_outcome = server.repo_upsert_task(conn, dict(write_task_row))
+            require(before_task and task_outcome == "updated", f"task write helper update failed: {task_outcome}")
+            require(server.repo_get_workspace_task(conn, workspace_a, write_task)["status"] == "running", "task write helper did not persist update")
+
+            write_run_row = {
+                "run_id": write_run,
+                "workspace_id": workspace_a,
+                "task_id": write_task,
+                "agent_id": agent_a,
+                "runtime_type": "mock",
+                "status": "running",
+                "started_at": write_now,
+                "ended_at": None,
+                "duration_ms": None,
+                "input_summary": "Storage write boundary run.",
+                "output_summary": None,
+                "model_provider": "mock-provider",
+                "model_name": "mock-model",
+                "input_tokens": 1,
+                "output_tokens": 0,
+                "reasoning_tokens": 0,
+                "cost_usd": 0,
+                "error_type": None,
+                "error_message": None,
+                "trace_id": "trace_storage_write",
+                "parent_run_id": None,
+                "delegation_id": "del_storage_write",
+                "approval_required": 0,
+                "created_at": write_now,
+            }
+            before_run, run_outcome = server.repo_upsert_run(conn, dict(write_run_row))
+            require(before_run is None and run_outcome == "created", f"run write helper create failed: {run_outcome}")
+            write_run_row["status"] = "completed"
+            write_run_row["ended_at"] = server.now_iso()
+            write_run_row["duration_ms"] = 1
+            write_run_row["output_summary"] = "Storage write boundary run completed."
+            before_run, run_outcome = server.repo_upsert_run(conn, dict(write_run_row))
+            require(before_run and run_outcome == "updated", f"run write helper update failed: {run_outcome}")
+            require(server.repo_get_workspace_run(conn, workspace_a, write_run)["status"] == "completed", "run write helper did not persist update")
+
             memory_id_a = memory_a["memory"]["memory_id"]
             memory_id_b = memory_b["memory"]["memory_id"]
             org_memory_id_a = org_memory_a["memory"]["memory_id"]
@@ -332,6 +396,8 @@ def main() -> int:
                 "repo_list_agent_gateway_artifacts",
                 "repo_list_agent_gateway_approvals",
                 "repo_list_agent_gateway_memories",
+                "repo_upsert_task",
+                "repo_upsert_run",
             ],
             "workspace_a": workspace_a,
             "workspace_b": workspace_b,
@@ -339,6 +405,8 @@ def main() -> int:
             "run_b": run_b,
             "workflow_job_a": job_a,
             "workflow_job_b": job_b,
+            "write_task": write_task,
+            "write_run": write_run,
             "gateway_enrollment_a": token_id_a,
             "gateway_session_a": session_id_a,
             "token_omitted": True,

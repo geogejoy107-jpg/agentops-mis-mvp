@@ -1688,12 +1688,12 @@ def upsert_agent(conn, row: dict, actor_id="adapter-import") -> str:
     return "updated" if before else "created"
 
 
-def upsert_task(conn, row: dict, actor_id="adapter-import") -> str:
+def repo_upsert_task(conn: sqlite3.Connection, row: dict) -> tuple[sqlite3.Row | None, str]:
     row.setdefault("workspace_id", "local-demo")
     before = conn.execute("SELECT * FROM tasks WHERE task_id=?", (row["task_id"],)).fetchone()
     if before:
         if row_unchanged(before, row, {"created_at", "updated_at"}):
-            return "unchanged"
+            return before, "unchanged"
         conn.execute(
             """UPDATE tasks SET title=:title, description=:description, requester_id=:requester_id,
             owner_agent_id=:owner_agent_id, collaborator_agent_ids=:collaborator_agent_ids, status=:status,
@@ -1701,28 +1701,35 @@ def upsert_task(conn, row: dict, actor_id="adapter-import") -> str:
             budget_limit_usd=:budget_limit_usd, workspace_id=:workspace_id, updated_at=:updated_at WHERE task_id=:task_id""",
             row,
         )
-        action = "task.update"
+        return before, "updated"
     else:
         conn.execute(
             """INSERT INTO tasks(task_id,workspace_id,title,description,requester_id,owner_agent_id,collaborator_agent_ids,status,priority,due_date,acceptance_criteria,risk_level,budget_limit_usd,created_at,updated_at)
             VALUES(:task_id,:workspace_id,:title,:description,:requester_id,:owner_agent_id,:collaborator_agent_ids,:status,:priority,:due_date,:acceptance_criteria,:risk_level,:budget_limit_usd,:created_at,:updated_at)""",
             row,
         )
-        action = "task.create"
+        return before, "created"
+
+
+def upsert_task(conn, row: dict, actor_id="adapter-import") -> str:
+    before, outcome = repo_upsert_task(conn, row)
+    if outcome == "unchanged":
+        return outcome
+    action = "task.update" if before else "task.create"
     audit(conn, "system", actor_id, action, "tasks", row["task_id"], dict(before) if before else None, row, {})
-    return "updated" if before else "created"
+    return outcome
 
 
-def upsert_run(conn, row: dict, actor_id="adapter-import", audit_metadata=None) -> str:
+def repo_upsert_run(conn: sqlite3.Connection, row: dict, allow_update: bool = True) -> tuple[sqlite3.Row | None, str]:
     if not row.get("workspace_id"):
         task = conn.execute("SELECT workspace_id FROM tasks WHERE task_id=?", (row.get("task_id"),)).fetchone()
         row["workspace_id"] = (task["workspace_id"] if task else None) or "local-demo"
     before = conn.execute("SELECT * FROM runs WHERE run_id=?", (row["run_id"],)).fetchone()
     if before:
-        if actor_id == "openclaw-import":
-            return "unchanged"
+        if not allow_update:
+            return before, "unchanged"
         if row_unchanged(before, row, {"created_at"}):
-            return "unchanged"
+            return before, "unchanged"
         conn.execute(
             """UPDATE runs SET task_id=:task_id, agent_id=:agent_id, runtime_type=:runtime_type, status=:status,
             started_at=:started_at, ended_at=:ended_at, duration_ms=:duration_ms, input_summary=:input_summary,
@@ -1734,16 +1741,23 @@ def upsert_run(conn, row: dict, actor_id="adapter-import", audit_metadata=None) 
             WHERE run_id=:run_id""",
             row,
         )
-        action = "run.update"
+        return before, "updated"
     else:
         conn.execute(
             """INSERT INTO runs(run_id,workspace_id,task_id,agent_id,runtime_type,status,started_at,ended_at,duration_ms,input_summary,output_summary,model_provider,model_name,input_tokens,output_tokens,reasoning_tokens,cost_usd,error_type,error_message,trace_id,parent_run_id,delegation_id,approval_required,created_at)
             VALUES(:run_id,:workspace_id,:task_id,:agent_id,:runtime_type,:status,:started_at,:ended_at,:duration_ms,:input_summary,:output_summary,:model_provider,:model_name,:input_tokens,:output_tokens,:reasoning_tokens,:cost_usd,:error_type,:error_message,:trace_id,:parent_run_id,:delegation_id,:approval_required,:created_at)""",
             row,
         )
-        action = "run.create"
+        return before, "created"
+
+
+def upsert_run(conn, row: dict, actor_id="adapter-import", audit_metadata=None) -> str:
+    before, outcome = repo_upsert_run(conn, row, allow_update=actor_id != "openclaw-import")
+    if outcome == "unchanged":
+        return outcome
+    action = "run.update" if before else "run.create"
     audit(conn, "system", actor_id, action, "runs", row["run_id"], dict(before) if before else None, row, audit_metadata or {})
-    return "updated" if before else "created"
+    return outcome
 
 
 def upsert_tool_call(conn, row: dict, actor_id="adapter-import", audit_metadata=None) -> str:
@@ -3864,10 +3878,13 @@ def create_task_api(conn, body: dict) -> tuple[dict, int]:
         body.get("acceptance_criteria") or body.get("acceptance") or "Worker must satisfy task acceptance criteria and write ledger evidence.",
         600,
     )
-    owner_agent_id = body.get("owner_agent_id")
-    if owner_agent_id is None:
+    if "owner_agent_id" in body:
+        owner_agent_id = body.get("owner_agent_id")
+    else:
         owner_agent_id = body.get("agent_id") or "agt_research"
-    owner_agent_id = str(owner_agent_id or "").strip()
+    owner_agent_id = str(owner_agent_id).strip() if owner_agent_id is not None else None
+    if owner_agent_id == "":
+        owner_agent_id = None
     if owner_agent_id:
         owner_exists = conn.execute("SELECT 1 FROM agents WHERE agent_id=?", (owner_agent_id,)).fetchone()
         if not owner_exists:
@@ -3880,7 +3897,14 @@ def create_task_api(conn, body: dict) -> tuple[dict, int]:
 
     collaborators = body.get("collaborator_agent_ids") or []
     if isinstance(collaborators, str):
-        collaborators = [item.strip() for item in collaborators.split(",") if item.strip()]
+        try:
+            parsed_collaborators = json.loads(collaborators)
+        except Exception:
+            parsed_collaborators = None
+        if isinstance(parsed_collaborators, list):
+            collaborators = parsed_collaborators
+        else:
+            collaborators = [item.strip() for item in collaborators.split(",") if item.strip()]
     elif not isinstance(collaborators, list):
         collaborators = []
     collaborators = [redact_text(str(item), 120) for item in collaborators if str(item).strip()]
@@ -11860,11 +11884,33 @@ def start_mock_run(conn, body):
     trace_id = new_id("trace")
     start = now_iso()
     workspace_id = row_workspace(task)
-    conn.execute(
-        """INSERT INTO runs(run_id,workspace_id,task_id,agent_id,runtime_type,status,started_at,ended_at,duration_ms,input_summary,output_summary,model_provider,model_name,input_tokens,output_tokens,reasoning_tokens,cost_usd,error_type,error_message,trace_id,parent_run_id,delegation_id,approval_required,created_at)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-        (run_id, workspace_id, task_id, agent_id, agent["runtime_type"], "running", start, None, None, f"Mock run started for task: {task['title']}", None, agent["model_provider"], agent["model_name"], random.randint(400, 1200), random.randint(0, 600), random.randint(0, 400), round(random.uniform(0.05, 1.5), 3), None, None, trace_id, body.get("parent_run_id"), new_id("del"), 0, start)
-    )
+    row = {
+        "run_id": run_id,
+        "workspace_id": workspace_id,
+        "task_id": task_id,
+        "agent_id": agent_id,
+        "runtime_type": agent["runtime_type"],
+        "status": "running",
+        "started_at": start,
+        "ended_at": None,
+        "duration_ms": None,
+        "input_summary": f"Mock run started for task: {task['title']}",
+        "output_summary": None,
+        "model_provider": agent["model_provider"],
+        "model_name": agent["model_name"],
+        "input_tokens": random.randint(400, 1200),
+        "output_tokens": random.randint(0, 600),
+        "reasoning_tokens": random.randint(0, 400),
+        "cost_usd": round(random.uniform(0.05, 1.5), 3),
+        "error_type": None,
+        "error_message": None,
+        "trace_id": trace_id,
+        "parent_run_id": body.get("parent_run_id"),
+        "delegation_id": new_id("del"),
+        "approval_required": 0,
+        "created_at": start,
+    }
+    upsert_run(conn, row, "mock-run", {"workspace_id": workspace_id})
     conn.execute("UPDATE tasks SET status='running', updated_at=? WHERE task_id=?", (now_iso(), task_id))
     conn.execute("UPDATE agents SET status='running', updated_at=? WHERE agent_id=?", (now_iso(), agent_id))
     audit(conn, "user", "usr_founder", "run.start", "runs", run_id, None, {"run_id": run_id, "task_id": task_id, "agent_id": agent_id}, {})
