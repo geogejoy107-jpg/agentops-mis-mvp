@@ -104,7 +104,28 @@ Product requirement:
 - Product screens should make missing evidence obvious before a work package can
   advance.
 
-### 5. Readiness Gates Prevent Confident Breakage
+### 5. Async Workers Need A Commander Queue
+
+Parallel AI work does not finish at the same time. A useful commander should not
+wait for every worker before moving the project forward. Faster workers should
+enter review or merge immediately; slower workers should keep running; late
+results should land in a commander inbox where they can be reviewed, merged,
+reassigned, or superseded.
+
+Product requirement:
+
+- MIS should model worker runs as asynchronous lanes with independent state,
+  priority, due time, stale timeout, and evidence completeness.
+- The commander dashboard should support partial progress: "ready for review",
+  "merge now", "waiting on slower lane", "superseded", "needs rebase", and
+  "blocked by approval".
+- Late worker output should not overwrite integrated work automatically. It
+  should enter an integration inbox with provenance, changed scope, conflicts,
+  and recommended next action.
+- The product should let the commander continue dispatching and reviewing other
+  work while long Hermes/OpenClaw jobs continue in the background.
+
+### 6. Readiness Gates Prevent Confident Breakage
 
 The commander runbook required targeted smoke tests, secret scans, UI builds,
 adapter readiness checks, and live-runtime confirmation when needed. These gates
@@ -118,7 +139,7 @@ Product requirement:
 - Gate status should block "ready to merge" and "ready to deliver" when required
   evidence is missing or failed.
 
-### 6. Approval Checkpoints Are Part Of Execution
+### 7. Approval Checkpoints Are Part Of Execution
 
 Human approval was not only a final sign-off. It appeared before live runtime
 use, before merges, before delivery acceptance, and before memory capture.
@@ -130,7 +151,7 @@ Product requirement:
 - Product flows should support pre-run approval, merge approval, delivery
   approval, and memory approval.
 
-### 7. Artifact Delivery Needs A Customer View
+### 8. Artifact Delivery Needs A Customer View
 
 Workers may produce code, docs, reports, smoke evidence, screenshots, or
 customer summaries. The commander needs a compact delivery view, while customers
@@ -144,7 +165,7 @@ Product requirement:
 - Artifacts should record provenance back to task, run, agent, branch, and gate
   status.
 
-### 8. Memory Capture Must Be Curated
+### 9. Memory Capture Must Be Curated
 
 Dogfood created reusable operating lessons: branch ownership rules, live runtime
 confirm gates, no raw transcripts, return checklists, and scoped workers. These
@@ -277,6 +298,32 @@ Acceptance:
 
 - A commander can run a daily project review from AgentOps MIS instead of a
   manually maintained markdown runbook.
+
+### v1.5: Async Integration Inbox
+
+Goal:
+
+- Let the commander keep moving while workers finish at different speeds.
+
+Requirements:
+
+- Show returned worker results as reviewable inbox items with task, agent,
+  branch/scope, run evidence, artifact, gate status, and conflict/superseded
+  indicators.
+- Allow fast lanes to move into review or merge while slower lanes remain
+  running.
+- Mark late results as "needs review", "needs rebase", "superseded", or
+  "merge candidate" instead of auto-applying them.
+- Surface stuck, stale, or long-running workers without blocking unrelated
+  packages.
+- Preserve all decisions in the audit ledger: accepted, rejected, superseded,
+  reopened, reassigned, or deferred.
+
+Acceptance:
+
+- A commander can integrate one completed worker result, keep two workers
+  running, and later review their returned artifacts without losing provenance
+  or overwriting already accepted work.
 
 ### v1.5: Merge / Integration Gate
 
