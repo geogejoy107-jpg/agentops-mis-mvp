@@ -1186,6 +1186,66 @@ export interface OperatorActionPlanPayload {
   live_execution_performed?: boolean;
 }
 
+export interface OperatorActionReceipt {
+  receipt_id: string;
+  audit_id?: string;
+  actor_id?: string;
+  workspace_id: string;
+  status: string;
+  source: string;
+  action_id?: string | null;
+  action_command?: string | null;
+  action_hash?: string | null;
+  verify_command?: string | null;
+  verify_hash?: string | null;
+  result_summary?: string | null;
+  created_at?: string;
+  tamper_chain_hash?: string;
+  token_omitted?: boolean;
+}
+
+export interface OperatorActionReceiptsPayload {
+  provider: string;
+  operation: string;
+  status: string;
+  workspace_id: string;
+  summary: {
+    receipts: number;
+    recorded: number;
+    verified: number;
+    failed: number;
+    skipped: number;
+  };
+  receipts: OperatorActionReceipt[];
+  safety: {
+    read_only: boolean;
+    ledger_mutated: boolean;
+    live_execution_performed: boolean;
+    raw_prompt_omitted: boolean;
+    raw_response_omitted: boolean;
+    token_omitted: boolean;
+  };
+  token_omitted?: boolean;
+}
+
+export interface OperatorActionReceiptResult {
+  provider?: string;
+  operation?: string;
+  status: string;
+  workspace_id?: string;
+  receipt?: OperatorActionReceipt;
+  next_actions?: string[];
+  safety?: {
+    read_only: boolean;
+    ledger_mutated: boolean;
+    live_execution_performed: boolean;
+    raw_prompt_omitted: boolean;
+    raw_response_omitted: boolean;
+    token_omitted: boolean;
+  };
+  token_omitted?: boolean;
+}
+
 export interface OperatorLoopAuditStep {
   id: string;
   label: string;
@@ -3559,6 +3619,111 @@ function normalizeTaskIntakeChecklist(rawValue: unknown): TaskIntakeChecklistPay
       read_only: boolValue(safetyRaw.read_only),
       ledger_mutated: boolValue(safetyRaw.ledger_mutated),
       live_execution_performed: boolValue(safetyRaw.live_execution_performed),
+      token_omitted: boolValue(safetyRaw.token_omitted),
+    },
+    token_omitted: raw.token_omitted === undefined ? undefined : boolValue(raw.token_omitted),
+  };
+}
+
+function normalizeOperatorActionReceipt(raw: Record<string, unknown>): OperatorActionReceipt {
+  return {
+    receipt_id: String(raw.receipt_id || raw.audit_id || ""),
+    audit_id: raw.audit_id ? String(raw.audit_id) : undefined,
+    actor_id: raw.actor_id ? String(raw.actor_id) : undefined,
+    workspace_id: String(raw.workspace_id || "local-demo"),
+    status: String(raw.status || "recorded"),
+    source: String(raw.source || "operator_action_queue"),
+    action_id: raw.action_id ? String(raw.action_id) : null,
+    action_command: raw.action_command ? String(raw.action_command) : null,
+    action_hash: raw.action_hash ? String(raw.action_hash) : null,
+    verify_command: raw.verify_command ? String(raw.verify_command) : null,
+    verify_hash: raw.verify_hash ? String(raw.verify_hash) : null,
+    result_summary: raw.result_summary ? String(raw.result_summary) : null,
+    created_at: raw.created_at ? String(raw.created_at) : undefined,
+    tamper_chain_hash: raw.tamper_chain_hash ? String(raw.tamper_chain_hash) : undefined,
+    token_omitted: raw.token_omitted === undefined ? undefined : boolValue(raw.token_omitted),
+  };
+}
+
+export async function loadOperatorActionReceipts(limit = 8): Promise<OperatorActionReceiptsPayload> {
+  const raw = await optionalApiJson<Record<string, unknown>>(`/operator/action-receipts?limit=${encodeURIComponent(String(limit))}`, {
+    provider: "agentops-operator",
+    operation: "operator_action_receipts",
+    status: "unavailable",
+    workspace_id: "local-demo",
+    summary: {},
+    receipts: [],
+    safety: {
+      read_only: true,
+      ledger_mutated: false,
+      live_execution_performed: false,
+      raw_prompt_omitted: true,
+      raw_response_omitted: true,
+      token_omitted: true,
+    },
+    token_omitted: true,
+  });
+  const summaryRaw = typeof raw.summary === "object" && raw.summary !== null ? raw.summary as Record<string, unknown> : {};
+  const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
+  return {
+    provider: String(raw.provider || "agentops-operator"),
+    operation: String(raw.operation || "operator_action_receipts"),
+    status: String(raw.status || "unknown"),
+    workspace_id: String(raw.workspace_id || "local-demo"),
+    summary: {
+      receipts: numberValue(summaryRaw.receipts, 0),
+      recorded: numberValue(summaryRaw.recorded, 0),
+      verified: numberValue(summaryRaw.verified, 0),
+      failed: numberValue(summaryRaw.failed, 0),
+      skipped: numberValue(summaryRaw.skipped, 0),
+    },
+    receipts: asArray<Record<string, unknown>>(raw.receipts).map(normalizeOperatorActionReceipt).filter(item => item.receipt_id),
+    safety: {
+      read_only: boolValue(safetyRaw.read_only),
+      ledger_mutated: boolValue(safetyRaw.ledger_mutated),
+      live_execution_performed: boolValue(safetyRaw.live_execution_performed),
+      raw_prompt_omitted: boolValue(safetyRaw.raw_prompt_omitted),
+      raw_response_omitted: boolValue(safetyRaw.raw_response_omitted),
+      token_omitted: boolValue(safetyRaw.token_omitted),
+    },
+    token_omitted: boolValue(raw.token_omitted),
+  };
+}
+
+export async function recordOperatorActionReceipt(input: {
+  action_command: string;
+  verify_command?: string;
+  action_id?: string;
+  source?: string;
+  status?: "recorded" | "verified" | "failed" | "skipped";
+  result_summary?: string;
+}): Promise<OperatorActionReceiptResult> {
+  const raw = await apiJsonWithStatuses<Record<string, unknown>>("/operator/action-receipts", {
+    method: "POST",
+    body: JSON.stringify({
+      action_command: input.action_command,
+      verify_command: input.verify_command,
+      action_id: input.action_id,
+      source: input.source,
+      status: input.status || "recorded",
+      result_summary: input.result_summary,
+    }),
+  }, [400]);
+  const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
+  const receiptRaw = typeof raw.receipt === "object" && raw.receipt !== null ? raw.receipt as Record<string, unknown> : undefined;
+  return {
+    provider: raw.provider ? String(raw.provider) : undefined,
+    operation: raw.operation ? String(raw.operation) : undefined,
+    status: String(raw.status || raw.error || input.status || "recorded"),
+    workspace_id: raw.workspace_id ? String(raw.workspace_id) : undefined,
+    receipt: receiptRaw ? normalizeOperatorActionReceipt(receiptRaw) : undefined,
+    next_actions: asArray<unknown>(raw.next_actions).map(String).filter(Boolean),
+    safety: {
+      read_only: boolValue(safetyRaw.read_only),
+      ledger_mutated: boolValue(safetyRaw.ledger_mutated),
+      live_execution_performed: boolValue(safetyRaw.live_execution_performed),
+      raw_prompt_omitted: boolValue(safetyRaw.raw_prompt_omitted),
+      raw_response_omitted: boolValue(safetyRaw.raw_response_omitted),
       token_omitted: boolValue(safetyRaw.token_omitted),
     },
     token_omitted: raw.token_omitted === undefined ? undefined : boolValue(raw.token_omitted),

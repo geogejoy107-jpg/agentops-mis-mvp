@@ -710,13 +710,35 @@ agentops workflow customer-worker-task \
   --description "Use local OpenClaw to produce product recommendations."
 ```
 
+Confirmed Hermes/OpenClaw tasks that intend to publish, upload, deploy, send,
+or otherwise write to an external target must declare the external-write
+boundary. In that case the command does not start the live runtime immediately;
+it creates a waiting-approval task/run/tool call plus an immutable prepared
+action, returns `202 external_write_prepared_action_required`, and gives the
+operator an exact approval/resume command.
+
+```bash
+agentops workflow customer-worker-task \
+  --adapter hermes \
+  --confirm-run \
+  --external-write-intent \
+  --target-resource mock://customer-portal/delivery \
+  --external-action-type customer.portal.publish \
+  --approval-reason "Publish customer delivery only after human review." \
+  --title "Publish the approved customer report" \
+  --description "Prepare a customer portal update from the approved MIS report."
+```
+
 Maps to `POST /api/workflows/customer-worker-task` and returns `task_id`,
 `run_id`, `artifact_id`, `approval_id`, `plan_id`,
 `plan_evidence_manifest_id`, `plan_evidence_status`, and evidence counts. The
 workflow creates or reuses a verified `plan_evidence_manifest` before generating
 the customer delivery approval; if the manifest gate fails, it returns
 `verified_plan_evidence_manifest_required` and no delivery approval is created.
-It must not print raw tokens, full prompts, full raw model responses,
+For external-write gates, the response instead includes `approval_wall`,
+`approval_id`, `prepared_action_id`, `next_action`, and
+`live_execution_performed:false`. It must not print raw tokens, full prompts,
+full raw model responses,
 credentials, or private transcripts.
 
 For real Hermes/OpenClaw work or any customer task that may run longer than a

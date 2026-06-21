@@ -24,6 +24,7 @@ import {
   loadHermesOpenClawLoopReadback,
   loadIntegrationInbox,
   loadLocalReadiness,
+  loadOperatorActionReceipts,
   loadOperatorActionPlan,
   loadOperatorLoopAudit,
   loadReviewQueue,
@@ -40,6 +41,7 @@ import {
   planCommanderWorkPackages,
   promoteCommanderSynthesis,
   previewAgentGatewayEnrollmentPolicy,
+  recordOperatorActionReceipt,
   releaseWorkerTask,
   restartLocalWorkerDaemon,
   revokeAgentGatewayEnrollment,
@@ -64,6 +66,7 @@ import {
   type HermesOpenClawLoopReadbackPayload,
   type HermesOpenClawLoopWorkflowResult,
   type OperatorActionPlanPayload,
+  type OperatorActionReceiptsPayload,
   type OperatorLoopAuditPayload,
   type ReviewQueuePayload,
   type TaskIntakeChecklistItem,
@@ -180,6 +183,7 @@ export function AIEmployees() {
   });
   const [actionQueueOrder, setActionQueueOrder] = useState<string[]>([]);
   const [draggedActionId, setDraggedActionId] = useState<string | null>(null);
+  const [receiptAction, setReceiptAction] = useState<string | null>(null);
   const [customerTaskForm, setCustomerTaskForm] = useState<{
     adapter: (typeof WORKER_ADAPTERS)[number];
     title: string;
@@ -210,7 +214,7 @@ export function AIEmployees() {
     scopes: DEFAULT_GATEWAY_SCOPES.join(", "),
   });
   const { data, loading, error, refresh } = useLiveData(async () => {
-    const [metrics, demoReadiness, workerStatus, workerFleet, workerHygiene, adapterReadiness, localReadiness, operatorActionPlan, securityReadiness, integrationInbox, commanderWorkPackages, reviewQueue, customerDeliveryBoard, loopLaneReadback, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs] = await Promise.all([
+    const [metrics, demoReadiness, workerStatus, workerFleet, workerHygiene, adapterReadiness, localReadiness, operatorActionPlan, operatorActionReceipts, securityReadiness, integrationInbox, commanderWorkPackages, reviewQueue, customerDeliveryBoard, loopLaneReadback, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs] = await Promise.all([
       loadDashboard(),
       loadDemoReadiness(),
       loadWorkerStatus(),
@@ -219,6 +223,7 @@ export function AIEmployees() {
       loadWorkerAdapterReadiness(),
       loadLocalReadiness(),
       loadOperatorActionPlan(12),
+      loadOperatorActionReceipts(8),
       loadSecurityProductionReadiness(),
       loadIntegrationInbox({ bucket: integrationInboxBucket, limit: 20 }),
       loadCommanderWorkPackages({ limit: 8 }),
@@ -236,7 +241,7 @@ export function AIEmployees() {
     const scopedLoopId = latestLoopIdFromReadback(loopLaneReadback);
     const operatorLoopAudit = await loadOperatorLoopAudit(12, scopedLoopId);
     const agents = await loadAgents(metrics);
-    return { agents, demoReadiness, workerStatus, workerFleet, workerHygiene, adapterReadiness, localReadiness, operatorActionPlan, operatorLoopAudit, securityReadiness, integrationInbox, commanderWorkPackages, reviewQueue, customerDeliveryBoard, loopLaneReadback, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs };
+    return { agents, demoReadiness, workerStatus, workerFleet, workerHygiene, adapterReadiness, localReadiness, operatorActionPlan, operatorActionReceipts, operatorLoopAudit, securityReadiness, integrationInbox, commanderWorkPackages, reviewQueue, customerDeliveryBoard, loopLaneReadback, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs };
   }, [integrationInboxBucket]);
   const agents = data?.agents || [];
   const demoReadiness = data?.demoReadiness;
@@ -247,6 +252,7 @@ export function AIEmployees() {
   const adapterReadiness = data?.adapterReadiness;
   const localReadiness = data?.localReadiness;
   const operatorActionPlan = data?.operatorActionPlan as OperatorActionPlanPayload | undefined;
+  const operatorActionReceipts = data?.operatorActionReceipts as OperatorActionReceiptsPayload | undefined;
   const operatorLoopAudit = data?.operatorLoopAudit as OperatorLoopAuditPayload | undefined;
   const operatorPlanActions = operatorActionPlan?.actions || [];
   const operatorPlanSummary = operatorActionPlan?.summary;
@@ -370,6 +376,10 @@ export function AIEmployees() {
       moveDown: "Move down",
       closeEvidenceGap: "Close gap",
       closingEvidenceGap: "Closing...",
+      recordActionReceipt: "Record",
+      recordVerifyReceipt: "Verify receipt",
+      recordingReceipt: "Recording...",
+      actionReceipts: "Receipts",
       evidenceClosureLedger: "Evidence closure ledger",
       evidenceClosureSummary: "Audit readback for remediated source-run debt: closure-ready, closed, waived and reopened decisions.",
       taskIntakeTitle: "Task intake gates",
@@ -742,6 +752,10 @@ export function AIEmployees() {
       moveDown: "下移",
       closeEvidenceGap: "关闭缺口",
       closingEvidenceGap: "关闭中...",
+      recordActionReceipt: "记账",
+      recordVerifyReceipt: "验收记账",
+      recordingReceipt: "记账中...",
+      actionReceipts: "收据",
       evidenceClosureLedger: "证据关闭账本",
       evidenceClosureSummary: "回读已修复源 run 债务的审计状态：待关闭、已关闭、已豁免和已重开。",
       taskIntakeTitle: "任务接收 Gate",
@@ -1158,30 +1172,35 @@ export function AIEmployees() {
       source: `${copy.operatorTitle} · ${item.lane}`,
       status: item.severity || operatorActionPlan?.status || "attention",
       operatorAction: item,
+      ...(isCloseEvidenceGapCommand(item.command) ? { verifyAction: "agentops operator action-plan --limit 20" } : {}),
     })),
     ...recommendedActions.map((action, index) => ({
       id: `fleet:${index}:${action}`,
       action,
       source: copy.overallFleetHealth,
       status: fleetHealth?.overall || "attention",
+      verifyAction: "agentops worker status",
     })),
     ...integrationInboxActions.map((action, index) => ({
       id: `inbox:${index}:${action}`,
       action,
       source: copy.integrationInboxTitle,
       status: integrationInbox?.status || "attention",
+      verifyAction: "agentops commander inbox --limit 5",
     })),
     ...synthesisLifecycleActions.map((action, index) => ({
       id: `synthesis:${index}:${action}`,
       action,
       source: copy.synthesisLoop,
       status: synthesisLifecycle?.status || "attention",
+      verifyAction: "agentops commander board --limit 20",
     })),
     ...localReadinessActions.map((action, index) => ({
       id: `local:${index}:${action}`,
       action,
       source: copy.localReadinessTitle,
       status: localReadiness?.status || "attention",
+      verifyAction: "agentops local readiness",
     })),
   ].filter((candidate, index, list) => (
     candidate.action &&
@@ -1371,6 +1390,34 @@ export function AIEmployees() {
     const details = closeGapDetailsForAction(item);
     if (!details) return;
     await submitEvidenceGapDecision(details);
+  };
+
+  const recordActionQueueReceipt = async (
+    item: (typeof actionQueueCandidates)[number],
+    status: "recorded" | "verified",
+  ) => {
+    const verifyAction = "verifyAction" in item ? item.verifyAction : undefined;
+    const actionKey = `action-receipt:${status}:${item.id}`;
+    setReceiptAction(actionKey);
+    setDispatchResult(null);
+    try {
+      const result = await recordOperatorActionReceipt({
+        action_command: item.action,
+        verify_command: verifyAction || undefined,
+        action_id: item.id,
+        source: item.source,
+        status,
+        result_summary: status === "verified"
+          ? `Operator verified recovery action from ${item.source}.`
+          : `Operator recorded recovery action from ${item.source}.`,
+      });
+      setDispatchResult(`${copy.actionReceipts}: ${result.status} · ${result.receipt?.receipt_id || ""}`);
+      await refresh();
+    } catch (err) {
+      setDispatchResult(err instanceof Error ? err.message : String(err));
+    } finally {
+      setReceiptAction(null);
+    }
   };
 
   const updateCustomerTaskText = (field: "title" | "description", value: string) => {
@@ -3046,6 +3093,7 @@ export function AIEmployees() {
                 {operatorPlanSummary && ` · synth ${operatorPlanSummary.evidence_synthesis_ready_runs}/${operatorPlanSummary.evidence_synthesis_pending_runs}/${operatorPlanSummary.evidence_synthesis_promoted_runs}`}
                 {operatorPlanSummary && ` · close ${operatorPlanSummary.evidence_gap_closure_ready_runs}/${operatorPlanSummary.closed_evidence_gap_runs}/${operatorPlanSummary.waived_evidence_gap_runs}`}
                 {operatorPlanSummary && ` · intake ${operatorPlanSummary.task_intake_ready}/${operatorPlanSummary.task_intake_blocked}/${operatorPlanSummary.task_intake_attention}`}
+                {operatorActionReceipts?.summary && ` · ${copy.actionReceipts.toLowerCase()} ${operatorActionReceipts.summary.receipts}/${operatorActionReceipts.summary.verified}`}
               </p>
             </div>
             <button
@@ -3065,6 +3113,9 @@ export function AIEmployees() {
             {visibleActionQueue.map((item, index) => {
               const closeGapDetails = closeGapDetailsForAction(item);
               const closeGapBusy = Boolean(closeGapDetails && dispatching === `close-gap:${closeGapDetails.runId}`);
+              const verifyAction = "verifyAction" in item ? item.verifyAction : undefined;
+              const recordBusy = receiptAction === `action-receipt:recorded:${item.id}`;
+              const verifyBusy = receiptAction === `action-receipt:verified:${item.id}`;
               return (
                 <div
                   key={item.id}
@@ -3126,6 +3177,28 @@ export function AIEmployees() {
                       >
                         {closeGapBusy ? <RefreshCw size={10} /> : <CheckCircle2 size={10} />}
                         {closeGapBusy ? copy.closingEvidenceGap : copy.closeEvidenceGap}
+                      </button>
+                    )}
+                    <button
+                      onClick={() => void recordActionQueueReceipt(item, "recorded")}
+                      disabled={Boolean(receiptAction)}
+                      className="inline-flex items-center gap-1 text-[10px] px-2 h-6 rounded disabled:opacity-50"
+                      style={{ background: "rgba(34,211,238,0.08)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.20)" }}
+                      title={copy.recordActionReceipt}
+                    >
+                      {recordBusy ? <RefreshCw size={10} /> : <Activity size={10} />}
+                      {recordBusy ? copy.recordingReceipt : copy.recordActionReceipt}
+                    </button>
+                    {verifyAction && (
+                      <button
+                        onClick={() => void recordActionQueueReceipt(item, "verified")}
+                        disabled={Boolean(receiptAction)}
+                        className="inline-flex items-center gap-1 text-[10px] px-2 h-6 rounded disabled:opacity-50"
+                        style={{ background: "rgba(45,212,191,0.10)", color: "var(--mis-success)", border: "1px solid rgba(45,212,191,0.20)" }}
+                        title={copy.recordVerifyReceipt}
+                      >
+                        {verifyBusy ? <RefreshCw size={10} /> : <CheckCircle2 size={10} />}
+                        {verifyBusy ? copy.recordingReceipt : copy.recordVerifyReceipt}
                       </button>
                     )}
                     <StatusBadge status={item.status} />

@@ -149,6 +149,11 @@ Current v1.5 implementation:
     ingested or risky external writes are routed through prepared actions.
 - Hermes/OpenClaw real execution requires explicit `--confirm-run`.
 - Hermes/OpenClaw customer worker live execution is blocked when the linked runtime connector has `trust_status=blocked`.
+- Confirmed Hermes/OpenClaw customer worker tasks that declare or clearly imply
+  external-write intent are paused before runtime invocation. MIS creates a
+  waiting-approval task/run/tool call, an immutable prepared action, and a human
+  approval, then returns `external_write_prepared_action_required` with a
+  precise resume command instead of starting the opaque live runtime.
 - Hermes adapter timeout is configurable through `--hermes-timeout` / `HERMES_TIMEOUT`; customer worker live dogfood uses a 300s Hermes window.
 - Retryable adapter failures can be retried with `--adapter-max-attempts` and `--adapter-retry-delay-sec`.
 - Non-retryable safety failures such as `ConfirmRunRequired` do not retry.
@@ -199,11 +204,19 @@ Acceptance evidence:
   - mock transient failure succeeded after two attempts in `run_gw_a572f60ec9f4`,
   - Hermes without `--confirm-run` stopped after one non-retryable `ConfirmRunRequired` attempt in `run_gw_9951c583b9a7`,
   - raw token output remained omitted.
+- `python3 scripts/customer_worker_external_write_gate_smoke.py` verifies that
+  a confirmed Hermes customer-worker task with `external_write_intent:true`
+  returns `202`, writes task/run/tool/prepared-action/approval/runtime/audit
+  evidence, keeps `live_execution_performed:false`, and does not leak
+  token-like values.
 
 Remaining product work:
 
 - Rich task-to-runtime prompt profiles.
 - Rich runtime trust policy beyond the current trusted/review/blocked MVP.
+- Generalize the same prepared-action entry gate to every high-risk
+  external connector/runtime side-effect path before shared/commercial
+  deployment.
 
 ### 3. Installable CLI Package
 

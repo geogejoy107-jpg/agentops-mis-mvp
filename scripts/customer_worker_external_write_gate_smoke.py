@@ -1,0 +1,130 @@
+#!/usr/bin/env python3
+"""Verify opaque live customer worker external writes create a prepared-action gate before execution."""
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+import server  # noqa: E402
+from agentops_mis_cli import agentops as cli  # noqa: E402
+
+
+def require(condition: bool, message: str) -> None:
+    if not condition:
+        raise AssertionError(message)
+
+
+def leaked_secret(text: str) -> bool:
+    markers = ["AGENTOPS_API_KEY", "Authorization:", "Bearer ", "agtok_", "agtsess_", "sk-", "ntn_"]
+    return any(marker in text for marker in markers)
+
+
+def main() -> int:
+    try:
+        class FakeClient:
+            workspace_id = "local-demo"
+            agent_id = "agt_fake"
+
+            def __init__(self) -> None:
+                self.endpoint = None
+                self.payload = None
+
+            def post(self, endpoint: str, payload: dict) -> dict:
+                self.endpoint = endpoint
+                self.payload = payload
+                return {"ok": True, "endpoint": endpoint, "payload": payload}
+
+        parser = cli.build_parser()
+        args = parser.parse_args([
+            "workflow",
+            "customer-worker-task",
+            "--adapter",
+            "hermes",
+            "--confirm-run",
+            "--external-write-intent",
+            "--target-resource",
+            "mock://customer-portal/delivery",
+            "--external-action-type",
+            "customer.portal.publish",
+            "--approval-reason",
+            "Human review required.",
+            "--title",
+            "Publish customer delivery through Hermes",
+            "--description",
+            "Prepare a customer portal update.",
+        ])
+        fake_client = FakeClient()
+        cli.cmd_workflow_customer_worker_task(args, fake_client)
+        require(fake_client.endpoint == "/api/workflows/customer-worker-task", "CLI used wrong endpoint")
+        require(fake_client.payload and fake_client.payload.get("external_write_intent") is True, "CLI omitted external_write_intent")
+        require(fake_client.payload.get("target_resource") == "mock://customer-portal/delivery", "CLI omitted target_resource")
+        require(fake_client.payload.get("external_action_type") == "customer.portal.publish", "CLI omitted external_action_type")
+        require(fake_client.payload.get("approval_reason") == "Human review required.", "CLI omitted approval_reason")
+
+        with server.db() as conn:
+            server.refresh_runtime_connectors(conn)
+            conn.execute(
+                "UPDATE runtime_connectors SET trust_status='trusted', trust_note=NULL WHERE runtime_connector_id='rtc_hermes_default_gateway'"
+            )
+            payload, status = server.run_customer_worker_task_workflow(conn, {
+                "adapter": "hermes",
+                "confirm_run": True,
+                "external_write_intent": True,
+                "external_action_type": "customer.portal.publish",
+                "target_resource": "mock://customer-portal/delivery",
+                "title": "Publish customer delivery through Hermes",
+                "description": "Use the live Hermes worker to publish the delivery artifact to an external customer portal.",
+                "acceptance_criteria": "Do not execute the live runtime until the exact external publish action is prepared and approved.",
+                "risk_level": "medium",
+            })
+            task = conn.execute("SELECT * FROM tasks WHERE task_id=?", (payload.get("task_id"),)).fetchone()
+            run = conn.execute("SELECT * FROM runs WHERE run_id=?", (payload.get("run_id"),)).fetchone()
+            tool = conn.execute("SELECT * FROM tool_calls WHERE tool_call_id=?", (payload.get("tool_call_id"),)).fetchone()
+            prepared = conn.execute("SELECT * FROM prepared_actions WHERE action_id=?", (payload.get("prepared_action_id"),)).fetchone()
+            approval = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (payload.get("approval_id"),)).fetchone()
+            runtime_events = conn.execute(
+                "SELECT COUNT(*) c FROM runtime_events WHERE run_id=? AND event_type='customer_worker_task.external_write_prepared_action_required'",
+                (payload.get("run_id"),),
+            ).fetchone()["c"]
+            audit_rows = conn.execute(
+                "SELECT COUNT(*) c FROM audit_logs WHERE entity_id=? AND action='workflow.customer_worker_task.external_write_prepared_action_required'",
+                (payload.get("run_id"),),
+            ).fetchone()["c"]
+        require(status == 202, f"expected 202, got {status}: {payload}")
+        require(payload.get("reason") == "external_write_prepared_action_required", f"wrong reason: {payload}")
+        require(payload.get("live_execution_performed") is False, f"live runtime should not execute: {payload}")
+        require(task is not None and task["status"] == "waiting_approval", f"task gate missing: {payload}")
+        require(run is not None and run["status"] == "waiting_approval" and run["approval_required"] == 1, f"run gate missing: {payload}")
+        require(tool is not None and tool["status"] == "waiting_approval" and tool["risk_level"] in {"high", "critical"}, f"tool gate missing: {payload}")
+        require(prepared is not None and prepared["status"] == "prepared", f"prepared action missing: {payload}")
+        require(approval is not None and approval["decision"] == "pending", f"approval missing: {payload}")
+        require("approval prepared-action resume" in (payload.get("next_action") or ""), f"next action missing resume: {payload}")
+        require(runtime_events >= 1, "runtime event evidence missing")
+        require(audit_rows >= 1, "audit evidence missing")
+        serialized = json.dumps(payload, ensure_ascii=False)
+        require(not leaked_secret(serialized), "payload leaked token-like material")
+        print(json.dumps({
+            "ok": True,
+            "status": status,
+            "task_id": payload.get("task_id"),
+            "run_id": payload.get("run_id"),
+            "tool_call_id": payload.get("tool_call_id"),
+            "prepared_action_id": payload.get("prepared_action_id"),
+            "approval_id": payload.get("approval_id"),
+            "cli_payload_checked": True,
+            "live_execution_performed": False,
+            "secret_leaked": False,
+        }, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+    except Exception as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True), file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

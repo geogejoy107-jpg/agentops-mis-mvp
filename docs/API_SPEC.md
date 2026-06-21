@@ -255,6 +255,13 @@ It never creates plans, runs, approvals, memories, or audit rows; it only
 returns recommended explicit commands for the gates that are blocked or need
 attention.
 
+`GET /api/operator/action-receipts` and
+`POST /api/operator/action-receipts` let the human operator record that a queue
+recovery action was copied/run and pair it with its follow-up VERIFY command.
+Receipts are stored as audit/runtime evidence with command hashes and redacted
+command text. They do not execute shell commands, call live runtimes, or persist
+raw tokens.
+
 `GET /api/agent-gateway/tasks/pull?enforce_intake=true` applies the same gate
 at worker pull time: blocked planned/backlog tasks are omitted from `tasks[]`
 and returned under `intake.blocked_tasks[]` with failed gate ids and safe next
@@ -398,6 +405,14 @@ queues the same workflow as a `workflow_jobs` row and returns immediately with a
 outlive a short browser or CLI request. Job records store status, request hash,
 safe summaries, result ids, and safe result JSON; they must not store raw
 prompts, raw responses, credentials, tokens, or private transcripts.
+
+For confirmed Hermes/OpenClaw tasks that declare `external_write_intent:true`
+or match obvious publish/upload/deploy/webhook/external-write wording,
+`/customer-worker-task` does not start the live runtime. It creates a
+waiting-approval task, run, tool call, prepared action, and approval, then
+returns `202 external_write_prepared_action_required` with
+`approval_wall`, `approval_id`, `prepared_action_id`, and a precise
+`next_action` resume command.
 
 `/workflows/jobs/stuck` lists queued/running jobs older than a threshold.
 `/mark-failed` is an operator recovery action for stale jobs; it marks the job

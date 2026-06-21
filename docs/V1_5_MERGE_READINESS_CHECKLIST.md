@@ -62,12 +62,14 @@ execution touches undeclared file/tool      readiness gate fails
 - [x] Resume writes provider side-effect evidence and `consumed_at`.
 - [x] Replay after `consumed_at` is rejected.
 - [x] CLI supports create/get/resume.
+- [x] Customer-worker Hermes/OpenClaw external-write intent pauses before live runtime execution and creates a prepared action plus approval.
 - [ ] All high-risk external connector/runtime tool paths use prepared actions before shared/commercial deployment.
 
 Required check:
 
 ```bash
 python3 scripts/prepared_action_approval_wall_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/customer_worker_external_write_gate_smoke.py
 ```
 
 ## 3. Knowledge safety and quality
@@ -173,8 +175,12 @@ Current v1.5 hardening status: `GET /api/workers/adapter-readiness` and
 Hermes and OpenClaw. Worker tool-call risk now consumes the manifest:
 Hermes/OpenClaw are recorded at a medium risk floor with
 `ledger_summary_only`, `restricted_until_runtime_tool_events`, and
-`requires_prepared_action_for_external_write` metadata. This is a disclosed
-governance boundary, not full internal runtime tracing.
+`requires_prepared_action_for_external_write` metadata. Confirmed
+customer-worker Hermes/OpenClaw tasks with explicit or obvious external-write
+intent now stop before runtime invocation and create task/run/tool/prepared
+action/approval/audit evidence. This is a disclosed governance boundary and a
+first enforced entry gate, not full internal runtime tracing or complete
+coverage for every external side-effect path.
 
 ```bash
 python3 scripts/runtime_connector_trust_smoke.py

@@ -5678,6 +5678,152 @@ def operator_close_execution_evidence_gap(conn: sqlite3.Connection, body: dict, 
     }, 200
 
 
+VALID_OPERATOR_ACTION_RECEIPT_STATUSES = {"recorded", "verified", "failed", "skipped"}
+
+
+def operator_action_receipt_public(row: sqlite3.Row) -> dict:
+    try:
+        metadata = json.loads(row["metadata_json"] or "{}")
+    except Exception:
+        metadata = {}
+    return {
+        "receipt_id": row["entity_id"],
+        "audit_id": row["audit_id"],
+        "actor_id": row["actor_id"],
+        "workspace_id": metadata.get("workspace_id") or "local-demo",
+        "status": metadata.get("status") or "recorded",
+        "source": metadata.get("source") or "operator_action_queue",
+        "action_id": metadata.get("action_id"),
+        "action_command": metadata.get("action_command"),
+        "action_hash": metadata.get("action_hash"),
+        "verify_command": metadata.get("verify_command"),
+        "verify_hash": metadata.get("verify_hash"),
+        "result_summary": metadata.get("result_summary"),
+        "created_at": row["created_at"],
+        "tamper_chain_hash": row["tamper_chain_hash"],
+        "token_omitted": True,
+    }
+
+
+def list_operator_action_receipts(conn: sqlite3.Connection, qs, headers=None) -> dict:
+    headers = headers or {}
+    workspace_id = normalize_workspace_id((qs.get("workspace_id") or [headers.get("X-AgentOps-Workspace-Id") or "local-demo"])[0])
+    limit = min(max(int((qs.get("limit") or ["12"])[0]), 1), 50)
+    rows = conn.execute(
+        """SELECT audit_id, actor_id, entity_id, metadata_json, tamper_chain_hash, created_at
+        FROM audit_logs
+        WHERE action='operator.action_queue_receipt' AND entity_type='operator_action_receipts'
+        ORDER BY created_at DESC
+        LIMIT ?""",
+        (max(limit * 3, limit),),
+    ).fetchall()
+    receipts = [
+        receipt for receipt in (operator_action_receipt_public(row) for row in rows)
+        if receipt.get("workspace_id") == workspace_id
+    ][:limit]
+    summary = {
+        "receipts": len(receipts),
+        "recorded": sum(1 for item in receipts if item.get("status") == "recorded"),
+        "verified": sum(1 for item in receipts if item.get("status") == "verified"),
+        "failed": sum(1 for item in receipts if item.get("status") == "failed"),
+        "skipped": sum(1 for item in receipts if item.get("status") == "skipped"),
+    }
+    return {
+        "provider": "agentops-operator",
+        "operation": "operator_action_receipts",
+        "status": "ready",
+        "workspace_id": workspace_id,
+        "summary": summary,
+        "receipts": receipts,
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
+
+
+def record_operator_action_receipt(conn: sqlite3.Connection, body: dict, headers=None) -> tuple[dict, int]:
+    headers = headers or {}
+    workspace_id = normalize_workspace_id(body.get("workspace_id") or headers.get("X-AgentOps-Workspace-Id") or "local-demo")
+    actor_id = redact_text(body.get("actor_id") or "usr_founder", 120)
+    raw_action = str(body.get("action_command") or body.get("action") or "").strip()
+    raw_verify = str(body.get("verify_command") or body.get("verify_action") or "").strip()
+    if not raw_action:
+        return {"error": "action_command_required", "message": "action_command is required.", "token_omitted": True}, 400
+    status = str(body.get("status") or "recorded").strip().lower()
+    if status not in VALID_OPERATOR_ACTION_RECEIPT_STATUSES:
+        return {
+            "error": "invalid_status",
+            "message": f"status must be one of {sorted(VALID_OPERATOR_ACTION_RECEIPT_STATUSES)}.",
+            "token_omitted": True,
+        }, 400
+    receipt_id = new_id("oar")
+    action_hash = stable_hash(raw_action)
+    verify_hash = stable_hash(raw_verify) if raw_verify else None
+    result_summary = redact_text(body.get("result_summary") or "", 240) or None
+    after = {
+        "receipt_id": receipt_id,
+        "workspace_id": workspace_id,
+        "status": status,
+        "source": redact_text(body.get("source") or "operator_action_queue", 160),
+        "action_id": redact_text(body.get("action_id") or "", 160) or None,
+        "action_command": redact_text(raw_action, 500),
+        "action_hash": action_hash,
+        "verify_command": redact_text(raw_verify, 500) if raw_verify else None,
+        "verify_hash": verify_hash,
+        "result_summary": result_summary,
+        "raw_secret_omitted": True,
+        "raw_prompt_omitted": True,
+        "raw_response_omitted": True,
+        "token_omitted": True,
+    }
+    runtime_event(
+        conn,
+        "rtc_agent_gateway_local",
+        "operator.action_queue_receipt",
+        status,
+        input_summary=f"Operator action receipt for action_hash={action_hash[:16]}",
+        output_summary=result_summary or f"Receipt status {status}; verify_hash={(verify_hash or '')[:16] or 'none'}.",
+        raw_payload_hash=stable_hash({"action": raw_action, "verify": raw_verify, "status": status}),
+    )
+    audit(conn, "user", actor_id, "operator.action_queue_receipt", "operator_action_receipts", receipt_id, None, after, {
+        **after,
+        "command_text_is_redacted": True,
+        "live_execution_performed": False,
+        "ledger_mutated": True,
+    })
+    audit_row = conn.execute(
+        """SELECT audit_id, actor_id, entity_id, metadata_json, tamper_chain_hash, created_at
+        FROM audit_logs
+        WHERE action='operator.action_queue_receipt' AND entity_id=?
+        ORDER BY created_at DESC
+        LIMIT 1""",
+        (receipt_id,),
+    ).fetchone()
+    return {
+        "provider": "agentops-operator",
+        "operation": "operator_action_receipt",
+        "status": status,
+        "workspace_id": workspace_id,
+        "receipt": operator_action_receipt_public(audit_row) if audit_row else after,
+        "next_actions": [after["verify_command"]] if after.get("verify_command") and status == "recorded" else ["agentops operator action-plan --limit 20"],
+        "safety": {
+            "read_only": False,
+            "ledger_mutated": True,
+            "live_execution_performed": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }, 201
+
+
 def latest_agent_plan_for_run(conn: sqlite3.Connection, run: sqlite3.Row) -> sqlite3.Row | None:
     return conn.execute(
         """SELECT * FROM agent_plans
@@ -15111,6 +15257,184 @@ def dispatch_local_worker_once(conn, body: dict) -> dict:
     }
 
 
+EXTERNAL_WRITE_INTENT_KEYWORDS = {
+    "publish",
+    "upload",
+    "deploy",
+    "push",
+    "send email",
+    "webhook",
+    "external write",
+    "notion",
+    "dify",
+    "dataset",
+    "file search",
+    "customer portal",
+    "生产发布",
+    "发布",
+    "上传",
+    "部署",
+    "推送",
+    "发邮件",
+    "外部写入",
+    "知识库上传",
+}
+
+
+def customer_worker_external_write_intent(body: dict, title: str, description: str, acceptance: str) -> bool:
+    explicit = body.get("external_write_intent")
+    if explicit is not None:
+        return bool(explicit)
+    combined = " ".join([
+        str(title or ""),
+        str(description or ""),
+        str(acceptance or ""),
+        str(body.get("target_resource") or ""),
+        str(body.get("external_action_type") or ""),
+    ]).lower()
+    return any(keyword.lower() in combined for keyword in EXTERNAL_WRITE_INTENT_KEYWORDS)
+
+
+def create_customer_worker_external_write_gate(conn, body: dict, adapter: str, connector_id: str | None, adapter_readiness: dict, title: str, description: str, acceptance: str, worker_agent_id: str) -> tuple[dict, int]:
+    now = now_iso()
+    task_id = body.get("task_id") or stable_id("tsk_customer_worker_external_write_gate", adapter, title, now)
+    agent_id = worker_agent_id
+    risk = coerce_choice(body.get("risk_level"), VALID_RISK_LEVELS, "high")
+    if risk in {"low", "medium"}:
+        risk = "high"
+    ensure_gateway_agent(conn, agent_id, name=f"Customer {adapter} Worker", role="Customer Task Worker", runtime_type=adapter)
+    row = {
+        "task_id": task_id,
+        "title": title,
+        "description": description,
+        "requester_id": body.get("requester_id", "usr_customer_demo"),
+        "owner_agent_id": agent_id,
+        "collaborator_agent_ids": json.dumps(body.get("selected_agent_ids") or [], ensure_ascii=False),
+        "status": "waiting_approval",
+        "priority": coerce_choice(body.get("priority"), VALID_PRIORITIES, "high"),
+        "due_date": body.get("due_date"),
+        "acceptance_criteria": acceptance,
+        "risk_level": risk,
+        "budget_limit_usd": float(body.get("budget_limit_usd") or 1.0),
+        "created_at": now,
+        "updated_at": now,
+    }
+    upsert_task(conn, row, "customer-worker-external-write-gate")
+    run_id = stable_id("run_customer_worker_external_write_gate", task_id, adapter)
+    run = {
+        "run_id": run_id,
+        "workspace_id": body.get("workspace_id") or "local-demo",
+        "task_id": task_id,
+        "agent_id": agent_id,
+        "runtime_type": adapter,
+        "status": "waiting_approval",
+        "started_at": now,
+        "ended_at": None,
+        "duration_ms": None,
+        "input_summary": f"{adapter} customer worker external-write intent requires prepared action.",
+        "output_summary": "Live runtime execution is paused before external write approval.",
+        "model_provider": adapter,
+        "model_name": adapter,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "reasoning_tokens": 0,
+        "cost_usd": 0.0,
+        "error_type": None,
+        "error_message": None,
+        "trace_id": stable_id("trace_external_write_gate", task_id, adapter),
+        "parent_run_id": None,
+        "delegation_id": f"customer-worker:{adapter}:external-write:{task_id}",
+        "approval_required": 1,
+        "agent_plan_id": None,
+        "plan_hash": None,
+        "created_at": now,
+    }
+    upsert_run(conn, run, "customer-worker-external-write-gate", {"adapter": adapter, "connector_id": connector_id, "external_write_intent": True, "token_omitted": True})
+    action_type = redact_text(body.get("external_action_type") or "customer_worker.external_write", 120)
+    target_resource = redact_text(body.get("target_resource") or adapter_readiness.get("target_resource") or f"{adapter}:external-write", 240)
+    normalized_args = {
+        "adapter": adapter,
+        "task_id": task_id,
+        "title": title,
+        "target_resource": target_resource,
+        "external_write_intent": True,
+        "observation_level": adapter_readiness.get("observation_level"),
+        "commercial_readiness": adapter_readiness.get("commercial_readiness"),
+        "requires_prepared_action_for_external_write": True,
+        "raw_prompt_omitted": True,
+        "raw_response_omitted": True,
+    }
+    tool_call_id = stable_id("tc_customer_worker_external_write_gate", run_id, action_type, target_resource)
+    tool = {
+        "tool_call_id": tool_call_id,
+        "run_id": run_id,
+        "agent_id": agent_id,
+        "tool_name": action_type,
+        "tool_version": "v1",
+        "tool_category": "custom",
+        "normalized_args_json": json.dumps(normalized_args, ensure_ascii=False, sort_keys=True),
+        "target_resource": target_resource,
+        "risk_level": risk,
+        "status": "waiting_approval",
+        "result_summary": "Prepared action approval is required before live runtime external write.",
+        "side_effect_id": None,
+        "started_at": now,
+        "ended_at": None,
+        "created_at": now,
+    }
+    upsert_tool_call(conn, tool, "customer-worker-external-write-gate", {"adapter": adapter, "external_write_intent": True, "token_omitted": True})
+    approval_wall, approval_status = agent_gateway_prepare_action(conn, {
+        "workspace_id": body.get("workspace_id") or "local-demo",
+        "agent_id": agent_id,
+        "requested_by_agent_id": agent_id,
+        "run_id": run_id,
+        "tool_call_id": tool_call_id,
+        "action_type": action_type,
+        "normalized_args_json": normalized_args,
+        "target_resource": target_resource,
+        "risk_level": risk,
+        "policy_version": "runtime-capability-external-write-v1",
+        "checkpoint": {
+            "checkpoint": "before_live_runtime_external_write",
+            "task_id": task_id,
+            "run_id": run_id,
+            "tool_call_id": tool_call_id,
+            "adapter": adapter,
+        },
+        "idempotency_key": stable_hash({"task_id": task_id, "adapter": adapter, "action_type": action_type, "target_resource": target_resource})[:32],
+        "reason": body.get("approval_reason") or f"{adapter} is an opaque live runtime and this customer task requests external write/publish/upload. Approve exact prepared action before execution resumes.",
+        "approver_user_id": body.get("approver_user_id") or "usr_founder",
+    })
+    runtime_event(conn, connector_id or "rtc_agent_gateway_local", "customer_worker_task.external_write_prepared_action_required", "waiting_approval", run_id=run_id, task_id=task_id, agent_id=agent_id, input_summary=f"{adapter} external write intent requires prepared action.", output_summary="Live execution paused before runtime invocation.", raw_payload_hash=stable_hash(normalized_args))
+    audit(conn, "system", "runtime-capability-policy", "workflow.customer_worker_task.external_write_prepared_action_required", "runs", run_id, None, {"status": "waiting_approval"}, {"adapter": adapter, "connector_id": connector_id, "approval_status": approval_status, "raw_output_omitted": True, "token_omitted": True})
+    conn.commit()
+    approval = approval_wall.get("approval") or {}
+    prepared_action = approval_wall.get("prepared_action") or {}
+    return {
+        "provider": "agentops-worker",
+        "workflow": "customer_worker_task",
+        "dry_run": True,
+        "ok": False,
+        "adapter": adapter,
+        "task_id": task_id,
+        "run_id": run_id,
+        "tool_call_id": tool_call_id,
+        "connector_id": connector_id,
+        "reason": "external_write_prepared_action_required",
+        "note": "Live runtime execution was not started. Approve and resume the exact prepared action before external write execution.",
+        "approval_wall": approval_wall,
+        "approval_id": approval.get("approval_id"),
+        "prepared_action_id": prepared_action.get("action_id"),
+        "next_action": (
+            f"agentops approval inspect --approval-id {approval.get('approval_id')} && "
+            f"agentops approval approve --approval-id {approval.get('approval_id')} && "
+            f"agentops approval prepared-action resume --action-id {prepared_action.get('action_id')} --provider-side-effect-id <id>"
+        ),
+        "live_execution_performed": False,
+        "token_omitted": True,
+    }, 202
+
+
 def run_customer_worker_task_workflow(conn, body: dict) -> tuple[dict, int]:
     adapter = coerce_choice(body.get("adapter"), {"mock", "hermes", "openclaw"}, "mock")
     confirm_run = bool(body.get("confirm_run"))
@@ -15127,6 +15451,7 @@ def run_customer_worker_task_workflow(conn, body: dict) -> tuple[dict, int]:
     connector_id = runtime_connector_for_adapter(adapter)
     connector_trust = runtime_connector_trust(conn, connector_id)
     adapter_readiness = (worker_adapter_readiness(conn).get("adapters") or {}).get(adapter) or {}
+    manifest_governance = ((adapter_readiness.get("capability_manifest") or {}).get("governance") or {})
     if adapter in {"hermes", "openclaw"} and confirm_run and connector_trust and connector_trust.get("trust_status") == "blocked":
         task_id = body.get("task_id") or stable_id("tsk_customer_worker_trust_blocked", adapter, title, now_iso())
         agent_id = worker_agent_id
@@ -15170,6 +15495,13 @@ def run_customer_worker_task_workflow(conn, body: dict) -> tuple[dict, int]:
             "reason": "runtime_connector_trust_blocked",
             "note": reason,
         }, 409
+    if (
+        adapter in {"hermes", "openclaw"}
+        and confirm_run
+        and manifest_governance.get("requires_prepared_action_for_external_write") is True
+        and customer_worker_external_write_intent(body, title, description, acceptance)
+    ):
+        return create_customer_worker_external_write_gate(conn, body, adapter, connector_id, adapter_readiness, title, description, acceptance, worker_agent_id)
     if adapter in {"hermes", "openclaw"} and confirm_run and adapter_readiness.get("readiness") in {"unavailable", "blocked"}:
         task_id = body.get("task_id") or stable_id("tsk_customer_worker_adapter_not_ready", adapter, title, now_iso())
         agent_id = worker_agent_id
@@ -15786,6 +16118,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(payload)
             if path == "/api/operator/loop-audit":
                 payload = operator_loop_audit(conn, self.headers, qs)
+                conn.rollback()
+                return self.send_json(payload)
+            if path == "/api/operator/action-receipts":
+                payload = list_operator_action_receipts(conn, qs, self.headers)
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/operator/intake-checklist":
@@ -16423,6 +16759,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(payload, status)
             if path == "/api/operator/execution-evidence/close-gap":
                 payload, status = operator_close_execution_evidence_gap(conn, body, self.headers)
+                conn.commit()
+                return self.send_json(payload, status)
+            if path == "/api/operator/action-receipts":
+                payload, status = record_operator_action_receipt(conn, body, self.headers)
                 conn.commit()
                 return self.send_json(payload, status)
             if path == "/api/agents":
