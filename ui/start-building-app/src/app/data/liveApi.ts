@@ -1045,6 +1045,61 @@ export interface EvaluationCaseCandidatesPayload {
   token_omitted: boolean;
 }
 
+export interface EvaluationCaseRun {
+  case_run_id?: string;
+  case_id: string;
+  workspace_id?: string;
+  run_id?: string;
+  evaluation_id?: string;
+  artifact_id?: string | null;
+  runner_type: string;
+  status: string;
+  score: number;
+  pass_fail: "pass" | "fail";
+  checks?: Record<string, unknown>;
+  case_title?: string;
+  case_type?: string;
+  task_id?: string | null;
+  source_type?: string | null;
+  source_ref?: string | null;
+  created_by_agent_id?: string | null;
+  created_at?: string;
+  token_omitted?: boolean;
+}
+
+export interface EvaluationCaseRunPayload {
+  provider: string;
+  operation: string;
+  status: string;
+  created?: boolean;
+  workspace_id: string;
+  limit?: number;
+  summary: {
+    selected?: number;
+    planned?: number;
+    skipped?: number;
+    total?: number;
+    returned?: number;
+    created?: number;
+    passed?: number;
+    failed?: number;
+    min_score?: number;
+  };
+  planned_runs?: EvaluationCaseRun[];
+  case_runs: EvaluationCaseRun[];
+  skipped?: EvaluationCaseRun[];
+  next_actions?: string[];
+  safety: {
+    read_only?: boolean;
+    ledger_mutated: boolean;
+    live_execution_performed: boolean;
+    raw_prompt_omitted: boolean;
+    raw_response_omitted: boolean;
+    token_omitted: boolean;
+  };
+  token_omitted: boolean;
+}
+
 export interface StuckWorkerTask extends Task {
   age_sec?: number;
   threshold_sec?: number;
@@ -1633,6 +1688,31 @@ export function normalizeEvaluationCaseCandidate(row: Record<string, unknown>): 
   };
 }
 
+export function normalizeEvaluationCaseRun(row: Record<string, unknown>): EvaluationCaseRun {
+  const checks = typeof row.checks === "object" && row.checks !== null ? row.checks as Record<string, unknown> : {};
+  return {
+    case_run_id: row.case_run_id ? String(row.case_run_id) : undefined,
+    case_id: String(row.case_id || ""),
+    workspace_id: row.workspace_id ? String(row.workspace_id) : undefined,
+    run_id: row.run_id ? String(row.run_id) : undefined,
+    evaluation_id: row.evaluation_id ? String(row.evaluation_id) : undefined,
+    artifact_id: row.artifact_id ? String(row.artifact_id) : null,
+    runner_type: String(row.runner_type || "rule"),
+    status: String(row.status || "preview"),
+    score: numberValue(row.score, 0),
+    pass_fail: String(row.pass_fail || "fail") === "pass" ? "pass" : "fail",
+    checks,
+    case_title: row.case_title ? String(row.case_title) : undefined,
+    case_type: row.case_type ? String(row.case_type) : undefined,
+    task_id: row.task_id ? String(row.task_id) : null,
+    source_type: row.source_type ? String(row.source_type) : null,
+    source_ref: row.source_ref ? String(row.source_ref) : null,
+    created_by_agent_id: row.created_by_agent_id ? String(row.created_by_agent_id) : null,
+    created_at: row.created_at ? String(row.created_at) : undefined,
+    token_omitted: boolValue(row.token_omitted),
+  };
+}
+
 export function normalizeToolCall(row: Record<string, unknown>): ToolCall {
   return {
     tool_call_id: String(row.tool_call_id || ""),
@@ -1767,6 +1847,106 @@ export async function loadEvaluationCaseCandidates(input: {
     },
     token_omitted: boolValue(raw.token_omitted),
   };
+}
+
+function normalizeEvaluationCaseRunPayload(raw: Record<string, unknown>, fallbackStatus = "unknown"): EvaluationCaseRunPayload {
+  const summaryRaw = typeof raw.summary === "object" && raw.summary !== null ? raw.summary as Record<string, unknown> : {};
+  const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
+  return {
+    provider: String(raw.provider || "agentops-evaluation"),
+    operation: String(raw.operation || "evaluation_case_runs"),
+    status: String(raw.status || fallbackStatus),
+    created: raw.created === undefined ? undefined : boolValue(raw.created),
+    workspace_id: String(raw.workspace_id || "local-demo"),
+    limit: raw.limit === undefined ? undefined : numberValue(raw.limit, 0),
+    summary: {
+      selected: summaryRaw.selected === undefined ? undefined : numberValue(summaryRaw.selected, 0),
+      planned: summaryRaw.planned === undefined ? undefined : numberValue(summaryRaw.planned, 0),
+      skipped: summaryRaw.skipped === undefined ? undefined : numberValue(summaryRaw.skipped, 0),
+      total: summaryRaw.total === undefined ? undefined : numberValue(summaryRaw.total, 0),
+      returned: summaryRaw.returned === undefined ? undefined : numberValue(summaryRaw.returned, 0),
+      created: summaryRaw.created === undefined ? undefined : numberValue(summaryRaw.created, 0),
+      passed: summaryRaw.passed === undefined ? undefined : numberValue(summaryRaw.passed, 0),
+      failed: summaryRaw.failed === undefined ? undefined : numberValue(summaryRaw.failed, 0),
+      min_score: summaryRaw.min_score === undefined ? undefined : numberValue(summaryRaw.min_score, 0),
+    },
+    planned_runs: asArray<Record<string, unknown>>(raw.planned_runs).map(normalizeEvaluationCaseRun),
+    case_runs: asArray<Record<string, unknown>>(raw.case_runs).map(normalizeEvaluationCaseRun),
+    skipped: asArray<Record<string, unknown>>(raw.skipped).map(normalizeEvaluationCaseRun),
+    next_actions: asArray(raw.next_actions).map(String),
+    safety: {
+      read_only: safetyRaw.read_only === undefined ? undefined : boolValue(safetyRaw.read_only),
+      ledger_mutated: boolValue(safetyRaw.ledger_mutated),
+      live_execution_performed: boolValue(safetyRaw.live_execution_performed),
+      raw_prompt_omitted: boolValue(safetyRaw.raw_prompt_omitted),
+      raw_response_omitted: boolValue(safetyRaw.raw_response_omitted),
+      token_omitted: boolValue(safetyRaw.token_omitted),
+    },
+    token_omitted: boolValue(raw.token_omitted),
+  };
+}
+
+export async function loadEvaluationCaseRuns(input: {
+  limit?: number;
+  case_id?: string;
+  run_id?: string;
+  task_id?: string;
+  pass_fail?: "pass" | "fail";
+} = {}): Promise<EvaluationCaseRunPayload> {
+  const params = new URLSearchParams();
+  params.set("limit", String(input.limit || 25));
+  if (input.case_id) params.set("case_id", input.case_id);
+  if (input.run_id) params.set("run_id", input.run_id);
+  if (input.task_id) params.set("task_id", input.task_id);
+  if (input.pass_fail) params.set("pass_fail", input.pass_fail);
+  const raw = await optionalApiJson<Record<string, unknown>>(`/evaluation-case-runs?${params.toString()}`, {
+    provider: "agentops-evaluation",
+    operation: "evaluation_case_runs",
+    status: "unavailable",
+    workspace_id: "local-demo",
+    summary: {},
+    case_runs: [],
+    safety: {
+      read_only: true,
+      ledger_mutated: false,
+      live_execution_performed: false,
+      raw_prompt_omitted: true,
+      raw_response_omitted: true,
+      token_omitted: true,
+    },
+    token_omitted: true,
+  });
+  return normalizeEvaluationCaseRunPayload(raw, "unavailable");
+}
+
+export async function runEvaluationCases(input: {
+  case_ids?: string[];
+  case_type?: string;
+  status?: string;
+  runner_type?: "rule" | "llm_mock";
+  task_id?: string;
+  run_id?: string;
+  artifact_id?: string;
+  limit?: number;
+  min_score?: number;
+  confirm_run?: boolean;
+} = {}): Promise<EvaluationCaseRunPayload> {
+  const raw = await apiJson<Record<string, unknown>>("/evaluation-cases/run", {
+    method: "POST",
+    body: JSON.stringify({
+      case_ids: input.case_ids || [],
+      case_type: input.case_type,
+      status: input.status || "approved",
+      runner_type: input.runner_type || "rule",
+      task_id: input.task_id,
+      run_id: input.run_id,
+      artifact_id: input.artifact_id,
+      limit: input.limit || 10,
+      min_score: input.min_score ?? 0.75,
+      confirm_run: Boolean(input.confirm_run),
+    }),
+  });
+  return normalizeEvaluationCaseRunPayload(raw, input.confirm_run ? "completed" : "preview");
 }
 
 export async function loadApprovals(): Promise<Approval[]> {

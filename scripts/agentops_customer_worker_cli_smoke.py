@@ -2,6 +2,7 @@
 """Smoke test `agentops workflow customer-worker-task`."""
 from __future__ import annotations
 
+import datetime as dt
 import json
 import os
 import subprocess
@@ -42,7 +43,79 @@ def secret_leaked(text: str) -> bool:
     return any(marker in text for marker in ["Authorization:", "Bearer ", "agtok_", "agtsess_", "sk-", "ntn_"])
 
 
+def stamp() -> str:
+    return dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d%H%M%S%f")
+
+
 def main() -> int:
+    case_task_id = f"tsk_customer_worker_case_{stamp()}"
+    case_id = f"evalcase_customer_worker_{stamp()}"
+    created_task = run([
+        "task",
+        "create",
+        "--task-id",
+        case_task_id,
+        "--title",
+        "Customer worker auto evaluation case smoke",
+        "--description",
+        "Customer wants a worker task that automatically runs approved local benchmark cases after execution.",
+        "--acceptance",
+        "Worker result must include tool, evaluation, audit, artifact and evaluation case run evidence.",
+        "--risk",
+        "medium",
+    ])
+    created_task_payload = load_json(created_task)
+    require(created_task.returncode == 0, f"task create failed: {created_task.stderr or created_task.stdout}")
+    require(created_task_payload.get("task", {}).get("task_id") == case_task_id, f"task id mismatch: {created_task_payload}")
+
+    proposed_case = run([
+        "eval",
+        "propose-case",
+        "--case-id",
+        case_id,
+        "--task-id",
+        case_task_id,
+        "--case-type",
+        "golden",
+        "--title",
+        "Customer worker auto evaluation golden case",
+        "--expected-output-summary",
+        "Worker result must include tool, evaluation, audit, artifact and evaluation case run evidence.",
+        "--confirm-create",
+    ])
+    proposed_payload = load_json(proposed_case)
+    require(proposed_case.returncode == 0, f"case propose failed: {proposed_case.stderr or proposed_case.stdout}")
+    require(proposed_payload.get("status") == "candidate", f"case propose status wrong: {proposed_payload}")
+
+    approved_case = run(["eval", "approve-case", "--case-id", case_id])
+    approved_payload = load_json(approved_case)
+    require(approved_case.returncode == 0, f"case approve failed: {approved_case.stderr or approved_case.stdout}")
+    require(approved_payload.get("review_status") == "approved", f"case approve status wrong: {approved_payload}")
+
+    auto_case = run([
+        "workflow",
+        "customer-worker-task",
+        "--adapter",
+        "mock",
+        "--task-id",
+        case_task_id,
+        "--title",
+        "Customer worker auto evaluation case smoke",
+        "--description",
+        "Execute the pre-created customer task and automatically run the approved evaluation case.",
+        "--acceptance",
+        "Worker result must include tool, evaluation, audit, artifact and evaluation case run evidence.",
+        "--selected-agent-id",
+        "agt_worker_local",
+    ])
+    auto_payload = load_json(auto_case)
+    auto_evidence = auto_payload.get("evidence") or {}
+    require(auto_case.returncode == 0, f"auto case worker workflow failed: {auto_case.stderr or auto_case.stdout}")
+    require(auto_payload.get("ok") is True, f"auto case worker did not complete: {auto_payload}")
+    require(auto_payload.get("task_id") == case_task_id, f"auto case task id mismatch: {auto_payload}")
+    require(auto_evidence.get("evaluation_case_runs", 0) >= 1, f"missing automatic evaluation case evidence: {auto_evidence}")
+    require((auto_payload.get("evaluation_case_result") or {}).get("summary", {}).get("created", 0) >= 1, f"missing evaluation case result payload: {auto_payload}")
+
     mock = run([
         "workflow",
         "customer-worker-task",
@@ -86,10 +159,27 @@ def main() -> int:
     require(hermes_payload.get("dry_run") is True, f"Hermes without confirm should be planned/dry-run: {hermes_payload}")
     require(hermes_payload.get("reason") == "confirm_run_required_for_live_adapter", f"wrong Hermes gate reason: {hermes_payload}")
 
-    combined = "\n".join([mock.stdout, mock.stderr, hermes_gate.stdout, hermes_gate.stderr])
+    combined = "\n".join([
+        created_task.stdout,
+        created_task.stderr,
+        proposed_case.stdout,
+        proposed_case.stderr,
+        approved_case.stdout,
+        approved_case.stderr,
+        auto_case.stdout,
+        auto_case.stderr,
+        mock.stdout,
+        mock.stderr,
+        hermes_gate.stdout,
+        hermes_gate.stderr,
+    ])
     require(not secret_leaked(combined), "CLI workflow output leaked a secret-like token")
     print(json.dumps({
         "ok": True,
+        "auto_case_id": case_id,
+        "auto_case_task_id": case_task_id,
+        "auto_case_run_id": auto_payload.get("run_id"),
+        "auto_case_evidence": auto_evidence,
         "mock_run_id": mock_payload.get("run_id"),
         "mock_artifact_id": mock_payload.get("artifact_id"),
         "mock_evidence": evidence,

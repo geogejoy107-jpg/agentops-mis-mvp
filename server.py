@@ -4889,6 +4889,63 @@ def list_evaluation_case_candidates(conn: sqlite3.Connection, qs: dict | None = 
     }, 200
 
 
+def list_evaluation_case_runs(conn: sqlite3.Connection, qs: dict | None = None, headers=None) -> tuple[dict, int]:
+    qs = qs or {}
+    workspace_id = normalize_workspace_id((qs.get("workspace_id") or [None])[0] or (headers or {}).get("X-AgentOps-Workspace-Id") or "local-demo")
+    limit = min(max(int((qs.get("limit") or ["25"])[0]), 1), 100)
+    where = ["ecr.workspace_id=?"]
+    params: list = [workspace_id]
+    if "case_id" in qs:
+        where.append("ecr.case_id=?")
+        params.append(qs["case_id"][0])
+    if "run_id" in qs:
+        where.append("ecr.run_id=?")
+        params.append(qs["run_id"][0])
+    if "task_id" in qs:
+        where.append("c.task_id=?")
+        params.append(qs["task_id"][0])
+    if "pass_fail" in qs:
+        where.append("ecr.pass_fail=?")
+        params.append(coerce_choice(qs["pass_fail"][0], {"pass", "fail"}, "pass"))
+    rows = rows_to_dicts(conn.execute(
+        f"""SELECT ecr.*, c.title AS case_title, c.case_type, c.task_id, c.source_type, c.source_ref
+        FROM evaluation_case_runs ecr
+        JOIN evaluation_case_candidates c ON c.case_id=ecr.case_id
+        WHERE {' AND '.join(where)}
+        ORDER BY ecr.created_at DESC
+        LIMIT ?""",
+        [*params, limit],
+    ).fetchall())
+    summary = {
+        "total": scalar_count(conn, "SELECT COUNT(*) FROM evaluation_case_runs WHERE workspace_id=?", (workspace_id,)),
+        "passed": scalar_count(conn, "SELECT COUNT(*) FROM evaluation_case_runs WHERE workspace_id=? AND pass_fail='pass'", (workspace_id,)),
+        "failed": scalar_count(conn, "SELECT COUNT(*) FROM evaluation_case_runs WHERE workspace_id=? AND pass_fail='fail'", (workspace_id,)),
+        "returned": len(rows),
+    }
+    return {
+        "provider": "agentops-evaluation",
+        "operation": "evaluation_case_runs",
+        "status": "attention" if summary["failed"] else "ready" if summary["total"] else "empty",
+        "workspace_id": workspace_id,
+        "limit": limit,
+        "summary": summary,
+        "case_runs": [evaluation_case_run_public(row) for row in rows],
+        "next_actions": [
+            "Investigate failed case runs before promoting the related workflow or memory.",
+            "Use `agentops eval run-cases` to preview or refresh approved regression checks.",
+        ],
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }, 200
+
+
 def propose_evaluation_case_candidate(conn: sqlite3.Connection, body, headers=None) -> tuple[dict, int]:
     workspace_id = normalize_workspace_id(body.get("workspace_id") or (headers or {}).get("X-AgentOps-Workspace-Id") or "local-demo")
     now = now_iso()
@@ -5142,6 +5199,15 @@ def run_evaluation_cases(conn: sqlite3.Connection, body, headers=None) -> tuple[
     if case_ids:
         where.append("case_id IN (" + ",".join("?" for _ in case_ids) + ")")
         params.extend(case_ids)
+    if body.get("task_id"):
+        where.append("task_id=?")
+        params.append(body.get("task_id"))
+    if body.get("run_id"):
+        where.append("run_id=?")
+        params.append(body.get("run_id"))
+    if body.get("artifact_id"):
+        where.append("artifact_id=?")
+        params.append(body.get("artifact_id"))
     if body.get("case_type"):
         where.append("case_type=?")
         params.append(coerce_choice(body.get("case_type"), {"regression", "golden", "safety", "quality", "cost", "tool_use", "memory"}, "regression"))
@@ -5192,6 +5258,8 @@ def run_evaluation_cases(conn: sqlite3.Connection, body, headers=None) -> tuple[
                 "planned": len(planned),
                 "skipped": len(skipped),
                 "min_score": min_score,
+                "task_id": body.get("task_id"),
+                "run_id": body.get("run_id"),
             },
             "planned_runs": planned,
             "skipped": skipped,
@@ -5322,6 +5390,8 @@ def run_evaluation_cases(conn: sqlite3.Connection, body, headers=None) -> tuple[
             "passed": sum(1 for item in results if item["pass_fail"] == "pass"),
             "failed": sum(1 for item in results if item["pass_fail"] == "fail"),
             "min_score": min_score,
+            "task_id": body.get("task_id"),
+            "run_id": body.get("run_id"),
         },
         "case_runs": results,
         "skipped": skipped,
@@ -11576,6 +11646,7 @@ def run_customer_worker_task_workflow(conn, body: dict) -> tuple[dict, int]:
     dispatch = dispatch_local_worker_once(conn, {
         "adapter": adapter,
         "confirm_run": confirm_run,
+        "task_id": body.get("task_id"),
         "title": title,
         "description": description,
         "acceptance_criteria": acceptance,
@@ -11649,6 +11720,29 @@ def run_customer_worker_task_workflow(conn, body: dict) -> tuple[dict, int]:
             "customer-worker-task",
         )
         runtime_event(conn, "rtc_agent_gateway_local", "customer_worker_task.memory", "completed", run_id=run_id, task_id=task_id, agent_id=dispatch.get("agent_id"), output_summary=f"Memory candidate {memory_id} {memory_outcome}.")
+        evaluation_case_result = None
+        if body.get("auto_run_evaluation_cases", True) is not False:
+            evaluation_case_result, _case_status = run_evaluation_cases(conn, {
+                "workspace_id": body.get("workspace_id") or "local-demo",
+                "task_id": task_id,
+                "status": "approved",
+                "runner_type": body.get("evaluation_case_runner_type") or "rule",
+                "agent_id": dispatch.get("agent_id"),
+                "limit": body.get("evaluation_case_limit") or 5,
+                "min_score": body.get("evaluation_case_min_score") if body.get("evaluation_case_min_score") is not None else 0.75,
+                "confirm_run": True,
+            })
+            runtime_event(
+                conn,
+                "rtc_agent_gateway_local",
+                "customer_worker_task.evaluation_cases",
+                evaluation_case_result.get("status") or "skipped",
+                run_id=run_id,
+                task_id=task_id,
+                agent_id=dispatch.get("agent_id"),
+                output_summary=f"Auto evaluation cases created={((evaluation_case_result.get('summary') or {}).get('created') or 0)}.",
+                raw_payload_hash=stable_hash({"task_id": task_id, "evaluation_case_result": evaluation_case_result.get("summary")}),
+            )
         plan_evidence = ensure_run_plan_evidence_manifest(conn, run_id, reason="customer_worker_delivery_approval")
         if not plan_evidence.get("ok"):
             runtime_event(
@@ -11678,6 +11772,12 @@ def run_customer_worker_task_workflow(conn, body: dict) -> tuple[dict, int]:
                 "memories": conn.execute("SELECT COUNT(*) c FROM memories WHERE source_ref=? OR task_id=?", (run_id, task_id)).fetchone()["c"],
                 "approvals": conn.execute("SELECT COUNT(*) c FROM approvals WHERE run_id=? OR task_id=?", (run_id, task_id)).fetchone()["c"],
                 "plan_evidence_manifests": conn.execute("SELECT COUNT(*) c FROM plan_evidence_manifests WHERE run_id=?", (run_id,)).fetchone()["c"],
+                "evaluation_case_runs": conn.execute(
+                    """SELECT COUNT(*) c FROM evaluation_case_runs ecr
+                    JOIN evaluation_case_candidates c ON c.case_id=ecr.case_id
+                    WHERE c.task_id=?""",
+                    (task_id,),
+                ).fetchone()["c"],
             }
             return {
                 "provider": "agentops-worker",
@@ -11697,6 +11797,7 @@ def run_customer_worker_task_workflow(conn, body: dict) -> tuple[dict, int]:
                 "output_summary": output_summary,
                 "evidence": evidence,
                 "plan_evidence": plan_evidence,
+                "evaluation_case_result": evaluation_case_result,
                 "worker_result": dispatch.get("worker_result"),
                 "error": dispatch.get("error") or "Customer delivery approval blocked by plan evidence manifest gate.",
                 "token_omitted": True,
@@ -11738,6 +11839,12 @@ def run_customer_worker_task_workflow(conn, body: dict) -> tuple[dict, int]:
             "memories": conn.execute("SELECT COUNT(*) c FROM memories WHERE source_ref=? OR task_id=?", (run_id, task_id)).fetchone()["c"],
             "approvals": conn.execute("SELECT COUNT(*) c FROM approvals WHERE run_id=? OR task_id=?", (run_id, task_id)).fetchone()["c"],
             "plan_evidence_manifests": conn.execute("SELECT COUNT(*) c FROM plan_evidence_manifests WHERE run_id=?", (run_id,)).fetchone()["c"],
+            "evaluation_case_runs": conn.execute(
+                """SELECT COUNT(*) c FROM evaluation_case_runs ecr
+                JOIN evaluation_case_candidates c ON c.case_id=ecr.case_id
+                WHERE c.task_id=?""",
+                (task_id,),
+            ).fetchone()["c"],
         }
     return {
         "provider": "agentops-worker",
@@ -11753,6 +11860,7 @@ def run_customer_worker_task_workflow(conn, body: dict) -> tuple[dict, int]:
         "plan_evidence_manifest_id": plan_evidence.get("manifest_id") if run_id and task_id and artifact_id else processed.get("plan_evidence_manifest_id"),
         "plan_evidence_status": plan_evidence.get("status") if run_id and task_id and artifact_id else processed.get("plan_evidence_status"),
         "plan_evidence_pass": plan_evidence.get("ok") if run_id and task_id and artifact_id else processed.get("plan_evidence_pass"),
+        "evaluation_case_result": evaluation_case_result if run_id and task_id and artifact_id else None,
         "duration_ms": dispatch.get("duration_ms"),
         "output_summary": output_summary,
         "evidence": evidence,
@@ -12383,6 +12491,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM evaluations ORDER BY created_at DESC").fetchall()))
             if path == "/api/evaluation-cases":
                 payload, status = list_evaluation_case_candidates(conn, dict(qs), self.headers)
+                return self.send_json(payload, status)
+            if path == "/api/evaluation-case-runs":
+                payload, status = list_evaluation_case_runs(conn, dict(qs), self.headers)
                 return self.send_json(payload, status)
             if path == "/api/artifacts":
                 return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM artifacts ORDER BY created_at DESC").fetchall()))

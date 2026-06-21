@@ -209,6 +209,13 @@ def main() -> int:
         require(run_created_payload.get("status") == "completed", f"run cases status wrong: {run_created_payload}")
         require(run_created_payload.get("summary", {}).get("created") == 1, f"case run missing: {run_created_payload}")
         require(run_created_payload.get("safety", {}).get("live_execution_performed") is False, f"case run performed live execution: {run_created_payload}")
+        case_run_list = run_cli(["eval", "case-runs", "--case-id", case_id, "--limit", "5"])
+        transcripts.extend([case_run_list.stdout, case_run_list.stderr])
+        case_run_list_payload = load_json(case_run_list)
+        require(case_run_list.returncode == 0, f"case run list failed: {case_run_list.stderr or case_run_list.stdout}")
+        require(case_run_list_payload.get("operation") == "evaluation_case_runs", f"case run list operation wrong: {case_run_list_payload}")
+        require(case_run_list_payload.get("safety", {}).get("read_only") is True, f"case run list not read-only: {case_run_list_payload}")
+        require(any(item.get("case_id") == case_id for item in case_run_list_payload.get("case_runs", [])), f"case run missing from list: {case_run_list_payload}")
 
         conn = sqlite3.connect(DEFAULT_DB)
         try:

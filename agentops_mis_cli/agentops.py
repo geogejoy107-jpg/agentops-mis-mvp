@@ -817,6 +817,17 @@ def cmd_eval_cases(args, client: AgentOpsClient) -> dict:
     })
 
 
+def cmd_eval_case_runs(args, client: AgentOpsClient) -> dict:
+    return client.get("/api/evaluation-case-runs", query={
+        "workspace_id": client.workspace_id,
+        "limit": args.limit,
+        "case_id": args.case_id,
+        "run_id": args.run_id,
+        "task_id": args.task_id,
+        "pass_fail": args.pass_fail,
+    })
+
+
 def cmd_eval_propose_case(args, client: AgentOpsClient) -> dict:
     payload = {
         "workspace_id": client.workspace_id,
@@ -853,6 +864,9 @@ def cmd_eval_run_cases(args, client: AgentOpsClient) -> dict:
         "status": args.status,
         "runner_type": args.runner_type,
         "agent_id": args.agent_id,
+        "task_id": args.task_id,
+        "run_id": args.run_id,
+        "artifact_id": args.artifact_id,
         "limit": args.limit,
         "min_score": args.min_score,
         "confirm_run": bool(args.confirm_run),
@@ -881,6 +895,7 @@ def cmd_workflow_customer_worker_task(args, client: AgentOpsClient) -> dict:
         "title": args.title,
         "description": args.description,
         "acceptance_criteria": args.acceptance,
+        "task_id": args.task_id,
         "priority": args.priority,
         "risk_level": args.risk,
         "selected_agent_ids": args.selected_agent_id or [],
@@ -1798,6 +1813,13 @@ def build_parser() -> argparse.ArgumentParser:
     cases.add_argument("--task-id", default=None)
     cases.add_argument("--artifact-id", default=None)
     cases.set_defaults(handler="eval_cases")
+    case_runs = eval_sub.add_parser("case-runs", help="List local benchmark evidence produced from approved evaluation cases.")
+    case_runs.add_argument("--limit", type=int, default=25)
+    case_runs.add_argument("--case-id", default=None)
+    case_runs.add_argument("--run-id", default=None)
+    case_runs.add_argument("--task-id", default=None)
+    case_runs.add_argument("--pass-fail", default=None, choices=["pass", "fail"])
+    case_runs.set_defaults(handler="eval_case_runs")
     propose_case = eval_sub.add_parser("propose-case", help="Preview or create an evaluation case candidate from run/eval/artifact evidence.")
     propose_case.add_argument("--case-id", default=None)
     propose_case.add_argument("--source-type", default=None, choices=["evaluation", "customer_delivery", "run", "artifact", "manual", "commander_synthesis"])
@@ -1828,6 +1850,9 @@ def build_parser() -> argparse.ArgumentParser:
     run_cases.add_argument("--status", default="approved", choices=["candidate", "approved", "rejected", "stale", "superseded"])
     run_cases.add_argument("--runner-type", default="rule", choices=["rule", "llm_mock"])
     run_cases.add_argument("--agent-id", default=None)
+    run_cases.add_argument("--task-id", default=None)
+    run_cases.add_argument("--run-id", default=None)
+    run_cases.add_argument("--artifact-id", default=None)
     run_cases.add_argument("--limit", type=int, default=10)
     run_cases.add_argument("--min-score", type=float, default=0.75)
     run_cases.add_argument("--confirm-run", action="store_true")
@@ -1904,6 +1929,7 @@ def build_parser() -> argparse.ArgumentParser:
     customer_worker.add_argument("--title", required=True)
     customer_worker.add_argument("--description", required=True)
     customer_worker.add_argument("--acceptance", default="Worker must write run, tool, evaluation, audit and artifact evidence.")
+    customer_worker.add_argument("--task-id", default=None, help="Optional existing task id to execute; useful for task-bound evaluation cases.")
     customer_worker.add_argument("--priority", choices=["low", "medium", "high", "critical"], default="high")
     customer_worker.add_argument("--risk", choices=["low", "medium", "high", "critical"], default="medium")
     customer_worker.add_argument("--selected-agent-id", action="append", default=None, help="Optional business agent id to record as selected context. Repeatable.")
@@ -2145,6 +2171,7 @@ HANDLERS = {
     "memory_propose": cmd_memory_propose,
     "eval_submit": cmd_eval_submit,
     "eval_cases": cmd_eval_cases,
+    "eval_case_runs": cmd_eval_case_runs,
     "eval_propose_case": cmd_eval_propose_case,
     "eval_approve_case": cmd_eval_review_case,
     "eval_reject_case": cmd_eval_review_case,

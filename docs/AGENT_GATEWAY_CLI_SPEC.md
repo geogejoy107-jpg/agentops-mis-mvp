@@ -1076,9 +1076,13 @@ agentops eval cases --status candidate --limit 20
 agentops eval approve-case --case-id evalcase_123
 agentops eval run-cases --case-id evalcase_123
 agentops eval run-cases --case-id evalcase_123 --confirm-run
+agentops eval run-cases --task-id tsk_123 --confirm-run
+agentops eval case-runs --case-id evalcase_123 --limit 5
+agentops eval case-runs --task-id tsk_123 --limit 10
 ```
 
 Maps to `POST /api/evaluation-cases/propose`, `GET /api/evaluation-cases`,
+`GET /api/evaluation-case-runs`,
 `POST /api/evaluation-cases/:case_id/approve|reject`, and
 `POST /api/evaluation-cases/run`.
 
@@ -1097,6 +1101,14 @@ omitted; candidates carry bounded summaries, source refs, confidence, rubric,
 and review status. Case execution is local-only by default: `run-cases`
 previews without mutation unless `--confirm-run` is provided, and the v1 runner
 uses `rule` or `llm_mock` checks rather than calling Hermes/OpenClaw live.
+`case-runs` is read-only evidence readback for the local benchmark ledger and
+returns bounded summaries plus run/evaluation/artifact ids.
+
+Customer worker tasks automatically run task-bound approved evaluation cases
+after a worker completes, then include `evaluation_case_runs` in the returned
+evidence summary. This makes the worker loop act like a small local CI gate:
+normal task execution still happens through Agent Gateway, while reusable
+regression/golden cases are executed locally and safely as ledger evidence.
 
 ### `POST /api/agent-gateway/approvals/request`
 
