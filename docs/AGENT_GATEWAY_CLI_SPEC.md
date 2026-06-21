@@ -1074,20 +1074,29 @@ agentops eval propose-case --evaluation-id eval_123
 agentops eval propose-case --run-id run_123 --case-type regression --confirm-create
 agentops eval cases --status candidate --limit 20
 agentops eval approve-case --case-id evalcase_123
+agentops eval run-cases --case-id evalcase_123
+agentops eval run-cases --case-id evalcase_123 --confirm-run
 ```
 
 Maps to `POST /api/evaluation-cases/propose`, `GET /api/evaluation-cases`,
-and `POST /api/evaluation-cases/:case_id/approve|reject`.
+`POST /api/evaluation-cases/:case_id/approve|reject`, and
+`POST /api/evaluation-cases/run`.
 
 Writes only after explicit confirmation or review:
 
 - `evaluation_case_candidates`
+- `evaluation_case_runs`
+- `runs`
+- `evaluations`
+- `artifacts`
 - `runtime_events`
 - `audit_logs`
 
 Raw prompts, raw responses, credentials, and full private transcripts remain
 omitted; candidates carry bounded summaries, source refs, confidence, rubric,
-and review status.
+and review status. Case execution is local-only by default: `run-cases`
+previews without mutation unless `--confirm-run` is provided, and the v1 runner
+uses `rule` or `llm_mock` checks rather than calling Hermes/OpenClaw live.
 
 ### `POST /api/agent-gateway/approvals/request`
 

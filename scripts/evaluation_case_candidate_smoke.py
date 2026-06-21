@@ -90,8 +90,18 @@ def db_counts(conn: sqlite3.Connection, case_id: str) -> dict:
         "cases": int(conn.execute("SELECT COUNT(*) FROM evaluation_case_candidates WHERE case_id=?", (case_id,)).fetchone()[0] or 0),
         "candidate": int(conn.execute("SELECT COUNT(*) FROM evaluation_case_candidates WHERE case_id=? AND review_status='candidate'", (case_id,)).fetchone()[0] or 0),
         "approved": int(conn.execute("SELECT COUNT(*) FROM evaluation_case_candidates WHERE case_id=? AND review_status='approved'", (case_id,)).fetchone()[0] or 0),
+        "case_runs": int(conn.execute("SELECT COUNT(*) FROM evaluation_case_runs WHERE case_id=?", (case_id,)).fetchone()[0] or 0),
+        "case_run_evaluations": int(conn.execute("""SELECT COUNT(*)
+            FROM evaluation_case_runs ecr
+            JOIN evaluations e ON e.evaluation_id=ecr.evaluation_id
+            WHERE ecr.case_id=?""", (case_id,)).fetchone()[0] or 0),
+        "case_run_artifacts": int(conn.execute("""SELECT COUNT(*)
+            FROM evaluation_case_runs ecr
+            JOIN artifacts a ON a.artifact_id=ecr.artifact_id
+            WHERE ecr.case_id=?""", (case_id,)).fetchone()[0] or 0),
         "audit_logs": int(conn.execute("SELECT COUNT(*) FROM audit_logs WHERE entity_type='evaluation_case_candidates' AND entity_id=?", (case_id,)).fetchone()[0] or 0),
-        "runtime_events": int(conn.execute("SELECT COUNT(*) FROM runtime_events WHERE event_type LIKE 'evaluation_case_candidate.%'").fetchone()[0] or 0),
+        "case_run_audit_logs": int(conn.execute("SELECT COUNT(*) FROM audit_logs WHERE entity_type='evaluation_case_runs' AND metadata_json LIKE ?", (f"%{case_id}%",)).fetchone()[0] or 0),
+        "runtime_events": int(conn.execute("SELECT COUNT(*) FROM runtime_events WHERE event_type LIKE 'evaluation_case_candidate.%' OR event_type LIKE 'evaluation_case_run.%'").fetchone()[0] or 0),
     }
 
 
@@ -180,13 +190,37 @@ def main() -> int:
         require(approved.returncode == 0, f"approve failed: {approved.stderr or approved.stdout}")
         require(approved_payload.get("review_status") == "approved", f"approve status wrong: {approved_payload}")
 
+        run_preview = run_cli(["eval", "run-cases", "--case-id", case_id])
+        transcripts.extend([run_preview.stdout, run_preview.stderr])
+        run_preview_payload = load_json(run_preview)
+        require(run_preview.returncode == 0, f"run preview failed: {run_preview.stderr or run_preview.stdout}")
+        require(run_preview_payload.get("status") == "preview", f"run preview status wrong: {run_preview_payload}")
+        require(run_preview_payload.get("safety", {}).get("ledger_mutated") is False, f"run preview mutated ledger: {run_preview_payload}")
+        conn = sqlite3.connect(DEFAULT_DB)
+        try:
+            require(db_counts(conn, case_id)["case_runs"] == 0, "run preview created case run")
+        finally:
+            conn.close()
+
+        run_created = run_cli(["eval", "run-cases", "--case-id", case_id, "--confirm-run"])
+        transcripts.extend([run_created.stdout, run_created.stderr])
+        run_created_payload = load_json(run_created)
+        require(run_created.returncode == 0, f"run cases failed: {run_created.stderr or run_created.stdout}")
+        require(run_created_payload.get("status") == "completed", f"run cases status wrong: {run_created_payload}")
+        require(run_created_payload.get("summary", {}).get("created") == 1, f"case run missing: {run_created_payload}")
+        require(run_created_payload.get("safety", {}).get("live_execution_performed") is False, f"case run performed live execution: {run_created_payload}")
+
         conn = sqlite3.connect(DEFAULT_DB)
         try:
             counts = db_counts(conn, case_id)
             require(counts["cases"] == 1, f"case row missing: {counts}")
             require(counts["approved"] == 1, f"case not approved: {counts}")
+            require(counts["case_runs"] == 1, f"case run missing: {counts}")
+            require(counts["case_run_evaluations"] == 1, f"case run evaluation missing: {counts}")
+            require(counts["case_run_artifacts"] == 1, f"case run artifact missing: {counts}")
             require(counts["audit_logs"] >= 2, f"audit missing: {counts}")
-            require(counts["runtime_events"] >= 2, f"runtime events missing: {counts}")
+            require(counts["case_run_audit_logs"] >= 1, f"case run audit missing: {counts}")
+            require(counts["runtime_events"] >= 3, f"runtime events missing: {counts}")
         finally:
             conn.close()
 

@@ -90,6 +90,7 @@ def db_fingerprint(db_path: Path) -> dict | None:
             ("tool_calls", "created_at"),
             ("evaluations", "created_at"),
             ("evaluation_case_candidates", "updated_at"),
+            ("evaluation_case_runs", "created_at"),
             ("audit_logs", "created_at"),
             ("runtime_events", "created_at"),
         ]

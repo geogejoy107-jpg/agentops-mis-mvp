@@ -430,6 +430,27 @@ CREATE TABLE IF NOT EXISTS evaluation_case_candidates (
     FOREIGN KEY(agent_id) REFERENCES agents(agent_id)
 );
 
+CREATE TABLE IF NOT EXISTS evaluation_case_runs (
+    case_run_id TEXT PRIMARY KEY,
+    case_id TEXT NOT NULL,
+    workspace_id TEXT NOT NULL DEFAULT 'local-demo',
+    run_id TEXT NOT NULL,
+    evaluation_id TEXT NOT NULL,
+    artifact_id TEXT,
+    runner_type TEXT NOT NULL CHECK(runner_type IN ('rule','llm_mock')),
+    status TEXT NOT NULL CHECK(status IN ('preview','completed','skipped')),
+    score REAL NOT NULL DEFAULT 0,
+    pass_fail TEXT NOT NULL CHECK(pass_fail IN ('pass','fail')),
+    checks_json TEXT NOT NULL DEFAULT '{}',
+    created_by_agent_id TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(case_id) REFERENCES evaluation_case_candidates(case_id),
+    FOREIGN KEY(run_id) REFERENCES runs(run_id),
+    FOREIGN KEY(evaluation_id) REFERENCES evaluations(evaluation_id),
+    FOREIGN KEY(artifact_id) REFERENCES artifacts(artifact_id),
+    FOREIGN KEY(created_by_agent_id) REFERENCES agents(agent_id)
+);
+
 CREATE TABLE IF NOT EXISTS artifacts (
     artifact_id TEXT PRIMARY KEY,
     task_id TEXT,
@@ -798,6 +819,8 @@ CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope);
 CREATE INDEX IF NOT EXISTS idx_eval_case_status ON evaluation_case_candidates(review_status);
 CREATE INDEX IF NOT EXISTS idx_eval_case_run ON evaluation_case_candidates(run_id);
 CREATE INDEX IF NOT EXISTS idx_eval_case_source ON evaluation_case_candidates(source_type, source_ref);
+CREATE INDEX IF NOT EXISTS idx_eval_case_runs_case ON evaluation_case_runs(case_id);
+CREATE INDEX IF NOT EXISTS idx_eval_case_runs_created ON evaluation_case_runs(created_at);
 CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_logs(entity_type, entity_id);
 CREATE INDEX IF NOT EXISTS idx_runtime_events_connector ON runtime_events(runtime_connector_id);
 CREATE INDEX IF NOT EXISTS idx_agent_gateway_tokens_agent ON agent_gateway_tokens(agent_id);
@@ -1244,7 +1267,7 @@ def seed(reset=False):
         if count and not reset:
             return
         # clear in dependency order
-        for table in ["audit_logs", "artifacts", "evaluations", "memories", "approvals", "tool_calls", "runs", "tasks", "agent_gateway_tokens", "agents", "users"]:
+        for table in ["audit_logs", "evaluation_case_runs", "artifacts", "evaluations", "evaluation_case_candidates", "memories", "approvals", "tool_calls", "runs", "tasks", "agent_gateway_tokens", "agents", "users"]:
             conn.execute(f"DELETE FROM {table}")
 
         users = [
@@ -4799,6 +4822,16 @@ def evaluation_case_candidate_public(row) -> dict:
     return data
 
 
+def evaluation_case_run_public(row) -> dict:
+    data = dict(row)
+    try:
+        data["checks"] = json.loads(data.get("checks_json") or "{}")
+    except Exception:
+        data["checks"] = {}
+    data["token_omitted"] = True
+    return data
+
+
 def list_evaluation_case_candidates(conn: sqlite3.Connection, qs: dict | None = None, headers=None) -> tuple[dict, int]:
     qs = qs or {}
     workspace_id = normalize_workspace_id((qs.get("workspace_id") or [None])[0] or (headers or {}).get("X-AgentOps-Workspace-Id") or "local-demo")
@@ -5045,6 +5078,262 @@ def propose_evaluation_case_candidate(conn: sqlite3.Connection, body, headers=No
         },
         "token_omitted": True,
     }, 201 if outcome == "created" else 200
+
+
+def evaluation_case_source_available(conn: sqlite3.Connection, case) -> bool:
+    source_type = case["source_type"]
+    source_ref = case["source_ref"]
+    if case["evaluation_id"]:
+        return conn.execute("SELECT 1 FROM evaluations WHERE evaluation_id=?", (case["evaluation_id"],)).fetchone() is not None
+    if case["artifact_id"]:
+        return conn.execute("SELECT 1 FROM artifacts WHERE artifact_id=?", (case["artifact_id"],)).fetchone() is not None
+    if case["run_id"]:
+        return conn.execute("SELECT 1 FROM runs WHERE run_id=?", (case["run_id"],)).fetchone() is not None
+    if case["task_id"]:
+        return conn.execute("SELECT 1 FROM tasks WHERE task_id=?", (case["task_id"],)).fetchone() is not None
+    return source_type == "manual" and bool(source_ref or case["title"])
+
+
+def evaluation_case_agent_id(conn: sqlite3.Connection, case, requested_agent_id: str | None = None) -> str | None:
+    candidates = [requested_agent_id, case["agent_id"]]
+    if case["task_id"]:
+        task = conn.execute("SELECT owner_agent_id FROM tasks WHERE task_id=?", (case["task_id"],)).fetchone()
+        if task:
+            candidates.append(task["owner_agent_id"])
+    candidates.append("agt_qa")
+    candidates.extend(row["agent_id"] for row in conn.execute("SELECT agent_id FROM agents ORDER BY created_at LIMIT 3").fetchall())
+    for agent_id in candidates:
+        if agent_id and conn.execute("SELECT 1 FROM agents WHERE agent_id=?", (agent_id,)).fetchone():
+            return agent_id
+    return None
+
+
+def evaluation_case_checks(conn: sqlite3.Connection, case, min_score: float) -> tuple[dict, float, str]:
+    try:
+        rubric = json.loads(case["rubric_json"] or "{}")
+    except Exception:
+        rubric = {}
+    checks = {
+        "approved_before_run": case["review_status"] == "approved",
+        "task_bound": bool(case["task_id"]),
+        "input_summary_present": bool(case["input_summary"]),
+        "expected_output_summary_present": bool(case["expected_output_summary"]),
+        "rubric_present": bool(rubric),
+        "source_still_available": evaluation_case_source_available(conn, case),
+        "regression_failure_mode_documented": case["case_type"] not in {"regression", "safety"} or bool(case["failure_mode"]),
+    }
+    score = round(sum(1 for value in checks.values() if value) / len(checks), 2)
+    return checks, score, "pass" if score >= min_score else "fail"
+
+
+def run_evaluation_cases(conn: sqlite3.Connection, body, headers=None) -> tuple[dict, int]:
+    workspace_id = normalize_workspace_id(body.get("workspace_id") or (headers or {}).get("X-AgentOps-Workspace-Id") or "local-demo")
+    limit = min(max(int(body.get("limit") or 10), 1), 50)
+    runner_type = coerce_choice(body.get("runner_type"), {"rule", "llm_mock"}, "rule")
+    min_score = max(0.0, min(float(body.get("min_score") if body.get("min_score") is not None else 0.75), 1.0))
+    requested_status = coerce_choice(body.get("status"), {"candidate", "approved", "rejected", "stale", "superseded"}, "approved")
+    confirm_run = bool(body.get("confirm_run"))
+    case_ids = safe_json_list(body.get("case_ids") or body.get("case_id"), 50)
+    if body.get("case_id") and body.get("case_id") not in case_ids:
+        case_ids.append(body.get("case_id"))
+
+    where = ["workspace_id=?", "review_status=?"]
+    params: list = [workspace_id, requested_status]
+    if case_ids:
+        where.append("case_id IN (" + ",".join("?" for _ in case_ids) + ")")
+        params.extend(case_ids)
+    if body.get("case_type"):
+        where.append("case_type=?")
+        params.append(coerce_choice(body.get("case_type"), {"regression", "golden", "safety", "quality", "cost", "tool_use", "memory"}, "regression"))
+    cases = conn.execute(
+        f"""SELECT * FROM evaluation_case_candidates
+        WHERE {' AND '.join(where)}
+        ORDER BY updated_at DESC
+        LIMIT ?""",
+        [*params, limit],
+    ).fetchall()
+
+    planned = []
+    results = []
+    skipped = []
+    for case in cases:
+        checks, score, pass_fail = evaluation_case_checks(conn, case, min_score)
+        agent_id = evaluation_case_agent_id(conn, case, body.get("agent_id"))
+        plan = {
+            "case_id": case["case_id"],
+            "title": case["title"],
+            "case_type": case["case_type"],
+            "task_id": case["task_id"],
+            "source_ref": case["source_ref"],
+            "runner_type": runner_type,
+            "score": score,
+            "pass_fail": pass_fail,
+            "checks": checks,
+            "agent_id": agent_id,
+        }
+        if not case["task_id"]:
+            plan["skip_reason"] = "task_id_required_for_run_ledger"
+            skipped.append(plan)
+        elif not agent_id:
+            plan["skip_reason"] = "agent_required_for_run_ledger"
+            skipped.append(plan)
+        else:
+            planned.append(plan)
+
+    if not confirm_run:
+        return {
+            "provider": "agentops-evaluation",
+            "operation": "evaluation_case_run",
+            "status": "preview",
+            "created": False,
+            "workspace_id": workspace_id,
+            "summary": {
+                "selected": len(cases),
+                "planned": len(planned),
+                "skipped": len(skipped),
+                "min_score": min_score,
+            },
+            "planned_runs": planned,
+            "skipped": skipped,
+            "next_actions": [
+                "Review the planned case runs, then repeat with --confirm-run to write benchmark evidence.",
+                "Bind manual cases to a task before execution if they appear in skipped.",
+            ],
+            "safety": {
+                "ledger_mutated": False,
+                "live_execution_performed": False,
+                "raw_prompt_omitted": True,
+                "raw_response_omitted": True,
+                "token_omitted": True,
+            },
+            "token_omitted": True,
+        }, 200
+
+    created_at = now_iso()
+    for plan in planned:
+        case = conn.execute("SELECT * FROM evaluation_case_candidates WHERE case_id=?", (plan["case_id"],)).fetchone()
+        started_at = now_iso()
+        ended_at = now_iso()
+        run_id = new_id("run_evalcase")
+        evaluation_id = stable_id("eval_case_run", run_id)
+        artifact_id = stable_id("art_case_run", run_id)
+        case_run_id = new_id("ecr")
+        run_row = {
+            "run_id": run_id,
+            "workspace_id": workspace_id,
+            "task_id": case["task_id"],
+            "agent_id": plan["agent_id"],
+            "runtime_type": "mock",
+            "status": "completed",
+            "started_at": started_at,
+            "ended_at": ended_at,
+            "duration_ms": 1,
+            "input_summary": redact_text(f"Run approved evaluation case {case['case_id']}: {case['input_summary']}", 700),
+            "output_summary": redact_text(f"Evaluation case {case['case_id']} {plan['pass_fail']} with score {plan['score']}.", 700),
+            "model_provider": "agentops",
+            "model_name": f"evaluation-case-{runner_type}-runner",
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "reasoning_tokens": 0,
+            "cost_usd": 0,
+            "error_type": None,
+            "error_message": None,
+            "trace_id": stable_hash({"case_id": case["case_id"], "runner_type": runner_type, "created_at": created_at})[:24],
+            "parent_run_id": case["run_id"],
+            "delegation_id": f"evaluation_case:{case['case_id']}",
+            "approval_required": 0,
+            "created_at": created_at,
+        }
+        upsert_run(conn, run_row, "evaluation-case-runner", {"case_id": case["case_id"], "runner_type": runner_type, "raw_content_omitted": True})
+        eval_row = {
+            "evaluation_id": evaluation_id,
+            "task_id": case["task_id"],
+            "run_id": run_id,
+            "agent_id": plan["agent_id"],
+            "evaluator_type": runner_type,
+            "score": plan["score"],
+            "pass_fail": plan["pass_fail"],
+            "rubric_json": json.dumps(plan["checks"], ensure_ascii=False),
+            "notes": redact_text(f"Local evaluation case runner for {case['case_id']}.", 260),
+            "created_at": now_iso(),
+        }
+        upsert_evaluation(conn, eval_row, "evaluation-case-runner")
+        artifact_row = {
+            "artifact_id": artifact_id,
+            "task_id": case["task_id"],
+            "run_id": run_id,
+            "artifact_type": "evaluation_case_run_report",
+            "title": redact_text(f"Evaluation case run: {case['title']}", 160),
+            "uri": f"evaluation-case://{case['case_id']}/{run_id}",
+            "summary": redact_text(f"{plan['pass_fail'].upper()} score={plan['score']} checks={sum(1 for value in plan['checks'].values() if value)}/{len(plan['checks'])}", 360),
+            "created_at": now_iso(),
+        }
+        conn.execute(
+            """INSERT OR REPLACE INTO artifacts(artifact_id,task_id,run_id,artifact_type,title,uri,summary,created_at)
+            VALUES(:artifact_id,:task_id,:run_id,:artifact_type,:title,:uri,:summary,:created_at)""",
+            artifact_row,
+        )
+        ledger_row = {
+            "case_run_id": case_run_id,
+            "case_id": case["case_id"],
+            "workspace_id": workspace_id,
+            "run_id": run_id,
+            "evaluation_id": evaluation_id,
+            "artifact_id": artifact_id,
+            "runner_type": runner_type,
+            "status": "completed",
+            "score": plan["score"],
+            "pass_fail": plan["pass_fail"],
+            "checks_json": json.dumps(plan["checks"], ensure_ascii=False),
+            "created_by_agent_id": plan["agent_id"],
+            "created_at": now_iso(),
+        }
+        conn.execute(
+            """INSERT INTO evaluation_case_runs(case_run_id,case_id,workspace_id,run_id,evaluation_id,artifact_id,runner_type,status,score,pass_fail,checks_json,created_by_agent_id,created_at)
+            VALUES(:case_run_id,:case_id,:workspace_id,:run_id,:evaluation_id,:artifact_id,:runner_type,:status,:score,:pass_fail,:checks_json,:created_by_agent_id,:created_at)""",
+            ledger_row,
+        )
+        runtime_event(
+            conn,
+            "rtc_agent_gateway_local",
+            "evaluation_case_run.execute",
+            plan["pass_fail"],
+            run_id=run_id,
+            task_id=case["task_id"],
+            agent_id=plan["agent_id"],
+            input_summary=f"Approved evaluation case {case['case_id']}",
+            output_summary=f"{plan['pass_fail']} score={plan['score']}",
+            raw_payload_hash=stable_hash({"case_id": case["case_id"], "checks": plan["checks"]}),
+        )
+        audit(conn, "system", "evaluation-case-runner", "artifact.create", "artifacts", artifact_id, None, artifact_row, {"case_id": case["case_id"], "raw_content_omitted": True})
+        audit(conn, "system", "evaluation-case-runner", "evaluation_case_run.completed", "evaluation_case_runs", case_run_id, None, ledger_row, {"case_id": case["case_id"], "run_id": run_id})
+        results.append(evaluation_case_run_public(ledger_row))
+
+    return {
+        "provider": "agentops-evaluation",
+        "operation": "evaluation_case_run",
+        "status": "completed" if results else "skipped",
+        "created": bool(results),
+        "workspace_id": workspace_id,
+        "summary": {
+            "selected": len(cases),
+            "created": len(results),
+            "skipped": len(skipped),
+            "passed": sum(1 for item in results if item["pass_fail"] == "pass"),
+            "failed": sum(1 for item in results if item["pass_fail"] == "fail"),
+            "min_score": min_score,
+        },
+        "case_runs": results,
+        "skipped": skipped,
+        "safety": {
+            "ledger_mutated": bool(results),
+            "live_execution_performed": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }, 201 if results else 200
 
 
 def agent_gateway_record_artifact(conn, body) -> tuple[dict, int]:
@@ -12438,6 +12727,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"created": True})
             if path == "/api/evaluation-cases/propose":
                 payload, status = propose_evaluation_case_candidate(conn, body, self.headers)
+                conn.commit()
+                return self.send_json(payload, status)
+            if path == "/api/evaluation-cases/run":
+                payload, status = run_evaluation_cases(conn, body, self.headers)
                 conn.commit()
                 return self.send_json(payload, status)
             if path.startswith("/api/evaluation-cases/") and path.endswith("/approve"):

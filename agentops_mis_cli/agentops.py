@@ -845,6 +845,21 @@ def cmd_eval_review_case(args, client: AgentOpsClient) -> dict:
     return client.post(f"/api/evaluation-cases/{args.case_id}/{action}", {})
 
 
+def cmd_eval_run_cases(args, client: AgentOpsClient) -> dict:
+    payload = {
+        "workspace_id": client.workspace_id,
+        "case_ids": args.case_id or [],
+        "case_type": args.case_type,
+        "status": args.status,
+        "runner_type": args.runner_type,
+        "agent_id": args.agent_id,
+        "limit": args.limit,
+        "min_score": args.min_score,
+        "confirm_run": bool(args.confirm_run),
+    }
+    return client.post("/api/evaluation-cases/run", payload)
+
+
 def cmd_audit_emit(args, client: AgentOpsClient) -> dict:
     payload = {
         "workspace_id": client.workspace_id,
@@ -1807,6 +1822,16 @@ def build_parser() -> argparse.ArgumentParser:
     reject_case = eval_sub.add_parser("reject-case", help="Reject a noisy evaluation case candidate.")
     reject_case.add_argument("--case-id", required=True)
     reject_case.set_defaults(handler="eval_reject_case")
+    run_cases = eval_sub.add_parser("run-cases", help="Preview or execute approved evaluation cases through the local benchmark runner.")
+    run_cases.add_argument("--case-id", action="append", default=None, help="Approved case id to run. Repeatable. Defaults to latest approved cases.")
+    run_cases.add_argument("--case-type", default=None, choices=["regression", "golden", "safety", "quality", "cost", "tool_use", "memory"])
+    run_cases.add_argument("--status", default="approved", choices=["candidate", "approved", "rejected", "stale", "superseded"])
+    run_cases.add_argument("--runner-type", default="rule", choices=["rule", "llm_mock"])
+    run_cases.add_argument("--agent-id", default=None)
+    run_cases.add_argument("--limit", type=int, default=10)
+    run_cases.add_argument("--min-score", type=float, default=0.75)
+    run_cases.add_argument("--confirm-run", action="store_true")
+    run_cases.set_defaults(handler="eval_run_cases")
 
     audit_parser = sub.add_parser("audit", help="Audit commands.")
     audit_sub = audit_parser.add_subparsers(dest="action", required=True)
@@ -2123,6 +2148,7 @@ HANDLERS = {
     "eval_propose_case": cmd_eval_propose_case,
     "eval_approve_case": cmd_eval_review_case,
     "eval_reject_case": cmd_eval_review_case,
+    "eval_run_cases": cmd_eval_run_cases,
     "audit_emit": cmd_audit_emit,
     "workflow_templates": cmd_workflow_templates,
     "workflow_delivery_board": cmd_workflow_delivery_board,

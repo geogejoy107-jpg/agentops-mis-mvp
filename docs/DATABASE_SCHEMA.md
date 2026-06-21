@@ -180,6 +180,22 @@ CREATE TABLE IF NOT EXISTS evaluation_case_candidates (
     updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS evaluation_case_runs (
+    case_run_id TEXT PRIMARY KEY,
+    case_id TEXT NOT NULL,
+    workspace_id TEXT NOT NULL DEFAULT 'local-demo',
+    run_id TEXT NOT NULL,
+    evaluation_id TEXT NOT NULL,
+    artifact_id TEXT,
+    runner_type TEXT NOT NULL CHECK(runner_type IN ('rule','llm_mock')),
+    status TEXT NOT NULL CHECK(status IN ('preview','completed','skipped')),
+    score REAL NOT NULL DEFAULT 0,
+    pass_fail TEXT NOT NULL CHECK(pass_fail IN ('pass','fail')),
+    checks_json TEXT NOT NULL DEFAULT '{}',
+    created_by_agent_id TEXT,
+    created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS artifacts (
     artifact_id TEXT PRIMARY KEY,
     task_id TEXT,
