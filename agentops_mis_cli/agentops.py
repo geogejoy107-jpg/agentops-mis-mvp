@@ -839,8 +839,8 @@ def cmd_workflow_run_task(args, client: AgentOpsClient) -> dict:
 
     first_result = ((worker_result.get("results") or [{}])[0] or {})
     run_id = first_result.get("run_id")
-    run_detail = client.get(f"/api/runs/{run_id}") if run_id else None
-    task_detail = client.get(f"/api/tasks/{task_id}") if task_id else None
+    run_detail = client.get(f"/api/agent-gateway/runs/{run_id}") if run_id else None
+    task_detail = client.get(f"/api/agent-gateway/tasks/{task_id}") if task_id else None
     evidence = {
         "tool_calls": len((run_detail or {}).get("tool_calls") or []),
         "evaluations": len((run_detail or {}).get("evaluations") or []),
@@ -861,6 +861,11 @@ def cmd_workflow_run_task(args, client: AgentOpsClient) -> dict:
         "worker_processed": worker_result.get("processed"),
         "run_status": run.get("status"),
         "task_status": ((task_detail or {}).get("task") or {}).get("status"),
+        "readback": {
+            "run_provider": (run_detail or {}).get("provider"),
+            "task_provider": (task_detail or {}).get("provider"),
+            "required_scope": "tasks:read",
+        },
         "evidence": evidence,
         "created_task": created,
         "agent_register": register_result,

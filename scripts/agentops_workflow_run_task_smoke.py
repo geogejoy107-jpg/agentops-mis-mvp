@@ -74,6 +74,7 @@ def main() -> int:
     ])
     mock_payload = load_json(mock)
     evidence = mock_payload.get("evidence") or {}
+    readback = mock_payload.get("readback") or {}
     require(mock.returncode == 0, f"mock workflow command failed: {mock.stderr or mock.stdout}")
     require(mock_payload.get("workflow") == "run_task", f"wrong workflow: {mock_payload}")
     require(mock_payload.get("ok") is True, f"mock workflow did not complete: {mock_payload}")
@@ -83,6 +84,9 @@ def main() -> int:
     require(bool(mock_payload.get("run_id")), f"missing run id: {mock_payload}")
     require(mock_payload.get("run_status") == "completed", f"run not completed: {mock_payload}")
     require(mock_payload.get("task_status") == "completed", f"task not completed: {mock_payload}")
+    require(readback.get("run_provider") == "agent_gateway", f"run readback should use Agent Gateway: {mock_payload}")
+    require(readback.get("task_provider") == "agent_gateway", f"task readback should use Agent Gateway: {mock_payload}")
+    require(readback.get("required_scope") == "tasks:read", f"readback scope missing: {mock_payload}")
     require(evidence.get("tool_calls", 0) >= 1, f"missing tool evidence: {evidence}")
     require(evidence.get("evaluations", 0) >= 1, f"missing evaluation evidence: {evidence}")
 
@@ -111,6 +115,7 @@ def main() -> int:
         "mock_task_id": mock_payload.get("task_id"),
         "mock_run_id": mock_payload.get("run_id"),
         "mock_evidence": evidence,
+        "readback": readback,
         "hermes_gate_task_id": hermes_payload.get("task_id"),
         "secret_leaked": False,
     }, ensure_ascii=False, indent=2, sort_keys=True))

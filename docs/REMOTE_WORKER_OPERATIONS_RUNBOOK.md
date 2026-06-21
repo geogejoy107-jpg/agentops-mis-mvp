@@ -248,8 +248,9 @@ agentops workflow run-task \
 ```
 
 This creates the task through Agent Gateway, executes one worker iteration, and
-returns `task_id`, `run_id`, status, and evidence counts. Hermes/OpenClaw still
-require explicit `--confirm-run`.
+returns `task_id`, `run_id`, status, evidence counts, and a `readback` block
+showing final task/run evidence came from scoped Agent Gateway read endpoints.
+Hermes/OpenClaw still require explicit `--confirm-run`.
 
 For predefined customer delivery workflows, external agents and operators can
 avoid browser UI entirely:

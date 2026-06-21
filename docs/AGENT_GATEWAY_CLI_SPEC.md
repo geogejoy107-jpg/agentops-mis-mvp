@@ -638,10 +638,12 @@ agentops workflow run-task \
 ```
 
 The command returns JSON with `task_id`, `run_id`, `run_status`,
-`task_status`, `evidence`, and `token_omitted:true`. It must not print raw
-tokens, full prompts, full raw model responses, credentials, or private
-transcripts. Without `--confirm-run`, Hermes/OpenClaw create a planned task but
-do not execute the live adapter.
+`task_status`, `evidence`, `readback`, and `token_omitted:true`. Final task/run
+evidence is fetched through `GET /api/agent-gateway/tasks/:id` and
+`GET /api/agent-gateway/runs/:id` with `tasks:read`, not through public demo
+detail endpoints. It must not print raw tokens, full prompts, full raw model
+responses, credentials, or private transcripts. Without `--confirm-run`,
+Hermes/OpenClaw create a planned task but do not execute the live adapter.
 
 With `--confirm-run`, live Hermes/OpenClaw dispatch first checks the worker
 adapter readiness route. If the selected live adapter is `unavailable` or
