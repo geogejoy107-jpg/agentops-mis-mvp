@@ -40,6 +40,24 @@ def http_json(base_url: str) -> tuple[int, dict]:
         return exc.code, body
 
 
+def post_json(base_url: str, path: str, payload: dict) -> tuple[int, dict]:
+    req = urllib.request.Request(
+        base_url.rstrip("/") + path,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Accept": "application/json", "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            return resp.status, json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        try:
+            body = json.loads(exc.read().decode("utf-8"))
+        except Exception:
+            body = {"error": exc.reason}
+        return exc.code, body
+
+
 def run_cli(base_url: str, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [str(CLI), "--base-url", base_url, "commercial", "entitlements"],
@@ -74,6 +92,51 @@ def validate(payload: dict, label: str) -> None:
     require("billing integration" in (payload.get("contract") or ""), f"{label} contract should mention billing boundary")
 
 
+def validate_free_local_export_gate(base_url: str) -> dict:
+    status, payload = post_json(
+        base_url,
+        "/api/integrations/notion/export-confirmed",
+        {"confirm_export": True, "title": "Commercial entitlement smoke"},
+    )
+    require(status == 403, f"confirmed Notion export should be entitlement-blocked in Free Local: {status} {payload}")
+    require(payload.get("error") == "entitlement_required", f"wrong block error: {payload}")
+    require(payload.get("capability") == "notion_confirmed_export", f"wrong blocked capability: {payload}")
+    require(payload.get("required_edition") == "pro_workspace", f"wrong required edition: {payload}")
+    require(payload.get("current_edition") == "free_local", f"wrong current edition: {payload}")
+    require(payload.get("billing_call_performed") is False, f"billing should not be called: {payload}")
+    require(payload.get("live_execution_performed") is False, f"live work should not be performed: {payload}")
+    require(payload.get("token_omitted") is True, f"token omission proof missing: {payload}")
+    return {
+        "status": status,
+        "capability": payload.get("capability"),
+        "required_edition": payload.get("required_edition"),
+        "current_edition": payload.get("current_edition"),
+    }
+
+
+def validate_free_local_template_gates(base_url: str) -> dict:
+    results = {}
+    for action, path in {
+        "run": "/api/workflows/customer-task-templates/run",
+        "submit": "/api/workflows/customer-task-templates/submit",
+    }.items():
+        status, payload = post_json(base_url, path, {"template_id": "tpl_customer_kb_qa_bot"})
+        require(status == 403, f"template {action} should be entitlement-blocked in Free Local: {status} {payload}")
+        require(payload.get("error") == "entitlement_required", f"template {action} wrong block error: {payload}")
+        require(payload.get("capability") == "report_templates", f"template {action} wrong capability: {payload}")
+        require(payload.get("required_edition") == "pro_workspace", f"template {action} wrong required edition: {payload}")
+        require(payload.get("current_edition") == "free_local", f"template {action} wrong current edition: {payload}")
+        require(payload.get("billing_call_performed") is False, f"template {action} should not call billing: {payload}")
+        require(payload.get("live_execution_performed") is False, f"template {action} should not perform live work: {payload}")
+        results[action] = {
+            "status": status,
+            "capability": payload.get("capability"),
+            "required_edition": payload.get("required_edition"),
+            "current_edition": payload.get("current_edition"),
+        }
+    return results
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Verify commercial entitlement status API and CLI.")
     parser.add_argument("--base-url", default=os.environ.get("AGENTOPS_BASE_URL", "http://127.0.0.1:8787"))
@@ -85,6 +148,10 @@ def main() -> int:
         outputs.append(raw)
         require(status == 200, f"entitlement API failed: {status} {payload}")
         validate(payload, "api")
+        export_gate = validate_free_local_export_gate(args.base_url)
+        template_gates = validate_free_local_template_gates(args.base_url)
+        outputs.append(json.dumps(export_gate, ensure_ascii=False, sort_keys=True))
+        outputs.append(json.dumps(template_gates, ensure_ascii=False, sort_keys=True))
 
         with tempfile.TemporaryDirectory(prefix="agentops-commercial-entitlements-") as tmp:
             env = os.environ.copy()
@@ -102,6 +169,8 @@ def main() -> int:
             "ok": True,
             "edition": payload.get("edition"),
             "gate_count": len(payload.get("gates") or []),
+            "notion_confirmed_export_blocked": export_gate,
+            "report_template_execution_blocked": template_gates,
             "postgres_enabled": payload.get("capabilities", {}).get("postgres_adapter"),
             "billing_call_performed": payload.get("safety", {}).get("billing_call_performed"),
             "secret_leaked": False,

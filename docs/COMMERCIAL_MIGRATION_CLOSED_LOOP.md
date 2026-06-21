@@ -209,6 +209,13 @@ Initial status:
 - Example config: `config/entitlements.example.json`
 - API: `GET /api/commercial/entitlements`
 - CLI: `agentops commercial entitlements`
+- First fail-closed gate: Free Local blocks `confirm_export:true` on
+  `POST /api/integrations/notion/export-confirmed` for capability
+  `notion_confirmed_export`, while Notion preview/dry-run stays available.
+- First template gate: Free Local can list customer templates but blocks
+  `POST /api/workflows/customer-task-templates/run` and
+  `POST /api/workflows/customer-task-templates/submit` for capability
+  `report_templates`.
 - Smoke: `python3 scripts/commercial_entitlements_smoke.py`
 
 ### WP2: Production Safety Contract

@@ -240,6 +240,43 @@ def entitlement_status(headers) -> dict:
     }
 
 
+def commercial_capability_enabled(capability: str) -> bool:
+    return bool(entitlement_status(None).get("capabilities", {}).get(capability))
+
+
+def commercial_entitlement_block(conn, capability: str, operation: str, actor: str = "commercial-gate") -> dict:
+    status = entitlement_status(None)
+    required_edition = COMMERCIAL_CAPABILITY_GATES.get(capability, "pro_workspace")
+    payload = {
+        "error": "entitlement_required",
+        "provider": "agentops-commercial",
+        "operation": operation,
+        "capability": capability,
+        "required_edition": required_edition,
+        "current_edition": status.get("edition"),
+        "current_edition_label": status.get("edition_label"),
+        "created": False,
+        "dry_run": False,
+        "live_execution_performed": False,
+        "billing_call_performed": False,
+        "token_omitted": True,
+        "message": f"{capability} requires {required_edition}; current edition is {status.get('edition')}.",
+    }
+    audit(
+        conn,
+        "system",
+        actor,
+        "commercial.entitlement_blocked",
+        "commercial_capabilities",
+        capability,
+        None,
+        {"blocked": True, "operation": operation, "required_edition": required_edition},
+        {"current_edition": status.get("edition"), "billing_call_performed": False},
+    )
+    conn.commit()
+    return payload
+
+
 def split_provider_model(model, default_provider="unknown"):
     if isinstance(model, dict):
         model = model.get("primary") or model.get("model") or model.get("name")
@@ -6127,6 +6164,8 @@ def run_customer_task_template_workflow(conn, body: dict) -> tuple[dict, int]:
     template = templates.get(template_id)
     if not template:
         return {"error": "template not found", "template_id": template_id, "templates": list(templates)}, 404
+    if not commercial_capability_enabled("report_templates"):
+        return commercial_entitlement_block(conn, "report_templates", "workflow.customer_task_template.run", "customer-template-workflow"), 403
     adapter = body.get("adapter")
     use_worker_adapter = adapter in {"mock", "hermes", "openclaw"}
     if use_worker_adapter:
@@ -6354,6 +6393,8 @@ def submit_customer_task_template_job(conn, body: dict) -> tuple[dict, int]:
     template = templates.get(template_id)
     if not template:
         return {"error": "template not found", "template_id": template_id, "templates": list(templates)}, 404
+    if not commercial_capability_enabled("report_templates"):
+        return commercial_entitlement_block(conn, "report_templates", "workflow.customer_task_template.submit", "customer-template-workflow"), 403
     adapter = body.get("adapter") if body.get("adapter") in {"mock", "hermes", "openclaw"} else None
     now = now_iso()
     title = redact_text(body.get("title") or template["default_title"], 180)
@@ -10380,15 +10421,17 @@ def notion_dry_run_export(conn, actor="notion-dry-run") -> dict:
     return {"provider": "notion", "dry_run": True, "created": False, "sync_event_id": event["sync_event_id"], "preview": preview}
 
 
-def notion_export_confirmed(conn, body: dict) -> dict:
+def notion_export_confirmed(conn, body: dict) -> tuple[dict, int]:
     confirm = bool(body.get("confirm_export"))
     cfg = notion_config()
     markdown = build_notion_report(conn)
+    if confirm and not commercial_capability_enabled("notion_confirmed_export"):
+        return commercial_entitlement_block(conn, "notion_confirmed_export", "notion.export_confirmed", "notion-export"), 403
     if not confirm or not cfg["configured"]:
         event = create_sync_event(conn, "conn_notion_templates", "outbound", "report", "dry_run", {"confirm_export": confirm, "configured": cfg["configured"]})
         audit(conn, "system", "notion-export", "notion.export.skipped", "sync_events", event["sync_event_id"], None, {"dry_run": True}, {"confirm_export": confirm, "configured": cfg["configured"]})
         conn.commit()
-        return {"provider": "notion", "dry_run": True, "created": False, "requires_confirm_export": not confirm, "configured": cfg["configured"], "sync_event_id": event["sync_event_id"], "markdown": markdown, "block_count": len(text_blocks(markdown))}
+        return {"provider": "notion", "dry_run": True, "created": False, "requires_confirm_export": not confirm, "configured": cfg["configured"], "sync_event_id": event["sync_event_id"], "markdown": markdown, "block_count": len(text_blocks(markdown))}, 201
     try:
         result = post_notion_page(markdown, body.get("title", "AgentOps MIS 项目汇报工作台"))
         event = create_sync_event(conn, "conn_notion_templates", "outbound", "report", "created", result, external_object_id=result.get("notion_page_id"))
@@ -10396,16 +10439,16 @@ def notion_export_confirmed(conn, body: dict) -> dict:
             conn.execute(
                 "INSERT INTO external_object_links(link_id,internal_object_type,internal_object_id,external_provider,external_object_type,external_object_id,external_url,sync_direction,sync_status,last_synced_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                 (stable_id("lnk", "report", event["sync_event_id"]), "report", "agentops_mis_project_report", "notion", "page", result.get("notion_page_id"), result.get("url"), "outbound", "created", now_iso(), now_iso()),
-            )
+        )
         audit(conn, "user", "usr_founder", "notion.export_confirmed", "integrations", "notion", None, result, {"sync_event_id": event["sync_event_id"]})
         conn.commit()
-        return {**result, "sync_event_id": event["sync_event_id"]}
+        return {**result, "sync_event_id": event["sync_event_id"]}, 201
     except Exception as exc:
         err = redact_text(str(exc), 300)
         event = create_sync_event(conn, "conn_notion_templates", "outbound", "report", "failed", {"export_mode": cfg["export_mode"]}, error_message=err)
         audit(conn, "system", "notion-export", "notion.export_failed", "integrations", "notion", None, {"created": False}, {"error": err, "sync_event_id": event["sync_event_id"]})
         conn.commit()
-        return {"provider": "notion", "created": False, "configured": cfg["configured"], "export_mode": cfg["export_mode"], "error": err, "sync_event_id": event["sync_event_id"]}
+        return {"provider": "notion", "created": False, "configured": cfg["configured"], "export_mode": cfg["export_mode"], "error": err, "sync_event_id": event["sync_event_id"]}, 200
 
 
 def notion_import_preview(conn, body: dict) -> dict:
@@ -11300,7 +11343,8 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/integrations/notion/dry-run-export":
                 return self.send_json(notion_dry_run_export(conn), 201)
             if path == "/api/integrations/notion/export-confirmed":
-                return self.send_json(notion_export_confirmed(conn, body), 201)
+                payload, status = notion_export_confirmed(conn, body)
+                return self.send_json(payload, status)
             if path == "/api/integrations/notion/import-preview":
                 return self.send_json(notion_import_preview(conn, body))
             if path == "/api/integrations/notion/sync-memory-candidates":
@@ -11314,6 +11358,9 @@ class Handler(BaseHTTPRequestHandler):
                 dry_run = body.get("dry_run", True) is not False
                 confirm_export = bool(body.get("confirm_export", False))
                 cfg = notion_config()
+                if confirm_export and not commercial_capability_enabled("notion_confirmed_export"):
+                    payload = commercial_entitlement_block(conn, "notion_confirmed_export", "notion.export_report", "notion-export")
+                    return self.send_json(payload, 403)
                 if dry_run or not confirm_export or not cfg["configured"]:
                     return self.send_json({
                         "provider": "notion",
