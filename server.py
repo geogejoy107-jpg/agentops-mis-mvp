@@ -40,6 +40,7 @@ STATIC_DIR = ROOT / "static"
 ARTIFACTS_DIR = ROOT / "artifacts"
 RUNTIME_DIR = ROOT / ".agentops_runtime"
 WORKER_RUNTIME_DIR = RUNTIME_DIR / "workers"
+KNOWLEDGE_DIR = ROOT / "knowledge"
 OPENCLAW_HOME = Path.home() / ".openclaw"
 HERMES_HOME = Path.home() / ".hermes"
 OPENCLAW_BIN = Path("/opt/homebrew/bin/openclaw")
@@ -103,6 +104,13 @@ def split_provider_model(model, default_provider="unknown"):
 
 def redact_text(text: str | None, limit=200) -> str:
     value = str(text or "")
+    value = redact_full_text(value)
+    value = re.sub(r"\s+", " ", value).strip()
+    return value[:limit]
+
+
+def redact_full_text(text: str | None) -> str:
+    value = str(text or "")
     replacements = [
         (r"(?i)(bearer\s+)[a-z0-9._\-]+", r"\1[REDACTED]"),
         (r"(?i)(token|secret|password|api[_-]?key)\s*[:=]\s*['\"]?[^'\"\s,;]+", r"\1=[REDACTED]"),
@@ -112,8 +120,7 @@ def redact_text(text: str | None, limit=200) -> str:
     ]
     for pattern, repl in replacements:
         value = re.sub(pattern, repl, value)
-    value = re.sub(r"\s+", " ", value).strip()
-    return value[:limit]
+    return value
 
 
 def parse_ms(value):
@@ -688,6 +695,42 @@ CREATE TABLE IF NOT EXISTS migration_runs (
     FOREIGN KEY(to_base_id) REFERENCES bases(base_id)
 );
 
+CREATE TABLE IF NOT EXISTS agent_plans (
+    plan_id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL DEFAULT 'local-demo',
+    task_id TEXT,
+    run_id TEXT,
+    agent_id TEXT NOT NULL,
+    task_understanding TEXT NOT NULL,
+    referenced_specs_json TEXT NOT NULL DEFAULT '[]',
+    referenced_memories_json TEXT NOT NULL DEFAULT '[]',
+    referenced_bases_json TEXT NOT NULL DEFAULT '[]',
+    proposed_files_to_change_json TEXT NOT NULL DEFAULT '[]',
+    risk_level TEXT NOT NULL CHECK(risk_level IN ('low','medium','high','critical')),
+    approval_required INTEGER NOT NULL DEFAULT 0,
+    execution_steps_json TEXT NOT NULL DEFAULT '[]',
+    verification_plan TEXT,
+    rollback_plan TEXT,
+    status TEXT NOT NULL CHECK(status IN ('draft','submitted','approved','rejected','superseded')),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY(task_id) REFERENCES tasks(task_id),
+    FOREIGN KEY(run_id) REFERENCES runs(run_id),
+    FOREIGN KEY(agent_id) REFERENCES agents(agent_id)
+);
+
+CREATE TABLE IF NOT EXISTS knowledge_documents (
+    doc_id TEXT PRIMARY KEY,
+    path TEXT NOT NULL UNIQUE,
+    title TEXT NOT NULL,
+    category TEXT NOT NULL,
+    scope TEXT NOT NULL,
+    source_hash TEXT NOT NULL,
+    content_summary TEXT,
+    indexed_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_owner ON tasks(owner_agent_id);
 CREATE INDEX IF NOT EXISTS idx_runs_task ON runs(task_id);
@@ -705,6 +748,9 @@ CREATE INDEX IF NOT EXISTS idx_agent_gateway_tokens_status ON agent_gateway_toke
 CREATE INDEX IF NOT EXISTS idx_connectors_base ON connectors(base_id);
 CREATE INDEX IF NOT EXISTS idx_sync_events_connector ON sync_events(connector_id);
 CREATE INDEX IF NOT EXISTS idx_external_links_internal ON external_object_links(internal_object_type, internal_object_id);
+CREATE INDEX IF NOT EXISTS idx_agent_plans_task ON agent_plans(task_id);
+CREATE INDEX IF NOT EXISTS idx_agent_plans_agent ON agent_plans(agent_id);
+CREATE INDEX IF NOT EXISTS idx_knowledge_documents_category ON knowledge_documents(category);
 """
 
 
@@ -758,6 +804,19 @@ def ensure_schema_migrations(conn: sqlite3.Connection):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_workspace ON tasks(workspace_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_workspace ON runs(workspace_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_workflow_jobs_status ON workflow_jobs(status, created_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_plans_workspace ON agent_plans(workspace_id, created_at)")
+    ensure_knowledge_fts(conn)
+
+
+def ensure_knowledge_fts(conn: sqlite3.Connection) -> bool:
+    try:
+        conn.execute(
+            """CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts
+            USING fts5(doc_id UNINDEXED, path UNINDEXED, title, content)"""
+        )
+        return True
+    except sqlite3.OperationalError:
+        return False
 
 
 def ensure_v121_reference_data(conn: sqlite3.Connection):
@@ -1932,9 +1991,28 @@ def safe_json_metadata(value):
     return redact_text(str(value), 240)
 
 
+def safe_json_list(value, limit=40) -> list:
+    if value is None or value == "":
+        return []
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except Exception:
+            parsed = [item.strip() for item in value.split(",") if item.strip()]
+    else:
+        parsed = value
+    if not isinstance(parsed, list):
+        parsed = [parsed]
+    return [safe_json_metadata(item) for item in parsed[:limit]]
+
+
 VALID_AGENT_GATEWAY_SCOPES = {
     "agents:write",
     "agents:heartbeat",
+    "agent_plans:read",
+    "agent_plans:write",
+    "knowledge:read",
+    "knowledge:write",
     "tasks:create",
     "tasks:read",
     "tasks:claim",
@@ -3370,6 +3448,366 @@ def agent_gateway_list_memories(conn: sqlite3.Connection, qs: dict, headers, aut
         },
         "token_omitted": True,
     }, 200
+
+
+def markdown_title(content: str, fallback: str) -> str:
+    for line in content.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("# "):
+            return redact_text(stripped[2:], 160) or fallback
+    return fallback
+
+
+def knowledge_category(path: Path) -> str:
+    try:
+        rel = path.relative_to(ROOT)
+    except ValueError:
+        return "external"
+    parts = rel.parts
+    if not parts:
+        return "root"
+    if parts[0] == "knowledge" and len(parts) > 1:
+        return parts[1]
+    if parts[0] == "docs":
+        return "docs"
+    return "root"
+
+
+def knowledge_scope(path: Path) -> str:
+    try:
+        rel = path.relative_to(ROOT)
+    except ValueError:
+        return "project"
+    if rel.parts[:2] == ("knowledge", "shared"):
+        return "org"
+    if rel.parts[:2] == ("knowledge", "bases"):
+        return "base"
+    if rel.parts[:2] == ("knowledge", "runbooks"):
+        return "runbook"
+    return "project"
+
+
+def iter_knowledge_markdown_files() -> list[Path]:
+    candidates: list[Path] = []
+    for name in ["PROJECT_SPEC.md", "AGENT_WORKFLOW.md", "BASE_INDEX.md", "secret_registry.md"]:
+        path = ROOT / name
+        if path.exists():
+            candidates.append(path)
+    for base in [ROOT / "docs", KNOWLEDGE_DIR]:
+        if base.exists():
+            candidates.extend(sorted(base.rglob("*.md")))
+    unique = []
+    seen = set()
+    for path in candidates:
+        try:
+            resolved = path.resolve()
+            resolved.relative_to(ROOT)
+        except Exception:
+            continue
+        if resolved not in seen and ".git" not in resolved.parts and "node_modules" not in resolved.parts:
+            seen.add(resolved)
+            unique.append(resolved)
+    return unique
+
+
+def sync_knowledge_index(conn: sqlite3.Connection, rebuild: bool = False) -> dict:
+    fts_available = ensure_knowledge_fts(conn)
+    if rebuild:
+        conn.execute("DELETE FROM knowledge_documents")
+        if fts_available:
+            conn.execute("DELETE FROM knowledge_fts")
+    indexed = 0
+    changed = 0
+    deleted = 0
+    seen_doc_ids = set()
+    for path in iter_knowledge_markdown_files():
+        try:
+            content = path.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        rel = str(path.relative_to(ROOT))
+        doc_id = stable_id("kdoc", rel)
+        seen_doc_ids.add(doc_id)
+        source_hash = stable_hash({"path": rel, "content": content})
+        indexed_content = redact_full_text(content)
+        existing = conn.execute("SELECT source_hash FROM knowledge_documents WHERE doc_id=?", (doc_id,)).fetchone()
+        indexed += 1
+        if existing and existing["source_hash"] == source_hash and not rebuild:
+            continue
+        title = markdown_title(content, path.stem.replace("_", " ").replace("-", " ").title())
+        now = now_iso()
+        row = {
+            "doc_id": doc_id,
+            "path": rel,
+            "title": title,
+            "category": knowledge_category(path),
+            "scope": knowledge_scope(path),
+            "source_hash": source_hash,
+            "content_summary": redact_text(indexed_content, 360),
+            "indexed_at": now,
+            "updated_at": now,
+        }
+        conn.execute(
+            """INSERT INTO knowledge_documents(doc_id,path,title,category,scope,source_hash,content_summary,indexed_at,updated_at)
+            VALUES(:doc_id,:path,:title,:category,:scope,:source_hash,:content_summary,:indexed_at,:updated_at)
+            ON CONFLICT(doc_id) DO UPDATE SET
+                path=excluded.path,title=excluded.title,category=excluded.category,scope=excluded.scope,
+                source_hash=excluded.source_hash,content_summary=excluded.content_summary,updated_at=excluded.updated_at""",
+            row,
+        )
+        if fts_available:
+            conn.execute("DELETE FROM knowledge_fts WHERE doc_id=?", (doc_id,))
+            conn.execute(
+                "INSERT INTO knowledge_fts(doc_id,path,title,content) VALUES(?,?,?,?)",
+                (doc_id, rel, title, indexed_content),
+            )
+        changed += 1
+    existing_ids = {row["doc_id"] for row in conn.execute("SELECT doc_id FROM knowledge_documents").fetchall()}
+    for stale_id in sorted(existing_ids - seen_doc_ids):
+        conn.execute("DELETE FROM knowledge_documents WHERE doc_id=?", (stale_id,))
+        if fts_available:
+            conn.execute("DELETE FROM knowledge_fts WHERE doc_id=?", (stale_id,))
+        deleted += 1
+    return {"indexed": indexed, "changed": changed, "deleted": deleted, "fts_available": fts_available}
+
+
+def fts_query(raw: str) -> str:
+    terms = re.findall(r"[\w\u4e00-\u9fff]+", raw or "", flags=re.UNICODE)
+    terms = [term for term in terms if term.strip()]
+    return " OR ".join(terms[:8])
+
+
+def knowledge_search(conn: sqlite3.Connection, qs: dict, headers=None, auth_ctx=None) -> tuple[dict, int]:
+    query = (qs.get("q") or qs.get("query") or [""])[0].strip()
+    limit = min(max(int((qs.get("limit") or ["10"])[0]), 1), 50)
+    refresh = (qs.get("refresh") or ["false"])[0].lower() in {"1", "true", "yes"}
+    has_index = bool(conn.execute("SELECT 1 FROM knowledge_documents LIMIT 1").fetchone())
+    gateway_read = auth_ctx is not None
+    index_result = None
+    if not gateway_read and (refresh or not has_index):
+        index_result = sync_knowledge_index(conn, rebuild=False)
+        has_index = bool(conn.execute("SELECT 1 FROM knowledge_documents LIMIT 1").fetchone())
+    index_state = {
+        "indexed": has_index,
+        "refresh_requested": refresh,
+        "refresh_performed": bool(index_result),
+        "read_only": gateway_read,
+        "refresh_skipped_reason": "knowledge_read_is_non_mutating" if gateway_read and refresh else None,
+    }
+    rows = []
+    search_mode = "recent"
+    if query:
+        search_mode = "fts5" if ensure_knowledge_fts(conn) else "like"
+        try:
+            match = fts_query(query)
+            if not match:
+                raise sqlite3.OperationalError("empty fts query")
+            rows = rows_to_dicts(conn.execute(
+                """SELECT kd.*, snippet(knowledge_fts, 3, '', '', ' ... ', 18) AS snippet, bm25(knowledge_fts) AS rank
+                FROM knowledge_fts
+                JOIN knowledge_documents kd ON kd.doc_id=knowledge_fts.doc_id
+                WHERE knowledge_fts MATCH ?
+                ORDER BY rank LIMIT ?""",
+                (match, limit),
+            ).fetchall())
+        except sqlite3.OperationalError:
+            like = f"%{query}%"
+            search_mode = "like"
+            rows = rows_to_dicts(conn.execute(
+                """SELECT *, content_summary AS snippet, 0 AS rank FROM knowledge_documents
+                WHERE title LIKE ? OR path LIKE ? OR content_summary LIKE ?
+                ORDER BY updated_at DESC LIMIT ?""",
+                (like, like, like, limit),
+            ).fetchall())
+    else:
+        rows = rows_to_dicts(conn.execute(
+            "SELECT *, content_summary AS snippet, 0 AS rank FROM knowledge_documents ORDER BY updated_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall())
+    return {
+        "provider": "agentops-knowledge",
+        "operation": "knowledge_search",
+        "query": query,
+        "search_mode": search_mode,
+        "results": rows,
+        "count": len(rows),
+        "index": index_result or index_state,
+        "token_omitted": True,
+    }, 200
+
+
+def list_agent_plans(conn: sqlite3.Connection, qs: dict, headers=None, auth_ctx=None) -> tuple[dict, int]:
+    ident = agent_gateway_identity(headers or {}, qs=qs, auth_ctx=auth_ctx)
+    limit = min(max(int((qs.get("limit") or ["25"])[0]), 1), 100)
+    where = ["COALESCE(ap.workspace_id,'local-demo')=?"]
+    params: list = [ident["workspace_id"]]
+    if "task_id" in qs:
+        task_id = qs["task_id"][0]
+        _task, access_error = agent_gateway_task_read_access(conn, task_id, ident, auth_ctx)
+        if access_error:
+            return access_error
+        where.append("ap.task_id=?")
+        params.append(task_id)
+    if "run_id" in qs:
+        run_id = qs["run_id"][0]
+        _run, access_error = agent_gateway_run_read_access(conn, run_id, ident, auth_ctx)
+        if access_error:
+            return access_error
+        where.append("ap.run_id=?")
+        params.append(run_id)
+    if agent_gateway_is_bound_auth(auth_ctx):
+        where.append("ap.agent_id=?")
+        params.append(ident["agent_id"])
+    elif "agent_id" in qs:
+        where.append("ap.agent_id=?")
+        params.append(qs["agent_id"][0])
+    rows = rows_to_dicts(conn.execute(
+        "SELECT ap.* FROM agent_plans ap WHERE " + " AND ".join(where) + " ORDER BY ap.created_at DESC LIMIT ?",
+        [*params, limit],
+    ).fetchall())
+    return {
+        "provider": "agentops-agent-plan",
+        "operation": "agent_plan_list",
+        "agent_plans": rows,
+        "count": len(rows),
+        "workspace_id": ident["workspace_id"],
+        "token_omitted": True,
+    }, 200
+
+
+def get_agent_plan(conn: sqlite3.Connection, plan_id: str, headers=None, auth_ctx=None) -> tuple[dict, int]:
+    ident = agent_gateway_identity(headers or {}, auth_ctx=auth_ctx)
+    row = conn.execute("SELECT * FROM agent_plans WHERE plan_id=?", (plan_id,)).fetchone()
+    if not row:
+        return {"error": "agent plan not found"}, 404
+    if row["workspace_id"] != ident["workspace_id"]:
+        return workspace_forbidden("agent_plan", plan_id, ident["workspace_id"], row["workspace_id"])
+    if agent_gateway_is_bound_auth(auth_ctx) and row["agent_id"] != ident["agent_id"]:
+        return {"error": "forbidden", "message": "Agent token cannot read another agent's plan."}, 403
+    return {"provider": "agentops-agent-plan", "operation": "agent_plan_get", "agent_plan": dict(row), "token_omitted": True}, 200
+
+
+def load_json_list_field(row: sqlite3.Row | dict, field: str) -> list:
+    try:
+        value = row[field]
+    except Exception:
+        value = "[]"
+    try:
+        parsed = json.loads(value or "[]")
+    except Exception:
+        parsed = []
+    return parsed if isinstance(parsed, list) else []
+
+
+def verify_agent_plan_row(row: sqlite3.Row | dict) -> dict:
+    specs = load_json_list_field(row, "referenced_specs_json")
+    memories = load_json_list_field(row, "referenced_memories_json")
+    bases = load_json_list_field(row, "referenced_bases_json")
+    files = load_json_list_field(row, "proposed_files_to_change_json")
+    steps = load_json_list_field(row, "execution_steps_json")
+    risk = row["risk_level"]
+    approval_required = bool(row["approval_required"])
+    checks = [
+        {"id": "read_specs", "ok": bool(specs), "message": "Plan references specs or workflow docs."},
+        {"id": "retrieve_memory", "ok": bool(memories), "message": "Plan references memory, knowledge, or failure-case context."},
+        {"id": "compare_bases", "ok": bool(bases), "message": "Plan references base constraints or reusable foundations."},
+        {"id": "execution_steps", "ok": len(steps) >= 3, "message": "Plan includes concrete execution steps."},
+        {"id": "verification_plan", "ok": bool(str(row["verification_plan"] or "").strip()), "message": "Plan includes verification path."},
+        {"id": "rollback_plan", "ok": bool(str(row["rollback_plan"] or "").strip()), "message": "Plan includes rollback path."},
+        {"id": "risk_gate", "ok": risk not in {"high", "critical"} or approval_required, "message": "High/critical risk requires approval."},
+        {"id": "file_scope", "ok": bool(files) or risk == "low", "message": "Non-low work names proposed files or surfaces."},
+    ]
+    failed = [check for check in checks if not check["ok"]]
+    return {
+        "pass": not failed,
+        "checks": checks,
+        "failed_checks": failed,
+        "summary": {
+            "referenced_specs": len(specs),
+            "referenced_memories": len(memories),
+            "referenced_bases": len(bases),
+            "proposed_files_to_change": len(files),
+            "execution_steps": len(steps),
+            "risk_level": risk,
+            "approval_required": approval_required,
+        },
+        "token_omitted": True,
+    }
+
+
+def verify_agent_plan(conn: sqlite3.Connection, plan_id: str, headers=None, auth_ctx=None) -> tuple[dict, int]:
+    payload, status = get_agent_plan(conn, plan_id, headers, auth_ctx)
+    if status != 200:
+        return payload, status
+    row = payload["agent_plan"]
+    verification = verify_agent_plan_row(row)
+    return {
+        "provider": "agentops-agent-plan",
+        "operation": "agent_plan_verify",
+        "plan_id": plan_id,
+        "agent_plan": row,
+        "verification": verification,
+        "token_omitted": True,
+    }, 200
+
+
+def agent_gateway_create_agent_plan(conn: sqlite3.Connection, body) -> tuple[dict, int]:
+    ident = agent_gateway_identity({}, body)
+    agent_id = ident["agent_id"]
+    if not agent_id:
+        return {"error": "agent_id is required"}, 400
+    task_id = body.get("task_id")
+    run_id = body.get("run_id")
+    if run_id:
+        run, access_error = ensure_run_access(conn, run_id, ident)
+        if access_error:
+            return access_error
+        task_id = task_id or run["task_id"]
+    elif task_id:
+        task = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+        if not task:
+            return {"error": "task not found"}, 404
+        actual_workspace = row_workspace(task)
+        if actual_workspace != ident["workspace_id"]:
+            return workspace_forbidden("task", task_id, ident["workspace_id"], actual_workspace)
+        if not agent_can_access_task(task, agent_id):
+            return {"error": "forbidden", "message": f"Task {task_id} is assigned to another agent.", "owner_agent_id": task["owner_agent_id"]}, 403
+    understanding = redact_text(body.get("task_understanding") or body.get("understanding") or "", 800)
+    if not understanding:
+        return {"error": "task_understanding is required"}, 400
+    risk = coerce_choice(body.get("risk_level"), VALID_RISK_LEVELS, "medium")
+    row = {
+        "plan_id": body.get("plan_id") or stable_id("plan", agent_id, task_id or run_id or stable_hash(understanding)[:12], now_iso()),
+        "workspace_id": ident["workspace_id"],
+        "task_id": task_id,
+        "run_id": run_id,
+        "agent_id": agent_id,
+        "task_understanding": understanding,
+        "referenced_specs_json": json.dumps(safe_json_list(body.get("referenced_specs")), ensure_ascii=False),
+        "referenced_memories_json": json.dumps(safe_json_list(body.get("referenced_memories")), ensure_ascii=False),
+        "referenced_bases_json": json.dumps(safe_json_list(body.get("referenced_bases")), ensure_ascii=False),
+        "proposed_files_to_change_json": json.dumps(safe_json_list(body.get("proposed_files_to_change")), ensure_ascii=False),
+        "risk_level": risk,
+        "approval_required": 1 if body.get("approval_required") or risk in {"high", "critical"} else 0,
+        "execution_steps_json": json.dumps(safe_json_list(body.get("execution_steps")), ensure_ascii=False),
+        "verification_plan": redact_text(body.get("verification_plan"), 800) if body.get("verification_plan") else None,
+        "rollback_plan": redact_text(body.get("rollback_plan"), 800) if body.get("rollback_plan") else None,
+        "status": coerce_choice(body.get("status"), {"draft", "submitted", "approved", "rejected", "superseded"}, "submitted"),
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+    }
+    conn.execute(
+        """INSERT INTO agent_plans(plan_id,workspace_id,task_id,run_id,agent_id,task_understanding,referenced_specs_json,
+        referenced_memories_json,referenced_bases_json,proposed_files_to_change_json,risk_level,approval_required,
+        execution_steps_json,verification_plan,rollback_plan,status,created_at,updated_at)
+        VALUES(:plan_id,:workspace_id,:task_id,:run_id,:agent_id,:task_understanding,:referenced_specs_json,
+        :referenced_memories_json,:referenced_bases_json,:proposed_files_to_change_json,:risk_level,:approval_required,
+        :execution_steps_json,:verification_plan,:rollback_plan,:status,:created_at,:updated_at)""",
+        row,
+    )
+    audit(conn, "agent", agent_id, "agent_gateway.agent_plan_create", "agent_plans", row["plan_id"], None, row, {"raw_omitted": True})
+    runtime_event(conn, "rtc_agent_gateway_local", "agent_plan.create", "completed", run_id=run_id, task_id=task_id, agent_id=agent_id, output_summary=understanding)
+    return {"agent_plan": row, "token_omitted": True}, 201
 
 
 def agent_gateway_review_queue(conn: sqlite3.Connection, qs: dict, headers, auth_ctx=None) -> tuple[dict, int]:
@@ -8763,6 +9201,41 @@ class Handler(BaseHTTPRequestHandler):
                 payload, status = agent_gateway_list_artifacts(conn, query, self.headers, auth_ctx)
                 conn.commit()
                 return self.send_json(payload, status)
+            if path == "/api/agent-gateway/knowledge/search":
+                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "knowledge:read")
+                if auth_error:
+                    return self.send_json(auth_error, agent_gateway_error_status(auth_error))
+                payload, status = knowledge_search(conn, dict(qs), self.headers, auth_ctx)
+                conn.commit()
+                return self.send_json(payload, status)
+            if path == "/api/agent-gateway/agent-plans":
+                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "agent_plans:read")
+                if auth_error:
+                    return self.send_json(auth_error, agent_gateway_error_status(auth_error))
+                query = dict(qs)
+                if agent_gateway_is_bound_auth(auth_ctx):
+                    requested_header_workspace = normalize_workspace_id(self.headers.get("X-AgentOps-Workspace-Id") or auth_ctx["workspace_id"])
+                    if requested_header_workspace != auth_ctx["workspace_id"]:
+                        return self.send_json({"error": "forbidden", "message": "Agent token cannot use another workspace header."}, 403)
+                    requested_workspace = requested_workspace_from_qs(query, auth_ctx["workspace_id"])
+                    if requested_workspace != auth_ctx["workspace_id"]:
+                        return self.send_json({"error": "forbidden", "message": "Agent token cannot list agent plans from another workspace."}, 403)
+                    query["workspace_id"] = [auth_ctx["workspace_id"]]
+                payload, status = list_agent_plans(conn, query, self.headers, auth_ctx)
+                conn.commit()
+                return self.send_json(payload, status)
+            if path.startswith("/api/agent-gateway/agent-plans/"):
+                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "agent_plans:read")
+                if auth_error:
+                    return self.send_json(auth_error, agent_gateway_error_status(auth_error))
+                if path.endswith("/verify"):
+                    plan_id = path.split("/")[-2]
+                    payload, status = verify_agent_plan(conn, plan_id, self.headers, auth_ctx)
+                else:
+                    plan_id = path.split("/")[-1]
+                    payload, status = get_agent_plan(conn, plan_id, self.headers, auth_ctx)
+                conn.commit()
+                return self.send_json(payload, status)
             if path == "/api/agent-gateway/approvals":
                 auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
                 if auth_error:
@@ -8870,6 +9343,14 @@ class Handler(BaseHTTPRequestHandler):
                 })
             if path == "/api/tool-calls":
                 return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM tool_calls ORDER BY created_at DESC").fetchall()))
+            if path == "/api/knowledge/search":
+                payload, status = knowledge_search(conn, dict(qs), self.headers)
+                conn.commit()
+                return self.send_json(payload, status)
+            if path == "/api/agent-plans":
+                payload, status = list_agent_plans(conn, dict(qs), self.headers)
+                conn.commit()
+                return self.send_json(payload, status)
             if path == "/api/approvals":
                 return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM approvals ORDER BY created_at DESC").fetchall()))
             if path == "/api/memories":
@@ -9031,6 +9512,8 @@ class Handler(BaseHTTPRequestHandler):
                     "/api/agent-gateway/runs/start": "runs:write",
                     "/api/agent-gateway/tool-calls": "toolcalls:write",
                     "/api/agent-gateway/artifacts": "artifacts:write",
+                    "/api/agent-gateway/knowledge/index": "knowledge:write",
+                    "/api/agent-gateway/agent-plans": "agent_plans:write",
                     "/api/agent-gateway/approvals/request": "approvals:request",
                     "/api/agent-gateway/memories/propose": "memories:propose",
                     "/api/agent-gateway/evaluations/submit": "evaluations:submit",
@@ -9081,6 +9564,13 @@ class Handler(BaseHTTPRequestHandler):
                     payload, status = agent_gateway_record_tool_call(conn, body)
                 elif path == "/api/agent-gateway/artifacts":
                     payload, status = agent_gateway_record_artifact(conn, body)
+                elif path == "/api/agent-gateway/knowledge/index":
+                    payload = sync_knowledge_index(conn, rebuild=bool(body.get("rebuild")))
+                    audit(conn, "agent", (auth_ctx or {}).get("agent_id") or "knowledge-index", "agent_gateway.knowledge_index", "knowledge_documents", "index", None, {"operation": "knowledge_index", **payload}, {"raw_content_omitted": True})
+                    status = 200
+                    payload = {"provider": "agentops-knowledge", "operation": "knowledge_index", **payload, "token_omitted": True}
+                elif path == "/api/agent-gateway/agent-plans":
+                    payload, status = agent_gateway_create_agent_plan(conn, body)
                 elif path == "/api/agent-gateway/approvals/request":
                     payload, status = agent_gateway_request_approval(conn, body)
                 elif path == "/api/agent-gateway/memories/propose":
@@ -9093,6 +9583,10 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send_json({"error": "unknown agent gateway endpoint"}, 404)
                 conn.commit()
                 return self.send_json(payload, status)
+            if path == "/api/knowledge/index":
+                payload = sync_knowledge_index(conn, rebuild=bool(body.get("rebuild")))
+                conn.commit()
+                return self.send_json({"provider": "agentops-knowledge", "operation": "knowledge_index", **payload, "token_omitted": True}, 200)
             if path == "/api/agents":
                 agent_id = body.get("agent_id") or new_id("agt")
                 now = now_iso()

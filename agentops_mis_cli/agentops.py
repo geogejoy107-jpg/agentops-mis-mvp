@@ -508,6 +508,56 @@ def cmd_artifact_list(args, client: AgentOpsClient) -> dict:
     return client.get("/api/agent-gateway/artifacts", query=query)
 
 
+def cmd_knowledge_search(args, client: AgentOpsClient) -> dict:
+    return client.get("/api/agent-gateway/knowledge/search", query={
+        "q": args.query,
+        "limit": args.limit,
+        "refresh": "true" if args.refresh else None,
+    })
+
+
+def cmd_knowledge_index(args, client: AgentOpsClient) -> dict:
+    return client.post("/api/agent-gateway/knowledge/index", {"rebuild": bool(args.rebuild)})
+
+
+def cmd_agent_plan_create(args, client: AgentOpsClient) -> dict:
+    payload = {
+        "workspace_id": client.workspace_id,
+        "agent_id": args.agent_id or client.agent_id,
+        "task_id": args.task_id,
+        "run_id": args.run_id,
+        "task_understanding": args.task_understanding,
+        "referenced_specs": split_csv(args.referenced_specs),
+        "referenced_memories": split_csv(args.referenced_memories),
+        "referenced_bases": split_csv(args.referenced_bases),
+        "proposed_files_to_change": split_csv(args.proposed_files_to_change),
+        "risk_level": args.risk,
+        "approval_required": bool(args.approval_required),
+        "execution_steps": parse_json_value(args.execution_steps_json, split_csv(args.execution_steps)),
+        "verification_plan": args.verification_plan,
+        "rollback_plan": args.rollback_plan,
+        "status": args.status,
+    }
+    return client.post("/api/agent-gateway/agent-plans", payload)
+
+
+def cmd_agent_plan_list(args, client: AgentOpsClient) -> dict:
+    return client.get("/api/agent-gateway/agent-plans", query={
+        "task_id": args.task_id,
+        "run_id": args.run_id,
+        "agent_id": args.agent_id,
+        "limit": args.limit,
+    })
+
+
+def cmd_agent_plan_get(args, client: AgentOpsClient) -> dict:
+    return client.get(f"/api/agent-gateway/agent-plans/{args.plan_id}")
+
+
+def cmd_agent_plan_verify(args, client: AgentOpsClient) -> dict:
+    return client.get(f"/api/agent-gateway/agent-plans/{args.plan_id}/verify")
+
+
 def cmd_approval_request(args, client: AgentOpsClient) -> dict:
     payload = {
         "workspace_id": client.workspace_id,
@@ -1321,6 +1371,49 @@ def build_parser() -> argparse.ArgumentParser:
     artifact_record.add_argument("--content-hash", default=None)
     artifact_record.set_defaults(handler="artifact_record")
 
+    knowledge = sub.add_parser("knowledge", help="Knowledge base and Markdown index commands.")
+    knowledge_sub = knowledge.add_subparsers(dest="action", required=True)
+    knowledge_search = knowledge_sub.add_parser("search", help="Search indexed specs, base notes, runbooks and shared memory.")
+    knowledge_search.add_argument("query", nargs="?", default="")
+    knowledge_search.add_argument("--limit", type=int, default=10)
+    knowledge_search.add_argument("--refresh", action="store_true")
+    knowledge_search.set_defaults(handler="knowledge_search")
+    knowledge_index = knowledge_sub.add_parser("index", help="Refresh the local Markdown knowledge FTS index.")
+    knowledge_index.add_argument("--rebuild", action="store_true")
+    knowledge_index.set_defaults(handler="knowledge_index")
+
+    agent_plan = sub.add_parser("agent-plan", help="Agent work method plan commands.")
+    agent_plan_sub = agent_plan.add_subparsers(dest="action", required=True)
+    agent_plan_create = agent_plan_sub.add_parser("create", help="Submit the required READ/PLAN/RETRIEVE/COMPARE execution plan.")
+    agent_plan_create.add_argument("--agent-id", default=None)
+    agent_plan_create.add_argument("--task-id", default=None)
+    agent_plan_create.add_argument("--run-id", default=None)
+    agent_plan_create.add_argument("--task-understanding", required=True)
+    agent_plan_create.add_argument("--referenced-specs", default="")
+    agent_plan_create.add_argument("--referenced-memories", default="")
+    agent_plan_create.add_argument("--referenced-bases", default="")
+    agent_plan_create.add_argument("--proposed-files-to-change", default="")
+    agent_plan_create.add_argument("--risk", default="medium", choices=["low", "medium", "high", "critical"])
+    agent_plan_create.add_argument("--approval-required", action="store_true")
+    agent_plan_create.add_argument("--execution-steps", default="")
+    agent_plan_create.add_argument("--execution-steps-json", default=None)
+    agent_plan_create.add_argument("--verification-plan", default="")
+    agent_plan_create.add_argument("--rollback-plan", default="")
+    agent_plan_create.add_argument("--status", default="submitted", choices=["draft", "submitted", "approved", "rejected", "superseded"])
+    agent_plan_create.set_defaults(handler="agent_plan_create")
+    agent_plan_list = agent_plan_sub.add_parser("list", help="List submitted agent plans.")
+    agent_plan_list.add_argument("--task-id", default=None)
+    agent_plan_list.add_argument("--run-id", default=None)
+    agent_plan_list.add_argument("--agent-id", default=None)
+    agent_plan_list.add_argument("--limit", type=int, default=25)
+    agent_plan_list.set_defaults(handler="agent_plan_list")
+    agent_plan_get = agent_plan_sub.add_parser("get", help="Read one agent plan.")
+    agent_plan_get.add_argument("--plan-id", required=True)
+    agent_plan_get.set_defaults(handler="agent_plan_get")
+    agent_plan_verify = agent_plan_sub.add_parser("verify", help="Verify one agent plan has required method-block evidence.")
+    agent_plan_verify.add_argument("--plan-id", required=True)
+    agent_plan_verify.set_defaults(handler="agent_plan_verify")
+
     approval = sub.add_parser("approval", help="Approval commands.")
     approval_sub = approval.add_subparsers(dest="action", required=True)
     approval_list = approval_sub.add_parser("list", help="List approvals for operator review.")
@@ -1550,7 +1643,7 @@ def build_parser() -> argparse.ArgumentParser:
     enroll_create.add_argument("--name", default="Remote Agent")
     enroll_create.add_argument("--role", default="Remote AI Digital Employee")
     enroll_create.add_argument("--runtime", default="mock")
-    enroll_create.add_argument("--scopes", default="agents:write,agents:heartbeat,tasks:create,tasks:read,tasks:claim,runs:write,toolcalls:write,artifacts:write,approvals:request,memories:propose,evaluations:submit,audit:write")
+    enroll_create.add_argument("--scopes", default="agents:write,agents:heartbeat,knowledge:read,agent_plans:read,agent_plans:write,tasks:create,tasks:read,tasks:claim,runs:write,toolcalls:write,artifacts:write,approvals:request,memories:propose,evaluations:submit,audit:write")
     enroll_create.add_argument("--ttl-days", type=int, default=30)
     enroll_create.add_argument("--heartbeat-timeout-sec", type=int, default=300)
     enroll_create.add_argument("--label", default="")
@@ -1562,7 +1655,7 @@ def build_parser() -> argparse.ArgumentParser:
     enroll_request.add_argument("--name", default="Remote Agent")
     enroll_request.add_argument("--role", default="Remote AI Digital Employee")
     enroll_request.add_argument("--runtime", default="mock")
-    enroll_request.add_argument("--scopes", default="agents:heartbeat,tasks:create,tasks:read,tasks:claim,runs:write,toolcalls:write,evaluations:submit,audit:write")
+    enroll_request.add_argument("--scopes", default="agents:heartbeat,knowledge:read,agent_plans:read,agent_plans:write,tasks:create,tasks:read,tasks:claim,runs:write,toolcalls:write,evaluations:submit,audit:write")
     enroll_request.add_argument("--reason", default="Remote worker needs scoped access to process assigned MIS tasks.")
     enroll_request.set_defaults(handler="enrollment_request")
 
@@ -1635,6 +1728,12 @@ HANDLERS = {
     "toolcall_record": cmd_toolcall_record,
     "artifact_list": cmd_artifact_list,
     "artifact_record": cmd_artifact_record,
+    "knowledge_search": cmd_knowledge_search,
+    "knowledge_index": cmd_knowledge_index,
+    "agent_plan_create": cmd_agent_plan_create,
+    "agent_plan_list": cmd_agent_plan_list,
+    "agent_plan_get": cmd_agent_plan_get,
+    "agent_plan_verify": cmd_agent_plan_verify,
     "approval_list": cmd_approval_list,
     "approval_approve": cmd_approval_decide,
     "approval_reject": cmd_approval_decide,

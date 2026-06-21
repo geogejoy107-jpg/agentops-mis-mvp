@@ -215,5 +215,8 @@ CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_logs(entity_type, entity_id
 | `template_packages` | 用例模板：agent roles、task schema、memory schema、quality gates、approval policy。 |
 | `template_bindings` | 模板与 base/workspace 的绑定。 |
 | `migration_runs` | base/template switching preview 和未来迁移结果。 |
+| `agent_plans` | Agent 执行前的 READ/PLAN/RETRIEVE/COMPARE 计划账本。 |
+| `knowledge_documents` | Markdown 知识文件的索引元数据、hash、分类和摘要。 |
+| `knowledge_fts` | SQLite FTS5 虚拟表，用于第一版 `/api/knowledge/search`。 |
 
 隐私边界保持不变：这些扩展表记录结构化状态、短摘要、hash、连接器状态和迁移预览，不存 credentials、私聊正文、完整 transcript 或真实 prompt 原文。

@@ -156,7 +156,7 @@ agentops enrollment create \
   --agent-id agt_remote_builder \
   --name "Remote Builder" \
   --runtime openclaw \
-  --scopes agents:write,agents:heartbeat,tasks:create,tasks:read,tasks:claim,runs:write,toolcalls:write,artifacts:write,evaluations:submit,audit:write \
+  --scopes agents:write,agents:heartbeat,knowledge:read,agent_plans:read,agent_plans:write,tasks:create,tasks:read,tasks:claim,runs:write,toolcalls:write,artifacts:write,evaluations:submit,audit:write \
   --ttl-days 30
 ```
 
@@ -194,7 +194,7 @@ agentops enrollment request \
   --agent-id agt_customer_worker \
   --name "Customer Worker" \
   --runtime mock \
-  --scopes agents:heartbeat,tasks:create,tasks:read,tasks:claim,runs:write,toolcalls:write,evaluations:submit,audit:write \
+  --scopes agents:heartbeat,knowledge:read,agent_plans:read,agent_plans:write,tasks:create,tasks:read,tasks:claim,runs:write,toolcalls:write,evaluations:submit,audit:write \
   --reason "Customer server worker needs to process assigned MIS tasks"
 ```
 
@@ -1124,6 +1124,12 @@ Current endpoint scope map:
 | `POST /api/agent-gateway/tool-calls` | `toolcalls:write` |
 | `GET /api/agent-gateway/artifacts` | `tasks:read` |
 | `POST /api/agent-gateway/artifacts` | `artifacts:write` |
+| `GET /api/agent-gateway/knowledge/search` | `knowledge:read` |
+| `POST /api/agent-gateway/knowledge/index` | `knowledge:write` |
+| `GET /api/agent-gateway/agent-plans` | `agent_plans:read` |
+| `GET /api/agent-gateway/agent-plans/:plan_id` | `agent_plans:read` |
+| `GET /api/agent-gateway/agent-plans/:plan_id/verify` | `agent_plans:read` |
+| `POST /api/agent-gateway/agent-plans` | `agent_plans:write` |
 | `GET /api/agent-gateway/approvals` | `tasks:read` |
 | `POST /api/agent-gateway/approvals/request` | `approvals:request` |
 | `GET /api/agent-gateway/memories` | `tasks:read` |

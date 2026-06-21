@@ -83,16 +83,74 @@ GET /api/agent-gateway/runs/:id/graph
 GET /api/agent-gateway/artifacts
 GET /api/agent-gateway/approvals
 GET /api/agent-gateway/memories
+GET /api/agent-gateway/knowledge/search?q=workflow
+GET /api/agent-gateway/agent-plans
+GET /api/agent-gateway/agent-plans/:plan_id
+GET /api/agent-gateway/agent-plans/:plan_id/verify
+POST /api/agent-gateway/agent-plans
 GET /api/agent-gateway/review/queue
 ```
 
-These require `tasks:read` for scoped tokens and are constrained to the token's
-workspace plus tasks/runs/artifacts/approvals/memories/review items visible to
-the bound agent. The browser UI may still use the local list endpoints for the
-single-machine demo. `GET /api/review/queue` remains the local UI/demo read
+Most scoped readback endpoints require `tasks:read` and are constrained to the
+token's workspace plus tasks/runs/artifacts/approvals/memories/review items
+visible to the bound agent. Knowledge endpoints use `knowledge:read` /
+`knowledge:write`; agent-plan endpoints use `agent_plans:read` /
+`agent_plans:write`. The browser UI may still use the local list endpoints for
+the single-machine demo. `GET /api/review/queue` remains the local UI/demo read
 path; machine-facing CLI/remote agents should use
 `GET /api/agent-gateway/review/queue`. Approval and memory approve/reject
 actions remain human/operator actions, not agent-scoped automatic decisions.
+
+## Knowledge Search
+
+```http
+GET  /api/knowledge/search?q=approval&limit=10&refresh=true
+POST /api/knowledge/index
+GET  /api/agent-gateway/knowledge/search?q=approval&limit=10
+POST /api/agent-gateway/knowledge/index
+```
+
+The first version indexes Markdown from the repo root, `docs/`, and `knowledge/`
+into SQLite FTS5. If FTS5 is unavailable, search falls back to a plain SQLite
+`LIKE` query. This is intentionally the first stage before embeddings or a
+vector database.
+
+Agent Gateway search requires `knowledge:read` and is non-mutating: `refresh`
+requests are reported as skipped so read scope cannot update the index. Explicit
+index refresh uses `POST /api/agent-gateway/knowledge/index` and requires
+`knowledge:write`.
+
+## Agent Plans
+
+```http
+POST /api/agent-gateway/agent-plans
+GET  /api/agent-gateway/agent-plans?task_id=tsk_123
+GET  /api/agent-gateway/agent-plans/:plan_id
+GET  /api/agent-gateway/agent-plans/:plan_id/verify
+```
+
+`POST /api/agent-gateway/agent-plans` records the required pre-execution plan:
+
+```json
+{
+  "task_id": "tsk_example",
+  "agent_id": "agt_builder",
+  "task_understanding": "Implement the Agent Work Method Block.",
+  "referenced_specs": ["PROJECT_SPEC.md", "AGENT_WORKFLOW.md"],
+  "referenced_memories": ["mem_..."],
+  "referenced_bases": ["base_local_memory"],
+  "proposed_files_to_change": ["server.py"],
+  "risk_level": "medium",
+  "approval_required": false,
+  "execution_steps": ["index knowledge", "record plan", "run smoke"],
+  "verification_plan": "Run focused CLI/API smoke.",
+  "rollback_plan": "Remove new routes and schema additions before release."
+}
+```
+
+`GET /verify` checks that the plan names specs, retrieval/memory context, bases,
+execution steps, verification, rollback, risk and file scope. It is read-only;
+future recorded verification decisions should use a write-scoped endpoint.
 
 ## Tool Calls
 

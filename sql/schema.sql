@@ -194,3 +194,7 @@ CREATE INDEX IF NOT EXISTS idx_approvals_decision ON approvals(decision);
 CREATE INDEX IF NOT EXISTS idx_memories_status ON memories(review_status);
 CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope);
 CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_logs(entity_type, entity_id);
+
+-- The executable schema in server.py also initializes the Agent Work Method
+-- tables: agent_plans, knowledge_documents, and optional SQLite FTS5
+-- knowledge_fts. Keep server.py as the migration authority for this local MVP.
