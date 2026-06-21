@@ -1217,6 +1217,7 @@ def seed(reset=False):
             ("usr_founder", "Founder", "founder@example.local", "founder", now_iso()),
             ("usr_ops", "Ops Reviewer", "ops@example.local", "reviewer", now_iso()),
             ("usr_admin", "Platform Admin", "admin@example.local", "admin", now_iso()),
+            ("usr_customer_demo", "Customer Demo", "customer@example.local", "customer", now_iso()),
         ]
         conn.executemany("INSERT INTO users(user_id,name,email,role,created_at) VALUES(?,?,?,?,?)", users)
 
@@ -4080,6 +4081,83 @@ def delivery_manifest_gate(conn: sqlite3.Connection, run_id: str | None) -> dict
         "evidence_counts": verification.get("evidence_counts") or {},
         "failed_checks": [item.get("id") for item in verification.get("failed_checks") or []],
         "message": "Verified plan_evidence_manifest found." if verification.get("pass") else "Latest plan_evidence_manifest is not verified.",
+        "token_omitted": True,
+    }
+
+
+def latest_agent_plan_for_run(conn: sqlite3.Connection, run: sqlite3.Row) -> sqlite3.Row | None:
+    return conn.execute(
+        """SELECT * FROM agent_plans
+        WHERE workspace_id=? AND agent_id=? AND (run_id=? OR task_id=?)
+        ORDER BY CASE WHEN run_id=? THEN 0 ELSE 1 END, updated_at DESC, created_at DESC
+        LIMIT 1""",
+        (run["workspace_id"], run["agent_id"], run["run_id"], run["task_id"], run["run_id"]),
+    ).fetchone()
+
+
+def ensure_run_plan_evidence_manifest(conn: sqlite3.Connection, run_id: str, reason: str = "auto") -> dict:
+    run = conn.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
+    if not run:
+        return {"ok": False, "error": "run_not_found", "run_id": run_id}
+    existing_manifest = latest_plan_evidence_manifest_for_run(conn, run_id)
+    if existing_manifest:
+        existing_verification = verify_plan_evidence_manifest_row(conn, existing_manifest)
+        if existing_verification.get("pass"):
+            return {
+                "ok": True,
+                "plan_id": existing_manifest["plan_id"],
+                "manifest_id": existing_manifest["manifest_id"],
+                "status": existing_verification.get("status"),
+                "verification": existing_verification,
+                "reused": True,
+                "token_omitted": True,
+            }
+    plan = latest_agent_plan_for_run(conn, run)
+    if not plan:
+        task = conn.execute("SELECT * FROM tasks WHERE task_id=?", (run["task_id"],)).fetchone() if run["task_id"] else None
+        plan_payload, plan_status = agent_gateway_create_agent_plan(conn, {
+            "workspace_id": run["workspace_id"],
+            "agent_id": run["agent_id"],
+            "task_id": run["task_id"],
+            "run_id": run["run_id"],
+            "task_understanding": (
+                f"Auto-plan for run {run['run_id']} before customer delivery approval. "
+                "Bind worker output to READ/PLAN/RETRIEVE/COMPARE/EXECUTE/VERIFY/RECORD evidence."
+            ),
+            "referenced_specs": ["PROJECT_SPEC.md", "AGENT_WORKFLOW.md", "docs/AGENT_WORK_METHOD_BLOCK.md"],
+            "referenced_memories": ["knowledge/shared/common_failures.md", "project_memory"],
+            "referenced_bases": ["base_local_tasks", "base_local_memory", "agent_gateway_ledger"],
+            "proposed_files_to_change": ["agentops-worker-runtime", "customer-delivery-approval-gate"],
+            "risk_level": task["risk_level"] if task else "medium",
+            "approval_required": bool(task and task["risk_level"] in {"high", "critical"}),
+            "execution_steps": ["READ", "PLAN", "RETRIEVE", "COMPARE", "EXECUTE", "VERIFY", "RECORD"],
+            "verification_plan": "Require run/tool/evaluation/artifact/audit evidence and a verified plan_evidence_manifest before delivery approval.",
+            "rollback_plan": "Block customer delivery approval and record an audit event if evidence verification fails.",
+            "status": "submitted",
+        })
+        if plan_status >= 400:
+            return {"ok": False, "error": "agent_plan_create_failed", "details": plan_payload, "token_omitted": True}
+        plan = conn.execute("SELECT * FROM agent_plans WHERE plan_id=?", (plan_payload["agent_plan"]["plan_id"],)).fetchone()
+    manifest_payload, manifest_status = agent_gateway_create_plan_evidence_manifest(conn, {
+        "workspace_id": run["workspace_id"],
+        "agent_id": run["agent_id"],
+        "plan_id": plan["plan_id"],
+        "run_id": run["run_id"],
+        "mismatch_policy": "block",
+        "verify_now": True,
+    })
+    if manifest_status >= 400:
+        return {"ok": False, "plan_id": plan["plan_id"], "error": "plan_evidence_manifest_create_failed", "details": manifest_payload, "token_omitted": True}
+    manifest = manifest_payload.get("manifest") or {}
+    verification = manifest_payload.get("verification") or {}
+    return {
+        "ok": bool(verification.get("pass")),
+        "plan_id": plan["plan_id"],
+        "manifest_id": manifest.get("manifest_id"),
+        "status": verification.get("status") or manifest.get("status"),
+        "verification": verification,
+        "reused": False,
+        "reason": reason,
         "token_omitted": True,
     }
 
@@ -8862,6 +8940,11 @@ def run_customer_worker_task_workflow(conn, body: dict) -> tuple[dict, int]:
     title = redact_text(body.get("title") or "客户 Worker 任务", 160)
     description = redact_text(body.get("description") or "Customer task should be processed by an AgentOps worker.", 800)
     acceptance = redact_text(body.get("acceptance_criteria") or "Worker must write run, tool, evaluation and audit evidence.", 500)
+    conn.execute(
+        """INSERT OR IGNORE INTO users(user_id,name,email,role,created_at)
+        VALUES(?,?,?,?,?)""",
+        ("usr_customer_demo", "Customer Demo User", "customer-demo@example.local", "requester", now_iso()),
+    )
     call_id = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d%H%M%S%f")
     worker_agent_id = body.get("worker_agent_id") or stable_id("agt_customer_worker", adapter, call_id, uuid.uuid4().hex[:8])
     connector_id = runtime_connector_for_adapter(adapter)
@@ -9075,6 +9158,58 @@ def run_customer_worker_task_workflow(conn, body: dict) -> tuple[dict, int]:
             "customer-worker-task",
         )
         runtime_event(conn, "rtc_agent_gateway_local", "customer_worker_task.memory", "completed", run_id=run_id, task_id=task_id, agent_id=dispatch.get("agent_id"), output_summary=f"Memory candidate {memory_id} {memory_outcome}.")
+        plan_evidence = ensure_run_plan_evidence_manifest(conn, run_id, reason="customer_worker_delivery_approval")
+        if not plan_evidence.get("ok"):
+            runtime_event(
+                conn,
+                "rtc_agent_gateway_local",
+                "customer_worker_task.delivery_approval_blocked_missing_plan_evidence",
+                "blocked",
+                run_id=run_id,
+                task_id=task_id,
+                agent_id=dispatch.get("agent_id"),
+                output_summary="Customer delivery approval blocked until plan_evidence_manifest verifies.",
+            )
+            audit(conn, "system", "customer-worker-task", "workflow.customer_worker_task.delivery_approval_blocked_missing_plan_evidence", "runs", run_id, None, {"status": "blocked"}, {
+                "adapter": adapter,
+                "plan_id": plan_evidence.get("plan_id"),
+                "manifest_id": plan_evidence.get("manifest_id"),
+                "failed_checks": [item.get("id") for item in ((plan_evidence.get("verification") or {}).get("failed_checks") or [])],
+                "raw_output_omitted": True,
+            })
+            conn.commit()
+            evidence = {
+                "tool_calls": conn.execute("SELECT COUNT(*) c FROM tool_calls WHERE run_id=?", (run_id,)).fetchone()["c"],
+                "evaluations": conn.execute("SELECT COUNT(*) c FROM evaluations WHERE run_id=?", (run_id,)).fetchone()["c"],
+                "runtime_events": conn.execute("SELECT COUNT(*) c FROM runtime_events WHERE run_id=? OR task_id=?", (run_id, task_id)).fetchone()["c"],
+                "audit_logs": conn.execute("SELECT COUNT(*) c FROM audit_logs WHERE entity_id IN (?,?,?,?,?)", (run_id, task_id, artifact_id, memory_id, plan_evidence.get("manifest_id"))).fetchone()["c"],
+                "artifacts": conn.execute("SELECT COUNT(*) c FROM artifacts WHERE run_id=?", (run_id,)).fetchone()["c"],
+                "memories": conn.execute("SELECT COUNT(*) c FROM memories WHERE source_ref=? OR task_id=?", (run_id, task_id)).fetchone()["c"],
+                "approvals": conn.execute("SELECT COUNT(*) c FROM approvals WHERE run_id=? OR task_id=?", (run_id, task_id)).fetchone()["c"],
+                "plan_evidence_manifests": conn.execute("SELECT COUNT(*) c FROM plan_evidence_manifests WHERE run_id=?", (run_id,)).fetchone()["c"],
+            }
+            return {
+                "provider": "agentops-worker",
+                "workflow": "customer_worker_task",
+                "dry_run": False,
+                "ok": False,
+                "adapter": adapter,
+                "task_id": task_id,
+                "run_id": run_id,
+                "artifact_id": artifact_id,
+                "plan_id": plan_evidence.get("plan_id"),
+                "plan_evidence_manifest_id": plan_evidence.get("manifest_id"),
+                "plan_evidence_status": plan_evidence.get("status"),
+                "plan_evidence_pass": False,
+                "reason": "verified_plan_evidence_manifest_required",
+                "duration_ms": dispatch.get("duration_ms"),
+                "output_summary": output_summary,
+                "evidence": evidence,
+                "plan_evidence": plan_evidence,
+                "worker_result": dispatch.get("worker_result"),
+                "error": dispatch.get("error") or "Customer delivery approval blocked by plan evidence manifest gate.",
+                "token_omitted": True,
+            }, 409
         delivery_approval_id = stable_id("ap_customer_worker_delivery", run_id)
         delivery_approval = {
             "approval_id": delivery_approval_id,
@@ -9107,10 +9242,11 @@ def run_customer_worker_task_workflow(conn, body: dict) -> tuple[dict, int]:
             "tool_calls": conn.execute("SELECT COUNT(*) c FROM tool_calls WHERE run_id=?", (run_id,)).fetchone()["c"],
             "evaluations": conn.execute("SELECT COUNT(*) c FROM evaluations WHERE run_id=?", (run_id,)).fetchone()["c"],
             "runtime_events": conn.execute("SELECT COUNT(*) c FROM runtime_events WHERE run_id=? OR task_id=?", (run_id, task_id)).fetchone()["c"],
-            "audit_logs": conn.execute("SELECT COUNT(*) c FROM audit_logs WHERE entity_id IN (?,?,?,?,?)", (run_id, task_id, artifact_id, memory_id, delivery_approval_id)).fetchone()["c"],
+            "audit_logs": conn.execute("SELECT COUNT(*) c FROM audit_logs WHERE entity_id IN (?,?,?,?,?,?,?)", (run_id, task_id, artifact_id, memory_id, delivery_approval_id, plan_evidence.get("plan_id"), plan_evidence.get("manifest_id"))).fetchone()["c"],
             "artifacts": conn.execute("SELECT COUNT(*) c FROM artifacts WHERE run_id=?", (run_id,)).fetchone()["c"],
             "memories": conn.execute("SELECT COUNT(*) c FROM memories WHERE source_ref=? OR task_id=?", (run_id, task_id)).fetchone()["c"],
             "approvals": conn.execute("SELECT COUNT(*) c FROM approvals WHERE run_id=? OR task_id=?", (run_id, task_id)).fetchone()["c"],
+            "plan_evidence_manifests": conn.execute("SELECT COUNT(*) c FROM plan_evidence_manifests WHERE run_id=?", (run_id,)).fetchone()["c"],
         }
     return {
         "provider": "agentops-worker",
@@ -9121,6 +9257,11 @@ def run_customer_worker_task_workflow(conn, body: dict) -> tuple[dict, int]:
         "task_id": task_id,
         "run_id": run_id,
         "artifact_id": artifact_id,
+        "approval_id": delivery_approval_id if run_id and task_id and artifact_id else None,
+        "plan_id": plan_evidence.get("plan_id") if run_id and task_id and artifact_id else processed.get("plan_id"),
+        "plan_evidence_manifest_id": plan_evidence.get("manifest_id") if run_id and task_id and artifact_id else processed.get("plan_evidence_manifest_id"),
+        "plan_evidence_status": plan_evidence.get("status") if run_id and task_id and artifact_id else processed.get("plan_evidence_status"),
+        "plan_evidence_pass": plan_evidence.get("ok") if run_id and task_id and artifact_id else processed.get("plan_evidence_pass"),
         "duration_ms": dispatch.get("duration_ms"),
         "output_summary": output_summary,
         "evidence": evidence,

@@ -411,7 +411,7 @@ agentops plan-evidence verify --manifest-id pem_123
 
 `create` requires `plan_evidence:write` and can persist verified/blocked
 status. `verify` requires `plan_evidence:read`, re-computes ledger checks, and
-records a verification audit row.
+does not mutate the manifest or write audit rows.
 
 ### `agentops toolcall record`
 
@@ -612,8 +612,13 @@ agentops workflow customer-worker-task \
 ```
 
 Maps to `POST /api/workflows/customer-worker-task` and returns `task_id`,
-`run_id`, `artifact_id`, and evidence counts. It must not print raw tokens,
-full prompts, full raw model responses, credentials, or private transcripts.
+`run_id`, `artifact_id`, `approval_id`, `plan_id`,
+`plan_evidence_manifest_id`, `plan_evidence_status`, and evidence counts. The
+workflow creates or reuses a verified `plan_evidence_manifest` before generating
+the customer delivery approval; if the manifest gate fails, it returns
+`verified_plan_evidence_manifest_required` and no delivery approval is created.
+It must not print raw tokens, full prompts, full raw model responses,
+credentials, or private transcripts.
 
 For real Hermes/OpenClaw work or any customer task that may run longer than a
 short HTTP request, submit it as an async workflow job:

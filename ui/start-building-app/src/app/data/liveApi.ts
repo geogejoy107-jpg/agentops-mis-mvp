@@ -273,6 +273,21 @@ export interface CustomerDeliveryBoardItem {
     latest_score?: number | null;
     latest_pass_fail?: string | null;
   };
+  delivery_approval_gate?: {
+    required?: boolean;
+    pass?: boolean;
+    status?: string;
+    manifest_id?: string | null;
+    message?: string;
+    evidence_counts?: Record<string, number>;
+    failed_checks?: string[];
+    token_omitted?: boolean;
+    verification?: {
+      status?: string;
+      failed_checks?: { id?: string; message?: string; ok?: boolean }[];
+      evidence_counts?: Record<string, number>;
+    };
+  };
   evidence?: Record<string, number>;
   next_action?: string;
 }
@@ -289,6 +304,8 @@ export interface CustomerDeliveryBoardPayload {
     needs_attention: number;
     pending_approvals: number;
     artifacts: number;
+    verified_plan_evidence_manifests?: number;
+    missing_plan_evidence_manifests?: number;
   };
   deliveries: CustomerDeliveryBoardItem[];
   gates: { id: string; label: string; ok: boolean; value?: string | number | boolean }[];

@@ -270,6 +270,10 @@ export function AIEmployees() {
       alternateAction: "Alternative",
       customerDeliveryBoardTitle: "Customer Delivery Board",
       customerDeliveryBoardSummary: "Read-only customer-facing board: delivery artifact, linked task/run, approvals, evaluations, audit evidence, and next action.",
+      planEvidenceGate: "Plan evidence gate",
+      planEvidenceVerified: "Verified",
+      planEvidenceBlocked: "Blocked",
+      planEvidenceMissing: "Missing manifest",
       deliveriesReady: "Ready",
       deliveriesWaiting: "Waiting approval",
       deliveriesAttention: "Needs attention",
@@ -526,6 +530,10 @@ export function AIEmployees() {
       alternateAction: "备用动作",
       customerDeliveryBoardTitle: "客户交付看板",
       customerDeliveryBoardSummary: "只读客户视角：交付 artifact、关联 task/run、审批、评估、审计证据和下一步动作。",
+      planEvidenceGate: "计划证据门禁",
+      planEvidenceVerified: "已验证",
+      planEvidenceBlocked: "未通过",
+      planEvidenceMissing: "缺少 manifest",
       deliveriesReady: "可交付",
       deliveriesWaiting: "待审批",
       deliveriesAttention: "需处理",
@@ -1405,6 +1413,21 @@ export function AIEmployees() {
                   {delivery.summary && (
                     <div className="text-[10px] mt-1 line-clamp-2" style={{ color: "var(--mis-dim)" }}>{delivery.summary}</div>
                   )}
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                    <span
+                      className="text-[9px] px-1.5 py-0.5 rounded"
+                      style={{
+                        color: delivery.delivery_approval_gate?.pass ? "var(--mis-success)" : delivery.delivery_approval_gate?.manifest_id ? "var(--mis-warning)" : "#F87171",
+                        background: "var(--mis-surface2)",
+                        border: "1px solid var(--mis-border)",
+                      }}
+                    >
+                      {copy.planEvidenceGate}: {delivery.delivery_approval_gate?.pass ? copy.planEvidenceVerified : delivery.delivery_approval_gate?.manifest_id ? copy.planEvidenceBlocked : copy.planEvidenceMissing}
+                    </span>
+                    <span className="text-[9px] truncate max-w-[18rem]" style={{ color: "var(--mis-muted)" }}>
+                      {delivery.delivery_approval_gate?.manifest_id || delivery.delivery_approval_gate?.message || delivery.next_action || "—"}
+                    </span>
+                  </div>
                 </div>
                 <div className="flex flex-wrap md:justify-end gap-1.5 shrink-0">
                   {delivery.task_id && (

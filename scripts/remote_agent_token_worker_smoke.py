@@ -72,10 +72,13 @@ def main() -> int:
         scopes = [
             "agents:write",
             "agents:heartbeat",
+            "agent_plans:write",
+            "plan_evidence:write",
             "tasks:read",
             "tasks:claim",
             "runs:write",
             "toolcalls:write",
+            "artifacts:write",
             "approvals:request",
             "memories:propose",
             "evaluations:submit",
@@ -131,6 +134,7 @@ def main() -> int:
         run_id = ((worker_result.get("results") or [{}])[0] or {}).get("run_id")
         if not run_id:
             raise RuntimeError(f"worker did not return run_id: {worker_result}")
+        worker_item = ((worker_result.get("results") or [{}])[0] or {})
 
         status, run_detail = http_json("GET", args.base_url, f"/api/runs/{run_id}")
         if status != 200:
@@ -142,10 +146,17 @@ def main() -> int:
             run.get("status") == "completed"
             and any(item.get("tool_name") == f"agent_worker.{args.adapter}" and item.get("status") == "completed" for item in tool_calls)
             and any(item.get("pass_fail") == "pass" for item in evaluations)
+            and bool(worker_item.get("plan_id"))
+            and bool(worker_item.get("plan_evidence_manifest_id"))
+            and worker_item.get("plan_evidence_pass") is True
         )
         result.update({
             "ok": ok,
             "run_id": run_id,
+            "plan_id": worker_item.get("plan_id"),
+            "plan_evidence_manifest_id": worker_item.get("plan_evidence_manifest_id"),
+            "plan_evidence_status": worker_item.get("plan_evidence_status"),
+            "plan_evidence_pass": worker_item.get("plan_evidence_pass"),
             "run_status": run.get("status"),
             "tool_calls": len(tool_calls),
             "evaluations": len(evaluations),

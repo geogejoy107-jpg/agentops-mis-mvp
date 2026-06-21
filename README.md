@@ -383,11 +383,11 @@ Hermes/OpenClaw 真实执行仍必须显式加 `--confirm-run`。
 - 通过 Agent Gateway 登记一份客户交付摘要 artifact，可从任务/运行详情看到。
 - 对 Dify / OpenAI File Search / AnythingLLM 外部上传创建 pending approval，不上传原始资料、不保存凭证。
 - 也可以从 Pixel Office 里的“一键生成知识库机器人项目”按钮触发同一条浏览器工作流，后端接口是 `POST /api/workflows/kb-bot-project`。
-- Pixel Office 的客户派活面板也能触发 `POST /api/workflows/customer-worker-task`：客户任务进入 Agent Gateway worker，mock/Hermes/OpenClaw adapter 执行后写回 run、tool call、evaluation、audit 和 `customer_worker_result` artifact。Hermes/OpenClaw 仍需显式确认。
+- Pixel Office 的客户派活面板也能触发 `POST /api/workflows/customer-worker-task`：客户任务进入 Agent Gateway worker，mock/Hermes/OpenClaw adapter 执行后写回 run、tool call、evaluation、audit、`customer_worker_result` artifact、`agent_plan` 和 verified `plan_evidence_manifest`。交付审批只会在 manifest 门禁通过后生成；Hermes/OpenClaw 仍需显式确认。
 
 ## v1.5 Local Agent Worker Loop
 
-`agentops-worker` 是可安装的 worker daemon 命令。它通过 Agent Gateway API 拉取普通 MIS 任务，认领后调用 adapter，并把 run/tool/eval/audit 写回 MIS。`scripts/agent_worker.py` 仍保留为 repo-local 兼容 wrapper，供本地 UI/smoke 继续使用。
+`agentops-worker` 是可安装的 worker daemon 命令。它通过 Agent Gateway API 拉取普通 MIS 任务，认领后调用 adapter，并把 run/tool/eval/artifact/audit、`agent_plan` 和 `plan_evidence_manifest` 写回 MIS。`scripts/agent_worker.py` 仍保留为 repo-local 兼容 wrapper，供本地 UI/smoke 继续使用。
 
 8 点产品闭环目标与总 spec 见 `docs/V1_5_EIGHT_PRODUCT_CLOSURE_SPEC.md`。
 
@@ -463,7 +463,7 @@ python3 scripts/agent_worker.py --adapter mock --poll-interval 5 --max-tasks 0 -
 浏览器派发：
 
 - `/workspace/agents` 现在有 “本地 Worker 循环 / Local Worker Loop” 面板。
-- `/workspace/agents` 现在也有 “客户任务派发 / Customer Task Dispatch” 面板：用户填写一个正常业务任务，选择 mock/Hermes/OpenClaw adapter，系统通过 `POST /api/workflows/customer-worker-task` 创建任务、执行 worker，并显示 task/run/artifact/evidence 链接。
+- `/workspace/agents` 现在也有 “客户任务派发 / Customer Task Dispatch” 面板：用户填写一个正常业务任务，选择 mock/Hermes/OpenClaw adapter，系统通过 `POST /api/workflows/customer-worker-task` 创建任务、执行 worker，并显示 task/run/artifact/evidence/plan-evidence 链接。
 - 它可以从页面触发一次 `mock`、`Hermes` 或 `OpenClaw` worker run。
 - 它也可以启动/停止本地 mock / Hermes / OpenClaw daemon，让 worker 持续拉取普通 MIS 任务。
 - 它可以查看 “Worker Fleet 观测 / Worker Fleet Telemetry”，包括 daemon 状态计数、错误计数、state 文件路径、日志尾部和最近 Agent Gateway runtime events。

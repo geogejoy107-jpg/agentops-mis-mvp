@@ -544,6 +544,45 @@ def register_worker(client: AgentOpsClient, adapter: str):
     })
 
 
+def create_worker_agent_plan(client: AgentOpsClient, task: dict, args) -> dict:
+    risk = task.get("risk_level") or "medium"
+    payload = {
+        "workspace_id": client.workspace_id,
+        "agent_id": client.agent_id,
+        "task_id": task["task_id"],
+        "task_understanding": (
+            f"Process task '{redact_text(task.get('title'), 120)}' through the {args.adapter} worker adapter, "
+            "write run/tool/evaluation/artifact/audit evidence, then bind the result to this plan."
+        ),
+        "referenced_specs": ["PROJECT_SPEC.md", "AGENT_WORKFLOW.md", "docs/AGENT_WORK_METHOD_BLOCK.md"],
+        "referenced_memories": ["knowledge/shared/common_failures.md"],
+        "referenced_bases": ["base_local_tasks", "base_local_memory"],
+        "proposed_files_to_change": ["agentops-worker-runtime", f"adapter:{args.adapter}"],
+        "risk_level": risk,
+        "approval_required": risk in {"high", "critical"},
+        "execution_steps": ["READ", "PLAN", "RETRIEVE", "COMPARE", "EXECUTE", "VERIFY", "RECORD"],
+        "verification_plan": "Agent worker must submit tool, evaluation, artifact, audit and plan_evidence_manifest evidence.",
+        "rollback_plan": "Mark the run failed/blocked and leave the manifest blocked if execution evidence is incomplete.",
+        "status": "submitted",
+    }
+    return client.post("/api/agent-gateway/agent-plans", payload)
+
+
+def create_worker_plan_manifest(client: AgentOpsClient, plan_id: str, run_id: str, tool_call_id: str | None, evaluation_id: str | None, artifact_id: str | None) -> dict:
+    payload = {
+        "workspace_id": client.workspace_id,
+        "agent_id": client.agent_id,
+        "plan_id": plan_id,
+        "run_id": run_id,
+        "mismatch_policy": "block",
+        "expected_steps": ["READ", "PLAN", "RETRIEVE", "COMPARE", "EXECUTE", "VERIFY", "RECORD"],
+        "tool_call_ids": [tool_call_id] if tool_call_id else [],
+        "evaluation_ids": [evaluation_id] if evaluation_id else [],
+        "artifact_ids": [artifact_id] if artifact_id else [],
+    }
+    return client.post("/api/agent-gateway/plan-evidence-manifests", payload)
+
+
 def process_one_task(client: AgentOpsClient, args) -> dict:
     pulled = client.get("/api/agent-gateway/tasks/pull", {
         "agent_id": client.agent_id,
@@ -572,6 +611,10 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
         "agent_id": client.agent_id,
         "runtime_type": args.adapter,
     })
+    plan_payload = create_worker_agent_plan(client, task, args)
+    plan_id = (plan_payload.get("agent_plan") or {}).get("plan_id")
+    if not plan_id:
+        raise RuntimeError("agent plan create did not return plan_id")
     run_payload = client.post("/api/agent-gateway/runs/start", {
         "workspace_id": client.workspace_id,
         "agent_id": client.agent_id,
@@ -586,7 +629,7 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
     result = execute_adapter_with_retries(task, args)
 
     tool_status = "completed" if result.ok else "failed"
-    client.post("/api/agent-gateway/tool-calls", {
+    tool_payload = client.post("/api/agent-gateway/tool-calls", {
         "workspace_id": client.workspace_id,
         "run_id": run_id,
         "agent_id": client.agent_id,
@@ -606,6 +649,7 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
         },
         "result_summary": result.output_summary,
     })
+    tool_call_id = (tool_payload.get("tool_call") or {}).get("tool_call_id")
     final_status = "completed" if result.ok else "failed"
     client.post(f"/api/agent-gateway/runs/{run_id}/heartbeat", {
         "workspace_id": client.workspace_id,
@@ -617,7 +661,7 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
         "error_type": result.error_type,
         "error_message": result.error_message,
     })
-    client.post("/api/agent-gateway/evaluations/submit", {
+    eval_payload = client.post("/api/agent-gateway/evaluations/submit", {
         "workspace_id": client.workspace_id,
         "run_id": run_id,
         "task_id": task_id,
@@ -635,6 +679,25 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
         },
         "notes": "Worker adapter loop completed." if result.ok else f"Worker adapter loop failed: {result.error_type}",
     })
+    evaluation_id = (eval_payload.get("evaluation") or {}).get("evaluation_id")
+    artifact_payload = client.post("/api/agent-gateway/artifacts", {
+        "workspace_id": client.workspace_id,
+        "run_id": run_id,
+        "task_id": task_id,
+        "agent_id": client.agent_id,
+        "artifact_type": "agent_worker_result",
+        "title": f"Agent worker result: {redact_text(task.get('title'), 120)}",
+        "uri": f"run://{run_id}",
+        "summary": result.output_summary,
+        "content_hash": stable_hash({
+            "run_id": run_id,
+            "task_id": task_id,
+            "adapter": args.adapter,
+            "summary": result.output_summary,
+            "ok": result.ok,
+        }),
+    })
+    artifact_id = (artifact_payload.get("artifact") or {}).get("artifact_id")
     if result.ok:
         client.post("/api/agent-gateway/memories/propose", {
             "workspace_id": client.workspace_id,
@@ -666,6 +729,9 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
             "retryable_final": result.retryable,
         },
     })
+    manifest_payload = create_worker_plan_manifest(client, plan_id, run_id, tool_call_id, evaluation_id, artifact_id)
+    manifest = manifest_payload.get("manifest") or {}
+    manifest_verification = manifest_payload.get("verification") or {}
     client.post("/api/agent-gateway/heartbeat", {
         "workspace_id": client.workspace_id,
         "agent_id": client.agent_id,
@@ -677,6 +743,10 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
         "processed": True,
         "task_id": task_id,
         "run_id": run_id,
+        "plan_id": plan_id,
+        "plan_evidence_manifest_id": manifest.get("manifest_id"),
+        "plan_evidence_status": manifest.get("status"),
+        "plan_evidence_pass": manifest_verification.get("pass"),
         "adapter": args.adapter,
         "ok": result.ok,
         "attempt_count": result.attempt_count,

@@ -188,7 +188,11 @@ writing audit rows.
 
 Customer delivery approvals fail closed against this gate: approving a customer
 delivery approval without a verified manifest returns
-`verified_plan_evidence_manifest_required`.
+`verified_plan_evidence_manifest_required`. The normal worker path creates an
+`agent_plan`, records result artifact evidence, and persists a
+`plan_evidence_manifest` automatically. The customer-worker workflow reuses that
+verified manifest, or creates one from the run ledger, before it generates a
+customer delivery approval.
 
 ## Tool Calls
 
@@ -247,7 +251,9 @@ POST /api/workflows/jobs/:job_id/mark-failed
 ```
 
 `/customer-worker-task` executes a customer task through the Agent Gateway
-worker loop and returns run/artifact/evidence ids. `/customer-worker-task/submit`
+worker loop and returns run/artifact/approval/plan-evidence ids. It fails closed
+before delivery approval generation when the run cannot produce a verified
+`plan_evidence_manifest`. `/customer-worker-task/submit`
 queues the same workflow as a `workflow_jobs` row and returns immediately with a
 `job_id`, which is the preferred path for real Hermes/OpenClaw work that may
 outlive a short browser or CLI request. Job records store status, request hash,

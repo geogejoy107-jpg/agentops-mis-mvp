@@ -57,6 +57,8 @@ Use Markdown plus SQLite first:
 - RECORD: artifacts, audit logs, and memory candidates close the loop.
 - EVIDENCE BINDING: `plan_evidence_manifests` links a verified `agent_plan` to the exact run, tool calls, evaluations, artifacts, and audit evidence before a delivery can be treated as closed.
 - DELIVERY GATE: customer delivery approvals fail closed until the linked run has a verified `plan_evidence_manifest`; the customer delivery board surfaces the manifest gate status for human review.
+- AUTOMATIC WORKER PATH: normal AgentOps worker pulls create an `agent_plan`, write tool/evaluation/artifact/audit evidence, and persist a verified or blocked `plan_evidence_manifest` before returning the worker result.
+- CUSTOMER WORKER PATH: `POST /api/workflows/customer-worker-task` now reuses a verified worker manifest or creates one before generating the customer delivery approval; if verification fails, no delivery approval is created.
 
 ## Cleanliness Contract
 
@@ -67,4 +69,4 @@ Use Markdown plus SQLite first:
 
 ## Next Guardrail
 
-Hermes/OpenClaw loop review flagged the next bypass risk: an agent can create and verify a plan, then execute a different path. The implemented guardrail is `plan_evidence_manifests`: create one with `agentops plan-evidence create --plan-id <id> --run-id <id> --mismatch-policy block` after the run writes tool, evaluation, artifact, and audit evidence. Creation can persist `verified` / `blocked` status; `agentops plan-evidence verify` re-computes the ledger checks without mutating the manifest or writing audit rows. A manifest verifies only when the plan passes, plan/run/task/agent bindings match, tool calls completed, evaluations passed, artifacts are bound, and audit evidence exists. Missing or mismatched evidence is blocked by default. Customer delivery approvals now consume this gate: approving a customer delivery without a verified manifest returns `verified_plan_evidence_manifest_required`.
+Hermes/OpenClaw loop review flagged the next bypass risk: an agent can create and verify a plan, then execute a different path. The implemented guardrail is `plan_evidence_manifests`: create one with `agentops plan-evidence create --plan-id <id> --run-id <id> --mismatch-policy block` after the run writes tool, evaluation, artifact, and audit evidence. Creation can persist `verified` / `blocked` status; `agentops plan-evidence verify` re-computes the ledger checks without mutating the manifest or writing audit rows. A manifest verifies only when the plan passes, plan/run/task/agent bindings match, tool calls completed, evaluations passed, artifacts are bound, and audit evidence exists. Missing or mismatched evidence is blocked by default. Customer delivery approvals now consume this gate: approving a customer delivery without a verified manifest returns `verified_plan_evidence_manifest_required`, and the customer-worker workflow does not generate a delivery approval until this gate passes.

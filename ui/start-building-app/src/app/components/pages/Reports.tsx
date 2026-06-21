@@ -54,6 +54,18 @@ export function Reports() {
     };
     return (zh ? zhLabels : enLabels)[status] || status;
   };
+  const gateLabel = (delivery: (typeof deliveries)[number]) => {
+    const gate = delivery.delivery_approval_gate;
+    if (!gate?.required) return zh ? "不需要" : "Not required";
+    if (gate.pass) return zh ? "计划证据已验证" : "Plan evidence verified";
+    if (gate.manifest_id) return zh ? "计划证据未通过" : "Plan evidence blocked";
+    return zh ? "缺少计划证据" : "Plan evidence missing";
+  };
+  const gateColor = (delivery: (typeof deliveries)[number]) => {
+    const gate = delivery.delivery_approval_gate;
+    if (!gate?.required || gate.pass) return "var(--mis-success)";
+    return gate.manifest_id ? "var(--mis-warning)" : "#F87171";
+  };
 
   return (
     <div className="space-y-6 w-full">
@@ -81,12 +93,13 @@ export function Reports() {
           </div>
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mt-3">
           {[
             { label: zh ? "交付总数" : "Deliveries", value: deliverySummary?.deliveries ?? 0, color: "var(--mis-cyan)" },
             { label: zh ? "可交付" : "Ready", value: deliverySummary?.ready ?? 0, color: "var(--mis-success)" },
             { label: zh ? "待审批" : "Waiting approval", value: deliverySummary?.waiting_approval ?? 0, color: "var(--mis-warning)" },
             { label: zh ? "需处理" : "Needs attention", value: deliverySummary?.needs_attention ?? 0, color: "#F87171" },
+            { label: zh ? "证据门禁" : "Evidence gates", value: `${deliverySummary?.verified_plan_evidence_manifests ?? 0}/${deliverySummary?.deliveries ?? 0}`, color: "var(--mis-cyan)" },
           ].map((item) => (
             <div key={item.label} className="rounded-lg px-3 py-2" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
               <div className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{item.label}</div>
@@ -117,6 +130,17 @@ export function Reports() {
                 </span>
               </div>
               <div className="mt-2 text-[11px] line-clamp-2" style={{ color: "var(--mis-dim)" }}>{delivery.summary}</div>
+              <div className="mt-2 rounded px-2 py-1.5" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-[10px] font-semibold" style={{ color: gateColor(delivery) }}>{gateLabel(delivery)}</span>
+                  <span className="text-[9px] truncate max-w-[13rem]" style={{ color: "var(--mis-muted)" }}>
+                    {delivery.delivery_approval_gate?.manifest_id || (zh ? "暂无 manifest" : "no manifest")}
+                  </span>
+                </div>
+                <div className="text-[9px] mt-1 line-clamp-2" style={{ color: "var(--mis-dim)" }}>
+                  {delivery.delivery_approval_gate?.message || delivery.next_action || (zh ? "交付审批会读取这个门禁。" : "Delivery approval consumes this gate.")}
+                </div>
+              </div>
               <div className="mt-2 grid grid-cols-3 gap-2 text-[10px]" style={{ color: "var(--mis-dim)" }}>
                 <div>{zh ? "审批" : "Approvals"}<br /><span style={{ color: "var(--mis-text)" }}>{delivery.pending_approval_ids?.length || 0}</span></div>
                 <div>{zh ? "评估" : "Evals"}<br /><span style={{ color: "var(--mis-text)" }}>{delivery.evaluation_summary?.count || 0}</span></div>
