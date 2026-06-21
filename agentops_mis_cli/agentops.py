@@ -337,6 +337,19 @@ def cmd_operator_remediate_evidence_gap(args, client: AgentOpsClient) -> dict:
     })
 
 
+def cmd_operator_close_evidence_gap(args, client: AgentOpsClient) -> dict:
+    return client.post("/api/operator/execution-evidence/close-gap", {
+        "workspace_id": client.workspace_id,
+        "run_id": args.run_id,
+        "decision": args.decision,
+        "reason": args.reason or args.note,
+        "synthesis_artifact_id": args.synthesis_artifact_id,
+        "remediation_task_id": args.remediation_task_id,
+        "actor_id": args.actor_id,
+        "confirm_close": bool(args.confirm_close),
+    })
+
+
 def cmd_commander_board(args, client: AgentOpsClient) -> dict:
     return client.get("/api/commander/project-board")
 
@@ -1573,6 +1586,16 @@ def build_parser() -> argparse.ArgumentParser:
     evidence_gap.add_argument("--actor-id", default="usr_founder")
     evidence_gap.add_argument("--confirm-create", action="store_true")
     evidence_gap.set_defaults(handler="operator_remediate_evidence_gap")
+    close_evidence_gap = operator_sub.add_parser("close-evidence-gap", help="Preview or record an operator decision closing/reopening a run execution-evidence gap.")
+    close_evidence_gap.add_argument("--run-id", required=True)
+    close_evidence_gap.add_argument("--decision", default="accepted_remediation", choices=["accepted_remediation", "waived", "reopen"])
+    close_evidence_gap.add_argument("--reason", default=None)
+    close_evidence_gap.add_argument("--note", default=None)
+    close_evidence_gap.add_argument("--synthesis-artifact-id", default=None)
+    close_evidence_gap.add_argument("--remediation-task-id", default=None)
+    close_evidence_gap.add_argument("--actor-id", default="usr_founder")
+    close_evidence_gap.add_argument("--confirm-close", action="store_true")
+    close_evidence_gap.set_defaults(handler="operator_close_evidence_gap")
 
     commander = sub.add_parser("commander", help="Commander planning, dispatch and readback commands.")
     commander_sub = commander.add_subparsers(dest="action", required=True)
@@ -2268,6 +2291,7 @@ HANDLERS = {
     "demo_readiness": cmd_demo_readiness,
     "operator_action_plan": cmd_operator_action_plan,
     "operator_remediate_evidence_gap": cmd_operator_remediate_evidence_gap,
+    "operator_close_evidence_gap": cmd_operator_close_evidence_gap,
     "commander_board": cmd_commander_board,
     "commander_inbox": cmd_commander_inbox,
     "commander_plan": cmd_commander_plan,

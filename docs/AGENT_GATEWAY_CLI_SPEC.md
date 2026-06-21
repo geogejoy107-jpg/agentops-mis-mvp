@@ -1154,7 +1154,26 @@ task can be dispatched with `agentops commander dispatch-package --task-id ...
 verified plan-evidence rows, the `execution_evidence` gap remains visible as
 legacy source-run debt but reports `remediation_status=verified`,
 increments `remediated_evidence_gap_runs`, and drops from blocked severity to a
-ready review item. Failed-benchmark remediation is a first-class
+ready review item. The next action then follows the standard Commander chain:
+stable `commander synthesize`, `approval inspect`, and
+`commander promote-synthesis --mode both --confirm-promote`. The action-plan
+summary reports that chain with `evidence_synthesis_ready_runs`,
+`evidence_synthesis_pending_runs`, and `evidence_synthesis_promoted_runs`.
+After promotion, action-plan recommends an explicit operator closure:
+
+```bash
+agentops operator close-evidence-gap --run-id run_123 --decision accepted_remediation
+agentops operator close-evidence-gap --run-id run_123 --decision accepted_remediation --confirm-close
+agentops operator close-evidence-gap --run-id run_123 --decision waived --note "legacy imported run" --confirm-close
+agentops operator close-evidence-gap --run-id run_123 --decision reopen --confirm-close
+```
+
+The close command is preview-only by default. Confirmed calls write
+runtime/audit evidence; `accepted_remediation` is allowed only after the
+remediation synthesis has been promoted, while `waived` requires a note. The
+operator action-plan can surface the latest gap decision in the action evidence
+without storing raw notes.
+Failed-benchmark remediation is a first-class
 `remediation_loop` source: once a failed evaluation case becomes a Commander
 work package, the action plan reports remediation package counts,
 ready-for-review counts, pending synthesis reviews, promoted delivery/memory

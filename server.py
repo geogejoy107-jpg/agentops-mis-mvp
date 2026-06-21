@@ -61,6 +61,7 @@ HIGH_RISK_CATEGORIES = {"shell", "email", "database"}
 VALID_TASK_STATUSES = {"backlog", "planned", "running", "waiting_approval", "blocked", "completed", "failed", "canceled"}
 VALID_RISK_LEVELS = {"low", "medium", "high", "critical"}
 VALID_PRIORITIES = {"low", "medium", "high", "critical"}
+VALID_EXECUTION_EVIDENCE_GAP_DECISIONS = {"accepted_remediation", "waived", "reopen"}
 VALID_TOOL_CATEGORIES = {"browser", "github", "file", "shell", "email", "notion", "discord", "database", "mcp", "custom"}
 VALID_RUNTIME_TYPES = {"mock", "claude_code", "codex", "openhands", "crewai", "langgraph", "openclaw", "hermes"}
 
@@ -4645,6 +4646,41 @@ def commander_project_synthesis_state(conn: sqlite3.Connection, project_id: str 
     }
 
 
+def latest_execution_evidence_gap_decision(conn: sqlite3.Connection, run_id: str | None) -> dict | None:
+    run_id = commander_safe_text(run_id or "", 120)
+    if not run_id:
+        return None
+    rows = conn.execute(
+        """SELECT audit_id, actor_id, action, entity_id, metadata_json, created_at
+        FROM audit_logs
+        WHERE action='execution_evidence.gap_decision'
+          AND entity_type='runs'
+          AND entity_id=?
+        ORDER BY created_at DESC
+        LIMIT 5""",
+        (run_id,),
+    ).fetchall()
+    for row in rows:
+        try:
+            metadata = json.loads(row["metadata_json"] or "{}")
+        except json.JSONDecodeError:
+            metadata = {}
+        decision = metadata.get("decision")
+        if decision in VALID_EXECUTION_EVIDENCE_GAP_DECISIONS:
+            return {
+                "audit_id": row["audit_id"],
+                "actor_id": row["actor_id"],
+                "decision": decision,
+                "status": "open" if decision == "reopen" else "closed",
+                "reason": metadata.get("reason"),
+                "remediation_task_id": metadata.get("remediation_task_id"),
+                "synthesis_artifact_id": metadata.get("synthesis_artifact_id"),
+                "created_at": row["created_at"],
+                "token_omitted": True,
+            }
+    return None
+
+
 def operator_execution_evidence_gaps(conn: sqlite3.Connection, workspace_id: str, limit: int = 8) -> dict:
     limit = max(1, min(int(limit or 8), 25))
     rows = conn.execute(
@@ -4677,6 +4713,9 @@ def operator_execution_evidence_gaps(conn: sqlite3.Connection, workspace_id: str
         "synthesis_ready_runs": 0,
         "synthesis_pending_runs": 0,
         "synthesis_promoted_runs": 0,
+        "closure_ready_runs": 0,
+        "closed_gap_runs": 0,
+        "waived_gap_runs": 0,
     }
     for row in rows:
         inspected += 1
@@ -4716,6 +4755,7 @@ def operator_execution_evidence_gaps(conn: sqlite3.Connection, workspace_id: str
         remediation_status = None
         remediation_evidence_counts = {}
         remediation_synthesis = {}
+        gap_decision = latest_execution_evidence_gap_decision(conn, row["run_id"])
         if existing_package:
             package_status = existing_package.get("package_status")
             remediation_evidence_counts = existing_package.get("evidence_counts") or {}
@@ -4762,10 +4802,21 @@ def operator_execution_evidence_gaps(conn: sqlite3.Connection, workspace_id: str
                     next_action = "Promote approved remediation synthesis into memory and customer delivery evidence."
                     summary["synthesis_pending_runs"] += 1
                 elif synthesis_status in {"promoted", "memory_pending_review"}:
-                    command = "agentops workflow delivery-board --limit 12"
-                    severity = "ready"
-                    priority = 72
-                    next_action = "Review promoted remediation outputs on the delivery board and memory queue."
+                    if gap_decision and gap_decision.get("status") == "closed":
+                        command = "agentops workflow delivery-board --limit 12"
+                        severity = "ready"
+                        priority = 62
+                        next_action = "Execution-evidence remediation has been closed by operator decision; keep monitoring delivery evidence."
+                        summary["closed_gap_runs"] += 1
+                        if gap_decision.get("decision") == "waived":
+                            summary["waived_gap_runs"] += 1
+                    else:
+                        artifact_id = remediation_synthesis.get("artifact_id") or stable_artifact_id
+                        command = f"agentops operator close-evidence-gap --run-id {row['run_id']} --decision accepted_remediation --synthesis-artifact-id {artifact_id} --confirm-close"
+                        severity = "attention"
+                        priority = 80
+                        next_action = "Record the final operator decision that closes this remediated execution-evidence gap."
+                        summary["closure_ready_runs"] += 1
                     summary["synthesis_promoted_runs"] += 1
         if "missing_agent_plan_binding" in gap_types:
             if not existing_package:
@@ -4810,6 +4861,9 @@ def operator_execution_evidence_gaps(conn: sqlite3.Connection, workspace_id: str
             "remediation_synthesis_status": remediation_synthesis.get("status"),
             "remediation_synthesis_artifact_id": remediation_synthesis.get("artifact_id"),
             "remediation_synthesis_approval_id": remediation_synthesis.get("approval_id"),
+            "gap_decision": gap_decision,
+            "gap_decision_status": (gap_decision or {}).get("status"),
+            "gap_decision_type": (gap_decision or {}).get("decision"),
             "gap_types": gap_types,
             "missing_evidence": missing_evidence,
             "evidence_counts": counts,
@@ -4830,6 +4884,15 @@ def operator_execution_evidence_gaps(conn: sqlite3.Connection, workspace_id: str
             break
     summary["inspected_runs"] = inspected
     summary["gap_runs"] = len(gaps)
+    for key in [
+        "synthesis_ready_runs",
+        "synthesis_pending_runs",
+        "synthesis_promoted_runs",
+        "closure_ready_runs",
+        "closed_gap_runs",
+        "waived_gap_runs",
+    ]:
+        summary.setdefault(key, 0)
     if summary["blocked_gap_runs"]:
         status = "blocked"
     elif summary["attention_gap_runs"] or summary["gap_runs"]:
@@ -5102,6 +5165,165 @@ def operator_execution_evidence_remediation_task(conn: sqlite3.Connection, body:
         "safety": safety,
         "token_omitted": True,
     }, 201
+
+
+def operator_close_execution_evidence_gap(conn: sqlite3.Connection, body: dict, headers=None) -> tuple[dict, int]:
+    headers = headers or {}
+    workspace_id = normalize_workspace_id(body.get("workspace_id") or headers.get("X-AgentOps-Workspace-Id") or "local-demo")
+    run_id = str(body.get("run_id") or "").strip()
+    decision = coerce_choice(body.get("decision") or "accepted_remediation", VALID_EXECUTION_EVIDENCE_GAP_DECISIONS, "accepted_remediation")
+    confirm_close = bool(body.get("confirm_close"))
+    actor_id = redact_text(body.get("actor_id") or "usr_founder", 120)
+    reason = redact_text(body.get("reason") or body.get("note") or "", 360)
+    synthesis_artifact_id = commander_safe_text(body.get("synthesis_artifact_id") or "", 120) or None
+    remediation_task_id = commander_safe_text(body.get("remediation_task_id") or "", 120) or None
+    if not run_id:
+        return {"error": "run_id_required", "message": "run_id is required.", "token_omitted": True}, 400
+    run = conn.execute(
+        """SELECT r.*, t.title AS task_title, t.status AS task_status
+        FROM runs r
+        LEFT JOIN tasks t ON t.task_id=r.task_id
+        WHERE r.run_id=?""",
+        (run_id,),
+    ).fetchone()
+    if not run:
+        return {"error": "run_not_found", "run_id": run_id, "token_omitted": True}, 404
+    if row_workspace(run) != workspace_id:
+        return workspace_forbidden("run", run_id, workspace_id, row_workspace(run))
+
+    gap_index = operator_execution_evidence_gaps(conn, workspace_id, limit=25)
+    gap = next((item for item in gap_index.get("gaps") or [] if item.get("run_id") == run_id), None)
+    previous_decision = latest_execution_evidence_gap_decision(conn, run_id)
+    if not gap and decision != "reopen":
+        return {
+            "provider": "agentops-operator",
+            "operation": "execution_evidence_gap_decision",
+            "status": "no_gap",
+            "closed": False,
+            "workspace_id": workspace_id,
+            "run_id": run_id,
+            "message": "No execution evidence gap was found for this run.",
+            "safety": {
+                "read_only": True,
+                "ledger_mutated": False,
+                "live_execution_performed": False,
+                "raw_note_omitted": True,
+                "token_omitted": True,
+            },
+            "token_omitted": True,
+        }, 200
+
+    remediation_synthesis_status = (gap or {}).get("remediation_synthesis_status")
+    if not synthesis_artifact_id:
+        synthesis_artifact_id = (gap or {}).get("remediation_synthesis_artifact_id")
+    if not remediation_task_id:
+        remediation_task_id = (gap or {}).get("remediation_task_id")
+    if decision == "accepted_remediation" and remediation_synthesis_status not in {"promoted", "memory_pending_review"}:
+        return {
+            "error": "remediation_not_promoted",
+            "message": "accepted_remediation requires promoted remediation synthesis before closing the source run gap.",
+            "run_id": run_id,
+            "remediation_synthesis_status": remediation_synthesis_status,
+            "recommended_action": (gap or {}).get("command") or f"agentops operator action-plan --limit 20",
+            "token_omitted": True,
+        }, 409
+    if decision == "waived" and confirm_close and not reason:
+        return {
+            "error": "waiver_reason_required",
+            "message": "waived decisions require --note or --reason when confirmed.",
+            "run_id": run_id,
+            "token_omitted": True,
+        }, 400
+
+    draft = {
+        "workspace_id": workspace_id,
+        "run_id": run_id,
+        "task_id": run["task_id"],
+        "agent_id": run["agent_id"],
+        "decision": decision,
+        "status": "open" if decision == "reopen" else "closed",
+        "reason": reason or None,
+        "remediation_task_id": remediation_task_id,
+        "synthesis_artifact_id": synthesis_artifact_id,
+        "previous_decision": previous_decision,
+        "gap_types": (gap or {}).get("gap_types") or [],
+        "remediation_status": (gap or {}).get("remediation_status"),
+        "remediation_synthesis_status": remediation_synthesis_status,
+        "token_omitted": True,
+    }
+    safety = {
+        "read_only": not confirm_close,
+        "ledger_mutated": False,
+        "live_execution_performed": False,
+        "raw_note_omitted": True,
+        "raw_prompt_omitted": True,
+        "raw_response_omitted": True,
+        "token_omitted": True,
+    }
+    if not confirm_close:
+        return {
+            "provider": "agentops-operator",
+            "operation": "execution_evidence_gap_decision",
+            "status": "preview",
+            "closed": False,
+            "workspace_id": workspace_id,
+            "run_id": run_id,
+            "decision": draft,
+            "gap": gap,
+            "next_actions": [
+                f"agentops operator close-evidence-gap --run-id {run_id} --decision {decision} --confirm-close",
+                "agentops operator action-plan --limit 20",
+            ],
+            "safety": safety,
+            "token_omitted": True,
+        }, 200
+
+    event_status = "reopened" if decision == "reopen" else "closed"
+    runtime_event(
+        conn,
+        "rtc_agent_gateway_local",
+        "execution_evidence.gap_decision",
+        event_status,
+        run_id=run_id,
+        task_id=run["task_id"],
+        agent_id=run["agent_id"],
+        input_summary=f"Execution evidence gap decision for run {run_id}",
+        output_summary=f"Operator decision {decision} recorded for execution evidence gap.",
+        raw_payload_hash=stable_hash(draft),
+    )
+    audit(conn, "user", actor_id, "execution_evidence.gap_decision", "runs", run_id, previous_decision, draft, {
+        "workspace_id": workspace_id,
+        "decision": decision,
+        "status": draft["status"],
+        "reason": reason or None,
+        "source_task_id": run["task_id"],
+        "source_run_id": run_id,
+        "remediation_task_id": remediation_task_id,
+        "synthesis_artifact_id": synthesis_artifact_id,
+        "gap_types": draft["gap_types"],
+        "remediation_status": draft["remediation_status"],
+        "remediation_synthesis_status": remediation_synthesis_status,
+        "raw_note_omitted": True,
+        "token_omitted": True,
+    })
+    safety["read_only"] = False
+    safety["ledger_mutated"] = True
+    return {
+        "provider": "agentops-operator",
+        "operation": "execution_evidence_gap_decision",
+        "status": event_status,
+        "closed": decision != "reopen",
+        "workspace_id": workspace_id,
+        "run_id": run_id,
+        "decision": draft,
+        "next_actions": [
+            "agentops operator action-plan --limit 20",
+            f"agentops run graph --run-id {run_id}",
+            "agentops workflow delivery-board --limit 12",
+        ],
+        "safety": safety,
+        "token_omitted": True,
+    }, 200
 
 
 def latest_agent_plan_for_run(conn: sqlite3.Connection, run: sqlite3.Row) -> sqlite3.Row | None:
@@ -13088,6 +13310,9 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
                 "remediation_synthesis_status": item.get("remediation_synthesis_status"),
                 "remediation_synthesis_artifact_id": item.get("remediation_synthesis_artifact_id"),
                 "remediation_synthesis_approval_id": item.get("remediation_synthesis_approval_id"),
+                "gap_decision": item.get("gap_decision"),
+                "gap_decision_status": item.get("gap_decision_status"),
+                "gap_decision_type": item.get("gap_decision_type"),
                 "gap_types": item.get("gap_types") or [],
                 "missing_evidence": item.get("missing_evidence") or [],
                 "evidence_counts": item.get("evidence_counts") or {},
@@ -13140,6 +13365,9 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             "evidence_synthesis_ready_runs": (evidence_gaps.get("summary") or {}).get("synthesis_ready_runs", 0),
             "evidence_synthesis_pending_runs": (evidence_gaps.get("summary") or {}).get("synthesis_pending_runs", 0),
             "evidence_synthesis_promoted_runs": (evidence_gaps.get("summary") or {}).get("synthesis_promoted_runs", 0),
+            "evidence_gap_closure_ready_runs": (evidence_gaps.get("summary") or {}).get("closure_ready_runs", 0),
+            "closed_evidence_gap_runs": (evidence_gaps.get("summary") or {}).get("closed_gap_runs", 0),
+            "waived_evidence_gap_runs": (evidence_gaps.get("summary") or {}).get("waived_gap_runs", 0),
         },
         "actions": deduped,
         "top_commands": [item["command"] for item in deduped[:5]],
@@ -14555,6 +14783,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(payload, status)
             if path == "/api/operator/execution-evidence/remediation-task":
                 payload, status = operator_execution_evidence_remediation_task(conn, body, self.headers)
+                conn.commit()
+                return self.send_json(payload, status)
+            if path == "/api/operator/execution-evidence/close-gap":
+                payload, status = operator_close_execution_evidence_gap(conn, body, self.headers)
                 conn.commit()
                 return self.send_json(payload, status)
             if path == "/api/agents":

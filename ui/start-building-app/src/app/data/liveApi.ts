@@ -940,6 +940,33 @@ export interface CommanderSynthesisPromotionPayload {
   live_execution_performed: boolean;
 }
 
+export interface ExecutionEvidenceGapDecisionPayload {
+  provider?: string;
+  operation?: string;
+  ok?: boolean;
+  status: string;
+  error?: string;
+  message?: string;
+  closed?: boolean;
+  workspace_id?: string;
+  run_id?: string;
+  decision?: Record<string, unknown>;
+  gap?: Record<string, unknown> | null;
+  next_actions?: string[];
+  recommended_action?: string;
+  safety?: {
+    read_only?: boolean;
+    ledger_mutated?: boolean;
+    live_execution_performed?: boolean;
+    raw_note_omitted?: boolean;
+    raw_prompt_omitted?: boolean;
+    raw_response_omitted?: boolean;
+    token_omitted?: boolean;
+  };
+  token_omitted?: boolean;
+  live_execution_performed?: boolean;
+}
+
 export interface ReviewQueueSummary {
   pending_approvals: number;
   memory_candidates: number;
@@ -1044,6 +1071,9 @@ export interface OperatorActionPlanPayload {
     evidence_synthesis_ready_runs: number;
     evidence_synthesis_pending_runs: number;
     evidence_synthesis_promoted_runs: number;
+    evidence_gap_closure_ready_runs: number;
+    closed_evidence_gap_runs: number;
+    waived_evidence_gap_runs: number;
   };
   actions: OperatorActionPlanItem[];
   top_commands: string[];
@@ -3208,6 +3238,9 @@ export async function loadOperatorActionPlan(limit = 12): Promise<OperatorAction
       evidence_synthesis_ready_runs: numberValue(summaryRaw.evidence_synthesis_ready_runs, 0),
       evidence_synthesis_pending_runs: numberValue(summaryRaw.evidence_synthesis_pending_runs, 0),
       evidence_synthesis_promoted_runs: numberValue(summaryRaw.evidence_synthesis_promoted_runs, 0),
+      evidence_gap_closure_ready_runs: numberValue(summaryRaw.evidence_gap_closure_ready_runs, 0),
+      closed_evidence_gap_runs: numberValue(summaryRaw.closed_evidence_gap_runs, 0),
+      waived_evidence_gap_runs: numberValue(summaryRaw.waived_evidence_gap_runs, 0),
     },
     actions: asArray<Record<string, unknown>>(raw.actions).map((item) => ({
       action_id: String(item.action_id || item.command || item.title || ""),

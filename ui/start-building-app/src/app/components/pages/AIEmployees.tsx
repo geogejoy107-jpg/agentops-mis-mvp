@@ -2407,6 +2407,8 @@ export function AIEmployees() {
                 {operatorPlanSummary && ` · blocked ${operatorPlanSummary.blocked} / attention ${operatorPlanSummary.attention} / adapter ${operatorPlanSummary.recommended_adapter}`}
                 {operatorPlanSummary && ` · remediation ${operatorPlanSummary.remediation_packages}/${operatorPlanSummary.remediation_pending_reviews}/${operatorPlanSummary.remediation_promoted_deliveries}`}
                 {operatorPlanSummary && ` · evidence gaps ${operatorPlanSummary.evidence_gap_runs}/${operatorPlanSummary.blocked_evidence_gap_runs}/${operatorPlanSummary.remediated_evidence_gap_runs}`}
+                {operatorPlanSummary && ` · synth ${operatorPlanSummary.evidence_synthesis_ready_runs}/${operatorPlanSummary.evidence_synthesis_pending_runs}/${operatorPlanSummary.evidence_synthesis_promoted_runs}`}
+                {operatorPlanSummary && ` · close ${operatorPlanSummary.evidence_gap_closure_ready_runs}/${operatorPlanSummary.closed_evidence_gap_runs}/${operatorPlanSummary.waived_evidence_gap_runs}`}
               </p>
             </div>
             <button

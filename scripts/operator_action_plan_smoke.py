@@ -138,6 +138,12 @@ def validate_plan(payload: dict, label: str, failures: list[str], limit: int) ->
         "unverified_plan_evidence_manifests",
         "remediated_evidence_gap_runs",
         "blocked_evidence_gap_runs",
+        "evidence_synthesis_ready_runs",
+        "evidence_synthesis_pending_runs",
+        "evidence_synthesis_promoted_runs",
+        "evidence_gap_closure_ready_runs",
+        "closed_evidence_gap_runs",
+        "waived_evidence_gap_runs",
     ]:
         require(isinstance(summary.get(key), int), f"{label} summary.{key} missing: {summary}", failures)
     require(isinstance(summary.get("recommended_adapter"), str), f"{label} recommended_adapter missing: {summary}", failures)
@@ -152,6 +158,15 @@ def validate_plan(payload: dict, label: str, failures: list[str], limit: int) ->
     require(evidence_source.get("operation") == "execution_evidence_gaps", f"{label} execution evidence payload missing: {evidence_source}", failures)
     evidence_summary = evidence_source.get("summary") or {}
     require(isinstance(evidence_summary.get("gap_runs"), int), f"{label} execution evidence gap count missing: {evidence_summary}", failures)
+    for key in [
+        "synthesis_ready_runs",
+        "synthesis_pending_runs",
+        "synthesis_promoted_runs",
+        "closure_ready_runs",
+        "closed_gap_runs",
+        "waived_gap_runs",
+    ]:
+        require(isinstance(evidence_summary.get(key), int), f"{label} execution evidence {key} missing: {evidence_summary}", failures)
     evidence_safety = evidence_source.get("safety") or {}
     require(evidence_safety.get("read_only") is True, f"{label} execution evidence read_only missing: {evidence_safety}", failures)
     require(evidence_safety.get("ledger_mutated") is False, f"{label} execution evidence must not mutate ledger: {evidence_safety}", failures)
@@ -173,6 +188,7 @@ def validate_plan(payload: dict, label: str, failures: list[str], limit: int) ->
                 or command.startswith("agentops commander dispatch-package --task-id ")
                 or command.startswith("agentops commander synthesize --project-id ")
                 or command.startswith("agentops commander promote-synthesis --artifact-id ")
+                or command.startswith("agentops operator close-evidence-gap --run-id ")
                 or command.startswith("agentops approval inspect --approval-id ")
                 or command.startswith("agentops workflow delivery-board")
                 or command.startswith("agentops task get --task-id ")
@@ -219,6 +235,32 @@ def main() -> int:
             cli_payload = load_json(proc)
             require(proc.returncode == 0, f"CLI failed: {proc.stderr or proc.stdout}", failures)
             validate_plan(cli_payload, "cli", failures, args.limit)
+            gap_run_id = next(
+                (item.get("run_id") for item in ((payload.get("execution_evidence") or {}).get("gaps") or []) if item.get("run_id")),
+                None,
+            )
+            if gap_run_id:
+                close_proc = run_cli(
+                    args.base_url,
+                    [
+                        "operator",
+                        "close-evidence-gap",
+                        "--run-id",
+                        str(gap_run_id),
+                        "--decision",
+                        "waived",
+                        "--note",
+                        "smoke preview only",
+                    ],
+                    env,
+                )
+                outputs.extend([close_proc.stdout, close_proc.stderr])
+                close_payload = load_json(close_proc)
+                require(close_proc.returncode == 0, f"close-gap preview CLI failed: {close_proc.stderr or close_proc.stdout}", failures)
+                require(close_payload.get("operation") == "execution_evidence_gap_decision", f"close-gap preview operation mismatch: {close_payload}", failures)
+                close_safety = close_payload.get("safety") or {}
+                require(close_safety.get("read_only") is True, f"close-gap preview should be read-only: {close_safety}", failures)
+                require(close_safety.get("ledger_mutated") is False, f"close-gap preview mutated ledger: {close_safety}", failures)
 
     after = db_fingerprint(db_path)
     db_unchanged = bool(before is not None and after is not None and before == after)

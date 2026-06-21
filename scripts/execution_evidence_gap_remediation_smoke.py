@@ -119,7 +119,13 @@ def main() -> int:
     status, action_plan = http_json(args.base_url, "GET", "/api/operator/action-plan?limit=20")
     outputs.append(json.dumps(action_plan, ensure_ascii=False))
     require(status == 200, f"action-plan failed: {status} {action_plan}", failures)
-    gap = next((item for item in (action_plan.get("execution_evidence") or {}).get("gaps") or [] if item.get("run_id")), None)
+    gaps = [item for item in (action_plan.get("execution_evidence") or {}).get("gaps") or [] if item.get("run_id")]
+    gap = (
+        next((item for item in gaps if not item.get("remediation_task_id")), None)
+        or next((item for item in gaps if item.get("remediation_synthesis_status") in {None, "empty"}), None)
+        or next((item for item in gaps if item.get("gap_decision_status") != "closed"), None)
+        or (gaps[0] if gaps else None)
+    )
     require(bool(gap), f"no execution evidence gap available: {action_plan}", failures)
     run_id = str((gap or {}).get("run_id") or "")
 
@@ -256,8 +262,43 @@ def main() -> int:
     require(promoted_status == 200, f"promoted action-plan failed: {promoted_status} {promoted_plan}", failures)
     promoted_gap = next((item for item in (promoted_plan.get("execution_evidence") or {}).get("gaps") or [] if item.get("run_id") == run_id), {})
     require(promoted_gap.get("remediation_synthesis_status") in {"promoted", "memory_pending_review"}, f"gap did not record promoted synthesis: {promoted_gap}", failures)
+    close_command = str(promoted_gap.get("command") or "")
+    require(close_command.startswith("agentops operator close-evidence-gap --run-id "), f"promoted gap did not recommend close decision: {promoted_gap}", failures)
     promoted_summary = promoted_plan.get("summary") or {}
     require(int(promoted_summary.get("evidence_synthesis_promoted_runs") or 0) >= 1, f"promoted summary missing: {promoted_summary}", failures)
+    require(int(promoted_summary.get("evidence_gap_closure_ready_runs") or 0) >= 1, f"closure-ready summary missing: {promoted_summary}", failures)
+
+    with tempfile.TemporaryDirectory(prefix="agentops-evidence-close-") as tmp:
+        env = os.environ.copy()
+        env["AGENTOPS_CONFIG"] = str(Path(tmp) / "config.json")
+        env.pop("AGENTOPS_API_KEY", None)
+
+        close_preview = run_cli(args.base_url, ["operator", "close-evidence-gap", "--run-id", run_id, "--decision", "accepted_remediation"], env)
+        outputs.extend([close_preview.stdout, close_preview.stderr])
+        close_preview_payload = load_json(close_preview)
+        require(close_preview.returncode == 0, f"close preview failed: {close_preview.stderr or close_preview.stdout}", failures)
+        require(close_preview_payload.get("status") == "preview", f"close preview status wrong: {close_preview_payload}", failures)
+        require(close_preview_payload.get("safety", {}).get("ledger_mutated") is False, f"close preview mutated ledger: {close_preview_payload}", failures)
+
+        close_args = shlex.split(close_command)
+        if close_args and close_args[0] == "agentops":
+            close_args = close_args[1:]
+        closed = run_cli(args.base_url, close_args, env)
+        outputs.extend([closed.stdout, closed.stderr])
+        closed_payload = load_json(closed)
+        require(closed.returncode == 0, f"close command failed: {closed.stderr or closed.stdout}", failures)
+        require(closed_payload.get("status") == "closed", f"gap decision not closed: {closed_payload}", failures)
+        require(closed_payload.get("closed") is True, f"gap decision closed flag wrong: {closed_payload}", failures)
+        require(closed_payload.get("safety", {}).get("ledger_mutated") is True, f"close did not report ledger mutation: {closed_payload}", failures)
+
+    closed_status, closed_plan = http_json(args.base_url, "GET", "/api/operator/action-plan?limit=20")
+    outputs.append(json.dumps(closed_plan, ensure_ascii=False))
+    require(closed_status == 200, f"closed action-plan failed: {closed_status} {closed_plan}", failures)
+    closed_gap = next((item for item in (closed_plan.get("execution_evidence") or {}).get("gaps") or [] if item.get("run_id") == run_id), {})
+    require(closed_gap.get("gap_decision_status") == "closed", f"gap did not retain closed decision: {closed_gap}", failures)
+    require(closed_gap.get("gap_decision_type") == "accepted_remediation", f"gap closed decision type wrong: {closed_gap}", failures)
+    closed_summary = closed_plan.get("summary") or {}
+    require(int(closed_summary.get("closed_evidence_gap_runs") or 0) >= 1, f"closed summary missing: {closed_summary}", failures)
 
     after_create = db_fingerprint(db_path)
     if before is not None and after_create is not None:

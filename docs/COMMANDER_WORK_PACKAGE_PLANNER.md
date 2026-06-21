@@ -193,6 +193,10 @@ and promotion commands close the loop:
   --approval-id ap_cmd_synthesis_x \
   --mode both \
   --confirm-promote
+./scripts/agentops operator close-evidence-gap \
+  --run-id run_123 \
+  --decision accepted_remediation \
+  --confirm-close
 ./scripts/agentops operator action-plan --limit 20
 ./scripts/agentops workflow delivery-board --limit 12
 ```
@@ -213,7 +217,12 @@ planned task that can then be dispatched through the normal Commander package
 path. After dispatch writes a full evidence chain including
 `plan_evidence_manifests`, the operator source marks that gap
 `remediation_status=verified` so the command center can review the legacy debt
-without keeping it in the blocked lane.
+without keeping it in the blocked lane. The next operator action is then the
+normal synthesis/review/promotion chain. Once promotion succeeds, the source run
+still requires `agentops operator close-evidence-gap --decision
+accepted_remediation --confirm-close` (or an explicit `waived`/`reopen`
+decision) so approved remediation becomes memory/customer-delivery evidence
+without silently erasing the historical gap.
 
 Dispatch a package:
 

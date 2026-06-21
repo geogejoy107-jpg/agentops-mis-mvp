@@ -177,7 +177,18 @@ evidence and returns `already_exists` for repeated calls. Once the package is
 dispatched and carries tool/evaluation/artifact/audit plus verified
 plan-evidence rows, `GET /api/operator/action-plan` reports the source gap with
 `remediation_status=verified` and includes `remediated_evidence_gap_runs` /
-`blocked_evidence_gap_runs` in its summary.
+`blocked_evidence_gap_runs` in its summary. The same source then recommends the
+standard Commander synthesis/review/promotion chain and reports
+`evidence_synthesis_ready_runs`, `evidence_synthesis_pending_runs`, and
+`evidence_synthesis_promoted_runs`. After promotion, the source gap is still
+historical debt until an operator records the final decision.
+
+`POST /api/operator/execution-evidence/close-gap` previews or records that
+final decision. `decision` is one of `accepted_remediation`, `waived`, or
+`reopen`; preview is read-only, and `confirm_close:true` writes runtime/audit
+evidence. `accepted_remediation` fails closed until the remediation synthesis
+has been promoted. Action-plan execution-evidence rows may include the latest
+gap decision status, but raw notes are omitted.
 
 ## Plan Evidence Manifests
 
