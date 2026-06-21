@@ -273,7 +273,7 @@ Workspace isolation smoke 会验证：token 绑定 workspace A 后，只能 pull
 - token 绑定 `workspace_id`，不能通过 header/query/body 切换到其他 workspace。
 - API 会检查 endpoint scope，例如 `tasks:create`、`tasks:read`、`runs:write`、`audit:write`。
 - `./scripts/agentops demo readiness` 可查看 v1.5 录屏主路径是否齐备：local readiness、安全边界、worker fleet lanes、async inbox、客户任务闭环和 run ledger 证据。它只读，不启动 worker、不写账本、不触发 live runtime。
-- `./scripts/agentops commander plan --goal "..."` 可把一个客户/项目目标预览拆成多条 AI 团队工作包；加 `--confirm-create` 后才写入 planned MIS tasks，并记录 commander runtime/audit evidence。浏览器入口在 `/workspace/agents` 的 Commander Work Package Planner，详见 `docs/COMMANDER_WORK_PACKAGE_PLANNER.md`。
+- `./scripts/agentops commander plan --goal "..."` 可把一个客户/项目目标预览拆成多条 AI 团队工作包；加 `--confirm-create` 后才写入 planned MIS tasks，并记录 commander runtime/audit evidence。`./scripts/agentops commander packages` 可读回持久化工作包状态、最新 run 和 evidence counts。浏览器入口在 `/workspace/agents` 的 Commander Work Package Planner，详见 `docs/COMMANDER_WORK_PACKAGE_PLANNER.md`。
 - `./scripts/agentops worker status` 可从命令行查看 worker fleet、daemon、pending task 和 stuck task 状态。
 - `./scripts/agentops worker hygiene` 默认只读，会列出 stuck worker tasks 和超过阈值仍 never-seen 的 enrollment；只有加 `--apply --confirm-cleanup` 才释放任务、吊销 stale token，并写入 audit/runtime evidence。
 - `./scripts/agentops local readiness` 可查看单机开源版闭环体检：Agent Gateway、worker route、memory/knowledge、approval、task->run->tool/eval/audit/artifact 证据、runbook 是否齐备。它只读，不启动 worker、不拉任务、不触发 Hermes/OpenClaw live runtime。

@@ -754,6 +754,54 @@ export interface CommanderWorkPackagePlanPayload {
   live_execution_performed: boolean;
 }
 
+export interface CommanderWorkPackageReadbackPayload {
+  provider: string;
+  operation: string;
+  status: string;
+  workspace_id: string;
+  filter: {
+    project_id?: string | null;
+    plan_id?: string | null;
+    status: string;
+    limit: number;
+  };
+  summary: {
+    total: number;
+    by_status: Record<string, number>;
+    by_project: Record<string, number>;
+  };
+  work_packages: (CommanderWorkPackage & {
+    work_package_id: string;
+    package_status: string;
+    latest_run?: {
+      run_id?: string;
+      status?: string;
+      agent_id?: string;
+      runtime_type?: string;
+      created_at?: string;
+      ended_at?: string | null;
+      error_type?: string | null;
+      error_message?: string | null;
+    } | null;
+    evidence_counts?: Record<string, number>;
+    recommended_action?: string;
+    created_at?: string;
+    updated_at?: string;
+  })[];
+  recommended_next_actions: string[];
+  safety: {
+    read_only: boolean;
+    ledger_mutated: boolean;
+    task_created: boolean;
+    run_created: boolean;
+    live_execution_performed: boolean;
+    token_omitted: boolean;
+    raw_prompt_omitted: boolean;
+  };
+  token_omitted: boolean;
+  live_execution_performed: boolean;
+}
+
 export interface ReviewQueueSummary {
   pending_approvals: number;
   memory_candidates: number;
@@ -2101,6 +2149,109 @@ export async function planCommanderWorkPackages(input: {
       dry_run: boolValue(safetyRaw.dry_run),
       ledger_mutated: boolValue(safetyRaw.ledger_mutated),
       task_created: boolValue(safetyRaw.task_created),
+    },
+    token_omitted: boolValue(raw.token_omitted),
+    live_execution_performed: boolValue(raw.live_execution_performed),
+  };
+}
+
+export async function loadCommanderWorkPackages(options: {
+  project_id?: string;
+  plan_id?: string;
+  status?: string;
+  limit?: number;
+} = {}): Promise<CommanderWorkPackageReadbackPayload> {
+  const params = new URLSearchParams();
+  if (options.project_id) params.set("project_id", options.project_id);
+  if (options.plan_id) params.set("plan_id", options.plan_id);
+  if (options.status) params.set("status", options.status);
+  if (options.limit) params.set("limit", String(options.limit));
+  const raw = await optionalApiJson<Record<string, unknown>>(`/commander/work-packages${params.toString() ? `?${params}` : ""}`, {
+    provider: "agentops-commander",
+    operation: "work_packages_readback",
+    status: "unavailable",
+    workspace_id: "local-demo",
+    filter: { status: options.status || "all", limit: options.limit || 25 },
+    summary: {},
+    work_packages: [],
+    recommended_next_actions: [],
+    safety: {
+      read_only: true,
+      ledger_mutated: false,
+      task_created: false,
+      run_created: false,
+      live_execution_performed: false,
+      token_omitted: true,
+      raw_prompt_omitted: true,
+    },
+    token_omitted: true,
+    live_execution_performed: false,
+  });
+  const filterRaw = typeof raw.filter === "object" && raw.filter !== null ? raw.filter as Record<string, unknown> : {};
+  const summaryRaw = typeof raw.summary === "object" && raw.summary !== null ? raw.summary as Record<string, unknown> : {};
+  const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
+  return {
+    provider: String(raw.provider || "agentops-commander"),
+    operation: String(raw.operation || "work_packages_readback"),
+    status: String(raw.status || "unknown"),
+    workspace_id: String(raw.workspace_id || "local-demo"),
+    filter: {
+      project_id: filterRaw.project_id ? String(filterRaw.project_id) : null,
+      plan_id: filterRaw.plan_id ? String(filterRaw.plan_id) : null,
+      status: String(filterRaw.status || options.status || "all"),
+      limit: numberValue(filterRaw.limit, options.limit || 25),
+    },
+    summary: {
+      total: numberValue(summaryRaw.total, 0),
+      by_status: numberRecord(summaryRaw.by_status),
+      by_project: numberRecord(summaryRaw.by_project),
+    },
+    work_packages: asArray<Record<string, unknown>>(raw.work_packages).map((item) => {
+      const latestRun = typeof item.latest_run === "object" && item.latest_run !== null ? item.latest_run as Record<string, unknown> : null;
+      return {
+        plan_id: String(item.plan_id || ""),
+        project_id: String(item.project_id || ""),
+        lane_id: String(item.lane_id || ""),
+        task_id: String(item.task_id || ""),
+        work_package_id: String(item.work_package_id || item.task_id || ""),
+        title: String(item.title || "Untitled work package"),
+        description: String(item.description || ""),
+        owner_agent_id: String(item.owner_agent_id || ""),
+        collaborator_agent_ids: asArray<unknown>(item.collaborator_agent_ids).map(String),
+        status: String(item.status || "unknown"),
+        package_status: String(item.package_status || item.status || "unknown"),
+        priority: String(item.priority || "medium"),
+        risk_level: String(item.risk_level || "medium"),
+        acceptance_criteria: String(item.acceptance_criteria || ""),
+        dependencies: asArray<unknown>(item.dependencies).map(String),
+        verification_commands: asArray<unknown>(item.verification_commands).map(String),
+        scope: String(item.scope || ""),
+        avoid_scope: String(item.avoid_scope || ""),
+        latest_run: latestRun ? {
+          run_id: latestRun.run_id ? String(latestRun.run_id) : undefined,
+          status: latestRun.status ? String(latestRun.status) : undefined,
+          agent_id: latestRun.agent_id ? String(latestRun.agent_id) : undefined,
+          runtime_type: latestRun.runtime_type ? String(latestRun.runtime_type) : undefined,
+          created_at: latestRun.created_at ? String(latestRun.created_at) : undefined,
+          ended_at: latestRun.ended_at ? String(latestRun.ended_at) : null,
+          error_type: latestRun.error_type ? String(latestRun.error_type) : null,
+          error_message: latestRun.error_message ? String(latestRun.error_message) : null,
+        } : null,
+        evidence_counts: numberRecord(item.evidence_counts),
+        recommended_action: item.recommended_action ? String(item.recommended_action) : undefined,
+        created_at: item.created_at ? String(item.created_at) : undefined,
+        updated_at: item.updated_at ? String(item.updated_at) : undefined,
+      };
+    }),
+    recommended_next_actions: asArray<unknown>(raw.recommended_next_actions).map(String).filter(Boolean),
+    safety: {
+      read_only: boolValue(safetyRaw.read_only),
+      ledger_mutated: boolValue(safetyRaw.ledger_mutated),
+      task_created: boolValue(safetyRaw.task_created),
+      run_created: boolValue(safetyRaw.run_created),
+      live_execution_performed: boolValue(safetyRaw.live_execution_performed),
+      token_omitted: boolValue(safetyRaw.token_omitted),
+      raw_prompt_omitted: boolValue(safetyRaw.raw_prompt_omitted),
     },
     token_omitted: boolValue(raw.token_omitted),
     live_execution_performed: boolValue(raw.live_execution_performed),

@@ -177,6 +177,36 @@ def main() -> int:
             require(after_create["runtime_events"] >= (before or {}).get("runtime_events", 0) + 1, f"commander runtime event missing: {after_create}")
             require(after_create["audit_logs"] >= (before or {}).get("audit_logs", 0) + 1, f"commander audit log missing: {after_create}")
 
+        readback_status, readback = http_json("GET", f"/api/commander/work-packages?project_id={project_id}&limit=10")
+        transcripts.append(json.dumps(readback, ensure_ascii=False))
+        require(readback_status == 200, f"readback API failed: {readback_status} {readback}")
+        require(readback.get("operation") == "work_packages_readback", f"wrong readback operation: {readback}")
+        require(readback.get("summary", {}).get("total") == 4, f"wrong readback total: {readback}")
+        require(readback.get("safety", {}).get("read_only") is True, f"readback not read-only: {readback}")
+        require(readback.get("safety", {}).get("ledger_mutated") is False, f"readback mutated ledger flag: {readback}")
+        readback_items = readback.get("work_packages") or []
+        require({item.get("task_id") for item in readback_items} == set(task_ids), f"readback task mismatch: {readback_items}")
+        require(all(item.get("project_id") == project_id for item in readback_items), f"readback project mismatch: {readback_items}")
+        require(all(item.get("plan_id") == plan_id for item in readback_items), f"readback plan mismatch: {readback_items}")
+        require(all(item.get("recommended_action") for item in readback_items), f"readback missing next action: {readback_items}")
+
+        cli_readback = run_cli([
+            "commander",
+            "packages",
+            "--project-id",
+            project_id,
+            "--limit",
+            "10",
+        ])
+        transcripts.extend([cli_readback.stdout, cli_readback.stderr])
+        cli_readback_payload = load_json(cli_readback)
+        require(cli_readback.returncode == 0, f"CLI readback failed: {cli_readback.stderr or cli_readback.stdout}")
+        require(cli_readback_payload.get("summary", {}).get("total") == 4, f"CLI readback total wrong: {cli_readback_payload}")
+
+        after_readback = db_counts(DEFAULT_DB, project_id) if DEFAULT_DB.exists() else None
+        if after_create is not None and after_readback is not None:
+            require(after_create == after_readback, f"readback mutated database: before={after_create} after={after_readback}")
+
         require(not leaked_secret("\n".join(transcripts)), "planner output leaked token-like material")
     except Exception as exc:
         failures.append(str(exc))

@@ -37,6 +37,10 @@ runner. The supported management primitives are:
   customer/operator goal. Preview is read-only; confirmed creation writes
   planned tasks plus commander runtime/audit evidence without executing live
   adapters.
+- Commander work-package readback:
+  `GET /api/commander/work-packages` and `agentops commander packages` read
+  persisted work packages from normal MIS tasks, attach latest run/evidence
+  counts, and remain read-only.
 - Async workflow management: long Hermes/OpenClaw/customer-template work can be
   submitted as workflow jobs, polled, listed, and recovered through
   `POST /api/workflows/customer-worker-task/submit`,

@@ -16,6 +16,7 @@ import {
   loadCustomerDeliveryBoard,
   loadDashboard,
   loadDemoReadiness,
+  loadCommanderWorkPackages,
   loadHermesOpenClawLoopReadback,
   loadIntegrationInbox,
   loadLocalReadiness,
@@ -170,7 +171,7 @@ export function AIEmployees() {
     scopes: DEFAULT_GATEWAY_SCOPES.join(", "),
   });
   const { data, loading, error, refresh } = useLiveData(async () => {
-    const [metrics, demoReadiness, workerStatus, workerFleet, workerHygiene, adapterReadiness, localReadiness, securityReadiness, integrationInbox, reviewQueue, customerDeliveryBoard, loopLaneReadback, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs] = await Promise.all([
+    const [metrics, demoReadiness, workerStatus, workerFleet, workerHygiene, adapterReadiness, localReadiness, securityReadiness, integrationInbox, commanderWorkPackages, reviewQueue, customerDeliveryBoard, loopLaneReadback, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs] = await Promise.all([
       loadDashboard(),
       loadDemoReadiness(),
       loadWorkerStatus(),
@@ -180,6 +181,7 @@ export function AIEmployees() {
       loadLocalReadiness(),
       loadSecurityProductionReadiness(),
       loadIntegrationInbox({ bucket: integrationInboxBucket, limit: 20 }),
+      loadCommanderWorkPackages({ limit: 8 }),
       loadReviewQueue(12),
       loadCustomerDeliveryBoard(8),
       loadHermesOpenClawLoopReadback("", 6),
@@ -192,7 +194,7 @@ export function AIEmployees() {
       loadStuckWorkflowJobs(30, 8),
     ]);
     const agents = await loadAgents(metrics);
-    return { agents, demoReadiness, workerStatus, workerFleet, workerHygiene, adapterReadiness, localReadiness, securityReadiness, integrationInbox, reviewQueue, customerDeliveryBoard, loopLaneReadback, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs };
+    return { agents, demoReadiness, workerStatus, workerFleet, workerHygiene, adapterReadiness, localReadiness, securityReadiness, integrationInbox, commanderWorkPackages, reviewQueue, customerDeliveryBoard, loopLaneReadback, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs };
   }, [integrationInboxBucket]);
   const agents = data?.agents || [];
   const demoReadiness = data?.demoReadiness;
@@ -204,6 +206,8 @@ export function AIEmployees() {
   const localReadiness = data?.localReadiness;
   const securityReadiness = data?.securityReadiness;
   const integrationInbox = data?.integrationInbox;
+  const commanderWorkPackages = data?.commanderWorkPackages;
+  const commanderPackageRows = commanderWorkPackages?.work_packages || [];
   const reviewQueue = data?.reviewQueue as ReviewQueuePayload | undefined;
   const reviewQueueSummary = reviewQueue?.summary;
   const reviewQueueItems = reviewQueue?.review_items || [];
@@ -309,6 +313,9 @@ export function AIEmployees() {
       plannedPackages: "Planned packages",
       createdPackages: "Created tasks",
       plannerSafety: "Preview is safe",
+      persistedPackages: "Persisted packages",
+      packageReadback: "Package readback",
+      packageStatus: "Package status",
       reviewQueueTitle: "Human Review Queue",
       reviewQueueSummary: "One operator queue for approvals, memory candidates and customer deliveries. Handle returned work first without waiting for every worker lane.",
       reviewQueueEmpty: "No review items. Keep dispatching or watch the async inbox.",
@@ -617,6 +624,9 @@ export function AIEmployees() {
       plannedPackages: "规划工作包",
       createdPackages: "已创建任务",
       plannerSafety: "预览安全",
+      persistedPackages: "持久化工作包",
+      packageReadback: "工作包读回",
+      packageStatus: "工作包状态",
       reviewQueueTitle: "人工审核队列",
       reviewQueueSummary: "把审批、候选记忆和客户交付聚合成一个 operator 队列；哪个 worker 先回来，就先处理哪个。",
       reviewQueueEmpty: "暂无待审事项。可以继续派发任务，或观察异步 Inbox。",
@@ -1620,6 +1630,51 @@ export function AIEmployees() {
             </div>
           </div>
         )}
+
+        <div className="mt-4 rounded-lg p-3" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-2">
+            <div className="min-w-0">
+              <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>
+                {copy.persistedPackages}
+              </div>
+              <div className="text-[10px] mt-1 truncate" style={{ color: "var(--mis-muted)" }}>
+                {copy.packageReadback}: {commanderWorkPackages?.summary.total ?? 0} · {copy.readOnlyProof}: {commanderWorkPackages?.safety.read_only ? copy.yes : copy.no}
+              </div>
+            </div>
+            <StatusBadge status={commanderWorkPackages?.status || "unknown"} />
+          </div>
+          <div className="space-y-2 mt-3">
+            {commanderPackageRows.length === 0 && (
+              <div className="text-[11px] rounded px-3 py-2" style={{ color: "var(--mis-muted)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                {copy.noWorkflowJobs}
+              </div>
+            )}
+            {commanderPackageRows.slice(0, 6).map((pkg) => (
+              <div key={pkg.work_package_id || pkg.task_id} className="rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className="text-[11px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{pkg.title}</div>
+                      <StatusBadge status={pkg.package_status || pkg.status} label={pkg.lane_id || pkg.status} />
+                    </div>
+                    <div className="text-[10px] mt-1 truncate" style={{ color: "var(--mis-muted)" }}>
+                      {pkg.project_id || "project"} · {pkg.owner_agent_id || "agent"} · {copy.packageStatus}: {pkg.package_status}
+                    </div>
+                    <div className="text-[10px] mt-1 line-clamp-2" style={{ color: "var(--mis-dim)" }}>
+                      {pkg.recommended_action || "agentops commander board"}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 shrink-0">
+                    <Link to={`/admin/tasks/${pkg.task_id}`} className="text-[10px] px-2 py-1 rounded" style={{ background: "rgba(34,211,238,0.10)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.18)" }}>{copy.openTask}</Link>
+                    {pkg.latest_run?.run_id && (
+                      <Link to={`/admin/runs/${pkg.latest_run.run_id}`} className="text-[10px] px-2 py-1 rounded" style={{ background: "rgba(45,212,191,0.10)", color: "var(--mis-success)", border: "1px solid rgba(45,212,191,0.18)" }}>{copy.openRun}</Link>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
 
       <div

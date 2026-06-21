@@ -8758,12 +8758,13 @@ def commander_normalize_lane(raw_lane: dict, index: int) -> dict:
     }
 
 
-def commander_work_package_description(goal: str, lane: dict, dependencies: list[str], project_id: str) -> str:
+def commander_work_package_description(goal: str, lane: dict, dependencies: list[str], project_id: str, plan_id: str) -> str:
     verification = "\n".join(f"- {item}" for item in lane.get("verification") or [])
     deps = ", ".join(dependencies) if dependencies else "none"
     return redact_text(
         "\n".join([
             f"Commander project: {project_id}",
+            f"Plan: {plan_id}",
             f"Goal: {goal}",
             f"Lane: {lane['lane_id']}",
             f"Scope: {lane['scope']}",
@@ -8814,7 +8815,7 @@ def commander_plan_work_packages(conn: sqlite3.Connection, body: dict, headers) 
             "lane_id": lane["lane_id"],
             "task_id": task_id,
             "title": title,
-            "description": commander_work_package_description(goal, lane, dependencies, project_id),
+            "description": commander_work_package_description(goal, lane, dependencies, project_id, plan_id),
             "owner_agent_id": lane["owner_agent_id"],
             "collaborator_agent_ids": ["agt_qa"] if lane["owner_agent_id"] != "agt_qa" else ["agt_cos"],
             "status": "planned",
@@ -8903,6 +8904,179 @@ def commander_plan_work_packages(conn: sqlite3.Connection, body: dict, headers) 
         "token_omitted": True,
         "live_execution_performed": False,
     }, status_code
+
+
+def commander_extract_line(description: str, label: str) -> str:
+    labels = ["Commander project", "Plan", "Goal", "Lane", "Scope", "Avoid scope", "Dependencies", "Return checklist", "Verification commands"]
+    next_labels = "|".join(re.escape(item) for item in labels if item != label)
+    pattern = rf"(?:^|\s){re.escape(label)}:\s*(.*?)(?=\s(?:{next_labels}):|$)"
+    match = re.search(pattern, description or "", flags=re.DOTALL)
+    return commander_safe_text(match.group(1).strip(), 360) if match else ""
+
+
+def commander_extract_verification(description: str) -> list[str]:
+    if "Verification commands:" not in (description or ""):
+        return []
+    tail = description.split("Verification commands:", 1)[1]
+    commands = []
+    for line in tail.splitlines():
+        line = line.strip()
+        if line.startswith("- "):
+            commands.append(commander_safe_text(line[2:].strip(), 180))
+    if len(commands) <= 1 and " - " in tail:
+        commands = [commander_safe_text(item.strip(), 180) for item in tail.split(" - ") if item.strip()]
+    return commands[:8]
+
+
+def commander_extract_dependencies(description: str) -> list[str]:
+    raw = commander_extract_line(description, "Dependencies")
+    if not raw or raw.lower() == "none":
+        return []
+    return [commander_safe_text(item.strip(), 100) for item in raw.split(",") if item.strip()][:12]
+
+
+def commander_plan_id_from_task(task_id: str, description: str) -> str:
+    explicit = commander_extract_line(description, "Plan")
+    if explicit:
+        return explicit
+    match = re.match(r"tsk_cmd_(.+)_(strategy|research|implementation|qa|ops|lane-[0-9]+)$", task_id or "")
+    return commander_safe_text(match.group(1), 120) if match else ""
+
+
+def commander_work_package_status(task: dict, latest_run: dict | None, evidence: dict) -> str:
+    if task.get("status") in {"failed", "blocked", "canceled"}:
+        return "blocked"
+    if task.get("status") in {"running", "waiting_approval"}:
+        return "still_running"
+    if task.get("status") == "completed":
+        return "ready_for_review" if (evidence.get("evaluations") or evidence.get("artifacts") or evidence.get("tool_calls")) else "needs_evidence"
+    if latest_run and latest_run.get("status") in {"failed", "blocked"}:
+        return "blocked"
+    return "planned"
+
+
+def commander_work_package_next_action(item: dict) -> str:
+    owner = item.get("owner_agent_id") or "agt_worker_local"
+    status = item.get("package_status")
+    if status == "planned":
+        return f"agentops-worker --once --adapter mock --agent-id {owner}"
+    if status == "still_running":
+        run_id = item.get("latest_run", {}).get("run_id") if item.get("latest_run") else ""
+        return f"agentops run get --run-id {run_id}" if run_id else "agentops commander inbox --bucket still_running"
+    if status == "ready_for_review":
+        return f"agentops task get --task-id {item.get('task_id')}"
+    if status == "blocked":
+        return "agentops commander inbox --bucket blocked --limit 5"
+    return "agentops commander board"
+
+
+def commander_work_package_from_task(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
+    task = dict(row)
+    description = task.get("description") or ""
+    latest_run_row = conn.execute(
+        """SELECT run_id,status,agent_id,runtime_type,created_at,ended_at,error_type,error_message
+        FROM runs WHERE task_id=? ORDER BY created_at DESC LIMIT 1""",
+        (task["task_id"],),
+    ).fetchone()
+    latest_run = dict(latest_run_row) if latest_run_row else None
+    evidence = commander_evidence_counts(conn, task_id=task["task_id"], run_id=(latest_run or {}).get("run_id"))
+    item = {
+        "work_package_id": task["task_id"],
+        "task_id": task["task_id"],
+        "workspace_id": row_workspace(task),
+        "project_id": commander_extract_line(description, "Commander project"),
+        "plan_id": commander_plan_id_from_task(task["task_id"], description),
+        "goal": commander_extract_line(description, "Goal"),
+        "lane_id": commander_extract_line(description, "Lane") or "unknown",
+        "title": commander_safe_text(task.get("title"), 180),
+        "status": task.get("status"),
+        "owner_agent_id": task.get("owner_agent_id"),
+        "collaborator_agent_ids": task_collaborators(task),
+        "priority": task.get("priority"),
+        "risk_level": task.get("risk_level"),
+        "scope": commander_extract_line(description, "Scope"),
+        "avoid_scope": commander_extract_line(description, "Avoid scope"),
+        "dependencies": commander_extract_dependencies(description),
+        "verification_commands": commander_extract_verification(description),
+        "acceptance_criteria": commander_safe_text(task.get("acceptance_criteria"), 360),
+        "latest_run": latest_run,
+        "evidence_counts": evidence,
+        "created_at": task.get("created_at"),
+        "updated_at": task.get("updated_at"),
+    }
+    item["package_status"] = commander_work_package_status(task, latest_run, evidence)
+    item["recommended_action"] = commander_work_package_next_action(item)
+    return item
+
+
+def commander_work_packages_readback(conn: sqlite3.Connection, qs=None, headers=None) -> dict:
+    qs = qs or {}
+    workspace_id = normalize_workspace_id((qs.get("workspace_id") or [headers.get("X-AgentOps-Workspace-Id") if headers else "local-demo"])[0] or "local-demo")
+    project_id = commander_safe_text((qs.get("project_id") or [""])[0], 120)
+    plan_id = commander_safe_text((qs.get("plan_id") or [""])[0], 120)
+    status_filter = commander_safe_text((qs.get("status") or ["all"])[0], 80)
+    limit = min(max(int((qs.get("limit") or ["25"])[0]), 1), 100)
+    sql = """SELECT * FROM tasks
+        WHERE COALESCE(workspace_id,'local-demo')=?
+        AND description LIKE 'Commander project:%'"""
+    params: list = [workspace_id]
+    if project_id:
+        sql += " AND description LIKE ?"
+        params.append(f"%Commander project: {project_id}%")
+    if plan_id:
+        sql += " AND (description LIKE ? OR task_id LIKE ?)"
+        params.extend([f"%Plan: {plan_id}%", f"%{plan_id}%"])
+    sql += " ORDER BY created_at DESC LIMIT ?"
+    params.append(limit)
+    rows = conn.execute(sql, params).fetchall()
+    packages = [commander_work_package_from_task(conn, row) for row in rows]
+    if status_filter and status_filter != "all":
+        packages = [item for item in packages if item.get("package_status") == status_filter or item.get("status") == status_filter]
+    counts: dict[str, int] = {}
+    for item in packages:
+        key = item.get("package_status") or "unknown"
+        counts[key] = counts.get(key, 0) + 1
+    project_counts: dict[str, int] = {}
+    for item in packages:
+        key = item.get("project_id") or "unknown"
+        project_counts[key] = project_counts.get(key, 0) + 1
+    next_actions = []
+    for item in packages:
+        action = item.get("recommended_action")
+        if action and action not in next_actions:
+            next_actions.append(action)
+    if not next_actions:
+        next_actions = ["agentops commander plan --goal \"Describe the customer project\" --confirm-create"]
+    return {
+        "provider": "agentops-commander",
+        "operation": "work_packages_readback",
+        "status": "ready" if packages else "empty",
+        "workspace_id": workspace_id,
+        "filter": {
+            "project_id": project_id or None,
+            "plan_id": plan_id or None,
+            "status": status_filter,
+            "limit": limit,
+        },
+        "summary": {
+            "total": len(packages),
+            "by_status": counts,
+            "by_project": project_counts,
+        },
+        "work_packages": packages,
+        "recommended_next_actions": next_actions[:8],
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "task_created": False,
+            "run_created": False,
+            "live_execution_performed": False,
+            "token_omitted": True,
+            "raw_prompt_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
 
 
 COMMANDER_INBOX_BUCKETS = ["ready_for_review", "still_running", "blocked", "late_or_stale", "needs_memory_review"]
@@ -10252,6 +10426,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(payload)
             if path == "/api/commander/project-board":
                 payload = commander_project_board(conn, self.headers)
+                conn.rollback()
+                return self.send_json(payload)
+            if path == "/api/commander/work-packages":
+                payload = commander_work_packages_readback(conn, qs, self.headers)
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/commander/integration-inbox":

@@ -39,6 +39,16 @@ curl -s -X POST http://127.0.0.1:8787/api/commander/work-packages/plan \
   }' | jq .
 ```
 
+Read persisted work packages:
+
+```bash
+curl -s "http://127.0.0.1:8787/api/commander/work-packages?project_id=proj_x&limit=25" | jq .
+```
+
+The readback endpoint is read-only. It reconstructs work-package state from
+normal MIS `tasks`, links the latest run, counts evidence rows, and returns a
+recommended next action for each lane.
+
 ## CLI
 
 Preview:
@@ -56,6 +66,12 @@ Create tasks:
   --goal "Use AgentOps MIS to coordinate a customer AI-team project." \
   --max-packages 5 \
   --confirm-create
+```
+
+Read persisted packages:
+
+```bash
+./scripts/agentops commander packages --project-id proj_x --limit 25
 ```
 
 ## Default Lanes
@@ -86,6 +102,7 @@ The panel supports:
 - previewing the work-package split
 - confirming task creation
 - opening created task detail pages
+- reading persisted work-package status after refresh
 - seeing safety proof for no live execution and token omission
 
 ## Verification

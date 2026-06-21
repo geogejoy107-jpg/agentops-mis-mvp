@@ -308,6 +308,16 @@ def cmd_commander_plan(args, client: AgentOpsClient) -> dict:
     return client.post("/api/commander/work-packages/plan", payload)
 
 
+def cmd_commander_packages(args, client: AgentOpsClient) -> dict:
+    query = {
+        "project_id": args.project_id,
+        "plan_id": args.plan_id,
+        "status": args.status,
+        "limit": args.limit,
+    }
+    return client.get("/api/commander/work-packages", query=query)
+
+
 def cmd_review_queue(args, client: AgentOpsClient) -> dict:
     return client.get("/api/agent-gateway/review/queue", query={"limit": args.limit})
 
@@ -1342,6 +1352,12 @@ def build_parser() -> argparse.ArgumentParser:
     commander_plan.add_argument("--lanes-json", default=None, help="Optional JSON array overriding the default commander lanes.")
     commander_plan.add_argument("--confirm-create", action="store_true", help="Actually create MIS tasks; omitted means preview only.")
     commander_plan.set_defaults(handler="commander_plan")
+    commander_packages = commander_sub.add_parser("packages", help="Read persisted commander work-package task status and evidence.")
+    commander_packages.add_argument("--project-id", default=None)
+    commander_packages.add_argument("--plan-id", default=None)
+    commander_packages.add_argument("--status", default="all")
+    commander_packages.add_argument("--limit", type=int, default=25)
+    commander_packages.set_defaults(handler="commander_packages")
 
     review = sub.add_parser("review", help="Human review queue commands.")
     review_sub = review.add_subparsers(dest="action", required=True)
@@ -1901,6 +1917,7 @@ HANDLERS = {
     "commander_board": cmd_commander_board,
     "commander_inbox": cmd_commander_inbox,
     "commander_plan": cmd_commander_plan,
+    "commander_packages": cmd_commander_packages,
     "review_queue": cmd_review_queue,
     "security_production_readiness": cmd_security_production_readiness,
     "agent_register": cmd_agent_register,

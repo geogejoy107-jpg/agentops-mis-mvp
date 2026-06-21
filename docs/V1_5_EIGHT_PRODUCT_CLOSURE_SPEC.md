@@ -49,6 +49,10 @@ product exposes:
   `POST /api/commander/work-packages/plan` and
   `agentops commander plan`, with safe preview by default and confirmed task
   creation only when `confirm_create:true` / `--confirm-create` is provided.
+- Persisted commander work-package readback through
+  `GET /api/commander/work-packages` and `agentops commander packages`, so a
+  customer can refresh the app and still see lane status, latest run, evidence
+  counts, dependencies, verification commands, and next actions.
 - Async workflow job submission, polling, listing, stuck-job detection, and
   operator mark-failed recovery for customer worker and template jobs.
 - An async integration inbox at `GET /api/commander/integration-inbox` for
