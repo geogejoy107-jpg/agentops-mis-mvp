@@ -58,6 +58,10 @@ product exposes:
 - An async integration inbox at `GET /api/commander/integration-inbox` for
   returned worker results, running lanes, blocked work, stale work and memory
   review.
+- Operator action receipts through `GET/POST /api/operator/action-receipts`,
+  embedded back into `operator action-plan` and `operator loop-audit`, so copied
+  recovery commands can be paired with VERIFY commands and preserved in the
+  audit/runtime ledger.
 - CLI/API-first execution for agents, with browser pages reserved for command,
   supervision, approval, and review.
 - Real Hermes/OpenClaw dogfood evidence in the ledger, cited by run ID and

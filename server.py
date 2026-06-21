@@ -14378,6 +14378,8 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
     evidence_gaps = operator_execution_evidence_gaps(conn, workspace_id, limit=max(limit, 8))
     task_intake = operator_task_intake_checklist(conn, workspace_id, limit=max(limit, 8))
     dispatch_evidence = operator_dispatch_evidence_lane(conn, workspace_id, limit=max(limit, 8))
+    action_receipts = list_operator_action_receipts(conn, {"limit": [str(max(limit, 8))], "workspace_id": [workspace_id]}, headers)
+    action_receipt_summary = action_receipts.get("summary") or {}
 
     actions: list[dict] = []
 
@@ -14680,6 +14682,10 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             "dispatch_evidence_ready": (dispatch_evidence.get("summary") or {}).get("ready_for_delivery", 0),
             "dispatch_evidence_waiting_approval": (dispatch_evidence.get("summary") or {}).get("waiting_approval", 0),
             "dispatch_evidence_verified_manifests": (dispatch_evidence.get("summary") or {}).get("verified_manifests", 0),
+            "action_receipts": action_receipt_summary.get("receipts", 0),
+            "action_receipts_recorded": action_receipt_summary.get("recorded", 0),
+            "action_receipts_verified": action_receipt_summary.get("verified", 0),
+            "action_receipts_failed": action_receipt_summary.get("failed", 0),
         },
         "actions": deduped,
         "top_commands": [item["command"] for item in deduped[:5]],
@@ -14693,11 +14699,13 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             "execution_evidence": evidence_gaps.get("status"),
             "task_intake": task_intake.get("status"),
             "dispatch_evidence": dispatch_evidence.get("status"),
+            "action_receipts": action_receipts.get("status"),
         },
         "remediation_loop": remediation_loop,
         "execution_evidence": evidence_gaps,
         "task_intake": task_intake,
         "dispatch_evidence": dispatch_evidence,
+        "action_receipts": action_receipts,
         "contract": "read-only operator action plan; execution stays in explicit CLI/API commands and live adapters still require confirmation",
         "safety": {
             "read_only": True,
@@ -14725,6 +14733,8 @@ def operator_loop_audit(conn: sqlite3.Connection, headers, qs=None) -> dict:
     evidence_summary = execution_evidence.get("summary") or {}
     dispatch_evidence = action_plan.get("dispatch_evidence") or {}
     dispatch_summary = dispatch_evidence.get("summary") or {}
+    action_receipts = action_plan.get("action_receipts") or {}
+    action_receipt_summary = action_receipts.get("summary") or {}
     source_status = action_plan.get("source_status") or {}
     loop_readback = hermes_openclaw_loop_readback(conn, loop_id=loop_id or None, limit=limit)
     loop_summary = loop_readback.get("summary") or {}
@@ -14954,9 +14964,13 @@ def operator_loop_audit(conn: sqlite3.Connection, headers, qs=None) -> dict:
             "loop_pending_approvals": loop_pending_approvals,
             "loop_memory_candidates": loop_memory_candidates,
             "loop_approved_memories": loop_approved_memories,
+            "action_receipts": action_receipt_summary.get("receipts", 0),
+            "action_receipts_recorded": action_receipt_summary.get("recorded", 0),
+            "action_receipts_verified": action_receipt_summary.get("verified", 0),
+            "action_receipts_failed": action_receipt_summary.get("failed", 0),
         },
         record_command,
-        "review_memory_audit",
+        "review_memory_audit:action_receipts",
     )
 
     blocked = [step for step in steps if step["status"] == "blocked"]
@@ -14984,6 +14998,8 @@ def operator_loop_audit(conn: sqlite3.Connection, headers, qs=None) -> dict:
             "loop_blocked_plan_evidence_manifests": loop_summary.get("blocked_plan_evidence_manifests", 0),
             "pending_approvals": pending_approvals,
             "memory_candidates": memory_candidates,
+            "action_receipts": action_receipt_summary.get("receipts", 0),
+            "action_receipts_verified": action_receipt_summary.get("verified", 0),
             "loop_memory_candidates": loop_memory_candidates,
             "loop_approved_memories": loop_approved_memories,
             "loop_pending_approvals": loop_pending_approvals,
@@ -15009,6 +15025,11 @@ def operator_loop_audit(conn: sqlite3.Connection, headers, qs=None) -> dict:
             "dispatch_evidence": {
                 "status": dispatch_evidence.get("status"),
                 "summary": dispatch_summary,
+            },
+            "action_receipts": {
+                "status": action_receipts.get("status"),
+                "summary": action_receipt_summary,
+                "recent": action_receipts.get("receipts") or [],
             },
             "loop_readback": {
                 "status": loop_readback.get("status"),

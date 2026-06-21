@@ -380,6 +380,8 @@ export function AIEmployees() {
       recordVerifyReceipt: "Verify receipt",
       recordingReceipt: "Recording...",
       actionReceipts: "Receipts",
+      receiptProof: "Receipt",
+      noReceiptProof: "No receipt",
       evidenceClosureLedger: "Evidence closure ledger",
       evidenceClosureSummary: "Audit readback for remediated source-run debt: closure-ready, closed, waived and reopened decisions.",
       taskIntakeTitle: "Task intake gates",
@@ -756,6 +758,8 @@ export function AIEmployees() {
       recordVerifyReceipt: "验收记账",
       recordingReceipt: "记账中...",
       actionReceipts: "收据",
+      receiptProof: "收据证明",
+      noReceiptProof: "暂无收据",
       evidenceClosureLedger: "证据关闭账本",
       evidenceClosureSummary: "回读已修复源 run 债务的审计状态：待关闭、已关闭、已豁免和已重开。",
       taskIntakeTitle: "任务接收 Gate",
@@ -1207,6 +1211,18 @@ export function AIEmployees() {
     list.findIndex(item => item.action === candidate.action) === index
   )).sort((left, right) => actionQueueCandidateScore(right) - actionQueueCandidateScore(left)).slice(0, 8);
   const actionQueueKey = actionQueueCandidates.map(item => item.id).join("|");
+  const actionReceiptRows = operatorActionReceipts?.receipts || operatorActionPlan?.action_receipts?.receipts || [];
+  const receiptShortHash = (receipt?: { tamper_chain_hash?: string; action_hash?: string | null; verify_hash?: string | null; audit_id?: string }) => (
+    (receipt?.tamper_chain_hash || receipt?.verify_hash || receipt?.action_hash || receipt?.audit_id || "").slice(0, 12)
+  );
+  const latestReceiptForCommands = (...commands: Array<string | undefined | null>) => {
+    const wanted = new Set(commands.map(command => String(command || "").trim()).filter(Boolean));
+    if (!wanted.size) return undefined;
+    return actionReceiptRows.find(receipt => (
+      wanted.has(String(receipt.action_command || "").trim()) ||
+      wanted.has(String(receipt.verify_command || "").trim())
+    ));
+  };
   const dispatchEvidenceActions = operatorPlanActions.filter(item => item.lane === "dispatch_evidence").slice(0, 4);
   const loopRecord = operatorLoopAudit?.loop_record;
   const loopRecordMemories = loopRecord?.memory_reviews || [];
@@ -2842,30 +2858,39 @@ export function AIEmployees() {
               </div>
               <div className="mt-2 overflow-x-auto">
                 <div className="flex items-stretch gap-1 min-w-max">
-                  {loopAuditSteps.map((step, index) => (
-                    <div key={step.id} className="flex items-center gap-1">
-                      <button
-                        onClick={() => void copyIntakeCommand(step.command)}
-                        className="min-w-[108px] text-left rounded px-2 py-1.5"
-                        style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}
-                        title={step.command}
-                      >
-                        <div className="flex items-center justify-between gap-1">
-                          <span className="text-[9px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{step.label}</span>
-                          <StatusBadge status={step.status} />
-                        </div>
-                        <div className="text-[8px] mt-1 truncate" style={{ color: "var(--mis-muted)" }}>
-                          {step.source || copy.actionSource}
-                        </div>
-                        <div className="text-[8px] mt-0.5 truncate" style={{ color: copiedIntakeCommand === step.command ? "var(--mis-success)" : "var(--mis-cyan)" }}>
-                          {copiedIntakeCommand === step.command ? copy.copiedCommand : copy.copyCommand}
-                        </div>
-                      </button>
-                      {index < loopAuditSteps.length - 1 && (
-                        <div className="text-[10px]" style={{ color: "var(--mis-dim)" }}>-&gt;</div>
-                      )}
-                    </div>
-                  ))}
+                  {loopAuditSteps.map((step, index) => {
+                    const stepReceipt = latestReceiptForCommands(step.command);
+                    const stepReceiptHash = receiptShortHash(stepReceipt);
+                    return (
+                      <div key={step.id} className="flex items-center gap-1">
+                        <button
+                          onClick={() => void copyIntakeCommand(step.command)}
+                          className="min-w-[108px] text-left rounded px-2 py-1.5"
+                          style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}
+                          title={step.command}
+                        >
+                          <div className="flex items-center justify-between gap-1">
+                            <span className="text-[9px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{step.label}</span>
+                            <StatusBadge status={step.status} />
+                          </div>
+                          <div className="text-[8px] mt-1 truncate" style={{ color: "var(--mis-muted)" }}>
+                            {step.source || copy.actionSource}
+                          </div>
+                          <div className="text-[8px] mt-0.5 truncate" style={{ color: copiedIntakeCommand === step.command ? "var(--mis-success)" : "var(--mis-cyan)" }}>
+                            {copiedIntakeCommand === step.command ? copy.copiedCommand : copy.copyCommand}
+                          </div>
+                          {stepReceipt && (
+                            <div className="text-[8px] mt-0.5 truncate" style={{ color: "var(--mis-success)" }}>
+                              {copy.receiptProof}: {stepReceipt.status} · {stepReceiptHash}
+                            </div>
+                          )}
+                        </button>
+                        {index < loopAuditSteps.length - 1 && (
+                          <div className="text-[10px]" style={{ color: "var(--mis-dim)" }}>-&gt;</div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             </div>
@@ -3116,6 +3141,8 @@ export function AIEmployees() {
               const verifyAction = "verifyAction" in item ? item.verifyAction : undefined;
               const recordBusy = receiptAction === `action-receipt:recorded:${item.id}`;
               const verifyBusy = receiptAction === `action-receipt:verified:${item.id}`;
+              const queueReceipt = latestReceiptForCommands(item.action, verifyAction);
+              const queueReceiptHash = receiptShortHash(queueReceipt);
               return (
                 <div
                   key={item.id}
@@ -3163,6 +3190,11 @@ export function AIEmployees() {
                           <Copy size={9} />
                           {copiedIntakeCommand === item.verifyAction ? copy.copiedCommand : copy.copyCommand}
                         </button>
+                      </div>
+                    )}
+                    {queueReceipt && (
+                      <div className="text-[10px] mt-0.5 truncate" style={{ color: "var(--mis-success)" }}>
+                        {copy.receiptProof}: {queueReceipt.status} · {queueReceiptHash}
                       </div>
                     )}
                   </div>

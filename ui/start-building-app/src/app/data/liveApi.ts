@@ -1167,6 +1167,10 @@ export interface OperatorActionPlanPayload {
     dispatch_evidence_ready: number;
     dispatch_evidence_waiting_approval: number;
     dispatch_evidence_verified_manifests: number;
+    action_receipts: number;
+    action_receipts_recorded: number;
+    action_receipts_verified: number;
+    action_receipts_failed: number;
   };
   actions: OperatorActionPlanItem[];
   top_commands: string[];
@@ -1174,6 +1178,7 @@ export interface OperatorActionPlanPayload {
   execution_evidence?: ExecutionEvidenceGapsPayload;
   task_intake?: TaskIntakeChecklistPayload;
   dispatch_evidence?: Record<string, unknown>;
+  action_receipts?: OperatorActionReceiptsPayload;
   safety: {
     read_only: boolean;
     ledger_mutated: boolean;
@@ -3796,6 +3801,10 @@ export async function loadOperatorActionPlan(limit = 12): Promise<OperatorAction
       dispatch_evidence_ready: numberValue(summaryRaw.dispatch_evidence_ready, 0),
       dispatch_evidence_waiting_approval: numberValue(summaryRaw.dispatch_evidence_waiting_approval, 0),
       dispatch_evidence_verified_manifests: numberValue(summaryRaw.dispatch_evidence_verified_manifests, 0),
+      action_receipts: numberValue(summaryRaw.action_receipts, 0),
+      action_receipts_recorded: numberValue(summaryRaw.action_receipts_recorded, 0),
+      action_receipts_verified: numberValue(summaryRaw.action_receipts_verified, 0),
+      action_receipts_failed: numberValue(summaryRaw.action_receipts_failed, 0),
     },
     actions: asArray<Record<string, unknown>>(raw.actions).map((item) => ({
       action_id: String(item.action_id || item.command || item.title || ""),
@@ -3814,6 +3823,10 @@ export async function loadOperatorActionPlan(limit = 12): Promise<OperatorAction
     execution_evidence: normalizeExecutionEvidenceGaps(raw.execution_evidence),
     task_intake: normalizeTaskIntakeChecklist(raw.task_intake),
     dispatch_evidence: typeof raw.dispatch_evidence === "object" && raw.dispatch_evidence !== null ? raw.dispatch_evidence as Record<string, unknown> : undefined,
+    action_receipts: typeof raw.action_receipts === "object" && raw.action_receipts !== null ? {
+      ...(raw.action_receipts as OperatorActionReceiptsPayload),
+      receipts: asArray<Record<string, unknown>>((raw.action_receipts as Record<string, unknown>).receipts).map(normalizeOperatorActionReceipt).filter(item => item.receipt_id),
+    } : undefined,
     safety: {
       read_only: boolValue(safetyRaw.read_only),
       ledger_mutated: boolValue(safetyRaw.ledger_mutated),

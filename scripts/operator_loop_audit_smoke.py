@@ -137,6 +137,8 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
         "loop_pending_approvals",
         "pending_approvals",
         "memory_candidates",
+        "action_receipts",
+        "action_receipts_verified",
         "audit_logs",
     ]:
         require(isinstance(summary.get(key), int), f"{label} summary.{key} missing: {summary}", failures)
@@ -151,8 +153,16 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
     require(bool(payload.get("next_actions")), f"{label} next_actions missing", failures)
     require(isinstance(payload.get("source_status"), dict), f"{label} source_status missing", failures)
     sources = payload.get("sources") or {}
-    for key in ["action_plan", "task_intake", "execution_evidence", "dispatch_evidence", "loop_readback"]:
+    for key in ["action_plan", "task_intake", "execution_evidence", "dispatch_evidence", "action_receipts", "loop_readback"]:
         require(key in sources, f"{label} sources.{key} missing: {sources}", failures)
+    receipt_source = sources.get("action_receipts") or {}
+    receipt_summary = receipt_source.get("summary") or {}
+    for key in ["receipts", "recorded", "verified", "failed", "skipped"]:
+        require(isinstance(receipt_summary.get(key), int), f"{label} action receipts summary.{key} missing: {receipt_summary}", failures)
+    record_step = next((step for step in steps if step.get("id") == "record"), {})
+    record_evidence = record_step.get("evidence") or {}
+    for key in ["action_receipts", "action_receipts_recorded", "action_receipts_verified", "action_receipts_failed"]:
+        require(isinstance(record_evidence.get(key), int), f"{label} RECORD evidence {key} missing: {record_evidence}", failures)
     loop_readback = payload.get("loop_readback") or {}
     require(loop_readback.get("operation") == "hermes_openclaw_loop_readback", f"{label} loop readback missing: {loop_readback}", failures)
     require(loop_readback.get("token_omitted") is True, f"{label} loop readback token omission missing", failures)

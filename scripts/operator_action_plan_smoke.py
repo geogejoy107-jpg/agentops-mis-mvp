@@ -153,6 +153,10 @@ def validate_plan(payload: dict, label: str, failures: list[str], limit: int) ->
         "dispatch_evidence_ready",
         "dispatch_evidence_waiting_approval",
         "dispatch_evidence_verified_manifests",
+        "action_receipts",
+        "action_receipts_recorded",
+        "action_receipts_verified",
+        "action_receipts_failed",
     ]:
         require(isinstance(summary.get(key), int), f"{label} summary.{key} missing: {summary}", failures)
     require(isinstance(summary.get("recommended_adapter"), str), f"{label} recommended_adapter missing: {summary}", failures)
@@ -165,11 +169,20 @@ def validate_plan(payload: dict, label: str, failures: list[str], limit: int) ->
     require("execution_evidence" in (payload.get("source_status") or {}), f"{label} execution evidence source status missing: {payload.get('source_status')}", failures)
     require("task_intake" in (payload.get("source_status") or {}), f"{label} task intake source status missing: {payload.get('source_status')}", failures)
     require("dispatch_evidence" in (payload.get("source_status") or {}), f"{label} dispatch evidence source status missing: {payload.get('source_status')}", failures)
+    require("action_receipts" in (payload.get("source_status") or {}), f"{label} action receipts source status missing: {payload.get('source_status')}", failures)
     evidence_source = payload.get("execution_evidence") or {}
     require(evidence_source.get("operation") == "execution_evidence_gaps", f"{label} execution evidence payload missing: {evidence_source}", failures)
     evidence_summary = evidence_source.get("summary") or {}
     dispatch_source = payload.get("dispatch_evidence") or {}
     require(dispatch_source.get("operation") == "dispatch_evidence_lane", f"{label} dispatch evidence payload missing: {dispatch_source}", failures)
+    receipt_source = payload.get("action_receipts") or {}
+    require(receipt_source.get("operation") == "operator_action_receipts", f"{label} action receipts payload missing: {receipt_source}", failures)
+    receipt_summary = receipt_source.get("summary") or {}
+    for key in ["receipts", "recorded", "verified", "failed", "skipped"]:
+        require(isinstance(receipt_summary.get(key), int), f"{label} action receipts summary.{key} missing: {receipt_summary}", failures)
+    receipt_safety = receipt_source.get("safety") or {}
+    require(receipt_safety.get("read_only") is True, f"{label} action receipts read_only missing: {receipt_safety}", failures)
+    require(receipt_safety.get("ledger_mutated") is False, f"{label} action receipts must not mutate ledger: {receipt_safety}", failures)
     require(isinstance(evidence_summary.get("gap_runs"), int), f"{label} execution evidence gap count missing: {evidence_summary}", failures)
     for key in [
         "synthesis_ready_runs",

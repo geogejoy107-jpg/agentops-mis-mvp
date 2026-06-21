@@ -42,6 +42,12 @@ EXPECTED_MARKERS = {
     "verify_receipt_label_en": 'recordVerifyReceipt: "Verify receipt"',
     "verify_receipt_label_zh": 'recordVerifyReceipt: "验收记账"',
     "receipt_summary": "operatorActionReceipts.summary.receipts",
+    "receipt_proof_label_en": 'receiptProof: "Receipt"',
+    "receipt_proof_label_zh": 'receiptProof: "收据证明"',
+    "receipt_matcher": "latestReceiptForCommands",
+    "receipt_short_hash": "receiptShortHash",
+    "queue_receipt_display": "{copy.receiptProof}: {queueReceipt.status}",
+    "loop_receipt_display": "{copy.receiptProof}: {stepReceipt.status}",
     "recorded_receipt_status": 'recordActionQueueReceipt(item, "recorded")',
     "verified_receipt_status": 'recordActionQueueReceipt(item, "verified")',
 }

@@ -260,7 +260,10 @@ attention.
 recovery action was copied/run and pair it with its follow-up VERIFY command.
 Receipts are stored as audit/runtime evidence with command hashes and redacted
 command text. They do not execute shell commands, call live runtimes, or persist
-raw tokens.
+raw tokens. `action-plan` includes the `action_receipts` source and receipt
+counts in its summary; `loop-audit` includes the same source in RECORD evidence
+so the operator can see whether recovery actions were followed by explicit
+verification steps.
 
 `GET /api/agent-gateway/tasks/pull?enforce_intake=true` applies the same gate
 at worker pull time: blocked planned/backlog tasks are omitted from `tasks[]`

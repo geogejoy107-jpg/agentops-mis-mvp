@@ -151,6 +151,28 @@ def main() -> int:
             receipt_ids = {row.get("receipt_id") for row in readback.get("receipts") or []}
             require(item.get("receipt_id") in receipt_ids, f"receipt missing from readback: {readback}", failures)
 
+            status, action_plan = http_json(base_url, "/api/operator/action-plan?limit=8")
+            outputs.append(json.dumps(action_plan, ensure_ascii=False))
+            require(status == 200, f"action-plan status mismatch: {status} {action_plan}", failures)
+            plan_summary = action_plan.get("summary") or {}
+            require(int(plan_summary.get("action_receipts_verified") or 0) >= 1, f"action-plan verified receipt count missing: {plan_summary}", failures)
+            require((action_plan.get("source_status") or {}).get("action_receipts") == "ready", f"action-plan receipt source missing: {action_plan.get('source_status')}", failures)
+            plan_receipts = action_plan.get("action_receipts") or {}
+            require(plan_receipts.get("operation") == "operator_action_receipts", f"action-plan receipt payload missing: {plan_receipts}", failures)
+            plan_receipt_ids = {row.get("receipt_id") for row in plan_receipts.get("receipts") or []}
+            require(item.get("receipt_id") in plan_receipt_ids, f"receipt missing from action-plan source: {plan_receipts}", failures)
+
+            status, loop_audit = http_json(base_url, "/api/operator/loop-audit?limit=8")
+            outputs.append(json.dumps(loop_audit, ensure_ascii=False))
+            require(status == 200, f"loop-audit status mismatch: {status} {loop_audit}", failures)
+            loop_summary = loop_audit.get("summary") or {}
+            require(int(loop_summary.get("action_receipts_verified") or 0) >= 1, f"loop-audit verified receipt count missing: {loop_summary}", failures)
+            loop_receipts = ((loop_audit.get("sources") or {}).get("action_receipts") or {})
+            require(loop_receipts.get("status") == "ready", f"loop-audit receipt source missing: {loop_receipts}", failures)
+            record_step = next((step for step in loop_audit.get("steps") or [] if step.get("id") == "record"), {})
+            record_evidence = record_step.get("evidence") or {}
+            require(int(record_evidence.get("action_receipts_verified") or 0) >= 1, f"RECORD evidence lacks verified receipt: {record_evidence}", failures)
+
             after = db_counts(db_path)
             require(after["audit_logs"] == before["audit_logs"] + 1, f"audit count did not increase once: {before} -> {after}", failures)
             require(after["runtime_events"] == before["runtime_events"] + 1, f"runtime count did not increase once: {before} -> {after}", failures)

@@ -245,6 +245,7 @@ locked/busy failures: zero
 - [ ] Do not fetch daemon logs before the panel is opened.
 - [ ] Make panels independently loadable.
 - [ ] Add a lightweight command-center read model or equivalent aggregation.
+- [x] Operator Action Queue recovery items can record action receipts and show VERIFY commands in action-plan / loop-audit readback.
 - [ ] Paginate large run, tool and audit lists.
 - [ ] Briefly cache expensive aggregate read models.
 - [ ] One optional endpoint failure must not block the whole page.
