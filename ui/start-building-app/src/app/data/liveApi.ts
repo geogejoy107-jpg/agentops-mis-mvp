@@ -491,6 +491,11 @@ export interface IntegrationInboxPayload {
   provider: string;
   operation: string;
   status: string;
+  filter?: {
+    bucket: string;
+    limit: number;
+    threshold_sec: number;
+  };
   token_omitted: boolean;
   live_execution_performed: boolean;
   summary: IntegrationInboxSummary;
@@ -501,6 +506,12 @@ export interface IntegrationInboxPayload {
     ledger_mutated: boolean;
     raw_prompt_omitted: boolean;
   };
+}
+
+export interface IntegrationInboxOptions {
+  bucket?: string;
+  limit?: number;
+  threshold_sec?: number;
 }
 
 export interface StuckWorkerTask extends Task {
@@ -1313,11 +1324,17 @@ export async function loadLocalReadiness(): Promise<LocalReadinessPayload> {
   };
 }
 
-export async function loadIntegrationInbox(): Promise<IntegrationInboxPayload> {
-  const raw = await optionalApiJson<Record<string, unknown>>("/commander/integration-inbox", {
+export async function loadIntegrationInbox(options: IntegrationInboxOptions = {}): Promise<IntegrationInboxPayload> {
+  const params = new URLSearchParams();
+  if (options.bucket && options.bucket !== "all") params.set("bucket", options.bucket);
+  if (options.limit) params.set("limit", String(options.limit));
+  if (options.threshold_sec) params.set("threshold_sec", String(options.threshold_sec));
+  const path = params.toString() ? `/commander/integration-inbox?${params.toString()}` : "/commander/integration-inbox";
+  const raw = await optionalApiJson<Record<string, unknown>>(path, {
     provider: "agentops-commander",
     operation: "integration_inbox",
     status: "unavailable",
+    filter: { bucket: options.bucket || "all", limit: options.limit || 20, threshold_sec: options.threshold_sec || 900 },
     token_omitted: true,
     live_execution_performed: false,
     summary: {},
@@ -1332,11 +1349,17 @@ export async function loadIntegrationInbox(): Promise<IntegrationInboxPayload> {
   });
   const summaryRaw = typeof raw.summary === "object" && raw.summary !== null ? raw.summary as Record<string, unknown> : {};
   const bucketRaw = typeof summaryRaw.buckets === "object" && summaryRaw.buckets !== null ? summaryRaw.buckets as Record<string, unknown> : summaryRaw;
+  const filterRaw = typeof raw.filter === "object" && raw.filter !== null ? raw.filter as Record<string, unknown> : {};
   const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
   return {
     provider: String(raw.provider || "agentops-commander"),
     operation: String(raw.operation || "integration_inbox"),
     status: String(raw.status || "unknown"),
+    filter: {
+      bucket: String(filterRaw.bucket || options.bucket || "all"),
+      limit: numberValue(filterRaw.limit, options.limit || 20),
+      threshold_sec: numberValue(filterRaw.threshold_sec, options.threshold_sec || 900),
+    },
     token_omitted: boolValue(raw.token_omitted),
     live_execution_performed: boolValue(raw.live_execution_performed),
     summary: {

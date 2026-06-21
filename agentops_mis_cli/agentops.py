@@ -275,7 +275,17 @@ def cmd_commander_board(args, client: AgentOpsClient) -> dict:
 
 
 def cmd_commander_inbox(args, client: AgentOpsClient) -> dict:
-    return client.get("/api/commander/integration-inbox")
+    query = {}
+    if getattr(args, "bucket", None):
+        query["bucket"] = args.bucket
+    if getattr(args, "limit", None) is not None:
+        query["limit"] = str(args.limit)
+    if getattr(args, "threshold_sec", None) is not None:
+        query["threshold_sec"] = str(args.threshold_sec)
+    path = "/api/commander/integration-inbox"
+    if query:
+        path = f"{path}?{urlencode(query)}"
+    return client.get(path)
 
 
 def cmd_agent_register(args, client: AgentOpsClient) -> dict:
@@ -1042,6 +1052,9 @@ def build_parser() -> argparse.ArgumentParser:
     commander_board = commander_sub.add_parser("board", help="Read the Commander project board.")
     commander_board.set_defaults(handler="commander_board")
     commander_inbox = commander_sub.add_parser("inbox", help="Read the Commander integration inbox.")
+    commander_inbox.add_argument("--bucket", choices=["all", "ready_for_review", "still_running", "blocked", "late_or_stale", "needs_memory_review"], default="all")
+    commander_inbox.add_argument("--limit", type=int, default=20)
+    commander_inbox.add_argument("--threshold-sec", type=int, default=900)
     commander_inbox.set_defaults(handler="commander_inbox")
 
     agent = sub.add_parser("agent", help="Agent identity commands.")

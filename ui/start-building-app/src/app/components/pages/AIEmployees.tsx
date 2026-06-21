@@ -107,6 +107,7 @@ export function AIEmployees() {
       : "Ask the AI team to review Pixel Office from a customer perspective: improve the pixel style, clarify the flow, and keep MIS ledger, approvals, and run evidence visible.",
   });
   const [selectedLogAdapter, setSelectedLogAdapter] = useState<(typeof WORKER_ADAPTERS)[number]>("mock");
+  const [integrationInboxBucket, setIntegrationInboxBucket] = useState("all");
   const [enrollmentAction, setEnrollmentAction] = useState<string | null>(null);
   const [enrollmentResult, setEnrollmentResult] = useState<string | null>(null);
   const [createdToken, setCreatedToken] = useState<AgentGatewayEnrollmentCreateResult | null>(null);
@@ -127,7 +128,7 @@ export function AIEmployees() {
       loadWorkerStatus(),
       loadWorkerAdapterReadiness(),
       loadLocalReadiness(),
-      loadIntegrationInbox(),
+      loadIntegrationInbox({ bucket: integrationInboxBucket, limit: 20 }),
       loadAgentGatewayEnrollments(),
       loadAgentGatewaySessions(),
       loadAgentGatewayStatus(),
@@ -138,7 +139,7 @@ export function AIEmployees() {
     ]);
     const agents = await loadAgents(metrics);
     return { agents, workerStatus, adapterReadiness, localReadiness, integrationInbox, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs };
-  }, []);
+  }, [integrationInboxBucket]);
   const agents = data?.agents || [];
   const workerStatus = data?.workerStatus;
   const adapterReadiness = data?.adapterReadiness;
@@ -221,6 +222,8 @@ export function AIEmployees() {
       liveExecutionProof: "Live execution not performed",
       integrationInboxTitle: "Async Integration Inbox",
       integrationInboxSummary: "Commander queue for worker results arriving at different speeds: review ready work, watch running jobs, and recover blocked items.",
+      inboxFilter: "Queue view",
+      inboxAll: "All",
       readyForReview: "Ready",
       stillRunning: "Running",
       blockedItems: "Blocked",
@@ -437,6 +440,8 @@ export function AIEmployees() {
       liveExecutionProof: "未执行真实任务",
       integrationInboxTitle: "异步集成 Inbox",
       integrationInboxSummary: "Commander 用来处理不同速度 worker 回报的队列：审阅已完成工作、观察运行中 job、恢复阻塞项。",
+      inboxFilter: "队列视角",
+      inboxAll: "全部",
       readyForReview: "待审阅",
       stillRunning: "运行中",
       blockedItems: "阻塞",
@@ -683,6 +688,14 @@ export function AIEmployees() {
         : "local mock worker";
     return { item, liveReady, attention, checkSummary };
   });
+  const integrationInboxFilters = [
+    { bucket: "all", label: copy.inboxAll, count: integrationInboxSummary?.total ?? 0 },
+    { bucket: "ready_for_review", label: copy.readyForReview, count: integrationInboxSummary?.ready_for_review ?? 0 },
+    { bucket: "still_running", label: copy.stillRunning, count: integrationInboxSummary?.still_running ?? 0 },
+    { bucket: "blocked", label: copy.blockedItems, count: integrationInboxSummary?.blocked ?? 0 },
+    { bucket: "late_or_stale", label: copy.lateOrStale, count: integrationInboxSummary?.late_or_stale ?? 0 },
+    { bucket: "needs_memory_review", label: copy.memoryReview, count: integrationInboxSummary?.needs_memory_review ?? 0 },
+  ];
   const actionQueueCandidates = [
     ...recommendedActions.map((action, index) => ({
       id: `fleet:${index}:${action}`,
@@ -1096,7 +1109,7 @@ export function AIEmployees() {
         className="rounded-xl p-4"
         style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}
       >
-        <div className="flex items-start justify-between gap-4">
+        <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
           <div>
             <div className="flex items-center gap-2">
               <Activity size={14} style={{ color: "var(--mis-cyan)" }} />
@@ -1110,7 +1123,7 @@ export function AIEmployees() {
               </p>
             )}
           </div>
-          <div className="text-right shrink-0">
+          <div className="text-left lg:text-right shrink-0">
             <div className="text-[10px] uppercase tracking-wide" style={{ color: "var(--mis-muted)" }}>{copy.recommendedAdapter}</div>
             <div className="text-sm font-semibold mt-0.5" style={{ color: "var(--mis-text)" }}>{recommendedAdapter}</div>
           </div>
@@ -1170,7 +1183,7 @@ export function AIEmployees() {
                   setDraggedActionId(null);
                 }}
                 onDragEnd={() => setDraggedActionId(null)}
-                className="grid grid-cols-[auto_1fr_auto] items-center gap-2 rounded px-3 py-2 cursor-grab active:cursor-grabbing"
+                className="grid grid-cols-[auto_1fr] sm:grid-cols-[auto_1fr_auto] items-center gap-2 rounded px-3 py-2 cursor-grab active:cursor-grabbing"
                 style={{
                   background: draggedActionId === item.id ? "rgba(34,211,238,0.08)" : "var(--mis-bg)",
                   border: draggedActionId === item.id ? "1px solid rgba(34,211,238,0.32)" : "1px solid var(--mis-border)",
@@ -1184,7 +1197,7 @@ export function AIEmployees() {
                     {copy.actionSource}: {item.source}
                   </div>
                 </div>
-                <div className="flex items-center gap-1.5">
+                <div className="col-span-2 sm:col-span-1 flex items-center gap-1.5 justify-end">
                   <StatusBadge status={item.status} />
                   <button
                     onClick={() => nudgeActionQueueItem(item.id, -1)}
@@ -1294,6 +1307,28 @@ export function AIEmployees() {
             ))}
           </div>
 
+          <div className="mt-3 flex flex-wrap items-center gap-1.5">
+            <span className="text-[10px] mr-1" style={{ color: "var(--mis-muted)" }}>{copy.inboxFilter}</span>
+            {integrationInboxFilters.map((filter) => {
+              const active = integrationInboxBucket === filter.bucket;
+              return (
+                <button
+                  key={filter.bucket}
+                  type="button"
+                  onClick={() => setIntegrationInboxBucket(filter.bucket)}
+                  className="rounded px-2 py-1 text-[10px] font-semibold"
+                  style={{
+                    color: active ? "var(--mis-bg)" : "var(--mis-text)",
+                    background: active ? "var(--mis-cyan)" : "var(--mis-bg)",
+                    border: `1px solid ${active ? "var(--mis-cyan)" : "var(--mis-border)"}`,
+                  }}
+                >
+                  {filter.label} · {filter.count}
+                </button>
+              );
+            })}
+          </div>
+
           <div className="grid grid-cols-1 xl:grid-cols-[1.35fr_0.85fr] gap-3 mt-3">
             <div className="space-y-2 min-w-0">
               {integrationInboxItems.length === 0 && (
@@ -1304,7 +1339,7 @@ export function AIEmployees() {
               {integrationInboxItems.slice(0, 5).map((item) => {
                 const primaryRef = item.task_id || item.run_id || item.job_id || item.artifact_id || item.item_id;
                 return (
-                  <div key={item.item_id || primaryRef} className="grid grid-cols-[1fr_auto] gap-3 rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                  <div key={item.item_id || primaryRef} className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-3 rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 min-w-0">
                         <div className="text-[11px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{item.title}</div>
@@ -1348,13 +1383,13 @@ export function AIEmployees() {
           </div>
         </div>
 
-        <div className="grid grid-cols-[1.35fr_1fr] gap-4 mt-4">
+        <div className="grid grid-cols-1 xl:grid-cols-[1.35fr_1fr] gap-4 mt-4">
           <div className="rounded-lg p-3 min-w-0" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
             <div className="flex items-center justify-between gap-3">
               <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.healthGates}</div>
               <StatusBadge status={fleetHealth?.overall || "unknown"} label={String(fleetGates.length)} />
             </div>
-            <div className="grid grid-cols-2 gap-2 mt-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-3">
               {fleetGates.slice(0, 6).map((gate) => (
                 <div key={`${gate.id}-${gate.status}`} className="rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
                   <div className="flex items-center justify-between gap-2">
@@ -1370,7 +1405,7 @@ export function AIEmployees() {
                 </div>
               ))}
               {fleetGates.length === 0 && (
-                <div className="col-span-2 text-[11px] rounded px-3 py-2" style={{ color: "var(--mis-muted)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                <div className="md:col-span-2 text-[11px] rounded px-3 py-2" style={{ color: "var(--mis-muted)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
                   {copy.noRecommendedActions}
                 </div>
               )}
@@ -1397,17 +1432,17 @@ export function AIEmployees() {
           </div>
         </div>
 
-        <div className="grid grid-cols-[1.1fr_0.9fr] gap-4 mt-4">
+        <div className="grid grid-cols-1 xl:grid-cols-[1.1fr_0.9fr] gap-4 mt-4">
           <div className="rounded-lg p-3 min-w-0" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
             <div className="flex items-center justify-between gap-3">
               <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.remoteWorkersTitle}</div>
-              <div className="flex gap-1.5">
+              <div className="flex flex-wrap gap-1.5 justify-end">
                 <StatusBadge status="fresh" label={`${copy.heartbeatFresh}: ${workerStatus?.fresh_remote_enrollments ?? 0}`} />
                 <StatusBadge status="stale" label={`${copy.heartbeatStale}: ${workerStatus?.stale_remote_enrollments ?? 0}`} />
                 <StatusBadge status="never_seen" label={`${copy.heartbeatNeverSeen}: ${workerStatus?.never_seen_remote_enrollments ?? 0}`} />
               </div>
             </div>
-            <div className="grid grid-cols-4 gap-2 mt-3">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3">
               {[
                 { label: copy.totalEnrollments, value: workerStatus?.total_remote_enrollments ?? 0 },
                 { label: copy.activeEnrollments, value: workerStatus?.active_remote_enrollments ?? 0 },
@@ -1427,7 +1462,7 @@ export function AIEmployees() {
                 </div>
               )}
               {remoteWorkers.slice(0, 4).map((worker) => (
-                <div key={`${worker.agent_id}-${worker.token_ref}`} className="grid grid-cols-[1fr_0.55fr_0.55fr_0.7fr] gap-2 items-center rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                <div key={`${worker.agent_id}-${worker.token_ref}`} className="grid grid-cols-1 md:grid-cols-[1fr_0.55fr_0.55fr_0.7fr] gap-2 items-start md:items-center rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
                   <div className="min-w-0">
                     <div className="text-[11px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{worker.agent_name || worker.agent_id || "remote worker"}</div>
                     <div className="text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>{worker.agent_id || "—"} · {worker.runtime_type || "external"}</div>
@@ -1471,7 +1506,7 @@ export function AIEmployees() {
         className="rounded-xl p-4"
         style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}
       >
-        <div className="flex items-start justify-between gap-4">
+        <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
           <div>
             <div className="flex items-center gap-2">
               <Bot size={14} style={{ color: "var(--mis-cyan)" }} />
@@ -1483,7 +1518,7 @@ export function AIEmployees() {
             <p className="text-[11px] mt-1 max-w-3xl" style={{ color: "var(--mis-dim)" }}>{copy.customerTaskSummary}</p>
             <p className="text-[10px] mt-1 max-w-3xl" style={{ color: "var(--mis-muted)" }}>{copy.confirmLiveHint}</p>
           </div>
-          <div className="flex gap-2 shrink-0 flex-wrap justify-end">
+          <div className="flex gap-2 shrink-0 flex-wrap justify-start lg:justify-end">
             <button
               onClick={() => runCustomerTask(false)}
               disabled={customerTaskBusy}
@@ -1514,7 +1549,7 @@ export function AIEmployees() {
           </div>
         </div>
 
-        <div className="grid grid-cols-[1fr_180px] gap-3 mt-4">
+        <div className="grid grid-cols-1 md:grid-cols-[1fr_180px] gap-3 mt-4">
           <label className="text-[10px] uppercase" style={{ color: "var(--mis-muted)" }}>
             {copy.taskTitleLabel}
             <input
@@ -1537,7 +1572,7 @@ export function AIEmployees() {
               ))}
             </select>
           </label>
-          <label className="col-span-2 text-[10px] uppercase" style={{ color: "var(--mis-muted)" }}>
+          <label className="md:col-span-2 text-[10px] uppercase" style={{ color: "var(--mis-muted)" }}>
             {copy.taskDescriptionLabel}
             <textarea
               value={customerTaskForm.description}
@@ -1565,7 +1600,7 @@ export function AIEmployees() {
             </div>
             <StatusBadge status={selectedAdapterRoute?.readiness || "unknown"} />
           </div>
-          <div className="grid grid-cols-3 gap-2 mt-2">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mt-2">
             <div className="rounded px-2 py-1" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
               <div className="text-[9px]" style={{ color: "var(--mis-muted)" }}>{copy.trustStatus}</div>
               <div className="text-[10px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{selectedAdapterRoute?.trust_status || "—"}</div>
@@ -1596,7 +1631,7 @@ export function AIEmployees() {
             )}
             {customerTaskJob && (
               <div className="space-y-3">
-                <div className="grid grid-cols-4 gap-2">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                   <div className="rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
                     <div className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{copy.jobId}</div>
                     <div className="text-[11px] font-semibold truncate mt-1" style={{ color: "var(--mis-text)" }}>{customerTaskJob.job_id}</div>
@@ -1621,7 +1656,7 @@ export function AIEmployees() {
             )}
             {customerTaskResult && (
               <div className="space-y-3">
-                <div className="grid grid-cols-4 gap-2">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                   <div className="rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
                     <div className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{copy.taskId}</div>
                     <div className="text-[11px] font-semibold truncate mt-1" style={{ color: "var(--mis-text)" }}>{customerTaskResult.task_id}</div>
@@ -1714,7 +1749,7 @@ export function AIEmployees() {
                 </div>
               )}
               {stuckWorkflowRecoveryRows.slice(0, 4).map((job) => (
-                <div key={job.job_id} className="grid grid-cols-[1.1fr_0.7fr_0.7fr_auto] gap-3 items-center rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                <div key={job.job_id} className="grid grid-cols-1 lg:grid-cols-[1.1fr_0.7fr_0.7fr_auto] gap-3 items-start lg:items-center rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
                   <div className="min-w-0">
                     <div className="text-[11px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{"title" in job ? job.title || job.job_id : job.job_id}</div>
                     <div className="text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>{job.job_id} · {job.workflow_type}</div>
@@ -1746,7 +1781,7 @@ export function AIEmployees() {
               </div>
             )}
             {workflowJobs.slice(0, 6).map((job) => (
-              <div key={job.job_id} className="grid grid-cols-[1.1fr_0.8fr_0.8fr_auto] gap-3 items-center rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+              <div key={job.job_id} className="grid grid-cols-1 lg:grid-cols-[1.1fr_0.8fr_0.8fr_auto] gap-3 items-start lg:items-center rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
                 <div className="min-w-0">
                   <div className="text-[11px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{job.title || job.job_id}</div>
                   <div className="text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>{job.job_id} · {job.workflow_type}</div>
@@ -1780,7 +1815,7 @@ export function AIEmployees() {
         className="rounded-xl p-4"
         style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}
       >
-        <div className="flex items-start justify-between gap-4">
+        <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
           <div>
             <div className="flex items-center gap-2">
               <CheckCircle2 size={14} style={{ color: "var(--mis-success)" }} />
@@ -1790,7 +1825,7 @@ export function AIEmployees() {
           </div>
           <StatusBadge status={gatewayReady ? "ready" : "planned"} label={gatewayReady ? copy.statusReady : copy.statusSetup} />
         </div>
-        <div className="grid grid-cols-4 gap-3 mt-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 mt-4">
           {operatorReadiness.map(item => (
             <div
               key={item.title}
@@ -1820,7 +1855,7 @@ export function AIEmployees() {
             </div>
             <StatusBadge status={adapterReadiness?.status || "unknown"} label={`${copy.recommendedAdapter}: ${recommendedAdapter}`} />
           </div>
-          <div className="grid grid-cols-3 gap-3 mt-3">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mt-3">
             {adapterRouteCards.map(({ item, liveReady, attention, checkSummary }) => (
               <div
                 key={item.adapter}
@@ -1873,7 +1908,7 @@ export function AIEmployees() {
         className="rounded-xl p-4"
         style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}
       >
-        <div className="flex items-start justify-between gap-4">
+        <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
           <div>
             <div className="flex items-center gap-2">
               <ShieldCheck size={14} style={{ color: "var(--mis-cyan)" }} />
@@ -1882,14 +1917,14 @@ export function AIEmployees() {
             </div>
             <p className="text-[11px] mt-1 max-w-2xl" style={{ color: "var(--mis-dim)" }}>{copy.gatewaySummary}</p>
           </div>
-          <div className="text-right">
+          <div className="text-left lg:text-right">
             <div className="text-[10px] uppercase tracking-wide" style={{ color: "var(--mis-muted)" }}>{copy.authMode}</div>
             <div className="text-xs font-semibold mt-0.5" style={{ color: "var(--mis-text)" }}>
               {gatewayStatus?.auth.mode || "unknown"}
             </div>
           </div>
         </div>
-        <div className="grid grid-cols-5 gap-3 mt-4">
+        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3 mt-4">
           {[
             { label: copy.authenticated, value: gatewayStatus?.auth.authenticated ? copy.yes : copy.no },
             { label: copy.gatewayWorkspace, value: gatewayStatus?.auth.workspace_id || "local-demo" },
@@ -1909,7 +1944,7 @@ export function AIEmployees() {
         className="rounded-xl p-4"
         style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}
       >
-        <div className="flex items-start justify-between gap-4">
+        <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
           <div>
             <div className="flex items-center gap-2">
               <Activity size={14} style={{ color: "var(--mis-success)" }} />
@@ -1969,7 +2004,7 @@ export function AIEmployees() {
             {dispatching === "stop-daemons" ? copy.stopping : copy.stopDaemons}
           </button>
         </div>
-        <div className="grid grid-cols-4 gap-3 mt-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4">
           {[
             { label: copy.workers, value: workerStatus?.worker_count ?? "—" },
             { label: copy.completedRuns, value: workerStatus?.recent_completed_runs ?? "—" },
@@ -1994,7 +2029,7 @@ export function AIEmployees() {
               </div>
             )}
             {stuckTasks.slice(0, 4).map(task => (
-              <div key={task.task_id} className="grid grid-cols-[1.1fr_0.8fr_0.9fr_auto] gap-3 items-center rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+              <div key={task.task_id} className="grid grid-cols-1 lg:grid-cols-[1.1fr_0.8fr_0.9fr_auto] gap-3 items-start lg:items-center rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
                 <div className="min-w-0">
                   <div className="text-[11px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{task.title}</div>
                   <div className="text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>{task.task_id} · {task.owner_agent_id || "—"}</div>
@@ -2014,7 +2049,7 @@ export function AIEmployees() {
             ))}
           </div>
         </div>
-        <div className="grid grid-cols-3 gap-3 mt-3">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mt-3">
           {(workerStatus?.daemons || []).map((daemon) => (
             <div key={daemon.adapter} className="rounded-lg px-3 py-2" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
               <div className="flex items-center justify-between gap-2">
@@ -2060,7 +2095,7 @@ export function AIEmployees() {
         className="rounded-xl p-4"
         style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}
       >
-        <div className="flex items-start justify-between gap-4">
+        <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
           <div>
             <div className="flex items-center gap-2">
               <Activity size={14} style={{ color: "var(--mis-cyan)" }} />
@@ -2086,7 +2121,7 @@ export function AIEmployees() {
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-4 mt-4">
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 mt-4">
           <div className="rounded-lg p-3 min-w-0" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
             <div className="flex items-center justify-between gap-2">
               <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.daemonLogs}</div>
@@ -2147,7 +2182,7 @@ export function AIEmployees() {
         className="rounded-xl p-4"
         style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}
       >
-        <div className="flex items-start justify-between gap-4">
+        <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
           <div>
             <div className="flex items-center gap-2">
               <KeyRound size={14} style={{ color: "var(--mis-cyan)" }} />
@@ -2163,7 +2198,7 @@ export function AIEmployees() {
               </div>
             )}
           </div>
-          <div className="grid grid-cols-2 gap-2 shrink-0">
+          <div className="grid grid-cols-2 gap-2 shrink-0 w-full sm:w-auto">
             <div className="rounded-lg px-3 py-2 min-w-28" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
               <div className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{copy.activeEnrollments}</div>
               <div className="text-sm font-semibold mt-1" style={{ color: "var(--mis-text)" }}>{activeEnrollments}</div>
@@ -2179,8 +2214,8 @@ export function AIEmployees() {
           </div>
         </div>
 
-        <div className="grid grid-cols-6 gap-3 mt-4">
-          <label className="col-span-2 text-[10px] uppercase" style={{ color: "var(--mis-muted)" }}>
+        <div className="grid grid-cols-1 md:grid-cols-6 gap-3 mt-4">
+          <label className="md:col-span-2 text-[10px] uppercase" style={{ color: "var(--mis-muted)" }}>
             {copy.agentId}
             <input
               value={enrollmentForm.agent_id}
@@ -2189,7 +2224,7 @@ export function AIEmployees() {
               style={{ background: "var(--mis-surface2)", color: "var(--mis-text)", border: "1px solid var(--mis-border)" }}
             />
           </label>
-          <label className="col-span-2 text-[10px] uppercase" style={{ color: "var(--mis-muted)" }}>
+          <label className="md:col-span-2 text-[10px] uppercase" style={{ color: "var(--mis-muted)" }}>
             {copy.agentName}
             <input
               value={enrollmentForm.name}
@@ -2242,7 +2277,7 @@ export function AIEmployees() {
               style={{ background: "var(--mis-surface2)", color: "var(--mis-text)", border: "1px solid var(--mis-border)" }}
             />
           </label>
-          <label className="col-span-4 text-[10px] uppercase" style={{ color: "var(--mis-muted)" }}>
+          <label className="md:col-span-4 text-[10px] uppercase" style={{ color: "var(--mis-muted)" }}>
             {copy.scopes}
             <input
               value={enrollmentForm.scopes}
@@ -2251,7 +2286,7 @@ export function AIEmployees() {
               style={{ background: "var(--mis-surface2)", color: "var(--mis-text)", border: "1px solid var(--mis-border)" }}
             />
           </label>
-          <div className="flex items-end gap-2">
+          <div className="md:col-span-2 flex items-end gap-2">
             <button
               onClick={requestEnrollment}
               disabled={Boolean(enrollmentAction) || !enrollmentForm.agent_id.trim() || !enrollmentForm.name.trim() || scopeList.length === 0}
@@ -2284,18 +2319,18 @@ export function AIEmployees() {
                   </div>
                 )}
               </div>
-              <div className="flex items-center gap-2">
-                <input
-                  value={issueApprovalId}
-                  onChange={(event) => setIssueApprovalId(event.target.value)}
-                  placeholder="approval_id"
-                  className="w-56 rounded px-3 py-2 text-xs outline-none"
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
+              <input
+                value={issueApprovalId}
+                onChange={(event) => setIssueApprovalId(event.target.value)}
+                placeholder="approval_id"
+                className="w-full sm:w-56 rounded px-3 py-2 text-xs outline-none"
                   style={{ background: "var(--mis-bg)", color: "var(--mis-text)", border: "1px solid var(--mis-border)" }}
                 />
                 <button
                   onClick={() => issueApprovedEnrollment()}
                   disabled={Boolean(enrollmentAction) || !issueApprovalId.trim()}
-                  className="flex items-center gap-1.5 text-[11px] px-3 py-2 rounded disabled:opacity-50"
+                  className="flex items-center justify-center gap-1.5 text-[11px] px-3 py-2 rounded disabled:opacity-50"
                   style={{ background: "rgba(251,191,36,0.1)", color: "var(--mis-warning)", border: "1px solid rgba(251,191,36,0.25)" }}
                 >
                   {enrollmentAction?.startsWith("issue-") ? <RefreshCw size={12} /> : <KeyRound size={12} />}
@@ -2310,14 +2345,14 @@ export function AIEmployees() {
                 </div>
               )}
               {enrollmentApprovals.slice(0, 5).map((approval) => (
-                <div key={approval.approval_id} className="grid grid-cols-[1.1fr_1.3fr_0.8fr_auto] items-center gap-3 rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                <div key={approval.approval_id} className="grid grid-cols-1 lg:grid-cols-[1.1fr_1.3fr_0.8fr_auto] items-start lg:items-center gap-3 rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
                   <div className="min-w-0">
                     <div className="text-[11px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{approval.requested_by_agent_id}</div>
                     <div className="text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>{approval.approval_id}</div>
                   </div>
                   <div className="text-[10px] truncate" style={{ color: "var(--mis-dim)" }}>{approval.reason}</div>
                   <StatusBadge status={approval.decision} />
-                  <div className="flex justify-end gap-1.5">
+                  <div className="flex flex-wrap justify-start lg:justify-end gap-1.5">
                     <button
                       onClick={() => decideEnrollmentApproval(approval.approval_id, "approve")}
                       disabled={approval.decision !== "pending" || Boolean(enrollmentAction)}
@@ -2389,7 +2424,7 @@ export function AIEmployees() {
                 <div className="text-[10px] mt-1" style={{ color: "var(--mis-muted)" }}>
                   {createdToken.next_steps.token_policy}
                 </div>
-                <div className="grid grid-cols-2 gap-3 mt-3">
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 mt-3">
                   <div className="min-w-0">
                     <div className="text-[10px] mb-1" style={{ color: "var(--mis-muted)" }}>{copy.envSetup}</div>
                     <pre className="rounded p-2 text-[10px] whitespace-pre-wrap break-all" style={{ background: "var(--mis-surface2)", color: "var(--mis-dim)", border: "1px solid var(--mis-border)" }}>
@@ -2432,7 +2467,7 @@ export function AIEmployees() {
               </div>
             )}
             {enrollments.slice(0, 6).map((item) => (
-              <div key={item.token_id} className="grid grid-cols-[1.2fr_1.1fr_0.9fr_1.3fr_auto] gap-3 items-center rounded-lg px-3 py-2" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+              <div key={item.token_id} className="grid grid-cols-1 xl:grid-cols-[1.2fr_1.1fr_0.9fr_1.3fr_auto] gap-3 items-start xl:items-center rounded-lg px-3 py-2" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
                 <div className="min-w-0">
                   <div className="text-[11px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{item.agent_id}</div>
                   <div className="text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>{copy.tokenId}: {item.token_id}</div>
@@ -2456,7 +2491,7 @@ export function AIEmployees() {
                     </span>
                   )}
                 </div>
-                <div className="flex gap-1.5 justify-end">
+                <div className="flex flex-wrap gap-1.5 justify-start xl:justify-end">
                   <button
                     onClick={() => rotateEnrollment(item.token_id)}
                     disabled={item.status !== "active" || Boolean(enrollmentAction)}
@@ -2490,7 +2525,7 @@ export function AIEmployees() {
               </div>
             )}
             {sessions.slice(0, 6).map((item) => (
-              <div key={item.session_id} className="grid grid-cols-[1.1fr_1fr_1.1fr_1.3fr_auto] gap-3 items-center rounded-lg px-3 py-2" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+              <div key={item.session_id} className="grid grid-cols-1 xl:grid-cols-[1.1fr_1fr_1.1fr_1.3fr_auto] gap-3 items-start xl:items-center rounded-lg px-3 py-2" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
                 <div className="min-w-0">
                   <div className="text-[11px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{item.agent_id}</div>
                   <div className="text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>{copy.sessionId}: {item.session_id}</div>
@@ -2519,7 +2554,7 @@ export function AIEmployees() {
                     )}
                   </div>
                 </div>
-                <div className="flex justify-end">
+                <div className="flex justify-start xl:justify-end">
                   <button
                     onClick={() => revokeSession(item.session_id)}
                     disabled={item.session_state !== "active" || Boolean(enrollmentAction)}
@@ -2537,7 +2572,7 @@ export function AIEmployees() {
       </div>
 
       {/* Agent cards grid */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {agents.map(agent => {
           const budgetPct = Math.min(100, (agent.budget_used_usd / agent.budget_limit_usd) * 100);
           const rtColor = RUNTIME_COLOR[agent.runtime_type] ?? "var(--mis-muted)";

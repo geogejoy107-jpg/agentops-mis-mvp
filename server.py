@@ -6529,16 +6529,37 @@ def commander_inbox_item(bucket: str, row: dict, title: str, recommended_action:
     }
 
 
-def commander_integration_inbox(conn: sqlite3.Connection, headers) -> dict:
-    threshold_sec = 900
-    item_limit = 20
-    per_bucket_limit = 8
+def commander_integration_inbox(conn: sqlite3.Connection, headers, qs=None) -> dict:
+    qs = qs or {}
+
+    def query_value(name: str, default: str = "") -> str:
+        value = qs.get(name, default)
+        if isinstance(value, list):
+            return str(value[0]) if value else default
+        return str(value)
+
+    bucket_filter = query_value("bucket", "all").strip()
+    if bucket_filter in ("", "all", "*"):
+        bucket_filter = ""
+    if bucket_filter and bucket_filter not in COMMANDER_INBOX_BUCKETS:
+        bucket_filter = ""
+    try:
+        threshold_sec = max(60, min(86400, int(query_value("threshold_sec", "900"))))
+    except (TypeError, ValueError):
+        threshold_sec = 900
+    try:
+        item_limit = max(1, min(50, int(query_value("limit", "20"))))
+    except (TypeError, ValueError):
+        item_limit = 20
+    per_bucket_limit = item_limit if bucket_filter else 8
     cutoff_iso = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=threshold_sec)).isoformat()
     items: list[dict] = []
     seen: set[str] = set()
 
     def add(item: dict) -> None:
         item_id = item.get("item_id")
+        if bucket_filter and item.get("bucket") != bucket_filter:
+            return
         if item_id in seen or len(items) >= item_limit:
             return
         seen.add(item_id)
@@ -6850,6 +6871,11 @@ def commander_integration_inbox(conn: sqlite3.Connection, headers) -> dict:
         "live_execution_performed": False,
         "workspace_id": normalize_workspace_id(headers.get("X-AgentOps-Workspace-Id") or "local-demo"),
         "threshold_sec": threshold_sec,
+        "filter": {
+            "bucket": bucket_filter or "all",
+            "limit": item_limit,
+            "threshold_sec": threshold_sec,
+        },
         "summary": {
             **bucket_totals,
             "buckets": bucket_totals,
@@ -7688,7 +7714,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/commander/integration-inbox":
-                payload = commander_integration_inbox(conn, self.headers)
+                payload = commander_integration_inbox(conn, self.headers, qs)
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/agent-gateway/enrollments":

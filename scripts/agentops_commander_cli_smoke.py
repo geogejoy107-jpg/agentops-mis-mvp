@@ -117,7 +117,7 @@ def validate_board(payload: dict) -> None:
     require(isinstance(payload.get("recent_work_packages"), list), "board recent_work_packages missing")
 
 
-def validate_inbox(payload: dict) -> None:
+def validate_inbox(payload: dict, expected_bucket: str | None = None) -> None:
     require(payload.get("provider") == "agentops-commander", f"inbox wrong provider: {payload}")
     require(payload.get("operation") == "integration_inbox", f"inbox wrong operation: {payload}")
     validate_safety(payload, "inbox")
@@ -128,6 +128,12 @@ def validate_inbox(payload: dict) -> None:
     summary = payload.get("summary") or {}
     buckets = summary.get("buckets") or {}
     require(isinstance(buckets, dict) and buckets, f"inbox bucket summary missing: {payload}")
+    filter_payload = payload.get("filter") or {}
+    require(isinstance(filter_payload, dict), "inbox filter metadata missing")
+    if expected_bucket:
+        require(filter_payload.get("bucket") == expected_bucket, f"inbox filter mismatch: {filter_payload}")
+        for item in payload.get("inbox_items") or []:
+            require(item.get("bucket") == expected_bucket, f"filtered inbox item has wrong bucket: {item}")
 
 
 def main() -> int:
@@ -166,6 +172,12 @@ def main() -> int:
             try:
                 require(inbox.returncode == 0, f"commander inbox failed: {inbox.stderr or inbox.stdout}")
                 validate_inbox(inbox_payload)
+                filtered_inbox = run_cli(args.base_url, ["commander", "inbox", "--bucket", "blocked", "--limit", "5"], env)
+                outputs.extend([filtered_inbox.stdout, filtered_inbox.stderr])
+                filtered_payload = load_json(filtered_inbox)
+                require(filtered_inbox.returncode == 0, f"filtered commander inbox failed: {filtered_inbox.stderr or filtered_inbox.stdout}")
+                validate_inbox(filtered_payload, expected_bucket="blocked")
+                require(len(filtered_payload.get("inbox_items") or []) <= 5, "filtered commander inbox ignored limit")
                 inbox_endpoint_available = True
                 inbox_status = "available"
             except Exception as exc:

@@ -117,7 +117,7 @@ def validate_item(item: dict) -> None:
     require(age is None or isinstance(age, int), f"item age_sec must be int/null: {item}")
 
 
-def validate(payload: dict, has_inbox_data: bool) -> None:
+def validate(payload: dict, has_inbox_data: bool, expected_bucket: str | None = None) -> None:
     require(payload.get("provider") == "agentops-commander", f"wrong provider: {payload}")
     require(payload.get("operation") == "integration_inbox", f"wrong operation: {payload}")
     require(payload.get("status") in KNOWN_STATUSES, f"bad status: {payload.get('status')}")
@@ -133,6 +133,10 @@ def validate(payload: dict, has_inbox_data: bool) -> None:
     buckets = summary.get("buckets") or {}
     require(set(buckets) == KNOWN_BUCKETS, f"bucket summary mismatch: {buckets}")
     require(all(isinstance(buckets.get(bucket), int) for bucket in KNOWN_BUCKETS), f"bucket counts must be ints: {buckets}")
+    filter_payload = payload.get("filter") or {}
+    require(isinstance(filter_payload, dict), "filter metadata missing")
+    if expected_bucket:
+        require(filter_payload.get("bucket") == expected_bucket, f"filter bucket mismatch: {filter_payload}")
     inbox_items = payload.get("inbox_items")
     require(isinstance(inbox_items, list), "inbox_items must be a list")
     require(len(inbox_items) <= 25, f"inbox_items should stay bounded, got {len(inbox_items)}")
@@ -140,6 +144,8 @@ def validate(payload: dict, has_inbox_data: bool) -> None:
 
     for item in inbox_items:
         validate_item(item)
+        if expected_bucket:
+            require(item.get("bucket") == expected_bucket, f"filtered item has wrong bucket: {item}")
     if has_inbox_data:
         require(inbox_items, "database has inbox-worthy data but endpoint returned no items")
         require(any(count > 0 for count in buckets.values()), "database has data but all bucket counts are zero")
@@ -159,6 +165,12 @@ def main() -> int:
         raw = json.dumps(payload, ensure_ascii=False, sort_keys=True)
         require(not token_like_leak(raw), "integration inbox leaked token-like material")
         validate(payload, has_inbox_data)
+        filtered_status, filtered_payload = http_json(args.base_url, "/api/commander/integration-inbox?bucket=blocked&limit=5")
+        require(filtered_status == 200, f"filtered integration inbox API failed: {filtered_status} {filtered_payload}")
+        filtered_raw = json.dumps(filtered_payload, ensure_ascii=False, sort_keys=True)
+        require(not token_like_leak(filtered_raw), "filtered integration inbox leaked token-like material")
+        validate(filtered_payload, False, expected_bucket="blocked")
+        require(len(filtered_payload.get("inbox_items") or []) <= 5, "filtered inbox ignored limit")
         after = db_fingerprint(db_path)
         if before is not None and after is not None:
             require(before == after, f"database fingerprint changed: before={before} after={after}")
@@ -168,6 +180,7 @@ def main() -> int:
             "status": payload.get("status"),
             "bucket_counts": summary.get("buckets"),
             "items_returned": len(payload.get("inbox_items") or []),
+            "filtered_items_returned": len(filtered_payload.get("inbox_items") or []),
             "db_fingerprint_checked": before is not None and after is not None,
             "secret_leaked": False,
             "has_inbox_data": has_inbox_data,
