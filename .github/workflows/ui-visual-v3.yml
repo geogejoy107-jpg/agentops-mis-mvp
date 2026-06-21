@@ -33,3 +33,28 @@ jobs:
         run: npm ci
       - name: Build
         run: npm run build
+      - name: Install Chromium
+        run: npx --yes playwright@1.53.1 install --with-deps chromium
+      - name: Start Vite
+        run: nohup npm run dev -- --host 127.0.0.1 > /tmp/agentops-ui-v3.log 2>&1 &
+      - name: Wait for UI
+        run: |
+          for attempt in $(seq 1 40); do
+            if curl -fsS http://127.0.0.1:5173/workspace/pixel-office >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/agentops-ui-v3.log
+          exit 1
+      - name: Capture screenshots
+        run: |
+          mkdir -p visual-artifacts
+          npx --yes playwright@1.53.1 screenshot --full-page http://127.0.0.1:5173/workspace/pixel-office visual-artifacts/pixel-office-v3.png
+          npx --yes playwright@1.53.1 screenshot --full-page http://127.0.0.1:5173/workspace visual-artifacts/workspace-v3.png
+      - name: Upload visual review
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-visual-v3-screenshots
+          path: ui/start-building-app/visual-artifacts/*.png
+          if-no-files-found: error
