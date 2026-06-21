@@ -4,10 +4,37 @@ Every agent must follow this protocol before and during execution:
 
 READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD
 
+## Project Preflight
+
+Before code, architecture, project planning, or priority changes:
+
+1. Read `docs/project/PROJECT_STATE.md`.
+2. Read `docs/project/DECISIONS.md`.
+3. Read `docs/project/BACKLOG.md`.
+4. Read `docs/project/HANDOFF.md`.
+5. Verify the exact GitHub repository, branch, and commit.
+6. Read `AGENTS.md`, `PROJECT_SPEC.md`, this workflow, `BASE_INDEX.md`, relevant docs, and task acceptance criteria.
+7. Search the existing implementation and project ledger before proposing a parallel path.
+
+Required preflight output:
+
+```text
+Repository:
+Branch:
+Commit:
+Current milestone:
+Current objective:
+Relevant approved decisions:
+Open P0/P1 items:
+Risks / unknowns:
+```
+
+If branch or commit cannot be verified, mark it `Unknown` and do not infer current implementation from conversation memory.
+
 ## Required Steps
 
 1. READ
-   Read `PROJECT_SPEC.md`, this workflow, `BASE_INDEX.md`, relevant docs, and task acceptance criteria.
+   Read the project-governance files, `PROJECT_SPEC.md`, this workflow, `BASE_INDEX.md`, relevant docs, current code, and task acceptance criteria.
 
 2. PLAN
    Submit an `agent_plan` before meaningful file or runtime changes.
@@ -16,10 +43,12 @@ READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD
    Normal AgentOps worker loops now do this automatically for pulled tasks; manual runs must still create the plan and manifest explicitly.
 
 3. RETRIEVE
-   Search approved project knowledge, runbooks, base notes, and memory candidates through `/api/knowledge/search` or `agentops knowledge search`.
+   Search approved project knowledge, runbooks, base notes, reviewed memory, and relevant Project Ledger entries through `/api/knowledge/search`, `agentops knowledge search`, or the approved project sources.
+   A retrieved candidate memory is not authority merely because it was found.
 
 4. COMPARE
-   Compare the proposed work with base constraints, runtime boundaries, security rules, and existing product decisions.
+   Compare the proposed work with approved decisions, active backlog, base constraints, runtime boundaries, security rules, and current implementation.
+   Classify any durable new item as `duplicate_of`, `updates`, `supersedes`, `conflicts_with`, or genuinely new.
 
 5. EXECUTE
    Work through Agent Gateway CLI/API where possible. Browser UI is for human supervision, not normal agent execution.
@@ -29,20 +58,59 @@ READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD
 
 7. RECORD
    Record run/tool/evaluation/audit/artifact evidence and propose memory candidates only when the lesson should survive.
+   Emit a Project Delta rather than copying the entire answer or transcript.
+   Update `PROJECT_STATE`, `DECISIONS`, `BACKLOG`, and `HANDOFF` only when their facts changed.
 
 ## Evidence Per Phase
 
-- READ: cite specs and docs in `referenced_specs`.
+- READ: cite specs, approved decisions, branch, commit, and relevant docs in `referenced_specs` or equivalent evidence.
 - PLAN: submit `agentops agent-plan create`.
-- RETRIEVE: cite knowledge paths and memory IDs.
-- COMPARE: cite base IDs and risk decisions.
+- RETRIEVE: cite knowledge paths, decision IDs, ledger IDs, and reviewed memory IDs.
+- COMPARE: cite base IDs, existing implementation, duplicate/conflict relationships, and risk decisions.
 - EXECUTE: record tool calls and runtime events.
-- VERIFY: submit evaluations or smoke artifacts.
-- RECORD: write audit/artifact evidence, verify a `plan_evidence_manifest`, and propose reviewable memory candidates.
+- VERIFY: submit evaluations or smoke artifacts against the exact relevant branch and commit.
+- RECORD: write audit/artifact evidence, verify a `plan_evidence_manifest`, emit the Project Delta, and propose reviewable memory candidates.
+
+## Project Delta
+
+Choose exactly one durable type:
+
+```text
+Decision | Proposal | Requirement | Task | Risk | Evidence | Question | Handoff
+```
+
+New ideas default to `Inbox` or `Proposed`. Only human-reviewed `Approved` or evidence-backed `Implemented` items may become canonical.
+
+Minimum fields:
+
+```yaml
+type:
+title:
+status:
+priority:
+module:
+summary:
+source:
+repository:
+branch:
+commit:
+duplicate_of:
+updates:
+supersedes:
+conflicts_with:
+owner:
+next_action:
+```
+
+If nothing durable changed, record:
+
+```text
+No canonical project-state change.
+```
 
 ## Clean Repo Rule
 
-Do not commit generated plans, FTS index data, temporary databases, raw runtime logs, raw prompts, raw responses, tokens, or cache directories.
+Do not commit generated plans, FTS index data, temporary databases, raw runtime logs, raw prompts, raw responses, tokens, cache directories, or unreviewed customer/private content.
 
 ## Required Agent Plan Fields
 
@@ -60,6 +128,11 @@ Do not commit generated plans, FTS index data, temporary databases, raw runtime 
 ## Approval Rules
 
 - High or critical risk plans require approval.
+- An Agent must not approve its own high-risk plan or promote its own candidate memory to authority.
 - External uploads, connector credential changes, public publishing, destructive file operations, and live Hermes/OpenClaw runs require explicit confirmation or an existing approved policy.
 - Customer-facing delivery approval requires a verified `plan_evidence_manifest`; the customer-worker workflow must create or reuse a verified manifest before generating the delivery approval.
 - Memory candidates are not authority until reviewed.
+
+## Handoff Rule
+
+At the end of substantive work, state the exact branch and commit, what changed, verification performed, open risks, and the next single action. The latest handoff must allow a new agent to continue without rereading the full conversation.
