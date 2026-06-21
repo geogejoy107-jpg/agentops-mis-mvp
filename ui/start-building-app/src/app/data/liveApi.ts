@@ -836,6 +836,38 @@ export interface WorkerTaskReleaseResult {
   error?: string;
 }
 
+export interface WorkerFleetHygienePayload {
+  provider: string;
+  operation: string;
+  status: string;
+  threshold_sec: number;
+  enrollment_age_sec: number;
+  summary: {
+    stuck_tasks: number;
+    stale_never_seen_enrollments: number;
+    actions_available: number;
+    released_tasks?: number;
+    revoked_enrollments?: number;
+    errors?: number;
+  };
+  stuck_tasks: StuckWorkerTask[];
+  stale_never_seen_enrollments: AgentGatewayEnrollment[];
+  recommended_actions: string[];
+  safety: {
+    read_only: boolean;
+    requires_confirm_cleanup: boolean;
+    live_execution_performed: boolean;
+    token_omitted: boolean;
+  };
+  applied?: boolean;
+  released_tasks?: { task_id: string; released_runs: string[] }[];
+  revoked_enrollments?: { token_id: string; agent_id?: string | null; sessions_revoked?: number }[];
+  errors?: Record<string, unknown>[];
+  error?: string;
+  token_omitted: boolean;
+  live_execution_performed: boolean;
+}
+
 export interface AgentGatewayEnrollment {
   token_id: string;
   workspace_id: string;
@@ -1692,6 +1724,110 @@ export async function loadWorkerFleet(): Promise<WorkerFleetPayload> {
     token_omitted: boolValue(raw.token_omitted),
     live_execution_performed: boolValue(raw.live_execution_performed),
   };
+}
+
+function normalizeWorkerFleetHygiene(raw: Record<string, unknown>): WorkerFleetHygienePayload {
+  const summaryRaw = typeof raw.summary === "object" && raw.summary !== null ? raw.summary as Record<string, unknown> : {};
+  const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
+  return {
+    provider: String(raw.provider || "agentops-worker"),
+    operation: String(raw.operation || "fleet_hygiene"),
+    status: String(raw.status || "unknown"),
+    threshold_sec: numberValue(raw.threshold_sec, 900),
+    enrollment_age_sec: numberValue(raw.enrollment_age_sec, 900),
+    summary: {
+      stuck_tasks: numberValue(summaryRaw.stuck_tasks, 0),
+      stale_never_seen_enrollments: numberValue(summaryRaw.stale_never_seen_enrollments, 0),
+      actions_available: numberValue(summaryRaw.actions_available, 0),
+      released_tasks: summaryRaw.released_tasks === undefined ? undefined : numberValue(summaryRaw.released_tasks, 0),
+      revoked_enrollments: summaryRaw.revoked_enrollments === undefined ? undefined : numberValue(summaryRaw.revoked_enrollments, 0),
+      errors: summaryRaw.errors === undefined ? undefined : numberValue(summaryRaw.errors, 0),
+    },
+    stuck_tasks: asArray<Record<string, unknown>>(raw.stuck_tasks).map((row) => ({
+      ...normalizeTask(row),
+      age_sec: numberValue(row.age_sec, 0),
+      threshold_sec: numberValue(row.threshold_sec, 0),
+      running_run_id: row.running_run_id ? String(row.running_run_id) : null,
+      running_run_started_at: row.running_run_started_at ? String(row.running_run_started_at) : null,
+      stuck_reason: row.stuck_reason ? String(row.stuck_reason) : undefined,
+    })),
+    stale_never_seen_enrollments: asArray<Record<string, unknown>>(raw.stale_never_seen_enrollments).map(normalizeAgentGatewayEnrollment),
+    recommended_actions: asArray(raw.recommended_actions).map(String).filter(Boolean),
+    safety: {
+      read_only: boolValue(safetyRaw.read_only),
+      requires_confirm_cleanup: boolValue(safetyRaw.requires_confirm_cleanup),
+      live_execution_performed: boolValue(safetyRaw.live_execution_performed),
+      token_omitted: boolValue(safetyRaw.token_omitted),
+    },
+    applied: raw.applied === undefined ? undefined : boolValue(raw.applied),
+    released_tasks: asArray<Record<string, unknown>>(raw.released_tasks).map((item) => ({
+      task_id: String(item.task_id || ""),
+      released_runs: asArray(item.released_runs).map(String),
+    })).filter((item) => item.task_id),
+    revoked_enrollments: asArray<Record<string, unknown>>(raw.revoked_enrollments).map((item) => ({
+      token_id: String(item.token_id || ""),
+      agent_id: item.agent_id ? String(item.agent_id) : null,
+      sessions_revoked: numberValue(item.sessions_revoked, 0),
+    })).filter((item) => item.token_id),
+    errors: asArray<Record<string, unknown>>(raw.errors),
+    error: raw.error ? String(raw.error) : undefined,
+    token_omitted: boolValue(raw.token_omitted),
+    live_execution_performed: boolValue(raw.live_execution_performed),
+  };
+}
+
+export async function loadWorkerFleetHygiene(options: {
+  threshold_sec?: number;
+  enrollment_age_sec?: number;
+  limit?: number;
+} = {}): Promise<WorkerFleetHygienePayload> {
+  const params = new URLSearchParams();
+  if (options.threshold_sec !== undefined) params.set("threshold_sec", String(options.threshold_sec));
+  if (options.enrollment_age_sec !== undefined) params.set("enrollment_age_sec", String(options.enrollment_age_sec));
+  if (options.limit !== undefined) params.set("limit", String(options.limit));
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  const raw = await optionalApiJson<Record<string, unknown>>(`/workers/fleet/hygiene${suffix}`, {
+    provider: "agentops-worker",
+    operation: "fleet_hygiene",
+    status: "unavailable",
+    threshold_sec: options.threshold_sec || 900,
+    enrollment_age_sec: options.enrollment_age_sec || 900,
+    summary: {
+      stuck_tasks: 0,
+      stale_never_seen_enrollments: 0,
+      actions_available: 0,
+    },
+    stuck_tasks: [],
+    stale_never_seen_enrollments: [],
+    recommended_actions: [],
+    safety: {
+      read_only: true,
+      requires_confirm_cleanup: true,
+      live_execution_performed: false,
+      token_omitted: true,
+    },
+    token_omitted: true,
+    live_execution_performed: false,
+    fallback_reason: "endpoint_not_available",
+  });
+  return normalizeWorkerFleetHygiene(raw);
+}
+
+export async function applyWorkerFleetHygiene(input: {
+  threshold_sec?: number;
+  enrollment_age_sec?: number;
+  limit?: number;
+  release_reason?: string;
+} = {}): Promise<WorkerFleetHygienePayload> {
+  const raw = await apiJsonWithStatuses<Record<string, unknown>>("/workers/fleet/hygiene", {
+    method: "POST",
+    body: JSON.stringify({
+      ...input,
+      apply: true,
+      confirm_cleanup: true,
+    }),
+  }, [200, 207, 409]);
+  return normalizeWorkerFleetHygiene(raw);
 }
 
 export async function loadLocalReadiness(): Promise<LocalReadinessPayload> {

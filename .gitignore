@@ -6,6 +6,9 @@ build/
 
 # Local runtime state and imported personal run ledgers.
 agentops_mis.db
+*.db-journal
+*.db-shm
+*.db-wal
 .agentops_runtime/
 .playwright-cli/
 mis-project/

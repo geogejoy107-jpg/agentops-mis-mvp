@@ -25,9 +25,11 @@ import {
   loadWorkerAdapterReadiness,
   loadWorkerDaemonLogs,
   loadWorkerFleet,
+  loadWorkerFleetHygiene,
   loadWorkerStatus,
   loadWorkflowJobs,
   markWorkflowJobFailed,
+  applyWorkerFleetHygiene,
   releaseWorkerTask,
   revokeAgentGatewayEnrollment,
   revokeAgentGatewaySession,
@@ -47,6 +49,7 @@ import {
   type HermesOpenClawLoopWorkflowResult,
   type ReviewQueuePayload,
   type WorkerAdapterName,
+  type WorkerFleetHygienePayload,
   type WorkflowJob,
 } from "../../data/liveApi";
 import { pick, usePreferences } from "../../context/PreferencesContext";
@@ -101,6 +104,9 @@ export function AIEmployees() {
   const { locale } = usePreferences();
   const [dispatching, setDispatching] = useState<string | null>(null);
   const [dispatchResult, setDispatchResult] = useState<string | null>(null);
+  const [hygieneBusy, setHygieneBusy] = useState(false);
+  const [hygieneResult, setHygieneResult] = useState<WorkerFleetHygienePayload | null>(null);
+  const [hygieneError, setHygieneError] = useState<string | null>(null);
   const [customerTaskBusy, setCustomerTaskBusy] = useState(false);
   const [customerTaskError, setCustomerTaskError] = useState<string | null>(null);
   const [customerTaskResult, setCustomerTaskResult] = useState<CustomerTaskWorkflowResult | null>(null);
@@ -148,11 +154,12 @@ export function AIEmployees() {
     scopes: DEFAULT_GATEWAY_SCOPES.join(", "),
   });
   const { data, loading, error, refresh } = useLiveData(async () => {
-    const [metrics, demoReadiness, workerStatus, workerFleet, adapterReadiness, localReadiness, securityReadiness, integrationInbox, reviewQueue, customerDeliveryBoard, loopLaneReadback, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs] = await Promise.all([
+    const [metrics, demoReadiness, workerStatus, workerFleet, workerHygiene, adapterReadiness, localReadiness, securityReadiness, integrationInbox, reviewQueue, customerDeliveryBoard, loopLaneReadback, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs] = await Promise.all([
       loadDashboard(),
       loadDemoReadiness(),
       loadWorkerStatus(),
       loadWorkerFleet(),
+      loadWorkerFleetHygiene({ limit: 5 }),
       loadWorkerAdapterReadiness(),
       loadLocalReadiness(),
       loadSecurityProductionReadiness(),
@@ -169,12 +176,14 @@ export function AIEmployees() {
       loadStuckWorkflowJobs(30, 8),
     ]);
     const agents = await loadAgents(metrics);
-    return { agents, demoReadiness, workerStatus, workerFleet, adapterReadiness, localReadiness, securityReadiness, integrationInbox, reviewQueue, customerDeliveryBoard, loopLaneReadback, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs };
+    return { agents, demoReadiness, workerStatus, workerFleet, workerHygiene, adapterReadiness, localReadiness, securityReadiness, integrationInbox, reviewQueue, customerDeliveryBoard, loopLaneReadback, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs };
   }, [integrationInboxBucket]);
   const agents = data?.agents || [];
   const demoReadiness = data?.demoReadiness;
   const workerStatus = data?.workerStatus;
   const workerFleet = data?.workerFleet;
+  const workerHygiene = data?.workerHygiene as WorkerFleetHygienePayload | undefined;
+  const activeHygiene = hygieneResult || workerHygiene;
   const adapterReadiness = data?.adapterReadiness;
   const localReadiness = data?.localReadiness;
   const securityReadiness = data?.securityReadiness;
@@ -220,6 +229,8 @@ export function AIEmployees() {
   const stuckWorkflowRecoveryRows = stuckWorkflowJobs.length > 0 ? stuckWorkflowJobs : stuckWorkflowJobRefs;
   const recentEvents = workerStatus?.recent_events || [];
   const stuckTasks = workerStatus?.stuck_tasks || [];
+  const hygieneSummary = activeHygiene?.summary;
+  const hygieneActionsAvailable = Number(hygieneSummary?.actions_available || 0);
   const enrollments = data?.enrollmentPayload?.enrollments || [];
   const sessions = data?.sessionPayload?.sessions || [];
   const gatewayStatus = data?.gatewayStatus;
@@ -323,6 +334,17 @@ export function AIEmployees() {
       itemOwner: "Owner",
       itemBucket: "Bucket",
       overallFleetHealth: "Fleet health",
+      fleetHygieneTitle: "Fleet hygiene",
+      fleetHygieneSummary: "Plan or confirm cleanup for stale running worker tasks and never-seen remote enrollments. Cleanup writes audit/runtime evidence and never runs live adapters.",
+      hygienePlan: "Plan cleanup",
+      hygieneApply: "Confirm cleanup",
+      hygieneRunning: "Checking...",
+      hygieneActions: "Actions",
+      staleNeverSeen: "Never-seen enrollments",
+      releasedTasks: "Released",
+      revokedEnrollments: "Revoked",
+      hygieneNoActions: "No cleanup needed.",
+      hygieneSafety: "No live execution",
       healthGates: "Health gates",
       recommendedActions: "Recommended actions",
       noRecommendedActions: "No urgent action. Keep monitoring the worker status.",
@@ -594,6 +616,17 @@ export function AIEmployees() {
       itemOwner: "负责人",
       itemBucket: "分组",
       overallFleetHealth: "Fleet 健康",
+      fleetHygieneTitle: "Fleet 清理",
+      fleetHygieneSummary: "为卡住的运行中任务和从未心跳的远程接入生成清理计划；确认清理会写入审计/runtime 证据，但不会触发真实 adapter 执行。",
+      hygienePlan: "只读计划",
+      hygieneApply: "确认清理",
+      hygieneRunning: "检查中...",
+      hygieneActions: "可处理项",
+      staleNeverSeen: "未连接接入",
+      releasedTasks: "已释放",
+      revokedEnrollments: "已吊销",
+      hygieneNoActions: "暂无需要清理的项目。",
+      hygieneSafety: "不执行真实任务",
       healthGates: "健康 Gate",
       recommendedActions: "推荐动作",
       noRecommendedActions: "暂无紧急动作，继续观察 worker status。",
@@ -1106,6 +1139,27 @@ export function AIEmployees() {
       setDispatchResult(err instanceof Error ? err.message : String(err));
     } finally {
       setDispatching(null);
+    }
+  };
+
+  const runFleetHygiene = async (apply: boolean) => {
+    setHygieneBusy(true);
+    setHygieneError(null);
+    try {
+      const result = apply
+        ? await applyWorkerFleetHygiene({
+            threshold_sec: 900,
+            enrollment_age_sec: 900,
+            limit: 10,
+            release_reason: locale === "zh" ? "操作台 Fleet Hygiene 清理" : "Operator fleet hygiene cleanup",
+          })
+        : await loadWorkerFleetHygiene({ threshold_sec: 900, enrollment_age_sec: 900, limit: 10 });
+      setHygieneResult(result);
+      await refresh();
+    } catch (err) {
+      setHygieneError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setHygieneBusy(false);
     }
   };
 
@@ -1710,6 +1764,75 @@ export function AIEmployees() {
               </div>
             </div>
           ))}
+        </div>
+
+        <div className="rounded-lg p-3 mt-4" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+          <div className="flex flex-col xl:flex-row xl:items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <ShieldCheck size={13} style={{ color: hygieneActionsAvailable > 0 ? "var(--mis-warning)" : "var(--mis-success)" }} />
+                <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.fleetHygieneTitle}</div>
+                <StatusBadge status={activeHygiene?.status || "unknown"} />
+              </div>
+              <p className="text-[10px] mt-1 max-w-3xl" style={{ color: "var(--mis-dim)" }}>{copy.fleetHygieneSummary}</p>
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                <span className="text-[9px] px-1.5 py-0.5 rounded" style={{ color: "var(--mis-success)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                  {copy.hygieneSafety}
+                </span>
+                <span className="text-[9px] px-1.5 py-0.5 rounded" style={{ color: "var(--mis-muted)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                  {copy.tokenOmittedProof}
+                </span>
+                {activeHygiene?.safety?.read_only && (
+                  <span className="text-[9px] px-1.5 py-0.5 rounded" style={{ color: "var(--mis-cyan)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                    {copy.readOnlyProof}
+                  </span>
+                )}
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2 shrink-0">
+              <button
+                onClick={() => runFleetHygiene(false)}
+                disabled={hygieneBusy}
+                className="inline-flex items-center gap-1.5 text-[10px] px-2 py-1 rounded"
+                style={{ color: "var(--mis-text)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}
+              >
+                {hygieneBusy ? <RefreshCw size={11} /> : <Activity size={11} />}
+                {hygieneBusy ? copy.hygieneRunning : copy.hygienePlan}
+              </button>
+              <button
+                onClick={() => runFleetHygiene(true)}
+                disabled={hygieneBusy || hygieneActionsAvailable <= 0}
+                className="inline-flex items-center gap-1.5 text-[10px] px-2 py-1 rounded disabled:opacity-50"
+                style={{ color: "#071014", background: hygieneActionsAvailable > 0 ? "var(--mis-warning)" : "var(--mis-muted)", border: "1px solid var(--mis-border)" }}
+              >
+                {hygieneBusy ? <RefreshCw size={11} /> : <Trash2 size={11} />}
+                {hygieneBusy ? copy.hygieneRunning : copy.hygieneApply}
+              </button>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mt-3">
+            {[
+              { label: copy.hygieneActions, value: hygieneActionsAvailable, status: hygieneActionsAvailable > 0 ? "attention" : "pass" },
+              { label: copy.stuckTasks, value: hygieneSummary?.stuck_tasks ?? 0, status: (hygieneSummary?.stuck_tasks || 0) > 0 ? "blocked" : "pass" },
+              { label: copy.staleNeverSeen, value: hygieneSummary?.stale_never_seen_enrollments ?? 0, status: (hygieneSummary?.stale_never_seen_enrollments || 0) > 0 ? "attention" : "pass" },
+              { label: copy.releasedTasks, value: hygieneSummary?.released_tasks ?? activeHygiene?.released_tasks?.length ?? 0, status: (hygieneSummary?.released_tasks || 0) > 0 ? "completed" : "planned" },
+              { label: copy.revokedEnrollments, value: hygieneSummary?.revoked_enrollments ?? activeHygiene?.revoked_enrollments?.length ?? 0, status: (hygieneSummary?.revoked_enrollments || 0) > 0 ? "completed" : "planned" },
+            ].map((item) => (
+              <div key={item.label} className="rounded px-2 py-1" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                <div className="text-[9px]" style={{ color: "var(--mis-muted)" }}>{item.label}</div>
+                <div className="flex items-center justify-between gap-2 mt-0.5">
+                  <div className="text-[10px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{item.value}</div>
+                  <StatusBadge status={item.status} />
+                </div>
+              </div>
+            ))}
+          </div>
+          {hygieneError && (
+            <div className="text-[10px] mt-2" style={{ color: "#F87171" }}>{hygieneError}</div>
+          )}
+          <div className="mt-2 text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>
+            {(activeHygiene?.recommended_actions || [copy.hygieneNoActions])[0] || copy.hygieneNoActions}
+          </div>
         </div>
 
         <div className="rounded-lg p-3 mt-4" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
