@@ -27,6 +27,7 @@ export function TaskDetail() {
   const taskMemories = data.detail.memories;
   const taskEvals = data.detail.evaluations;
   const taskArtifacts = data.detail.artifacts || [];
+  const taskCaseRuns = data.detail.evaluation_case_runs || [];
   const latestEval = taskEvals[taskEvals.length - 1];
   const latestScore = latestEval ? (latestEval.score <= 1 ? Math.round(latestEval.score * 100) : Math.round(latestEval.score)) : 0;
 
@@ -53,6 +54,8 @@ export function TaskDetail() {
       relatedRuns: "Related Runs",
       noRuns: "No runs yet.",
       memory: "Memory Candidates",
+      benchmarkEvidence: "Benchmark Evidence",
+      noBenchmarkEvidence: "No approved evaluation case runs recorded yet.",
       headers: ["Run ID", "Agent", "Runtime", "Status", "Cost", "Tokens"],
     },
     zh: {
@@ -71,6 +74,8 @@ export function TaskDetail() {
       relatedRuns: "相关运行",
       noRuns: "暂无运行记录。",
       memory: "记忆候选",
+      benchmarkEvidence: "基准证据",
+      noBenchmarkEvidence: "暂无已批准评估用例执行记录。",
       headers: ["运行 ID", "代理", "运行时", "状态", "成本", "Token"],
     },
   });
@@ -226,6 +231,37 @@ export function TaskDetail() {
                 </div>
                 <p className="text-[11px] leading-relaxed mt-2" style={{ color: "var(--mis-dim)" }}>{artifact.summary}</p>
                 <div className="text-[10px] mt-2" style={{ color: "var(--mis-muted)" }}>{new Date(artifact.created_at).toLocaleString(locale === "zh" ? "zh-CN" : "en-US")}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div
+        className="rounded-xl p-4"
+        style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}
+      >
+        <div className="text-xs font-semibold flex items-center gap-1.5 mb-3" style={{ color: "var(--mis-text)" }}>
+          <ShieldCheck size={13} style={{ color: "var(--mis-success)" }} />
+          {copy.benchmarkEvidence}
+        </div>
+        {taskCaseRuns.length === 0 ? (
+          <p className="text-xs" style={{ color: "var(--mis-muted)" }}>{copy.noBenchmarkEvidence}</p>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {taskCaseRuns.map(caseRun => (
+              <div key={caseRun.case_run_id || `${caseRun.case_id}-${caseRun.run_id}`} className="rounded-lg p-3" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-xs font-medium truncate" style={{ color: "var(--mis-text)" }}>{caseRun.case_title || caseRun.case_id}</div>
+                  <StatusBadge status={caseRun.pass_fail} />
+                </div>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  <span className="text-[10px] rounded px-1.5 py-0.5" style={{ color: "var(--mis-cyan)", background: "rgba(34,211,238,0.10)" }}>{caseRun.case_type || caseRun.runner_type}</span>
+                  <span className="text-[10px] rounded px-1.5 py-0.5" style={{ color: "var(--mis-success)", background: "rgba(45,212,191,0.10)" }}>{Math.round((caseRun.score <= 1 ? caseRun.score * 100 : caseRun.score))}/100</span>
+                </div>
+                <div className="mt-2 text-[10px] font-mono truncate" style={{ color: "var(--mis-muted)" }}>
+                  {caseRun.run_id ? <Link to={`/admin/runs/${caseRun.run_id}`} style={{ color: "var(--mis-cyan)" }}>{caseRun.run_id}</Link> : caseRun.case_id}
+                </div>
               </div>
             ))}
           </div>

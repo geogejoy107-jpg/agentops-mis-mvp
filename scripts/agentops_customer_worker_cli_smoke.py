@@ -7,10 +7,13 @@ import json
 import os
 import subprocess
 from pathlib import Path
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "scripts" / "agentops"
+BASE_URL = os.environ.get("AGENTOPS_BASE_URL", "http://127.0.0.1:8787").rstrip("/")
 
 
 def run(args: list[str]) -> subprocess.CompletedProcess[str]:
@@ -32,6 +35,22 @@ def load_json(proc: subprocess.CompletedProcess[str]) -> dict:
         return json.loads(proc.stdout)
     except json.JSONDecodeError:
         return {}
+
+
+def http_json(path: str, timeout: int = 30) -> tuple[int, dict]:
+    req = Request(BASE_URL + path, headers={"Accept": "application/json"}, method="GET")
+    try:
+        with urlopen(req, timeout=timeout) as res:
+            raw = res.read().decode("utf-8")
+            return res.status, json.loads(raw) if raw else {}
+    except HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        try:
+            return exc.code, json.loads(raw)
+        except json.JSONDecodeError:
+            return exc.code, {"raw": raw}
+    except URLError as exc:
+        return 0, {"error": str(exc.reason)}
 
 
 def require(condition: bool, message: str) -> None:
@@ -115,6 +134,12 @@ def main() -> int:
     require(auto_payload.get("task_id") == case_task_id, f"auto case task id mismatch: {auto_payload}")
     require(auto_evidence.get("evaluation_case_runs", 0) >= 1, f"missing automatic evaluation case evidence: {auto_evidence}")
     require((auto_payload.get("evaluation_case_result") or {}).get("summary", {}).get("created", 0) >= 1, f"missing evaluation case result payload: {auto_payload}")
+    task_detail_status, task_detail = http_json(f"/api/tasks/{case_task_id}")
+    require(task_detail_status == 200, f"task detail failed: {task_detail_status} {task_detail}")
+    require(any(item.get("case_id") == case_id for item in task_detail.get("evaluation_case_runs", [])), f"task detail missing evaluation case run: {task_detail}")
+    run_detail_status, run_detail = http_json(f"/api/runs/{auto_payload.get('run_id')}")
+    require(run_detail_status == 200, f"run detail failed: {run_detail_status} {run_detail}")
+    require(any(item.get("case_id") == case_id for item in run_detail.get("evaluation_case_runs", [])), f"run detail missing evaluation case run: {run_detail}")
 
     mock = run([
         "workflow",

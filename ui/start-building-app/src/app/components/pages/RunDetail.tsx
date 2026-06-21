@@ -1,5 +1,5 @@
-import { useParams } from "react-router";
-import { Cpu, DollarSign, Clock, GitBranch, AlertTriangle } from "lucide-react";
+import { Link, useParams } from "react-router";
+import { Cpu, DollarSign, Clock, GitBranch, AlertTriangle, ShieldCheck } from "lucide-react";
 import { StatusBadge } from "../shared/StatusBadge";
 import { RiskBadge } from "../shared/RiskBadge";
 import { AuditTimeline } from "../shared/AuditTimeline";
@@ -26,6 +26,7 @@ export function RunDetail() {
   const run = data.detail.run;
   const runTools = data.detail.tool_calls;
   const runEval = data.detail.evaluations[0];
+  const caseRuns = data.detail.evaluation_case_runs || [];
   const runAudit = data.auditLogs.filter(a => a.entity_id === run.run_id || runTools.some(tc => a.entity_id === tc.tool_call_id)).slice(0, 5);
   const childRuns = data.allRuns.filter(r => r.parent_run_id === run.run_id);
   const parentRun = run.parent_run_id ? data.allRuns.find(r => r.run_id === run.parent_run_id) : null;
@@ -179,6 +180,35 @@ export function RunDetail() {
             <span className="text-xs font-semibold" style={{ color: "#F87171" }}>{run.error_type}</span>
           </div>
           <p className="text-xs" style={{ color: "var(--mis-dim)" }}>{run.error_message}</p>
+        </div>
+      )}
+
+      {caseRuns.length > 0 && (
+        <div
+          className="rounded-xl p-4"
+          style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}
+        >
+          <div className="text-xs font-semibold flex items-center gap-1.5 mb-3" style={{ color: "var(--mis-text)" }}>
+            <ShieldCheck size={13} style={{ color: "var(--mis-success)" }} />
+            Evaluation Case Evidence
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {caseRuns.map(caseRun => (
+              <div key={caseRun.case_run_id || `${caseRun.case_id}-${caseRun.run_id}`} className="rounded-lg p-3" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-xs font-medium truncate" style={{ color: "var(--mis-text)" }}>{caseRun.case_title || caseRun.case_id}</div>
+                  <StatusBadge status={caseRun.pass_fail} />
+                </div>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  <span className="text-[10px] rounded px-1.5 py-0.5" style={{ color: "var(--mis-cyan)", background: "rgba(34,211,238,0.10)" }}>{caseRun.case_type || caseRun.runner_type}</span>
+                  <span className="text-[10px] rounded px-1.5 py-0.5" style={{ color: "var(--mis-success)", background: "rgba(45,212,191,0.10)" }}>{Math.round((caseRun.score <= 1 ? caseRun.score * 100 : caseRun.score))}/100</span>
+                </div>
+                <div className="mt-2 text-[10px] font-mono truncate" style={{ color: "var(--mis-muted)" }}>
+                  {caseRun.run_id && caseRun.run_id !== run.run_id ? <Link to={`/admin/runs/${caseRun.run_id}`} style={{ color: "var(--mis-cyan)" }}>{caseRun.run_id}</Link> : caseRun.case_id}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

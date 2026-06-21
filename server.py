@@ -4478,6 +4478,7 @@ def agent_gateway_review_queue(conn: sqlite3.Connection, qs: dict, headers, auth
     pending_approvals = [item for item in lanes.get("pending_approvals", []) if visible(item)]
     memory_candidates = [item for item in lanes.get("memory_candidates", []) if visible(item)]
     evaluation_case_candidates = [item for item in lanes.get("evaluation_case_candidates", []) if visible(item)]
+    failed_evaluation_case_runs = [item for item in lanes.get("failed_evaluation_case_runs", []) if visible(item)]
     customer_deliveries = [item for item in lanes.get("customer_deliveries", []) if visible(item)]
     commander_synthesis = [item for item in lanes.get("commander_synthesis", []) if visible(item)]
     review_items = visible_review_items[:limit]
@@ -4487,6 +4488,7 @@ def agent_gateway_review_queue(conn: sqlite3.Connection, qs: dict, headers, auth
         "pending_approvals": pending_approvals[:limit],
         "memory_candidates": memory_candidates[:limit],
         "evaluation_case_candidates": evaluation_case_candidates[:limit],
+        "failed_evaluation_case_runs": failed_evaluation_case_runs[:limit],
         "customer_deliveries": customer_deliveries[:limit],
         "commander_synthesis": commander_synthesis[:limit],
     }
@@ -4494,6 +4496,7 @@ def agent_gateway_review_queue(conn: sqlite3.Connection, qs: dict, headers, auth
         "pending_approvals": len(pending_approvals),
         "memory_candidates": len(memory_candidates),
         "evaluation_case_candidates": len(evaluation_case_candidates),
+        "failed_evaluation_case_runs": len(failed_evaluation_case_runs),
         "ready_deliveries": len([item for item in customer_deliveries if item.get("status") == "ready"]),
         "waiting_deliveries": len([item for item in customer_deliveries if item.get("status") == "waiting_approval"]),
         "needs_attention_deliveries": len([item for item in customer_deliveries if item.get("status") == "needs_attention"]),
@@ -4505,11 +4508,13 @@ def agent_gateway_review_queue(conn: sqlite3.Connection, qs: dict, headers, auth
         "retrieved_pending_approvals": len(pending_approvals[:limit]),
         "retrieved_memory_candidates": len(memory_candidates[:limit]),
         "retrieved_evaluation_case_candidates": len(evaluation_case_candidates[:limit]),
+        "retrieved_failed_evaluation_case_runs": len(failed_evaluation_case_runs[:limit]),
     }
     if any(payload["summary"].get(key, 0) for key in [
         "pending_approvals",
         "memory_candidates",
         "evaluation_case_candidates",
+        "failed_evaluation_case_runs",
         "waiting_deliveries",
         "needs_attention_deliveries",
         "commander_synthesis_promotion_available",
@@ -4944,6 +4949,34 @@ def list_evaluation_case_runs(conn: sqlite3.Connection, qs: dict | None = None, 
         },
         "token_omitted": True,
     }, 200
+
+
+def evaluation_case_runs_for_task(conn: sqlite3.Connection, task_id: str, limit: int = 12) -> list[dict]:
+    rows = rows_to_dicts(conn.execute(
+        """SELECT ecr.*, c.title AS case_title, c.case_type, c.task_id, c.source_type, c.source_ref
+        FROM evaluation_case_runs ecr
+        JOIN evaluation_case_candidates c ON c.case_id=ecr.case_id
+        WHERE c.task_id=?
+        ORDER BY ecr.created_at DESC
+        LIMIT ?""",
+        (task_id, limit),
+    ).fetchall())
+    return [evaluation_case_run_public(row) for row in rows]
+
+
+def evaluation_case_runs_for_run(conn: sqlite3.Connection, run, limit: int = 12) -> list[dict]:
+    if not run:
+        return []
+    rows = rows_to_dicts(conn.execute(
+        """SELECT ecr.*, c.title AS case_title, c.case_type, c.task_id, c.source_type, c.source_ref
+        FROM evaluation_case_runs ecr
+        JOIN evaluation_case_candidates c ON c.case_id=ecr.case_id
+        WHERE ecr.run_id=? OR c.run_id=? OR c.task_id=?
+        ORDER BY ecr.created_at DESC
+        LIMIT ?""",
+        (run["run_id"], run["run_id"], run["task_id"], limit),
+    ).fetchall())
+    return [evaluation_case_run_public(row) for row in rows]
 
 
 def propose_evaluation_case_candidate(conn: sqlite3.Connection, body, headers=None) -> tuple[dict, int]:
@@ -7428,6 +7461,18 @@ def customer_delivery_board(conn, limit: int = 12) -> dict:
                    OR (source_ref IS NOT NULL AND source_ref IN (?,?))""",
                 (run_id or "", artifact_id or "", run_id or "", artifact_id or ""),
             ).fetchone()["c"],
+            "evaluation_case_runs": conn.execute(
+                """SELECT COUNT(*) c FROM evaluation_case_runs ecr
+                JOIN evaluation_case_candidates c ON c.case_id=ecr.case_id
+                WHERE ecr.run_id=? OR c.run_id=? OR c.task_id=?""",
+                (run_id or "", run_id or "", task_id or ""),
+            ).fetchone()["c"],
+            "failed_evaluation_case_runs": conn.execute(
+                """SELECT COUNT(*) c FROM evaluation_case_runs ecr
+                JOIN evaluation_case_candidates c ON c.case_id=ecr.case_id
+                WHERE (ecr.run_id=? OR c.run_id=? OR c.task_id=?) AND ecr.pass_fail='fail'""",
+                (run_id or "", run_id or "", task_id or ""),
+            ).fetchone()["c"],
             "runtime_events": conn.execute("SELECT COUNT(*) c FROM runtime_events WHERE run_id=? OR task_id=?", (run_id or "", task_id or "")).fetchone()["c"] if task_id or run_id else 0,
             "audit_logs": conn.execute(
                 "SELECT COUNT(*) c FROM audit_logs WHERE entity_id IN (?,?,?)",
@@ -7438,6 +7483,7 @@ def customer_delivery_board(conn, limit: int = 12) -> dict:
         }
         pending_approvals = [row for row in approvals if row.get("decision") == "pending"]
         failed_eval = [row for row in evaluations if row.get("pass_fail") == "fail"]
+        failed_case_runs = int(evidence.get("failed_evaluation_case_runs") or 0)
         run_status = artifact.get("run_status")
         task_status = artifact.get("task_status")
         delivery_gate = delivery_manifest_gate(conn, run_id) if run_id else {
@@ -7463,6 +7509,9 @@ def customer_delivery_board(conn, limit: int = 12) -> dict:
                 if evidence["evaluation_case_candidates"] == 0 else
                 "Review failed evaluation/run evidence and the linked evaluation case candidate before delivery."
             )
+        elif failed_case_runs:
+            status = "needs_attention"
+            next_action = "Investigate failed evaluation case runs before approving customer delivery."
         elif pending_approvals or task_status == "waiting_approval":
             status = "waiting_approval"
             next_action = "Open Approvals and decide the customer delivery gate."
@@ -7513,6 +7562,8 @@ def customer_delivery_board(conn, limit: int = 12) -> dict:
                 "latest_score": evaluations[0]["score"] if evaluations else None,
                 "latest_pass_fail": evaluations[0]["pass_fail"] if evaluations else None,
                 "case_candidates": evidence["evaluation_case_candidates"],
+                "case_runs": evidence["evaluation_case_runs"],
+                "failed_case_runs": failed_case_runs,
             },
             "delivery_approval_gate": delivery_gate,
             "evidence": evidence,
@@ -7702,6 +7753,7 @@ def human_review_queue(conn, limit: int = 20) -> dict:
     approval_total = conn.execute("SELECT COUNT(*) c FROM approvals WHERE decision='pending'").fetchone()["c"]
     memory_total = conn.execute("SELECT COUNT(*) c FROM memories WHERE review_status='candidate'").fetchone()["c"]
     eval_case_total = conn.execute("SELECT COUNT(*) c FROM evaluation_case_candidates WHERE review_status='candidate'").fetchone()["c"]
+    failed_eval_case_run_total = conn.execute("SELECT COUNT(*) c FROM evaluation_case_runs WHERE pass_fail='fail'").fetchone()["c"]
     approvals = rows_to_dicts(conn.execute(
         """SELECT approval_id, task_id, run_id, tool_call_id, requested_by_agent_id,
                   approver_user_id, decision, reason, expires_at, created_at, decided_at
@@ -7729,6 +7781,18 @@ def human_review_queue(conn, limit: int = 20) -> dict:
            FROM evaluation_case_candidates
            WHERE review_status='candidate'
            ORDER BY updated_at DESC
+           LIMIT ?""",
+        (per_lane_limit,),
+    ).fetchall())
+    failed_eval_case_runs = rows_to_dicts(conn.execute(
+        """SELECT ecr.case_run_id, ecr.case_id, ecr.workspace_id, ecr.run_id, ecr.evaluation_id,
+                  ecr.artifact_id, ecr.runner_type, ecr.status, ecr.score, ecr.pass_fail,
+                  ecr.checks_json, ecr.created_by_agent_id, ecr.created_at,
+                  c.title AS case_title, c.case_type, c.task_id, c.agent_id, c.source_type, c.source_ref
+           FROM evaluation_case_runs ecr
+           JOIN evaluation_case_candidates c ON c.case_id=ecr.case_id
+           WHERE ecr.pass_fail='fail'
+           ORDER BY ecr.created_at DESC
            LIMIT ?""",
         (per_lane_limit,),
     ).fetchall())
@@ -7856,6 +7920,47 @@ def human_review_queue(conn, limit: int = 20) -> dict:
             "priority": 72,
         })
 
+    for row in failed_eval_case_runs:
+        case_run_id = row.get("case_run_id")
+        case_id = row.get("case_id")
+        try:
+            checks = json.loads(row.get("checks_json") or "{}")
+        except Exception:
+            checks = {}
+        failed_checks = [key for key, value in checks.items() if value is False]
+        summary = f"score={row.get('score')} runner={row.get('runner_type')}"
+        if failed_checks:
+            summary += f" failed_checks={', '.join(failed_checks[:5])}"
+        items.append({
+            "item_type": "evaluation_case_run",
+            "item_id": case_run_id,
+            "status": row.get("pass_fail"),
+            "kind": row.get("case_type"),
+            "title": f"Benchmark failed: {row.get('case_title') or case_id}",
+            "summary": redact_text(summary, 260),
+            "task_id": row.get("task_id"),
+            "run_id": row.get("run_id"),
+            "agent_id": row.get("created_by_agent_id") or row.get("agent_id"),
+            "artifact_id": row.get("artifact_id"),
+            "evaluation_id": row.get("evaluation_id"),
+            "case_id": case_id,
+            "case_run_id": case_run_id,
+            "source_type": row.get("source_type"),
+            "source_ref": row.get("source_ref"),
+            "created_at": row.get("created_at"),
+            "updated_at": row.get("created_at"),
+            "score": row.get("score"),
+            "links": {
+                "task_url": f"/admin/tasks/{row.get('task_id')}" if row.get("task_id") else None,
+                "run_url": f"/admin/runs/{row.get('run_id')}" if row.get("run_id") else None,
+                "evaluation_room_url": "/admin/evaluations",
+            },
+            "next_action": "Investigate this failed benchmark before promoting the related workflow, memory, or customer delivery.",
+            "cli_action": f"agentops eval case-runs --case-id {case_id} --pass-fail fail",
+            "alternate_cli_action": f"agentops eval run-cases --case-id {case_id}",
+            "priority": 92,
+        })
+
     for row in delivery_focus:
         delivery_id = row.get("delivery_id") or row.get("artifact_id")
         if row.get("status") == "waiting_approval":
@@ -7954,6 +8059,7 @@ def human_review_queue(conn, limit: int = 20) -> dict:
         "pending_approvals": int(approval_total or 0),
         "memory_candidates": int(memory_total or 0),
         "evaluation_case_candidates": int(eval_case_total or 0),
+        "failed_evaluation_case_runs": int(failed_eval_case_run_total or 0),
         "ready_deliveries": int(delivery_summary.get("ready") or 0),
         "waiting_deliveries": int(delivery_summary.get("waiting_approval") or 0),
         "needs_attention_deliveries": int(delivery_summary.get("needs_attention") or 0),
@@ -7965,11 +8071,13 @@ def human_review_queue(conn, limit: int = 20) -> dict:
         "retrieved_pending_approvals": len(approvals),
         "retrieved_memory_candidates": len(memories),
         "retrieved_evaluation_case_candidates": len(eval_cases),
+        "retrieved_failed_evaluation_case_runs": len(failed_eval_case_runs),
     }
     if (
         summary["pending_approvals"]
         or summary["memory_candidates"]
         or summary["evaluation_case_candidates"]
+        or summary["failed_evaluation_case_runs"]
         or summary["waiting_deliveries"]
         or summary["needs_attention_deliveries"]
         or summary["commander_synthesis_promotion_available"]
@@ -8001,6 +8109,7 @@ def human_review_queue(conn, limit: int = 20) -> dict:
             "pending_approvals": safe_approvals,
             "memory_candidates": safe_memories,
             "evaluation_case_candidates": eval_cases,
+            "failed_evaluation_case_runs": failed_eval_case_runs,
             "customer_deliveries": delivery_focus,
             "commander_synthesis": synthesis_action_focus,
         },
@@ -8008,6 +8117,7 @@ def human_review_queue(conn, limit: int = 20) -> dict:
             {"id": "pending_approvals_visible", "label": "Pending approvals visible", "ok": True, "value": summary["pending_approvals"]},
             {"id": "memory_candidates_visible", "label": "Memory candidates visible", "ok": True, "value": summary["memory_candidates"]},
             {"id": "evaluation_case_candidates_visible", "label": "Evaluation case candidates visible", "ok": True, "value": summary["evaluation_case_candidates"]},
+            {"id": "failed_evaluation_case_runs_visible", "label": "Failed evaluation case runs visible", "ok": True, "value": summary["failed_evaluation_case_runs"]},
             {"id": "delivery_board_visible", "label": "Delivery board visible", "ok": True, "value": len(delivery_focus)},
             {"id": "commander_synthesis_lifecycle_visible", "label": "Commander synthesis lifecycle visible", "ok": True, "value": len(synthesis_action_focus)},
             {"id": "safe_readback", "label": "Read-only safe readback", "ok": True, "value": "summary/hash only"},
@@ -8016,6 +8126,7 @@ def human_review_queue(conn, limit: int = 20) -> dict:
             "Start with the first review item; do not wait for slower workers if this item is ready.",
             "Promote approved Commander synthesis reports only after the linked review approval is approved.",
             "Approve only evaluation case candidates that are reusable as regression or golden checks.",
+            "Investigate failed benchmark case runs before reusing the related workflow or memory.",
             "Use `agentops review queue` for the combined queue, then approve/reject individual gates.",
             "Use `agentops commander inbox` for async worker lane state and `agentops workflow delivery-board` for customer handoff.",
         ],
@@ -12442,6 +12553,7 @@ class Handler(BaseHTTPRequestHandler):
                 data = {"task": dict(task)}
                 for table in ["runs", "approvals", "evaluations", "memories", "artifacts"]:
                     data[table] = rows_to_dicts(conn.execute(f"SELECT * FROM {table} WHERE task_id=? ORDER BY created_at DESC", (task_id,)).fetchall())
+                data["evaluation_case_runs"] = evaluation_case_runs_for_task(conn, task_id)
                 return self.send_json(data)
             if path == "/api/runs":
                 where, params = [], []
@@ -12470,6 +12582,7 @@ class Handler(BaseHTTPRequestHandler):
                     "approvals": rows_to_dicts(conn.execute("SELECT * FROM approvals WHERE run_id=? ORDER BY created_at", (run_id,)).fetchall()),
                     "evaluations": rows_to_dicts(conn.execute("SELECT * FROM evaluations WHERE run_id=? ORDER BY created_at", (run_id,)).fetchall()),
                     "artifacts": rows_to_dicts(conn.execute("SELECT * FROM artifacts WHERE run_id=? ORDER BY created_at", (run_id,)).fetchall()),
+                    "evaluation_case_runs": evaluation_case_runs_for_run(conn, run),
                 })
             if path == "/api/tool-calls":
                 return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM tool_calls ORDER BY created_at DESC").fetchall()))

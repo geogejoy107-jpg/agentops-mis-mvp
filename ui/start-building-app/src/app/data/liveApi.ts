@@ -54,6 +54,7 @@ export interface RunDetailPayload {
   approvals: Approval[];
   evaluations: Evaluation[];
   artifacts?: { artifact_id: string; title: string; artifact_type: string; summary: string; created_at: string }[];
+  evaluation_case_runs?: EvaluationCaseRun[];
 }
 
 export interface TaskDetailPayload {
@@ -63,6 +64,7 @@ export interface TaskDetailPayload {
   evaluations: Evaluation[];
   memories: Memory[];
   artifacts?: { artifact_id: string; title: string; artifact_type: string; summary: string; created_at: string }[];
+  evaluation_case_runs?: EvaluationCaseRun[];
 }
 
 export interface AgentPerformancePayload {
@@ -942,6 +944,7 @@ export interface ReviewQueueSummary {
   pending_approvals: number;
   memory_candidates: number;
   evaluation_case_candidates?: number;
+  failed_evaluation_case_runs?: number;
   ready_deliveries: number;
   waiting_deliveries: number;
   needs_attention_deliveries: number;
@@ -953,6 +956,7 @@ export interface ReviewQueueSummary {
   retrieved_pending_approvals?: number;
   retrieved_memory_candidates?: number;
   retrieved_evaluation_case_candidates?: number;
+  retrieved_failed_evaluation_case_runs?: number;
 }
 
 export interface ReviewQueueItem {
@@ -1984,6 +1988,7 @@ export async function loadRunDetail(id: string): Promise<RunDetailPayload> {
     approvals: asArray<Record<string, unknown>>(raw.approvals).map(normalizeApproval),
     evaluations: asArray<Record<string, unknown>>(raw.evaluations).map(normalizeEvaluation),
     artifacts: asArray(raw.artifacts),
+    evaluation_case_runs: asArray<Record<string, unknown>>(raw.evaluation_case_runs).map(normalizeEvaluationCaseRun),
   };
 }
 
@@ -1996,6 +2001,7 @@ export async function loadTaskDetail(id: string): Promise<TaskDetailPayload> {
     evaluations: asArray<Record<string, unknown>>(raw.evaluations).map(normalizeEvaluation),
     memories: asArray<Record<string, unknown>>(raw.memories).map(normalizeMemory),
     artifacts: asArray(raw.artifacts),
+    evaluation_case_runs: asArray<Record<string, unknown>>(raw.evaluation_case_runs).map(normalizeEvaluationCaseRun),
   };
 }
 
@@ -3026,6 +3032,7 @@ export async function loadReviewQueue(limit = 12): Promise<ReviewQueuePayload> {
       pending_approvals: numberValue(summaryRaw.pending_approvals, 0),
       memory_candidates: numberValue(summaryRaw.memory_candidates, 0),
       evaluation_case_candidates: numberValue(summaryRaw.evaluation_case_candidates, 0),
+      failed_evaluation_case_runs: numberValue(summaryRaw.failed_evaluation_case_runs, 0),
       ready_deliveries: numberValue(summaryRaw.ready_deliveries, 0),
       waiting_deliveries: numberValue(summaryRaw.waiting_deliveries, 0),
       needs_attention_deliveries: numberValue(summaryRaw.needs_attention_deliveries, 0),
@@ -3037,6 +3044,7 @@ export async function loadReviewQueue(limit = 12): Promise<ReviewQueuePayload> {
       retrieved_pending_approvals: numberValue(summaryRaw.retrieved_pending_approvals, 0),
       retrieved_memory_candidates: numberValue(summaryRaw.retrieved_memory_candidates, 0),
       retrieved_evaluation_case_candidates: numberValue(summaryRaw.retrieved_evaluation_case_candidates, 0),
+      retrieved_failed_evaluation_case_runs: numberValue(summaryRaw.retrieved_failed_evaluation_case_runs, 0),
     },
     review_items: asArray<Record<string, unknown>>(raw.review_items).map((item) => ({
       item_type: String(item.item_type || "review_item"),

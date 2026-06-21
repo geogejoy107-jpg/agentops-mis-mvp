@@ -124,6 +124,7 @@ def main() -> int:
     failures: list[str] = []
     transcripts: list[str] = []
     case_id = f"evalcase_smoke_{stamp()}"
+    fail_case_id = f"evalcase_fail_smoke_{stamp()}"
     source: dict = {}
     try:
         require(DEFAULT_DB.exists(), f"database not found: {DEFAULT_DB}")
@@ -216,6 +217,41 @@ def main() -> int:
         require(case_run_list_payload.get("operation") == "evaluation_case_runs", f"case run list operation wrong: {case_run_list_payload}")
         require(case_run_list_payload.get("safety", {}).get("read_only") is True, f"case run list not read-only: {case_run_list_payload}")
         require(any(item.get("case_id") == case_id for item in case_run_list_payload.get("case_runs", [])), f"case run missing from list: {case_run_list_payload}")
+
+        fail_case = run_cli([
+            "eval",
+            "propose-case",
+            "--case-id",
+            fail_case_id,
+            "--task-id",
+            source["task_id"],
+            "--case-type",
+            "regression",
+            "--title",
+            "Smoke failed benchmark case without failure mode",
+            "--expected-output-summary",
+            "This case intentionally lacks a failure_mode so strict benchmark readiness fails.",
+            "--confirm-create",
+        ])
+        transcripts.extend([fail_case.stdout, fail_case.stderr])
+        fail_case_payload = load_json(fail_case)
+        require(fail_case.returncode == 0, f"fail case create failed: {fail_case.stderr or fail_case.stdout}")
+        require(fail_case_payload.get("status") == "candidate", f"fail case status wrong: {fail_case_payload}")
+        fail_approved = run_cli(["eval", "approve-case", "--case-id", fail_case_id])
+        transcripts.extend([fail_approved.stdout, fail_approved.stderr])
+        fail_approved_payload = load_json(fail_approved)
+        require(fail_approved.returncode == 0, f"fail case approve failed: {fail_approved.stderr or fail_approved.stdout}")
+        require(fail_approved_payload.get("review_status") == "approved", f"fail case approve status wrong: {fail_approved_payload}")
+        fail_run = run_cli(["eval", "run-cases", "--case-id", fail_case_id, "--min-score", "0.95", "--confirm-run"])
+        transcripts.extend([fail_run.stdout, fail_run.stderr])
+        fail_run_payload = load_json(fail_run)
+        require(fail_run.returncode == 0, f"fail case run failed: {fail_run.stderr or fail_run.stdout}")
+        require(fail_run_payload.get("summary", {}).get("failed", 0) >= 1, f"strict benchmark did not fail: {fail_run_payload}")
+        queue_status, queue_payload = http_json("GET", "/api/review/queue?limit=20")
+        transcripts.append(json.dumps(queue_payload, ensure_ascii=False))
+        require(queue_status == 200, f"review queue failed: {queue_status} {queue_payload}")
+        require((queue_payload.get("summary") or {}).get("failed_evaluation_case_runs", 0) >= 1, f"failed benchmark summary missing: {queue_payload}")
+        require(any(item.get("item_type") == "evaluation_case_run" and item.get("case_id") == fail_case_id for item in queue_payload.get("review_items", [])), f"failed benchmark item missing from review queue: {queue_payload}")
 
         conn = sqlite3.connect(DEFAULT_DB)
         try:

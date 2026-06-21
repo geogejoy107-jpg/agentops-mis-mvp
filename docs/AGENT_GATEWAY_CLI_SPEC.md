@@ -1051,8 +1051,9 @@ returns `token_omitted:true`.
 ### `agentops review queue`
 
 Returns the combined human review queue as JSON: pending approvals, candidate
-memories, evaluation case candidates, Commander synthesis actions, and customer
-delivery items that need human attention.
+memories, evaluation case candidates, failed evaluation-case benchmark runs,
+Commander synthesis actions, and customer delivery items that need human
+attention.
 
 ```bash
 agentops review queue --limit 12
@@ -1063,6 +1064,10 @@ Maps to `GET /api/agent-gateway/review/queue`. Scoped tokens require
 visibility rules. The local browser UI can still use `GET /api/review/queue`,
 but remote workers and machine-facing CLI flows should use the Agent Gateway
 path and must omit raw token/session values.
+
+Failed benchmark runs are read-only risk items, not approval objects. Operators
+should inspect the linked run/task or use `agentops eval case-runs --pass-fail
+fail`; reruns still require the explicit `agentops eval run-cases` path.
 
 ### `agentops eval propose-case`
 

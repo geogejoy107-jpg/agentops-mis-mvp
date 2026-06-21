@@ -346,6 +346,7 @@ export function AIEmployees() {
       reviewDecisionAuditProof: "Decisions write audit",
       pendingApprovals: "Pending approvals",
       memoryCandidates: "Memory candidates",
+      failedBenchmarks: "Failed benchmarks",
       waitingDeliveries: "Waiting deliveries",
       returnedItems: "Returned items",
       cliAction: "CLI action",
@@ -665,6 +666,7 @@ export function AIEmployees() {
       reviewDecisionAuditProof: "决策写入审计",
       pendingApprovals: "待审批",
       memoryCandidates: "候选记忆",
+      failedBenchmarks: "失败基准",
       waitingDeliveries: "待交付审批",
       returnedItems: "已返回事项",
       cliAction: "CLI 动作",
@@ -1890,10 +1892,11 @@ export function AIEmployees() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-2 mt-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-6 gap-2 mt-3">
           {[
             { label: copy.pendingApprovals, value: reviewQueueSummary?.pending_approvals ?? 0, status: (reviewQueueSummary?.pending_approvals || 0) > 0 ? "attention" : "pass" },
             { label: copy.memoryCandidates, value: reviewQueueSummary?.memory_candidates ?? 0, status: (reviewQueueSummary?.memory_candidates || 0) > 0 ? "attention" : "pass" },
+            { label: copy.failedBenchmarks, value: reviewQueueSummary?.failed_evaluation_case_runs ?? 0, status: (reviewQueueSummary?.failed_evaluation_case_runs || 0) > 0 ? "attention" : "pass" },
             { label: copy.waitingDeliveries, value: reviewQueueSummary?.waiting_deliveries ?? 0, status: (reviewQueueSummary?.waiting_deliveries || 0) > 0 ? "attention" : "pass" },
             { label: copy.synthesisLoop, value: `${reviewQueueSummary?.commander_synthesis_promotion_available ?? 0}/${reviewQueueSummary?.commander_synthesis_memory_reviews ?? 0}`, status: ((reviewQueueSummary?.commander_synthesis_promotion_available || 0) + (reviewQueueSummary?.commander_synthesis_memory_reviews || 0)) > 0 ? "attention" : "pass" },
             { label: copy.returnedItems, value: `${reviewQueueSummary?.returned_items ?? 0}/${reviewQueueSummary?.review_items_total ?? 0}`, status: (reviewQueueSummary?.review_items_total || 0) > 0 ? "ready" : "idle" },

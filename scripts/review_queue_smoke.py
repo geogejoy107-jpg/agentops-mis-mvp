@@ -127,6 +127,7 @@ def validate_queue(payload: dict, label: str, failures: list[str]) -> None:
         "pending_approvals",
         "memory_candidates",
         "evaluation_case_candidates",
+        "failed_evaluation_case_runs",
         "ready_deliveries",
         "waiting_deliveries",
         "needs_attention_deliveries",
@@ -134,6 +135,7 @@ def validate_queue(payload: dict, label: str, failures: list[str]) -> None:
         "commander_synthesis_promotion_available",
         "commander_synthesis_memory_reviews",
         "retrieved_evaluation_case_candidates",
+        "retrieved_failed_evaluation_case_runs",
         "review_items_total",
         "returned_items",
     ]:
@@ -145,11 +147,13 @@ def validate_queue(payload: dict, label: str, failures: list[str]) -> None:
     gate_ids = {gate.get("id") for gate in payload.get("gates") or []}
     require("commander_synthesis_lifecycle_visible" in gate_ids, f"{label} commander synthesis gate missing: {payload.get('gates')}", failures)
     require("evaluation_case_candidates_visible" in gate_ids, f"{label} evaluation case gate missing: {payload.get('gates')}", failures)
+    require("failed_evaluation_case_runs_visible" in gate_ids, f"{label} failed evaluation case run gate missing: {payload.get('gates')}", failures)
     lanes = payload.get("lanes") or {}
     require(isinstance(lanes.get("commander_synthesis"), list), f"{label} commander synthesis lane missing: {lanes}", failures)
     require(isinstance(lanes.get("evaluation_case_candidates"), list), f"{label} evaluation case lane missing: {lanes}", failures)
+    require(isinstance(lanes.get("failed_evaluation_case_runs"), list), f"{label} failed evaluation case run lane missing: {lanes}", failures)
     for item in payload.get("review_items") or []:
-        require(item.get("item_type") in {"approval", "memory_candidate", "customer_delivery", "commander_synthesis", "evaluation_case_candidate"}, f"{label} bad item type: {item}", failures)
+        require(item.get("item_type") in {"approval", "memory_candidate", "customer_delivery", "commander_synthesis", "evaluation_case_candidate", "evaluation_case_run"}, f"{label} bad item type: {item}", failures)
         require(bool(item.get("item_id")), f"{label} item id missing: {item}", failures)
         require(bool(item.get("next_action")), f"{label} next action missing: {item}", failures)
         require(bool(item.get("cli_action")), f"{label} cli action missing: {item}", failures)
