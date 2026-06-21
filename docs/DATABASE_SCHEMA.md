@@ -116,10 +116,40 @@ CREATE TABLE IF NOT EXISTS approvals (
     FOREIGN KEY(approver_user_id) REFERENCES users(user_id)
 );
 
+CREATE TABLE IF NOT EXISTS prepared_actions (
+    action_id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL DEFAULT 'local-demo',
+    task_id TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    tool_call_id TEXT,
+    approval_id TEXT NOT NULL,
+    requested_by_agent_id TEXT NOT NULL,
+    action_type TEXT NOT NULL,
+    normalized_args_json TEXT NOT NULL DEFAULT '{}',
+    target_resource TEXT,
+    risk_level TEXT NOT NULL CHECK(risk_level IN ('low','medium','high','critical')),
+    policy_version TEXT NOT NULL DEFAULT 'approval-wall-v1',
+    checkpoint_json TEXT NOT NULL DEFAULT '{}',
+    action_hash TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('prepared','approved','rejected','consumed','expired')),
+    provider_side_effect_id TEXT,
+    result_summary TEXT,
+    created_at TEXT NOT NULL,
+    approved_at TEXT,
+    consumed_at TEXT,
+    expires_at TEXT,
+    FOREIGN KEY(task_id) REFERENCES tasks(task_id),
+    FOREIGN KEY(run_id) REFERENCES runs(run_id),
+    FOREIGN KEY(tool_call_id) REFERENCES tool_calls(tool_call_id),
+    FOREIGN KEY(approval_id) REFERENCES approvals(approval_id),
+    FOREIGN KEY(requested_by_agent_id) REFERENCES agents(agent_id)
+);
+
 CREATE TABLE IF NOT EXISTS memories (
     memory_id TEXT PRIMARY KEY,
     scope TEXT NOT NULL CHECK(scope IN ('task','project','org')),
-    memory_type TEXT NOT NULL CHECK(memory_type IN ('policy','sop','decision','commitment','risk','failure_case','project_context','customer_preference','agent_lesson','artifact_summary')),
+    memory_type TEXT NOT NULL CHECK(memory_type IN ('policy','sop','decision','commitment','risk','failure_case','project_context','customer_preference','agent_lesson','artifact_summary','loop_record')),
     canonical_text TEXT NOT NULL,
     source_type TEXT NOT NULL CHECK(source_type IN ('chat','email','meeting','github','notion','run_log','manual')),
     source_ref TEXT,

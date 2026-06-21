@@ -118,6 +118,17 @@ python3 scripts/hermes_openclaw_loop_smoke.py
 
 The smoke test starts an isolated temporary SQLite-backed server, runs `--mis-ledger`, and verifies `tasks`, `runs`, `agent_plans`, `tool_calls`, `evaluations`, `audit_logs`, `artifacts`, `plan_evidence_manifests`, resume behavior, and blocked-lane visibility without touching the default `agentops_mis.db`.
 
+Closed loop-audit RECORD smoke:
+
+```bash
+python3 scripts/operator_loop_audit_closed_loop_smoke.py
+```
+
+This smoke starts an isolated server, runs the Hermes/OpenClaw workflow lane,
+checks that `agentops operator loop-audit --loop-id ...` keeps `RECORD` at
+attention until a `loop_record` memory candidate is approved, then verifies the
+scoped loop reaches 7/7 passing gates.
+
 ## Stop Conditions
 
 - Any live mode without explicit confirmation.
