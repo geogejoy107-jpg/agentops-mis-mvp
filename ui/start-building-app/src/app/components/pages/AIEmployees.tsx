@@ -379,6 +379,8 @@ export function AIEmployees() {
       closingEvidenceGap: "Closing...",
       recordActionReceipt: "Record",
       recordVerifyReceipt: "Verify receipt",
+      copyReceiptCommand: "Copy receipt CLI",
+      copyVerifyReceiptCommand: "Copy verify CLI",
       recordingReceipt: "Recording...",
       actionReceipts: "Receipts",
       receiptProof: "Receipt",
@@ -758,6 +760,8 @@ export function AIEmployees() {
       closingEvidenceGap: "关闭中...",
       recordActionReceipt: "记账",
       recordVerifyReceipt: "验收记账",
+      copyReceiptCommand: "复制记账 CLI",
+      copyVerifyReceiptCommand: "复制验收 CLI",
       recordingReceipt: "记账中...",
       actionReceipts: "收据",
       receiptProof: "收据证明",
@@ -1205,6 +1209,9 @@ export function AIEmployees() {
       receiptVerified: item.receipt_verified,
       receiptHash: item.receipt_hash,
       receiptId: item.receipt_id,
+      receiptRecordCommand: item.receipt_record_command,
+      receiptRecordConfirmCommand: item.receipt_record_confirm_command,
+      receiptVerifyRecordCommand: item.receipt_verify_record_command,
       isReceiptCoverageRecovery: item.source === "receipt_coverage",
     })),
     ...recommendedActions.map((action, index) => ({
@@ -3169,6 +3176,8 @@ export function AIEmployees() {
               const queueReceiptStatus = backendReceiptStatus || queueReceipt?.status;
               const queueReceiptHash = receiptShortHash(queueReceipt) || String(backendReceiptHash || "").slice(0, 12);
               const queueNeedsReceipt = !candidateReceiptVerified(item);
+              const receiptRecordCommand = "receiptRecordCommand" in item ? item.receiptRecordCommand : undefined;
+              const receiptVerifyRecordCommand = "receiptVerifyRecordCommand" in item ? item.receiptVerifyRecordCommand : undefined;
               return (
                 <div
                   key={item.id}
@@ -3226,6 +3235,32 @@ export function AIEmployees() {
                     {queueNeedsReceipt && (
                       <div className="text-[10px] mt-0.5 truncate" style={{ color: "var(--mis-warning)" }}>
                         {copy.receiptNeeded}: {verifyAction || item.action}
+                      </div>
+                    )}
+                    {(receiptRecordCommand || receiptVerifyRecordCommand) && (
+                      <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                        {receiptRecordCommand && (
+                          <button
+                            onClick={() => void copyIntakeCommand(receiptRecordCommand)}
+                            className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded"
+                            style={{ color: "var(--mis-cyan)", background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}
+                            title={receiptRecordCommand}
+                          >
+                            <Copy size={9} />
+                            {copiedIntakeCommand === receiptRecordCommand ? copy.copiedCommand : copy.copyReceiptCommand}
+                          </button>
+                        )}
+                        {receiptVerifyRecordCommand && (
+                          <button
+                            onClick={() => void copyIntakeCommand(receiptVerifyRecordCommand)}
+                            className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded"
+                            style={{ color: "var(--mis-success)", background: "rgba(45,212,191,0.08)", border: "1px solid rgba(45,212,191,0.18)" }}
+                            title={receiptVerifyRecordCommand}
+                          >
+                            <Copy size={9} />
+                            {copiedIntakeCommand === receiptVerifyRecordCommand ? copy.copiedCommand : copy.copyVerifyReceiptCommand}
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>

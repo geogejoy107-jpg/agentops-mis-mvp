@@ -1048,6 +1048,9 @@ export interface OperatorActionPlanItem {
   summary?: string;
   command: string;
   verify_command?: string | null;
+  receipt_record_command?: string | null;
+  receipt_record_confirm_command?: string | null;
+  receipt_verify_record_command?: string | null;
   ui_route?: string | null;
   source: string;
   evidence?: Record<string, unknown>;
@@ -3861,6 +3864,9 @@ export async function loadOperatorActionPlan(limit = 12): Promise<OperatorAction
       summary: item.summary ? String(item.summary) : undefined,
       command: String(item.command || ""),
       verify_command: item.verify_command ? String(item.verify_command) : null,
+      receipt_record_command: item.receipt_record_command ? String(item.receipt_record_command) : null,
+      receipt_record_confirm_command: item.receipt_record_confirm_command ? String(item.receipt_record_confirm_command) : null,
+      receipt_verify_record_command: item.receipt_verify_record_command ? String(item.receipt_verify_record_command) : null,
       ui_route: item.ui_route ? String(item.ui_route) : null,
       source: String(item.source || "operator"),
       evidence: typeof item.evidence === "object" && item.evidence !== null ? item.evidence as Record<string, unknown> : undefined,
