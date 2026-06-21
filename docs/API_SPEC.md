@@ -81,11 +81,14 @@ GET /api/agent-gateway/runs
 GET /api/agent-gateway/runs/:id
 GET /api/agent-gateway/runs/:id/graph
 GET /api/agent-gateway/artifacts
+GET /api/agent-gateway/review/queue
 ```
 
 These require `tasks:read` for scoped tokens and are constrained to the token's
-workspace plus tasks/runs/artifacts visible to the bound agent. The browser UI
-may still use the local list endpoints for the single-machine demo.
+workspace plus tasks/runs/artifacts/review items visible to the bound agent.
+The browser UI may still use the local list endpoints for the single-machine
+demo. `GET /api/review/queue` remains the local UI/demo read path; machine-facing
+CLI/remote agents should use `GET /api/agent-gateway/review/queue`.
 
 ## Tool Calls
 

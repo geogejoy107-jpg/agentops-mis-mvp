@@ -350,6 +350,11 @@ candidates can likewise be reviewed in the browser or with
 `agentops memory approve/reject`, so local and remote agents can propose
 knowledge while humans keep final control.
 
+Use `agentops review queue` for remote/CLI agents; it calls the scoped
+`GET /api/agent-gateway/review/queue` path with `tasks:read`. The
+`GET /api/review/queue` curl above is the local browser/UI read path for a
+single-machine demo.
+
 ## Revocation And Rotation
 
 List enrollments and sessions:

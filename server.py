@@ -3241,6 +3241,68 @@ def agent_gateway_list_artifacts(conn: sqlite3.Connection, qs: dict, headers, au
     return {"provider": "agent_gateway", "operation": "artifact_list", "artifacts": rows, "count": len(rows), "workspace_id": ident["workspace_id"], "token_omitted": True}, 200
 
 
+def agent_gateway_review_queue(conn: sqlite3.Connection, qs: dict, headers, auth_ctx=None) -> tuple[dict, int]:
+    ident = agent_gateway_identity(headers, qs=qs, auth_ctx=auth_ctx)
+    limit = min(max(int((qs.get("limit") or ["20"])[0]), 1), 100)
+    fetch_limit = min(max(limit * 5, 50), 100) if agent_gateway_is_bound_auth(auth_ctx) else limit
+    payload = human_review_queue(conn, fetch_limit)
+
+    def visible(row: dict) -> bool:
+        if not agent_gateway_is_bound_auth(auth_ctx):
+            return True
+        task_id = row.get("task_id")
+        run_id = row.get("run_id")
+        if task_id:
+            _task, access_error = agent_gateway_task_read_access(conn, str(task_id), ident, auth_ctx)
+            return access_error is None
+        if run_id:
+            _run, access_error = agent_gateway_run_read_access(conn, str(run_id), ident, auth_ctx)
+            return access_error is None
+        agent_id = row.get("agent_id") or row.get("requested_by_agent_id") or row.get("owner_agent_id")
+        return bool(agent_id and agent_id == ident["agent_id"])
+
+    visible_review_items = [item for item in payload.get("review_items", []) if visible(item)]
+    lanes = payload.get("lanes") or {}
+    pending_approvals = [item for item in lanes.get("pending_approvals", []) if visible(item)]
+    memory_candidates = [item for item in lanes.get("memory_candidates", []) if visible(item)]
+    customer_deliveries = [item for item in lanes.get("customer_deliveries", []) if visible(item)]
+    review_items = visible_review_items[:limit]
+    payload["limit"] = limit
+    payload["review_items"] = review_items
+    payload["lanes"] = {
+        "pending_approvals": pending_approvals[:limit],
+        "memory_candidates": memory_candidates[:limit],
+        "customer_deliveries": customer_deliveries[:limit],
+    }
+    payload["summary"] = {
+        "pending_approvals": len(pending_approvals),
+        "memory_candidates": len(memory_candidates),
+        "ready_deliveries": len([item for item in customer_deliveries if item.get("status") == "ready"]),
+        "waiting_deliveries": len([item for item in customer_deliveries if item.get("status") == "waiting_approval"]),
+        "needs_attention_deliveries": len([item for item in customer_deliveries if item.get("status") == "needs_attention"]),
+        "review_items_total": len(visible_review_items),
+        "returned_items": len(review_items),
+        "retrieved_pending_approvals": len(pending_approvals[:limit]),
+        "retrieved_memory_candidates": len(memory_candidates[:limit]),
+    }
+    if any(payload["summary"].get(key, 0) for key in ["pending_approvals", "memory_candidates", "waiting_deliveries", "needs_attention_deliveries"]):
+        payload["status"] = "attention"
+    elif payload["summary"].get("ready_deliveries"):
+        payload["status"] = "ready"
+    else:
+        payload["status"] = "empty"
+    payload["gateway_scope"] = {
+        "required_scope": "tasks:read",
+        "workspace_id": ident["workspace_id"],
+        "agent_id": ident["agent_id"],
+        "auth_mode": (auth_ctx or {}).get("mode") or "unknown",
+        "bound_visibility_enforced": agent_gateway_is_bound_auth(auth_ctx),
+        "token_omitted": True,
+    }
+    payload["token_omitted"] = True
+    return payload, 200
+
+
 def agent_gateway_claim_task(conn, task_id: str, body) -> tuple[dict, int]:
     ident = agent_gateway_identity({}, body)
     agent_id = ident["agent_id"]
@@ -8568,6 +8630,22 @@ class Handler(BaseHTTPRequestHandler):
                         return self.send_json({"error": "forbidden", "message": "Agent token cannot list artifacts from another workspace."}, 403)
                     query["workspace_id"] = [auth_ctx["workspace_id"]]
                 payload, status = agent_gateway_list_artifacts(conn, query, self.headers, auth_ctx)
+                conn.commit()
+                return self.send_json(payload, status)
+            if path == "/api/agent-gateway/review/queue":
+                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                if auth_error:
+                    return self.send_json(auth_error, agent_gateway_error_status(auth_error))
+                query = dict(qs)
+                if agent_gateway_is_bound_auth(auth_ctx):
+                    requested_header_workspace = normalize_workspace_id(self.headers.get("X-AgentOps-Workspace-Id") or auth_ctx["workspace_id"])
+                    if requested_header_workspace != auth_ctx["workspace_id"]:
+                        return self.send_json({"error": "forbidden", "message": "Agent token cannot use another workspace header."}, 403)
+                    requested_workspace = requested_workspace_from_qs(query, auth_ctx["workspace_id"])
+                    if requested_workspace != auth_ctx["workspace_id"]:
+                        return self.send_json({"error": "forbidden", "message": "Agent token cannot read review queue from another workspace."}, 403)
+                    query["workspace_id"] = [auth_ctx["workspace_id"]]
+                payload, status = agent_gateway_review_queue(conn, query, self.headers, auth_ctx)
                 conn.commit()
                 return self.send_json(payload, status)
             if path == "/api/agents":

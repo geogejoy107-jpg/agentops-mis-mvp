@@ -945,6 +945,21 @@ agentops artifact list --run-id run_123 --type customer_worker_result
 Maps to `GET /api/agent-gateway/artifacts` with scoped task/run visibility and
 returns `token_omitted:true`.
 
+### `agentops review queue`
+
+Returns the combined human review queue as JSON: pending approvals, candidate
+memories, and customer delivery items that need human attention.
+
+```bash
+agentops review queue --limit 12
+```
+
+Maps to `GET /api/agent-gateway/review/queue`. Scoped tokens require
+`tasks:read`; results are constrained by the token's bound workspace and agent
+visibility rules. The local browser UI can still use `GET /api/review/queue`,
+but remote workers and machine-facing CLI flows should use the Agent Gateway
+path and must omit raw token/session values.
+
 ### `POST /api/agent-gateway/approvals/request`
 
 Creates a human approval request.

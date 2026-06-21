@@ -293,7 +293,7 @@ def cmd_commander_inbox(args, client: AgentOpsClient) -> dict:
 
 
 def cmd_review_queue(args, client: AgentOpsClient) -> dict:
-    return client.get("/api/review/queue", query={"limit": args.limit})
+    return client.get("/api/agent-gateway/review/queue", query={"limit": args.limit})
 
 
 def cmd_security_production_readiness(args, client: AgentOpsClient) -> dict:
