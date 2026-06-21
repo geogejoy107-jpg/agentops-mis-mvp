@@ -457,7 +457,8 @@ def cmd_workflow_customer_worker_task(args, client: AgentOpsClient) -> dict:
         "worker_agent_id": args.worker_agent_id,
         "hermes_timeout": args.hermes_timeout,
     }
-    return client.post("/api/workflows/customer-worker-task", payload)
+    endpoint = "/api/workflows/customer-worker-task/submit" if args.async_job else "/api/workflows/customer-worker-task"
+    return client.post(endpoint, payload)
 
 
 def cmd_workflow_templates(args, client: AgentOpsClient) -> dict:
@@ -1109,6 +1110,7 @@ def build_parser() -> argparse.ArgumentParser:
     customer_worker.add_argument("--selected-agent-id", action="append", default=None, help="Optional business agent id to record as selected context. Repeatable.")
     customer_worker.add_argument("--worker-agent-id", default=None, help="Optional exact worker agent id. Defaults to a unique id per dispatch.")
     customer_worker.add_argument("--hermes-timeout", type=int, default=300)
+    customer_worker.add_argument("--async-job", action="store_true", help="Submit the customer worker task as a workflow job and return immediately.")
     customer_worker.set_defaults(handler="workflow_customer_worker_task")
 
     run_task = workflow_sub.add_parser("run-task", help="Create a normal MIS task and execute one local worker iteration.")

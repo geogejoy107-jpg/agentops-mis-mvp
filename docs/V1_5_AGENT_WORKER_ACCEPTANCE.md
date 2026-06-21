@@ -997,6 +997,19 @@ Hermes without confirm_run: planned task, confirm_run_required_for_live_adapter
 secret_leaked: false
 ```
 
+Latest async customer worker job smoke:
+
+```text
+script: python3 scripts/customer_worker_async_job_smoke.py
+command: ./scripts/agentops workflow customer-worker-task --async-job
+job: wfjob_ea7b472330ab
+status: completed
+run: run_gw_daa11c182e8e
+artifact: art_customer_worker_task_run_gw_daa11c182e8e
+evidence: tool_calls 1, evaluations 1, runtime_events 10, audit_logs 10, artifacts 1, memories 2, approvals 1
+secret_leaked: false
+```
+
 Latest task-create CLI smoke:
 
 ```text

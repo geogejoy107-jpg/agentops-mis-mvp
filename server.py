@@ -4587,6 +4587,7 @@ def run_workflow_job_background(job_id: str, body: dict) -> None:
     try:
         with db() as conn:
             before = conn.execute("SELECT * FROM workflow_jobs WHERE job_id=?", (job_id,)).fetchone()
+            workflow_type = dict(before).get("workflow_type") if before else "customer_task_template"
             conn.execute(
                 "UPDATE workflow_jobs SET status='running', started_at=?, updated_at=? WHERE job_id=?",
                 (started, started, job_id),
@@ -4594,7 +4595,10 @@ def run_workflow_job_background(job_id: str, body: dict) -> None:
             runtime_event(conn, "rtc_agent_gateway_local", "workflow_job.running", "running", input_summary=f"Workflow job {job_id} started.")
             audit(conn, "system", "workflow-job", "workflow.job.running", "workflow_jobs", job_id, dict(before) if before else None, {"status": "running"}, {"raw_request_omitted": True})
             conn.commit()
-            result, _status = run_customer_task_template_workflow(conn, {**body, "async_job": False})
+            if workflow_type == "customer_worker_task":
+                result, _status = run_customer_worker_task_workflow(conn, {**body, "async_job": False})
+            else:
+                result, _status = run_customer_task_template_workflow(conn, {**body, "async_job": False})
             status = "completed" if result.get("ok", True) else "failed"
             completed = now_iso()
             safe_result = json.dumps(result, ensure_ascii=False)
@@ -4687,6 +4691,61 @@ def submit_customer_task_template_job(conn, body: dict) -> tuple[dict, int]:
     return {
         "ok": True,
         "provider": "agentops-workflow-job",
+        "job": workflow_job_public(row),
+        "job_id": job_id,
+        "status_url": f"/api/workflows/jobs/{job_id}",
+        "raw_request_omitted": True,
+        "token_omitted": True,
+    }, 202
+
+
+def submit_customer_worker_task_job(conn, body: dict) -> tuple[dict, int]:
+    adapter = coerce_choice(body.get("adapter"), {"mock", "hermes", "openclaw"}, "mock")
+    now = now_iso()
+    title = redact_text(body.get("title") or "客户 Worker 任务", 180)
+    input_summary = redact_text(body.get("description") or "Customer task should be processed by an AgentOps worker.", 300)
+    job_id = new_id("wfjob")
+    row = {
+        "job_id": job_id,
+        "workspace_id": normalize_workspace_id(body.get("workspace_id") or "local-demo"),
+        "workflow_type": "customer_worker_task",
+        "status": "queued",
+        "template_id": body.get("template_id"),
+        "adapter": adapter,
+        "confirm_run": 1 if body.get("confirm_run") else 0,
+        "title": title,
+        "input_summary": input_summary,
+        "request_hash": stable_hash({
+            "workflow_type": "customer_worker_task",
+            "adapter": adapter,
+            "confirm_run": bool(body.get("confirm_run")),
+            "title": title,
+            "description": input_summary,
+            "worker_agent_id": body.get("worker_agent_id"),
+        }),
+        "result_json": "{}",
+        "result_task_id": None,
+        "result_run_id": None,
+        "result_artifact_id": None,
+        "error_message": None,
+        "created_at": now,
+        "started_at": None,
+        "completed_at": None,
+        "updated_at": now,
+    }
+    conn.execute(
+        """INSERT INTO workflow_jobs(job_id,workspace_id,workflow_type,status,template_id,adapter,confirm_run,title,input_summary,request_hash,result_json,result_task_id,result_run_id,result_artifact_id,error_message,created_at,started_at,completed_at,updated_at)
+        VALUES(:job_id,:workspace_id,:workflow_type,:status,:template_id,:adapter,:confirm_run,:title,:input_summary,:request_hash,:result_json,:result_task_id,:result_run_id,:result_artifact_id,:error_message,:created_at,:started_at,:completed_at,:updated_at)""",
+        row,
+    )
+    runtime_event(conn, "rtc_agent_gateway_local", "workflow_job.submitted", "queued", input_summary=f"Customer worker job {job_id} submitted.", raw_payload_hash=row["request_hash"])
+    audit(conn, "user", "usr_customer_demo", "workflow.job.submitted", "workflow_jobs", job_id, None, row, {"workflow_type": "customer_worker_task", "adapter": adapter, "raw_request_omitted": True})
+    conn.commit()
+    threading.Thread(target=run_workflow_job_background, args=(job_id, dict(body)), daemon=True).start()
+    return {
+        "ok": True,
+        "provider": "agentops-workflow-job",
+        "workflow": "customer_worker_task",
         "job": workflow_job_public(row),
         "job_id": job_id,
         "status_url": f"/api/workflows/jobs/{job_id}",
@@ -6463,6 +6522,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(run_customer_task_workflow(conn, body), 201)
             if path == "/api/workflows/customer-worker-task":
                 payload, status = run_customer_worker_task_workflow(conn, body)
+                return self.send_json(payload, status)
+            if path == "/api/workflows/customer-worker-task/submit":
+                payload, status = submit_customer_worker_task_job(conn, body)
                 return self.send_json(payload, status)
             if path == "/api/workflows/kb-bot-project":
                 return self.send_json(run_kb_bot_project_workflow(conn, body), 201)

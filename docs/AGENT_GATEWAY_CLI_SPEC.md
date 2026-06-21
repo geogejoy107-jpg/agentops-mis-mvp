@@ -476,6 +476,27 @@ Maps to `POST /api/workflows/customer-worker-task` and returns `task_id`,
 `run_id`, `artifact_id`, and evidence counts. It must not print raw tokens,
 full prompts, full raw model responses, credentials, or private transcripts.
 
+For real Hermes/OpenClaw work or any customer task that may run longer than a
+short HTTP request, submit it as an async workflow job:
+
+```bash
+agentops workflow customer-worker-task \
+  --adapter openclaw \
+  --confirm-run \
+  --async-job \
+  --title "Optimize AgentOps MIS customer workspace" \
+  --description "Use local OpenClaw to produce product recommendations."
+
+agentops workflow job-status --job-id wfjob_... --wait --timeout 420
+```
+
+`--async-job` maps to `POST /api/workflows/customer-worker-task/submit`.
+The job starts quickly, records request hash and safe summaries, and later
+stores `result_task_id`, `result_run_id`, `result_artifact_id`, status, and safe
+result JSON. This is the preferred product path for customer-visible long
+runtime work because the browser and CLI can observe status without pretending
+the agent is a human UI user or holding a fragile synchronous request open.
+
 ### `agentops workflow run-task`
 
 Creates a normal MIS task through the scoped Agent Gateway path, executes one

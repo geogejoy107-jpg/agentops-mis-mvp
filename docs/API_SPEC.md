@@ -112,6 +112,25 @@ Dashboard metrics include baseline MIS counts plus:
 - `openclaw_import`: imported OpenClaw agent, cron task, cron run and failed gate counts.
 - `agent_performance_summary`: run count, success rate, duration, cost, failure and approval counts.
 
+## Workflows
+
+```http
+POST /api/workflows/customer-worker-task
+POST /api/workflows/customer-worker-task/submit
+POST /api/workflows/customer-task-templates/run
+POST /api/workflows/customer-task-templates/submit
+GET  /api/workflows/jobs
+GET  /api/workflows/jobs/:job_id
+```
+
+`/customer-worker-task` executes a customer task through the Agent Gateway
+worker loop and returns run/artifact/evidence ids. `/customer-worker-task/submit`
+queues the same workflow as a `workflow_jobs` row and returns immediately with a
+`job_id`, which is the preferred path for real Hermes/OpenClaw work that may
+outlive a short browser or CLI request. Job records store status, request hash,
+safe summaries, result ids, and safe result JSON; they must not store raw
+prompts, raw responses, credentials, tokens, or private transcripts.
+
 ## Audit
 
 ```http

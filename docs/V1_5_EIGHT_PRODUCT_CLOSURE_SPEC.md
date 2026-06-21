@@ -170,6 +170,7 @@ Current v1.5 implementation:
   - `agentops workflow templates`
   - `agentops workflow run-template`
   - `agentops workflow customer-worker-task`
+  - `agentops workflow job-status`
   - `agentops workflow run-task`
   - `agentops worker status`
   - `agentops worker preflight`
@@ -630,7 +631,14 @@ Implemented and verified:
 - CLI worker daemon controls through `agentops worker start|stop|logs`.
 - Live adapter daemon starts fail closed without `--confirm-run`.
 - Customer-facing worker task workflow through `POST /api/workflows/customer-worker-task`.
+- Async customer-facing worker task workflow through
+  `POST /api/workflows/customer-worker-task/submit` plus
+  `GET /api/workflows/jobs/:job_id`.
 - Customer-facing worker task CLI through `agentops workflow customer-worker-task`.
+- Long customer worker tasks can use `agentops workflow customer-worker-task
+  --async-job` and `agentops workflow job-status --wait`, which keeps Hermes
+  and OpenClaw runs observable without holding a brittle synchronous request
+  open.
 - Customer-facing template list/run CLI through `agentops workflow templates`
   and `agentops workflow run-template`.
 - Customer-facing template worker dispatch through
