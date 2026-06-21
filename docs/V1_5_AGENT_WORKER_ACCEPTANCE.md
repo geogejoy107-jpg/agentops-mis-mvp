@@ -1091,6 +1091,17 @@ scope: tasks:read, constrained to token workspace and visible task/run/artifact 
 secret_leaked: false
 ```
 
+Latest workspace visual style switch verification:
+
+```text
+page: http://127.0.0.1:19001/workspace/agents
+styles: enterprise, ops, workforce
+default legacy migration: light -> enterprise; dark/unknown -> ops
+Playwright: button changed from 控制面 to 员工 OS, then to 企业版 after fresh snapshot/click
+build: cd ui/start-building-app && npm run build
+note: this is a presentation/customer usability layer only; it does not change Agent Gateway, worker, or ledger behavior
+```
+
 Latest scoped Gateway task-create smoke:
 
 ```text
