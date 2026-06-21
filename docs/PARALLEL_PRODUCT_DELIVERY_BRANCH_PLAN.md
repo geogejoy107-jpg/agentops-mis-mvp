@@ -6,6 +6,9 @@ This plan lets multiple Codex threads work in parallel without rewriting each
 other's files. The base branch is `codex/agent-gateway-kb-demo` unless the
 operator explicitly chooses a newer integration branch.
 
+This thread's integration/commander responsibilities are defined in
+`docs/INTEGRATION_COMMANDER_RUNBOOK.md`.
+
 The product contract stays fixed:
 
 - Humans use the browser workspace/admin console to create tasks, supervise
