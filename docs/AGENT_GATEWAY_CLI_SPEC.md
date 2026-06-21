@@ -602,13 +602,30 @@ do not execute the live adapter.
 
 ### `agentops worker status`
 
-Returns the same safe worker fleet summary used by `/workspace/agents`: worker count, running workers, pending worker tasks, stuck worker tasks, daemon state, recent worker runs, and recent Gateway events.
+Returns the same safe worker fleet summary used by `/workspace/agents`: worker
+count, running workers, pending worker tasks, stuck worker tasks, stuck async
+workflow jobs, daemon state, remote enrollment heartbeat state, short-lived
+session state, recent worker runs, and recent Gateway events.
 
 ```bash
 agentops worker status
 ```
 
-It is read-only and does not print raw tokens.
+It is read-only and does not print raw tokens. The response also includes
+`fleet_health`, a machine-facing operator contract:
+
+- `overall`: `ready`, `attention`, or `blocked`
+- `contract`: agents execute through Agent Gateway CLI/API; the browser is an
+  operator console only
+- `gates`: local daemon, execution capacity, remote heartbeat, session hygiene,
+  stuck task, and stuck workflow job checks
+- `recommended_actions`: safe next CLI commands such as `agentops worker stuck`,
+  `agentops workflow stuck-jobs`, `agentops worker preflight --adapter mock`, or
+  `agentops enrollment list`
+- `token_omitted:true`
+
+This makes the CLI/API layer usable by external workers and automation scripts,
+not only by a human browsing the admin UI.
 
 ### `agentops worker preflight`
 

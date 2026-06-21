@@ -336,6 +336,20 @@ local daemon state, it summarizes remote worker enrollments, heartbeat states
 It omits raw token/session identifiers and returns only safe refs for machine
 diagnostics.
 
+The same response includes `fleet_health`, which is the machine-facing health
+gate for agent operators and scripts:
+
+- `overall`: `ready`, `attention`, or `blocked`
+- `gates`: stuck worker tasks, stuck workflow jobs, execution capacity, remote
+  heartbeats, session hygiene, and local daemon visibility
+- `recommended_actions`: concrete next CLI commands, for example
+  `agentops worker stuck`, `agentops workflow stuck-jobs`,
+  `agentops worker preflight --adapter mock`, or `agentops enrollment list`
+
+Use this before asking a remote OpenClaw/Hermes/Dify-style worker to execute
+work. The browser UI should confirm what happened; the worker should still pull,
+claim, run, and write evidence through CLI/API.
+
 Revoke one session:
 
 ```bash
@@ -377,7 +391,8 @@ The expected proof is:
 - Hermes/OpenClaw daemon starts without `--confirm-run` fail closed.
 - Remote launch packet commands can create ledger evidence through Agent Gateway.
 - `agentops worker status` reports remote worker heartbeat/session health without
-  leaking token/session identifiers.
+  leaking token/session identifiers and includes `fleet_health.gates` plus
+  `fleet_health.recommended_actions`.
 - Scoped task creation requires `tasks:create` and rejects agent/workspace impersonation.
 - `agentops workflow run-task` creates a task, executes one worker iteration, and returns evidence.
 - Demo acceptance remains safe and reproducible.

@@ -51,6 +51,13 @@ def main() -> int:
             proc.returncode == 0
             and payload.get("provider") == "agentops-worker"
             and payload.get("status") in {"ready", "running", "attention"}
+            and payload.get("fleet_health", {}).get("overall") in {"ready", "attention", "blocked"}
+            and payload.get("fleet_health", {}).get("token_omitted") is True
+            and isinstance(payload.get("fleet_health", {}).get("gates"), list)
+            and bool(payload.get("fleet_health", {}).get("gates"))
+            and isinstance(payload.get("fleet_health", {}).get("recommended_actions"), list)
+            and bool(payload.get("fleet_health", {}).get("recommended_actions"))
+            and "CLI/API" in (payload.get("fleet_health", {}).get("contract") or "")
             and isinstance(payload.get("daemons"), list)
             and isinstance(payload.get("workers"), list)
             and isinstance(payload.get("remote_worker_health"), dict)
@@ -70,6 +77,9 @@ def main() -> int:
             "remote_worker_count": payload.get("remote_worker_count"),
             "stale_remote_enrollments": payload.get("stale_remote_enrollments"),
             "active_remote_sessions": payload.get("active_remote_sessions"),
+            "fleet_overall": payload.get("fleet_health", {}).get("overall"),
+            "fleet_gate_count": len(payload.get("fleet_health", {}).get("gates") or []),
+            "fleet_actions": payload.get("fleet_health", {}).get("recommended_actions"),
             "daemon_count": len(payload.get("daemons") or []),
             "secret_leaked": leaked_secret(text),
         }, ensure_ascii=False, indent=2, sort_keys=True))

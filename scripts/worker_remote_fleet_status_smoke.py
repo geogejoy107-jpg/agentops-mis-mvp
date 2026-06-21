@@ -127,18 +127,23 @@ def smoke(base_url: str, stamp: str) -> dict:
         require(fresh_worker.get("heartbeat_state") == "fresh", f"expected fresh, got {fresh_worker}")
         require(int(fresh_worker.get("active_session_count") or 0) >= 1, f"active session count missing: {fresh_worker}")
         require((fresh.get("remote_worker_health") or {}).get("active_sessions", 0) >= 1, f"active sessions missing: {fresh}")
+        require((fresh.get("fleet_health") or {}).get("token_omitted") is True, f"fleet health token proof missing: {fresh.get('fleet_health')}")
+        require(isinstance((fresh.get("fleet_health") or {}).get("gates"), list), f"fleet gates missing: {fresh.get('fleet_health')}")
+        require((fresh.get("fleet_health") or {}).get("overall") in {"ready", "attention", "blocked"}, f"fleet overall missing: {fresh.get('fleet_health')}")
 
         aged_at = age_token_heartbeat(token_id, seconds_ago=120)
         stale = worker_status_payload(base_url)
         stale_worker = find_remote_worker(stale, agent_id)
         require(stale_worker.get("heartbeat_state") == "stale", f"expected stale after aging heartbeat to {aged_at}, got {stale_worker}")
         require(stale.get("stale_remote_enrollments", 0) >= 1, f"stale count missing: {stale}")
+        require((stale.get("fleet_health") or {}).get("overall") in {"attention", "blocked"}, f"stale fleet should need attention: {stale.get('fleet_health')}")
         return {
             "agent_id": agent_id,
             "token_ref": safe_ref(token_id),
             "states": ["never_seen", "fresh", "stale"],
             "aged_at": aged_at,
             "active_sessions": (fresh.get("remote_worker_health") or {}).get("active_sessions"),
+            "fleet_overall_after_stale": (stale.get("fleet_health") or {}).get("overall"),
             "token_omitted": True,
         }
     finally:
