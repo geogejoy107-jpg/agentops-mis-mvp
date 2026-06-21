@@ -18,6 +18,7 @@ human/admin APIs:
 | Memory list/export/review lookup | `repo_list_workspace_memories`, `repo_get_workspace_memory` | `GET /api/memories`, `GET /api/memories/export`, memory approve/reject | `python3 scripts/storage_boundary_sqlite_smoke.py` |
 | Approval/evaluation/artifact lists | `repo_list_workspace_approvals`, `repo_list_workspace_evaluations`, `repo_list_workspace_artifacts` | `GET /api/approvals`, `GET /api/evaluations`, `GET /api/artifacts` | `python3 scripts/storage_boundary_sqlite_smoke.py` |
 | Audit list | `repo_list_workspace_audit` | `GET /api/audit` | `python3 scripts/storage_boundary_sqlite_smoke.py` |
+| Workflow job list/detail/stuck recovery | `repo_list_workspace_workflow_jobs`, `repo_get_workspace_workflow_job`, `repo_list_workspace_stuck_workflow_jobs` | `GET /api/workflows/jobs`, `GET /api/workflows/jobs/:job_id`, `GET /api/workflows/jobs/stuck`, mark-failed lookup | `python3 scripts/storage_boundary_sqlite_smoke.py` |
 
 The helpers deliberately keep the existing SQLite row shape and ordering. They
 only centralize workspace filters and detail assembly so a future adapter can
@@ -28,7 +29,6 @@ match behavior before Postgres is introduced.
 | Candidate | Why next | Required proof before Postgres |
 | --- | --- | --- |
 | Agent Gateway read helpers | CLI/API/MCP are the durable agent contract | Scope matrix and workspace isolation smokes |
-| Workflow job repository | BYOC deployments need stuck-job recovery and retention | Job recovery smoke against isolated SQLite |
 | Write-path repositories | Postgres parity needs create/update behavior centralized after read helpers are locked | Existing workflow smokes plus isolated write helper smoke |
 
 ## Postgres Parity Rule

@@ -2743,6 +2743,51 @@ def repo_list_workspace_audit(conn: sqlite3.Connection, workspace_id: str, limit
     ).fetchall()
 
 
+def repo_list_workspace_workflow_jobs(conn: sqlite3.Connection, workspace_id: str, limit: int = 50):
+    return conn.execute(
+        "SELECT * FROM workflow_jobs WHERE COALESCE(workspace_id,'local-demo')=? ORDER BY created_at DESC LIMIT ?",
+        (normalize_workspace_id(workspace_id), min(max(int(limit or 50), 1), 200)),
+    ).fetchall()
+
+
+def repo_get_workspace_workflow_job(conn: sqlite3.Connection, workspace_id: str, job_id: str):
+    return conn.execute(
+        "SELECT * FROM workflow_jobs WHERE job_id=? AND COALESCE(workspace_id,'local-demo')=?",
+        (job_id, normalize_workspace_id(workspace_id)),
+    ).fetchone()
+
+
+def repo_list_workspace_stuck_workflow_jobs(conn: sqlite3.Connection, workspace_id: str, threshold_sec: int = 900, limit: int = 25) -> list[dict]:
+    threshold_sec = max(int(threshold_sec or 900), 30)
+    limit = min(max(int(limit or 25), 1), 200)
+    now_dt = dt.datetime.now(dt.timezone.utc)
+    rows = conn.execute(
+        """SELECT * FROM workflow_jobs
+        WHERE COALESCE(workspace_id,'local-demo')=?
+          AND status IN ('queued','running')
+        ORDER BY updated_at ASC LIMIT 500""",
+        (normalize_workspace_id(workspace_id),),
+    ).fetchall()
+    stuck: list[dict] = []
+    for row in rows:
+        data = workflow_job_public(row) or {}
+        anchor = (
+            _parse_iso_datetime(data.get("updated_at"))
+            or _parse_iso_datetime(data.get("started_at"))
+            or _parse_iso_datetime(data.get("created_at"))
+            or now_dt
+        )
+        age_sec = max(int((now_dt - anchor).total_seconds()), 0)
+        if age_sec >= threshold_sec:
+            data["age_sec"] = age_sec
+            data["threshold_sec"] = threshold_sec
+            data["stuck_reason"] = "workflow_job_exceeded_threshold"
+            stuck.append(data)
+        if len(stuck) >= limit:
+            break
+    return stuck
+
+
 def normalize_workspace_id(value) -> str:
     raw = str(value or "local-demo").strip()[:120]
     normalized = re.sub(r"[^A-Za-z0-9_.:-]+", "_", raw).strip("_")
@@ -6481,9 +6526,10 @@ def workflow_stuck_jobs(conn, threshold_sec: int = 900, limit: int = 25) -> list
     return stuck
 
 
-def mark_workflow_job_failed(conn, job_id: str, body: dict) -> tuple[dict, int]:
+def mark_workflow_job_failed(conn, job_id: str, body: dict, workspace_id: str | None = None) -> tuple[dict, int]:
     job_id = redact_text(job_id, 120)
-    before = conn.execute("SELECT * FROM workflow_jobs WHERE job_id=?", (job_id,)).fetchone()
+    workspace_id = normalize_workspace_id(workspace_id or body.get("workspace_id") or "local-demo")
+    before = repo_get_workspace_workflow_job(conn, workspace_id, job_id)
     if not before:
         return {"error": "not found", "job_id": job_id}, 404
     if before["status"] not in {"queued", "running"}:
@@ -11188,23 +11234,27 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"provider": "agentops-worker", "daemon": read_worker_daemon(adapter, include_log=True)})
             if path == "/api/workflows/jobs":
                 limit = min(int((qs.get("limit") or ["50"])[0]), 200)
-                rows = conn.execute("SELECT * FROM workflow_jobs ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
-                return self.send_json({"jobs": [workflow_job_public(row) for row in rows], "token_omitted": True})
+                workspace_id = request_workspace(self.headers, qs)
+                rows = repo_list_workspace_workflow_jobs(conn, workspace_id, limit)
+                return self.send_json({"jobs": [workflow_job_public(row) for row in rows], "workspace_id": workspace_id, "token_omitted": True})
             if path == "/api/workflows/jobs/stuck":
                 threshold = int((qs.get("threshold_sec") or ["900"])[0])
                 limit = int((qs.get("limit") or ["25"])[0])
+                workspace_id = request_workspace(self.headers, qs)
                 return self.send_json({
                     "provider": "agentops-workflow-job",
+                    "workspace_id": workspace_id,
                     "threshold_sec": max(threshold, 30),
-                    "stuck_jobs": workflow_stuck_jobs(conn, threshold, limit),
+                    "stuck_jobs": repo_list_workspace_stuck_workflow_jobs(conn, workspace_id, threshold, limit),
                     "token_omitted": True,
                 })
             if path.startswith("/api/workflows/jobs/"):
                 job_id = path.split("/")[-1]
-                row = conn.execute("SELECT * FROM workflow_jobs WHERE job_id=?", (job_id,)).fetchone()
+                workspace_id = request_workspace(self.headers, qs)
+                row = repo_get_workspace_workflow_job(conn, workspace_id, job_id)
                 if not row:
                     return self.send_json({"error": "not found", "job_id": job_id}, 404)
-                return self.send_json({"job": workflow_job_public(row), "token_omitted": True})
+                return self.send_json({"job": workflow_job_public(row), "workspace_id": workspace_id, "token_omitted": True})
             if path == "/api/bases":
                 bases = rows_to_dicts(conn.execute("SELECT * FROM bases ORDER BY provider, category, display_name").fetchall())
                 capabilities = rows_to_dicts(conn.execute("SELECT * FROM base_capabilities ORDER BY base_id").fetchall())
@@ -11497,7 +11547,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(payload, status)
             if path.startswith("/api/workflows/jobs/") and path.endswith("/mark-failed"):
                 job_id = path.split("/")[-2]
-                payload, status = mark_workflow_job_failed(conn, job_id, body)
+                workspace_id = request_workspace(self.headers, {"workspace_id": [body.get("workspace_id")]} if body.get("workspace_id") else None)
+                payload, status = mark_workflow_job_failed(conn, job_id, body, workspace_id)
                 return self.send_json(payload, status)
             if path.startswith("/api/workflows/customer-projects/") and path.endswith("/report-artifact"):
                 project_id = path.split("/")[-2]

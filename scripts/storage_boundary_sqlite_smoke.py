@@ -6,6 +6,7 @@ import json
 import os
 import sys
 import tempfile
+import datetime as dt
 from pathlib import Path
 
 
@@ -39,6 +40,8 @@ def main() -> int:
     agent_b = "agt_storage_b"
     task_a = "tsk_storage_a"
     task_b = "tsk_storage_b"
+    job_a = "wfjob_storage_a"
+    job_b = "wfjob_storage_b"
 
     try:
         server.init_schema()
@@ -145,6 +148,36 @@ def main() -> int:
                 "canonical_text": "Storage boundary org memory A.",
             })
             require(status == 201, f"org memory propose failed: {status} {org_memory_a}")
+            old = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=120)).isoformat()
+            for workspace_id, agent_id, task_id, run_id, artifact_id, job_id in [
+                (workspace_a, agent_a, task_a, run_a, artifact_a["artifact"]["artifact_id"], job_a),
+                (workspace_b, agent_b, task_b, run_b, artifact_b["artifact"]["artifact_id"], job_b),
+            ]:
+                conn.execute(
+                    """INSERT INTO workflow_jobs(job_id,workspace_id,workflow_type,status,template_id,adapter,confirm_run,title,input_summary,request_hash,result_json,result_task_id,result_run_id,result_artifact_id,error_message,created_at,started_at,completed_at,updated_at)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        job_id,
+                        workspace_id,
+                        "customer_worker_task",
+                        "queued",
+                        None,
+                        "mock",
+                        0,
+                        f"Storage boundary workflow job {workspace_id}",
+                        "Synthetic workflow job for storage-boundary smoke. Raw prompt omitted.",
+                        f"hash_{job_id}",
+                        "{}",
+                        task_id,
+                        run_id,
+                        artifact_id,
+                        None,
+                        old,
+                        None,
+                        None,
+                        old,
+                    ),
+                )
             conn.commit()
 
             task_ids = ids(server.repo_list_workspace_tasks(conn, workspace_a), "task_id")
@@ -189,6 +222,25 @@ def main() -> int:
             require(artifact_id_a in audit_text, "audit helper missed workspace A metadata evidence")
             require(task_b not in audit_text and run_b not in audit_text and artifact_id_b not in audit_text, "audit helper leaked workspace B evidence")
 
+            workflow_job_ids = ids(server.repo_list_workspace_workflow_jobs(conn, workspace_a), "job_id")
+            require(job_a in workflow_job_ids and job_b not in workflow_job_ids, f"workflow job helper leaked workspace rows: {workflow_job_ids}")
+            require(server.repo_get_workspace_workflow_job(conn, workspace_a, job_a), "workflow job helper missed workspace A job")
+            require(not server.repo_get_workspace_workflow_job(conn, workspace_a, job_b), "workflow job helper exposed workspace B job")
+            stuck_ids = {row["job_id"] for row in server.repo_list_workspace_stuck_workflow_jobs(conn, workspace_a, threshold_sec=30, limit=20)}
+            require(job_a in stuck_ids and job_b not in stuck_ids, f"stuck workflow helper leaked workspace rows: {stuck_ids}")
+            wrong_workspace_payload, wrong_workspace_status = server.mark_workflow_job_failed(conn, job_b, {
+                "workspace_id": workspace_a,
+                "reason": "Cross-workspace mark failed should not mutate.",
+            })
+            require(wrong_workspace_status == 404, f"cross-workspace mark-failed should be 404: {wrong_workspace_payload}")
+            marked_payload, marked_status = server.mark_workflow_job_failed(conn, job_a, {
+                "workspace_id": workspace_a,
+                "reason": "Storage boundary mark failed.",
+            })
+            require(marked_status == 200 and marked_payload.get("marked_failed") is True, f"workspace mark-failed failed: {marked_status} {marked_payload}")
+            remaining_stuck_ids = {row["job_id"] for row in server.repo_list_workspace_stuck_workflow_jobs(conn, workspace_a, threshold_sec=30, limit=20)}
+            require(job_a not in remaining_stuck_ids and job_b not in remaining_stuck_ids, f"marked/cross workflow job still leaked as stuck: {remaining_stuck_ids}")
+
         print(json.dumps({
             "ok": True,
             "db_path": "isolated_tmp" if owned_db else os.environ.get("AGENTOPS_DB_PATH"),
@@ -203,11 +255,16 @@ def main() -> int:
                 "repo_list_workspace_evaluations",
                 "repo_list_workspace_artifacts",
                 "repo_list_workspace_audit",
+                "repo_list_workspace_workflow_jobs",
+                "repo_get_workspace_workflow_job",
+                "repo_list_workspace_stuck_workflow_jobs",
             ],
             "workspace_a": workspace_a,
             "workspace_b": workspace_b,
             "run_a": run_a,
             "run_b": run_b,
+            "workflow_job_a": job_a,
+            "workflow_job_b": job_b,
             "token_omitted": True,
             "raw_prompt_omitted": True,
         }, ensure_ascii=False, indent=2, sort_keys=True))
