@@ -88,6 +88,10 @@ GET /api/agent-gateway/agent-plans
 GET /api/agent-gateway/agent-plans/:plan_id
 GET /api/agent-gateway/agent-plans/:plan_id/verify
 POST /api/agent-gateway/agent-plans
+GET /api/agent-gateway/plan-evidence-manifests
+GET /api/agent-gateway/plan-evidence-manifests/:manifest_id
+GET /api/agent-gateway/plan-evidence-manifests/:manifest_id/verify
+POST /api/agent-gateway/plan-evidence-manifests
 GET /api/agent-gateway/review/queue
 ```
 
@@ -95,9 +99,10 @@ Most scoped readback endpoints require `tasks:read` and are constrained to the
 token's workspace plus tasks/runs/artifacts/approvals/memories/review items
 visible to the bound agent. Knowledge endpoints use `knowledge:read` /
 `knowledge:write`; agent-plan endpoints use `agent_plans:read` /
-`agent_plans:write`. The browser UI may still use the local list endpoints for
-the single-machine demo. `GET /api/review/queue` remains the local UI/demo read
-path; machine-facing CLI/remote agents should use
+`agent_plans:write`; plan-evidence manifest endpoints use
+`plan_evidence:read` / `plan_evidence:write`. The browser UI may still use the
+local list endpoints for the single-machine demo. `GET /api/review/queue`
+remains the local UI/demo read path; machine-facing CLI/remote agents should use
 `GET /api/agent-gateway/review/queue`. Approval and memory approve/reject
 actions remain human/operator actions, not agent-scoped automatic decisions.
 
@@ -151,6 +156,39 @@ GET  /api/agent-gateway/agent-plans/:plan_id/verify
 `GET /verify` checks that the plan names specs, retrieval/memory context, bases,
 execution steps, verification, rollback, risk and file scope. It is read-only;
 future recorded verification decisions should use a write-scoped endpoint.
+
+## Plan Evidence Manifests
+
+```http
+POST /api/agent-gateway/plan-evidence-manifests
+GET  /api/agent-gateway/plan-evidence-manifests?run_id=run_123
+GET  /api/agent-gateway/plan-evidence-manifests/:manifest_id
+GET  /api/agent-gateway/plan-evidence-manifests/:manifest_id/verify
+```
+
+`POST /api/agent-gateway/plan-evidence-manifests` binds a verified
+`agent_plan` to the concrete run evidence that proves the agent followed the
+plan:
+
+```json
+{
+  "plan_id": "plan_123",
+  "run_id": "run_123",
+  "mismatch_policy": "block",
+  "tool_call_ids": ["tc_123"],
+  "evaluation_ids": ["eval_123"],
+  "artifact_ids": ["art_123"]
+}
+```
+
+Creation requires `plan_evidence:write` and may persist the verification result.
+`GET /verify` requires `plan_evidence:read` and is read-only: it re-computes the
+plan/run/task/agent binding and evidence checks without mutating the manifest or
+writing audit rows.
+
+Customer delivery approvals fail closed against this gate: approving a customer
+delivery approval without a verified manifest returns
+`verified_plan_evidence_manifest_required`.
 
 ## Tool Calls
 

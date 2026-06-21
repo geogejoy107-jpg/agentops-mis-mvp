@@ -558,6 +558,43 @@ def cmd_agent_plan_verify(args, client: AgentOpsClient) -> dict:
     return client.get(f"/api/agent-gateway/agent-plans/{args.plan_id}/verify")
 
 
+def cmd_plan_evidence_create(args, client: AgentOpsClient) -> dict:
+    payload = {
+        "workspace_id": client.workspace_id,
+        "agent_id": args.agent_id or client.agent_id,
+        "manifest_id": args.manifest_id,
+        "plan_id": args.plan_id,
+        "task_id": args.task_id,
+        "run_id": args.run_id,
+        "mismatch_policy": args.mismatch_policy,
+        "expected_steps": parse_json_value(args.expected_steps_json, split_csv(args.expected_steps)),
+        "tool_call_ids": split_csv(args.tool_call_ids),
+        "evaluation_ids": split_csv(args.evaluation_ids),
+        "artifact_ids": split_csv(args.artifact_ids),
+        "audit_ids": split_csv(args.audit_ids),
+        "verify_now": not args.no_verify,
+    }
+    return client.post("/api/agent-gateway/plan-evidence-manifests", payload)
+
+
+def cmd_plan_evidence_list(args, client: AgentOpsClient) -> dict:
+    return client.get("/api/agent-gateway/plan-evidence-manifests", query={
+        "plan_id": args.plan_id,
+        "task_id": args.task_id,
+        "run_id": args.run_id,
+        "agent_id": args.agent_id,
+        "limit": args.limit,
+    })
+
+
+def cmd_plan_evidence_get(args, client: AgentOpsClient) -> dict:
+    return client.get(f"/api/agent-gateway/plan-evidence-manifests/{args.manifest_id}")
+
+
+def cmd_plan_evidence_verify(args, client: AgentOpsClient) -> dict:
+    return client.get(f"/api/agent-gateway/plan-evidence-manifests/{args.manifest_id}/verify")
+
+
 def cmd_approval_request(args, client: AgentOpsClient) -> dict:
     payload = {
         "workspace_id": client.workspace_id,
@@ -1414,6 +1451,37 @@ def build_parser() -> argparse.ArgumentParser:
     agent_plan_verify.add_argument("--plan-id", required=True)
     agent_plan_verify.set_defaults(handler="agent_plan_verify")
 
+    plan_evidence = sub.add_parser("plan-evidence", help="Bind verified agent plans to run/tool/eval/artifact/audit evidence.")
+    plan_evidence_sub = plan_evidence.add_subparsers(dest="action", required=True)
+    plan_evidence_create = plan_evidence_sub.add_parser("create", help="Create a plan_evidence_manifest for a run.")
+    plan_evidence_create.add_argument("--agent-id", default=None)
+    plan_evidence_create.add_argument("--manifest-id", default=None)
+    plan_evidence_create.add_argument("--plan-id", required=True)
+    plan_evidence_create.add_argument("--task-id", default=None)
+    plan_evidence_create.add_argument("--run-id", required=True)
+    plan_evidence_create.add_argument("--mismatch-policy", default="block", choices=["block", "warn"])
+    plan_evidence_create.add_argument("--expected-steps", default="")
+    plan_evidence_create.add_argument("--expected-steps-json", default=None)
+    plan_evidence_create.add_argument("--tool-call-ids", default="")
+    plan_evidence_create.add_argument("--evaluation-ids", default="")
+    plan_evidence_create.add_argument("--artifact-ids", default="")
+    plan_evidence_create.add_argument("--audit-ids", default="")
+    plan_evidence_create.add_argument("--no-verify", action="store_true")
+    plan_evidence_create.set_defaults(handler="plan_evidence_create")
+    plan_evidence_list = plan_evidence_sub.add_parser("list", help="List plan evidence manifests.")
+    plan_evidence_list.add_argument("--plan-id", default=None)
+    plan_evidence_list.add_argument("--task-id", default=None)
+    plan_evidence_list.add_argument("--run-id", default=None)
+    plan_evidence_list.add_argument("--agent-id", default=None)
+    plan_evidence_list.add_argument("--limit", type=int, default=25)
+    plan_evidence_list.set_defaults(handler="plan_evidence_list")
+    plan_evidence_get = plan_evidence_sub.add_parser("get", help="Read one plan evidence manifest.")
+    plan_evidence_get.add_argument("--manifest-id", required=True)
+    plan_evidence_get.set_defaults(handler="plan_evidence_get")
+    plan_evidence_verify = plan_evidence_sub.add_parser("verify", help="Re-verify a plan evidence manifest against the ledger.")
+    plan_evidence_verify.add_argument("--manifest-id", required=True)
+    plan_evidence_verify.set_defaults(handler="plan_evidence_verify")
+
     approval = sub.add_parser("approval", help="Approval commands.")
     approval_sub = approval.add_subparsers(dest="action", required=True)
     approval_list = approval_sub.add_parser("list", help="List approvals for operator review.")
@@ -1643,7 +1711,7 @@ def build_parser() -> argparse.ArgumentParser:
     enroll_create.add_argument("--name", default="Remote Agent")
     enroll_create.add_argument("--role", default="Remote AI Digital Employee")
     enroll_create.add_argument("--runtime", default="mock")
-    enroll_create.add_argument("--scopes", default="agents:write,agents:heartbeat,knowledge:read,agent_plans:read,agent_plans:write,tasks:create,tasks:read,tasks:claim,runs:write,toolcalls:write,artifacts:write,approvals:request,memories:propose,evaluations:submit,audit:write")
+    enroll_create.add_argument("--scopes", default="agents:write,agents:heartbeat,knowledge:read,agent_plans:read,agent_plans:write,plan_evidence:read,plan_evidence:write,tasks:create,tasks:read,tasks:claim,runs:write,toolcalls:write,artifacts:write,approvals:request,memories:propose,evaluations:submit,audit:write")
     enroll_create.add_argument("--ttl-days", type=int, default=30)
     enroll_create.add_argument("--heartbeat-timeout-sec", type=int, default=300)
     enroll_create.add_argument("--label", default="")
@@ -1655,7 +1723,7 @@ def build_parser() -> argparse.ArgumentParser:
     enroll_request.add_argument("--name", default="Remote Agent")
     enroll_request.add_argument("--role", default="Remote AI Digital Employee")
     enroll_request.add_argument("--runtime", default="mock")
-    enroll_request.add_argument("--scopes", default="agents:heartbeat,knowledge:read,agent_plans:read,agent_plans:write,tasks:create,tasks:read,tasks:claim,runs:write,toolcalls:write,evaluations:submit,audit:write")
+    enroll_request.add_argument("--scopes", default="agents:heartbeat,knowledge:read,agent_plans:read,agent_plans:write,plan_evidence:read,plan_evidence:write,tasks:create,tasks:read,tasks:claim,runs:write,toolcalls:write,evaluations:submit,audit:write")
     enroll_request.add_argument("--reason", default="Remote worker needs scoped access to process assigned MIS tasks.")
     enroll_request.set_defaults(handler="enrollment_request")
 
@@ -1734,6 +1802,10 @@ HANDLERS = {
     "agent_plan_list": cmd_agent_plan_list,
     "agent_plan_get": cmd_agent_plan_get,
     "agent_plan_verify": cmd_agent_plan_verify,
+    "plan_evidence_create": cmd_plan_evidence_create,
+    "plan_evidence_list": cmd_plan_evidence_list,
+    "plan_evidence_get": cmd_plan_evidence_get,
+    "plan_evidence_verify": cmd_plan_evidence_verify,
     "approval_list": cmd_approval_list,
     "approval_approve": cmd_approval_decide,
     "approval_reject": cmd_approval_decide,

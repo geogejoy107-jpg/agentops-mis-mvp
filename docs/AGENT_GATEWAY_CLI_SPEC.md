@@ -156,7 +156,7 @@ agentops enrollment create \
   --agent-id agt_remote_builder \
   --name "Remote Builder" \
   --runtime openclaw \
-  --scopes agents:write,agents:heartbeat,knowledge:read,agent_plans:read,agent_plans:write,tasks:create,tasks:read,tasks:claim,runs:write,toolcalls:write,artifacts:write,evaluations:submit,audit:write \
+  --scopes agents:write,agents:heartbeat,knowledge:read,agent_plans:read,agent_plans:write,plan_evidence:read,plan_evidence:write,tasks:create,tasks:read,tasks:claim,runs:write,toolcalls:write,artifacts:write,evaluations:submit,audit:write \
   --ttl-days 30
 ```
 
@@ -194,7 +194,7 @@ agentops enrollment request \
   --agent-id agt_customer_worker \
   --name "Customer Worker" \
   --runtime mock \
-  --scopes agents:heartbeat,knowledge:read,agent_plans:read,agent_plans:write,tasks:create,tasks:read,tasks:claim,runs:write,toolcalls:write,evaluations:submit,audit:write \
+  --scopes agents:heartbeat,knowledge:read,agent_plans:read,agent_plans:write,plan_evidence:read,plan_evidence:write,tasks:create,tasks:read,tasks:claim,runs:write,toolcalls:write,evaluations:submit,audit:write \
   --reason "Customer server worker needs to process assigned MIS tasks"
 ```
 
@@ -373,6 +373,46 @@ agentops run graph --run-id run_123
 
 Maps to `GET /api/agent-gateway/runs/:id/graph`.
 
+### `agentops agent-plan`
+
+Records and reads the pre-execution READ -> PLAN -> RETRIEVE -> COMPARE plan.
+
+```bash
+agentops agent-plan create \
+  --task-id tsk_clean_sources \
+  --task-understanding "Clean the uploaded sources before indexing." \
+  --referenced-specs PROJECT_SPEC.md,AGENT_WORKFLOW.md \
+  --referenced-memories knowledge/shared/common_failures.md \
+  --referenced-bases base_local_tasks,base_local_memory \
+  --execution-steps READ,PLAN,RETRIEVE,COMPARE,EXECUTE,VERIFY,RECORD \
+  --verification-plan "Run a focused smoke test." \
+  --rollback-plan "Remove generated evidence if verification fails."
+
+agentops agent-plan verify --plan-id plan_123
+```
+
+`agentops agent-plan verify` is read-only.
+
+### `agentops plan-evidence`
+
+Binds the verified plan to the actual run evidence after execution.
+
+```bash
+agentops plan-evidence create \
+  --plan-id plan_123 \
+  --run-id run_123 \
+  --tool-call-ids tc_123 \
+  --evaluation-ids eval_123 \
+  --artifact-ids art_123 \
+  --mismatch-policy block
+
+agentops plan-evidence verify --manifest-id pem_123
+```
+
+`create` requires `plan_evidence:write` and can persist verified/blocked
+status. `verify` requires `plan_evidence:read`, re-computes ledger checks, and
+records a verification audit row.
+
 ### `agentops toolcall record`
 
 Records a tool call summary, risk level, duration, status, and redacted metadata.
@@ -414,7 +454,8 @@ agentops approval list --decision pending --limit 10
 Maps to `GET /api/agent-gateway/approvals`. Scoped tokens require `tasks:read`
 and only receive approvals attached to tasks/runs visible to their bound
 workspace and agent. `agentops approval approve/reject` remains a human/operator
-decision path.
+decision path. Customer-delivery approvals fail closed until the linked run has
+a verified `plan_evidence_manifest`.
 
 ### `agentops memory propose`
 
@@ -1130,6 +1171,10 @@ Current endpoint scope map:
 | `GET /api/agent-gateway/agent-plans/:plan_id` | `agent_plans:read` |
 | `GET /api/agent-gateway/agent-plans/:plan_id/verify` | `agent_plans:read` |
 | `POST /api/agent-gateway/agent-plans` | `agent_plans:write` |
+| `GET /api/agent-gateway/plan-evidence-manifests` | `plan_evidence:read` |
+| `GET /api/agent-gateway/plan-evidence-manifests/:manifest_id` | `plan_evidence:read` |
+| `GET /api/agent-gateway/plan-evidence-manifests/:manifest_id/verify` | `plan_evidence:read` |
+| `POST /api/agent-gateway/plan-evidence-manifests` | `plan_evidence:write` |
 | `GET /api/agent-gateway/approvals` | `tasks:read` |
 | `POST /api/agent-gateway/approvals/request` | `approvals:request` |
 | `GET /api/agent-gateway/memories` | `tasks:read` |

@@ -216,6 +216,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_logs(entity_type, entity_id
 | `template_bindings` | 模板与 base/workspace 的绑定。 |
 | `migration_runs` | base/template switching preview 和未来迁移结果。 |
 | `agent_plans` | Agent 执行前的 READ/PLAN/RETRIEVE/COMPARE 计划账本。 |
+| `plan_evidence_manifests` | Agent 执行后的计划证据绑定：plan、run、tool call、evaluation、artifact、audit 证据与验证状态。 |
 | `knowledge_documents` | Markdown 知识文件的索引元数据、hash、分类和摘要。 |
 | `knowledge_fts` | SQLite FTS5 虚拟表，用于第一版 `/api/knowledge/search`。 |
 

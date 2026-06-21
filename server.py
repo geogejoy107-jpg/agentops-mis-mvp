@@ -719,6 +719,29 @@ CREATE TABLE IF NOT EXISTS agent_plans (
     FOREIGN KEY(agent_id) REFERENCES agents(agent_id)
 );
 
+CREATE TABLE IF NOT EXISTS plan_evidence_manifests (
+    manifest_id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL DEFAULT 'local-demo',
+    plan_id TEXT NOT NULL,
+    task_id TEXT,
+    run_id TEXT NOT NULL,
+    agent_id TEXT NOT NULL,
+    mismatch_policy TEXT NOT NULL CHECK(mismatch_policy IN ('block','warn')),
+    expected_steps_json TEXT NOT NULL DEFAULT '[]',
+    tool_call_ids_json TEXT NOT NULL DEFAULT '[]',
+    evaluation_ids_json TEXT NOT NULL DEFAULT '[]',
+    artifact_ids_json TEXT NOT NULL DEFAULT '[]',
+    audit_ids_json TEXT NOT NULL DEFAULT '[]',
+    status TEXT NOT NULL CHECK(status IN ('submitted','verified','warning','blocked')),
+    verification_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY(plan_id) REFERENCES agent_plans(plan_id),
+    FOREIGN KEY(task_id) REFERENCES tasks(task_id),
+    FOREIGN KEY(run_id) REFERENCES runs(run_id),
+    FOREIGN KEY(agent_id) REFERENCES agents(agent_id)
+);
+
 CREATE TABLE IF NOT EXISTS knowledge_documents (
     doc_id TEXT PRIMARY KEY,
     path TEXT NOT NULL UNIQUE,
@@ -750,6 +773,9 @@ CREATE INDEX IF NOT EXISTS idx_sync_events_connector ON sync_events(connector_id
 CREATE INDEX IF NOT EXISTS idx_external_links_internal ON external_object_links(internal_object_type, internal_object_id);
 CREATE INDEX IF NOT EXISTS idx_agent_plans_task ON agent_plans(task_id);
 CREATE INDEX IF NOT EXISTS idx_agent_plans_agent ON agent_plans(agent_id);
+CREATE INDEX IF NOT EXISTS idx_plan_evidence_plan ON plan_evidence_manifests(plan_id);
+CREATE INDEX IF NOT EXISTS idx_plan_evidence_run ON plan_evidence_manifests(run_id);
+CREATE INDEX IF NOT EXISTS idx_plan_evidence_agent ON plan_evidence_manifests(agent_id);
 CREATE INDEX IF NOT EXISTS idx_knowledge_documents_category ON knowledge_documents(category);
 """
 
@@ -1348,6 +1374,8 @@ def seed(reset=False):
 
 
 def export_seed_artifacts():
+    if os.environ.get("AGENTOPS_SKIP_SEED_EXPORTS") == "1":
+        return
     ARTIFACTS_DIR.mkdir(exist_ok=True)
     with db() as conn:
         runs = rows_to_dicts(conn.execute("SELECT * FROM runs ORDER BY created_at DESC LIMIT 30").fetchall())
@@ -2011,6 +2039,8 @@ VALID_AGENT_GATEWAY_SCOPES = {
     "agents:heartbeat",
     "agent_plans:read",
     "agent_plans:write",
+    "plan_evidence:read",
+    "plan_evidence:write",
     "knowledge:read",
     "knowledge:write",
     "tasks:create",
@@ -2349,6 +2379,11 @@ def agent_gateway_create_enrollment(conn, body) -> tuple[dict, int]:
     scopes = parse_scope_list(body.get("scopes") or body.get("allowed_scopes") or [
         "agents:write",
         "agents:heartbeat",
+        "knowledge:read",
+        "agent_plans:read",
+        "agent_plans:write",
+        "plan_evidence:read",
+        "plan_evidence:write",
         "tasks:create",
         "tasks:read",
         "tasks:claim",
@@ -2415,6 +2450,11 @@ def agent_gateway_request_enrollment(conn, body) -> tuple[dict, int]:
     runtime_type = coerce_choice(body.get("runtime_type") or body.get("runtime"), VALID_RUNTIME_TYPES, "mock")
     scopes = parse_scope_list(body.get("scopes") or body.get("allowed_scopes") or [
         "agents:heartbeat",
+        "knowledge:read",
+        "agent_plans:read",
+        "agent_plans:write",
+        "plan_evidence:read",
+        "plan_evidence:write",
         "tasks:create",
         "tasks:read",
         "tasks:claim",
@@ -3808,6 +3848,304 @@ def agent_gateway_create_agent_plan(conn: sqlite3.Connection, body) -> tuple[dic
     audit(conn, "agent", agent_id, "agent_gateway.agent_plan_create", "agent_plans", row["plan_id"], None, row, {"raw_omitted": True})
     runtime_event(conn, "rtc_agent_gateway_local", "agent_plan.create", "completed", run_id=run_id, task_id=task_id, agent_id=agent_id, output_summary=understanding)
     return {"agent_plan": row, "token_omitted": True}, 201
+
+
+def load_plan_evidence_manifest(conn: sqlite3.Connection, manifest_id: str, ident: dict, auth_ctx=None) -> tuple[sqlite3.Row | None, tuple[dict, int] | None]:
+    row = conn.execute("SELECT * FROM plan_evidence_manifests WHERE manifest_id=?", (manifest_id,)).fetchone()
+    if not row:
+        return None, ({"error": "plan evidence manifest not found"}, 404)
+    if row["workspace_id"] != ident["workspace_id"]:
+        return None, workspace_forbidden("plan_evidence_manifest", manifest_id, ident["workspace_id"], row["workspace_id"])
+    if agent_gateway_is_bound_auth(auth_ctx) and row["agent_id"] != ident["agent_id"]:
+        return None, ({"error": "forbidden", "message": "Agent token cannot read another agent's plan evidence manifest."}, 403)
+    return row, None
+
+
+def list_plan_evidence_manifests(conn: sqlite3.Connection, qs: dict, headers=None, auth_ctx=None) -> tuple[dict, int]:
+    ident = agent_gateway_identity(headers or {}, qs=qs, auth_ctx=auth_ctx)
+    limit = min(max(int((qs.get("limit") or ["25"])[0]), 1), 100)
+    where = ["workspace_id=?"]
+    params: list = [ident["workspace_id"]]
+    for field in ["plan_id", "task_id", "run_id"]:
+        if field in qs:
+            where.append(f"{field}=?")
+            params.append(qs[field][0])
+    if agent_gateway_is_bound_auth(auth_ctx):
+        where.append("agent_id=?")
+        params.append(ident["agent_id"])
+    elif "agent_id" in qs:
+        where.append("agent_id=?")
+        params.append(qs["agent_id"][0])
+    rows = rows_to_dicts(conn.execute(
+        "SELECT * FROM plan_evidence_manifests WHERE " + " AND ".join(where) + " ORDER BY created_at DESC LIMIT ?",
+        [*params, limit],
+    ).fetchall())
+    return {
+        "provider": "agentops-plan-evidence",
+        "operation": "plan_evidence_manifest_list",
+        "manifests": rows,
+        "count": len(rows),
+        "workspace_id": ident["workspace_id"],
+        "token_omitted": True,
+    }, 200
+
+
+def get_plan_evidence_manifest(conn: sqlite3.Connection, manifest_id: str, headers=None, auth_ctx=None) -> tuple[dict, int]:
+    ident = agent_gateway_identity(headers or {}, auth_ctx=auth_ctx)
+    row, access_error = load_plan_evidence_manifest(conn, manifest_id, ident, auth_ctx)
+    if access_error:
+        return access_error
+    return {
+        "provider": "agentops-plan-evidence",
+        "operation": "plan_evidence_manifest_get",
+        "manifest": dict(row),
+        "token_omitted": True,
+    }, 200
+
+
+def existing_id_rows(conn: sqlite3.Connection, table: str, id_col: str, ids: list) -> dict:
+    clean = [str(item) for item in ids if item]
+    if not clean:
+        return {}
+    placeholders = ",".join("?" for _ in clean)
+    rows = conn.execute(f"SELECT * FROM {table} WHERE {id_col} IN ({placeholders})", clean).fetchall()
+    return {row[id_col]: row for row in rows}
+
+
+def plan_evidence_rows(conn: sqlite3.Connection, manifest: sqlite3.Row) -> dict:
+    run_id = manifest["run_id"]
+    task_id = manifest["task_id"]
+    supplied_tool_ids = load_json_list_field(manifest, "tool_call_ids_json")
+    supplied_eval_ids = load_json_list_field(manifest, "evaluation_ids_json")
+    supplied_artifact_ids = load_json_list_field(manifest, "artifact_ids_json")
+    supplied_audit_ids = load_json_list_field(manifest, "audit_ids_json")
+    tool_rows = existing_id_rows(conn, "tool_calls", "tool_call_id", supplied_tool_ids) if supplied_tool_ids else {
+        row["tool_call_id"]: row for row in conn.execute("SELECT * FROM tool_calls WHERE run_id=? ORDER BY created_at", (run_id,)).fetchall()
+    }
+    evaluation_rows = existing_id_rows(conn, "evaluations", "evaluation_id", supplied_eval_ids) if supplied_eval_ids else {
+        row["evaluation_id"]: row for row in conn.execute("SELECT * FROM evaluations WHERE run_id=? ORDER BY created_at", (run_id,)).fetchall()
+    }
+    artifact_rows = existing_id_rows(conn, "artifacts", "artifact_id", supplied_artifact_ids) if supplied_artifact_ids else {
+        row["artifact_id"]: row for row in conn.execute("SELECT * FROM artifacts WHERE run_id=? OR task_id=? ORDER BY created_at", (run_id, task_id)).fetchall()
+    }
+    audit_rows = existing_id_rows(conn, "audit_logs", "audit_id", supplied_audit_ids) if supplied_audit_ids else {}
+    if not audit_rows:
+        entity_ids = [manifest["manifest_id"], manifest["plan_id"], run_id, task_id, *tool_rows.keys(), *evaluation_rows.keys(), *artifact_rows.keys()]
+        clean_entity_ids = [str(item) for item in entity_ids if item]
+        if clean_entity_ids:
+            placeholders = ",".join("?" for _ in clean_entity_ids)
+            audit_rows = {
+                row["audit_id"]: row
+                for row in conn.execute(f"SELECT * FROM audit_logs WHERE entity_id IN ({placeholders}) ORDER BY created_at", clean_entity_ids).fetchall()
+            }
+    return {
+        "tool_calls": list(tool_rows.values()),
+        "evaluations": list(evaluation_rows.values()),
+        "artifacts": list(artifact_rows.values()),
+        "audit_logs": list(audit_rows.values()),
+        "supplied": {
+            "tool_call_ids": supplied_tool_ids,
+            "evaluation_ids": supplied_eval_ids,
+            "artifact_ids": supplied_artifact_ids,
+            "audit_ids": supplied_audit_ids,
+        },
+    }
+
+
+def verify_plan_evidence_manifest_row(conn: sqlite3.Connection, manifest: sqlite3.Row | dict) -> dict:
+    plan = conn.execute("SELECT * FROM agent_plans WHERE plan_id=?", (manifest["plan_id"],)).fetchone()
+    run = conn.execute("SELECT * FROM runs WHERE run_id=?", (manifest["run_id"],)).fetchone()
+    task = conn.execute("SELECT * FROM tasks WHERE task_id=?", (manifest["task_id"],)).fetchone() if manifest["task_id"] else None
+    evidence = plan_evidence_rows(conn, manifest)
+    plan_verification = verify_agent_plan_row(plan) if plan else {"pass": False, "checks": []}
+    expected_steps = load_json_list_field(manifest, "expected_steps_json")
+    tool_rows = evidence["tool_calls"]
+    eval_rows = evidence["evaluations"]
+    artifact_rows = evidence["artifacts"]
+    audit_rows = evidence["audit_logs"]
+    supplied = evidence["supplied"]
+    supplied_tool_count = len(supplied["tool_call_ids"])
+    supplied_eval_count = len(supplied["evaluation_ids"])
+    supplied_artifact_count = len(supplied["artifact_ids"])
+    supplied_audit_count = len(supplied["audit_ids"])
+
+    def all_supplied_found(rows: list, supplied_key: str, id_col: str) -> bool:
+        supplied_ids = supplied[supplied_key]
+        if not supplied_ids:
+            return True
+        found = {row[id_col] for row in rows}
+        return all(item in found for item in supplied_ids)
+
+    checks = [
+        {"id": "plan_exists", "ok": bool(plan), "message": "Manifest references an existing agent_plan."},
+        {"id": "plan_verifies", "ok": bool(plan_verification.get("pass")), "message": "Referenced agent_plan passes method-block verification."},
+        {"id": "run_exists", "ok": bool(run), "message": "Manifest references an existing run."},
+        {"id": "task_exists", "ok": bool(task), "message": "Manifest task exists."},
+        {"id": "workspace_match", "ok": bool(plan and run and plan["workspace_id"] == manifest["workspace_id"] == run["workspace_id"]), "message": "Plan, manifest and run are in the same workspace."},
+        {"id": "task_match", "ok": bool(plan and run and (not plan["task_id"] or plan["task_id"] == manifest["task_id"] == run["task_id"])), "message": "Plan, manifest and run bind to the same task."},
+        {"id": "run_match", "ok": bool(plan and (not plan["run_id"] or plan["run_id"] == manifest["run_id"])), "message": "Manifest run matches any run pinned by the plan."},
+        {"id": "agent_match", "ok": bool(plan and run and plan["agent_id"] == manifest["agent_id"] == run["agent_id"]), "message": "Plan, manifest and run bind to the same agent."},
+        {"id": "expected_steps", "ok": len(expected_steps) >= 3, "message": "Manifest carries the approved execution steps."},
+        {"id": "tool_evidence_present", "ok": len(tool_rows) >= 1, "message": "Run has at least one tool_call evidence row."},
+        {"id": "tool_evidence_completed", "ok": bool(tool_rows) and all(row["run_id"] == manifest["run_id"] and row["status"] == "completed" for row in tool_rows), "message": "Tool evidence belongs to the run and is completed."},
+        {"id": "tool_ids_found", "ok": all_supplied_found(tool_rows, "tool_call_ids", "tool_call_id"), "message": "All declared tool_call_ids exist."},
+        {"id": "evaluation_evidence_present", "ok": len(eval_rows) >= 1, "message": "Run has at least one evaluation evidence row."},
+        {"id": "evaluation_evidence_passed", "ok": bool(eval_rows) and all(row["run_id"] == manifest["run_id"] and row["pass_fail"] == "pass" for row in eval_rows), "message": "Evaluation evidence belongs to the run and passes."},
+        {"id": "evaluation_ids_found", "ok": all_supplied_found(eval_rows, "evaluation_ids", "evaluation_id"), "message": "All declared evaluation_ids exist."},
+        {"id": "artifact_evidence_present", "ok": len(artifact_rows) >= 1, "message": "Run or task has at least one artifact evidence row."},
+        {"id": "artifact_evidence_bound", "ok": bool(artifact_rows) and all(row["run_id"] == manifest["run_id"] or row["task_id"] == manifest["task_id"] for row in artifact_rows), "message": "Artifact evidence is bound to the run or task."},
+        {"id": "artifact_ids_found", "ok": all_supplied_found(artifact_rows, "artifact_ids", "artifact_id"), "message": "All declared artifact_ids exist."},
+        {"id": "audit_evidence_present", "ok": len(audit_rows) >= 1, "message": "Ledger has audit evidence for the plan/run/tool/eval/artifact chain."},
+        {"id": "audit_ids_found", "ok": all_supplied_found(audit_rows, "audit_ids", "audit_id"), "message": "All declared audit_ids exist."},
+    ]
+    failed = [check for check in checks if not check["ok"]]
+    status = "verified" if not failed else ("blocked" if manifest["mismatch_policy"] == "block" else "warning")
+    return {
+        "pass": not failed,
+        "status": status,
+        "mismatch_policy": manifest["mismatch_policy"],
+        "checks": checks,
+        "failed_checks": failed,
+        "plan_verification": plan_verification,
+        "evidence_counts": {
+            "tool_calls": len(tool_rows),
+            "evaluations": len(eval_rows),
+            "artifacts": len(artifact_rows),
+            "audit_logs": len(audit_rows),
+        },
+        "declared_counts": {
+            "tool_call_ids": supplied_tool_count,
+            "evaluation_ids": supplied_eval_count,
+            "artifact_ids": supplied_artifact_count,
+            "audit_ids": supplied_audit_count,
+        },
+        "token_omitted": True,
+    }
+
+
+def persist_plan_evidence_verification(conn: sqlite3.Connection, manifest_id: str, verification: dict) -> None:
+    conn.execute(
+        "UPDATE plan_evidence_manifests SET status=?, verification_json=?, updated_at=? WHERE manifest_id=?",
+        (verification["status"], json.dumps(verification, ensure_ascii=False), now_iso(), manifest_id),
+    )
+
+
+def verify_plan_evidence_manifest(conn: sqlite3.Connection, manifest_id: str, headers=None, auth_ctx=None) -> tuple[dict, int]:
+    ident = agent_gateway_identity(headers or {}, auth_ctx=auth_ctx)
+    row, access_error = load_plan_evidence_manifest(conn, manifest_id, ident, auth_ctx)
+    if access_error:
+        return access_error
+    verification = verify_plan_evidence_manifest_row(conn, row)
+    return {
+        "provider": "agentops-plan-evidence",
+        "operation": "plan_evidence_manifest_verify",
+        "manifest": dict(row),
+        "verification": verification,
+        "token_omitted": True,
+    }, 200
+
+
+def latest_plan_evidence_manifest_for_run(conn: sqlite3.Connection, run_id: str | None) -> sqlite3.Row | None:
+    if not run_id:
+        return None
+    return conn.execute(
+        "SELECT * FROM plan_evidence_manifests WHERE run_id=? ORDER BY updated_at DESC, created_at DESC LIMIT 1",
+        (run_id,),
+    ).fetchone()
+
+
+def customer_delivery_approval_requires_manifest(approval: sqlite3.Row | dict) -> bool:
+    approval_id = str(approval["approval_id"] or "")
+    reason = str(approval["reason"] or "").lower()
+    return approval_id.startswith("ap_customer_worker_delivery") or "customer delivery" in reason
+
+
+def delivery_manifest_gate(conn: sqlite3.Connection, run_id: str | None) -> dict:
+    manifest = latest_plan_evidence_manifest_for_run(conn, run_id)
+    if not manifest:
+        return {
+            "required": True,
+            "pass": False,
+            "status": "blocked_missing_verified_manifest",
+            "manifest_id": None,
+            "message": "Customer delivery requires a verified plan_evidence_manifest for this run.",
+            "token_omitted": True,
+        }
+    verification = verify_plan_evidence_manifest_row(conn, manifest)
+    return {
+        "required": True,
+        "pass": bool(verification.get("pass")),
+        "status": verification.get("status"),
+        "manifest_id": manifest["manifest_id"],
+        "evidence_counts": verification.get("evidence_counts") or {},
+        "failed_checks": [item.get("id") for item in verification.get("failed_checks") or []],
+        "message": "Verified plan_evidence_manifest found." if verification.get("pass") else "Latest plan_evidence_manifest is not verified.",
+        "token_omitted": True,
+    }
+
+
+def agent_gateway_create_plan_evidence_manifest(conn: sqlite3.Connection, body) -> tuple[dict, int]:
+    ident = agent_gateway_identity({}, body)
+    plan_id = body.get("plan_id")
+    run_id = body.get("run_id")
+    if not plan_id or not run_id:
+        return {"error": "plan_id and run_id are required"}, 400
+    plan = conn.execute("SELECT * FROM agent_plans WHERE plan_id=?", (plan_id,)).fetchone()
+    if not plan:
+        return {"error": "agent plan not found"}, 404
+    if plan["workspace_id"] != ident["workspace_id"]:
+        return workspace_forbidden("agent_plan", plan_id, ident["workspace_id"], plan["workspace_id"])
+    run, access_error = ensure_run_access(conn, run_id, ident)
+    if access_error:
+        return access_error
+    task_id = body.get("task_id") or run["task_id"] or plan["task_id"]
+    if plan["task_id"] and task_id != plan["task_id"]:
+        return {"error": "forbidden", "message": "Manifest task_id must match the referenced agent_plan."}, 403
+    if run["task_id"] and task_id != run["task_id"]:
+        return {"error": "forbidden", "message": "Manifest task_id must match the referenced run."}, 403
+    if plan["run_id"] and plan["run_id"] != run_id:
+        return {"error": "forbidden", "message": "Manifest run_id must match the run pinned by the agent_plan."}, 403
+    if plan["agent_id"] != run["agent_id"]:
+        return {"error": "forbidden", "message": "Manifest requires agent_plan.agent_id to match run.agent_id."}, 403
+    expected_steps = safe_json_list(body.get("expected_steps")) or load_json_list_field(plan, "execution_steps_json")
+    row = {
+        "manifest_id": body.get("manifest_id") or stable_id("pem", plan_id, run_id, now_iso()),
+        "workspace_id": ident["workspace_id"],
+        "plan_id": plan_id,
+        "task_id": task_id,
+        "run_id": run_id,
+        "agent_id": run["agent_id"],
+        "mismatch_policy": coerce_choice(body.get("mismatch_policy"), {"block", "warn"}, "block"),
+        "expected_steps_json": json.dumps(expected_steps, ensure_ascii=False),
+        "tool_call_ids_json": json.dumps(safe_json_list(body.get("tool_call_ids")), ensure_ascii=False),
+        "evaluation_ids_json": json.dumps(safe_json_list(body.get("evaluation_ids")), ensure_ascii=False),
+        "artifact_ids_json": json.dumps(safe_json_list(body.get("artifact_ids")), ensure_ascii=False),
+        "audit_ids_json": json.dumps(safe_json_list(body.get("audit_ids")), ensure_ascii=False),
+        "status": "submitted",
+        "verification_json": "{}",
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+    }
+    conn.execute(
+        """INSERT INTO plan_evidence_manifests(manifest_id,workspace_id,plan_id,task_id,run_id,agent_id,mismatch_policy,
+        expected_steps_json,tool_call_ids_json,evaluation_ids_json,artifact_ids_json,audit_ids_json,status,verification_json,created_at,updated_at)
+        VALUES(:manifest_id,:workspace_id,:plan_id,:task_id,:run_id,:agent_id,:mismatch_policy,
+        :expected_steps_json,:tool_call_ids_json,:evaluation_ids_json,:artifact_ids_json,:audit_ids_json,:status,:verification_json,:created_at,:updated_at)""",
+        row,
+    )
+    audit(conn, "agent", row["agent_id"], "agent_gateway.plan_evidence_manifest_create", "plan_evidence_manifests", row["manifest_id"], None, row, {"raw_omitted": True})
+    runtime_event(conn, "rtc_agent_gateway_local", "plan_evidence_manifest.create", "completed", run_id=run_id, task_id=task_id, agent_id=row["agent_id"], output_summary=f"Plan evidence manifest {row['manifest_id']} submitted.")
+    verification = verify_plan_evidence_manifest_row(conn, row) if body.get("verify_now", True) is not False else None
+    if verification:
+        persist_plan_evidence_verification(conn, row["manifest_id"], verification)
+        row = dict(conn.execute("SELECT * FROM plan_evidence_manifests WHERE manifest_id=?", (row["manifest_id"],)).fetchone())
+    return {
+        "provider": "agentops-plan-evidence",
+        "operation": "plan_evidence_manifest_create",
+        "manifest": row,
+        "verification": verification,
+        "token_omitted": True,
+    }, 201
 
 
 def agent_gateway_review_queue(conn: sqlite3.Connection, qs: dict, headers, auth_ctx=None) -> tuple[dict, int]:
@@ -6142,6 +6480,8 @@ def customer_delivery_board(conn, limit: int = 12) -> dict:
         "needs_attention": 0,
         "pending_approvals": 0,
         "artifacts": 0,
+        "verified_plan_evidence_manifests": 0,
+        "missing_plan_evidence_manifests": 0,
     }
     for artifact in artifact_rows:
         task_id = artifact.get("task_id")
@@ -6174,7 +6514,23 @@ def customer_delivery_board(conn, limit: int = 12) -> dict:
         failed_eval = [row for row in evaluations if row.get("pass_fail") == "fail"]
         run_status = artifact.get("run_status")
         task_status = artifact.get("task_status")
-        if run_status in {"failed", "blocked", "timeout", "error"} or task_status in {"failed", "blocked"} or failed_eval:
+        delivery_gate = delivery_manifest_gate(conn, run_id) if run_id else {
+            "required": True,
+            "pass": False,
+            "status": "blocked_missing_run",
+            "manifest_id": None,
+            "message": "Customer delivery requires a run-linked verified plan_evidence_manifest.",
+            "token_omitted": True,
+        }
+        evidence["plan_evidence_manifests"] = 1 if delivery_gate.get("manifest_id") else 0
+        if delivery_gate.get("pass"):
+            totals["verified_plan_evidence_manifests"] += 1
+        else:
+            totals["missing_plan_evidence_manifests"] += 1
+        if not delivery_gate.get("pass"):
+            status = "needs_attention"
+            next_action = "Create and verify a plan_evidence_manifest before approving customer delivery."
+        elif run_status in {"failed", "blocked", "timeout", "error"} or task_status in {"failed", "blocked"} or failed_eval:
             status = "needs_attention"
             next_action = "Review failed evaluation/run evidence before delivery."
         elif pending_approvals or task_status == "waiting_approval":
@@ -6227,12 +6583,14 @@ def customer_delivery_board(conn, limit: int = 12) -> dict:
                 "latest_score": evaluations[0]["score"] if evaluations else None,
                 "latest_pass_fail": evaluations[0]["pass_fail"] if evaluations else None,
             },
+            "delivery_approval_gate": delivery_gate,
             "evidence": evidence,
             "next_action": next_action,
         })
     gates = [
         {"id": "delivery_artifacts", "label": "Customer delivery artifacts", "ok": totals["artifacts"] > 0, "value": totals["artifacts"]},
         {"id": "approval_visibility", "label": "Approval state visible", "ok": True, "value": totals["pending_approvals"]},
+        {"id": "plan_evidence_manifest", "label": "Verified plan evidence manifests", "ok": totals["deliveries"] > 0 and totals["missing_plan_evidence_manifests"] == 0, "value": totals["verified_plan_evidence_manifests"]},
         {"id": "evidence_chain", "label": "Run/tool/eval/audit evidence summarized", "ok": all((row.get("evidence") or {}).get("audit_logs", 0) >= 1 for row in deliveries) if deliveries else False, "value": totals["deliveries"]},
         {"id": "safe_readback", "label": "Read-only safe readback", "ok": True, "value": "summary/hash only"},
     ]
@@ -9236,6 +9594,34 @@ class Handler(BaseHTTPRequestHandler):
                     payload, status = get_agent_plan(conn, plan_id, self.headers, auth_ctx)
                 conn.commit()
                 return self.send_json(payload, status)
+            if path == "/api/agent-gateway/plan-evidence-manifests":
+                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "plan_evidence:read")
+                if auth_error:
+                    return self.send_json(auth_error, agent_gateway_error_status(auth_error))
+                query = dict(qs)
+                if agent_gateway_is_bound_auth(auth_ctx):
+                    requested_header_workspace = normalize_workspace_id(self.headers.get("X-AgentOps-Workspace-Id") or auth_ctx["workspace_id"])
+                    if requested_header_workspace != auth_ctx["workspace_id"]:
+                        return self.send_json({"error": "forbidden", "message": "Agent token cannot use another workspace header."}, 403)
+                    requested_workspace = requested_workspace_from_qs(query, auth_ctx["workspace_id"])
+                    if requested_workspace != auth_ctx["workspace_id"]:
+                        return self.send_json({"error": "forbidden", "message": "Agent token cannot list plan evidence manifests from another workspace."}, 403)
+                    query["workspace_id"] = [auth_ctx["workspace_id"]]
+                payload, status = list_plan_evidence_manifests(conn, query, self.headers, auth_ctx)
+                conn.commit()
+                return self.send_json(payload, status)
+            if path.startswith("/api/agent-gateway/plan-evidence-manifests/"):
+                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "plan_evidence:read")
+                if auth_error:
+                    return self.send_json(auth_error, agent_gateway_error_status(auth_error))
+                if path.endswith("/verify"):
+                    manifest_id = path.split("/")[-2]
+                    payload, status = verify_plan_evidence_manifest(conn, manifest_id, self.headers, auth_ctx)
+                else:
+                    manifest_id = path.split("/")[-1]
+                    payload, status = get_plan_evidence_manifest(conn, manifest_id, self.headers, auth_ctx)
+                conn.commit()
+                return self.send_json(payload, status)
             if path == "/api/agent-gateway/approvals":
                 auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
                 if auth_error:
@@ -9514,6 +9900,7 @@ class Handler(BaseHTTPRequestHandler):
                     "/api/agent-gateway/artifacts": "artifacts:write",
                     "/api/agent-gateway/knowledge/index": "knowledge:write",
                     "/api/agent-gateway/agent-plans": "agent_plans:write",
+                    "/api/agent-gateway/plan-evidence-manifests": "plan_evidence:write",
                     "/api/agent-gateway/approvals/request": "approvals:request",
                     "/api/agent-gateway/memories/propose": "memories:propose",
                     "/api/agent-gateway/evaluations/submit": "evaluations:submit",
@@ -9571,6 +9958,8 @@ class Handler(BaseHTTPRequestHandler):
                     payload = {"provider": "agentops-knowledge", "operation": "knowledge_index", **payload, "token_omitted": True}
                 elif path == "/api/agent-gateway/agent-plans":
                     payload, status = agent_gateway_create_agent_plan(conn, body)
+                elif path == "/api/agent-gateway/plan-evidence-manifests":
+                    payload, status = agent_gateway_create_plan_evidence_manifest(conn, body)
                 elif path == "/api/agent-gateway/approvals/request":
                     payload, status = agent_gateway_request_approval(conn, body)
                 elif path == "/api/agent-gateway/memories/propose":
@@ -9786,6 +10175,18 @@ class Handler(BaseHTTPRequestHandler):
         before = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (approval_id,)).fetchone()
         if not before:
             return self.send_json({"error": "not found"}, 404)
+        if decision == "approved" and customer_delivery_approval_requires_manifest(before):
+            gate = delivery_manifest_gate(conn, before["run_id"])
+            if not gate.get("pass"):
+                audit(conn, "user", "usr_founder", "approval.blocked_missing_plan_evidence", "approvals", approval_id, dict(before), dict(before), gate)
+                conn.commit()
+                return self.send_json({
+                    "error": "verified_plan_evidence_manifest_required",
+                    "message": "Customer delivery approval is blocked until the run has a verified plan_evidence_manifest.",
+                    "approval": dict(before),
+                    "delivery_approval_gate": gate,
+                    "token_omitted": True,
+                }, 409)
         conn.execute("UPDATE approvals SET decision=?, decided_at=? WHERE approval_id=?", (decision, now_iso(), approval_id))
         if before["tool_call_id"]:
             tool_before = conn.execute("SELECT * FROM tool_calls WHERE tool_call_id=?", (before["tool_call_id"],)).fetchone()

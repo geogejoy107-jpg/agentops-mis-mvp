@@ -10,10 +10,10 @@ READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD
 - Shared knowledge: `knowledge/shared/`
 - Base notes: `knowledge/bases/`
 - Runbooks: `knowledge/runbooks/`
-- SQLite ledger: `agent_plans`, `knowledge_documents`, `knowledge_fts`
+- SQLite ledger: `agent_plans`, `plan_evidence_manifests`, `knowledge_documents`, `knowledge_fts`
 - API: `GET /api/knowledge/search`, `POST /api/knowledge/index`
-- Agent Gateway API: `GET /api/agent-gateway/knowledge/search`, `POST /api/agent-gateway/agent-plans`, `GET /api/agent-gateway/agent-plans/:id/verify`
-- CLI: `agentops knowledge search`, `agentops knowledge index`, `agentops agent-plan create/list/get/verify`
+- Agent Gateway API: `GET /api/agent-gateway/knowledge/search`, `POST /api/agent-gateway/agent-plans`, `GET /api/agent-gateway/agent-plans/:id/verify`, `POST /api/agent-gateway/plan-evidence-manifests`, `GET /api/agent-gateway/plan-evidence-manifests/:id/verify`
+- CLI: `agentops knowledge search`, `agentops knowledge index`, `agentops agent-plan create/list/get/verify`, `agentops plan-evidence create/list/get/verify`
 
 ## Why This Shape
 
@@ -55,6 +55,8 @@ Use Markdown plus SQLite first:
 - EXECUTE: tool calls and runtime events record the execution path.
 - VERIFY: evaluations record rule, smoke, human, or mock-LLM gates.
 - RECORD: artifacts, audit logs, and memory candidates close the loop.
+- EVIDENCE BINDING: `plan_evidence_manifests` links a verified `agent_plan` to the exact run, tool calls, evaluations, artifacts, and audit evidence before a delivery can be treated as closed.
+- DELIVERY GATE: customer delivery approvals fail closed until the linked run has a verified `plan_evidence_manifest`; the customer delivery board surfaces the manifest gate status for human review.
 
 ## Cleanliness Contract
 
@@ -65,4 +67,4 @@ Use Markdown plus SQLite first:
 
 ## Next Guardrail
 
-Hermes review flagged the next bypass risk: an agent can create and verify a plan, then execute a different path. The next implementation step should make delivery gates require a linked `agent_plan_id`, a passing plan verification result, and concrete run/tool/evaluation/artifact evidence before customer delivery approval.
+Hermes/OpenClaw loop review flagged the next bypass risk: an agent can create and verify a plan, then execute a different path. The implemented guardrail is `plan_evidence_manifests`: create one with `agentops plan-evidence create --plan-id <id> --run-id <id> --mismatch-policy block` after the run writes tool, evaluation, artifact, and audit evidence. Creation can persist `verified` / `blocked` status; `agentops plan-evidence verify` re-computes the ledger checks without mutating the manifest or writing audit rows. A manifest verifies only when the plan passes, plan/run/task/agent bindings match, tool calls completed, evaluations passed, artifacts are bound, and audit evidence exists. Missing or mismatched evidence is blocked by default. Customer delivery approvals now consume this gate: approving a customer delivery without a verified manifest returns `verified_plan_evidence_manifest_required`.

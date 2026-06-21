@@ -12,6 +12,7 @@ READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD
 2. PLAN
    Submit an `agent_plan` before meaningful file or runtime changes.
    Run `agentops agent-plan verify --plan-id <id>` before execution when a plan ID is available.
+   After execution, bind the plan to evidence with `agentops plan-evidence create --plan-id <id> --run-id <id> --mismatch-policy block`.
 
 3. RETRIEVE
    Search approved project knowledge, runbooks, base notes, and memory candidates through `/api/knowledge/search` or `agentops knowledge search`.
@@ -36,7 +37,7 @@ READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD
 - COMPARE: cite base IDs and risk decisions.
 - EXECUTE: record tool calls and runtime events.
 - VERIFY: submit evaluations or smoke artifacts.
-- RECORD: write audit/artifact evidence and propose reviewable memory candidates.
+- RECORD: write audit/artifact evidence, verify a `plan_evidence_manifest`, and propose reviewable memory candidates.
 
 ## Clean Repo Rule
 
@@ -59,4 +60,5 @@ Do not commit generated plans, FTS index data, temporary databases, raw runtime 
 
 - High or critical risk plans require approval.
 - External uploads, connector credential changes, public publishing, destructive file operations, and live Hermes/OpenClaw runs require explicit confirmation or an existing approved policy.
+- Customer-facing delivery approval requires a verified `plan_evidence_manifest`; unresolved manifest mismatches must block delivery.
 - Memory candidates are not authority until reviewed.
