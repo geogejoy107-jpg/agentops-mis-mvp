@@ -584,12 +584,15 @@ def create_worker_plan_manifest(client: AgentOpsClient, plan_id: str, run_id: st
 
 
 def process_one_task(client: AgentOpsClient, args) -> dict:
-    pulled = client.get("/api/agent-gateway/tasks/pull", {
+    pull_query = {
         "agent_id": client.agent_id,
         "workspace_id": client.workspace_id,
         "limit": 1,
         "status": args.status,
-    })
+    }
+    if args.task_id:
+        pull_query["task_id"] = args.task_id
+    pulled = client.get("/api/agent-gateway/tasks/pull", pull_query)
     tasks = pulled.get("tasks") or []
     if not tasks:
         client.post("/api/agent-gateway/heartbeat", {
@@ -766,6 +769,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--session-refresh-margin-sec", type=float, default=float(os.environ.get("AGENTOPS_SESSION_REFRESH_MARGIN_SEC", "60")), help="Refresh the short-lived session when it has this many seconds or less remaining.")
     parser.add_argument("--session-scopes", default=os.environ.get("AGENTOPS_SESSION_SCOPES", ""), help="Optional comma-separated subset for the worker session. Defaults to parent token scopes.")
     parser.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
+    parser.add_argument("--task-id", default=os.environ.get("AGENTOPS_TASK_ID", ""), help="Optional exact task id to pull and process.")
     parser.add_argument("--status", action="append", default=["planned"], help="Task status to pull. Repeatable.")
     parser.add_argument("--once", action="store_true", help="Process at most one task and exit.")
     parser.add_argument("--poll-interval", type=float, default=5.0)

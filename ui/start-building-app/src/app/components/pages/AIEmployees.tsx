@@ -6,6 +6,7 @@ import {
   createAgentGatewayEnrollment,
   decideApproval,
   decideMemory,
+  dispatchCommanderWorkPackage,
   dispatchLocalWorkerOnce,
   issueApprovedAgentGatewayEnrollment,
   loadApprovals,
@@ -316,6 +317,10 @@ export function AIEmployees() {
       persistedPackages: "Persisted packages",
       packageReadback: "Package readback",
       packageStatus: "Package status",
+      dispatchPackage: "Run package",
+      dispatchPackageMock: "Run mock",
+      dispatchPackageHermes: "Run Hermes",
+      dispatchPackageOpenClaw: "Run OpenClaw",
       reviewQueueTitle: "Human Review Queue",
       reviewQueueSummary: "One operator queue for approvals, memory candidates and customer deliveries. Handle returned work first without waiting for every worker lane.",
       reviewQueueEmpty: "No review items. Keep dispatching or watch the async inbox.",
@@ -627,6 +632,10 @@ export function AIEmployees() {
       persistedPackages: "持久化工作包",
       packageReadback: "工作包读回",
       packageStatus: "工作包状态",
+      dispatchPackage: "运行工作包",
+      dispatchPackageMock: "运行 mock",
+      dispatchPackageHermes: "运行 Hermes",
+      dispatchPackageOpenClaw: "运行 OpenClaw",
       reviewQueueTitle: "人工审核队列",
       reviewQueueSummary: "把审批、候选记忆和客户交付聚合成一个 operator 队列；哪个 worker 先回来，就先处理哪个。",
       reviewQueueEmpty: "暂无待审事项。可以继续派发任务，或观察异步 Inbox。",
@@ -1059,6 +1068,25 @@ export function AIEmployees() {
       setDispatchResult(message);
     } finally {
       setCommanderPlannerBusy(false);
+    }
+  };
+
+  const dispatchCommanderPackage = async (taskId: string, adapter: (typeof WORKER_ADAPTERS)[number], confirmRun = false) => {
+    const actionId = `commander-${adapter}-${taskId}`;
+    setDispatching(actionId);
+    setDispatchResult(null);
+    try {
+      const result = await dispatchCommanderWorkPackage({
+        task_id: taskId,
+        adapter,
+        confirm_run: confirmRun,
+      });
+      setDispatchResult(`${copy.dispatchPackage}: ${result.ok ? "ok" : result.reason || "failed"} · ${result.run_id || result.task_id}`);
+      await refresh();
+    } catch (err) {
+      setDispatchResult(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDispatching(null);
     }
   };
 
@@ -1665,6 +1693,25 @@ export function AIEmployees() {
                     </div>
                   </div>
                   <div className="flex flex-wrap gap-1.5 shrink-0">
+                    {([
+                      { adapter: "mock" as const, label: copy.dispatchPackageMock, confirm: false },
+                      { adapter: "hermes" as const, label: copy.dispatchPackageHermes, confirm: true },
+                      { adapter: "openclaw" as const, label: copy.dispatchPackageOpenClaw, confirm: true },
+                    ]).map(action => {
+                      const actionId = `commander-${action.adapter}-${pkg.task_id}`;
+                      return (
+                        <button
+                          key={action.adapter}
+                          onClick={() => void dispatchCommanderPackage(pkg.task_id, action.adapter, action.confirm)}
+                          disabled={Boolean(dispatching)}
+                          className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded disabled:opacity-50"
+                          style={{ background: "rgba(129,140,248,0.10)", color: "var(--mis-purple)", border: "1px solid rgba(129,140,248,0.18)" }}
+                        >
+                          {dispatching === actionId ? <RefreshCw size={10} /> : <Play size={10} />}
+                          {dispatching === actionId ? copy.dispatching : action.label}
+                        </button>
+                      );
+                    })}
                     <Link to={`/admin/tasks/${pkg.task_id}`} className="text-[10px] px-2 py-1 rounded" style={{ background: "rgba(34,211,238,0.10)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.18)" }}>{copy.openTask}</Link>
                     {pkg.latest_run?.run_id && (
                       <Link to={`/admin/runs/${pkg.latest_run.run_id}`} className="text-[10px] px-2 py-1 rounded" style={{ background: "rgba(45,212,191,0.10)", color: "var(--mis-success)", border: "1px solid rgba(45,212,191,0.18)" }}>{copy.openRun}</Link>

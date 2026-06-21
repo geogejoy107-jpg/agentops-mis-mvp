@@ -11,6 +11,8 @@ It is the product version of the current development workflow: a commander decom
 - Preview is the default and does not mutate the ledger.
 - Real task creation requires `confirm_create:true` or `--confirm-create`.
 - The planner does not execute Hermes, OpenClaw, Dify, Notion, shell, or browser actions.
+- Work-package dispatch is explicit and targeted by `task_id`; it runs through the Agent Gateway worker loop, not an ad hoc backend shortcut.
+- Mock dispatch is safe for local demos. Hermes/OpenClaw dispatch requires explicit `confirm_run:true` / `--confirm-run`.
 - Stored text is redacted and bounded; raw prompts, credentials, tokens, raw model responses, and private transcripts are not stored.
 - Confirmed planning writes normal MIS task rows plus runtime/audit evidence.
 
@@ -49,6 +51,25 @@ The readback endpoint is read-only. It reconstructs work-package state from
 normal MIS `tasks`, links the latest run, counts evidence rows, and returns a
 recommended next action for each lane.
 
+Dispatch one persisted package through the mock worker:
+
+```bash
+curl -s -X POST http://127.0.0.1:8787/api/commander/work-packages/tsk_cmd_example_strategy/dispatch \
+  -H "Content-Type: application/json" \
+  -d '{"adapter":"mock"}' | jq .
+```
+
+Confirmed live dispatch uses the same endpoint but must be explicit:
+
+```bash
+curl -s -X POST http://127.0.0.1:8787/api/commander/work-packages/tsk_cmd_example_strategy/dispatch \
+  -H "Content-Type: application/json" \
+  -d '{"adapter":"openclaw","confirm_run":true}' | jq .
+```
+
+If `adapter` is `hermes` or `openclaw` and confirmation is omitted, MIS writes a
+confirm-required runtime/audit event and does not create a run.
+
 ## CLI
 
 Preview:
@@ -72,6 +93,23 @@ Read persisted packages:
 
 ```bash
 ./scripts/agentops commander packages --project-id proj_x --limit 25
+```
+
+Dispatch a package:
+
+```bash
+./scripts/agentops commander dispatch-package \
+  --task-id tsk_cmd_example_strategy \
+  --adapter mock
+```
+
+Confirmed live dispatch:
+
+```bash
+./scripts/agentops commander dispatch-package \
+  --task-id tsk_cmd_example_strategy \
+  --adapter openclaw \
+  --confirm-run
 ```
 
 ## Default Lanes
@@ -103,12 +141,14 @@ The panel supports:
 - confirming task creation
 - opening created task detail pages
 - reading persisted work-package status after refresh
+- dispatching a persisted package through mock, Hermes, or OpenClaw worker adapters
 - seeing safety proof for no live execution and token omission
 
 ## Verification
 
 ```bash
 python3 scripts/commander_work_package_plan_smoke.py
+python3 scripts/commander_work_package_dispatch_smoke.py
 python3 -m py_compile server.py scripts/*.py agentops_mis_cli/*.py
 cd ui/start-building-app && npm run build
 ```

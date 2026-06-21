@@ -3217,6 +3217,10 @@ def agent_gateway_pull_tasks(conn, qs, headers, auth_ctx=None) -> tuple[dict, in
     params = list(statuses)
     sql = f"SELECT * FROM tasks WHERE status IN ({placeholders}) AND COALESCE(workspace_id,'local-demo')=?"
     params.append(ident["workspace_id"])
+    requested_task_id = (qs.get("task_id") or [""])[0]
+    if requested_task_id:
+        sql += " AND task_id=?"
+        params.append(requested_task_id)
     if agent_id:
         sql += " AND (owner_agent_id=? OR collaborator_agent_ids LIKE ? OR owner_agent_id IS NULL OR owner_agent_id='')"
         params.extend([agent_id, f"%{agent_id}%"])
@@ -8889,8 +8893,8 @@ def commander_plan_work_packages(conn: sqlite3.Connection, body: dict, headers) 
         "errors": errors,
         "recommended_next_actions": [
             "agentops commander board",
-            "agentops task pull --agent-id agt_builder --status planned --limit 3",
-            "agentops worker start --adapter mock",
+            f"agentops commander dispatch-package --task-id {planned_packages[0]['task_id']} --adapter mock" if planned_packages else "agentops commander packages --limit 5",
+            "agentops commander packages --status ready_for_review --limit 5",
             "agentops commander inbox --bucket ready_for_review --limit 5",
         ],
         "safety": {
@@ -8956,10 +8960,9 @@ def commander_work_package_status(task: dict, latest_run: dict | None, evidence:
 
 
 def commander_work_package_next_action(item: dict) -> str:
-    owner = item.get("owner_agent_id") or "agt_worker_local"
     status = item.get("package_status")
     if status == "planned":
-        return f"agentops-worker --once --adapter mock --agent-id {owner}"
+        return f"agentops commander dispatch-package --task-id {item.get('task_id')} --adapter mock"
     if status == "still_running":
         run_id = item.get("latest_run", {}).get("run_id") if item.get("latest_run") else ""
         return f"agentops run get --run-id {run_id}" if run_id else "agentops commander inbox --bucket still_running"
@@ -9077,6 +9080,145 @@ def commander_work_packages_readback(conn: sqlite3.Connection, qs=None, headers=
         "token_omitted": True,
         "live_execution_performed": False,
     }
+
+
+def commander_dispatch_work_package(conn: sqlite3.Connection, task_id: str, body: dict, headers=None) -> tuple[dict, int]:
+    headers = headers or {}
+    workspace_id = normalize_workspace_id(body.get("workspace_id") or headers.get("X-AgentOps-Workspace-Id") or "local-demo")
+    task = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+    if not task:
+        return {"error": "work_package_not_found", "task_id": task_id}, 404
+    if row_workspace(task) != workspace_id:
+        return workspace_forbidden("task", task_id, workspace_id, row_workspace(task))
+    before_package = commander_work_package_from_task(conn, task)
+    if not (task["description"] or "").startswith("Commander project:"):
+        return {
+            "error": "not_commander_work_package",
+            "message": "Only tasks created by Commander Work Package Planner can be dispatched here.",
+            "task_id": task_id,
+            "token_omitted": True,
+        }, 400
+
+    adapter = coerce_choice(body.get("adapter"), {"mock", "hermes", "openclaw"}, "mock")
+    confirm_run = bool(body.get("confirm_run"))
+    if adapter in {"hermes", "openclaw"} and not confirm_run:
+        runtime_event(
+            conn,
+            "rtc_agent_gateway_local",
+            "commander.work_package_dispatch.confirm_required",
+            "planned",
+            task_id=task_id,
+            agent_id=body.get("worker_agent_id") or task["owner_agent_id"],
+            input_summary=f"Commander work package {task_id} requested {adapter} dispatch without confirm_run.",
+            output_summary=f"{adapter} dispatch requires confirm_run=true before live execution.",
+        )
+        audit(
+            conn,
+            "user",
+            "usr_founder",
+            "commander.work_package_dispatch_confirm_required",
+            "tasks",
+            task_id,
+            dict(task),
+            dict(task),
+            {"adapter": adapter, "confirm_run": False, "raw_prompt_omitted": True},
+        )
+        conn.commit()
+        return {
+            "provider": "agentops-commander",
+            "operation": "work_package_dispatch",
+            "ok": False,
+            "dry_run": True,
+            "adapter": adapter,
+            "task_id": task_id,
+            "work_package": before_package,
+            "requires": {"confirm_run": True},
+            "reason": "confirm_run_required_for_live_adapter",
+            "safety": {
+                "ledger_mutated": True,
+                "run_created": False,
+                "live_execution_performed": False,
+                "token_omitted": True,
+                "raw_prompt_omitted": True,
+            },
+            "token_omitted": True,
+            "live_execution_performed": False,
+        }, 200
+
+    worker_agent_id = body.get("worker_agent_id") or stable_id(
+        "agt_cmd_dispatch",
+        adapter,
+        task_id,
+        dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d%H%M%S%f"),
+    )
+    dispatch = dispatch_local_worker_once(conn, {
+        "adapter": adapter,
+        "confirm_run": confirm_run,
+        "task_id": task_id,
+        "agent_id": worker_agent_id,
+        "title": task["title"],
+        "description": task["description"],
+        "acceptance_criteria": task["acceptance_criteria"],
+        "priority": task["priority"],
+        "risk_level": task["risk_level"],
+        "budget_limit_usd": task["budget_limit_usd"] or 3.0,
+        "requester_id": task["requester_id"] or "usr_founder",
+        "hermes_timeout": body.get("hermes_timeout") or 300,
+    })
+    worker_results = ((dispatch.get("worker_result") or {}).get("results") or [])
+    processed = next((item for item in worker_results if item.get("processed")), worker_results[0] if worker_results else {})
+    run_id = processed.get("run_id")
+    refreshed = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+    after_package = commander_work_package_from_task(conn, refreshed or task)
+    status = "completed" if dispatch.get("ok") and run_id else "failed"
+    runtime_event(
+        conn,
+        "rtc_agent_gateway_local",
+        "commander.work_package_dispatch",
+        status,
+        run_id=run_id,
+        task_id=task_id,
+        agent_id=worker_agent_id,
+        input_summary=f"Commander dispatched work package {task_id} through {adapter}.",
+        output_summary=redact_text(processed.get("output_summary") or dispatch.get("error") or "Commander dispatch completed.", 500),
+        raw_payload_hash=stable_hash({"task_id": task_id, "run_id": run_id, "adapter": adapter, "ok": dispatch.get("ok")}),
+    )
+    audit(
+        conn,
+        "user",
+        "usr_founder",
+        "commander.work_package_dispatch",
+        "tasks",
+        task_id,
+        before_package,
+        after_package,
+        {"adapter": adapter, "worker_agent_id": worker_agent_id, "run_id": run_id, "raw_prompt_omitted": True},
+    )
+    conn.commit()
+    return {
+        "provider": "agentops-commander",
+        "operation": "work_package_dispatch",
+        "ok": bool(dispatch.get("ok") and run_id),
+        "dry_run": False,
+        "adapter": adapter,
+        "task_id": task_id,
+        "agent_id": worker_agent_id,
+        "run_id": run_id,
+        "work_package": after_package,
+        "evidence": after_package.get("evidence_counts") or {},
+        "duration_ms": dispatch.get("duration_ms"),
+        "worker_result": dispatch.get("worker_result"),
+        "error": dispatch.get("error"),
+        "safety": {
+            "ledger_mutated": True,
+            "run_created": bool(run_id),
+            "live_execution_performed": bool(adapter in {"hermes", "openclaw"} and confirm_run and run_id),
+            "token_omitted": True,
+            "raw_prompt_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": bool(adapter in {"hermes", "openclaw"} and confirm_run and run_id),
+    }, 201 if run_id else 500
 
 
 COMMANDER_INBOX_BUCKETS = ["ready_for_review", "still_running", "blocked", "late_or_stale", "needs_memory_review"]
@@ -9740,6 +9882,8 @@ def dispatch_local_worker_once(conn, body: dict) -> dict:
         adapter,
         "--agent-id",
         agent_id,
+        "--task-id",
+        task_id,
         "--base-url",
         os.environ.get("AGENTOPS_BASE_URL", "http://127.0.0.1:8787"),
     ]
@@ -10991,6 +11135,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json({"provider": "agentops-knowledge", "operation": "knowledge_index", **payload, "token_omitted": True}, 200)
             if path == "/api/commander/work-packages/plan":
                 payload, status = commander_plan_work_packages(conn, body, self.headers)
+                conn.commit()
+                return self.send_json(payload, status)
+            if path.startswith("/api/commander/work-packages/") and path.endswith("/dispatch"):
+                task_id = path.split("/")[-2]
+                payload, status = commander_dispatch_work_package(conn, task_id, body, self.headers)
                 conn.commit()
                 return self.send_json(payload, status)
             if path == "/api/agents":

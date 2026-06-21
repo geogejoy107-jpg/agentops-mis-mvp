@@ -318,6 +318,17 @@ def cmd_commander_packages(args, client: AgentOpsClient) -> dict:
     return client.get("/api/commander/work-packages", query=query)
 
 
+def cmd_commander_dispatch_package(args, client: AgentOpsClient) -> dict:
+    payload = {
+        "workspace_id": client.workspace_id,
+        "adapter": args.adapter,
+        "confirm_run": bool(args.confirm_run),
+        "worker_agent_id": args.worker_agent_id,
+        "hermes_timeout": args.hermes_timeout,
+    }
+    return client.post(f"/api/commander/work-packages/{args.task_id}/dispatch", payload)
+
+
 def cmd_review_queue(args, client: AgentOpsClient) -> dict:
     return client.get("/api/agent-gateway/review/queue", query={"limit": args.limit})
 
@@ -936,6 +947,8 @@ def cmd_workflow_run_task(args, client: AgentOpsClient) -> dict:
         client.workspace_id,
         "--agent-id",
         worker_agent_id,
+        "--task-id",
+        task_id,
         "--api-key",
         client.api_key,
         "--adapter",
@@ -1334,7 +1347,7 @@ def build_parser() -> argparse.ArgumentParser:
     demo_readiness = demo_sub.add_parser("readiness", help="Show the canonical v1.5 classroom recording path readiness.")
     demo_readiness.set_defaults(handler="demo_readiness")
 
-    commander = sub.add_parser("commander", help="Read-only commander surface readback commands.")
+    commander = sub.add_parser("commander", help="Commander planning, dispatch and readback commands.")
     commander_sub = commander.add_subparsers(dest="action", required=True)
     commander_board = commander_sub.add_parser("board", help="Read the Commander project board.")
     commander_board.set_defaults(handler="commander_board")
@@ -1358,6 +1371,13 @@ def build_parser() -> argparse.ArgumentParser:
     commander_packages.add_argument("--status", default="all")
     commander_packages.add_argument("--limit", type=int, default=25)
     commander_packages.set_defaults(handler="commander_packages")
+    commander_dispatch = commander_sub.add_parser("dispatch-package", help="Dispatch one persisted commander work package through a worker adapter.")
+    commander_dispatch.add_argument("--task-id", required=True)
+    commander_dispatch.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
+    commander_dispatch.add_argument("--confirm-run", action="store_true", help="Required for Hermes/OpenClaw live execution.")
+    commander_dispatch.add_argument("--worker-agent-id", default=None)
+    commander_dispatch.add_argument("--hermes-timeout", type=int, default=300)
+    commander_dispatch.set_defaults(handler="commander_dispatch_package")
 
     review = sub.add_parser("review", help="Human review queue commands.")
     review_sub = review.add_subparsers(dest="action", required=True)
@@ -1918,6 +1938,7 @@ HANDLERS = {
     "commander_inbox": cmd_commander_inbox,
     "commander_plan": cmd_commander_plan,
     "commander_packages": cmd_commander_packages,
+    "commander_dispatch_package": cmd_commander_dispatch_package,
     "review_queue": cmd_review_queue,
     "security_production_readiness": cmd_security_production_readiness,
     "agent_register": cmd_agent_register,

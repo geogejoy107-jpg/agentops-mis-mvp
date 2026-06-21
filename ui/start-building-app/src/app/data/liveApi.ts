@@ -802,6 +802,32 @@ export interface CommanderWorkPackageReadbackPayload {
   live_execution_performed: boolean;
 }
 
+export interface CommanderWorkPackageDispatchPayload {
+  provider: string;
+  operation: string;
+  ok: boolean;
+  dry_run: boolean;
+  adapter: string;
+  task_id: string;
+  agent_id?: string | null;
+  run_id?: string | null;
+  work_package?: CommanderWorkPackageReadbackPayload["work_packages"][number] | null;
+  evidence?: Record<string, number>;
+  duration_ms?: number | null;
+  error?: string | null;
+  reason?: string | null;
+  requires?: Record<string, boolean>;
+  safety: {
+    ledger_mutated: boolean;
+    run_created: boolean;
+    live_execution_performed: boolean;
+    token_omitted: boolean;
+    raw_prompt_omitted: boolean;
+  };
+  token_omitted: boolean;
+  live_execution_performed: boolean;
+}
+
 export interface ReviewQueueSummary {
   pending_approvals: number;
   memory_candidates: number;
@@ -2248,6 +2274,88 @@ export async function loadCommanderWorkPackages(options: {
       read_only: boolValue(safetyRaw.read_only),
       ledger_mutated: boolValue(safetyRaw.ledger_mutated),
       task_created: boolValue(safetyRaw.task_created),
+      run_created: boolValue(safetyRaw.run_created),
+      live_execution_performed: boolValue(safetyRaw.live_execution_performed),
+      token_omitted: boolValue(safetyRaw.token_omitted),
+      raw_prompt_omitted: boolValue(safetyRaw.raw_prompt_omitted),
+    },
+    token_omitted: boolValue(raw.token_omitted),
+    live_execution_performed: boolValue(raw.live_execution_performed),
+  };
+}
+
+export async function dispatchCommanderWorkPackage(input: {
+  task_id: string;
+  adapter?: WorkerAdapterName;
+  confirm_run?: boolean;
+  worker_agent_id?: string;
+  hermes_timeout?: number;
+}): Promise<CommanderWorkPackageDispatchPayload> {
+  const raw = await apiJson<Record<string, unknown>>(`/commander/work-packages/${encodeURIComponent(input.task_id)}/dispatch`, {
+    method: "POST",
+    body: JSON.stringify({
+      adapter: input.adapter || "mock",
+      confirm_run: Boolean(input.confirm_run),
+      worker_agent_id: input.worker_agent_id,
+      hermes_timeout: input.hermes_timeout,
+    }),
+  });
+  const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
+  const workPackageRaw = typeof raw.work_package === "object" && raw.work_package !== null ? raw.work_package as Record<string, unknown> : null;
+  const latestRun = workPackageRaw && typeof workPackageRaw.latest_run === "object" && workPackageRaw.latest_run !== null
+    ? workPackageRaw.latest_run as Record<string, unknown>
+    : null;
+  const workPackage = workPackageRaw ? {
+    plan_id: String(workPackageRaw.plan_id || ""),
+    project_id: String(workPackageRaw.project_id || ""),
+    lane_id: String(workPackageRaw.lane_id || ""),
+    task_id: String(workPackageRaw.task_id || raw.task_id || ""),
+    work_package_id: String(workPackageRaw.work_package_id || workPackageRaw.task_id || raw.task_id || ""),
+    title: String(workPackageRaw.title || "Untitled work package"),
+    description: String(workPackageRaw.description || ""),
+    owner_agent_id: String(workPackageRaw.owner_agent_id || ""),
+    collaborator_agent_ids: asArray<unknown>(workPackageRaw.collaborator_agent_ids).map(String),
+    status: String(workPackageRaw.status || "unknown"),
+    package_status: String(workPackageRaw.package_status || workPackageRaw.status || "unknown"),
+    priority: String(workPackageRaw.priority || "medium"),
+    risk_level: String(workPackageRaw.risk_level || "medium"),
+    acceptance_criteria: String(workPackageRaw.acceptance_criteria || ""),
+    dependencies: asArray<unknown>(workPackageRaw.dependencies).map(String),
+    verification_commands: asArray<unknown>(workPackageRaw.verification_commands).map(String),
+    scope: String(workPackageRaw.scope || ""),
+    avoid_scope: String(workPackageRaw.avoid_scope || ""),
+    latest_run: latestRun ? {
+      run_id: latestRun.run_id ? String(latestRun.run_id) : undefined,
+      status: latestRun.status ? String(latestRun.status) : undefined,
+      agent_id: latestRun.agent_id ? String(latestRun.agent_id) : undefined,
+      runtime_type: latestRun.runtime_type ? String(latestRun.runtime_type) : undefined,
+      created_at: latestRun.created_at ? String(latestRun.created_at) : undefined,
+      ended_at: latestRun.ended_at ? String(latestRun.ended_at) : null,
+      error_type: latestRun.error_type ? String(latestRun.error_type) : null,
+      error_message: latestRun.error_message ? String(latestRun.error_message) : null,
+    } : null,
+    evidence_counts: numberRecord(workPackageRaw.evidence_counts),
+    recommended_action: workPackageRaw.recommended_action ? String(workPackageRaw.recommended_action) : undefined,
+    created_at: workPackageRaw.created_at ? String(workPackageRaw.created_at) : undefined,
+    updated_at: workPackageRaw.updated_at ? String(workPackageRaw.updated_at) : undefined,
+  } : null;
+  return {
+    provider: String(raw.provider || "agentops-commander"),
+    operation: String(raw.operation || "work_package_dispatch"),
+    ok: boolValue(raw.ok),
+    dry_run: boolValue(raw.dry_run),
+    adapter: String(raw.adapter || input.adapter || "mock"),
+    task_id: String(raw.task_id || input.task_id),
+    agent_id: raw.agent_id ? String(raw.agent_id) : null,
+    run_id: raw.run_id ? String(raw.run_id) : null,
+    work_package: workPackage,
+    evidence: numberRecord(raw.evidence),
+    duration_ms: raw.duration_ms === null || raw.duration_ms === undefined ? null : numberValue(raw.duration_ms, 0),
+    error: raw.error ? String(raw.error) : null,
+    reason: raw.reason ? String(raw.reason) : null,
+    requires: typeof raw.requires === "object" && raw.requires !== null ? raw.requires as Record<string, boolean> : undefined,
+    safety: {
+      ledger_mutated: boolValue(safetyRaw.ledger_mutated),
       run_created: boolValue(safetyRaw.run_created),
       live_execution_performed: boolValue(safetyRaw.live_execution_performed),
       token_omitted: boolValue(safetyRaw.token_omitted),
