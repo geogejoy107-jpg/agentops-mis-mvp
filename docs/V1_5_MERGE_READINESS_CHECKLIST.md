@@ -53,6 +53,23 @@ run without verified plan                   rejected for governed workflow
 execution touches undeclared file/tool      readiness gate fails
 ```
 
+## 2.5 Approval Wall exact action resume
+
+- [x] Prepared actions persist normalized arguments, policy version, checkpoint and idempotency key.
+- [x] Prepared actions store and verify an immutable `action_hash`.
+- [x] Approval authorizes a prepared action without performing the side effect.
+- [x] Resume requires approved approval plus matching hash.
+- [x] Resume writes provider side-effect evidence and `consumed_at`.
+- [x] Replay after `consumed_at` is rejected.
+- [x] CLI supports create/get/resume.
+- [ ] All high-risk external connector/runtime tool paths use prepared actions before shared/commercial deployment.
+
+Required check:
+
+```bash
+python3 scripts/prepared_action_approval_wall_smoke.py --base-url http://127.0.0.1:8787
+```
+
 ## 3. Knowledge safety and quality
 
 - [ ] Knowledge documents carry workspace/project/access metadata where required.

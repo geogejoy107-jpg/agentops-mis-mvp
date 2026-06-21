@@ -132,6 +132,9 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
         "loop_runs",
         "loop_verified_plan_evidence_manifests",
         "loop_blocked_plan_evidence_manifests",
+        "loop_memory_candidates",
+        "loop_approved_memories",
+        "loop_pending_approvals",
         "pending_approvals",
         "memory_candidates",
         "audit_logs",
@@ -153,6 +156,16 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
     loop_readback = payload.get("loop_readback") or {}
     require(loop_readback.get("operation") == "hermes_openclaw_loop_readback", f"{label} loop readback missing: {loop_readback}", failures)
     require(loop_readback.get("token_omitted") is True, f"{label} loop readback token omission missing", failures)
+    loop_runs = int(summary.get("loop_runs") or 0)
+    loop_verified = int(summary.get("loop_verified_plan_evidence_manifests") or 0)
+    loop_blocked = int(summary.get("loop_blocked_plan_evidence_manifests") or 0)
+    if payload.get("loop_id") and loop_runs and loop_verified >= loop_runs and loop_blocked == 0:
+        step_status = {step.get("id"): step.get("status") for step in steps}
+        require(payload.get("status") != "blocked", f"{label} scoped verified loop should not be globally blocked: {payload.get('status')} {summary}", failures)
+        for step_id in ["plan", "retrieve", "compare", "execute", "verify"]:
+            require(step_status.get(step_id) == "pass", f"{label} scoped loop step {step_id} should pass: {step_status}", failures)
+        if step_status.get("record") == "pass":
+            require(int(summary.get("loop_approved_memories") or 0) > 0, f"{label} record pass requires approved loop memory: {summary}", failures)
 
 
 def main() -> int:

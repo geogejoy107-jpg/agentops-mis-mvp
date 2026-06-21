@@ -163,6 +163,21 @@ workspace, task, and agent and passes verification. Pass `agent_plan_id` in the
 run-start request to make the binding explicit; the run stores `agent_plan_id`
 and `plan_hash` for later plan-evidence manifest checks.
 
+`POST /api/agent-gateway/prepared-actions` creates the durable Approval Wall
+pause/resume primitive. The request binds a run, optional tool call, action
+type, normalized arguments, target resource, policy version, checkpoint, and
+idempotency key into an immutable `action_hash`, then creates a linked pending
+approval. It updates the run/task/tool call to `waiting_approval` and omits raw
+prompts, raw responses, credentials, and full external payloads.
+
+`GET /api/agent-gateway/prepared-actions/:id` verifies that the current stored
+prepared action still hashes to the approved `action_hash`. `POST
+/api/agent-gateway/prepared-actions/:id/resume` resumes only after the linked
+approval is approved, the hash still matches, and `consumed_at` is empty. Resume
+records a provider side-effect id, marks the action `consumed`, updates the
+linked tool-call evidence, writes runtime/audit evidence, and rejects replay
+with `409 prepared_action_already_consumed`.
+
 `GET /api/operator/action-plan` includes a read-only `execution_evidence`
 source. It audits recent completed or failed runs for missing plan bindings,
 missing/unverified plan-evidence manifests, and missing tool, evaluation,
@@ -184,6 +199,14 @@ into seven machine-checkable gates using the existing knowledge index, Agent
 Plans, intake checklist, plan-evidence manifests, execution-evidence gaps,
 dispatch proofs, human review, memory review, and audit ledger. Optional
 `loop_id=<id>` also embeds the Hermes/OpenClaw `loop://...` readback source.
+When a `loop_id` has matching loop evidence, the PLAN/RETRIEVE/COMPARE/EXECUTE
+and VERIFY gates are scoped to that loop's Agent Plans and manifests so legacy
+global gaps remain background context instead of overriding the loop result.
+The RECORD gate is also scoped: it passes only after the loop has audit/readback
+evidence, no loop-local pending approval or memory candidate, and at least one
+approved loop memory record.
+This lets the operator distinguish a globally busy review queue from a specific
+loop whose output has already been reviewed into durable memory.
 It never creates plans, runs, approvals, memories, or audit rows; it only
 returns recommended explicit commands for the gates that are blocked or need
 attention.

@@ -208,29 +208,36 @@ Current checks verify that lists such as referenced specs, memories and bases ar
 
 ## B0-4: Approval is still not durable action pause/resume
 
-**Severity: Blocker for real side effects**
+**Severity: Primitive implemented for controlled dogfood; integration across all live tools remains required**
 
-Generic approval currently changes ledger state and may call `complete_run()`. It does not universally persist and later execute an exact prepared action.
+Generic legacy approval can still change ledger state for older flows, but Agent Gateway now has a durable `prepared_actions` primitive for exact action governance:
 
-Missing primitives:
+- `POST /api/agent-gateway/prepared-actions`
+- `GET /api/agent-gateway/prepared-actions/:id`
+- `POST /api/agent-gateway/prepared-actions/:id/resume`
+- `agentops approval prepared-action create|get|resume`
 
-```text
-prepared_action
-normalized arguments
-action hash
-policy version
-checkpoint
-resume token
-idempotency key
-consumed_at
-provider side-effect ID
-```
+The prepared action stores normalized arguments, policy version, checkpoint,
+idempotency key, immutable `action_hash`, `consumed_at`, and provider
+side-effect id. Approval authorizes the action but does not execute it. Resume
+requires an approved linked approval, matching hash, and empty `consumed_at`,
+then records the provider side-effect evidence exactly once.
 
 ### Required fix or restriction
 
-Preferred: implement durable prepared-action resume.
+- [x] implement durable prepared-action resume primitive;
+- [x] hash the exact action payload;
+- [x] preserve checkpoint/idempotency/consumed/provider-side-effect fields;
+- [x] reject replay after `consumed_at`;
+- [x] expose API and CLI;
+- [x] add deterministic smoke coverage;
+- [ ] migrate every high-risk external connector/runtime tool path to require prepared actions before shared/commercial deployment.
 
-Minimum v1.5 alternative: explicitly call the existing mechanism ledger/delivery approval, prohibit generic external side effects and avoid claims that a tool was executed after approval.
+Verification:
+
+```bash
+python3 scripts/prepared_action_approval_wall_smoke.py --base-url http://127.0.0.1:8787
+```
 
 ## B0-5: Runtime internal tool behavior is opaque to MIS
 

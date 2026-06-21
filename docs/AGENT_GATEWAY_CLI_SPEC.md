@@ -340,8 +340,44 @@ This is a read-only operator audit for
 `READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD`. It
 combines the knowledge index, Agent Plans, task intake, execution-evidence
 gaps, dispatch evidence, review/memory state, audit rows, and optional
-Hermes/OpenClaw `loop://...` readback. It recommends explicit next commands but
-does not create runs, approvals, memories, audit rows, or live adapter work.
+Hermes/OpenClaw `loop://...` readback. When `--loop-id` matches loop evidence,
+the plan/retrieve/compare/execute/verify gates are scoped to that loop's own
+Agent Plans and manifests, while global legacy gaps remain background context.
+The record gate is scoped too: it passes only when the loop has audit/readback
+evidence, no loop-local pending approval or memory candidate, and at least one
+approved loop memory record.
+It recommends explicit next commands but does not create runs, approvals,
+memories, audit rows, or live adapter work.
+
+### `agentops approval prepared-action`
+
+Creates and resumes the durable Approval Wall primitive for exact tool/action
+governance:
+
+```bash
+agentops approval prepared-action create \
+  --run-id run_123 \
+  --tool-call-id tc_123 \
+  --action-type external.publish \
+  --args-json '{"target":"mock://customer/delivery","raw_payload_stored":false}' \
+  --target-resource mock://customer/delivery \
+  --risk-level critical \
+  --checkpoint-json '{"checkpoint":"before_external_publish"}' \
+  --idempotency-key publish-run-123
+
+agentops approval inspect --approval-id ap_123
+agentops approval approve --approval-id ap_123
+agentops approval prepared-action resume \
+  --action-id pa_123 \
+  --provider-side-effect-id provider-side-effect-123
+```
+
+The create command stores normalized arguments, a checkpoint, policy version,
+idempotency key and `action_hash`, then creates a linked pending approval.
+Approval only authorizes the prepared action; it does not perform the side
+effect. Resume checks that approval is approved, the hash still matches and the
+action has not been consumed, then records provider side-effect evidence exactly
+once. Replay returns `prepared_action_already_consumed`.
 
 ### `agentops task claim`
 
@@ -498,11 +534,16 @@ Creates a reviewable memory candidate.
 ```bash
 agentops memory propose \
   --task-id tsk_eval_retrieval \
-  --type evaluation_finding \
+  --type decision \
   --text "OpenAI File Search needs source metadata for reliable citations"
 ```
 
-Maps to `memories`.
+Maps to `memories`. Supported memory types are `policy`, `sop`, `decision`,
+`commitment`, `risk`, `failure_case`, `project_context`,
+`customer_preference`, `agent_lesson`, `artifact_summary`, and `loop_record`.
+Use `loop_record` for approved Hermes/OpenClaw/Codex loop outcomes such as
+`source_ref=loop://...`; it should still pass through candidate review before
+the loop-audit `RECORD` gate closes.
 
 ### `agentops memory list`
 

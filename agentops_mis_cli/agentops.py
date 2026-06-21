@@ -805,14 +805,50 @@ def cmd_approval_inspect(args, client: AgentOpsClient) -> dict:
     return client.get(f"/api/agent-gateway/approvals/{args.approval_id}")
 
 
+def cmd_approval_prepared_action_create(args, client: AgentOpsClient) -> dict:
+    payload = {
+        "workspace_id": client.workspace_id,
+        "run_id": args.run_id,
+        "tool_call_id": args.tool_call_id,
+        "requested_by_agent_id": args.agent_id or client.agent_id,
+        "action_type": args.action_type,
+        "normalized_args_json": parse_json_value(args.args_json, {}),
+        "target_resource": args.target_resource,
+        "risk_level": args.risk_level,
+        "policy_version": args.policy_version,
+        "checkpoint": parse_json_value(args.checkpoint_json, {}),
+        "idempotency_key": args.idempotency_key,
+        "reason": args.reason,
+        "approver_user_id": args.approver,
+    }
+    return client.post("/api/agent-gateway/prepared-actions", payload)
+
+
+def cmd_approval_prepared_action_get(args, client: AgentOpsClient) -> dict:
+    return client.get(f"/api/agent-gateway/prepared-actions/{args.action_id}")
+
+
+def cmd_approval_prepared_action_resume(args, client: AgentOpsClient) -> dict:
+    payload = {
+        "workspace_id": client.workspace_id,
+        "agent_id": args.agent_id or client.agent_id,
+        "provider_side_effect_id": args.provider_side_effect_id,
+        "result_summary": args.result_summary,
+    }
+    return client.post(f"/api/agent-gateway/prepared-actions/{args.action_id}/resume", payload)
+
+
 def cmd_approval_decide(args, client: AgentOpsClient) -> dict:
     action = "approve" if args.handler == "approval_approve" else "reject"
     response = client.post(f"/api/approvals/{args.approval_id}/{action}", {})
     approval = response.get("approval") if isinstance(response.get("approval"), dict) else response
+    prepared_action = response.get("prepared_action") if isinstance(response.get("prepared_action"), dict) else None
     return {
         "provider": "agentops-approval",
         "operation": f"approval_{action}",
         "approval": approval,
+        "prepared_action": prepared_action,
+        "resume_required": bool(response.get("resume_required")) if isinstance(response, dict) else False,
         "approval_id": approval.get("approval_id") or args.approval_id,
         "decision": approval.get("decision"),
         "task_id": approval.get("task_id"),
@@ -1909,6 +1945,31 @@ def build_parser() -> argparse.ArgumentParser:
     approval_inspect = approval_sub.add_parser("inspect", help="Inspect approval evidence and risk before deciding.")
     approval_inspect.add_argument("--approval-id", required=True)
     approval_inspect.set_defaults(handler="approval_inspect")
+    approval_prepared = approval_sub.add_parser("prepared-action", help="Create, inspect, and resume exact approval-gated prepared actions.")
+    approval_prepared_sub = approval_prepared.add_subparsers(dest="prepared_action_action", required=True)
+    prepared_create = approval_prepared_sub.add_parser("create", help="Create a prepared action and linked approval gate.")
+    prepared_create.add_argument("--run-id", required=True)
+    prepared_create.add_argument("--tool-call-id", default=None)
+    prepared_create.add_argument("--agent-id", default=None)
+    prepared_create.add_argument("--action-type", required=True)
+    prepared_create.add_argument("--args-json", default="{}")
+    prepared_create.add_argument("--target-resource", default=None)
+    prepared_create.add_argument("--risk-level", choices=["low", "medium", "high", "critical"], default="high")
+    prepared_create.add_argument("--policy-version", default="approval-wall-v1")
+    prepared_create.add_argument("--checkpoint-json", default="{}")
+    prepared_create.add_argument("--idempotency-key", default=None)
+    prepared_create.add_argument("--approver", default="usr_founder")
+    prepared_create.add_argument("--reason", default="Prepared action requires human approval before exact resume.")
+    prepared_create.set_defaults(handler="approval_prepared_action_create")
+    prepared_get = approval_prepared_sub.add_parser("get", help="Inspect one prepared action and verify its action hash.")
+    prepared_get.add_argument("--action-id", required=True)
+    prepared_get.set_defaults(handler="approval_prepared_action_get")
+    prepared_resume = approval_prepared_sub.add_parser("resume", help="Resume an approved prepared action exactly once.")
+    prepared_resume.add_argument("--action-id", required=True)
+    prepared_resume.add_argument("--agent-id", default=None)
+    prepared_resume.add_argument("--provider-side-effect-id", default=None)
+    prepared_resume.add_argument("--result-summary", default=None)
+    prepared_resume.set_defaults(handler="approval_prepared_action_resume")
     approval_approve = approval_sub.add_parser("approve", help="Approve an approval gate and sync linked ledger rows.")
     approval_approve.add_argument("--approval-id", required=True)
     approval_approve.set_defaults(handler="approval_approve")
@@ -2350,6 +2411,9 @@ HANDLERS = {
     "plan_evidence_verify": cmd_plan_evidence_verify,
     "approval_list": cmd_approval_list,
     "approval_inspect": cmd_approval_inspect,
+    "approval_prepared_action_create": cmd_approval_prepared_action_create,
+    "approval_prepared_action_get": cmd_approval_prepared_action_get,
+    "approval_prepared_action_resume": cmd_approval_prepared_action_resume,
     "approval_approve": cmd_approval_decide,
     "approval_reject": cmd_approval_decide,
     "approval_request": cmd_approval_request,

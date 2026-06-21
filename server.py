@@ -64,6 +64,19 @@ VALID_PRIORITIES = {"low", "medium", "high", "critical"}
 VALID_EXECUTION_EVIDENCE_GAP_DECISIONS = {"accepted_remediation", "waived", "reopen"}
 VALID_TOOL_CATEGORIES = {"browser", "github", "file", "shell", "email", "notion", "discord", "database", "mcp", "custom"}
 VALID_RUNTIME_TYPES = {"mock", "claude_code", "codex", "openhands", "crewai", "langgraph", "openclaw", "hermes"}
+VALID_MEMORY_TYPES = {
+    "policy",
+    "sop",
+    "decision",
+    "commitment",
+    "risk",
+    "failure_case",
+    "project_context",
+    "customer_preference",
+    "agent_lesson",
+    "artifact_summary",
+    "loop_record",
+}
 
 
 def now_iso() -> str:
@@ -372,10 +385,40 @@ CREATE TABLE IF NOT EXISTS approvals (
     FOREIGN KEY(approver_user_id) REFERENCES users(user_id)
 );
 
+CREATE TABLE IF NOT EXISTS prepared_actions (
+    action_id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL DEFAULT 'local-demo',
+    task_id TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    tool_call_id TEXT,
+    approval_id TEXT NOT NULL,
+    requested_by_agent_id TEXT NOT NULL,
+    action_type TEXT NOT NULL,
+    normalized_args_json TEXT NOT NULL DEFAULT '{}',
+    target_resource TEXT,
+    risk_level TEXT NOT NULL CHECK(risk_level IN ('low','medium','high','critical')),
+    policy_version TEXT NOT NULL DEFAULT 'approval-wall-v1',
+    checkpoint_json TEXT NOT NULL DEFAULT '{}',
+    action_hash TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('prepared','approved','rejected','consumed','expired')),
+    provider_side_effect_id TEXT,
+    result_summary TEXT,
+    created_at TEXT NOT NULL,
+    approved_at TEXT,
+    consumed_at TEXT,
+    expires_at TEXT,
+    FOREIGN KEY(task_id) REFERENCES tasks(task_id),
+    FOREIGN KEY(run_id) REFERENCES runs(run_id),
+    FOREIGN KEY(tool_call_id) REFERENCES tool_calls(tool_call_id),
+    FOREIGN KEY(approval_id) REFERENCES approvals(approval_id),
+    FOREIGN KEY(requested_by_agent_id) REFERENCES agents(agent_id)
+);
+
 CREATE TABLE IF NOT EXISTS memories (
     memory_id TEXT PRIMARY KEY,
     scope TEXT NOT NULL CHECK(scope IN ('task','project','org')),
-    memory_type TEXT NOT NULL CHECK(memory_type IN ('policy','sop','decision','commitment','risk','failure_case','project_context','customer_preference','agent_lesson','artifact_summary')),
+    memory_type TEXT NOT NULL CHECK(memory_type IN ('policy','sop','decision','commitment','risk','failure_case','project_context','customer_preference','agent_lesson','artifact_summary','loop_record')),
     canonical_text TEXT NOT NULL,
     source_type TEXT NOT NULL CHECK(source_type IN ('chat','email','meeting','github','notion','run_log','manual')),
     source_ref TEXT,
@@ -837,6 +880,9 @@ CREATE INDEX IF NOT EXISTS idx_runs_created ON runs(created_at);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_run ON tool_calls(run_id);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_risk ON tool_calls(risk_level);
 CREATE INDEX IF NOT EXISTS idx_approvals_decision ON approvals(decision);
+CREATE INDEX IF NOT EXISTS idx_prepared_actions_approval ON prepared_actions(approval_id);
+CREATE INDEX IF NOT EXISTS idx_prepared_actions_run ON prepared_actions(run_id);
+CREATE INDEX IF NOT EXISTS idx_prepared_actions_hash ON prepared_actions(action_hash);
 CREATE INDEX IF NOT EXISTS idx_memories_status ON memories(review_status);
 CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope);
 CREATE INDEX IF NOT EXISTS idx_eval_case_status ON evaluation_case_candidates(review_status);
@@ -901,7 +947,69 @@ def ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str):
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
 
 
+def memories_table_sql(table_name: str = "memories") -> str:
+    return f"""
+        CREATE TABLE IF NOT EXISTS {table_name} (
+            memory_id TEXT PRIMARY KEY,
+            scope TEXT NOT NULL CHECK(scope IN ('task','project','org')),
+            memory_type TEXT NOT NULL CHECK(memory_type IN ('policy','sop','decision','commitment','risk','failure_case','project_context','customer_preference','agent_lesson','artifact_summary','loop_record')),
+            canonical_text TEXT NOT NULL,
+            source_type TEXT NOT NULL CHECK(source_type IN ('chat','email','meeting','github','notion','run_log','manual')),
+            source_ref TEXT,
+            project_id TEXT,
+            task_id TEXT,
+            agent_id TEXT,
+            confidence REAL NOT NULL DEFAULT 0.5,
+            review_status TEXT NOT NULL CHECK(review_status IN ('candidate','approved','rejected','stale','superseded')),
+            owner_user_id TEXT,
+            ttl_review_due_at TEXT,
+            supersedes_memory_id TEXT,
+            access_tags TEXT NOT NULL DEFAULT '[]',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(task_id) REFERENCES tasks(task_id),
+            FOREIGN KEY(agent_id) REFERENCES agents(agent_id),
+            FOREIGN KEY(owner_user_id) REFERENCES users(user_id),
+            FOREIGN KEY(supersedes_memory_id) REFERENCES memories(memory_id)
+        )
+    """
+
+
+def ensure_memory_type_schema(conn: sqlite3.Connection):
+    row = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='memories'").fetchone()
+    existing_sql = str(row["sql"] or "") if row else ""
+    if not existing_sql or "'loop_record'" in existing_sql:
+        return
+    columns = [
+        "memory_id",
+        "scope",
+        "memory_type",
+        "canonical_text",
+        "source_type",
+        "source_ref",
+        "project_id",
+        "task_id",
+        "agent_id",
+        "confidence",
+        "review_status",
+        "owner_user_id",
+        "ttl_review_due_at",
+        "supersedes_memory_id",
+        "access_tags",
+        "created_at",
+        "updated_at",
+    ]
+    column_sql = ", ".join(columns)
+    backup_table = "memories_before_loop_record"
+    conn.execute("DROP TABLE IF EXISTS memories_before_loop_record")
+    conn.execute(f"ALTER TABLE memories RENAME TO {backup_table}")
+    conn.execute(memories_table_sql("memories"))
+    conn.execute(f"INSERT INTO memories({column_sql}) SELECT {column_sql} FROM {backup_table}")
+    conn.execute(f"DROP TABLE {backup_table}")
+
+
 def ensure_schema_migrations(conn: sqlite3.Connection):
+    ensure_memory_type_schema(conn)
     ensure_column(conn, "tasks", "workspace_id", "workspace_id TEXT NOT NULL DEFAULT 'local-demo'")
     ensure_column(conn, "runs", "workspace_id", "workspace_id TEXT NOT NULL DEFAULT 'local-demo'")
     ensure_column(conn, "runs", "agent_plan_id", "agent_plan_id TEXT")
@@ -921,6 +1029,37 @@ def ensure_schema_migrations(conn: sqlite3.Connection):
     ensure_column(conn, "agent_plans", "approved_at", "approved_at TEXT")
     ensure_column(conn, "plan_evidence_manifests", "plan_hash", "plan_hash TEXT")
     ensure_column(conn, "plan_evidence_manifests", "verification_result_hash", "verification_result_hash TEXT")
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS prepared_actions (
+            action_id TEXT PRIMARY KEY,
+            workspace_id TEXT NOT NULL DEFAULT 'local-demo',
+            task_id TEXT NOT NULL,
+            run_id TEXT NOT NULL,
+            tool_call_id TEXT,
+            approval_id TEXT NOT NULL,
+            requested_by_agent_id TEXT NOT NULL,
+            action_type TEXT NOT NULL,
+            normalized_args_json TEXT NOT NULL DEFAULT '{}',
+            target_resource TEXT,
+            risk_level TEXT NOT NULL CHECK(risk_level IN ('low','medium','high','critical')),
+            policy_version TEXT NOT NULL DEFAULT 'approval-wall-v1',
+            checkpoint_json TEXT NOT NULL DEFAULT '{}',
+            action_hash TEXT NOT NULL,
+            idempotency_key TEXT NOT NULL,
+            status TEXT NOT NULL CHECK(status IN ('prepared','approved','rejected','consumed','expired')),
+            provider_side_effect_id TEXT,
+            result_summary TEXT,
+            created_at TEXT NOT NULL,
+            approved_at TEXT,
+            consumed_at TEXT,
+            expires_at TEXT,
+            FOREIGN KEY(task_id) REFERENCES tasks(task_id),
+            FOREIGN KEY(run_id) REFERENCES runs(run_id),
+            FOREIGN KEY(tool_call_id) REFERENCES tool_calls(tool_call_id),
+            FOREIGN KEY(approval_id) REFERENCES approvals(approval_id),
+            FOREIGN KEY(requested_by_agent_id) REFERENCES agents(agent_id)
+        )"""
+    )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_workspace ON tasks(workspace_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_workspace ON runs(workspace_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_agent_plan ON runs(agent_plan_id)")
@@ -928,6 +1067,11 @@ def ensure_schema_migrations(conn: sqlite3.Connection):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_plans_workspace ON agent_plans(workspace_id, created_at)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_plans_hash ON agent_plans(plan_hash)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_eval_case_runs_review ON evaluation_case_runs(review_status, pass_fail)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_prepared_actions_approval ON prepared_actions(approval_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_prepared_actions_run ON prepared_actions(run_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_prepared_actions_hash ON prepared_actions(action_hash)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_status ON memories(review_status)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope)")
     ensure_knowledge_fts(conn)
 
 
@@ -1238,7 +1382,7 @@ def default_template_packages() -> list[dict]:
             "swappable_bases_json": json.dumps(swappable, ensure_ascii=False),
             "agent_roles_json": json.dumps(roles, ensure_ascii=False),
             "task_schema_json": json.dumps({"fields": ["goal", "owner_agent", "risk_level", "acceptance_criteria", "due_date", "artifact_ref"]}, ensure_ascii=False),
-            "memory_schema_json": json.dumps({"types": ["decision", "sop", "failure_case", "risk", "artifact_summary"], "required": ["source_ref", "confidence", "review_status", "ttl_review_due_at"]}, ensure_ascii=False),
+            "memory_schema_json": json.dumps({"types": ["decision", "sop", "failure_case", "risk", "artifact_summary", "loop_record"], "required": ["source_ref", "confidence", "review_status", "ttl_review_due_at"]}, ensure_ascii=False),
             "quality_gates_json": json.dumps(quality, ensure_ascii=False),
             "approval_policy_json": json.dumps(approvals, ensure_ascii=False),
             "created_at": now,
@@ -3810,6 +3954,10 @@ def agent_gateway_get_approval(conn: sqlite3.Connection, approval_id: str, heade
         if not visible:
             return {"error": "forbidden", "message": "Agent token cannot inspect this approval.", "token_omitted": True}, 403
     tool_call = conn.execute("SELECT * FROM tool_calls WHERE tool_call_id=?", (approval.get("tool_call_id") or "",)).fetchone() if approval.get("tool_call_id") else None
+    prepared_action = get_prepared_action_for_approval(conn, approval_id)
+    prepared_action_hash_match = None
+    if prepared_action:
+        prepared_action_hash_match = prepared_action_hash(dict(prepared_action)) == prepared_action["action_hash"]
     run_id = approval.get("run_id")
     task_id = approval.get("task_id")
     evidence = {
@@ -3843,6 +3991,10 @@ def agent_gateway_get_approval(conn: sqlite3.Connection, approval_id: str, heade
         risks.append({"id": "plan_evidence_gate", "status": "fail", "summary": delivery_gate.get("message") or "Verified plan evidence is missing."})
     if approval.get("decision") != "pending":
         risks.append({"id": "already_decided", "status": "info", "summary": f"Approval is already {approval.get('decision')}."})
+    if prepared_action and not prepared_action_hash_match:
+        risks.append({"id": "prepared_action_hash_mismatch", "status": "fail", "summary": "Prepared action changed after approval request; require a new prepared action and approval."})
+    if prepared_action and prepared_action["status"] == "consumed":
+        risks.append({"id": "prepared_action_consumed", "status": "info", "summary": "Prepared action has already been resumed exactly once."})
     status = "blocked" if any(item["status"] == "fail" for item in risks) else "attention" if risks else "ready"
     return {
         "provider": "agentops-approval",
@@ -3850,6 +4002,14 @@ def agent_gateway_get_approval(conn: sqlite3.Connection, approval_id: str, heade
         "status": status,
         "approval": approval,
         "approval_kind": approval_kind,
+        "prepared_action": prepared_action_public(prepared_action),
+        "prepared_action_gate": {
+            "required_for_exact_resume": bool(prepared_action),
+            "action_hash": prepared_action["action_hash"] if prepared_action else None,
+            "hash_match": prepared_action_hash_match,
+            "status": prepared_action["status"] if prepared_action else None,
+            "consumed_at": prepared_action["consumed_at"] if prepared_action else None,
+        },
         "task": task,
         "run": run,
         "tool_call": dict(tool_call) if tool_call else None,
@@ -3857,9 +4017,17 @@ def agent_gateway_get_approval(conn: sqlite3.Connection, approval_id: str, heade
         "delivery_approval_gate": delivery_gate,
         "risks": risks,
         "recommended_actions": [
-            f"agentops approval approve --approval-id {approval_id}",
-            f"agentops approval reject --approval-id {approval_id}",
-        ] if approval.get("decision") == "pending" else ["agentops approval list --decision pending"],
+            action for action in (
+                f"agentops approval prepared-action get --action-id {prepared_action['action_id']}" if prepared_action else f"agentops approval inspect --approval-id {approval_id}",
+                f"agentops approval approve --approval-id {approval_id}",
+                f"agentops approval reject --approval-id {approval_id}",
+                f"agentops approval prepared-action resume --action-id {prepared_action['action_id']} --provider-side-effect-id <id>" if prepared_action else "",
+            ) if action
+        ] if approval.get("decision") == "pending" else (
+            [f"agentops approval prepared-action resume --action-id {prepared_action['action_id']} --provider-side-effect-id <id>"]
+            if prepared_action and approval.get("decision") == "approved" and not prepared_action["consumed_at"]
+            else ["agentops approval list --decision pending"]
+        ),
         "safety": {
             "read_only": True,
             "ledger_mutated": False,
@@ -3904,7 +4072,7 @@ def agent_gateway_list_memories(conn: sqlite3.Connection, qs: dict, headers, aut
         params.extend(scopes)
     types = qs.get("type") or qs.get("memory_type") or []
     if types:
-        allowed = {"policy", "sop", "decision", "commitment", "risk", "failure_case", "project_context", "customer_preference", "agent_lesson", "artifact_summary"}
+        allowed = VALID_MEMORY_TYPES
         cleaned_types = [coerce_choice(memory_type, allowed, "artifact_summary") for memory_type in types]
         where.append("m.memory_type IN (" + ",".join("?" for _ in cleaned_types) + ")")
         params.extend(cleaned_types)
@@ -5849,6 +6017,272 @@ def agent_gateway_record_tool_call(conn, body) -> tuple[dict, int]:
     return {"tool_call": row, "outcome": outcome}, 201 if outcome == "created" else 200
 
 
+def prepared_action_hash_payload(row: dict) -> dict:
+    return {
+        "workspace_id": normalize_workspace_id(row.get("workspace_id")),
+        "task_id": row.get("task_id"),
+        "run_id": row.get("run_id"),
+        "tool_call_id": row.get("tool_call_id"),
+        "requested_by_agent_id": row.get("requested_by_agent_id"),
+        "action_type": row.get("action_type"),
+        "normalized_args_json": row.get("normalized_args_json") or "{}",
+        "target_resource": row.get("target_resource"),
+        "risk_level": row.get("risk_level"),
+        "policy_version": row.get("policy_version") or "approval-wall-v1",
+        "checkpoint_json": row.get("checkpoint_json") or "{}",
+        "idempotency_key": row.get("idempotency_key"),
+    }
+
+
+def prepared_action_hash(row: dict) -> str:
+    return stable_hash(prepared_action_hash_payload(row))
+
+
+def prepared_action_public(row) -> dict | None:
+    if not row:
+        return None
+    data = dict(row)
+    try:
+        normalized_args = json.loads(data.get("normalized_args_json") or "{}")
+    except Exception:
+        normalized_args = data.get("normalized_args_json")
+    try:
+        checkpoint = json.loads(data.get("checkpoint_json") or "{}")
+    except Exception:
+        checkpoint = data.get("checkpoint_json")
+    data["normalized_args"] = safe_json_metadata(normalized_args)
+    data["checkpoint"] = safe_json_metadata(checkpoint)
+    data["raw_prompt_omitted"] = True
+    data["raw_response_omitted"] = True
+    data["token_omitted"] = True
+    return data
+
+
+def get_prepared_action_for_approval(conn: sqlite3.Connection, approval_id: str):
+    return conn.execute("SELECT * FROM prepared_actions WHERE approval_id=? ORDER BY created_at DESC LIMIT 1", (approval_id,)).fetchone()
+
+
+def agent_gateway_get_prepared_action(conn: sqlite3.Connection, action_id: str, headers, auth_ctx=None) -> tuple[dict, int]:
+    ident = agent_gateway_identity(headers, auth_ctx=auth_ctx)
+    row = conn.execute("SELECT * FROM prepared_actions WHERE action_id=?", (action_id,)).fetchone()
+    if not row:
+        return {"error": "not_found", "message": f"prepared action {action_id} not found", "token_omitted": True}, 404
+    if row_workspace(row) != ident["workspace_id"]:
+        return workspace_forbidden("prepared_action", action_id, ident["workspace_id"], row_workspace(row))
+    if agent_gateway_is_bound_auth(auth_ctx) and row["requested_by_agent_id"] != ident["agent_id"]:
+        return {"error": "forbidden", "message": "Agent token cannot inspect another agent's prepared action.", "token_omitted": True}, 403
+    approval = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (row["approval_id"],)).fetchone()
+    current_hash = prepared_action_hash(dict(row))
+    hash_match = current_hash == row["action_hash"]
+    return {
+        "provider": "agentops-approval-wall",
+        "operation": "prepared_action_get",
+        "status": "ready" if hash_match else "blocked",
+        "prepared_action": prepared_action_public(row),
+        "approval": dict(approval) if approval else None,
+        "hash_verification": {
+            "stored_action_hash": row["action_hash"],
+            "current_action_hash": current_hash,
+            "match": hash_match,
+        },
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }, 200
+
+
+def agent_gateway_prepare_action(conn, body) -> tuple[dict, int]:
+    run_id = body.get("run_id")
+    ident = agent_gateway_identity({}, body)
+    run, access_error = ensure_run_access(conn, run_id, ident)
+    if access_error:
+        return access_error
+    tool_call_id = body.get("tool_call_id")
+    tool_call = None
+    if tool_call_id:
+        tool_call = conn.execute("SELECT * FROM tool_calls WHERE tool_call_id=?", (tool_call_id,)).fetchone()
+        if not tool_call:
+            return {"error": "tool_call_not_found", "token_omitted": True}, 404
+        if tool_call["run_id"] != run_id:
+            return {"error": "forbidden", "message": "Prepared action tool_call_id must belong to the target run.", "token_omitted": True}, 403
+    action_type = redact_text(body.get("action_type") or (tool_call["tool_name"] if tool_call else "external.action"), 120)
+    normalized_args = safe_json_metadata(body.get("normalized_args_json") or body.get("args") or {})
+    checkpoint = safe_json_metadata(body.get("checkpoint") or body.get("checkpoint_json") or {
+        "run_id": run_id,
+        "tool_call_id": tool_call_id,
+        "prepared_at": now_iso(),
+    })
+    risk = coerce_choice(body.get("risk_level") or (tool_call["risk_level"] if tool_call else "high"), VALID_RISK_LEVELS, "high")
+    policy_version = redact_text(body.get("policy_version") or "approval-wall-v1", 80)
+    idempotency_key = redact_text(body.get("idempotency_key") or stable_hash({
+        "run_id": run_id,
+        "tool_call_id": tool_call_id,
+        "action_type": action_type,
+        "normalized_args": normalized_args,
+    })[:32], 120)
+    approval_id = body.get("approval_id") or stable_id("ap_prepared_action", run_id, idempotency_key)
+    existing = conn.execute(
+        "SELECT * FROM prepared_actions WHERE run_id=? AND idempotency_key=?",
+        (run_id, idempotency_key),
+    ).fetchone()
+    if existing:
+        approval = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (existing["approval_id"],)).fetchone()
+        return {
+            "provider": "agentops-approval-wall",
+            "operation": "prepared_action_prepare",
+            "outcome": "unchanged",
+            "prepared_action": prepared_action_public(existing),
+            "approval": dict(approval) if approval else None,
+            "token_omitted": True,
+        }, 200
+    created_at = now_iso()
+    expires_at = body.get("expires_at") or (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=2)).isoformat()
+    row = {
+        "action_id": body.get("action_id") or stable_id("pa", run_id, idempotency_key),
+        "workspace_id": row_workspace(run),
+        "task_id": run["task_id"],
+        "run_id": run_id,
+        "tool_call_id": tool_call_id,
+        "approval_id": approval_id,
+        "requested_by_agent_id": body.get("requested_by_agent_id") or body.get("agent_id") or run["agent_id"],
+        "action_type": action_type,
+        "normalized_args_json": json.dumps(normalized_args, ensure_ascii=False, sort_keys=True),
+        "target_resource": redact_text(body.get("target_resource") or (tool_call["target_resource"] if tool_call else ""), 240) if (body.get("target_resource") or tool_call) else None,
+        "risk_level": risk,
+        "policy_version": policy_version,
+        "checkpoint_json": json.dumps(checkpoint, ensure_ascii=False, sort_keys=True),
+        "action_hash": "",
+        "idempotency_key": idempotency_key,
+        "status": "prepared",
+        "provider_side_effect_id": None,
+        "result_summary": None,
+        "created_at": created_at,
+        "approved_at": None,
+        "consumed_at": None,
+        "expires_at": expires_at,
+    }
+    row["action_hash"] = prepared_action_hash(row)
+    reason = redact_text(
+        body.get("reason") or f"Prepared action requires approval before exact resume. action_hash={row['action_hash'][:16]}",
+        260,
+    )
+    approval = {
+        "approval_id": approval_id,
+        "task_id": row["task_id"],
+        "run_id": run_id,
+        "tool_call_id": tool_call_id,
+        "requested_by_agent_id": row["requested_by_agent_id"],
+        "approver_user_id": body.get("approver_user_id") or "usr_founder",
+        "decision": "pending",
+        "reason": reason,
+        "expires_at": expires_at,
+        "created_at": created_at,
+        "decided_at": None,
+    }
+    conn.execute(
+        """INSERT INTO approvals(approval_id,task_id,run_id,tool_call_id,requested_by_agent_id,approver_user_id,decision,reason,expires_at,created_at,decided_at)
+        VALUES(:approval_id,:task_id,:run_id,:tool_call_id,:requested_by_agent_id,:approver_user_id,:decision,:reason,:expires_at,:created_at,:decided_at)""",
+        approval,
+    )
+    conn.execute(
+        """INSERT INTO prepared_actions(action_id,workspace_id,task_id,run_id,tool_call_id,approval_id,requested_by_agent_id,action_type,normalized_args_json,target_resource,risk_level,policy_version,checkpoint_json,action_hash,idempotency_key,status,provider_side_effect_id,result_summary,created_at,approved_at,consumed_at,expires_at)
+        VALUES(:action_id,:workspace_id,:task_id,:run_id,:tool_call_id,:approval_id,:requested_by_agent_id,:action_type,:normalized_args_json,:target_resource,:risk_level,:policy_version,:checkpoint_json,:action_hash,:idempotency_key,:status,:provider_side_effect_id,:result_summary,:created_at,:approved_at,:consumed_at,:expires_at)""",
+        row,
+    )
+    conn.execute("UPDATE runs SET approval_required=1, status='waiting_approval' WHERE run_id=?", (run_id,))
+    conn.execute("UPDATE tasks SET status='waiting_approval', updated_at=? WHERE task_id=?", (now_iso(), row["task_id"]))
+    if tool_call_id:
+        conn.execute("UPDATE tool_calls SET status='waiting_approval' WHERE tool_call_id=?", (tool_call_id,))
+    runtime_event(conn, "rtc_agent_gateway_local", "prepared_action.prepare", "waiting_approval", run_id=run_id, task_id=row["task_id"], agent_id=row["requested_by_agent_id"], input_summary=action_type, output_summary=reason, raw_payload_hash=row["action_hash"])
+    audit(conn, "agent", row["requested_by_agent_id"], "approval_wall.prepared_action_created", "prepared_actions", row["action_id"], None, row, {"approval_id": approval_id, "action_hash": row["action_hash"], "raw_omitted": True, "token_omitted": True})
+    return {
+        "provider": "agentops-approval-wall",
+        "operation": "prepared_action_prepare",
+        "outcome": "created",
+        "prepared_action": prepared_action_public(row),
+        "approval": approval,
+        "resume_contract": "Approve the approval, then POST /api/agent-gateway/prepared-actions/:id/resume. The stored action hash must match and consumed_at must be empty.",
+        "token_omitted": True,
+    }, 201
+
+
+def agent_gateway_resume_prepared_action(conn, action_id: str, body) -> tuple[dict, int]:
+    row = conn.execute("SELECT * FROM prepared_actions WHERE action_id=?", (action_id,)).fetchone()
+    if not row:
+        return {"error": "prepared_action_not_found", "token_omitted": True}, 404
+    ident = agent_gateway_identity({}, body)
+    if row_workspace(row) != ident["workspace_id"]:
+        return workspace_forbidden("prepared_action", action_id, ident["workspace_id"], row_workspace(row))
+    if ident.get("agent_id") and row["requested_by_agent_id"] != ident["agent_id"]:
+        return {"error": "forbidden", "message": "Agent token cannot resume another agent's prepared action.", "token_omitted": True}, 403
+    approval = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (row["approval_id"],)).fetchone()
+    if not approval or approval["decision"] != "approved":
+        return {
+            "error": "approval_required",
+            "message": "Prepared action can resume only after its approval is approved.",
+            "approval_id": row["approval_id"],
+            "decision": approval["decision"] if approval else None,
+            "token_omitted": True,
+        }, 409
+    if row["consumed_at"] or row["status"] == "consumed":
+        return {
+            "error": "prepared_action_already_consumed",
+            "prepared_action": prepared_action_public(row),
+            "token_omitted": True,
+        }, 409
+    current_hash = prepared_action_hash(dict(row))
+    if current_hash != row["action_hash"]:
+        audit(conn, "agent", row["requested_by_agent_id"], "approval_wall.prepared_action_hash_mismatch", "prepared_actions", action_id, dict(row), dict(row), {"stored_action_hash": row["action_hash"], "current_action_hash": current_hash, "token_omitted": True})
+        return {
+            "error": "action_hash_mismatch",
+            "message": "Prepared action changed after approval; request a new approval.",
+            "stored_action_hash": row["action_hash"],
+            "current_action_hash": current_hash,
+            "token_omitted": True,
+        }, 409
+    now = now_iso()
+    provider_side_effect_id = redact_text(body.get("provider_side_effect_id") or f"side_effect_{action_id}_{row['action_hash'][:12]}", 180)
+    result_summary = redact_text(body.get("result_summary") or f"Prepared action {action_id} resumed exactly once after approval.", 260)
+    before = dict(row)
+    conn.execute(
+        """UPDATE prepared_actions SET status='consumed', consumed_at=?, provider_side_effect_id=?, result_summary=? WHERE action_id=? AND consumed_at IS NULL""",
+        (now, provider_side_effect_id, result_summary, action_id),
+    )
+    after = conn.execute("SELECT * FROM prepared_actions WHERE action_id=?", (action_id,)).fetchone()
+    if row["tool_call_id"]:
+        tool_before = conn.execute("SELECT * FROM tool_calls WHERE tool_call_id=?", (row["tool_call_id"],)).fetchone()
+        conn.execute(
+            "UPDATE tool_calls SET status='completed', side_effect_id=?, result_summary=?, ended_at=? WHERE tool_call_id=?",
+            (provider_side_effect_id, result_summary, now, row["tool_call_id"]),
+        )
+        tool_after = conn.execute("SELECT * FROM tool_calls WHERE tool_call_id=?", (row["tool_call_id"],)).fetchone()
+        audit(conn, "agent", row["requested_by_agent_id"], "tool_call.prepared_action_resumed", "tool_calls", row["tool_call_id"], dict(tool_before) if tool_before else None, dict(tool_after) if tool_after else None, {"prepared_action_id": action_id, "approval_id": row["approval_id"], "action_hash": row["action_hash"], "token_omitted": True})
+    conn.execute("UPDATE runs SET approval_required=0, status=CASE WHEN status='waiting_approval' THEN 'running' ELSE status END WHERE run_id=?", (row["run_id"],))
+    conn.execute("UPDATE tasks SET status=CASE WHEN status='waiting_approval' THEN 'running' ELSE status END, updated_at=? WHERE task_id=?", (now, row["task_id"]))
+    runtime_event(conn, "rtc_agent_gateway_local", "prepared_action.resume", "completed", run_id=row["run_id"], task_id=row["task_id"], agent_id=row["requested_by_agent_id"], input_summary=row["action_type"], output_summary=result_summary, raw_payload_hash=row["action_hash"])
+    audit(conn, "agent", row["requested_by_agent_id"], "approval_wall.prepared_action_resumed", "prepared_actions", action_id, before, dict(after), {"approval_id": row["approval_id"], "action_hash": row["action_hash"], "provider_side_effect_id": provider_side_effect_id, "execute_once": True, "token_omitted": True})
+    return {
+        "provider": "agentops-approval-wall",
+        "operation": "prepared_action_resume",
+        "status": "completed",
+        "prepared_action": prepared_action_public(after),
+        "approval": dict(approval),
+        "provider_side_effect_id": provider_side_effect_id,
+        "execute_once": True,
+        "hash_verification": {
+            "stored_action_hash": row["action_hash"],
+            "current_action_hash": current_hash,
+            "match": True,
+        },
+        "token_omitted": True,
+    }, 200
+
+
 def agent_gateway_request_approval(conn, body) -> tuple[dict, int]:
     run_id = body.get("run_id")
     ident = agent_gateway_identity({}, body)
@@ -5911,7 +6345,7 @@ def agent_gateway_memory_propose(conn, body) -> tuple[dict, int]:
     row = {
         "memory_id": memory_id,
         "scope": coerce_choice(body.get("scope"), {"task", "project", "org"}, "project"),
-        "memory_type": coerce_choice(body.get("memory_type"), {"policy", "sop", "decision", "commitment", "risk", "failure_case", "project_context", "customer_preference", "agent_lesson", "artifact_summary"}, "artifact_summary"),
+        "memory_type": coerce_choice(body.get("memory_type"), VALID_MEMORY_TYPES, "artifact_summary"),
         "canonical_text": redact_text(text, 360),
         "source_type": coerce_choice(body.get("source_type"), {"chat", "email", "meeting", "github", "notion", "run_log", "manual"}, "run_log"),
         "source_ref": redact_text(body.get("source_ref") or body.get("run_id") or "agent-gateway", 200),
@@ -13934,6 +14368,60 @@ def operator_loop_audit(conn: sqlite3.Connection, headers, qs=None) -> dict:
     source_status = action_plan.get("source_status") or {}
     loop_readback = hermes_openclaw_loop_readback(conn, loop_id=loop_id or None, limit=limit)
     loop_summary = loop_readback.get("summary") or {}
+    loop_scoped = bool(loop_id and int(loop_summary.get("runs") or 0) > 0)
+    loop_plans = loop_readback.get("agent_plans") or []
+    loop_plan_count = len(loop_plans)
+    loop_verified_plans = len([plan for plan in loop_plans if plan.get("verified_at")])
+    loop_plans_with_knowledge = len([
+        plan for plan in loop_plans
+        if load_json_list_field(plan, "referenced_specs_json") and load_json_list_field(plan, "referenced_memories_json")
+    ])
+    loop_plans_with_bases = len([plan for plan in loop_plans if load_json_list_field(plan, "referenced_bases_json")])
+    loop_missing_knowledge = max(0, loop_plan_count - loop_plans_with_knowledge)
+    loop_missing_bases = max(0, loop_plan_count - loop_plans_with_bases)
+    loop_runs_count = int(loop_summary.get("runs") or 0)
+    loop_verified_manifest_count = int(loop_summary.get("verified_plan_evidence_manifests") or 0)
+    loop_blocked_manifest_count = int(loop_summary.get("blocked_plan_evidence_manifests") or 0)
+    loop_run_ids = [str(row.get("run_id")) for row in (loop_readback.get("runs") or []) if row.get("run_id")]
+    loop_task_ids = [str(row.get("task_id")) for row in (loop_readback.get("tasks") or []) if row.get("task_id")]
+    loop_artifact_ids = [str(row.get("artifact_id")) for row in (loop_readback.get("artifacts") or []) if row.get("artifact_id")]
+    loop_audit_count = len(loop_readback.get("audit_logs") or [])
+    loop_pending_approvals = 0
+    loop_approval_count = 0
+    loop_memory_candidates = 0
+    loop_approved_memories = 0
+    if loop_scoped:
+        approval_where = []
+        approval_params: list[str] = []
+        if loop_run_ids:
+            approval_where.append("run_id IN (" + ",".join("?" for _ in loop_run_ids) + ")")
+            approval_params.extend(loop_run_ids)
+        if loop_task_ids:
+            approval_where.append("task_id IN (" + ",".join("?" for _ in loop_task_ids) + ")")
+            approval_params.extend(loop_task_ids)
+        if approval_where:
+            approval_rows = rows_to_dicts(conn.execute(
+                "SELECT approval_id, decision FROM approvals WHERE " + " OR ".join(approval_where),
+                approval_params,
+            ).fetchall())
+            loop_approval_count = len(approval_rows)
+            loop_pending_approvals = len([row for row in approval_rows if (row.get("decision") or "pending") == "pending"])
+        memory_refs = [f"loop://{loop_id}", *loop_artifact_ids]
+        memory_where = []
+        memory_params: list[str] = []
+        if memory_refs:
+            memory_where.append("source_ref IN (" + ",".join("?" for _ in memory_refs) + ")")
+            memory_params.extend(memory_refs)
+        if loop_task_ids:
+            memory_where.append("task_id IN (" + ",".join("?" for _ in loop_task_ids) + ")")
+            memory_params.extend(loop_task_ids)
+        if memory_where:
+            memory_rows = rows_to_dicts(conn.execute(
+                "SELECT memory_id, review_status FROM memories WHERE " + " OR ".join(memory_where),
+                memory_params,
+            ).fetchall())
+            loop_memory_candidates = len([row for row in memory_rows if (row.get("review_status") or "candidate") == "candidate"])
+            loop_approved_memories = len([row for row in memory_rows if row.get("review_status") == "approved"])
 
     knowledge_docs = scalar_count(conn, "SELECT COUNT(*) FROM knowledge_documents")
     indexed_specs = scalar_count(
@@ -13968,20 +14456,26 @@ def operator_loop_audit(conn: sqlite3.Connection, headers, qs=None) -> dict:
     add_step(
         "read",
         "READ",
-        "pass" if knowledge_docs > 0 else "attention",
+        "pass" if knowledge_docs > 0 or (loop_scoped and loop_plans_with_knowledge > 0) else "attention",
         "Project specs, runbooks, and shared knowledge are indexed before agents plan.",
-        {"knowledge_documents": knowledge_docs, "indexed_specs": indexed_specs},
+        {
+            "knowledge_documents": knowledge_docs,
+            "indexed_specs": indexed_specs,
+            "loop_plans_with_knowledge": loop_plans_with_knowledge,
+        },
         "agentops knowledge index --rebuild" if knowledge_docs == 0 else "agentops knowledge search \"project spec\" --limit 10",
         "knowledge_index",
     )
     add_step(
         "plan",
         "PLAN",
-        "blocked" if int(summary.get("task_intake_missing_agent_plan") or 0) > 0 else "pass" if verified_plans > 0 else "attention",
+        "pass" if loop_scoped and loop_verified_plans >= max(1, loop_runs_count) else "blocked" if int(summary.get("task_intake_missing_agent_plan") or 0) > 0 else "pass" if verified_plans > 0 else "attention",
         "Execution must be authorized by a submitted and verified Agent Plan.",
         {
             "submitted_agent_plans": submitted_plans,
             "verified_agent_plans": verified_plans,
+            "loop_agent_plans": loop_plan_count,
+            "loop_verified_agent_plans": loop_verified_plans,
             "task_intake_missing_agent_plan": summary.get("task_intake_missing_agent_plan", 0),
         },
         "agentops operator intake-checklist --limit 20",
@@ -13990,10 +14484,11 @@ def operator_loop_audit(conn: sqlite3.Connection, headers, qs=None) -> dict:
     add_step(
         "retrieve",
         "RETRIEVE",
-        "attention" if int(intake_summary.get("missing_knowledge_retrieval") or 0) > 0 else "pass" if knowledge_docs > 0 else "attention",
+        "pass" if loop_scoped and loop_missing_knowledge == 0 and loop_plan_count > 0 else "attention" if int(intake_summary.get("missing_knowledge_retrieval") or 0) > 0 else "pass" if knowledge_docs > 0 else "attention",
         "Agent Plans should reference specs and memory/knowledge before execution.",
         {
             "missing_knowledge_retrieval": intake_summary.get("missing_knowledge_retrieval", 0),
+            "loop_missing_knowledge_retrieval": loop_missing_knowledge,
             "tasks_checked": intake_summary.get("tasks_checked", 0),
             "knowledge_documents": knowledge_docs,
         },
@@ -14003,10 +14498,11 @@ def operator_loop_audit(conn: sqlite3.Connection, headers, qs=None) -> dict:
     add_step(
         "compare",
         "COMPARE",
-        "attention" if int(intake_summary.get("missing_base_reference") or 0) > 0 else "pass",
+        "pass" if loop_scoped and loop_missing_bases == 0 and loop_plan_count > 0 else "attention" if int(intake_summary.get("missing_base_reference") or 0) > 0 else "pass",
         "Plans should compare work against reusable bases and risk boundaries.",
         {
             "missing_base_reference": intake_summary.get("missing_base_reference", 0),
+            "loop_missing_base_reference": loop_missing_bases,
             "risk_gate_blocked": intake_summary.get("risk_gate_blocked", 0),
         },
         "agentops operator intake-checklist --limit 20",
@@ -14031,20 +14527,32 @@ def operator_loop_audit(conn: sqlite3.Connection, headers, qs=None) -> dict:
     add_step(
         "verify",
         "VERIFY",
-        "blocked" if int(evidence_summary.get("gap_runs") or 0) > 0 or int(loop_summary.get("blocked_plan_evidence_manifests") or 0) > 0 else "pass" if verified_manifests > 0 or int(loop_summary.get("verified_plan_evidence_manifests") or 0) > 0 else "attention",
+        "blocked" if loop_scoped and loop_blocked_manifest_count > 0 else "pass" if loop_scoped and loop_verified_manifest_count >= max(1, loop_runs_count) else "blocked" if int(evidence_summary.get("gap_runs") or 0) > 0 else "pass" if verified_manifests > 0 else "attention",
         "Runs should carry verified plan-evidence manifests plus tool/evaluation/artifact/audit rows.",
         {
             "verified_plan_evidence_manifests": verified_manifests,
             "dispatch_verified_manifests": dispatch_summary.get("verified_manifests", 0),
-            "loop_verified_plan_evidence_manifests": loop_summary.get("verified_plan_evidence_manifests", 0),
-            "loop_blocked_plan_evidence_manifests": loop_summary.get("blocked_plan_evidence_manifests", 0),
+            "loop_verified_plan_evidence_manifests": loop_verified_manifest_count,
+            "loop_blocked_plan_evidence_manifests": loop_blocked_manifest_count,
             "evidence_gap_runs": evidence_summary.get("gap_runs", 0),
             "missing_plan_evidence_manifests": evidence_summary.get("missing_manifest_runs", 0),
         },
         "agentops operator action-plan --limit 20",
         "execution_evidence",
     )
-    record_status = "attention" if pending_approvals or memory_candidates or int(summary.get("review_items_total") or 0) else "pass" if audit_rows > 0 else "attention"
+    if loop_scoped:
+        if loop_pending_approvals or loop_memory_candidates:
+            record_status = "attention"
+            record_command = "agentops review queue --limit 20"
+        elif loop_audit_count > 0 and loop_approved_memories > 0:
+            record_status = "pass"
+            record_command = f"agentops operator loop-audit --loop-id {loop_id} --limit 10"
+        else:
+            record_status = "attention"
+            record_command = f"agentops memory propose --source-ref loop://{loop_id} --scope project --type loop_record --text \"Summarize approved loop outcome\""
+    else:
+        record_status = "attention" if pending_approvals or memory_candidates or int(summary.get("review_items_total") or 0) else "pass" if audit_rows > 0 else "attention"
+        record_command = "agentops review queue --limit 20" if record_status == "attention" else "agentops operator action-plan --limit 20"
     add_step(
         "record",
         "RECORD",
@@ -14056,8 +14564,13 @@ def operator_loop_audit(conn: sqlite3.Connection, headers, qs=None) -> dict:
             "approved_memories": approved_memories,
             "review_items_total": summary.get("review_items_total", 0),
             "audit_logs": audit_rows,
+            "loop_audit_logs": loop_audit_count,
+            "loop_approvals": loop_approval_count,
+            "loop_pending_approvals": loop_pending_approvals,
+            "loop_memory_candidates": loop_memory_candidates,
+            "loop_approved_memories": loop_approved_memories,
         },
-        "agentops review queue --limit 20" if record_status == "attention" else "agentops operator action-plan --limit 20",
+        record_command,
         "review_memory_audit",
     )
 
@@ -14086,6 +14599,9 @@ def operator_loop_audit(conn: sqlite3.Connection, headers, qs=None) -> dict:
             "loop_blocked_plan_evidence_manifests": loop_summary.get("blocked_plan_evidence_manifests", 0),
             "pending_approvals": pending_approvals,
             "memory_candidates": memory_candidates,
+            "loop_memory_candidates": loop_memory_candidates,
+            "loop_approved_memories": loop_approved_memories,
+            "loop_pending_approvals": loop_pending_approvals,
             "audit_logs": audit_rows,
         },
         "steps": steps,
@@ -15191,6 +15707,14 @@ class Handler(BaseHTTPRequestHandler):
                 payload, status = agent_gateway_get_approval(conn, approval_id, self.headers, auth_ctx)
                 conn.rollback()
                 return self.send_json(payload, status)
+            if path.startswith("/api/agent-gateway/prepared-actions/"):
+                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                if auth_error:
+                    return self.send_json(auth_error, agent_gateway_error_status(auth_error))
+                action_id = path.split("/")[-1]
+                payload, status = agent_gateway_get_prepared_action(conn, action_id, self.headers, auth_ctx)
+                conn.rollback()
+                return self.send_json(payload, status)
             if path == "/api/agent-gateway/memories":
                 auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
                 if auth_error:
@@ -15480,6 +16004,7 @@ class Handler(BaseHTTPRequestHandler):
                     "/api/agent-gateway/agent-plans": "agent_plans:write",
                     "/api/agent-gateway/plan-evidence-manifests": "plan_evidence:write",
                     "/api/agent-gateway/approvals/request": "approvals:request",
+                    "/api/agent-gateway/prepared-actions": "approvals:request",
                     "/api/agent-gateway/memories/propose": "memories:propose",
                     "/api/agent-gateway/evaluations/submit": "evaluations:submit",
                     "/api/agent-gateway/audit": "audit:write",
@@ -15489,6 +16014,8 @@ class Handler(BaseHTTPRequestHandler):
                     required_scope = "tasks:claim"
                 elif path.startswith("/api/agent-gateway/runs/") and path.endswith("/heartbeat"):
                     required_scope = "runs:write"
+                elif path.startswith("/api/agent-gateway/prepared-actions/") and path.endswith("/resume"):
+                    required_scope = "toolcalls:write"
                 auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, required_scope)
                 if auth_error:
                     return self.send_json(auth_error, agent_gateway_error_status(auth_error))
@@ -15540,6 +16067,11 @@ class Handler(BaseHTTPRequestHandler):
                     payload, status = agent_gateway_create_plan_evidence_manifest(conn, body)
                 elif path == "/api/agent-gateway/approvals/request":
                     payload, status = agent_gateway_request_approval(conn, body)
+                elif path == "/api/agent-gateway/prepared-actions":
+                    payload, status = agent_gateway_prepare_action(conn, body)
+                elif path.startswith("/api/agent-gateway/prepared-actions/") and path.endswith("/resume"):
+                    action_id = path.split("/")[-2]
+                    payload, status = agent_gateway_resume_prepared_action(conn, action_id, body)
                 elif path == "/api/agent-gateway/memories/propose":
                     payload, status = agent_gateway_memory_propose(conn, body)
                 elif path == "/api/agent-gateway/evaluations/submit":
@@ -15854,6 +16386,65 @@ class Handler(BaseHTTPRequestHandler):
                     "delivery_approval_gate": gate,
                     "token_omitted": True,
                 }, 409)
+        prepared_action = get_prepared_action_for_approval(conn, approval_id)
+        if prepared_action:
+            current_hash = prepared_action_hash(dict(prepared_action))
+            if decision == "approved" and current_hash != prepared_action["action_hash"]:
+                audit(
+                    conn,
+                    "user",
+                    "usr_founder",
+                    "approval.blocked_prepared_action_hash_mismatch",
+                    "prepared_actions",
+                    prepared_action["action_id"],
+                    dict(prepared_action),
+                    dict(prepared_action),
+                    {"approval_id": approval_id, "stored_action_hash": prepared_action["action_hash"], "current_action_hash": current_hash, "token_omitted": True},
+                )
+                conn.commit()
+                return self.send_json({
+                    "error": "action_hash_mismatch",
+                    "message": "Prepared action changed after approval request; create a new prepared action.",
+                    "approval": dict(before),
+                    "prepared_action": prepared_action_public(prepared_action),
+                    "stored_action_hash": prepared_action["action_hash"],
+                    "current_action_hash": current_hash,
+                    "token_omitted": True,
+                }, 409)
+            conn.execute("UPDATE approvals SET decision=?, decided_at=? WHERE approval_id=?", (decision, now_iso(), approval_id))
+            prepared_status = "approved" if decision == "approved" else "rejected"
+            conn.execute(
+                "UPDATE prepared_actions SET status=?, approved_at=CASE WHEN ?='approved' THEN ? ELSE approved_at END WHERE action_id=?",
+                (prepared_status, prepared_status, now_iso(), prepared_action["action_id"]),
+            )
+            if before["tool_call_id"]:
+                tool_before = conn.execute("SELECT * FROM tool_calls WHERE tool_call_id=?", (before["tool_call_id"],)).fetchone()
+                conn.execute("UPDATE tool_calls SET status=? WHERE tool_call_id=?", ("waiting_approval" if decision == "approved" else "blocked", before["tool_call_id"]))
+                tool_after = conn.execute("SELECT * FROM tool_calls WHERE tool_call_id=?", (before["tool_call_id"],)).fetchone()
+                audit(conn, "user", "usr_founder", f"tool_call.prepared_action_approval_{decision}", "tool_calls", before["tool_call_id"], dict(tool_before) if tool_before else None, dict(tool_after) if tool_after else None, {"approval_id": approval_id, "prepared_action_id": prepared_action["action_id"], "action_hash": prepared_action["action_hash"], "token_omitted": True})
+            if decision == "rejected":
+                run = conn.execute("SELECT * FROM runs WHERE run_id=?", (before["run_id"],)).fetchone()
+                conn.execute("UPDATE runs SET status='blocked', error_type='ApprovalRejected', error_message='Prepared action approval rejected.', ended_at=? WHERE run_id=?", (now_iso(), before["run_id"]))
+                conn.execute("UPDATE tasks SET status='blocked', updated_at=? WHERE task_id=?", (now_iso(), before["task_id"]))
+                audit(conn, "user", "usr_founder", "run.blocked_prepared_action_rejected", "runs", before["run_id"], dict(run) if run else None, {"status": "blocked"}, {"approval_id": approval_id, "prepared_action_id": prepared_action["action_id"], "token_omitted": True})
+            after = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (approval_id,)).fetchone()
+            action_after = conn.execute("SELECT * FROM prepared_actions WHERE action_id=?", (prepared_action["action_id"],)).fetchone()
+            runtime_event(
+                conn,
+                "rtc_agent_gateway_local",
+                "prepared_action.approval_decision",
+                prepared_status,
+                run_id=before["run_id"],
+                task_id=before["task_id"],
+                agent_id=before["requested_by_agent_id"],
+                input_summary=f"Prepared action {prepared_action['action_id']} approval decision.",
+                output_summary=f"Prepared action {prepared_action['action_hash'][:16]} was {prepared_status}.",
+                raw_payload_hash=prepared_action["action_hash"],
+            )
+            audit(conn, "user", "usr_founder", f"approval_wall.prepared_action_{decision}", "prepared_actions", prepared_action["action_id"], dict(prepared_action), dict(action_after), {"approval_id": approval_id, "action_hash": prepared_action["action_hash"], "resume_required": decision == "approved", "token_omitted": True})
+            audit(conn, "user", "usr_founder", f"approval.{decision}", "approvals", approval_id, dict(before), dict(after), {"prepared_action_id": prepared_action["action_id"], "action_hash": prepared_action["action_hash"], "run_task_status_unchanged": decision == "approved", "token_omitted": True})
+            conn.commit()
+            return self.send_json({"approval": dict(after), "prepared_action": prepared_action_public(action_after), "resume_required": decision == "approved", "token_omitted": True})
         conn.execute("UPDATE approvals SET decision=?, decided_at=? WHERE approval_id=?", (decision, now_iso(), approval_id))
         if before["tool_call_id"]:
             tool_before = conn.execute("SELECT * FROM tool_calls WHERE tool_call_id=?", (before["tool_call_id"],)).fetchone()
