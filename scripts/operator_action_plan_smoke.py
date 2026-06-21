@@ -255,11 +255,28 @@ def validate_plan(payload: dict, label: str, failures: list[str], limit: int) ->
         require(action.get("receipt_match") in {"missing", "current", "stale"}, f"{label} bad receipt_match: {action}", failures)
         require(isinstance(action.get("receipt_current"), bool), f"{label} receipt_current missing: {action}", failures)
         require(isinstance(action.get("receipt_verified"), bool), f"{label} receipt_verified missing: {action}", failures)
+        if action.get("receipt_required"):
+            record_command = action.get("receipt_record_command") or ""
+            record_confirm_command = action.get("receipt_record_confirm_command") or ""
+            verify_record_command = action.get("receipt_verify_record_command") or ""
+            require(record_command.startswith("agentops operator record-action-receipt "), f"{label} receipt_record_command missing: {action}", failures)
+            require("--action-command" in record_command, f"{label} receipt_record_command lacks action command: {action}", failures)
+            require("--confirm-record" not in record_command, f"{label} preview receipt command should not confirm: {record_command}", failures)
+            require(record_confirm_command.startswith("agentops operator record-action-receipt "), f"{label} receipt_record_confirm_command missing: {action}", failures)
+            require("--confirm-record" in record_confirm_command, f"{label} receipt_record_confirm_command lacks confirmation: {record_confirm_command}", failures)
+            require("--status recorded" in record_confirm_command, f"{label} receipt record confirm status wrong: {record_confirm_command}", failures)
+            require(verify_record_command.startswith("agentops operator record-action-receipt "), f"{label} receipt_verify_record_command missing: {action}", failures)
+            require("--confirm-record" in verify_record_command, f"{label} receipt_verify_record_command lacks confirmation: {verify_record_command}", failures)
+            require("--status verified" in verify_record_command, f"{label} receipt verify record status wrong: {verify_record_command}", failures)
         receipt_state = action.get("receipt_state") or {}
         require(receipt_state.get("status") == action.get("receipt_status"), f"{label} receipt_state mismatch: {action}", failures)
         require(receipt_state.get("match") == action.get("receipt_match"), f"{label} receipt_state match mismatch: {action}", failures)
         require(receipt_state.get("current") == action.get("receipt_current"), f"{label} receipt_state current mismatch: {action}", failures)
         require(receipt_state.get("verified") == action.get("receipt_verified"), f"{label} receipt_state verified mismatch: {action}", failures)
+        if action.get("receipt_required"):
+            require(receipt_state.get("record_command") == action.get("receipt_record_command"), f"{label} receipt_state record command mismatch: {action}", failures)
+            require(receipt_state.get("record_confirm_command") == action.get("receipt_record_confirm_command"), f"{label} receipt_state confirm command mismatch: {action}", failures)
+            require(receipt_state.get("verify_record_command") == action.get("receipt_verify_record_command"), f"{label} receipt_state verify command mismatch: {action}", failures)
         if action.get("receipt_verified"):
             require(bool(action.get("receipt_id")), f"{label} verified receipt_id missing: {action}", failures)
             require(bool(action.get("receipt_hash")), f"{label} verified receipt_hash missing: {action}", failures)
