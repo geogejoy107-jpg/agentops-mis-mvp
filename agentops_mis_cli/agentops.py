@@ -292,6 +292,22 @@ def cmd_commander_inbox(args, client: AgentOpsClient) -> dict:
     return client.get(path)
 
 
+def cmd_commander_plan(args, client: AgentOpsClient) -> dict:
+    lanes = parse_json_value(args.lanes_json, None) if getattr(args, "lanes_json", None) else None
+    payload = {
+        "workspace_id": client.workspace_id,
+        "project_id": args.project_id,
+        "plan_id": args.plan_id,
+        "goal": args.goal,
+        "max_packages": args.max_packages,
+        "confirm_create": bool(args.confirm_create),
+        "task_id_prefix": args.task_id_prefix,
+    }
+    if lanes is not None:
+        payload["lanes"] = lanes
+    return client.post("/api/commander/work-packages/plan", payload)
+
+
 def cmd_review_queue(args, client: AgentOpsClient) -> dict:
     return client.get("/api/agent-gateway/review/queue", query={"limit": args.limit})
 
@@ -1317,6 +1333,15 @@ def build_parser() -> argparse.ArgumentParser:
     commander_inbox.add_argument("--limit", type=int, default=20)
     commander_inbox.add_argument("--threshold-sec", type=int, default=900)
     commander_inbox.set_defaults(handler="commander_inbox")
+    commander_plan = commander_sub.add_parser("plan", help="Preview or create commander work-package tasks from a project goal.")
+    commander_plan.add_argument("--goal", required=True, help="Customer/project goal to decompose into work packages.")
+    commander_plan.add_argument("--project-id", default=None)
+    commander_plan.add_argument("--plan-id", default=None)
+    commander_plan.add_argument("--max-packages", type=int, default=5)
+    commander_plan.add_argument("--task-id-prefix", default=None)
+    commander_plan.add_argument("--lanes-json", default=None, help="Optional JSON array overriding the default commander lanes.")
+    commander_plan.add_argument("--confirm-create", action="store_true", help="Actually create MIS tasks; omitted means preview only.")
+    commander_plan.set_defaults(handler="commander_plan")
 
     review = sub.add_parser("review", help="Human review queue commands.")
     review_sub = review.add_subparsers(dest="action", required=True)
@@ -1875,6 +1900,7 @@ HANDLERS = {
     "demo_readiness": cmd_demo_readiness,
     "commander_board": cmd_commander_board,
     "commander_inbox": cmd_commander_inbox,
+    "commander_plan": cmd_commander_plan,
     "review_queue": cmd_review_queue,
     "security_production_readiness": cmd_security_production_readiness,
     "agent_register": cmd_agent_register,

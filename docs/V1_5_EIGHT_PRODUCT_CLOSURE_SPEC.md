@@ -45,6 +45,10 @@ product exposes:
   readiness, worker health, recent work packages, pending approvals, artifacts,
   memory candidates, workflow jobs, integration gates, and recommended next
   actions.
+- A commander work-package planner through
+  `POST /api/commander/work-packages/plan` and
+  `agentops commander plan`, with safe preview by default and confirmed task
+  creation only when `confirm_create:true` / `--confirm-create` is provided.
 - Async workflow job submission, polling, listing, stuck-job detection, and
   operator mark-failed recovery for customer worker and template jobs.
 - An async integration inbox at `GET /api/commander/integration-inbox` for

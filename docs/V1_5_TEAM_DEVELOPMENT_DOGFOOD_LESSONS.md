@@ -209,6 +209,13 @@ for this workflow:
 - Runtime connector trust states such as trusted, review required, and blocked.
 - Customer worker task workflow with async job status and project report
   artifact paths.
+- Commander work-package planner through
+  `POST /api/commander/work-packages/plan`, `agentops commander plan`, and the
+  `/workspace/agents` planner panel. It turns one customer/operator goal into
+  bounded planned MIS tasks with owner agent, collaborators, scope, avoid
+  scope, dependencies, verification commands, return checklist and acceptance
+  criteria. Preview is read-only; confirmed creation writes task/runtime/audit
+  evidence without live adapter execution.
 - Evidence surfaces for runs, tool calls, evaluations, audit logs, artifacts,
   approvals, and memory candidates.
 - Documentation patterns for commander runbooks, branch plans, acceptance
@@ -221,8 +228,9 @@ worker runs:
 
 - No first-class team project board that shows multiple AI workers, work
   packages, branches, dependencies, and integration readiness in one place.
-- No work package object that combines task, branch scope, agent assignment,
-  prompt-safe instructions, verification requirements, and return checklist.
+- Work-package planning now exists as planned MIS tasks with safe instructions,
+  agent assignment, verification requirements and return checklist, but branch
+  diff/commit provenance and merge scope gates are still not first-class.
 - No commander dashboard that summarizes worker progress, blocked lanes,
   evidence completeness, merge risk, and next human decisions.
 - No merge/integration gate that ties branch diff scope, tests, approvals,

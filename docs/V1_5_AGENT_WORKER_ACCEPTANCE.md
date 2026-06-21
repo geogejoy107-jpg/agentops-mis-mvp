@@ -31,6 +31,12 @@ runner. The supported management primitives are:
   local readiness, worker health, recent work packages, pending approvals,
   artifacts, memory candidates, workflow jobs, integration gates, and safe next
   actions without mutating the ledger or executing live work.
+- Commander work-package planner:
+  `POST /api/commander/work-packages/plan` and
+  `agentops commander plan` preview or create planned MIS tasks from one
+  customer/operator goal. Preview is read-only; confirmed creation writes
+  planned tasks plus commander runtime/audit evidence without executing live
+  adapters.
 - Async workflow management: long Hermes/OpenClaw/customer-template work can be
   submitted as workflow jobs, polled, listed, and recovered through
   `POST /api/workflows/customer-worker-task/submit`,
@@ -127,6 +133,7 @@ python3 scripts/customer_project_report_smoke.py
 python3 scripts/customer_project_report_artifact_smoke.py
 python3 scripts/customer_project_index_smoke.py
 python3 scripts/task_owner_validation_smoke.py
+python3 scripts/commander_work_package_plan_smoke.py
 ```
 
 ## Evidence

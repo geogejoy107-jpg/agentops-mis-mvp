@@ -8681,6 +8681,230 @@ def commander_project_board(conn: sqlite3.Connection, headers) -> dict:
     }
 
 
+COMMANDER_DEFAULT_WORK_PACKAGE_LANES = [
+    {
+        "lane_id": "strategy",
+        "title": "Clarify product goal and acceptance gates",
+        "owner_agent_id": "agt_cos",
+        "priority": "high",
+        "risk_level": "medium",
+        "scope": "problem framing, success criteria, owner decisions, approval checkpoints",
+        "avoid_scope": "do not execute live adapters or rewrite implementation details",
+        "verification": ["agentops commander board", "agentops commander inbox --bucket ready_for_review --limit 5"],
+    },
+    {
+        "lane_id": "research",
+        "title": "Gather grounded product and implementation evidence",
+        "owner_agent_id": "agt_research",
+        "priority": "high",
+        "risk_level": "low",
+        "scope": "current repo evidence, relevant docs, comparable product patterns, source-backed gaps",
+        "avoid_scope": "do not ingest private transcripts, credentials, or unsupported external claims",
+        "verification": ["agentops local readiness", "agentops review queue --limit 5"],
+    },
+    {
+        "lane_id": "implementation",
+        "title": "Implement the smallest useful product increment",
+        "owner_agent_id": "agt_builder",
+        "priority": "high",
+        "risk_level": "medium",
+        "scope": "bounded code/docs changes required by the accepted work package",
+        "avoid_scope": "do not touch unrelated UI/backend surfaces or local databases",
+        "verification": ["python3 -m py_compile server.py scripts/*.py agentops_mis_cli/*.py", "git diff --check"],
+    },
+    {
+        "lane_id": "qa",
+        "title": "Verify ledger evidence and regression gates",
+        "owner_agent_id": "agt_qa",
+        "priority": "medium",
+        "risk_level": "medium",
+        "scope": "smoke tests, build checks, evidence counts, safety/readiness gates",
+        "avoid_scope": "do not approve customer delivery without verified evidence",
+        "verification": ["python3 scripts/v1_5_demo_readiness_smoke.py --base-url http://127.0.0.1:8787", "cd ui/start-building-app && npm run build"],
+    },
+    {
+        "lane_id": "ops",
+        "title": "Prepare customer-facing handoff and operations notes",
+        "owner_agent_id": "agt_ops",
+        "priority": "medium",
+        "risk_level": "low",
+        "scope": "runbook updates, delivery report outline, next actions, backup/restore notes",
+        "avoid_scope": "do not export to external systems or include raw prompts/responses",
+        "verification": ["agentops workflow delivery-board", "agentops worker status"],
+    },
+]
+
+
+def commander_normalize_lane(raw_lane: dict, index: int) -> dict:
+    lane = raw_lane if isinstance(raw_lane, dict) else {}
+    default = COMMANDER_DEFAULT_WORK_PACKAGE_LANES[index % len(COMMANDER_DEFAULT_WORK_PACKAGE_LANES)]
+    lane_id = re.sub(r"[^a-zA-Z0-9_-]+", "-", str(lane.get("lane_id") or lane.get("id") or default["lane_id"]).strip()).strip("-").lower()
+    if not lane_id:
+        lane_id = f"lane-{index + 1}"
+    verification = lane.get("verification") or lane.get("verification_commands") or default.get("verification") or []
+    if isinstance(verification, str):
+        verification = [item.strip() for item in verification.splitlines() if item.strip()]
+    if not isinstance(verification, list):
+        verification = []
+    return {
+        "lane_id": commander_safe_text(lane_id, 80),
+        "title": commander_safe_text(lane.get("title") or default["title"], 160),
+        "owner_agent_id": commander_safe_text(lane.get("owner_agent_id") or lane.get("agent_id") or default["owner_agent_id"], 120),
+        "priority": coerce_choice(lane.get("priority"), VALID_PRIORITIES, default["priority"]),
+        "risk_level": coerce_choice(lane.get("risk_level") or lane.get("risk"), VALID_RISK_LEVELS, default["risk_level"]),
+        "scope": commander_safe_text(lane.get("scope") or default["scope"], 360),
+        "avoid_scope": commander_safe_text(lane.get("avoid_scope") or lane.get("avoid") or default["avoid_scope"], 360),
+        "verification": [commander_safe_text(item, 180) for item in verification[:8]],
+    }
+
+
+def commander_work_package_description(goal: str, lane: dict, dependencies: list[str], project_id: str) -> str:
+    verification = "\n".join(f"- {item}" for item in lane.get("verification") or [])
+    deps = ", ".join(dependencies) if dependencies else "none"
+    return redact_text(
+        "\n".join([
+            f"Commander project: {project_id}",
+            f"Goal: {goal}",
+            f"Lane: {lane['lane_id']}",
+            f"Scope: {lane['scope']}",
+            f"Avoid scope: {lane['avoid_scope']}",
+            f"Dependencies: {deps}",
+            "Return checklist: changed files or artifacts, evidence ids, verification result, known limits, next action.",
+            "Verification commands:",
+            verification or "- agentops commander board",
+        ]),
+        1200,
+    )
+
+
+def commander_plan_work_packages(conn: sqlite3.Connection, body: dict, headers) -> tuple[dict, int]:
+    goal = commander_safe_text(body.get("goal") or body.get("objective") or "Plan the next AgentOps MIS product increment.", 500)
+    if len(goal.strip()) < 8:
+        return {"error": "goal_required", "message": "A concrete goal/objective of at least 8 characters is required."}, 400
+    workspace_id = normalize_workspace_id(body.get("workspace_id") or headers.get("X-AgentOps-Workspace-Id") or "local-demo")
+    project_id = commander_safe_text(body.get("project_id") or stable_id("proj_cmd", workspace_id, goal)[:32], 80)
+    plan_id = commander_safe_text(body.get("plan_id") or stable_id("cmdplan", workspace_id, project_id, goal)[:40], 80)
+    max_packages = min(max(int(body.get("max_packages") or 5), 1), 8)
+    confirm_create = bool(body.get("confirm_create"))
+    raw_lanes = body.get("lanes")
+    if not isinstance(raw_lanes, list) or not raw_lanes:
+        raw_lanes = COMMANDER_DEFAULT_WORK_PACKAGE_LANES
+    lanes = [commander_normalize_lane(item, idx) for idx, item in enumerate(raw_lanes[:max_packages])]
+
+    planned_packages = []
+    created_packages = []
+    errors = []
+    for idx, lane in enumerate(lanes):
+        owner_exists = conn.execute("SELECT 1 FROM agents WHERE agent_id=?", (lane["owner_agent_id"],)).fetchone()
+        if not owner_exists:
+            errors.append({"lane_id": lane["lane_id"], "error": "owner_agent_not_found", "owner_agent_id": lane["owner_agent_id"]})
+            lane["owner_agent_id"] = "agt_cos"
+        dependencies = [pkg["task_id"] for pkg in planned_packages[:1]] if idx > 0 else []
+        task_id = commander_safe_text(body.get("task_id_prefix") or stable_id("tsk_cmd", plan_id, lane["lane_id"]), 80)
+        if body.get("task_id_prefix"):
+            task_id = f"{task_id}_{idx + 1:02d}_{lane['lane_id']}"[:80]
+        title = commander_safe_text(f"{lane['title']}: {goal}", 180)
+        acceptance = redact_text(
+            "Work package is ready for commander review when it returns evidence ids, verification output, scope deviations, and a recommended next action.",
+            600,
+        )
+        package = {
+            "plan_id": plan_id,
+            "project_id": project_id,
+            "lane_id": lane["lane_id"],
+            "task_id": task_id,
+            "title": title,
+            "description": commander_work_package_description(goal, lane, dependencies, project_id),
+            "owner_agent_id": lane["owner_agent_id"],
+            "collaborator_agent_ids": ["agt_qa"] if lane["owner_agent_id"] != "agt_qa" else ["agt_cos"],
+            "status": "planned",
+            "priority": lane["priority"],
+            "risk_level": lane["risk_level"],
+            "acceptance_criteria": acceptance,
+            "dependencies": dependencies,
+            "verification_commands": lane.get("verification") or [],
+            "scope": lane["scope"],
+            "avoid_scope": lane["avoid_scope"],
+        }
+        planned_packages.append(package)
+        if confirm_create:
+            payload, status = create_task_api(conn, {
+                "task_id": task_id,
+                "workspace_id": workspace_id,
+                "title": title,
+                "description": package["description"],
+                "owner_agent_id": package["owner_agent_id"],
+                "collaborator_agent_ids": package["collaborator_agent_ids"],
+                "status": "planned",
+                "priority": package["priority"],
+                "risk_level": package["risk_level"],
+                "acceptance_criteria": acceptance,
+                "budget_limit_usd": float(body.get("budget_limit_usd") or 3.0),
+                "requester_id": "usr_founder",
+                "source": "commander-work-package-plan",
+            })
+            if status >= 400:
+                errors.append({"lane_id": lane["lane_id"], "task_id": task_id, "error": payload.get("error"), "message": payload.get("message")})
+            else:
+                created_packages.append(payload.get("task") or package)
+
+    if confirm_create and created_packages:
+        runtime_event(
+            conn,
+            "rtc_agent_gateway_local",
+            "commander.work_package_plan",
+            "completed",
+            input_summary=f"Commander planned {len(created_packages)} work package(s) for {project_id}.",
+            output_summary=f"Created work packages for: {goal}",
+            raw_payload_hash=stable_hash({"goal": goal, "project_id": project_id, "plan_id": plan_id, "count": len(created_packages)}),
+        )
+        audit(
+            conn,
+            "user",
+            "usr_founder",
+            "commander.work_package_plan_create",
+            "tasks",
+            plan_id,
+            None,
+            {"created_task_ids": [item.get("task_id") for item in created_packages], "workspace_id": workspace_id},
+            {"project_id": project_id, "raw_goal_hash": stable_hash(goal), "raw_prompt_omitted": True},
+        )
+    status_code = 201 if confirm_create and created_packages else 200
+    return {
+        "provider": "agentops-commander",
+        "operation": "work_package_plan",
+        "status": "created" if confirm_create and created_packages else "preview",
+        "ok": not errors or bool(created_packages),
+        "workspace_id": workspace_id,
+        "project_id": project_id,
+        "plan_id": plan_id,
+        "goal_summary": goal,
+        "confirm_create": confirm_create,
+        "created": bool(confirm_create and created_packages),
+        "created_count": len(created_packages),
+        "planned_count": len(planned_packages),
+        "work_packages": planned_packages,
+        "created_task_ids": [item.get("task_id") for item in created_packages],
+        "errors": errors,
+        "recommended_next_actions": [
+            "agentops commander board",
+            "agentops task pull --agent-id agt_builder --status planned --limit 3",
+            "agentops worker start --adapter mock",
+            "agentops commander inbox --bucket ready_for_review --limit 5",
+        ],
+        "safety": {
+            "live_execution_performed": False,
+            "token_omitted": True,
+            "raw_prompt_omitted": True,
+            "dry_run": not confirm_create,
+            "ledger_mutated": bool(confirm_create and created_packages),
+            "task_created": bool(confirm_create and created_packages),
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }, status_code
+
+
 COMMANDER_INBOX_BUCKETS = ["ready_for_review", "still_running", "blocked", "late_or_stale", "needs_memory_review"]
 
 
@@ -10587,6 +10811,10 @@ class Handler(BaseHTTPRequestHandler):
                 payload = sync_knowledge_index(conn, rebuild=bool(body.get("rebuild")))
                 conn.commit()
                 return self.send_json({"provider": "agentops-knowledge", "operation": "knowledge_index", **payload, "token_omitted": True}, 200)
+            if path == "/api/commander/work-packages/plan":
+                payload, status = commander_plan_work_packages(conn, body, self.headers)
+                conn.commit()
+                return self.send_json(payload, status)
             if path == "/api/agents":
                 agent_id = body.get("agent_id") or new_id("agt")
                 now = now_iso()

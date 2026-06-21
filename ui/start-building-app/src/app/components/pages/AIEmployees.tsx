@@ -30,6 +30,7 @@ import {
   loadWorkflowJobs,
   markWorkflowJobFailed,
   applyWorkerFleetHygiene,
+  planCommanderWorkPackages,
   previewAgentGatewayEnrollmentPolicy,
   releaseWorkerTask,
   restartLocalWorkerDaemon,
@@ -46,6 +47,7 @@ import {
   type AgentGatewayEnrollmentCreateResult,
   type AgentGatewayEnrollmentPolicyPreview,
   type AgentGatewayEnrollmentRequestResult,
+  type CommanderWorkPackagePlanPayload,
   type CustomerDeliveryBoardPayload,
   type CustomerTaskWorkflowResult,
   type HermesOpenClawLoopReadbackPayload,
@@ -127,6 +129,15 @@ export function AIEmployees() {
   const [workflowJobResult, setWorkflowJobResult] = useState<string | null>(null);
   const [reviewAction, setReviewAction] = useState<string | null>(null);
   const [reviewResult, setReviewResult] = useState<string | null>(null);
+  const [commanderPlannerBusy, setCommanderPlannerBusy] = useState(false);
+  const [commanderPlannerError, setCommanderPlannerError] = useState<string | null>(null);
+  const [commanderPlannerResult, setCommanderPlannerResult] = useState<CommanderWorkPackagePlanPayload | null>(null);
+  const [commanderPlannerForm, setCommanderPlannerForm] = useState({
+    goal: locale === "zh"
+      ? "用 AgentOps MIS 协调一个客户 AI 团队项目：拆分并行工作包、分派 agent、保留证据、准备交付。"
+      : "Use AgentOps MIS to coordinate a customer AI-team project: split parallel work packages, assign agents, keep evidence, and prepare delivery.",
+    max_packages: "5",
+  });
   const [actionQueueOrder, setActionQueueOrder] = useState<string[]>([]);
   const [draggedActionId, setDraggedActionId] = useState<string | null>(null);
   const [customerTaskForm, setCustomerTaskForm] = useState<{
@@ -287,6 +298,17 @@ export function AIEmployees() {
       liveExecutionProof: "Live execution not performed",
       integrationInboxTitle: "Async Integration Inbox",
       integrationInboxSummary: "Commander queue for worker results arriving at different speeds: review ready work, watch running jobs, and recover blocked items.",
+      commanderPlannerTitle: "Commander Work Package Planner",
+      commanderPlannerSummary: "Turn one customer goal into parallel MIS work-package tasks for the AI team. Preview is safe; confirm writes planned tasks into the ledger.",
+      commanderGoal: "Project goal",
+      commanderMaxPackages: "Packages",
+      previewPlan: "Preview plan",
+      createWorkPackages: "Create work packages",
+      planning: "Planning...",
+      plannerResult: "Planner result",
+      plannedPackages: "Planned packages",
+      createdPackages: "Created tasks",
+      plannerSafety: "Preview is safe",
       reviewQueueTitle: "Human Review Queue",
       reviewQueueSummary: "One operator queue for approvals, memory candidates and customer deliveries. Handle returned work first without waiting for every worker lane.",
       reviewQueueEmpty: "No review items. Keep dispatching or watch the async inbox.",
@@ -584,6 +606,17 @@ export function AIEmployees() {
       liveExecutionProof: "未执行真实任务",
       integrationInboxTitle: "异步集成 Inbox",
       integrationInboxSummary: "Commander 用来处理不同速度 worker 回报的队列：审阅已完成工作、观察运行中 job、恢复阻塞项。",
+      commanderPlannerTitle: "总指挥工作包规划器",
+      commanderPlannerSummary: "把一个客户目标拆成多条 MIS 工作包任务，分派给 AI 团队并行推进。预览安全不改账本；确认后才写入 planned tasks。",
+      commanderGoal: "项目目标",
+      commanderMaxPackages: "工作包数",
+      previewPlan: "预览规划",
+      createWorkPackages: "创建工作包",
+      planning: "规划中...",
+      plannerResult: "规划结果",
+      plannedPackages: "规划工作包",
+      createdPackages: "已创建任务",
+      plannerSafety: "预览安全",
       reviewQueueTitle: "人工审核队列",
       reviewQueueSummary: "把审批、候选记忆和客户交付聚合成一个 operator 队列；哪个 worker 先回来，就先处理哪个。",
       reviewQueueEmpty: "暂无待审事项。可以继续派发任务，或观察异步 Inbox。",
@@ -986,6 +1019,37 @@ export function AIEmployees() {
 
   const updateLoopLaneForm = (field: keyof typeof loopLaneForm, value: string) => {
     setLoopLaneForm(prev => ({ ...prev, [field]: value }));
+  };
+
+  const updateCommanderPlannerForm = (field: keyof typeof commanderPlannerForm, value: string) => {
+    setCommanderPlannerForm(prev => ({ ...prev, [field]: value }));
+  };
+
+  const runCommanderPlanner = async (confirmCreate: boolean) => {
+    setCommanderPlannerBusy(true);
+    setCommanderPlannerError(null);
+    try {
+      const goal = commanderPlannerForm.goal.trim() || (locale === "zh"
+        ? "用 AgentOps MIS 拆分并行 AI 团队工作包。"
+        : "Use AgentOps MIS to split parallel AI-team work packages.");
+      const maxPackages = Math.min(Math.max(Number(commanderPlannerForm.max_packages) || 5, 1), 8);
+      const result = await planCommanderWorkPackages({
+        goal,
+        max_packages: maxPackages,
+        confirm_create: confirmCreate,
+      });
+      setCommanderPlannerResult(result);
+      setDispatchResult(`${result.status}: ${result.created_count || result.planned_count} · ${result.plan_id}`);
+      if (confirmCreate) {
+        await refresh();
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setCommanderPlannerError(message);
+      setDispatchResult(message);
+    } finally {
+      setCommanderPlannerBusy(false);
+    }
   };
 
   const runLoopLane = async (resume = false) => {
@@ -1452,6 +1516,110 @@ export function AIEmployees() {
         <button onClick={refresh} className="mt-3 text-[11px] px-3 py-1.5 rounded" style={{ background: "rgba(34,211,238,0.12)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.2)" }}>
           {copy.refresh}
         </button>
+      </div>
+
+      <div
+        data-testid="commander-work-package-planner"
+        className="rounded-xl p-4"
+        style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}
+      >
+        <div className="flex flex-col xl:flex-row xl:items-start justify-between gap-4">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <Bot size={14} style={{ color: "var(--mis-cyan)" }} />
+              <h2 className="text-sm font-semibold" style={{ color: "var(--mis-text)" }}>{copy.commanderPlannerTitle}</h2>
+              <StatusBadge status={commanderPlannerResult?.status || "preview"} />
+            </div>
+            <p className="text-[11px] mt-1 max-w-3xl" style={{ color: "var(--mis-dim)" }}>{copy.commanderPlannerSummary}</p>
+          </div>
+          <div className="flex flex-wrap gap-1.5 xl:justify-end">
+            <StatusBadge status="pass" label={`${copy.plannerSafety}: ${copy.yes}`} />
+            <StatusBadge status={commanderPlannerResult?.safety.ledger_mutated ? "attention" : "pass"} label={`${copy.ledgerMutationProof}: ${commanderPlannerResult?.safety.ledger_mutated ? copy.yes : copy.no}`} />
+            <StatusBadge status={commanderPlannerResult?.live_execution_performed ? "fail" : "pass"} label={`${copy.liveExecutionProof}: ${commanderPlannerResult?.live_execution_performed ? copy.no : copy.yes}`} />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 xl:grid-cols-[1fr_160px_auto] gap-3 mt-4">
+          <label className="text-[10px] uppercase tracking-wide" style={{ color: "var(--mis-muted)" }}>
+            {copy.commanderGoal}
+            <textarea
+              value={commanderPlannerForm.goal}
+              onChange={(event) => updateCommanderPlannerForm("goal", event.target.value)}
+              className="mt-1 w-full rounded px-3 py-2 text-[11px] min-h-[76px]"
+              style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)", color: "var(--mis-text)" }}
+            />
+          </label>
+          <label className="text-[10px] uppercase tracking-wide" style={{ color: "var(--mis-muted)" }}>
+            {copy.commanderMaxPackages}
+            <input
+              value={commanderPlannerForm.max_packages}
+              onChange={(event) => updateCommanderPlannerForm("max_packages", event.target.value)}
+              className="mt-1 w-full rounded px-3 py-2 text-[11px]"
+              style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)", color: "var(--mis-text)" }}
+            />
+          </label>
+          <div className="flex xl:flex-col gap-2 xl:justify-end">
+            <button
+              onClick={() => void runCommanderPlanner(false)}
+              disabled={commanderPlannerBusy}
+              className="inline-flex items-center justify-center gap-1.5 text-[11px] px-3 py-2 rounded disabled:opacity-50"
+              style={{ background: "rgba(34,211,238,0.12)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.2)" }}
+            >
+              {commanderPlannerBusy ? <RefreshCw size={12} /> : <Inbox size={12} />}
+              {commanderPlannerBusy ? copy.planning : copy.previewPlan}
+            </button>
+            <button
+              onClick={() => void runCommanderPlanner(true)}
+              disabled={commanderPlannerBusy}
+              className="inline-flex items-center justify-center gap-1.5 text-[11px] px-3 py-2 rounded disabled:opacity-50"
+              style={{ background: "rgba(45,212,191,0.12)", color: "var(--mis-success)", border: "1px solid rgba(45,212,191,0.22)" }}
+            >
+              {commanderPlannerBusy ? <RefreshCw size={12} /> : <CheckCircle2 size={12} />}
+              {commanderPlannerBusy ? copy.planning : copy.createWorkPackages}
+            </button>
+          </div>
+        </div>
+
+        {commanderPlannerError && (
+          <div className="text-[11px] rounded px-3 py-2 mt-3" style={{ color: "#F87171", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+            {commanderPlannerError}
+          </div>
+        )}
+
+        {commanderPlannerResult && (
+          <div className="mt-4 rounded-lg p-3" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-2">
+              <div className="min-w-0">
+                <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>
+                  {copy.plannerResult}: {commanderPlannerResult.plan_id}
+                </div>
+                <div className="text-[10px] mt-1 truncate" style={{ color: "var(--mis-muted)" }}>
+                  {copy.plannedPackages}: {commanderPlannerResult.planned_count} · {copy.createdPackages}: {commanderPlannerResult.created_count}
+                </div>
+              </div>
+              <StatusBadge status={commanderPlannerResult.created ? "completed" : "planned"} label={commanderPlannerResult.status} />
+            </div>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 mt-3">
+              {commanderPlannerResult.work_packages.slice(0, 6).map((pkg) => (
+                <div key={pkg.task_id} className="rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-[11px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{pkg.title}</div>
+                    <StatusBadge status={pkg.status} label={pkg.lane_id} />
+                  </div>
+                  <div className="text-[10px] mt-1 truncate" style={{ color: "var(--mis-muted)" }}>
+                    {pkg.owner_agent_id} · {pkg.priority} · {pkg.risk_level}
+                  </div>
+                  <div className="text-[10px] mt-1 line-clamp-2" style={{ color: "var(--mis-dim)" }}>{pkg.scope}</div>
+                  {commanderPlannerResult.created_task_ids.includes(pkg.task_id) && (
+                    <Link to={`/admin/tasks/${pkg.task_id}`} className="inline-flex mt-2 text-[10px] px-2 py-1 rounded" style={{ background: "rgba(34,211,238,0.10)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.18)" }}>
+                      {copy.openTask}
+                    </Link>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       <div

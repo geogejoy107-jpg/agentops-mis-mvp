@@ -706,6 +706,54 @@ export interface IntegrationInboxOptions {
   threshold_sec?: number;
 }
 
+export interface CommanderWorkPackage {
+  plan_id: string;
+  project_id: string;
+  lane_id: string;
+  task_id: string;
+  title: string;
+  description: string;
+  owner_agent_id: string;
+  collaborator_agent_ids: string[];
+  status: string;
+  priority: string;
+  risk_level: string;
+  acceptance_criteria: string;
+  dependencies: string[];
+  verification_commands: string[];
+  scope: string;
+  avoid_scope: string;
+}
+
+export interface CommanderWorkPackagePlanPayload {
+  provider: string;
+  operation: string;
+  status: string;
+  ok: boolean;
+  workspace_id: string;
+  project_id: string;
+  plan_id: string;
+  goal_summary: string;
+  confirm_create: boolean;
+  created: boolean;
+  created_count: number;
+  planned_count: number;
+  work_packages: CommanderWorkPackage[];
+  created_task_ids: string[];
+  errors: { lane_id?: string; task_id?: string; error?: string; message?: string }[];
+  recommended_next_actions: string[];
+  safety: {
+    live_execution_performed: boolean;
+    token_omitted: boolean;
+    raw_prompt_omitted: boolean;
+    dry_run: boolean;
+    ledger_mutated: boolean;
+    task_created: boolean;
+  };
+  token_omitted: boolean;
+  live_execution_performed: boolean;
+}
+
 export interface ReviewQueueSummary {
   pending_approvals: number;
   memory_candidates: number;
@@ -1992,6 +2040,70 @@ export async function loadIntegrationInbox(options: IntegrationInboxOptions = {}
       ledger_mutated: boolValue(safetyRaw.ledger_mutated),
       raw_prompt_omitted: boolValue(safetyRaw.raw_prompt_omitted),
     },
+  };
+}
+
+export async function planCommanderWorkPackages(input: {
+  goal: string;
+  project_id?: string;
+  plan_id?: string;
+  max_packages?: number;
+  confirm_create?: boolean;
+}): Promise<CommanderWorkPackagePlanPayload> {
+  const raw = await apiJson<Record<string, unknown>>("/commander/work-packages/plan", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
+  return {
+    provider: String(raw.provider || "agentops-commander"),
+    operation: String(raw.operation || "work_package_plan"),
+    status: String(raw.status || "unknown"),
+    ok: boolValue(raw.ok),
+    workspace_id: String(raw.workspace_id || "local-demo"),
+    project_id: String(raw.project_id || ""),
+    plan_id: String(raw.plan_id || ""),
+    goal_summary: String(raw.goal_summary || ""),
+    confirm_create: boolValue(raw.confirm_create),
+    created: boolValue(raw.created),
+    created_count: numberValue(raw.created_count, 0),
+    planned_count: numberValue(raw.planned_count, 0),
+    work_packages: asArray<Record<string, unknown>>(raw.work_packages).map((item) => ({
+      plan_id: String(item.plan_id || raw.plan_id || ""),
+      project_id: String(item.project_id || raw.project_id || ""),
+      lane_id: String(item.lane_id || ""),
+      task_id: String(item.task_id || ""),
+      title: String(item.title || "Untitled work package"),
+      description: String(item.description || ""),
+      owner_agent_id: String(item.owner_agent_id || ""),
+      collaborator_agent_ids: asArray<unknown>(item.collaborator_agent_ids).map(String),
+      status: String(item.status || "planned"),
+      priority: String(item.priority || "medium"),
+      risk_level: String(item.risk_level || "medium"),
+      acceptance_criteria: String(item.acceptance_criteria || ""),
+      dependencies: asArray<unknown>(item.dependencies).map(String),
+      verification_commands: asArray<unknown>(item.verification_commands).map(String),
+      scope: String(item.scope || ""),
+      avoid_scope: String(item.avoid_scope || ""),
+    })),
+    created_task_ids: asArray<unknown>(raw.created_task_ids).map(String),
+    errors: asArray<Record<string, unknown>>(raw.errors).map((item) => ({
+      lane_id: item.lane_id ? String(item.lane_id) : undefined,
+      task_id: item.task_id ? String(item.task_id) : undefined,
+      error: item.error ? String(item.error) : undefined,
+      message: item.message ? String(item.message) : undefined,
+    })),
+    recommended_next_actions: asArray<unknown>(raw.recommended_next_actions).map(String).filter(Boolean),
+    safety: {
+      live_execution_performed: boolValue(safetyRaw.live_execution_performed),
+      token_omitted: boolValue(safetyRaw.token_omitted),
+      raw_prompt_omitted: boolValue(safetyRaw.raw_prompt_omitted),
+      dry_run: boolValue(safetyRaw.dry_run),
+      ledger_mutated: boolValue(safetyRaw.ledger_mutated),
+      task_created: boolValue(safetyRaw.task_created),
+    },
+    token_omitted: boolValue(raw.token_omitted),
+    live_execution_performed: boolValue(raw.live_execution_performed),
   };
 }
 
