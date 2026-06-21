@@ -765,6 +765,26 @@ def cmd_workflow_delivery_board(args, client: AgentOpsClient) -> dict:
     return client.get("/api/workflows/customer-delivery-board", query={"limit": args.limit})
 
 
+def cmd_workflow_hermes_openclaw_loop(args, client: AgentOpsClient) -> dict:
+    if args.readback:
+        return client.get("/api/workflows/hermes-openclaw-loop", query={"loop_id": args.loop_id or "", "limit": args.limit})
+    payload = {
+        "workspace_id": client.workspace_id,
+        "topic": args.topic,
+        "rounds": args.rounds,
+        "mode": args.mode,
+        "confirm_live": bool(args.confirm_live),
+        "loop_id": args.loop_id,
+        "resume": bool(args.resume),
+        "order": args.order,
+        "request_timeout": args.request_timeout,
+        "max_agent_attempts": args.max_agent_attempts,
+        "retry_delay_sec": args.retry_delay_sec,
+        "simulate_failure_agent": args.simulate_failure_agent or [],
+    }
+    return client.post("/api/workflows/hermes-openclaw-loop", payload)
+
+
 def cmd_workflow_run_template(args, client: AgentOpsClient) -> dict:
     if args.adapter in {"hermes", "openclaw"} and args.confirm_run:
         minimum_timeout = (int(args.hermes_timeout or 300) + 60) if args.adapter == "hermes" else 240
@@ -1568,6 +1588,21 @@ def build_parser() -> argparse.ArgumentParser:
     delivery_board = workflow_sub.add_parser("delivery-board", help="Read customer delivery evidence board without mutating the ledger.")
     delivery_board.add_argument("--limit", type=int, default=12)
     delivery_board.set_defaults(handler="workflow_delivery_board")
+    loop_lane = workflow_sub.add_parser("hermes-openclaw-loop", help="Run or read back the supervised Hermes/OpenClaw loop lane.")
+    loop_lane.add_argument("--topic", default="Review the supervised Hermes/OpenClaw loop lane.")
+    loop_lane.add_argument("--rounds", type=int, default=1)
+    loop_lane.add_argument("--mode", choices=["dry-run", "live-hermes", "live-openclaw", "live-both"], default="dry-run")
+    loop_lane.add_argument("--confirm-live", action="store_true")
+    loop_lane.add_argument("--loop-id", default="")
+    loop_lane.add_argument("--resume", action="store_true")
+    loop_lane.add_argument("--order", nargs="+", choices=["hermes", "openclaw"], default=["hermes", "openclaw"])
+    loop_lane.add_argument("--request-timeout", type=int, default=30)
+    loop_lane.add_argument("--max-agent-attempts", type=int, default=1)
+    loop_lane.add_argument("--retry-delay-sec", type=float, default=1.0)
+    loop_lane.add_argument("--simulate-failure-agent", action="append", choices=["hermes", "openclaw"], default=None)
+    loop_lane.add_argument("--readback", action="store_true", help="Read ledger evidence for --loop-id instead of running a new loop.")
+    loop_lane.add_argument("--limit", type=int, default=10)
+    loop_lane.set_defaults(handler="workflow_hermes_openclaw_loop")
     run_template = workflow_sub.add_parser("run-template", help="Run a customer task template through the MIS workflow layer.")
     run_template.add_argument("--template-id", default="tpl_customer_kb_qa_bot")
     run_template.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default=None, help="Optional Agent Worker adapter. Without this, the template uses its default safe workflow.")
@@ -1818,6 +1853,7 @@ HANDLERS = {
     "audit_emit": cmd_audit_emit,
     "workflow_templates": cmd_workflow_templates,
     "workflow_delivery_board": cmd_workflow_delivery_board,
+    "workflow_hermes_openclaw_loop": cmd_workflow_hermes_openclaw_loop,
     "workflow_run_template": cmd_workflow_run_template,
     "workflow_job_status": cmd_workflow_job_status,
     "workflow_stuck_jobs": cmd_workflow_stuck_jobs,

@@ -656,6 +656,34 @@ path for jobs left in `queued` or `running` after a server restart, runtime
 crash, or gateway disconnect. It does not delete evidence or claim success; it
 marks the job failed and writes runtime/audit evidence.
 
+### `agentops workflow hermes-openclaw-loop`
+
+Runs or reads back the supervised Hermes/OpenClaw loop lane. Default mode is
+dry-run; live Hermes/OpenClaw calls require `--confirm-live`.
+
+```bash
+agentops workflow hermes-openclaw-loop \
+  --topic "Review the next AgentOps MIS loop guardrail" \
+  --rounds 1
+
+agentops workflow hermes-openclaw-loop \
+  --readback \
+  --loop-id loop_20260622_review
+```
+
+Maps to `POST /api/workflows/hermes-openclaw-loop` and
+`GET /api/workflows/hermes-openclaw-loop?loop_id=...`. The workflow runs
+`scripts/hermes_openclaw_loop.py --mis-ledger` under bounded timeouts, records
+parent/child tasks and runs, and creates per-lane `agent_plan` and
+`plan_evidence_manifest` rows. `--resume` reuses existing gitignored loop JSONL
+rows for the same `--loop-id`; blocked lanes return nonzero/409 while keeping
+blocked manifest evidence for operator readback. It must not print raw prompts,
+raw model responses, credentials, or token values.
+
+Smoke coverage: `python3 scripts/hermes_openclaw_loop_smoke.py` checks dry-run,
+confirmation gating, resume, CLI/API invocation, readback, verified manifests,
+blocked manifests, gitignored runtime files, and token-like leakage.
+
 ### `agentops workflow run-task`
 
 Creates a normal MIS task through the scoped Agent Gateway path, executes one

@@ -6697,6 +6697,152 @@ def customer_delivery_board(conn, limit: int = 12) -> dict:
     }
 
 
+def hermes_openclaw_loop_readback(conn, loop_id: str | None = None, limit: int = 10) -> dict:
+    loop_id = redact_text(loop_id or "", 120)
+    limit = max(1, min(int(limit or 10), 50))
+    if loop_id:
+        artifacts = rows_to_dicts(conn.execute(
+            "SELECT * FROM artifacts WHERE uri=? OR uri LIKE ? ORDER BY created_at DESC",
+            (f"loop://{loop_id}", f"loop://{loop_id}/%"),
+        ).fetchall())
+    else:
+        artifacts = rows_to_dicts(conn.execute(
+            "SELECT * FROM artifacts WHERE uri LIKE 'loop://%' ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall())
+    run_ids = sorted({row.get("run_id") for row in artifacts if row.get("run_id")})
+    task_ids = sorted({row.get("task_id") for row in artifacts if row.get("task_id")})
+    if not run_ids:
+        return {
+            "provider": "agentops-loop-lane",
+            "operation": "hermes_openclaw_loop_readback",
+            "loop_id": loop_id or None,
+            "status": "empty",
+            "runs": [],
+            "tasks": [],
+            "artifacts": artifacts,
+            "agent_plans": [],
+            "plan_evidence_manifests": [],
+            "summary": {"runs": 0, "verified_plan_evidence_manifests": 0, "blocked_plan_evidence_manifests": 0},
+            "token_omitted": True,
+        }
+    run_placeholders = ",".join("?" for _ in run_ids)
+    task_placeholders = ",".join("?" for _ in task_ids) if task_ids else "''"
+    runs = rows_to_dicts(conn.execute(f"SELECT * FROM runs WHERE run_id IN ({run_placeholders}) ORDER BY created_at", run_ids).fetchall())
+    tasks = rows_to_dicts(conn.execute(f"SELECT * FROM tasks WHERE task_id IN ({task_placeholders}) ORDER BY created_at", task_ids).fetchall()) if task_ids else []
+    plans = rows_to_dicts(conn.execute(
+        f"SELECT * FROM agent_plans WHERE run_id IN ({run_placeholders}) OR task_id IN ({task_placeholders}) ORDER BY created_at",
+        [*run_ids, *task_ids],
+    ).fetchall())
+    manifests = rows_to_dicts(conn.execute(
+        f"SELECT * FROM plan_evidence_manifests WHERE run_id IN ({run_placeholders}) ORDER BY created_at",
+        run_ids,
+    ).fetchall())
+    audits = rows_to_dicts(conn.execute(
+        f"SELECT * FROM audit_logs WHERE entity_id IN ({run_placeholders}) ORDER BY created_at",
+        run_ids,
+    ).fetchall())
+    verified = [row for row in manifests if row.get("status") == "verified"]
+    blocked = [row for row in manifests if row.get("status") == "blocked"]
+    failed_runs = [row for row in runs if row.get("status") in {"failed", "blocked", "error", "timeout"}]
+    status = "blocked" if failed_runs or blocked else "ready" if verified else "attention"
+    return {
+        "provider": "agentops-loop-lane",
+        "operation": "hermes_openclaw_loop_readback",
+        "loop_id": loop_id or None,
+        "status": status,
+        "runs": runs,
+        "tasks": tasks,
+        "artifacts": artifacts,
+        "agent_plans": plans,
+        "plan_evidence_manifests": manifests,
+        "audit_logs": audits,
+        "summary": {
+            "runs": len(runs),
+            "tasks": len(tasks),
+            "artifacts": len(artifacts),
+            "agent_plans": len(plans),
+            "plan_evidence_manifests": len(manifests),
+            "verified_plan_evidence_manifests": len(verified),
+            "blocked_plan_evidence_manifests": len(blocked),
+            "failed_runs": len(failed_runs),
+        },
+        "token_omitted": True,
+    }
+
+
+def run_hermes_openclaw_loop_workflow(body: dict, host_header: str | None = None) -> tuple[dict, int]:
+    topic = redact_text(body.get("topic") or "Review the supervised Hermes/OpenClaw loop lane.", 500)
+    mode = coerce_choice(body.get("mode"), {"dry-run", "live-hermes", "live-openclaw", "live-both"}, "dry-run")
+    rounds = max(1, min(int(body.get("rounds") or 1), 8))
+    order = [item for item in safe_json_list(body.get("order")) if item in {"hermes", "openclaw"}] or ["hermes", "openclaw"]
+    loop_id = redact_text(body.get("loop_id") or "", 120)
+    base_url = body.get("_base_url") or body.get("base_url") or os.environ.get("AGENTOPS_BASE_URL")
+    if not base_url and host_header:
+        base_url = f"http://{host_header}"
+    base_url = base_url or "http://127.0.0.1:8787"
+    request_timeout = str(max(1, min(int(body.get("request_timeout") or 30), 300)))
+    cmd = [
+        sys.executable,
+        str(ROOT / "scripts" / "hermes_openclaw_loop.py"),
+        "--topic",
+        topic,
+        "--rounds",
+        str(rounds),
+        "--mode",
+        mode,
+        "--mis-ledger",
+        "--base-url",
+        base_url,
+        "--workspace-id",
+        normalize_workspace_id(body.get("workspace_id") or "local-demo"),
+        "--request-timeout",
+        request_timeout,
+        "--max-agent-attempts",
+        str(max(1, min(int(body.get("max_agent_attempts") or 1), 5))),
+        "--retry-delay-sec",
+        str(max(0.0, min(float(body.get("retry_delay_sec") or 1.0), 30.0))),
+        "--order",
+        *order,
+    ]
+    if loop_id:
+        cmd.extend(["--loop-id", loop_id])
+    if body.get("resume"):
+        cmd.append("--resume")
+    if body.get("confirm_live"):
+        cmd.append("--confirm-live")
+    for agent in safe_json_list(body.get("simulate_failure_agent")):
+        if agent in {"hermes", "openclaw"}:
+            cmd.extend(["--simulate-failure-agent", agent])
+    for key, flag in [
+        ("runtime_dir", "--runtime-dir"),
+        ("hermes_url", "--hermes-url"),
+        ("hermes_model", "--hermes-model"),
+        ("hermes_timeout", "--hermes-timeout"),
+        ("openclaw_bin", "--openclaw-bin"),
+        ("openclaw_agent", "--openclaw-agent"),
+        ("openclaw_timeout", "--openclaw-timeout"),
+    ]:
+        if body.get(key):
+            cmd.extend([flag, str(body[key])])
+    env = os.environ.copy()
+    env["AGENTOPS_SKIP_SEED_EXPORTS"] = "1"
+    started = dt.datetime.now(dt.timezone.utc)
+    timeout = max(60, int(request_timeout) * max(rounds, 1) * max(len(order), 1) + 30)
+    proc = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=timeout, check=False, env=env)
+    duration_ms = int((dt.datetime.now(dt.timezone.utc) - started).total_seconds() * 1000)
+    try:
+        payload = json.loads(proc.stdout or "{}")
+    except json.JSONDecodeError:
+        payload = {"raw": redact_text(proc.stdout, 1000)}
+    payload["provider"] = "agentops-loop-lane"
+    payload["workflow"] = "hermes_openclaw_loop"
+    payload["duration_ms"] = duration_ms
+    payload["stderr_summary"] = redact_text(proc.stderr, 500) if proc.stderr else None
+    payload["token_omitted"] = True
+    return payload, 201 if proc.returncode == 0 else 409
+
+
 def human_review_queue(conn, limit: int = 20) -> dict:
     limit = max(1, min(int(limit or 20), 100))
     per_lane_limit = max(limit, 10)
@@ -9956,6 +10102,10 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/workflows/customer-delivery-board":
                 limit = int((qs.get("limit") or ["12"])[0])
                 return self.send_json(customer_delivery_board(conn, limit))
+            if path == "/api/workflows/hermes-openclaw-loop":
+                limit = int((qs.get("limit") or ["10"])[0])
+                loop_id = (qs.get("loop_id") or [""])[0]
+                return self.send_json(hermes_openclaw_loop_readback(conn, loop_id, limit))
             if path == "/api/workflows/customer-projects":
                 limit = int((qs.get("limit") or ["25"])[0])
                 return self.send_json(customer_projects_index(conn, limit))
@@ -10201,6 +10351,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(payload, status)
             if path == "/api/workflows/customer-worker-task/submit":
                 payload, status = submit_customer_worker_task_job(conn, body)
+                return self.send_json(payload, status)
+            if path == "/api/workflows/hermes-openclaw-loop":
+                body["_base_url"] = body.get("base_url") or f"http://{self.headers.get('Host')}"
+                payload, status = run_hermes_openclaw_loop_workflow(body, self.headers.get("Host"))
                 return self.send_json(payload, status)
             if path == "/api/workflows/kb-bot-project":
                 return self.send_json(run_kb_bot_project_workflow(conn, body), 201)

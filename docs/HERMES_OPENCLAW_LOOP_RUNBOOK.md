@@ -44,6 +44,21 @@ python3 scripts/hermes_openclaw_loop.py \
   --mis-ledger
 ```
 
+Run through the MIS workflow API/CLI:
+
+```bash
+agentops workflow hermes-openclaw-loop \
+  --topic "Review the next AgentOps MIS worker-loop improvement." \
+  --rounds 1
+
+agentops workflow hermes-openclaw-loop \
+  --readback \
+  --loop-id loop_...
+```
+
+The CLI maps to `POST /api/workflows/hermes-openclaw-loop` and
+`GET /api/workflows/hermes-openclaw-loop?loop_id=...`.
+
 Expected MIS writeback:
 
 - one parent task/run owned by the Codex loop supervisor

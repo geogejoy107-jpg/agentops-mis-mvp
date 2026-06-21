@@ -19,6 +19,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 LOOP = ROOT / "scripts" / "hermes_openclaw_loop.py"
+CLI = ROOT / "scripts" / "agentops"
 RUNTIME_DIR = ROOT / ".agentops_runtime" / "loops"
 SECRET_PATTERNS = [
     re.compile(r"Authorization:", re.IGNORECASE),
@@ -123,6 +124,16 @@ def cleanup_loop_runtime(loop_id: str) -> None:
             (RUNTIME_DIR / f"{loop_id}{suffix}").unlink()
         except FileNotFoundError:
             pass
+
+
+def run_cli(args: list[str], base_url: str, outputs: list[str], timeout: int = 60) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    env["AGENTOPS_BASE_URL"] = base_url
+    env["AGENTOPS_WORKSPACE_ID"] = "local-demo"
+    env.pop("AGENTOPS_API_KEY", None)
+    proc = subprocess.run([str(CLI), *args], cwd=ROOT, env=env, capture_output=True, text=True, timeout=timeout, check=False)
+    outputs.extend([proc.stdout, proc.stderr])
+    return proc
 
 
 def main() -> int:
@@ -287,30 +298,52 @@ def main() -> int:
                 timeout=45,
                 check=False,
             )
+            outputs.extend([ledger.stdout, ledger.stderr])
+            ledger_payload = load_json(ledger.stdout)
+            mis_ledger = ledger_payload.get("mis_ledger") or {}
+            require(ledger.returncode == 0, f"MIS ledger loop failed: {ledger.stderr or ledger.stdout}", failures)
+            require(mis_ledger.get("ok") is True, f"MIS ledger payload not ok: {ledger_payload}", failures)
+            child_run_ids = mis_ledger.get("child_run_ids") or []
+            child_task_ids = mis_ledger.get("child_task_ids") or []
+            parent_run_id = mis_ledger.get("parent_run_id")
+            parent_task_id = mis_ledger.get("parent_task_id")
+            artifact_id = mis_ledger.get("artifact_id")
+            plan_ids = mis_ledger.get("plan_ids") or []
+            manifest_ids = mis_ledger.get("plan_evidence_manifest_ids") or []
+            require(count_rows(db_path, "tasks", "task_id", [parent_task_id, *child_task_ids]) == 3, f"expected parent+child tasks in ledger: {mis_ledger}", failures)
+            require(count_rows(db_path, "runs", "run_id", [parent_run_id, *child_run_ids]) == 3, f"expected parent+child runs in ledger: {mis_ledger}", failures)
+            require(count_rows(db_path, "tool_calls", "run_id", [parent_run_id, *child_run_ids]) == 3, f"expected parent+child tool calls in ledger: {mis_ledger}", failures)
+            require(count_rows(db_path, "evaluations", "run_id", [parent_run_id, *child_run_ids]) == 3, f"expected evaluations in ledger: {mis_ledger}", failures)
+            require(count_rows(db_path, "artifacts", "artifact_id", [artifact_id, *(mis_ledger.get("artifact_ids") or [])]) >= 3, f"expected final+child artifacts in ledger: {mis_ledger}", failures)
+            require(count_rows(db_path, "audit_logs", "entity_id", [parent_run_id, *child_run_ids]) >= 3, f"expected audit evidence in ledger: {mis_ledger}", failures)
+            require(count_rows(db_path, "agent_plans", "plan_id", plan_ids) == 3, f"expected parent+child plans in ledger: {mis_ledger}", failures)
+            require(count_rows(db_path, "plan_evidence_manifests", "manifest_id", manifest_ids) == 3, f"expected parent+child manifests in ledger: {mis_ledger}", failures)
+            require(count_manifest_status(db_path, manifest_ids, "verified") == 3, f"expected verified manifests: {mis_ledger}", failures)
+            require(mis_ledger.get("raw_omitted") is True and mis_ledger.get("token_omitted") is True, f"MIS ledger omission proof missing: {mis_ledger}", failures)
+            api_loop_id = f"loop_smoke_api_{uuid.uuid4().hex[:10]}"
+            api_run = run_cli([
+                "workflow",
+                "hermes-openclaw-loop",
+                "--topic",
+                "Run the supervised loop lane through the MIS workflow API.",
+                "--loop-id",
+                api_loop_id,
+                "--rounds",
+                "1",
+                "--request-timeout",
+                "5",
+            ], base_url, outputs, timeout=60)
+            api_payload = load_json(api_run.stdout)
+            api_ledger = api_payload.get("mis_ledger") or {}
+            require(api_run.returncode == 0 and api_payload.get("ok") is True, f"CLI/API loop lane failed: {api_run.stderr or api_run.stdout}", failures)
+            require(len(api_ledger.get("verified_plan_evidence_manifest_ids") or []) == 3, f"CLI/API loop did not verify manifests: {api_payload}", failures)
+            readback = run_cli(["workflow", "hermes-openclaw-loop", "--readback", "--loop-id", api_loop_id], base_url, outputs)
+            readback_payload = load_json(readback.stdout)
+            readback_summary = readback_payload.get("summary") or {}
+            require(readback.returncode == 0 and readback_payload.get("status") == "ready", f"loop readback failed: {readback.stdout}", failures)
+            require(readback_summary.get("verified_plan_evidence_manifests") == 3, f"loop readback missing verified manifests: {readback_payload}", failures)
         finally:
             stop_server(server)
-        outputs.extend([ledger.stdout, ledger.stderr])
-        ledger_payload = load_json(ledger.stdout)
-        mis_ledger = ledger_payload.get("mis_ledger") or {}
-        require(ledger.returncode == 0, f"MIS ledger loop failed: {ledger.stderr or ledger.stdout}", failures)
-        require(mis_ledger.get("ok") is True, f"MIS ledger payload not ok: {ledger_payload}", failures)
-        child_run_ids = mis_ledger.get("child_run_ids") or []
-        child_task_ids = mis_ledger.get("child_task_ids") or []
-        parent_run_id = mis_ledger.get("parent_run_id")
-        parent_task_id = mis_ledger.get("parent_task_id")
-        artifact_id = mis_ledger.get("artifact_id")
-        plan_ids = mis_ledger.get("plan_ids") or []
-        manifest_ids = mis_ledger.get("plan_evidence_manifest_ids") or []
-        require(count_rows(db_path, "tasks", "task_id", [parent_task_id, *child_task_ids]) == 3, f"expected parent+child tasks in ledger: {mis_ledger}", failures)
-        require(count_rows(db_path, "runs", "run_id", [parent_run_id, *child_run_ids]) == 3, f"expected parent+child runs in ledger: {mis_ledger}", failures)
-        require(count_rows(db_path, "tool_calls", "run_id", [parent_run_id, *child_run_ids]) == 3, f"expected parent+child tool calls in ledger: {mis_ledger}", failures)
-        require(count_rows(db_path, "evaluations", "run_id", [parent_run_id, *child_run_ids]) == 3, f"expected evaluations in ledger: {mis_ledger}", failures)
-        require(count_rows(db_path, "artifacts", "artifact_id", [artifact_id, *(mis_ledger.get("artifact_ids") or [])]) >= 3, f"expected final+child artifacts in ledger: {mis_ledger}", failures)
-        require(count_rows(db_path, "audit_logs", "entity_id", [parent_run_id, *child_run_ids]) >= 3, f"expected audit evidence in ledger: {mis_ledger}", failures)
-        require(count_rows(db_path, "agent_plans", "plan_id", plan_ids) == 3, f"expected parent+child plans in ledger: {mis_ledger}", failures)
-        require(count_rows(db_path, "plan_evidence_manifests", "manifest_id", manifest_ids) == 3, f"expected parent+child manifests in ledger: {mis_ledger}", failures)
-        require(count_manifest_status(db_path, manifest_ids, "verified") == 3, f"expected verified manifests: {mis_ledger}", failures)
-        require(mis_ledger.get("raw_omitted") is True and mis_ledger.get("token_omitted") is True, f"MIS ledger omission proof missing: {mis_ledger}", failures)
 
     with tempfile.TemporaryDirectory(prefix="agentops-loop-block-") as tmp:
         tmpdir = Path(tmp)

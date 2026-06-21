@@ -389,6 +389,18 @@ Hermes/OpenClaw 真实执行仍必须显式加 `--confirm-run`。
 
 `agentops-worker` 是可安装的 worker daemon 命令。它通过 Agent Gateway API 拉取普通 MIS 任务，认领后调用 adapter，并把 run/tool/eval/artifact/audit、`agent_plan` 和 `plan_evidence_manifest` 写回 MIS。`scripts/agent_worker.py` 仍保留为 repo-local 兼容 wrapper，供本地 UI/smoke 继续使用。
 
+Hermes/OpenClaw 监督 loop 也可以作为 MIS workflow 运行：
+
+```bash
+agentops workflow hermes-openclaw-loop \
+  --topic "Review the next AgentOps MIS loop guardrail" \
+  --rounds 1
+
+agentops workflow hermes-openclaw-loop --readback --loop-id loop_...
+```
+
+这条 lane 默认 dry-run，live Hermes/OpenClaw 需要 `--confirm-live`。运行时写入 parent/child task/run、tool/eval/artifact/audit、每条 lane 的 `agent_plan` 和 `plan_evidence_manifest`；`--resume` 会复用 `.agentops_runtime/loops/` 里的 gitignored JSONL 继续缺失轮次，blocked lane 会保留 blocked manifest 供 operator 回读。
+
 8 点产品闭环目标与总 spec 见 `docs/V1_5_EIGHT_PRODUCT_CLOSURE_SPEC.md`。
 
 客户/远程机器安装后运行：

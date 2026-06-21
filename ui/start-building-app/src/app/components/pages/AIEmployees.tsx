@@ -16,6 +16,7 @@ import {
   loadCustomerDeliveryBoard,
   loadDashboard,
   loadDemoReadiness,
+  loadHermesOpenClawLoopReadback,
   loadIntegrationInbox,
   loadLocalReadiness,
   loadReviewQueue,
@@ -32,6 +33,7 @@ import {
   revokeAgentGatewaySession,
   rotateAgentGatewayEnrollment,
   runCustomerWorkerTaskWorkflow,
+  runHermesOpenClawLoopWorkflow,
   requestAgentGatewayEnrollment,
   startLocalWorkerDaemon,
   stopLocalWorkerDaemon,
@@ -41,6 +43,8 @@ import {
   type AgentGatewayEnrollmentRequestResult,
   type CustomerDeliveryBoardPayload,
   type CustomerTaskWorkflowResult,
+  type HermesOpenClawLoopReadbackPayload,
+  type HermesOpenClawLoopWorkflowResult,
   type ReviewQueuePayload,
   type WorkerAdapterName,
   type WorkflowJob,
@@ -60,6 +64,8 @@ const RUNTIME_COLOR: Record<string, string> = {
 
 const DEFAULT_GATEWAY_SCOPES = [
   "agents:heartbeat",
+  "agent_plans:write",
+  "plan_evidence:write",
   "tasks:create",
   "tasks:read",
   "tasks:claim",
@@ -85,7 +91,7 @@ const GATEWAY_SCOPE_PRESETS = [
   },
   {
     id: "full",
-    scopes: ["agents:write", "agents:heartbeat", "tasks:create", "tasks:read", "tasks:claim", "runs:write", "toolcalls:write", "artifacts:write", "approvals:request", "memories:propose", "evaluations:submit", "audit:write"],
+    scopes: ["agents:write", "agents:heartbeat", "agent_plans:read", "agent_plans:write", "plan_evidence:read", "plan_evidence:write", "tasks:create", "tasks:read", "tasks:claim", "runs:write", "toolcalls:write", "artifacts:write", "approvals:request", "memories:propose", "evaluations:submit", "audit:write"],
   },
 ];
 
@@ -99,6 +105,15 @@ export function AIEmployees() {
   const [customerTaskError, setCustomerTaskError] = useState<string | null>(null);
   const [customerTaskResult, setCustomerTaskResult] = useState<CustomerTaskWorkflowResult | null>(null);
   const [customerTaskJob, setCustomerTaskJob] = useState<WorkflowJob | null>(null);
+  const [loopLaneBusy, setLoopLaneBusy] = useState(false);
+  const [loopLaneError, setLoopLaneError] = useState<string | null>(null);
+  const [loopLaneResult, setLoopLaneResult] = useState<HermesOpenClawLoopWorkflowResult | null>(null);
+  const [loopLaneForm, setLoopLaneForm] = useState({
+    topic: locale === "zh"
+      ? "请 Hermes 和 OpenClaw 审视 AgentOps MIS 下一步最重要的产品闭环。"
+      : "Ask Hermes and OpenClaw to review the next most important AgentOps MIS product closure.",
+    loop_id: "",
+  });
   const [workflowJobAction, setWorkflowJobAction] = useState<string | null>(null);
   const [workflowJobResult, setWorkflowJobResult] = useState<string | null>(null);
   const [reviewAction, setReviewAction] = useState<string | null>(null);
@@ -133,7 +148,7 @@ export function AIEmployees() {
     scopes: DEFAULT_GATEWAY_SCOPES.join(", "),
   });
   const { data, loading, error, refresh } = useLiveData(async () => {
-    const [metrics, demoReadiness, workerStatus, workerFleet, adapterReadiness, localReadiness, securityReadiness, integrationInbox, reviewQueue, customerDeliveryBoard, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs] = await Promise.all([
+    const [metrics, demoReadiness, workerStatus, workerFleet, adapterReadiness, localReadiness, securityReadiness, integrationInbox, reviewQueue, customerDeliveryBoard, loopLaneReadback, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs] = await Promise.all([
       loadDashboard(),
       loadDemoReadiness(),
       loadWorkerStatus(),
@@ -144,6 +159,7 @@ export function AIEmployees() {
       loadIntegrationInbox({ bucket: integrationInboxBucket, limit: 20 }),
       loadReviewQueue(12),
       loadCustomerDeliveryBoard(8),
+      loadHermesOpenClawLoopReadback("", 6),
       loadAgentGatewayEnrollments(),
       loadAgentGatewaySessions(),
       loadAgentGatewayStatus(),
@@ -153,7 +169,7 @@ export function AIEmployees() {
       loadStuckWorkflowJobs(30, 8),
     ]);
     const agents = await loadAgents(metrics);
-    return { agents, demoReadiness, workerStatus, workerFleet, adapterReadiness, localReadiness, securityReadiness, integrationInbox, reviewQueue, customerDeliveryBoard, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs };
+    return { agents, demoReadiness, workerStatus, workerFleet, adapterReadiness, localReadiness, securityReadiness, integrationInbox, reviewQueue, customerDeliveryBoard, loopLaneReadback, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs };
   }, [integrationInboxBucket]);
   const agents = data?.agents || [];
   const demoReadiness = data?.demoReadiness;
@@ -171,6 +187,7 @@ export function AIEmployees() {
   const customerDeliveries = customerDeliveryBoard?.deliveries || [];
   const customerDeliverySummary = customerDeliveryBoard?.summary;
   const customerDeliverySafety = customerDeliveryBoard?.safety;
+  const loopLaneReadback = data?.loopLaneReadback as HermesOpenClawLoopReadbackPayload | undefined;
   const localEvidence = localReadiness?.evidence;
   const localReadinessActions = localReadiness?.next_actions || [];
   const localReadinessGates = localReadiness?.gates || [];
@@ -274,6 +291,17 @@ export function AIEmployees() {
       planEvidenceVerified: "Verified",
       planEvidenceBlocked: "Blocked",
       planEvidenceMissing: "Missing manifest",
+      loopLaneTitle: "Hermes/OpenClaw Loop Lane",
+      loopLaneSummary: "Run a supervised dry-run review loop, then inspect parent/child runs, plans, artifacts, audit and plan evidence manifests.",
+      loopTopic: "Loop topic",
+      loopId: "Loop ID",
+      runLoopLane: "Run safe loop",
+      resumeLoopLane: "Resume loop",
+      loopRunning: "Loop running...",
+      loopReadback: "Loop readback",
+      verifiedManifests: "Verified manifests",
+      blockedManifests: "Blocked manifests",
+      parentRun: "Parent run",
       deliveriesReady: "Ready",
       deliveriesWaiting: "Waiting approval",
       deliveriesAttention: "Needs attention",
@@ -534,6 +562,17 @@ export function AIEmployees() {
       planEvidenceVerified: "已验证",
       planEvidenceBlocked: "未通过",
       planEvidenceMissing: "缺少 manifest",
+      loopLaneTitle: "Hermes/OpenClaw 循环 Lane",
+      loopLaneSummary: "运行一个受监督的安全 dry-run 评审循环，然后查看父子 run、计划、artifact、审计和计划证据 manifest。",
+      loopTopic: "循环主题",
+      loopId: "Loop ID",
+      runLoopLane: "运行安全循环",
+      resumeLoopLane: "继续循环",
+      loopRunning: "循环运行中...",
+      loopReadback: "循环回读",
+      verifiedManifests: "已验证 manifest",
+      blockedManifests: "阻塞 manifest",
+      parentRun: "父 Run",
       deliveriesReady: "可交付",
       deliveriesWaiting: "待审批",
       deliveriesAttention: "需处理",
@@ -875,6 +914,44 @@ export function AIEmployees() {
 
   const updateCustomerTaskAdapter = (adapter: (typeof WORKER_ADAPTERS)[number]) => {
     setCustomerTaskForm(prev => ({ ...prev, adapter }));
+  };
+
+  const updateLoopLaneForm = (field: keyof typeof loopLaneForm, value: string) => {
+    setLoopLaneForm(prev => ({ ...prev, [field]: value }));
+  };
+
+  const runLoopLane = async (resume = false) => {
+    setLoopLaneBusy(true);
+    setLoopLaneError(null);
+    setLoopLaneResult(null);
+    try {
+      const topic = loopLaneForm.topic.trim() || (locale === "zh"
+        ? "请审视 AgentOps MIS 下一步产品闭环。"
+        : "Review the next AgentOps MIS product closure.");
+      const result = await runHermesOpenClawLoopWorkflow({
+        topic,
+        loop_id: loopLaneForm.loop_id.trim() || undefined,
+        rounds: 1,
+        mode: "dry-run",
+        resume,
+        request_timeout: 15,
+        max_agent_attempts: 1,
+        retry_delay_sec: 0,
+        order: ["hermes", "openclaw"],
+      });
+      setLoopLaneResult(result);
+      if (result.loop_id && !loopLaneForm.loop_id.trim()) {
+        setLoopLaneForm(prev => ({ ...prev, loop_id: result.loop_id || prev.loop_id }));
+      }
+      setDispatchResult(`loop: ${result.ok ? "ok" : "blocked"} · ${result.loop_id || "—"}`);
+      await refresh();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setLoopLaneError(message);
+      setDispatchResult(message);
+    } finally {
+      setLoopLaneBusy(false);
+    }
   };
 
   const runCustomerTask = async (confirmRun: boolean) => {
@@ -1354,6 +1431,135 @@ export function AIEmployees() {
               </div>
             </div>
           ))}
+        </div>
+      </div>
+
+      <div
+        className="rounded-xl p-4"
+        style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}
+      >
+        <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <Bot size={14} style={{ color: "var(--mis-cyan)" }} />
+              <h2 className="text-sm font-semibold" style={{ color: "var(--mis-text)" }}>{copy.loopLaneTitle}</h2>
+              <StatusBadge status={loopLaneResult?.ok ? "completed" : loopLaneReadback?.status || "ready"} />
+            </div>
+            <p className="text-[11px] mt-1 max-w-3xl" style={{ color: "var(--mis-dim)" }}>{copy.loopLaneSummary}</p>
+          </div>
+          <div className="flex flex-wrap gap-1.5 lg:justify-end">
+            <StatusBadge status="pass" label={`${copy.readOnlyProof}: ${loopLaneReadback?.token_omitted ? copy.yes : copy.no}`} />
+            <StatusBadge status={(loopLaneReadback?.summary?.blocked_plan_evidence_manifests || 0) > 0 ? "blocked" : "pass"} label={`${copy.blockedManifests}: ${loopLaneReadback?.summary?.blocked_plan_evidence_manifests ?? 0}`} />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 xl:grid-cols-[1.2fr_0.8fr] gap-3 mt-3">
+          <div className="rounded-lg p-3" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+            <div className="grid grid-cols-1 md:grid-cols-[1fr_0.7fr] gap-2">
+              <label className="text-[10px] uppercase tracking-wide" style={{ color: "var(--mis-muted)" }}>
+                {copy.loopTopic}
+                <textarea
+                  value={loopLaneForm.topic}
+                  onChange={(event) => updateLoopLaneForm("topic", event.target.value)}
+                  className="mt-1 w-full rounded px-3 py-2 text-[11px] min-h-[72px]"
+                  style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)", color: "var(--mis-text)" }}
+                />
+              </label>
+              <label className="text-[10px] uppercase tracking-wide" style={{ color: "var(--mis-muted)" }}>
+                {copy.loopId}
+                <input
+                  value={loopLaneForm.loop_id}
+                  onChange={(event) => updateLoopLaneForm("loop_id", event.target.value)}
+                  placeholder="loop_ui_review"
+                  className="mt-1 w-full rounded px-3 py-2 text-[11px]"
+                  style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)", color: "var(--mis-text)" }}
+                />
+                <div className="text-[9px] mt-1 normal-case" style={{ color: "var(--mis-dim)" }}>
+                  {loopLaneResult?.loop_id || loopLaneReadback?.loop_id || "dry-run · MIS ledger · no live runtime"}
+                </div>
+              </label>
+            </div>
+            <div className="flex flex-wrap gap-2 mt-3">
+              <button
+                onClick={() => runLoopLane(false)}
+                disabled={loopLaneBusy}
+                className="inline-flex items-center gap-1.5 rounded px-3 py-2 text-[11px] disabled:opacity-50"
+                style={{ background: "rgba(34,211,238,0.12)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.24)" }}
+              >
+                {loopLaneBusy ? <RefreshCw size={12} /> : <Play size={12} />}
+                {loopLaneBusy ? copy.loopRunning : copy.runLoopLane}
+              </button>
+              <button
+                onClick={() => runLoopLane(true)}
+                disabled={loopLaneBusy || !loopLaneForm.loop_id.trim()}
+                className="inline-flex items-center gap-1.5 rounded px-3 py-2 text-[11px] disabled:opacity-50"
+                style={{ background: "var(--mis-bg)", color: "var(--mis-text)", border: "1px solid var(--mis-border)" }}
+              >
+                {loopLaneBusy ? <RefreshCw size={12} /> : <RotateCw size={12} />}
+                {loopLaneBusy ? copy.loopRunning : copy.resumeLoopLane}
+              </button>
+            </div>
+            {(loopLaneError || loopLaneResult) && (
+              <div className="mt-3 rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: loopLaneError ? "1px solid rgba(248,113,113,0.24)" : "1px solid var(--mis-border)" }}>
+                {loopLaneError && <div className="text-[11px]" style={{ color: "#F87171" }}>{loopLaneError}</div>}
+                {loopLaneResult && (
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                      {[
+                        { label: copy.loopId, value: loopLaneResult.loop_id || "—" },
+                        { label: copy.parentRun, value: loopLaneResult.mis_ledger?.parent_run_id || "—" },
+                        { label: copy.verifiedManifests, value: loopLaneResult.mis_ledger?.verified_plan_evidence_manifest_ids?.length ?? 0 },
+                        { label: copy.blockedManifests, value: loopLaneResult.mis_ledger?.blocked_plan_evidence_manifest_ids?.length ?? 0 },
+                      ].map(item => (
+                        <div key={item.label} className="rounded px-2 py-1" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                          <div className="text-[9px]" style={{ color: "var(--mis-muted)" }}>{item.label}</div>
+                          <div className="text-[10px] font-semibold truncate mt-0.5" style={{ color: "var(--mis-text)" }}>{item.value}</div>
+                        </div>
+                      ))}
+                    </div>
+                    {loopLaneResult.mis_ledger?.parent_run_id && (
+                      <Link to={`/admin/runs/${loopLaneResult.mis_ledger.parent_run_id}`} className="inline-flex text-[10px] rounded px-2 py-1" style={{ background: "rgba(45,212,191,0.10)", color: "var(--mis-success)", border: "1px solid rgba(45,212,191,0.18)" }}>
+                        {copy.openRun}
+                      </Link>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-lg p-3" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.loopReadback}</div>
+              <StatusBadge status={loopLaneReadback?.status || "unknown"} />
+            </div>
+            <div className="grid grid-cols-2 gap-2 mt-3">
+              {[
+                { label: copy.runs, value: loopLaneReadback?.summary?.runs ?? 0 },
+                { label: copy.artifactId, value: loopLaneReadback?.summary?.artifacts ?? 0 },
+                { label: copy.verifiedManifests, value: loopLaneReadback?.summary?.verified_plan_evidence_manifests ?? 0 },
+                { label: copy.blockedManifests, value: loopLaneReadback?.summary?.blocked_plan_evidence_manifests ?? 0 },
+              ].map(item => (
+                <div key={item.label} className="rounded px-2 py-1" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                  <div className="text-[9px]" style={{ color: "var(--mis-muted)" }}>{item.label}</div>
+                  <div className="text-[10px] font-semibold truncate mt-0.5" style={{ color: "var(--mis-text)" }}>{item.value}</div>
+                </div>
+              ))}
+            </div>
+            <div className="mt-3 space-y-1.5">
+              {(loopLaneReadback?.runs || []).slice(0, 3).map((run) => (
+                <Link key={String(run.run_id)} to={`/admin/runs/${String(run.run_id)}`} className="block rounded px-2 py-1.5" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                  <div className="text-[10px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{String(run.run_id || "—")}</div>
+                  <div className="text-[9px] mt-0.5 truncate" style={{ color: "var(--mis-muted)" }}>{String(run.status || "unknown")} · {String(run.agent_id || "—")}</div>
+                </Link>
+              ))}
+              {(loopLaneReadback?.runs || []).length === 0 && (
+                <div className="text-[10px] rounded px-2 py-1.5" style={{ color: "var(--mis-muted)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                  {copy.inboxEmpty}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </div>
 

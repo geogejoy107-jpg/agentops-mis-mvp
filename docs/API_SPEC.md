@@ -242,6 +242,8 @@ Dashboard metrics include baseline MIS counts plus:
 ```http
 POST /api/workflows/customer-worker-task
 POST /api/workflows/customer-worker-task/submit
+POST /api/workflows/hermes-openclaw-loop
+GET  /api/workflows/hermes-openclaw-loop?loop_id=loop_123
 POST /api/workflows/customer-task-templates/run
 POST /api/workflows/customer-task-templates/submit
 GET  /api/workflows/jobs
@@ -263,6 +265,15 @@ prompts, raw responses, credentials, tokens, or private transcripts.
 `/workflows/jobs/stuck` lists queued/running jobs older than a threshold.
 `/mark-failed` is an operator recovery action for stale jobs; it marks the job
 failed and writes runtime/audit evidence without deleting result history.
+
+`/hermes-openclaw-loop` invokes the supervised Hermes/OpenClaw loop lane through
+the Agent Gateway ledger. Dry-run mode is the default; live Hermes/OpenClaw modes
+require `confirm_live`. Each parent/child loop lane writes an `agent_plan`,
+tool call, evaluation, artifact, audit evidence, and a
+`plan_evidence_manifest`. `resume:true` reuses existing gitignored runtime JSONL
+rows for a fixed `loop_id`; blocked lanes preserve blocked manifests for
+operator review. `GET` is read-only and returns runs, tasks, artifacts,
+agent_plans, manifests, audit rows and summary counts for a loop id.
 
 ## Audit
 

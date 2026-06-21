@@ -321,6 +321,65 @@ export interface CustomerDeliveryBoardPayload {
   token_omitted?: boolean;
 }
 
+export interface HermesOpenClawLoopReadbackPayload {
+  provider: string;
+  operation: string;
+  loop_id?: string | null;
+  status: string;
+  runs: Record<string, unknown>[];
+  tasks: Record<string, unknown>[];
+  artifacts: Record<string, unknown>[];
+  agent_plans: Record<string, unknown>[];
+  plan_evidence_manifests: Record<string, unknown>[];
+  audit_logs?: Record<string, unknown>[];
+  summary: {
+    runs?: number;
+    tasks?: number;
+    artifacts?: number;
+    agent_plans?: number;
+    plan_evidence_manifests?: number;
+    verified_plan_evidence_manifests?: number;
+    blocked_plan_evidence_manifests?: number;
+    failed_runs?: number;
+  };
+  token_omitted?: boolean;
+}
+
+export interface HermesOpenClawLoopWorkflowResult {
+  provider: string;
+  workflow: string;
+  ok?: boolean;
+  loop_id?: string;
+  mode?: string;
+  rounds?: number;
+  agents?: string[];
+  duration_ms?: number;
+  log_path?: string;
+  audit_path?: string;
+  next_action_artifact_path?: string;
+  next_action_artifact?: Record<string, unknown>;
+  runtime_dir_gitignored?: boolean;
+  mis_ledger?: {
+    ok?: boolean;
+    parent_task_id?: string;
+    parent_run_id?: string;
+    child_task_ids?: string[];
+    child_run_ids?: string[];
+    plan_ids?: string[];
+    plan_evidence_manifest_ids?: string[];
+    verified_plan_evidence_manifest_ids?: string[];
+    blocked_plan_evidence_manifest_ids?: string[];
+    artifact_id?: string;
+    artifact_ids?: string[];
+    token_omitted?: boolean;
+    raw_omitted?: boolean;
+  };
+  outputs?: Record<string, unknown>[];
+  stderr_summary?: string | null;
+  token_omitted?: boolean;
+  raw_omitted?: boolean;
+}
+
 export interface CustomerTaskTemplate {
   template_id: string;
   name: string;
@@ -1484,6 +1543,32 @@ export async function loadCustomerProjects(limit = 25): Promise<CustomerProjectI
 
 export async function loadCustomerDeliveryBoard(limit = 12): Promise<CustomerDeliveryBoardPayload> {
   return apiJson<CustomerDeliveryBoardPayload>(`/workflows/customer-delivery-board?limit=${encodeURIComponent(String(limit))}`);
+}
+
+export async function loadHermesOpenClawLoopReadback(loopId = "", limit = 10): Promise<HermesOpenClawLoopReadbackPayload> {
+  const params = new URLSearchParams();
+  if (loopId) params.set("loop_id", loopId);
+  params.set("limit", String(limit));
+  return apiJson<HermesOpenClawLoopReadbackPayload>(`/workflows/hermes-openclaw-loop?${params.toString()}`);
+}
+
+export async function runHermesOpenClawLoopWorkflow(input: {
+  topic: string;
+  loop_id?: string;
+  rounds?: number;
+  mode?: "dry-run" | "live-hermes" | "live-openclaw" | "live-both";
+  confirm_live?: boolean;
+  resume?: boolean;
+  order?: ("hermes" | "openclaw")[];
+  request_timeout?: number;
+  max_agent_attempts?: number;
+  retry_delay_sec?: number;
+  simulate_failure_agent?: ("hermes" | "openclaw")[];
+}): Promise<HermesOpenClawLoopWorkflowResult> {
+  return apiJsonWithStatuses<HermesOpenClawLoopWorkflowResult>("/workflows/hermes-openclaw-loop", {
+    method: "POST",
+    body: JSON.stringify(input),
+  }, [201, 409]);
 }
 
 export async function loadWorkerStatus(): Promise<WorkerStatusPayload> {
