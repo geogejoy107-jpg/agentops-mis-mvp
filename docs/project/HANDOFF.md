@@ -3,12 +3,11 @@
 > Handoff date: 2026-06-21  
 > Repository: `geogejoy107-jpg/agentops-mis-mvp`  
 > Development line: `codex/agent-gateway-kb-demo`  
-> Latest development head observed: `9d47f0e1bcdc3da9f9b8e37733b4ae12c96507cf`  
-> Governance branch: `ops/project-governance-ledger`  
-> Governance PR: `#6` — `docs: install durable project governance and ledger workflow`  
-> Governance head observed before this handoff update: `d1dd4db7e80a4bcdf6605161c252d9f26bde9693`
+> Project-governance integration commit: `5f1706c3afed22156e0bb3dc06ca351f698713d9`  
+> Governance PR: `#6` merged  
+> Audit PR: `#5` remains the last full audit package
 
-The exact current PR head must always be read from GitHub because updating this file itself creates a newer commit.
+Always verify the exact current development HEAD from GitHub before implementation. The integration commit is a stable point showing where governance entered the development line.
 
 ## Read First
 
@@ -16,81 +15,76 @@ The exact current PR head must always be read from GitHub because updating this 
 2. `docs/project/DECISIONS.md`
 3. `docs/project/BACKLOG.md`
 4. this handoff
-5. `PROJECT_SPEC.md`
-6. `AGENT_WORKFLOW.md`
-7. `BASE_INDEX.md`
-8. Draft audit PR `#5`
-9. Draft governance PR `#6`
+5. `AGENTS.md`
+6. `PROJECT_SPEC.md`
+7. `AGENT_WORKFLOW.md`
+8. `BASE_INDEX.md`
+9. audit PR `#5`
 
-Then verify the current GitHub branch and commit. Do not rely on the values in this file if either branch has advanced.
+Then verify repository, branch, and commit. Do not rely on conversation memory or stale values in a document if the branch has advanced.
 
-## What This Workstream Completed
+## Completed
 
-The project previously relied too heavily on conversation memory and scattered documents. This workstream installed a durable, reviewable project-governance layer:
+The project now has a durable, reviewable governance layer:
 
-- a Notion Control Center;
-- a structured Notion Project Ledger;
+- Notion `MIS Project Control Center`;
+- Notion `MIS Project Ledger` with review and operational views;
 - accepted decisions and candidate-memory rules;
-- versioned project state, backlog, decision log, and handoff;
-- root repository instructions;
-- an extended Agent Workflow with Git preflight and Project Delta;
-- a repo-local Project Ledger skill;
-- a ready-to-paste ChatGPT Project Instructions template.
+- versioned project state, backlog, decision log, operating rules, and handoff;
+- root `AGENTS.md` repository instructions;
+- extended `AGENT_WORKFLOW.md` with Git preflight, deduplication, Project Delta, and handoff rules;
+- repo-local `.agents/skills/project-ledger/SKILL.md`;
+- ready-to-paste `docs/project/CHATGPT_PROJECT_INSTRUCTIONS.md`.
 
-## Completed Outside GitHub
-
-- Created `MIS Project Control Center｜项目操作台` under the existing MIS Knowledge Hub.
-- Created `MIS Project Ledger｜项目账本`.
-- Added Status Board, Inbox, Proposed Review, Approved Canon, Decisions, P0, Risks, Tasks, and Handoffs views.
-- Seeded accepted decisions, current risks, audit evidence, the governance task, the manual ChatGPT-instruction task, and a baseline handoff.
-- Registered the SOP in the existing Notion `Docs｜项目文档库`.
-
-Notion links:
+## Notion Assets
 
 - Control Center: https://app.notion.com/p/3866adfdd920816096a0ef9bd4a58801
 - Project Ledger: https://app.notion.com/p/24467ea0d1764e40957cdcc1ca55db53
+- Docs SOP entry is registered in the existing `Docs｜项目文档库`.
 
-## Current Code-Line Facts
+The ledger contains accepted decisions, current risks, audit evidence, tasks, and a baseline handoff. It includes Status Board, Inbox, Proposed Review, Approved Canon, Decisions, P0, Risks, Tasks, and Handoffs views.
 
-- The last full static audit froze `8d1827e00629bdca4779794121ca4a31dfa3f1e1`.
-- The development line continued after that audit.
-- Observed post-audit work includes customer local-deployment backup/restore and the Commander Work Package Planner at `9d47f0e1bcdc3da9f9b8e37733b4ae12c96507cf`.
-- Governance PR `#6` was opened against that development line and GitHub reported it mergeable at the time of verification.
-- The governance branch was cut before the latest Commander commit and is one base commit behind; the PR is mergeable, but must be refreshed or merge-tested again before final merge.
-- The historical blocker list must be reconciled against the exact latest development head before implementation begins.
+## Code-Line Facts
+
+- Last full static audit baseline: `8d1827e00629bdca4779794121ca4a31dfa3f1e1`.
+- Post-audit development includes customer local-deployment backup/restore and Commander Work Package Planner work.
+- Governance was merged into `codex/agent-gateway-kb-demo` at `5f1706c3afed22156e0bb3dc06ca351f698713d9`.
+- Historical P0 findings must still be reconciled against the exact latest development HEAD before implementation.
+- No runtime, database, or live adapter was executed as part of the governance workstream.
 
 ## Current Decision
 
-Do not start another horizontal feature line. Finish governance review, re-verify current HEAD, then close the first unresolved correctness gate: Agent Plan approval-role separation and verified Plan-to-Run binding.
+Do not start another horizontal feature line. Re-verify current HEAD, then close the first unresolved correctness gate: Agent Plan approval-role separation and verified Plan-to-Run binding.
 
-## Manual Dependency
+## Remaining Manual Dependency
 
-The available integrations can write to Notion and GitHub, but cannot edit ChatGPT Project Instructions. The project owner must paste `docs/project/CHATGPT_PROJECT_INSTRUCTIONS.md` into the Project settings and run its installation check.
+The current connectors cannot edit ChatGPT Project Instructions. The project owner must paste `docs/project/CHATGPT_PROJECT_INSTRUCTIONS.md` into the ChatGPT Project settings and run the included installation check.
 
 ## Verification Performed
 
-- Confirmed all ten expected governance files appear in PR `#6`.
-- Confirmed the PR base and head branches are correct.
-- Confirmed GitHub currently reports PR `#6` as mergeable.
-- Confirmed the Notion Control Center, Project Ledger, database views, seed entries, and Docs SOP exist.
-- No runtime, database, or live adapter was executed; this workstream is governance/documentation only.
+- Confirmed the ten intended governance files were present in PR `#6`.
+- Confirmed the PR targeted `codex/agent-gateway-kb-demo`.
+- Confirmed GitHub reported the PR mergeable before merge.
+- Squash-merged PR `#6`; resulting development integration commit is `5f1706c3afed22156e0bb3dc06ca351f698713d9`.
+- Confirmed the Notion Control Center, Project Ledger, views, seed entries, and Docs SOP exist.
+- No GitHub Actions workflow run existed for the documentation head; this is recorded rather than treated as a pass.
 
 ## Next Single Action
 
-Project owner pastes the ChatGPT Project Instructions template. In parallel, review PR `#6`; immediately before merge, re-check the exact development head, mergeability, changed files, and any CI/status checks.
+Install the ChatGPT Project Instructions template. Then re-audit the exact current development HEAD and reconcile each P0 item with current code and tests before opening the first hardening implementation PR.
 
 ## Project Delta
 
 ```yaml
 type: Handoff
-title: Durable project governance installed for AgentOps MIS
+title: Durable project governance installed and merged
 status: Implemented
 priority: P0
 module: Project Governance
 repository: geogejoy107-jpg/agentops-mis-mvp
-branch: ops/project-governance-ledger
-commit: read exact head from PR #6
-source: Notion Control Center and GitHub PR #6
+branch: codex/agent-gateway-kb-demo
+commit: 5f1706c3afed22156e0bb3dc06ca351f698713d9
+source: Notion Control Center and merged GitHub PR #6
 supersedes: ad-hoc conversation-only continuity
-next_action: install ChatGPT Project Instructions and review PR #6
+next_action: install ChatGPT Project Instructions, then re-audit exact current HEAD
 ```
