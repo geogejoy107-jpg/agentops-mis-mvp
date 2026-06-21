@@ -17,6 +17,7 @@ import {
   loadDemoReadiness,
   loadIntegrationInbox,
   loadLocalReadiness,
+  loadReviewQueue,
   loadSecurityProductionReadiness,
   loadStuckWorkflowJobs,
   loadWorkerAdapterReadiness,
@@ -39,6 +40,7 @@ import {
   type AgentGatewayEnrollmentRequestResult,
   type CustomerDeliveryBoardPayload,
   type CustomerTaskWorkflowResult,
+  type ReviewQueuePayload,
   type WorkerAdapterName,
   type WorkflowJob,
 } from "../../data/liveApi";
@@ -128,7 +130,7 @@ export function AIEmployees() {
     scopes: DEFAULT_GATEWAY_SCOPES.join(", "),
   });
   const { data, loading, error, refresh } = useLiveData(async () => {
-    const [metrics, demoReadiness, workerStatus, workerFleet, adapterReadiness, localReadiness, securityReadiness, integrationInbox, customerDeliveryBoard, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs] = await Promise.all([
+    const [metrics, demoReadiness, workerStatus, workerFleet, adapterReadiness, localReadiness, securityReadiness, integrationInbox, reviewQueue, customerDeliveryBoard, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs] = await Promise.all([
       loadDashboard(),
       loadDemoReadiness(),
       loadWorkerStatus(),
@@ -137,6 +139,7 @@ export function AIEmployees() {
       loadLocalReadiness(),
       loadSecurityProductionReadiness(),
       loadIntegrationInbox({ bucket: integrationInboxBucket, limit: 20 }),
+      loadReviewQueue(12),
       loadCustomerDeliveryBoard(8),
       loadAgentGatewayEnrollments(),
       loadAgentGatewaySessions(),
@@ -147,7 +150,7 @@ export function AIEmployees() {
       loadStuckWorkflowJobs(30, 8),
     ]);
     const agents = await loadAgents(metrics);
-    return { agents, demoReadiness, workerStatus, workerFleet, adapterReadiness, localReadiness, securityReadiness, integrationInbox, customerDeliveryBoard, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs };
+    return { agents, demoReadiness, workerStatus, workerFleet, adapterReadiness, localReadiness, securityReadiness, integrationInbox, reviewQueue, customerDeliveryBoard, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs };
   }, [integrationInboxBucket]);
   const agents = data?.agents || [];
   const demoReadiness = data?.demoReadiness;
@@ -157,6 +160,10 @@ export function AIEmployees() {
   const localReadiness = data?.localReadiness;
   const securityReadiness = data?.securityReadiness;
   const integrationInbox = data?.integrationInbox;
+  const reviewQueue = data?.reviewQueue as ReviewQueuePayload | undefined;
+  const reviewQueueSummary = reviewQueue?.summary;
+  const reviewQueueItems = reviewQueue?.review_items || [];
+  const reviewQueueSafety = reviewQueue?.safety;
   const customerDeliveryBoard = data?.customerDeliveryBoard as CustomerDeliveryBoardPayload | undefined;
   const customerDeliveries = customerDeliveryBoard?.deliveries || [];
   const customerDeliverySummary = customerDeliveryBoard?.summary;
@@ -244,6 +251,15 @@ export function AIEmployees() {
       liveExecutionProof: "Live execution not performed",
       integrationInboxTitle: "Async Integration Inbox",
       integrationInboxSummary: "Commander queue for worker results arriving at different speeds: review ready work, watch running jobs, and recover blocked items.",
+      reviewQueueTitle: "Human Review Queue",
+      reviewQueueSummary: "One operator queue for approvals, memory candidates and customer deliveries. Handle returned work first without waiting for every worker lane.",
+      reviewQueueEmpty: "No review items. Keep dispatching or watch the async inbox.",
+      pendingApprovals: "Pending approvals",
+      memoryCandidates: "Memory candidates",
+      waitingDeliveries: "Waiting deliveries",
+      returnedItems: "Returned items",
+      cliAction: "CLI action",
+      alternateAction: "Alternative",
       customerDeliveryBoardTitle: "Customer Delivery Board",
       customerDeliveryBoardSummary: "Read-only customer-facing board: delivery artifact, linked task/run, approvals, evaluations, audit evidence, and next action.",
       deliveriesReady: "Ready",
@@ -486,6 +502,15 @@ export function AIEmployees() {
       liveExecutionProof: "未执行真实任务",
       integrationInboxTitle: "异步集成 Inbox",
       integrationInboxSummary: "Commander 用来处理不同速度 worker 回报的队列：审阅已完成工作、观察运行中 job、恢复阻塞项。",
+      reviewQueueTitle: "人工审核队列",
+      reviewQueueSummary: "把审批、候选记忆和客户交付聚合成一个 operator 队列；哪个 worker 先回来，就先处理哪个。",
+      reviewQueueEmpty: "暂无待审事项。可以继续派发任务，或观察异步 Inbox。",
+      pendingApprovals: "待审批",
+      memoryCandidates: "候选记忆",
+      waitingDeliveries: "待交付审批",
+      returnedItems: "已返回事项",
+      cliAction: "CLI 动作",
+      alternateAction: "备用动作",
       customerDeliveryBoardTitle: "客户交付看板",
       customerDeliveryBoardSummary: "只读客户视角：交付 artifact、关联 task/run、审批、评估、审计证据和下一步动作。",
       deliveriesReady: "可交付",
@@ -1169,6 +1194,99 @@ export function AIEmployees() {
         <button onClick={refresh} className="mt-3 text-[11px] px-3 py-1.5 rounded" style={{ background: "rgba(34,211,238,0.12)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.2)" }}>
           {copy.refresh}
         </button>
+      </div>
+
+      <div
+        data-testid="review-queue-panel"
+        className="rounded-xl p-4"
+        style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}
+      >
+        <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <Inbox size={14} style={{ color: "var(--mis-warning)" }} />
+              <h2 className="text-sm font-semibold" style={{ color: "var(--mis-text)" }}>{copy.reviewQueueTitle}</h2>
+              <StatusBadge status={reviewQueue?.status || "unknown"} />
+            </div>
+            <p className="text-[11px] mt-1 max-w-3xl" style={{ color: "var(--mis-dim)" }}>{copy.reviewQueueSummary}</p>
+          </div>
+          <div className="flex flex-wrap gap-1.5 lg:justify-end">
+            <StatusBadge status={reviewQueueSafety?.read_only ? "pass" : "fail"} label={`${copy.readOnlyProof}: ${reviewQueueSafety?.read_only ? copy.yes : copy.no}`} />
+            <StatusBadge status={reviewQueueSafety?.ledger_mutated === false ? "pass" : "fail"} label={`${copy.ledgerMutationProof}: ${reviewQueueSafety?.ledger_mutated === false ? copy.yes : copy.no}`} />
+            <StatusBadge status={reviewQueueSafety?.live_execution_performed === false ? "pass" : "fail"} label={`${copy.liveExecutionProof}: ${reviewQueueSafety?.live_execution_performed === false ? copy.yes : copy.no}`} />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2 mt-3">
+          {[
+            { label: copy.pendingApprovals, value: reviewQueueSummary?.pending_approvals ?? 0, status: (reviewQueueSummary?.pending_approvals || 0) > 0 ? "attention" : "pass" },
+            { label: copy.memoryCandidates, value: reviewQueueSummary?.memory_candidates ?? 0, status: (reviewQueueSummary?.memory_candidates || 0) > 0 ? "attention" : "pass" },
+            { label: copy.waitingDeliveries, value: reviewQueueSummary?.waiting_deliveries ?? 0, status: (reviewQueueSummary?.waiting_deliveries || 0) > 0 ? "attention" : "pass" },
+            { label: copy.returnedItems, value: `${reviewQueueSummary?.returned_items ?? 0}/${reviewQueueSummary?.review_items_total ?? 0}`, status: (reviewQueueSummary?.review_items_total || 0) > 0 ? "ready" : "idle" },
+          ].map((item) => (
+            <div key={item.label} className="rounded px-3 py-2" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+              <div className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{item.label}</div>
+              <div className="flex items-center justify-between gap-2 mt-1">
+                <div className="text-sm font-semibold truncate" style={{ color: item.status === "attention" ? "var(--mis-warning)" : "var(--mis-text)" }}>{item.value}</div>
+                <StatusBadge status={item.status} />
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="space-y-2 mt-3">
+          {reviewQueueItems.length === 0 && (
+            <div className="text-[11px] rounded px-3 py-2" style={{ color: "var(--mis-muted)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+              {copy.reviewQueueEmpty}
+            </div>
+          )}
+          {reviewQueueItems.slice(0, 5).map((item) => (
+            <div key={`${item.item_type}-${item.item_id}`} data-testid="review-queue-item" className="rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+              <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="text-[11px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{item.title}</div>
+                    <StatusBadge status={item.status} />
+                  </div>
+                  <div className="text-[10px] mt-1 truncate" style={{ color: "var(--mis-muted)" }}>
+                    {item.item_type} · {item.kind || "review"} · {item.agent_id || "agent: —"}
+                  </div>
+                  {item.summary && (
+                    <div className="text-[10px] mt-1 line-clamp-2" style={{ color: "var(--mis-dim)" }}>{item.summary}</div>
+                  )}
+                  {item.next_action && (
+                    <div className="text-[10px] mt-1 line-clamp-2" style={{ color: "var(--mis-cyan)" }}>
+                      {copy.nextAction}: {item.next_action}
+                    </div>
+                  )}
+                </div>
+                <div className="flex flex-wrap lg:justify-end gap-1.5 shrink-0">
+                  {item.task_id && (
+                    <Link to={`/admin/tasks/${item.task_id}`} className="text-[10px] px-2 py-1 rounded" style={{ background: "rgba(34,211,238,0.10)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.18)" }}>{copy.openTask}</Link>
+                  )}
+                  {item.run_id && (
+                    <Link to={`/admin/runs/${item.run_id}`} className="text-[10px] px-2 py-1 rounded" style={{ background: "rgba(45,212,191,0.10)", color: "var(--mis-success)", border: "1px solid rgba(45,212,191,0.18)" }}>{copy.openRun}</Link>
+                  )}
+                  {item.links?.report_url && (
+                    <Link to={item.links.report_url} className="text-[10px] px-2 py-1 rounded" style={{ background: "rgba(251,191,36,0.10)", color: "var(--mis-warning)", border: "1px solid rgba(251,191,36,0.20)" }}>{copy.openReport}</Link>
+                  )}
+                </div>
+              </div>
+              <div className="mt-2 grid grid-cols-1 lg:grid-cols-2 gap-1.5">
+                {item.cli_action && (
+                  <div className="text-[9px] truncate px-2 py-1 rounded" style={{ color: "var(--mis-muted)", background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                    {copy.cliAction}: {item.cli_action}
+                  </div>
+                )}
+                {item.alternate_cli_action && (
+                  <div className="text-[9px] truncate px-2 py-1 rounded" style={{ color: "var(--mis-muted)", background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                    {copy.alternateAction}: {item.alternate_cli_action}
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
 
       <div

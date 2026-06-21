@@ -630,6 +630,57 @@ export interface IntegrationInboxOptions {
   threshold_sec?: number;
 }
 
+export interface ReviewQueueSummary {
+  pending_approvals: number;
+  memory_candidates: number;
+  ready_deliveries: number;
+  waiting_deliveries: number;
+  needs_attention_deliveries: number;
+  review_items_total: number;
+  returned_items: number;
+  retrieved_pending_approvals?: number;
+  retrieved_memory_candidates?: number;
+}
+
+export interface ReviewQueueItem {
+  item_type: "approval" | "memory_candidate" | "customer_delivery" | string;
+  item_id: string;
+  status: string;
+  kind?: string | null;
+  title: string;
+  summary?: string;
+  task_id?: string | null;
+  run_id?: string | null;
+  agent_id?: string | null;
+  artifact_id?: string | null;
+  created_at?: string;
+  updated_at?: string;
+  next_action?: string;
+  cli_action?: string;
+  alternate_cli_action?: string | null;
+  links?: Record<string, string | null>;
+}
+
+export interface ReviewQueuePayload {
+  provider: string;
+  operation: string;
+  status: string;
+  limit: number;
+  summary: ReviewQueueSummary;
+  review_items: ReviewQueueItem[];
+  gates: { id: string; label: string; ok: boolean; value?: string | number | boolean }[];
+  next_actions: string[];
+  safety: {
+    read_only: boolean;
+    ledger_mutated: boolean;
+    live_execution_performed: boolean;
+    raw_prompt_omitted: boolean;
+    raw_response_omitted: boolean;
+    token_omitted: boolean;
+  };
+  token_omitted?: boolean;
+}
+
 export interface StuckWorkerTask extends Task {
   age_sec?: number;
   threshold_sec?: number;
@@ -1666,6 +1717,82 @@ export async function loadIntegrationInbox(options: IntegrationInboxOptions = {}
       ledger_mutated: boolValue(safetyRaw.ledger_mutated),
       raw_prompt_omitted: boolValue(safetyRaw.raw_prompt_omitted),
     },
+  };
+}
+
+export async function loadReviewQueue(limit = 12): Promise<ReviewQueuePayload> {
+  const raw = await optionalApiJson<Record<string, unknown>>(`/review/queue?limit=${encodeURIComponent(String(limit))}`, {
+    provider: "agentops-review",
+    operation: "human_review_queue",
+    status: "unavailable",
+    limit,
+    summary: {},
+    review_items: [],
+    gates: [],
+    next_actions: [],
+    safety: {
+      read_only: true,
+      ledger_mutated: false,
+      live_execution_performed: false,
+      raw_prompt_omitted: true,
+      raw_response_omitted: true,
+      token_omitted: true,
+    },
+    token_omitted: true,
+    fallback_reason: "endpoint_not_available",
+  });
+  const summaryRaw = typeof raw.summary === "object" && raw.summary !== null ? raw.summary as Record<string, unknown> : {};
+  const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
+  return {
+    provider: String(raw.provider || "agentops-review"),
+    operation: String(raw.operation || "human_review_queue"),
+    status: String(raw.status || "unknown"),
+    limit: numberValue(raw.limit, limit),
+    summary: {
+      pending_approvals: numberValue(summaryRaw.pending_approvals, 0),
+      memory_candidates: numberValue(summaryRaw.memory_candidates, 0),
+      ready_deliveries: numberValue(summaryRaw.ready_deliveries, 0),
+      waiting_deliveries: numberValue(summaryRaw.waiting_deliveries, 0),
+      needs_attention_deliveries: numberValue(summaryRaw.needs_attention_deliveries, 0),
+      review_items_total: numberValue(summaryRaw.review_items_total, 0),
+      returned_items: numberValue(summaryRaw.returned_items, 0),
+      retrieved_pending_approvals: numberValue(summaryRaw.retrieved_pending_approvals, 0),
+      retrieved_memory_candidates: numberValue(summaryRaw.retrieved_memory_candidates, 0),
+    },
+    review_items: asArray<Record<string, unknown>>(raw.review_items).map((item) => ({
+      item_type: String(item.item_type || "review_item"),
+      item_id: String(item.item_id || item.approval_id || item.memory_id || item.artifact_id || ""),
+      status: String(item.status || "unknown"),
+      kind: item.kind ? String(item.kind) : null,
+      title: String(item.title || item.item_id || "Review item"),
+      summary: item.summary ? String(item.summary) : undefined,
+      task_id: item.task_id ? String(item.task_id) : null,
+      run_id: item.run_id ? String(item.run_id) : null,
+      agent_id: item.agent_id ? String(item.agent_id) : null,
+      artifact_id: item.artifact_id ? String(item.artifact_id) : null,
+      created_at: item.created_at ? String(item.created_at) : undefined,
+      updated_at: item.updated_at ? String(item.updated_at) : undefined,
+      next_action: item.next_action ? String(item.next_action) : undefined,
+      cli_action: item.cli_action ? String(item.cli_action) : undefined,
+      alternate_cli_action: item.alternate_cli_action ? String(item.alternate_cli_action) : null,
+      links: typeof item.links === "object" && item.links !== null ? item.links as Record<string, string | null> : undefined,
+    })).filter((item) => item.item_id || item.title),
+    gates: asArray<Record<string, unknown>>(raw.gates).map((gate) => ({
+      id: String(gate.id || gate.label || ""),
+      label: String(gate.label || gate.id || ""),
+      ok: boolValue(gate.ok),
+      value: typeof gate.value === "string" || typeof gate.value === "number" || typeof gate.value === "boolean" ? gate.value : undefined,
+    })),
+    next_actions: asArray<unknown>(raw.next_actions).map(String).filter(Boolean),
+    safety: {
+      read_only: boolValue(safetyRaw.read_only),
+      ledger_mutated: boolValue(safetyRaw.ledger_mutated),
+      live_execution_performed: boolValue(safetyRaw.live_execution_performed),
+      raw_prompt_omitted: boolValue(safetyRaw.raw_prompt_omitted),
+      raw_response_omitted: boolValue(safetyRaw.raw_response_omitted),
+      token_omitted: boolValue(safetyRaw.token_omitted),
+    },
+    token_omitted: boolValue(raw.token_omitted),
   };
 }
 
