@@ -260,6 +260,19 @@ def main() -> int:
             statuses = task_statuses(DEFAULT_DB, task_ids)
             require(all(status == "completed" for status in statuses.values()), f"synthesis approval mutated task statuses: {statuses}")
 
+        queue_status, queue_ready = http_json("GET", "/api/review/queue?limit=20")
+        transcripts.append(json.dumps(queue_ready, ensure_ascii=False))
+        require(queue_status == 200, f"review queue after approval failed: {queue_status} {queue_ready}")
+        ready_items = queue_ready.get("review_items") or []
+        promotion_items = [
+            item for item in ready_items
+            if item.get("item_type") == "commander_synthesis"
+            and item.get("artifact_id") == artifact_id
+            and item.get("status") == "approved_not_promoted"
+        ]
+        require(promotion_items, f"approved synthesis promotion action missing from review queue: {queue_ready}")
+        require("promote-synthesis" in (promotion_items[0].get("cli_action") or ""), f"promotion cli action missing: {promotion_items[0]}")
+
         promote_preview = run_cli([
             "commander",
             "promote-synthesis",
@@ -305,7 +318,10 @@ def main() -> int:
         queue_status, queue_after = http_json("GET", "/api/review/queue?limit=20")
         transcripts.append(json.dumps(queue_after, ensure_ascii=False))
         require(queue_status == 200, f"review queue after promote failed: {queue_status} {queue_after}")
-        require(any(item.get("item_type") == "memory_candidate" and item.get("summary") for item in (queue_after.get("review_items") or [])), f"memory candidate missing after promote: {queue_after}")
+        queue_summary = queue_after.get("summary") or {}
+        queue_lanes = queue_after.get("lanes") or {}
+        require(isinstance(queue_lanes.get("memory_candidates"), list), f"memory candidate lane missing after promote: {queue_after}")
+        require(int(queue_summary.get("memory_candidates") or 0) >= 1, f"memory candidate summary missing after promote: {queue_after}")
 
         if DEFAULT_DB.exists():
             promoted_counts = promotion_evidence(DEFAULT_DB, artifact_id, delivery_artifact_id)

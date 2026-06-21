@@ -4423,6 +4423,7 @@ def agent_gateway_review_queue(conn: sqlite3.Connection, qs: dict, headers, auth
     pending_approvals = [item for item in lanes.get("pending_approvals", []) if visible(item)]
     memory_candidates = [item for item in lanes.get("memory_candidates", []) if visible(item)]
     customer_deliveries = [item for item in lanes.get("customer_deliveries", []) if visible(item)]
+    commander_synthesis = [item for item in lanes.get("commander_synthesis", []) if visible(item)]
     review_items = visible_review_items[:limit]
     payload["limit"] = limit
     payload["review_items"] = review_items
@@ -4430,6 +4431,7 @@ def agent_gateway_review_queue(conn: sqlite3.Connection, qs: dict, headers, auth
         "pending_approvals": pending_approvals[:limit],
         "memory_candidates": memory_candidates[:limit],
         "customer_deliveries": customer_deliveries[:limit],
+        "commander_synthesis": commander_synthesis[:limit],
     }
     payload["summary"] = {
         "pending_approvals": len(pending_approvals),
@@ -4437,12 +4439,22 @@ def agent_gateway_review_queue(conn: sqlite3.Connection, qs: dict, headers, auth
         "ready_deliveries": len([item for item in customer_deliveries if item.get("status") == "ready"]),
         "waiting_deliveries": len([item for item in customer_deliveries if item.get("status") == "waiting_approval"]),
         "needs_attention_deliveries": len([item for item in customer_deliveries if item.get("status") == "needs_attention"]),
+        "commander_synthesis_pending_reviews": len([item for item in pending_approvals if item.get("kind") == "commander_synthesis"]),
+        "commander_synthesis_promotion_available": len([item for item in commander_synthesis if item.get("status") == "approved_not_promoted"]),
+        "commander_synthesis_memory_reviews": len([item for item in commander_synthesis if item.get("status") == "memory_pending_review"]),
         "review_items_total": len(visible_review_items),
         "returned_items": len(review_items),
         "retrieved_pending_approvals": len(pending_approvals[:limit]),
         "retrieved_memory_candidates": len(memory_candidates[:limit]),
     }
-    if any(payload["summary"].get(key, 0) for key in ["pending_approvals", "memory_candidates", "waiting_deliveries", "needs_attention_deliveries"]):
+    if any(payload["summary"].get(key, 0) for key in [
+        "pending_approvals",
+        "memory_candidates",
+        "waiting_deliveries",
+        "needs_attention_deliveries",
+        "commander_synthesis_promotion_available",
+        "commander_synthesis_memory_reviews",
+    ]):
         payload["status"] = "attention"
     elif payload["summary"].get("ready_deliveries"):
         payload["status"] = "ready"
@@ -7047,6 +7059,12 @@ def human_review_queue(conn, limit: int = 20) -> dict:
         row for row in delivery_board.get("deliveries", [])
         if row.get("status") in {"waiting_approval", "needs_attention", "ready"}
     ][:per_lane_limit]
+    synthesis_lifecycle = commander_synthesis_lifecycle(conn, limit=min(per_lane_limit, 10))
+    synthesis_recent = synthesis_lifecycle.get("recent") or []
+    synthesis_action_focus = [
+        row for row in synthesis_recent
+        if row.get("status") in {"approved_not_promoted", "memory_pending_review", "needs_review_gate"}
+    ][:per_lane_limit]
 
     items: list[dict] = []
     for row in approvals:
@@ -7088,6 +7106,7 @@ def human_review_queue(conn, limit: int = 20) -> dict:
             "next_action": next_action,
             "cli_action": f"agentops approval approve --approval-id {approval_id}",
             "alternate_cli_action": f"agentops approval reject --approval-id {approval_id}",
+            "priority": 95 if approval_kind == "commander_synthesis" else 90,
         })
 
     for row in memories:
@@ -7120,6 +7139,7 @@ def human_review_queue(conn, limit: int = 20) -> dict:
             "next_action": "Approve useful reusable knowledge or reject noisy memory.",
             "cli_action": f"agentops memory approve --memory-id {memory_id}",
             "alternate_cli_action": f"agentops memory reject --memory-id {memory_id}",
+            "priority": 70,
         })
 
     for row in delivery_focus:
@@ -7160,25 +7180,84 @@ def human_review_queue(conn, limit: int = 20) -> dict:
                 f"agentops approval reject --approval-id {pending_ids[0]}"
                 if pending_ids else None
             ),
+            "priority": 84 if row.get("status") == "waiting_approval" else 80 if row.get("status") == "needs_attention" else 60,
         })
 
-    def sort_key(item: dict) -> str:
-        return item.get("updated_at") or item.get("created_at") or ""
+    for row in synthesis_action_focus:
+        artifact_id = row.get("artifact_id")
+        approval_id = row.get("approval_id")
+        status_value = row.get("status")
+        if status_value == "approved_not_promoted":
+            title = "Commander synthesis approved: promotion available"
+            next_action = row.get("next_action") or (
+                f"agentops commander promote-synthesis --artifact-id {artifact_id} --approval-id {approval_id} --confirm-promote"
+            )
+            alternate_action = "agentops commander board"
+            priority = 96
+        elif status_value == "memory_pending_review":
+            title = "Commander synthesis memory awaiting review"
+            next_action = "Review the memory candidate created from this synthesis."
+            alternate_action = "agentops memory list --status candidate"
+            priority = 74
+        else:
+            title = "Commander synthesis missing review gate"
+            next_action = row.get("next_action") or "agentops commander synthesize --status ready_for_review --confirm-create"
+            alternate_action = "agentops commander board"
+            priority = 58
+        items.append({
+            "item_type": "commander_synthesis",
+            "item_id": artifact_id or approval_id,
+            "status": status_value,
+            "kind": "commander_synthesis",
+            "title": title,
+            "summary": redact_text(row.get("summary") or "", 260),
+            "task_id": row.get("task_id"),
+            "run_id": row.get("run_id"),
+            "agent_id": "commander",
+            "artifact_id": artifact_id,
+            "approval_id": approval_id,
+            "created_at": row.get("created_at"),
+            "updated_at": row.get("created_at"),
+            "links": {
+                "task_url": f"/admin/tasks/{row.get('task_id')}" if row.get("task_id") else None,
+                "run_url": f"/admin/runs/{row.get('run_id')}" if row.get("run_id") else None,
+                "approvals_url": "/workspace/approvals" if approval_id else None,
+                "report_url": "/workspace/reports",
+            },
+            "next_action": next_action,
+            "cli_action": next_action,
+            "alternate_cli_action": alternate_action,
+            "priority": priority,
+        })
+
+    def sort_key(item: dict) -> tuple[int, str]:
+        return (int(item.get("priority") or 0), item.get("updated_at") or item.get("created_at") or "")
 
     review_items = sorted(items, key=sort_key, reverse=True)[:limit]
     delivery_summary = delivery_board.get("summary") or {}
+    synthesis_summary = synthesis_lifecycle.get("summary") or {}
     summary = {
         "pending_approvals": int(approval_total or 0),
         "memory_candidates": int(memory_total or 0),
         "ready_deliveries": int(delivery_summary.get("ready") or 0),
         "waiting_deliveries": int(delivery_summary.get("waiting_approval") or 0),
         "needs_attention_deliveries": int(delivery_summary.get("needs_attention") or 0),
+        "commander_synthesis_pending_reviews": int(synthesis_summary.get("pending_reviews") or 0),
+        "commander_synthesis_promotion_available": len([row for row in synthesis_recent if row.get("status") == "approved_not_promoted"]),
+        "commander_synthesis_memory_reviews": len([row for row in synthesis_recent if row.get("status") == "memory_pending_review"]),
         "review_items_total": len(items),
         "returned_items": len(review_items),
         "retrieved_pending_approvals": len(approvals),
         "retrieved_memory_candidates": len(memories),
     }
-    if summary["pending_approvals"] or summary["memory_candidates"] or summary["waiting_deliveries"] or summary["needs_attention_deliveries"]:
+    if (
+        summary["pending_approvals"]
+        or summary["memory_candidates"]
+        or summary["waiting_deliveries"]
+        or summary["needs_attention_deliveries"]
+        or summary["commander_synthesis_promotion_available"]
+        or summary["commander_synthesis_memory_reviews"]
+    ):
         status = "attention"
     elif summary["ready_deliveries"]:
         status = "ready"
@@ -7205,15 +7284,18 @@ def human_review_queue(conn, limit: int = 20) -> dict:
             "pending_approvals": safe_approvals,
             "memory_candidates": safe_memories,
             "customer_deliveries": delivery_focus,
+            "commander_synthesis": synthesis_action_focus,
         },
         "gates": [
             {"id": "pending_approvals_visible", "label": "Pending approvals visible", "ok": True, "value": summary["pending_approvals"]},
             {"id": "memory_candidates_visible", "label": "Memory candidates visible", "ok": True, "value": summary["memory_candidates"]},
             {"id": "delivery_board_visible", "label": "Delivery board visible", "ok": True, "value": len(delivery_focus)},
+            {"id": "commander_synthesis_lifecycle_visible", "label": "Commander synthesis lifecycle visible", "ok": True, "value": len(synthesis_action_focus)},
             {"id": "safe_readback", "label": "Read-only safe readback", "ok": True, "value": "summary/hash only"},
         ],
         "next_actions": [
             "Start with the first review item; do not wait for slower workers if this item is ready.",
+            "Promote approved Commander synthesis reports only after the linked review approval is approved.",
             "Use `agentops review queue` for the combined queue, then approve/reject individual gates.",
             "Use `agentops commander inbox` for async worker lane state and `agentops workflow delivery-board` for customer handoff.",
         ],

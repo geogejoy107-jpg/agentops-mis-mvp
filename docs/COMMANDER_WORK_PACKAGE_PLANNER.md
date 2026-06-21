@@ -249,6 +249,12 @@ delivery artifacts, recent synthesis rows, and the next CLI action. This lets
 operators see whether the loop is still waiting on review, ready to promote, or
 already visible in customer delivery.
 
+`agentops review queue` also treats the lifecycle as a first-class review lane:
+pending synthesis approvals and approved-but-not-promoted synthesis reports are
+prioritized ahead of ordinary memory review. The `/workspace/agents` operator
+action queue reads the same lifecycle next actions from local readiness, so the
+Commander can continue the loop without hunting through separate pages.
+
 ## Default Lanes
 
 - Strategy: clarify goal, acceptance gates, approvals, and scope.

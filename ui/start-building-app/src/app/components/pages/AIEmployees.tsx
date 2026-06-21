@@ -228,6 +228,8 @@ export function AIEmployees() {
   const loopLaneReadback = data?.loopLaneReadback as HermesOpenClawLoopReadbackPayload | undefined;
   const localEvidence = localReadiness?.evidence;
   const localReadinessActions = localReadiness?.next_actions || [];
+  const synthesisLifecycle = localReadiness?.commander_synthesis_lifecycle;
+  const synthesisLifecycleActions = synthesisLifecycle?.next_actions || [];
   const localReadinessGates = localReadiness?.gates || [];
   const localReadinessReadyGates = localReadinessGates.filter(gate => gate.ok).length;
   const localSafetyOk = Boolean(localReadiness?.token_omitted && localReadiness?.live_execution_performed === false);
@@ -995,6 +997,12 @@ export function AIEmployees() {
       action,
       source: copy.integrationInboxTitle,
       status: integrationInbox?.status || "attention",
+    })),
+    ...synthesisLifecycleActions.map((action, index) => ({
+      id: `synthesis:${index}:${action}`,
+      action,
+      source: copy.synthesisLoop,
+      status: synthesisLifecycle?.status || "attention",
     })),
     ...localReadinessActions.map((action, index) => ({
       id: `local:${index}:${action}`,
@@ -1879,11 +1887,12 @@ export function AIEmployees() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-2 mt-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-2 mt-3">
           {[
             { label: copy.pendingApprovals, value: reviewQueueSummary?.pending_approvals ?? 0, status: (reviewQueueSummary?.pending_approvals || 0) > 0 ? "attention" : "pass" },
             { label: copy.memoryCandidates, value: reviewQueueSummary?.memory_candidates ?? 0, status: (reviewQueueSummary?.memory_candidates || 0) > 0 ? "attention" : "pass" },
             { label: copy.waitingDeliveries, value: reviewQueueSummary?.waiting_deliveries ?? 0, status: (reviewQueueSummary?.waiting_deliveries || 0) > 0 ? "attention" : "pass" },
+            { label: copy.synthesisLoop, value: `${reviewQueueSummary?.commander_synthesis_promotion_available ?? 0}/${reviewQueueSummary?.commander_synthesis_memory_reviews ?? 0}`, status: ((reviewQueueSummary?.commander_synthesis_promotion_available || 0) + (reviewQueueSummary?.commander_synthesis_memory_reviews || 0)) > 0 ? "attention" : "pass" },
             { label: copy.returnedItems, value: `${reviewQueueSummary?.returned_items ?? 0}/${reviewQueueSummary?.review_items_total ?? 0}`, status: (reviewQueueSummary?.review_items_total || 0) > 0 ? "ready" : "idle" },
           ].map((item) => (
             <div key={item.label} className="rounded px-3 py-2" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>

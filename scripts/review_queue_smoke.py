@@ -127,6 +127,9 @@ def validate_queue(payload: dict, label: str, failures: list[str]) -> None:
         "ready_deliveries",
         "waiting_deliveries",
         "needs_attention_deliveries",
+        "commander_synthesis_pending_reviews",
+        "commander_synthesis_promotion_available",
+        "commander_synthesis_memory_reviews",
         "review_items_total",
         "returned_items",
     ]:
@@ -135,11 +138,16 @@ def validate_queue(payload: dict, label: str, failures: list[str]) -> None:
     require(isinstance(payload.get("lanes"), dict), f"{label} lanes missing", failures)
     require(isinstance(payload.get("gates"), list) and payload.get("gates"), f"{label} gates missing", failures)
     require(isinstance(payload.get("next_actions"), list) and payload.get("next_actions"), f"{label} next_actions missing", failures)
+    gate_ids = {gate.get("id") for gate in payload.get("gates") or []}
+    require("commander_synthesis_lifecycle_visible" in gate_ids, f"{label} commander synthesis gate missing: {payload.get('gates')}", failures)
+    lanes = payload.get("lanes") or {}
+    require(isinstance(lanes.get("commander_synthesis"), list), f"{label} commander synthesis lane missing: {lanes}", failures)
     for item in payload.get("review_items") or []:
-        require(item.get("item_type") in {"approval", "memory_candidate", "customer_delivery"}, f"{label} bad item type: {item}", failures)
+        require(item.get("item_type") in {"approval", "memory_candidate", "customer_delivery", "commander_synthesis"}, f"{label} bad item type: {item}", failures)
         require(bool(item.get("item_id")), f"{label} item id missing: {item}", failures)
         require(bool(item.get("next_action")), f"{label} next action missing: {item}", failures)
         require(bool(item.get("cli_action")), f"{label} cli action missing: {item}", failures)
+        require(isinstance(item.get("priority"), int), f"{label} item priority missing: {item}", failures)
 
 
 def main() -> int:

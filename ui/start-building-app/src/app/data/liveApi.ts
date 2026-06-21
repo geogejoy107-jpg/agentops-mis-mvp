@@ -944,6 +944,9 @@ export interface ReviewQueueSummary {
   ready_deliveries: number;
   waiting_deliveries: number;
   needs_attention_deliveries: number;
+  commander_synthesis_pending_reviews?: number;
+  commander_synthesis_promotion_available?: number;
+  commander_synthesis_memory_reviews?: number;
   review_items_total: number;
   returned_items: number;
   retrieved_pending_approvals?: number;
@@ -963,6 +966,7 @@ export interface ReviewQueueItem {
   artifact_id?: string | null;
   created_at?: string;
   updated_at?: string;
+  priority?: number;
   next_action?: string;
   cli_action?: string;
   alternate_cli_action?: string | null;
@@ -2693,6 +2697,9 @@ export async function loadReviewQueue(limit = 12): Promise<ReviewQueuePayload> {
       ready_deliveries: numberValue(summaryRaw.ready_deliveries, 0),
       waiting_deliveries: numberValue(summaryRaw.waiting_deliveries, 0),
       needs_attention_deliveries: numberValue(summaryRaw.needs_attention_deliveries, 0),
+      commander_synthesis_pending_reviews: numberValue(summaryRaw.commander_synthesis_pending_reviews, 0),
+      commander_synthesis_promotion_available: numberValue(summaryRaw.commander_synthesis_promotion_available, 0),
+      commander_synthesis_memory_reviews: numberValue(summaryRaw.commander_synthesis_memory_reviews, 0),
       review_items_total: numberValue(summaryRaw.review_items_total, 0),
       returned_items: numberValue(summaryRaw.returned_items, 0),
       retrieved_pending_approvals: numberValue(summaryRaw.retrieved_pending_approvals, 0),
@@ -2711,6 +2718,7 @@ export async function loadReviewQueue(limit = 12): Promise<ReviewQueuePayload> {
       artifact_id: item.artifact_id ? String(item.artifact_id) : null,
       created_at: item.created_at ? String(item.created_at) : undefined,
       updated_at: item.updated_at ? String(item.updated_at) : undefined,
+      priority: numberValue(item.priority, 0),
       next_action: item.next_action ? String(item.next_action) : undefined,
       cli_action: item.cli_action ? String(item.cli_action) : undefined,
       alternate_cli_action: item.alternate_cli_action ? String(item.alternate_cli_action) : null,
