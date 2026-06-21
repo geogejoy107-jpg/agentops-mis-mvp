@@ -1,0 +1,548 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentops-mis.local/schemas/context-manifest.v0.1.schema.json",
+  "title": "AgentOps MIS Context Manifest v0.1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "manifest_id",
+    "created_at",
+    "objective",
+    "mode",
+    "project_context",
+    "policy",
+    "included_items",
+    "excluded_items",
+    "conflicts",
+    "unresolved_questions",
+    "budget",
+    "safety",
+    "evidence_refs",
+    "output_hash"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "0.1"
+    },
+    "manifest_id": {
+      "type": "string",
+      "pattern": "^ctx_[A-Za-z0-9._:-]+$"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "objective": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000
+    },
+    "mode": {
+      "enum": [
+        "read_only",
+        "candidate_writeback"
+      ]
+    },
+    "project_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository",
+        "branch",
+        "commit",
+        "workspace_id",
+        "project_id",
+        "task_id",
+        "agent_id"
+      ],
+      "properties": {
+        "repository": {
+          "type": "string",
+          "pattern": "^[^/\\s]+/[^/\\s]+$"
+        },
+        "branch": {
+          "type": "string",
+          "minLength": 1
+        },
+        "commit": {
+          "type": "string",
+          "pattern": "^(Unknown|[a-f0-9]{40})$"
+        },
+        "workspace_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "project_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "task_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "agent_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authority_order",
+        "token_budget",
+        "writeback_mode",
+        "semantic_retrieval",
+        "historical_as_of"
+      ],
+      "properties": {
+        "authority_order": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/authorityClass"
+          }
+        },
+        "token_budget": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "writeback_mode": {
+          "enum": [
+            "none",
+            "candidate_only"
+          ]
+        },
+        "semantic_retrieval": {
+          "type": "boolean"
+        },
+        "historical_as_of": {
+          "oneOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "included_items": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/includedItem"
+      }
+    },
+    "excluded_items": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/excludedItem"
+      }
+    },
+    "conflicts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/conflict"
+      }
+    },
+    "unresolved_questions": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2000
+      }
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "limit",
+        "reserved",
+        "used",
+        "overflow"
+      ],
+      "properties": {
+        "limit": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "reserved": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "used": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "overflow": {
+          "type": "boolean"
+        }
+      }
+    },
+    "safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scope_gate_applied",
+        "redaction_applied",
+        "raw_prompts_omitted",
+        "raw_responses_omitted",
+        "secrets_omitted",
+        "chain_of_thought_omitted"
+      ],
+      "properties": {
+        "scope_gate_applied": {
+          "const": true
+        },
+        "redaction_applied": {
+          "const": true
+        },
+        "raw_prompts_omitted": {
+          "const": true
+        },
+        "raw_responses_omitted": {
+          "const": true
+        },
+        "secrets_omitted": {
+          "const": true
+        },
+        "chain_of_thought_omitted": {
+          "const": true
+        }
+      }
+    },
+    "evidence_refs": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2000
+      }
+    },
+    "output_hash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    }
+  },
+  "$defs": {
+    "authorityClass": {
+      "enum": [
+        "git_fact",
+        "mis_execution_fact",
+        "approved_project_state",
+        "approved_memory",
+        "candidate_memory",
+        "external_research",
+        "chat_source"
+      ]
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "workspace_id",
+        "project_id",
+        "task_id",
+        "access_tags",
+        "visibility_proof"
+      ],
+      "properties": {
+        "workspace_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "project_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "task_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "access_tags": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "visibility_proof": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      }
+    },
+    "scores": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "task_relevance",
+        "lexical",
+        "semantic",
+        "entity_or_graph",
+        "authority",
+        "freshness",
+        "evidence_quality",
+        "combined"
+      ],
+      "properties": {
+        "task_relevance": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "lexical": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "semantic": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "entity_or_graph": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "authority": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "freshness": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "evidence_quality": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "combined": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "includedItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "item_id",
+        "source_ref",
+        "source_version",
+        "source_type",
+        "authority_class",
+        "relationship",
+        "summary",
+        "scope",
+        "observed_at",
+        "valid_from",
+        "valid_to",
+        "scores",
+        "inclusion_reason",
+        "token_estimate"
+      ],
+      "properties": {
+        "item_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "source_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_type": {
+          "enum": [
+            "github",
+            "mis_ledger",
+            "project_doc",
+            "approved_memory",
+            "candidate_memory",
+            "external_research",
+            "chat"
+          ]
+        },
+        "authority_class": {
+          "$ref": "#/$defs/authorityClass"
+        },
+        "relationship": {
+          "enum": [
+            "new",
+            "duplicate_of",
+            "updates",
+            "supersedes",
+            "conflicts_with",
+            "derived_from"
+          ]
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "scope": {
+          "$ref": "#/$defs/scope"
+        },
+        "observed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "valid_from": {
+          "oneOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "valid_to": {
+          "oneOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "scores": {
+          "$ref": "#/$defs/scores"
+        },
+        "inclusion_reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "token_estimate": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "excludedItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_ref",
+        "source_version",
+        "reason_code",
+        "reason"
+      ],
+      "properties": {
+        "source_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "source_version": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason_code": {
+          "enum": [
+            "scope_denied",
+            "missing_source",
+            "untrusted",
+            "candidate_not_authority",
+            "stale",
+            "duplicate",
+            "superseded",
+            "conflict_unresolved",
+            "historical_mismatch",
+            "token_budget",
+            "redacted",
+            "insufficient_budget",
+            "other"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        }
+      }
+    },
+    "conflict": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "conflict_id",
+        "relation",
+        "source_refs",
+        "summary",
+        "status",
+        "resolution_ref"
+      ],
+      "properties": {
+        "conflict_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "relation": {
+          "const": "conflicts_with"
+        },
+        "source_refs": {
+          "type": "array",
+          "minItems": 2,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000
+        },
+        "status": {
+          "enum": [
+            "unresolved",
+            "resolved"
+          ]
+        },
+        "resolution_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    }
+  }
+}
