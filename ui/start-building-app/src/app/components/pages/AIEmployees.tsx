@@ -13,6 +13,7 @@ import {
   loadAgentGatewayStatus,
   loadAgents,
   loadDashboard,
+  loadLocalReadiness,
   loadStuckWorkflowJobs,
   loadWorkerAdapterReadiness,
   loadWorkerDaemonLogs,
@@ -118,10 +119,11 @@ export function AIEmployees() {
     scopes: DEFAULT_GATEWAY_SCOPES.join(", "),
   });
   const { data, loading, error, refresh } = useLiveData(async () => {
-    const [metrics, workerStatus, adapterReadiness, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs] = await Promise.all([
+    const [metrics, workerStatus, adapterReadiness, localReadiness, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs] = await Promise.all([
       loadDashboard(),
       loadWorkerStatus(),
       loadWorkerAdapterReadiness(),
+      loadLocalReadiness(),
       loadAgentGatewayEnrollments(),
       loadAgentGatewaySessions(),
       loadAgentGatewayStatus(),
@@ -131,11 +133,17 @@ export function AIEmployees() {
       loadStuckWorkflowJobs(30, 8),
     ]);
     const agents = await loadAgents(metrics);
-    return { agents, workerStatus, adapterReadiness, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs };
+    return { agents, workerStatus, adapterReadiness, localReadiness, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs };
   }, []);
   const agents = data?.agents || [];
   const workerStatus = data?.workerStatus;
   const adapterReadiness = data?.adapterReadiness;
+  const localReadiness = data?.localReadiness;
+  const localEvidence = localReadiness?.evidence;
+  const localReadinessActions = localReadiness?.next_actions || [];
+  const localReadinessGates = localReadiness?.gates || [];
+  const localReadinessReadyGates = localReadinessGates.filter(gate => gate.ok).length;
+  const localSafetyOk = Boolean(localReadiness?.token_omitted && localReadiness?.live_execution_performed === false);
   const fleetHealth = workerStatus?.fleet_health;
   const fleetGates = fleetHealth?.gates || [];
   const recommendedActions = fleetHealth?.recommended_actions || [];
@@ -166,6 +174,7 @@ export function AIEmployees() {
   const unavailableAdapters = adapterReadiness?.summary.unavailable_adapters || workerStatus?.adapter_readiness?.unavailable_adapters || [];
   const blockedAdapters = adapterReadiness?.summary.blocked_adapters || workerStatus?.adapter_readiness?.blocked_adapters || [];
   const recommendedAdapter = adapterReadiness?.summary.recommended_adapter || workerStatus?.adapter_readiness?.recommended_adapter || "mock";
+  const localRecommendedAdapter = localReadiness?.adapter_readiness?.recommended_adapter || recommendedAdapter;
   const selectedAdapterRoute = adapterReadiness?.adapters?.[customerTaskForm.adapter];
   const selectedAdapterLiveBlocked = customerTaskForm.adapter !== "mock" && ["unavailable", "blocked"].includes(selectedAdapterRoute?.readiness || "");
   const selectedAdapterIsReady = customerTaskForm.adapter === "mock" || selectedAdapterRoute?.readiness === "ready" || selectedAdapterRoute?.readiness === "review_required";
@@ -179,6 +188,14 @@ export function AIEmployees() {
       refresh: "Refresh live agents",
       commandCenterTitle: "Worker Fleet Console",
       commandCenterSummary: "Adapter readiness, daemon capacity, remote heartbeat/session health, stuck recovery, and the next safe CLI/API action.",
+      localReadinessTitle: "Local Readiness",
+      localReadinessSummary: "Read-only proof that this local MIS workspace can be operated without leaking tokens or triggering live work.",
+      localReadinessOverall: "Overall status",
+      evidenceChains: "Evidence chains",
+      memoryApprovalCounts: "Memory / approvals",
+      safetyProof: "Safety proof",
+      tokenOmittedProof: "Token omitted",
+      liveExecutionProof: "Live execution not performed",
       overallFleetHealth: "Fleet health",
       healthGates: "Health gates",
       recommendedActions: "Recommended actions",
@@ -366,6 +383,14 @@ export function AIEmployees() {
       refresh: "刷新实时代理",
       commandCenterTitle: "Worker Fleet 控制台",
       commandCenterSummary: "集中查看 adapter 就绪、daemon 容量、远程心跳/session、卡住恢复和下一步安全 CLI/API 动作。",
+      localReadinessTitle: "本地就绪",
+      localReadinessSummary: "只读证明：这个本地 MIS 工作区可运行，同时不泄露 token，也不会触发真实执行。",
+      localReadinessOverall: "整体状态",
+      evidenceChains: "证据闭环",
+      memoryApprovalCounts: "记忆 / 审批",
+      safetyProof: "安全证明",
+      tokenOmittedProof: "Token 已省略",
+      liveExecutionProof: "未执行真实任务",
       overallFleetHealth: "Fleet 健康",
       healthGates: "健康 Gate",
       recommendedActions: "推荐动作",
@@ -981,6 +1006,57 @@ export function AIEmployees() {
               </div>
             </div>
           ))}
+        </div>
+
+        <div className="rounded-lg p-3 mt-4" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <ShieldCheck size={13} style={{ color: localSafetyOk ? "var(--mis-success)" : "var(--mis-warning)" }} />
+                <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.localReadinessTitle}</div>
+                <StatusBadge status={localReadiness?.status || "unknown"} />
+              </div>
+              <p className="text-[10px] mt-1 max-w-3xl" style={{ color: "var(--mis-dim)" }}>{copy.localReadinessSummary}</p>
+              {localReadiness?.contract && (
+                <p className="text-[10px] mt-1 truncate max-w-3xl" style={{ color: "var(--mis-muted)" }}>
+                  {copy.contract}: {localReadiness.contract}
+                </p>
+              )}
+            </div>
+            <StatusBadge status={localReadiness?.ok ? "pass" : "blocked"} label={`${localReadinessReadyGates}/${localReadinessGates.length || 0}`} />
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mt-3">
+            {[
+              { label: copy.localReadinessOverall, value: localReadiness?.status || "—", status: localReadiness?.status || "unknown" },
+              { label: copy.evidenceChains, value: localEvidence?.closed_loop_runs ?? "—", status: localEvidence?.has_task_run_tool_eval_audit_artifact_chain ? "pass" : "attention" },
+              { label: copy.memoryApprovalCounts, value: `${localEvidence?.memories ?? 0}/${localEvidence?.approvals ?? 0}`, status: localEvidence?.has_memory_or_knowledge && localEvidence?.has_approval_flow ? "pass" : "attention" },
+              { label: copy.recommendedAdapter, value: localRecommendedAdapter, status: localRecommendedAdapter ? "ready" : "unknown" },
+              { label: copy.safetyProof, value: localSafetyOk ? copy.statusClear : copy.statusAttention, status: localSafetyOk ? "pass" : "blocked" },
+            ].map((item) => (
+              <div key={item.label} className="rounded px-2 py-1" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                <div className="text-[9px]" style={{ color: "var(--mis-muted)" }}>{item.label}</div>
+                <div className="flex items-center justify-between gap-2 mt-0.5">
+                  <div className="text-[10px] font-semibold truncate" style={{ color: item.status === "blocked" ? "#F87171" : "var(--mis-text)" }}>{item.value}</div>
+                  <StatusBadge status={item.status} />
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-[0.9fr_1.1fr] gap-3 mt-3">
+            <div className="flex flex-wrap gap-1.5">
+              <StatusBadge status={localReadiness?.token_omitted ? "pass" : "fail"} label={`${copy.tokenOmittedProof}: ${localReadiness?.token_omitted ? copy.yes : copy.no}`} />
+              <StatusBadge status={localReadiness?.live_execution_performed === false ? "pass" : "fail"} label={`${copy.liveExecutionProof}: ${localReadiness?.live_execution_performed === false ? copy.yes : copy.no}`} />
+            </div>
+            <div className="flex flex-wrap gap-1.5 md:justify-end">
+              {(localReadinessActions.length > 0 ? localReadinessActions : [copy.noRecommendedActions]).slice(0, 3).map((action) => (
+                <span key={action} className="text-[10px] px-2 py-1 rounded truncate max-w-full" style={{ color: "var(--mis-cyan)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                  {copy.nextAction}: {action}
+                </span>
+              ))}
+            </div>
+          </div>
         </div>
 
         <div className="grid grid-cols-[1.35fr_1fr] gap-4 mt-4">

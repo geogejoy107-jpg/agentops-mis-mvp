@@ -989,10 +989,11 @@ def runtime_connector_for_adapter(adapter: str) -> str | None:
     return None
 
 
-def runtime_connector_trust(conn, connector_id: str | None) -> dict | None:
+def runtime_connector_trust(conn, connector_id: str | None, refresh: bool = True) -> dict | None:
     if not connector_id:
         return None
-    refresh_runtime_connectors(conn)
+    if refresh:
+        refresh_runtime_connectors(conn)
     row = conn.execute("SELECT * FROM runtime_connectors WHERE runtime_connector_id=?", (connector_id,)).fetchone()
     return dict(row) if row else None
 
@@ -6061,14 +6062,15 @@ def worker_fleet_health(payload: dict) -> dict:
     }
 
 
-def worker_adapter_readiness(conn) -> dict:
-    refresh_runtime_connectors(conn)
+def worker_adapter_readiness(conn, refresh: bool = True) -> dict:
+    if refresh:
+        refresh_runtime_connectors(conn)
     hermes = hermes_status()
     openclaw = openclaw_status()
 
     def trust_for(adapter: str) -> dict:
         connector_id = runtime_connector_for_adapter(adapter)
-        trust = runtime_connector_trust(conn, connector_id) if connector_id else None
+        trust = runtime_connector_trust(conn, connector_id, refresh=refresh) if connector_id else None
         return {
             "connector_id": connector_id,
             "trust_status": (trust or {}).get("trust_status") or "trusted",
@@ -6240,6 +6242,207 @@ def worker_status(conn) -> dict:
 def scalar_count(conn: sqlite3.Connection, sql: str, params=()) -> int:
     row = conn.execute(sql, params).fetchone()
     return int((row[0] if row else 0) or 0)
+
+
+def status_counts(conn: sqlite3.Connection, table: str, valid_statuses: set[str] | None = None) -> dict:
+    if table not in {"tasks", "runs", "workflow_jobs"}:
+        return {}
+    rows = rows_to_dicts(conn.execute(f"SELECT status, COUNT(*) AS count FROM {table} GROUP BY status").fetchall())
+    counts = {str(row.get("status") or "unknown"): int(row.get("count") or 0) for row in rows}
+    if valid_statuses:
+        for status in valid_statuses:
+            counts.setdefault(status, 0)
+    return dict(sorted(counts.items()))
+
+
+def safe_commander_readiness_snapshot(conn: sqlite3.Connection, headers) -> tuple[dict, dict]:
+    readiness: dict = {}
+    worker: dict = {}
+    try:
+        readiness = local_readiness(conn, headers)
+    except Exception as exc:
+        readiness = {"status": "unknown", "error": redact_text(str(exc), 160)}
+    finally:
+        conn.rollback()
+    try:
+        worker = worker_status(conn)
+    except Exception as exc:
+        worker = {"status": "unknown", "error": redact_text(str(exc), 160)}
+    finally:
+        conn.rollback()
+    return readiness, worker
+
+
+def commander_safe_text(value, limit=180) -> str:
+    redacted = redact_text(value, limit)
+    redacted = re.sub(r"(?i)bearer\s+\[REDACTED\]", "[SECRET_REDACTED]", redacted)
+    redacted = re.sub(r"(?i)\b(?:agtok|agtsess)_[a-z0-9._\-]+\b", "[SECRET_REDACTED]", redacted)
+    return redacted[:limit]
+
+
+def commander_project_board(conn: sqlite3.Connection, headers) -> dict:
+    readiness, worker = safe_commander_readiness_snapshot(conn, headers)
+    adapter_payload = worker_adapter_readiness(conn, refresh=False)
+    conn.rollback()
+
+    task_counts = status_counts(conn, "tasks", VALID_TASK_STATUSES)
+    run_counts = status_counts(conn, "runs")
+    workflow_counts = status_counts(conn, "workflow_jobs", {"queued", "running", "completed", "failed"})
+    active_workflow_jobs = scalar_count(conn, "SELECT COUNT(*) FROM workflow_jobs WHERE status IN ('queued','running')")
+    stuck_jobs = workflow_stuck_jobs(conn, threshold_sec=900, limit=10)
+    recent_artifact_rows = rows_to_dicts(conn.execute(
+        """SELECT artifact_id, task_id, run_id, artifact_type, title, created_at
+        FROM artifacts
+        ORDER BY created_at DESC
+        LIMIT 8"""
+    ).fetchall())
+    for artifact in recent_artifact_rows:
+        artifact["title"] = commander_safe_text(artifact.get("title"), 160)
+    memory_candidate_count = scalar_count(conn, "SELECT COUNT(*) FROM memories WHERE review_status='candidate'")
+    memory_review_counts = {
+        str(row["review_status"]): int(row["count"] or 0)
+        for row in conn.execute("SELECT review_status, COUNT(*) AS count FROM memories GROUP BY review_status").fetchall()
+    }
+    pending_approval_count = scalar_count(conn, "SELECT COUNT(*) FROM approvals WHERE decision='pending'")
+
+    recent_tasks = rows_to_dicts(conn.execute(
+        """SELECT task_id, title, status, owner_agent_id, priority, risk_level, created_at
+        FROM tasks
+        ORDER BY created_at DESC
+        LIMIT 12"""
+    ).fetchall())
+    recent_work_packages = []
+    for task in recent_tasks:
+        latest_run = conn.execute(
+            """SELECT run_id, status, created_at
+            FROM runs
+            WHERE task_id=?
+            ORDER BY created_at DESC
+            LIMIT 1""",
+            (task["task_id"],),
+        ).fetchone()
+        recent_work_packages.append({
+            "task_id": task.get("task_id"),
+            "title": commander_safe_text(task.get("title"), 180),
+            "status": task.get("status"),
+            "owner_agent_id": task.get("owner_agent_id"),
+            "priority": task.get("priority"),
+            "risk": task.get("risk_level"),
+            "created_at": task.get("created_at"),
+            "latest_run": {
+                "run_id": latest_run["run_id"],
+                "status": latest_run["status"],
+                "created_at": latest_run["created_at"],
+            } if latest_run else None,
+        })
+
+    readiness_gates = {gate.get("id"): gate for gate in (readiness.get("gates") or []) if isinstance(gate, dict)}
+    worker_fleet = worker.get("fleet_health") or readiness.get("worker_fleet_health") or {}
+    adapter_summary = adapter_payload.get("summary") or readiness.get("adapter_readiness") or {}
+    closed_loop_runs = int(((readiness.get("evidence") or {}).get("closed_loop_runs") or 0))
+    approved_memory = int(memory_review_counts.get("approved") or 0)
+
+    integration_gates = [
+        {
+            "id": "evidence_chain",
+            "status": "pass" if closed_loop_runs else "warn",
+            "summary": f"{closed_loop_runs} closed-loop run(s) with task/run/tool/eval/audit/artifact evidence",
+            "next_action": "Run a mock customer-worker task to create fresh evidence." if not closed_loop_runs else "Review recent run graph before delivery.",
+        },
+        {
+            "id": "worker_fleet_health",
+            "status": "pass" if worker_fleet.get("overall") == "ready" else "fail" if worker_fleet.get("overall") == "blocked" else "warn",
+            "summary": f"fleet={worker_fleet.get('overall') or worker.get('status') or 'unknown'}; running_workers={worker.get('running_workers', 0)}; stuck_tasks={worker.get('stuck_worker_tasks', 0)}",
+            "next_action": (worker_fleet.get("recommended_actions") or ["agentops worker status"])[0],
+        },
+        {
+            "id": "approvals_pending",
+            "status": "warn" if pending_approval_count else "pass",
+            "summary": f"{pending_approval_count} pending approval(s)",
+            "next_action": "Open /workspace/approvals and approve or reject pending gates." if pending_approval_count else "No approval action needed.",
+        },
+        {
+            "id": "memory_review",
+            "status": "warn" if memory_candidate_count else "pass" if approved_memory else "warn",
+            "summary": f"{memory_candidate_count} candidate memory item(s), {approved_memory} approved",
+            "next_action": "Review candidate memories before using them as project context." if memory_candidate_count else "Capture durable project lessons after the next delivery.",
+        },
+        {
+            "id": "adapter_readiness",
+            "status": "pass" if adapter_payload.get("status") == "ready" else "warn" if adapter_payload.get("status") == "degraded" else "fail",
+            "summary": f"recommended_adapter={adapter_summary.get('recommended_adapter') or 'unknown'}; ready={','.join(adapter_summary.get('ready_adapters') or []) or 'none'}",
+            "next_action": "agentops worker readiness",
+        },
+    ]
+
+    recommended_next_actions = []
+    for gate in integration_gates:
+        if gate["status"] in {"fail", "warn"} and gate.get("next_action") not in recommended_next_actions:
+            recommended_next_actions.append(gate["next_action"])
+    for action in readiness.get("next_actions") or []:
+        if action not in recommended_next_actions:
+            recommended_next_actions.append(action)
+    if not recommended_next_actions:
+        recommended_next_actions = [
+            "Select the highest-priority planned task and dispatch a mock worker.",
+            "Review recent artifacts and approve customer-facing delivery evidence.",
+            "Run agentops worker readiness before using live Hermes/OpenClaw adapters.",
+        ]
+
+    board_status = "blocked" if any(gate["status"] == "fail" for gate in integration_gates) else "attention" if any(gate["status"] == "warn" for gate in integration_gates) else "ready"
+    return {
+        "provider": "agentops-commander",
+        "operation": "project_board",
+        "status": board_status,
+        "token_omitted": True,
+        "live_execution_performed": False,
+        "workspace_id": normalize_workspace_id(headers.get("X-AgentOps-Workspace-Id") or "local-demo"),
+        "local_readiness": {
+            "status": readiness.get("status") or "unknown",
+            "ok": bool(readiness.get("ok")) if "ok" in readiness else None,
+            "gate_count": len(readiness.get("gates") or []),
+            "blocked_gates": [gate_id for gate_id, gate in readiness_gates.items() if not gate.get("ok")][:8],
+        },
+        "worker_status": {
+            "status": worker.get("status") or "unknown",
+            "running_workers": int(worker.get("running_workers") or 0),
+            "pending_worker_tasks": int(worker.get("pending_worker_tasks") or 0),
+            "stuck_worker_tasks": int(worker.get("stuck_worker_tasks") or 0),
+            "remote_worker_count": int(worker.get("remote_worker_count") or 0),
+            "fleet_overall": worker_fleet.get("overall"),
+        },
+        "counts": {
+            "tasks_by_status": task_counts,
+            "runs_by_status": run_counts,
+            "workflow_jobs_by_status": workflow_counts,
+            "pending_approvals": pending_approval_count,
+            "active_workflow_jobs": active_workflow_jobs,
+            "stuck_workflow_jobs": len(stuck_jobs),
+            "recent_artifacts": len(recent_artifact_rows),
+            "memory_candidates": memory_candidate_count,
+        },
+        "recent_artifacts": recent_artifact_rows,
+        "stuck_workflow_jobs": [{
+            "job_id": job.get("job_id"),
+            "workflow_type": job.get("workflow_type"),
+            "status": job.get("status"),
+            "age_sec": job.get("age_sec"),
+            "result_task_id": job.get("result_task_id"),
+            "result_run_id": job.get("result_run_id"),
+        } for job in stuck_jobs],
+        "recent_work_packages": recent_work_packages,
+        "integration_gates": integration_gates,
+        "recommended_next_actions": recommended_next_actions[:8],
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "task_created": False,
+            "run_created": False,
+            "job_created": False,
+            "token_omitted": True,
+            "raw_prompt_omitted": True,
+        },
+    }
 
 
 def recent_closed_loop_run_count(conn: sqlite3.Connection, limit: int = 250) -> int:
@@ -7050,6 +7253,10 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/local/readiness":
                 payload = local_readiness(conn, self.headers)
                 conn.commit()
+                return self.send_json(payload)
+            if path == "/api/commander/project-board":
+                payload = commander_project_board(conn, self.headers)
+                conn.rollback()
                 return self.send_json(payload)
             if path == "/api/agent-gateway/enrollments":
                 auth_error = agent_gateway_admin_auth_error(self.headers)

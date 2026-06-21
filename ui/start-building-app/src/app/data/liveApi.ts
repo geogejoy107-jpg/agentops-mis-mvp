@@ -336,6 +336,7 @@ export interface WorkerStatusPayload {
   recent_completed_runs: number;
   pending_worker_tasks: number;
   stuck_worker_tasks: number;
+  stuck_workflow_jobs?: number;
   remote_worker_count: number;
   total_remote_enrollments: number;
   active_remote_enrollments: number;
@@ -345,11 +346,19 @@ export interface WorkerStatusPayload {
   active_remote_sessions: number;
   remote_worker_health: Record<string, unknown>;
   adapter_readiness?: WorkerAdapterReadinessSummary;
+  fleet_health?: WorkerFleetHealth;
   daemons: WorkerDaemonStatus[];
   workers: Agent[];
   recent_runs: Run[];
   recent_tasks: Task[];
   stuck_tasks: StuckWorkerTask[];
+  stuck_workflow_job_refs?: {
+    job_id: string;
+    workflow_type?: string;
+    status?: string;
+    age_sec?: number;
+    stuck_reason?: string;
+  }[];
   recent_events: Record<string, unknown>[];
 }
 
@@ -386,6 +395,69 @@ export interface WorkerAdapterReadinessPayload {
   contract?: string;
   live_execution_performed: boolean;
   token_omitted?: boolean;
+}
+
+export interface WorkerFleetGate {
+  id: string;
+  status: string;
+  summary: string;
+  action?: string;
+}
+
+export interface WorkerFleetHealth {
+  overall: string;
+  contract?: string;
+  gates: WorkerFleetGate[];
+  recommended_actions: string[];
+  remote_status?: string;
+  token_omitted?: boolean;
+}
+
+export interface LocalReadinessGate {
+  id: string;
+  label: string;
+  ok: boolean;
+  status: string;
+  detail: string;
+  next_action: string;
+}
+
+export interface LocalReadinessEvidence {
+  tasks: number;
+  planned_tasks: number;
+  completed_tasks: number;
+  runs: number;
+  completed_runs: number;
+  tool_calls: number;
+  evaluations: number;
+  audit_logs: number;
+  artifacts: number;
+  memories: number;
+  memory_candidates: number;
+  approved_memories: number;
+  pending_approvals: number;
+  approvals: number;
+  workflow_jobs: number;
+  customer_worker_artifacts: number;
+  closed_loop_runs: number;
+  has_task_run_tool_eval_audit_artifact_chain: boolean;
+  has_memory_or_knowledge: boolean;
+  has_approval_flow: boolean;
+}
+
+export interface LocalReadinessPayload {
+  provider: string;
+  operation: string;
+  status: "ready" | "attention" | "blocked" | string;
+  ok: boolean;
+  workspace_id?: string;
+  gates: LocalReadinessGate[];
+  evidence: LocalReadinessEvidence;
+  next_actions: string[];
+  contract?: string;
+  adapter_readiness: WorkerAdapterReadinessSummary;
+  token_omitted: boolean;
+  live_execution_performed: boolean;
 }
 
 export interface StuckWorkerTask extends Task {
@@ -1122,6 +1194,54 @@ export async function loadWorkerStatus(): Promise<WorkerStatusPayload> {
       stuck_reason: row.stuck_reason ? String(row.stuck_reason) : undefined,
     })).filter((row) => row.job_id),
     recent_events: asArray<Record<string, unknown>>(raw.recent_events),
+  };
+}
+
+export async function loadLocalReadiness(): Promise<LocalReadinessPayload> {
+  const raw = await apiJson<Record<string, unknown>>("/local/readiness");
+  const evidenceRaw = typeof raw.evidence === "object" && raw.evidence !== null ? raw.evidence as Record<string, unknown> : {};
+  const adapterReadiness = typeof raw.adapter_readiness === "object" && raw.adapter_readiness !== null ? raw.adapter_readiness as WorkerAdapterReadinessSummary : {};
+  return {
+    provider: String(raw.provider || "agentops-local"),
+    operation: String(raw.operation || "local_readiness"),
+    status: String(raw.status || "unknown"),
+    ok: boolValue(raw.ok),
+    workspace_id: raw.workspace_id ? String(raw.workspace_id) : undefined,
+    gates: asArray<Record<string, unknown>>(raw.gates).map((gate) => ({
+      id: String(gate.id || ""),
+      label: String(gate.label || gate.id || ""),
+      ok: boolValue(gate.ok),
+      status: String(gate.status || "unknown"),
+      detail: String(gate.detail || ""),
+      next_action: String(gate.next_action || ""),
+    })).filter((gate) => gate.id || gate.label),
+    evidence: {
+      tasks: numberValue(evidenceRaw.tasks, 0),
+      planned_tasks: numberValue(evidenceRaw.planned_tasks, 0),
+      completed_tasks: numberValue(evidenceRaw.completed_tasks, 0),
+      runs: numberValue(evidenceRaw.runs, 0),
+      completed_runs: numberValue(evidenceRaw.completed_runs, 0),
+      tool_calls: numberValue(evidenceRaw.tool_calls, 0),
+      evaluations: numberValue(evidenceRaw.evaluations, 0),
+      audit_logs: numberValue(evidenceRaw.audit_logs, 0),
+      artifacts: numberValue(evidenceRaw.artifacts, 0),
+      memories: numberValue(evidenceRaw.memories, 0),
+      memory_candidates: numberValue(evidenceRaw.memory_candidates, 0),
+      approved_memories: numberValue(evidenceRaw.approved_memories, 0),
+      pending_approvals: numberValue(evidenceRaw.pending_approvals, 0),
+      approvals: numberValue(evidenceRaw.approvals, 0),
+      workflow_jobs: numberValue(evidenceRaw.workflow_jobs, 0),
+      customer_worker_artifacts: numberValue(evidenceRaw.customer_worker_artifacts, 0),
+      closed_loop_runs: numberValue(evidenceRaw.closed_loop_runs, 0),
+      has_task_run_tool_eval_audit_artifact_chain: boolValue(evidenceRaw.has_task_run_tool_eval_audit_artifact_chain),
+      has_memory_or_knowledge: boolValue(evidenceRaw.has_memory_or_knowledge),
+      has_approval_flow: boolValue(evidenceRaw.has_approval_flow),
+    },
+    adapter_readiness: adapterReadiness,
+    next_actions: asArray(raw.next_actions).map(String),
+    contract: raw.contract ? String(raw.contract) : undefined,
+    token_omitted: boolValue(raw.token_omitted),
+    live_execution_performed: boolValue(raw.live_execution_performed),
   };
 }
 

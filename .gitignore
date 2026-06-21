@@ -8,6 +8,7 @@ build/
 agentops_mis.db
 .agentops_runtime/
 .playwright-cli/
+mis-project/
 
 # Downloaded / generated UI runtime artifacts.
 node_modules/
