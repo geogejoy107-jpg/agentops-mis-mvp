@@ -321,6 +321,18 @@ Hermes/OpenClaw 真实执行仍必须显式加 `--confirm-run`。
 
 这会走 `GET /api/workflows/customer-task-templates` 和 `POST /api/workflows/customer-task-templates/run`，返回 project/task/run/artifact/approval/report URL 等账本证据。
 
+如果要让模板真的调用本地/远程 agent worker，而不是只走模板默认安全工作流，可以显式指定 adapter：
+
+```bash
+./scripts/agentops workflow run-template \
+  --template-id tpl_customer_ui_review \
+  --adapter openclaw \
+  --confirm-run \
+  --request-timeout 420
+```
+
+`mock` 会立即写真实账本；`hermes` / `openclaw` 必须加 `--confirm-run`，否则只创建 planned task。长任务可用 `--request-timeout` 或 `AGENTOPS_REQUEST_TIMEOUT`。
+
 它会模拟 AI 团队完成“正式 AI 知识库 / 问答机器人”项目：
 
 - 注册 Project Planner、Document Cleaner、Knowledge Base Builder、Q&A Evaluator、Customer Report Writer。

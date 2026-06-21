@@ -407,6 +407,28 @@ customer report URL when available. The command stores only safe summaries,
 hashes, and ledger ids; it must not print or persist raw customer documents,
 full prompts, full model responses, tokens, or credentials.
 
+Templates can also be dispatched through the real Agent Worker adapter loop:
+
+```bash
+agentops workflow run-template \
+  --template-id tpl_customer_ui_review \
+  --adapter openclaw \
+  --confirm-run \
+  --request-timeout 420 \
+  --title "Optimize the AgentOps MIS customer workspace"
+```
+
+Without `--adapter`, the template uses its default safe workflow. With
+`--adapter mock|hermes|openclaw`, it maps the template defaults into
+`POST /api/workflows/customer-worker-task`, executes through the worker loop,
+and returns run/tool/evaluation/audit/artifact/memory/approval evidence. Hermes
+and OpenClaw require `--confirm-run`; without confirmation the command creates
+a planned task and returns `confirm_run_required_for_live_adapter`.
+
+Long live runs can exceed the default CLI HTTP timeout. Use
+`--request-timeout` or `AGENTOPS_REQUEST_TIMEOUT`; the CLI automatically raises
+the timeout for confirmed Hermes/OpenClaw template runs.
+
 ### `agentops workflow customer-worker-task`
 
 Dispatches a customer-facing task through the AgentOps worker loop. This is the

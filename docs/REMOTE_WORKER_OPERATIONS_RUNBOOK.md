@@ -256,6 +256,22 @@ This maps to the customer task template API and returns project, task, run,
 artifact, approval, and report URL evidence while preserving the same safe
 summary/hash storage policy.
 
+To make a template use a real local runtime adapter, pass `--adapter` and
+explicit confirmation. This is the agent/operator path; the browser remains for
+observation, review, and approval:
+
+```bash
+agentops workflow run-template \
+  --template-id tpl_customer_ui_review \
+  --adapter openclaw \
+  --confirm-run \
+  --request-timeout 420
+```
+
+Hermes/OpenClaw template runs can take several minutes. Use
+`AGENTOPS_REQUEST_TIMEOUT` or `--request-timeout` so the CLI waits for the
+worker to write run/tool/evaluation/audit/artifact evidence.
+
 For scoped remote tokens, `agentops task create` maps to
 `POST /api/agent-gateway/tasks` and requires `tasks:create`. The Gateway binds
 the created task to the token's own `agent_id` and `workspace_id`; attempts to

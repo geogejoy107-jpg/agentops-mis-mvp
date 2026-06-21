@@ -4469,7 +4469,31 @@ def run_customer_task_template_workflow(conn, body: dict) -> tuple[dict, int]:
     template = templates.get(template_id)
     if not template:
         return {"error": "template not found", "template_id": template_id, "templates": list(templates)}, 404
-    if template["workflow"] == "formal_ai_knowledge_base_qa_bot":
+    adapter = body.get("adapter")
+    use_worker_adapter = adapter in {"mock", "hermes", "openclaw"}
+    if use_worker_adapter:
+        worker_payload = {
+            "adapter": adapter,
+            "confirm_run": bool(body.get("confirm_run")),
+            "title": body.get("title") or template["default_title"],
+            "description": body.get("description") or template["default_description"],
+            "acceptance_criteria": body.get("acceptance_criteria") or template["default_acceptance"],
+            "priority": body.get("priority") or template["priority"],
+            "risk_level": body.get("risk_level") or template["risk_level"],
+            "template_id": template_id,
+            "workflow_kind": template["workflow"],
+            "selected_agent_ids": body.get("selected_agent_ids") or [],
+            "worker_agent_id": body.get("worker_agent_id") or body.get("owner_agent_id"),
+            "requester_id": body.get("requester_id", "usr_customer_demo"),
+            "hermes_timeout": body.get("hermes_timeout") or 300,
+        }
+        result, _status = run_customer_worker_task_workflow(conn, worker_payload)
+        result["template_execution"] = {
+            "mode": "agent_worker_adapter",
+            "adapter": adapter,
+            "confirm_run": bool(body.get("confirm_run")),
+        }
+    elif template["workflow"] == "formal_ai_knowledge_base_qa_bot":
         result = run_kb_bot_project_workflow(conn, {**body, "template_id": template_id})
     else:
         payload = {
@@ -4491,9 +4515,11 @@ def run_customer_task_template_workflow(conn, body: dict) -> tuple[dict, int]:
         "workflow": template["workflow"],
         "safe_defaults": template["safe_defaults"],
     }
+    if use_worker_adapter:
+        result["template"]["agent_worker_adapter_enabled"] = True
     if result.get("project_id"):
         result["report_url"] = f"/api/workflows/customer-projects/{result['project_id']}/report"
-    audit(conn, "user", "usr_customer_demo", "workflow.customer_template.run", "template_packages", template_id, None, {"status": "completed" if result.get("ok", True) else "failed", "workflow": template["workflow"]}, {"template_id": template_id, "dry_run": result.get("dry_run"), "raw_documents_stored": False, "credentials_stored": False})
+    audit(conn, "user", "usr_customer_demo", "workflow.customer_template.run", "template_packages", template_id, None, {"status": "completed" if result.get("ok", True) else "failed", "workflow": template["workflow"]}, {"template_id": template_id, "dry_run": result.get("dry_run"), "adapter": adapter if use_worker_adapter else None, "raw_documents_stored": False, "credentials_stored": False})
     conn.commit()
     return result, 201
 

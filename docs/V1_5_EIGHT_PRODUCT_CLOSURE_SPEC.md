@@ -432,6 +432,10 @@ Current v1.5 implementation:
 - External agents and operators can list and launch those templates through
   `agentops workflow templates` and `agentops workflow run-template`, which
   keeps machine-facing dispatch on CLI/API instead of browser UI clicks.
+- `agentops workflow run-template --adapter mock|hermes|openclaw` maps a
+  selected template into the Agent Worker loop. Hermes/OpenClaw require
+  `--confirm-run`; long live runs use `--request-timeout` or
+  `AGENTOPS_REQUEST_TIMEOUT`.
 - Pixel Office's customer dispatch panel loads local templates, applies their default title/brief/acceptance criteria, and can run the selected template.
 - Customer projects can export a safe ledger-backed delivery report through `GET /api/workflows/customer-projects/:project_id/report`.
 - Pixel Office surfaces the report link after template-backed project generation.
@@ -475,6 +479,12 @@ Acceptance evidence:
   - pending external-upload approval: `ap_gw_63ba94be6f35`
   - report URL: `/api/workflows/customer-projects/20260620165509944069/report`
   - secret leakage check: `false`
+- Live customer template worker dogfood:
+  `python3 scripts/template_worker_live_dogfood.py --adapter openclaw`
+  and manual Hermes run with `--request-timeout 420`
+  - OpenClaw: `run_gw_f564c767fa0b`, artifact `art_customer_worker_task_run_gw_f564c767fa0b`
+  - Hermes: `run_gw_99c4e69cae16`, artifact `art_customer_worker_task_run_gw_99c4e69cae16`
+  - both wrote tool/evaluation/audit/artifact/memory/approval evidence
 - Customer project report smoke: `python3 scripts/customer_project_report_smoke.py`
   - project: `20260618155050`
   - report: `/api/workflows/customer-projects/20260618155050/report`
@@ -570,6 +580,9 @@ python3 scripts/worker_session_refresh_smoke.py
 python3 scripts/worker_adapter_retry_smoke.py
 python3 scripts/customer_task_template_smoke.py
 python3 scripts/agentops_workflow_template_cli_smoke.py
+# Optional live/local-runtime evidence, not part of default CI because it can take several minutes:
+python3 scripts/template_worker_live_dogfood.py --adapter openclaw
+python3 scripts/template_worker_live_dogfood.py --adapter hermes
 python3 scripts/customer_project_report_smoke.py
 python3 scripts/customer_project_report_artifact_smoke.py
 ```
@@ -593,6 +606,9 @@ Implemented and verified:
 - Customer-facing worker task CLI through `agentops workflow customer-worker-task`.
 - Customer-facing template list/run CLI through `agentops workflow templates`
   and `agentops workflow run-template`.
+- Customer-facing template worker dispatch through
+  `agentops workflow run-template --adapter mock|hermes|openclaw`, with
+  OpenClaw/Hermes live proof runs recorded in the ledger.
 - One-command scoped task create + worker execution through `agentops workflow run-task`.
 - Customer/API-facing normal task creation through `POST /api/tasks`, scoped Gateway task creation through `POST /api/agent-gateway/tasks`, and CLI `agentops task create`, followed by worker pull/claim/writeback.
 - Scoped Gateway task creation requires `tasks:create` and binds remote tokens to their own `agent_id`/`workspace_id`.

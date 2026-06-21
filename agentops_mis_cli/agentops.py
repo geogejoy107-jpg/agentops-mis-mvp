@@ -26,6 +26,7 @@ from urllib.request import Request, urlopen
 
 DEFAULT_BASE_URL = "http://127.0.0.1:8787"
 DEFAULT_WORKSPACE_ID = "local-demo"
+DEFAULT_REQUEST_TIMEOUT = 30
 CONFIG_PATH = Path(os.environ.get("AGENTOPS_CONFIG", "~/.agentops/config.json")).expanduser()
 
 
@@ -50,11 +51,22 @@ def save_config(config: dict):
 
 def resolved_context(args) -> dict:
     config = load_config()
+    request_timeout_raw = (
+        getattr(args, "request_timeout", None)
+        or os.environ.get("AGENTOPS_REQUEST_TIMEOUT")
+        or config.get("request_timeout")
+        or DEFAULT_REQUEST_TIMEOUT
+    )
+    try:
+        request_timeout = max(1, int(request_timeout_raw))
+    except (TypeError, ValueError):
+        request_timeout = DEFAULT_REQUEST_TIMEOUT
     return {
         "base_url": (getattr(args, "base_url", None) or os.environ.get("AGENTOPS_BASE_URL") or config.get("base_url") or DEFAULT_BASE_URL).rstrip("/"),
         "api_key": getattr(args, "api_key", None) if getattr(args, "api_key", None) is not None else os.environ.get("AGENTOPS_API_KEY", config.get("api_key", "")),
         "workspace_id": getattr(args, "workspace_id", None) or os.environ.get("AGENTOPS_WORKSPACE_ID") or config.get("workspace_id") or DEFAULT_WORKSPACE_ID,
         "agent_id": getattr(args, "agent_id", None) or os.environ.get("AGENTOPS_AGENT_ID") or config.get("agent_id") or "",
+        "request_timeout": request_timeout,
     }
 
 
@@ -74,6 +86,7 @@ def context_sources(args, config: dict) -> dict:
         "api_key": source_for("api_key", "AGENTOPS_API_KEY", "api_key"),
         "workspace_id": source_for("workspace_id", "AGENTOPS_WORKSPACE_ID", "workspace_id", DEFAULT_WORKSPACE_ID),
         "agent_id": source_for("agent_id", "AGENTOPS_AGENT_ID", "agent_id"),
+        "request_timeout": source_for("request_timeout", "AGENTOPS_REQUEST_TIMEOUT", "request_timeout", str(DEFAULT_REQUEST_TIMEOUT)),
     }
 
 
@@ -106,6 +119,7 @@ class AgentOpsClient:
         self.api_key = context["api_key"] or ""
         self.workspace_id = context["workspace_id"]
         self.agent_id = context["agent_id"]
+        self.request_timeout = int(context.get("request_timeout") or DEFAULT_REQUEST_TIMEOUT)
 
     def request(self, method: str, path: str, payload: dict | None = None, query: dict | None = None):
         url = self.base_url + path
@@ -123,7 +137,7 @@ class AgentOpsClient:
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8") if payload is not None else None
         req = Request(url, data=data, headers=headers, method=method)
         try:
-            with urlopen(req, timeout=30) as res:
+            with urlopen(req, timeout=self.request_timeout) as res:
                 raw = res.read().decode("utf-8")
                 return json.loads(raw) if raw else {}
         except HTTPError as exc:
@@ -450,11 +464,16 @@ def cmd_workflow_templates(args, client: AgentOpsClient) -> dict:
 
 
 def cmd_workflow_run_template(args, client: AgentOpsClient) -> dict:
+    if args.adapter in {"hermes", "openclaw"} and args.confirm_run:
+        minimum_timeout = (int(args.hermes_timeout or 300) + 60) if args.adapter == "hermes" else 240
+        client.request_timeout = max(client.request_timeout, minimum_timeout)
     payload = {
         "template_id": args.template_id,
         "confirm_run": bool(args.confirm_run),
         "selected_agent_ids": args.selected_agent_id or [],
     }
+    if args.adapter:
+        payload["adapter"] = args.adapter
     if args.title:
         payload["title"] = args.title
     if args.description:
@@ -467,6 +486,10 @@ def cmd_workflow_run_template(args, client: AgentOpsClient) -> dict:
         payload["risk_level"] = args.risk
     if args.owner_agent_id:
         payload["owner_agent_id"] = args.owner_agent_id
+    if args.worker_agent_id:
+        payload["worker_agent_id"] = args.worker_agent_id
+    if args.hermes_timeout:
+        payload["hermes_timeout"] = args.hermes_timeout
     return client.post("/api/workflows/customer-task-templates/run", payload)
 
 
@@ -858,6 +881,7 @@ def add_global_args(parser, suppress_defaults: bool = False):
     parser.add_argument("--api-key", default=default, help="Local API key. Prefer AGENTOPS_API_KEY for real use.")
     parser.add_argument("--workspace-id", default=default, help="Workspace id. Defaults to env/config/local-demo.")
     parser.add_argument("--agent-id", default=default, help="Default agent id for this command.")
+    parser.add_argument("--request-timeout", type=int, default=default, help="HTTP request timeout in seconds. Defaults to env/config/30.")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1039,7 +1063,8 @@ def build_parser() -> argparse.ArgumentParser:
     templates_cmd.set_defaults(handler="workflow_templates")
     run_template = workflow_sub.add_parser("run-template", help="Run a customer task template through the MIS workflow layer.")
     run_template.add_argument("--template-id", default="tpl_customer_kb_qa_bot")
-    run_template.add_argument("--confirm-run", action="store_true", help="Required only for templates that execute a live local runtime.")
+    run_template.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default=None, help="Optional Agent Worker adapter. Without this, the template uses its default safe workflow.")
+    run_template.add_argument("--confirm-run", action="store_true", help="Required when --adapter is hermes or openclaw.")
     run_template.add_argument("--title", default="")
     run_template.add_argument("--description", default="")
     run_template.add_argument("--acceptance", default="")
@@ -1047,6 +1072,9 @@ def build_parser() -> argparse.ArgumentParser:
     run_template.add_argument("--risk", choices=["low", "medium", "high", "critical"], default=None)
     run_template.add_argument("--selected-agent-id", action="append", default=None)
     run_template.add_argument("--owner-agent-id", default=None)
+    run_template.add_argument("--worker-agent-id", default=None)
+    run_template.add_argument("--hermes-timeout", type=int, default=None)
+    run_template.add_argument("--request-timeout", type=int, default=None)
     run_template.set_defaults(handler="workflow_run_template")
     customer_worker = workflow_sub.add_parser("customer-worker-task", help="Dispatch a customer task through the AgentOps worker loop.")
     customer_worker.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")

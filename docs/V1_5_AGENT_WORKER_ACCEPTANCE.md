@@ -530,8 +530,23 @@ secret_leaked: false
 
 Pixel Office's customer dispatch panel now loads `GET /api/workflows/customer-task-templates`, applies template defaults to the customer task form, and runs the selected template through `POST /api/workflows/customer-task-templates/run`.
 The same template list/run path is available to external agents and operators through `agentops workflow templates` and `agentops workflow run-template`, so the browser is not required for machine-facing dispatch.
+`agentops workflow run-template` now also accepts `--adapter mock|hermes|openclaw`; with an adapter it maps the selected template into the Agent Worker loop and returns run/tool/evaluation/audit/artifact/memory/approval evidence. Hermes/OpenClaw still require `--confirm-run`, and long runs should pass `--request-timeout` or set `AGENTOPS_REQUEST_TIMEOUT`.
 After a template-backed KB project completes, the same panel also exposes an `Archive report to ledger` / `归档报告到账本` action backed by `POST /api/workflows/customer-projects/:project_id/report-artifact`.
 The report link now opens the customer-facing route `/workspace/customer-projects/:project_id/report`, which renders counts, safety boundary, delivery/report artifact ids, approvals, and the ledger-backed markdown report instead of exposing raw API JSON.
+
+Live template worker dogfood passed:
+
+```text
+script: scripts/template_worker_live_dogfood.py
+manual commands:
+  ./scripts/agentops workflow run-template --template-id tpl_customer_ui_review --adapter openclaw --confirm-run
+  ./scripts/agentops workflow run-template --template-id tpl_customer_ui_review --adapter hermes --confirm-run --request-timeout 420
+OpenClaw run: run_gw_f564c767fa0b
+OpenClaw artifact: art_customer_worker_task_run_gw_f564c767fa0b
+Hermes run: run_gw_99c4e69cae16
+Hermes artifact: art_customer_worker_task_run_gw_99c4e69cae16
+evidence: tool_calls>=1, evaluations>=1, audit_logs>=1, artifacts>=1, memories>=1, approvals>=1
+```
 
 The customer project report smoke passed:
 

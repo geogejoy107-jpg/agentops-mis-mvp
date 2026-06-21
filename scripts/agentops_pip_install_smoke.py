@@ -128,6 +128,8 @@ def main() -> int:
             and "usage: agentops workflow run-task" in workflow_run_task_help_run.stdout
             and workflow_run_template_help_run.returncode == 0
             and "usage: agentops workflow run-template" in workflow_run_template_help_run.stdout
+            and "--adapter" in workflow_run_template_help_run.stdout
+            and "--request-timeout" in workflow_run_template_help_run.stdout
             and workflow_help_run.returncode == 0
             and "customer-worker-task" in workflow_help_run.stdout
         )
