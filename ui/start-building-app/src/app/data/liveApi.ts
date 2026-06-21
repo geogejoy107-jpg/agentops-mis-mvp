@@ -1041,6 +1041,9 @@ export interface OperatorActionPlanPayload {
     unverified_plan_evidence_manifests: number;
     remediated_evidence_gap_runs: number;
     blocked_evidence_gap_runs: number;
+    evidence_synthesis_ready_runs: number;
+    evidence_synthesis_pending_runs: number;
+    evidence_synthesis_promoted_runs: number;
   };
   actions: OperatorActionPlanItem[];
   top_commands: string[];
@@ -3202,6 +3205,9 @@ export async function loadOperatorActionPlan(limit = 12): Promise<OperatorAction
       unverified_plan_evidence_manifests: numberValue(summaryRaw.unverified_plan_evidence_manifests, 0),
       remediated_evidence_gap_runs: numberValue(summaryRaw.remediated_evidence_gap_runs, 0),
       blocked_evidence_gap_runs: numberValue(summaryRaw.blocked_evidence_gap_runs, 0),
+      evidence_synthesis_ready_runs: numberValue(summaryRaw.evidence_synthesis_ready_runs, 0),
+      evidence_synthesis_pending_runs: numberValue(summaryRaw.evidence_synthesis_pending_runs, 0),
+      evidence_synthesis_promoted_runs: numberValue(summaryRaw.evidence_synthesis_promoted_runs, 0),
     },
     actions: asArray<Record<string, unknown>>(raw.actions).map((item) => ({
       action_id: String(item.action_id || item.command || item.title || ""),

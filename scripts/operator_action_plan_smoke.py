@@ -171,6 +171,10 @@ def validate_plan(payload: dict, label: str, failures: list[str], limit: int) ->
             require(
                 command.startswith("agentops operator remediate-evidence-gap --run-id ")
                 or command.startswith("agentops commander dispatch-package --task-id ")
+                or command.startswith("agentops commander synthesize --project-id ")
+                or command.startswith("agentops commander promote-synthesis --artifact-id ")
+                or command.startswith("agentops approval inspect --approval-id ")
+                or command.startswith("agentops workflow delivery-board")
                 or command.startswith("agentops task get --task-id ")
                 or command.startswith("agentops run get --run-id ")
                 or command.startswith("agentops commander inbox"),
