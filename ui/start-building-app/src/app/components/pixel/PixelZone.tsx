@@ -1,6 +1,6 @@
 import type { PixelMetrics, PixelZoneDefinition } from "./pixelModel";
 import { formatZoneMetric } from "./pixelModel";
-import { PixelRoomDecor } from "./PixelRoomDecor";
+import { PixelRoomSceneRenderer } from "./PixelRoomSceneRenderer";
 
 interface PixelZoneProps {
   zone: PixelZoneDefinition;
@@ -96,7 +96,7 @@ export function PixelZone({ zone, metrics, selected, hovered, onHover, onSelect,
       aria-label={`Open ${zone.label}`}
       title={`${zone.label}: ${zone.description}`}
     >
-      <PixelRoomDecor zone={zone} />
+      <PixelRoomSceneRenderer zone={zone} />
 
       <div
         className="pointer-events-none absolute inset-0 z-[1] transition-opacity duration-200"
