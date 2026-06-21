@@ -382,6 +382,7 @@ export function AIEmployees() {
       actionReceipts: "Receipts",
       receiptProof: "Receipt",
       noReceiptProof: "No receipt",
+      receiptNeeded: "Needs receipt",
       evidenceClosureLedger: "Evidence closure ledger",
       evidenceClosureSummary: "Audit readback for remediated source-run debt: closure-ready, closed, waived and reopened decisions.",
       taskIntakeTitle: "Task intake gates",
@@ -760,6 +761,7 @@ export function AIEmployees() {
       actionReceipts: "收据",
       receiptProof: "收据证明",
       noReceiptProof: "暂无收据",
+      receiptNeeded: "需验收收据",
       evidenceClosureLedger: "证据关闭账本",
       evidenceClosureSummary: "回读已修复源 run 债务的审计状态：待关闭、已关闭、已豁免和已重开。",
       taskIntakeTitle: "任务接收 Gate",
@@ -1157,9 +1159,25 @@ export function AIEmployees() {
   const loopAuditSummary = operatorLoopAudit?.summary;
   const loopAuditNextAction = operatorLoopAudit?.next_actions?.[0] || "agentops operator loop-audit --limit 20";
   const firstLoopIssueStep = loopAuditSteps.find((step) => step.status !== "pass");
-  const actionQueueCandidateScore = (candidate: { id: string; action: string }) => (
-    isCloseEvidenceGapCommand(candidate.action) ? 100 :
-    candidate.id.startsWith("loop-first-issue:") ? 90 :
+  const actionReceiptRows = operatorActionReceipts?.receipts || operatorActionPlan?.action_receipts?.receipts || [];
+  const receiptShortHash = (receipt?: { tamper_chain_hash?: string; action_hash?: string | null; verify_hash?: string | null; audit_id?: string }) => (
+    (receipt?.tamper_chain_hash || receipt?.verify_hash || receipt?.action_hash || receipt?.audit_id || "").slice(0, 12)
+  );
+  const latestReceiptForCommands = (...commands: Array<string | undefined | null>) => {
+    const wanted = new Set(commands.map(command => String(command || "").trim()).filter(Boolean));
+    if (!wanted.size) return undefined;
+    return actionReceiptRows.find(receipt => (
+      wanted.has(String(receipt.action_command || "").trim()) ||
+      wanted.has(String(receipt.verify_command || "").trim())
+    ));
+  };
+  const hasVerifiedReceiptForCommands = (...commands: Array<string | undefined | null>) => (
+    latestReceiptForCommands(...commands)?.status === "verified"
+  );
+  const actionQueueCandidateScore = (candidate: { id: string; action: string; verifyAction?: string }) => (
+    isCloseEvidenceGapCommand(candidate.action) ? 120 :
+    candidate.id.startsWith("loop-first-issue:") ? 110 :
+    !hasVerifiedReceiptForCommands(candidate.action, candidate.verifyAction) ? 80 :
     0
   );
   const actionQueueCandidates = [
@@ -1210,19 +1228,10 @@ export function AIEmployees() {
     candidate.action &&
     list.findIndex(item => item.action === candidate.action) === index
   )).sort((left, right) => actionQueueCandidateScore(right) - actionQueueCandidateScore(left)).slice(0, 8);
-  const actionQueueKey = actionQueueCandidates.map(item => item.id).join("|");
-  const actionReceiptRows = operatorActionReceipts?.receipts || operatorActionPlan?.action_receipts?.receipts || [];
-  const receiptShortHash = (receipt?: { tamper_chain_hash?: string; action_hash?: string | null; verify_hash?: string | null; audit_id?: string }) => (
-    (receipt?.tamper_chain_hash || receipt?.verify_hash || receipt?.action_hash || receipt?.audit_id || "").slice(0, 12)
-  );
-  const latestReceiptForCommands = (...commands: Array<string | undefined | null>) => {
-    const wanted = new Set(commands.map(command => String(command || "").trim()).filter(Boolean));
-    if (!wanted.size) return undefined;
-    return actionReceiptRows.find(receipt => (
-      wanted.has(String(receipt.action_command || "").trim()) ||
-      wanted.has(String(receipt.verify_command || "").trim())
-    ));
-  };
+  const actionReceiptKey = actionQueueCandidates.map(item => (
+    `${item.id}:${hasVerifiedReceiptForCommands(item.action, "verifyAction" in item ? item.verifyAction : undefined) ? "verified" : "missing"}`
+  )).join("|");
+  const actionQueueKey = `${actionQueueCandidates.map(item => item.id).join("|")}::${actionReceiptKey}`;
   const dispatchEvidenceActions = operatorPlanActions.filter(item => item.lane === "dispatch_evidence").slice(0, 4);
   const loopRecord = operatorLoopAudit?.loop_record;
   const loopRecordMemories = loopRecord?.memory_reviews || [];
@@ -3143,6 +3152,7 @@ export function AIEmployees() {
               const verifyBusy = receiptAction === `action-receipt:verified:${item.id}`;
               const queueReceipt = latestReceiptForCommands(item.action, verifyAction);
               const queueReceiptHash = receiptShortHash(queueReceipt);
+              const queueNeedsReceipt = queueReceipt?.status !== "verified";
               return (
                 <div
                   key={item.id}
@@ -3195,6 +3205,11 @@ export function AIEmployees() {
                     {queueReceipt && (
                       <div className="text-[10px] mt-0.5 truncate" style={{ color: "var(--mis-success)" }}>
                         {copy.receiptProof}: {queueReceipt.status} · {queueReceiptHash}
+                      </div>
+                    )}
+                    {queueNeedsReceipt && (
+                      <div className="text-[10px] mt-0.5 truncate" style={{ color: "var(--mis-warning)" }}>
+                        {copy.receiptNeeded}: {verifyAction || item.action}
                       </div>
                     )}
                   </div>
