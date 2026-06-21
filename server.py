@@ -2665,6 +2665,85 @@ def repo_get_workspace_run(conn: sqlite3.Connection, workspace_id: str, run_id: 
     ).fetchone()
 
 
+def repo_pull_agent_gateway_tasks(conn: sqlite3.Connection, workspace_id: str, agent_id: str | None = None, statuses: list[str] | None = None, limit: int = 10):
+    statuses = statuses or ["planned", "backlog"]
+    placeholders = ",".join("?" for _ in statuses)
+    params: list = [*statuses, normalize_workspace_id(workspace_id)]
+    sql = f"SELECT * FROM tasks WHERE status IN ({placeholders}) AND COALESCE(workspace_id,'local-demo')=?"
+    if agent_id:
+        sql += " AND (owner_agent_id=? OR collaborator_agent_ids LIKE ? OR owner_agent_id IS NULL OR owner_agent_id='')"
+        params.extend([agent_id, f"%{agent_id}%"])
+    sql += " ORDER BY created_at ASC LIMIT ?"
+    params.append(min(max(int(limit or 10), 1), 50))
+    return conn.execute(sql, params).fetchall()
+
+
+def repo_list_agent_gateway_tasks(
+    conn: sqlite3.Connection,
+    workspace_id: str,
+    agent_id: str | None = None,
+    bound_visibility: bool = False,
+    statuses: list[str] | None = None,
+    owner_agent_id: str | None = None,
+    requester_id: str | None = None,
+    limit: int = 25,
+):
+    where = ["COALESCE(workspace_id,'local-demo')=?"]
+    params: list = [normalize_workspace_id(workspace_id)]
+    if bound_visibility:
+        where.append("(owner_agent_id=? OR collaborator_agent_ids LIKE ? OR owner_agent_id IS NULL OR owner_agent_id='')")
+        params.extend([agent_id or "", f"%{agent_id or ''}%"])
+    if statuses:
+        where.append("status IN (" + ",".join("?" for _ in statuses) + ")")
+        params.extend(statuses)
+    if owner_agent_id and not bound_visibility:
+        where.append("owner_agent_id=?")
+        params.append(owner_agent_id)
+    if requester_id:
+        where.append("requester_id=?")
+        params.append(requester_id)
+    sql = "SELECT * FROM tasks WHERE " + " AND ".join(where) + " ORDER BY created_at DESC LIMIT ?"
+    params.append(min(max(int(limit or 25), 1), 200))
+    return conn.execute(sql, params).fetchall()
+
+
+def repo_get_agent_gateway_task(conn: sqlite3.Connection, workspace_id: str, task_id: str):
+    return repo_get_workspace_task(conn, workspace_id, task_id)
+
+
+def repo_list_agent_gateway_runs(
+    conn: sqlite3.Connection,
+    workspace_id: str,
+    agent_id: str | None = None,
+    bound_visibility: bool = False,
+    task_id: str | None = None,
+    run_agent_id: str | None = None,
+    statuses: list[str] | None = None,
+    limit: int = 25,
+):
+    where = ["COALESCE(r.workspace_id,'local-demo')=?"]
+    params: list = [normalize_workspace_id(workspace_id)]
+    if task_id:
+        where.append("r.task_id=?")
+        params.append(task_id)
+    if run_agent_id and not bound_visibility:
+        where.append("r.agent_id=?")
+        params.append(run_agent_id)
+    if bound_visibility:
+        where.append("(t.owner_agent_id=? OR t.collaborator_agent_ids LIKE ? OR t.owner_agent_id IS NULL OR t.owner_agent_id='' OR r.agent_id=?)")
+        params.extend([agent_id or "", f"%{agent_id or ''}%", agent_id or ""])
+    if statuses:
+        where.append("r.status IN (" + ",".join("?" for _ in statuses) + ")")
+        params.extend(statuses)
+    sql = "SELECT r.* FROM runs r LEFT JOIN tasks t ON t.task_id=r.task_id WHERE " + " AND ".join(where) + " ORDER BY r.created_at DESC LIMIT ?"
+    params.append(min(max(int(limit or 25), 1), 200))
+    return conn.execute(sql, params).fetchall()
+
+
+def repo_get_agent_gateway_run(conn: sqlite3.Connection, workspace_id: str, run_id: str):
+    return repo_get_workspace_run(conn, workspace_id, run_id)
+
+
 def repo_run_detail(conn: sqlite3.Connection, run) -> dict:
     run_id = run["run_id"]
     return {
@@ -3642,16 +3721,7 @@ def agent_gateway_pull_tasks(conn, qs, headers, auth_ctx=None) -> tuple[dict, in
     limit = min(max(int((qs.get("limit") or ["10"])[0]), 1), 50)
     statuses = qs.get("status") or ["planned", "backlog"]
     statuses = [coerce_choice(status, VALID_TASK_STATUSES, "planned") for status in statuses]
-    placeholders = ",".join("?" for _ in statuses)
-    params = list(statuses)
-    sql = f"SELECT * FROM tasks WHERE status IN ({placeholders}) AND COALESCE(workspace_id,'local-demo')=?"
-    params.append(ident["workspace_id"])
-    if agent_id:
-        sql += " AND (owner_agent_id=? OR collaborator_agent_ids LIKE ? OR owner_agent_id IS NULL OR owner_agent_id='')"
-        params.extend([agent_id, f"%{agent_id}%"])
-    sql += " ORDER BY created_at ASC LIMIT ?"
-    params.append(limit)
-    rows = rows_to_dicts(conn.execute(sql, params).fetchall())
+    rows = rows_to_dicts(repo_pull_agent_gateway_tasks(conn, ident["workspace_id"], agent_id or None, statuses, limit))
     if agent_id:
         runtime_event(conn, "rtc_agent_gateway_local", "task.pull", "completed", agent_id=agent_id, output_summary=f"Pulled {len(rows)} task(s).")
         audit(conn, "agent", agent_id, "agent_gateway.task_pull", "tasks", agent_id, None, {"count": len(rows)}, {"workspace_id": ident["workspace_id"]})
@@ -3762,57 +3832,25 @@ def agent_can_access_task(task, agent_id: str) -> bool:
     return not owner or owner == agent_id or agent_id in task_collaborators(task)
 
 
-def task_detail_payload(conn: sqlite3.Connection, task_id: str) -> dict | None:
-    task = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
-    if not task:
-        return None
-    data = {"task": dict(task)}
-    for table in ["runs", "approvals", "evaluations", "memories", "artifacts"]:
-        data[table] = rows_to_dicts(conn.execute(f"SELECT * FROM {table} WHERE task_id=? ORDER BY created_at DESC", (task_id,)).fetchall())
-    return data
-
-
-def run_detail_payload(conn: sqlite3.Connection, run_id: str) -> dict | None:
-    run = conn.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
-    if not run:
-        return None
-    return {
-        "run": dict(run),
-        "tool_calls": rows_to_dicts(conn.execute("SELECT * FROM tool_calls WHERE run_id=? ORDER BY created_at", (run_id,)).fetchall()),
-        "approvals": rows_to_dicts(conn.execute("SELECT * FROM approvals WHERE run_id=? ORDER BY created_at", (run_id,)).fetchall()),
-        "evaluations": rows_to_dicts(conn.execute("SELECT * FROM evaluations WHERE run_id=? ORDER BY created_at", (run_id,)).fetchall()),
-        "artifacts": rows_to_dicts(conn.execute("SELECT * FROM artifacts WHERE run_id=? ORDER BY created_at", (run_id,)).fetchall()),
-    }
-
-
-def agent_gateway_visible_task_sql(ident: dict, auth_ctx: dict | None) -> tuple[str, list]:
-    sql = "COALESCE(workspace_id,'local-demo')=?"
-    params: list = [ident["workspace_id"]]
-    if agent_gateway_is_bound_auth(auth_ctx):
-        sql += " AND (owner_agent_id=? OR collaborator_agent_ids LIKE ? OR owner_agent_id IS NULL OR owner_agent_id='')"
-        params.extend([ident["agent_id"], f"%{ident['agent_id']}%"])
-    return sql, params
-
-
 def agent_gateway_task_read_access(conn: sqlite3.Connection, task_id: str, ident: dict, auth_ctx: dict | None) -> tuple[sqlite3.Row | None, tuple[dict, int] | None]:
-    task = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+    task = repo_get_agent_gateway_task(conn, ident["workspace_id"], task_id)
     if not task:
+        other = conn.execute("SELECT task_id,workspace_id FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+        if other:
+            return other, workspace_forbidden("task", task_id, ident["workspace_id"], row_workspace(other))
         return None, ({"error": "task not found"}, 404)
-    actual_workspace = row_workspace(task)
-    if actual_workspace != ident["workspace_id"]:
-        return task, workspace_forbidden("task", task_id, ident["workspace_id"], actual_workspace)
     if agent_gateway_is_bound_auth(auth_ctx) and not agent_can_access_task(task, ident["agent_id"]):
         return task, ({"error": "forbidden", "message": f"Task {task_id} is not visible to this agent."}, 403)
     return task, None
 
 
 def agent_gateway_run_read_access(conn: sqlite3.Connection, run_id: str, ident: dict, auth_ctx: dict | None) -> tuple[sqlite3.Row | None, tuple[dict, int] | None]:
-    run = conn.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
+    run = repo_get_agent_gateway_run(conn, ident["workspace_id"], run_id)
     if not run:
+        other = conn.execute("SELECT run_id,workspace_id FROM runs WHERE run_id=?", (run_id,)).fetchone()
+        if other:
+            return other, workspace_forbidden("run", run_id, ident["workspace_id"], row_workspace(other))
         return None, ({"error": "run not found"}, 404)
-    actual_workspace = row_workspace(run)
-    if actual_workspace != ident["workspace_id"]:
-        return run, workspace_forbidden("run", run_id, ident["workspace_id"], actual_workspace)
     if agent_gateway_is_bound_auth(auth_ctx):
         task_id = run["task_id"]
         if task_id:
@@ -3827,21 +3865,20 @@ def agent_gateway_run_read_access(conn: sqlite3.Connection, run_id: str, ident: 
 def agent_gateway_list_tasks(conn: sqlite3.Connection, qs: dict, headers, auth_ctx=None) -> tuple[dict, int]:
     ident = agent_gateway_identity(headers, qs=qs, auth_ctx=auth_ctx)
     limit = min(max(int((qs.get("limit") or ["25"])[0]), 1), 200)
-    where, params = agent_gateway_visible_task_sql(ident, auth_ctx)
     statuses = qs.get("status") or []
     statuses = [coerce_choice(status, VALID_TASK_STATUSES, "planned") for status in statuses]
-    if statuses:
-        where += " AND status IN (" + ",".join("?" for _ in statuses) + ")"
-        params.extend(statuses)
     owner = (qs.get("owner_agent_id") or [None])[0]
-    if owner and not agent_gateway_is_bound_auth(auth_ctx):
-        where += " AND owner_agent_id=?"
-        params.append(owner)
     requester = (qs.get("requester_id") or [None])[0]
-    if requester:
-        where += " AND requester_id=?"
-        params.append(requester)
-    rows = rows_to_dicts(conn.execute(f"SELECT * FROM tasks WHERE {where} ORDER BY created_at DESC LIMIT ?", [*params, limit]).fetchall())
+    rows = rows_to_dicts(repo_list_agent_gateway_tasks(
+        conn,
+        ident["workspace_id"],
+        agent_id=ident.get("agent_id"),
+        bound_visibility=agent_gateway_is_bound_auth(auth_ctx),
+        statuses=statuses,
+        owner_agent_id=owner,
+        requester_id=requester,
+        limit=limit,
+    ))
     return {"provider": "agent_gateway", "operation": "task_list", "tasks": rows, "count": len(rows), "workspace_id": ident["workspace_id"], "token_omitted": True}, 200
 
 
@@ -3850,7 +3887,7 @@ def agent_gateway_get_task(conn: sqlite3.Connection, task_id: str, headers, auth
     _task, access_error = agent_gateway_task_read_access(conn, task_id, ident, auth_ctx)
     if access_error:
         return access_error
-    data = task_detail_payload(conn, task_id) or {}
+    data = repo_task_detail(conn, _task) if _task else {}
     data.update({"provider": "agent_gateway", "operation": "task_get", "workspace_id": ident["workspace_id"], "token_omitted": True})
     return data, 200
 
@@ -3858,28 +3895,25 @@ def agent_gateway_get_task(conn: sqlite3.Connection, task_id: str, headers, auth
 def agent_gateway_list_runs(conn: sqlite3.Connection, qs: dict, headers, auth_ctx=None) -> tuple[dict, int]:
     ident = agent_gateway_identity(headers, qs=qs, auth_ctx=auth_ctx)
     limit = min(max(int((qs.get("limit") or ["25"])[0]), 1), 200)
-    where = ["COALESCE(r.workspace_id,'local-demo')=?"]
-    params: list = [ident["workspace_id"]]
+    task_id = None
     if "task_id" in qs:
         task_id = qs["task_id"][0]
         _task, access_error = agent_gateway_task_read_access(conn, task_id, ident, auth_ctx)
         if access_error:
             return access_error
-        where.append("r.task_id=?")
-        params.append(task_id)
-    if "agent_id" in qs and not agent_gateway_is_bound_auth(auth_ctx):
-        where.append("r.agent_id=?")
-        params.append(qs["agent_id"][0])
-    if agent_gateway_is_bound_auth(auth_ctx):
-        where.append("(t.owner_agent_id=? OR t.collaborator_agent_ids LIKE ? OR t.owner_agent_id IS NULL OR t.owner_agent_id='' OR r.agent_id=?)")
-        params.extend([ident["agent_id"], f"%{ident['agent_id']}%", ident["agent_id"]])
+    run_agent_id = (qs.get("agent_id") or [None])[0]
     statuses = qs.get("status") or []
     statuses = [coerce_choice(status, {"running", "completed", "failed", "blocked", "waiting_approval"}, "running") for status in statuses]
-    if statuses:
-        where.append("r.status IN (" + ",".join("?" for _ in statuses) + ")")
-        params.extend(statuses)
-    sql = "SELECT r.* FROM runs r LEFT JOIN tasks t ON t.task_id=r.task_id WHERE " + " AND ".join(where) + " ORDER BY r.created_at DESC LIMIT ?"
-    rows = rows_to_dicts(conn.execute(sql, [*params, limit]).fetchall())
+    rows = rows_to_dicts(repo_list_agent_gateway_runs(
+        conn,
+        ident["workspace_id"],
+        agent_id=ident.get("agent_id"),
+        bound_visibility=agent_gateway_is_bound_auth(auth_ctx),
+        task_id=task_id,
+        run_agent_id=run_agent_id,
+        statuses=statuses,
+        limit=limit,
+    ))
     return {"provider": "agent_gateway", "operation": "run_list", "runs": rows, "count": len(rows), "workspace_id": ident["workspace_id"], "token_omitted": True}, 200
 
 
@@ -3888,7 +3922,7 @@ def agent_gateway_get_run(conn: sqlite3.Connection, run_id: str, headers, auth_c
     _run, access_error = agent_gateway_run_read_access(conn, run_id, ident, auth_ctx)
     if access_error:
         return access_error
-    data = run_detail_payload(conn, run_id) or {}
+    data = repo_run_detail(conn, _run) if _run else {}
     data.update({"provider": "agent_gateway", "operation": "run_get", "workspace_id": ident["workspace_id"], "token_omitted": True})
     return data, 200
 

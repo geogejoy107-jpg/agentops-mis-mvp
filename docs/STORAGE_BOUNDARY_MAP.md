@@ -20,6 +20,7 @@ human/admin APIs:
 | Audit list | `repo_list_workspace_audit` | `GET /api/audit` | `python3 scripts/storage_boundary_sqlite_smoke.py` |
 | Workflow job list/detail/stuck recovery | `repo_list_workspace_workflow_jobs`, `repo_get_workspace_workflow_job`, `repo_list_workspace_stuck_workflow_jobs` | `GET /api/workflows/jobs`, `GET /api/workflows/jobs/:job_id`, `GET /api/workflows/jobs/stuck`, mark-failed lookup | `python3 scripts/storage_boundary_sqlite_smoke.py` |
 | Agent Gateway enrollment/session admin reads | `repo_list_gateway_enrollments`, `repo_list_gateway_sessions` | `GET /api/agent-gateway/enrollments`, `GET /api/agent-gateway/sessions` | `python3 scripts/storage_boundary_sqlite_smoke.py` |
+| Agent Gateway task/run reads | `repo_pull_agent_gateway_tasks`, `repo_list_agent_gateway_tasks`, `repo_get_agent_gateway_task`, `repo_list_agent_gateway_runs`, `repo_get_agent_gateway_run` | `GET /api/agent-gateway/tasks/pull`, `GET /api/agent-gateway/tasks`, `GET /api/agent-gateway/tasks/:task_id`, `GET /api/agent-gateway/runs`, `GET /api/agent-gateway/runs/:run_id` | `python3 scripts/storage_boundary_sqlite_smoke.py` |
 
 The helpers deliberately keep the existing SQLite row shape and ordering. They
 only centralize workspace filters and detail assembly so a future adapter can
@@ -29,7 +30,7 @@ match behavior before Postgres is introduced.
 
 | Candidate | Why next | Required proof before Postgres |
 | --- | --- | --- |
-| Agent Gateway task/run/artifact reads | CLI/API/MCP are the durable agent contract | Scope matrix and workspace isolation smokes |
+| Agent Gateway artifact/approval/memory reads | CLI/API/MCP are the durable agent contract | Scope matrix and workspace isolation smokes |
 | Write-path repositories | Postgres parity needs create/update behavior centralized after read helpers are locked | Existing workflow smokes plus isolated write helper smoke |
 
 ## Postgres Parity Rule

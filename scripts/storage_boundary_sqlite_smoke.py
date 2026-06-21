@@ -228,6 +228,19 @@ def main() -> int:
             require(server.repo_get_workspace_run(conn, workspace_a, run_a), "run helper missed workspace A run")
             require(not server.repo_get_workspace_run(conn, workspace_a, run_b), "run helper exposed workspace B run")
 
+            task_a_status = server.repo_get_workspace_task(conn, workspace_a, task_a)["status"]
+            gateway_pull_ids = ids(server.repo_pull_agent_gateway_tasks(conn, workspace_a, agent_a, [task_a_status], 20), "task_id")
+            require(task_a in gateway_pull_ids and task_b not in gateway_pull_ids, f"gateway task pull helper leaked workspace rows: {gateway_pull_ids}")
+            gateway_task_ids = ids(server.repo_list_agent_gateway_tasks(conn, workspace_a, agent_id=agent_a, bound_visibility=True, limit=20), "task_id")
+            require(task_a in gateway_task_ids and task_b not in gateway_task_ids, f"gateway task list helper leaked workspace rows: {gateway_task_ids}")
+            require(server.repo_get_agent_gateway_task(conn, workspace_a, task_a), "gateway task helper missed workspace A task")
+            require(not server.repo_get_agent_gateway_task(conn, workspace_a, task_b), "gateway task helper exposed workspace B task")
+
+            gateway_run_ids = ids(server.repo_list_agent_gateway_runs(conn, workspace_a, agent_id=agent_a, bound_visibility=True, limit=20), "run_id")
+            require(run_a in gateway_run_ids and run_b not in gateway_run_ids, f"gateway run list helper leaked workspace rows: {gateway_run_ids}")
+            require(server.repo_get_agent_gateway_run(conn, workspace_a, run_a), "gateway run helper missed workspace A run")
+            require(not server.repo_get_agent_gateway_run(conn, workspace_a, run_b), "gateway run helper exposed workspace B run")
+
             memory_id_a = memory_a["memory"]["memory_id"]
             memory_id_b = memory_b["memory"]["memory_id"]
             org_memory_id_a = org_memory_a["memory"]["memory_id"]
@@ -305,6 +318,11 @@ def main() -> int:
                 "repo_list_workspace_stuck_workflow_jobs",
                 "repo_list_gateway_enrollments",
                 "repo_list_gateway_sessions",
+                "repo_pull_agent_gateway_tasks",
+                "repo_list_agent_gateway_tasks",
+                "repo_get_agent_gateway_task",
+                "repo_list_agent_gateway_runs",
+                "repo_get_agent_gateway_run",
             ],
             "workspace_a": workspace_a,
             "workspace_b": workspace_b,
