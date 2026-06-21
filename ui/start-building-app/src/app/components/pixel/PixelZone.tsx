@@ -1,5 +1,6 @@
 import type { PixelMetrics, PixelZoneDefinition } from "./pixelModel";
 import { formatZoneMetric } from "./pixelModel";
+import { PixelRoomDecor } from "./PixelRoomDecor";
 
 interface PixelZoneProps {
   zone: PixelZoneDefinition;
@@ -86,41 +87,48 @@ export function PixelZone({ zone, metrics, selected, hovered, onHover, onSelect,
         background: tone.bg,
         border: `2px solid ${active ? tone.light : tone.border}`,
         boxShadow: active
-          ? `0 0 0 2px rgba(255,255,255,0.05), 0 0 24px ${tone.glow}, inset 0 0 0 2px rgba(255,255,255,0.04)`
-          : `0 0 12px ${tone.glow}, inset 0 0 0 1px rgba(255,255,255,0.03)`,
+          ? `0 0 0 2px rgba(255,255,255,0.05), 0 0 24px ${tone.glow}, inset 0 0 0 2px rgba(255,255,255,0.04), 4px 5px 0 rgba(2,6,23,.38)`
+          : `0 0 12px ${tone.glow}, inset 0 0 0 1px rgba(255,255,255,0.03), 3px 4px 0 rgba(2,6,23,.3)`,
         imageRendering: "pixelated",
         clipPath: "polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px))",
+        transform: active ? "translateY(-2px)" : "translateY(0)",
       }}
       aria-label={`Open ${zone.label}`}
       title={`${zone.label}: ${zone.description}`}
     >
+      <PixelRoomDecor zone={zone} />
+
       <div
-        className="absolute inset-0 opacity-25"
+        className="pointer-events-none absolute inset-0 z-[1] transition-opacity duration-200"
         style={{
-          backgroundImage:
-            "linear-gradient(rgba(255,255,255,0.08) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.06) 1px, transparent 1px)",
-          backgroundSize: "12px 12px",
+          background: active
+            ? `linear-gradient(135deg, ${tone.glow}, transparent 42%)`
+            : "linear-gradient(180deg, rgba(255,255,255,.025), transparent 45%)",
         }}
       />
-      <div className="relative h-full p-2 flex flex-col justify-between">
+
+      <div className="relative z-10 flex h-full flex-col justify-between p-2">
         <div className="flex items-start justify-between gap-2">
           {showLabels && (
-            <div className="min-w-0">
-              <div className="text-[11px] font-semibold leading-tight truncate">{zone.label}</div>
-              <div className="text-[9px] leading-tight mt-0.5 truncate" style={{ color: "var(--mis-muted)" }}>
+            <div
+              className="min-w-0 px-1.5 py-1"
+              style={{ background: "rgba(2,6,23,.72)", border: "1px solid rgba(148,163,184,.18)", boxShadow: "2px 2px 0 rgba(2,6,23,.38)" }}
+            >
+              <div className="truncate text-[10px] font-semibold leading-tight tracking-wide">{zone.label}</div>
+              <div className="mt-0.5 truncate text-[8px] leading-tight" style={{ color: "var(--mis-muted)" }}>
                 {zone.metricLabel}
               </div>
             </div>
           )}
           <span
             className="inline-block h-2.5 w-2.5 shrink-0"
-            style={{ background: tone.light, boxShadow: `0 0 10px ${tone.light}` }}
+            style={{ background: tone.light, boxShadow: `0 0 10px ${tone.light}`, border: "1px solid #020617" }}
           />
         </div>
         {showLabels && (
           <div
-            className="self-start rounded px-1.5 py-0.5 text-[9px] font-mono"
-            style={{ background: "rgba(2, 6, 23, 0.58)", color: tone.light }}
+            className="self-start px-1.5 py-0.5 text-[9px] font-mono"
+            style={{ background: "rgba(2, 6, 23, 0.72)", color: tone.light, border: "1px solid rgba(148,163,184,.16)", boxShadow: "2px 2px 0 rgba(2,6,23,.3)" }}
           >
             {formatZoneMetric(zone.id, metrics)}
           </div>
