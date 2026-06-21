@@ -27,6 +27,10 @@ runner. The supported management primitives are:
 - Local readiness: `GET /api/local/readiness` and `agentops local readiness`
   provide a read-only local closure check across Agent Gateway, worker fleet,
   adapter routes, evidence chains, memory, approvals, docs, and UI routes.
+- Operator action plan: `GET /api/operator/action-plan` and
+  `agentops operator action-plan` merge review items, failed benchmark runs,
+  customer delivery gates, worker fleet recovery, adapter readiness, and
+  commander inbox state into a prioritized read-only next-action queue.
 - Commander project board: `GET /api/commander/project-board` summarizes
   local readiness, worker health, recent work packages, pending approvals,
   artifacts, memory candidates, workflow jobs, integration gates, and safe next
@@ -138,6 +142,7 @@ python3 scripts/customer_project_report_artifact_smoke.py
 python3 scripts/customer_project_index_smoke.py
 python3 scripts/task_owner_validation_smoke.py
 python3 scripts/commander_work_package_plan_smoke.py
+python3 scripts/operator_action_plan_smoke.py --base-url http://127.0.0.1:8787
 ```
 
 ## Evidence

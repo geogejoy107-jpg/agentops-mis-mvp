@@ -11501,6 +11501,224 @@ def local_readiness(conn: sqlite3.Connection, headers) -> dict:
     }
 
 
+def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
+    qs = qs or {}
+    limit = min(max(int((qs.get("limit") or ["12"])[0]), 1), 30)
+    review = human_review_queue(conn, limit=max(limit, 12))
+    fleet = worker_fleet_view(conn)
+    adapter_readiness = worker_adapter_readiness(conn, refresh=False)
+    delivery_board = customer_delivery_board(conn, limit=max(limit, 8))
+    inbox = commander_integration_inbox(conn, headers, {"bucket": ["all"], "limit": [str(max(limit, 12))]})
+
+    actions: list[dict] = []
+
+    def add_action(
+        lane: str,
+        title: str,
+        command: str,
+        *,
+        priority: int,
+        severity: str = "attention",
+        source: str = "operator",
+        summary: str = "",
+        ui_route: str | None = None,
+        evidence: dict | None = None,
+    ) -> None:
+        if not command:
+            return
+        action_id = stable_id("op_action", lane, title, command, ui_route or "")[-18:]
+        actions.append({
+            "action_id": action_id,
+            "lane": lane,
+            "severity": severity,
+            "priority": int(priority),
+            "title": redact_text(title, 180),
+            "summary": redact_text(summary, 360),
+            "command": redact_text(command, 260),
+            "ui_route": ui_route,
+            "source": source,
+            "evidence": evidence or {},
+            "token_omitted": True,
+        })
+
+    for item in (review.get("review_items") or [])[:limit]:
+        item_type = item.get("item_type") or "review"
+        title = item.get("title") or item.get("item_id") or item_type
+        command = item.get("cli_action") or item.get("next_action") or item.get("alternate_cli_action")
+        links = item.get("links") or {}
+        severity = "blocked" if item_type == "evaluation_case_run" else "attention"
+        priority = int(item.get("priority") or 80)
+        if item_type == "evaluation_case_run":
+            priority = max(priority, 94)
+        add_action(
+            "review",
+            title,
+            command,
+            priority=priority,
+            severity=severity,
+            source=f"review_queue:{item_type}",
+            summary=item.get("summary") or item.get("next_action") or "",
+            ui_route=links.get("run_url") or links.get("task_url") or links.get("approvals_url") or links.get("evaluation_room_url"),
+            evidence={
+                "item_type": item_type,
+                "item_id": item.get("item_id"),
+                "task_id": item.get("task_id"),
+                "run_id": item.get("run_id"),
+                "artifact_id": item.get("artifact_id"),
+                "approval_id": item.get("approval_id"),
+                "case_id": item.get("case_id"),
+            },
+        )
+
+    for delivery in (delivery_board.get("deliveries") or [])[:limit]:
+        status = delivery.get("status")
+        if status not in {"needs_attention", "waiting_approval", "ready"}:
+            continue
+        if status == "needs_attention":
+            command = "agentops workflow delivery-board --limit 12"
+            severity = "blocked"
+            priority = 89
+        elif status == "waiting_approval":
+            pending_ids = delivery.get("pending_approval_ids") or []
+            command = f"agentops approval approve --approval-id {pending_ids[0]}" if pending_ids else "agentops workflow delivery-board --limit 12"
+            severity = "attention"
+            priority = 82
+        else:
+            command = "agentops workflow delivery-board --limit 12"
+            severity = "ready"
+            priority = 62
+        add_action(
+            "customer_delivery",
+            delivery.get("title") or delivery.get("delivery_id") or "Customer delivery",
+            command,
+            priority=priority,
+            severity=severity,
+            source="customer_delivery_board",
+            summary=delivery.get("next_action") or delivery.get("summary") or "",
+            ui_route=delivery.get("ui_report_url") or delivery.get("run_url") or delivery.get("task_url") or "/workspace/reports",
+            evidence={
+                "delivery_id": delivery.get("delivery_id"),
+                "task_id": delivery.get("task_id"),
+                "run_id": delivery.get("run_id"),
+                "artifact_id": delivery.get("artifact_id"),
+                "status": status,
+                "evaluation_summary": delivery.get("evaluation_summary"),
+            },
+        )
+
+    fleet_summary = fleet.get("summary") or {}
+    for command in (fleet.get("next_actions") or [])[:5]:
+        severity = "blocked" if fleet.get("status") == "blocked" else "attention" if fleet.get("status") == "attention" else "ready"
+        add_action(
+            "worker_fleet",
+            "Worker fleet recovery or capacity check",
+            command,
+            priority=86 if severity == "blocked" else 76,
+            severity=severity,
+            source="worker_fleet",
+            summary="Worker lanes, stale enrollments, daemon status, and stuck-task recovery.",
+            ui_route="/workspace/agents",
+            evidence={
+                "stuck_worker_tasks": fleet_summary.get("stuck_worker_tasks"),
+                "stuck_workflow_jobs": fleet_summary.get("stuck_workflow_jobs"),
+                "running_local_daemons": fleet_summary.get("running_local_daemons"),
+                "remote_worker_count": fleet_summary.get("remote_worker_count"),
+            },
+        )
+
+    adapter_summary = adapter_readiness.get("summary") or {}
+    recommended_adapter = adapter_summary.get("recommended_adapter") or "mock"
+    if adapter_readiness.get("status") != "ready" or recommended_adapter == "mock":
+        add_action(
+            "runtime_route",
+            "Confirm the safest available runtime route",
+            "agentops worker readiness",
+            priority=73,
+            severity="attention" if adapter_readiness.get("status") != "ready" else "ready",
+            source="adapter_readiness",
+            summary=f"recommended_adapter={recommended_adapter}; live routes require explicit confirmation.",
+            ui_route="/workspace/agents",
+            evidence=adapter_summary,
+        )
+
+    for item in (inbox.get("inbox_items") or [])[:limit]:
+        bucket = item.get("bucket") or "inbox"
+        if bucket not in {"ready_for_review", "blocked", "late_or_stale", "needs_memory_review"}:
+            continue
+        severity = "blocked" if bucket in {"blocked", "late_or_stale"} else "attention"
+        add_action(
+            "async_inbox",
+            item.get("title") or item.get("item_id") or bucket,
+            item.get("recommended_action") or item.get("next_action") or "agentops commander inbox",
+            priority=84 if severity == "blocked" else 72,
+            severity=severity,
+            source=f"commander_inbox:{bucket}",
+            summary=item.get("summary") or "",
+            ui_route=item.get("run_url") or item.get("task_url") or "/workspace/agents",
+            evidence={
+                "bucket": bucket,
+                "task_id": item.get("task_id"),
+                "run_id": item.get("run_id"),
+                "artifact_id": item.get("artifact_id"),
+            },
+        )
+
+    deduped: list[dict] = []
+    seen: set[tuple[str, str | None]] = set()
+    severity_rank = {"blocked": 3, "attention": 2, "ready": 1, "info": 0}
+    for action in sorted(actions, key=lambda row: (int(row.get("priority") or 0), severity_rank.get(row.get("severity"), 0), row.get("title") or ""), reverse=True):
+        key = (action.get("command") or "", action.get("ui_route"))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(action)
+        if len(deduped) >= limit:
+            break
+
+    blocked = [item for item in deduped if item.get("severity") == "blocked"]
+    attention = [item for item in deduped if item.get("severity") == "attention"]
+    status = "blocked" if blocked else "attention" if attention else "ready"
+    return {
+        "provider": "agentops-operator",
+        "operation": "action_plan",
+        "status": status,
+        "workspace_id": normalize_workspace_id(headers.get("X-AgentOps-Workspace-Id") or "local-demo"),
+        "summary": {
+            "actions": len(deduped),
+            "blocked": len(blocked),
+            "attention": len(attention),
+            "ready": len([item for item in deduped if item.get("severity") == "ready"]),
+            "review_items_total": (review.get("summary") or {}).get("review_items_total", 0),
+            "failed_evaluation_case_runs": (review.get("summary") or {}).get("failed_evaluation_case_runs", 0),
+            "waiting_deliveries": (delivery_board.get("summary") or {}).get("waiting_approval", 0),
+            "needs_attention_deliveries": (delivery_board.get("summary") or {}).get("needs_attention", 0),
+            "stuck_worker_tasks": fleet_summary.get("stuck_worker_tasks", 0),
+            "stuck_workflow_jobs": fleet_summary.get("stuck_workflow_jobs", 0),
+            "recommended_adapter": recommended_adapter,
+        },
+        "actions": deduped,
+        "top_commands": [item["command"] for item in deduped[:5]],
+        "source_status": {
+            "review_queue": review.get("status"),
+            "customer_delivery_board": delivery_board.get("status"),
+            "worker_fleet": fleet.get("status"),
+            "commander_inbox": inbox.get("status"),
+            "adapter_readiness": adapter_readiness.get("status"),
+        },
+        "contract": "read-only operator action plan; execution stays in explicit CLI/API commands and live adapters still require confirmation",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+
+
 def request_base_url(headers=None) -> str | None:
     host = headers.get("Host") if headers else ""
     return f"http://{host}" if host else None
@@ -12274,6 +12492,10 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/local/readiness":
                 payload = local_readiness(conn, self.headers)
                 conn.commit()
+                return self.send_json(payload)
+            if path == "/api/operator/action-plan":
+                payload = operator_action_plan(conn, self.headers, qs)
+                conn.rollback()
                 return self.send_json(payload)
             if path == "/api/security/production-readiness":
                 payload = security_production_readiness(conn, self.headers)

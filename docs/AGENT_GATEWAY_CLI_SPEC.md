@@ -1069,6 +1069,22 @@ Failed benchmark runs are read-only risk items, not approval objects. Operators
 should inspect the linked run/task or use `agentops eval case-runs --pass-fail
 fail`; reruns still require the explicit `agentops eval run-cases` path.
 
+### `agentops operator action-plan`
+
+Returns the prioritized operator command-center plan as JSON. It merges the
+review queue, customer delivery board, worker fleet status, adapter readiness,
+and commander inbox into safe next CLI/UI actions.
+
+```bash
+agentops operator action-plan --limit 12
+```
+
+Maps to `GET /api/operator/action-plan`. This is read-only: it must not start a
+worker, approve a gate, upload data, or call Hermes/OpenClaw. It returns
+`top_commands`, `actions[]`, source statuses, safety flags, and
+`token_omitted:true` so a local admin, remote operator, or future commander
+agent can decide which explicit command to run next.
+
 ### `agentops eval propose-case`
 
 Previews or creates a review-gated evaluation case candidate from existing

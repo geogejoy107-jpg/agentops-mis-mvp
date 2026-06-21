@@ -274,6 +274,10 @@ def cmd_demo_readiness(args, client: AgentOpsClient) -> dict:
     return client.get("/api/demo/readiness")
 
 
+def cmd_operator_action_plan(args, client: AgentOpsClient) -> dict:
+    return client.get("/api/operator/action-plan", query={"limit": args.limit})
+
+
 def cmd_commander_board(args, client: AgentOpsClient) -> dict:
     return client.get("/api/commander/project-board")
 
@@ -1459,6 +1463,12 @@ def build_parser() -> argparse.ArgumentParser:
     demo_readiness = demo_sub.add_parser("readiness", help="Show the canonical v1.5 classroom recording path readiness.")
     demo_readiness.set_defaults(handler="demo_readiness")
 
+    operator = sub.add_parser("operator", help="Read-only operator command-center plans.")
+    operator_sub = operator.add_subparsers(dest="action", required=True)
+    operator_plan = operator_sub.add_parser("action-plan", help="Show the prioritized next safe CLI/UI actions.")
+    operator_plan.add_argument("--limit", type=int, default=12)
+    operator_plan.set_defaults(handler="operator_action_plan")
+
     commander = sub.add_parser("commander", help="Commander planning, dispatch and readback commands.")
     commander_sub = commander.add_subparsers(dest="action", required=True)
     commander_board = commander_sub.add_parser("board", help="Read the Commander project board.")
@@ -2126,6 +2136,7 @@ HANDLERS = {
     "doctor": cmd_doctor,
     "local_readiness": cmd_local_readiness,
     "demo_readiness": cmd_demo_readiness,
+    "operator_action_plan": cmd_operator_action_plan,
     "commander_board": cmd_commander_board,
     "commander_inbox": cmd_commander_inbox,
     "commander_plan": cmd_commander_plan,

@@ -999,6 +999,52 @@ export interface ReviewQueuePayload {
   token_omitted?: boolean;
 }
 
+export interface OperatorActionPlanItem {
+  action_id: string;
+  lane: string;
+  severity: string;
+  priority: number;
+  title: string;
+  summary?: string;
+  command: string;
+  ui_route?: string | null;
+  source: string;
+  evidence?: Record<string, unknown>;
+}
+
+export interface OperatorActionPlanPayload {
+  provider: string;
+  operation: string;
+  status: string;
+  workspace_id: string;
+  summary: {
+    actions: number;
+    blocked: number;
+    attention: number;
+    ready: number;
+    review_items_total: number;
+    failed_evaluation_case_runs: number;
+    waiting_deliveries: number;
+    needs_attention_deliveries: number;
+    stuck_worker_tasks: number;
+    stuck_workflow_jobs: number;
+    recommended_adapter: string;
+  };
+  actions: OperatorActionPlanItem[];
+  top_commands: string[];
+  source_status: Record<string, string | undefined>;
+  safety: {
+    read_only: boolean;
+    ledger_mutated: boolean;
+    live_execution_performed: boolean;
+    raw_prompt_omitted: boolean;
+    raw_response_omitted: boolean;
+    token_omitted: boolean;
+  };
+  token_omitted?: boolean;
+  live_execution_performed?: boolean;
+}
+
 export interface EvaluationCaseCandidate {
   case_id: string;
   workspace_id: string;
@@ -3081,6 +3127,74 @@ export async function loadReviewQueue(limit = 12): Promise<ReviewQueuePayload> {
       token_omitted: boolValue(safetyRaw.token_omitted),
     },
     token_omitted: boolValue(raw.token_omitted),
+  };
+}
+
+export async function loadOperatorActionPlan(limit = 12): Promise<OperatorActionPlanPayload> {
+  const raw = await optionalApiJson<Record<string, unknown>>(`/operator/action-plan?limit=${encodeURIComponent(String(limit))}`, {
+    provider: "agentops-operator",
+    operation: "action_plan",
+    status: "unavailable",
+    workspace_id: "local-demo",
+    summary: {},
+    actions: [],
+    top_commands: [],
+    source_status: {},
+    safety: {
+      read_only: true,
+      ledger_mutated: false,
+      live_execution_performed: false,
+      raw_prompt_omitted: true,
+      raw_response_omitted: true,
+      token_omitted: true,
+    },
+    token_omitted: true,
+    live_execution_performed: false,
+  });
+  const summaryRaw = typeof raw.summary === "object" && raw.summary !== null ? raw.summary as Record<string, unknown> : {};
+  const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
+  return {
+    provider: String(raw.provider || "agentops-operator"),
+    operation: String(raw.operation || "action_plan"),
+    status: String(raw.status || "unknown"),
+    workspace_id: String(raw.workspace_id || "local-demo"),
+    summary: {
+      actions: numberValue(summaryRaw.actions, 0),
+      blocked: numberValue(summaryRaw.blocked, 0),
+      attention: numberValue(summaryRaw.attention, 0),
+      ready: numberValue(summaryRaw.ready, 0),
+      review_items_total: numberValue(summaryRaw.review_items_total, 0),
+      failed_evaluation_case_runs: numberValue(summaryRaw.failed_evaluation_case_runs, 0),
+      waiting_deliveries: numberValue(summaryRaw.waiting_deliveries, 0),
+      needs_attention_deliveries: numberValue(summaryRaw.needs_attention_deliveries, 0),
+      stuck_worker_tasks: numberValue(summaryRaw.stuck_worker_tasks, 0),
+      stuck_workflow_jobs: numberValue(summaryRaw.stuck_workflow_jobs, 0),
+      recommended_adapter: String(summaryRaw.recommended_adapter || "mock"),
+    },
+    actions: asArray<Record<string, unknown>>(raw.actions).map((item) => ({
+      action_id: String(item.action_id || item.command || item.title || ""),
+      lane: String(item.lane || "operator"),
+      severity: String(item.severity || "attention"),
+      priority: numberValue(item.priority, 0),
+      title: String(item.title || item.command || "Operator action"),
+      summary: item.summary ? String(item.summary) : undefined,
+      command: String(item.command || ""),
+      ui_route: item.ui_route ? String(item.ui_route) : null,
+      source: String(item.source || "operator"),
+      evidence: typeof item.evidence === "object" && item.evidence !== null ? item.evidence as Record<string, unknown> : undefined,
+    })).filter((item) => item.command),
+    top_commands: asArray<unknown>(raw.top_commands).map(String).filter(Boolean),
+    source_status: typeof raw.source_status === "object" && raw.source_status !== null ? raw.source_status as Record<string, string | undefined> : {},
+    safety: {
+      read_only: boolValue(safetyRaw.read_only),
+      ledger_mutated: boolValue(safetyRaw.ledger_mutated),
+      live_execution_performed: boolValue(safetyRaw.live_execution_performed),
+      raw_prompt_omitted: boolValue(safetyRaw.raw_prompt_omitted),
+      raw_response_omitted: boolValue(safetyRaw.raw_response_omitted),
+      token_omitted: boolValue(safetyRaw.token_omitted),
+    },
+    token_omitted: boolValue(raw.token_omitted),
+    live_execution_performed: boolValue(raw.live_execution_performed),
   };
 }
 

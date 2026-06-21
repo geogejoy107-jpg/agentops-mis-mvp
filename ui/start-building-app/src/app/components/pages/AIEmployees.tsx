@@ -23,6 +23,7 @@ import {
   loadHermesOpenClawLoopReadback,
   loadIntegrationInbox,
   loadLocalReadiness,
+  loadOperatorActionPlan,
   loadReviewQueue,
   loadSecurityProductionReadiness,
   loadStuckWorkflowJobs,
@@ -59,6 +60,7 @@ import {
   type CustomerTaskWorkflowResult,
   type HermesOpenClawLoopReadbackPayload,
   type HermesOpenClawLoopWorkflowResult,
+  type OperatorActionPlanPayload,
   type ReviewQueuePayload,
   type WorkerAdapterName,
   type WorkerFleetHygienePayload,
@@ -179,7 +181,7 @@ export function AIEmployees() {
     scopes: DEFAULT_GATEWAY_SCOPES.join(", "),
   });
   const { data, loading, error, refresh } = useLiveData(async () => {
-    const [metrics, demoReadiness, workerStatus, workerFleet, workerHygiene, adapterReadiness, localReadiness, securityReadiness, integrationInbox, commanderWorkPackages, reviewQueue, customerDeliveryBoard, loopLaneReadback, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs] = await Promise.all([
+    const [metrics, demoReadiness, workerStatus, workerFleet, workerHygiene, adapterReadiness, localReadiness, operatorActionPlan, securityReadiness, integrationInbox, commanderWorkPackages, reviewQueue, customerDeliveryBoard, loopLaneReadback, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs] = await Promise.all([
       loadDashboard(),
       loadDemoReadiness(),
       loadWorkerStatus(),
@@ -187,6 +189,7 @@ export function AIEmployees() {
       loadWorkerFleetHygiene({ limit: 5 }),
       loadWorkerAdapterReadiness(),
       loadLocalReadiness(),
+      loadOperatorActionPlan(12),
       loadSecurityProductionReadiness(),
       loadIntegrationInbox({ bucket: integrationInboxBucket, limit: 20 }),
       loadCommanderWorkPackages({ limit: 8 }),
@@ -202,7 +205,7 @@ export function AIEmployees() {
       loadStuckWorkflowJobs(30, 8),
     ]);
     const agents = await loadAgents(metrics);
-    return { agents, demoReadiness, workerStatus, workerFleet, workerHygiene, adapterReadiness, localReadiness, securityReadiness, integrationInbox, commanderWorkPackages, reviewQueue, customerDeliveryBoard, loopLaneReadback, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs };
+    return { agents, demoReadiness, workerStatus, workerFleet, workerHygiene, adapterReadiness, localReadiness, operatorActionPlan, securityReadiness, integrationInbox, commanderWorkPackages, reviewQueue, customerDeliveryBoard, loopLaneReadback, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs };
   }, [integrationInboxBucket]);
   const agents = data?.agents || [];
   const demoReadiness = data?.demoReadiness;
@@ -212,6 +215,9 @@ export function AIEmployees() {
   const activeHygiene = hygieneResult || workerHygiene;
   const adapterReadiness = data?.adapterReadiness;
   const localReadiness = data?.localReadiness;
+  const operatorActionPlan = data?.operatorActionPlan as OperatorActionPlanPayload | undefined;
+  const operatorPlanActions = operatorActionPlan?.actions || [];
+  const operatorPlanSummary = operatorActionPlan?.summary;
   const securityReadiness = data?.securityReadiness;
   const integrationInbox = data?.integrationInbox;
   const commanderWorkPackages = data?.commanderWorkPackages;
@@ -989,6 +995,12 @@ export function AIEmployees() {
     { bucket: "needs_memory_review", label: copy.memoryReview, count: integrationInboxSummary?.needs_memory_review ?? 0 },
   ];
   const actionQueueCandidates = [
+    ...operatorPlanActions.map((item) => ({
+      id: `operator:${item.action_id}`,
+      action: item.command,
+      source: `${copy.operatorTitle} · ${item.lane}`,
+      status: item.severity || operatorActionPlan?.status || "attention",
+    })),
     ...recommendedActions.map((action, index) => ({
       id: `fleet:${index}:${action}`,
       action,
@@ -2388,8 +2400,12 @@ export function AIEmployees() {
               <div className="flex items-center gap-2">
                 <GripVertical size={13} style={{ color: "var(--mis-cyan)" }} />
                 <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.actionQueueTitle}</div>
+                <StatusBadge status={operatorActionPlan?.status || "unknown"} />
               </div>
-              <p className="text-[10px] mt-1" style={{ color: "var(--mis-muted)" }}>{copy.actionQueueSummary}</p>
+              <p className="text-[10px] mt-1" style={{ color: "var(--mis-muted)" }}>
+                {copy.actionQueueSummary}
+                {operatorPlanSummary && ` · blocked ${operatorPlanSummary.blocked} / attention ${operatorPlanSummary.attention} / adapter ${operatorPlanSummary.recommended_adapter}`}
+              </p>
             </div>
             <button
               onClick={() => setActionQueueOrder(actionQueueCandidates.map(item => item.id))}
