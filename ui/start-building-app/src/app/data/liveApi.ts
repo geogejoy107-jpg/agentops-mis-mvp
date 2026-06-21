@@ -1082,6 +1082,35 @@ export interface AgentGatewayEnrollmentRevokeResult {
   sessions?: string[];
 }
 
+export interface AgentGatewayEnrollmentPolicyPreview {
+  provider: string;
+  operation: string;
+  status: string;
+  workspace_id: string;
+  runtime_type: string;
+  policy: string;
+  risk_level: string;
+  approval_recommended: boolean;
+  recommended_path: string;
+  scope_count: number;
+  scopes: string[];
+  invalid_scopes: string[];
+  privileged_scopes: string[];
+  worker_write_scopes: string[];
+  missing_worker_scopes: string[];
+  gates: { id: string; ok: boolean; status: string; summary: string }[];
+  next_actions: string[];
+  safety: {
+    read_only: boolean;
+    ledger_mutated: boolean;
+    live_execution_performed: boolean;
+    token_omitted: boolean;
+    raw_prompt_omitted: boolean;
+  };
+  token_omitted: boolean;
+  live_execution_performed: boolean;
+}
+
 export interface AgentGatewaySessionRevokeResult {
   revoked: number;
   sessions: string[];
@@ -2311,6 +2340,51 @@ export async function loadAgentGatewaySessions(): Promise<AgentGatewaySessionLis
 export async function loadAgentGatewayStatus(): Promise<AgentGatewayStatusPayload> {
   const raw = await apiJson<Record<string, unknown>>("/agent-gateway/status");
   return normalizeAgentGatewayStatus(raw);
+}
+
+export async function previewAgentGatewayEnrollmentPolicy(input: {
+  workspace_id?: string;
+  runtime_type?: string;
+  scopes: string[];
+}): Promise<AgentGatewayEnrollmentPolicyPreview> {
+  const raw = await apiJson<Record<string, unknown>>("/agent-gateway/enrollment/policy-preview", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
+  return {
+    provider: String(raw.provider || "agent_gateway"),
+    operation: String(raw.operation || "enrollment_policy_preview"),
+    status: String(raw.status || "unknown"),
+    workspace_id: String(raw.workspace_id || ""),
+    runtime_type: String(raw.runtime_type || ""),
+    policy: String(raw.policy || "custom"),
+    risk_level: String(raw.risk_level || "unknown"),
+    approval_recommended: boolValue(raw.approval_recommended),
+    recommended_path: String(raw.recommended_path || ""),
+    scope_count: numberValue(raw.scope_count, 0),
+    scopes: asArray(raw.scopes).map(String),
+    invalid_scopes: asArray(raw.invalid_scopes).map(String),
+    privileged_scopes: asArray(raw.privileged_scopes).map(String),
+    worker_write_scopes: asArray(raw.worker_write_scopes).map(String),
+    missing_worker_scopes: asArray(raw.missing_worker_scopes).map(String),
+    gates: asArray<Record<string, unknown>>(raw.gates).map((gate) => ({
+      id: String(gate.id || ""),
+      ok: boolValue(gate.ok),
+      status: String(gate.status || "unknown"),
+      summary: String(gate.summary || ""),
+    })).filter((gate) => gate.id || gate.summary),
+    next_actions: asArray(raw.next_actions).map(String).filter(Boolean),
+    safety: {
+      read_only: boolValue(safetyRaw.read_only),
+      ledger_mutated: boolValue(safetyRaw.ledger_mutated),
+      live_execution_performed: boolValue(safetyRaw.live_execution_performed),
+      token_omitted: boolValue(safetyRaw.token_omitted),
+      raw_prompt_omitted: boolValue(safetyRaw.raw_prompt_omitted),
+    },
+    token_omitted: boolValue(raw.token_omitted),
+    live_execution_performed: boolValue(raw.live_execution_performed),
+  };
 }
 
 export async function loadSecurityProductionReadiness(): Promise<SecurityProductionReadinessPayload> {

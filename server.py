@@ -2057,6 +2057,33 @@ VALID_AGENT_GATEWAY_SCOPES = {
     "audit:write",
 }
 
+AGENT_GATEWAY_OBSERVER_SCOPES = {
+    "agents:heartbeat",
+    "knowledge:read",
+    "agent_plans:read",
+    "plan_evidence:read",
+    "tasks:read",
+    "audit:write",
+}
+
+AGENT_GATEWAY_WORKER_WRITE_SCOPES = {
+    "agent_plans:write",
+    "plan_evidence:write",
+    "tasks:create",
+    "tasks:claim",
+    "runs:write",
+    "toolcalls:write",
+    "artifacts:write",
+    "memories:propose",
+    "evaluations:submit",
+}
+
+AGENT_GATEWAY_PRIVILEGED_SCOPES = {
+    "agents:write",
+    "knowledge:write",
+    "approvals:request",
+}
+
 
 def parse_scope_list(value) -> list[str]:
     if isinstance(value, list):
@@ -2075,6 +2102,126 @@ def parse_scope_list(value) -> list[str]:
         if scope and scope in VALID_AGENT_GATEWAY_SCOPES and scope not in scopes:
             scopes.append(scope)
     return scopes
+
+
+def agent_gateway_enrollment_policy_preview(body) -> tuple[dict, int]:
+    raw_scopes = body.get("scopes") or body.get("allowed_scopes") or []
+    scopes = parse_scope_list(raw_scopes)
+    invalid_scopes: list[str] = []
+    if isinstance(raw_scopes, str):
+        raw_items = raw_scopes.split(",")
+    elif isinstance(raw_scopes, list):
+        raw_items = raw_scopes
+    else:
+        raw_items = []
+    for item in raw_items:
+        scope = str(item).strip()
+        if scope and scope not in VALID_AGENT_GATEWAY_SCOPES and scope not in invalid_scopes:
+            invalid_scopes.append(scope)
+    runtime_type = coerce_choice(body.get("runtime_type") or body.get("runtime"), VALID_RUNTIME_TYPES, "mock")
+    workspace_id = normalize_workspace_id(body.get("workspace_id") or "local-demo")
+    privileged = [scope for scope in scopes if scope in AGENT_GATEWAY_PRIVILEGED_SCOPES]
+    worker_writes = [scope for scope in scopes if scope in AGENT_GATEWAY_WORKER_WRITE_SCOPES]
+    observer_only = bool(scopes) and set(scopes).issubset(AGENT_GATEWAY_OBSERVER_SCOPES)
+    missing_worker_scopes = [
+        scope for scope in [
+            "agents:heartbeat",
+            "tasks:read",
+            "tasks:claim",
+            "runs:write",
+            "toolcalls:write",
+            "evaluations:submit",
+            "audit:write",
+        ] if scope not in scopes
+    ]
+    if invalid_scopes:
+        risk_level = "blocked"
+        policy = "invalid"
+        approval_recommended = True
+        recommended_path = "fix_scopes"
+    elif not scopes:
+        risk_level = "blocked"
+        policy = "invalid"
+        approval_recommended = True
+        recommended_path = "fix_scopes"
+    elif privileged:
+        risk_level = "high"
+        policy = "privileged"
+        approval_recommended = True
+        recommended_path = "request_approval"
+    elif worker_writes:
+        risk_level = "medium"
+        policy = "worker"
+        approval_recommended = runtime_type != "mock" or workspace_id != "local-demo"
+        recommended_path = "request_approval" if approval_recommended else "create_token"
+    elif observer_only:
+        risk_level = "low"
+        policy = "observer"
+        approval_recommended = False
+        recommended_path = "create_token"
+    else:
+        risk_level = "medium"
+        policy = "custom"
+        approval_recommended = True
+        recommended_path = "request_approval"
+    gates = [
+        {
+            "id": "valid_scopes",
+            "ok": bool(scopes) and not invalid_scopes,
+            "status": "pass" if bool(scopes) and not invalid_scopes else "fail",
+            "summary": "All requested scopes are recognized." if not invalid_scopes else f"Invalid scopes: {', '.join(invalid_scopes[:5])}",
+        },
+        {
+            "id": "least_privilege",
+            "ok": not privileged,
+            "status": "pass" if not privileged else "warn",
+            "summary": "No privileged enrollment scopes requested." if not privileged else f"Privileged scopes requested: {', '.join(privileged)}",
+        },
+        {
+            "id": "worker_viability",
+            "ok": not worker_writes or not missing_worker_scopes,
+            "status": "pass" if not worker_writes or not missing_worker_scopes else "warn",
+            "summary": "Worker scope set can claim and write task evidence." if worker_writes and not missing_worker_scopes else "Observer/custom scope set does not need full worker write coverage." if not worker_writes else f"Worker execution may be incomplete without: {', '.join(missing_worker_scopes)}",
+        },
+        {
+            "id": "approval_path",
+            "ok": True,
+            "status": "warn" if approval_recommended else "pass",
+            "summary": "Use approval-gated request before issuing this token." if approval_recommended else "Direct token creation is acceptable for this local/low-risk scope set.",
+        },
+    ]
+    return {
+        "provider": "agent_gateway",
+        "operation": "enrollment_policy_preview",
+        "status": "blocked" if risk_level == "blocked" else "attention" if approval_recommended or privileged else "ready",
+        "workspace_id": workspace_id,
+        "runtime_type": runtime_type,
+        "policy": policy,
+        "risk_level": risk_level,
+        "approval_recommended": approval_recommended,
+        "recommended_path": recommended_path,
+        "scope_count": len(scopes),
+        "scopes": scopes,
+        "invalid_scopes": invalid_scopes,
+        "privileged_scopes": privileged,
+        "worker_write_scopes": worker_writes,
+        "missing_worker_scopes": missing_worker_scopes if worker_writes else [],
+        "gates": gates,
+        "next_actions": [action for action in [
+            "Fix invalid scopes before creating a token." if invalid_scopes else "",
+            "Use agentops enrollment request before issuing this token." if approval_recommended else "Use agentops enrollment create for this low-risk/local scope set.",
+            "Use short-lived sessions for worker loops after enrollment.",
+        ] if action],
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "token_omitted": True,
+            "raw_prompt_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }, 200
 
 
 def token_hash(token: str) -> str:
@@ -10264,6 +10411,9 @@ class Handler(BaseHTTPRequestHandler):
     def handle_post_api(self, path, body):
         with db() as conn:
             if path.startswith("/api/agent-gateway/"):
+                if path == "/api/agent-gateway/enrollment/policy-preview":
+                    payload, status = agent_gateway_enrollment_policy_preview(body)
+                    return self.send_json(payload, status)
                 if path == "/api/agent-gateway/enrollment/request":
                     payload, status = agent_gateway_request_enrollment(conn, body)
                     conn.commit()

@@ -71,6 +71,17 @@ agentops worker stop --adapter openclaw
 
 On the MIS/admin machine, create or request enrollment:
 
+Preview scope risk before issuing any token:
+
+```bash
+./scripts/agentops enrollment policy-preview \
+  --runtime mock \
+  --scopes agents:heartbeat,tasks:read,audit:write
+```
+
+For Hermes/OpenClaw or worker write scopes, prefer the approval-gated request
+path when the preview returns `approval_recommended=true`.
+
 ```bash
 ./scripts/agentops enrollment create \
   --agent-id agt_remote_builder \
@@ -468,6 +479,7 @@ python3 scripts/agent_gateway_task_create_scope_smoke.py
 python3 scripts/agentops_workflow_run_task_smoke.py
 python3 scripts/worker_remote_fleet_status_smoke.py
 python3 scripts/worker_fleet_hygiene_smoke.py
+python3 scripts/enrollment_policy_preview_smoke.py
 python3 scripts/demo_acceptance.py
 git diff --check
 ```
@@ -496,6 +508,9 @@ The expected proof is:
   heartbeat/session state, safe refs, and next actions, without executing work.
 - `agentops worker hygiene` is read-only by default, requires
   `--apply --confirm-cleanup` for cleanup, and records recovery evidence.
+- `agentops enrollment policy-preview` is read-only, classifies observer /
+  worker / privileged / invalid scope sets, recommends direct create vs
+  approval-gated request, and omits token/session/secret-like strings.
 - `agentops security production-readiness` reports the local-dev vs production
   security boundary and marks no-token local mode as non-production without
   breaking safe local demos.

@@ -304,6 +304,11 @@ Current v1.5 implementation:
 - `/workspace/agents` exposes a first operator UI for creating, viewing, and revoking scoped enrollment tokens.
 - `/workspace/agents` exposes approval-gated enrollment request controls: request approval, approve/reject enrollment requests, and issue approved tokens.
 - `/workspace/agents` also exposes scope presets and per-token rotation.
+- Enrollment policy preview now exists before token issue:
+  - `POST /api/agent-gateway/enrollment/policy-preview`
+  - `agentops enrollment policy-preview`
+  - `/workspace/agents` renders a live read-only scope policy card.
+  - The preview classifies observer / worker / privileged / invalid scope sets, recommends direct create vs approval-gated request, highlights invalid and privileged scopes, and proves no token issuance, ledger mutation, or live execution occurred.
 - `/workspace/agents` exposes recent short-lived sessions and can revoke an active session directly.
 - `/workspace/agents` surfaces Agent Gateway readiness/auth mode/scope count/active enrollment/stale heartbeat cards for operators.
 - `/workspace/agents` now includes an operator readiness strip for self-dogfooding and customer operations. It explains local worker mode, confirmed Hermes/OpenClaw live dispatch, remote agent entry, and stuck-task recovery before the detailed gateway/worker/enrollment panels.
@@ -368,6 +373,11 @@ Acceptance evidence:
   - approval unlocked one-time token issue,
   - issued token successfully heartbeated,
   - cleanup revoked the token.
+- `python3 scripts/enrollment_policy_preview_smoke.py` verified read-only enrollment policy:
+  - OpenClaw worker scopes are classified as `worker` and recommend approval.
+  - Local observer scopes are classified as `observer` and can use direct create.
+  - Invalid scopes are blocked before token issue.
+  - CLI output omits token/session/secret-like strings.
 
 Remaining product work:
 

@@ -30,6 +30,7 @@ import {
   loadWorkflowJobs,
   markWorkflowJobFailed,
   applyWorkerFleetHygiene,
+  previewAgentGatewayEnrollmentPolicy,
   releaseWorkerTask,
   revokeAgentGatewayEnrollment,
   revokeAgentGatewaySession,
@@ -42,6 +43,7 @@ import {
   submitCustomerWorkerTaskJob,
   useLiveData,
   type AgentGatewayEnrollmentCreateResult,
+  type AgentGatewayEnrollmentPolicyPreview,
   type AgentGatewayEnrollmentRequestResult,
   type CustomerDeliveryBoardPayload,
   type CustomerTaskWorkflowResult,
@@ -143,6 +145,8 @@ export function AIEmployees() {
   const [enrollmentResult, setEnrollmentResult] = useState<string | null>(null);
   const [createdToken, setCreatedToken] = useState<AgentGatewayEnrollmentCreateResult | null>(null);
   const [createdRequest, setCreatedRequest] = useState<AgentGatewayEnrollmentRequestResult | null>(null);
+  const [enrollmentPolicy, setEnrollmentPolicy] = useState<AgentGatewayEnrollmentPolicyPreview | null>(null);
+  const [enrollmentPolicyError, setEnrollmentPolicyError] = useState<string | null>(null);
   const [issueApprovalId, setIssueApprovalId] = useState("");
   const [enrollmentForm, setEnrollmentForm] = useState({
     agent_id: "agt_remote_customer_worker",
@@ -458,6 +462,17 @@ export function AIEmployees() {
       eventAgent: "Agent",
       enrollmentTitle: "Remote Agent Enrollment",
       enrollmentSummary: "Issue scoped tokens for agents running on another laptop or server. The token is shown once; MIS stores only a hash.",
+      enrollmentPolicyTitle: "Scope policy preview",
+      enrollmentPolicySummary: "Read-only preview before token issue: risk, approval path, privileged scopes, and worker viability.",
+      riskLevel: "Risk",
+      policyType: "Policy",
+      approvalPath: "Approval path",
+      directCreatePath: "Direct create",
+      recommendedPath: "Recommended",
+      invalidScopes: "Invalid scopes",
+      privilegedScopes: "Privileged",
+      workerWriteScopes: "Worker writes",
+      missingWorkerScopes: "Missing worker scopes",
       createToken: "Create scoped token",
       creatingToken: "Creating token...",
       requestEnrollment: "Request approval",
@@ -740,6 +755,17 @@ export function AIEmployees() {
       eventAgent: "Agent",
       enrollmentTitle: "远程 Agent 接入",
       enrollmentSummary: "给运行在另一台电脑或服务器上的 agent 发放带权限范围的 token。token 只显示一次，MIS 只保存 hash。",
+      enrollmentPolicyTitle: "Scope 策略预览",
+      enrollmentPolicySummary: "发 token 前的只读检查：风险、审批路径、高权限 scope 和 worker 可执行性。",
+      riskLevel: "风险",
+      policyType: "策略",
+      approvalPath: "走审批",
+      directCreatePath: "直接创建",
+      recommendedPath: "推荐路径",
+      invalidScopes: "无效 scope",
+      privilegedScopes: "高权限",
+      workerWriteScopes: "Worker 写权限",
+      missingWorkerScopes: "缺少 worker scope",
       createToken: "创建接入 token",
       creatingToken: "正在创建...",
       requestEnrollment: "提交审批申请",
@@ -1193,6 +1219,35 @@ export function AIEmployees() {
     .split(",")
     .map(item => item.trim())
     .filter(Boolean);
+
+  useEffect(() => {
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      if (scopeList.length === 0) {
+        setEnrollmentPolicy(null);
+        return;
+      }
+      try {
+        const result = await previewAgentGatewayEnrollmentPolicy({
+          workspace_id: enrollmentForm.workspace_id,
+          runtime_type: enrollmentForm.runtime_type,
+          scopes: scopeList,
+        });
+        if (!cancelled) {
+          setEnrollmentPolicy(result);
+          setEnrollmentPolicyError(null);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setEnrollmentPolicyError(err instanceof Error ? err.message : String(err));
+        }
+      }
+    }, 250);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [enrollmentForm.workspace_id, enrollmentForm.runtime_type, enrollmentForm.scopes]);
 
   const presetLabel = (id: string) => {
     if (id === "worker") return copy.presetWorker;
@@ -3108,6 +3163,65 @@ export function AIEmployees() {
               style={{ background: "var(--mis-surface2)", color: "var(--mis-text)", border: "1px solid var(--mis-border)" }}
             />
           </label>
+          <div className="md:col-span-4 rounded-lg p-3" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+            <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <ShieldCheck size={13} style={{ color: enrollmentPolicy?.approval_recommended ? "var(--mis-warning)" : "var(--mis-success)" }} />
+                  <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.enrollmentPolicyTitle}</div>
+                  <StatusBadge status={enrollmentPolicy?.status || "unknown"} />
+                </div>
+                <p className="text-[10px] mt-1" style={{ color: "var(--mis-muted)" }}>{copy.enrollmentPolicySummary}</p>
+              </div>
+              <div className="flex flex-wrap gap-1.5 shrink-0">
+                <StatusBadge status={enrollmentPolicy?.risk_level || "unknown"} label={`${copy.riskLevel}: ${enrollmentPolicy?.risk_level || "—"}`} />
+                <StatusBadge status={enrollmentPolicy?.approval_recommended ? "attention" : "pass"} label={enrollmentPolicy?.approval_recommended ? copy.approvalPath : copy.directCreatePath} />
+              </div>
+            </div>
+            {enrollmentPolicyError && (
+              <div className="text-[10px] mt-2" style={{ color: "#F87171" }}>{enrollmentPolicyError}</div>
+            )}
+            {enrollmentPolicy && (
+              <>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3">
+                  {[
+                    { label: copy.policyType, value: enrollmentPolicy.policy, status: enrollmentPolicy.policy },
+                    { label: copy.recommendedPath, value: enrollmentPolicy.recommended_path, status: enrollmentPolicy.approval_recommended ? "attention" : "pass" },
+                    { label: copy.workerWriteScopes, value: enrollmentPolicy.worker_write_scopes.length, status: enrollmentPolicy.worker_write_scopes.length > 0 ? "ready" : "planned" },
+                    { label: copy.privilegedScopes, value: enrollmentPolicy.privileged_scopes.length, status: enrollmentPolicy.privileged_scopes.length > 0 ? "attention" : "pass" },
+                  ].map((item) => (
+                    <div key={item.label} className="rounded px-2 py-1" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                      <div className="text-[9px]" style={{ color: "var(--mis-muted)" }}>{item.label}</div>
+                      <div className="flex items-center justify-between gap-2 mt-0.5">
+                        <div className="text-[10px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{item.value}</div>
+                        <StatusBadge status={item.status} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex flex-wrap gap-1.5 mt-3">
+                  {enrollmentPolicy.invalid_scopes.slice(0, 4).map(scope => (
+                    <span key={`invalid-${scope}`} className="text-[9px] px-1.5 py-0.5 rounded" style={{ background: "rgba(248,113,113,0.08)", color: "#F87171", border: "1px solid rgba(248,113,113,0.18)" }}>
+                      {copy.invalidScopes}: {scope}
+                    </span>
+                  ))}
+                  {enrollmentPolicy.privileged_scopes.slice(0, 4).map(scope => (
+                    <span key={`privileged-${scope}`} className="text-[9px] px-1.5 py-0.5 rounded" style={{ background: "rgba(251,191,36,0.08)", color: "var(--mis-warning)", border: "1px solid rgba(251,191,36,0.18)" }}>
+                      {scope}
+                    </span>
+                  ))}
+                  {enrollmentPolicy.missing_worker_scopes.slice(0, 4).map(scope => (
+                    <span key={`missing-${scope}`} className="text-[9px] px-1.5 py-0.5 rounded" style={{ background: "var(--mis-bg)", color: "var(--mis-muted)", border: "1px solid var(--mis-border)" }}>
+                      {copy.missingWorkerScopes}: {scope}
+                    </span>
+                  ))}
+                </div>
+                <div className="text-[10px] mt-2 truncate" style={{ color: "var(--mis-muted)" }}>
+                  {(enrollmentPolicy.next_actions || [])[0] || "agentops enrollment policy-preview"}
+                </div>
+              </>
+            )}
+          </div>
           <div className="md:col-span-2 flex items-end gap-2">
             <button
               onClick={requestEnrollment}

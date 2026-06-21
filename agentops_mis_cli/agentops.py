@@ -1146,6 +1146,14 @@ def cmd_enrollment_create(args, client: AgentOpsClient) -> dict:
     return result
 
 
+def cmd_enrollment_policy_preview(args, client: AgentOpsClient) -> dict:
+    return client.post("/api/agent-gateway/enrollment/policy-preview", {
+        "workspace_id": args.workspace_id or client.workspace_id,
+        "runtime_type": args.runtime,
+        "scopes": split_csv(args.scopes),
+    })
+
+
 def cmd_enrollment_request(args, client: AgentOpsClient) -> dict:
     payload = {
         "workspace_id": client.workspace_id,
@@ -1763,6 +1771,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     enrollment = sub.add_parser("enrollment", help="Remote/local agent enrollment token commands.")
     enrollment_sub = enrollment.add_subparsers(dest="action", required=True)
+    enroll_policy = enrollment_sub.add_parser("policy-preview", help="Preview enrollment scope risk without issuing a token.")
+    enroll_policy.add_argument("--runtime", default="mock")
+    enroll_policy.add_argument("--workspace-id", default=None)
+    enroll_policy.add_argument("--scopes", default="agents:heartbeat,tasks:read,audit:write")
+    enroll_policy.set_defaults(handler="enrollment_policy_preview")
+
     enroll_create = enrollment_sub.add_parser("create", help="Create a scoped one-time-visible agent token.")
     enroll_create.add_argument("--agent-id", required=True)
     enroll_create.add_argument("--name", default="Remote Agent")
@@ -1894,6 +1908,7 @@ HANDLERS = {
     "worker_stuck": cmd_worker_stuck,
     "worker_release": cmd_worker_release,
     "worker_hygiene": cmd_worker_hygiene,
+    "enrollment_policy_preview": cmd_enrollment_policy_preview,
     "enrollment_create": cmd_enrollment_create,
     "enrollment_request": cmd_enrollment_request,
     "enrollment_issue_approved": cmd_enrollment_issue_approved,
