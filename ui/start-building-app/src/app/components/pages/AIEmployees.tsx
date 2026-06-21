@@ -342,9 +342,12 @@ export function AIEmployees() {
       loopAuditTitle: "Loop audit",
       loopAuditSummary: "READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD gates across Agent Plans, evidence manifests, reviews, memory and audit.",
       loopRecordTitle: "Loop RECORD closure",
-      loopRecordSummary: "Scoped readback for the latest Hermes/OpenClaw loop: memory candidates, approval blockers, and the exact review command to close RECORD.",
+      loopRecordSummary: "Scoped readback for the latest Hermes/OpenClaw loop: memory candidates, approval blockers, review actions, and audit proof to close RECORD.",
       loopMemoryReview: "Memory review",
       loopApprovalReview: "Approval review",
+      loopRecordAuditTrail: "Audit trail",
+      gateEvidenceGaps: "Gaps",
+      gateEvidenceProof: "Proof",
       noLoopRecordItems: "No loop-specific review rows. Follow the next gate command to create a loop_record memory.",
       approveCommand: "Approve command",
       rejectCommand: "Reject command",
@@ -677,6 +680,9 @@ export function AIEmployees() {
       adapterRoutesSummary: "Read-only route selection for agent workers before live dispatch.",
       recommendedAdapter: "Recommended",
       trustStatus: "Trust",
+      observationLevel: "Observation",
+      riskFloor: "Risk floor",
+      commercialReadiness: "Commercial",
       targetResource: "Target",
       nextAction: "Next action",
       liveReady: "live ready",
@@ -703,9 +709,12 @@ export function AIEmployees() {
       loopAuditTitle: "Loop 审计",
       loopAuditSummary: "围绕 Agent Plan、证据清单、评审、记忆和审计账本检查 READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD。",
       loopRecordTitle: "Loop RECORD 闭环",
-      loopRecordSummary: "最近 Hermes/OpenClaw loop 的 scoped 回读：记忆候选、审批阻塞项，以及关闭 RECORD 的精确评审命令。",
+      loopRecordSummary: "最近 Hermes/OpenClaw loop 的 scoped 回读：记忆候选、审批阻塞项、评审动作和关闭 RECORD 的审计证明。",
       loopMemoryReview: "记忆评审",
       loopApprovalReview: "审批评审",
+      loopRecordAuditTrail: "审计链",
+      gateEvidenceGaps: "缺口",
+      gateEvidenceProof: "证明",
       noLoopRecordItems: "暂无 loop 专属评审行；请按下一步 Gate 命令创建 loop_record 记忆。",
       approveCommand: "批准命令",
       rejectCommand: "拒绝命令",
@@ -1038,6 +1047,9 @@ export function AIEmployees() {
       adapterRoutesSummary: "agent worker 真跑前使用的只读选路状态。",
       recommendedAdapter: "推荐",
       trustStatus: "信任",
+      observationLevel: "观测等级",
+      riskFloor: "风险底线",
+      commercialReadiness: "商业状态",
       targetResource: "目标",
       nextAction: "下一步",
       liveReady: "可真跑",
@@ -2735,7 +2747,28 @@ export function AIEmployees() {
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-2 mt-3">
             {loopAuditSteps.map((step) => {
-              const evidenceEntries = Object.entries(step.evidence || {}).slice(0, 3);
+              const evidenceEntries = Object.entries(step.evidence || {});
+              const isGapEvidence = ([key, value]: [string, unknown]) => {
+                const keyText = key.toLowerCase();
+                if (!["blocked", "missing", "gap", "pending", "candidate", "failed", "error"].some(marker => keyText.includes(marker))) {
+                  return false;
+                }
+                const numeric = typeof value === "number" ? value : Number(value);
+                return Number.isFinite(numeric) ? numeric > 0 : Boolean(value);
+              };
+              const formatEvidenceValue = (value: unknown) => {
+                if (Array.isArray(value)) return value.length;
+                if (value && typeof value === "object") return Object.keys(value).length;
+                return String(value);
+              };
+              const gapEvidenceEntries = evidenceEntries.filter(isGapEvidence).slice(0, 3);
+              const proofEvidenceEntries = evidenceEntries
+                .filter(entry => !isGapEvidence(entry))
+                .filter(([, value]) => Array.isArray(value) ? value.length > 0 : value && value !== "0")
+                .slice(0, 3);
+              const recordAuditEntries = step.id === "record" ? (loopRecord?.audit_trail || []) : [];
+              const latestRecordAudit = recordAuditEntries[0];
+              const latestRecordAuditHash = latestRecordAudit ? (latestRecordAudit.tamper_chain_hash || latestRecordAudit.after_hash || latestRecordAudit.before_hash || latestRecordAudit.audit_id || "") : "";
               return (
                 <div key={step.id} className="rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
                   <div className="flex items-center justify-between gap-2">
@@ -2743,15 +2776,68 @@ export function AIEmployees() {
                     <StatusBadge status={step.status} />
                   </div>
                   <div className="text-[9px] mt-1 line-clamp-2" style={{ color: "var(--mis-muted)" }}>{step.message || step.source}</div>
-                  {evidenceEntries.length > 0 && (
-                    <div className="flex flex-wrap gap-1 mt-2">
-                      {evidenceEntries.map(([key, value]) => (
-                        <span key={key} className="text-[9px] px-1.5 py-0.5 rounded" style={{ color: "var(--mis-dim)", background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
-                          {key}: {String(value)}
-                        </span>
-                      ))}
+                  {(gapEvidenceEntries.length > 0 || proofEvidenceEntries.length > 0) && (
+                    <div className="mt-2 space-y-1">
+                      {gapEvidenceEntries.length > 0 && (
+                        <div>
+                          <div className="text-[8px] uppercase" style={{ color: "var(--mis-warning)" }}>{copy.gateEvidenceGaps}</div>
+                          <div className="flex flex-wrap gap-1 mt-0.5">
+                            {gapEvidenceEntries.map(([key, value]) => (
+                              <span key={key} className="text-[9px] px-1.5 py-0.5 rounded" style={{ color: "var(--mis-warning)", background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.18)" }}>
+                                {key}: {formatEvidenceValue(value)}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {proofEvidenceEntries.length > 0 && (
+                        <div>
+                          <div className="text-[8px] uppercase" style={{ color: "var(--mis-success)" }}>{copy.gateEvidenceProof}</div>
+                          <div className="flex flex-wrap gap-1 mt-0.5">
+                            {proofEvidenceEntries.map(([key, value]) => (
+                              <span key={key} className="text-[9px] px-1.5 py-0.5 rounded" style={{ color: "var(--mis-dim)", background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                                {key}: {formatEvidenceValue(value)}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
+                  {step.id === "record" && loopRecord && (
+                    <div className="mt-2 rounded px-2 py-1.5" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-[9px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{copy.loopRecordAuditTrail}</div>
+                        <StatusBadge status={loopRecord.status} />
+                      </div>
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        <StatusBadge status={(loopRecord.candidate_count || 0) > 0 ? "attention" : "pass"} label={`${copy.loopMemoryReview}: ${loopRecord.candidate_count}/${loopRecord.approved_count}`} />
+                        <StatusBadge status={(loopRecord.pending_approval_count || 0) > 0 ? "attention" : "pass"} label={`${copy.loopApprovalReview}: ${loopRecord.pending_approval_count}`} />
+                        <StatusBadge status={(loopRecord.audit_count || 0) > 0 ? "pass" : "attention"} label={`${copy.loopRecordAuditTrail}: ${loopRecord.audit_count || 0}`} />
+                      </div>
+                      {latestRecordAuditHash && (
+                        <div className="text-[9px] mt-1 truncate" style={{ color: "var(--mis-dim)" }}>
+                          {latestRecordAudit?.action || copy.loopRecordAuditTrail}: {latestRecordAuditHash.slice(0, 12)}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between gap-2 mt-2 pt-2" style={{ borderTop: "1px solid var(--mis-border)" }}>
+                    <div className="text-[9px] truncate" style={{ color: "var(--mis-muted)" }}>
+                      {copy.actionSource}: {step.source || "—"}
+                    </div>
+                    {step.command && (
+                      <button
+                        onClick={() => void copyIntakeCommand(step.command)}
+                        className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded shrink-0"
+                        style={{ color: "var(--mis-cyan)", background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}
+                        title={step.command}
+                      >
+                        <Copy size={9} />
+                        {copiedIntakeCommand === step.command ? copy.copiedCommand : copy.copyCommand}
+                      </button>
+                    )}
+                  </div>
                 </div>
               );
             })}
@@ -2787,12 +2873,14 @@ export function AIEmployees() {
               )}
               {loopRecordItems.slice(0, 4).map((item) => {
                 const isMemory = "memory_id" in item;
+                const reviewKind = isMemory ? "memory" : "approval";
                 const itemId = isMemory ? item.memory_id : item.approval_id;
                 const itemStatus = isMemory ? item.review_status : item.decision;
                 const title = isMemory ? `${copy.loopMemoryReview}: ${item.memory_type || "memory"}` : `${copy.loopApprovalReview}: ${item.tool_call_id || item.run_id || "approval"}`;
                 const summary = isMemory ? item.summary : item.reason;
-                const approveCommand = item.approve_command || "";
-                const rejectCommand = item.reject_command || "";
+                const canReview = isMemory ? item.review_status === "candidate" : item.decision === "pending";
+                const approveActionKey = `loop-record-${reviewKind}-${itemId}-approve`;
+                const rejectActionKey = `loop-record-${reviewKind}-${itemId}-reject`;
                 return (
                   <div key={itemId} className="rounded px-2 py-1.5" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -2805,25 +2893,27 @@ export function AIEmployees() {
                         {summary && <div className="text-[9px] mt-0.5 line-clamp-2" style={{ color: "var(--mis-dim)" }}>{summary}</div>}
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">
-                        {approveCommand && (
-                          <button
-                            onClick={() => void copyIntakeCommand(approveCommand)}
-                            className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded"
-                            style={{ background: "rgba(42,157,143,0.12)", color: "var(--mis-success)", border: "1px solid rgba(42,157,143,0.22)" }}
-                          >
-                            <Copy size={10} />
-                            {copiedIntakeCommand === approveCommand ? copy.copiedCommand : copy.approveCommand}
-                          </button>
-                        )}
-                        {rejectCommand && (
-                          <button
-                            onClick={() => void copyIntakeCommand(rejectCommand)}
-                            className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded"
-                            style={{ background: "rgba(248,113,113,0.10)", color: "#F87171", border: "1px solid rgba(248,113,113,0.18)" }}
-                          >
-                            <Copy size={10} />
-                            {copiedIntakeCommand === rejectCommand ? copy.copiedCommand : copy.rejectCommand}
-                          </button>
+                        {canReview && (
+                          <>
+                            <button
+                              onClick={() => void handleLoopRecordDecision(reviewKind, itemId, "approve")}
+                              disabled={Boolean(loopRecordAction)}
+                              className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded disabled:opacity-50"
+                              style={{ background: "rgba(42,157,143,0.12)", color: "var(--mis-success)", border: "1px solid rgba(42,157,143,0.22)" }}
+                            >
+                              <CheckCircle2 size={10} />
+                              {loopRecordAction === approveActionKey ? copy.dispatching : copy.reviewApprove}
+                            </button>
+                            <button
+                              onClick={() => void handleLoopRecordDecision(reviewKind, itemId, "reject")}
+                              disabled={Boolean(loopRecordAction)}
+                              className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded disabled:opacity-50"
+                              style={{ background: "rgba(248,113,113,0.10)", color: "#F87171", border: "1px solid rgba(248,113,113,0.18)" }}
+                            >
+                              <XCircle size={10} />
+                              {loopRecordAction === rejectActionKey ? copy.dispatching : copy.reviewReject}
+                            </button>
+                          </>
                         )}
                       </div>
                     </div>
@@ -2831,6 +2921,33 @@ export function AIEmployees() {
                 );
               })}
             </div>
+            {loopRecordResult && (
+              <div className="text-[10px] mt-2 rounded px-2 py-1" style={{ color: loopRecordResult.toLowerCase().includes("error") ? "#F87171" : "var(--mis-cyan)", background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                {loopRecordResult}
+              </div>
+            )}
+            {(loopRecord?.audit_trail || []).length > 0 && (
+              <div className="mt-2 rounded px-2 py-1.5" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.loopRecordAuditTrail}</div>
+                  <StatusBadge status="pass" label={`${loopRecord?.audit_count || loopRecord.audit_trail.length}`} />
+                </div>
+                <div className="mt-1 space-y-1">
+                  {loopRecord.audit_trail.slice(0, 3).map((entry) => (
+                    <div key={entry.audit_id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 text-[9px]" style={{ color: "var(--mis-muted)" }}>
+                      <div className="min-w-0 truncate">
+                        <span style={{ color: "var(--mis-cyan)" }}>{entry.action}</span>
+                        {" · "}
+                        {entry.entity_type}/{entry.entity_id}
+                      </div>
+                      <div className="shrink-0 truncate" style={{ color: "var(--mis-dim)" }}>
+                        {(entry.tamper_chain_hash || entry.after_hash || entry.before_hash || "").slice(0, 12) || entry.audit_id}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="text-[10px] mt-2 truncate" style={{ color: "var(--mis-cyan)" }}>{copy.nextAction}: {loopRecord?.next_action || loopAuditNextAction}</div>
           </div>
         </div>
@@ -3505,20 +3622,29 @@ export function AIEmployees() {
             </div>
             <StatusBadge status={selectedAdapterRoute?.readiness || "unknown"} />
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mt-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-2 mt-2">
             <div className="rounded px-2 py-1" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
               <div className="text-[9px]" style={{ color: "var(--mis-muted)" }}>{copy.trustStatus}</div>
               <div className="text-[10px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{selectedAdapterRoute?.trust_status || "—"}</div>
+            </div>
+            <div className="rounded px-2 py-1" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+              <div className="text-[9px]" style={{ color: "var(--mis-muted)" }}>{copy.observationLevel}</div>
+              <div className="text-[10px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{selectedAdapterRoute?.observation_level || "—"}</div>
+            </div>
+            <div className="rounded px-2 py-1" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+              <div className="text-[9px]" style={{ color: "var(--mis-muted)" }}>{copy.riskFloor}</div>
+              <div className="text-[10px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{selectedAdapterRoute?.risk_floor || "—"}</div>
             </div>
             <div className="rounded px-2 py-1" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
               <div className="text-[9px]" style={{ color: "var(--mis-muted)" }}>{copy.targetResource}</div>
               <div className="text-[10px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{selectedAdapterRoute?.target_resource || "—"}</div>
             </div>
             <div className="rounded px-2 py-1" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
-              <div className="text-[9px]" style={{ color: "var(--mis-muted)" }}>{copy.nextAction}</div>
-              <div className="text-[10px] font-semibold truncate" style={{ color: "var(--mis-cyan)" }}>{selectedAdapterRoute?.recommended_action || "agentops worker readiness"}</div>
+              <div className="text-[9px]" style={{ color: "var(--mis-muted)" }}>{copy.commercialReadiness}</div>
+              <div className="text-[10px] font-semibold truncate" style={{ color: "var(--mis-cyan)" }}>{selectedAdapterRoute?.commercial_readiness || "—"}</div>
             </div>
           </div>
+          <div className="text-[10px] mt-2 truncate" style={{ color: "var(--mis-cyan)" }}>{copy.nextAction}: {selectedAdapterRoute?.recommended_action || "agentops worker readiness"}</div>
         </div>
 
         <div className="text-[10px] mt-3" style={{ color: "var(--mis-muted)" }}>{copy.asyncTaskHint}</div>
@@ -3804,6 +3930,17 @@ export function AIEmployees() {
                       {liveReady ? copy.yes : item.adapter === "mock" ? copy.no : copy.notLiveReady}
                     </div>
                   </div>
+                  <div className="rounded px-2 py-1" style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}>
+                    <div className="text-[9px]" style={{ color: "var(--mis-muted)" }}>{copy.observationLevel}</div>
+                    <div className="text-[10px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{item.observation_level || "—"}</div>
+                  </div>
+                  <div className="rounded px-2 py-1" style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}>
+                    <div className="text-[9px]" style={{ color: "var(--mis-muted)" }}>{copy.riskFloor}</div>
+                    <div className="text-[10px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{item.risk_floor || "—"}</div>
+                  </div>
+                </div>
+                <div className="text-[10px] mt-2 truncate" style={{ color: "var(--mis-muted)" }}>
+                  {copy.commercialReadiness}: {item.commercial_readiness || "—"}
                 </div>
                 <div className="text-[10px] mt-2 truncate" style={{ color: "var(--mis-dim)" }}>
                   {copy.targetResource}: {item.target_resource || "—"}

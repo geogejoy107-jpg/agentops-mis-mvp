@@ -549,6 +549,9 @@ CREATE TABLE IF NOT EXISTS runtime_connectors (
     trust_status TEXT NOT NULL DEFAULT 'trusted',
     trust_note TEXT,
     trust_updated_at TEXT,
+    observation_level TEXT NOT NULL DEFAULT 'ledger_summary_only',
+    capability_manifest_json TEXT NOT NULL DEFAULT '{}',
+    capability_policy_hash TEXT,
     last_health_at TEXT,
     last_error TEXT,
     created_at TEXT NOT NULL,
@@ -1017,6 +1020,9 @@ def ensure_schema_migrations(conn: sqlite3.Connection):
     ensure_column(conn, "runtime_connectors", "trust_status", "trust_status TEXT NOT NULL DEFAULT 'trusted'")
     ensure_column(conn, "runtime_connectors", "trust_note", "trust_note TEXT")
     ensure_column(conn, "runtime_connectors", "trust_updated_at", "trust_updated_at TEXT")
+    ensure_column(conn, "runtime_connectors", "observation_level", "observation_level TEXT NOT NULL DEFAULT 'ledger_summary_only'")
+    ensure_column(conn, "runtime_connectors", "capability_manifest_json", "capability_manifest_json TEXT NOT NULL DEFAULT '{}'")
+    ensure_column(conn, "runtime_connectors", "capability_policy_hash", "capability_policy_hash TEXT")
     ensure_column(conn, "evaluation_case_runs", "review_status", "review_status TEXT NOT NULL DEFAULT 'open'")
     ensure_column(conn, "evaluation_case_runs", "reviewed_by_user_id", "reviewed_by_user_id TEXT")
     ensure_column(conn, "evaluation_case_runs", "review_note", "review_note TEXT")
@@ -1189,11 +1195,134 @@ def agnesfallback_cli_command(agnes: dict, prompt: str) -> list[str]:
     return [agnes["binary_path"], "-z", prompt, *agnes.get("extra_args", [])]
 
 
+def runtime_connector_capability_manifest(connector_id: str, provider: str, connector_type: str) -> dict:
+    adapter = "mock"
+    if connector_id == "rtc_hermes_default_gateway" or provider == "hermes":
+        adapter = "hermes"
+    elif connector_id == "rtc_openclaw_local" or provider == "openclaw":
+        adapter = "openclaw"
+    elif provider == "agnesfallback":
+        adapter = "agnesfallback"
+
+    base = {
+        "schema_version": "runtime-capability-manifest-v1",
+        "connector_id": connector_id,
+        "provider": provider,
+        "connector_type": connector_type,
+        "adapter": adapter,
+        "token_omitted": True,
+        "raw_prompt_omitted": True,
+        "raw_response_omitted": True,
+    }
+    manifests = {
+        "mock": {
+            "observation_level": "structured_ledger",
+            "risk_floor": "low",
+            "commercial_readiness": "local_demo_ready",
+            "capabilities": {
+                "filesystem": "none",
+                "shell": "none",
+                "network": "none",
+                "git": "none",
+                "external_write": "none",
+                "secrets": "none",
+                "tool_event_ingestion": "structured",
+            },
+            "boundaries": {
+                "workdir": "local://agentops/mock-worker",
+                "network": "disabled",
+                "external_side_effects": "disabled",
+            },
+            "governance": {
+                "requires_confirm_run": False,
+                "requires_prepared_action_for_external_write": False,
+                "shared_commercial_policy": "allowed_for_tests_only",
+            },
+        },
+        "hermes": {
+            "observation_level": "ledger_summary_only",
+            "risk_floor": "medium",
+            "commercial_readiness": "restricted_until_runtime_tool_events",
+            "capabilities": {
+                "filesystem": "runtime_internal_opaque",
+                "shell": "runtime_internal_opaque",
+                "network": "runtime_internal_opaque",
+                "git": "runtime_internal_opaque",
+                "external_write": "must_route_through_mis_guarded_tools",
+                "secrets": "runtime_env_only_not_ledger",
+                "tool_event_ingestion": "summary_hash_only",
+            },
+            "boundaries": {
+                "workdir": "runtime_owned",
+                "network": "runtime_policy_required",
+                "external_side_effects": "prepared_action_required",
+            },
+            "governance": {
+                "requires_confirm_run": True,
+                "requires_prepared_action_for_external_write": True,
+                "shared_commercial_policy": "restricted_when_tool_events_unavailable",
+            },
+        },
+        "openclaw": {
+            "observation_level": "ledger_summary_only",
+            "risk_floor": "medium",
+            "commercial_readiness": "restricted_until_runtime_tool_events",
+            "capabilities": {
+                "filesystem": "runtime_internal_opaque",
+                "shell": "runtime_internal_opaque",
+                "network": "runtime_internal_opaque",
+                "git": "runtime_internal_opaque",
+                "external_write": "must_route_through_mis_guarded_tools",
+                "secrets": "runtime_env_only_not_ledger",
+                "tool_event_ingestion": "summary_hash_only",
+            },
+            "boundaries": {
+                "workdir": str(ROOT),
+                "config": "~/.openclaw",
+                "network": "runtime_policy_required",
+                "external_side_effects": "prepared_action_required",
+            },
+            "governance": {
+                "requires_confirm_run": True,
+                "requires_prepared_action_for_external_write": True,
+                "shared_commercial_policy": "restricted_when_tool_events_unavailable",
+            },
+        },
+        "agnesfallback": {
+            "observation_level": "fixed_probe_summary_only",
+            "risk_floor": "low",
+            "commercial_readiness": "local_recording_only",
+            "capabilities": {
+                "filesystem": "none_declared",
+                "shell": "cli_or_openai_compatible_gateway",
+                "network": "local_loopback_gateway_optional",
+                "git": "none_declared",
+                "external_write": "none_for_fixed_probe",
+                "secrets": "runtime_env_only_not_ledger",
+                "tool_event_ingestion": "summary_hash_only",
+            },
+            "boundaries": {
+                "workdir": "runtime_owned",
+                "network": "127.0.0.1 only for gateway profile",
+                "external_side_effects": "disabled_for_fixed_probe",
+            },
+            "governance": {
+                "requires_confirm_run": True,
+                "requires_prepared_action_for_external_write": True,
+                "shared_commercial_policy": "not_a_general_worker_adapter",
+            },
+        },
+    }
+    manifest = {**base, **manifests.get(adapter, manifests["mock"])}
+    manifest["manifest_hash"] = stable_hash({k: v for k, v in manifest.items() if k != "manifest_hash"})
+    return manifest
+
+
 def runtime_connector_rows() -> list[dict]:
     now = now_iso()
     hermes = hermes_runtime_config()
     agnes = agnesfallback_config()
-    return [
+    rows = [
         {
             "runtime_connector_id": "rtc_agent_gateway_local",
             "provider": "agent-gateway",
@@ -1285,6 +1414,12 @@ def runtime_connector_rows() -> list[dict]:
             "updated_at": now,
         },
     ]
+    for row in rows:
+        manifest = runtime_connector_capability_manifest(row["runtime_connector_id"], row["provider"], row["connector_type"])
+        row["observation_level"] = manifest["observation_level"]
+        row["capability_manifest_json"] = json.dumps(manifest, ensure_ascii=False, sort_keys=True)
+        row["capability_policy_hash"] = manifest["manifest_hash"]
+    return rows
 
 
 def upsert_runtime_connector(conn, row: dict):
@@ -1293,14 +1428,16 @@ def upsert_runtime_connector(conn, row: dict):
         conn.execute(
             """UPDATE runtime_connectors SET provider=:provider, connector_type=:connector_type, profile_name=:profile_name,
             base_url=:base_url, binary_path=:binary_path, status=:status, allow_real_run=:allow_real_run,
-            require_confirm_run=:require_confirm_run, last_health_at=:last_health_at, last_error=:last_error,
+            require_confirm_run=:require_confirm_run, observation_level=:observation_level,
+            capability_manifest_json=:capability_manifest_json, capability_policy_hash=:capability_policy_hash,
+            last_health_at=:last_health_at, last_error=:last_error,
             updated_at=:updated_at WHERE runtime_connector_id=:runtime_connector_id""",
             row,
         )
     else:
         conn.execute(
-            """INSERT INTO runtime_connectors(runtime_connector_id,provider,connector_type,profile_name,base_url,binary_path,status,allow_real_run,require_confirm_run,last_health_at,last_error,created_at,updated_at)
-            VALUES(:runtime_connector_id,:provider,:connector_type,:profile_name,:base_url,:binary_path,:status,:allow_real_run,:require_confirm_run,:last_health_at,:last_error,:created_at,:updated_at)""",
+            """INSERT INTO runtime_connectors(runtime_connector_id,provider,connector_type,profile_name,base_url,binary_path,status,allow_real_run,require_confirm_run,observation_level,capability_manifest_json,capability_policy_hash,last_health_at,last_error,created_at,updated_at)
+            VALUES(:runtime_connector_id,:provider,:connector_type,:profile_name,:base_url,:binary_path,:status,:allow_real_run,:require_confirm_run,:observation_level,:capability_manifest_json,:capability_policy_hash,:last_health_at,:last_error,:created_at,:updated_at)""",
             row,
         )
 
@@ -10984,11 +11121,20 @@ def worker_adapter_readiness(conn, refresh: bool = True) -> dict:
     def trust_for(adapter: str) -> dict:
         connector_id = runtime_connector_for_adapter(adapter)
         trust = runtime_connector_trust(conn, connector_id, refresh=refresh) if connector_id else None
+        manifest = {}
+        if trust and trust.get("capability_manifest_json"):
+            try:
+                manifest = json.loads(trust.get("capability_manifest_json") or "{}")
+            except Exception:
+                manifest = {}
         return {
             "connector_id": connector_id,
             "trust_status": (trust or {}).get("trust_status") or "trusted",
             "trust_note": redact_text((trust or {}).get("trust_note"), 160) if (trust or {}).get("trust_note") else None,
             "require_confirm_run": bool((trust or {}).get("require_confirm_run", 1)),
+            "observation_level": (trust or {}).get("observation_level") or manifest.get("observation_level") or "ledger_summary_only",
+            "capability_policy_hash": (trust or {}).get("capability_policy_hash") or manifest.get("manifest_hash"),
+            "capability_manifest": manifest,
         }
 
     def readiness_from_checks(available: bool, trust: dict) -> tuple[str, bool]:
@@ -11010,6 +11156,11 @@ def worker_adapter_readiness(conn, refresh: bool = True) -> dict:
         "readiness": mock_readiness,
         "connector_id": mock_trust.get("connector_id"),
         "trust_status": mock_trust.get("trust_status"),
+        "observation_level": mock_trust.get("observation_level"),
+        "capability_policy_hash": mock_trust.get("capability_policy_hash"),
+        "capability_manifest": mock_trust.get("capability_manifest"),
+        "risk_floor": (mock_trust.get("capability_manifest") or {}).get("risk_floor"),
+        "commercial_readiness": (mock_trust.get("capability_manifest") or {}).get("commercial_readiness"),
         "requires_confirm_run": False,
         "target_resource": "local://agentops/mock-worker",
         "checks": {"available": True, "live_execution_performed": False},
@@ -11026,6 +11177,11 @@ def worker_adapter_readiness(conn, refresh: bool = True) -> dict:
         "readiness": hermes_readiness,
         "connector_id": hermes_trust.get("connector_id"),
         "trust_status": hermes_trust.get("trust_status"),
+        "observation_level": hermes_trust.get("observation_level"),
+        "capability_policy_hash": hermes_trust.get("capability_policy_hash"),
+        "capability_manifest": hermes_trust.get("capability_manifest"),
+        "risk_floor": (hermes_trust.get("capability_manifest") or {}).get("risk_floor"),
+        "commercial_readiness": (hermes_trust.get("capability_manifest") or {}).get("commercial_readiness"),
         "requires_confirm_run": True,
         "target_resource": hermes.get("gateway_url"),
         "checks": {
@@ -11049,6 +11205,11 @@ def worker_adapter_readiness(conn, refresh: bool = True) -> dict:
         "readiness": openclaw_readiness,
         "connector_id": openclaw_trust.get("connector_id"),
         "trust_status": openclaw_trust.get("trust_status"),
+        "observation_level": openclaw_trust.get("observation_level"),
+        "capability_policy_hash": openclaw_trust.get("capability_policy_hash"),
+        "capability_manifest": openclaw_trust.get("capability_manifest"),
+        "risk_floor": (openclaw_trust.get("capability_manifest") or {}).get("risk_floor"),
+        "commercial_readiness": (openclaw_trust.get("capability_manifest") or {}).get("commercial_readiness"),
         "requires_confirm_run": True,
         "target_resource": str(OPENCLAW_BIN),
         "checks": {
@@ -11068,6 +11229,8 @@ def worker_adapter_readiness(conn, refresh: bool = True) -> dict:
     review_required = [name for name, item in adapters.items() if item.get("readiness") == "review_required"]
     blocked = [name for name, item in adapters.items() if item.get("readiness") == "blocked"]
     unavailable = [name for name, item in adapters.items() if item.get("readiness") == "unavailable"]
+    restricted = [name for name, item in adapters.items() if item.get("commercial_readiness") in {"restricted_until_runtime_tool_events", "local_recording_only"}]
+    opaque = [name for name, item in adapters.items() if item.get("observation_level") == "ledger_summary_only"]
     live_ready = [name for name in ready if name != "mock"]
     recommended_adapter = "openclaw" if "openclaw" in ready else "hermes" if "hermes" in ready else "mock"
     summary_status = "ready" if live_ready else "degraded" if ready else "blocked"
@@ -11080,10 +11243,17 @@ def worker_adapter_readiness(conn, refresh: bool = True) -> dict:
             "review_required_adapters": review_required,
             "blocked_adapters": blocked,
             "unavailable_adapters": unavailable,
+            "restricted_capability_adapters": restricted,
+            "opaque_runtime_adapters": opaque,
             "recommended_adapter": recommended_adapter,
         },
         "adapters": adapters,
-        "contract": "read-only adapter readiness; use Agent Gateway CLI/API for execution and confirm live Hermes/OpenClaw runs explicitly",
+        "contract": "read-only adapter readiness with runtime capability manifests; use Agent Gateway CLI/API for execution, confirm live Hermes/OpenClaw runs explicitly, and route high-risk external writes through prepared actions",
+        "capability_policy": {
+            "manifest_schema": "runtime-capability-manifest-v1",
+            "shared_commercial_restriction": "adapters with ledger_summary_only observation remain restricted until runtime tool events are ingested or external writes are routed through prepared actions",
+            "token_omitted": True,
+        },
         "live_execution_performed": False,
         "token_omitted": True,
     }
@@ -14434,6 +14604,7 @@ def operator_loop_audit(conn: sqlite3.Connection, headers, qs=None) -> dict:
     loop_approval_count = 0
     loop_approval_rows: list[dict] = []
     loop_memory_rows: list[dict] = []
+    loop_record_audit_rows: list[dict] = []
     loop_memory_candidates = 0
     loop_approved_memories = 0
     if loop_scoped:
@@ -14470,6 +14641,26 @@ def operator_loop_audit(conn: sqlite3.Connection, headers, qs=None) -> dict:
             loop_memory_rows = memory_rows[:limit]
             loop_memory_candidates = len([row for row in memory_rows if (row.get("review_status") or "candidate") == "candidate"])
             loop_approved_memories = len([row for row in memory_rows if row.get("review_status") == "approved"])
+        review_entity_ids = sorted({
+            str(row.get("memory_id"))
+            for row in loop_memory_rows
+            if row.get("memory_id")
+        } | {
+            str(row.get("approval_id"))
+            for row in loop_approval_rows
+            if row.get("approval_id")
+        })
+        if review_entity_ids:
+            audit_placeholders = ",".join("?" for _ in review_entity_ids)
+            loop_record_audit_rows = rows_to_dicts(conn.execute(
+                f"""SELECT audit_id, actor_type, actor_id, action, entity_type, entity_id,
+                           before_hash, after_hash, tamper_chain_hash, created_at
+                    FROM audit_logs
+                    WHERE entity_id IN ({audit_placeholders})
+                    ORDER BY created_at DESC
+                    LIMIT ?""",
+                [*review_entity_ids, limit],
+            ).fetchall())
 
     knowledge_docs = scalar_count(conn, "SELECT COUNT(*) FROM knowledge_documents")
     indexed_specs = scalar_count(
@@ -14731,6 +14922,23 @@ def operator_loop_audit(conn: sqlite3.Connection, headers, qs=None) -> dict:
             "candidate_count": loop_memory_candidates,
             "approved_count": loop_approved_memories,
             "pending_approval_count": loop_pending_approvals,
+            "audit_count": len(loop_record_audit_rows),
+            "audit_trail": [
+                {
+                    "audit_id": row.get("audit_id"),
+                    "actor_type": row.get("actor_type"),
+                    "actor_id": row.get("actor_id"),
+                    "action": row.get("action"),
+                    "entity_type": row.get("entity_type"),
+                    "entity_id": row.get("entity_id"),
+                    "before_hash": row.get("before_hash"),
+                    "after_hash": row.get("after_hash"),
+                    "tamper_chain_hash": row.get("tamper_chain_hash"),
+                    "created_at": row.get("created_at"),
+                    "token_omitted": True,
+                }
+                for row in loop_record_audit_rows
+            ],
             "next_action": record_command,
             "review_queue_command": "agentops review queue --limit 20",
             "token_omitted": True,

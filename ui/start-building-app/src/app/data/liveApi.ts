@@ -579,6 +579,11 @@ export interface WorkerAdapterReadinessItem {
   readiness: "ready" | "review_required" | "blocked" | "unavailable" | string;
   connector_id?: string | null;
   trust_status?: string;
+  observation_level?: string;
+  capability_policy_hash?: string | null;
+  capability_manifest?: Record<string, unknown>;
+  risk_floor?: string;
+  commercial_readiness?: string;
   requires_confirm_run?: boolean;
   target_resource?: string | null;
   checks?: Record<string, unknown>;
@@ -1225,6 +1230,20 @@ export interface OperatorLoopRecordApprovalReview {
   token_omitted?: boolean;
 }
 
+export interface OperatorLoopRecordAuditEntry {
+  audit_id: string;
+  actor_type?: string | null;
+  actor_id?: string | null;
+  action: string;
+  entity_type: string;
+  entity_id: string;
+  before_hash?: string | null;
+  after_hash?: string | null;
+  tamper_chain_hash?: string | null;
+  created_at?: string | null;
+  token_omitted?: boolean;
+}
+
 export interface OperatorLoopRecordPayload {
   status: string;
   loop_id?: string | null;
@@ -1233,6 +1252,8 @@ export interface OperatorLoopRecordPayload {
   candidate_count: number;
   approved_count: number;
   pending_approval_count: number;
+  audit_count: number;
+  audit_trail: OperatorLoopRecordAuditEntry[];
   next_action?: string;
   review_queue_command?: string;
   token_omitted?: boolean;
@@ -3746,6 +3767,20 @@ export async function loadOperatorLoopAudit(limit = 12, loopId = ""): Promise<Op
       candidate_count: numberValue(loopRecordRaw.candidate_count, 0),
       approved_count: numberValue(loopRecordRaw.approved_count, 0),
       pending_approval_count: numberValue(loopRecordRaw.pending_approval_count, 0),
+      audit_count: numberValue(loopRecordRaw.audit_count, 0),
+      audit_trail: asArray<Record<string, unknown>>(loopRecordRaw.audit_trail).map((item) => ({
+        audit_id: String(item.audit_id || ""),
+        actor_type: item.actor_type ? String(item.actor_type) : null,
+        actor_id: item.actor_id ? String(item.actor_id) : null,
+        action: String(item.action || ""),
+        entity_type: String(item.entity_type || ""),
+        entity_id: String(item.entity_id || ""),
+        before_hash: item.before_hash ? String(item.before_hash) : null,
+        after_hash: item.after_hash ? String(item.after_hash) : null,
+        tamper_chain_hash: item.tamper_chain_hash ? String(item.tamper_chain_hash) : null,
+        created_at: item.created_at ? String(item.created_at) : null,
+        token_omitted: item.token_omitted === undefined ? undefined : boolValue(item.token_omitted),
+      })).filter((item) => item.audit_id),
       next_action: loopRecordRaw.next_action ? String(loopRecordRaw.next_action) : undefined,
       review_queue_command: loopRecordRaw.review_queue_command ? String(loopRecordRaw.review_queue_command) : undefined,
       token_omitted: loopRecordRaw.token_omitted === undefined ? undefined : boolValue(loopRecordRaw.token_omitted),
@@ -3775,6 +3810,11 @@ export async function loadWorkerAdapterReadiness(): Promise<WorkerAdapterReadine
       readiness: String(item.readiness || "unavailable"),
       connector_id: item.connector_id ? String(item.connector_id) : null,
       trust_status: item.trust_status ? String(item.trust_status) : undefined,
+      observation_level: item.observation_level ? String(item.observation_level) : undefined,
+      capability_policy_hash: item.capability_policy_hash ? String(item.capability_policy_hash) : null,
+      capability_manifest: typeof item.capability_manifest === "object" && item.capability_manifest !== null ? item.capability_manifest as Record<string, unknown> : {},
+      risk_floor: item.risk_floor ? String(item.risk_floor) : undefined,
+      commercial_readiness: item.commercial_readiness ? String(item.commercial_readiness) : undefined,
       requires_confirm_run: boolValue(item.requires_confirm_run),
       target_resource: item.target_resource ? String(item.target_resource) : null,
       checks: typeof item.checks === "object" && item.checks !== null ? item.checks as Record<string, unknown> : {},

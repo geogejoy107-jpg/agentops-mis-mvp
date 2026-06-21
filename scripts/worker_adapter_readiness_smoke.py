@@ -65,8 +65,23 @@ def validate_readiness(payload: dict) -> None:
         require(item.get("readiness") in {"ready", "review_required", "blocked", "unavailable"}, f"bad {adapter} readiness: {item}")
         require((item.get("checks") or {}).get("live_execution_performed") is False, f"{adapter} readiness executed live work")
         require(item.get("token_omitted") is True, f"{adapter} token omission proof missing")
+        manifest = item.get("capability_manifest") or {}
+        require(manifest.get("schema_version") == "runtime-capability-manifest-v1", f"{adapter} manifest missing schema: {item}")
+        require(bool(item.get("capability_policy_hash")), f"{adapter} capability hash missing: {item}")
+        require(item.get("observation_level") in {"structured_ledger", "ledger_summary_only"}, f"{adapter} observation level missing: {item}")
+        require(item.get("risk_floor") in {"low", "medium"}, f"{adapter} risk floor missing: {item}")
+        require(manifest.get("token_omitted") is True, f"{adapter} manifest token omission proof missing: {manifest}")
+    for adapter in ("hermes", "openclaw"):
+        item = adapters.get(adapter) or {}
+        require(item.get("observation_level") == "ledger_summary_only", f"{adapter} must disclose summary-only observation: {item}")
+        require(item.get("commercial_readiness") == "restricted_until_runtime_tool_events", f"{adapter} commercial restriction missing: {item}")
+        governance = ((item.get("capability_manifest") or {}).get("governance") or {})
+        require(governance.get("requires_prepared_action_for_external_write") is True, f"{adapter} external write governance missing: {item}")
     summary = payload.get("summary") or {}
     require(summary.get("recommended_adapter") in {"mock", "hermes", "openclaw"}, f"missing recommended adapter: {summary}")
+    require("opaque_runtime_adapters" in summary, f"opaque adapter list missing: {summary}")
+    policy = payload.get("capability_policy") or {}
+    require(policy.get("manifest_schema") == "runtime-capability-manifest-v1", f"capability policy missing: {policy}")
 
 
 def main() -> int:

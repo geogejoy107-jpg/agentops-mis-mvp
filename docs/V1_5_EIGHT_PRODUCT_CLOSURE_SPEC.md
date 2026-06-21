@@ -138,6 +138,15 @@ Current v1.5 implementation:
   - `trust_updated_at`
   - `POST /api/runtime-connectors/:id/trust`
   - `/admin/connectors` trust controls
+- Runtime connectors now carry a `runtime-capability-manifest-v1`:
+  - `observation_level`
+  - `capability_manifest_json`
+  - `capability_policy_hash`
+  - per-adapter filesystem, shell, network, Git, external-write, secret, and
+    tool-event-ingestion declarations
+  - Hermes/OpenClaw are intentionally marked `ledger_summary_only` and
+    `restricted_until_runtime_tool_events` until internal tool events are
+    ingested or risky external writes are routed through prepared actions.
 - Hermes/OpenClaw real execution requires explicit `--confirm-run`.
 - Hermes/OpenClaw customer worker live execution is blocked when the linked runtime connector has `trust_status=blocked`.
 - Hermes adapter timeout is configurable through `--hermes-timeout` / `HERMES_TIMEOUT`; customer worker live dogfood uses a 300s Hermes window.
@@ -145,6 +154,8 @@ Current v1.5 implementation:
 - Non-retryable safety failures such as `ConfirmRunRequired` do not retry.
 - Tool-call args, evaluation rubric, and audit metadata record `attempt_count`, `max_attempts`, and retry history summaries.
 - Adapter output is summarized and hashed; raw prompt/response is not stored.
+- `GET /api/workers/adapter-readiness` and `agentops worker readiness` expose
+  these manifests to operators and external agents without executing live work.
 
 Acceptance evidence:
 

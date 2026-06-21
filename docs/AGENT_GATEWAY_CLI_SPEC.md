@@ -347,9 +347,10 @@ The record gate is scoped too: it passes only when the loop has audit/readback
 evidence, no loop-local pending approval or memory candidate, and at least one
 approved loop memory record.
 The payload includes a `loop_record` section with safe memory/approval review
-rows, candidate/approved/pending counts, and exact approve/reject commands for
-the scoped loop. This is what the `/workspace/agents` Loop Audit panel uses to
-show the human review action that closes RECORD.
+rows, candidate/approved/pending counts, exact approve/reject commands, and a
+safe audit trail for the scoped loop's review entities. This is what the
+`/workspace/agents` Loop Audit panel uses to show both the human review action
+and the ledger proof that closes RECORD.
 It recommends explicit next commands but does not create runs, approvals,
 memories, audit rows, or live adapter work.
 
@@ -868,11 +869,21 @@ The response includes:
 - `summary.review_required_adapters`
 - `summary.blocked_adapters`
 - `summary.unavailable_adapters`
+- `summary.opaque_runtime_adapters`
+- `summary.restricted_capability_adapters`
 - `summary.recommended_adapter`
 - per-adapter `readiness`: `ready`, `review_required`, `blocked`, or
   `unavailable`
+- per-adapter `capability_manifest`, `capability_policy_hash`,
+  `observation_level`, `risk_floor`, and `commercial_readiness`
 - per-adapter `recommended_action`
 - `live_execution_performed:false`
+
+Capability manifests are deliberately conservative. `mock` is
+`structured_ledger`; live Hermes/OpenClaw routes are `ledger_summary_only` until
+runtime internal tool events can be ingested. For shared/commercial deployment,
+external writes from opaque runtimes must be routed through guarded MIS tools
+and prepared actions.
 
 Use `agentops worker readiness` when an operator or external agent needs to
 choose a route. Use `agentops worker preflight --adapter <name>` when debugging

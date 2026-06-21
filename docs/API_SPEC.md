@@ -106,6 +106,33 @@ remains the local UI/demo read path; machine-facing CLI/remote agents should use
 `GET /api/agent-gateway/review/queue`. Approval and memory approve/reject
 actions remain human/operator actions, not agent-scoped automatic decisions.
 
+## Worker Adapter Readiness
+
+```http
+GET /api/workers/adapter-readiness
+GET /api/workers/status
+```
+
+`GET /api/workers/adapter-readiness` is a read-only route-selection endpoint
+for operators and external agents. It does not pull tasks, execute models, or
+write ledger rows. Each adapter entry includes:
+
+- `readiness`
+- `trust_status`
+- `target_resource`
+- `recommended_action`
+- `capability_manifest`
+- `capability_policy_hash`
+- `observation_level`
+- `risk_floor`
+- `commercial_readiness`
+
+The manifest schema is `runtime-capability-manifest-v1`. Mock is currently
+`structured_ledger`; Hermes and OpenClaw are deliberately marked
+`ledger_summary_only` and `restricted_until_runtime_tool_events` until internal
+runtime tool events are ingested or risky external writes are routed through
+prepared actions.
+
 ## Knowledge Search
 
 ```http
@@ -214,9 +241,11 @@ evidence, no loop-local pending approval or memory candidate, and at least one
 approved loop memory record.
 For scoped loop audits, the response also includes `loop_record`: safe
 `memory_reviews` and `approval_reviews` rows, candidate/approved/pending
-counts, and exact approve/reject CLI commands so `/workspace/agents` can show
-the human review action required to close RECORD without exposing raw prompts,
-responses, or tokens.
+counts, exact approve/reject CLI commands, and a safe `audit_trail`/`audit_count`
+slice for the loop-local memory and approval review entities. The audit slice
+exposes audit ids, actions, entity ids, hashes, and timestamps so
+`/workspace/agents` can show both the human review action and the ledger proof
+that closes RECORD without exposing raw prompts, responses, metadata, or tokens.
 This lets the operator distinguish a globally busy review queue from a specific
 loop whose output has already been reviewed into durable memory.
 It never creates plans, runs, approvals, memories, or audit rows; it only

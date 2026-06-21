@@ -161,6 +161,7 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
     require(loop_record.get("token_omitted") is True, f"{label} loop_record token omission missing: {loop_record}", failures)
     require(isinstance(loop_record.get("memory_reviews") or [], list), f"{label} loop_record memory_reviews missing: {loop_record}", failures)
     require(isinstance(loop_record.get("approval_reviews") or [], list), f"{label} loop_record approval_reviews missing: {loop_record}", failures)
+    require(isinstance(loop_record.get("audit_trail") or [], list), f"{label} loop_record audit_trail missing: {loop_record}", failures)
     loop_runs = int(summary.get("loop_runs") or 0)
     loop_verified = int(summary.get("loop_verified_plan_evidence_manifests") or 0)
     loop_blocked = int(summary.get("loop_blocked_plan_evidence_manifests") or 0)
@@ -174,6 +175,7 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
             approved_rows = [row for row in (loop_record.get("memory_reviews") or []) if row.get("review_status") == "approved"]
             require(bool(approved_rows), f"{label} record pass should expose approved loop memory rows: {loop_record}", failures)
             require(loop_record.get("status") == "ready", f"{label} loop_record should be ready when RECORD passes: {loop_record}", failures)
+            require(int(loop_record.get("audit_count") or 0) >= 1, f"{label} loop_record should expose audit evidence when RECORD passes: {loop_record}", failures)
 
 
 def main() -> int:

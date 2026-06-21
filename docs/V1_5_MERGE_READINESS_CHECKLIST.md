@@ -161,12 +161,18 @@ python3 scripts/agent_gateway_review_queue_smoke.py
 ### Runtime capabilities
 
 - [ ] Runtime execution is not always recorded as low risk.
-- [ ] Each adapter declares filesystem, shell, network, Git and external-write capabilities.
+- [x] Each adapter declares filesystem, shell, network, Git and external-write capabilities through a runtime capability manifest.
 - [ ] Live execution requires compatible trust and policy decisions.
-- [ ] Work directory and write boundaries are explicit.
+- [x] Work directory and write boundaries are explicit in the manifest/readiness payload.
 - [ ] Runtime tool events are ingested when available.
-- [ ] Shared/commercial mode is restricted when detailed tool events are unavailable.
+- [x] Shared/commercial mode is restricted when detailed tool events are unavailable.
 - [ ] Secrets are consumed inside trusted tools rather than returned to model output.
+
+Current v1.5 hardening status: `GET /api/workers/adapter-readiness` and
+`agentops worker readiness` expose `runtime-capability-manifest-v1` for mock,
+Hermes and OpenClaw. Hermes/OpenClaw remain `ledger_summary_only` and
+`restricted_until_runtime_tool_events`; this is a disclosed governance boundary,
+not full internal runtime tracing.
 
 ```bash
 python3 scripts/runtime_connector_trust_smoke.py
