@@ -573,12 +573,25 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
         "workspace_id": client.workspace_id,
         "limit": 1,
         "status": args.status,
+        "enforce_intake": "true" if args.enforce_intake else "false",
     }
     if args.task_id:
         pull_query["task_id"] = args.task_id
     pulled = client.get("/api/agent-gateway/tasks/pull", pull_query)
     tasks = pulled.get("tasks") or []
     if not tasks:
+        intake = pulled.get("intake") or {}
+        if intake.get("blocked"):
+            return {
+                "processed": False,
+                "reason": "intake_blocked",
+                "intake": {
+                    "blocked": intake.get("blocked", 0),
+                    "next_actions": intake.get("next_actions") or [],
+                    "blocked_tasks": intake.get("blocked_tasks") or [],
+                    "token_omitted": True,
+                },
+            }
         client.post("/api/agent-gateway/heartbeat", {
             "workspace_id": client.workspace_id,
             "agent_id": client.agent_id,
@@ -759,6 +772,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
     parser.add_argument("--task-id", default=os.environ.get("AGENTOPS_TASK_ID", ""), help="Optional exact task id to pull and process.")
     parser.add_argument("--status", action="append", default=["planned"], help="Task status to pull. Repeatable.")
+    parser.add_argument("--enforce-intake", action=argparse.BooleanOptionalAction, default=True, help="Require Agent Plan / knowledge / base-reference / risk intake gates before pulling tasks.")
     parser.add_argument("--once", action="store_true", help="Process at most one task and exit.")
     parser.add_argument("--poll-interval", type=float, default=5.0)
     parser.add_argument("--idle-backoff-max", type=float, default=30.0, help="Maximum sleep seconds after consecutive no-task polls.")

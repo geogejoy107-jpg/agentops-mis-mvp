@@ -1,6 +1,6 @@
 import { Link } from "react-router";
 import { useEffect, useState } from "react";
-import { AlertTriangle, Bot, CheckCircle2, Play, RefreshCw, Activity, Power, Square, KeyRound, ShieldCheck, Trash2, RotateCw, Inbox, GripVertical, XCircle } from "lucide-react";
+import { AlertTriangle, Bot, CheckCircle2, Play, RefreshCw, Activity, Power, Square, KeyRound, ShieldCheck, Trash2, RotateCw, Inbox, GripVertical, XCircle, Copy } from "lucide-react";
 import { StatusBadge } from "../shared/StatusBadge";
 import {
   createAgentGatewayEnrollment,
@@ -66,6 +66,7 @@ import {
   type ReviewQueuePayload,
   type TaskIntakeChecklistItem,
   type WorkerAdapterName,
+  type WorkerDispatchResult,
   type WorkerFleetHygienePayload,
   type WorkflowJob,
 } from "../../data/liveApi";
@@ -128,6 +129,8 @@ export function AIEmployees() {
   const [customerTaskError, setCustomerTaskError] = useState<string | null>(null);
   const [customerTaskResult, setCustomerTaskResult] = useState<CustomerTaskWorkflowResult | null>(null);
   const [customerTaskJob, setCustomerTaskJob] = useState<WorkflowJob | null>(null);
+  const [lastWorkerDispatch, setLastWorkerDispatch] = useState<WorkerDispatchResult | null>(null);
+  const [copiedIntakeCommand, setCopiedIntakeCommand] = useState<string | null>(null);
   const [loopLaneBusy, setLoopLaneBusy] = useState(false);
   const [loopLaneError, setLoopLaneError] = useState<string | null>(null);
   const [loopLaneResult, setLoopLaneResult] = useState<HermesOpenClawLoopWorkflowResult | null>(null);
@@ -323,6 +326,11 @@ export function AIEmployees() {
       evidenceClosureSummary: "Audit readback for remediated source-run debt: closure-ready, closed, waived and reopened decisions.",
       taskIntakeTitle: "Task intake gates",
       taskIntakeSummary: "Pre-run governance for planned work: assignment, Agent Plan, knowledge retrieval, base reference and risk boundary.",
+      activeIntakeGate: "Active intake gate",
+      activeIntakeSummary: "Planned work is blocked before worker pull. Resolve the listed Agent Plan / knowledge gates first.",
+      workerStartBlockedHint: "Worker daemon start/restart is held until intake gates pass.",
+      copyCommand: "Copy command",
+      copiedCommand: "Copied",
       reopenEvidenceGap: "Reopen",
       reopeningEvidenceGap: "Reopening...",
       closureDecision: "Decision",
@@ -334,6 +342,9 @@ export function AIEmployees() {
       intakeAttention: "Attention",
       assignedAgents: "Assigned",
       planReferences: "Refs",
+      agentPlan: "Agent Plan",
+      planEvidence: "Plan evidence",
+      intakeGate: "Intake gate",
       localReadinessTitle: "Local Readiness",
       localReadinessSummary: "Read-only proof that this local MIS workspace can be operated without leaking tokens or triggering live work.",
       localReadinessOverall: "Overall status",
@@ -660,6 +671,11 @@ export function AIEmployees() {
       evidenceClosureSummary: "回读已修复源 run 债务的审计状态：待关闭、已关闭、已豁免和已重开。",
       taskIntakeTitle: "任务接收 Gate",
       taskIntakeSummary: "planned 工作的运行前治理：分派、Agent Plan、知识检索、底座引用和风险边界。",
+      activeIntakeGate: "接单 Gate 生效",
+      activeIntakeSummary: "已有 planned 工作在 worker pull 前被阻塞；请先处理 Agent Plan / 知识 Gate。",
+      workerStartBlockedHint: "Worker 常驻启动/重启会被暂停，直到接单 Gate 通过。",
+      copyCommand: "复制命令",
+      copiedCommand: "已复制",
       reopenEvidenceGap: "重开",
       reopeningEvidenceGap: "重开中...",
       closureDecision: "决策",
@@ -671,6 +687,9 @@ export function AIEmployees() {
       intakeAttention: "需处理",
       assignedAgents: "已分派",
       planReferences: "引用",
+      agentPlan: "Agent Plan",
+      planEvidence: "计划证据",
+      intakeGate: "接单 Gate",
       localReadinessTitle: "本地就绪",
       localReadinessSummary: "只读证明：这个本地 MIS 工作区可运行，同时不泄露 token，也不会触发真实执行。",
       localReadinessOverall: "整体状态",
@@ -1164,6 +1183,61 @@ export function AIEmployees() {
       return score(right) - score(left) || right.priority_score - left.priority_score;
     })
     .slice(0, 4);
+  const blockedIntakeRows = taskIntakeItems.filter(item => item.severity === "blocked");
+  const primaryBlockedIntake = blockedIntakeRows[0];
+  const workerStartBlocked = Boolean(primaryBlockedIntake);
+
+  const copyIntakeCommand = async (command: string) => {
+    if (!command) return;
+    try {
+      await navigator.clipboard?.writeText(command);
+      setCopiedIntakeCommand(command);
+      window.setTimeout(() => setCopiedIntakeCommand(current => current === command ? null : current), 1800);
+    } catch {
+      setCopiedIntakeCommand(null);
+    }
+  };
+
+  const renderActiveIntakeGate = () => {
+    if (!primaryBlockedIntake) return null;
+    const taskRoute = primaryBlockedIntake.ui_route || `/admin/tasks/${primaryBlockedIntake.task_id}`;
+    const gateIds = primaryBlockedIntake.failed_gate_ids.join(", ") || "gate";
+    const commandCopied = copiedIntakeCommand === primaryBlockedIntake.command;
+
+    return (
+      <div className="rounded-lg p-3 mt-3" style={{ background: "rgba(248,113,113,0.08)", border: "1px solid rgba(248,113,113,0.22)" }}>
+        <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5">
+              <AlertTriangle size={13} style={{ color: "#F87171" }} />
+              <div className="text-[11px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{copy.activeIntakeGate}</div>
+            </div>
+            <div className="text-[10px] mt-1" style={{ color: "var(--mis-muted)" }}>{copy.activeIntakeSummary}</div>
+            <div className="text-[10px] mt-1" style={{ color: "#F87171" }}>{copy.workerStartBlockedHint}</div>
+            <div className="text-[10px] mt-1 truncate" style={{ color: "var(--mis-dim)" }}>{primaryBlockedIntake.title} · {gateIds}</div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0 flex-wrap">
+            <StatusBadge status="blocked" label={String(blockedIntakeRows.length)} />
+            <Link to={taskRoute} className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded" style={{ background: "rgba(34,211,238,0.10)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.18)" }}>
+              <Inbox size={11} />
+              {copy.openTask}
+            </Link>
+            {primaryBlockedIntake.command && (
+              <button
+                onClick={() => void copyIntakeCommand(primaryBlockedIntake.command)}
+                className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded"
+                style={{ background: "rgba(251,191,36,0.10)", color: "var(--mis-warning)", border: "1px solid rgba(251,191,36,0.20)" }}
+              >
+                <Copy size={11} />
+                {commandCopied ? copy.copiedCommand : copy.copyCommand}
+              </button>
+            )}
+          </div>
+        </div>
+        <div className="text-[10px] mt-2 truncate" style={{ color: "var(--mis-cyan)" }}>{copy.nextAction}: {primaryBlockedIntake.command}</div>
+      </div>
+    );
+  };
 
   const submitEvidenceGapDecision = async (details: {
     runId: string;
@@ -1472,7 +1546,8 @@ export function AIEmployees() {
           : "Trigger one local worker run from the AI Employees page and write evidence back to the MIS ledger.",
         acceptance_criteria: "Worker must complete the task and write run/tool/eval/audit.",
       });
-      const runId = result.worker_result?.results?.[0]?.run_id || result.task_id;
+      const runId = result.run_id || result.worker_result?.results?.[0]?.run_id || result.task_id;
+      setLastWorkerDispatch(result);
       setDispatchResult(`${adapter}: ${result.ok ? "ok" : "failed"} · ${runId}`);
       await refresh();
     } catch (err) {
@@ -1492,6 +1567,11 @@ export function AIEmployees() {
         poll_interval: 2,
         max_tasks: 0,
       });
+      if (!result.ok && result.task_intake) {
+        const action = result.recommended_action || result.task_intake.next_actions?.[0] || copy.activeIntakeGate;
+        setDispatchResult(`${adapter} daemon: blocked · ${action}`);
+        return;
+      }
       const pid = result.daemon?.pid ? `pid ${result.daemon.pid}` : result.already_running ? "already running" : "started";
       setDispatchResult(`${adapter} daemon: ${result.ok ? "ok" : "failed"} · ${pid}`);
       await refresh();
@@ -1512,6 +1592,11 @@ export function AIEmployees() {
         poll_interval: 2,
         max_tasks: 0,
       });
+      if (!result.ok && result.task_intake) {
+        const action = result.recommended_action || result.task_intake.next_actions?.[0] || copy.activeIntakeGate;
+        setDispatchResult(`${adapter} restart: blocked · ${action}`);
+        return;
+      }
       const pid = result.daemon?.pid ? `pid ${result.daemon.pid}` : "restart requested";
       setDispatchResult(`${adapter} restart: ${result.ok ? "ok" : "failed"} · ${pid}`);
       await refresh();
@@ -3132,6 +3217,8 @@ export function AIEmployees() {
           </label>
         </div>
 
+        {renderActiveIntakeGate()}
+
         <div
           className="rounded-lg p-3 mt-3"
           style={{
@@ -3222,6 +3309,22 @@ export function AIEmployees() {
                     <div className="text-[11px] font-semibold truncate mt-1" style={{ color: "var(--mis-text)" }}>{customerTaskResult.adapter || customerTaskForm.adapter}</div>
                   </div>
                 </div>
+                {(customerTaskResult.plan_id || customerTaskResult.plan_evidence_manifest_id) && (
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <div className="rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                      <div className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{copy.agentPlan}</div>
+                      <div className="text-[11px] font-semibold truncate mt-1" style={{ color: "var(--mis-text)" }}>{customerTaskResult.plan_id || "—"}</div>
+                    </div>
+                    <div className="rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                      <div className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{copy.planEvidence}</div>
+                      <div className="mt-1"><StatusBadge status={customerTaskResult.plan_evidence_pass ? "pass" : customerTaskResult.plan_evidence_status || "attention"} label={customerTaskResult.plan_evidence_manifest_id || "—"} /></div>
+                    </div>
+                    <div className="rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                      <div className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{copy.approvals}</div>
+                      <div className="text-[11px] font-semibold truncate mt-1" style={{ color: "var(--mis-text)" }}>{customerTaskResult.approval_id || "—"}</div>
+                    </div>
+                  </div>
+                )}
                 <div className="flex flex-wrap items-center gap-2">
                   {customerTaskResult.task_id && (
                     <Link
@@ -3550,6 +3653,40 @@ export function AIEmployees() {
             ))}
           </div>
         </div>
+        {renderActiveIntakeGate()}
+        {lastWorkerDispatch && (
+          <div className="rounded-lg p-3 mt-3" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+            <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-[11px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>
+                  {lastWorkerDispatch.adapter} · {lastWorkerDispatch.task_id}
+                </div>
+                <div className="text-[10px] mt-1 truncate" style={{ color: "var(--mis-muted)" }}>
+                  {copy.runId}: {lastWorkerDispatch.run_id || "—"} · {copy.agentPlan}: {lastWorkerDispatch.agent_plan_id || "—"}
+                </div>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <StatusBadge status={lastWorkerDispatch.ok ? "completed" : "failed"} />
+                <StatusBadge status={lastWorkerDispatch.evidence?.agent_plan_verified ? "pass" : "attention"} label={copy.agentPlan} />
+                <StatusBadge status={lastWorkerDispatch.plan_evidence_pass ? "pass" : "attention"} label={copy.planEvidence} />
+                <StatusBadge status={String(lastWorkerDispatch.evidence?.intake?.severity || "unknown")} label={copy.intakeGate} />
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 mt-3">
+              {lastWorkerDispatch.task_id && (
+                <Link to={`/admin/tasks/${lastWorkerDispatch.task_id}`} className="text-[10px] px-2 py-1 rounded" style={{ background: "rgba(34,211,238,0.10)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.18)" }}>{copy.openTask}</Link>
+              )}
+              {lastWorkerDispatch.run_id && (
+                <Link to={`/admin/runs/${lastWorkerDispatch.run_id}`} className="text-[10px] px-2 py-1 rounded" style={{ background: "rgba(45,212,191,0.10)", color: "var(--mis-success)", border: "1px solid rgba(45,212,191,0.18)" }}>{copy.openRun}</Link>
+              )}
+              {Object.entries(lastWorkerDispatch.evidence?.evidence_counts || {}).slice(0, 6).map(([key, value]) => (
+                <span key={key} className="text-[10px] px-2 py-1 rounded" style={{ background: "var(--mis-bg)", color: "var(--mis-muted)", border: "1px solid var(--mis-border)" }}>
+                  {key}: {value}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
         <div className="flex gap-2 flex-wrap mt-4">
           {[
             { adapter: "mock" as const, label: copy.startMockDaemon },
@@ -3559,7 +3696,7 @@ export function AIEmployees() {
             <button
               key={item.adapter}
               onClick={() => startDaemon(item.adapter)}
-              disabled={Boolean(dispatching)}
+              disabled={Boolean(dispatching) || workerStartBlocked}
               className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded disabled:opacity-50"
               style={{ background: "rgba(45,212,191,0.12)", color: "var(--mis-success)", border: "1px solid rgba(45,212,191,0.22)" }}
             >
@@ -3575,7 +3712,7 @@ export function AIEmployees() {
             <button
               key={`restart-${item.adapter}`}
               onClick={() => restartDaemon(item.adapter)}
-              disabled={Boolean(dispatching)}
+              disabled={Boolean(dispatching) || workerStartBlocked}
               className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded disabled:opacity-50"
               style={{ background: "rgba(122,90,248,0.1)", color: "#A78BFA", border: "1px solid rgba(122,90,248,0.2)" }}
             >

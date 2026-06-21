@@ -127,6 +127,12 @@ export interface CustomerTaskWorkflowResult {
   task_id: string;
   run_id?: string;
   artifact_id?: string | null;
+  approval_id?: string | null;
+  plan_id?: string | null;
+  plan_evidence_manifest_id?: string | null;
+  plan_evidence_status?: string | null;
+  plan_evidence_pass?: boolean;
+  evaluation_case_result?: Record<string, unknown> | null;
   duration_ms?: number;
   output_summary?: string;
   error?: string | null;
@@ -1319,6 +1325,26 @@ export interface WorkerDispatchResult {
   adapter: "mock" | "hermes" | "openclaw";
   agent_id: string;
   task_id: string;
+  run_id?: string | null;
+  agent_plan_id?: string | null;
+  plan_evidence_manifest_id?: string | null;
+  plan_evidence_status?: string | null;
+  plan_evidence_pass?: boolean;
+  evidence?: {
+    task_id?: string;
+    run_id?: string | null;
+    agent_plan_id?: string | null;
+    agent_plan_status?: string | null;
+    agent_plan_verified?: boolean;
+    plan_hash?: string | null;
+    plan_evidence_manifest_id?: string | null;
+    plan_evidence_status?: string | null;
+    plan_evidence_pass?: boolean;
+    evidence_counts?: Record<string, number>;
+    intake?: Record<string, unknown> | null;
+    ready_for_delivery?: boolean;
+    token_omitted?: boolean;
+  };
   duration_ms: number;
   worker_result?: {
     ok?: boolean;
@@ -1343,6 +1369,9 @@ export interface WorkerDaemonResult {
   daemon?: WorkerDaemonStatus;
   daemons?: WorkerDaemonStatus[];
   error?: string;
+  message?: string;
+  recommended_action?: string;
+  task_intake?: TaskIntakeChecklistPayload;
 }
 
 export interface WorkerDaemonLogPayload {
@@ -3714,10 +3743,10 @@ export async function startLocalWorkerDaemon(input: {
   poll_interval?: number;
   max_tasks?: number;
 }): Promise<WorkerDaemonResult> {
-  return apiJson<WorkerDaemonResult>("/workers/local/start", {
+  return apiJsonWithStatuses<WorkerDaemonResult>("/workers/local/start", {
     method: "POST",
     body: JSON.stringify(input),
-  });
+  }, [200, 201, 409]);
 }
 
 export async function stopLocalWorkerDaemon(adapter?: "mock" | "hermes" | "openclaw" | "all"): Promise<WorkerDaemonResult> {
@@ -3733,10 +3762,10 @@ export async function restartLocalWorkerDaemon(input: {
   poll_interval?: number;
   max_tasks?: number;
 }): Promise<WorkerDaemonResult> {
-  return apiJson<WorkerDaemonResult>("/workers/local/restart", {
+  return apiJsonWithStatuses<WorkerDaemonResult>("/workers/local/restart", {
     method: "POST",
     body: JSON.stringify(input),
-  });
+  }, [200, 201, 409]);
 }
 
 export async function loadWorkerDaemonLogs(adapter: "mock" | "hermes" | "openclaw"): Promise<WorkerDaemonLogPayload> {

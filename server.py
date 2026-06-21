@@ -3390,6 +3390,7 @@ def agent_gateway_pull_tasks(conn, qs, headers, auth_ctx=None) -> tuple[dict, in
     limit = min(max(int((qs.get("limit") or ["10"])[0]), 1), 50)
     statuses = qs.get("status") or ["planned", "backlog"]
     statuses = [coerce_choice(status, VALID_TASK_STATUSES, "planned") for status in statuses]
+    enforce_intake = str((qs.get("enforce_intake") or ["false"])[0]).strip().lower() in {"1", "true", "yes", "strict"}
     placeholders = ",".join("?" for _ in statuses)
     params = list(statuses)
     sql = f"SELECT * FROM tasks WHERE status IN ({placeholders}) AND COALESCE(workspace_id,'local-demo')=?"
@@ -3404,10 +3405,40 @@ def agent_gateway_pull_tasks(conn, qs, headers, auth_ctx=None) -> tuple[dict, in
     sql += " ORDER BY created_at ASC LIMIT ?"
     params.append(limit)
     rows = rows_to_dicts(conn.execute(sql, params).fetchall())
+    intake = {
+        "enforced": enforce_intake,
+        "blocked": 0,
+        "blocked_tasks": [],
+        "next_actions": [],
+        "token_omitted": True,
+    }
+    if enforce_intake:
+        eligible_rows: list[dict] = []
+        blocked_items: list[dict] = []
+        for row in rows:
+            item = task_intake_item_for_row(conn, row)
+            row["intake"] = {
+                "severity": item["severity"],
+                "failed_gate_ids": item["failed_gate_ids"],
+                "next_action": item["next_action"],
+                "command": item["command"],
+                "plan_id": item["plan_id"],
+                "plan_verified": item["plan_verified"],
+                "token_omitted": True,
+            }
+            if item["severity"] == "blocked":
+                blocked_items.append(item)
+                continue
+            eligible_rows.append(row)
+        rows = eligible_rows
+        intake["blocked"] = len(blocked_items)
+        intake["blocked_tasks"] = blocked_items[:5]
+        intake["next_actions"] = [item["command"] for item in blocked_items if item.get("command")][:5]
     if agent_id:
-        runtime_event(conn, "rtc_agent_gateway_local", "task.pull", "completed", agent_id=agent_id, output_summary=f"Pulled {len(rows)} task(s).")
-        audit(conn, "agent", agent_id, "agent_gateway.task_pull", "tasks", agent_id, None, {"count": len(rows)}, {"workspace_id": ident["workspace_id"]})
-    return {"tasks": rows, "count": len(rows), "workspace_id": ident["workspace_id"]}, 200
+        blocked_suffix = f"; intake blocked {intake['blocked']} task(s)" if enforce_intake and intake["blocked"] else ""
+        runtime_event(conn, "rtc_agent_gateway_local", "task.pull", "completed", agent_id=agent_id, output_summary=f"Pulled {len(rows)} task(s){blocked_suffix}.")
+        audit(conn, "agent", agent_id, "agent_gateway.task_pull", "tasks", agent_id, None, {"count": len(rows), "intake_blocked": intake["blocked"] if enforce_intake else 0}, {"workspace_id": ident["workspace_id"], "enforce_intake": enforce_intake})
+    return {"tasks": rows, "count": len(rows), "workspace_id": ident["workspace_id"], "intake": intake}, 200
 
 
 def create_task_api(conn, body: dict) -> tuple[dict, int]:
@@ -9850,6 +9881,64 @@ def worker_daemon_status(include_log: bool = False) -> list[dict]:
     return [read_worker_daemon(adapter, include_log=include_log) for adapter in ("mock", "hermes", "openclaw")]
 
 
+def worker_intake_start_gate(conn, agent_id: str, workspace_id: str = "local-demo", status_filters: list[str] | None = None, limit: int = 25) -> dict:
+    statuses = status_filters or ["planned"]
+    statuses = [coerce_choice(str(status), VALID_TASK_STATUSES, "planned") for status in statuses if status]
+    if not statuses:
+        statuses = ["planned"]
+    limit = max(1, min(int(limit or 25), 50))
+    placeholders = ",".join("?" for _ in statuses)
+    params: list = [*statuses, normalize_workspace_id(workspace_id), agent_id, agent_id, limit]
+    rows = conn.execute(
+        f"""SELECT * FROM tasks
+        WHERE status IN ({placeholders})
+          AND COALESCE(workspace_id,'local-demo')=?
+          AND (owner_agent_id=? OR agentops_json_array_contains(collaborator_agent_ids, ?))
+        ORDER BY
+          CASE priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END,
+          created_at ASC
+        LIMIT ?""",
+        params,
+    ).fetchall()
+    items = [task_intake_item_for_row(conn, row) for row in rows]
+    blocked = [item for item in items if item["severity"] == "blocked"]
+    attention = [item for item in items if item["severity"] == "attention"]
+    ready = [item for item in items if item["severity"] == "ready"]
+    return {
+        "provider": "agentops-worker",
+        "operation": "worker_intake_start_gate",
+        "status": "blocked" if blocked else "attention" if attention else "ready",
+        "workspace_id": normalize_workspace_id(workspace_id),
+        "agent_id": agent_id,
+        "summary": {
+            "tasks_checked": len(items),
+            "blocked_for_intake": len(blocked),
+            "attention_for_intake": len(attention),
+            "ready_for_intake": len(ready),
+        },
+        "items": items,
+        "blocked_tasks": blocked[:5],
+        "next_actions": [item["command"] for item in blocked[:5] if item.get("command")],
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
+
+
+def body_bool(value, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def start_local_worker_daemon(conn, body: dict) -> tuple[dict, int]:
     adapter = coerce_choice(body.get("adapter"), {"mock", "hermes", "openclaw"}, "mock")
     confirm_run = bool(body.get("confirm_run"))
@@ -9861,18 +9950,31 @@ def start_local_worker_daemon(conn, body: dict) -> tuple[dict, int]:
             "error": "confirm_run:true is required for Hermes/OpenClaw live worker daemons.",
         }, 400
 
-    existing = read_worker_daemon(adapter)
-    if existing["running"]:
-        return {"provider": "agentops-worker", "ok": True, "already_running": True, "daemon": existing}, 200
-
-    WORKER_RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
     agent_id = body.get("agent_id") or f"agt_worker_daemon_{adapter}"
-    poll_interval = min(max(float(body.get("poll_interval") or 5.0), 1.0), 300.0)
-    max_tasks = max(int(body.get("max_tasks") or 0), 0)
     status_filters = body.get("status") if isinstance(body.get("status"), list) else ["planned"]
     status_filters = [coerce_choice(str(item), VALID_TASK_STATUSES, "planned") for item in status_filters if item]
     if not status_filters:
         status_filters = ["planned"]
+    existing = read_worker_daemon(adapter)
+    if existing["running"]:
+        return {"provider": "agentops-worker", "ok": True, "already_running": True, "daemon": existing}, 200
+    enforce_intake = body_bool(body.get("enforce_intake"), True)
+    intake_gate = worker_intake_start_gate(conn, agent_id, body.get("workspace_id") or "local-demo", status_filters=status_filters)
+    if enforce_intake and intake_gate["summary"]["blocked_for_intake"] > 0 and not body_bool(body.get("confirm_intake_override")):
+        return {
+            "provider": "agentops-worker",
+            "ok": False,
+            "adapter": adapter,
+            "error": "worker_intake_blocked",
+            "message": "Resolve blocked Agent Plan / knowledge intake gates before starting a worker daemon.",
+            "task_intake": intake_gate,
+            "recommended_action": (intake_gate.get("next_actions") or ["agentops operator intake-checklist --limit 20"])[0],
+            "token_omitted": True,
+        }, 409
+
+    WORKER_RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+    poll_interval = min(max(float(body.get("poll_interval") or 5.0), 1.0), 300.0)
+    max_tasks = max(int(body.get("max_tasks") or 0), 0)
 
     ensure_gateway_agent(
         conn,
@@ -9908,6 +10010,8 @@ def start_local_worker_daemon(conn, body: dict) -> tuple[dict, int]:
         cmd.extend(["--status", status])
     if confirm_run:
         cmd.append("--confirm-run")
+    if not enforce_intake:
+        cmd.append("--no-enforce-intake")
     if adapter == "hermes":
         cmd.extend(["--hermes-gateway-url", os.environ.get("HERMES_GATEWAY_URL", "http://127.0.0.1:8642")])
     if adapter == "openclaw":
@@ -9933,12 +10037,13 @@ def start_local_worker_daemon(conn, body: dict) -> tuple[dict, int]:
         "continue_on_error": True,
         "max_errors": max(int(body.get("max_errors") or 5), 1),
         "state_path": str(worker_runtime_path(adapter, "state.json")),
+        "enforce_intake": enforce_intake,
     }
     worker_runtime_path(adapter, "json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
     runtime_event(conn, "rtc_agent_gateway_local", "worker.daemon.start", "running", agent_id=agent_id, output_summary=f"Started {adapter} local worker daemon pid={proc.pid}.")
-    audit(conn, "user", "usr_founder", "worker.daemon.start", "agents", agent_id, None, {"pid": proc.pid, "adapter": adapter}, {"poll_interval": poll_interval, "max_tasks": max_tasks, "confirm_run": confirm_run})
+    audit(conn, "user", "usr_founder", "worker.daemon.start", "agents", agent_id, None, {"pid": proc.pid, "adapter": adapter}, {"poll_interval": poll_interval, "max_tasks": max_tasks, "confirm_run": confirm_run, "enforce_intake": enforce_intake})
     conn.commit()
-    return {"provider": "agentops-worker", "ok": True, "daemon": read_worker_daemon(adapter, include_log=True)}, 201
+    return {"provider": "agentops-worker", "ok": True, "daemon": read_worker_daemon(adapter, include_log=True), "task_intake": intake_gate}, 201
 
 
 def stop_local_worker_daemon(conn, body: dict) -> tuple[dict, int]:
@@ -10007,14 +10112,34 @@ def restart_local_worker_daemon(conn, body: dict) -> tuple[dict, int]:
     meta_path = worker_runtime_path(adapter, "json")
     meta = read_json_file(meta_path, {}) if meta_path.exists() else {}
     previous = read_worker_daemon(adapter, include_log=True)
+    agent_id = body.get("agent_id") or meta.get("agent_id") or f"agt_worker_daemon_{adapter}"
+    status_filters = body.get("status") if isinstance(body.get("status"), list) else meta.get("status_filters") or ["planned"]
+    status_filters = [coerce_choice(str(item), VALID_TASK_STATUSES, "planned") for item in status_filters if item]
+    if not status_filters:
+        status_filters = ["planned"]
+    enforce_intake = body_bool(body.get("enforce_intake"), True)
+    intake_gate = worker_intake_start_gate(conn, agent_id, body.get("workspace_id") or "local-demo", status_filters=status_filters)
+    if enforce_intake and intake_gate["summary"]["blocked_for_intake"] > 0 and not body_bool(body.get("confirm_intake_override")):
+        return {
+            "provider": "agentops-worker",
+            "ok": False,
+            "adapter": adapter,
+            "error": "worker_intake_blocked",
+            "message": "Resolve blocked Agent Plan / knowledge intake gates before restarting a worker daemon.",
+            "previous": previous,
+            "task_intake": intake_gate,
+            "recommended_action": (intake_gate.get("next_actions") or ["agentops operator intake-checklist --limit 20"])[0],
+            "token_omitted": True,
+        }, 409
     restart_body = {
         "adapter": adapter,
-        "agent_id": body.get("agent_id") or meta.get("agent_id") or f"agt_worker_daemon_{adapter}",
+        "agent_id": agent_id,
         "poll_interval": body.get("poll_interval") if body.get("poll_interval") is not None else meta.get("poll_interval") or 5.0,
         "max_tasks": body.get("max_tasks") if body.get("max_tasks") is not None else meta.get("max_tasks") or 0,
         "max_errors": body.get("max_errors") if body.get("max_errors") is not None else meta.get("max_errors") or 5,
-        "status": body.get("status") if isinstance(body.get("status"), list) else meta.get("status_filters") or ["planned"],
+        "status": status_filters,
         "confirm_run": confirm_run,
+        "enforce_intake": enforce_intake,
     }
     if body.get("openclaw_timeout") is not None:
         restart_body["openclaw_timeout"] = body.get("openclaw_timeout")
@@ -13161,6 +13286,109 @@ def latest_task_agent_plan(conn: sqlite3.Connection, task_id: str, agent_ids: li
     ).fetchone()
 
 
+def task_intake_item_for_row(conn: sqlite3.Connection, row: sqlite3.Row | dict) -> dict:
+    assigned_agent_ids = task_assigned_agent_ids(row)
+    plan = latest_task_agent_plan(conn, row_field(row, "task_id"), assigned_agent_ids)
+    verification = verify_agent_plan_row(plan) if plan else None
+    plan_verified = bool(plan and row_field(plan, "verified_at") and (verification or {}).get("pass"))
+    referenced_specs = load_json_list_field(plan, "referenced_specs_json") if plan else []
+    referenced_memories = load_json_list_field(plan, "referenced_memories_json") if plan else []
+    referenced_bases = load_json_list_field(plan, "referenced_bases_json") if plan else []
+    risk_level = str(row_field(row, "risk_level") or "medium")
+    plan_approval_required = bool(row_field(plan, "approval_required")) if plan else False
+    gates = [
+        {
+            "id": "assigned_agent",
+            "ok": bool(assigned_agent_ids),
+            "status": "pass" if assigned_agent_ids else "blocked",
+            "message": "Task has an owner or collaborator agent.",
+        },
+        {
+            "id": "agent_plan",
+            "ok": bool(plan),
+            "status": "pass" if plan else "blocked",
+            "message": "Assigned agent has submitted an Agent Plan for this task.",
+        },
+        {
+            "id": "verified_agent_plan",
+            "ok": plan_verified,
+            "status": "pass" if plan_verified else "blocked",
+            "message": "Latest Agent Plan has been verified before run start.",
+        },
+        {
+            "id": "knowledge_retrieval",
+            "ok": bool(referenced_specs and referenced_memories),
+            "status": "pass" if referenced_specs and referenced_memories else "attention",
+            "message": "Plan references specs plus memory/knowledge context.",
+        },
+        {
+            "id": "base_reference",
+            "ok": bool(referenced_bases),
+            "status": "pass" if referenced_bases else "attention",
+            "message": "Plan compares the task against reusable base constraints.",
+        },
+        {
+            "id": "risk_boundary",
+            "ok": risk_level not in {"high", "critical"} or plan_approval_required,
+            "status": "pass" if risk_level not in {"high", "critical"} or plan_approval_required else "blocked",
+            "message": "High/critical intake requires approval_required in the plan.",
+        },
+    ]
+    failed_blockers = [gate for gate in gates if not gate["ok"] and gate["status"] == "blocked"]
+    attention_gates = [gate for gate in gates if not gate["ok"] and gate["status"] == "attention"]
+    if failed_blockers:
+        severity = "blocked"
+        priority = 93 if not plan else 88
+    elif attention_gates:
+        severity = "attention"
+        priority = 76
+    else:
+        severity = "ready"
+        priority = 58
+    task_id = row_field(row, "task_id")
+    title = redact_text(row_field(row, "title") or task_id, 180)
+    failed_gate_ids = [gate["id"] for gate in gates if not gate["ok"]]
+    if "assigned_agent" in set(failed_gate_ids):
+        command = f"agentops task get --task-id {task_id}"
+        next_action = "Assign an owner or collaborator agent before worker execution."
+    elif not plan:
+        command = f"agentops knowledge search \"{redact_text(row_field(row, 'title') or task_id, 80)}\" --limit 10"
+        next_action = "Search knowledge, compare base constraints, then submit and verify an Agent Plan before task execution."
+    elif not plan_verified:
+        command = f"agentops agent-plan verify --plan-id {plan['plan_id']}"
+        next_action = "Verify the latest Agent Plan before the assigned worker starts a run."
+    elif attention_gates:
+        command = f"agentops agent-plan get --plan-id {plan['plan_id']}"
+        next_action = "Review the plan references and strengthen knowledge/base retrieval before dispatch."
+    else:
+        command_agent_id = assigned_agent_ids[0] if assigned_agent_ids else "<agent_id>"
+        command = f"agentops task pull --agent-id {command_agent_id} --status planned --limit 5 --enforce-intake"
+        next_action = "Intake gates pass; assigned worker can pull the planned task."
+    return {
+        "task_id": task_id,
+        "title": title,
+        "status": row_field(row, "status"),
+        "priority": row_field(row, "priority"),
+        "risk_level": risk_level,
+        "assigned_agent_ids": assigned_agent_ids,
+        "plan_id": plan["plan_id"] if plan else None,
+        "plan_status": plan["status"] if plan else None,
+        "plan_verified": plan_verified,
+        "plan_verified_at": plan["verified_at"] if plan else None,
+        "referenced_specs": len(referenced_specs),
+        "referenced_memories": len(referenced_memories),
+        "referenced_bases": len(referenced_bases),
+        "gates": gates,
+        "failed_gate_ids": failed_gate_ids,
+        "severity": severity,
+        "priority_score": priority,
+        "command": command,
+        "next_action": next_action,
+        "ui_route": f"/admin/tasks/{task_id}",
+        "token_omitted": True,
+    }
+
+
 def operator_task_intake_checklist(conn: sqlite3.Connection, workspace_id: str, limit: int = 8) -> dict:
     limit = max(1, min(int(limit or 8), 25))
     rows = conn.execute(
@@ -13187,117 +13415,26 @@ def operator_task_intake_checklist(conn: sqlite3.Connection, workspace_id: str, 
         "risk_gate_blocked": 0,
     }
     for row in rows:
-        assigned_agent_ids = task_assigned_agent_ids(row)
-        plan = latest_task_agent_plan(conn, row["task_id"], assigned_agent_ids)
-        verification = verify_agent_plan_row(plan) if plan else None
-        plan_verified = bool(plan and plan["verified_at"] and (verification or {}).get("pass"))
-        referenced_specs = load_json_list_field(plan, "referenced_specs_json") if plan else []
-        referenced_memories = load_json_list_field(plan, "referenced_memories_json") if plan else []
-        referenced_bases = load_json_list_field(plan, "referenced_bases_json") if plan else []
-        risk_level = str(row["risk_level"] or "medium")
-        plan_approval_required = bool(row_field(plan, "approval_required")) if plan else False
-        gates = [
-            {
-                "id": "assigned_agent",
-                "ok": bool(assigned_agent_ids),
-                "status": "pass" if assigned_agent_ids else "blocked",
-                "message": "Task has an owner or collaborator agent.",
-            },
-            {
-                "id": "agent_plan",
-                "ok": bool(plan),
-                "status": "pass" if plan else "blocked",
-                "message": "Assigned agent has submitted an Agent Plan for this task.",
-            },
-            {
-                "id": "verified_agent_plan",
-                "ok": plan_verified,
-                "status": "pass" if plan_verified else "blocked",
-                "message": "Latest Agent Plan has been verified before run start.",
-            },
-            {
-                "id": "knowledge_retrieval",
-                "ok": bool(referenced_specs and referenced_memories),
-                "status": "pass" if referenced_specs and referenced_memories else "attention",
-                "message": "Plan references specs plus memory/knowledge context.",
-            },
-            {
-                "id": "base_reference",
-                "ok": bool(referenced_bases),
-                "status": "pass" if referenced_bases else "attention",
-                "message": "Plan compares the task against reusable base constraints.",
-            },
-            {
-                "id": "risk_boundary",
-                "ok": risk_level not in {"high", "critical"} or plan_approval_required,
-                "status": "pass" if risk_level not in {"high", "critical"} or plan_approval_required else "blocked",
-                "message": "High/critical intake requires approval_required in the plan.",
-            },
-        ]
-        failed_blockers = [gate for gate in gates if not gate["ok"] and gate["status"] == "blocked"]
-        attention_gates = [gate for gate in gates if not gate["ok"] and gate["status"] == "attention"]
-        if failed_blockers:
-            severity = "blocked"
-            priority = 93 if not plan else 88
-        elif attention_gates:
-            severity = "attention"
-            priority = 76
-        else:
-            severity = "ready"
-            priority = 58
-        if not assigned_agent_ids:
+        item = task_intake_item_for_row(conn, row)
+        if not item["assigned_agent_ids"]:
             summary["missing_assignment"] += 1
-        if not plan:
+        if not item["plan_id"]:
             summary["missing_agent_plan"] += 1
-        elif not plan_verified:
+        elif not item["plan_verified"]:
             summary["unverified_agent_plan"] += 1
-        if not (referenced_specs and referenced_memories):
+        if not (item["referenced_specs"] and item["referenced_memories"]):
             summary["missing_knowledge_retrieval"] += 1
-        if not referenced_bases:
+        if not item["referenced_bases"]:
             summary["missing_base_reference"] += 1
-        if risk_level in {"high", "critical"} and not plan_approval_required:
+        if "risk_boundary" in set(item["failed_gate_ids"]):
             summary["risk_gate_blocked"] += 1
-        if severity == "blocked":
+        if item["severity"] == "blocked":
             summary["blocked_for_intake"] += 1
-        elif severity == "attention":
+        elif item["severity"] == "attention":
             summary["attention_for_intake"] += 1
         else:
             summary["ready_for_intake"] += 1
-        if not plan:
-            command = f"agentops knowledge search \"{redact_text(row['title'] or row['task_id'], 80)}\" --limit 10"
-            next_action = "Search knowledge, compare base constraints, then submit and verify an Agent Plan before task execution."
-        elif not plan_verified:
-            command = f"agentops agent-plan verify --plan-id {plan['plan_id']}"
-            next_action = "Verify the latest Agent Plan before the assigned worker starts a run."
-        elif attention_gates:
-            command = f"agentops agent-plan get --plan-id {plan['plan_id']}"
-            next_action = "Review the plan references and strengthen knowledge/base retrieval before dispatch."
-        else:
-            command = f"agentops task pull --agent-id {assigned_agent_ids[0]} --status planned --limit 5"
-            next_action = "Intake gates pass; assigned worker can pull the planned task."
-        items.append({
-            "task_id": row["task_id"],
-            "title": redact_text(row["title"] or row["task_id"], 180),
-            "status": row["status"],
-            "priority": row["priority"],
-            "risk_level": risk_level,
-            "assigned_agent_ids": assigned_agent_ids,
-            "plan_id": plan["plan_id"] if plan else None,
-            "plan_status": plan["status"] if plan else None,
-            "plan_verified": plan_verified,
-            "plan_verified_at": plan["verified_at"] if plan else None,
-            "referenced_specs": len(referenced_specs),
-            "referenced_memories": len(referenced_memories),
-            "referenced_bases": len(referenced_bases),
-            "gates": gates,
-            "failed_gate_ids": [gate["id"] for gate in gates if not gate["ok"]],
-            "severity": severity,
-            "priority_score": priority,
-            "command": command,
-            "next_action": next_action,
-            "ui_route": f"/admin/tasks/{row['task_id']}",
-            "token_omitted": True,
-        })
+        items.append(item)
     summary["tasks_checked"] = len(items)
     status = "blocked" if summary["blocked_for_intake"] else "attention" if summary["attention_for_intake"] else "ready"
     return {
@@ -13308,6 +13445,119 @@ def operator_task_intake_checklist(conn: sqlite3.Connection, workspace_id: str, 
         "summary": summary,
         "items": items,
         "next_actions": [item["command"] for item in items if item["severity"] != "ready"][:5] or ["agentops operator action-plan --limit 20"],
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+
+
+def operator_dispatch_evidence_lane(conn: sqlite3.Connection, workspace_id: str, limit: int = 8) -> dict:
+    limit = max(1, min(int(limit or 8), 25))
+    rows = conn.execute(
+        """SELECT
+            pem.*,
+            r.status AS run_status,
+            r.runtime_type AS runtime_type,
+            r.delegation_id AS delegation_id,
+            t.title AS task_title,
+            t.status AS task_status
+        FROM plan_evidence_manifests pem
+        JOIN runs r ON r.run_id=pem.run_id
+        LEFT JOIN tasks t ON t.task_id=pem.task_id
+        WHERE COALESCE(pem.workspace_id,'local-demo')=?
+          AND pem.status='verified'
+          AND (
+            r.delegation_id LIKE 'worker:%'
+            OR EXISTS (
+              SELECT 1 FROM artifacts a
+              WHERE a.run_id=pem.run_id
+                AND a.artifact_type IN ('agent_worker_result','customer_worker_result','customer_delivery')
+            )
+          )
+        ORDER BY pem.updated_at DESC, pem.created_at DESC
+        LIMIT ?""",
+        (workspace_id, limit),
+    ).fetchall()
+    items: list[dict] = []
+    summary = {
+        "proofs": 0,
+        "verified_manifests": 0,
+        "ready_for_delivery": 0,
+        "waiting_approval": 0,
+        "customer_worker_results": 0,
+        "direct_worker_results": 0,
+    }
+    for row in rows:
+        verification = verify_plan_evidence_manifest_row(conn, row)
+        if not verification.get("pass"):
+            continue
+        counts = commander_evidence_counts(conn, task_id=row["task_id"], run_id=row["run_id"])
+        approval_count = int(counts.get("approvals") or 0)
+        pending_approvals = int(counts.get("pending_approvals") or 0)
+        artifact_types = [
+            item["artifact_type"]
+            for item in conn.execute(
+                "SELECT DISTINCT artifact_type FROM artifacts WHERE run_id=? ORDER BY artifact_type",
+                (row["run_id"],),
+            ).fetchall()
+        ]
+        is_customer = any(item in {"customer_worker_result", "customer_delivery"} for item in artifact_types)
+        if is_customer:
+            summary["customer_worker_results"] += 1
+        else:
+            summary["direct_worker_results"] += 1
+        if pending_approvals > 0:
+            status = "waiting_approval"
+            severity = "attention"
+            command = "agentops workflow delivery-board --limit 12"
+            next_action = "Review pending customer delivery approval with verified plan evidence."
+        else:
+            status = "ready"
+            severity = "ready"
+            command = f"agentops run get --run-id {row['run_id']}"
+            next_action = "Verified dispatch proof is ready for operator review or customer delivery board."
+            summary["ready_for_delivery"] += 1
+        summary["proofs"] += 1
+        summary["verified_manifests"] += 1
+        summary["waiting_approval"] += pending_approvals
+        items.append({
+            "run_id": row["run_id"],
+            "task_id": row["task_id"],
+            "agent_id": row["agent_id"],
+            "plan_id": row["plan_id"],
+            "manifest_id": row["manifest_id"],
+            "runtime_type": row["runtime_type"],
+            "delegation_id": row["delegation_id"],
+            "task_title": redact_text(row["task_title"] or row["task_id"] or row["run_id"], 180),
+            "task_status": row["task_status"],
+            "run_status": row["run_status"],
+            "status": status,
+            "severity": severity,
+            "artifact_types": artifact_types,
+            "evidence_counts": counts,
+            "approval_count": approval_count,
+            "pending_approvals": pending_approvals,
+            "command": command,
+            "next_action": next_action,
+            "ui_route": f"/admin/runs/{row['run_id']}",
+            "token_omitted": True,
+        })
+    status = "attention" if summary["waiting_approval"] else "ready" if items else "idle"
+    return {
+        "provider": "agentops-operator",
+        "operation": "dispatch_evidence_lane",
+        "status": status,
+        "workspace_id": workspace_id,
+        "summary": summary,
+        "items": items,
+        "next_actions": [item["command"] for item in items[:5]] or ["agentops workflow delivery-board --limit 12"],
         "safety": {
             "read_only": True,
             "ledger_mutated": False,
@@ -13333,6 +13583,7 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
     remediation_loop = evaluation_case_remediation_loop(conn, workspace_id, limit=max(limit, 8))
     evidence_gaps = operator_execution_evidence_gaps(conn, workspace_id, limit=max(limit, 8))
     task_intake = operator_task_intake_checklist(conn, workspace_id, limit=max(limit, 8))
+    dispatch_evidence = operator_dispatch_evidence_lane(conn, workspace_id, limit=max(limit, 8))
 
     actions: list[dict] = []
 
@@ -13532,6 +13783,29 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             },
         )
 
+    for item in (dispatch_evidence.get("items") or [])[:limit]:
+        add_action(
+            "dispatch_evidence",
+            item.get("task_title") or item.get("run_id") or "Verified dispatch proof",
+            item.get("command") or "agentops workflow delivery-board --limit 12",
+            priority=70 if item.get("severity") == "ready" else 80,
+            severity=item.get("severity") or "ready",
+            source="dispatch_evidence_lane",
+            summary=item.get("next_action") or "",
+            ui_route=item.get("ui_route") or f"/admin/runs/{item.get('run_id')}",
+            evidence={
+                "task_id": item.get("task_id"),
+                "run_id": item.get("run_id"),
+                "agent_id": item.get("agent_id"),
+                "plan_id": item.get("plan_id"),
+                "manifest_id": item.get("manifest_id"),
+                "status": item.get("status"),
+                "artifact_types": item.get("artifact_types") or [],
+                "evidence_counts": item.get("evidence_counts") or {},
+                "pending_approvals": item.get("pending_approvals"),
+            },
+        )
+
     for item in (task_intake.get("items") or [])[:limit]:
         if item.get("severity") == "ready":
             continue
@@ -13608,6 +13882,10 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             "task_intake_blocked": (task_intake.get("summary") or {}).get("blocked_for_intake", 0),
             "task_intake_attention": (task_intake.get("summary") or {}).get("attention_for_intake", 0),
             "task_intake_missing_agent_plan": (task_intake.get("summary") or {}).get("missing_agent_plan", 0),
+            "dispatch_evidence_proofs": (dispatch_evidence.get("summary") or {}).get("proofs", 0),
+            "dispatch_evidence_ready": (dispatch_evidence.get("summary") or {}).get("ready_for_delivery", 0),
+            "dispatch_evidence_waiting_approval": (dispatch_evidence.get("summary") or {}).get("waiting_approval", 0),
+            "dispatch_evidence_verified_manifests": (dispatch_evidence.get("summary") or {}).get("verified_manifests", 0),
         },
         "actions": deduped,
         "top_commands": [item["command"] for item in deduped[:5]],
@@ -13620,10 +13898,12 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             "remediation_loop": remediation_loop.get("status"),
             "execution_evidence": evidence_gaps.get("status"),
             "task_intake": task_intake.get("status"),
+            "dispatch_evidence": dispatch_evidence.get("status"),
         },
         "remediation_loop": remediation_loop,
         "execution_evidence": evidence_gaps,
         "task_intake": task_intake,
+        "dispatch_evidence": dispatch_evidence,
         "contract": "read-only operator action plan; execution stays in explicit CLI/API commands and live adapters still require confirmation",
         "safety": {
             "read_only": True,
@@ -13641,6 +13921,42 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
 def request_base_url(headers=None) -> str | None:
     host = headers.get("Host") if headers else ""
     return f"http://{host}" if host else None
+
+
+def worker_dispatch_evidence_summary(conn: sqlite3.Connection, task_id: str, run_id: str | None, plan_id: str | None, manifest_id: str | None) -> dict:
+    plan = conn.execute("SELECT * FROM agent_plans WHERE plan_id=?", (plan_id,)).fetchone() if plan_id else None
+    plan_verification = verify_agent_plan_row(plan) if plan else {"pass": False, "checks": []}
+    manifest = conn.execute("SELECT * FROM plan_evidence_manifests WHERE manifest_id=?", (manifest_id,)).fetchone() if manifest_id else None
+    if not manifest and run_id:
+        manifest = latest_plan_evidence_manifest_for_run(conn, run_id)
+    manifest_verification = verify_plan_evidence_manifest_row(conn, manifest) if manifest else {"pass": False, "checks": []}
+    counts = commander_evidence_counts(conn, task_id=task_id, run_id=run_id)
+    task = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+    intake = task_intake_item_for_row(conn, task) if task else None
+    return {
+        "task_id": task_id,
+        "run_id": run_id,
+        "agent_plan_id": plan["plan_id"] if plan else plan_id,
+        "agent_plan_status": plan["status"] if plan else None,
+        "agent_plan_verified": bool(plan_verification.get("pass")),
+        "plan_hash": row_field(plan, "plan_hash") if plan else None,
+        "plan_evidence_manifest_id": manifest["manifest_id"] if manifest else manifest_id,
+        "plan_evidence_status": manifest_verification.get("status") if manifest else None,
+        "plan_evidence_pass": bool(manifest_verification.get("pass")),
+        "evidence_counts": counts,
+        "intake": {
+            "severity": intake.get("severity"),
+            "failed_gate_ids": intake.get("failed_gate_ids") or [],
+            "plan_verified": intake.get("plan_verified"),
+            "referenced_specs": intake.get("referenced_specs"),
+            "referenced_memories": intake.get("referenced_memories"),
+            "referenced_bases": intake.get("referenced_bases"),
+            "next_action": intake.get("next_action"),
+            "token_omitted": True,
+        } if intake else None,
+        "ready_for_delivery": bool(plan_verification.get("pass") and manifest_verification.get("pass")),
+        "token_omitted": True,
+    }
 
 
 def dispatch_local_worker_once(conn, body: dict) -> dict:
@@ -13700,6 +14016,7 @@ def dispatch_local_worker_once(conn, body: dict) -> dict:
         task_id,
         "--base-url",
         str(body.get("base_url") or body.get("_base_url") or os.environ.get("AGENTOPS_BASE_URL") or "http://127.0.0.1:8787"),
+        "--no-enforce-intake",
     ]
     if confirm_run:
         cmd.append("--confirm-run")
@@ -13728,6 +14045,11 @@ def dispatch_local_worker_once(conn, body: dict) -> dict:
         ok = False
         error = redact_text(str(exc), 240)
     duration = int((dt.datetime.now(dt.timezone.utc) - started).total_seconds() * 1000)
+    result_item = ((parsed.get("results") or [{}])[0] or {}) if isinstance(parsed, dict) else {}
+    run_id = result_item.get("run_id")
+    plan_id = result_item.get("plan_id") or result_item.get("agent_plan_id")
+    manifest_id = result_item.get("plan_evidence_manifest_id")
+    evidence = worker_dispatch_evidence_summary(conn, task_id, run_id, plan_id, manifest_id)
     audit(conn, "system", "worker-dispatch", "worker.dispatch_once", "tasks", task_id, None, {"ok": ok}, {"adapter": adapter, "agent_id": agent_id, "duration_ms": duration, "error": error})
     conn.commit()
     return {
@@ -13737,6 +14059,12 @@ def dispatch_local_worker_once(conn, body: dict) -> dict:
         "adapter": adapter,
         "agent_id": agent_id,
         "task_id": task_id,
+        "run_id": run_id,
+        "agent_plan_id": evidence.get("agent_plan_id"),
+        "plan_evidence_manifest_id": evidence.get("plan_evidence_manifest_id"),
+        "plan_evidence_status": evidence.get("plan_evidence_status"),
+        "plan_evidence_pass": evidence.get("plan_evidence_pass"),
+        "evidence": evidence,
         "duration_ms": duration,
         "worker_result": parsed,
         "error": error,

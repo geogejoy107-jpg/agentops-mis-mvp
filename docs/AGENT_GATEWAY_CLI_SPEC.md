@@ -307,10 +307,23 @@ remote server can verify that MIS recorded work without relying on a human page.
 Returns available tasks for the agent based on role, scope, and workspace policy.
 
 ```bash
-agentops task pull --agent-id agt_kb_researcher --limit 5
+agentops task pull --agent-id agt_kb_researcher --limit 5 --enforce-intake
 ```
 
-Reads from `tasks`.
+Reads from `tasks`. `--task-id <id>` narrows visibility checks to one task.
+`--enforce-intake` excludes tasks blocked by assignment, Agent Plan
+verification, knowledge/base-reference, or high-risk approval gates; local
+worker loops use this enforced mode by default before claiming work.
+Local daemon `start`/`restart` APIs use the same gate for tasks visible to the
+daemon agent and fail closed with `worker_intake_blocked` before launching a
+process when blocked planned work is present.
+The UI/API direct dispatch path, `POST /api/workers/local/dispatch-once`,
+creates a fresh single worker task and returns `agent_plan_id`,
+`plan_evidence_manifest_id`, `plan_evidence_pass`, and an `evidence` summary
+with intake severity plus ledger counts. It explicitly uses the worker
+self-plan path for its newly created task: backlog pull enforcement is bypassed,
+but `run_start` still requires a verified Agent Plan and the result must bind
+to a verified plan-evidence manifest.
 
 ### `agentops task claim`
 
@@ -969,11 +982,15 @@ Writes:
 ### `GET /api/agent-gateway/tasks/pull`
 
 Returns tasks matching agent scope, role, and status.
+When `enforce_intake=true`, blocked planned/backlog tasks are omitted from
+`tasks[]` and reported under `intake.blocked_tasks[]` with failed gate ids,
+next action text, and the safe CLI command to run before worker execution.
 
 Reads:
 
 - `tasks`
 - `agents`
+- `agent_plans` when intake enforcement is enabled
 - future policy tables
 
 ### `POST /api/agent-gateway/tasks/:id/claim`
@@ -1150,7 +1167,9 @@ agentops operator intake-checklist --limit 12
 Maps to `GET /api/operator/intake-checklist`. This is read-only and reports
 `ready_for_intake`, `blocked_for_intake`, `attention_for_intake`,
 `missing_agent_plan`, `missing_knowledge_retrieval`, and
-`missing_base_reference` without starting workers or writing ledger rows.
+`missing_base_reference` without starting workers or writing ledger rows. Ready
+rows point to `agentops task pull --enforce-intake` so worker execution uses the
+same gate decision as the operator console.
 
 ```bash
 agentops operator remediate-evidence-gap --run-id run_123

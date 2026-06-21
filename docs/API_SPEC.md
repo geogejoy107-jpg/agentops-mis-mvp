@@ -178,6 +178,22 @@ the `task_intake` source and reports `task_intake_checked`,
 `task_intake_ready`, `task_intake_blocked`, `task_intake_attention`, and
 `task_intake_missing_agent_plan`.
 
+`GET /api/agent-gateway/tasks/pull?enforce_intake=true` applies the same gate
+at worker pull time: blocked planned/backlog tasks are omitted from `tasks[]`
+and returned under `intake.blocked_tasks[]` with failed gate ids and safe next
+commands. Local worker loops enable this mode before claiming work.
+`POST /api/workers/local/start` and `/restart` also default to this gate for
+the daemon agent's pull-visible planned work; a blocked gate returns
+`409 worker_intake_blocked` with `task_intake.blocked_tasks[]` and does not
+start or restart the daemon.
+`POST /api/workers/local/dispatch-once` creates a single UI worker task and
+returns top-level `agent_plan_id`, `plan_evidence_manifest_id`,
+`plan_evidence_pass`, and an `evidence` readback with intake severity and
+ledger counts so the operator can distinguish a freshly proven dispatch from a
+blocked backlog task. This fresh one-shot path uses the worker self-plan flow:
+it bypasses backlog pull enforcement but must still create and verify an
+Agent Plan before `run_start`, then bind the run with a plan-evidence manifest.
+
 `POST /api/operator/execution-evidence/remediation-task` previews or creates a
 Commander-compatible remediation package for one run gap. Preview is read-only;
 `confirm_create:true` writes one deterministic planned task plus runtime/audit

@@ -92,6 +92,7 @@ def run_worker(base_url: str, agent_id: str, workspace_id: str, outputs: list[st
             workspace_id,
             "--base-url",
             base_url,
+            "--no-enforce-intake",
         ],
         cwd=ROOT,
         env=env,
@@ -208,6 +209,25 @@ def main() -> int:
             require(worker_result.get("plan_evidence_pass") is True, f"worker manifest did not pass: {worker_payload}", failures)
             require(db_count(db_path, "SELECT COUNT(*) FROM agent_plans WHERE task_id=? AND agent_id=?", (worker_task_id, worker_agent_id)) >= 1, "worker did not persist an agent_plan", failures)
             require(db_count(db_path, "SELECT COUNT(*) FROM plan_evidence_manifests WHERE run_id=? AND status='verified'", (run_id,)) >= 1, "worker did not persist a verified manifest", failures)
+
+            status, direct_dispatch, raw = http_json("POST", base_url, "/api/workers/local/dispatch-once", {
+                "adapter": "mock",
+                "title": "Direct worker dispatch evidence summary",
+                "description": "UI direct dispatch must surface Agent Plan, intake and plan evidence ledger proof.",
+                "acceptance_criteria": "Dispatch result includes top-level plan and manifest evidence summary.",
+            })
+            outputs.append(raw)
+            direct_evidence = direct_dispatch.get("evidence") or {}
+            direct_counts = direct_evidence.get("evidence_counts") or {}
+            require(status == 201, f"direct worker dispatch failed: {status} {direct_dispatch}", failures)
+            require(direct_dispatch.get("ok") is True, f"direct dispatch not ok: {direct_dispatch}", failures)
+            require(direct_dispatch.get("run_id"), f"direct dispatch missing top-level run_id: {direct_dispatch}", failures)
+            require(direct_dispatch.get("agent_plan_id"), f"direct dispatch missing top-level agent_plan_id: {direct_dispatch}", failures)
+            require(direct_dispatch.get("plan_evidence_manifest_id"), f"direct dispatch missing top-level manifest id: {direct_dispatch}", failures)
+            require(direct_dispatch.get("plan_evidence_pass") is True, f"direct dispatch manifest did not pass: {direct_dispatch}", failures)
+            require(direct_evidence.get("agent_plan_verified") is True, f"direct dispatch evidence missing verified plan: {direct_evidence}", failures)
+            require((direct_evidence.get("intake") or {}).get("severity") in {"ready", "attention"}, f"direct dispatch intake summary missing: {direct_evidence}", failures)
+            require(direct_counts.get("plan_evidence_manifests", 0) >= 1, f"direct dispatch evidence counts missing manifest: {direct_counts}", failures)
 
             status, workflow, raw = http_json("POST", base_url, "/api/workflows/customer-worker-task", {
                 "adapter": "mock",

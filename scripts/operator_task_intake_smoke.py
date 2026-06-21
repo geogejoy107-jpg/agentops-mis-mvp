@@ -201,6 +201,12 @@ def main() -> int:
         require(blocked_item.get("severity") == "blocked", f"blocked task not blocked: {blocked_item}", failures)
         require("agent_plan" in set(blocked_item.get("failed_gate_ids") or []), f"blocked task did not fail agent_plan gate: {blocked_item}", failures)
 
+        status, action_plan, raw = http_json(base_url, "GET", "/api/operator/action-plan", query={"limit": 30})
+        outputs.append(raw)
+        require(status == 200, f"operator action-plan failed: {status} {action_plan}", failures)
+        require("task_intake" in (action_plan.get("source_status") or {}), f"action plan missing task_intake source: {action_plan}", failures)
+        require((action_plan.get("task_intake") or {}).get("operation") == "task_intake_checklist", f"action plan missing task_intake payload: {action_plan}", failures)
+
         with tempfile.TemporaryDirectory(prefix="agentops-task-intake-") as tmp:
             env = os.environ.copy()
             env["AGENTOPS_CONFIG"] = str(Path(tmp) / "config.json")
@@ -212,15 +218,60 @@ def main() -> int:
             require(find_item(cli_payload, ready_task_id).get("severity") == "ready", f"CLI ready task mismatch: {cli_payload}", failures)
             require(find_item(cli_payload, blocked_task_id).get("severity") == "blocked", f"CLI blocked task mismatch: {cli_payload}", failures)
 
-        status, action_plan, raw = http_json(base_url, "GET", "/api/operator/action-plan", query={"limit": 30})
-        outputs.append(raw)
-        require(status == 200, f"operator action-plan failed: {status} {action_plan}", failures)
-        require("task_intake" in (action_plan.get("source_status") or {}), f"action plan missing task_intake source: {action_plan}", failures)
-        require((action_plan.get("task_intake") or {}).get("operation") == "task_intake_checklist", f"action plan missing task_intake payload: {action_plan}", failures)
+            status, start_gate, raw = http_json(base_url, "POST", "/api/workers/local/start", {
+                "adapter": "mock",
+                "agent_id": agent_id,
+                "max_tasks": 1,
+                "enforce_intake": True,
+            })
+            outputs.append(raw)
+            require(status == 409, f"worker daemon start should be intake-blocked: {status} {start_gate}", failures)
+            require(start_gate.get("error") == "worker_intake_blocked", f"worker start did not report intake block: {start_gate}", failures)
+            require(
+                blocked_task_id in {item.get("task_id") for item in ((start_gate.get("task_intake") or {}).get("blocked_tasks") or [])},
+                f"worker start block missing blocked task evidence: {start_gate}",
+                failures,
+            )
+
+            status, restart_gate, raw = http_json(base_url, "POST", "/api/workers/local/restart", {
+                "adapter": "mock",
+                "agent_id": agent_id,
+                "max_tasks": 1,
+                "enforce_intake": True,
+            })
+            outputs.append(raw)
+            require(status == 409, f"worker daemon restart should be intake-blocked: {status} {restart_gate}", failures)
+            require(restart_gate.get("error") == "worker_intake_blocked", f"worker restart did not report intake block: {restart_gate}", failures)
+
+            after_reads = db_fingerprint(db_path)
+            if before is not None and after_reads is not None:
+                require(before == after_reads, f"intake/action-plan reads changed database fingerprint: before={before} after={after_reads}", failures)
+
+            proc = run_cli(base_url, ["task", "pull", "--agent-id", agent_id, "--task-id", ready_task_id, "--status", "planned", "--limit", "5", "--enforce-intake"], env)
+            outputs.extend([proc.stdout, proc.stderr])
+            ready_pull = load_json(proc)
+            ready_pull_ids = {item.get("task_id") for item in ready_pull.get("tasks") or []}
+            require(proc.returncode == 0, f"CLI ready pull failed: {proc.stderr or proc.stdout}", failures)
+            require(ready_task_id in ready_pull_ids, f"ready task was not pull-eligible with intake enforced: {ready_pull}", failures)
+
+            proc = run_cli(base_url, ["task", "pull", "--agent-id", agent_id, "--task-id", blocked_task_id, "--status", "planned", "--limit", "5", "--enforce-intake"], env)
+            outputs.extend([proc.stdout, proc.stderr])
+            blocked_pull = load_json(proc)
+            blocked_pull_ids = {item.get("task_id") for item in blocked_pull.get("tasks") or []}
+            blocked_intake = blocked_pull.get("intake") or {}
+            require(proc.returncode == 0, f"CLI blocked pull failed: {proc.stderr or proc.stdout}", failures)
+            require(blocked_task_id not in blocked_pull_ids, f"blocked task leaked through enforced intake pull: {blocked_pull}", failures)
+            require((blocked_intake.get("blocked") or 0) >= 1, f"enforced pull did not report blocked intake task: {blocked_pull}", failures)
+            require(
+                blocked_task_id in {item.get("task_id") for item in blocked_intake.get("blocked_tasks") or []},
+                f"enforced pull did not return blocked task evidence: {blocked_pull}",
+                failures,
+            )
 
         after = db_fingerprint(db_path)
         if before is not None and after is not None:
-            require(before == after, f"intake reads changed database fingerprint: before={before} after={after}", failures)
+            for table in ("tasks", "agent_plans"):
+                require(before.get(table) == after.get(table), f"enforced pull mutated {table}: before={before.get(table)} after={after.get(table)}", failures)
         require(not leaked_secret("\n".join(outputs)), "operator task intake leaked token-like material", failures)
 
         print(json.dumps({
@@ -230,7 +281,8 @@ def main() -> int:
             "ready_task_id": ready_task_id,
             "blocked_task_id": blocked_task_id,
             "plan_id": plan_id,
-            "read_only": before == after if before is not None and after is not None else None,
+            "read_only": before == after_reads if before is not None and after_reads is not None else None,
+            "pull_entity_stable": all(before.get(table) == after.get(table) for table in ("tasks", "agent_plans")) if before is not None and after is not None else None,
             "secret_leaked": leaked_secret("\n".join(outputs)),
             "failures": failures,
         }, ensure_ascii=False, indent=2, sort_keys=True))

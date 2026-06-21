@@ -494,6 +494,8 @@ def cmd_task_pull(args, client: AgentOpsClient) -> dict:
         "workspace_id": client.workspace_id,
         "limit": args.limit,
         "status": args.status,
+        "enforce_intake": "true" if args.enforce_intake else None,
+        "task_id": args.task_id,
     }
     return client.get("/api/agent-gateway/tasks/pull", query=query)
 
@@ -1727,8 +1729,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     pull = task_sub.add_parser("pull", help="Pull available tasks for an agent.")
     pull.add_argument("--agent-id", default=None)
+    pull.add_argument("--task-id", default=None, help="Optional exact task id to test pull visibility.")
     pull.add_argument("--limit", type=int, default=10)
     pull.add_argument("--status", action="append", default=None, help="Task status filter. Can be repeated.")
+    pull.add_argument("--enforce-intake", action="store_true", help="Exclude tasks blocked by Agent Plan, knowledge, base-reference, or risk-boundary intake gates.")
     pull.set_defaults(handler="task_pull")
 
     claim = task_sub.add_parser("claim", help="Claim a task.")
