@@ -13,6 +13,7 @@ import sys
 import tempfile
 import time
 import urllib.request
+import uuid
 from pathlib import Path
 
 
@@ -103,6 +104,27 @@ def count_rows(db_path: Path, table: str, column: str, values: list[str]) -> int
     return int(row[0] if row else 0)
 
 
+def count_where(db_path: Path, sql: str, params: tuple = ()) -> int:
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(sql, params).fetchone()
+    return int(row[0] if row else 0)
+
+
+def count_manifest_status(db_path: Path, manifest_ids: list[str], status: str) -> int:
+    if not manifest_ids:
+        return 0
+    placeholders = ",".join("?" for _ in manifest_ids)
+    return count_where(db_path, f"SELECT COUNT(*) FROM plan_evidence_manifests WHERE manifest_id IN ({placeholders}) AND status=?", (*manifest_ids, status))
+
+
+def cleanup_loop_runtime(loop_id: str) -> None:
+    for suffix in [".jsonl", ".audit.jsonl", ".next_action.json"]:
+        try:
+            (RUNTIME_DIR / f"{loop_id}{suffix}").unlink()
+        except FileNotFoundError:
+            pass
+
+
 def main() -> int:
     failures: list[str] = []
     outputs: list[str] = []
@@ -180,6 +202,62 @@ def main() -> int:
     require(gate_payload.get("error") == "confirm_live_required", f"wrong live gate error: {gate_payload}", failures)
     require(gate_payload.get("token_omitted") is True, f"live gate token omission missing: {gate_payload}", failures)
 
+    resume_loop_id = f"loop_smoke_resume_{uuid.uuid4().hex[:10]}"
+    cleanup_loop_runtime(resume_loop_id)
+    first_resume = subprocess.run(
+        [
+            sys.executable,
+            str(LOOP),
+            "--topic",
+            "Resume smoke should preserve completed Hermes output and continue OpenClaw.",
+            "--loop-id",
+            resume_loop_id,
+            "--rounds",
+            "1",
+            "--order",
+            "hermes",
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    outputs.extend([first_resume.stdout, first_resume.stderr])
+    require(first_resume.returncode == 0, f"first resume seed loop failed: {first_resume.stderr or first_resume.stdout}", failures)
+    resumed = subprocess.run(
+        [
+            sys.executable,
+            str(LOOP),
+            "--topic",
+            "Resume smoke should preserve completed Hermes output and continue OpenClaw.",
+            "--loop-id",
+            resume_loop_id,
+            "--rounds",
+            "1",
+            "--order",
+            "hermes",
+            "openclaw",
+            "--resume",
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    outputs.extend([resumed.stdout, resumed.stderr])
+    resumed_payload = load_json(resumed.stdout)
+    resumed_audit = Path(resumed_payload.get("audit_path") or "")
+    resumed_log = Path(resumed_payload.get("log_path") or "")
+    require(resumed.returncode == 0, f"resume loop failed: {resumed.stderr or resumed.stdout}", failures)
+    require(len(resumed_payload.get("outputs") or []) == 2, f"resume should have two outputs after continuation: {resumed_payload}", failures)
+    require(any(row.get("resumed_from_existing") for row in resumed_payload.get("outputs") or []), f"resume did not mark reused output: {resumed_payload}", failures)
+    require(resumed_log.exists() and len([line for line in resumed_log.read_text(encoding="utf-8").splitlines() if line.strip()]) == 2, f"resume log should contain two rows: {resumed_payload}", failures)
+    if resumed_audit.exists():
+        resume_actions = {json.loads(line).get("action") for line in resumed_audit.read_text(encoding="utf-8").splitlines() if line.strip()}
+        require("loop.resumed" in resume_actions and "loop.output_reused" in resume_actions, f"resume audit missing actions: {resume_actions}", failures)
+
     with tempfile.TemporaryDirectory(prefix="agentops-loop-ledger-") as tmp:
         tmpdir = Path(tmp)
         db_path = tmpdir / "agentops_mis.db"
@@ -221,13 +299,63 @@ def main() -> int:
         parent_run_id = mis_ledger.get("parent_run_id")
         parent_task_id = mis_ledger.get("parent_task_id")
         artifact_id = mis_ledger.get("artifact_id")
+        plan_ids = mis_ledger.get("plan_ids") or []
+        manifest_ids = mis_ledger.get("plan_evidence_manifest_ids") or []
         require(count_rows(db_path, "tasks", "task_id", [parent_task_id, *child_task_ids]) == 3, f"expected parent+child tasks in ledger: {mis_ledger}", failures)
         require(count_rows(db_path, "runs", "run_id", [parent_run_id, *child_run_ids]) == 3, f"expected parent+child runs in ledger: {mis_ledger}", failures)
-        require(count_rows(db_path, "tool_calls", "run_id", child_run_ids) == 2, f"expected child tool calls in ledger: {mis_ledger}", failures)
+        require(count_rows(db_path, "tool_calls", "run_id", [parent_run_id, *child_run_ids]) == 3, f"expected parent+child tool calls in ledger: {mis_ledger}", failures)
         require(count_rows(db_path, "evaluations", "run_id", [parent_run_id, *child_run_ids]) == 3, f"expected evaluations in ledger: {mis_ledger}", failures)
-        require(count_rows(db_path, "artifacts", "artifact_id", [artifact_id]) == 1, f"expected final artifact in ledger: {mis_ledger}", failures)
+        require(count_rows(db_path, "artifacts", "artifact_id", [artifact_id, *(mis_ledger.get("artifact_ids") or [])]) >= 3, f"expected final+child artifacts in ledger: {mis_ledger}", failures)
         require(count_rows(db_path, "audit_logs", "entity_id", [parent_run_id, *child_run_ids]) >= 3, f"expected audit evidence in ledger: {mis_ledger}", failures)
+        require(count_rows(db_path, "agent_plans", "plan_id", plan_ids) == 3, f"expected parent+child plans in ledger: {mis_ledger}", failures)
+        require(count_rows(db_path, "plan_evidence_manifests", "manifest_id", manifest_ids) == 3, f"expected parent+child manifests in ledger: {mis_ledger}", failures)
+        require(count_manifest_status(db_path, manifest_ids, "verified") == 3, f"expected verified manifests: {mis_ledger}", failures)
         require(mis_ledger.get("raw_omitted") is True and mis_ledger.get("token_omitted") is True, f"MIS ledger omission proof missing: {mis_ledger}", failures)
+
+    with tempfile.TemporaryDirectory(prefix="agentops-loop-block-") as tmp:
+        tmpdir = Path(tmp)
+        db_path = tmpdir / "agentops_mis.db"
+        shutil.copy(ROOT / "agentops_mis.db", db_path)
+        port = free_port()
+        base_url = f"http://127.0.0.1:{port}"
+        server = start_server(db_path, port, tmpdir / "server.log")
+        try:
+            wait_for_server(base_url)
+            blocked = subprocess.run(
+                [
+                    sys.executable,
+                    str(LOOP),
+                    "--topic",
+                    "Record a blocked Hermes/OpenClaw loop lane into MIS.",
+                    "--rounds",
+                    "1",
+                    "--order",
+                    "hermes",
+                    "--simulate-failure-agent",
+                    "hermes",
+                    "--mis-ledger",
+                    "--base-url",
+                    base_url,
+                    "--request-timeout",
+                    "5",
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                timeout=45,
+                check=False,
+            )
+        finally:
+            stop_server(server)
+        outputs.extend([blocked.stdout, blocked.stderr])
+        blocked_payload = load_json(blocked.stdout)
+        blocked_ledger = blocked_payload.get("mis_ledger") or {}
+        blocked_manifests = blocked_ledger.get("plan_evidence_manifest_ids") or []
+        require(blocked.returncode == 1, f"forced-failure loop should return blocked/nonzero: {blocked.stdout}", failures)
+        require(blocked_payload.get("next_action_artifact", {}).get("status") == "blocked", f"forced-failure artifact should be blocked: {blocked_payload}", failures)
+        require(blocked_ledger.get("ok") is True, f"blocked loop should still write MIS ledger evidence: {blocked_payload}", failures)
+        require(count_where(db_path, "SELECT COUNT(*) FROM plan_evidence_manifests WHERE status='blocked'") >= 1, f"blocked loop should persist blocked manifest: {blocked_ledger}", failures)
+        require(len(blocked_manifests) >= 2, f"blocked loop should have child+parent manifests: {blocked_ledger}", failures)
 
     print(json.dumps({
         "ok": not failures,
@@ -237,6 +365,9 @@ def main() -> int:
         "evaluation_checked": True,
         "mis_ledger_checked": True,
         "next_action_artifact_checked": True,
+        "plan_evidence_checked": True,
+        "resume_checked": True,
+        "block_checked": True,
         "secret_leaked": False,
     }, ensure_ascii=False, indent=2, sort_keys=True))
     return 0 if not failures else 1

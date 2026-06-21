@@ -98,6 +98,9 @@ def verify_retry_success(base_url: str, worker_result: dict) -> dict:
     run_id = result.get("run_id")
     require(run_id and result.get("ok") is True, f"retry success worker result invalid: {worker_result}")
     require(result.get("attempt_count") == 2, f"worker output did not report two attempts: {worker_result}")
+    require(result.get("plan_id"), f"retry success missing agent plan: {worker_result}")
+    require(result.get("plan_evidence_manifest_id"), f"retry success missing plan evidence manifest: {worker_result}")
+    require(result.get("plan_evidence_pass") is True, f"retry success plan evidence did not pass: {worker_result}")
     detail = run_detail(base_url, run_id)
     run = detail.get("run") or {}
     tool_calls = detail.get("tool_calls") or []
@@ -110,7 +113,13 @@ def verify_retry_success(base_url: str, worker_result: dict) -> dict:
     history = args.get("retry_history") or []
     require(len(history) == 2 and history[0].get("retryable") is True and history[1].get("ok") is True, f"retry history invalid: {history}")
     require(any(((ev.get("rubric_json") or ev.get("rubric") or "")).find("attempt_count") >= 0 for ev in evaluations), f"evaluation rubric missing attempt metadata: {evaluations}")
-    return {"run_id": run_id, "attempt_count": args.get("attempt_count"), "retry_history": history}
+    return {
+        "run_id": run_id,
+        "attempt_count": args.get("attempt_count"),
+        "retry_history": history,
+        "plan_id": result.get("plan_id"),
+        "plan_evidence_manifest_id": result.get("plan_evidence_manifest_id"),
+    }
 
 
 def verify_non_retry_failure(base_url: str, worker_result: dict) -> dict:
@@ -118,6 +127,9 @@ def verify_non_retry_failure(base_url: str, worker_result: dict) -> dict:
     run_id = result.get("run_id")
     require(run_id and result.get("ok") is False, f"non-retry worker result invalid: {worker_result}")
     require(result.get("attempt_count") == 1 and result.get("error_type") == "ConfirmRunRequired", f"confirm gate should not retry: {worker_result}")
+    require(result.get("plan_id"), f"non-retry failure missing agent plan: {worker_result}")
+    require(result.get("plan_evidence_manifest_id"), f"non-retry failure missing plan evidence manifest: {worker_result}")
+    require(result.get("plan_evidence_pass") is not True, f"non-retry failure should not have passing plan evidence: {worker_result}")
     detail = run_detail(base_url, run_id)
     run = detail.get("run") or {}
     tool_calls = detail.get("tool_calls") or []
@@ -128,7 +140,14 @@ def verify_non_retry_failure(base_url: str, worker_result: dict) -> dict:
     require(args.get("attempt_count") == 1 and args.get("max_attempts") == 3, f"non-retry args missing attempt metadata: {args}")
     history = args.get("retry_history") or []
     require(len(history) == 1 and history[0].get("retryable") is False, f"non-retry history invalid: {history}")
-    return {"run_id": run_id, "attempt_count": args.get("attempt_count"), "error_type": result.get("error_type")}
+    return {
+        "run_id": run_id,
+        "attempt_count": args.get("attempt_count"),
+        "error_type": result.get("error_type"),
+        "plan_id": result.get("plan_id"),
+        "plan_evidence_manifest_id": result.get("plan_evidence_manifest_id"),
+        "plan_evidence_pass": result.get("plan_evidence_pass"),
+    }
 
 
 def smoke(base_url: str, stamp: str) -> dict:
@@ -140,7 +159,20 @@ def smoke(base_url: str, stamp: str) -> dict:
             "name": "Worker Adapter Retry Smoke",
             "runtime_type": "mock",
             "workspace_id": "local-demo",
-            "scopes": ["agents:write", "agents:heartbeat", "tasks:read", "tasks:claim", "runs:write", "toolcalls:write", "memories:propose", "evaluations:submit", "audit:write"],
+            "scopes": [
+                "agents:write",
+                "agents:heartbeat",
+                "agent_plans:write",
+                "plan_evidence:write",
+                "tasks:read",
+                "tasks:claim",
+                "runs:write",
+                "toolcalls:write",
+                "artifacts:write",
+                "memories:propose",
+                "evaluations:submit",
+                "audit:write",
+            ],
             "ttl_days": 1,
             "heartbeat_timeout_sec": 60,
         })
@@ -182,10 +214,15 @@ def smoke(base_url: str, stamp: str) -> dict:
             "retry_task_id": retry_task_id,
             "retry_run_id": retry_result["run_id"],
             "retry_attempt_count": retry_result["attempt_count"],
+            "retry_plan_id": retry_result["plan_id"],
+            "retry_plan_evidence_manifest_id": retry_result["plan_evidence_manifest_id"],
             "confirm_gate_task_id": gate_task_id,
             "confirm_gate_run_id": gate_result["run_id"],
             "confirm_gate_attempt_count": gate_result["attempt_count"],
             "confirm_gate_error_type": gate_result["error_type"],
+            "confirm_gate_plan_id": gate_result["plan_id"],
+            "confirm_gate_plan_evidence_manifest_id": gate_result["plan_evidence_manifest_id"],
+            "confirm_gate_plan_evidence_pass": gate_result["plan_evidence_pass"],
             "token_omitted": True,
         }
     finally:

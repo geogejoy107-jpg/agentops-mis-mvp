@@ -15,7 +15,11 @@ The loop harness lets Codex ask Hermes and OpenClaw for alternating proposals, c
 - Every agent output receives a rule-based evaluation score.
 - Every loop writes audit JSONL events for start, agent output, next-action artifact, and completion.
 - Every loop writes a next-action artifact for Codex review.
-- `--mis-ledger` records parent/child tasks, parent/child runs, tool calls, evaluations, audit logs, and a final artifact through Agent Gateway.
+- `--mis-ledger` records parent/child tasks, parent/child runs, agent plans, tool calls, evaluations, artifacts, audit logs, and plan evidence manifests through Agent Gateway.
+- Parent and child lanes each follow the Agent Work Method Block: READ, PLAN, RETRIEVE, COMPARE, EXECUTE, VERIFY, RECORD.
+- A loop lane is not considered delivery-ready until its `plan_evidence_manifest` verifies against tool, evaluation, artifact, and audit evidence.
+- `--resume` can reuse existing JSONL outputs for a fixed `--loop-id` and continue missing iterations.
+- `--max-agent-attempts` and `--retry-delay-sec` bound retry behavior; summaries store retry hashes, not raw prompts or raw responses.
 - Raw prompts, raw responses, credentials, and private transcripts are omitted.
 - Logs live under `.agentops_runtime/loops/`, which is gitignored.
 - Live runtime calls require `--confirm-live`.
@@ -44,9 +48,32 @@ Expected MIS writeback:
 
 - one parent task/run owned by the Codex loop supervisor
 - one child task/run per Hermes/OpenClaw output
-- one tool call and one rule evaluation per child run
+- one `agent_plan` for the parent and one per child lane
+- one tool call, one rule evaluation, and one loop output artifact per child run
+- one `plan_evidence_manifest` per child lane and one parent manifest
 - audit evidence for output recording and loop completion
 - one final `loop_next_action` artifact linked to the parent run
+
+Resume an interrupted dry-run loop:
+
+```bash
+python3 scripts/hermes_openclaw_loop.py \
+  --topic "Review the next AgentOps MIS worker-loop improvement." \
+  --rounds 2 \
+  --loop-id loop_demo_review \
+  --resume \
+  --mis-ledger
+```
+
+Smoke-test a blocked lane without calling live runtimes:
+
+```bash
+python3 scripts/hermes_openclaw_loop.py \
+  --topic "Verify blocked loop evidence is visible." \
+  --rounds 1 \
+  --simulate-failure-agent hermes \
+  --mis-ledger
+```
 
 Live Hermes only:
 
@@ -74,7 +101,7 @@ Smoke test:
 python3 scripts/hermes_openclaw_loop_smoke.py
 ```
 
-The smoke test starts an isolated temporary SQLite-backed server, runs `--mis-ledger`, and verifies `tasks`, `runs`, `tool_calls`, `evaluations`, `audit_logs`, and `artifacts` without touching the default `agentops_mis.db`.
+The smoke test starts an isolated temporary SQLite-backed server, runs `--mis-ledger`, and verifies `tasks`, `runs`, `agent_plans`, `tool_calls`, `evaluations`, `audit_logs`, `artifacts`, `plan_evidence_manifests`, resume behavior, and blocked-lane visibility without touching the default `agentops_mis.db`.
 
 ## Stop Conditions
 

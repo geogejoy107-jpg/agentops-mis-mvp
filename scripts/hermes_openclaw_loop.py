@@ -87,6 +87,9 @@ class GatewayClient:
             raise RuntimeError(f"Cannot reach {self.base_url}{path}: {redact(str(exc.reason), 300)}") from exc
 
 
+AGENT_WORK_STEPS = ["READ", "PLAN", "RETRIEVE", "COMPARE", "EXECUTE", "VERIFY", "RECORD"]
+
+
 def loop_prompt(topic: str, round_no: int, previous: list[dict]) -> str:
     prior = []
     for item in previous[-4:]:
@@ -162,6 +165,16 @@ def dry_result(agent: str, prompt: str) -> dict:
     }
 
 
+def forced_failure_result(agent: str, prompt: str) -> dict:
+    return {
+        "status": "failed",
+        "summary": f"{agent} forced failure for loop smoke. prompt_hash={stable_hash(prompt)[:16]}",
+        "raw_omitted": True,
+        "error_type": "ForcedLoopFailure",
+        "retryable": False,
+    }
+
+
 def secret_like(text: str | None) -> bool:
     value = str(text or "")
     return any(pattern.search(value) for pattern, _repl in SECRET_PATTERNS)
@@ -197,6 +210,20 @@ def write_json(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def read_jsonl(path: Path) -> list[dict]:
+    if not path.exists():
+        return []
+    rows = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return rows
+
+
 def git_check_ignored(path: Path) -> bool:
     proc = subprocess.run(
         ["git", "check-ignore", "-q", str(path)],
@@ -222,6 +249,40 @@ def audit_event(audit_path: Path, loop_id: str, action: str, entity_type: str, e
         "created_at": now_iso(),
     }
     append_jsonl(audit_path, row)
+
+
+def gateway_agent_plan(client: GatewayClient, args, agent_id: str, task_id: str, run_id: str | None, understanding: str, risk: str, files: list[str]) -> dict:
+    return client.post("/api/agent-gateway/agent-plans", {
+        "workspace_id": args.workspace_id,
+        "agent_id": agent_id,
+        "task_id": task_id,
+        "run_id": run_id,
+        "task_understanding": understanding,
+        "referenced_specs": ["PROJECT_SPEC.md", "AGENT_WORKFLOW.md", "docs/AGENT_WORK_METHOD_BLOCK.md", "docs/HERMES_OPENCLAW_LOOP_RUNBOOK.md"],
+        "referenced_memories": ["knowledge/shared/common_failures.md", "project_memory"],
+        "referenced_bases": ["knowledge/bases/hermes/BASE_SPEC.md", "knowledge/bases/openclaw/BASE_SPEC.md", "agent_gateway_ledger"],
+        "proposed_files_to_change": files,
+        "risk_level": risk,
+        "approval_required": risk in {"high", "critical"},
+        "execution_steps": AGENT_WORK_STEPS,
+        "verification_plan": "Loop lane must record tool, evaluation, artifact, audit and plan_evidence_manifest evidence for this run.",
+        "rollback_plan": "Leave the loop blocked, keep runtime files under .agentops_runtime, and require Codex/operator review before another live iteration.",
+        "status": "submitted",
+    }, agent_id=agent_id)
+
+
+def gateway_plan_manifest(client: GatewayClient, args, agent_id: str, plan_id: str, run_id: str, tool_call_id: str | None, evaluation_id: str | None, artifact_id: str | None) -> dict:
+    return client.post("/api/agent-gateway/plan-evidence-manifests", {
+        "workspace_id": args.workspace_id,
+        "agent_id": agent_id,
+        "plan_id": plan_id,
+        "run_id": run_id,
+        "mismatch_policy": "block",
+        "expected_steps": AGENT_WORK_STEPS,
+        "tool_call_ids": [tool_call_id] if tool_call_id else [],
+        "evaluation_ids": [evaluation_id] if evaluation_id else [],
+        "artifact_ids": [artifact_id] if artifact_id else [],
+    }, agent_id=agent_id)
 
 
 def record_loop_to_mis(args, loop_id: str, outputs: list[dict], artifact: dict) -> dict:
@@ -272,6 +333,17 @@ def record_loop_to_mis(args, loop_id: str, outputs: list[dict], artifact: dict) 
         "risk_level": "medium" if args.mode == "dry-run" else "high",
         "acceptance_criteria": "Every loop output must write run, tool-call, evaluation, audit and final artifact evidence without storing raw prompts or responses.",
     }, agent_id=supervisor_id)
+    parent_plan = gateway_agent_plan(
+        client,
+        args,
+        supervisor_id,
+        parent_task_id,
+        None,
+        f"Supervise Hermes/OpenClaw loop {loop_id}, enforce bounded attempts, record child evidence and produce next action.",
+        "medium" if args.mode == "dry-run" else "high",
+        ["scripts/hermes_openclaw_loop.py", ".agentops_runtime/loops", "Agent Gateway ledger"],
+    )
+    parent_plan_id = (parent_plan.get("agent_plan") or {}).get("plan_id")
     client.post("/api/agent-gateway/runs/start", {
         "workspace_id": args.workspace_id,
         "run_id": parent_run_id,
@@ -284,8 +356,13 @@ def record_loop_to_mis(args, loop_id: str, outputs: list[dict], artifact: dict) 
 
     child_task_ids = []
     child_run_ids = []
+    plan_ids = [parent_plan_id] if parent_plan_id else []
+    manifest_ids = []
+    verified_manifest_ids = []
+    blocked_manifest_ids = []
     tool_call_ids = []
     evaluation_ids = []
+    artifact_ids = []
     for row in outputs:
         agent = row["agent"]
         agent_id = agent_ids[agent]
@@ -306,6 +383,19 @@ def record_loop_to_mis(args, loop_id: str, outputs: list[dict], artifact: dict) 
             "risk_level": "low" if row["status"] == "dry_run" else "medium",
             "acceptance_criteria": "Return a concise redacted summary; raw prompt and raw response must remain omitted.",
         }, agent_id=agent_id)
+        child_plan = gateway_agent_plan(
+            client,
+            args,
+            agent_id,
+            task_id,
+            None,
+            f"{agent} loop round {row['round']} must review the topic using only redacted prior summaries and return safe loop guidance.",
+            "low" if row["status"] == "dry_run" else "medium",
+            ["scripts/hermes_openclaw_loop.py", ".agentops_runtime/loops"],
+        )
+        child_plan_id = (child_plan.get("agent_plan") or {}).get("plan_id")
+        if child_plan_id:
+            plan_ids.append(child_plan_id)
         client.post("/api/agent-gateway/runs/start", {
             "workspace_id": args.workspace_id,
             "run_id": run_id,
@@ -346,6 +436,28 @@ def record_loop_to_mis(args, loop_id: str, outputs: list[dict], artifact: dict) 
         evaluation_id = (eval_payload.get("evaluation") or {}).get("evaluation_id")
         if evaluation_id:
             evaluation_ids.append(evaluation_id)
+        artifact_payload = client.post("/api/agent-gateway/artifacts", {
+            "workspace_id": args.workspace_id,
+            "run_id": run_id,
+            "task_id": task_id,
+            "agent_id": agent_id,
+            "artifact_id": stable_id("art_loop_output", loop_id, agent, row["round"]),
+            "artifact_type": "loop_agent_output",
+            "title": f"{agent} loop round {row['round']} evidence",
+            "uri": f"loop://{loop_id}/{agent}/{row['round']}",
+            "summary": row.get("summary") or row["status"],
+            "content_hash": stable_hash({
+                "loop_id": loop_id,
+                "agent": agent,
+                "round": row["round"],
+                "summary": row.get("summary") or "",
+                "status": row.get("status"),
+                "prompt_hash": row.get("prompt_hash"),
+            }),
+        }, agent_id=agent_id)
+        artifact_id = (artifact_payload.get("artifact") or {}).get("artifact_id")
+        if artifact_id:
+            artifact_ids.append(artifact_id)
         client.post("/api/agent-gateway/audit", {
             "workspace_id": args.workspace_id,
             "agent_id": agent_id,
@@ -371,6 +483,14 @@ def record_loop_to_mis(args, loop_id: str, outputs: list[dict], artifact: dict) 
             "error_type": None if evaluation.get("pass") else "LoopEvaluationFailed",
             "error_message": None if evaluation.get("pass") else ",".join(evaluation.get("failed_checks") or []),
         }, agent_id=agent_id)
+        if child_plan_id:
+            manifest_payload = gateway_plan_manifest(client, args, agent_id, child_plan_id, run_id, tool_call_id, evaluation_id, artifact_id)
+            manifest = manifest_payload.get("manifest") or {}
+            verification = manifest_payload.get("verification") or {}
+            manifest_id = manifest.get("manifest_id")
+            if manifest_id:
+                manifest_ids.append(manifest_id)
+                (verified_manifest_ids if verification.get("pass") else blocked_manifest_ids).append(manifest_id)
 
     artifact_payload = client.post("/api/agent-gateway/artifacts", {
         "workspace_id": args.workspace_id,
@@ -384,7 +504,25 @@ def record_loop_to_mis(args, loop_id: str, outputs: list[dict], artifact: dict) 
         "summary": artifact.get("recommended_next_action") or artifact.get("status") or "Loop artifact recorded.",
         "content_hash": stable_hash(artifact),
     }, agent_id=supervisor_id)
-    client.post("/api/agent-gateway/evaluations/submit", {
+    parent_artifact_id = (artifact_payload.get("artifact") or {}).get("artifact_id")
+    if parent_artifact_id:
+        artifact_ids.append(parent_artifact_id)
+    parent_tool = client.post("/api/agent-gateway/tool-calls", {
+        "workspace_id": args.workspace_id,
+        "run_id": parent_run_id,
+        "agent_id": supervisor_id,
+        "tool_name": "loop.supervise",
+        "tool_category": "custom",
+        "risk_level": "low" if args.mode == "dry-run" else "medium",
+        "status": "completed" if artifact.get("status") == "ready_for_codex_review" else "failed",
+        "target_resource": f"loop://{loop_id}",
+        "args": {"loop_id": loop_id, "raw_prompt_omitted": True, "child_runs": len(child_run_ids)},
+        "result_summary": artifact.get("recommended_next_action") or artifact.get("status") or "Loop supervised.",
+    }, agent_id=supervisor_id)
+    parent_tool_call_id = (parent_tool.get("tool_call") or {}).get("tool_call_id")
+    if parent_tool_call_id:
+        tool_call_ids.append(parent_tool_call_id)
+    parent_eval = client.post("/api/agent-gateway/evaluations/submit", {
         "workspace_id": args.workspace_id,
         "run_id": parent_run_id,
         "task_id": parent_task_id,
@@ -395,6 +533,9 @@ def record_loop_to_mis(args, loop_id: str, outputs: list[dict], artifact: dict) 
         "rubric": {"gate": "loop_parent_artifact_recorded", "raw_omitted": True},
         "notes": "Parent loop run recorded child evidence and final next-action artifact.",
     }, agent_id=supervisor_id)
+    parent_evaluation_id = (parent_eval.get("evaluation") or {}).get("evaluation_id")
+    if parent_evaluation_id:
+        evaluation_ids.append(parent_evaluation_id)
     client.post("/api/agent-gateway/audit", {
         "workspace_id": args.workspace_id,
         "agent_id": supervisor_id,
@@ -406,7 +547,7 @@ def record_loop_to_mis(args, loop_id: str, outputs: list[dict], artifact: dict) 
         "metadata": {
             "loop_id": loop_id,
             "child_runs": len(child_run_ids),
-            "artifact_id": (artifact_payload.get("artifact") or {}).get("artifact_id"),
+            "artifact_id": parent_artifact_id,
             "raw_omitted": True,
         },
     }, agent_id=supervisor_id)
@@ -419,6 +560,14 @@ def record_loop_to_mis(args, loop_id: str, outputs: list[dict], artifact: dict) 
         "error_type": None if parent_ok else "LoopChildFailure",
         "error_message": None if parent_ok else "One or more child loop evaluations failed.",
     }, agent_id=supervisor_id)
+    if parent_plan_id:
+        parent_manifest_payload = gateway_plan_manifest(client, args, supervisor_id, parent_plan_id, parent_run_id, parent_tool_call_id, parent_evaluation_id, parent_artifact_id)
+        parent_manifest = parent_manifest_payload.get("manifest") or {}
+        parent_verification = parent_manifest_payload.get("verification") or {}
+        parent_manifest_id = parent_manifest.get("manifest_id")
+        if parent_manifest_id:
+            manifest_ids.append(parent_manifest_id)
+            (verified_manifest_ids if parent_verification.get("pass") else blocked_manifest_ids).append(parent_manifest_id)
     return {
         "enabled": True,
         "ok": True,
@@ -428,9 +577,14 @@ def record_loop_to_mis(args, loop_id: str, outputs: list[dict], artifact: dict) 
         "parent_run_id": parent_run_id,
         "child_task_ids": child_task_ids,
         "child_run_ids": child_run_ids,
+        "plan_ids": plan_ids,
+        "plan_evidence_manifest_ids": manifest_ids,
+        "verified_plan_evidence_manifest_ids": verified_manifest_ids,
+        "blocked_plan_evidence_manifest_ids": blocked_manifest_ids,
         "tool_call_ids": tool_call_ids,
         "evaluation_ids": evaluation_ids,
-        "artifact_id": (artifact_payload.get("artifact") or {}).get("artifact_id"),
+        "artifact_ids": artifact_ids,
+        "artifact_id": parent_artifact_id,
         "registered_agents": registered_agents,
         "raw_omitted": True,
         "token_omitted": True,
@@ -440,6 +594,7 @@ def record_loop_to_mis(args, loop_id: str, outputs: list[dict], artifact: dict) 
 def build_next_action_artifact(loop_id: str, args, outputs: list[dict], log_path: Path, audit_path: Path) -> dict:
     failed = [row for row in outputs if not (row.get("evaluation") or {}).get("pass")]
     last = outputs[-1] if outputs else {}
+    reused = [row for row in outputs if row.get("resumed_from_existing")]
     return {
         "artifact_type": "loop_next_action",
         "loop_id": loop_id,
@@ -450,6 +605,8 @@ def build_next_action_artifact(loop_id: str, args, outputs: list[dict], log_path
         "status": "blocked" if failed else "ready_for_codex_review",
         "recommended_next_action": redact(last.get("summary") or "No agent output available.", 500),
         "failed_evaluations": len(failed),
+        "resumed_outputs": len(reused),
+        "max_agent_attempts": max(int(args.max_agent_attempts or 1), 1),
         "log_path": str(log_path),
         "audit_path": str(audit_path),
         "raw_omitted": True,
@@ -478,30 +635,55 @@ def run_loop(args) -> dict:
     log_path = runtime_dir / f"{loop_id}.jsonl"
     audit_path = runtime_dir / f"{loop_id}.audit.jsonl"
     artifact_path = runtime_dir / f"{loop_id}.next_action.json"
-    transcript: list[dict] = []
-    outputs: list[dict] = []
+    existing_rows = read_jsonl(log_path) if args.resume else []
+    for row in existing_rows:
+        row["resumed_from_existing"] = True
+    existing_by_key = {(row.get("round"), row.get("agent")): row for row in existing_rows}
+    transcript: list[dict] = list(existing_rows)
+    outputs: list[dict] = list(existing_rows)
 
-    audit_event(audit_path, loop_id, "loop.started", "loop", loop_id, {
+    audit_event(audit_path, loop_id, "loop.resumed" if existing_rows else "loop.started", "loop", loop_id, {
         "mode": args.mode,
         "rounds": args.rounds,
         "agents": args.order,
         "topic_hash": stable_hash(args.topic),
         "live_agents": sorted(live_agents),
+        "resume": bool(args.resume),
+        "existing_outputs": len(existing_rows),
     })
 
     for round_no in range(1, args.rounds + 1):
         for agent in args.order:
+            if args.resume and (round_no, agent) in existing_by_key:
+                audit_event(audit_path, loop_id, "loop.output_reused", "loop_output", f"{agent}:{round_no}", {
+                    "agent": agent,
+                    "round": round_no,
+                    "reason": "resume_existing_output",
+                })
+                continue
             prompt = loop_prompt(args.topic, round_no, transcript)
             started = now_iso()
-            try:
-                if agent == "hermes" and "hermes" in live_agents:
-                    result = call_hermes(prompt, args)
-                elif agent == "openclaw" and "openclaw" in live_agents:
-                    result = call_openclaw(prompt, args)
-                else:
-                    result = dry_result(agent, prompt)
-            except Exception as exc:
-                result = {"status": "failed", "summary": redact(f"{type(exc).__name__}: {exc}"), "raw_omitted": True}
+            result = {"status": "failed", "summary": "Loop did not run.", "raw_omitted": True}
+            retry_history = []
+            max_attempts = max(int(args.max_agent_attempts or 1), 1)
+            for attempt_no in range(1, max_attempts + 1):
+                try:
+                    if agent in set(args.simulate_failure_agent or []):
+                        result = forced_failure_result(agent, prompt)
+                    elif agent == "hermes" and "hermes" in live_agents:
+                        result = call_hermes(prompt, args)
+                    elif agent == "openclaw" and "openclaw" in live_agents:
+                        result = call_openclaw(prompt, args)
+                    else:
+                        result = dry_result(agent, prompt)
+                except Exception as exc:
+                    result = {"status": "failed", "summary": redact(f"{type(exc).__name__}: {exc}"), "raw_omitted": True, "retryable": True}
+                retry_history.append({"attempt": attempt_no, "status": result.get("status"), "summary_hash": stable_hash(result.get("summary", ""))[:16]})
+                if result.get("status") in {"completed", "dry_run"} or not result.get("retryable", True):
+                    break
+                if attempt_no < max_attempts and args.retry_delay_sec > 0:
+                    import time
+                    time.sleep(args.retry_delay_sec)
             row = {
                 "loop_id": loop_id,
                 "round": round_no,
@@ -513,7 +695,12 @@ def run_loop(args) -> dict:
                 "raw_omitted": True,
                 "started_at": started,
                 "ended_at": now_iso(),
+                "attempt_count": len(retry_history),
+                "max_attempts": max_attempts,
+                "retry_history": retry_history,
             }
+            if result.get("error_type"):
+                row["error_type"] = result["error_type"]
             if "returncode" in result:
                 row["returncode"] = result["returncode"]
             row["evaluation"] = evaluate_output(row)
@@ -580,6 +767,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--confirm-live", action="store_true")
     parser.add_argument("--loop-id", default="")
     parser.add_argument("--runtime-dir", default=str(DEFAULT_RUNTIME_DIR))
+    parser.add_argument("--resume", action="store_true", help="Reuse existing loop JSONL rows for the same --loop-id and continue missing iterations.")
     parser.add_argument("--order", nargs="+", choices=["hermes", "openclaw"], default=["hermes", "openclaw"])
     parser.add_argument("--hermes-url", default=os.environ.get("HERMES_GATEWAY_URL", "http://127.0.0.1:8642"))
     parser.add_argument("--hermes-model", default=os.environ.get("HERMES_LOOP_MODEL", "hermes-agent"))
@@ -588,6 +776,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--openclaw-bin", default=os.environ.get("OPENCLAW_BIN", "/opt/homebrew/bin/openclaw"))
     parser.add_argument("--openclaw-agent", default=os.environ.get("OPENCLAW_AGENT", "main"))
     parser.add_argument("--openclaw-timeout", type=int, default=120)
+    parser.add_argument("--max-agent-attempts", type=int, default=1)
+    parser.add_argument("--retry-delay-sec", type=float, default=1.0)
+    parser.add_argument("--simulate-failure-agent", action="append", choices=["hermes", "openclaw"], default=[], help="Smoke-test hook: force an agent lane to fail without calling live runtimes.")
     parser.add_argument("--mis-ledger", action="store_true", help="Record loop tasks/runs/tool calls/evaluations/audit/artifact through Agent Gateway.")
     parser.add_argument("--base-url", default=os.environ.get("AGENTOPS_BASE_URL", DEFAULT_BASE_URL))
     parser.add_argument("--workspace-id", default=os.environ.get("AGENTOPS_WORKSPACE_ID", DEFAULT_WORKSPACE_ID))
