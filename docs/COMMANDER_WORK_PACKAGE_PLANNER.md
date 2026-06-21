@@ -172,7 +172,13 @@ Create a Commander-compatible remediation package from a failed benchmark:
 ./scripts/agentops eval remediate-case-run --case-run-id ecr_123
 ./scripts/agentops eval remediate-case-run --case-run-id ecr_123 --confirm-create
 ./scripts/agentops commander packages --project-id proj_evalcase_remediation_x --limit 5
+./scripts/agentops operator action-plan --limit 20
 ```
+
+The operator action plan exposes this as a `remediation_loop` lane with counts
+for packages, ready-for-review packages, pending synthesis reviews, and
+promoted deliveries. `/workspace/agents` renders those actions in the Operator
+Action Queue without executing workers or approving gates.
 
 Dispatch a package:
 

@@ -1106,7 +1106,11 @@ Maps to `GET /api/operator/action-plan`. This is read-only: it must not start a
 worker, approve a gate, upload data, or call Hermes/OpenClaw. It returns
 `top_commands`, `actions[]`, source statuses, safety flags, and
 `token_omitted:true` so a local admin, remote operator, or future commander
-agent can decide which explicit command to run next.
+agent can decide which explicit command to run next. Failed-benchmark
+remediation is a first-class `remediation_loop` source: once a failed
+evaluation case becomes a Commander work package, the action plan reports
+remediation package counts, ready-for-review counts, pending synthesis reviews,
+and read-only next commands for `/workspace/agents`.
 
 ### `agentops eval propose-case`
 
