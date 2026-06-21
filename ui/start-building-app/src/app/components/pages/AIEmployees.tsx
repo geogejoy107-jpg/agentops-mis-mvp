@@ -332,6 +332,7 @@ export function AIEmployees() {
       dispatchBatchMock: "Queue planned mock batch",
       synthesizePackages: "Create synthesis report",
       promoteSynthesis: "Promote approved synthesis",
+      synthesisLoop: "Synthesis loop",
       reviewQueueTitle: "Human Review Queue",
       reviewQueueSummary: "One operator queue for approvals, memory candidates and customer deliveries. Handle returned work first without waiting for every worker lane.",
       reviewQueueEmpty: "No review items. Keep dispatching or watch the async inbox.",
@@ -650,6 +651,7 @@ export function AIEmployees() {
       dispatchBatchMock: "批量排队 planned mock",
       synthesizePackages: "生成合并报告",
       promoteSynthesis: "晋升已批准报告",
+      synthesisLoop: "合并闭环",
       reviewQueueTitle: "人工审核队列",
       reviewQueueSummary: "把审批、候选记忆和客户交付聚合成一个 operator 队列；哪个 worker 先回来，就先处理哪个。",
       reviewQueueEmpty: "暂无待审事项。可以继续派发任务，或观察异步 Inbox。",
@@ -2468,11 +2470,12 @@ export function AIEmployees() {
             <StatusBadge status={localReadiness?.ok ? "pass" : "blocked"} label={`${localReadinessReadyGates}/${localReadinessGates.length || 0}`} />
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-2 mt-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-6 gap-2 mt-3">
             {[
               { label: copy.localReadinessOverall, value: localReadiness?.status || "—", status: localReadiness?.status || "unknown" },
               { label: copy.evidenceChains, value: localEvidence?.closed_loop_runs ?? "—", status: localEvidence?.has_task_run_tool_eval_audit_artifact_chain ? "pass" : "attention" },
               { label: copy.memoryApprovalCounts, value: `${localEvidence?.memories ?? 0}/${localEvidence?.approvals ?? 0}`, status: localEvidence?.has_memory_or_knowledge && localEvidence?.has_approval_flow ? "pass" : "attention" },
+              { label: copy.synthesisLoop, value: `${localEvidence?.commander_synthesis_promoted_deliveries ?? 0}/${localEvidence?.commander_synthesis_pending_reviews ?? 0}`, status: (localEvidence?.commander_synthesis_promoted_deliveries ?? 0) > 0 ? "pass" : "attention" },
               { label: copy.recommendedAdapter, value: localRecommendedAdapter, status: localRecommendedAdapter ? "ready" : "unknown" },
               { label: copy.safetyProof, value: localSafetyOk ? copy.statusClear : copy.statusAttention, status: localSafetyOk ? "pass" : "blocked" },
             ].map((item) => (

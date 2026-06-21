@@ -632,9 +632,36 @@ export interface LocalReadinessEvidence {
   workflow_jobs: number;
   customer_worker_artifacts: number;
   closed_loop_runs: number;
+  commander_synthesis_artifacts: number;
+  commander_synthesis_pending_reviews: number;
+  commander_synthesis_approved_reviews: number;
+  commander_synthesis_promoted_memories: number;
+  commander_synthesis_promoted_deliveries: number;
   has_task_run_tool_eval_audit_artifact_chain: boolean;
   has_memory_or_knowledge: boolean;
   has_approval_flow: boolean;
+}
+
+export interface CommanderSynthesisLifecyclePayload {
+  status: string;
+  summary: {
+    synthesis_artifacts: number;
+    pending_reviews: number;
+    approved_reviews: number;
+    rejected_reviews: number;
+    promoted_memory_candidates: number;
+    promoted_delivery_artifacts: number;
+  };
+  recent: Record<string, unknown>[];
+  next_actions: string[];
+  safety: {
+    read_only: boolean;
+    ledger_mutated: boolean;
+    live_execution_performed: boolean;
+    token_omitted: boolean;
+  };
+  token_omitted: boolean;
+  live_execution_performed: boolean;
 }
 
 export interface LocalReadinessPayload {
@@ -648,6 +675,7 @@ export interface LocalReadinessPayload {
   next_actions: string[];
   contract?: string;
   adapter_readiness: WorkerAdapterReadinessSummary;
+  commander_synthesis_lifecycle?: CommanderSynthesisLifecyclePayload;
   token_omitted: boolean;
   live_execution_performed: boolean;
 }
@@ -2078,6 +2106,9 @@ export async function loadLocalReadiness(): Promise<LocalReadinessPayload> {
     fallback_reason: "endpoint_not_available",
   });
   const evidenceRaw = typeof raw.evidence === "object" && raw.evidence !== null ? raw.evidence as Record<string, unknown> : {};
+  const lifecycleRaw = typeof raw.commander_synthesis_lifecycle === "object" && raw.commander_synthesis_lifecycle !== null ? raw.commander_synthesis_lifecycle as Record<string, unknown> : {};
+  const lifecycleSummaryRaw = typeof lifecycleRaw.summary === "object" && lifecycleRaw.summary !== null ? lifecycleRaw.summary as Record<string, unknown> : {};
+  const lifecycleSafetyRaw = typeof lifecycleRaw.safety === "object" && lifecycleRaw.safety !== null ? lifecycleRaw.safety as Record<string, unknown> : {};
   const adapterReadiness = typeof raw.adapter_readiness === "object" && raw.adapter_readiness !== null ? raw.adapter_readiness as WorkerAdapterReadinessSummary : {};
   return {
     provider: String(raw.provider || "agentops-local"),
@@ -2111,11 +2142,37 @@ export async function loadLocalReadiness(): Promise<LocalReadinessPayload> {
       workflow_jobs: numberValue(evidenceRaw.workflow_jobs, 0),
       customer_worker_artifacts: numberValue(evidenceRaw.customer_worker_artifacts, 0),
       closed_loop_runs: numberValue(evidenceRaw.closed_loop_runs, 0),
+      commander_synthesis_artifacts: numberValue(evidenceRaw.commander_synthesis_artifacts, 0),
+      commander_synthesis_pending_reviews: numberValue(evidenceRaw.commander_synthesis_pending_reviews, 0),
+      commander_synthesis_approved_reviews: numberValue(evidenceRaw.commander_synthesis_approved_reviews, 0),
+      commander_synthesis_promoted_memories: numberValue(evidenceRaw.commander_synthesis_promoted_memories, 0),
+      commander_synthesis_promoted_deliveries: numberValue(evidenceRaw.commander_synthesis_promoted_deliveries, 0),
       has_task_run_tool_eval_audit_artifact_chain: boolValue(evidenceRaw.has_task_run_tool_eval_audit_artifact_chain),
       has_memory_or_knowledge: boolValue(evidenceRaw.has_memory_or_knowledge),
       has_approval_flow: boolValue(evidenceRaw.has_approval_flow),
     },
     adapter_readiness: adapterReadiness,
+    commander_synthesis_lifecycle: raw.commander_synthesis_lifecycle ? {
+      status: String(lifecycleRaw.status || "unknown"),
+      summary: {
+        synthesis_artifacts: numberValue(lifecycleSummaryRaw.synthesis_artifacts, 0),
+        pending_reviews: numberValue(lifecycleSummaryRaw.pending_reviews, 0),
+        approved_reviews: numberValue(lifecycleSummaryRaw.approved_reviews, 0),
+        rejected_reviews: numberValue(lifecycleSummaryRaw.rejected_reviews, 0),
+        promoted_memory_candidates: numberValue(lifecycleSummaryRaw.promoted_memory_candidates, 0),
+        promoted_delivery_artifacts: numberValue(lifecycleSummaryRaw.promoted_delivery_artifacts, 0),
+      },
+      recent: asArray<Record<string, unknown>>(lifecycleRaw.recent),
+      next_actions: asArray(lifecycleRaw.next_actions).map(String),
+      safety: {
+        read_only: boolValue(lifecycleSafetyRaw.read_only),
+        ledger_mutated: boolValue(lifecycleSafetyRaw.ledger_mutated),
+        live_execution_performed: boolValue(lifecycleSafetyRaw.live_execution_performed),
+        token_omitted: boolValue(lifecycleSafetyRaw.token_omitted),
+      },
+      token_omitted: boolValue(lifecycleRaw.token_omitted),
+      live_execution_performed: boolValue(lifecycleRaw.live_execution_performed),
+    } : undefined,
     next_actions: asArray(raw.next_actions).map(String),
     contract: raw.contract ? String(raw.contract) : undefined,
     token_omitted: boolValue(raw.token_omitted),

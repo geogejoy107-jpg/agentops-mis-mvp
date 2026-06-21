@@ -9901,8 +9901,8 @@ def commander_synthesis_lifecycle(conn: sqlite3.Connection, limit: int = 5) -> d
         memory_count = scalar_count(conn, "SELECT COUNT(*) FROM memories WHERE source_ref=?", (artifact_id,))
         delivery_count = scalar_count(
             conn,
-            "SELECT COUNT(*) FROM artifacts WHERE artifact_type='customer_delivery_report' AND artifact_id LIKE 'art_customer_cmd_synthesis_%' AND summary=?",
-            (row.get("summary") or "",),
+            "SELECT COUNT(*) FROM audit_logs WHERE action='commander.work_package_synthesis_promote_delivery' AND metadata_json LIKE ?",
+            (f"%{artifact_id}%",),
         )
         latest_approval = approvals[0] if approvals else {}
         if delivery_count:
@@ -10446,6 +10446,8 @@ def local_readiness(conn: sqlite3.Connection, headers) -> dict:
     worker = worker_status(conn)
     adapter_summary = worker.get("adapter_readiness") or {}
     adapter_payload = worker_adapter_readiness(conn)
+    synthesis_lifecycle = commander_synthesis_lifecycle(conn, limit=3)
+    synthesis_summary = synthesis_lifecycle.get("summary") or {}
     docs = [
         ("README", ROOT / "README.md"),
         ("remote_worker_runbook", ROOT / "docs" / "REMOTE_WORKER_OPERATIONS_RUNBOOK.md"),
@@ -10472,6 +10474,11 @@ def local_readiness(conn: sqlite3.Connection, headers) -> dict:
         "workflow_jobs": scalar_count(conn, "SELECT COUNT(*) FROM workflow_jobs"),
         "customer_worker_artifacts": scalar_count(conn, "SELECT COUNT(*) FROM artifacts WHERE artifact_type='customer_worker_result'"),
         "closed_loop_runs": recent_closed_loop_run_count(conn),
+        "commander_synthesis_artifacts": int(synthesis_summary.get("synthesis_artifacts") or 0),
+        "commander_synthesis_pending_reviews": int(synthesis_summary.get("pending_reviews") or 0),
+        "commander_synthesis_approved_reviews": int(synthesis_summary.get("approved_reviews") or 0),
+        "commander_synthesis_promoted_memories": int(synthesis_summary.get("promoted_memory_candidates") or 0),
+        "commander_synthesis_promoted_deliveries": int(synthesis_summary.get("promoted_delivery_artifacts") or 0),
     }
     evidence["has_task_run_tool_eval_audit_artifact_chain"] = evidence["closed_loop_runs"] > 0
     evidence["has_memory_or_knowledge"] = evidence["memories"] > 0
@@ -10526,6 +10533,18 @@ def local_readiness(conn: sqlite3.Connection, headers) -> dict:
             "next_action": "agentops workflow customer-worker-task --adapter mock --title 'Local readiness demo' --description 'Write full MIS evidence.'",
         },
         {
+            "id": "commander_synthesis_loop",
+            "label": "Commander synthesis -> review -> memory/delivery",
+            "ok": evidence["commander_synthesis_promoted_memories"] > 0 or evidence["commander_synthesis_promoted_deliveries"] > 0,
+            "status": "ready" if (evidence["commander_synthesis_promoted_memories"] > 0 or evidence["commander_synthesis_promoted_deliveries"] > 0) else "attention",
+            "detail": (
+                f"{evidence['commander_synthesis_artifacts']} synthesis report(s), "
+                f"{evidence['commander_synthesis_pending_reviews']} pending review(s), "
+                f"{evidence['commander_synthesis_promoted_deliveries']} promoted delivery artifact(s)"
+            ),
+            "next_action": (synthesis_lifecycle.get("next_actions") or ["agentops commander synthesize --status ready_for_review --confirm-create"])[0],
+        },
+        {
             "id": "runbook",
             "label": "Local demo/runbook",
             "ok": all(item["exists"] for item in doc_status),
@@ -10548,6 +10567,7 @@ def local_readiness(conn: sqlite3.Connection, headers) -> dict:
         "adapter_readiness": adapter_payload.get("summary"),
         "worker_fleet_health": worker.get("fleet_health"),
         "security_production_readiness": security,
+        "commander_synthesis_lifecycle": synthesis_lifecycle,
         "gateway": gateway,
         "docs": doc_status,
         "ui_routes": {

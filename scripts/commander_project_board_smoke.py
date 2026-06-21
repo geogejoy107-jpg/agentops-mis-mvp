@@ -97,11 +97,14 @@ def validate(payload: dict) -> None:
     counts = payload.get("counts") or {}
     require(isinstance(counts.get("tasks_by_status"), dict), "tasks_by_status missing")
     require(isinstance(counts.get("runs_by_status"), dict), "runs_by_status missing")
-    for key in ["pending_approvals", "active_workflow_jobs", "stuck_workflow_jobs", "recent_artifacts", "memory_candidates"]:
+    for key in ["pending_approvals", "active_workflow_jobs", "stuck_workflow_jobs", "recent_artifacts", "memory_candidates", "synthesis_artifacts", "synthesis_pending_reviews", "synthesis_promoted_deliveries"]:
         require(isinstance(counts.get(key), int), f"count {key} missing")
     gate_ids = {gate.get("id") for gate in payload.get("integration_gates") or []}
-    for gate_id in {"evidence_chain", "worker_fleet_health", "approvals_pending", "memory_review", "adapter_readiness"}:
+    for gate_id in {"evidence_chain", "worker_fleet_health", "approvals_pending", "memory_review", "synthesis_lifecycle", "adapter_readiness"}:
         require(gate_id in gate_ids, f"missing integration gate {gate_id}")
+    lifecycle = payload.get("synthesis_lifecycle") or {}
+    require(lifecycle.get("status") in {"empty", "created", "review_pending", "promotion_available", "promoted"}, f"bad synthesis lifecycle: {lifecycle}")
+    require((lifecycle.get("safety") or {}).get("read_only") is True, f"synthesis lifecycle not read-only: {lifecycle}")
     require(payload.get("recommended_next_actions"), "recommended_next_actions must be nonempty")
     require(isinstance(payload.get("recent_work_packages"), list), "recent_work_packages must be a list")
 

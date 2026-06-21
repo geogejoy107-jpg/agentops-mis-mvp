@@ -236,6 +236,19 @@ delivery board; `--mode both` does both. Promotion never executes live adapters
 and stores only bounded summaries, URI references, hashes, runtime events, and
 audit logs.
 
+Mission control visibility:
+
+```bash
+./scripts/agentops commander board
+./scripts/agentops local readiness
+```
+
+Both read-only surfaces expose the Commander synthesis lifecycle: synthesis
+artifact count, pending/approved reviews, promoted memory candidates, promoted
+delivery artifacts, recent synthesis rows, and the next CLI action. This lets
+operators see whether the loop is still waiting on review, ready to promote, or
+already visible in customer delivery.
+
 ## Default Lanes
 
 - Strategy: clarify goal, acceptance gates, approvals, and scope.

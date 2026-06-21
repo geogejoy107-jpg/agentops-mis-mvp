@@ -61,11 +61,16 @@ def validate(payload: dict) -> None:
     require(payload.get("token_omitted") is True, "token omission proof missing")
     gates = payload.get("gates") or []
     gate_ids = {gate.get("id") for gate in gates}
-    for gate_id in {"agent_gateway", "worker_fleet", "production_security", "adapter_route", "knowledge_memory", "evidence_chain", "runbook"}:
+    for gate_id in {"agent_gateway", "worker_fleet", "production_security", "adapter_route", "knowledge_memory", "evidence_chain", "commander_synthesis_loop", "runbook"}:
         require(gate_id in gate_ids, f"missing gate {gate_id}: {payload}")
     evidence = payload.get("evidence") or {}
     for key in ["tasks", "runs", "tool_calls", "evaluations", "audit_logs", "artifacts", "memories", "approvals", "closed_loop_runs"]:
         require(isinstance(evidence.get(key), int), f"missing evidence count {key}: {evidence}")
+    for key in ["commander_synthesis_artifacts", "commander_synthesis_pending_reviews", "commander_synthesis_promoted_memories", "commander_synthesis_promoted_deliveries"]:
+        require(isinstance(evidence.get(key), int), f"missing synthesis evidence count {key}: {evidence}")
+    lifecycle = payload.get("commander_synthesis_lifecycle") or {}
+    require(lifecycle.get("status") in {"empty", "created", "review_pending", "promotion_available", "promoted"}, f"bad synthesis lifecycle: {lifecycle}")
+    require((lifecycle.get("safety") or {}).get("read_only") is True, f"synthesis lifecycle must be read-only: {lifecycle}")
     require(isinstance(payload.get("next_actions"), list), "next_actions must be a list")
     require(payload.get("contract") and "single local" in payload.get("contract"), "local contract missing")
     security = payload.get("security_production_readiness") or {}
