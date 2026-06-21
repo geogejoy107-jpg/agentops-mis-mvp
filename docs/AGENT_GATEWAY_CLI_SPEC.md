@@ -1403,6 +1403,12 @@ Current endpoint scope map:
 | `GET /api/agent-gateway/memories` | `tasks:read` |
 | `POST /api/agent-gateway/memories/propose` | `memories:propose` |
 | `POST /api/agent-gateway/evaluations/submit` | `evaluations:submit` |
+
+Bound Agent Gateway read paths use exact collaborator membership rather than
+substring matching. Task pull/list and task-linked run, artifact, approval and
+memory lists compare `agent_id` with parsed collaborator arrays via
+`agentops_json_array_contains`, so an agent like `agt_x` cannot read rows whose
+only collaborator is `agt_x_extra`.
 | `POST /api/agent-gateway/audit` | `audit:write` |
 
 ### Future Auth

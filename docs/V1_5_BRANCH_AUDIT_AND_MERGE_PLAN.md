@@ -296,6 +296,14 @@ Commercial release additionally needs user authentication, RBAC, CSRF/CORS, rate
 
 Multiple task/run/artifact/approval/memory queries use JSON text with `LIKE '%agent_id%'`. Similar IDs can collide, such as one ID being a prefix of another.
 
+**Current status:** fixed on the v1.5 working branch for Agent Gateway task
+pull/list plus run, artifact, approval and memory list visibility. The server
+now registers `agentops_json_array_contains(raw, agent_id)` for exact
+membership checks and keeps legacy comma-list compatibility. Regression
+coverage: `python3 scripts/collaborator_exact_scope_smoke.py
+http://127.0.0.1:8787`, which proves `agt_x` cannot see rows assigned only to
+`agt_x_extra`.
+
 ### Required fix
 
 Use either:

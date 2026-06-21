@@ -144,9 +144,25 @@ def url_listening(url: str, timeout=0.5) -> bool:
     return socket_listening(parsed.hostname, port, timeout)
 
 
+def json_array_contains(raw, needle) -> int:
+    """SQLite UDF for exact membership in JSON-array-ish text fields."""
+    needle = str(needle or "").strip()
+    if not needle or raw is None:
+        return 0
+    try:
+        parsed = json.loads(str(raw))
+        if isinstance(parsed, list):
+            return 1 if needle in {str(item) for item in parsed} else 0
+    except Exception:
+        pass
+    legacy_items = [item.strip() for item in str(raw).split(",") if item.strip()]
+    return 1 if needle in legacy_items else 0
+
+
 def db() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
+    conn.create_function("agentops_json_array_contains", 2, json_array_contains)
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA busy_timeout = 30000")
     conn.execute("PRAGMA journal_mode = WAL")
@@ -3383,8 +3399,8 @@ def agent_gateway_pull_tasks(conn, qs, headers, auth_ctx=None) -> tuple[dict, in
         sql += " AND task_id=?"
         params.append(requested_task_id)
     if agent_id:
-        sql += " AND (owner_agent_id=? OR collaborator_agent_ids LIKE ? OR owner_agent_id IS NULL OR owner_agent_id='')"
-        params.extend([agent_id, f"%{agent_id}%"])
+        sql += " AND (owner_agent_id=? OR agentops_json_array_contains(collaborator_agent_ids, ?) OR owner_agent_id IS NULL OR owner_agent_id='')"
+        params.extend([agent_id, agent_id])
     sql += " ORDER BY created_at ASC LIMIT ?"
     params.append(limit)
     rows = rows_to_dicts(conn.execute(sql, params).fetchall())
@@ -3525,8 +3541,8 @@ def agent_gateway_visible_task_sql(ident: dict, auth_ctx: dict | None) -> tuple[
     sql = "COALESCE(workspace_id,'local-demo')=?"
     params: list = [ident["workspace_id"]]
     if agent_gateway_is_bound_auth(auth_ctx):
-        sql += " AND (owner_agent_id=? OR collaborator_agent_ids LIKE ? OR owner_agent_id IS NULL OR owner_agent_id='')"
-        params.extend([ident["agent_id"], f"%{ident['agent_id']}%"])
+        sql += " AND (owner_agent_id=? OR agentops_json_array_contains(collaborator_agent_ids, ?) OR owner_agent_id IS NULL OR owner_agent_id='')"
+        params.extend([ident["agent_id"], ident["agent_id"]])
     return sql, params
 
 
@@ -3607,8 +3623,8 @@ def agent_gateway_list_runs(conn: sqlite3.Connection, qs: dict, headers, auth_ct
         where.append("r.agent_id=?")
         params.append(qs["agent_id"][0])
     if agent_gateway_is_bound_auth(auth_ctx):
-        where.append("(t.owner_agent_id=? OR t.collaborator_agent_ids LIKE ? OR t.owner_agent_id IS NULL OR t.owner_agent_id='' OR r.agent_id=?)")
-        params.extend([ident["agent_id"], f"%{ident['agent_id']}%", ident["agent_id"]])
+        where.append("(t.owner_agent_id=? OR agentops_json_array_contains(t.collaborator_agent_ids, ?) OR t.owner_agent_id IS NULL OR t.owner_agent_id='' OR r.agent_id=?)")
+        params.extend([ident["agent_id"], ident["agent_id"], ident["agent_id"]])
     statuses = qs.get("status") or []
     statuses = [coerce_choice(status, {"running", "completed", "failed", "blocked", "waiting_approval"}, "running") for status in statuses]
     if statuses:
@@ -3665,8 +3681,8 @@ def agent_gateway_list_artifacts(conn: sqlite3.Connection, qs: dict, headers, au
         params.append(qs["type"][0])
     if agent_gateway_is_bound_auth(auth_ctx):
         where.append("(a.task_id IS NOT NULL OR a.run_id IS NOT NULL)")
-        where.append("(t.owner_agent_id=? OR t.collaborator_agent_ids LIKE ? OR t.owner_agent_id IS NULL OR t.owner_agent_id='' OR r.agent_id=?)")
-        params.extend([ident["agent_id"], f"%{ident['agent_id']}%", ident["agent_id"]])
+        where.append("(t.owner_agent_id=? OR agentops_json_array_contains(t.collaborator_agent_ids, ?) OR t.owner_agent_id IS NULL OR t.owner_agent_id='' OR r.agent_id=?)")
+        params.extend([ident["agent_id"], ident["agent_id"], ident["agent_id"]])
     sql = """SELECT a.* FROM artifacts a
         LEFT JOIN tasks t ON t.task_id=a.task_id
         LEFT JOIN runs r ON r.run_id=a.run_id
@@ -3703,14 +3719,14 @@ def agent_gateway_list_approvals(conn: sqlite3.Connection, qs: dict, headers, au
         where.append(
             """(
                 t.owner_agent_id=?
-                OR t.collaborator_agent_ids LIKE ?
+                OR agentops_json_array_contains(t.collaborator_agent_ids, ?)
                 OR t.owner_agent_id IS NULL
                 OR t.owner_agent_id=''
                 OR r.agent_id=?
                 OR ap.requested_by_agent_id=?
             )"""
         )
-        params.extend([ident["agent_id"], f"%{ident['agent_id']}%", ident["agent_id"], ident["agent_id"]])
+        params.extend([ident["agent_id"], ident["agent_id"], ident["agent_id"], ident["agent_id"]])
     requested_by = (qs.get("requested_by_agent_id") or [None])[0]
     if requested_by and not agent_gateway_is_bound_auth(auth_ctx):
         where.append("ap.requested_by_agent_id=?")
@@ -3866,7 +3882,7 @@ def agent_gateway_list_memories(conn: sqlite3.Connection, qs: dict, headers, aut
             """(
                 (m.task_id IS NOT NULL AND (
                     t.owner_agent_id=?
-                    OR t.collaborator_agent_ids LIKE ?
+                    OR agentops_json_array_contains(t.collaborator_agent_ids, ?)
                     OR t.owner_agent_id IS NULL
                     OR t.owner_agent_id=''
                 ))
@@ -3874,7 +3890,7 @@ def agent_gateway_list_memories(conn: sqlite3.Connection, qs: dict, headers, aut
                 OR m.agent_id=?
             )"""
         )
-        params.extend([ident["agent_id"], f"%{ident['agent_id']}%", ident["agent_id"], ident["agent_id"]])
+        params.extend([ident["agent_id"], ident["agent_id"], ident["agent_id"], ident["agent_id"]])
     agent_id = (qs.get("agent_id") or [None])[0]
     if agent_id and not agent_gateway_is_bound_auth(auth_ctx):
         where.append("m.agent_id=?")

@@ -159,11 +159,11 @@ python3 scripts/worker_adapter_retry_smoke.py
 
 ## 7. Workspace and Agent isolation
 
-- [ ] Replace JSON-text `LIKE` collaborator authorization.
-- [ ] Use normalized collaborator rows or exact JSON-array comparison.
+- [x] Replace JSON-text `LIKE` collaborator authorization for Agent Gateway task/run/artifact/approval/memory list paths.
+- [x] Use exact JSON-array comparison via `agentops_json_array_contains`; normalized collaborator rows remain a later storage refactor.
 - [ ] Task, run, artifact, approval, memory and review queue use the same scope service.
 - [ ] Knowledge search applies its intended workspace/access policy.
-- [ ] Add similar-ID regression.
+- [x] Add similar-ID regression with `scripts/collaborator_exact_scope_smoke.py`.
 - [ ] Add special-character-ID regression.
 - [ ] Scoped review queue applies scope before limit.
 - [ ] Scoped totals are not distorted by global truncation.
