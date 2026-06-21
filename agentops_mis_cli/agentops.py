@@ -522,28 +522,27 @@ def cmd_approval_request(args, client: AgentOpsClient) -> dict:
 
 
 def cmd_approval_list(args, client: AgentOpsClient) -> dict:
-    rows = client.get("/api/approvals")
+    payload = client.get("/api/agent-gateway/approvals", query={
+        "decision": args.decision,
+        "task_id": args.task_id,
+        "run_id": args.run_id,
+        "limit": args.limit,
+    })
+    rows = payload.get("approvals") if isinstance(payload, dict) else []
     if not isinstance(rows, list):
         rows = []
-    filtered = rows
-    if args.decision:
-        filtered = [row for row in filtered if row.get("decision") == args.decision]
-    if args.task_id:
-        filtered = [row for row in filtered if row.get("task_id") == args.task_id]
-    if args.run_id:
-        filtered = [row for row in filtered if row.get("run_id") == args.run_id]
-    limited = apply_limit(filtered, args.limit)
     return {
         "provider": "agentops-approval",
         "operation": "approval_list",
-        "approvals": limited,
-        "total": len(filtered),
+        "approvals": rows,
+        "total": payload.get("count", len(rows)) if isinstance(payload, dict) else len(rows),
         "limit": args.limit,
         "filters": {
             "decision": args.decision,
             "task_id": args.task_id,
             "run_id": args.run_id,
         },
+        "gateway_scope": payload.get("gateway_scope") if isinstance(payload, dict) else None,
         "token_omitted": True,
     }
 
@@ -581,26 +580,22 @@ def cmd_memory_propose(args, client: AgentOpsClient) -> dict:
 
 
 def cmd_memory_list(args, client: AgentOpsClient) -> dict:
-    rows = client.get("/api/memories")
+    payload = client.get("/api/agent-gateway/memories", query={
+        "status": args.status,
+        "scope": args.scope,
+        "type": args.type,
+        "task_id": args.task_id,
+        "agent_id": args.agent_id,
+        "limit": args.limit,
+    })
+    rows = payload.get("memories") if isinstance(payload, dict) else []
     if not isinstance(rows, list):
         rows = []
-    filtered = rows
-    if args.status:
-        filtered = [row for row in filtered if row.get("review_status") == args.status]
-    if args.scope:
-        filtered = [row for row in filtered if row.get("scope") == args.scope]
-    if args.type:
-        filtered = [row for row in filtered if row.get("memory_type") == args.type]
-    if args.task_id:
-        filtered = [row for row in filtered if row.get("task_id") == args.task_id]
-    if args.agent_id:
-        filtered = [row for row in filtered if row.get("agent_id") == args.agent_id]
-    limited = apply_limit(filtered, args.limit)
     return {
         "provider": "agentops-memory",
         "operation": "memory_list",
-        "memories": limited,
-        "total": len(filtered),
+        "memories": rows,
+        "total": payload.get("count", len(rows)) if isinstance(payload, dict) else len(rows),
         "limit": args.limit,
         "filters": {
             "status": args.status,
@@ -609,6 +604,7 @@ def cmd_memory_list(args, client: AgentOpsClient) -> dict:
             "task_id": args.task_id,
             "agent_id": args.agent_id,
         },
+        "gateway_scope": payload.get("gateway_scope") if isinstance(payload, dict) else None,
         "token_omitted": True,
     }
 

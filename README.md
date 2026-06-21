@@ -311,6 +311,7 @@ curl -fsS http://127.0.0.1:8787/api/review/queue?limit=12 | jq .
 
 这个看板聚合 delivery artifact、task、run、approval、evaluation、audit evidence 和下一步动作；它不启动 worker、不写账本、不触发 live runtime。交付审批可以继续走浏览器 `/workspace/approvals`，也可以用 `agentops approval approve/reject` 在 CLI 里完成；项目记忆候选同理可在 `/memory` 或 `agentops memory approve/reject` 审核。
 `agentops review queue` 是更高层的人类审核队列：它把待审批 gate、候选记忆和客户交付状态合到一个只读列表里，适合总指挥在多个 worker/子线程速度不同的时候先处理已返回的工作。浏览器/本地 UI 保留 `GET /api/review/queue`；CLI/远程 agent 使用 scoped Agent Gateway 路径 `GET /api/agent-gateway/review/queue`，token 需要 `tasks:read`，并且只返回该 token 绑定 workspace/agent 可见的队列项。
+`agentops approval list` 和 `agentops memory list` 也走 scoped Agent Gateway 读路径；远程 agent 可以看见自己可见任务/运行关联的审核项，但 approve/reject 仍是人类/管理员决策，不给 agent token 自动越权。
 
 更底层的 agent/API 方式是先创建普通 MIS 任务，再由 worker 拉取执行：
 

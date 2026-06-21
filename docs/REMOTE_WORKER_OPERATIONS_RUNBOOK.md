@@ -354,6 +354,10 @@ Use `agentops review queue` for remote/CLI agents; it calls the scoped
 `GET /api/agent-gateway/review/queue` path with `tasks:read`. The
 `GET /api/review/queue` curl above is the local browser/UI read path for a
 single-machine demo.
+`agentops approval list` and `agentops memory list` also use scoped Agent
+Gateway readback. Remote agents can inspect visible review work, but
+approve/reject remains a human/operator action and should not be embedded in a
+worker loop.
 
 ## Revocation And Rotation
 

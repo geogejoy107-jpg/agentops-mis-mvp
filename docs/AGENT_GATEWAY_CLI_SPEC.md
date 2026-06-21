@@ -402,6 +402,20 @@ agentops approval request \
 
 Maps to `approvals` and `audit_logs`.
 
+### `agentops approval list`
+
+Lists approval gates visible to the current CLI token without granting the agent
+permission to decide them.
+
+```bash
+agentops approval list --decision pending --limit 10
+```
+
+Maps to `GET /api/agent-gateway/approvals`. Scoped tokens require `tasks:read`
+and only receive approvals attached to tasks/runs visible to their bound
+workspace and agent. `agentops approval approve/reject` remains a human/operator
+decision path.
+
 ### `agentops memory propose`
 
 Creates a reviewable memory candidate.
@@ -414,6 +428,19 @@ agentops memory propose \
 ```
 
 Maps to `memories`.
+
+### `agentops memory list`
+
+Lists reviewable memories visible to the current CLI token.
+
+```bash
+agentops memory list --status candidate --limit 10
+```
+
+Maps to `GET /api/agent-gateway/memories`. Scoped tokens require `tasks:read`
+and only receive task-linked or agent-owned memory rows visible to their bound
+workspace and agent. `agentops memory approve/reject` remains a human/operator
+decision path.
 
 ### `agentops eval submit`
 
@@ -1095,7 +1122,9 @@ Current endpoint scope map:
 | `POST /api/agent-gateway/tool-calls` | `toolcalls:write` |
 | `GET /api/agent-gateway/artifacts` | `tasks:read` |
 | `POST /api/agent-gateway/artifacts` | `artifacts:write` |
+| `GET /api/agent-gateway/approvals` | `tasks:read` |
 | `POST /api/agent-gateway/approvals/request` | `approvals:request` |
+| `GET /api/agent-gateway/memories` | `tasks:read` |
 | `POST /api/agent-gateway/memories/propose` | `memories:propose` |
 | `POST /api/agent-gateway/evaluations/submit` | `evaluations:submit` |
 | `POST /api/agent-gateway/audit` | `audit:write` |

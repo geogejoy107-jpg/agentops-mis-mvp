@@ -3241,6 +3241,137 @@ def agent_gateway_list_artifacts(conn: sqlite3.Connection, qs: dict, headers, au
     return {"provider": "agent_gateway", "operation": "artifact_list", "artifacts": rows, "count": len(rows), "workspace_id": ident["workspace_id"], "token_omitted": True}, 200
 
 
+def agent_gateway_list_approvals(conn: sqlite3.Connection, qs: dict, headers, auth_ctx=None) -> tuple[dict, int]:
+    ident = agent_gateway_identity(headers, qs=qs, auth_ctx=auth_ctx)
+    limit = min(max(int((qs.get("limit") or ["25"])[0]), 1), 200)
+    where = ["COALESCE(t.workspace_id,r.workspace_id,'local-demo')=?"]
+    params: list = [ident["workspace_id"]]
+    if "task_id" in qs:
+        task_id = qs["task_id"][0]
+        _task, access_error = agent_gateway_task_read_access(conn, task_id, ident, auth_ctx)
+        if access_error:
+            return access_error
+        where.append("ap.task_id=?")
+        params.append(task_id)
+    if "run_id" in qs:
+        run_id = qs["run_id"][0]
+        _run, access_error = agent_gateway_run_read_access(conn, run_id, ident, auth_ctx)
+        if access_error:
+            return access_error
+        where.append("ap.run_id=?")
+        params.append(run_id)
+    decisions = qs.get("decision") or []
+    decisions = [coerce_choice(decision, {"pending", "approved", "rejected"}, "pending") for decision in decisions]
+    if decisions:
+        where.append("ap.decision IN (" + ",".join("?" for _ in decisions) + ")")
+        params.extend(decisions)
+    if agent_gateway_is_bound_auth(auth_ctx):
+        where.append(
+            """(
+                t.owner_agent_id=?
+                OR t.collaborator_agent_ids LIKE ?
+                OR t.owner_agent_id IS NULL
+                OR t.owner_agent_id=''
+                OR r.agent_id=?
+                OR ap.requested_by_agent_id=?
+            )"""
+        )
+        params.extend([ident["agent_id"], f"%{ident['agent_id']}%", ident["agent_id"], ident["agent_id"]])
+    requested_by = (qs.get("requested_by_agent_id") or [None])[0]
+    if requested_by and not agent_gateway_is_bound_auth(auth_ctx):
+        where.append("ap.requested_by_agent_id=?")
+        params.append(requested_by)
+    sql = """SELECT ap.* FROM approvals ap
+        LEFT JOIN tasks t ON t.task_id=ap.task_id
+        LEFT JOIN runs r ON r.run_id=ap.run_id
+        WHERE """ + " AND ".join(where) + " ORDER BY ap.created_at DESC LIMIT ?"
+    rows = rows_to_dicts(conn.execute(sql, [*params, limit]).fetchall())
+    return {
+        "provider": "agent_gateway",
+        "operation": "approval_list",
+        "approvals": rows,
+        "count": len(rows),
+        "workspace_id": ident["workspace_id"],
+        "gateway_scope": {
+            "required_scope": "tasks:read",
+            "workspace_id": ident["workspace_id"],
+            "agent_id": ident["agent_id"],
+            "auth_mode": (auth_ctx or {}).get("mode") or "unknown",
+            "bound_visibility_enforced": agent_gateway_is_bound_auth(auth_ctx),
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }, 200
+
+
+def agent_gateway_list_memories(conn: sqlite3.Connection, qs: dict, headers, auth_ctx=None) -> tuple[dict, int]:
+    ident = agent_gateway_identity(headers, qs=qs, auth_ctx=auth_ctx)
+    limit = min(max(int((qs.get("limit") or ["25"])[0]), 1), 200)
+    where = ["COALESCE(t.workspace_id,'local-demo')=?"]
+    params: list = [ident["workspace_id"]]
+    if "task_id" in qs:
+        task_id = qs["task_id"][0]
+        _task, access_error = agent_gateway_task_read_access(conn, task_id, ident, auth_ctx)
+        if access_error:
+            return access_error
+        where.append("m.task_id=?")
+        params.append(task_id)
+    statuses = qs.get("status") or []
+    statuses = [coerce_choice(status, {"candidate", "approved", "rejected"}, "candidate") for status in statuses]
+    if statuses:
+        where.append("m.review_status IN (" + ",".join("?" for _ in statuses) + ")")
+        params.extend(statuses)
+    scopes = qs.get("scope") or []
+    scopes = [coerce_choice(scope, {"task", "project", "org"}, "project") for scope in scopes]
+    if scopes:
+        where.append("m.scope IN (" + ",".join("?" for _ in scopes) + ")")
+        params.extend(scopes)
+    types = qs.get("type") or qs.get("memory_type") or []
+    if types:
+        allowed = {"policy", "sop", "decision", "commitment", "risk", "failure_case", "project_context", "customer_preference", "agent_lesson", "artifact_summary"}
+        cleaned_types = [coerce_choice(memory_type, allowed, "artifact_summary") for memory_type in types]
+        where.append("m.memory_type IN (" + ",".join("?" for _ in cleaned_types) + ")")
+        params.extend(cleaned_types)
+    if agent_gateway_is_bound_auth(auth_ctx):
+        where.append(
+            """(
+                (m.task_id IS NOT NULL AND (
+                    t.owner_agent_id=?
+                    OR t.collaborator_agent_ids LIKE ?
+                    OR t.owner_agent_id IS NULL
+                    OR t.owner_agent_id=''
+                ))
+                OR (m.task_id IS NULL AND m.agent_id=?)
+                OR m.agent_id=?
+            )"""
+        )
+        params.extend([ident["agent_id"], f"%{ident['agent_id']}%", ident["agent_id"], ident["agent_id"]])
+    agent_id = (qs.get("agent_id") or [None])[0]
+    if agent_id and not agent_gateway_is_bound_auth(auth_ctx):
+        where.append("m.agent_id=?")
+        params.append(agent_id)
+    sql = """SELECT m.* FROM memories m
+        LEFT JOIN tasks t ON t.task_id=m.task_id
+        WHERE """ + " AND ".join(where) + " ORDER BY m.updated_at DESC LIMIT ?"
+    rows = rows_to_dicts(conn.execute(sql, [*params, limit]).fetchall())
+    return {
+        "provider": "agent_gateway",
+        "operation": "memory_list",
+        "memories": rows,
+        "count": len(rows),
+        "workspace_id": ident["workspace_id"],
+        "gateway_scope": {
+            "required_scope": "tasks:read",
+            "workspace_id": ident["workspace_id"],
+            "agent_id": ident["agent_id"],
+            "auth_mode": (auth_ctx or {}).get("mode") or "unknown",
+            "bound_visibility_enforced": agent_gateway_is_bound_auth(auth_ctx),
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }, 200
+
+
 def agent_gateway_review_queue(conn: sqlite3.Connection, qs: dict, headers, auth_ctx=None) -> tuple[dict, int]:
     ident = agent_gateway_identity(headers, qs=qs, auth_ctx=auth_ctx)
     limit = min(max(int((qs.get("limit") or ["20"])[0]), 1), 100)
@@ -8630,6 +8761,38 @@ class Handler(BaseHTTPRequestHandler):
                         return self.send_json({"error": "forbidden", "message": "Agent token cannot list artifacts from another workspace."}, 403)
                     query["workspace_id"] = [auth_ctx["workspace_id"]]
                 payload, status = agent_gateway_list_artifacts(conn, query, self.headers, auth_ctx)
+                conn.commit()
+                return self.send_json(payload, status)
+            if path == "/api/agent-gateway/approvals":
+                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                if auth_error:
+                    return self.send_json(auth_error, agent_gateway_error_status(auth_error))
+                query = dict(qs)
+                if agent_gateway_is_bound_auth(auth_ctx):
+                    requested_header_workspace = normalize_workspace_id(self.headers.get("X-AgentOps-Workspace-Id") or auth_ctx["workspace_id"])
+                    if requested_header_workspace != auth_ctx["workspace_id"]:
+                        return self.send_json({"error": "forbidden", "message": "Agent token cannot use another workspace header."}, 403)
+                    requested_workspace = requested_workspace_from_qs(query, auth_ctx["workspace_id"])
+                    if requested_workspace != auth_ctx["workspace_id"]:
+                        return self.send_json({"error": "forbidden", "message": "Agent token cannot list approvals from another workspace."}, 403)
+                    query["workspace_id"] = [auth_ctx["workspace_id"]]
+                payload, status = agent_gateway_list_approvals(conn, query, self.headers, auth_ctx)
+                conn.commit()
+                return self.send_json(payload, status)
+            if path == "/api/agent-gateway/memories":
+                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                if auth_error:
+                    return self.send_json(auth_error, agent_gateway_error_status(auth_error))
+                query = dict(qs)
+                if agent_gateway_is_bound_auth(auth_ctx):
+                    requested_header_workspace = normalize_workspace_id(self.headers.get("X-AgentOps-Workspace-Id") or auth_ctx["workspace_id"])
+                    if requested_header_workspace != auth_ctx["workspace_id"]:
+                        return self.send_json({"error": "forbidden", "message": "Agent token cannot use another workspace header."}, 403)
+                    requested_workspace = requested_workspace_from_qs(query, auth_ctx["workspace_id"])
+                    if requested_workspace != auth_ctx["workspace_id"]:
+                        return self.send_json({"error": "forbidden", "message": "Agent token cannot list memories from another workspace."}, 403)
+                    query["workspace_id"] = [auth_ctx["workspace_id"]]
+                payload, status = agent_gateway_list_memories(conn, query, self.headers, auth_ctx)
                 conn.commit()
                 return self.send_json(payload, status)
             if path == "/api/agent-gateway/review/queue":
