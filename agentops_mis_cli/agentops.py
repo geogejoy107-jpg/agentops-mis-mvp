@@ -576,6 +576,54 @@ def cmd_memory_propose(args, client: AgentOpsClient) -> dict:
     return client.post("/api/agent-gateway/memories/propose", payload)
 
 
+def cmd_memory_list(args, client: AgentOpsClient) -> dict:
+    rows = client.get("/api/memories")
+    if not isinstance(rows, list):
+        rows = []
+    filtered = rows
+    if args.status:
+        filtered = [row for row in filtered if row.get("review_status") == args.status]
+    if args.scope:
+        filtered = [row for row in filtered if row.get("scope") == args.scope]
+    if args.type:
+        filtered = [row for row in filtered if row.get("memory_type") == args.type]
+    if args.task_id:
+        filtered = [row for row in filtered if row.get("task_id") == args.task_id]
+    if args.agent_id:
+        filtered = [row for row in filtered if row.get("agent_id") == args.agent_id]
+    limited = apply_limit(filtered, args.limit)
+    return {
+        "provider": "agentops-memory",
+        "operation": "memory_list",
+        "memories": limited,
+        "total": len(filtered),
+        "limit": args.limit,
+        "filters": {
+            "status": args.status,
+            "scope": args.scope,
+            "type": args.type,
+            "task_id": args.task_id,
+            "agent_id": args.agent_id,
+        },
+        "token_omitted": True,
+    }
+
+
+def cmd_memory_decide(args, client: AgentOpsClient) -> dict:
+    action = "approve" if args.handler == "memory_approve" else "reject"
+    memory = client.post(f"/api/memories/{args.memory_id}/{action}", {})
+    return {
+        "provider": "agentops-memory",
+        "operation": f"memory_{action}",
+        "memory": memory,
+        "memory_id": memory.get("memory_id") or args.memory_id,
+        "review_status": memory.get("review_status"),
+        "task_id": memory.get("task_id"),
+        "agent_id": memory.get("agent_id"),
+        "token_omitted": True,
+    }
+
+
 def cmd_eval_submit(args, client: AgentOpsClient) -> dict:
     payload = {
         "workspace_id": client.workspace_id,
@@ -1287,6 +1335,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     memory = sub.add_parser("memory", help="Memory commands.")
     memory_sub = memory.add_subparsers(dest="action", required=True)
+    memory_list = memory_sub.add_parser("list", help="List reviewable memory candidates.")
+    memory_list.add_argument("--status", choices=["candidate", "approved", "rejected", "stale", "superseded"], default=None)
+    memory_list.add_argument("--scope", choices=["task", "project", "org"], default=None)
+    memory_list.add_argument("--type", default=None)
+    memory_list.add_argument("--task-id", default=None)
+    memory_list.add_argument("--agent-id", default=None)
+    memory_list.add_argument("--limit", type=int, default=25)
+    memory_list.set_defaults(handler="memory_list")
+    memory_approve = memory_sub.add_parser("approve", help="Approve a memory candidate.")
+    memory_approve.add_argument("--memory-id", required=True)
+    memory_approve.set_defaults(handler="memory_approve")
+    memory_reject = memory_sub.add_parser("reject", help="Reject a memory candidate.")
+    memory_reject.add_argument("--memory-id", required=True)
+    memory_reject.set_defaults(handler="memory_reject")
     propose = memory_sub.add_parser("propose", help="Propose reviewable memory.")
     propose.add_argument("--agent-id", default=None)
     propose.add_argument("--task-id", default=None)
@@ -1565,6 +1627,9 @@ HANDLERS = {
     "approval_approve": cmd_approval_decide,
     "approval_reject": cmd_approval_decide,
     "approval_request": cmd_approval_request,
+    "memory_list": cmd_memory_list,
+    "memory_approve": cmd_memory_decide,
+    "memory_reject": cmd_memory_decide,
     "memory_propose": cmd_memory_propose,
     "eval_submit": cmd_eval_submit,
     "audit_emit": cmd_audit_emit,

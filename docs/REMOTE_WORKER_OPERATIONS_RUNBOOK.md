@@ -334,6 +334,8 @@ customer-facing result without mutating the ledger:
 agentops workflow delivery-board --limit 10
 agentops approval list --decision pending --limit 10
 agentops approval approve --approval-id ap_...
+agentops memory list --status candidate --limit 10
+agentops memory approve --memory-id mem_...
 curl -fsS http://127.0.0.1:8787/api/workflows/customer-delivery-board?limit=10 | jq .
 ```
 
@@ -341,7 +343,10 @@ The board links delivery artifacts to task/run evidence, approvals,
 evaluations, audit counts, and the next operator action. It is read-only and
 does not start live runtime work. Approval decisions can be made in the browser
 or through `agentops approval approve/reject`; approved gates clear linked run
-approval state, while rejected gates block linked task/run evidence.
+approval state, while rejected gates block linked task/run evidence. Memory
+candidates can likewise be reviewed in the browser or with
+`agentops memory approve/reject`, so local and remote agents can propose
+knowledge while humans keep final control.
 
 ## Revocation And Rotation
 
@@ -427,6 +432,7 @@ python3 scripts/customer_worker_adapter_not_ready_smoke.py
 python3 scripts/customer_worker_async_adapter_not_ready_smoke.py
 python3 scripts/customer_delivery_board_smoke.py
 python3 scripts/agentops_approval_cli_smoke.py
+python3 scripts/agentops_memory_cli_smoke.py
 python3 scripts/template_worker_async_adapter_not_ready_smoke.py
 python3 scripts/worker_live_confirm_gate_smoke.py
 python3 scripts/remote_launch_packet_worker_smoke.py

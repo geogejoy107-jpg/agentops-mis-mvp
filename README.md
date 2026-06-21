@@ -219,7 +219,9 @@ agentops artifact record
 agentops approval list
 agentops approval request
 agentops approval approve/reject
+agentops memory list
 agentops memory propose
+agentops memory approve/reject
 agentops eval submit
 agentops audit emit
 agentops workflow run-task
@@ -298,10 +300,12 @@ CLI 方式从客户/外部 agent 侧派发 worker 任务：
 ./scripts/agentops workflow delivery-board --limit 10
 ./scripts/agentops approval list --decision pending --limit 10
 ./scripts/agentops approval approve --approval-id ap_...
+./scripts/agentops memory list --status candidate --limit 10
+./scripts/agentops memory approve --memory-id mem_...
 curl -fsS http://127.0.0.1:8787/api/workflows/customer-delivery-board?limit=10 | jq .
 ```
 
-这个看板聚合 delivery artifact、task、run、approval、evaluation、audit evidence 和下一步动作；它不启动 worker、不写账本、不触发 live runtime。交付审批可以继续走浏览器 `/workspace/approvals`，也可以用 `agentops approval approve/reject` 在 CLI 里完成。
+这个看板聚合 delivery artifact、task、run、approval、evaluation、audit evidence 和下一步动作；它不启动 worker、不写账本、不触发 live runtime。交付审批可以继续走浏览器 `/workspace/approvals`，也可以用 `agentops approval approve/reject` 在 CLI 里完成；项目记忆候选同理可在 `/memory` 或 `agentops memory approve/reject` 审核。
 
 更底层的 agent/API 方式是先创建普通 MIS 任务，再由 worker 拉取执行：
 

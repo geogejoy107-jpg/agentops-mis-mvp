@@ -31,7 +31,7 @@ Show status, linked task, tool calls, evaluations, audit evidence and delivery a
 
 ## 3:15-4:05 Human Approval And Memory
 
-Open `/approvals` and `/memory`. Explain high-risk action governance, delivery acceptance and reviewed organizational memory.
+Open `/approvals` and `/memory`. Explain high-risk action governance, delivery acceptance and reviewed organizational memory. The same review loop is available through CLI: `agentops approval list/approve/reject` and `agentops memory list/approve/reject`.
 
 ## 4:05-5:15 Customer Worker Dispatch
 
@@ -59,6 +59,8 @@ Recording steps:
 ./scripts/agentops workflow delivery-board --limit 10
 ./scripts/agentops approval list --decision pending --limit 10
 ./scripts/agentops approval approve --approval-id <approval_id>
+./scripts/agentops memory list --status candidate --limit 10
+./scripts/agentops memory approve --memory-id <memory_id>
 ./scripts/agentops workflow customer-worker-task --adapter openclaw --confirm-run --async-job
 ./scripts/agentops workflow job-status --job-id <job_id> --wait
 ./scripts/agentops workflow delivery-board --limit 10
@@ -68,6 +70,7 @@ Then return to:
 
 - `/workspace/reports`: customer delivery board and report links.
 - `/workspace/approvals`: approval gate, or show the same decision through `agentops approval approve/reject`.
+- `/memory`: memory candidate review, or show the same decision through `agentops memory approve/reject`.
 - `/runs`: latest worker run.
 - `/evaluations`: rule result.
 - `/audit`: confirmed worker/audit trail.
