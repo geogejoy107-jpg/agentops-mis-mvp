@@ -13125,6 +13125,197 @@ def local_readiness(conn: sqlite3.Connection, headers) -> dict:
     }
 
 
+def task_assigned_agent_ids(task: sqlite3.Row | dict) -> list[str]:
+    owner = str(row_field(task, "owner_agent_id") or "").strip()
+    collaborators = load_json_list_field(task, "collaborator_agent_ids")
+    ids = [owner, *[str(item).strip() for item in collaborators]]
+    seen: set[str] = set()
+    result: list[str] = []
+    for agent_id in ids:
+        if agent_id and agent_id not in seen:
+            seen.add(agent_id)
+            result.append(agent_id)
+    return result
+
+
+def latest_task_agent_plan(conn: sqlite3.Connection, task_id: str, agent_ids: list[str]) -> sqlite3.Row | None:
+    if not task_id:
+        return None
+    params: list = [task_id]
+    where = "task_id=?"
+    if agent_ids:
+        placeholders = ",".join("?" for _ in agent_ids)
+        where += f" AND agent_id IN ({placeholders})"
+        params.extend(agent_ids)
+    return conn.execute(
+        f"""SELECT * FROM agent_plans
+        WHERE {where}
+        ORDER BY CASE WHEN verified_at IS NOT NULL THEN 0 ELSE 1 END, updated_at DESC, created_at DESC
+        LIMIT 1""",
+        params,
+    ).fetchone()
+
+
+def operator_task_intake_checklist(conn: sqlite3.Connection, workspace_id: str, limit: int = 8) -> dict:
+    limit = max(1, min(int(limit or 8), 25))
+    rows = conn.execute(
+        """SELECT * FROM tasks
+        WHERE COALESCE(workspace_id,'local-demo')=?
+          AND status IN ('planned','backlog')
+        ORDER BY
+          CASE priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END,
+          created_at ASC
+        LIMIT ?""",
+        (workspace_id, limit),
+    ).fetchall()
+    items: list[dict] = []
+    summary = {
+        "tasks_checked": 0,
+        "ready_for_intake": 0,
+        "blocked_for_intake": 0,
+        "attention_for_intake": 0,
+        "missing_assignment": 0,
+        "missing_agent_plan": 0,
+        "unverified_agent_plan": 0,
+        "missing_knowledge_retrieval": 0,
+        "missing_base_reference": 0,
+        "risk_gate_blocked": 0,
+    }
+    for row in rows:
+        assigned_agent_ids = task_assigned_agent_ids(row)
+        plan = latest_task_agent_plan(conn, row["task_id"], assigned_agent_ids)
+        verification = verify_agent_plan_row(plan) if plan else None
+        plan_verified = bool(plan and plan["verified_at"] and (verification or {}).get("pass"))
+        referenced_specs = load_json_list_field(plan, "referenced_specs_json") if plan else []
+        referenced_memories = load_json_list_field(plan, "referenced_memories_json") if plan else []
+        referenced_bases = load_json_list_field(plan, "referenced_bases_json") if plan else []
+        risk_level = str(row["risk_level"] or "medium")
+        plan_approval_required = bool(row_field(plan, "approval_required")) if plan else False
+        gates = [
+            {
+                "id": "assigned_agent",
+                "ok": bool(assigned_agent_ids),
+                "status": "pass" if assigned_agent_ids else "blocked",
+                "message": "Task has an owner or collaborator agent.",
+            },
+            {
+                "id": "agent_plan",
+                "ok": bool(plan),
+                "status": "pass" if plan else "blocked",
+                "message": "Assigned agent has submitted an Agent Plan for this task.",
+            },
+            {
+                "id": "verified_agent_plan",
+                "ok": plan_verified,
+                "status": "pass" if plan_verified else "blocked",
+                "message": "Latest Agent Plan has been verified before run start.",
+            },
+            {
+                "id": "knowledge_retrieval",
+                "ok": bool(referenced_specs and referenced_memories),
+                "status": "pass" if referenced_specs and referenced_memories else "attention",
+                "message": "Plan references specs plus memory/knowledge context.",
+            },
+            {
+                "id": "base_reference",
+                "ok": bool(referenced_bases),
+                "status": "pass" if referenced_bases else "attention",
+                "message": "Plan compares the task against reusable base constraints.",
+            },
+            {
+                "id": "risk_boundary",
+                "ok": risk_level not in {"high", "critical"} or plan_approval_required,
+                "status": "pass" if risk_level not in {"high", "critical"} or plan_approval_required else "blocked",
+                "message": "High/critical intake requires approval_required in the plan.",
+            },
+        ]
+        failed_blockers = [gate for gate in gates if not gate["ok"] and gate["status"] == "blocked"]
+        attention_gates = [gate for gate in gates if not gate["ok"] and gate["status"] == "attention"]
+        if failed_blockers:
+            severity = "blocked"
+            priority = 93 if not plan else 88
+        elif attention_gates:
+            severity = "attention"
+            priority = 76
+        else:
+            severity = "ready"
+            priority = 58
+        if not assigned_agent_ids:
+            summary["missing_assignment"] += 1
+        if not plan:
+            summary["missing_agent_plan"] += 1
+        elif not plan_verified:
+            summary["unverified_agent_plan"] += 1
+        if not (referenced_specs and referenced_memories):
+            summary["missing_knowledge_retrieval"] += 1
+        if not referenced_bases:
+            summary["missing_base_reference"] += 1
+        if risk_level in {"high", "critical"} and not plan_approval_required:
+            summary["risk_gate_blocked"] += 1
+        if severity == "blocked":
+            summary["blocked_for_intake"] += 1
+        elif severity == "attention":
+            summary["attention_for_intake"] += 1
+        else:
+            summary["ready_for_intake"] += 1
+        if not plan:
+            command = f"agentops knowledge search \"{redact_text(row['title'] or row['task_id'], 80)}\" --limit 10"
+            next_action = "Search knowledge, compare base constraints, then submit and verify an Agent Plan before task execution."
+        elif not plan_verified:
+            command = f"agentops agent-plan verify --plan-id {plan['plan_id']}"
+            next_action = "Verify the latest Agent Plan before the assigned worker starts a run."
+        elif attention_gates:
+            command = f"agentops agent-plan get --plan-id {plan['plan_id']}"
+            next_action = "Review the plan references and strengthen knowledge/base retrieval before dispatch."
+        else:
+            command = f"agentops task pull --agent-id {assigned_agent_ids[0]} --status planned --limit 5"
+            next_action = "Intake gates pass; assigned worker can pull the planned task."
+        items.append({
+            "task_id": row["task_id"],
+            "title": redact_text(row["title"] or row["task_id"], 180),
+            "status": row["status"],
+            "priority": row["priority"],
+            "risk_level": risk_level,
+            "assigned_agent_ids": assigned_agent_ids,
+            "plan_id": plan["plan_id"] if plan else None,
+            "plan_status": plan["status"] if plan else None,
+            "plan_verified": plan_verified,
+            "plan_verified_at": plan["verified_at"] if plan else None,
+            "referenced_specs": len(referenced_specs),
+            "referenced_memories": len(referenced_memories),
+            "referenced_bases": len(referenced_bases),
+            "gates": gates,
+            "failed_gate_ids": [gate["id"] for gate in gates if not gate["ok"]],
+            "severity": severity,
+            "priority_score": priority,
+            "command": command,
+            "next_action": next_action,
+            "ui_route": f"/admin/tasks/{row['task_id']}",
+            "token_omitted": True,
+        })
+    summary["tasks_checked"] = len(items)
+    status = "blocked" if summary["blocked_for_intake"] else "attention" if summary["attention_for_intake"] else "ready"
+    return {
+        "provider": "agentops-operator",
+        "operation": "task_intake_checklist",
+        "status": status,
+        "workspace_id": workspace_id,
+        "summary": summary,
+        "items": items,
+        "next_actions": [item["command"] for item in items if item["severity"] != "ready"][:5] or ["agentops operator action-plan --limit 20"],
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+
+
 def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
     qs = qs or {}
     limit = min(max(int((qs.get("limit") or ["12"])[0]), 1), 30)
@@ -13136,6 +13327,7 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
     inbox = commander_integration_inbox(conn, headers, {"bucket": ["all"], "limit": [str(max(limit, 12))]})
     remediation_loop = evaluation_case_remediation_loop(conn, workspace_id, limit=max(limit, 8))
     evidence_gaps = operator_execution_evidence_gaps(conn, workspace_id, limit=max(limit, 8))
+    task_intake = operator_task_intake_checklist(conn, workspace_id, limit=max(limit, 8))
 
     actions: list[dict] = []
 
@@ -13335,6 +13527,28 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             },
         )
 
+    for item in (task_intake.get("items") or [])[:limit]:
+        if item.get("severity") == "ready":
+            continue
+        add_action(
+            "task_intake",
+            item.get("title") or item.get("task_id") or "Task intake gate",
+            item.get("command") or "agentops operator intake-checklist --limit 20",
+            priority=int(item.get("priority_score") or 76),
+            severity=item.get("severity") or "attention",
+            source="task_intake_checklist",
+            summary=item.get("next_action") or "",
+            ui_route=item.get("ui_route") or f"/admin/tasks/{item.get('task_id')}",
+            evidence={
+                "task_id": item.get("task_id"),
+                "assigned_agent_ids": item.get("assigned_agent_ids") or [],
+                "plan_id": item.get("plan_id"),
+                "plan_verified": item.get("plan_verified"),
+                "failed_gate_ids": item.get("failed_gate_ids") or [],
+                "risk_level": item.get("risk_level"),
+            },
+        )
+
     deduped: list[dict] = []
     seen: set[tuple[str, str | None]] = set()
     severity_rank = {"blocked": 3, "attention": 2, "ready": 1, "info": 0}
@@ -13384,6 +13598,11 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             "evidence_gap_closure_ready_runs": (evidence_gaps.get("summary") or {}).get("closure_ready_runs", 0),
             "closed_evidence_gap_runs": (evidence_gaps.get("summary") or {}).get("closed_gap_runs", 0),
             "waived_evidence_gap_runs": (evidence_gaps.get("summary") or {}).get("waived_gap_runs", 0),
+            "task_intake_checked": (task_intake.get("summary") or {}).get("tasks_checked", 0),
+            "task_intake_ready": (task_intake.get("summary") or {}).get("ready_for_intake", 0),
+            "task_intake_blocked": (task_intake.get("summary") or {}).get("blocked_for_intake", 0),
+            "task_intake_attention": (task_intake.get("summary") or {}).get("attention_for_intake", 0),
+            "task_intake_missing_agent_plan": (task_intake.get("summary") or {}).get("missing_agent_plan", 0),
         },
         "actions": deduped,
         "top_commands": [item["command"] for item in deduped[:5]],
@@ -13395,9 +13614,11 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             "adapter_readiness": adapter_readiness.get("status"),
             "remediation_loop": remediation_loop.get("status"),
             "execution_evidence": evidence_gaps.get("status"),
+            "task_intake": task_intake.get("status"),
         },
         "remediation_loop": remediation_loop,
         "execution_evidence": evidence_gaps,
+        "task_intake": task_intake,
         "contract": "read-only operator action plan; execution stays in explicit CLI/API commands and live adapters still require confirmation",
         "safety": {
             "read_only": True,
@@ -14188,6 +14409,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(payload)
             if path == "/api/operator/action-plan":
                 payload = operator_action_plan(conn, self.headers, qs)
+                conn.rollback()
+                return self.send_json(payload)
+            if path == "/api/operator/intake-checklist":
+                workspace_id = normalize_workspace_id(self.headers.get("X-AgentOps-Workspace-Id") or "local-demo")
+                limit = min(max(int((qs.get("limit") or ["12"])[0]), 1), 30)
+                payload = operator_task_intake_checklist(conn, workspace_id, limit=limit)
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/security/production-readiness":

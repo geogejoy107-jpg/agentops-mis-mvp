@@ -1040,6 +1040,79 @@ export interface OperatorActionPlanItem {
   evidence?: Record<string, unknown>;
 }
 
+export interface ExecutionEvidenceGapItem {
+  run_id: string;
+  task_id?: string | null;
+  agent_id?: string | null;
+  task_title?: string;
+  run_status?: string;
+  task_status?: string | null;
+  remediation_task_id?: string | null;
+  remediation_status?: string | null;
+  remediation_synthesis_status?: string | null;
+  remediation_synthesis_artifact_id?: string | null;
+  remediation_synthesis_approval_id?: string | null;
+  gap_decision_status?: string | null;
+  gap_decision_type?: string | null;
+  gap_decision?: Record<string, unknown> | null;
+  gap_types: string[];
+  missing_evidence: string[];
+  severity: string;
+  priority: number;
+  command: string;
+  next_action?: string;
+  ui_route?: string | null;
+  token_omitted?: boolean;
+}
+
+export interface ExecutionEvidenceGapsPayload {
+  provider?: string;
+  operation?: string;
+  status?: string;
+  workspace_id?: string;
+  summary?: Record<string, number>;
+  gaps: ExecutionEvidenceGapItem[];
+  next_actions?: string[];
+  safety?: Record<string, unknown>;
+  token_omitted?: boolean;
+}
+
+export interface TaskIntakeChecklistItem {
+  task_id: string;
+  title: string;
+  status: string;
+  priority?: string;
+  risk_level?: string;
+  assigned_agent_ids: string[];
+  plan_id?: string | null;
+  plan_status?: string | null;
+  plan_verified: boolean;
+  plan_verified_at?: string | null;
+  referenced_specs: number;
+  referenced_memories: number;
+  referenced_bases: number;
+  gates: { id: string; ok: boolean; status: string; message?: string }[];
+  failed_gate_ids: string[];
+  severity: string;
+  priority_score: number;
+  command: string;
+  next_action?: string;
+  ui_route?: string | null;
+  token_omitted?: boolean;
+}
+
+export interface TaskIntakeChecklistPayload {
+  provider?: string;
+  operation?: string;
+  status?: string;
+  workspace_id?: string;
+  summary?: Record<string, number>;
+  items: TaskIntakeChecklistItem[];
+  next_actions?: string[];
+  safety?: Record<string, unknown>;
+  token_omitted?: boolean;
+}
+
 export interface OperatorActionPlanPayload {
   provider: string;
   operation: string;
@@ -1074,10 +1147,17 @@ export interface OperatorActionPlanPayload {
     evidence_gap_closure_ready_runs: number;
     closed_evidence_gap_runs: number;
     waived_evidence_gap_runs: number;
+    task_intake_checked: number;
+    task_intake_ready: number;
+    task_intake_blocked: number;
+    task_intake_attention: number;
+    task_intake_missing_agent_plan: number;
   };
   actions: OperatorActionPlanItem[];
   top_commands: string[];
   source_status: Record<string, string | undefined>;
+  execution_evidence?: ExecutionEvidenceGapsPayload;
+  task_intake?: TaskIntakeChecklistPayload;
   safety: {
     read_only: boolean;
     ledger_mutated: boolean;
@@ -3234,6 +3314,100 @@ export async function loadReviewQueue(limit = 12): Promise<ReviewQueuePayload> {
   };
 }
 
+function normalizeExecutionEvidenceGaps(rawValue: unknown): ExecutionEvidenceGapsPayload {
+  const raw = typeof rawValue === "object" && rawValue !== null ? rawValue as Record<string, unknown> : {};
+  const summaryRaw = typeof raw.summary === "object" && raw.summary !== null ? raw.summary as Record<string, unknown> : {};
+  const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
+  return {
+    provider: raw.provider ? String(raw.provider) : undefined,
+    operation: raw.operation ? String(raw.operation) : undefined,
+    status: raw.status ? String(raw.status) : undefined,
+    workspace_id: raw.workspace_id ? String(raw.workspace_id) : undefined,
+    summary: numberRecord(summaryRaw),
+    gaps: asArray<Record<string, unknown>>(raw.gaps).map((item) => ({
+      run_id: String(item.run_id || ""),
+      task_id: item.task_id ? String(item.task_id) : null,
+      agent_id: item.agent_id ? String(item.agent_id) : null,
+      task_title: item.task_title ? String(item.task_title) : undefined,
+      run_status: item.run_status ? String(item.run_status) : undefined,
+      task_status: item.task_status ? String(item.task_status) : null,
+      remediation_task_id: item.remediation_task_id ? String(item.remediation_task_id) : null,
+      remediation_status: item.remediation_status ? String(item.remediation_status) : null,
+      remediation_synthesis_status: item.remediation_synthesis_status ? String(item.remediation_synthesis_status) : null,
+      remediation_synthesis_artifact_id: item.remediation_synthesis_artifact_id ? String(item.remediation_synthesis_artifact_id) : null,
+      remediation_synthesis_approval_id: item.remediation_synthesis_approval_id ? String(item.remediation_synthesis_approval_id) : null,
+      gap_decision_status: item.gap_decision_status ? String(item.gap_decision_status) : null,
+      gap_decision_type: item.gap_decision_type ? String(item.gap_decision_type) : null,
+      gap_decision: typeof item.gap_decision === "object" && item.gap_decision !== null ? item.gap_decision as Record<string, unknown> : null,
+      gap_types: asArray<unknown>(item.gap_types).map(String),
+      missing_evidence: asArray<unknown>(item.missing_evidence).map(String),
+      severity: String(item.severity || "attention"),
+      priority: numberValue(item.priority, 0),
+      command: String(item.command || ""),
+      next_action: item.next_action ? String(item.next_action) : undefined,
+      ui_route: item.ui_route ? String(item.ui_route) : null,
+      token_omitted: item.token_omitted === undefined ? undefined : boolValue(item.token_omitted),
+    })).filter((item) => item.run_id),
+    next_actions: asArray<unknown>(raw.next_actions).map(String).filter(Boolean),
+    safety: {
+      read_only: boolValue(safetyRaw.read_only),
+      ledger_mutated: boolValue(safetyRaw.ledger_mutated),
+      live_execution_performed: boolValue(safetyRaw.live_execution_performed),
+      token_omitted: boolValue(safetyRaw.token_omitted),
+    },
+    token_omitted: raw.token_omitted === undefined ? undefined : boolValue(raw.token_omitted),
+  };
+}
+
+function normalizeTaskIntakeChecklist(rawValue: unknown): TaskIntakeChecklistPayload {
+  const raw = typeof rawValue === "object" && rawValue !== null ? rawValue as Record<string, unknown> : {};
+  const summaryRaw = typeof raw.summary === "object" && raw.summary !== null ? raw.summary as Record<string, unknown> : {};
+  const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
+  return {
+    provider: raw.provider ? String(raw.provider) : undefined,
+    operation: raw.operation ? String(raw.operation) : undefined,
+    status: raw.status ? String(raw.status) : undefined,
+    workspace_id: raw.workspace_id ? String(raw.workspace_id) : undefined,
+    summary: numberRecord(summaryRaw),
+    items: asArray<Record<string, unknown>>(raw.items).map((item) => ({
+      task_id: String(item.task_id || ""),
+      title: String(item.title || item.task_id || "Task intake"),
+      status: String(item.status || "planned"),
+      priority: item.priority ? String(item.priority) : undefined,
+      risk_level: item.risk_level ? String(item.risk_level) : undefined,
+      assigned_agent_ids: asArray<unknown>(item.assigned_agent_ids).map(String),
+      plan_id: item.plan_id ? String(item.plan_id) : null,
+      plan_status: item.plan_status ? String(item.plan_status) : null,
+      plan_verified: boolValue(item.plan_verified),
+      plan_verified_at: item.plan_verified_at ? String(item.plan_verified_at) : null,
+      referenced_specs: numberValue(item.referenced_specs, 0),
+      referenced_memories: numberValue(item.referenced_memories, 0),
+      referenced_bases: numberValue(item.referenced_bases, 0),
+      gates: asArray<Record<string, unknown>>(item.gates).map((gate) => ({
+        id: String(gate.id || ""),
+        ok: boolValue(gate.ok),
+        status: String(gate.status || (boolValue(gate.ok) ? "pass" : "attention")),
+        message: gate.message ? String(gate.message) : undefined,
+      })).filter((gate) => gate.id),
+      failed_gate_ids: asArray<unknown>(item.failed_gate_ids).map(String),
+      severity: String(item.severity || "attention"),
+      priority_score: numberValue(item.priority_score, 0),
+      command: String(item.command || ""),
+      next_action: item.next_action ? String(item.next_action) : undefined,
+      ui_route: item.ui_route ? String(item.ui_route) : null,
+      token_omitted: item.token_omitted === undefined ? undefined : boolValue(item.token_omitted),
+    })).filter((item) => item.task_id),
+    next_actions: asArray<unknown>(raw.next_actions).map(String).filter(Boolean),
+    safety: {
+      read_only: boolValue(safetyRaw.read_only),
+      ledger_mutated: boolValue(safetyRaw.ledger_mutated),
+      live_execution_performed: boolValue(safetyRaw.live_execution_performed),
+      token_omitted: boolValue(safetyRaw.token_omitted),
+    },
+    token_omitted: raw.token_omitted === undefined ? undefined : boolValue(raw.token_omitted),
+  };
+}
+
 export async function loadOperatorActionPlan(limit = 12): Promise<OperatorActionPlanPayload> {
   const raw = await optionalApiJson<Record<string, unknown>>(`/operator/action-plan?limit=${encodeURIComponent(String(limit))}`, {
     provider: "agentops-operator",
@@ -3291,6 +3465,11 @@ export async function loadOperatorActionPlan(limit = 12): Promise<OperatorAction
       evidence_gap_closure_ready_runs: numberValue(summaryRaw.evidence_gap_closure_ready_runs, 0),
       closed_evidence_gap_runs: numberValue(summaryRaw.closed_evidence_gap_runs, 0),
       waived_evidence_gap_runs: numberValue(summaryRaw.waived_evidence_gap_runs, 0),
+      task_intake_checked: numberValue(summaryRaw.task_intake_checked, 0),
+      task_intake_ready: numberValue(summaryRaw.task_intake_ready, 0),
+      task_intake_blocked: numberValue(summaryRaw.task_intake_blocked, 0),
+      task_intake_attention: numberValue(summaryRaw.task_intake_attention, 0),
+      task_intake_missing_agent_plan: numberValue(summaryRaw.task_intake_missing_agent_plan, 0),
     },
     actions: asArray<Record<string, unknown>>(raw.actions).map((item) => ({
       action_id: String(item.action_id || item.command || item.title || ""),
@@ -3306,6 +3485,8 @@ export async function loadOperatorActionPlan(limit = 12): Promise<OperatorAction
     })).filter((item) => item.command),
     top_commands: asArray<unknown>(raw.top_commands).map(String).filter(Boolean),
     source_status: typeof raw.source_status === "object" && raw.source_status !== null ? raw.source_status as Record<string, string | undefined> : {},
+    execution_evidence: normalizeExecutionEvidenceGaps(raw.execution_evidence),
+    task_intake: normalizeTaskIntakeChecklist(raw.task_intake),
     safety: {
       read_only: boolValue(safetyRaw.read_only),
       ledger_mutated: boolValue(safetyRaw.ledger_mutated),

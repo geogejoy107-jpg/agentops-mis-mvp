@@ -59,10 +59,12 @@ import {
   type CommanderSynthesisPromotionPayload,
   type CustomerDeliveryBoardPayload,
   type CustomerTaskWorkflowResult,
+  type ExecutionEvidenceGapItem,
   type HermesOpenClawLoopReadbackPayload,
   type HermesOpenClawLoopWorkflowResult,
   type OperatorActionPlanPayload,
   type ReviewQueuePayload,
+  type TaskIntakeChecklistItem,
   type WorkerAdapterName,
   type WorkerFleetHygienePayload,
   type WorkflowJob,
@@ -219,6 +221,10 @@ export function AIEmployees() {
   const operatorActionPlan = data?.operatorActionPlan as OperatorActionPlanPayload | undefined;
   const operatorPlanActions = operatorActionPlan?.actions || [];
   const operatorPlanSummary = operatorActionPlan?.summary;
+  const operatorEvidenceGaps = operatorActionPlan?.execution_evidence?.gaps || [];
+  const taskIntakeChecklist = operatorActionPlan?.task_intake;
+  const taskIntakeSummary = taskIntakeChecklist?.summary;
+  const taskIntakeItems = taskIntakeChecklist?.items || [];
   const securityReadiness = data?.securityReadiness;
   const integrationInbox = data?.integrationInbox;
   const commanderWorkPackages = data?.commanderWorkPackages;
@@ -313,6 +319,21 @@ export function AIEmployees() {
       moveDown: "Move down",
       closeEvidenceGap: "Close gap",
       closingEvidenceGap: "Closing...",
+      evidenceClosureLedger: "Evidence closure ledger",
+      evidenceClosureSummary: "Audit readback for remediated source-run debt: closure-ready, closed, waived and reopened decisions.",
+      taskIntakeTitle: "Task intake gates",
+      taskIntakeSummary: "Pre-run governance for planned work: assignment, Agent Plan, knowledge retrieval, base reference and risk boundary.",
+      reopenEvidenceGap: "Reopen",
+      reopeningEvidenceGap: "Reopening...",
+      closureDecision: "Decision",
+      remediationState: "Remediation",
+      noClosureRows: "No closure decisions yet.",
+      noIntakeRows: "No planned or backlog tasks to gate.",
+      intakeReady: "Ready",
+      intakeBlocked: "Blocked",
+      intakeAttention: "Attention",
+      assignedAgents: "Assigned",
+      planReferences: "Refs",
       localReadinessTitle: "Local Readiness",
       localReadinessSummary: "Read-only proof that this local MIS workspace can be operated without leaking tokens or triggering live work.",
       localReadinessOverall: "Overall status",
@@ -635,6 +656,21 @@ export function AIEmployees() {
       moveDown: "下移",
       closeEvidenceGap: "关闭缺口",
       closingEvidenceGap: "关闭中...",
+      evidenceClosureLedger: "证据关闭账本",
+      evidenceClosureSummary: "回读已修复源 run 债务的审计状态：待关闭、已关闭、已豁免和已重开。",
+      taskIntakeTitle: "任务接收 Gate",
+      taskIntakeSummary: "planned 工作的运行前治理：分派、Agent Plan、知识检索、底座引用和风险边界。",
+      reopenEvidenceGap: "重开",
+      reopeningEvidenceGap: "重开中...",
+      closureDecision: "决策",
+      remediationState: "修复",
+      noClosureRows: "暂无关闭决策。",
+      noIntakeRows: "暂无 planned/backlog 任务需要 Gate。",
+      intakeReady: "就绪",
+      intakeBlocked: "阻塞",
+      intakeAttention: "需处理",
+      assignedAgents: "已分派",
+      planReferences: "引用",
       localReadinessTitle: "本地就绪",
       localReadinessSummary: "只读证明：这个本地 MIS 工作区可运行，同时不泄露 token，也不会触发真实执行。",
       localReadinessOverall: "整体状态",
@@ -1102,10 +1138,41 @@ export function AIEmployees() {
     };
   };
 
-  const closeEvidenceGapFromQueue = async (item: (typeof actionQueueCandidates)[number]) => {
-    const details = closeGapDetailsForAction(item);
-    if (!details) return;
-    setDispatching(`close-gap:${details.runId}`);
+  const evidenceGapDecisionDetails = (gap: ExecutionEvidenceGapItem, decision: "accepted_remediation" | "reopen" = "accepted_remediation") => ({
+    runId: gap.run_id,
+    decision,
+    synthesisArtifactId: gap.remediation_synthesis_artifact_id || undefined,
+    remediationTaskId: gap.remediation_task_id || undefined,
+  });
+
+  const evidenceClosureRows = operatorEvidenceGaps
+    .filter((gap) => gap.remediation_synthesis_status || gap.gap_decision_status || isCloseEvidenceGapCommand(gap.command || ""))
+    .sort((left, right) => {
+      const score = (gap: ExecutionEvidenceGapItem) => (
+        gap.gap_decision_status === "closed" ? 30 :
+        isCloseEvidenceGapCommand(gap.command || "") ? 50 :
+        gap.remediation_synthesis_status === "promoted" ? 40 :
+        0
+      );
+      return score(right) - score(left);
+    })
+    .slice(0, 4);
+
+  const taskIntakeRows = [...taskIntakeItems]
+    .sort((left, right) => {
+      const score = (item: TaskIntakeChecklistItem) => item.severity === "blocked" ? 3 : item.severity === "attention" ? 2 : 1;
+      return score(right) - score(left) || right.priority_score - left.priority_score;
+    })
+    .slice(0, 4);
+
+  const submitEvidenceGapDecision = async (details: {
+    runId: string;
+    decision: "accepted_remediation" | "waived" | "reopen";
+    synthesisArtifactId?: string;
+    remediationTaskId?: string;
+  }) => {
+    const actionKey = `${details.decision === "reopen" ? "reopen-gap" : "close-gap"}:${details.runId}`;
+    setDispatching(actionKey);
     setDispatchResult(null);
     try {
       const result = await closeExecutionEvidenceGap({
@@ -1115,13 +1182,20 @@ export function AIEmployees() {
         remediation_task_id: details.remediationTaskId || undefined,
         confirm_close: true,
       });
-      setDispatchResult(`${copy.closeEvidenceGap}: ${result.status} · ${result.run_id || details.runId}`);
+      const label = details.decision === "reopen" ? copy.reopenEvidenceGap : copy.closeEvidenceGap;
+      setDispatchResult(`${label}: ${result.status} · ${result.run_id || details.runId}`);
       await refresh();
     } catch (err) {
       setDispatchResult(err instanceof Error ? err.message : String(err));
     } finally {
       setDispatching(null);
     }
+  };
+
+  const closeEvidenceGapFromQueue = async (item: (typeof actionQueueCandidates)[number]) => {
+    const details = closeGapDetailsForAction(item);
+    if (!details) return;
+    await submitEvidenceGapDecision(details);
   };
 
   const updateCustomerTaskText = (field: "title" | "description", value: string) => {
@@ -2466,6 +2540,7 @@ export function AIEmployees() {
                 {operatorPlanSummary && ` · evidence gaps ${operatorPlanSummary.evidence_gap_runs}/${operatorPlanSummary.blocked_evidence_gap_runs}/${operatorPlanSummary.remediated_evidence_gap_runs}`}
                 {operatorPlanSummary && ` · synth ${operatorPlanSummary.evidence_synthesis_ready_runs}/${operatorPlanSummary.evidence_synthesis_pending_runs}/${operatorPlanSummary.evidence_synthesis_promoted_runs}`}
                 {operatorPlanSummary && ` · close ${operatorPlanSummary.evidence_gap_closure_ready_runs}/${operatorPlanSummary.closed_evidence_gap_runs}/${operatorPlanSummary.waived_evidence_gap_runs}`}
+                {operatorPlanSummary && ` · intake ${operatorPlanSummary.task_intake_ready}/${operatorPlanSummary.task_intake_blocked}/${operatorPlanSummary.task_intake_attention}`}
               </p>
             </div>
             <button
@@ -2557,6 +2632,143 @@ export function AIEmployees() {
                 </div>
               );
             })}
+          </div>
+          <div className="mt-3 pt-3" style={{ borderTop: "1px solid var(--mis-border)" }}>
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.evidenceClosureLedger}</div>
+                <div className="text-[10px] mt-1 max-w-3xl" style={{ color: "var(--mis-dim)" }}>{copy.evidenceClosureSummary}</div>
+              </div>
+              <StatusBadge status={(operatorPlanSummary?.closed_evidence_gap_runs || 0) > 0 ? "pass" : (operatorPlanSummary?.evidence_gap_closure_ready_runs || 0) > 0 ? "attention" : "ready"} label={`${operatorPlanSummary?.closed_evidence_gap_runs || 0}/${operatorPlanSummary?.evidence_gap_closure_ready_runs || 0}`} />
+            </div>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 mt-2">
+              {evidenceClosureRows.length === 0 && (
+                <div className="text-[10px] rounded px-3 py-2" style={{ color: "var(--mis-muted)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                  {copy.noClosureRows}
+                </div>
+              )}
+              {evidenceClosureRows.map((gap) => {
+                const canClose = gap.gap_decision_status !== "closed" && isCloseEvidenceGapCommand(gap.command || "");
+                const canReopen = gap.gap_decision_status === "closed";
+                const closeBusy = dispatching === `close-gap:${gap.run_id}`;
+                const reopenBusy = dispatching === `reopen-gap:${gap.run_id}`;
+                return (
+                  <div key={gap.run_id} className="rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="text-[11px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{gap.task_title || gap.run_id}</div>
+                        <div className="text-[10px] truncate mt-0.5" style={{ color: "var(--mis-muted)" }}>{gap.run_id}</div>
+                      </div>
+                      <StatusBadge status={gap.gap_decision_status === "closed" ? "pass" : canClose ? "attention" : gap.severity} />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 mt-2">
+                      <div className="text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>
+                        {copy.remediationState}: <span style={{ color: "var(--mis-text)" }}>{gap.remediation_synthesis_status || gap.remediation_status || "—"}</span>
+                      </div>
+                      <div className="text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>
+                        {copy.closureDecision}: <span style={{ color: "var(--mis-text)" }}>{gap.gap_decision_type || gap.gap_decision_status || "open"}</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 mt-2">
+                      <div className="text-[10px] truncate" style={{ color: "var(--mis-dim)" }}>{gap.next_action || gap.command}</div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {canClose && (
+                          <button
+                            onClick={() => void submitEvidenceGapDecision(evidenceGapDecisionDetails(gap))}
+                            disabled={Boolean(dispatching)}
+                            className="inline-flex items-center gap-1 text-[10px] px-2 h-6 rounded disabled:opacity-50"
+                            style={{ background: "rgba(45,212,191,0.10)", color: "var(--mis-success)", border: "1px solid rgba(45,212,191,0.20)" }}
+                            title={copy.closeEvidenceGap}
+                          >
+                            {closeBusy ? <RefreshCw size={10} /> : <CheckCircle2 size={10} />}
+                            {closeBusy ? copy.closingEvidenceGap : copy.closeEvidenceGap}
+                          </button>
+                        )}
+                        {canReopen && (
+                          <button
+                            onClick={() => void submitEvidenceGapDecision(evidenceGapDecisionDetails(gap, "reopen"))}
+                            disabled={Boolean(dispatching)}
+                            className="inline-flex items-center gap-1 text-[10px] px-2 h-6 rounded disabled:opacity-50"
+                            style={{ background: "rgba(245,158,11,0.10)", color: "var(--mis-warning)", border: "1px solid rgba(245,158,11,0.20)" }}
+                            title={copy.reopenEvidenceGap}
+                          >
+                            {reopenBusy ? <RefreshCw size={10} /> : <RotateCw size={10} />}
+                            {reopenBusy ? copy.reopeningEvidenceGap : copy.reopenEvidenceGap}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-lg p-3 mt-4" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <ShieldCheck size={13} style={{ color: (taskIntakeSummary?.blocked_for_intake || 0) > 0 ? "var(--mis-warning)" : "var(--mis-success)" }} />
+                <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.taskIntakeTitle}</div>
+                <StatusBadge status={taskIntakeChecklist?.status || "unknown"} />
+              </div>
+              <p className="text-[10px] mt-1 max-w-3xl" style={{ color: "var(--mis-dim)" }}>{copy.taskIntakeSummary}</p>
+            </div>
+            <StatusBadge status={(taskIntakeSummary?.blocked_for_intake || 0) > 0 ? "blocked" : (taskIntakeSummary?.attention_for_intake || 0) > 0 ? "attention" : "pass"} label={`${taskIntakeSummary?.ready_for_intake || 0}/${taskIntakeSummary?.tasks_checked || 0}`} />
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-3">
+            {[
+              { label: copy.intakeReady, value: taskIntakeSummary?.ready_for_intake ?? 0, status: "pass" },
+              { label: copy.intakeBlocked, value: taskIntakeSummary?.blocked_for_intake ?? 0, status: (taskIntakeSummary?.blocked_for_intake || 0) > 0 ? "blocked" : "pass" },
+              { label: copy.intakeAttention, value: taskIntakeSummary?.attention_for_intake ?? 0, status: (taskIntakeSummary?.attention_for_intake || 0) > 0 ? "attention" : "pass" },
+            ].map((item) => (
+              <div key={item.label} className="rounded px-2 py-1" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                <div className="text-[9px]" style={{ color: "var(--mis-muted)" }}>{item.label}</div>
+                <div className="flex items-center justify-between gap-2 mt-0.5">
+                  <div className="text-[10px] font-semibold truncate" style={{ color: item.status === "blocked" ? "#F87171" : "var(--mis-text)" }}>{item.value}</div>
+                  <StatusBadge status={item.status} />
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-2 mt-3">
+            {taskIntakeRows.length === 0 && (
+              <div className="text-[10px] rounded px-3 py-2" style={{ color: "var(--mis-muted)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                {copy.noIntakeRows}
+              </div>
+            )}
+            {taskIntakeRows.map((item) => (
+              <div key={item.task_id} className="rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="text-[11px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{item.title}</div>
+                    <div className="text-[10px] truncate mt-0.5" style={{ color: "var(--mis-muted)" }}>{item.task_id}</div>
+                  </div>
+                  <StatusBadge status={item.severity} />
+                </div>
+                <div className="grid grid-cols-2 gap-2 mt-2">
+                  <div className="text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>
+                    {copy.assignedAgents}: <span style={{ color: "var(--mis-text)" }}>{item.assigned_agent_ids.join(", ") || "—"}</span>
+                  </div>
+                  <div className="text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>
+                    Agent Plan: <span style={{ color: "var(--mis-text)" }}>{item.plan_verified ? "verified" : item.plan_id || "missing"}</span>
+                  </div>
+                  <div className="text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>
+                    {copy.planReferences}: <span style={{ color: "var(--mis-text)" }}>{item.referenced_specs}/{item.referenced_memories}/{item.referenced_bases}</span>
+                  </div>
+                  <div className="text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>
+                    Risk: <span style={{ color: "var(--mis-text)" }}>{item.risk_level || "—"}</span>
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {item.gates.slice(0, 6).map((gate) => (
+                    <StatusBadge key={gate.id} status={gate.ok ? "pass" : gate.status} label={gate.id} />
+                  ))}
+                </div>
+                <div className="text-[10px] truncate mt-2" style={{ color: "var(--mis-dim)" }}>{item.next_action || item.command}</div>
+              </div>
+            ))}
           </div>
         </div>
 

@@ -1120,8 +1120,8 @@ Reruns still require the explicit `agentops eval run-cases` path.
 
 Returns the prioritized operator command-center plan as JSON. It merges the
 review queue, customer delivery board, worker fleet status, adapter readiness,
-commander inbox, execution-evidence gaps, and remediation loop into safe next
-CLI/UI actions.
+commander inbox, task-intake gates, execution-evidence gaps, and remediation
+loop into safe next CLI/UI actions.
 
 ```bash
 agentops operator action-plan --limit 12
@@ -1139,7 +1139,18 @@ reports summary counters such as `evidence_gap_runs`, `missing_plan_runs`,
 `missing_plan_evidence_manifests`, and
 `unverified_plan_evidence_manifests`, then suggests
 `agentops operator remediate-evidence-gap --run-id <run_id>` without mutating
-the ledger.
+the ledger. `task_intake` is the pre-run source for planned/backlog tasks: it
+checks assignment, verified Agent Plan, knowledge/spec references, base
+references, and high-risk approval boundaries before the task is pulled.
+
+```bash
+agentops operator intake-checklist --limit 12
+```
+
+Maps to `GET /api/operator/intake-checklist`. This is read-only and reports
+`ready_for_intake`, `blocked_for_intake`, `attention_for_intake`,
+`missing_agent_plan`, `missing_knowledge_retrieval`, and
+`missing_base_reference` without starting workers or writing ledger rows.
 
 ```bash
 agentops operator remediate-evidence-gap --run-id run_123
@@ -1409,6 +1420,21 @@ substring matching. Task pull/list and task-linked run, artifact, approval and
 memory lists compare `agent_id` with parsed collaborator arrays via
 `agentops_json_array_contains`, so an agent like `agt_x` cannot read rows whose
 only collaborator is `agt_x_extra`.
+
+### `agentops operator intake-checklist`
+
+Shows the read-only pre-intake gates for planned/backlog tasks before any worker
+starts execution:
+
+```bash
+agentops operator intake-checklist --limit 20
+```
+
+The checklist verifies assignment, submitted Agent Plan, verified Agent Plan,
+knowledge/spec retrieval, base references, and high-risk approval boundaries.
+It also feeds `agentops operator action-plan`, so customer tasks that are not
+ready for agent execution become explicit operator actions instead of silently
+remaining in the queue.
 | `POST /api/agent-gateway/audit` | `audit:write` |
 
 ### Future Auth

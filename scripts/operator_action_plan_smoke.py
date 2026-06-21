@@ -144,6 +144,11 @@ def validate_plan(payload: dict, label: str, failures: list[str], limit: int) ->
         "evidence_gap_closure_ready_runs",
         "closed_evidence_gap_runs",
         "waived_evidence_gap_runs",
+        "task_intake_checked",
+        "task_intake_ready",
+        "task_intake_blocked",
+        "task_intake_attention",
+        "task_intake_missing_agent_plan",
     ]:
         require(isinstance(summary.get(key), int), f"{label} summary.{key} missing: {summary}", failures)
     require(isinstance(summary.get("recommended_adapter"), str), f"{label} recommended_adapter missing: {summary}", failures)
@@ -154,6 +159,7 @@ def validate_plan(payload: dict, label: str, failures: list[str], limit: int) ->
     require(isinstance(payload.get("source_status"), dict), f"{label} source_status missing", failures)
     require("remediation_loop" in (payload.get("source_status") or {}), f"{label} remediation source status missing: {payload.get('source_status')}", failures)
     require("execution_evidence" in (payload.get("source_status") or {}), f"{label} execution evidence source status missing: {payload.get('source_status')}", failures)
+    require("task_intake" in (payload.get("source_status") or {}), f"{label} task intake source status missing: {payload.get('source_status')}", failures)
     evidence_source = payload.get("execution_evidence") or {}
     require(evidence_source.get("operation") == "execution_evidence_gaps", f"{label} execution evidence payload missing: {evidence_source}", failures)
     evidence_summary = evidence_source.get("summary") or {}
@@ -170,6 +176,30 @@ def validate_plan(payload: dict, label: str, failures: list[str], limit: int) ->
     evidence_safety = evidence_source.get("safety") or {}
     require(evidence_safety.get("read_only") is True, f"{label} execution evidence read_only missing: {evidence_safety}", failures)
     require(evidence_safety.get("ledger_mutated") is False, f"{label} execution evidence must not mutate ledger: {evidence_safety}", failures)
+    intake_source = payload.get("task_intake") or {}
+    require(intake_source.get("operation") == "task_intake_checklist", f"{label} task intake payload missing: {intake_source}", failures)
+    intake_summary = intake_source.get("summary") or {}
+    for key in [
+        "tasks_checked",
+        "ready_for_intake",
+        "blocked_for_intake",
+        "attention_for_intake",
+        "missing_agent_plan",
+        "missing_knowledge_retrieval",
+        "missing_base_reference",
+        "risk_gate_blocked",
+    ]:
+        require(isinstance(intake_summary.get(key), int), f"{label} task intake {key} missing: {intake_summary}", failures)
+    intake_safety = intake_source.get("safety") or {}
+    require(intake_safety.get("read_only") is True, f"{label} task intake read_only missing: {intake_safety}", failures)
+    require(intake_safety.get("ledger_mutated") is False, f"{label} task intake must not mutate ledger: {intake_safety}", failures)
+    for item in intake_source.get("items") or []:
+        require(bool(item.get("task_id")), f"{label} task intake item task_id missing: {item}", failures)
+        require(item.get("severity") in {"blocked", "attention", "ready"}, f"{label} task intake severity wrong: {item}", failures)
+        require(isinstance(item.get("gates"), list), f"{label} task intake gates missing: {item}", failures)
+        for gate in item.get("gates") or []:
+            require(bool(gate.get("id")), f"{label} task intake gate id missing: {gate}", failures)
+            require(isinstance(gate.get("ok"), bool), f"{label} task intake gate ok missing: {gate}", failures)
     for action in actions or []:
         require(bool(action.get("action_id")), f"{label} action_id missing: {action}", failures)
         require(action.get("severity") in {"blocked", "attention", "ready", "info"}, f"{label} bad severity: {action}", failures)
@@ -195,6 +225,16 @@ def validate_plan(payload: dict, label: str, failures: list[str], limit: int) ->
                 or command.startswith("agentops run get --run-id ")
                 or command.startswith("agentops commander inbox"),
                 f"{label} execution evidence action should preview remediation package: {action}",
+                failures,
+            )
+        if action.get("source") == "task_intake_checklist":
+            command = str(action.get("command") or "")
+            require(
+                command.startswith("agentops knowledge search ")
+                or command.startswith("agentops agent-plan verify --plan-id ")
+                or command.startswith("agentops agent-plan get --plan-id ")
+                or command.startswith("agentops task pull --agent-id "),
+                f"{label} task intake action should stay in read/plan/pull commands: {action}",
                 failures,
             )
         require(bool(action.get("source")), f"{label} source missing: {action}", failures)
@@ -235,6 +275,14 @@ def main() -> int:
             cli_payload = load_json(proc)
             require(proc.returncode == 0, f"CLI failed: {proc.stderr or proc.stdout}", failures)
             validate_plan(cli_payload, "cli", failures, args.limit)
+            intake_proc = run_cli(args.base_url, ["operator", "intake-checklist", "--limit", str(args.limit)], env)
+            outputs.extend([intake_proc.stdout, intake_proc.stderr])
+            intake_payload = load_json(intake_proc)
+            require(intake_proc.returncode == 0, f"intake-checklist CLI failed: {intake_proc.stderr or intake_proc.stdout}", failures)
+            require(intake_payload.get("operation") == "task_intake_checklist", f"intake-checklist operation mismatch: {intake_payload}", failures)
+            intake_safety = intake_payload.get("safety") or {}
+            require(intake_safety.get("read_only") is True, f"intake-checklist CLI read_only missing: {intake_safety}", failures)
+            require(intake_safety.get("ledger_mutated") is False, f"intake-checklist CLI mutated ledger: {intake_safety}", failures)
             gap_run_id = next(
                 (item.get("run_id") for item in ((payload.get("execution_evidence") or {}).get("gaps") or []) if item.get("run_id")),
                 None,

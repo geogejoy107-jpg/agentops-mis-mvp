@@ -319,6 +319,10 @@ def cmd_operator_action_plan(args, client: AgentOpsClient) -> dict:
     return client.get("/api/operator/action-plan", query={"limit": args.limit})
 
 
+def cmd_operator_intake_checklist(args, client: AgentOpsClient) -> dict:
+    return client.get("/api/operator/intake-checklist", query={"limit": args.limit})
+
+
 def cmd_operator_remediate_evidence_gap(args, client: AgentOpsClient) -> dict:
     return client.post("/api/operator/execution-evidence/remediation-task", {
         "workspace_id": client.workspace_id,
@@ -1572,6 +1576,9 @@ def build_parser() -> argparse.ArgumentParser:
     operator_plan = operator_sub.add_parser("action-plan", help="Show the prioritized next safe CLI/UI actions.")
     operator_plan.add_argument("--limit", type=int, default=12)
     operator_plan.set_defaults(handler="operator_action_plan")
+    operator_intake = operator_sub.add_parser("intake-checklist", help="Show read-only pre-intake gates for planned/backlog tasks.")
+    operator_intake.add_argument("--limit", type=int, default=12)
+    operator_intake.set_defaults(handler="operator_intake_checklist")
     evidence_gap = operator_sub.add_parser("remediate-evidence-gap", help="Preview or create a Commander package for a run execution-evidence gap.")
     evidence_gap.add_argument("--run-id", required=True)
     evidence_gap.add_argument("--task-id", default=None)
@@ -2290,6 +2297,7 @@ HANDLERS = {
     "local_readiness": cmd_local_readiness,
     "demo_readiness": cmd_demo_readiness,
     "operator_action_plan": cmd_operator_action_plan,
+    "operator_intake_checklist": cmd_operator_intake_checklist,
     "operator_remediate_evidence_gap": cmd_operator_remediate_evidence_gap,
     "operator_close_evidence_gap": cmd_operator_close_evidence_gap,
     "commander_board": cmd_commander_board,

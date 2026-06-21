@@ -170,6 +170,14 @@ artifact, or audit evidence. The response summarizes the gap counts and returns
 explicit remediation-preview commands; it does not create plans, manifests,
 approvals, or audit rows.
 
+`GET /api/operator/intake-checklist` is the read-only pre-run gate for planned
+or backlog tasks. It checks assignment, submitted/verified Agent Plan,
+knowledge/spec references, base references, and high-risk approval boundaries
+before a worker pulls the task. `GET /api/operator/action-plan` embeds this as
+the `task_intake` source and reports `task_intake_checked`,
+`task_intake_ready`, `task_intake_blocked`, `task_intake_attention`, and
+`task_intake_missing_agent_plan`.
+
 `POST /api/operator/execution-evidence/remediation-task` previews or creates a
 Commander-compatible remediation package for one run gap. Preview is read-only;
 `confirm_create:true` writes one deterministic planned task plus runtime/audit
