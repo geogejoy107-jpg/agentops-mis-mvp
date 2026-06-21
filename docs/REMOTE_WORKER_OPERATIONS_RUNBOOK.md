@@ -350,10 +350,12 @@ submit uses the same gate and writes a failed workflow job instead of queueing
 work that cannot run. Template async jobs with a live worker adapter use the
 same rule.
 
-`agentops worker status` is the operator's single fleet view. In addition to
-local daemon state, it summarizes remote worker enrollments, heartbeat states
+`agentops worker status` is the operator's fleet summary. In addition to local
+daemon state, it summarizes remote worker enrollments, heartbeat states
 (`never_seen`, `fresh`, `stale`), active short-lived sessions, and stuck tasks.
-It omits raw token/session identifiers and returns only safe refs for machine
+Use `agentops worker fleet` when the operator needs a normalized lane table
+across local daemons, remote workers, and registered worker agents. Both commands
+omit raw token/session identifiers and return only safe refs for machine
 diagnostics.
 
 The same response includes `fleet_health`, which is the machine-facing health
@@ -425,6 +427,8 @@ The expected proof is:
 - `agentops worker status` reports remote worker heartbeat/session health without
   leaking token/session identifiers and includes `fleet_health.gates` plus
   `fleet_health.recommended_actions`.
+- `agentops worker fleet` reports normalized fleet lanes with health,
+  heartbeat/session state, safe refs, and next actions, without executing work.
 - Scoped task creation requires `tasks:create` and rejects agent/workspace impersonation.
 - `agentops workflow run-task` creates a task, executes one worker iteration, and returns evidence.
 - Demo acceptance remains safe and reproducible.

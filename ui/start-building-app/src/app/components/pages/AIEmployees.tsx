@@ -18,6 +18,7 @@ import {
   loadStuckWorkflowJobs,
   loadWorkerAdapterReadiness,
   loadWorkerDaemonLogs,
+  loadWorkerFleet,
   loadWorkerStatus,
   loadWorkflowJobs,
   markWorkflowJobFailed,
@@ -123,9 +124,10 @@ export function AIEmployees() {
     scopes: DEFAULT_GATEWAY_SCOPES.join(", "),
   });
   const { data, loading, error, refresh } = useLiveData(async () => {
-    const [metrics, workerStatus, adapterReadiness, localReadiness, integrationInbox, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs] = await Promise.all([
+    const [metrics, workerStatus, workerFleet, adapterReadiness, localReadiness, integrationInbox, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs] = await Promise.all([
       loadDashboard(),
       loadWorkerStatus(),
+      loadWorkerFleet(),
       loadWorkerAdapterReadiness(),
       loadLocalReadiness(),
       loadIntegrationInbox({ bucket: integrationInboxBucket, limit: 20 }),
@@ -138,10 +140,11 @@ export function AIEmployees() {
       loadStuckWorkflowJobs(30, 8),
     ]);
     const agents = await loadAgents(metrics);
-    return { agents, workerStatus, adapterReadiness, localReadiness, integrationInbox, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs };
+    return { agents, workerStatus, workerFleet, adapterReadiness, localReadiness, integrationInbox, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs };
   }, [integrationInboxBucket]);
   const agents = data?.agents || [];
   const workerStatus = data?.workerStatus;
+  const workerFleet = data?.workerFleet;
   const adapterReadiness = data?.adapterReadiness;
   const localReadiness = data?.localReadiness;
   const integrationInbox = data?.integrationInbox;
@@ -162,6 +165,8 @@ export function AIEmployees() {
     integrationInboxSafety?.raw_prompt_omitted,
   );
   const fleetHealth = workerStatus?.fleet_health;
+  const fleetLanes = workerFleet?.lanes || [];
+  const fleetLaneSummary = workerFleet?.summary;
   const fleetGates = fleetHealth?.gates || [];
   const recommendedActions = fleetHealth?.recommended_actions || [];
   const remoteHealth = workerStatus?.remote_worker_health;
@@ -329,6 +334,14 @@ export function AIEmployees() {
       statePath: "State path",
       fleetTitle: "Worker Fleet Telemetry",
       fleetSummary: "Read-only observability for local daemons and Agent Gateway events.",
+      fleetLanes: "Fleet lanes",
+      laneType: "Type",
+      laneHealth: "Health",
+      laneHeartbeat: "Heartbeat",
+      laneSession: "Session",
+      laneLastSeen: "Last seen",
+      laneNextAction: "Next action",
+      noFleetLanes: "No worker fleet lanes yet.",
       daemonLogs: "Daemon logs",
       recentEvents: "Recent gateway events",
       logPath: "Log path",
@@ -547,6 +560,14 @@ export function AIEmployees() {
       statePath: "状态路径",
       fleetTitle: "Worker Fleet 观测",
       fleetSummary: "只读查看本地 daemon 日志和 Agent Gateway 最近事件。",
+      fleetLanes: "Fleet 队伍",
+      laneType: "类型",
+      laneHealth: "健康",
+      laneHeartbeat: "心跳",
+      laneSession: "Session",
+      laneLastSeen: "最近出现",
+      laneNextAction: "下一步动作",
+      noFleetLanes: "暂无 worker fleet 队伍。",
       daemonLogs: "Daemon 日志",
       recentEvents: "最近网关事件",
       logPath: "日志路径",
@@ -1175,11 +1196,19 @@ export function AIEmployees() {
               <div
                 key={item.id}
                 draggable
-                onDragStart={() => setDraggedActionId(item.id)}
-                onDragOver={(event) => event.preventDefault()}
+                onDragStart={(event) => {
+                  event.dataTransfer.effectAllowed = "move";
+                  event.dataTransfer.setData("text/plain", item.id);
+                  setDraggedActionId(item.id);
+                }}
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = "move";
+                }}
                 onDrop={(event) => {
                   event.preventDefault();
-                  if (draggedActionId) moveActionQueueItem(draggedActionId, item.id);
+                  const activeId = event.dataTransfer.getData("text/plain") || draggedActionId;
+                  if (activeId) moveActionQueueItem(activeId, item.id);
                   setDraggedActionId(null);
                 }}
                 onDragEnd={() => setDraggedActionId(null)}
@@ -2102,6 +2131,64 @@ export function AIEmployees() {
               <h2 className="text-sm font-semibold" style={{ color: "var(--mis-text)" }}>{copy.fleetTitle}</h2>
             </div>
             <p className="text-[11px] mt-1 max-w-2xl" style={{ color: "var(--mis-dim)" }}>{copy.fleetSummary}</p>
+          </div>
+          <StatusBadge status={workerFleet?.status || fleetHealth?.overall || "unknown"} label={String(fleetLaneSummary?.lane_count ?? 0)} />
+        </div>
+
+        <div className="rounded-lg p-3 mt-4" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.fleetLanes}</div>
+              <div className="text-[10px] mt-1 truncate" style={{ color: "var(--mis-muted)" }}>
+                {workerFleet?.contract || fleetHealth?.contract || "Agent Gateway CLI/API"}
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              <StatusBadge status="ready" label={`${copy.daemonStatus}: ${fleetLaneSummary?.running_local_daemons ?? runningDaemons}/${fleetLaneSummary?.local_daemon_count ?? workerStatus?.daemons?.length ?? 0}`} />
+              <StatusBadge status={(fleetLaneSummary?.stale_remote_enrollments || 0) > 0 ? "attention" : "ready"} label={`${copy.remoteWorkersTitle}: ${fleetLaneSummary?.remote_worker_count ?? workerStatus?.remote_worker_count ?? 0}`} />
+              <StatusBadge status={(fleetLaneSummary?.active_remote_sessions || 0) > 0 ? "ready" : "planned"} label={`${copy.activeSessions}: ${fleetLaneSummary?.active_remote_sessions ?? workerStatus?.active_remote_sessions ?? 0}`} />
+            </div>
+          </div>
+          <div className="space-y-2 mt-3">
+            {fleetLanes.length === 0 && (
+              <div className="text-[11px] rounded px-3 py-2" style={{ color: "var(--mis-muted)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                {copy.noFleetLanes}
+              </div>
+            )}
+            {fleetLanes.slice(0, 8).map((lane) => {
+              const healthStatus = lane.health === "pass" ? "ready" : lane.health === "warn" ? "attention" : lane.health === "fail" ? "blocked" : "planned";
+              return (
+                <div key={lane.lane_id} className="grid grid-cols-1 xl:grid-cols-[1.1fr_0.75fr_0.75fr_1fr] gap-2 rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className="text-[11px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{lane.agent_name || lane.agent_id || lane.lane_id}</div>
+                      <StatusBadge status={healthStatus} label={lane.health} />
+                    </div>
+                    <div className="text-[10px] truncate mt-1" style={{ color: "var(--mis-muted)" }}>
+                      {copy.laneType}: {lane.lane_type} · {lane.adapter || lane.runtime_type || "—"} · {lane.safe_ref || "—"}
+                    </div>
+                  </div>
+                  <div className="text-[10px]" style={{ color: "var(--mis-dim)" }}>
+                    <div>{copy.laneHeartbeat}: {lane.heartbeat_state || "—"}</div>
+                    <div className="truncate">{copy.laneLastSeen}: {lane.last_seen_at || "—"}</div>
+                  </div>
+                  <div className="text-[10px]" style={{ color: "var(--mis-dim)" }}>
+                    <div>{copy.laneSession}: {lane.session_state || "—"}</div>
+                    <div>{copy.activeSessions}: {lane.active_session_count ?? 0}</div>
+                  </div>
+                  <div className="text-[10px] truncate xl:text-right" style={{ color: "var(--mis-cyan)" }}>
+                    {copy.laneNextAction}: {lane.next_action || "agentops worker status"}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="mt-4 flex flex-col lg:flex-row lg:items-start justify-between gap-4">
+          <div>
+            <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.daemonLogs}</div>
+            <p className="text-[10px] mt-1 max-w-2xl" style={{ color: "var(--mis-muted)" }}>{copy.fleetSummary}</p>
           </div>
           <div className="flex gap-1.5">
             {WORKER_ADAPTERS.map(adapter => (

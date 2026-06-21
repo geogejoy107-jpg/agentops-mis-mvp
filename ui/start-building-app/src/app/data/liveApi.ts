@@ -362,6 +362,63 @@ export interface WorkerStatusPayload {
   recent_events: Record<string, unknown>[];
 }
 
+export interface WorkerFleetLane {
+  lane_id: string;
+  lane_type: string;
+  adapter?: string | null;
+  agent_id?: string | null;
+  agent_name?: string | null;
+  workspace_id?: string | null;
+  runtime_type?: string | null;
+  status: string;
+  health: string;
+  heartbeat_state?: string | null;
+  session_state?: string | null;
+  active_session_count: number;
+  last_seen_at?: string | null;
+  expires_at?: string | null;
+  scope_count?: number;
+  workload?: Record<string, unknown>;
+  next_action?: string;
+  safe_ref?: string | null;
+  token_omitted?: boolean;
+  session_id_omitted?: boolean;
+  token_id_omitted?: boolean;
+}
+
+export interface WorkerFleetPayload {
+  provider: string;
+  operation: string;
+  status: string;
+  summary: {
+    lane_count: number;
+    lane_counts: Record<string, number>;
+    health_counts: Record<string, number>;
+    local_daemon_count: number;
+    running_local_daemons: number;
+    remote_worker_count: number;
+    fresh_remote_enrollments: number;
+    stale_remote_enrollments: number;
+    never_seen_remote_enrollments: number;
+    active_remote_sessions: number;
+    stuck_worker_tasks: number;
+    stuck_workflow_jobs: number;
+    recommended_adapter?: string;
+  };
+  lanes: WorkerFleetLane[];
+  next_actions: string[];
+  contract?: string;
+  safety: {
+    read_only: boolean;
+    live_execution_performed: boolean;
+    token_omitted: boolean;
+    session_id_omitted: boolean;
+    raw_prompt_omitted: boolean;
+  };
+  token_omitted: boolean;
+  live_execution_performed: boolean;
+}
+
 export type WorkerAdapterName = "mock" | "hermes" | "openclaw";
 
 export interface WorkerAdapterReadinessSummary {
@@ -1261,6 +1318,83 @@ export async function loadWorkerStatus(): Promise<WorkerStatusPayload> {
       stuck_reason: row.stuck_reason ? String(row.stuck_reason) : undefined,
     })).filter((row) => row.job_id),
     recent_events: asArray<Record<string, unknown>>(raw.recent_events),
+  };
+}
+
+export async function loadWorkerFleet(): Promise<WorkerFleetPayload> {
+  const raw = await optionalApiJson<Record<string, unknown>>("/workers/fleet", {
+    provider: "agentops-worker",
+    operation: "fleet_view",
+    status: "unavailable",
+    summary: {},
+    lanes: [],
+    next_actions: [],
+    safety: {
+      read_only: true,
+      live_execution_performed: false,
+      token_omitted: true,
+      session_id_omitted: true,
+      raw_prompt_omitted: true,
+    },
+    token_omitted: true,
+    live_execution_performed: false,
+    fallback_reason: "endpoint_not_available",
+  });
+  const summaryRaw = typeof raw.summary === "object" && raw.summary !== null ? raw.summary as Record<string, unknown> : {};
+  const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
+  return {
+    provider: String(raw.provider || "agentops-worker"),
+    operation: String(raw.operation || "fleet_view"),
+    status: String(raw.status || "unknown"),
+    summary: {
+      lane_count: numberValue(summaryRaw.lane_count, 0),
+      lane_counts: numberRecord(summaryRaw.lane_counts),
+      health_counts: numberRecord(summaryRaw.health_counts),
+      local_daemon_count: numberValue(summaryRaw.local_daemon_count, 0),
+      running_local_daemons: numberValue(summaryRaw.running_local_daemons, 0),
+      remote_worker_count: numberValue(summaryRaw.remote_worker_count, 0),
+      fresh_remote_enrollments: numberValue(summaryRaw.fresh_remote_enrollments, 0),
+      stale_remote_enrollments: numberValue(summaryRaw.stale_remote_enrollments, 0),
+      never_seen_remote_enrollments: numberValue(summaryRaw.never_seen_remote_enrollments, 0),
+      active_remote_sessions: numberValue(summaryRaw.active_remote_sessions, 0),
+      stuck_worker_tasks: numberValue(summaryRaw.stuck_worker_tasks, 0),
+      stuck_workflow_jobs: numberValue(summaryRaw.stuck_workflow_jobs, 0),
+      recommended_adapter: summaryRaw.recommended_adapter ? String(summaryRaw.recommended_adapter) : undefined,
+    },
+    lanes: asArray<Record<string, unknown>>(raw.lanes).map((lane) => ({
+      lane_id: String(lane.lane_id || ""),
+      lane_type: String(lane.lane_type || "unknown"),
+      adapter: lane.adapter ? String(lane.adapter) : null,
+      agent_id: lane.agent_id ? String(lane.agent_id) : null,
+      agent_name: lane.agent_name ? String(lane.agent_name) : null,
+      workspace_id: lane.workspace_id ? String(lane.workspace_id) : null,
+      runtime_type: lane.runtime_type ? String(lane.runtime_type) : null,
+      status: String(lane.status || "unknown"),
+      health: String(lane.health || "info"),
+      heartbeat_state: lane.heartbeat_state ? String(lane.heartbeat_state) : null,
+      session_state: lane.session_state ? String(lane.session_state) : null,
+      active_session_count: numberValue(lane.active_session_count, 0),
+      last_seen_at: lane.last_seen_at ? String(lane.last_seen_at) : null,
+      expires_at: lane.expires_at ? String(lane.expires_at) : null,
+      scope_count: numberValue(lane.scope_count, 0),
+      workload: typeof lane.workload === "object" && lane.workload !== null ? lane.workload as Record<string, unknown> : undefined,
+      next_action: lane.next_action ? String(lane.next_action) : undefined,
+      safe_ref: lane.safe_ref ? String(lane.safe_ref) : null,
+      token_omitted: boolValue(lane.token_omitted),
+      session_id_omitted: boolValue(lane.session_id_omitted),
+      token_id_omitted: boolValue(lane.token_id_omitted),
+    })).filter((lane) => lane.lane_id),
+    next_actions: asArray<unknown>(raw.next_actions).map(String).filter(Boolean),
+    contract: raw.contract ? String(raw.contract) : undefined,
+    safety: {
+      read_only: boolValue(safetyRaw.read_only),
+      live_execution_performed: boolValue(safetyRaw.live_execution_performed),
+      token_omitted: boolValue(safetyRaw.token_omitted),
+      session_id_omitted: boolValue(safetyRaw.session_id_omitted),
+      raw_prompt_omitted: boolValue(safetyRaw.raw_prompt_omitted),
+    },
+    token_omitted: boolValue(raw.token_omitted),
+    live_execution_performed: boolValue(raw.live_execution_performed),
   };
 }
 

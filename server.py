@@ -6239,6 +6239,171 @@ def worker_status(conn) -> dict:
     return payload
 
 
+def worker_fleet_view(conn) -> dict:
+    daemons = worker_daemon_status(include_log=False)
+    remote_fleet = worker_remote_fleet_summary(conn)
+    adapter_readiness = worker_adapter_readiness(conn, refresh=False).get("summary") or {}
+    stuck_tasks = worker_stuck_tasks(conn)
+    stuck_workflow_jobs = workflow_stuck_jobs(conn, threshold_sec=900, limit=5)
+    worker_agents = rows_to_dicts(conn.execute(
+        """SELECT agent_id,name,role,runtime_type,status,updated_at
+        FROM agents
+        WHERE agent_id LIKE 'agt_worker_%' OR allowed_tools LIKE '%agent_worker%'
+        ORDER BY updated_at DESC LIMIT 50"""
+    ).fetchall())
+    lanes: list[dict] = []
+    seen_agents: set[str] = set()
+
+    def add_lane(lane: dict) -> None:
+        lane["token_omitted"] = True
+        lane["session_id_omitted"] = True
+        lanes.append(lane)
+        if lane.get("agent_id"):
+            seen_agents.add(lane["agent_id"])
+
+    for daemon in daemons:
+        running = bool(daemon.get("running"))
+        status = daemon.get("worker_status") or daemon.get("status") or "unknown"
+        health = "pass" if running else "info"
+        if running and int(daemon.get("consecutive_errors") or 0) > 0:
+            health = "warn"
+        add_lane({
+            "lane_id": f"local_daemon:{daemon.get('adapter')}",
+            "lane_type": "local_daemon",
+            "adapter": daemon.get("adapter"),
+            "agent_id": daemon.get("agent_id"),
+            "workspace_id": "local-demo",
+            "runtime_type": daemon.get("adapter") or "mock",
+            "status": status,
+            "health": health,
+            "heartbeat_state": "local_process" if running else "not_running",
+            "session_state": "not_required",
+            "active_session_count": 0,
+            "last_seen_at": daemon.get("state_updated_at") or daemon.get("started_at") or daemon.get("stopped_at"),
+            "workload": {
+                "processed": int(daemon.get("processed") or 0),
+                "iterations": int(daemon.get("iterations") or 0),
+                "consecutive_errors": int(daemon.get("consecutive_errors") or 0),
+                "total_errors": int(daemon.get("total_errors") or 0),
+            },
+            "next_action": "agentops worker logs --adapter " + str(daemon.get("adapter") or "mock") if running else "agentops worker start --adapter " + str(daemon.get("adapter") or "mock"),
+            "safe_ref": stable_id("fleet_lane", "local_daemon", daemon.get("adapter") or "mock")[-12:],
+        })
+
+    for worker in (remote_fleet.get("remote_workers") or []):
+        token_status = worker.get("token_status") or "unknown"
+        heartbeat_state = worker.get("heartbeat_state") or "unknown"
+        active_sessions = int(worker.get("active_session_count") or 0)
+        if token_status != "active":
+            health = "info"
+            next_action = "agentops enrollment create --agent-id <agent_id>"
+        elif heartbeat_state == "stale":
+            health = "warn"
+            next_action = "agentops doctor && agentops agent heartbeat"
+        elif heartbeat_state == "never_seen":
+            health = "warn"
+            next_action = "agentops agent heartbeat"
+        elif active_sessions <= 0:
+            health = "warn"
+            next_action = "agentops session create --ttl-sec 900 --save-session"
+        else:
+            health = "pass"
+            next_action = "agentops-worker --once --adapter mock --use-session"
+        add_lane({
+            "lane_id": f"remote_worker:{worker.get('agent_id')}:{worker.get('token_ref')}",
+            "lane_type": "remote_worker",
+            "adapter": worker.get("runtime_type") or "external",
+            "agent_id": worker.get("agent_id"),
+            "agent_name": worker.get("agent_name"),
+            "workspace_id": worker.get("workspace_id"),
+            "runtime_type": worker.get("runtime_type") or "external",
+            "status": token_status,
+            "health": health,
+            "heartbeat_state": heartbeat_state,
+            "session_state": "active" if active_sessions else "missing",
+            "active_session_count": active_sessions,
+            "last_seen_at": worker.get("last_heartbeat_at") or worker.get("last_used_at"),
+            "expires_at": worker.get("expires_at"),
+            "scope_count": int(worker.get("scope_count") or 0),
+            "next_action": next_action,
+            "safe_ref": worker.get("token_ref"),
+            "token_id_omitted": True,
+        })
+
+    for agent in worker_agents:
+        if agent.get("agent_id") in seen_agents:
+            continue
+        status = agent.get("status") or "unknown"
+        add_lane({
+            "lane_id": f"registered_worker:{agent.get('agent_id')}",
+            "lane_type": "registered_worker",
+            "adapter": agent.get("runtime_type") or "mock",
+            "agent_id": agent.get("agent_id"),
+            "agent_name": agent.get("name"),
+            "workspace_id": "local-demo",
+            "runtime_type": agent.get("runtime_type") or "mock",
+            "status": status,
+            "health": "pass" if status == "running" else "info",
+            "heartbeat_state": "registered",
+            "session_state": "unknown",
+            "active_session_count": 0,
+            "last_seen_at": agent.get("updated_at"),
+            "next_action": "agentops worker status",
+            "safe_ref": stable_id("fleet_lane", "registered_worker", agent.get("agent_id") or "")[-12:],
+        })
+
+    lane_counts: dict[str, int] = {}
+    health_counts: dict[str, int] = {}
+    for lane in lanes:
+        lane_counts[lane["lane_type"]] = lane_counts.get(lane["lane_type"], 0) + 1
+        health_counts[lane["health"]] = health_counts.get(lane["health"], 0) + 1
+    overall = "blocked" if health_counts.get("fail") else "attention" if health_counts.get("warn") else "ready"
+    next_actions = []
+    for lane in lanes:
+        action = lane.get("next_action")
+        if action and lane.get("health") in {"fail", "warn"} and action not in next_actions:
+            next_actions.append(action)
+    if stuck_tasks and "agentops worker stuck" not in next_actions:
+        next_actions.append("agentops worker stuck")
+    if stuck_workflow_jobs and "agentops workflow stuck-jobs" not in next_actions:
+        next_actions.append("agentops workflow stuck-jobs")
+    if not next_actions:
+        next_actions = ["agentops worker status", "agentops commander inbox --bucket ready_for_review"]
+
+    return {
+        "provider": "agentops-worker",
+        "operation": "fleet_view",
+        "status": overall,
+        "summary": {
+            "lane_count": len(lanes),
+            "lane_counts": lane_counts,
+            "health_counts": health_counts,
+            "local_daemon_count": len(daemons),
+            "running_local_daemons": len([daemon for daemon in daemons if daemon.get("running")]),
+            "remote_worker_count": remote_fleet.get("remote_worker_count", 0),
+            "fresh_remote_enrollments": remote_fleet.get("fresh_enrollments", 0),
+            "stale_remote_enrollments": remote_fleet.get("stale_enrollments", 0),
+            "never_seen_remote_enrollments": remote_fleet.get("never_seen_enrollments", 0),
+            "active_remote_sessions": remote_fleet.get("active_sessions", 0),
+            "stuck_worker_tasks": len(stuck_tasks),
+            "stuck_workflow_jobs": len(stuck_workflow_jobs),
+            "recommended_adapter": adapter_readiness.get("recommended_adapter"),
+        },
+        "lanes": lanes[:80],
+        "next_actions": next_actions[:8],
+        "contract": "read-only fleet management view; agents execute through Agent Gateway CLI/API and live adapters require explicit confirmation",
+        "safety": {
+            "read_only": True,
+            "live_execution_performed": False,
+            "token_omitted": True,
+            "session_id_omitted": True,
+            "raw_prompt_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+
+
 def scalar_count(conn: sqlite3.Connection, sql: str, params=()) -> int:
     row = conn.execute(sql, params).fetchone()
     return int((row[0] if row else 0) or 0)
@@ -7917,6 +8082,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM runtime_events ORDER BY created_at DESC LIMIT 200").fetchall()))
             if path == "/api/workers/status":
                 return self.send_json(worker_status(conn))
+            if path == "/api/workers/fleet":
+                return self.send_json(worker_fleet_view(conn))
             if path == "/api/workers/adapter-readiness":
                 payload = worker_adapter_readiness(conn)
                 conn.commit()
