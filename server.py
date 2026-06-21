@@ -25,6 +25,7 @@ import socket
 import sqlite3
 import subprocess
 import sys
+import threading
 import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -459,6 +460,28 @@ CREATE TABLE IF NOT EXISTS runtime_events (
     FOREIGN KEY(agent_id) REFERENCES agents(agent_id)
 );
 
+CREATE TABLE IF NOT EXISTS workflow_jobs (
+    job_id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL DEFAULT 'local-demo',
+    workflow_type TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('queued','running','completed','failed')),
+    template_id TEXT,
+    adapter TEXT,
+    confirm_run INTEGER NOT NULL DEFAULT 0,
+    title TEXT,
+    input_summary TEXT,
+    request_hash TEXT,
+    result_json TEXT NOT NULL DEFAULT '{}',
+    result_task_id TEXT,
+    result_run_id TEXT,
+    result_artifact_id TEXT,
+    error_message TEXT,
+    created_at TEXT NOT NULL,
+    started_at TEXT,
+    completed_at TEXT,
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS agent_gateway_tokens (
     token_id TEXT PRIMARY KEY,
     token_hash TEXT NOT NULL UNIQUE,
@@ -734,6 +757,7 @@ def ensure_schema_migrations(conn: sqlite3.Connection):
     ensure_column(conn, "runtime_connectors", "trust_updated_at", "trust_updated_at TEXT")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_workspace ON tasks(workspace_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_workspace ON runs(workspace_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_workflow_jobs_status ON workflow_jobs(status, created_at)")
 
 
 def ensure_v121_reference_data(conn: sqlite3.Connection):
@@ -4524,6 +4548,153 @@ def run_customer_task_template_workflow(conn, body: dict) -> tuple[dict, int]:
     return result, 201
 
 
+def workflow_job_public(row: sqlite3.Row | dict | None) -> dict | None:
+    if not row:
+        return None
+    data = dict(row)
+    result = {}
+    try:
+        result = json.loads(data.get("result_json") or "{}")
+    except Exception:
+        result = {}
+    return {
+        "job_id": data.get("job_id"),
+        "workspace_id": data.get("workspace_id"),
+        "workflow_type": data.get("workflow_type"),
+        "status": data.get("status"),
+        "template_id": data.get("template_id"),
+        "adapter": data.get("adapter"),
+        "confirm_run": bool(data.get("confirm_run")),
+        "title": data.get("title"),
+        "input_summary": data.get("input_summary"),
+        "request_hash": data.get("request_hash"),
+        "result_task_id": data.get("result_task_id"),
+        "result_run_id": data.get("result_run_id"),
+        "result_artifact_id": data.get("result_artifact_id"),
+        "error_message": data.get("error_message"),
+        "created_at": data.get("created_at"),
+        "started_at": data.get("started_at"),
+        "completed_at": data.get("completed_at"),
+        "updated_at": data.get("updated_at"),
+        "result": result,
+        "raw_request_omitted": True,
+        "token_omitted": True,
+    }
+
+
+def run_workflow_job_background(job_id: str, body: dict) -> None:
+    started = now_iso()
+    try:
+        with db() as conn:
+            before = conn.execute("SELECT * FROM workflow_jobs WHERE job_id=?", (job_id,)).fetchone()
+            conn.execute(
+                "UPDATE workflow_jobs SET status='running', started_at=?, updated_at=? WHERE job_id=?",
+                (started, started, job_id),
+            )
+            runtime_event(conn, "rtc_agent_gateway_local", "workflow_job.running", "running", input_summary=f"Workflow job {job_id} started.")
+            audit(conn, "system", "workflow-job", "workflow.job.running", "workflow_jobs", job_id, dict(before) if before else None, {"status": "running"}, {"raw_request_omitted": True})
+            conn.commit()
+            result, _status = run_customer_task_template_workflow(conn, {**body, "async_job": False})
+            status = "completed" if result.get("ok", True) else "failed"
+            completed = now_iso()
+            safe_result = json.dumps(result, ensure_ascii=False)
+            before = conn.execute("SELECT * FROM workflow_jobs WHERE job_id=?", (job_id,)).fetchone()
+            conn.execute(
+                """UPDATE workflow_jobs
+                SET status=?, result_json=?, result_task_id=?, result_run_id=?, result_artifact_id=?,
+                    error_message=?, completed_at=?, updated_at=?
+                WHERE job_id=?""",
+                (
+                    status,
+                    safe_result,
+                    result.get("task_id"),
+                    result.get("run_id"),
+                    result.get("artifact_id"),
+                    redact_text(result.get("error"), 300) if result.get("error") else None,
+                    completed,
+                    completed,
+                    job_id,
+                ),
+            )
+            runtime_event(conn, "rtc_agent_gateway_local", "workflow_job.completed" if status == "completed" else "workflow_job.failed", status, run_id=result.get("run_id"), task_id=result.get("task_id"), output_summary=f"Workflow job {job_id} {status}.", raw_payload_hash=stable_hash(result))
+            after = conn.execute("SELECT * FROM workflow_jobs WHERE job_id=?", (job_id,)).fetchone()
+            audit(conn, "system", "workflow-job", f"workflow.job.{status}", "workflow_jobs", job_id, dict(before) if before else None, dict(after) if after else {"status": status}, {"raw_request_omitted": True, "raw_result_omitted": True, "safe_result_stored": True})
+            conn.commit()
+    except Exception as exc:
+        error = redact_text(str(exc), 360)
+        with db() as conn:
+            before = conn.execute("SELECT * FROM workflow_jobs WHERE job_id=?", (job_id,)).fetchone()
+            now = now_iso()
+            conn.execute(
+                """UPDATE workflow_jobs
+                SET status='failed', error_message=?, completed_at=?, updated_at=?
+                WHERE job_id=?""",
+                (error, now, now, job_id),
+            )
+            runtime_event(conn, "rtc_agent_gateway_local", "workflow_job.failed", "failed", output_summary=f"Workflow job {job_id} failed.", error_message=error)
+            after = conn.execute("SELECT * FROM workflow_jobs WHERE job_id=?", (job_id,)).fetchone()
+            audit(conn, "system", "workflow-job", "workflow.job.failed", "workflow_jobs", job_id, dict(before) if before else None, dict(after) if after else {"status": "failed"}, {"raw_request_omitted": True})
+            conn.commit()
+
+
+def submit_customer_task_template_job(conn, body: dict) -> tuple[dict, int]:
+    templates = {template["template_id"]: template for template in customer_task_templates()}
+    template_id = body.get("template_id") or "tpl_customer_kb_qa_bot"
+    template = templates.get(template_id)
+    if not template:
+        return {"error": "template not found", "template_id": template_id, "templates": list(templates)}, 404
+    adapter = body.get("adapter") if body.get("adapter") in {"mock", "hermes", "openclaw"} else None
+    now = now_iso()
+    title = redact_text(body.get("title") or template["default_title"], 180)
+    input_summary = redact_text(body.get("description") or template["default_description"], 300)
+    job_id = new_id("wfjob")
+    row = {
+        "job_id": job_id,
+        "workspace_id": normalize_workspace_id(body.get("workspace_id") or "local-demo"),
+        "workflow_type": "customer_task_template",
+        "status": "queued",
+        "template_id": template_id,
+        "adapter": adapter,
+        "confirm_run": 1 if body.get("confirm_run") else 0,
+        "title": title,
+        "input_summary": input_summary,
+        "request_hash": stable_hash({
+            "template_id": template_id,
+            "adapter": adapter,
+            "confirm_run": bool(body.get("confirm_run")),
+            "title": title,
+            "description": input_summary,
+        }),
+        "result_json": "{}",
+        "result_task_id": None,
+        "result_run_id": None,
+        "result_artifact_id": None,
+        "error_message": None,
+        "created_at": now,
+        "started_at": None,
+        "completed_at": None,
+        "updated_at": now,
+    }
+    conn.execute(
+        """INSERT INTO workflow_jobs(job_id,workspace_id,workflow_type,status,template_id,adapter,confirm_run,title,input_summary,request_hash,result_json,result_task_id,result_run_id,result_artifact_id,error_message,created_at,started_at,completed_at,updated_at)
+        VALUES(:job_id,:workspace_id,:workflow_type,:status,:template_id,:adapter,:confirm_run,:title,:input_summary,:request_hash,:result_json,:result_task_id,:result_run_id,:result_artifact_id,:error_message,:created_at,:started_at,:completed_at,:updated_at)""",
+        row,
+    )
+    runtime_event(conn, "rtc_agent_gateway_local", "workflow_job.submitted", "queued", input_summary=f"Template job {template_id} submitted.", raw_payload_hash=row["request_hash"])
+    audit(conn, "user", "usr_customer_demo", "workflow.job.submitted", "workflow_jobs", job_id, None, row, {"template_id": template_id, "adapter": adapter, "raw_request_omitted": True})
+    conn.commit()
+    threading.Thread(target=run_workflow_job_background, args=(job_id, dict(body)), daemon=True).start()
+    return {
+        "ok": True,
+        "provider": "agentops-workflow-job",
+        "job": workflow_job_public(row),
+        "job_id": job_id,
+        "status_url": f"/api/workflows/jobs/{job_id}",
+        "raw_request_omitted": True,
+        "token_omitted": True,
+    }, 202
+
+
 def customer_project_report(conn, project_id: str) -> tuple[dict, int]:
     project_id = redact_text(project_id, 80)
     tasks = rows_to_dicts(conn.execute(
@@ -6038,6 +6209,16 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/workers/local/logs":
                 adapter = coerce_choice((qs.get("adapter") or ["mock"])[0], {"mock", "hermes", "openclaw"}, "mock")
                 return self.send_json({"provider": "agentops-worker", "daemon": read_worker_daemon(adapter, include_log=True)})
+            if path == "/api/workflows/jobs":
+                limit = min(int((qs.get("limit") or ["50"])[0]), 200)
+                rows = conn.execute("SELECT * FROM workflow_jobs ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+                return self.send_json({"jobs": [workflow_job_public(row) for row in rows], "token_omitted": True})
+            if path.startswith("/api/workflows/jobs/"):
+                job_id = path.split("/")[-1]
+                row = conn.execute("SELECT * FROM workflow_jobs WHERE job_id=?", (job_id,)).fetchone()
+                if not row:
+                    return self.send_json({"error": "not found", "job_id": job_id}, 404)
+                return self.send_json({"job": workflow_job_public(row), "token_omitted": True})
             if path == "/api/bases":
                 bases = rows_to_dicts(conn.execute("SELECT * FROM bases ORDER BY provider, category, display_name").fetchall())
                 capabilities = rows_to_dicts(conn.execute("SELECT * FROM base_capabilities ORDER BY base_id").fetchall())
@@ -6287,6 +6468,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(run_kb_bot_project_workflow(conn, body), 201)
             if path == "/api/workflows/customer-task-templates/run":
                 payload, status = run_customer_task_template_workflow(conn, body)
+                return self.send_json(payload, status)
+            if path == "/api/workflows/customer-task-templates/submit":
+                payload, status = submit_customer_task_template_job(conn, body)
                 return self.send_json(payload, status)
             if path.startswith("/api/workflows/customer-projects/") and path.endswith("/report-artifact"):
                 project_id = path.split("/")[-2]

@@ -429,6 +429,24 @@ Long live runs can exceed the default CLI HTTP timeout. Use
 `--request-timeout` or `AGENTOPS_REQUEST_TIMEOUT`; the CLI automatically raises
 the timeout for confirmed Hermes/OpenClaw template runs.
 
+For customer or remote-agent use, long template runs can be submitted as a
+workflow job and polled instead of holding one HTTP request open:
+
+```bash
+agentops workflow run-template \
+  --template-id tpl_customer_ui_review \
+  --adapter hermes \
+  --confirm-run \
+  --async-job
+
+agentops workflow job-status --job-id wfjob_... --wait --timeout 420
+```
+
+`--async-job` maps to `POST /api/workflows/customer-task-templates/submit`.
+`job-status` maps to `GET /api/workflows/jobs/:job_id`. The job record stores
+status, request hash, safe summaries, result ids, and token omission metadata;
+it must not store raw prompts, raw documents, credentials, or token values.
+
 ### `agentops workflow customer-worker-task`
 
 Dispatches a customer-facing task through the AgentOps worker loop. This is the

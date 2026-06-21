@@ -436,6 +436,10 @@ Current v1.5 implementation:
   selected template into the Agent Worker loop. Hermes/OpenClaw require
   `--confirm-run`; long live runs use `--request-timeout` or
   `AGENTOPS_REQUEST_TIMEOUT`.
+- Long customer template runs can be submitted asynchronously with
+  `agentops workflow run-template --async-job` and polled through
+  `agentops workflow job-status --wait`, avoiding brittle long-lived HTTP
+  requests while preserving ledger evidence.
 - Pixel Office's customer dispatch panel loads local templates, applies their default title/brief/acceptance criteria, and can run the selected template.
 - Customer projects can export a safe ledger-backed delivery report through `GET /api/workflows/customer-projects/:project_id/report`.
 - Pixel Office surfaces the report link after template-backed project generation.
@@ -485,6 +489,12 @@ Acceptance evidence:
   - OpenClaw: `run_gw_f564c767fa0b`, artifact `art_customer_worker_task_run_gw_f564c767fa0b`
   - Hermes: `run_gw_99c4e69cae16`, artifact `art_customer_worker_task_run_gw_99c4e69cae16`
   - both wrote tool/evaluation/audit/artifact/memory/approval evidence
+- Async customer template workflow smoke:
+  `python3 scripts/agentops_workflow_async_job_smoke.py`
+  - job: `wfjob_a76f1997b46a`
+  - run: `run_gw_cb2eca6b737c`
+  - artifact: `art_customer_worker_task_run_gw_cb2eca6b737c`
+  - evidence: tool/evaluation/audit/artifact/memory/approval rows present
 - Customer project report smoke: `python3 scripts/customer_project_report_smoke.py`
   - project: `20260618155050`
   - report: `/api/workflows/customer-projects/20260618155050/report`
@@ -580,6 +590,7 @@ python3 scripts/worker_session_refresh_smoke.py
 python3 scripts/worker_adapter_retry_smoke.py
 python3 scripts/customer_task_template_smoke.py
 python3 scripts/agentops_workflow_template_cli_smoke.py
+python3 scripts/agentops_workflow_async_job_smoke.py
 # Optional live/local-runtime evidence, not part of default CI because it can take several minutes:
 python3 scripts/template_worker_live_dogfood.py --adapter openclaw
 python3 scripts/template_worker_live_dogfood.py --adapter hermes
@@ -609,6 +620,9 @@ Implemented and verified:
 - Customer-facing template worker dispatch through
   `agentops workflow run-template --adapter mock|hermes|openclaw`, with
   OpenClaw/Hermes live proof runs recorded in the ledger.
+- Async customer template jobs through
+  `agentops workflow run-template --async-job` and
+  `agentops workflow job-status --wait`.
 - One-command scoped task create + worker execution through `agentops workflow run-task`.
 - Customer/API-facing normal task creation through `POST /api/tasks`, scoped Gateway task creation through `POST /api/agent-gateway/tasks`, and CLI `agentops task create`, followed by worker pull/claim/writeback.
 - Scoped Gateway task creation requires `tasks:create` and binds remote tokens to their own `agent_id`/`workspace_id`.

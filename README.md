@@ -333,6 +333,20 @@ Hermes/OpenClaw 真实执行仍必须显式加 `--confirm-run`。
 
 `mock` 会立即写真实账本；`hermes` / `openclaw` 必须加 `--confirm-run`，否则只创建 planned task。长任务可用 `--request-timeout` 或 `AGENTOPS_REQUEST_TIMEOUT`。
 
+更像产品/远程 agent 的用法是异步提交再轮询：
+
+```bash
+./scripts/agentops workflow run-template \
+  --template-id tpl_customer_ui_review \
+  --adapter hermes \
+  --confirm-run \
+  --async-job
+
+./scripts/agentops workflow job-status --job-id wfjob_... --wait --timeout 420
+```
+
+这避免真实 Hermes/OpenClaw 长任务占住一个同步 HTTP 请求，同时仍然回写 run、tool、evaluation、audit、artifact、memory 和 approval。
+
 它会模拟 AI 团队完成“正式 AI 知识库 / 问答机器人”项目：
 
 - 注册 Project Planner、Document Cleaner、Knowledge Base Builder、Q&A Evaluator、Customer Report Writer。

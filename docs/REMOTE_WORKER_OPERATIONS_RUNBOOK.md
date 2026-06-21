@@ -272,6 +272,22 @@ Hermes/OpenClaw template runs can take several minutes. Use
 `AGENTOPS_REQUEST_TIMEOUT` or `--request-timeout` so the CLI waits for the
 worker to write run/tool/evaluation/audit/artifact evidence.
 
+For remote agents and customer-facing automation, prefer the async job shape for
+long live runs:
+
+```bash
+agentops workflow run-template \
+  --template-id tpl_customer_ui_review \
+  --adapter hermes \
+  --confirm-run \
+  --async-job
+
+agentops workflow job-status --job-id wfjob_... --wait --timeout 420
+```
+
+The job status response returns the final `run_id`, `task_id`, `artifact_id`,
+evidence counts, and `token_omitted:true` when the worker completes.
+
 For scoped remote tokens, `agentops task create` maps to
 `POST /api/agent-gateway/tasks` and requires `tasks:create`. The Gateway binds
 the created task to the token's own `agent_id` and `workspace_id`; attempts to

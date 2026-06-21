@@ -17,6 +17,7 @@ import json
 import os
 import stat
 import sys
+import time
 import uuid
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -490,7 +491,21 @@ def cmd_workflow_run_template(args, client: AgentOpsClient) -> dict:
         payload["worker_agent_id"] = args.worker_agent_id
     if args.hermes_timeout:
         payload["hermes_timeout"] = args.hermes_timeout
-    return client.post("/api/workflows/customer-task-templates/run", payload)
+    endpoint = "/api/workflows/customer-task-templates/submit" if args.async_job else "/api/workflows/customer-task-templates/run"
+    return client.post(endpoint, payload)
+
+
+def cmd_workflow_job_status(args, client: AgentOpsClient) -> dict:
+    deadline = time.time() + max(args.timeout, 1)
+    result = client.get(f"/api/workflows/jobs/{args.job_id}")
+    while args.wait and (result.get("job") or {}).get("status") in {"queued", "running"} and time.time() < deadline:
+        time.sleep(max(args.poll_interval, 0.2))
+        result = client.get(f"/api/workflows/jobs/{args.job_id}")
+    job = result.get("job") or {}
+    result["waited"] = bool(args.wait)
+    result["done"] = job.get("status") in {"completed", "failed"}
+    result["token_omitted"] = True
+    return result
 
 
 def cmd_workflow_run_task(args, client: AgentOpsClient) -> dict:
@@ -1075,7 +1090,14 @@ def build_parser() -> argparse.ArgumentParser:
     run_template.add_argument("--worker-agent-id", default=None)
     run_template.add_argument("--hermes-timeout", type=int, default=None)
     run_template.add_argument("--request-timeout", type=int, default=None)
+    run_template.add_argument("--async-job", action="store_true", help="Submit a workflow job and return immediately; use workflow job-status to poll.")
     run_template.set_defaults(handler="workflow_run_template")
+    job_status = workflow_sub.add_parser("job-status", help="Inspect or wait for a submitted workflow job.")
+    job_status.add_argument("--job-id", required=True)
+    job_status.add_argument("--wait", action="store_true")
+    job_status.add_argument("--poll-interval", type=float, default=1.0)
+    job_status.add_argument("--timeout", type=int, default=120)
+    job_status.set_defaults(handler="workflow_job_status")
     customer_worker = workflow_sub.add_parser("customer-worker-task", help="Dispatch a customer task through the AgentOps worker loop.")
     customer_worker.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
     customer_worker.add_argument("--confirm-run", action="store_true", help="Required for Hermes/OpenClaw live execution.")
@@ -1262,6 +1284,7 @@ HANDLERS = {
     "audit_emit": cmd_audit_emit,
     "workflow_templates": cmd_workflow_templates,
     "workflow_run_template": cmd_workflow_run_template,
+    "workflow_job_status": cmd_workflow_job_status,
     "workflow_customer_worker_task": cmd_workflow_customer_worker_task,
     "workflow_run_task": cmd_workflow_run_task,
     "worker_status": cmd_worker_status,
