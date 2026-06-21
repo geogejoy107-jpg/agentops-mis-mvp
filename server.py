@@ -155,9 +155,10 @@ def url_listening(url: str, timeout=0.5) -> bool:
 
 
 def db() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA busy_timeout = 30000")
     return conn
 
 
@@ -4215,6 +4216,23 @@ def customer_delivery_approval_requires_manifest(approval: sqlite3.Row | dict) -
     return approval_id.startswith("ap_customer_worker_delivery") or "customer delivery" in reason
 
 
+def commander_synthesis_approval(approval: sqlite3.Row | dict) -> bool:
+    approval_id = str(approval["approval_id"] or "")
+    reason = str(approval["reason"] or "").lower()
+    return approval_id.startswith("ap_cmd_synthesis") or "commander synthesis review" in reason
+
+
+def commander_synthesis_artifact_id(approval: sqlite3.Row | dict) -> str | None:
+    reason = str(approval["reason"] or "")
+    match = re.search(r"artifact_id=([A-Za-z0-9_.:-]+)", reason)
+    return match.group(1) if match else None
+
+
+def commander_synthesis_project_id(value: str | None) -> str | None:
+    match = re.search(r"project_id=([A-Za-z0-9_.:-]+)", value or "")
+    return match.group(1) if match else None
+
+
 def delivery_manifest_gate(conn: sqlite3.Connection, run_id: str | None) -> dict:
     manifest = latest_plan_evidence_manifest_for_run(conn, run_id)
     if not manifest:
@@ -7035,20 +7053,30 @@ def human_review_queue(conn, limit: int = 20) -> dict:
         approval_id = row.get("approval_id")
         if (approval_id or "").startswith("ap_gw_enroll_") or "enrollment" in (row.get("reason") or "").lower():
             approval_kind = "agent_enrollment"
+        elif commander_synthesis_approval(row):
+            approval_kind = "commander_synthesis"
         elif row.get("tool_call_id"):
             approval_kind = "tool_call"
         else:
             approval_kind = "delivery_or_run"
+        artifact_id = commander_synthesis_artifact_id(row) if approval_kind == "commander_synthesis" else None
+        if approval_kind == "commander_synthesis":
+            title = "Approval required: Commander synthesis"
+            next_action = "Review the synthesis artifact before promoting it into memory or customer delivery."
+        else:
+            title = f"Approval required: {approval_kind}"
+            next_action = "Approve or reject this gate before the linked work is delivered."
         items.append({
             "item_type": "approval",
             "item_id": approval_id,
             "status": row.get("decision"),
             "kind": approval_kind,
-            "title": f"Approval required: {approval_kind}",
+            "title": title,
             "summary": redact_text(row.get("reason") or "Pending approval requires human decision.", 260),
             "task_id": row.get("task_id"),
             "run_id": row.get("run_id"),
             "agent_id": row.get("requested_by_agent_id"),
+            "artifact_id": artifact_id,
             "created_at": row.get("created_at"),
             "updated_at": row.get("decided_at") or row.get("created_at"),
             "expires_at": row.get("expires_at"),
@@ -7057,7 +7085,7 @@ def human_review_queue(conn, limit: int = 20) -> dict:
                 "run_url": f"/admin/runs/{row.get('run_id')}" if row.get("run_id") else None,
                 "approvals_url": "/workspace/approvals",
             },
-            "next_action": "Approve or reject this gate before the linked work is delivered.",
+            "next_action": next_action,
             "cli_action": f"agentops approval approve --approval-id {approval_id}",
             "alternate_cli_action": f"agentops approval reject --approval-id {approval_id}",
         })
@@ -8547,6 +8575,8 @@ def commander_project_board(conn: sqlite3.Connection, headers) -> dict:
         for row in conn.execute("SELECT review_status, COUNT(*) AS count FROM memories GROUP BY review_status").fetchall()
     }
     pending_approval_count = scalar_count(conn, "SELECT COUNT(*) FROM approvals WHERE decision='pending'")
+    synthesis_lifecycle = commander_synthesis_lifecycle(conn, limit=5)
+    synthesis_summary = synthesis_lifecycle.get("summary") or {}
 
     recent_tasks = rows_to_dicts(conn.execute(
         """SELECT task_id, title, status, owner_agent_id, priority, risk_level, created_at
@@ -8611,6 +8641,21 @@ def commander_project_board(conn: sqlite3.Connection, headers) -> dict:
             "next_action": "Review candidate memories before using them as project context." if memory_candidate_count else "Capture durable project lessons after the next delivery.",
         },
         {
+            "id": "synthesis_lifecycle",
+            "status": (
+                "warn" if synthesis_summary.get("pending_reviews")
+                else "warn" if synthesis_lifecycle.get("status") == "promotion_available"
+                else "pass" if synthesis_summary.get("promoted_delivery_artifacts")
+                else "warn"
+            ),
+            "summary": (
+                f"{synthesis_summary.get('synthesis_artifacts', 0)} synthesis report(s), "
+                f"{synthesis_summary.get('pending_reviews', 0)} pending review(s), "
+                f"{synthesis_summary.get('promoted_delivery_artifacts', 0)} promoted delivery artifact(s)"
+            ),
+            "next_action": (synthesis_lifecycle.get("next_actions") or ["agentops commander synthesize --status ready_for_review --confirm-create"])[0],
+        },
+        {
             "id": "adapter_readiness",
             "status": "pass" if adapter_payload.get("status") == "ready" else "warn" if adapter_payload.get("status") == "degraded" else "fail",
             "summary": f"recommended_adapter={adapter_summary.get('recommended_adapter') or 'unknown'}; ready={','.join(adapter_summary.get('ready_adapters') or []) or 'none'}",
@@ -8663,7 +8708,11 @@ def commander_project_board(conn: sqlite3.Connection, headers) -> dict:
             "stuck_workflow_jobs": len(stuck_jobs),
             "recent_artifacts": len(recent_artifact_rows),
             "memory_candidates": memory_candidate_count,
+            "synthesis_artifacts": synthesis_summary.get("synthesis_artifacts", 0),
+            "synthesis_pending_reviews": synthesis_summary.get("pending_reviews", 0),
+            "synthesis_promoted_deliveries": synthesis_summary.get("promoted_delivery_artifacts", 0),
         },
+        "synthesis_lifecycle": synthesis_lifecycle,
         "recent_artifacts": recent_artifact_rows,
         "stuck_workflow_jobs": [{
             "job_id": job.get("job_id"),
@@ -8980,7 +9029,7 @@ def commander_work_package_from_task(conn: sqlite3.Connection, row: sqlite3.Row)
     task = dict(row)
     description = task.get("description") or ""
     latest_run_row = conn.execute(
-        """SELECT run_id,status,agent_id,runtime_type,created_at,ended_at,error_type,error_message
+        """SELECT run_id,status,agent_id,runtime_type,created_at,ended_at,error_type,error_message,output_summary
         FROM runs WHERE task_id=? ORDER BY created_at DESC LIMIT 1""",
         (task["task_id"],),
     ).fetchone()
@@ -9157,6 +9206,7 @@ def commander_dispatch_work_package(conn: sqlite3.Connection, task_id: str, body
     dispatch = dispatch_local_worker_once(conn, {
         "adapter": adapter,
         "confirm_run": confirm_run,
+        "base_url": body.get("base_url") or body.get("_base_url") or request_base_url(headers),
         "task_id": task_id,
         "agent_id": worker_agent_id,
         "title": task["title"],
@@ -9229,6 +9279,7 @@ def submit_commander_work_package_dispatch_jobs(conn: sqlite3.Connection, body: 
     workspace_id = normalize_workspace_id(body.get("workspace_id") or headers.get("X-AgentOps-Workspace-Id") or "local-demo")
     adapter = coerce_choice(body.get("adapter"), {"mock", "hermes", "openclaw"}, "mock")
     confirm_run = bool(body.get("confirm_run"))
+    base_url = body.get("base_url") or body.get("_base_url") or request_base_url(headers)
     if adapter in {"hermes", "openclaw"} and not confirm_run:
         return {
             "provider": "agentops-commander",
@@ -9347,6 +9398,7 @@ def submit_commander_work_package_dispatch_jobs(conn: sqlite3.Connection, body: 
             args=(job["job_id"], {
                 "workspace_id": workspace_id,
                 "task_id": task_id,
+                "base_url": base_url,
                 "adapter": adapter,
                 "confirm_run": confirm_run,
                 "worker_agent_id": stable_id("agt_cmd_dispatch", adapter, task_id or "", job["job_id"]),
@@ -9379,6 +9431,428 @@ def submit_commander_work_package_dispatch_jobs(conn: sqlite3.Connection, body: 
     }, 202
 
 
+def commander_select_work_packages(conn: sqlite3.Connection, workspace_id: str, body: dict) -> list[dict]:
+    requested_task_ids = [commander_safe_text(item, 120) for item in (body.get("task_ids") or []) if item]
+    limit = min(max(int(body.get("limit") or len(requested_task_ids) or 10), 1), 50)
+    project_id = commander_safe_text(body.get("project_id") or "", 120)
+    plan_id = commander_safe_text(body.get("plan_id") or "", 120)
+    status_filter = commander_safe_text(body.get("status") or "ready_for_review", 80)
+    params: list = [workspace_id]
+    sql = """SELECT * FROM tasks
+        WHERE COALESCE(workspace_id,'local-demo')=?
+        AND description LIKE 'Commander project:%'"""
+    if requested_task_ids:
+        placeholders = ",".join("?" for _ in requested_task_ids[:limit])
+        sql += f" AND task_id IN ({placeholders})"
+        params.extend(requested_task_ids[:limit])
+    if project_id:
+        sql += " AND description LIKE ?"
+        params.append(f"%Commander project: {project_id}%")
+    if plan_id:
+        sql += " AND (description LIKE ? OR task_id LIKE ?)"
+        params.extend([f"%Plan: {plan_id}%", f"%{plan_id}%"])
+    sql += " ORDER BY created_at ASC LIMIT ?"
+    params.append(limit)
+    rows = conn.execute(sql, params).fetchall()
+    packages = [commander_work_package_from_task(conn, row) for row in rows]
+    if status_filter and status_filter != "all":
+        packages = [item for item in packages if item.get("package_status") == status_filter or item.get("status") == status_filter]
+    return packages
+
+
+def commander_synthesize_work_packages(conn: sqlite3.Connection, body: dict, headers=None) -> tuple[dict, int]:
+    headers = headers or {}
+    workspace_id = normalize_workspace_id(body.get("workspace_id") or headers.get("X-AgentOps-Workspace-Id") or "local-demo")
+    confirm_create = bool(body.get("confirm_create"))
+    packages = commander_select_work_packages(conn, workspace_id, body)
+    if not packages:
+        return {
+            "provider": "agentops-commander",
+            "operation": "work_package_synthesis",
+            "ok": False,
+            "status": "empty",
+            "reason": "no_matching_work_packages",
+            "workspace_id": workspace_id,
+            "artifact_id": None,
+            "packages": [],
+            "safety": {
+                "ledger_mutated": False,
+                "artifact_created": False,
+                "live_execution_performed": False,
+                "token_omitted": True,
+                "raw_prompt_omitted": True,
+            },
+            "token_omitted": True,
+            "live_execution_performed": False,
+        }, 404
+
+    project_id = body.get("project_id") or packages[0].get("project_id") or "commander_project"
+    plan_id = body.get("plan_id") or packages[0].get("plan_id") or ""
+    ready_count = len([pkg for pkg in packages if pkg.get("package_status") == "ready_for_review"])
+    blocked_count = len([pkg for pkg in packages if pkg.get("package_status") == "blocked"])
+    running_count = len([pkg for pkg in packages if pkg.get("package_status") == "still_running"])
+    evidence_totals: dict[str, int] = {}
+    for pkg in packages:
+        for key, value in (pkg.get("evidence_counts") or {}).items():
+            evidence_totals[key] = evidence_totals.get(key, 0) + int(value or 0)
+
+    lines = [
+        "# Commander Work Package Synthesis",
+        "",
+        f"- Workspace: `{workspace_id}`",
+        f"- Project: `{project_id}`",
+        f"- Plan: `{plan_id or 'n/a'}`",
+        f"- Packages included: {len(packages)}",
+        f"- Ready for review: {ready_count}",
+        f"- Still running: {running_count}",
+        f"- Blocked: {blocked_count}",
+        f"- Evidence totals: {json.dumps(evidence_totals, ensure_ascii=False, sort_keys=True)}",
+        "",
+        "## Package Results",
+        "",
+    ]
+    for idx, pkg in enumerate(packages, 1):
+        latest = pkg.get("latest_run") or {}
+        output = redact_text(latest.get("output_summary") or latest.get("error_message") or pkg.get("scope") or "", 320)
+        lines.extend([
+            f"### {idx}. {pkg.get('title')}",
+            f"- Task ID: `{pkg.get('task_id')}`",
+            f"- Lane: `{pkg.get('lane_id')}`",
+            f"- Status: `{pkg.get('package_status')}`",
+            f"- Owner: `{pkg.get('owner_agent_id')}`",
+            f"- Latest run: `{latest.get('run_id') or 'none'}` ({latest.get('status') or 'n/a'})",
+            f"- Evidence: {json.dumps(pkg.get('evidence_counts') or {}, ensure_ascii=False, sort_keys=True)}",
+            f"- Result summary: {output or 'No output summary recorded.'}",
+            "",
+        ])
+    if blocked_count or running_count:
+        lines.extend([
+            "## Next Action",
+            "",
+            "- Review blocked or running lanes before customer delivery approval.",
+            "- Use `agentops commander inbox --bucket blocked --limit 5` for failures.",
+            "",
+        ])
+    else:
+        lines.extend([
+            "## Next Action",
+            "",
+            "- Review this synthesis with the human approver.",
+            "- Promote approved findings into memory or customer delivery artifacts only after review.",
+            "",
+        ])
+    markdown = "\n".join(lines)
+    summary = redact_text(markdown, 1200)
+    artifact_id = body.get("artifact_id") or stable_id("art_cmd_synthesis", workspace_id, project_id, plan_id, now_iso())
+    primary_package = next((pkg for pkg in packages if (pkg.get("latest_run") or {}).get("run_id")), packages[0])
+    primary_task_id = primary_package.get("task_id")
+    primary_run_id = (primary_package.get("latest_run") or {}).get("run_id")
+    primary_agent_id = (primary_package.get("latest_run") or {}).get("agent_id") or primary_package.get("owner_agent_id")
+    content_hash = stable_hash(markdown)
+
+    if not confirm_create:
+        return {
+            "provider": "agentops-commander",
+            "operation": "work_package_synthesis",
+            "ok": True,
+            "status": "preview",
+            "workspace_id": workspace_id,
+            "project_id": project_id,
+            "plan_id": plan_id,
+            "artifact_id": None,
+            "markdown": markdown,
+            "content_hash": content_hash,
+            "package_count": len(packages),
+            "packages": packages,
+            "evidence_totals": evidence_totals,
+            "safety": {
+                "ledger_mutated": False,
+                "artifact_created": False,
+                "live_execution_performed": False,
+                "token_omitted": True,
+                "raw_prompt_omitted": True,
+            },
+            "token_omitted": True,
+            "live_execution_performed": False,
+        }, 200
+
+    row = {
+        "artifact_id": artifact_id,
+        "task_id": primary_task_id,
+        "run_id": primary_run_id,
+        "artifact_type": "commander_synthesis_report",
+        "title": f"Commander synthesis: {project_id}",
+        "uri": f"commander://{project_id}/synthesis/{artifact_id}",
+        "summary": summary,
+        "created_at": now_iso(),
+    }
+    before = conn.execute("SELECT * FROM artifacts WHERE artifact_id=?", (artifact_id,)).fetchone()
+    conn.execute(
+        """INSERT OR REPLACE INTO artifacts(artifact_id,task_id,run_id,artifact_type,title,uri,summary,created_at)
+        VALUES(:artifact_id,:task_id,:run_id,:artifact_type,:title,:uri,:summary,:created_at)""",
+        row,
+    )
+    review_approval = None
+    if primary_run_id:
+        approval_id = body.get("approval_id") or stable_id("ap_cmd_synthesis", artifact_id)
+        review_approval = {
+            "approval_id": approval_id,
+            "task_id": primary_task_id,
+            "run_id": primary_run_id,
+            "tool_call_id": None,
+            "requested_by_agent_id": primary_agent_id,
+            "approver_user_id": body.get("approver_user_id") or "usr_founder",
+            "decision": "pending",
+            "reason": redact_text(
+                f"Commander synthesis review required. artifact_id={artifact_id}; content_hash={content_hash}; project_id={project_id}; packages={len(packages)}; review before customer delivery or memory promotion.",
+                260,
+            ),
+            "expires_at": body.get("expires_at") or (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=3)).isoformat(),
+            "created_at": now_iso(),
+            "decided_at": None,
+        }
+        conn.execute(
+            """INSERT OR REPLACE INTO approvals(approval_id,task_id,run_id,tool_call_id,requested_by_agent_id,approver_user_id,decision,reason,expires_at,created_at,decided_at)
+            VALUES(:approval_id,:task_id,:run_id,:tool_call_id,:requested_by_agent_id,:approver_user_id,:decision,:reason,:expires_at,:created_at,:decided_at)""",
+            review_approval,
+        )
+        runtime_event(
+            conn,
+            "rtc_agent_gateway_local",
+            "commander.work_package_synthesis.review_requested",
+            "waiting_approval",
+            run_id=primary_run_id,
+            task_id=primary_task_id,
+            agent_id=primary_agent_id,
+            input_summary=f"Commander synthesis {artifact_id} entered human review.",
+            output_summary=review_approval["reason"],
+            raw_payload_hash=content_hash,
+        )
+        audit(
+            conn,
+            "user",
+            "usr_founder",
+            "commander.work_package_synthesis_review_request",
+            "approvals",
+            approval_id,
+            None,
+            review_approval,
+            {"artifact_id": artifact_id, "content_hash": content_hash, "raw_markdown_omitted": True},
+        )
+    runtime_event(
+        conn,
+        "rtc_agent_gateway_local",
+        "commander.work_package_synthesis",
+        "completed",
+        run_id=primary_run_id,
+        task_id=primary_task_id,
+        input_summary=f"Commander synthesized {len(packages)} work package(s) for {project_id}.",
+        output_summary=summary,
+        raw_payload_hash=content_hash,
+    )
+    audit(
+        conn,
+        "user",
+        "usr_founder",
+        "commander.work_package_synthesis",
+        "artifacts",
+        artifact_id,
+        dict(before) if before else None,
+        row,
+        {"project_id": project_id, "plan_id": plan_id, "package_count": len(packages), "content_hash": content_hash, "raw_markdown_omitted": True},
+    )
+    conn.commit()
+    return {
+        "provider": "agentops-commander",
+        "operation": "work_package_synthesis",
+        "ok": True,
+        "status": "created",
+        "workspace_id": workspace_id,
+        "project_id": project_id,
+        "plan_id": plan_id,
+        "artifact_id": artifact_id,
+        "approval_id": (review_approval or {}).get("approval_id"),
+        "review_approval": review_approval,
+        "artifact": row,
+        "markdown": markdown,
+        "content_hash": content_hash,
+        "package_count": len(packages),
+        "packages": packages,
+        "evidence_totals": evidence_totals,
+        "safety": {
+            "ledger_mutated": True,
+            "artifact_created": True,
+            "approval_created": bool(review_approval),
+            "live_execution_performed": False,
+            "token_omitted": True,
+            "raw_prompt_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }, 201
+
+
+def commander_promote_synthesis(conn: sqlite3.Connection, body: dict, headers=None) -> tuple[dict, int]:
+    headers = headers or {}
+    workspace_id = normalize_workspace_id(body.get("workspace_id") or headers.get("X-AgentOps-Workspace-Id") or "local-demo")
+    artifact_id = commander_safe_text(body.get("artifact_id") or "", 140)
+    mode = coerce_choice(body.get("mode") or body.get("promote_to"), {"memory", "delivery", "both"}, "both")
+    confirm_promote = bool(body.get("confirm_promote"))
+    if not artifact_id:
+        return {"error": "artifact_id_required", "message": "Commander synthesis promotion requires artifact_id.", "token_omitted": True}, 400
+    row = conn.execute(
+        """SELECT a.*, t.workspace_id AS task_workspace_id, r.workspace_id AS run_workspace_id, r.agent_id AS run_agent_id
+        FROM artifacts a
+        LEFT JOIN tasks t ON t.task_id=a.task_id
+        LEFT JOIN runs r ON r.run_id=a.run_id
+        WHERE a.artifact_id=?""",
+        (artifact_id,),
+    ).fetchone()
+    if not row:
+        return {"error": "synthesis_artifact_not_found", "artifact_id": artifact_id, "token_omitted": True}, 404
+    artifact = dict(row)
+    actual_workspace = artifact.get("task_workspace_id") or artifact.get("run_workspace_id") or "local-demo"
+    if normalize_workspace_id(actual_workspace) != workspace_id:
+        return workspace_forbidden("artifact", artifact_id, workspace_id, actual_workspace)
+    if artifact.get("artifact_type") != "commander_synthesis_report":
+        return {
+            "error": "not_commander_synthesis_artifact",
+            "artifact_id": artifact_id,
+            "artifact_type": artifact.get("artifact_type"),
+            "token_omitted": True,
+        }, 400
+    approval_id = commander_safe_text(body.get("approval_id") or "", 140)
+    if approval_id:
+        approval = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (approval_id,)).fetchone()
+    else:
+        approval = conn.execute(
+            """SELECT * FROM approvals
+            WHERE approval_id LIKE 'ap_cmd_synthesis%'
+              AND reason LIKE ?
+            ORDER BY decided_at DESC, created_at DESC
+            LIMIT 1""",
+            (f"%artifact_id={artifact_id}%",),
+        ).fetchone()
+    if not approval or not commander_synthesis_approval(approval):
+        return {
+            "error": "approved_synthesis_review_required",
+            "message": "Promoting a Commander synthesis requires its commander_synthesis approval.",
+            "artifact_id": artifact_id,
+            "approval_id": approval_id or None,
+            "token_omitted": True,
+        }, 409
+    approved = approval["decision"] == "approved"
+    project_id = body.get("project_id") or commander_synthesis_project_id(approval["reason"]) or "commander_project"
+    delivery_artifact_id = body.get("delivery_artifact_id") or stable_id("art_customer_cmd_synthesis", artifact_id)
+    memory_id = body.get("memory_id") or stable_id("mem_cmd_synthesis", artifact_id)
+    preview = {
+        "provider": "agentops-commander",
+        "operation": "work_package_synthesis_promote",
+        "ok": approved,
+        "status": "ready" if approved else "approval_required",
+        "workspace_id": workspace_id,
+        "artifact_id": artifact_id,
+        "approval_id": approval["approval_id"],
+        "approval_decision": approval["decision"],
+        "mode": mode,
+        "would_create": {
+            "memory_candidate": mode in {"memory", "both"},
+            "customer_delivery_artifact": mode in {"delivery", "both"},
+        },
+        "memory_id": memory_id if mode in {"memory", "both"} else None,
+        "delivery_artifact_id": delivery_artifact_id if mode in {"delivery", "both"} else None,
+        "safety": {
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "token_omitted": True,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+    if not approved:
+        return preview, 409
+    if not confirm_promote:
+        return {**preview, "status": "preview", "ok": True}, 200
+
+    promoted: dict[str, object] = {}
+    task_id = artifact.get("task_id")
+    run_id = artifact.get("run_id")
+    agent_id = artifact.get("run_agent_id") or approval["requested_by_agent_id"] or "agt_commander"
+    content_hash = stable_hash({
+        "artifact_id": artifact_id,
+        "summary": artifact.get("summary"),
+        "approval_id": approval["approval_id"],
+        "mode": mode,
+    })
+    if mode in {"memory", "both"}:
+        memory_row = {
+            "memory_id": memory_id,
+            "scope": "project",
+            "memory_type": "artifact_summary",
+            "canonical_text": redact_text(
+                f"Approved Commander synthesis {artifact_id} can inform future project work. Summary: {artifact.get('summary') or ''}",
+                360,
+            ),
+            "source_type": "run_log",
+            "source_ref": artifact_id,
+            "project_id": project_id,
+            "task_id": task_id,
+            "agent_id": agent_id,
+            "confidence": float(body.get("confidence") or 0.74),
+            "review_status": "candidate",
+            "owner_user_id": body.get("owner_user_id") or "usr_founder",
+            "ttl_review_due_at": body.get("ttl_review_due_at") or (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=30)).isoformat(),
+            "supersedes_memory_id": body.get("supersedes_memory_id"),
+            "access_tags": json.dumps(["commander", "synthesis", "review"], ensure_ascii=False),
+            "created_at": now_iso(),
+            "updated_at": now_iso(),
+        }
+        promoted["memory_outcome"] = upsert_memory_candidate(conn, memory_row, "commander-synthesis")
+        promoted["memory_id"] = memory_id
+        runtime_event(conn, "rtc_agent_gateway_local", "commander.work_package_synthesis.promote_memory", "completed", run_id=run_id, task_id=task_id, agent_id=agent_id, output_summary=f"Memory candidate {memory_id} proposed from synthesis {artifact_id}.", raw_payload_hash=content_hash)
+        audit(conn, "user", "usr_founder", "commander.work_package_synthesis_promote_memory", "memories", memory_id, None, memory_row, {"artifact_id": artifact_id, "approval_id": approval["approval_id"], "raw_summary_omitted": True})
+    if mode in {"delivery", "both"}:
+        delivery_row = {
+            "artifact_id": delivery_artifact_id,
+            "task_id": task_id,
+            "run_id": run_id,
+            "artifact_type": "customer_delivery_report",
+            "title": f"Customer delivery from Commander synthesis: {project_id}",
+            "uri": f"commander://{project_id}/delivery/{delivery_artifact_id}",
+            "summary": redact_text(artifact.get("summary") or "", 1200),
+            "created_at": now_iso(),
+        }
+        before_delivery = conn.execute("SELECT * FROM artifacts WHERE artifact_id=?", (delivery_artifact_id,)).fetchone()
+        conn.execute(
+            """INSERT OR REPLACE INTO artifacts(artifact_id,task_id,run_id,artifact_type,title,uri,summary,created_at)
+            VALUES(:artifact_id,:task_id,:run_id,:artifact_type,:title,:uri,:summary,:created_at)""",
+            delivery_row,
+        )
+        promoted["delivery_artifact_id"] = delivery_artifact_id
+        runtime_event(conn, "rtc_agent_gateway_local", "commander.work_package_synthesis.promote_delivery", "completed", run_id=run_id, task_id=task_id, agent_id=agent_id, output_summary=f"Customer delivery artifact {delivery_artifact_id} created from synthesis {artifact_id}.", raw_payload_hash=content_hash)
+        audit(conn, "user", "usr_founder", "commander.work_package_synthesis_promote_delivery", "artifacts", delivery_artifact_id, dict(before_delivery) if before_delivery else None, delivery_row, {"source_artifact_id": artifact_id, "approval_id": approval["approval_id"], "raw_summary_omitted": True})
+    conn.commit()
+    return {
+        **preview,
+        "ok": True,
+        "status": "promoted",
+        "created": promoted,
+        "safety": {
+            "ledger_mutated": True,
+            "live_execution_performed": False,
+            "token_omitted": True,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "memory_candidate_created": mode in {"memory", "both"},
+            "customer_delivery_artifact_created": mode in {"delivery", "both"},
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }, 201
+
+
 COMMANDER_INBOX_BUCKETS = ["ready_for_review", "still_running", "blocked", "late_or_stale", "needs_memory_review"]
 
 
@@ -9395,8 +9869,110 @@ def commander_count(conn: sqlite3.Connection, sql: str, params=()) -> int:
     return int((conn.execute(sql, params).fetchone() or [0])[0] or 0)
 
 
+def commander_synthesis_lifecycle(conn: sqlite3.Connection, limit: int = 5) -> dict:
+    limit = max(1, min(int(limit or 5), 25))
+    summary = {
+        "synthesis_artifacts": scalar_count(conn, "SELECT COUNT(*) FROM artifacts WHERE artifact_type='commander_synthesis_report'"),
+        "pending_reviews": scalar_count(conn, "SELECT COUNT(*) FROM approvals WHERE decision='pending' AND approval_id LIKE 'ap_cmd_synthesis%'"),
+        "approved_reviews": scalar_count(conn, "SELECT COUNT(*) FROM approvals WHERE decision='approved' AND approval_id LIKE 'ap_cmd_synthesis%'"),
+        "rejected_reviews": scalar_count(conn, "SELECT COUNT(*) FROM approvals WHERE decision='rejected' AND approval_id LIKE 'ap_cmd_synthesis%'"),
+        "promoted_memory_candidates": scalar_count(conn, "SELECT COUNT(*) FROM memories WHERE source_ref IN (SELECT artifact_id FROM artifacts WHERE artifact_type='commander_synthesis_report')"),
+        "promoted_delivery_artifacts": scalar_count(conn, "SELECT COUNT(*) FROM artifacts WHERE artifact_type='customer_delivery_report' AND artifact_id LIKE 'art_customer_cmd_synthesis_%'"),
+    }
+    rows = rows_to_dicts(conn.execute(
+        """SELECT artifact_id, task_id, run_id, title, summary, created_at
+        FROM artifacts
+        WHERE artifact_type='commander_synthesis_report'
+        ORDER BY created_at DESC
+        LIMIT ?""",
+        (limit,),
+    ).fetchall())
+    recent = []
+    for row in rows:
+        artifact_id = row.get("artifact_id")
+        approvals = rows_to_dicts(conn.execute(
+            """SELECT approval_id, decision, created_at, decided_at, reason
+            FROM approvals
+            WHERE approval_id LIKE 'ap_cmd_synthesis%' AND reason LIKE ?
+            ORDER BY created_at DESC
+            LIMIT 3""",
+            (f"%artifact_id={artifact_id}%",),
+        ).fetchall())
+        memory_count = scalar_count(conn, "SELECT COUNT(*) FROM memories WHERE source_ref=?", (artifact_id,))
+        delivery_count = scalar_count(
+            conn,
+            "SELECT COUNT(*) FROM artifacts WHERE artifact_type='customer_delivery_report' AND artifact_id LIKE 'art_customer_cmd_synthesis_%' AND summary=?",
+            (row.get("summary") or "",),
+        )
+        latest_approval = approvals[0] if approvals else {}
+        if delivery_count:
+            status = "promoted"
+            next_action = "Open the customer delivery board and review the promoted synthesis artifact."
+        elif memory_count:
+            status = "memory_pending_review"
+            next_action = "Review the memory candidate created from this synthesis."
+        elif latest_approval.get("decision") == "approved":
+            status = "approved_not_promoted"
+            next_action = f"agentops commander promote-synthesis --artifact-id {artifact_id} --approval-id {latest_approval.get('approval_id')} --confirm-promote"
+        elif latest_approval.get("decision") == "rejected":
+            status = "rejected"
+            next_action = "Revise or rerun the work packages before promoting."
+        elif latest_approval.get("decision") == "pending":
+            status = "review_pending"
+            next_action = f"agentops approval approve --approval-id {latest_approval.get('approval_id')}"
+        else:
+            status = "needs_review_gate"
+            next_action = "Recreate synthesis with --confirm-create to generate a review gate."
+        recent.append({
+            "artifact_id": artifact_id,
+            "task_id": row.get("task_id"),
+            "run_id": row.get("run_id"),
+            "title": commander_safe_text(row.get("title"), 160),
+            "status": status,
+            "approval_id": latest_approval.get("approval_id"),
+            "approval_decision": latest_approval.get("decision"),
+            "memory_candidates": memory_count,
+            "delivery_artifacts": delivery_count,
+            "created_at": row.get("created_at"),
+            "summary": redact_text(row.get("summary") or "", 240),
+            "next_action": next_action,
+        })
+    if summary["pending_reviews"]:
+        status = "review_pending"
+    elif summary["approved_reviews"] > summary["promoted_delivery_artifacts"]:
+        status = "promotion_available"
+    elif summary["promoted_delivery_artifacts"]:
+        status = "promoted"
+    elif summary["synthesis_artifacts"]:
+        status = "created"
+    else:
+        status = "empty"
+    next_actions = []
+    for item in recent:
+        action = item.get("next_action")
+        if action and action not in next_actions:
+            next_actions.append(action)
+    if not next_actions:
+        next_actions = ["agentops commander synthesize --status ready_for_review --confirm-create"]
+    return {
+        "status": status,
+        "summary": summary,
+        "recent": recent,
+        "next_actions": next_actions[:5],
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+
+
 def commander_evidence_counts(conn: sqlite3.Connection, task_id=None, run_id=None, artifact_id=None) -> dict:
     counts = {
+        "runs": 0,
         "artifacts": 0,
         "evaluations": 0,
         "audit_logs": 0,
@@ -9405,17 +9981,22 @@ def commander_evidence_counts(conn: sqlite3.Connection, task_id=None, run_id=Non
         "tool_calls": 0,
         "runtime_events": 0,
         "memories": 0,
+        "plan_evidence_manifests": 0,
     }
     if run_id:
+        counts["runs"] += commander_count(conn, "SELECT COUNT(*) FROM runs WHERE run_id=?", (run_id,))
         counts["artifacts"] += commander_count(conn, "SELECT COUNT(*) FROM artifacts WHERE run_id=?", (run_id,))
         counts["evaluations"] += commander_count(conn, "SELECT COUNT(*) FROM evaluations WHERE run_id=?", (run_id,))
         counts["tool_calls"] += commander_count(conn, "SELECT COUNT(*) FROM tool_calls WHERE run_id=?", (run_id,))
         counts["runtime_events"] += commander_count(conn, "SELECT COUNT(*) FROM runtime_events WHERE run_id=?", (run_id,))
+        counts["plan_evidence_manifests"] += commander_count(conn, "SELECT COUNT(*) FROM plan_evidence_manifests WHERE run_id=?", (run_id,))
     if task_id:
+        counts["runs"] += commander_count(conn, "SELECT COUNT(*) FROM runs WHERE task_id=? AND (? IS NULL OR run_id<>?)", (task_id, run_id, run_id or ""))
         counts["artifacts"] += commander_count(conn, "SELECT COUNT(*) FROM artifacts WHERE task_id=? AND (run_id IS NULL OR run_id<>?)", (task_id, run_id or ""))
         counts["evaluations"] += commander_count(conn, "SELECT COUNT(*) FROM evaluations WHERE task_id=? AND (run_id IS NULL OR run_id<>?)", (task_id, run_id or ""))
         counts["runtime_events"] += commander_count(conn, "SELECT COUNT(*) FROM runtime_events WHERE task_id=? AND (run_id IS NULL OR run_id<>?)", (task_id, run_id or ""))
         counts["memories"] += commander_count(conn, "SELECT COUNT(*) FROM memories WHERE task_id=?", (task_id,))
+        counts["plan_evidence_manifests"] += commander_count(conn, "SELECT COUNT(*) FROM plan_evidence_manifests WHERE task_id=? AND (run_id IS NULL OR run_id<>?)", (task_id, run_id or ""))
     if run_id or task_id:
         counts["approvals"] = commander_count(
             conn,
@@ -9987,6 +10568,11 @@ def local_readiness(conn: sqlite3.Connection, headers) -> dict:
     }
 
 
+def request_base_url(headers=None) -> str | None:
+    host = headers.get("Host") if headers else ""
+    return f"http://{host}" if host else None
+
+
 def dispatch_local_worker_once(conn, body: dict) -> dict:
     adapter = coerce_choice(body.get("adapter"), {"mock", "hermes", "openclaw"}, "mock")
     confirm_run = bool(body.get("confirm_run"))
@@ -10043,7 +10629,7 @@ def dispatch_local_worker_once(conn, body: dict) -> dict:
         "--task-id",
         task_id,
         "--base-url",
-        os.environ.get("AGENTOPS_BASE_URL", "http://127.0.0.1:8787"),
+        str(body.get("base_url") or body.get("_base_url") or os.environ.get("AGENTOPS_BASE_URL") or "http://127.0.0.1:8787"),
     ]
     if confirm_run:
         cmd.append("--confirm-run")
@@ -11298,6 +11884,12 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/commander/work-packages/dispatch-batch":
                 payload, status = submit_commander_work_package_dispatch_jobs(conn, body, self.headers)
                 return self.send_json(payload, status)
+            if path == "/api/commander/work-packages/synthesize":
+                payload, status = commander_synthesize_work_packages(conn, body, self.headers)
+                return self.send_json(payload, status)
+            if path == "/api/commander/work-packages/synthesis/promote":
+                payload, status = commander_promote_synthesis(conn, body, self.headers)
+                return self.send_json(payload, status)
             if path.startswith("/api/commander/work-packages/") and path.endswith("/dispatch"):
                 task_id = path.split("/")[-2]
                 payload, status = commander_dispatch_work_package(conn, task_id, body, self.headers)
@@ -11513,6 +12105,34 @@ class Handler(BaseHTTPRequestHandler):
         before = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (approval_id,)).fetchone()
         if not before:
             return self.send_json({"error": "not found"}, 404)
+        if commander_synthesis_approval(before):
+            conn.execute("UPDATE approvals SET decision=?, decided_at=? WHERE approval_id=?", (decision, now_iso(), approval_id))
+            after = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (approval_id,)).fetchone()
+            artifact_id = commander_synthesis_artifact_id(before)
+            runtime_event(
+                conn,
+                "rtc_agent_gateway_local",
+                "commander.work_package_synthesis.review_decision",
+                decision,
+                run_id=before["run_id"],
+                task_id=before["task_id"],
+                agent_id=before["requested_by_agent_id"],
+                input_summary=f"Commander synthesis review {approval_id} resolved.",
+                output_summary=f"Commander synthesis {artifact_id or 'artifact'} was {decision}.",
+            )
+            audit(
+                conn,
+                "user",
+                "usr_founder",
+                f"commander.work_package_synthesis_review_{decision}",
+                "approvals",
+                approval_id,
+                dict(before),
+                dict(after),
+                {"artifact_id": artifact_id, "run_task_status_unchanged": True},
+            )
+            conn.commit()
+            return self.send_json(dict(after))
         if decision == "approved" and customer_delivery_approval_requires_manifest(before):
             gate = delivery_manifest_gate(conn, before["run_id"])
             if not gate.get("pass"):

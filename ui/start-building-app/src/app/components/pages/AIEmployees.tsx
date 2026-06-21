@@ -34,6 +34,7 @@ import {
   markWorkflowJobFailed,
   applyWorkerFleetHygiene,
   planCommanderWorkPackages,
+  promoteCommanderSynthesis,
   previewAgentGatewayEnrollmentPolicy,
   releaseWorkerTask,
   restartLocalWorkerDaemon,
@@ -46,11 +47,13 @@ import {
   startLocalWorkerDaemon,
   stopLocalWorkerDaemon,
   submitCustomerWorkerTaskJob,
+  synthesizeCommanderWorkPackages,
   useLiveData,
   type AgentGatewayEnrollmentCreateResult,
   type AgentGatewayEnrollmentPolicyPreview,
   type AgentGatewayEnrollmentRequestResult,
   type CommanderWorkPackagePlanPayload,
+  type CommanderSynthesisPromotionPayload,
   type CustomerDeliveryBoardPayload,
   type CustomerTaskWorkflowResult,
   type HermesOpenClawLoopReadbackPayload,
@@ -135,6 +138,8 @@ export function AIEmployees() {
   const [commanderPlannerBusy, setCommanderPlannerBusy] = useState(false);
   const [commanderPlannerError, setCommanderPlannerError] = useState<string | null>(null);
   const [commanderPlannerResult, setCommanderPlannerResult] = useState<CommanderWorkPackagePlanPayload | null>(null);
+  const [lastSynthesis, setLastSynthesis] = useState<{ artifactId: string; approvalId?: string | null } | null>(null);
+  const [synthesisPromotion, setSynthesisPromotion] = useState<CommanderSynthesisPromotionPayload | null>(null);
   const [commanderPlannerForm, setCommanderPlannerForm] = useState({
     goal: locale === "zh"
       ? "用 AgentOps MIS 协调一个客户 AI 团队项目：拆分并行工作包、分派 agent、保留证据、准备交付。"
@@ -211,6 +216,7 @@ export function AIEmployees() {
   const commanderWorkPackages = data?.commanderWorkPackages;
   const commanderPackageRows = commanderWorkPackages?.work_packages || [];
   const commanderPlannedPackageCount = commanderPackageRows.filter(pkg => pkg.package_status === "planned" || pkg.status === "planned").length;
+  const commanderReadyPackageCount = commanderPackageRows.filter(pkg => pkg.package_status === "ready_for_review").length;
   const reviewQueue = data?.reviewQueue as ReviewQueuePayload | undefined;
   const reviewQueueSummary = reviewQueue?.summary;
   const reviewQueueItems = reviewQueue?.review_items || [];
@@ -324,6 +330,8 @@ export function AIEmployees() {
       dispatchPackageHermes: "Run Hermes",
       dispatchPackageOpenClaw: "Run OpenClaw",
       dispatchBatchMock: "Queue planned mock batch",
+      synthesizePackages: "Create synthesis report",
+      promoteSynthesis: "Promote approved synthesis",
       reviewQueueTitle: "Human Review Queue",
       reviewQueueSummary: "One operator queue for approvals, memory candidates and customer deliveries. Handle returned work first without waiting for every worker lane.",
       reviewQueueEmpty: "No review items. Keep dispatching or watch the async inbox.",
@@ -640,6 +648,8 @@ export function AIEmployees() {
       dispatchPackageHermes: "运行 Hermes",
       dispatchPackageOpenClaw: "运行 OpenClaw",
       dispatchBatchMock: "批量排队 planned mock",
+      synthesizePackages: "生成合并报告",
+      promoteSynthesis: "晋升已批准报告",
       reviewQueueTitle: "人工审核队列",
       reviewQueueSummary: "把审批、候选记忆和客户交付聚合成一个 operator 队列；哪个 worker 先回来，就先处理哪个。",
       reviewQueueEmpty: "暂无待审事项。可以继续派发任务，或观察异步 Inbox。",
@@ -1114,6 +1124,62 @@ export function AIEmployees() {
         limit: plannedTaskIds.length,
       });
       setDispatchResult(`${copy.dispatchBatchMock}: ${result.ok ? "queued" : result.reason || "failed"} · ${result.job_ids.length} jobs`);
+      await refresh();
+    } catch (err) {
+      setDispatchResult(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDispatching(null);
+    }
+  };
+
+  const synthesizeCommanderReadyPackages = async () => {
+    const readyTaskIds = commanderPackageRows
+      .filter(pkg => pkg.package_status === "ready_for_review")
+      .slice(0, 10)
+      .map(pkg => pkg.task_id)
+      .filter(Boolean);
+    if (readyTaskIds.length === 0) {
+      setDispatchResult(locale === "zh" ? "没有 ready_for_review 工作包可合并" : "No ready_for_review work packages to synthesize");
+      return;
+    }
+    setDispatching("commander-synthesize");
+    setDispatchResult(null);
+    try {
+      const result = await synthesizeCommanderWorkPackages({
+        task_ids: readyTaskIds,
+        status: "ready_for_review",
+        limit: readyTaskIds.length,
+        confirm_create: true,
+      });
+      const reviewGate = result.approval_id ? ` · approval ${result.approval_id}` : "";
+      if (result.artifact_id) {
+        setLastSynthesis({ artifactId: result.artifact_id, approvalId: result.approval_id });
+      }
+      setDispatchResult(`${copy.synthesizePackages}: ${result.ok ? result.artifact_id || "created" : "failed"} · ${result.package_count || readyTaskIds.length} packages${reviewGate}`);
+      await refresh();
+    } catch (err) {
+      setDispatchResult(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDispatching(null);
+    }
+  };
+
+  const promoteLastCommanderSynthesis = async () => {
+    if (!lastSynthesis?.artifactId) {
+      setDispatchResult(locale === "zh" ? "还没有可晋升的合并报告" : "No synthesis report to promote yet");
+      return;
+    }
+    setDispatching("commander-promote-synthesis");
+    setDispatchResult(null);
+    try {
+      const result = await promoteCommanderSynthesis({
+        artifact_id: lastSynthesis.artifactId,
+        approval_id: lastSynthesis.approvalId || undefined,
+        mode: "both",
+        confirm_promote: true,
+      });
+      setSynthesisPromotion(result);
+      setDispatchResult(`${copy.promoteSynthesis}: ${result.status} · memory ${result.memory_id || "n/a"} · delivery ${result.delivery_artifact_id || "n/a"}`);
       await refresh();
     } catch (err) {
       setDispatchResult(err instanceof Error ? err.message : String(err));
@@ -1711,9 +1777,32 @@ export function AIEmployees() {
                 {dispatching === "commander-batch-mock" ? <RefreshCw size={10} /> : <Play size={10} />}
                 {dispatching === "commander-batch-mock" ? copy.dispatching : `${copy.dispatchBatchMock} (${commanderPlannedPackageCount})`}
               </button>
+              <button
+                onClick={() => void synthesizeCommanderReadyPackages()}
+                disabled={Boolean(dispatching) || commanderReadyPackageCount === 0}
+                className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded disabled:opacity-50"
+                style={{ background: "rgba(34,211,238,0.10)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.18)" }}
+              >
+                {dispatching === "commander-synthesize" ? <RefreshCw size={10} /> : <CheckCircle2 size={10} />}
+                {dispatching === "commander-synthesize" ? copy.dispatching : `${copy.synthesizePackages} (${commanderReadyPackageCount})`}
+              </button>
+              <button
+                onClick={() => void promoteLastCommanderSynthesis()}
+                disabled={Boolean(dispatching) || !lastSynthesis?.artifactId}
+                className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded disabled:opacity-50"
+                style={{ background: "rgba(245,158,11,0.10)", color: "var(--mis-warning)", border: "1px solid rgba(245,158,11,0.20)" }}
+              >
+                {dispatching === "commander-promote-synthesis" ? <RefreshCw size={10} /> : <Inbox size={10} />}
+                {dispatching === "commander-promote-synthesis" ? copy.dispatching : copy.promoteSynthesis}
+              </button>
               <StatusBadge status={commanderWorkPackages?.status || "unknown"} />
             </div>
           </div>
+          {synthesisPromotion && (
+            <div className="text-[10px] mt-2 rounded px-3 py-2" style={{ color: "var(--mis-muted)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+              {copy.promoteSynthesis}: {synthesisPromotion.status} · {synthesisPromotion.safety.ledger_mutated ? copy.yes : copy.no}
+            </div>
+          )}
           <div className="space-y-2 mt-3">
             {commanderPackageRows.length === 0 && (
               <div className="text-[11px] rounded px-3 py-2" style={{ color: "var(--mis-muted)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>

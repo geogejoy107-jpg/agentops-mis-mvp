@@ -857,6 +857,59 @@ export interface CommanderWorkPackageDispatchBatchPayload {
   live_execution_performed: boolean;
 }
 
+export interface CommanderWorkPackageSynthesisPayload {
+  provider: string;
+  operation: string;
+  ok: boolean;
+  status: string;
+  workspace_id: string;
+  project_id?: string;
+  plan_id?: string;
+  artifact_id?: string | null;
+  approval_id?: string | null;
+  review_approval?: Record<string, unknown> | null;
+  markdown?: string;
+  content_hash?: string;
+  package_count?: number;
+  packages?: CommanderWorkPackageReadbackPayload["work_packages"];
+  evidence_totals?: Record<string, number>;
+  safety: {
+    ledger_mutated: boolean;
+    artifact_created: boolean;
+    live_execution_performed: boolean;
+    token_omitted: boolean;
+    raw_prompt_omitted: boolean;
+  };
+  token_omitted: boolean;
+  live_execution_performed: boolean;
+}
+
+export interface CommanderSynthesisPromotionPayload {
+  provider: string;
+  operation: string;
+  ok: boolean;
+  status: string;
+  workspace_id: string;
+  artifact_id: string;
+  approval_id?: string | null;
+  approval_decision?: string;
+  mode: string;
+  memory_id?: string | null;
+  delivery_artifact_id?: string | null;
+  created?: Record<string, unknown>;
+  safety: {
+    ledger_mutated: boolean;
+    live_execution_performed: boolean;
+    token_omitted: boolean;
+    raw_prompt_omitted: boolean;
+    raw_response_omitted: boolean;
+    memory_candidate_created?: boolean;
+    customer_delivery_artifact_created?: boolean;
+  };
+  token_omitted: boolean;
+  live_execution_performed: boolean;
+}
+
 export interface ReviewQueueSummary {
   pending_approvals: number;
   memory_candidates: number;
@@ -2444,6 +2497,105 @@ export async function dispatchCommanderWorkPackageBatch(input: {
       live_execution_performed: boolValue(safetyRaw.live_execution_performed),
       token_omitted: boolValue(safetyRaw.token_omitted),
       raw_prompt_omitted: boolValue(safetyRaw.raw_prompt_omitted),
+    },
+    token_omitted: boolValue(raw.token_omitted),
+    live_execution_performed: boolValue(raw.live_execution_performed),
+  };
+}
+
+export async function synthesizeCommanderWorkPackages(input: {
+  project_id?: string;
+  plan_id?: string;
+  task_ids?: string[];
+  status?: string;
+  limit?: number;
+  confirm_create?: boolean;
+  artifact_id?: string;
+}): Promise<CommanderWorkPackageSynthesisPayload> {
+  const raw = await apiJsonWithStatuses<Record<string, unknown>>("/commander/work-packages/synthesize", {
+    method: "POST",
+    body: JSON.stringify({
+      project_id: input.project_id,
+      plan_id: input.plan_id,
+      task_ids: input.task_ids || [],
+      status: input.status || "ready_for_review",
+      limit: input.limit || 10,
+      confirm_create: Boolean(input.confirm_create),
+      artifact_id: input.artifact_id,
+    }),
+  }, [404]);
+  const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
+  return {
+    provider: String(raw.provider || "agentops-commander"),
+    operation: String(raw.operation || "work_package_synthesis"),
+    ok: boolValue(raw.ok),
+    status: String(raw.status || "unknown"),
+    workspace_id: String(raw.workspace_id || "local-demo"),
+    project_id: raw.project_id ? String(raw.project_id) : undefined,
+    plan_id: raw.plan_id ? String(raw.plan_id) : undefined,
+    artifact_id: raw.artifact_id ? String(raw.artifact_id) : null,
+    approval_id: raw.approval_id ? String(raw.approval_id) : null,
+    review_approval: typeof raw.review_approval === "object" && raw.review_approval !== null ? raw.review_approval as Record<string, unknown> : null,
+    markdown: raw.markdown ? String(raw.markdown) : undefined,
+    content_hash: raw.content_hash ? String(raw.content_hash) : undefined,
+    package_count: raw.package_count === undefined ? undefined : numberValue(raw.package_count, 0),
+    packages: asArray<CommanderWorkPackageReadbackPayload["work_packages"][number]>(raw.packages),
+    evidence_totals: numberRecord(raw.evidence_totals),
+    safety: {
+      ledger_mutated: boolValue(safetyRaw.ledger_mutated),
+      artifact_created: boolValue(safetyRaw.artifact_created),
+      live_execution_performed: boolValue(safetyRaw.live_execution_performed),
+      token_omitted: boolValue(safetyRaw.token_omitted),
+      raw_prompt_omitted: boolValue(safetyRaw.raw_prompt_omitted),
+    },
+    token_omitted: boolValue(raw.token_omitted),
+    live_execution_performed: boolValue(raw.live_execution_performed),
+  };
+}
+
+export async function promoteCommanderSynthesis(input: {
+  artifact_id: string;
+  approval_id?: string;
+  mode?: "memory" | "delivery" | "both";
+  confirm_promote?: boolean;
+  project_id?: string;
+  memory_id?: string;
+  delivery_artifact_id?: string;
+}): Promise<CommanderSynthesisPromotionPayload> {
+  const raw = await apiJsonWithStatuses<Record<string, unknown>>("/commander/work-packages/synthesis/promote", {
+    method: "POST",
+    body: JSON.stringify({
+      artifact_id: input.artifact_id,
+      approval_id: input.approval_id,
+      mode: input.mode || "both",
+      confirm_promote: Boolean(input.confirm_promote),
+      project_id: input.project_id,
+      memory_id: input.memory_id,
+      delivery_artifact_id: input.delivery_artifact_id,
+    }),
+  }, [409]);
+  const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
+  return {
+    provider: String(raw.provider || "agentops-commander"),
+    operation: String(raw.operation || "work_package_synthesis_promote"),
+    ok: boolValue(raw.ok),
+    status: String(raw.status || "unknown"),
+    workspace_id: String(raw.workspace_id || "local-demo"),
+    artifact_id: String(raw.artifact_id || input.artifact_id),
+    approval_id: raw.approval_id ? String(raw.approval_id) : null,
+    approval_decision: raw.approval_decision ? String(raw.approval_decision) : undefined,
+    mode: String(raw.mode || input.mode || "both"),
+    memory_id: raw.memory_id ? String(raw.memory_id) : null,
+    delivery_artifact_id: raw.delivery_artifact_id ? String(raw.delivery_artifact_id) : null,
+    created: typeof raw.created === "object" && raw.created !== null ? raw.created as Record<string, unknown> : undefined,
+    safety: {
+      ledger_mutated: boolValue(safetyRaw.ledger_mutated),
+      live_execution_performed: boolValue(safetyRaw.live_execution_performed),
+      token_omitted: boolValue(safetyRaw.token_omitted),
+      raw_prompt_omitted: boolValue(safetyRaw.raw_prompt_omitted),
+      raw_response_omitted: boolValue(safetyRaw.raw_response_omitted),
+      memory_candidate_created: safetyRaw.memory_candidate_created === undefined ? undefined : boolValue(safetyRaw.memory_candidate_created),
+      customer_delivery_artifact_created: safetyRaw.customer_delivery_artifact_created === undefined ? undefined : boolValue(safetyRaw.customer_delivery_artifact_created),
     },
     token_omitted: boolValue(raw.token_omitted),
     live_execution_performed: boolValue(raw.live_execution_performed),

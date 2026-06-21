@@ -88,6 +88,44 @@ then executes the exact target work-package `task_id` through the same Agent
 Gateway worker loop. Hermes/OpenClaw batch dispatch is rejected unless
 `confirm_run:true` is present.
 
+Synthesize returned packages into a review report:
+
+```bash
+curl -s -X POST http://127.0.0.1:8787/api/commander/work-packages/synthesize \
+  -H "Content-Type: application/json" \
+  -d '{
+    "project_id": "proj_x",
+    "status": "ready_for_review",
+    "limit": 10
+  }' | jq .
+```
+
+Preview is read-only. To persist a bounded report artifact for human review,
+pass `confirm_create:true`. The report stores a redacted summary, artifact URI,
+content hash evidence, runtime event, audit log, and a pending
+`commander_synthesis` approval visible in the human review queue. It does not
+execute live adapters and does not store raw prompts, private transcripts,
+credentials, or tokens.
+
+Promote an approved synthesis into downstream review/delivery evidence:
+
+```bash
+curl -s -X POST http://127.0.0.1:8787/api/commander/work-packages/synthesis/promote \
+  -H "Content-Type: application/json" \
+  -d '{
+    "artifact_id": "art_cmd_synthesis_x",
+    "approval_id": "ap_cmd_synthesis_x",
+    "mode": "both",
+    "confirm_promote": true
+  }' | jq .
+```
+
+Promotion fails closed until the `commander_synthesis` approval is approved.
+Without `confirm_promote:true`, the endpoint is preview-only. Confirmed
+promotion creates a memory candidate and/or customer delivery artifact with
+runtime/audit evidence; it still does not execute live adapters or store raw
+package transcripts.
+
 ## CLI
 
 Preview:
@@ -147,6 +185,57 @@ Then poll returned jobs:
 ./scripts/agentops commander packages --project-id proj_x --limit 25
 ```
 
+Synthesize ready packages into a review artifact:
+
+```bash
+./scripts/agentops commander synthesize \
+  --project-id proj_x \
+  --status ready_for_review \
+  --limit 10 \
+  --confirm-create
+```
+
+Then review the generated gate:
+
+```bash
+./scripts/agentops review queue --limit 10
+./scripts/agentops approval approve --approval-id ap_cmd_synthesis_x
+```
+
+Approving or rejecting a Commander synthesis approval records the report review
+decision without changing the already completed worker run/task status. The
+operator can then promote approved findings into memory candidates or customer
+delivery artifacts through the normal review/delivery flows.
+
+Promote approved synthesis evidence:
+
+```bash
+./scripts/agentops commander promote-synthesis \
+  --artifact-id art_cmd_synthesis_x \
+  --approval-id ap_cmd_synthesis_x \
+  --mode both \
+  --confirm-promote
+```
+
+Omit `--confirm-promote` for a dry preview.
+
+Promote an approved synthesis:
+
+```bash
+./scripts/agentops commander promote-synthesis \
+  --artifact-id art_cmd_synthesis_x \
+  --approval-id ap_cmd_synthesis_x \
+  --mode both \
+  --confirm-promote
+```
+
+Promotion is explicit and fails closed until the linked `commander_synthesis`
+approval is approved. `--mode memory` creates a `candidate` memory only;
+`--mode delivery` creates a `customer_delivery_report` artifact visible in the
+delivery board; `--mode both` does both. Promotion never executes live adapters
+and stores only bounded summaries, URI references, hashes, runtime events, and
+audit logs.
+
 ## Default Lanes
 
 - Strategy: clarify goal, acceptance gates, approvals, and scope.
@@ -178,6 +267,7 @@ The panel supports:
 - reading persisted work-package status after refresh
 - dispatching a persisted package through mock, Hermes, or OpenClaw worker adapters
 - queueing currently planned packages as mock async workflow jobs
+- synthesizing ready package outputs into a ledger-backed review artifact through CLI/API
 - seeing safety proof for no live execution and token omission
 
 ## Verification
@@ -186,6 +276,7 @@ The panel supports:
 python3 scripts/commander_work_package_plan_smoke.py
 python3 scripts/commander_work_package_dispatch_smoke.py
 python3 scripts/commander_work_package_batch_dispatch_smoke.py
+python3 scripts/commander_work_package_synthesis_smoke.py
 python3 -m py_compile server.py scripts/*.py agentops_mis_cli/*.py
 cd ui/start-building-app && npm run build
 ```
