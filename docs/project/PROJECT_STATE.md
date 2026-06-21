@@ -3,7 +3,7 @@
 > Status date: 2026-06-21  
 > Repository: `geogejoy107-jpg/agentops-mis-mvp`  
 > Development line: `codex/agent-gateway-kb-demo`  
-> Latest observed development commit: `6305b2533f7219ecdeb1fc3763e1196a25a38272`  
+> Latest observed development commit: `9d47f0e1bcdc3da9f9b8e37733b4ae12c96507cf`  
 > Last full audit baseline: `8d1827e00629bdca4779794121ca4a31dfa3f1e1`  
 > Governance branch: `ops/project-governance-ledger`  
 > Audit PR: `#5`
@@ -48,7 +48,7 @@ The full audit at `8d1827e` verified a credible local-first control-plane candid
 - Markdown plus SQLite FTS5 Knowledge Index v0;
 - Agent Plan API/CLI and verification v0.
 
-The development line advanced after that audit. The latest observed head `6305b253` adds a customer local-deployment runbook and local SQLite backup, verification, and explicit-restore tooling. Later commits still require current-head verification; historical blocker status must not be assumed resolved.
+The development line advanced after that audit. Observed post-audit work includes customer local-deployment and SQLite backup/restore tooling, followed by the Commander Work Package Planner at `9d47f0e1`. These later commits have not yet received the same complete audit as `8d1827e`; historical blocker status must not be assumed resolved.
 
 ## Current Deployment Truth
 
