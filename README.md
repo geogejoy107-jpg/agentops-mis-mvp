@@ -161,6 +161,11 @@ v1.3 当前默认使用原创 React/CSS Pixel Operating Map，不复制 Star-Off
 
 v1.4 增加了最小 Agent Gateway/API slice，用于让本机或远程 AI 员工通过 CLI/API/MCP 写入 MIS，而不是让 agent 操作浏览器 UI。
 
+客户本地部署、运维、远程 agent 接入、备份/恢复路径见：
+
+- `docs/CUSTOMER_LOCAL_DEPLOYMENT_RUNBOOK.md`
+- `docs/REMOTE_WORKER_OPERATIONS_RUNBOOK.md`
+
 本地 CLI wrapper / 可安装 CLI：
 
 ```bash

@@ -614,6 +614,13 @@ Current v1.5 implementation:
 - Agent Gateway CLI/API spec exists.
 - Worker daemon spec exists.
 - Scoped remote-token entry exists.
+- Customer local deployment runbook exists.
+- Local SQLite backup/verify/explicit-restore utility exists:
+  - `python3 scripts/agentops_local_backup.py create`
+  - `python3 scripts/agentops_local_backup.py verify`
+  - `python3 scripts/agentops_local_backup.py restore --confirm-restore`
+  - Backup manifests store hashes, counts and integrity status only; table rows,
+    prompts, raw responses and token material are not printed.
 - GitHub PR has implementation history and acceptance docs.
 
 Acceptance evidence:
@@ -622,6 +629,8 @@ Acceptance evidence:
 - `docs/AGENT_GATEWAY_CLI_SPEC.md`
 - `docs/V1_5_AGENT_WORKER_LOOP_SPEC.md`
 - `docs/V1_5_AGENT_WORKER_ACCEPTANCE.md`
+- `docs/CUSTOMER_LOCAL_DEPLOYMENT_RUNBOOK.md`
+- `python3 scripts/agentops_local_backup_smoke.py`
 - This closure spec.
 
 Remaining product work:
@@ -630,8 +639,6 @@ Remaining product work:
 - Multi-workspace and user accounts.
 - RBAC and workspace isolation.
 - Billing/plan model.
-- Customer deployment guide.
-- Backup/restore.
 - Monitoring/logging.
 
 ## Current Verification Commands

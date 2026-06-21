@@ -491,6 +491,7 @@ python3 scripts/worker_remote_fleet_status_smoke.py
 python3 scripts/worker_fleet_hygiene_smoke.py
 python3 scripts/enrollment_policy_preview_smoke.py
 python3 scripts/agentops_worker_restart_smoke.py
+python3 scripts/agentops_local_backup_smoke.py
 python3 scripts/demo_acceptance.py
 git diff --check
 ```
@@ -524,6 +525,8 @@ The expected proof is:
 - `agentops enrollment policy-preview` is read-only, classifies observer /
   worker / privileged / invalid scope sets, recommends direct create vs
   approval-gated request, and omits token/session/secret-like strings.
+- `scripts/agentops_local_backup.py` can create, verify, and explicitly restore
+  a local SQLite backup without printing rows or token material.
 - `agentops security production-readiness` reports the local-dev vs production
   security boundary and marks no-token local mode as non-production without
   breaking safe local demos.
