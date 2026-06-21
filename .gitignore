@@ -18,6 +18,7 @@ node_modules/
 dist/
 output/playwright/
 ui/**/node_modules/
+ui/**/.next/
 ui/**/dist/
 ui/**/output/
 ui/**/.playwright-cli/

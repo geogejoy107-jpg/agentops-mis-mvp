@@ -14,8 +14,10 @@ The target state is:
   gates. There is no big-bang rewrite.
 - SQLite remains the default Free Local ledger. Postgres is introduced through a
   storage boundary for Team Governance and Enterprise/BYOC.
-- Vite/React remains the current product UI. Next.js is a formal engineering
-  target only after the UI/API parity gate is green.
+- Vite/React remains the current canonical product UI. `ui/next-app` is the
+  parallel Next.js App Router migration track; it starts with the workspace
+  cockpit and `/api/mis/*` proxy, then replaces routes only after the UI/API
+  parity gate is green.
 - Commercial release replaces demo-only visual assets with original Pixel Office
   assets and keeps Star-Office assets out of public/commercial distribution.
 - Every migration step has a reversible branch, a named verification command,
@@ -136,6 +138,10 @@ Must be true:
   deferred.
 - Verification includes current Vite build and Playwright snapshots before a
   Next.js route is accepted.
+- First migration artifact:
+  - `ui/next-app/app/workspace/page.tsx`
+  - `ui/next-app/app/api/mis/[...path]/route.ts`
+  - `scripts/nextjs_parity_smoke.py`
 
 ### Gate 5: BYOC / Enterprise Deployment
 
@@ -157,7 +163,7 @@ Must be true:
 | --- | --- | --- | --- |
 | Backend/control plane | Python `server.py` + stdlib HTTP | Keep until API parity and production safety pass; split services later only if pressure is real | 2 |
 | Agent execution | Agent Gateway CLI/API/MCP | Keep as the durable agent contract | 1 |
-| UI | Vite + React + TypeScript | Next.js App Router only after parity gate | 4 |
+| UI | Vite + React + TypeScript plus parallel `ui/next-app` | Next.js App Router replaces pages only after parity gate | 4 |
 | Database | SQLite | SQLite Free Local, Postgres Team/Enterprise adapter | 3 |
 | ORM | Direct SQLite helpers | Adapter/repository boundary first; Prisma/Drizzle only if Next.js owns backend | 3/4 |
 | Auth | Local dev/admin key/scoped agent sessions | Production auth, SSO hooks, workspace RBAC | 2/5 |

@@ -109,6 +109,7 @@ def main() -> int:
         "sql/schema.sql",
         "config/entitlements.example.json",
         "ui/start-building-app/package.json",
+        "ui/next-app/package.json",
     ]
 
     checks = [
@@ -156,6 +157,14 @@ def main() -> int:
             "nextjs_is_gated_not_immediate",
             file_contains("docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md", "UI/API Parity Before Next.js"),
             "Next.js migration is behind a parity gate",
+        ),
+        check(
+            "nextjs_parity_surface_exists",
+            file_contains("ui/next-app/package.json", '"next": "16.2.9"')
+            and file_contains("ui/next-app/app/api/mis/[...path]/route.ts", "AGENTOPS_API_BASE")
+            and file_contains("ui/next-app/src/lib/mis.ts", "/dashboard/metrics")
+            and (ROOT / "scripts" / "nextjs_parity_smoke.py").exists(),
+            "parallel Next.js App Router track has API proxy and workspace data contract",
         ),
         check(
             "postgres_is_gated_not_immediate",
@@ -212,8 +221,13 @@ def main() -> int:
         {
             "id": "gate_4",
             "name": "UI/API Parity Before Next.js",
-            "status": "planned",
-            "verify": ["cd ui/start-building-app && npm run build", "Playwright parity snapshot"],
+            "status": "started",
+            "verify": [
+                "python3 scripts/nextjs_parity_smoke.py",
+                "cd ui/start-building-app && npm run build",
+                "cd ui/next-app && npm run build",
+                "Playwright parity snapshot",
+            ],
         },
         {
             "id": "gate_5",
@@ -232,7 +246,7 @@ def main() -> int:
             "rewrite_policy": "no_big_bang",
             "backend": "keep_python_control_plane_until_api_parity_and_production_safety_pass",
             "database": "sqlite_first_postgres_after_storage_boundary",
-            "frontend": "vite_react_now_nextjs_after_ui_api_parity",
+            "frontend": "vite_react_canonical_nextjs_parallel_parity_started",
             "agent_contract": "agent_gateway_cli_api_mcp_remains_durable",
         },
         "checks": checks,
