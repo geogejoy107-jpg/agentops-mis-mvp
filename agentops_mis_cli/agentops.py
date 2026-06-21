@@ -266,6 +266,10 @@ def cmd_doctor(args, client: AgentOpsClient) -> dict:
     }
 
 
+def cmd_local_readiness(args, client: AgentOpsClient) -> dict:
+    return client.get("/api/local/readiness")
+
+
 def cmd_agent_register(args, client: AgentOpsClient) -> dict:
     payload = {
         "workspace_id": client.workspace_id,
@@ -1020,6 +1024,11 @@ def build_parser() -> argparse.ArgumentParser:
     add_global_args(doctor, suppress_defaults=True)
     doctor.set_defaults(handler="doctor")
 
+    local = sub.add_parser("local", help="Single-workspace local readiness commands.")
+    local_sub = local.add_subparsers(dest="action", required=True)
+    local_readiness = local_sub.add_parser("readiness", help="Show end-to-end local MIS readiness and evidence closure.")
+    local_readiness.set_defaults(handler="local_readiness")
+
     agent = sub.add_parser("agent", help="Agent identity commands.")
     agent_sub = agent.add_subparsers(dest="action", required=True)
     register = agent_sub.add_parser("register", help="Register or update an AI digital employee.")
@@ -1418,6 +1427,7 @@ HANDLERS = {
     "login": lambda args, client: cmd_login(args),
     "status": cmd_status,
     "doctor": cmd_doctor,
+    "local_readiness": cmd_local_readiness,
     "agent_register": cmd_agent_register,
     "agent_heartbeat": cmd_agent_heartbeat,
     "task_create": cmd_task_create,

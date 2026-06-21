@@ -83,7 +83,9 @@ def main(argv: list[str] | None = None) -> int:
     task_a = f"tsk_workspace_iso_a_{stamp}"
     task_b = f"tsk_workspace_iso_b_{stamp}"
     token_id = None
+    token_b_id = None
     token = None
+    token_b = None
     result = {
         "ok": False,
         "agent_id": agent_id,
@@ -108,6 +110,20 @@ def main(argv: list[str] | None = None) -> int:
         token = created["token"]
         token_id = created["token_id"]
         result["token_id"] = token_id
+
+        status, created_b = http_json("POST", args.base_url, "/api/agent-gateway/enrollment/create", {
+            "workspace_id": workspace_b,
+            "agent_id": agent_id,
+            "name": "Workspace Isolation Smoke B",
+            "runtime_type": "mock",
+            "scopes": ["agents:heartbeat", "tasks:read", "tasks:claim", "runs:write", "toolcalls:write", "artifacts:write", "approvals:request", "evaluations:submit", "audit:write"],
+            "ttl_days": 1,
+            "heartbeat_timeout_sec": 60,
+        })
+        require(status == 201, f"workspace B enrollment create failed: {status} {created_b}")
+        token_b = created_b["token"]
+        token_b_id = created_b["token_id"]
+        result["token_b_id"] = token_b_id
 
         create_task(args.base_url, task_a, workspace_a, agent_id, "workspace A isolation smoke")
         create_task(args.base_url, task_b, workspace_b, agent_id, "workspace B isolation smoke")
@@ -165,6 +181,49 @@ def main(argv: list[str] | None = None) -> int:
         )
         require(status == 403, f"cross-workspace run start should fail: {status} {start_b}")
 
+        status, claim_b_owner = http_json(
+            "POST",
+            args.base_url,
+            f"/api/agent-gateway/tasks/{task_b}/claim",
+            payload={"workspace_id": workspace_b, "runtime_type": "mock"},
+            token=token_b,
+            workspace_header=workspace_b,
+        )
+        require(status == 200, f"workspace B owner claim failed: {status} {claim_b_owner}")
+
+        status, start_b_owner = http_json(
+            "POST",
+            args.base_url,
+            "/api/agent-gateway/runs/start",
+            payload={"workspace_id": workspace_b, "task_id": task_b, "runtime_type": "mock"},
+            token=token_b,
+            workspace_header=workspace_b,
+        )
+        require(status in {200, 201}, f"workspace B owner run start failed: {status} {start_b_owner}")
+        run_b_id = (start_b_owner.get("run") or {}).get("run_id")
+        require(bool(run_b_id), f"workspace B run_id missing: {start_b_owner}")
+
+        cross_write_checks = {}
+        cross_write_payloads = [
+            ("run_heartbeat", "POST", f"/api/agent-gateway/runs/{run_b_id}/heartbeat", {"workspace_id": workspace_a, "status": "completed", "output_summary": "should be blocked"}),
+            ("tool_call", "POST", "/api/agent-gateway/tool-calls", {"workspace_id": workspace_a, "run_id": run_b_id, "tool_name": "workspace.isolation.blocked"}),
+            ("artifact", "POST", "/api/agent-gateway/artifacts", {"workspace_id": workspace_a, "run_id": run_b_id, "title": "blocked artifact", "summary": "should be blocked"}),
+            ("approval", "POST", "/api/agent-gateway/approvals/request", {"workspace_id": workspace_a, "run_id": run_b_id, "reason": "should be blocked"}),
+            ("evaluation", "POST", "/api/agent-gateway/evaluations/submit", {"workspace_id": workspace_a, "run_id": run_b_id, "score": 1.0}),
+            ("audit", "POST", "/api/agent-gateway/audit", {"workspace_id": workspace_a, "run_id": run_b_id, "action": "workspace.isolation.blocked"}),
+        ]
+        for label, method, path, payload in cross_write_payloads:
+            status, blocked = http_json(
+                method,
+                args.base_url,
+                path,
+                payload=payload,
+                token=token,
+                workspace_header=workspace_a,
+            )
+            require(status == 403, f"cross-workspace {label} should fail: {status} {blocked}")
+            cross_write_checks[label] = blocked.get("error")
+
         status, claim_a = http_json(
             "POST",
             args.base_url,
@@ -205,6 +264,8 @@ def main(argv: list[str] | None = None) -> int:
             "query_spoof_status": query_spoof.get("error"),
             "cross_claim_status": claim_b.get("error"),
             "cross_start_status": start_b.get("error"),
+            "cross_write_statuses": cross_write_checks,
+            "run_b": run_b_id,
         })
         return 0
     except Exception as exc:
@@ -214,6 +275,9 @@ def main(argv: list[str] | None = None) -> int:
         if token_id:
             status, revoked = http_json("POST", args.base_url, "/api/agent-gateway/enrollment/revoke", {"token_id": token_id})
             result["revocation"] = {"status": status, "revoked": revoked.get("revoked") if isinstance(revoked, dict) else None}
+        if token_b_id:
+            status, revoked = http_json("POST", args.base_url, "/api/agent-gateway/enrollment/revoke", {"token_id": token_b_id})
+            result["revocation_b"] = {"status": status, "revoked": revoked.get("revoked") if isinstance(revoked, dict) else None}
         print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
 
 

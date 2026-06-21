@@ -71,7 +71,7 @@ def smoke(base_url: str, stamp: str) -> dict:
         require(enrollment_token and token_id, f"missing enrollment token: {enrollment}")
 
         status, session = http_json("POST", base_url, "/api/agent-gateway/session/create", {
-            "ttl_sec": 1,
+            "ttl_sec": 60,
             "scopes": ["agents:heartbeat", "tasks:read"],
         }, token=enrollment_token)
         require(status == 201, f"session create failed: {status} {session}")
@@ -97,11 +97,20 @@ def smoke(base_url: str, stamp: str) -> dict:
         cascade_session_id = cascade_session.get("session_id")
         require(cascade_session_id, f"missing cascade session id: {cascade_session}")
 
+        status, expire_session = http_json("POST", base_url, "/api/agent-gateway/session/create", {
+            "ttl_sec": 1,
+            "scopes": ["agents:heartbeat"],
+        }, token=enrollment_token)
+        require(status == 201, f"expire session create failed: {status} {expire_session}")
+        expire_session_token = expire_session.get("session_token")
+        expire_session_id = expire_session.get("session_id")
+        require(expire_session_token and expire_session_id, f"missing expire session token: {expire_session}")
+
         status, listed = http_json("GET", base_url, "/api/agent-gateway/sessions")
         require(status == 200, f"session list failed: {status} {listed}")
         session_rows = listed.get("sessions", [])
         listed_ids = {item.get("session_id") for item in session_rows}
-        require({session_id, revoke_session_id, cascade_session_id}.issubset(listed_ids), f"session list missing ids: {listed_ids}")
+        require({session_id, revoke_session_id, cascade_session_id, expire_session_id}.issubset(listed_ids), f"session list missing ids: {listed_ids}")
         require(all("session_hash" not in item for item in session_rows), "session list leaked session_hash")
 
         status, revoked = http_json("POST", base_url, "/api/agent-gateway/session/revoke", {"session_id": revoke_session_id})
@@ -148,7 +157,7 @@ def smoke(base_url: str, stamp: str) -> dict:
         status, expired = http_json("POST", base_url, "/api/agent-gateway/heartbeat", {
             "status": "idle",
             "summary": "expired session heartbeat",
-        }, token=session_token)
+        }, token=expire_session_token)
         require(status == 401, f"expired session should be rejected: {status} {expired}")
         require("expired" in json.dumps(expired).lower(), f"expired session message missing: {expired}")
 
@@ -156,6 +165,13 @@ def smoke(base_url: str, stamp: str) -> dict:
         require(status == 200, f"enrollment revoke failed: {status} {revoke_parent}")
         require(revoke_parent.get("sessions_revoked", 0) >= 1, f"parent revoke did not cascade to sessions: {revoke_parent}")
         require(cascade_session_id in revoke_parent.get("sessions", []), f"cascade session missing from revoke result: {revoke_parent}")
+        require(session_id in revoke_parent.get("sessions", []), f"active session missing from parent revoke result: {revoke_parent}")
+        status, parent_revoked = http_json("POST", base_url, "/api/agent-gateway/heartbeat", {
+            "status": "idle",
+            "summary": "parent-revoked session heartbeat",
+        }, token=session_token)
+        require(status == 401, f"parent-revoked session should be rejected: {status} {parent_revoked}")
+        require("revoked" in json.dumps(parent_revoked).lower(), f"parent-revoked session message missing: {parent_revoked}")
         token_id = None
 
         return {
@@ -165,11 +181,13 @@ def smoke(base_url: str, stamp: str) -> dict:
             "session_id": session_id,
             "revoked_session_id": revoke_session_id,
             "cascade_session_id": cascade_session_id,
+            "expired_session_id": expire_session_id,
             "session_scopes": session.get("scopes", []),
             "auth_mode": (gateway_status.get("auth") or {}).get("mode"),
             "listed_session_count": len(session_rows),
             "revoke_status": rejected.get("error"),
             "expired_status": expired.get("error"),
+            "parent_revoked_status": parent_revoked.get("error"),
             "cascade_sessions_revoked": revoke_parent.get("sessions_revoked"),
             "token_omitted": True,
         }

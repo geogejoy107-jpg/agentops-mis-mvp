@@ -136,10 +136,18 @@ export function AIEmployees() {
   const agents = data?.agents || [];
   const workerStatus = data?.workerStatus;
   const adapterReadiness = data?.adapterReadiness;
+  const fleetHealth = workerStatus?.fleet_health;
+  const fleetGates = fleetHealth?.gates || [];
+  const recommendedActions = fleetHealth?.recommended_actions || [];
+  const remoteHealth = workerStatus?.remote_worker_health;
+  const remoteWorkers = remoteHealth?.remote_workers || [];
+  const recentRemoteSessions = remoteHealth?.recent_sessions || [];
   const daemonLogs = data?.daemonLogs || [];
   const selectedDaemonLog = daemonLogs.find(item => item.daemon.adapter === selectedLogAdapter)?.daemon;
   const workflowJobs = data?.workflowJobs?.jobs || [];
   const stuckWorkflowJobs = data?.stuckWorkflowJobs?.stuck_jobs || [];
+  const stuckWorkflowJobRefs = workerStatus?.stuck_workflow_job_refs || [];
+  const stuckWorkflowRecoveryRows = stuckWorkflowJobs.length > 0 ? stuckWorkflowJobs : stuckWorkflowJobRefs;
   const recentEvents = workerStatus?.recent_events || [];
   const stuckTasks = workerStatus?.stuck_tasks || [];
   const enrollments = data?.enrollmentPayload?.enrollments || [];
@@ -153,6 +161,7 @@ export function AIEmployees() {
   const activeSessions = sessions.filter(item => item.session_state === "active").length;
   const runningDaemons = (workerStatus?.daemons || []).filter(daemon => daemon.running).length;
   const stuckWorkerCount = Number(workerStatus?.stuck_worker_tasks || stuckTasks.length || 0);
+  const stuckWorkflowJobCount = Number(workerStatus?.stuck_workflow_jobs || stuckWorkflowJobRefs.length || stuckWorkflowJobs.length || 0);
   const liveReadyAdapters = adapterReadiness?.summary.live_ready_adapters || workerStatus?.adapter_readiness?.live_ready_adapters || [];
   const unavailableAdapters = adapterReadiness?.summary.unavailable_adapters || workerStatus?.adapter_readiness?.unavailable_adapters || [];
   const blockedAdapters = adapterReadiness?.summary.blocked_adapters || workerStatus?.adapter_readiness?.blocked_adapters || [];
@@ -168,6 +177,24 @@ export function AIEmployees() {
       loading: "Loading live agents...",
       backendUnavailable: "Live backend unavailable",
       refresh: "Refresh live agents",
+      commandCenterTitle: "Worker Fleet Console",
+      commandCenterSummary: "Adapter readiness, daemon capacity, remote heartbeat/session health, stuck recovery, and the next safe CLI/API action.",
+      overallFleetHealth: "Fleet health",
+      healthGates: "Health gates",
+      recommendedActions: "Recommended actions",
+      noRecommendedActions: "No urgent action. Keep monitoring the worker status.",
+      remoteWorkersTitle: "Remote heartbeat/session",
+      recentRemoteSessionsTitle: "Recent sessions",
+      totalEnrollments: "Total enrollments",
+      heartbeatFresh: "Fresh",
+      heartbeatStale: "Stale",
+      heartbeatNeverSeen: "Never seen",
+      workflowRecovery: "Workflow recovery",
+      recoveryRefs: "Recovery refs",
+      contract: "Contract",
+      noRemoteWorkers: "No remote workers enrolled.",
+      daemonBackoff: "Backoff",
+      noBackoff: "none",
       gatewayTitle: "Agent Gateway",
       gatewaySummary: "Machine-facing API/CLI layer for local and remote agents.",
       authMode: "Auth mode",
@@ -337,6 +364,24 @@ export function AIEmployees() {
       loading: "正在加载实时代理...",
       backendUnavailable: "本地后端不可用",
       refresh: "刷新实时代理",
+      commandCenterTitle: "Worker Fleet 控制台",
+      commandCenterSummary: "集中查看 adapter 就绪、daemon 容量、远程心跳/session、卡住恢复和下一步安全 CLI/API 动作。",
+      overallFleetHealth: "Fleet 健康",
+      healthGates: "健康 Gate",
+      recommendedActions: "推荐动作",
+      noRecommendedActions: "暂无紧急动作，继续观察 worker status。",
+      remoteWorkersTitle: "远程心跳 / Session",
+      recentRemoteSessionsTitle: "最近 Session",
+      totalEnrollments: "接入总数",
+      heartbeatFresh: "新鲜",
+      heartbeatStale: "过期",
+      heartbeatNeverSeen: "未连接",
+      workflowRecovery: "Workflow 恢复",
+      recoveryRefs: "恢复引用",
+      contract: "执行契约",
+      noRemoteWorkers: "暂无远程 worker 接入。",
+      daemonBackoff: "退避",
+      noBackoff: "无",
       gatewayTitle: "Agent Gateway",
       gatewaySummary: "给本地和远程 agent 使用的 API/CLI 接入层。",
       authMode: "认证模式",
@@ -529,10 +574,10 @@ export function AIEmployees() {
     {
       title: copy.modeRecoveryTitle,
       body: copy.modeRecoveryBody,
-      status: stuckWorkerCount > 0 ? "blocked" : "pass",
-      label: stuckWorkerCount > 0 ? copy.statusAttention : copy.statusClear,
-      attention: stuckWorkerCount > 0,
-      meta: `${stuckWorkerCount} ${copy.stuckTasks}`,
+      status: stuckWorkerCount > 0 || stuckWorkflowJobCount > 0 ? "blocked" : "pass",
+      label: stuckWorkerCount > 0 || stuckWorkflowJobCount > 0 ? copy.statusAttention : copy.statusClear,
+      attention: stuckWorkerCount > 0 || stuckWorkflowJobCount > 0,
+      meta: `${stuckWorkerCount} ${copy.stuckTasks} · ${stuckWorkflowJobCount} ${copy.workflowRecovery}`,
     },
   ];
   const adapterRouteCards = WORKER_ADAPTERS.map((adapter) => {
@@ -902,6 +947,168 @@ export function AIEmployees() {
         <div className="flex items-start justify-between gap-4">
           <div>
             <div className="flex items-center gap-2">
+              <Activity size={14} style={{ color: "var(--mis-cyan)" }} />
+              <h2 className="text-sm font-semibold" style={{ color: "var(--mis-text)" }}>{copy.commandCenterTitle}</h2>
+              <StatusBadge status={fleetHealth?.overall || workerStatus?.status || "unknown"} />
+            </div>
+            <p className="text-[11px] mt-1 max-w-3xl" style={{ color: "var(--mis-dim)" }}>{copy.commandCenterSummary}</p>
+            {fleetHealth?.contract && (
+              <p className="text-[10px] mt-1 max-w-3xl" style={{ color: "var(--mis-muted)" }}>
+                {copy.contract}: {fleetHealth.contract}
+              </p>
+            )}
+          </div>
+          <div className="text-right shrink-0">
+            <div className="text-[10px] uppercase tracking-wide" style={{ color: "var(--mis-muted)" }}>{copy.recommendedAdapter}</div>
+            <div className="text-sm font-semibold mt-0.5" style={{ color: "var(--mis-text)" }}>{recommendedAdapter}</div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-6 gap-3 mt-4">
+          {[
+            { label: copy.overallFleetHealth, value: fleetHealth?.overall || workerStatus?.status || "—", status: fleetHealth?.overall || workerStatus?.status || "unknown" },
+            { label: copy.daemonStatus, value: `${runningDaemons}/${workerStatus?.daemons?.length ?? 0}`, status: runningDaemons > 0 ? "running" : "ready" },
+            { label: copy.pendingTasks, value: workerStatus?.pending_worker_tasks ?? "—", status: (workerStatus?.pending_worker_tasks || 0) > 0 ? "planned" : "pass" },
+            { label: copy.stuckTasks, value: stuckWorkerCount, status: stuckWorkerCount > 0 ? "blocked" : "pass" },
+            { label: copy.workflowRecovery, value: stuckWorkflowJobCount, status: stuckWorkflowJobCount > 0 ? "blocked" : "pass" },
+            { label: copy.remoteWorkersTitle, value: `${workerStatus?.fresh_remote_enrollments ?? 0}/${workerStatus?.active_remote_enrollments ?? 0}`, status: remoteHealth?.status || "unknown" },
+          ].map((item) => (
+            <div key={item.label} className="rounded-lg px-3 py-2" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+              <div className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{item.label}</div>
+              <div className="flex items-center justify-between gap-2 mt-1">
+                <div className="text-sm font-semibold truncate" style={{ color: item.status === "blocked" ? "#F87171" : "var(--mis-text)" }}>{item.value}</div>
+                <StatusBadge status={item.status} />
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="grid grid-cols-[1.35fr_1fr] gap-4 mt-4">
+          <div className="rounded-lg p-3 min-w-0" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.healthGates}</div>
+              <StatusBadge status={fleetHealth?.overall || "unknown"} label={String(fleetGates.length)} />
+            </div>
+            <div className="grid grid-cols-2 gap-2 mt-3">
+              {fleetGates.slice(0, 6).map((gate) => (
+                <div key={`${gate.id}-${gate.status}`} className="rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-[10px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{gate.id}</div>
+                    <StatusBadge status={gate.status} />
+                  </div>
+                  <div className="text-[10px] mt-1 line-clamp-2" style={{ color: "var(--mis-dim)" }}>{gate.summary}</div>
+                  {gate.action && (
+                    <div className="text-[10px] mt-1 truncate" style={{ color: gate.status === "fail" || gate.status === "warn" ? "var(--mis-warning)" : "var(--mis-muted)" }}>
+                      {gate.action}
+                    </div>
+                  )}
+                </div>
+              ))}
+              {fleetGates.length === 0 && (
+                <div className="col-span-2 text-[11px] rounded px-3 py-2" style={{ color: "var(--mis-muted)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                  {copy.noRecommendedActions}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-lg p-3 min-w-0" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.recommendedActions}</div>
+              <StatusBadge status={recommendedActions.length > 0 ? "attention" : "pass"} label={String(recommendedActions.length)} />
+            </div>
+            <div className="space-y-2 mt-3">
+              {recommendedActions.length === 0 && (
+                <div className="text-[11px] rounded px-3 py-2" style={{ color: "var(--mis-muted)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                  {copy.noRecommendedActions}
+                </div>
+              )}
+              {recommendedActions.slice(0, 5).map((action) => (
+                <div key={action} className="text-[11px] rounded px-3 py-2 truncate" style={{ color: "var(--mis-cyan)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                  {action}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-[1.1fr_0.9fr] gap-4 mt-4">
+          <div className="rounded-lg p-3 min-w-0" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.remoteWorkersTitle}</div>
+              <div className="flex gap-1.5">
+                <StatusBadge status="fresh" label={`${copy.heartbeatFresh}: ${workerStatus?.fresh_remote_enrollments ?? 0}`} />
+                <StatusBadge status="stale" label={`${copy.heartbeatStale}: ${workerStatus?.stale_remote_enrollments ?? 0}`} />
+                <StatusBadge status="never_seen" label={`${copy.heartbeatNeverSeen}: ${workerStatus?.never_seen_remote_enrollments ?? 0}`} />
+              </div>
+            </div>
+            <div className="grid grid-cols-4 gap-2 mt-3">
+              {[
+                { label: copy.totalEnrollments, value: workerStatus?.total_remote_enrollments ?? 0 },
+                { label: copy.activeEnrollments, value: workerStatus?.active_remote_enrollments ?? 0 },
+                { label: copy.activeSessions, value: workerStatus?.active_remote_sessions ?? 0 },
+                { label: copy.gatewayWorkspace, value: gatewayStatus?.auth.workspace_id || "local-demo" },
+              ].map((item) => (
+                <div key={item.label} className="rounded px-2 py-1" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                  <div className="text-[9px]" style={{ color: "var(--mis-muted)" }}>{item.label}</div>
+                  <div className="text-[10px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{item.value}</div>
+                </div>
+              ))}
+            </div>
+            <div className="space-y-2 mt-3">
+              {remoteWorkers.length === 0 && (
+                <div className="text-[11px] rounded px-3 py-2" style={{ color: "var(--mis-muted)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                  {copy.noRemoteWorkers}
+                </div>
+              )}
+              {remoteWorkers.slice(0, 4).map((worker) => (
+                <div key={`${worker.agent_id}-${worker.token_ref}`} className="grid grid-cols-[1fr_0.55fr_0.55fr_0.7fr] gap-2 items-center rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                  <div className="min-w-0">
+                    <div className="text-[11px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{worker.agent_name || worker.agent_id || "remote worker"}</div>
+                    <div className="text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>{worker.agent_id || "—"} · {worker.runtime_type || "external"}</div>
+                  </div>
+                  <StatusBadge status={worker.heartbeat_state || "unknown"} />
+                  <div className="text-[10px] truncate" style={{ color: "var(--mis-dim)" }}>{copy.activeSessions}: {worker.active_session_count ?? 0}</div>
+                  <div className="text-[10px] truncate" style={{ color: "var(--mis-dim)" }}>{worker.last_heartbeat_at || worker.last_used_at || "—"}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-lg p-3 min-w-0" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.recentRemoteSessionsTitle}</div>
+              <StatusBadge status={recentRemoteSessions.length > 0 ? "active" : "idle"} label={String(recentRemoteSessions.length)} />
+            </div>
+            <div className="space-y-2 mt-3">
+              {recentRemoteSessions.length === 0 && (
+                <div className="text-[11px] rounded px-3 py-2" style={{ color: "var(--mis-muted)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                  {copy.noSessions}
+                </div>
+              )}
+              {recentRemoteSessions.slice(0, 5).map((session) => (
+                <div key={`${session.agent_id}-${session.session_ref}`} className="rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-[11px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{session.agent_id || "—"}</div>
+                    <StatusBadge status={session.session_state || session.status || "unknown"} />
+                  </div>
+                  <div className="text-[10px] mt-1 truncate" style={{ color: "var(--mis-muted)" }}>
+                    {copy.sessionId}: {session.session_ref || "—"} · {copy.expires}: {session.expires_at || "—"}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div
+        className="rounded-xl p-4"
+        style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}
+      >
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
               <Bot size={14} style={{ color: "var(--mis-cyan)" }} />
               <h2 className="text-sm font-semibold" style={{ color: "var(--mis-text)" }}>{copy.customerTaskTitle}</h2>
               <StatusBadge
@@ -932,7 +1139,7 @@ export function AIEmployees() {
             </button>
             <button
               onClick={submitCustomerTaskAsync}
-              disabled={customerTaskBusy}
+              disabled={customerTaskBusy || selectedAdapterLiveBlocked}
               className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded disabled:opacity-50"
               style={{ background: "rgba(251,191,36,0.12)", color: "var(--mis-warning)", border: "1px solid rgba(251,191,36,0.24)" }}
             >
@@ -1124,31 +1331,31 @@ export function AIEmployees() {
             </button>
           </div>
 
-          <div className="rounded-lg p-3 mt-3" style={{ background: stuckWorkflowJobs.length > 0 ? "rgba(251,191,36,0.08)" : "var(--mis-bg)", border: stuckWorkflowJobs.length > 0 ? "1px solid rgba(251,191,36,0.24)" : "1px solid var(--mis-border)" }}>
+          <div className="rounded-lg p-3 mt-3" style={{ background: stuckWorkflowRecoveryRows.length > 0 ? "rgba(251,191,36,0.08)" : "var(--mis-bg)", border: stuckWorkflowRecoveryRows.length > 0 ? "1px solid rgba(251,191,36,0.24)" : "1px solid var(--mis-border)" }}>
             <div className="flex items-start justify-between gap-3">
               <div>
                 <div className="flex items-center gap-1.5">
-                  <AlertTriangle size={13} style={{ color: stuckWorkflowJobs.length > 0 ? "var(--mis-warning)" : "var(--mis-muted)" }} />
+                  <AlertTriangle size={13} style={{ color: stuckWorkflowRecoveryRows.length > 0 ? "var(--mis-warning)" : "var(--mis-muted)" }} />
                   <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.stuckWorkflowJobsTitle}</div>
                 </div>
                 <div className="text-[10px] mt-1" style={{ color: "var(--mis-muted)" }}>{copy.stuckWorkflowJobsSummary}</div>
               </div>
-              <StatusBadge status={stuckWorkflowJobs.length > 0 ? "blocked" : "pass"} label={String(stuckWorkflowJobs.length)} />
+              <StatusBadge status={stuckWorkflowRecoveryRows.length > 0 ? "blocked" : "pass"} label={String(stuckWorkflowRecoveryRows.length)} />
             </div>
             <div className="space-y-2 mt-3">
-              {stuckWorkflowJobs.length === 0 && (
+              {stuckWorkflowRecoveryRows.length === 0 && (
                 <div className="text-[11px] rounded px-3 py-2" style={{ color: "var(--mis-muted)", background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
                   {copy.noStuckWorkflowJobs}
                 </div>
               )}
-              {stuckWorkflowJobs.slice(0, 4).map((job) => (
+              {stuckWorkflowRecoveryRows.slice(0, 4).map((job) => (
                 <div key={job.job_id} className="grid grid-cols-[1.1fr_0.7fr_0.7fr_auto] gap-3 items-center rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
                   <div className="min-w-0">
-                    <div className="text-[11px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{job.title || job.job_id}</div>
+                    <div className="text-[11px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{"title" in job ? job.title || job.job_id : job.job_id}</div>
                     <div className="text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>{job.job_id} · {job.workflow_type}</div>
                   </div>
                   <div className="text-[10px] truncate" style={{ color: "var(--mis-dim)" }}>
-                    {job.adapter || "default"} · {job.status}
+                    {"adapter" in job ? job.adapter || "default" : copy.recoveryRefs} · {job.status}
                   </div>
                   <div className="text-[10px] truncate" style={{ color: "var(--mis-dim)" }}>
                     {copy.age}: {job.age_sec || 0}s
@@ -1452,6 +1659,9 @@ export function AIEmployees() {
               <div className="text-[10px] mt-1 truncate" style={{ color: "var(--mis-dim)" }}>
                 {copy.daemonStatus}: {daemon.worker_status || daemon.status}
               </div>
+              <div className="text-[10px] mt-0.5 truncate" style={{ color: "var(--mis-muted)" }}>
+                {copy.daemonBackoff}: {daemon.last_sleep_reason || copy.noBackoff}{daemon.last_sleep_sec ? ` · ${daemon.last_sleep_sec}s` : ""}
+              </div>
               <div className="text-[10px] mt-0.5 truncate" style={{ color: "var(--mis-dim)" }}>
                 {copy.pid}: {daemon.pid || "—"} · {daemon.agent_id || "—"}
               </div>
@@ -1522,6 +1732,9 @@ export function AIEmployees() {
             </div>
             <div className="text-[10px] mt-1 truncate" style={{ color: "var(--mis-muted)" }}>
               {copy.statePath}: {selectedDaemonLog?.state_path || "—"}
+            </div>
+            <div className="text-[10px] mt-1 truncate" style={{ color: "var(--mis-muted)" }}>
+              {copy.daemonBackoff}: {selectedDaemonLog?.last_sleep_reason || copy.noBackoff}{selectedDaemonLog?.last_sleep_sec ? ` · ${selectedDaemonLog.last_sleep_sec}s` : ""}
             </div>
             {selectedDaemonLog?.last_error && (
               <div className="text-[10px] mt-2 rounded px-2 py-1" style={{ color: "#F87171", background: "rgba(248,113,113,0.08)", border: "1px solid rgba(248,113,113,0.18)" }}>

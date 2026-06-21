@@ -26,9 +26,16 @@ Run these from the AgentOps MIS repo:
 python3 -m pip install .
 agentops doctor
 agentops status
+agentops local readiness
 agentops worker status
 agentops worker preflight --adapter mock
 ```
+
+`agentops local readiness` is the single-machine closure check. It is read-only
+and summarizes Agent Gateway, worker route readiness, memory/knowledge,
+approval, task/run/tool/evaluation/audit/artifact evidence, and local runbook
+presence. Use it before a demo, after a worker change, or when the local stack
+feels out of shape.
 
 For a safe local daemon:
 

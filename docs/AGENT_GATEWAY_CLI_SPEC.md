@@ -116,6 +116,22 @@ agentops doctor
 AGENTOPS_API_KEY=agtok_... AGENTOPS_AGENT_ID=agt_remote_builder agentops doctor
 ```
 
+### `agentops local readiness`
+
+Returns the single-workspace local closure check. It is read-only and does not
+pull tasks, start workers, or execute Hermes/OpenClaw.
+
+```bash
+agentops local readiness
+curl -fsS http://127.0.0.1:8787/api/local/readiness | jq .
+```
+
+It reports Agent Gateway status, worker fleet health, adapter route selection,
+memory/knowledge counts, approval counts, task/run/tool/evaluation/audit/artifact
+evidence counts, local runbook/doc presence, UI routes, and recommended next
+actions. It is the preferred first check before a local demo or after changing
+worker/gateway code.
+
 ### `agentops agent register`
 
 Registers or updates an AI digital employee identity.
@@ -1033,6 +1049,7 @@ Current implementation:
 - `POST /api/agent-gateway/session/create` mints a short-lived session token from a valid enrollment token or local API key.
 - Session tokens inherit agent/workspace bindings and a subset of parent scopes.
 - Session tokens cannot mint replacement sessions.
+- Session-token auth rechecks the parent enrollment on every request. If the parent token is revoked, expired, missing, or no longer matches the session binding, the session fails closed.
 - `GET /api/agent-gateway/sessions` lists session metadata without `session_hash` or raw token values.
 - `POST /api/agent-gateway/session/revoke` revokes one session or all active sessions for an agent.
 - Revoking an enrollment token also revokes active child sessions.
@@ -1177,7 +1194,7 @@ python3 scripts/agentops_cli_inspect_smoke.py
 ```
 
 This helper creates a scoped token, creates a normal MIS task for that agent, runs `scripts/agent_worker.py --once` with the token, verifies run/tool/eval evidence, and revokes the token by default. It does not print the raw token.
-The workspace isolation helper creates workspace A/B tasks, verifies that the workspace A token cannot pull, claim, start, or write workspace B work, and verifies that normal workspace A execution still succeeds.
+The workspace isolation helper creates workspace A/B tasks and a workspace B run, verifies that the workspace A token cannot pull, claim, start, heartbeat, record tool calls, request approvals, submit evaluations, emit run-scoped audit, or write artifacts against workspace B work, and verifies that normal workspace A execution still succeeds.
 The enrollment health helper verifies `never_seen -> fresh -> stale -> revoked` without printing the raw token.
 The CLI status helper verifies `agentops status` reports safe token-bound metadata, updates to `fresh` after heartbeat, and rejects revoked tokens without leaking the raw token.
 The CLI doctor helper verifies `agentops doctor` works in local no-token mode and scoped env-token mode, checks Gateway/worker status, and confirms the raw token is omitted from output.
@@ -1192,7 +1209,7 @@ The CLI inspect helper verifies `agentops task get/list`, `agentops run get/list
 The launch-steps helper verifies create/rotate responses include safe remote-worker commands, a short-lived session command, `--use-session`, and do not embed the raw token in those commands.
 The remote launch-packet helper uses the returned environment shape to run a real worker through `--use-session` and verify run/tool/evaluation ledger evidence.
 The scope-matrix helper verifies an observer token can heartbeat/pull/audit but receives `403 forbidden` for claim/run/tool/artifact writes.
-The session helper verifies an enrollment token can mint a narrowed short-lived session, sessions can be listed without hash leakage, one session can be revoked directly, a session can heartbeat/pull tasks, cannot mint another session, expired sessions are rejected, and parent enrollment revocation cascades to active child sessions.
+The session helper verifies an enrollment token can mint a narrowed short-lived session, sessions can be listed without hash leakage, one session can be revoked directly, a non-expired session can status/heartbeat/pull tasks, cannot mint another session, a separate one-second session expires closed, and parent enrollment revocation cascades to active child sessions.
 The enrollment-approval helper verifies request-before-token behavior: request returns no token, premature issue is rejected, approval unlocks token issue, and the issued token can heartbeat.
 The task-claim helper verifies two agents can initially see the same public pool task, the first claim wins, same-agent repeat claim is idempotent, and a second worker cannot claim or start the already claimed task.
 The stuck-recovery helper verifies a stale running worker task is listed, released back to `planned`, and the linked running run is blocked with `WorkerTaskReleased`.

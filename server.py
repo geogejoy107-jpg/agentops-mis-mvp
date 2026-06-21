@@ -35,7 +35,7 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
 ROOT = Path(__file__).resolve().parent
-DB_PATH = ROOT / "agentops_mis.db"
+DB_PATH = Path(os.environ.get("AGENTOPS_DB_PATH") or (ROOT / "agentops_mis.db"))
 STATIC_DIR = ROOT / "static"
 ARTIFACTS_DIR = ROOT / "artifacts"
 RUNTIME_DIR = ROOT / ".agentops_runtime"
@@ -2031,6 +2031,28 @@ def agent_gateway_auth_context(conn, headers, required_scope: str | None = None,
                 conn.execute("UPDATE agent_gateway_sessions SET status='expired' WHERE session_id=?", (session["session_id"],))
                 audit(conn, "system", "agent-gateway-auth", "agent_gateway.session_expired", "agent_gateway_sessions", session["session_id"], dict(session), {"status": "expired"}, {"token_omitted": True})
                 return None, {"error": "unauthorized", "message": "Agent Gateway session is expired."}
+            if session["parent_token_id"]:
+                parent = conn.execute(
+                    "SELECT token_id,workspace_id,agent_id,status,expires_at FROM agent_gateway_tokens WHERE token_id=?",
+                    (session["parent_token_id"],),
+                ).fetchone()
+                if not parent:
+                    conn.execute("UPDATE agent_gateway_sessions SET status='revoked', revoked_at=? WHERE session_id=?", (now_iso(), session["session_id"]))
+                    audit(conn, "system", "agent-gateway-auth", "agent_gateway.session_parent_missing", "agent_gateway_sessions", session["session_id"], dict(session), {"status": "revoked"}, {"parent_token_id": session["parent_token_id"], "token_omitted": True})
+                    return None, {"error": "unauthorized", "message": "Agent Gateway session parent token is missing."}
+                if parent["status"] != "active":
+                    conn.execute("UPDATE agent_gateway_sessions SET status='revoked', revoked_at=? WHERE session_id=?", (now_iso(), session["session_id"]))
+                    audit(conn, "system", "agent-gateway-auth", "agent_gateway.session_parent_revoked", "agent_gateway_sessions", session["session_id"], dict(session), {"status": "revoked"}, {"parent_token_id": parent["token_id"], "parent_status": parent["status"], "token_omitted": True})
+                    return None, {"error": "unauthorized", "message": f"Agent Gateway session parent token is {parent['status']}."}
+                if parent["expires_at"] and parent["expires_at"] < now_iso():
+                    conn.execute("UPDATE agent_gateway_tokens SET status='expired' WHERE token_id=?", (parent["token_id"],))
+                    conn.execute("UPDATE agent_gateway_sessions SET status='expired' WHERE session_id=?", (session["session_id"],))
+                    audit(conn, "system", "agent-gateway-auth", "agent_gateway.session_parent_expired", "agent_gateway_sessions", session["session_id"], dict(session), {"status": "expired"}, {"parent_token_id": parent["token_id"], "token_omitted": True})
+                    return None, {"error": "unauthorized", "message": "Agent Gateway session parent token is expired."}
+                if normalize_workspace_id(parent["workspace_id"]) != normalize_workspace_id(session["workspace_id"]) or parent["agent_id"] != session["agent_id"]:
+                    conn.execute("UPDATE agent_gateway_sessions SET status='revoked', revoked_at=? WHERE session_id=?", (now_iso(), session["session_id"]))
+                    audit(conn, "system", "agent-gateway-auth", "agent_gateway.session_parent_binding_mismatch", "agent_gateway_sessions", session["session_id"], dict(session), {"status": "revoked"}, {"parent_token_id": parent["token_id"], "token_omitted": True})
+                    return None, {"error": "unauthorized", "message": "Agent Gateway session binding no longer matches its parent token."}
             scopes = parse_scope_list(session["scopes_json"])
             if required_scope and required_scope not in scopes:
                 return None, {"error": "forbidden", "message": f"Agent session is missing required scope: {required_scope}"}
@@ -3317,10 +3339,18 @@ def agent_gateway_request_approval(conn, body) -> tuple[dict, int]:
         return access_error
     approval_id = body.get("approval_id") or new_id("ap_gw")
     tool_call_id = body.get("tool_call_id")
+    if body.get("task_id") and body.get("task_id") != run["task_id"]:
+        return {"error": "forbidden", "message": "Approval task_id must match the target run."}, 403
+    if tool_call_id:
+        tool_call = conn.execute("SELECT run_id FROM tool_calls WHERE tool_call_id=?", (tool_call_id,)).fetchone()
+        if not tool_call:
+            return {"error": "tool call not found"}, 404
+        if tool_call["run_id"] != run_id:
+            return {"error": "forbidden", "message": "Approval tool_call_id must belong to the target run."}, 403
     reason = redact_text(body.get("reason") or "Agent requested approval for an external or high-risk action.", 260)
     row = {
         "approval_id": approval_id,
-        "task_id": body.get("task_id") or run["task_id"],
+        "task_id": run["task_id"],
         "run_id": run_id,
         "tool_call_id": tool_call_id,
         "requested_by_agent_id": body.get("requested_by_agent_id") or body.get("agent_id") or run["agent_id"],
@@ -3390,13 +3420,15 @@ def agent_gateway_eval_submit(conn, body) -> tuple[dict, int]:
     run, access_error = ensure_run_access(conn, run_id, ident)
     if access_error:
         return access_error
+    if body.get("task_id") and body.get("task_id") != run["task_id"]:
+        return {"error": "forbidden", "message": "Evaluation task_id must match the target run."}, 403
     score = float(body.get("score") if body.get("score") is not None else 1.0)
     score = max(0.0, min(score, 1.0))
     pass_fail = "pass" if body.get("pass_fail", "pass") == "pass" and score >= 0.5 else "fail"
     rubric = safe_json_metadata(body.get("rubric") or body.get("rubric_json") or {"submitted_by": "agent_gateway"})
     row = {
         "evaluation_id": body.get("evaluation_id") or stable_id("eval_gw", run_id, body.get("evaluator_type") or "rule"),
-        "task_id": body.get("task_id") or run["task_id"],
+        "task_id": run["task_id"],
         "run_id": run_id,
         "agent_id": body.get("agent_id") or run["agent_id"],
         "evaluator_type": coerce_choice(body.get("evaluator_type"), {"human", "rule", "llm_mock"}, "rule"),
@@ -5645,6 +5677,8 @@ def read_worker_daemon(adapter: str, include_log: bool = False) -> dict:
         "iterations": int(state.get("iterations") or 0),
         "total_errors": int(state.get("total_errors") or 0),
         "consecutive_errors": int(state.get("consecutive_errors") or 0),
+        "last_sleep_reason": state.get("last_sleep_reason"),
+        "last_sleep_sec": state.get("last_sleep_sec"),
         "last_error": state.get("last_error"),
         "last_result": state.get("last_result"),
         "continue_on_error": bool(state.get("continue_on_error")),
@@ -6201,6 +6235,154 @@ def worker_status(conn) -> dict:
     }
     payload["fleet_health"] = worker_fleet_health(payload)
     return payload
+
+
+def scalar_count(conn: sqlite3.Connection, sql: str, params=()) -> int:
+    row = conn.execute(sql, params).fetchone()
+    return int((row[0] if row else 0) or 0)
+
+
+def recent_closed_loop_run_count(conn: sqlite3.Connection, limit: int = 250) -> int:
+    candidate_rows = conn.execute(
+        """SELECT r.run_id FROM runs r
+        WHERE EXISTS (SELECT 1 FROM tool_calls tc WHERE tc.run_id=r.run_id)
+          AND EXISTS (SELECT 1 FROM evaluations e WHERE e.run_id=r.run_id)
+          AND EXISTS (SELECT 1 FROM artifacts a WHERE a.run_id=r.run_id)
+        ORDER BY r.created_at DESC
+        LIMIT ?""",
+        (limit,),
+    ).fetchall()
+    count = 0
+    for row in candidate_rows:
+        run_id = row["run_id"]
+        audit_row = conn.execute(
+            """SELECT 1 FROM audit_logs
+            WHERE entity_id=?
+               OR metadata_json LIKE ?
+            LIMIT 1""",
+            (run_id, f"%{run_id}%"),
+        ).fetchone()
+        if audit_row:
+            count += 1
+    return count
+
+
+def local_readiness(conn: sqlite3.Connection, headers) -> dict:
+    gateway, gateway_status_code = agent_gateway_status(conn, headers)
+    worker = worker_status(conn)
+    adapter_summary = worker.get("adapter_readiness") or {}
+    adapter_payload = worker_adapter_readiness(conn)
+    docs = [
+        ("README", ROOT / "README.md"),
+        ("remote_worker_runbook", ROOT / "docs" / "REMOTE_WORKER_OPERATIONS_RUNBOOK.md"),
+        ("agent_gateway_cli_spec", ROOT / "docs" / "AGENT_GATEWAY_CLI_SPEC.md"),
+        ("local_runtime_acceptance", ROOT / "scripts" / "local_runtime_acceptance.py"),
+        ("worker_adapter_readiness_smoke", ROOT / "scripts" / "worker_adapter_readiness_smoke.py"),
+    ]
+    doc_status = [{"id": doc_id, "path": str(path.relative_to(ROOT)), "exists": path.exists()} for doc_id, path in docs]
+    evidence = {
+        "tasks": scalar_count(conn, "SELECT COUNT(*) FROM tasks"),
+        "planned_tasks": scalar_count(conn, "SELECT COUNT(*) FROM tasks WHERE status IN ('planned','backlog')"),
+        "completed_tasks": scalar_count(conn, "SELECT COUNT(*) FROM tasks WHERE status='completed'"),
+        "runs": scalar_count(conn, "SELECT COUNT(*) FROM runs"),
+        "completed_runs": scalar_count(conn, "SELECT COUNT(*) FROM runs WHERE status='completed'"),
+        "tool_calls": scalar_count(conn, "SELECT COUNT(*) FROM tool_calls"),
+        "evaluations": scalar_count(conn, "SELECT COUNT(*) FROM evaluations"),
+        "audit_logs": scalar_count(conn, "SELECT COUNT(*) FROM audit_logs"),
+        "artifacts": scalar_count(conn, "SELECT COUNT(*) FROM artifacts"),
+        "memories": scalar_count(conn, "SELECT COUNT(*) FROM memories"),
+        "memory_candidates": scalar_count(conn, "SELECT COUNT(*) FROM memories WHERE review_status='candidate'"),
+        "approved_memories": scalar_count(conn, "SELECT COUNT(*) FROM memories WHERE review_status='approved'"),
+        "pending_approvals": scalar_count(conn, "SELECT COUNT(*) FROM approvals WHERE decision='pending'"),
+        "approvals": scalar_count(conn, "SELECT COUNT(*) FROM approvals"),
+        "workflow_jobs": scalar_count(conn, "SELECT COUNT(*) FROM workflow_jobs"),
+        "customer_worker_artifacts": scalar_count(conn, "SELECT COUNT(*) FROM artifacts WHERE artifact_type='customer_worker_result'"),
+        "closed_loop_runs": recent_closed_loop_run_count(conn),
+    }
+    evidence["has_task_run_tool_eval_audit_artifact_chain"] = evidence["closed_loop_runs"] > 0
+    evidence["has_memory_or_knowledge"] = evidence["memories"] > 0
+    evidence["has_approval_flow"] = evidence["approvals"] > 0
+    gates = [
+        {
+            "id": "agent_gateway",
+            "label": "Agent Gateway CLI/API",
+            "ok": gateway_status_code == 200 and gateway.get("status") == "ready",
+            "status": gateway.get("status") or gateway.get("error") or "unknown",
+            "detail": gateway.get("message") or (gateway.get("auth") or {}).get("mode") or "ready",
+            "next_action": "agentops status",
+        },
+        {
+            "id": "worker_fleet",
+            "label": "Local/remote worker readiness",
+            "ok": (worker.get("fleet_health") or {}).get("overall") != "blocked",
+            "status": (worker.get("fleet_health") or {}).get("overall") or worker.get("status"),
+            "detail": (worker.get("fleet_health") or {}).get("contract") or "worker status available",
+            "next_action": "agentops worker status",
+        },
+        {
+            "id": "adapter_route",
+            "label": "Mock/Hermes/OpenClaw route selection",
+            "ok": adapter_summary.get("recommended_adapter") in {"mock", "hermes", "openclaw"},
+            "status": adapter_payload.get("status"),
+            "detail": f"recommended_adapter={adapter_summary.get('recommended_adapter') or 'unknown'}",
+            "next_action": "agentops worker readiness",
+        },
+        {
+            "id": "knowledge_memory",
+            "label": "Memory/knowledge sedimentation",
+            "ok": evidence["has_memory_or_knowledge"],
+            "status": "ready" if evidence["has_memory_or_knowledge"] else "needs_seed_or_run",
+            "detail": f"{evidence['memories']} memories, {evidence['memory_candidates']} candidates",
+            "next_action": "agentops memory propose --text '...' --type artifact_summary",
+        },
+        {
+            "id": "evidence_chain",
+            "label": "task -> run -> tool/eval/audit/artifact",
+            "ok": evidence["has_task_run_tool_eval_audit_artifact_chain"],
+            "status": "ready" if evidence["has_task_run_tool_eval_audit_artifact_chain"] else "needs_demo_run",
+            "detail": f"{evidence['closed_loop_runs']} closed-loop run(s)",
+            "next_action": "agentops workflow customer-worker-task --adapter mock --title 'Local readiness demo' --description 'Write full MIS evidence.'",
+        },
+        {
+            "id": "runbook",
+            "label": "Local demo/runbook",
+            "ok": all(item["exists"] for item in doc_status),
+            "status": "ready" if all(item["exists"] for item in doc_status) else "missing_docs",
+            "detail": ", ".join(item["id"] for item in doc_status if not item["exists"]) or "README and worker runbook present",
+            "next_action": "open docs/REMOTE_WORKER_OPERATIONS_RUNBOOK.md",
+        },
+    ]
+    blockers = [gate for gate in gates if not gate["ok"] and gate["id"] in {"agent_gateway", "worker_fleet", "adapter_route", "runbook"}]
+    warnings = [gate for gate in gates if not gate["ok"] and gate not in blockers]
+    overall = "blocked" if blockers else "attention" if warnings else "ready"
+    return {
+        "provider": "agentops-local",
+        "operation": "local_readiness",
+        "status": overall,
+        "ok": overall != "blocked",
+        "workspace_id": normalize_workspace_id(headers.get("X-AgentOps-Workspace-Id") or "local-demo"),
+        "gates": gates,
+        "evidence": evidence,
+        "adapter_readiness": adapter_payload.get("summary"),
+        "worker_fleet_health": worker.get("fleet_health"),
+        "gateway": gateway,
+        "docs": doc_status,
+        "ui_routes": {
+            "worker_console": "/workspace/agents",
+            "memory": "/workspace/memory",
+            "approvals": "/workspace/approvals",
+            "tool_calls": "/admin/toolcalls",
+            "reports": "/workspace/reports",
+        },
+        "next_actions": [gate["next_action"] for gate in gates if not gate["ok"]] or [
+            "agentops workflow customer-worker-task --adapter mock --title 'Local smoke task' --description 'Verify full ledger evidence.'",
+            "agentops worker readiness",
+            "open http://127.0.0.1:19001/workspace/agents",
+        ],
+        "contract": "single local/open-source workspace; CLI/API for agents, UI for humans; no SaaS multi-tenant, no Notion/Dify live sync by default",
+        "live_execution_performed": False,
+        "token_omitted": True,
+    }
 
 
 def dispatch_local_worker_once(conn, body: dict) -> dict:
@@ -6865,6 +7047,10 @@ class Handler(BaseHTTPRequestHandler):
                 payload, status = agent_gateway_status(conn, self.headers)
                 conn.commit()
                 return self.send_json(payload, status)
+            if path == "/api/local/readiness":
+                payload = local_readiness(conn, self.headers)
+                conn.commit()
+                return self.send_json(payload)
             if path == "/api/agent-gateway/enrollments":
                 auth_error = agent_gateway_admin_auth_error(self.headers)
                 if auth_error:

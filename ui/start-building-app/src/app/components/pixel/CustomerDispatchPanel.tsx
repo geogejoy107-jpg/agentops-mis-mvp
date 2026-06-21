@@ -9,6 +9,7 @@ import {
   runCustomerTaskTemplateWorkflow,
   runCustomerTaskWorkflow,
   runCustomerWorkerTaskWorkflow,
+  submitCustomerWorkerTaskJob,
   submitCustomerTaskTemplateJob,
   type CustomerTaskTemplate,
   type CustomerProjectReportArtifactResult,
@@ -26,6 +27,17 @@ interface CustomerDispatchPanelProps {
 
 const riskOptions = ["low", "medium", "high"] as const;
 const workerAdapters = ["mock", "hermes", "openclaw"] as const;
+
+function evidenceLine(evidence?: CustomerTaskWorkflowResult["evidence"]) {
+  if (!evidence) return null;
+  return `tool ${evidence.tool_calls || 0} · eval ${evidence.evaluations || 0} · audit ${evidence.audit_logs || 0} · artifact ${evidence.artifacts || 0} · approval ${evidence.approvals || 0}`;
+}
+
+function workflowLabel(job: WorkflowJob, zh: boolean) {
+  if (job.workflow_type === "customer_worker_task") return zh ? "客户 Worker Job" : "Customer worker job";
+  if (job.workflow_type === "customer_task_template") return zh ? "模板项目 Job" : "Template project job";
+  return job.workflow_type || (zh ? "Workflow Job" : "Workflow job");
+}
 
 const DEFAULT_COPY = {
   en: {
@@ -61,6 +73,7 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
   const [kbBusy, setKbBusy] = useState(false);
   const [reportBusy, setReportBusy] = useState(false);
   const [jobBusy, setJobBusy] = useState(false);
+  const [templateJobBusy, setTemplateJobBusy] = useState(false);
   const [result, setResult] = useState<CustomerTaskWorkflowResult | null>(null);
   const [kbResult, setKbResult] = useState<KbBotProjectWorkflowResult | null>(null);
   const [reportArtifact, setReportArtifact] = useState<CustomerProjectReportArtifactResult | null>(null);
@@ -112,6 +125,13 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
   const kbFinalStep = useMemo(
     () => kbResult?.results?.[kbResult.results.length - 1],
     [kbResult],
+  );
+  const selectedAgentNames = useMemo(
+    () => selected
+      .map((agentId) => runnableAgents.find((agent) => agent.agent_id === agentId)?.name || agentId)
+      .slice(0, 3)
+      .join(", "),
+    [runnableAgents, selected],
   );
 
   const applyTemplate = (template: CustomerTaskTemplate) => {
@@ -200,8 +220,34 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
     }
   };
 
-  const submitAsyncTemplateJob = async () => {
+  const submitAsyncWorkerJob = async () => {
     setJobBusy(true);
+    setError(null);
+    try {
+      const next = await submitCustomerWorkerTaskJob({
+        template_id: selectedTemplateId,
+        adapter: workerAdapter,
+        confirm_run: true,
+        selected_agent_ids: selected,
+        owner_agent_id: selected[0],
+        title,
+        description,
+        acceptance_criteria: acceptance,
+        priority: "high",
+        risk_level: risk,
+      });
+      setWorkflowJobs((current) => [next.job, ...current.filter((job) => job.job_id !== next.job_id)].slice(0, 6));
+      await onRefresh();
+      await refreshWorkflowJobs();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setJobBusy(false);
+    }
+  };
+
+  const submitAsyncTemplateJob = async () => {
+    setTemplateJobBusy(true);
     setError(null);
     try {
       const next = await submitCustomerTaskTemplateJob({
@@ -222,7 +268,7 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setJobBusy(false);
+      setTemplateJobBusy(false);
     }
   };
 
@@ -284,19 +330,35 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
         )}
       </div>
 
-      <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-2">
+      <div className="mt-4 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-2">
         {[
           {
-            title: zh ? "1. 选择模板" : "1. Choose a template",
-            body: zh ? "先选一个客户项目模板，系统会填好标题、任务说明和验收标准。" : "Pick a customer project template; MIS fills the title, brief and acceptance criteria.",
+            title: zh ? "1. 创建任务" : "1. Create task",
+            body: title.trim() || (zh ? "填写标题、说明和验收标准。" : "Fill title, brief and acceptance criteria."),
           },
           {
-            title: zh ? "2. 派给 AI 团队" : "2. Dispatch to AI team",
-            body: zh ? "选择 Hermes / OpenClaw / 本地 worker，点击生成项目，任务会进入运行账本。" : "Select Hermes, OpenClaw or local workers, then generate the project into the run ledger.",
+            title: zh ? "2. 选择团队" : "2. Choose team",
+            body: selected.length ? `${selected.length} ${zh ? "个代理" : "agent(s)"} · ${selectedAgentNames || workerAdapter}` : (zh ? "选择 AI worker/team。" : "Select AI worker/team."),
           },
           {
-            title: zh ? "3. 审批与交付" : "3. Approve and deliver",
-            body: zh ? "查看报告、处理外部上传审批，并把最终报告归档到 MIS 账本。" : "Open the report, handle external-upload approvals and archive the final report to the MIS ledger.",
+            title: zh ? "3. 异步 Job" : "3. Async job",
+            body: workflowJobs[0] ? `${workflowJobs[0].job_id} · ${workflowJobs[0].status}` : (zh ? "长任务提交后轮询账本结果。" : "Submit long work and poll ledger results."),
+          },
+          {
+            title: zh ? "4. 证据" : "4. Evidence",
+            body: evidenceLine(result?.evidence) || evidenceLine(workflowJobs[0]?.result?.evidence) || (zh ? "等待 run / artifact / eval / audit。" : "Waiting for run / artifact / eval / audit."),
+          },
+          {
+            title: zh ? "5. 审批" : "5. Approval",
+            body: result?.evidence?.approvals || kbResult?.approval_ids?.length || workflowJobs[0]?.result?.approval_ids?.length
+              ? (zh ? "已有待处理交付审批。" : "Delivery approval is pending.")
+              : (zh ? "外部上传和交付需审批。" : "External upload and delivery require approval."),
+          },
+          {
+            title: zh ? "6. 报告" : "6. Report",
+            body: kbResult?.project_id
+              ? `${zh ? "项目报告" : "Project report"} ${kbResult.project_id}`
+              : (zh ? "项目模板完成后打开交付报告。" : "Open delivery report after project completion."),
           },
         ].map((step) => (
           <div key={step.title} className="rounded p-3" style={{ background: "var(--mis-surface2)", border: "1px solid rgba(148,163,184,0.14)" }}>
@@ -482,13 +544,23 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
         </button>
         <button
           type="button"
-          onClick={submitAsyncTemplateJob}
+          onClick={submitAsyncWorkerJob}
           disabled={jobBusy || !title.trim()}
           className="inline-flex items-center gap-1.5 rounded px-3 py-2 text-xs disabled:opacity-50"
           style={{ background: "rgba(168,85,247,0.14)", color: "var(--mis-purple)", border: "1px solid rgba(168,85,247,0.30)" }}
         >
           {jobBusy ? <Loader2 size={13} className="animate-spin" /> : <Clock3 size={13} />}
           {zh ? "异步提交 Worker Job" : "Submit async worker job"}
+        </button>
+        <button
+          type="button"
+          onClick={submitAsyncTemplateJob}
+          disabled={templateJobBusy || !selectedTemplateId}
+          className="inline-flex items-center gap-1.5 rounded px-3 py-2 text-xs disabled:opacity-50"
+          style={{ background: "rgba(42,157,143,0.12)", color: "var(--mis-success)", border: "1px solid rgba(42,157,143,0.26)" }}
+        >
+          {templateJobBusy ? <Loader2 size={13} className="animate-spin" /> : <Archive size={13} />}
+          {zh ? "异步提交项目 Job" : "Submit async project job"}
         </button>
         <button
           type="button"
@@ -543,12 +615,17 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
                   {job.status}
                 </span>
               </div>
-              <div className="mt-1 text-[10px]" style={{ color: "var(--mis-muted)" }}>{job.job_id} · {job.adapter || "default"} · {job.template_id}</div>
+              <div className="mt-1 text-[10px]" style={{ color: "var(--mis-muted)" }}>{workflowLabel(job, zh)} · {job.job_id} · {job.adapter || "default"} · {job.template_id || "custom"}</div>
               {job.input_summary && <p className="mt-1 line-clamp-2 text-[10px] leading-relaxed" style={{ color: "var(--mis-dim)" }}>{job.input_summary}</p>}
+              {evidenceLine(job.result?.evidence) && (
+                <div className="mt-1 text-[10px]" style={{ color: "var(--mis-dim)" }}>{evidenceLine(job.result?.evidence)}</div>
+              )}
               <div className="mt-2 flex flex-wrap gap-2 text-[10px]">
                 {job.result_task_id && <Link style={{ color: "var(--mis-cyan)" }} to={`/admin/tasks/${job.result_task_id}`}>{zh ? "任务" : "Task"}</Link>}
                 {job.result_run_id && <Link style={{ color: "var(--mis-purple)" }} to={`/admin/runs/${job.result_run_id}`}>{zh ? "运行" : "Run"}</Link>}
                 {job.result_artifact_id && <span style={{ color: "var(--mis-success)" }}>{job.result_artifact_id}</span>}
+                {job.result?.approval_ids?.length ? <Link style={{ color: "#FBBF24" }} to="/workspace/approvals">{zh ? "审批" : "Approval"}</Link> : null}
+                {job.result?.project_id && <Link style={{ color: "var(--mis-success)" }} to={`/workspace/customer-projects/${job.result.project_id}/report`}>{zh ? "报告" : "Report"}</Link>}
                 {job.error_message && <span style={{ color: "#FCA5A5" }}>{job.error_message}</span>}
               </div>
             </div>
@@ -572,8 +649,11 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
               {result.evidence && (
                 <div>
                   <span style={{ color: "var(--mis-muted)" }}>{zh ? "证据：" : "Evidence: "}</span>
-                  tool {result.evidence.tool_calls || 0} · eval {result.evidence.evaluations || 0} · audit {result.evidence.audit_logs || 0} · artifact {result.evidence.artifacts || 0}
+                  {evidenceLine(result.evidence)}
                 </div>
+              )}
+              {(result.evidence?.approvals || 0) > 0 && (
+                <Link className="inline-flex pt-1" style={{ color: "#FBBF24" }} to="/workspace/approvals">{zh ? "处理交付审批" : "Review delivery approval"}</Link>
               )}
               {result.reason && <div><span style={{ color: "var(--mis-muted)" }}>{zh ? "原因：" : "Reason: "}</span>{result.reason}</div>}
               {result.output_summary && <p className="pt-1 leading-relaxed" style={{ color: "var(--mis-dim)" }}>{result.output_summary}</p>}

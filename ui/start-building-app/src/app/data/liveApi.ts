@@ -650,6 +650,17 @@ export async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+async function apiJsonWithStatuses<T>(path: string, init: RequestInit | undefined, acceptedStatuses: number[]): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
+    ...init,
+  });
+  if (!res.ok && !acceptedStatuses.includes(res.status)) {
+    throw new Error(`${res.status} ${res.statusText}: ${await res.text()}`);
+  }
+  return res.json() as Promise<T>;
+}
+
 export function useLiveData<T>(loader: () => Promise<T>, deps: unknown[] = []) {
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(true);
@@ -970,10 +981,10 @@ export async function runCustomerWorkerTaskWorkflow(input: CustomerWorkerTaskWor
 }
 
 export async function submitCustomerWorkerTaskJob(input: CustomerWorkerTaskWorkflowInput): Promise<WorkflowJobSubmitPayload> {
-  return apiJson<WorkflowJobSubmitPayload>("/workflows/customer-worker-task/submit", {
+  return apiJsonWithStatuses<WorkflowJobSubmitPayload>("/workflows/customer-worker-task/submit", {
     method: "POST",
     body: JSON.stringify(input),
-  });
+  }, [409]);
 }
 
 export async function runKbBotProjectWorkflow(): Promise<KbBotProjectWorkflowResult> {
@@ -1028,10 +1039,10 @@ export async function submitCustomerTaskTemplateJob(input: {
   priority?: string;
   risk_level?: string;
 }): Promise<WorkflowJobSubmitPayload> {
-  return apiJson<WorkflowJobSubmitPayload>("/workflows/customer-task-templates/submit", {
+  return apiJsonWithStatuses<WorkflowJobSubmitPayload>("/workflows/customer-task-templates/submit", {
     method: "POST",
     body: JSON.stringify(input),
-  });
+  }, [409]);
 }
 
 export async function loadWorkflowJobs(limit = 8): Promise<WorkflowJobListPayload> {
@@ -1070,6 +1081,8 @@ export async function loadCustomerProjects(limit = 25): Promise<CustomerProjectI
 
 export async function loadWorkerStatus(): Promise<WorkerStatusPayload> {
   const raw = await apiJson<Record<string, unknown>>("/workers/status");
+  const remoteHealthRaw = typeof raw.remote_worker_health === "object" && raw.remote_worker_health !== null ? raw.remote_worker_health as Record<string, unknown> : {};
+  const fleetHealthRaw = typeof raw.fleet_health === "object" && raw.fleet_health !== null ? raw.fleet_health as Record<string, unknown> : {};
   return {
     provider: String(raw.provider || "agentops-worker"),
     status: String(raw.status || "unknown"),
@@ -1078,6 +1091,7 @@ export async function loadWorkerStatus(): Promise<WorkerStatusPayload> {
     recent_completed_runs: numberValue(raw.recent_completed_runs, 0),
     pending_worker_tasks: numberValue(raw.pending_worker_tasks, 0),
     stuck_worker_tasks: numberValue(raw.stuck_worker_tasks, 0),
+    stuck_workflow_jobs: numberValue(raw.stuck_workflow_jobs, 0),
     remote_worker_count: numberValue(raw.remote_worker_count, 0),
     total_remote_enrollments: numberValue(raw.total_remote_enrollments, 0),
     active_remote_enrollments: numberValue(raw.active_remote_enrollments, 0),
@@ -1085,8 +1099,9 @@ export async function loadWorkerStatus(): Promise<WorkerStatusPayload> {
     stale_remote_enrollments: numberValue(raw.stale_remote_enrollments, 0),
     never_seen_remote_enrollments: numberValue(raw.never_seen_remote_enrollments, 0),
     active_remote_sessions: numberValue(raw.active_remote_sessions, 0),
-    remote_worker_health: typeof raw.remote_worker_health === "object" && raw.remote_worker_health !== null ? raw.remote_worker_health as Record<string, unknown> : {},
+    remote_worker_health: normalizeWorkerRemoteHealth(remoteHealthRaw),
     adapter_readiness: typeof raw.adapter_readiness === "object" && raw.adapter_readiness !== null ? raw.adapter_readiness as WorkerAdapterReadinessSummary : undefined,
+    fleet_health: normalizeWorkerFleetHealth(fleetHealthRaw),
     daemons: asArray<Record<string, unknown>>(raw.daemons).map(normalizeWorkerDaemon),
     workers: asArray<Record<string, unknown>>(raw.workers).map((row) => normalizeAgent(row)),
     recent_runs: asArray<Record<string, unknown>>(raw.recent_runs).map(normalizeRun),
@@ -1099,6 +1114,13 @@ export async function loadWorkerStatus(): Promise<WorkerStatusPayload> {
       running_run_started_at: row.running_run_started_at ? String(row.running_run_started_at) : null,
       stuck_reason: row.stuck_reason ? String(row.stuck_reason) : undefined,
     })),
+    stuck_workflow_job_refs: asArray<Record<string, unknown>>(raw.stuck_workflow_job_refs).map((row) => ({
+      job_id: String(row.job_id || ""),
+      workflow_type: row.workflow_type ? String(row.workflow_type) : undefined,
+      status: row.status ? String(row.status) : undefined,
+      age_sec: numberValue(row.age_sec, 0),
+      stuck_reason: row.stuck_reason ? String(row.stuck_reason) : undefined,
+    })).filter((row) => row.job_id),
     recent_events: asArray<Record<string, unknown>>(raw.recent_events),
   };
 }
@@ -1170,10 +1192,83 @@ function normalizeWorkerDaemon(row: Record<string, unknown>): WorkerDaemonStatus
     iterations: numberValue(row.iterations, 0),
     total_errors: numberValue(row.total_errors, 0),
     consecutive_errors: numberValue(row.consecutive_errors, 0),
+    last_sleep_reason: row.last_sleep_reason ? String(row.last_sleep_reason) : null,
+    last_sleep_sec: row.last_sleep_sec === undefined || row.last_sleep_sec === null ? null : numberValue(row.last_sleep_sec, 0),
     continue_on_error: boolValue(row.continue_on_error),
     last_error: (row.last_error || null) as Record<string, unknown> | null,
     last_result: (row.last_result || null) as Record<string, unknown> | null,
     log_tail: asArray(row.log_tail).map(String),
+  };
+}
+
+function numberRecord(value: unknown): Record<string, number> {
+  const source = typeof value === "object" && value !== null ? value as Record<string, unknown> : {};
+  return Object.fromEntries(Object.entries(source).map(([key, count]) => [key, numberValue(count, 0)]));
+}
+
+function normalizeWorkerRemoteHealth(row: Record<string, unknown>): WorkerRemoteHealth {
+  return {
+    status: row.status ? String(row.status) : undefined,
+    remote_worker_count: numberValue(row.remote_worker_count, 0),
+    total_remote_enrollments: numberValue(row.total_remote_enrollments, 0),
+    active_enrollments: numberValue(row.active_enrollments, 0),
+    fresh_enrollments: numberValue(row.fresh_enrollments, 0),
+    stale_enrollments: numberValue(row.stale_enrollments, 0),
+    never_seen_enrollments: numberValue(row.never_seen_enrollments, 0),
+    active_sessions: numberValue(row.active_sessions, 0),
+    expired_sessions: numberValue(row.expired_sessions, 0),
+    revoked_sessions: numberValue(row.revoked_sessions, 0),
+    heartbeat_state_counts: numberRecord(row.heartbeat_state_counts),
+    token_status_counts: numberRecord(row.token_status_counts),
+    session_state_counts: numberRecord(row.session_state_counts),
+    remote_workers: asArray<Record<string, unknown>>(row.remote_workers).map((item) => ({
+      token_ref: item.token_ref ? String(item.token_ref) : undefined,
+      token_id_omitted: boolValue(item.token_id_omitted),
+      workspace_id: item.workspace_id ? String(item.workspace_id) : undefined,
+      agent_id: item.agent_id ? String(item.agent_id) : undefined,
+      agent_name: item.agent_name ? String(item.agent_name) : undefined,
+      runtime_type: item.runtime_type ? String(item.runtime_type) : undefined,
+      agent_status: item.agent_status ? String(item.agent_status) : null,
+      token_status: item.token_status ? String(item.token_status) : undefined,
+      heartbeat_state: item.heartbeat_state ? String(item.heartbeat_state) : undefined,
+      heartbeat_timeout_sec: numberValue(item.heartbeat_timeout_sec, 0),
+      last_heartbeat_at: item.last_heartbeat_at ? String(item.last_heartbeat_at) : null,
+      last_used_at: item.last_used_at ? String(item.last_used_at) : null,
+      expires_at: item.expires_at ? String(item.expires_at) : null,
+      scope_count: numberValue(item.scope_count, 0),
+      active_session_count: numberValue(item.active_session_count, 0),
+    })),
+    recent_sessions: asArray<Record<string, unknown>>(row.recent_sessions).map((item) => ({
+      session_ref: item.session_ref ? String(item.session_ref) : undefined,
+      session_id_omitted: boolValue(item.session_id_omitted),
+      parent_token_ref: item.parent_token_ref ? String(item.parent_token_ref) : undefined,
+      workspace_id: item.workspace_id ? String(item.workspace_id) : undefined,
+      agent_id: item.agent_id ? String(item.agent_id) : undefined,
+      status: item.status ? String(item.status) : undefined,
+      session_state: item.session_state ? String(item.session_state) : undefined,
+      created_at: item.created_at ? String(item.created_at) : undefined,
+      expires_at: item.expires_at ? String(item.expires_at) : undefined,
+      last_used_at: item.last_used_at ? String(item.last_used_at) : null,
+      scope_count: numberValue(item.scope_count, 0),
+    })),
+    token_omitted: boolValue(row.token_omitted),
+  };
+}
+
+function normalizeWorkerFleetHealth(row: Record<string, unknown>): WorkerFleetHealth | undefined {
+  if (Object.keys(row).length === 0) return undefined;
+  return {
+    overall: String(row.overall || "attention"),
+    contract: row.contract ? String(row.contract) : undefined,
+    gates: asArray<Record<string, unknown>>(row.gates).map((gate) => ({
+      id: String(gate.id || ""),
+      status: String(gate.status || "info"),
+      summary: String(gate.summary || ""),
+      action: gate.action ? String(gate.action) : undefined,
+    })).filter((gate) => gate.id || gate.summary),
+    recommended_actions: asArray(row.recommended_actions).map(String),
+    remote_status: row.remote_status ? String(row.remote_status) : undefined,
+    token_omitted: boolValue(row.token_omitted),
   };
 }
 

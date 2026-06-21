@@ -171,6 +171,7 @@ python3 -m pip install -e .
 python3 -m pip install .
 agentops doctor
 agentops status
+agentops local readiness
 ./scripts/agentops login --base-url http://127.0.0.1:8787 --workspace-id local-demo --agent-id agt_local_worker
 ./scripts/agentops agent register --id agt_local_worker --name "Local Worker" --role "AI Digital Employee"
 ./scripts/agentops task create \
@@ -259,6 +260,7 @@ Workspace isolation smoke 会验证：token 绑定 workspace A 后，只能 pull
 - token 绑定 `workspace_id`，不能通过 header/query/body 切换到其他 workspace。
 - API 会检查 endpoint scope，例如 `tasks:create`、`tasks:read`、`runs:write`、`audit:write`。
 - `./scripts/agentops worker status` 可从命令行查看 worker fleet、daemon、pending task 和 stuck task 状态。
+- `./scripts/agentops local readiness` 可查看单机开源版闭环体检：Agent Gateway、worker route、memory/knowledge、approval、task->run->tool/eval/audit/artifact 证据、runbook 是否齐备。它只读，不启动 worker、不拉任务、不触发 Hermes/OpenClaw live runtime。
 - `./scripts/agentops worker preflight --adapter mock|hermes|openclaw` 可从主 CLI 执行只读 Gateway/adapter 预检，不拉任务、不写账本、不触发 live runtime。
 - `./scripts/agentops worker start|stop|logs` 可从命令行控制本地 worker daemon；Hermes/OpenClaw start 必须显式 `--confirm-run`。
 - `./scripts/agentops enrollment revoke --agent-id agt_remote_builder` 可吊销该 agent 的 active token。
@@ -393,6 +395,16 @@ agentops worker service-install --manager launchd --adapter mock --agent-id agt_
 ```bash
 python3 scripts/agent_worker.py --once --adapter mock --agent-id agt_worker_local
 ```
+
+本地闭环体检：
+
+```bash
+curl -fsS http://127.0.0.1:8787/api/local/readiness | jq .
+./scripts/agentops local readiness
+python3 scripts/local_readiness_smoke.py
+```
+
+这条检查会汇总 `/workspace/agents`、Agent Gateway CLI/API、memory/knowledge、approval、run/tool/eval/audit/artifact 证据链和本地 runbook；它不执行任务，也不会打印 token。
 
 单轮 Hermes live adapter：
 
