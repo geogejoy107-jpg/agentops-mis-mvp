@@ -340,7 +340,8 @@ Hermes/OpenClaw adapter is unavailable or blocked, MIS returns
 `runtime_connector_trust_blocked` for trust-policy blocks, writes blocked task
 plus audit evidence, and does not execute the runtime. Async customer-worker
 submit uses the same gate and writes a failed workflow job instead of queueing
-work that cannot run.
+work that cannot run. Template async jobs with a live worker adapter use the
+same rule.
 
 `agentops worker status` is the operator's single fleet view. In addition to
 local daemon state, it summarizes remote worker enrollments, heartbeat states
@@ -387,6 +388,7 @@ python3 scripts/agentops_worker_preflight_smoke.py
 python3 scripts/worker_adapter_readiness_smoke.py
 python3 scripts/customer_worker_adapter_not_ready_smoke.py
 python3 scripts/customer_worker_async_adapter_not_ready_smoke.py
+python3 scripts/template_worker_async_adapter_not_ready_smoke.py
 python3 scripts/worker_live_confirm_gate_smoke.py
 python3 scripts/remote_launch_packet_worker_smoke.py
 python3 scripts/agent_gateway_task_create_scope_smoke.py
@@ -406,6 +408,7 @@ The expected proof is:
   execution when a selected Hermes/OpenClaw adapter is unavailable.
 - Async confirmed customer worker submit also rejects before queueing and records
   a failed workflow job when the selected live route cannot run.
+- Async template worker submit follows the same live-route gate.
 - `agentops worker service-install` defaults to dry-run and only writes a
   placeholder template when `--confirm-install` is present.
 - `agentops worker service-check` returns JSON, omits raw service content, and

@@ -1334,6 +1334,7 @@ recovery task, records runtime/audit evidence, and does not execute the runtime.
 Async customer-worker submit uses the same gate: it returns
 the same early rejection reason, creates a failed workflow job plus blocked task
 evidence, and does not queue background execution.
+Template async jobs that use a live worker adapter now use the same early gate.
 
 The `/workspace/agents` UI now exposes the same customer-worker path that the
 CLI and Pixel Office use: a human creates a normal business task, chooses
@@ -1391,4 +1392,5 @@ planned MIS task
   worker execution failure.
 - Async customer-worker submit now fails early and records a failed workflow job
   instead of accepting a job that cannot run.
+- Async template worker submit now uses the same live-route gate.
 - Remote enrollment token issuance/revocation/rotation, approval-gated enrollment request UI, endpoint-level scope enforcement, short-lived session tokens with list/revoke controls and worker-loop refresh, scope presets, a first enrollment UI, and minimal Agent Gateway workspace isolation now exist. Full RBAC, hosted multi-tenant isolation, and hosted enrollment policy UI remain future work.

@@ -4901,6 +4901,76 @@ def submit_customer_task_template_job(conn, body: dict) -> tuple[dict, int]:
     now = now_iso()
     title = redact_text(body.get("title") or template["default_title"], 180)
     input_summary = redact_text(body.get("description") or template["default_description"], 300)
+    confirm_run = bool(body.get("confirm_run"))
+    if adapter in {"hermes", "openclaw"} and confirm_run:
+        connector_id = runtime_connector_for_adapter(adapter)
+        connector_trust = runtime_connector_trust(conn, connector_id)
+        adapter_readiness = (worker_adapter_readiness(conn).get("adapters") or {}).get(adapter) or {}
+        should_reject = (
+            (connector_trust and connector_trust.get("trust_status") == "blocked")
+            or adapter_readiness.get("readiness") in {"unavailable", "blocked"}
+        )
+        if should_reject:
+            result, status = run_customer_task_template_workflow(conn, {**body, "async_job": False})
+            now = now_iso()
+            job_id = new_id("wfjob")
+            row = {
+                "job_id": job_id,
+                "workspace_id": normalize_workspace_id(body.get("workspace_id") or "local-demo"),
+                "workflow_type": "customer_task_template",
+                "status": "failed",
+                "template_id": template_id,
+                "adapter": adapter,
+                "confirm_run": 1,
+                "title": title,
+                "input_summary": input_summary,
+                "request_hash": stable_hash({
+                    "template_id": template_id,
+                    "adapter": adapter,
+                    "confirm_run": True,
+                    "title": title,
+                    "description": input_summary,
+                    "early_reject": result.get("reason"),
+                }),
+                "result_json": json.dumps(result, ensure_ascii=False),
+                "result_task_id": result.get("task_id"),
+                "result_run_id": result.get("run_id"),
+                "result_artifact_id": result.get("artifact_id"),
+                "error_message": redact_text(result.get("note") or result.get("reason") or "Template adapter not ready for async live execution.", 300),
+                "created_at": now,
+                "started_at": None,
+                "completed_at": now,
+                "updated_at": now,
+            }
+            conn.execute(
+                """INSERT INTO workflow_jobs(job_id,workspace_id,workflow_type,status,template_id,adapter,confirm_run,title,input_summary,request_hash,result_json,result_task_id,result_run_id,result_artifact_id,error_message,created_at,started_at,completed_at,updated_at)
+                VALUES(:job_id,:workspace_id,:workflow_type,:status,:template_id,:adapter,:confirm_run,:title,:input_summary,:request_hash,:result_json,:result_task_id,:result_run_id,:result_artifact_id,:error_message,:created_at,:started_at,:completed_at,:updated_at)""",
+                row,
+            )
+            runtime_event(conn, "rtc_agent_gateway_local", "workflow_job.rejected", "failed", task_id=result.get("task_id"), input_summary=f"Template job {job_id} rejected before async execution.", output_summary=row["error_message"], raw_payload_hash=row["request_hash"])
+            audit(conn, "system", "worker-adapter-readiness", "workflow.job.rejected", "workflow_jobs", job_id, None, row, {
+                "template_id": template_id,
+                "adapter": adapter,
+                "reason": result.get("reason"),
+                "readiness": result.get("readiness"),
+                "status": status,
+                "raw_request_omitted": True,
+                "raw_result_omitted": True,
+            })
+            conn.commit()
+            return {
+                "ok": False,
+                "provider": "agentops-workflow-job",
+                "workflow": "customer_task_template",
+                "job": workflow_job_public(row),
+                "job_id": job_id,
+                "status_url": f"/api/workflows/jobs/{job_id}",
+                "reason": result.get("reason") or "adapter_not_ready",
+                "readiness": result.get("readiness"),
+                "result": result,
+                "raw_request_omitted": True,
+                "token_omitted": True,
+            }, 409
     job_id = new_id("wfjob")
     row = {
         "job_id": job_id,
@@ -4909,13 +4979,13 @@ def submit_customer_task_template_job(conn, body: dict) -> tuple[dict, int]:
         "status": "queued",
         "template_id": template_id,
         "adapter": adapter,
-        "confirm_run": 1 if body.get("confirm_run") else 0,
+        "confirm_run": 1 if confirm_run else 0,
         "title": title,
         "input_summary": input_summary,
         "request_hash": stable_hash({
             "template_id": template_id,
             "adapter": adapter,
-            "confirm_run": bool(body.get("confirm_run")),
+            "confirm_run": confirm_run,
             "title": title,
             "description": input_summary,
         }),
