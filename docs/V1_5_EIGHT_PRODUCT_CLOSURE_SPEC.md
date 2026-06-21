@@ -84,6 +84,10 @@ Current v1.5 implementation:
   - `GET /api/workers/local/logs`
   - `POST /api/workers/local/start`
   - `POST /api/workers/local/stop`
+  - `POST /api/workers/local/restart`
+- Operator restart controls are exposed through `agentops worker restart` and
+  `/workspace/agents`; Hermes/OpenClaw restart still requires explicit
+  `confirm_run` before any live daemon is stopped or started.
 
 Acceptance evidence:
 
@@ -95,11 +99,16 @@ Acceptance evidence:
   - exposed `processed=1`, `iterations=1`, JSONL `worker.iteration`, and local state path
   - direct bad-URL worker recorded two errors and exited after `max_errors`
   - direct bad-URL worker exposed `last_sleep_reason=error_backoff` and `last_sleep_sec=0.1`.
+- Restart smoke: `python3 scripts/agentops_worker_restart_smoke.py`
+  - Hermes restart without `confirm_run` failed closed.
+  - Mock restart returned running daemon metadata through CLI/API.
+  - Restart output omitted token/session/secret-like strings.
+  - Cleanup stopped the mock daemon.
 
 Remaining product work:
 
 - OS service loading/restart automation. v1.5 now has safe template generation through `agentops-worker service-template`, dry-run-by-default file installation through `agentops-worker service-install`, and read-only diagnostics through `agentops-worker service-check`; it still does not load, restart, or mutate running OS service state automatically.
-- Full supervised relaunch after process death.
+- Full automatic relaunch after process death.
 - Production log rotation.
 - Fleet-level worker management.
 

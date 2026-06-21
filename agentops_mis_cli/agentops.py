@@ -1098,6 +1098,21 @@ def cmd_worker_stop(args, client: AgentOpsClient) -> dict:
     return client.post("/api/workers/local/stop", {"adapter": args.adapter})
 
 
+def cmd_worker_restart(args, client: AgentOpsClient) -> dict:
+    payload = {
+        "adapter": args.adapter,
+        "agent_id": args.agent_id,
+        "poll_interval": args.poll_interval,
+        "max_tasks": args.max_tasks,
+        "max_errors": args.max_errors,
+        "status": args.status or None,
+        "confirm_run": bool(args.confirm_run),
+    }
+    if args.openclaw_timeout is not None:
+        payload["openclaw_timeout"] = args.openclaw_timeout
+    return client.post("/api/workers/local/restart", payload)
+
+
 def cmd_worker_release(args, client: AgentOpsClient) -> dict:
     return client.post("/api/workers/tasks/release", {
         "task_id": args.task_id,
@@ -1751,6 +1766,16 @@ def build_parser() -> argparse.ArgumentParser:
     worker_stop = worker_sub.add_parser("stop", help="Stop one local worker daemon or all daemons.")
     worker_stop.add_argument("--adapter", choices=["mock", "hermes", "openclaw", "all"], default="all")
     worker_stop.set_defaults(handler="worker_stop")
+    worker_restart = worker_sub.add_parser("restart", help="Restart one local worker daemon through the MIS supervisor.")
+    worker_restart.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
+    worker_restart.add_argument("--agent-id", default=None)
+    worker_restart.add_argument("--poll-interval", type=float, default=None)
+    worker_restart.add_argument("--max-tasks", type=int, default=None)
+    worker_restart.add_argument("--max-errors", type=int, default=None)
+    worker_restart.add_argument("--status", action="append", default=None)
+    worker_restart.add_argument("--confirm-run", action="store_true", help="Required before restarting Hermes/OpenClaw live daemons.")
+    worker_restart.add_argument("--openclaw-timeout", type=int, default=None)
+    worker_restart.set_defaults(handler="worker_restart")
     worker_stuck = worker_sub.add_parser("stuck", help="List running worker tasks that exceeded a threshold.")
     worker_stuck.add_argument("--threshold-sec", type=int, default=900)
     worker_stuck.add_argument("--limit", type=int, default=25)
@@ -1905,6 +1930,7 @@ HANDLERS = {
     "worker_service_install": cmd_worker_service_install,
     "worker_start": cmd_worker_start,
     "worker_stop": cmd_worker_stop,
+    "worker_restart": cmd_worker_restart,
     "worker_stuck": cmd_worker_stuck,
     "worker_release": cmd_worker_release,
     "worker_hygiene": cmd_worker_hygiene,

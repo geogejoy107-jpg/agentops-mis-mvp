@@ -7632,6 +7632,51 @@ def stop_local_worker_daemon(conn, body: dict) -> tuple[dict, int]:
     return {"provider": "agentops-worker", "ok": True, "daemons": stopped}, 200
 
 
+def restart_local_worker_daemon(conn, body: dict) -> tuple[dict, int]:
+    adapter = coerce_choice(body.get("adapter"), {"mock", "hermes", "openclaw"}, "mock")
+    confirm_run = bool(body.get("confirm_run"))
+    if adapter in {"hermes", "openclaw"} and not confirm_run:
+        return {
+            "provider": "agentops-worker",
+            "ok": False,
+            "adapter": adapter,
+            "error": "confirm_run:true is required before restarting Hermes/OpenClaw live worker daemons.",
+        }, 400
+    meta_path = worker_runtime_path(adapter, "json")
+    meta = read_json_file(meta_path, {}) if meta_path.exists() else {}
+    previous = read_worker_daemon(adapter, include_log=True)
+    restart_body = {
+        "adapter": adapter,
+        "agent_id": body.get("agent_id") or meta.get("agent_id") or f"agt_worker_daemon_{adapter}",
+        "poll_interval": body.get("poll_interval") if body.get("poll_interval") is not None else meta.get("poll_interval") or 5.0,
+        "max_tasks": body.get("max_tasks") if body.get("max_tasks") is not None else meta.get("max_tasks") or 0,
+        "max_errors": body.get("max_errors") if body.get("max_errors") is not None else meta.get("max_errors") or 5,
+        "status": body.get("status") if isinstance(body.get("status"), list) else meta.get("status_filters") or ["planned"],
+        "confirm_run": confirm_run,
+    }
+    if body.get("openclaw_timeout") is not None:
+        restart_body["openclaw_timeout"] = body.get("openclaw_timeout")
+    stopped, _stop_status = stop_local_worker_daemon(conn, {"adapter": adapter})
+    started, start_status = start_local_worker_daemon(conn, restart_body)
+    ok = bool(started.get("ok"))
+    daemon = started.get("daemon") or read_worker_daemon(adapter, include_log=True)
+    agent_id = daemon.get("agent_id") or restart_body["agent_id"]
+    runtime_event(conn, "rtc_agent_gateway_local", "worker.daemon.restart", "running" if ok else "failed", agent_id=agent_id, output_summary=f"Restarted {adapter} local worker daemon." if ok else f"Failed to restart {adapter} local worker daemon.")
+    audit(conn, "user", "usr_founder", "worker.daemon.restart", "agents", agent_id, previous, daemon, {"adapter": adapter, "confirm_run": confirm_run, "token_omitted": True})
+    conn.commit()
+    return {
+        "provider": "agentops-worker",
+        "ok": ok,
+        "adapter": adapter,
+        "previous": previous,
+        "stopped": stopped,
+        "daemon": daemon,
+        "start_result": started,
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }, start_status
+
+
 def parse_iso_datetime(value: str | None) -> dt.datetime | None:
     if not value:
         return None
@@ -10655,6 +10700,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(payload, status)
             if path == "/api/workers/local/stop":
                 payload, status = stop_local_worker_daemon(conn, body)
+                return self.send_json(payload, status)
+            if path == "/api/workers/local/restart":
+                payload, status = restart_local_worker_daemon(conn, body)
                 return self.send_json(payload, status)
             if path == "/api/workers/tasks/release":
                 payload, status = release_worker_task(conn, body)

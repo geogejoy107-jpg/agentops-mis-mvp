@@ -459,6 +459,16 @@ agentops enrollment rotate --agent-id agt_remote_builder
 
 Revoking an enrollment also invalidates active child sessions.
 
+For a local supervised worker daemon, restart is a first-class operator action:
+
+```bash
+agentops worker restart --adapter mock
+agentops worker restart --adapter openclaw --confirm-run
+```
+
+Hermes/OpenClaw restart fails closed without `--confirm-run`, so a recovery
+click cannot silently stop/start a live adapter.
+
 ## Acceptance Checks
 
 Use these lightweight checks before a demo or customer handoff:
@@ -480,6 +490,7 @@ python3 scripts/agentops_workflow_run_task_smoke.py
 python3 scripts/worker_remote_fleet_status_smoke.py
 python3 scripts/worker_fleet_hygiene_smoke.py
 python3 scripts/enrollment_policy_preview_smoke.py
+python3 scripts/agentops_worker_restart_smoke.py
 python3 scripts/demo_acceptance.py
 git diff --check
 ```
@@ -508,6 +519,8 @@ The expected proof is:
   heartbeat/session state, safe refs, and next actions, without executing work.
 - `agentops worker hygiene` is read-only by default, requires
   `--apply --confirm-cleanup` for cleanup, and records recovery evidence.
+- `agentops worker restart` can restart a local supervised daemon and still
+  fails closed for Hermes/OpenClaw unless `--confirm-run` is present.
 - `agentops enrollment policy-preview` is read-only, classifies observer /
   worker / privileged / invalid scope sets, recommends direct create vs
   approval-gated request, and omits token/session/secret-like strings.

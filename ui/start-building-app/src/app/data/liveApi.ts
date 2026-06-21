@@ -2298,6 +2298,18 @@ export async function stopLocalWorkerDaemon(adapter?: "mock" | "hermes" | "openc
   });
 }
 
+export async function restartLocalWorkerDaemon(input: {
+  adapter: "mock" | "hermes" | "openclaw";
+  confirm_run?: boolean;
+  poll_interval?: number;
+  max_tasks?: number;
+}): Promise<WorkerDaemonResult> {
+  return apiJson<WorkerDaemonResult>("/workers/local/restart", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
 export async function loadWorkerDaemonLogs(adapter: "mock" | "hermes" | "openclaw"): Promise<WorkerDaemonLogPayload> {
   const raw = await apiJson<Record<string, unknown>>(`/workers/local/logs?adapter=${encodeURIComponent(adapter)}`);
   return {

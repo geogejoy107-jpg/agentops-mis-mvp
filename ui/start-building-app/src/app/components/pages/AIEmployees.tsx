@@ -32,6 +32,7 @@ import {
   applyWorkerFleetHygiene,
   previewAgentGatewayEnrollmentPolicy,
   releaseWorkerTask,
+  restartLocalWorkerDaemon,
   revokeAgentGatewayEnrollment,
   revokeAgentGatewaySession,
   rotateAgentGatewayEnrollment,
@@ -431,8 +432,12 @@ export function AIEmployees() {
       startMockDaemon: "Start mock daemon",
       startHermesDaemon: "Start Hermes daemon",
       startOpenClawDaemon: "Start OpenClaw daemon",
+      restartMockDaemon: "Restart mock",
+      restartHermesDaemon: "Restart Hermes",
+      restartOpenClawDaemon: "Restart OpenClaw",
       stopDaemons: "Stop daemons",
       dispatching: "Dispatching...",
+      restarting: "Restarting...",
       starting: "Starting...",
       stopping: "Stopping...",
       recentRun: "Recent run",
@@ -724,8 +729,12 @@ export function AIEmployees() {
       startMockDaemon: "启动 mock 常驻",
       startHermesDaemon: "启动 Hermes 常驻",
       startOpenClawDaemon: "启动 OpenClaw 常驻",
+      restartMockDaemon: "重启 mock",
+      restartHermesDaemon: "重启 Hermes",
+      restartOpenClawDaemon: "重启 OpenClaw",
       stopDaemons: "停止常驻 worker",
       dispatching: "正在派发...",
+      restarting: "正在重启...",
       starting: "正在启动...",
       stopping: "正在停止...",
       recentRun: "最近 run",
@@ -1129,6 +1138,26 @@ export function AIEmployees() {
       });
       const pid = result.daemon?.pid ? `pid ${result.daemon.pid}` : result.already_running ? "already running" : "started";
       setDispatchResult(`${adapter} daemon: ${result.ok ? "ok" : "failed"} · ${pid}`);
+      await refresh();
+    } catch (err) {
+      setDispatchResult(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDispatching(null);
+    }
+  };
+
+  const restartDaemon = async (adapter: "mock" | "hermes" | "openclaw") => {
+    setDispatching(`restart-${adapter}`);
+    setDispatchResult(null);
+    try {
+      const result = await restartLocalWorkerDaemon({
+        adapter,
+        confirm_run: adapter !== "mock",
+        poll_interval: 2,
+        max_tasks: 0,
+      });
+      const pid = result.daemon?.pid ? `pid ${result.daemon.pid}` : "restart requested";
+      setDispatchResult(`${adapter} restart: ${result.ok ? "ok" : "failed"} · ${pid}`);
       await refresh();
     } catch (err) {
       setDispatchResult(err instanceof Error ? err.message : String(err));
@@ -2811,6 +2840,22 @@ export function AIEmployees() {
             >
               {dispatching === `start-${item.adapter}` ? <RefreshCw size={12} /> : <Power size={12} />}
               {dispatching === `start-${item.adapter}` ? copy.starting : item.label}
+            </button>
+          ))}
+          {[
+            { adapter: "mock" as const, label: copy.restartMockDaemon },
+            { adapter: "hermes" as const, label: copy.restartHermesDaemon },
+            { adapter: "openclaw" as const, label: copy.restartOpenClawDaemon },
+          ].map((item) => (
+            <button
+              key={`restart-${item.adapter}`}
+              onClick={() => restartDaemon(item.adapter)}
+              disabled={Boolean(dispatching)}
+              className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded disabled:opacity-50"
+              style={{ background: "rgba(122,90,248,0.1)", color: "#A78BFA", border: "1px solid rgba(122,90,248,0.2)" }}
+            >
+              {dispatching === `restart-${item.adapter}` ? <RefreshCw size={12} /> : <RotateCw size={12} />}
+              {dispatching === `restart-${item.adapter}` ? copy.restarting : item.label}
             </button>
           ))}
           <button
