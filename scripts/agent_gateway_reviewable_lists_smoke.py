@@ -131,10 +131,31 @@ def create_task(base_url: str, workspace_id: str, agent_id: str, task_id: str) -
 
 
 def start_run(base_url: str, token: str, workspace_id: str, agent_id: str, task_id: str) -> str:
+    status, plan, _raw = http_json("POST", base_url, "/api/agent-gateway/agent-plans", {
+        "workspace_id": workspace_id,
+        "agent_id": agent_id,
+        "task_id": task_id,
+        "task_understanding": "Verify scoped reviewable list run is authorized by an Agent Plan.",
+        "referenced_specs": ["PROJECT_SPEC.md", "AGENT_WORKFLOW.md"],
+        "referenced_memories": ["knowledge/shared/common_failures.md"],
+        "referenced_bases": ["base_local_tasks"],
+        "proposed_files_to_change": ["scripts/agent_gateway_reviewable_lists_smoke.py"],
+        "risk_level": "low",
+        "execution_steps": ["READ", "PLAN", "RETRIEVE", "VERIFY"],
+        "verification_plan": "Run scoped reviewable list smoke.",
+        "rollback_plan": "Keep task planned if run_start fails.",
+        "status": "submitted",
+    }, token=token, workspace_header=workspace_id)
+    require(status == 201, f"plan create failed for {task_id}: {status} {plan}")
+    plan_id = (plan.get("agent_plan") or {}).get("plan_id")
+    require(bool(plan_id), f"plan_id missing for {task_id}: {plan}")
+    status, verified, _raw = http_json("GET", base_url, f"/api/agent-gateway/agent-plans/{plan_id}/verify", token=token, workspace_header=workspace_id)
+    require(status == 200 and (verified.get("verification") or {}).get("pass") is True, f"plan verify failed for {task_id}: {status} {verified}")
     status, payload, _raw = http_json("POST", base_url, "/api/agent-gateway/runs/start", {
         "workspace_id": workspace_id,
         "agent_id": agent_id,
         "task_id": task_id,
+        "agent_plan_id": plan_id,
         "runtime_type": "mock",
         "input_summary": f"Scoped list run for {task_id}",
     }, token=token, workspace_header=workspace_id)
@@ -200,7 +221,7 @@ def main() -> int:
     outputs: list[str] = []
 
     try:
-        scopes = ["tasks:read", "runs:write", "approvals:request", "memories:propose"]
+        scopes = ["tasks:read", "agent_plans:read", "agent_plans:write", "runs:write", "approvals:request", "memories:propose"]
         token_id_a, token_a = create_enrollment(args.base_url, admin_key, agent_a, workspace_a, scopes)
         token_id_b, token_b = create_enrollment(args.base_url, admin_key, agent_b, workspace_b, scopes)
         token_id_limited, token_limited = create_enrollment(args.base_url, admin_key, agent_limited, workspace_a, ["agents:heartbeat"])

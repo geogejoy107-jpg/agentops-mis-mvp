@@ -618,10 +618,14 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
     plan_id = (plan_payload.get("agent_plan") or {}).get("plan_id")
     if not plan_id:
         raise RuntimeError("agent plan create did not return plan_id")
+    verified_plan = client.get(f"/api/agent-gateway/agent-plans/{plan_id}/verify")
+    if not (verified_plan.get("verification") or {}).get("pass"):
+        raise RuntimeError(f"agent plan verification failed before run_start: {json_dumps(verified_plan.get('verification') or {})}")
     run_payload = client.post("/api/agent-gateway/runs/start", {
         "workspace_id": client.workspace_id,
         "agent_id": client.agent_id,
         "task_id": task_id,
+        "agent_plan_id": plan_id,
         "runtime_type": args.adapter,
         "input_summary": f"Worker adapter={args.adapter} task={redact_text(task.get('title'), 120)}",
         "delegation_id": f"worker:{args.adapter}:{task_id}",

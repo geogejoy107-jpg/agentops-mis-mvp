@@ -52,6 +52,30 @@ def create_token(base_url: str, agent_id: str) -> tuple[str, str]:
     return created["token"], created["token_id"]
 
 
+def create_verified_plan(base_url: str, agent_id: str, task_id: str) -> str:
+    status, plan = http_json("POST", base_url, "/api/agent-gateway/agent-plans", {
+        "workspace_id": "local-demo",
+        "agent_id": agent_id,
+        "task_id": task_id,
+        "task_understanding": "Start the claimed task only after the claim conflict boundary is proven.",
+        "referenced_specs": ["PROJECT_SPEC.md", "AGENT_WORKFLOW.md"],
+        "referenced_memories": ["knowledge/shared/common_failures.md"],
+        "referenced_bases": ["base_local_tasks"],
+        "proposed_files_to_change": ["scripts/task_claim_conflict_smoke.py"],
+        "risk_level": "low",
+        "execution_steps": ["READ", "PLAN", "RETRIEVE", "VERIFY"],
+        "verification_plan": "Run task_claim_conflict_smoke.py.",
+        "rollback_plan": "Leave the task planned if plan-bound run_start fails.",
+        "status": "submitted",
+    })
+    require(status == 201, f"plan create failed: {status} {plan}")
+    plan_id = (plan.get("agent_plan") or {}).get("plan_id")
+    require(bool(plan_id), f"plan id missing: {plan}")
+    status, verified = http_json("GET", base_url, f"/api/agent-gateway/agent-plans/{plan_id}/verify")
+    require(status == 200 and (verified.get("verification") or {}).get("pass") is True, f"plan verify failed: {status} {verified}")
+    return str(plan_id)
+
+
 def smoke(base_url: str, stamp: str) -> dict:
     agent_a = f"agt_claim_a_{stamp}"
     agent_b = f"agt_claim_b_{stamp}"
@@ -68,7 +92,7 @@ def smoke(base_url: str, stamp: str) -> dict:
             "title": "claim conflict smoke task",
             "description": "Two eligible workers should not both claim or run the same task.",
             "owner_agent_id": None,
-            "collaborator_agent_ids": json.dumps([]),
+            "collaborator_agent_ids": [agent_a, agent_b],
             "status": "planned",
             "priority": "high",
             "risk_level": "low",
@@ -76,9 +100,9 @@ def smoke(base_url: str, stamp: str) -> dict:
         })
         require(status == 201, f"task create failed: {status} {task}")
 
-        status, pull_a = http_json("GET", base_url, "/api/agent-gateway/tasks/pull?status=planned&limit=10", token=token_a)
+        status, pull_a = http_json("GET", base_url, f"/api/agent-gateway/tasks/pull?status=planned&limit=10&task_id={task_id}", token=token_a)
         require(status == 200 and task_id in {item.get("task_id") for item in pull_a.get("tasks", [])}, f"agent A did not see pool task: {status} {pull_a}")
-        status, pull_b = http_json("GET", base_url, "/api/agent-gateway/tasks/pull?status=planned&limit=10", token=token_b)
+        status, pull_b = http_json("GET", base_url, f"/api/agent-gateway/tasks/pull?status=planned&limit=10&task_id={task_id}", token=token_b)
         require(status == 200 and task_id in {item.get("task_id") for item in pull_b.get("tasks", [])}, f"agent B did not see pool task: {status} {pull_b}")
 
         status, claim_a = http_json("POST", base_url, f"/api/agent-gateway/tasks/{task_id}/claim", {"runtime_type": "mock"}, token=token_a)
@@ -94,7 +118,8 @@ def smoke(base_url: str, stamp: str) -> dict:
         status, start_b = http_json("POST", base_url, "/api/agent-gateway/runs/start", {"task_id": task_id, "runtime_type": "mock"}, token=token_b)
         require(status in {403, 409}, f"second worker start should be denied or conflict: {status} {start_b}")
 
-        status, start_a = http_json("POST", base_url, "/api/agent-gateway/runs/start", {"task_id": task_id, "runtime_type": "mock"}, token=token_a)
+        plan_id = create_verified_plan(base_url, agent_a, task_id)
+        status, start_a = http_json("POST", base_url, "/api/agent-gateway/runs/start", {"task_id": task_id, "runtime_type": "mock", "agent_plan_id": plan_id}, token=token_a)
         require(status in {200, 201}, f"claiming worker start failed: {status} {start_a}")
 
         run = start_a.get("run") or {}

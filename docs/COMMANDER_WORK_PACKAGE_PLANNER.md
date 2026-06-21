@@ -180,6 +180,28 @@ for packages, ready-for-review packages, pending synthesis reviews, and
 promoted deliveries. `/workspace/agents` renders those actions in the Operator
 Action Queue without executing workers or approving gates.
 
+After a remediation package is dispatched and synthesized, the same approval
+and promotion commands close the loop:
+
+```bash
+./scripts/agentops commander dispatch-package --task-id tsk_evalcase_fix_ecr_123 --adapter mock
+./scripts/agentops commander synthesize --project-id proj_evalcase_remediation_x --status ready_for_review --confirm-create
+./scripts/agentops approval inspect --approval-id ap_cmd_synthesis_x
+./scripts/agentops approval approve --approval-id ap_cmd_synthesis_x
+./scripts/agentops commander promote-synthesis \
+  --artifact-id art_cmd_synthesis_x \
+  --approval-id ap_cmd_synthesis_x \
+  --mode both \
+  --confirm-promote
+./scripts/agentops operator action-plan --limit 20
+./scripts/agentops workflow delivery-board --limit 12
+```
+
+Once promoted, `operator action-plan` reports the remediation source as
+`promoted`, increments `remediation_promoted_memories` and
+`remediation_promoted_deliveries`, and stops asking for duplicate synthesis of
+that already promoted remediation project.
+
 Dispatch a package:
 
 ```bash
@@ -248,16 +270,6 @@ Promote approved synthesis evidence:
 ```
 
 Omit `--confirm-promote` for a dry preview.
-
-Promote an approved synthesis:
-
-```bash
-./scripts/agentops commander promote-synthesis \
-  --artifact-id art_cmd_synthesis_x \
-  --approval-id ap_cmd_synthesis_x \
-  --mode both \
-  --confirm-promote
-```
 
 Promotion is explicit and fails closed until the linked `commander_synthesis`
 approval is approved. `--mode memory` creates a `candidate` memory only;

@@ -71,6 +71,30 @@ def create_task(base_url: str, task_id: str, workspace_id: str, agent_id: str, t
     require(status == 201, f"task create failed for {task_id}: {status} {body}")
 
 
+def create_verified_plan(base_url: str, workspace_id: str, agent_id: str, task_id: str, token: str) -> str:
+    status, plan = http_json("POST", base_url, "/api/agent-gateway/agent-plans", {
+        "workspace_id": workspace_id,
+        "agent_id": agent_id,
+        "task_id": task_id,
+        "task_understanding": "Verify workspace isolation with a plan-bound run.",
+        "referenced_specs": ["PROJECT_SPEC.md", "AGENT_WORKFLOW.md"],
+        "referenced_memories": ["knowledge/shared/common_failures.md"],
+        "referenced_bases": ["base_local_tasks"],
+        "proposed_files_to_change": ["scripts/workspace_isolation_smoke.py"],
+        "risk_level": "low",
+        "execution_steps": ["READ", "PLAN", "RETRIEVE", "VERIFY"],
+        "verification_plan": "Run workspace_isolation_smoke.py.",
+        "rollback_plan": "Keep the task planned if plan-bound run_start fails.",
+        "status": "submitted",
+    }, token=token, workspace_header=workspace_id)
+    require(status == 201, f"plan create failed for {task_id}: {status} {plan}")
+    plan_id = (plan.get("agent_plan") or {}).get("plan_id")
+    require(bool(plan_id), f"plan id missing for {task_id}: {plan}")
+    status, verified = http_json("GET", base_url, f"/api/agent-gateway/agent-plans/{plan_id}/verify", token=token, workspace_header=workspace_id)
+    require(status == 200 and (verified.get("verification") or {}).get("pass") is True, f"plan verify failed for {task_id}: {status} {verified}")
+    return str(plan_id)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Verify Agent Gateway token workspace isolation.")
     parser.add_argument("--base-url", default="http://127.0.0.1:8787")
@@ -102,7 +126,7 @@ def main(argv: list[str] | None = None) -> int:
             "agent_id": agent_id,
             "name": "Workspace Isolation Smoke",
             "runtime_type": "mock",
-            "scopes": ["agents:heartbeat", "tasks:read", "tasks:claim", "runs:write", "toolcalls:write", "evaluations:submit", "audit:write"],
+            "scopes": ["agents:heartbeat", "tasks:read", "tasks:claim", "agent_plans:read", "agent_plans:write", "runs:write", "toolcalls:write", "evaluations:submit", "audit:write"],
             "ttl_days": 1,
             "heartbeat_timeout_sec": 60,
         })
@@ -116,7 +140,7 @@ def main(argv: list[str] | None = None) -> int:
             "agent_id": agent_id,
             "name": "Workspace Isolation Smoke B",
             "runtime_type": "mock",
-            "scopes": ["agents:heartbeat", "tasks:read", "tasks:claim", "runs:write", "toolcalls:write", "artifacts:write", "approvals:request", "evaluations:submit", "audit:write"],
+            "scopes": ["agents:heartbeat", "tasks:read", "tasks:claim", "agent_plans:read", "agent_plans:write", "runs:write", "toolcalls:write", "artifacts:write", "approvals:request", "evaluations:submit", "audit:write"],
             "ttl_days": 1,
             "heartbeat_timeout_sec": 60,
         })
@@ -191,11 +215,12 @@ def main(argv: list[str] | None = None) -> int:
         )
         require(status == 200, f"workspace B owner claim failed: {status} {claim_b_owner}")
 
+        plan_b = create_verified_plan(args.base_url, workspace_b, agent_id, task_b, token_b)
         status, start_b_owner = http_json(
             "POST",
             args.base_url,
             "/api/agent-gateway/runs/start",
-            payload={"workspace_id": workspace_b, "task_id": task_b, "runtime_type": "mock"},
+            payload={"workspace_id": workspace_b, "task_id": task_b, "runtime_type": "mock", "agent_plan_id": plan_b},
             token=token_b,
             workspace_header=workspace_b,
         )
@@ -234,11 +259,12 @@ def main(argv: list[str] | None = None) -> int:
         )
         require(status == 200, f"workspace A claim failed: {status} {claim_a}")
 
+        plan_a = create_verified_plan(args.base_url, workspace_a, agent_id, task_a, token)
         status, start_a = http_json(
             "POST",
             args.base_url,
             "/api/agent-gateway/runs/start",
-            payload={"workspace_id": workspace_a, "task_id": task_a, "runtime_type": "mock"},
+            payload={"workspace_id": workspace_a, "task_id": task_a, "runtime_type": "mock", "agent_plan_id": plan_a},
             token=token,
             workspace_header=workspace_a,
         )

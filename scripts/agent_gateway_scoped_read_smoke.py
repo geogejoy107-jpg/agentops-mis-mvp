@@ -66,6 +66,32 @@ def secret_leaked(text: str) -> bool:
     return any(pattern.search(text) for pattern in SECRET_PATTERNS)
 
 
+def create_verified_plan(base_url: str, token: str, workspace: str, agent_id: str, task_id: str, output_chunks: list[str]) -> str:
+    status, plan, raw = http_json("POST", base_url, "/api/agent-gateway/agent-plans", {
+        "workspace_id": workspace,
+        "agent_id": agent_id,
+        "task_id": task_id,
+        "task_understanding": "Verify scoped read smoke can create a plan-bound run.",
+        "referenced_specs": ["PROJECT_SPEC.md", "AGENT_WORKFLOW.md"],
+        "referenced_memories": ["knowledge/shared/common_failures.md"],
+        "referenced_bases": ["base_local_tasks"],
+        "proposed_files_to_change": ["scripts/agent_gateway_scoped_read_smoke.py"],
+        "risk_level": "low",
+        "execution_steps": ["READ", "PLAN", "RETRIEVE", "VERIFY"],
+        "verification_plan": "Run scoped read smoke.",
+        "rollback_plan": "Keep task running if plan-bound run_start fails.",
+        "status": "submitted",
+    }, token=token, workspace_header=workspace)
+    output_chunks.append(raw)
+    require(status == 201, f"plan create failed: {status} {plan}")
+    plan_id = (plan.get("agent_plan") or {}).get("plan_id")
+    require(bool(plan_id), f"plan id missing: {plan}")
+    status, verified, raw = http_json("GET", base_url, f"/api/agent-gateway/agent-plans/{plan_id}/verify", token=token, workspace_header=workspace)
+    output_chunks.append(raw)
+    require(status == 200 and (verified.get("verification") or {}).get("pass") is True, f"plan verify failed: {status} {verified}")
+    return plan_id
+
+
 def main() -> int:
     base_url = "http://127.0.0.1:8787"
     stamp = now_stamp()
@@ -83,7 +109,7 @@ def main() -> int:
             "agent_id": agent_id,
             "name": "Scoped Read Smoke",
             "runtime_type": "mock",
-            "scopes": ["agents:heartbeat", "tasks:read", "tasks:claim", "runs:write", "toolcalls:write", "artifacts:write", "evaluations:submit", "audit:write"],
+            "scopes": ["agents:heartbeat", "tasks:read", "tasks:claim", "agent_plans:read", "agent_plans:write", "runs:write", "toolcalls:write", "artifacts:write", "evaluations:submit", "audit:write"],
             "ttl_days": 1,
             "heartbeat_timeout_sec": 60,
         })
@@ -129,7 +155,8 @@ def main() -> int:
         output_chunks.append(raw)
         require(status == 200, f"claim A failed: {status} {claim}")
 
-        status, started, raw = http_json("POST", base_url, "/api/agent-gateway/runs/start", {"task_id": task_a, "runtime_type": "mock"}, token=token, workspace_header=workspace_a)
+        plan_id = create_verified_plan(base_url, token, workspace_a, agent_id, task_a, output_chunks)
+        status, started, raw = http_json("POST", base_url, "/api/agent-gateway/runs/start", {"task_id": task_a, "runtime_type": "mock", "agent_plan_id": plan_id}, token=token, workspace_header=workspace_a)
         output_chunks.append(raw)
         require(status in {200, 201}, f"run start failed: {status} {started}")
         run_id = (started.get("run") or {}).get("run_id")

@@ -72,6 +72,30 @@ def expect_forbidden(label: str, status: int, payload: dict) -> str:
     return payload.get("message", "")
 
 
+def create_verified_plan(base_url: str, token: str, agent_id: str, task_id: str) -> str:
+    status, plan = http_json("POST", base_url, "/api/agent-gateway/agent-plans", {
+        "workspace_id": "local-demo",
+        "agent_id": agent_id,
+        "task_id": task_id,
+        "task_understanding": "Verify scoped worker can start only plan-bound runs.",
+        "referenced_specs": ["PROJECT_SPEC.md", "AGENT_WORKFLOW.md"],
+        "referenced_memories": ["knowledge/shared/common_failures.md"],
+        "referenced_bases": ["base_local_tasks"],
+        "proposed_files_to_change": ["scripts/agent_gateway_scope_matrix_smoke.py"],
+        "risk_level": "low",
+        "execution_steps": ["READ", "PLAN", "RETRIEVE", "VERIFY"],
+        "verification_plan": "Run the scope matrix smoke.",
+        "rollback_plan": "Keep the task planned if run_start fails.",
+        "status": "submitted",
+    }, token=token)
+    require(status == 201, f"plan create failed: {status} {plan}")
+    plan_id = (plan.get("agent_plan") or {}).get("plan_id")
+    require(bool(plan_id), f"plan id missing: {plan}")
+    status, verified = http_json("GET", base_url, f"/api/agent-gateway/agent-plans/{plan_id}/verify", token=token)
+    require(status == 200 and (verified.get("verification") or {}).get("pass") is True, f"plan verify failed: {status} {verified}")
+    return plan_id
+
+
 def smoke(base_url: str, stamp: str) -> dict:
     observer_agent = f"agt_scope_observer_{stamp}"
     worker_agent = f"agt_scope_worker_{stamp}"
@@ -80,7 +104,7 @@ def smoke(base_url: str, stamp: str) -> dict:
     worker_token_id = None
     try:
         observer = create_enrollment(base_url, observer_agent, "Scope Matrix Observer", ["agents:heartbeat", "tasks:read", "audit:write"])
-        worker = create_enrollment(base_url, worker_agent, "Scope Matrix Worker", ["agents:heartbeat", "tasks:read", "tasks:claim", "runs:write", "toolcalls:write", "artifacts:write", "evaluations:submit", "audit:write"])
+        worker = create_enrollment(base_url, worker_agent, "Scope Matrix Worker", ["agents:heartbeat", "tasks:read", "tasks:claim", "agent_plans:read", "agent_plans:write", "runs:write", "toolcalls:write", "artifacts:write", "evaluations:submit", "audit:write"])
         observer_token = observer["token"]
         worker_token = worker["token"]
         observer_token_id = observer["token_id"]
@@ -131,7 +155,8 @@ def smoke(base_url: str, stamp: str) -> dict:
 
         status, claimed = http_json("POST", base_url, f"/api/agent-gateway/tasks/{task_id}/claim", {"runtime_type": "mock"}, token=worker_token)
         require(status == 200, f"worker claim failed: {status} {claimed}")
-        status, started = http_json("POST", base_url, "/api/agent-gateway/runs/start", {"task_id": task_id, "runtime_type": "mock"}, token=worker_token)
+        plan_id = create_verified_plan(base_url, worker_token, worker_agent, task_id)
+        status, started = http_json("POST", base_url, "/api/agent-gateway/runs/start", {"task_id": task_id, "runtime_type": "mock", "agent_plan_id": plan_id}, token=worker_token)
         require(status in {200, 201}, f"worker run start failed: {status} {started}")
         run_id = (started.get("run") or {}).get("run_id")
         require(run_id, f"worker run id missing: {started}")

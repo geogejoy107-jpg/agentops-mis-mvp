@@ -136,6 +136,20 @@ def synthesis_artifact_counts(conn: sqlite3.Connection, artifact_id: str) -> dic
     }
 
 
+def promotion_evidence(conn: sqlite3.Connection, artifact_id: str, delivery_artifact_id: str) -> dict:
+    return {
+        "memory_candidates": int(conn.execute("SELECT COUNT(*) FROM memories WHERE source_ref=?", (artifact_id,)).fetchone()[0] or 0),
+        "delivery_artifacts": int(conn.execute("SELECT COUNT(*) FROM artifacts WHERE artifact_id=?", (delivery_artifact_id,)).fetchone()[0] or 0),
+        "promotion_audits": int(conn.execute(
+            "SELECT COUNT(*) FROM audit_logs WHERE action LIKE 'commander.work_package_synthesis_promote%' AND metadata_json LIKE ?",
+            (f"%{artifact_id}%",),
+        ).fetchone()[0] or 0),
+        "promotion_events": int(conn.execute(
+            "SELECT COUNT(*) FROM runtime_events WHERE event_type LIKE 'commander.work_package_synthesis.promote%' AND raw_payload_hash IS NOT NULL",
+        ).fetchone()[0] or 0),
+    }
+
+
 def source_run(conn: sqlite3.Connection) -> dict:
     row = conn.execute(
         """SELECT r.run_id, r.task_id, r.agent_id, e.evaluation_id
@@ -457,6 +471,99 @@ def main() -> int:
         remediation_loop = operator_payload.get("remediation_loop") or {}
         require(bool(remediation_loop.get("actions")), f"operator remediation loop action missing: {operator_payload}")
         require(operator_payload.get("safety", {}).get("ledger_mutated") is False, f"operator action plan mutated ledger flag: {operator_payload}")
+
+        synthesis_approval_id = synthesis_created_payload.get("approval_id") or ""
+        approve_status, approved_synthesis = http_json("POST", f"/api/approvals/{synthesis_approval_id}/approve", {})
+        transcripts.append(json.dumps(approved_synthesis, ensure_ascii=False))
+        require(approve_status == 200, f"synthesis approval failed: {approve_status} {approved_synthesis}")
+        require(approved_synthesis.get("decision") == "approved", f"synthesis approval not approved: {approved_synthesis}")
+
+        promote_preview = run_cli([
+            "commander",
+            "promote-synthesis",
+            "--artifact-id",
+            synthesis_artifact_id,
+            "--approval-id",
+            synthesis_approval_id,
+            "--mode",
+            "both",
+        ])
+        transcripts.extend([promote_preview.stdout, promote_preview.stderr])
+        promote_preview_payload = load_json(promote_preview)
+        require(promote_preview.returncode == 0, f"promote preview failed: {promote_preview.stderr or promote_preview.stdout}")
+        require(promote_preview_payload.get("status") == "preview", f"promote preview status wrong: {promote_preview_payload}")
+        require(promote_preview_payload.get("safety", {}).get("ledger_mutated") is False, f"promote preview mutated ledger: {promote_preview_payload}")
+
+        promote = run_cli([
+            "commander",
+            "promote-synthesis",
+            "--artifact-id",
+            synthesis_artifact_id,
+            "--approval-id",
+            synthesis_approval_id,
+            "--mode",
+            "both",
+            "--confirm-promote",
+        ])
+        transcripts.extend([promote.stdout, promote.stderr])
+        promote_payload = load_json(promote)
+        require(promote.returncode == 0, f"promote failed: {promote.stderr or promote.stdout}")
+        require(promote_payload.get("status") == "promoted", f"promote status wrong: {promote_payload}")
+        require(promote_payload.get("safety", {}).get("memory_candidate_created") is True, f"memory promotion missing: {promote_payload}")
+        require(promote_payload.get("safety", {}).get("customer_delivery_artifact_created") is True, f"delivery promotion missing: {promote_payload}")
+        delivery_artifact_id = promote_payload.get("delivery_artifact_id") or ""
+        require(delivery_artifact_id.startswith("art_customer_cmd_synthesis_"), f"bad delivery artifact id: {promote_payload}")
+
+        conn = sqlite3.connect(DEFAULT_DB)
+        try:
+            promoted_counts = promotion_evidence(conn, synthesis_artifact_id, delivery_artifact_id)
+            require(promoted_counts["memory_candidates"] >= 1, f"memory candidate missing after promote: {promoted_counts}")
+            require(promoted_counts["delivery_artifacts"] == 1, f"delivery artifact missing after promote: {promoted_counts}")
+            require(promoted_counts["promotion_audits"] >= 2, f"promotion audit missing after promote: {promoted_counts}")
+            require(promoted_counts["promotion_events"] >= 2, f"promotion events missing after promote: {promoted_counts}")
+        finally:
+            conn.close()
+
+        delivery_status, delivery_board = http_json("GET", "/api/workflows/customer-delivery-board?limit=20")
+        transcripts.append(json.dumps(delivery_board, ensure_ascii=False))
+        require(delivery_status == 200, f"delivery board failed after promote: {delivery_status} {delivery_board}")
+        deliveries = delivery_board.get("deliveries") or []
+        require(any(row.get("artifact_id") == delivery_artifact_id for row in deliveries), f"promoted delivery missing from board: {delivery_board}")
+
+        operator_promoted_status, operator_promoted = http_json("GET", "/api/operator/action-plan?limit=20")
+        transcripts.append(json.dumps(operator_promoted, ensure_ascii=False))
+        require(operator_promoted_status == 200, f"operator action plan after promote failed: {operator_promoted_status} {operator_promoted}")
+        operator_promoted_summary = operator_promoted.get("summary") or {}
+        require(operator_promoted.get("provider") == "agentops-operator", f"operator promoted provider wrong: {operator_promoted}")
+        require(operator_promoted.get("operation") == "action_plan", f"operator promoted operation wrong: {operator_promoted}")
+        require(operator_promoted_summary.get("remediation_packages", 0) >= 1, f"operator promoted package count missing: {operator_promoted}")
+        require(operator_promoted_summary.get("remediation_promoted_memories", 0) >= 1, f"operator promoted memory count missing: {operator_promoted}")
+        require(operator_promoted_summary.get("remediation_promoted_deliveries", 0) >= 1, f"operator promoted delivery count missing: {operator_promoted}")
+        require((operator_promoted.get("source_status") or {}).get("remediation_loop") == "promoted", f"operator remediation promoted status wrong: {operator_promoted}")
+        promoted_loop = operator_promoted.get("remediation_loop") or {}
+        require(promoted_loop.get("operation") == "evaluation_case_remediation_loop", f"operator promoted loop operation wrong: {operator_promoted}")
+        promoted_loop_summary = promoted_loop.get("summary") or {}
+        require(promoted_loop_summary.get("promoted_memory_candidates", 0) >= 1, f"operator loop promoted memory count missing: {operator_promoted}")
+        require(promoted_loop_summary.get("promoted_delivery_artifacts", 0) >= 1, f"operator loop promoted delivery count missing: {operator_promoted}")
+        promoted_synthesis = [
+            item for item in (promoted_loop.get("synthesis") or [])
+            if item.get("artifact_id") == synthesis_artifact_id
+        ]
+        require(promoted_synthesis, f"promoted synthesis missing from remediation loop: {operator_promoted}")
+        require(promoted_synthesis[0].get("status") == "promoted", f"synthesis status not promoted: {promoted_synthesis[0]}")
+        require(promoted_synthesis[0].get("approval_id") == synthesis_approval_id, f"synthesis approval id wrong: {promoted_synthesis[0]}")
+        require(promoted_synthesis[0].get("approval_decision") == "approved", f"synthesis approval decision wrong: {promoted_synthesis[0]}")
+        require(promoted_synthesis[0].get("memory_candidates", 0) >= 1, f"synthesis memory count missing: {promoted_synthesis[0]}")
+        require(promoted_synthesis[0].get("delivery_artifacts", 0) >= 1, f"synthesis delivery count missing: {promoted_synthesis[0]}")
+        promoted_actions = promoted_loop.get("actions") or []
+        require(not any(remediation_project_id in str(action.get("command") or "") and "synthesize" in str(action.get("command") or "") for action in promoted_actions), f"promoted remediation should not request duplicate synthesis: {operator_promoted}")
+        commands_after_promote = [str(action.get("command") or "") for action in (operator_promoted.get("actions") or [])]
+        commands_after_promote.extend(str(command or "") for command in (operator_promoted.get("top_commands") or []))
+        require(not any(synthesis_artifact_id in command and "promote-synthesis" in command for command in commands_after_promote), f"promoted synthesis should not request duplicate promotion: {operator_promoted}")
+        require(operator_promoted.get("safety", {}).get("read_only") is True, f"operator promoted action plan not read-only: {operator_promoted}")
+        require(operator_promoted.get("safety", {}).get("ledger_mutated") is False, f"operator promoted action plan mutated ledger flag: {operator_promoted}")
+        require(operator_promoted.get("safety", {}).get("live_execution_performed") is False, f"operator promoted action plan marked live execution: {operator_promoted}")
+        require(operator_promoted.get("token_omitted") is True, f"operator promoted token flag wrong: {operator_promoted}")
 
         acknowledged = run_cli([
             "eval",

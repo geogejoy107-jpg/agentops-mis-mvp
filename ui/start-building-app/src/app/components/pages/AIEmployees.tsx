@@ -2405,7 +2405,7 @@ export function AIEmployees() {
               <p className="text-[10px] mt-1" style={{ color: "var(--mis-muted)" }}>
                 {copy.actionQueueSummary}
                 {operatorPlanSummary && ` · blocked ${operatorPlanSummary.blocked} / attention ${operatorPlanSummary.attention} / adapter ${operatorPlanSummary.recommended_adapter}`}
-                {operatorPlanSummary && ` · remediation ${operatorPlanSummary.remediation_packages}/${operatorPlanSummary.remediation_pending_reviews}`}
+                {operatorPlanSummary && ` · remediation ${operatorPlanSummary.remediation_packages}/${operatorPlanSummary.remediation_pending_reviews}/${operatorPlanSummary.remediation_promoted_deliveries}`}
               </p>
             </div>
             <button

@@ -138,12 +138,39 @@ def create_task(client: AgentOpsClient, project_id: str, index: int, task: dict)
     return client.post("/api/tasks", payload)
 
 
+def create_verified_plan(client: AgentOpsClient, workspace_id: str, task_id: str, task: dict, project_id: str) -> str:
+    plan = client.post("/api/agent-gateway/agent-plans", {
+        "workspace_id": workspace_id,
+        "agent_id": task["agent_id"],
+        "task_id": task_id,
+        "task_understanding": f"Execute KB bot demo task for project {project_id}: {task['description']}",
+        "referenced_specs": ["PROJECT_SPEC.md", "AGENT_WORKFLOW.md", "docs/AGENT_WORK_METHOD_BLOCK.md"],
+        "referenced_memories": ["knowledge/shared/common_failures.md"],
+        "referenced_bases": ["base_local_tasks", "agent_gateway_ledger"],
+        "proposed_files_to_change": ["customer-kb-demo-ledger"],
+        "risk_level": task.get("risk", "medium"),
+        "approval_required": bool(task.get("tool_calls")),
+        "execution_steps": ["READ", "PLAN", "RETRIEVE", "COMPARE", "EXECUTE", "VERIFY", "RECORD"],
+        "verification_plan": "Record tool/evaluation/artifact/audit evidence without uploading raw documents or credentials.",
+        "rollback_plan": "Keep customer delivery in review and do not approve external ingestion if evidence is incomplete.",
+        "status": "submitted",
+    })
+    plan_id = (plan.get("agent_plan") or {}).get("plan_id")
+    if not plan_id:
+        raise RuntimeError(f"agent plan create did not return plan_id: {plan}")
+    verified = client.get(f"/api/agent-gateway/agent-plans/{plan_id}/verify")
+    if not (verified.get("verification") or {}).get("pass"):
+        raise RuntimeError(f"agent plan verification failed: {json.dumps(verified.get('verification') or {}, ensure_ascii=False)}")
+    return str(plan_id)
+
+
 def run_task(client: AgentOpsClient, workspace_id: str, task_id: str, task: dict, project_id: str) -> dict:
     agent_id = task["agent_id"]
     client.post(f"/api/agent-gateway/tasks/{task_id}/claim", {
         "workspace_id": workspace_id,
         "agent_id": agent_id,
     })
+    plan_id = create_verified_plan(client, workspace_id, task_id, task, project_id)
     run = client.post("/api/agent-gateway/runs/start", {
         "workspace_id": workspace_id,
         "task_id": task_id,
@@ -151,6 +178,7 @@ def run_task(client: AgentOpsClient, workspace_id: str, task_id: str, task: dict
         "runtime_type": "mock",
         "input_summary": task["description"],
         "delegation_id": f"kb-bot-demo:{project_id}:{agent_id}",
+        "agent_plan_id": plan_id,
     })["run"]
     run_id = run["run_id"]
 

@@ -352,6 +352,7 @@ def record_loop_to_mis(args, loop_id: str, outputs: list[dict], artifact: dict) 
         "runtime_type": "codex",
         "input_summary": f"Supervised loop started. topic_hash={stable_hash(args.topic)[:16]}",
         "delegation_id": stable_id("del_loop", loop_id, "supervisor"),
+        "agent_plan_id": parent_plan_id,
     }, agent_id=supervisor_id)
 
     child_task_ids = []
@@ -405,6 +406,7 @@ def record_loop_to_mis(args, loop_id: str, outputs: list[dict], artifact: dict) 
             "input_summary": f"Loop round {row['round']} prompt_hash={row['prompt_hash'][:16]}",
             "parent_run_id": parent_run_id,
             "delegation_id": stable_id("del_loop", loop_id, agent, row["round"]),
+            "agent_plan_id": child_plan_id,
         }, agent_id=agent_id)
         tool = client.post("/api/agent-gateway/tool-calls", {
             "workspace_id": args.workspace_id,

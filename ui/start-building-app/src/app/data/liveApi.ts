@@ -1033,6 +1033,7 @@ export interface OperatorActionPlanPayload {
     remediation_packages: number;
     remediation_ready_for_review: number;
     remediation_pending_reviews: number;
+    remediation_promoted_memories: number;
     remediation_promoted_deliveries: number;
   };
   actions: OperatorActionPlanItem[];
@@ -3187,6 +3188,7 @@ export async function loadOperatorActionPlan(limit = 12): Promise<OperatorAction
       remediation_packages: numberValue(summaryRaw.remediation_packages, 0),
       remediation_ready_for_review: numberValue(summaryRaw.remediation_ready_for_review, 0),
       remediation_pending_reviews: numberValue(summaryRaw.remediation_pending_reviews, 0),
+      remediation_promoted_memories: numberValue(summaryRaw.remediation_promoted_memories, 0),
       remediation_promoted_deliveries: numberValue(summaryRaw.remediation_promoted_deliveries, 0),
     },
     actions: asArray<Record<string, unknown>>(raw.actions).map((item) => ({

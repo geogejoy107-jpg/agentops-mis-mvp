@@ -157,6 +157,12 @@ GET  /api/agent-gateway/agent-plans/:plan_id/verify
 execution steps, verification, rollback, risk and file scope. It is read-only;
 future recorded verification decisions should use a write-scoped endpoint.
 
+`POST /api/agent-gateway/runs/start` is plan-bound: it rejects execution with
+`428 agent_plan_required` unless the selected Agent Plan matches the run's
+workspace, task, and agent and passes verification. Pass `agent_plan_id` in the
+run-start request to make the binding explicit; the run stores `agent_plan_id`
+and `plan_hash` for later plan-evidence manifest checks.
+
 ## Plan Evidence Manifests
 
 ```http

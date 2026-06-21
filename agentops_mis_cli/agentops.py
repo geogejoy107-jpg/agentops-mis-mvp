@@ -493,6 +493,7 @@ def cmd_run_start(args, client: AgentOpsClient) -> dict:
         "delegation_id": args.delegation_id,
         "parent_run_id": args.parent_run_id,
         "approval_required": args.approval_required,
+        "agent_plan_id": args.plan_id,
     }
     return client.post("/api/agent-gateway/runs/start", payload)
 
@@ -1657,6 +1658,7 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument("--input-summary", default="")
     start.add_argument("--delegation-id", default=None)
     start.add_argument("--parent-run-id", default=None)
+    start.add_argument("--plan-id", default=None, help="Verified Agent Plan id that authorizes this run.")
     start.add_argument("--approval-required", action="store_true")
     start.set_defaults(handler="run_start")
 

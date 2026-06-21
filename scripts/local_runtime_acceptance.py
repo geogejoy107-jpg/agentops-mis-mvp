@@ -133,7 +133,35 @@ def run_agent_gateway_cli_smoke(base_url: str) -> dict:
     outputs["task"] = task
     outputs["pull"] = run_cli(["task", "pull", "--agent-id", agent_id, "--limit", "5"], env)
     outputs["claim"] = run_cli(["task", "claim", "--task-id", task_id, "--agent-id", agent_id], env)
-    outputs["run_start"] = run_cli(["run", "start", "--task-id", task_id, "--agent-id", agent_id, "--input-summary", "Acceptance CLI run started"], env)
+    outputs["agent_plan"] = run_cli([
+        "agent-plan",
+        "create",
+        "--agent-id",
+        agent_id,
+        "--task-id",
+        task_id,
+        "--task-understanding",
+        "Verify Agent Gateway CLI writes task/run/tool/eval/memory/audit evidence through a plan-bound run.",
+        "--referenced-specs",
+        "PROJECT_SPEC.md,AGENT_WORKFLOW.md",
+        "--referenced-memories",
+        "knowledge/shared/common_failures.md",
+        "--referenced-bases",
+        "base_local_tasks",
+        "--proposed-files-to-change",
+        "scripts/local_runtime_acceptance.py",
+        "--risk",
+        "low",
+        "--execution-steps",
+        "READ,PLAN,RETRIEVE,EXECUTE,VERIFY",
+        "--verification-plan",
+        "Complete the local runtime acceptance evidence chain.",
+        "--rollback-plan",
+        "Leave the task running/failed and inspect run_start plan gate evidence.",
+    ], env)
+    plan_id = outputs["agent_plan"]["agent_plan"]["plan_id"]
+    outputs["agent_plan_verify"] = run_cli(["agent-plan", "verify", "--plan-id", plan_id], env)
+    outputs["run_start"] = run_cli(["run", "start", "--task-id", task_id, "--agent-id", agent_id, "--plan-id", plan_id, "--input-summary", "Acceptance CLI run started"], env)
     mis_run_id = outputs["run_start"]["run"]["run_id"]
     outputs["toolcall"] = run_cli(["toolcall", "record", "--run-id", mis_run_id, "--agent-id", agent_id, "--tool", "agentops.acceptance.cli", "--category", "custom", "--risk", "low", "--summary", "CLI acceptance toolcall recorded."], env)
     outputs["run_done"] = run_cli(["run", "heartbeat", "--run-id", mis_run_id, "--status", "completed", "--summary", "Acceptance CLI run completed", "--duration-ms", "777"], env)

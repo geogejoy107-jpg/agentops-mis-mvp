@@ -318,10 +318,13 @@ CREATE TABLE IF NOT EXISTS runs (
     parent_run_id TEXT,
     delegation_id TEXT,
     approval_required INTEGER NOT NULL DEFAULT 0,
+    agent_plan_id TEXT,
+    plan_hash TEXT,
     created_at TEXT NOT NULL,
     FOREIGN KEY(task_id) REFERENCES tasks(task_id),
     FOREIGN KEY(agent_id) REFERENCES agents(agent_id),
-    FOREIGN KEY(parent_run_id) REFERENCES runs(run_id)
+    FOREIGN KEY(parent_run_id) REFERENCES runs(run_id),
+    FOREIGN KEY(agent_plan_id) REFERENCES agent_plans(plan_id)
 );
 
 CREATE TABLE IF NOT EXISTS tool_calls (
@@ -895,6 +898,8 @@ def ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl: str):
 def ensure_schema_migrations(conn: sqlite3.Connection):
     ensure_column(conn, "tasks", "workspace_id", "workspace_id TEXT NOT NULL DEFAULT 'local-demo'")
     ensure_column(conn, "runs", "workspace_id", "workspace_id TEXT NOT NULL DEFAULT 'local-demo'")
+    ensure_column(conn, "runs", "agent_plan_id", "agent_plan_id TEXT")
+    ensure_column(conn, "runs", "plan_hash", "plan_hash TEXT")
     ensure_column(conn, "runtime_connectors", "trust_status", "trust_status TEXT NOT NULL DEFAULT 'trusted'")
     ensure_column(conn, "runtime_connectors", "trust_note", "trust_note TEXT")
     ensure_column(conn, "runtime_connectors", "trust_updated_at", "trust_updated_at TEXT")
@@ -912,6 +917,7 @@ def ensure_schema_migrations(conn: sqlite3.Connection):
     ensure_column(conn, "plan_evidence_manifests", "verification_result_hash", "verification_result_hash TEXT")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_workspace ON tasks(workspace_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_workspace ON runs(workspace_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_agent_plan ON runs(agent_plan_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_workflow_jobs_status ON workflow_jobs(status, created_at)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_plans_workspace ON agent_plans(workspace_id, created_at)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_agent_plans_hash ON agent_plans(plan_hash)")
@@ -1601,6 +1607,8 @@ def upsert_run(conn, row: dict, actor_id="adapter-import", audit_metadata=None) 
     if not row.get("workspace_id"):
         task = conn.execute("SELECT workspace_id FROM tasks WHERE task_id=?", (row.get("task_id"),)).fetchone()
         row["workspace_id"] = (task["workspace_id"] if task else None) or "local-demo"
+    row.setdefault("agent_plan_id", None)
+    row.setdefault("plan_hash", None)
     before = conn.execute("SELECT * FROM runs WHERE run_id=?", (row["run_id"],)).fetchone()
     if before:
         if actor_id == "openclaw-import":
@@ -1614,15 +1622,17 @@ def upsert_run(conn, row: dict, actor_id="adapter-import", audit_metadata=None) 
             input_tokens=:input_tokens, output_tokens=:output_tokens, reasoning_tokens=:reasoning_tokens,
             cost_usd=:cost_usd, error_type=:error_type, error_message=:error_message, trace_id=:trace_id,
             parent_run_id=:parent_run_id, delegation_id=:delegation_id, approval_required=:approval_required,
-            workspace_id=:workspace_id
+            workspace_id=:workspace_id,
+            agent_plan_id=COALESCE(:agent_plan_id, agent_plan_id),
+            plan_hash=COALESCE(:plan_hash, plan_hash)
             WHERE run_id=:run_id""",
             row,
         )
         action = "run.update"
     else:
         conn.execute(
-            """INSERT INTO runs(run_id,workspace_id,task_id,agent_id,runtime_type,status,started_at,ended_at,duration_ms,input_summary,output_summary,model_provider,model_name,input_tokens,output_tokens,reasoning_tokens,cost_usd,error_type,error_message,trace_id,parent_run_id,delegation_id,approval_required,created_at)
-            VALUES(:run_id,:workspace_id,:task_id,:agent_id,:runtime_type,:status,:started_at,:ended_at,:duration_ms,:input_summary,:output_summary,:model_provider,:model_name,:input_tokens,:output_tokens,:reasoning_tokens,:cost_usd,:error_type,:error_message,:trace_id,:parent_run_id,:delegation_id,:approval_required,:created_at)""",
+            """INSERT INTO runs(run_id,workspace_id,task_id,agent_id,runtime_type,status,started_at,ended_at,duration_ms,input_summary,output_summary,model_provider,model_name,input_tokens,output_tokens,reasoning_tokens,cost_usd,error_type,error_message,trace_id,parent_run_id,delegation_id,approval_required,agent_plan_id,plan_hash,created_at)
+            VALUES(:run_id,:workspace_id,:task_id,:agent_id,:runtime_type,:status,:started_at,:ended_at,:duration_ms,:input_summary,:output_summary,:model_provider,:model_name,:input_tokens,:output_tokens,:reasoning_tokens,:cost_usd,:error_type,:error_message,:trace_id,:parent_run_id,:delegation_id,:approval_required,:agent_plan_id,:plan_hash,:created_at)""",
             row,
         )
         action = "run.create"
@@ -4660,6 +4670,65 @@ def agent_gateway_create_plan_evidence_manifest(conn: sqlite3.Connection, body) 
     }, 201
 
 
+def resolve_agent_plan_for_run(conn: sqlite3.Connection, body: dict, task: sqlite3.Row, agent_id: str, ident: dict) -> tuple[dict | None, tuple[dict, int] | None]:
+    requested_plan_id = body.get("agent_plan_id") or body.get("plan_id")
+    if requested_plan_id:
+        plan = conn.execute("SELECT * FROM agent_plans WHERE plan_id=?", (requested_plan_id,)).fetchone()
+    else:
+        plan = conn.execute(
+            """SELECT * FROM agent_plans
+            WHERE workspace_id=? AND task_id=? AND agent_id=?
+            ORDER BY COALESCE(verified_at, updated_at, created_at) DESC, created_at DESC
+            LIMIT 1""",
+            (ident["workspace_id"], task["task_id"], agent_id),
+        ).fetchone()
+    if not plan:
+        return None, ({
+            "error": "agent_plan_required",
+            "message": "Agent Gateway run_start requires a submitted, verified Agent Plan for this task and agent.",
+            "task_id": task["task_id"],
+            "agent_id": agent_id,
+            "hint": "Create and verify a plan first: agentops agent-plan create ... && agentops agent-plan verify --plan-id <plan_id>",
+            "token_omitted": True,
+        }, 428)
+    if plan["workspace_id"] != ident["workspace_id"]:
+        return None, workspace_forbidden("agent_plan", plan["plan_id"], ident["workspace_id"], plan["workspace_id"])
+    if plan["task_id"] != task["task_id"]:
+        return None, ({"error": "agent_plan_task_mismatch", "message": "Agent Plan task_id must match run_start task_id.", "plan_id": plan["plan_id"], "token_omitted": True}, 409)
+    if plan["agent_id"] != agent_id:
+        return None, ({"error": "agent_plan_agent_mismatch", "message": "Agent Plan agent_id must match run_start agent_id.", "plan_id": plan["plan_id"], "token_omitted": True}, 409)
+    if plan["status"] not in {"submitted", "approved"}:
+        return None, ({"error": "agent_plan_not_executable", "message": "Agent Plan must be submitted or approved before run_start.", "plan_id": plan["plan_id"], "status": plan["status"], "token_omitted": True}, 409)
+    stored_hash = plan["plan_hash"]
+    current_hash = compute_agent_plan_hash(plan)
+    if stored_hash and stored_hash != current_hash:
+        return None, ({
+            "error": "agent_plan_hash_mismatch",
+            "message": "Agent Plan content no longer matches its stored plan_hash.",
+            "plan_id": plan["plan_id"],
+            "stored_plan_hash": stored_hash,
+            "current_plan_hash": current_hash,
+            "token_omitted": True,
+        }, 409)
+    verification = verify_agent_plan_row(plan)
+    if not verification.get("pass"):
+        return None, ({
+            "error": "agent_plan_verification_failed",
+            "message": "Agent Plan failed method-block verification and cannot authorize run_start.",
+            "plan_id": plan["plan_id"],
+            "failed_checks": verification.get("failed_checks") or [],
+            "token_omitted": True,
+        }, 428)
+    plan, verification_hash = persist_agent_plan_verification(conn, plan["plan_id"], verification)
+    return {
+        "plan": plan,
+        "plan_id": plan["plan_id"],
+        "plan_hash": plan["plan_hash"] or verification.get("plan_hash"),
+        "verification": verification,
+        "verification_result_hash": plan["verification_result_hash"] or verification_hash,
+    }, None
+
+
 def agent_gateway_review_queue(conn: sqlite3.Connection, qs: dict, headers, auth_ctx=None) -> tuple[dict, int]:
     ident = agent_gateway_identity(headers, qs=qs, auth_ctx=auth_ctx)
     limit = min(max(int((qs.get("limit") or ["20"])[0]), 1), 100)
@@ -4797,6 +4866,9 @@ def agent_gateway_start_run(conn, body) -> tuple[dict, int]:
         return {"error": "conflict", "message": f"Task {task_id} is already running.", "status": task["status"], "owner_agent_id": task["owner_agent_id"]}, 409
     if task["status"] not in {"planned", "backlog", "running"}:
         return {"error": "conflict", "message": f"Task {task_id} cannot start a run from status {task['status']}.", "status": task["status"], "owner_agent_id": task["owner_agent_id"]}, 409
+    plan_binding, plan_error = resolve_agent_plan_for_run(conn, body, task, agent_id, ident)
+    if plan_error:
+        return plan_error
     ensure_gateway_agent(conn, agent_id, runtime_type=body.get("runtime_type"))
     agent = conn.execute("SELECT * FROM agents WHERE agent_id=?", (agent_id,)).fetchone()
     started = now_iso()
@@ -4825,13 +4897,30 @@ def agent_gateway_start_run(conn, body) -> tuple[dict, int]:
         "parent_run_id": body.get("parent_run_id"),
         "delegation_id": body.get("delegation_id") or stable_id("del", "agent_gateway", task_id, agent_id),
         "approval_required": 1 if body.get("approval_required") else 0,
+        "agent_plan_id": plan_binding["plan_id"],
+        "plan_hash": plan_binding["plan_hash"],
         "created_at": started,
     }
-    outcome = upsert_run(conn, row, "agent-gateway", {"workspace_id": ident["workspace_id"], "input_hash": stable_hash(body.get("input_summary") or task["title"])})
+    outcome = upsert_run(conn, row, "agent-gateway", {
+        "workspace_id": ident["workspace_id"],
+        "input_hash": stable_hash(body.get("input_summary") or task["title"]),
+        "agent_plan_id": plan_binding["plan_id"],
+        "plan_hash": plan_binding["plan_hash"],
+        "verification_result_hash": plan_binding.get("verification_result_hash"),
+    })
     conn.execute("UPDATE tasks SET status='running', owner_agent_id=COALESCE(NULLIF(owner_agent_id,''), ?), updated_at=? WHERE task_id=?", (agent_id, now_iso(), task_id))
     conn.execute("UPDATE agents SET status='running', updated_at=? WHERE agent_id=?", (now_iso(), agent_id))
-    runtime_event(conn, "rtc_agent_gateway_local", "run.start", "running", task_id=task_id, run_id=run_id, agent_id=agent_id, input_summary=row["input_summary"])
-    return {"run": row, "outcome": outcome}, 201 if outcome == "created" else 200
+    runtime_event(conn, "rtc_agent_gateway_local", "run.start", "running", task_id=task_id, run_id=run_id, agent_id=agent_id, input_summary=row["input_summary"], output_summary=f"Run bound to agent_plan {plan_binding['plan_id']}.")
+    return {
+        "run": row,
+        "outcome": outcome,
+        "agent_plan": {
+            "plan_id": plan_binding["plan_id"],
+            "plan_hash": plan_binding["plan_hash"],
+            "verification_result_hash": plan_binding.get("verification_result_hash"),
+            "verification_pass": bool((plan_binding.get("verification") or {}).get("pass")),
+        },
+    }, 201 if outcome == "created" else 200
 
 
 def agent_gateway_run_heartbeat(conn, run_id: str, body) -> tuple[dict, int]:
@@ -11446,13 +11535,15 @@ def evaluation_case_remediation_loop(conn: sqlite3.Connection, workspace_id: str
             "SELECT COUNT(*) FROM audit_logs WHERE action='commander.work_package_synthesis_promote_delivery' AND metadata_json LIKE ?",
             (f"%{artifact_id}%",),
         )
+        if memory_count:
+            promoted_memories += memory_count
+        if delivery_count:
+            promoted_deliveries += delivery_count
         if delivery_count:
             status = "promoted"
-            promoted_deliveries += delivery_count
             next_action = "agentops workflow delivery-board --limit 12"
         elif memory_count:
             status = "memory_pending_review"
-            promoted_memories += memory_count
             next_action = "agentops review queue --limit 12"
         elif approval_data.get("decision") == "approved":
             status = "approved_not_promoted"
@@ -11481,6 +11572,7 @@ def evaluation_case_remediation_loop(conn: sqlite3.Connection, workspace_id: str
             "next_action": next_action,
         })
 
+    synthesized_project_ids = {item.get("project_id") for item in synthesis_items if item.get("project_id")}
     actions = []
     for pkg in packages:
         package_status = pkg.get("package_status")
@@ -11491,6 +11583,8 @@ def evaluation_case_remediation_loop(conn: sqlite3.Connection, workspace_id: str
             priority = 88
             title = "Dispatch failed-benchmark remediation package"
         elif package_status == "ready_for_review":
+            if project_id in synthesized_project_ids:
+                continue
             command = f"agentops commander synthesize --project-id {project_id} --status ready_for_review --confirm-create"
             severity = "attention"
             priority = 87
@@ -11550,14 +11644,14 @@ def evaluation_case_remediation_loop(conn: sqlite3.Connection, workspace_id: str
         status = "review_pending"
     elif approved_not_promoted:
         status = "promotion_available"
+    elif promoted_deliveries or promoted_memories:
+        status = "promoted"
     elif status_counts.get("blocked"):
         status = "blocked"
     elif status_counts.get("ready_for_review"):
         status = "ready_for_synthesis"
     elif status_counts.get("planned"):
         status = "planned"
-    elif promoted_deliveries or promoted_memories:
-        status = "promoted"
     elif packages:
         status = "active"
     else:
@@ -12426,6 +12520,7 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             "remediation_packages": (remediation_loop.get("summary") or {}).get("remediation_packages", 0),
             "remediation_ready_for_review": (remediation_loop.get("summary") or {}).get("ready_for_review", 0),
             "remediation_pending_reviews": (remediation_loop.get("summary") or {}).get("pending_reviews", 0),
+            "remediation_promoted_memories": (remediation_loop.get("summary") or {}).get("promoted_memory_candidates", 0),
             "remediation_promoted_deliveries": (remediation_loop.get("summary") or {}).get("promoted_delivery_artifacts", 0),
         },
         "actions": deduped,

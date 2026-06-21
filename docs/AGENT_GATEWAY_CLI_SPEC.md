@@ -391,7 +391,10 @@ agentops agent-plan create \
 agentops agent-plan verify --plan-id plan_123
 ```
 
-`agentops agent-plan verify` is read-only.
+`agentops agent-plan verify` is read-only. `agentops run start` requires a
+submitted/verified plan for the same workspace, task, and agent. Pass the plan
+explicitly with `--plan-id`, or rely on the latest verified plan for that task
+and agent only when the operator intentionally wants that default binding.
 
 ### `agentops plan-evidence`
 
@@ -984,12 +987,33 @@ Writes:
 
 ### `POST /api/agent-gateway/runs/start`
 
-Creates a run for an agent and task.
+Creates a run for an agent and task. This endpoint fails closed with
+`428 agent_plan_required` unless the request is bound to a submitted Agent Plan
+that verifies against the Agent Work Method Block. The plan must match
+`workspace_id`, `task_id`, `agent_id`, and stored `plan_hash`.
+
+Example:
+
+```json
+{
+  "task_id": "tsk_example",
+  "agent_id": "agt_builder",
+  "runtime_type": "mock",
+  "agent_plan_id": "plan_123",
+  "input_summary": "Plan-bound run start."
+}
+```
+
+The created run stores `agent_plan_id` and `plan_hash`; the response includes
+an `agent_plan.verification_pass` summary so operators can audit the execution
+boundary before later binding a plan-evidence manifest.
 
 Writes:
 
 - `runs`
 - `audit_logs`
+- `runtime_events`
+- `agent_plans` verification metadata when the selected plan is verified
 
 ### `POST /api/agent-gateway/runs/:id/heartbeat`
 
@@ -1129,6 +1153,14 @@ agentops eval case-runs --case-id evalcase_123 --limit 5
 agentops eval case-runs --task-id tsk_123 --limit 10
 agentops eval remediate-case-run --case-run-id ecr_123
 agentops eval remediate-case-run --case-run-id ecr_123 --confirm-create
+agentops commander packages --project-id proj_evalcase_remediation_x --limit 5
+agentops commander dispatch-package --task-id tsk_evalcase_fix_ecr_123 --adapter mock
+agentops commander synthesize --project-id proj_evalcase_remediation_x --status ready_for_review --confirm-create
+agentops approval inspect --approval-id ap_cmd_synthesis_x
+agentops approval approve --approval-id ap_cmd_synthesis_x
+agentops commander promote-synthesis --artifact-id art_cmd_synthesis_x --approval-id ap_cmd_synthesis_x --mode both --confirm-promote
+agentops operator action-plan --limit 20
+agentops workflow delivery-board --limit 12
 ```
 
 Maps to `POST /api/evaluation-cases/propose`, `GET /api/evaluation-cases`,
@@ -1159,6 +1191,12 @@ preview returns a deterministic Commander-compatible task draft, and
 `--confirm-create` writes a normal task plus runtime/audit evidence. Existing
 deterministic remediation task ids are returned as `already_exists` instead of
 silently updating work.
+After dispatch and synthesis, the remediation project uses the same Commander
+approval/promotion lifecycle as ordinary work packages. The operator action
+plan reports pending remediation synthesis reviews, approved-but-not-promoted
+synthesis reports, promoted remediation memory candidates, and promoted
+remediation delivery artifacts without running workers, approving gates, or
+mutating the ledger.
 
 Customer worker tasks automatically run task-bound approved evaluation cases
 after a worker completes, then include `evaluation_case_runs` in the returned
