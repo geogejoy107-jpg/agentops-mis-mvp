@@ -3,10 +3,12 @@
 > Status date: 2026-06-21  
 > Repository: `geogejoy107-jpg/agentops-mis-mvp`  
 > Development line: `codex/agent-gateway-kb-demo`  
-> Latest observed development commit: `9d47f0e1bcdc3da9f9b8e37733b4ae12c96507cf`  
+> Project-governance integration commit: `5f1706c3afed22156e0bb3dc06ca351f698713d9`  
 > Last full audit baseline: `8d1827e00629bdca4779794121ca4a31dfa3f1e1`  
-> Governance branch: `ops/project-governance-ledger`  
-> Audit PR: `#5`
+> Governance PR: `#6` merged  
+> Audit PR: `#5` draft
+
+Always fetch the exact current development HEAD from GitHub before code or architecture work. The integration commit above is a stable baseline, not a claim that the branch will never advance.
 
 ## Product Position
 
@@ -48,7 +50,7 @@ The full audit at `8d1827e` verified a credible local-first control-plane candid
 - Markdown plus SQLite FTS5 Knowledge Index v0;
 - Agent Plan API/CLI and verification v0.
 
-The development line advanced after that audit. Observed post-audit work includes customer local-deployment and SQLite backup/restore tooling, followed by the Commander Work Package Planner at `9d47f0e1`. These later commits have not yet received the same complete audit as `8d1827e`; historical blocker status must not be assumed resolved.
+Observed post-audit work includes customer local-deployment and SQLite backup/restore tooling, the Commander Work Package Planner, and the project-governance integration at `5f1706c3`. These later commits have not yet received the same complete audit as `8d1827e`; historical blocker status must not be assumed resolved.
 
 ## Current Deployment Truth
 
@@ -59,19 +61,19 @@ Not yet approved as a canonical claim: shared production deployment, multi-tenan
 ## Current Milestone
 
 ```text
-establish durable project governance
--> re-verify latest development HEAD
+project governance installed
+-> re-verify exact latest development HEAD
 -> close execution and permission correctness gaps
 -> establish CI, security, concurrency, and performance gates
 -> produce a clean v1.5 release candidate
--> merge through a reviewed PR
+-> merge to main through a reviewed release PR
 ```
 
 Horizontal feature expansion remains secondary until this sequence is complete.
 
 ## P0 Items Requiring Current-HEAD Verification
 
-The last full audit found these areas. Each must be checked against the latest development commit before changing code:
+The last full audit found these areas. Each must be checked against the exact latest development commit before changing code:
 
 1. Agent Plan approval roles and self-approval prevention.
 2. Immutable Plan hash and verified Plan hard-binding to Run and Delivery.
@@ -85,22 +87,23 @@ The last full audit found these areas. Each must be checked against the latest d
 10. SQLite WAL, busy timeout, short transactions, and concurrency baseline.
 11. Automated CI status, secret scanning, SBOM, license, and provenance.
 
-## Project Governance Added in This Workstream
+## Project Governance Now Installed
 
 - Notion `MIS Project Control Center`.
 - Notion `MIS Project Ledger` with dedicated review and status views.
 - Root `AGENTS.md` repository instructions.
+- Extended `AGENT_WORKFLOW.md` with Git preflight, deduplication, Project Delta, and handoff rules.
 - Versioned `PROJECT_STATE`, `DECISIONS`, `BACKLOG`, `HANDOFF`, and operating rules.
 - Repo-local `.agents/skills/project-ledger/SKILL.md`.
 - Ready-to-paste ChatGPT Project Instructions template.
 
 ## Known Unknowns
 
-- The development branch can continue moving while governance work is in review.
-- Historical smoke records are not a substitute for checks on the exact PR head.
+- The development branch can continue moving after this state file is written.
+- Historical smoke records are not a substitute for checks on the exact current head.
 - ChatGPT Project Instructions cannot be edited through the available connector.
 - Automatic capture must remain candidate-only until deduplication and approval are enforced.
 
 ## Next Single Recommended Action
 
-After this governance PR is ready, re-audit the exact latest development head, reconcile the P0 list with changes after `8d1827e`, and implement the first unresolved correctness gate: approval-role separation plus verified Plan-to-Run hard binding.
+Re-audit the exact latest development head, reconcile every historical P0 item with current code and tests, and implement the first unresolved correctness gate: approval-role separation plus verified Plan-to-Run hard binding.
