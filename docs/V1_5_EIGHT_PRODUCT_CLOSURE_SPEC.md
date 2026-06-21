@@ -34,6 +34,12 @@ normal customer task can be dispatched through the machine-facing contract and
 then become visible in the human-facing ledger, approvals, evaluations, audit,
 and artifact views.
 
+Parallel product work should use
+`docs/PARALLEL_PRODUCT_DELIVERY_BRANCH_PLAN.md` as the branch ownership and
+handoff map. It keeps remote worker, customer task flow, RBAC, fleet console,
+and demo/documentation workstreams separated while preserving the same
+CLI/API-first agent execution contract.
+
 ## The Eight Product Closure Items
 
 ### 1. Real Long-Running Agent Worker
