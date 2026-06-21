@@ -329,6 +329,8 @@ export function AIEmployees() {
       activeIntakeGate: "Active intake gate",
       activeIntakeSummary: "Planned work is blocked before worker pull. Resolve the listed Agent Plan / knowledge gates first.",
       workerStartBlockedHint: "Worker daemon start/restart is held until intake gates pass.",
+      dispatchEvidenceTitle: "Dispatch evidence proofs",
+      dispatchEvidenceSummary: "Verified worker/customer dispatch runs with Agent Plan, plan evidence manifest and ledger counts.",
       copyCommand: "Copy command",
       copiedCommand: "Copied",
       reopenEvidenceGap: "Reopen",
@@ -674,6 +676,8 @@ export function AIEmployees() {
       activeIntakeGate: "接单 Gate 生效",
       activeIntakeSummary: "已有 planned 工作在 worker pull 前被阻塞；请先处理 Agent Plan / 知识 Gate。",
       workerStartBlockedHint: "Worker 常驻启动/重启会被暂停，直到接单 Gate 通过。",
+      dispatchEvidenceTitle: "派发证据证明",
+      dispatchEvidenceSummary: "已验证的 worker/customer 派发 run，包含 Agent Plan、plan evidence manifest 和账本计数。",
       copyCommand: "复制命令",
       copiedCommand: "已复制",
       reopenEvidenceGap: "重开",
@@ -1093,6 +1097,7 @@ export function AIEmployees() {
     list.findIndex(item => item.action === candidate.action) === index
   )).sort((left, right) => actionQueueCandidateScore(right.action) - actionQueueCandidateScore(left.action)).slice(0, 8);
   const actionQueueKey = actionQueueCandidates.map(item => item.id).join("|");
+  const dispatchEvidenceActions = operatorPlanActions.filter(item => item.lane === "dispatch_evidence").slice(0, 4);
   const orderedActionQueue = [
     ...actionQueueOrder.map(id => actionQueueCandidates.find(item => item.id === id)).filter(Boolean),
     ...actionQueueCandidates.filter(item => !actionQueueOrder.includes(item.id)),
@@ -2717,6 +2722,51 @@ export function AIEmployees() {
                 </div>
               );
             })}
+          </div>
+          <div className="mt-3 pt-3" style={{ borderTop: "1px solid var(--mis-border)" }}>
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.dispatchEvidenceTitle}</div>
+                <div className="text-[10px] mt-1 max-w-3xl" style={{ color: "var(--mis-dim)" }}>{copy.dispatchEvidenceSummary}</div>
+              </div>
+              <StatusBadge status={(operatorPlanSummary?.dispatch_evidence_verified_manifests || 0) > 0 ? "pass" : "idle"} label={`${operatorPlanSummary?.dispatch_evidence_ready || 0}/${operatorPlanSummary?.dispatch_evidence_proofs || 0}`} />
+            </div>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 mt-2">
+              {dispatchEvidenceActions.length === 0 && (
+                <div className="text-[10px] rounded px-3 py-2" style={{ color: "var(--mis-muted)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                  {copy.noRecommendedActions}
+                </div>
+              )}
+              {dispatchEvidenceActions.map((action) => {
+                const evidence = action.evidence || {};
+                const counts = (evidence.evidence_counts || {}) as Record<string, unknown>;
+                return (
+                  <div key={action.action_id} className="rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="text-[10px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{action.title}</div>
+                        <div className="text-[9px] mt-0.5 truncate" style={{ color: "var(--mis-muted)" }}>
+                          {copy.runId}: {String(evidence.run_id || "—")} · {copy.planEvidence}: {String(evidence.manifest_id || "—")}
+                        </div>
+                      </div>
+                      <StatusBadge status={action.severity} />
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                      {["tool_calls", "evaluations", "artifacts", "plan_evidence_manifests"].map((key) => (
+                        <span key={key} className="text-[9px] px-2 py-0.5 rounded" style={{ color: "var(--mis-muted)", background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                          {key}: {String(counts[key] ?? 0)}
+                        </span>
+                      ))}
+                      {evidence.run_id && (
+                        <Link to={`/admin/runs/${String(evidence.run_id)}`} className="text-[9px] px-2 py-0.5 rounded" style={{ background: "rgba(45,212,191,0.10)", color: "var(--mis-success)", border: "1px solid rgba(45,212,191,0.18)" }}>
+                          {copy.openRun}
+                        </Link>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
           <div className="mt-3 pt-3" style={{ borderTop: "1px solid var(--mis-border)" }}>
             <div className="flex items-start justify-between gap-3">

@@ -1158,12 +1158,17 @@ export interface OperatorActionPlanPayload {
     task_intake_blocked: number;
     task_intake_attention: number;
     task_intake_missing_agent_plan: number;
+    dispatch_evidence_proofs: number;
+    dispatch_evidence_ready: number;
+    dispatch_evidence_waiting_approval: number;
+    dispatch_evidence_verified_manifests: number;
   };
   actions: OperatorActionPlanItem[];
   top_commands: string[];
   source_status: Record<string, string | undefined>;
   execution_evidence?: ExecutionEvidenceGapsPayload;
   task_intake?: TaskIntakeChecklistPayload;
+  dispatch_evidence?: Record<string, unknown>;
   safety: {
     read_only: boolean;
     ledger_mutated: boolean;
@@ -3499,6 +3504,10 @@ export async function loadOperatorActionPlan(limit = 12): Promise<OperatorAction
       task_intake_blocked: numberValue(summaryRaw.task_intake_blocked, 0),
       task_intake_attention: numberValue(summaryRaw.task_intake_attention, 0),
       task_intake_missing_agent_plan: numberValue(summaryRaw.task_intake_missing_agent_plan, 0),
+      dispatch_evidence_proofs: numberValue(summaryRaw.dispatch_evidence_proofs, 0),
+      dispatch_evidence_ready: numberValue(summaryRaw.dispatch_evidence_ready, 0),
+      dispatch_evidence_waiting_approval: numberValue(summaryRaw.dispatch_evidence_waiting_approval, 0),
+      dispatch_evidence_verified_manifests: numberValue(summaryRaw.dispatch_evidence_verified_manifests, 0),
     },
     actions: asArray<Record<string, unknown>>(raw.actions).map((item) => ({
       action_id: String(item.action_id || item.command || item.title || ""),
@@ -3516,6 +3525,7 @@ export async function loadOperatorActionPlan(limit = 12): Promise<OperatorAction
     source_status: typeof raw.source_status === "object" && raw.source_status !== null ? raw.source_status as Record<string, string | undefined> : {},
     execution_evidence: normalizeExecutionEvidenceGaps(raw.execution_evidence),
     task_intake: normalizeTaskIntakeChecklist(raw.task_intake),
+    dispatch_evidence: typeof raw.dispatch_evidence === "object" && raw.dispatch_evidence !== null ? raw.dispatch_evidence as Record<string, unknown> : undefined,
     safety: {
       read_only: boolValue(safetyRaw.read_only),
       ledger_mutated: boolValue(safetyRaw.ledger_mutated),
