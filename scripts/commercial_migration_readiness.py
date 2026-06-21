@@ -187,6 +187,7 @@ def main() -> int:
             "name": "Production Safety Baseline",
             "status": "next",
             "verify": [
+                "python3 scripts/production_auth_fail_closed_smoke.py",
                 "python3 scripts/security_production_readiness_smoke.py",
                 "python3 scripts/agent_gateway_scope_matrix_smoke.py",
                 "python3 scripts/workspace_isolation_smoke.py",

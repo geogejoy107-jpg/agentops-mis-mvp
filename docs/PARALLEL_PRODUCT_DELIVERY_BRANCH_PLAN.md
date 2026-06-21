@@ -70,6 +70,7 @@ python3 scripts/agentops_doctor_smoke.py
 Agent Gateway, enrollment, token, or workspace changes:
 
 ```bash
+python3 scripts/production_auth_fail_closed_smoke.py
 python3 scripts/agent_gateway_scope_matrix_smoke.py
 python3 scripts/agent_gateway_session_smoke.py
 python3 scripts/workspace_isolation_smoke.py

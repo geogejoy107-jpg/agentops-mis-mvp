@@ -2423,9 +2423,18 @@ def bearer_token(headers) -> str:
     return supplied
 
 
+def production_security_requested() -> bool:
+    return (
+        os.environ.get("AGENTOPS_DEPLOYMENT_MODE", "").strip().lower() == "production"
+        or os.environ.get("AGENTOPS_REQUIRE_PRODUCTION_SECURITY", "").strip().lower() in {"1", "true", "yes", "on"}
+    )
+
+
 def agent_gateway_admin_auth_error(headers) -> dict | None:
     expected = os.environ.get("AGENTOPS_ADMIN_KEY", "").strip()
     if not expected:
+        if production_security_requested():
+            return {"error": "unauthorized", "message": "AGENTOPS_ADMIN_KEY is required for Agent Gateway enrollment management in production mode."}
         return None
     supplied = (headers.get("X-AgentOps-Admin-Key") or "").strip()
     auth = (headers.get("Authorization") or "").strip()
@@ -2520,6 +2529,11 @@ def agent_gateway_auth_context(conn, headers, required_scope: str | None = None,
         return None, {
             "error": "unauthorized",
             "message": "Agent Gateway local token is required when AGENTOPS_API_KEY is configured. Token values are never logged.",
+        }
+    if production_security_requested():
+        return None, {
+            "error": "unauthorized",
+            "message": "Agent Gateway token, session, or configured API key is required in production mode.",
         }
     return {
         "mode": "local_dev_no_token",
@@ -3208,13 +3222,10 @@ def truthy_env(name: str) -> bool:
 def security_production_readiness(conn: sqlite3.Connection, headers) -> dict:
     gateway, gateway_status_code = agent_gateway_status(conn, headers)
     auth = gateway.get("auth") or {}
-    auth_mode = auth.get("mode") or "unknown"
+    auth_mode = auth.get("mode") or ("unauthorized" if gateway_status_code == 401 else "unknown")
     api_key_configured = bool(os.environ.get("AGENTOPS_API_KEY", "").strip())
     admin_key_configured = bool(os.environ.get("AGENTOPS_ADMIN_KEY", "").strip())
-    production_requested = (
-        os.environ.get("AGENTOPS_DEPLOYMENT_MODE", "").strip().lower() == "production"
-        or truthy_env("AGENTOPS_REQUIRE_PRODUCTION_SECURITY")
-    )
+    production_requested = production_security_requested()
     bound_or_global_auth = auth_mode in {"global_api_key", "agent_token", "agent_session"}
     dev_no_token = auth_mode == "local_dev_no_token"
     gates = [
@@ -3247,7 +3258,7 @@ def security_production_readiness(conn: sqlite3.Connection, headers) -> dict:
             "label": "Local-dev boundary",
             "status": "fail" if production_requested and dev_no_token else "warn" if dev_no_token else "pass",
             "ok": not dev_no_token,
-            "detail": "local_dev_no_token is allowed for local demos only." if dev_no_token else "request uses authenticated Agent Gateway mode.",
+            "detail": "local_dev_no_token is allowed for local demos only." if dev_no_token else "local-dev no-token fallback is disabled." if auth_mode == "unauthorized" else "request uses authenticated Agent Gateway mode.",
             "next_action": "Do not expose this service beyond 127.0.0.1 until authenticated mode is configured.",
         },
     ]

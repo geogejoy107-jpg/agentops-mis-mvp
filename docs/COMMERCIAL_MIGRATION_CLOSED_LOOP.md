@@ -85,9 +85,14 @@ Must be true:
   and audit evidence have smoke coverage.
 - Live Hermes/OpenClaw execution still requires readiness and explicit
   confirmation.
+- Production mode disables local-dev Agent Gateway fallback: without
+  `AGENTOPS_API_KEY` or scoped agent token/session, Agent Gateway read/write
+  routes return `401`; without `AGENTOPS_ADMIN_KEY`, enrollment/session admin
+  routes return `401`.
 - Verification includes:
 
 ```bash
+python3 scripts/production_auth_fail_closed_smoke.py
 python3 scripts/security_production_readiness_smoke.py
 python3 scripts/agent_gateway_scope_matrix_smoke.py
 python3 scripts/workspace_isolation_smoke.py
