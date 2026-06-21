@@ -77,12 +77,13 @@ python3 scripts/agent_gateway_scoped_read_smoke.py
 
 ## 4. Redaction and secret safety
 
-- [ ] Replace worker marker substitution with value-aware redaction.
-- [ ] Share one redaction library across backend, CLI, worker and tests.
-- [ ] Redact before truncation.
-- [ ] Cover authorization headers, URL parameters, JSON fields, environment assignments and common provider formats.
-- [ ] Raw stdout, stderr and model responses remain outside the ledger by default.
-- [ ] Add mixed-case and unusual-separator regression tests.
+- [x] Replace worker marker substitution with value-aware redaction.
+- [x] Share one redaction library across backend, CLI, worker and tests.
+- [x] Redact before truncation.
+- [x] Cover authorization headers, URL parameters, JSON fields, environment assignments and common provider formats.
+- [x] Raw stdout, stderr and model responses remain outside the ledger by default.
+- [x] Add mixed-case and unusual-separator regression tests.
+- [ ] Add fuzz/property tests before shared/commercial deployment.
 
 ```bash
 python3 scripts/redaction_policy_smoke.py

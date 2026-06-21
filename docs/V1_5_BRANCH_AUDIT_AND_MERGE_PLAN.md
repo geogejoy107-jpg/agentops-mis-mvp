@@ -251,17 +251,26 @@ Hermes/OpenClaw execution is currently summarized as one `agent_worker.<adapter>
 
 ## B0-6: Worker redaction is not strong enough
 
-**Severity: Blocker**
+**Severity: Fixed for local/controlled dogfood; keep as a regression gate for shared deployment**
 
-The server now has a shared-style full-text redaction helper, but the worker still has a separate marker-replacement implementation that can leave the secret value behind or behave inconsistently with mixed case.
+The server, installable CLI, and repo-local worker now share `agentops_mis_cli.redaction` through the same value-aware helpers. `scripts/agent_worker.py` is only a compatibility wrapper around `agentops_mis_cli.worker`, and the worker imports the shared redactor directly.
+
+Current coverage preserves safe operational identifiers such as loopback URLs, task IDs and run IDs, while redacting bearer tokens, `token`/`secret`/`password`/`api_key` assignments, OpenAI/Notion token formats, Agent Gateway token/session refs, email addresses and phone numbers. The helper redacts before truncation.
 
 ### Required fix
 
-- one redaction library for server, CLI, worker and tests;
-- value-aware patterns;
-- redact before truncate;
-- known-secret corpus and fuzz/property tests;
-- raw adapter output hash-only by default.
+- [x] one redaction library for server, CLI, worker and tests;
+- [x] value-aware patterns;
+- [x] redact before truncate;
+- [x] known-secret corpus for common provider and Agent Gateway tokens;
+- [ ] fuzz/property tests;
+- [x] raw adapter output hash-only by default.
+
+Verification:
+
+```bash
+python3 scripts/redaction_policy_smoke.py
+```
 
 ## B0-7: Shared deployment is fail-open
 

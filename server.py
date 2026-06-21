@@ -13918,6 +13918,217 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
     }
 
 
+def operator_loop_audit(conn: sqlite3.Connection, headers, qs=None) -> dict:
+    qs = qs or {}
+    limit = min(max(int((qs.get("limit") or ["12"])[0]), 1), 30)
+    workspace_id = normalize_workspace_id(headers.get("X-AgentOps-Workspace-Id") or "local-demo")
+    loop_id = redact_text((qs.get("loop_id") or [""])[0], 120)
+    action_plan = operator_action_plan(conn, headers, {"limit": [str(limit)]})
+    summary = action_plan.get("summary") or {}
+    task_intake = action_plan.get("task_intake") or {}
+    intake_summary = task_intake.get("summary") or {}
+    execution_evidence = action_plan.get("execution_evidence") or {}
+    evidence_summary = execution_evidence.get("summary") or {}
+    dispatch_evidence = action_plan.get("dispatch_evidence") or {}
+    dispatch_summary = dispatch_evidence.get("summary") or {}
+    source_status = action_plan.get("source_status") or {}
+    loop_readback = hermes_openclaw_loop_readback(conn, loop_id=loop_id or None, limit=limit)
+    loop_summary = loop_readback.get("summary") or {}
+
+    knowledge_docs = scalar_count(conn, "SELECT COUNT(*) FROM knowledge_documents")
+    indexed_specs = scalar_count(
+        conn,
+        "SELECT COUNT(*) FROM knowledge_documents WHERE category IN ('spec','project','architecture','runbook') OR path LIKE 'docs/%' OR path LIKE 'knowledge/%'",
+    )
+    verified_plans = scalar_count(conn, "SELECT COUNT(*) FROM agent_plans WHERE COALESCE(workspace_id,'local-demo')=? AND verified_at IS NOT NULL", (workspace_id,))
+    submitted_plans = scalar_count(conn, "SELECT COUNT(*) FROM agent_plans WHERE COALESCE(workspace_id,'local-demo')=?", (workspace_id,))
+    verified_manifests = scalar_count(conn, "SELECT COUNT(*) FROM plan_evidence_manifests WHERE COALESCE(workspace_id,'local-demo')=? AND status='verified'", (workspace_id,))
+    plan_bound_runs = scalar_count(conn, "SELECT COUNT(*) FROM runs WHERE COALESCE(workspace_id,'local-demo')=? AND agent_plan_id IS NOT NULL AND plan_hash IS NOT NULL", (workspace_id,))
+    completed_plan_bound_runs = scalar_count(conn, "SELECT COUNT(*) FROM runs WHERE COALESCE(workspace_id,'local-demo')=? AND status='completed' AND agent_plan_id IS NOT NULL AND plan_hash IS NOT NULL", (workspace_id,))
+    pending_approvals = scalar_count(conn, "SELECT COUNT(*) FROM approvals WHERE COALESCE(decision,'pending')='pending'")
+    memory_candidates = scalar_count(conn, "SELECT COUNT(*) FROM memories WHERE COALESCE(review_status,'candidate')='candidate'")
+    approved_memories = scalar_count(conn, "SELECT COUNT(*) FROM memories WHERE review_status='approved'")
+    audit_rows = scalar_count(conn, "SELECT COUNT(*) FROM audit_logs")
+    workflow_jobs_running = scalar_count(conn, "SELECT COUNT(*) FROM workflow_jobs WHERE status IN ('queued','running')")
+
+    steps: list[dict] = []
+
+    def add_step(step_id: str, label: str, status: str, message: str, evidence: dict, command: str, source: str) -> None:
+        steps.append({
+            "id": step_id,
+            "label": label,
+            "status": status,
+            "message": redact_text(message, 300),
+            "evidence": evidence,
+            "command": command,
+            "source": source,
+            "token_omitted": True,
+        })
+
+    add_step(
+        "read",
+        "READ",
+        "pass" if knowledge_docs > 0 else "attention",
+        "Project specs, runbooks, and shared knowledge are indexed before agents plan.",
+        {"knowledge_documents": knowledge_docs, "indexed_specs": indexed_specs},
+        "agentops knowledge index --rebuild" if knowledge_docs == 0 else "agentops knowledge search \"project spec\" --limit 10",
+        "knowledge_index",
+    )
+    add_step(
+        "plan",
+        "PLAN",
+        "blocked" if int(summary.get("task_intake_missing_agent_plan") or 0) > 0 else "pass" if verified_plans > 0 else "attention",
+        "Execution must be authorized by a submitted and verified Agent Plan.",
+        {
+            "submitted_agent_plans": submitted_plans,
+            "verified_agent_plans": verified_plans,
+            "task_intake_missing_agent_plan": summary.get("task_intake_missing_agent_plan", 0),
+        },
+        "agentops operator intake-checklist --limit 20",
+        "task_intake",
+    )
+    add_step(
+        "retrieve",
+        "RETRIEVE",
+        "attention" if int(intake_summary.get("missing_knowledge_retrieval") or 0) > 0 else "pass" if knowledge_docs > 0 else "attention",
+        "Agent Plans should reference specs and memory/knowledge before execution.",
+        {
+            "missing_knowledge_retrieval": intake_summary.get("missing_knowledge_retrieval", 0),
+            "tasks_checked": intake_summary.get("tasks_checked", 0),
+            "knowledge_documents": knowledge_docs,
+        },
+        "agentops operator intake-checklist --limit 20",
+        "task_intake",
+    )
+    add_step(
+        "compare",
+        "COMPARE",
+        "attention" if int(intake_summary.get("missing_base_reference") or 0) > 0 else "pass",
+        "Plans should compare work against reusable bases and risk boundaries.",
+        {
+            "missing_base_reference": intake_summary.get("missing_base_reference", 0),
+            "risk_gate_blocked": intake_summary.get("risk_gate_blocked", 0),
+        },
+        "agentops operator intake-checklist --limit 20",
+        "task_intake",
+    )
+    add_step(
+        "execute",
+        "EXECUTE",
+        "blocked" if loop_readback.get("status") == "blocked" else "pass" if plan_bound_runs > 0 or int(loop_summary.get("runs") or 0) > 0 else "attention",
+        "Worker/customer execution should start only after plan binding and preserve run-level proof.",
+        {
+            "plan_bound_runs": plan_bound_runs,
+            "completed_plan_bound_runs": completed_plan_bound_runs,
+            "dispatch_evidence_proofs": dispatch_summary.get("proofs", 0),
+            "loop_runs": loop_summary.get("runs", 0),
+            "loop_failed_runs": loop_summary.get("failed_runs", 0),
+            "workflow_jobs_running": workflow_jobs_running,
+        },
+        "agentops operator action-plan --limit 20",
+        "dispatch_evidence:loop_readback",
+    )
+    add_step(
+        "verify",
+        "VERIFY",
+        "blocked" if int(evidence_summary.get("gap_runs") or 0) > 0 or int(loop_summary.get("blocked_plan_evidence_manifests") or 0) > 0 else "pass" if verified_manifests > 0 or int(loop_summary.get("verified_plan_evidence_manifests") or 0) > 0 else "attention",
+        "Runs should carry verified plan-evidence manifests plus tool/evaluation/artifact/audit rows.",
+        {
+            "verified_plan_evidence_manifests": verified_manifests,
+            "dispatch_verified_manifests": dispatch_summary.get("verified_manifests", 0),
+            "loop_verified_plan_evidence_manifests": loop_summary.get("verified_plan_evidence_manifests", 0),
+            "loop_blocked_plan_evidence_manifests": loop_summary.get("blocked_plan_evidence_manifests", 0),
+            "evidence_gap_runs": evidence_summary.get("gap_runs", 0),
+            "missing_plan_evidence_manifests": evidence_summary.get("missing_manifest_runs", 0),
+        },
+        "agentops operator action-plan --limit 20",
+        "execution_evidence",
+    )
+    record_status = "attention" if pending_approvals or memory_candidates or int(summary.get("review_items_total") or 0) else "pass" if audit_rows > 0 else "attention"
+    add_step(
+        "record",
+        "RECORD",
+        record_status,
+        "Human review, memory promotion, customer delivery, and audit closure must remain explicit.",
+        {
+            "pending_approvals": pending_approvals,
+            "memory_candidates": memory_candidates,
+            "approved_memories": approved_memories,
+            "review_items_total": summary.get("review_items_total", 0),
+            "audit_logs": audit_rows,
+        },
+        "agentops review queue --limit 20" if record_status == "attention" else "agentops operator action-plan --limit 20",
+        "review_memory_audit",
+    )
+
+    blocked = [step for step in steps if step["status"] == "blocked"]
+    attention = [step for step in steps if step["status"] == "attention"]
+    status = "blocked" if blocked else "attention" if attention else "ready"
+    return {
+        "provider": "agentops-operator",
+        "operation": "loop_audit",
+        "status": status,
+        "workspace_id": workspace_id,
+        "loop_id": loop_id or None,
+        "method": "READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD",
+        "summary": {
+            "steps": len(steps),
+            "pass": len([step for step in steps if step["status"] == "pass"]),
+            "attention": len(attention),
+            "blocked": len(blocked),
+            "knowledge_documents": knowledge_docs,
+            "verified_agent_plans": verified_plans,
+            "plan_bound_runs": plan_bound_runs,
+            "verified_plan_evidence_manifests": verified_manifests,
+            "evidence_gap_runs": evidence_summary.get("gap_runs", 0),
+            "loop_runs": loop_summary.get("runs", 0),
+            "loop_verified_plan_evidence_manifests": loop_summary.get("verified_plan_evidence_manifests", 0),
+            "loop_blocked_plan_evidence_manifests": loop_summary.get("blocked_plan_evidence_manifests", 0),
+            "pending_approvals": pending_approvals,
+            "memory_candidates": memory_candidates,
+            "audit_logs": audit_rows,
+        },
+        "steps": steps,
+        "next_actions": [step["command"] for step in steps if step["status"] != "pass"][:5] or ["agentops operator action-plan --limit 20"],
+        "source_status": source_status,
+        "sources": {
+            "action_plan": {
+                "status": action_plan.get("status"),
+                "summary": summary,
+                "top_commands": action_plan.get("top_commands") or [],
+            },
+            "task_intake": {
+                "status": task_intake.get("status"),
+                "summary": intake_summary,
+            },
+            "execution_evidence": {
+                "status": execution_evidence.get("status"),
+                "summary": evidence_summary,
+            },
+            "dispatch_evidence": {
+                "status": dispatch_evidence.get("status"),
+                "summary": dispatch_summary,
+            },
+            "loop_readback": {
+                "status": loop_readback.get("status"),
+                "summary": loop_summary,
+            },
+        },
+        "loop_readback": loop_readback,
+        "contract": "read-only loop audit; it observes the method block and recommends explicit CLI/API actions without creating plans, approvals, runs, memories, or audit rows",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+
+
 def request_base_url(headers=None) -> str | None:
     host = headers.get("Host") if headers else ""
     return f"http://{host}" if host else None
@@ -14742,6 +14953,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(payload)
             if path == "/api/operator/action-plan":
                 payload = operator_action_plan(conn, self.headers, qs)
+                conn.rollback()
+                return self.send_json(payload)
+            if path == "/api/operator/loop-audit":
+                payload = operator_loop_audit(conn, self.headers, qs)
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/operator/intake-checklist":

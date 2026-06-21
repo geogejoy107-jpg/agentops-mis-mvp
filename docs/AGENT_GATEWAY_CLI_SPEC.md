@@ -327,6 +327,22 @@ to a verified plan-evidence manifest. `agentops operator action-plan` embeds
 recent verified dispatch/customer proofs as `dispatch_evidence` so operators can
 track them in the command center after the immediate result card is gone.
 
+### `agentops operator loop-audit`
+
+Reads the Agent Work Method Block as seven explicit gates:
+
+```bash
+agentops operator loop-audit --limit 20
+agentops operator loop-audit --loop-id loop_smoke_api_123 --limit 10
+```
+
+This is a read-only operator audit for
+`READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD`. It
+combines the knowledge index, Agent Plans, task intake, execution-evidence
+gaps, dispatch evidence, review/memory state, audit rows, and optional
+Hermes/OpenClaw `loop://...` readback. It recommends explicit next commands but
+does not create runs, approvals, memories, audit rows, or live adapter work.
+
 ### `agentops task claim`
 
 Claims a task for an agent.

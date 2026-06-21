@@ -319,6 +319,10 @@ def cmd_operator_action_plan(args, client: AgentOpsClient) -> dict:
     return client.get("/api/operator/action-plan", query={"limit": args.limit})
 
 
+def cmd_operator_loop_audit(args, client: AgentOpsClient) -> dict:
+    return client.get("/api/operator/loop-audit", query={"limit": args.limit, "loop_id": args.loop_id or None})
+
+
 def cmd_operator_intake_checklist(args, client: AgentOpsClient) -> dict:
     return client.get("/api/operator/intake-checklist", query={"limit": args.limit})
 
@@ -1578,6 +1582,10 @@ def build_parser() -> argparse.ArgumentParser:
     operator_plan = operator_sub.add_parser("action-plan", help="Show the prioritized next safe CLI/UI actions.")
     operator_plan.add_argument("--limit", type=int, default=12)
     operator_plan.set_defaults(handler="operator_action_plan")
+    operator_loop = operator_sub.add_parser("loop-audit", help="Audit the READ/PLAN/RETRIEVE/COMPARE/EXECUTE/VERIFY/RECORD loop contract.")
+    operator_loop.add_argument("--loop-id", default=None)
+    operator_loop.add_argument("--limit", type=int, default=12)
+    operator_loop.set_defaults(handler="operator_loop_audit")
     operator_intake = operator_sub.add_parser("intake-checklist", help="Show read-only pre-intake gates for planned/backlog tasks.")
     operator_intake.add_argument("--limit", type=int, default=12)
     operator_intake.set_defaults(handler="operator_intake_checklist")
@@ -2301,6 +2309,7 @@ HANDLERS = {
     "local_readiness": cmd_local_readiness,
     "demo_readiness": cmd_demo_readiness,
     "operator_action_plan": cmd_operator_action_plan,
+    "operator_loop_audit": cmd_operator_loop_audit,
     "operator_intake_checklist": cmd_operator_intake_checklist,
     "operator_remediate_evidence_gap": cmd_operator_remediate_evidence_gap,
     "operator_close_evidence_gap": cmd_operator_close_evidence_gap,

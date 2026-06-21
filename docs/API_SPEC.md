@@ -178,6 +178,16 @@ the `task_intake` source and reports `task_intake_checked`,
 `task_intake_ready`, `task_intake_blocked`, `task_intake_attention`, and
 `task_intake_missing_agent_plan`.
 
+`GET /api/operator/loop-audit` is the read-only Agent Work Method Block audit.
+It turns `READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD`
+into seven machine-checkable gates using the existing knowledge index, Agent
+Plans, intake checklist, plan-evidence manifests, execution-evidence gaps,
+dispatch proofs, human review, memory review, and audit ledger. Optional
+`loop_id=<id>` also embeds the Hermes/OpenClaw `loop://...` readback source.
+It never creates plans, runs, approvals, memories, or audit rows; it only
+returns recommended explicit commands for the gates that are blocked or need
+attention.
+
 `GET /api/agent-gateway/tasks/pull?enforce_intake=true` applies the same gate
 at worker pull time: blocked planned/backlog tasks are omitted from `tasks[]`
 and returned under `intake.blocked_tasks[]` with failed gate ids and safe next
