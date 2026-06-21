@@ -173,6 +173,7 @@ agentops doctor
 agentops status
 agentops demo readiness
 agentops local readiness
+agentops workflow delivery-board
 ./scripts/agentops login --base-url http://127.0.0.1:8787 --workspace-id local-demo --agent-id agt_local_worker
 ./scripts/agentops agent register --id agt_local_worker --name "Local Worker" --role "AI Digital Employee"
 ./scripts/agentops task create \
@@ -288,6 +289,15 @@ CLI 方式从客户/外部 agent 侧派发 worker 任务：
   --description "以客户视角审视任务创建、AI 执行、审批、评估、审计和交付报告闭环。" \
   --acceptance "必须返回 run、tool、evaluation、audit 和 artifact 证据。"
 ```
+
+交付完成后，用只读看板确认客户结果确实进入 MIS 管理账本：
+
+```bash
+./scripts/agentops workflow delivery-board --limit 10
+curl -fsS http://127.0.0.1:8787/api/workflows/customer-delivery-board?limit=10 | jq .
+```
+
+这个看板聚合 delivery artifact、task、run、approval、evaluation、audit evidence 和下一步动作；它不启动 worker、不写账本、不触发 live runtime。
 
 更底层的 agent/API 方式是先创建普通 MIS 任务，再由 worker 拉取执行：
 

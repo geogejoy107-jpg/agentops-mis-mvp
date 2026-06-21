@@ -583,6 +583,10 @@ def cmd_workflow_templates(args, client: AgentOpsClient) -> dict:
     return client.get("/api/workflows/customer-task-templates")
 
 
+def cmd_workflow_delivery_board(args, client: AgentOpsClient) -> dict:
+    return client.get("/api/workflows/customer-delivery-board", query={"limit": args.limit})
+
+
 def cmd_workflow_run_template(args, client: AgentOpsClient) -> dict:
     if args.adapter in {"hermes", "openclaw"} and args.confirm_run:
         minimum_timeout = (int(args.hermes_timeout or 300) + 60) if args.adapter == "hermes" else 240
@@ -1272,6 +1276,9 @@ def build_parser() -> argparse.ArgumentParser:
     workflow_sub = workflow.add_subparsers(dest="action", required=True)
     templates_cmd = workflow_sub.add_parser("templates", help="List customer task templates.")
     templates_cmd.set_defaults(handler="workflow_templates")
+    delivery_board = workflow_sub.add_parser("delivery-board", help="Read customer delivery evidence board without mutating the ledger.")
+    delivery_board.add_argument("--limit", type=int, default=12)
+    delivery_board.set_defaults(handler="workflow_delivery_board")
     run_template = workflow_sub.add_parser("run-template", help="Run a customer task template through the MIS workflow layer.")
     run_template.add_argument("--template-id", default="tpl_customer_kb_qa_bot")
     run_template.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default=None, help="Optional Agent Worker adapter. Without this, the template uses its default safe workflow.")
@@ -1504,6 +1511,7 @@ HANDLERS = {
     "eval_submit": cmd_eval_submit,
     "audit_emit": cmd_audit_emit,
     "workflow_templates": cmd_workflow_templates,
+    "workflow_delivery_board": cmd_workflow_delivery_board,
     "workflow_run_template": cmd_workflow_run_template,
     "workflow_job_status": cmd_workflow_job_status,
     "workflow_stuck_jobs": cmd_workflow_stuck_jobs,

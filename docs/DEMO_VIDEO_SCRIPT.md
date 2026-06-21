@@ -41,6 +41,7 @@ From `/workspace/agents` or Pixel Office, submit a customer worker task through 
 - Hermes/OpenClaw require explicit confirmation and adapter readiness.
 - Long work uses async jobs plus `agentops workflow job-status --wait`.
 - Results return as run/tool/evaluation/audit/artifact evidence, then move to human approval.
+- Open the Customer Delivery Board in `/workspace/agents` or `/workspace/reports` to show the customer-facing readback: delivery artifact, linked task/run, approvals, evaluations, audit counts and next action.
 
 Suggested narration:
 
@@ -55,12 +56,15 @@ Recording steps:
 ./scripts/agentops worker fleet
 ./scripts/agentops commander inbox --bucket ready_for_review --limit 5
 ./scripts/agentops workflow customer-worker-task --adapter mock
+./scripts/agentops workflow delivery-board --limit 10
 ./scripts/agentops workflow customer-worker-task --adapter openclaw --confirm-run --async-job
 ./scripts/agentops workflow job-status --job-id <job_id> --wait
+./scripts/agentops workflow delivery-board --limit 10
 ```
 
 Then return to:
 
+- `/workspace/reports`: customer delivery board and report links.
 - `/runs`: latest worker run.
 - `/evaluations`: rule result.
 - `/audit`: confirmed worker/audit trail.

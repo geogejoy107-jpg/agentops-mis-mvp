@@ -1,7 +1,7 @@
 import { BarChart, Bar, AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, PieChart, Pie, Cell } from "recharts";
 import { Link } from "react-router";
 import { dashboardMetrics, agents, tasks, evaluations } from "../../data/mockData";
-import { loadCustomerProjects, useLiveData } from "../../data/liveApi";
+import { loadCustomerDeliveryBoard, loadCustomerProjects, useLiveData } from "../../data/liveApi";
 import { usePreferences } from "../../context/PreferencesContext";
 
 const taskStatusDist = [
@@ -30,13 +30,118 @@ export function Reports() {
   const { locale } = usePreferences();
   const zh = locale === "zh";
   const customerProjects = useLiveData(() => loadCustomerProjects(8), []);
+  const customerDeliveryBoard = useLiveData(() => loadCustomerDeliveryBoard(12), []);
   const projects = customerProjects.data?.projects || [];
+  const deliveries = customerDeliveryBoard.data?.deliveries || [];
+  const deliverySummary = customerDeliveryBoard.data?.summary;
+
+  const statusLabel = (status: string) => {
+    const zhLabels: Record<string, string> = {
+      ready: "可交付",
+      waiting_approval: "待审批",
+      in_progress: "进行中",
+      needs_attention: "需处理",
+      attention: "注意",
+      empty: "暂无",
+    };
+    const enLabels: Record<string, string> = {
+      ready: "Ready",
+      waiting_approval: "Waiting approval",
+      in_progress: "In progress",
+      needs_attention: "Needs attention",
+      attention: "Attention",
+      empty: "Empty",
+    };
+    return (zh ? zhLabels : enLabels)[status] || status;
+  };
 
   return (
     <div className="space-y-6 w-full">
       <div>
         <h1 className="text-lg font-semibold" style={{ color: "var(--mis-text)" }}>{zh ? "报告" : "Reports"}</h1>
         <p className="text-xs mt-0.5" style={{ color: "var(--mis-dim)" }}>{zh ? "客户交付报告 · 运行绩效 · 质量评估" : "Customer delivery reports · runtime performance · quality evaluation"}</p>
+      </div>
+
+      <div className="rounded-xl p-4" style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}>
+        <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-3">
+          <div>
+            <div className="text-xs font-semibold" style={{ color: "var(--mis-text)" }}>{zh ? "客户交付看板" : "Customer delivery board"}</div>
+            <div className="text-[11px] mt-0.5 max-w-3xl" style={{ color: "var(--mis-muted)" }}>
+              {zh ? "按客户视角聚合最近交付：artifact、task、run、审批、评估、审计证据和下一步动作。只读，不触发真实运行。"
+                : "Customer-facing readback of recent deliveries: artifact, task, run, approvals, evaluations, audit evidence, and next action. Read-only; no live execution."}
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            <span className="rounded px-2 py-1 text-[10px]" style={{ color: "var(--mis-success)", background: "rgba(45,212,191,0.10)", border: "1px solid rgba(45,212,191,0.18)" }}>
+              {zh ? "只读" : "Read-only"}: {customerDeliveryBoard.data?.safety?.read_only ? (zh ? "是" : "yes") : "—"}
+            </span>
+            <span className="rounded px-2 py-1 text-[10px]" style={{ color: "var(--mis-cyan)", background: "rgba(34,211,238,0.10)", border: "1px solid rgba(34,211,238,0.18)" }}>
+              {zh ? "未触发真实执行" : "No live execution"}: {customerDeliveryBoard.data?.safety?.live_execution_performed === false ? (zh ? "是" : "yes") : "—"}
+            </span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3">
+          {[
+            { label: zh ? "交付总数" : "Deliveries", value: deliverySummary?.deliveries ?? 0, color: "var(--mis-cyan)" },
+            { label: zh ? "可交付" : "Ready", value: deliverySummary?.ready ?? 0, color: "var(--mis-success)" },
+            { label: zh ? "待审批" : "Waiting approval", value: deliverySummary?.waiting_approval ?? 0, color: "var(--mis-warning)" },
+            { label: zh ? "需处理" : "Needs attention", value: deliverySummary?.needs_attention ?? 0, color: "#F87171" },
+          ].map((item) => (
+            <div key={item.label} className="rounded-lg px-3 py-2" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+              <div className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{item.label}</div>
+              <div className="text-xl font-semibold mt-1" style={{ color: item.color }}>{item.value}</div>
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-3 grid grid-cols-1 xl:grid-cols-2 gap-2">
+          {customerDeliveryBoard.loading && (
+            <div className="text-[11px]" style={{ color: "var(--mis-dim)" }}>{zh ? "正在加载交付..." : "Loading deliveries..."}</div>
+          )}
+          {customerDeliveryBoard.error && (
+            <div className="text-[11px]" style={{ color: "#FCA5A5" }}>{customerDeliveryBoard.error}</div>
+          )}
+          {!customerDeliveryBoard.loading && !customerDeliveryBoard.error && deliveries.length === 0 && (
+            <div className="text-[11px]" style={{ color: "var(--mis-dim)" }}>{zh ? "还没有客户交付。先从 Pixel Office 或 AI 员工页派发一个客户任务。" : "No customer deliveries yet. Dispatch a customer task from Pixel Office or AI Employees first."}</div>
+          )}
+          {deliveries.map((delivery) => (
+            <div key={delivery.delivery_id} className="rounded-lg p-3" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="text-xs font-semibold truncate" style={{ color: "var(--mis-text)" }}>{delivery.title}</div>
+                  <div className="mt-1 text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>{delivery.artifact_id}</div>
+                </div>
+                <span className="rounded px-2 py-1 text-[10px] shrink-0" style={{ color: delivery.status === "needs_attention" ? "#F87171" : delivery.status === "waiting_approval" ? "var(--mis-warning)" : "var(--mis-success)", background: "rgba(148,163,184,0.10)" }}>
+                  {statusLabel(delivery.status)}
+                </span>
+              </div>
+              <div className="mt-2 text-[11px] line-clamp-2" style={{ color: "var(--mis-dim)" }}>{delivery.summary}</div>
+              <div className="mt-2 grid grid-cols-3 gap-2 text-[10px]" style={{ color: "var(--mis-dim)" }}>
+                <div>{zh ? "审批" : "Approvals"}<br /><span style={{ color: "var(--mis-text)" }}>{delivery.pending_approval_ids?.length || 0}</span></div>
+                <div>{zh ? "评估" : "Evals"}<br /><span style={{ color: "var(--mis-text)" }}>{delivery.evaluation_summary?.count || 0}</span></div>
+                <div>{zh ? "审计" : "Audit"}<br /><span style={{ color: "var(--mis-text)" }}>{delivery.evidence?.audit_logs || 0}</span></div>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-1.5">
+                {delivery.task_id && (
+                  <Link to={`/admin/tasks/${delivery.task_id}`} className="text-[10px] rounded px-2 py-1" style={{ background: "rgba(34,211,238,0.10)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.18)" }}>
+                    {zh ? "打开任务" : "Open task"}
+                  </Link>
+                )}
+                {delivery.run_id && (
+                  <Link to={`/admin/runs/${delivery.run_id}`} className="text-[10px] rounded px-2 py-1" style={{ background: "rgba(45,212,191,0.10)", color: "var(--mis-success)", border: "1px solid rgba(45,212,191,0.18)" }}>
+                    {zh ? "打开 Run" : "Open run"}
+                  </Link>
+                )}
+                {delivery.ui_report_url && (
+                  <Link to={delivery.ui_report_url} className="text-[10px] rounded px-2 py-1" style={{ background: "rgba(251,191,36,0.10)", color: "var(--mis-warning)", border: "1px solid rgba(251,191,36,0.20)" }}>
+                    {zh ? "打开报告" : "Open report"}
+                  </Link>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
 
       <div className="rounded-xl p-4" style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}>

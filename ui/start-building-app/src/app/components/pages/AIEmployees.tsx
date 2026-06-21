@@ -12,6 +12,7 @@ import {
   loadAgentGatewaySessions,
   loadAgentGatewayStatus,
   loadAgents,
+  loadCustomerDeliveryBoard,
   loadDashboard,
   loadDemoReadiness,
   loadIntegrationInbox,
@@ -36,6 +37,7 @@ import {
   useLiveData,
   type AgentGatewayEnrollmentCreateResult,
   type AgentGatewayEnrollmentRequestResult,
+  type CustomerDeliveryBoardPayload,
   type CustomerTaskWorkflowResult,
   type WorkerAdapterName,
   type WorkflowJob,
@@ -126,7 +128,7 @@ export function AIEmployees() {
     scopes: DEFAULT_GATEWAY_SCOPES.join(", "),
   });
   const { data, loading, error, refresh } = useLiveData(async () => {
-    const [metrics, demoReadiness, workerStatus, workerFleet, adapterReadiness, localReadiness, securityReadiness, integrationInbox, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs] = await Promise.all([
+    const [metrics, demoReadiness, workerStatus, workerFleet, adapterReadiness, localReadiness, securityReadiness, integrationInbox, customerDeliveryBoard, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs] = await Promise.all([
       loadDashboard(),
       loadDemoReadiness(),
       loadWorkerStatus(),
@@ -135,6 +137,7 @@ export function AIEmployees() {
       loadLocalReadiness(),
       loadSecurityProductionReadiness(),
       loadIntegrationInbox({ bucket: integrationInboxBucket, limit: 20 }),
+      loadCustomerDeliveryBoard(8),
       loadAgentGatewayEnrollments(),
       loadAgentGatewaySessions(),
       loadAgentGatewayStatus(),
@@ -144,7 +147,7 @@ export function AIEmployees() {
       loadStuckWorkflowJobs(30, 8),
     ]);
     const agents = await loadAgents(metrics);
-    return { agents, demoReadiness, workerStatus, workerFleet, adapterReadiness, localReadiness, securityReadiness, integrationInbox, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs };
+    return { agents, demoReadiness, workerStatus, workerFleet, adapterReadiness, localReadiness, securityReadiness, integrationInbox, customerDeliveryBoard, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs };
   }, [integrationInboxBucket]);
   const agents = data?.agents || [];
   const demoReadiness = data?.demoReadiness;
@@ -154,6 +157,10 @@ export function AIEmployees() {
   const localReadiness = data?.localReadiness;
   const securityReadiness = data?.securityReadiness;
   const integrationInbox = data?.integrationInbox;
+  const customerDeliveryBoard = data?.customerDeliveryBoard as CustomerDeliveryBoardPayload | undefined;
+  const customerDeliveries = customerDeliveryBoard?.deliveries || [];
+  const customerDeliverySummary = customerDeliveryBoard?.summary;
+  const customerDeliverySafety = customerDeliveryBoard?.safety;
   const localEvidence = localReadiness?.evidence;
   const localReadinessActions = localReadiness?.next_actions || [];
   const localReadinessGates = localReadiness?.gates || [];
@@ -237,6 +244,14 @@ export function AIEmployees() {
       liveExecutionProof: "Live execution not performed",
       integrationInboxTitle: "Async Integration Inbox",
       integrationInboxSummary: "Commander queue for worker results arriving at different speeds: review ready work, watch running jobs, and recover blocked items.",
+      customerDeliveryBoardTitle: "Customer Delivery Board",
+      customerDeliveryBoardSummary: "Read-only customer-facing board: delivery artifact, linked task/run, approvals, evaluations, audit evidence, and next action.",
+      deliveriesReady: "Ready",
+      deliveriesWaiting: "Waiting approval",
+      deliveriesAttention: "Needs attention",
+      deliveryEmpty: "No customer deliveries yet. Dispatch a customer worker task first.",
+      deliverySafeReadback: "Safe readback",
+      openReport: "Open report",
       inboxFilter: "Queue view",
       inboxAll: "All",
       readyForReview: "Ready",
@@ -471,6 +486,14 @@ export function AIEmployees() {
       liveExecutionProof: "未执行真实任务",
       integrationInboxTitle: "异步集成 Inbox",
       integrationInboxSummary: "Commander 用来处理不同速度 worker 回报的队列：审阅已完成工作、观察运行中 job、恢复阻塞项。",
+      customerDeliveryBoardTitle: "客户交付看板",
+      customerDeliveryBoardSummary: "只读客户视角：交付 artifact、关联 task/run、审批、评估、审计证据和下一步动作。",
+      deliveriesReady: "可交付",
+      deliveriesWaiting: "待审批",
+      deliveriesAttention: "需处理",
+      deliveryEmpty: "暂无客户交付。请先派发一个客户 worker 任务。",
+      deliverySafeReadback: "安全只读",
+      openReport: "打开报告",
       inboxFilter: "队列视角",
       inboxAll: "全部",
       readyForReview: "待审阅",
@@ -1146,6 +1169,97 @@ export function AIEmployees() {
         <button onClick={refresh} className="mt-3 text-[11px] px-3 py-1.5 rounded" style={{ background: "rgba(34,211,238,0.12)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.2)" }}>
           {copy.refresh}
         </button>
+      </div>
+
+      <div
+        className="rounded-xl p-4"
+        style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}
+      >
+        <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <ShieldCheck size={14} style={{ color: "var(--mis-success)" }} />
+              <h2 className="text-sm font-semibold" style={{ color: "var(--mis-text)" }}>{copy.customerDeliveryBoardTitle}</h2>
+              <StatusBadge status={customerDeliveryBoard?.status || "unknown"} />
+            </div>
+            <p className="text-[11px] mt-1 max-w-3xl" style={{ color: "var(--mis-dim)" }}>{copy.customerDeliveryBoardSummary}</p>
+          </div>
+          <div className="flex flex-wrap gap-1.5 lg:justify-end">
+            <StatusBadge status={customerDeliverySafety?.read_only ? "pass" : "fail"} label={`${copy.deliverySafeReadback}: ${customerDeliverySafety?.read_only ? copy.yes : copy.no}`} />
+            <StatusBadge status={customerDeliverySafety?.ledger_mutated === false ? "pass" : "fail"} label={`${copy.ledgerMutationProof}: ${customerDeliverySafety?.ledger_mutated === false ? copy.yes : copy.no}`} />
+            <StatusBadge status={customerDeliverySafety?.live_execution_performed === false ? "pass" : "fail"} label={`${copy.liveExecutionProof}: ${customerDeliverySafety?.live_execution_performed === false ? copy.yes : copy.no}`} />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-3">
+          {[
+            { label: copy.deliveriesReady, value: customerDeliverySummary?.ready ?? 0, status: (customerDeliverySummary?.ready || 0) > 0 ? "ready" : "idle" },
+            { label: copy.deliveriesWaiting, value: customerDeliverySummary?.waiting_approval ?? 0, status: (customerDeliverySummary?.waiting_approval || 0) > 0 ? "attention" : "pass" },
+            { label: copy.deliveriesAttention, value: customerDeliverySummary?.needs_attention ?? 0, status: (customerDeliverySummary?.needs_attention || 0) > 0 ? "blocked" : "pass" },
+          ].map((item) => (
+            <div key={item.label} className="rounded px-3 py-2" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+              <div className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{item.label}</div>
+              <div className="flex items-center justify-between gap-2 mt-1">
+                <div className="text-lg font-semibold" style={{ color: item.status === "blocked" ? "#F87171" : "var(--mis-text)" }}>{item.value}</div>
+                <StatusBadge status={item.status} />
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="space-y-2 mt-3">
+          {customerDeliveries.length === 0 && (
+            <div className="text-[11px] rounded px-3 py-2" style={{ color: "var(--mis-muted)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+              {copy.deliveryEmpty}
+            </div>
+          )}
+          {customerDeliveries.slice(0, 4).map((delivery) => (
+            <div key={delivery.delivery_id} className="rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+              <div className="flex flex-col md:flex-row md:items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="text-[11px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{delivery.title}</div>
+                    <StatusBadge status={delivery.status} />
+                  </div>
+                  <div className="text-[10px] mt-1 truncate" style={{ color: "var(--mis-muted)" }}>
+                    {copy.taskId}: {delivery.task_id || "—"} · {copy.runId}: {delivery.run_id || "—"} · {copy.artifactId}: {delivery.artifact_id || "—"}
+                  </div>
+                  {delivery.summary && (
+                    <div className="text-[10px] mt-1 line-clamp-2" style={{ color: "var(--mis-dim)" }}>{delivery.summary}</div>
+                  )}
+                </div>
+                <div className="flex flex-wrap md:justify-end gap-1.5 shrink-0">
+                  {delivery.task_id && (
+                    <Link to={`/admin/tasks/${delivery.task_id}`} className="text-[10px] px-2 py-1 rounded" style={{ background: "rgba(34,211,238,0.10)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.18)" }}>{copy.openTask}</Link>
+                  )}
+                  {delivery.run_id && (
+                    <Link to={`/admin/runs/${delivery.run_id}`} className="text-[10px] px-2 py-1 rounded" style={{ background: "rgba(45,212,191,0.10)", color: "var(--mis-success)", border: "1px solid rgba(45,212,191,0.18)" }}>{copy.openRun}</Link>
+                  )}
+                  {delivery.ui_report_url && (
+                    <Link to={delivery.ui_report_url} className="text-[10px] px-2 py-1 rounded" style={{ background: "rgba(251,191,36,0.10)", color: "var(--mis-warning)", border: "1px solid rgba(251,191,36,0.20)" }}>{copy.openReport}</Link>
+                  )}
+                </div>
+              </div>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {Object.entries(delivery.evidence || {}).slice(0, 6).map(([key, value]) => (
+                  <span key={key} className="text-[9px] px-1.5 py-0.5 rounded" style={{ color: "var(--mis-muted)", background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                    {key}: {value}
+                  </span>
+                ))}
+                {(delivery.pending_approval_ids?.length || 0) > 0 && (
+                  <span className="text-[9px] px-1.5 py-0.5 rounded" style={{ color: "var(--mis-warning)", background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.22)" }}>
+                    {copy.approvals}: {delivery.pending_approval_ids?.length}
+                  </span>
+                )}
+                {delivery.next_action && (
+                  <span className="text-[9px] px-1.5 py-0.5 rounded truncate max-w-full" style={{ color: "var(--mis-cyan)", background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                    {copy.nextAction}: {delivery.next_action}
+                  </span>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
 
       <div

@@ -245,6 +245,65 @@ export interface CustomerProjectIndexPayload {
   safe_defaults?: Record<string, unknown>;
 }
 
+export interface CustomerDeliveryBoardItem {
+  delivery_id: string;
+  status: string;
+  title: string;
+  task_id?: string | null;
+  run_id?: string | null;
+  artifact_id?: string | null;
+  artifact_type?: string | null;
+  project_id?: string | null;
+  owner_agent_id?: string | null;
+  run_status?: string | null;
+  task_status?: string | null;
+  priority?: string | null;
+  risk_level?: string | null;
+  summary?: string;
+  created_at?: string;
+  report_url?: string | null;
+  ui_report_url?: string | null;
+  task_url?: string | null;
+  run_url?: string | null;
+  approval_ids?: string[];
+  pending_approval_ids?: string[];
+  evaluation_summary?: {
+    count?: number;
+    failed?: number;
+    latest_score?: number | null;
+    latest_pass_fail?: string | null;
+  };
+  evidence?: Record<string, number>;
+  next_action?: string;
+}
+
+export interface CustomerDeliveryBoardPayload {
+  provider: string;
+  operation: string;
+  status: string;
+  summary: {
+    deliveries: number;
+    ready: number;
+    waiting_approval: number;
+    in_progress: number;
+    needs_attention: number;
+    pending_approvals: number;
+    artifacts: number;
+  };
+  deliveries: CustomerDeliveryBoardItem[];
+  gates: { id: string; label: string; ok: boolean; value?: string | number | boolean }[];
+  next_actions: string[];
+  safety: {
+    read_only: boolean;
+    ledger_mutated: boolean;
+    live_execution_performed: boolean;
+    raw_prompt_omitted: boolean;
+    raw_response_omitted: boolean;
+    token_omitted: boolean;
+  };
+  token_omitted?: boolean;
+}
+
 export interface CustomerTaskTemplate {
   template_id: string;
   name: string;
@@ -1345,6 +1404,10 @@ export async function loadCustomerProjectReport(projectId: string): Promise<Cust
 
 export async function loadCustomerProjects(limit = 25): Promise<CustomerProjectIndexPayload> {
   return apiJson<CustomerProjectIndexPayload>(`/workflows/customer-projects?limit=${encodeURIComponent(String(limit))}`);
+}
+
+export async function loadCustomerDeliveryBoard(limit = 12): Promise<CustomerDeliveryBoardPayload> {
+  return apiJson<CustomerDeliveryBoardPayload>(`/workflows/customer-delivery-board?limit=${encodeURIComponent(String(limit))}`);
 }
 
 export async function loadWorkerStatus(): Promise<WorkerStatusPayload> {

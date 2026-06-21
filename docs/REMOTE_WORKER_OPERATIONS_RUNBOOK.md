@@ -327,6 +327,18 @@ This path creates a normal MIS task, executes through the worker adapter, and
 returns the `run_id`, `artifact_id`, and evidence counts. Hermes/OpenClaw live
 execution still requires explicit confirmation inside the workflow call.
 
+After the worker returns, use the customer delivery board to inspect the
+customer-facing result without mutating the ledger:
+
+```bash
+agentops workflow delivery-board --limit 10
+curl -fsS http://127.0.0.1:8787/api/workflows/customer-delivery-board?limit=10 | jq .
+```
+
+The board links delivery artifacts to task/run evidence, approvals,
+evaluations, audit counts, and the next operator action. It is read-only and
+does not start live runtime work.
+
 ## Revocation And Rotation
 
 List enrollments and sessions:
@@ -409,6 +421,7 @@ python3 scripts/agentops_worker_preflight_smoke.py
 python3 scripts/worker_adapter_readiness_smoke.py
 python3 scripts/customer_worker_adapter_not_ready_smoke.py
 python3 scripts/customer_worker_async_adapter_not_ready_smoke.py
+python3 scripts/customer_delivery_board_smoke.py
 python3 scripts/template_worker_async_adapter_not_ready_smoke.py
 python3 scripts/worker_live_confirm_gate_smoke.py
 python3 scripts/remote_launch_packet_worker_smoke.py

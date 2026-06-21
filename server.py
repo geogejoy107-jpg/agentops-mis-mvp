@@ -5476,6 +5476,160 @@ def customer_projects_index(conn, limit: int = 25) -> dict:
     }
 
 
+def customer_delivery_board(conn, limit: int = 12) -> dict:
+    limit = max(1, min(int(limit or 12), 50))
+    artifact_rows = rows_to_dicts(conn.execute(
+        """SELECT
+            a.*,
+            t.title AS task_title,
+            t.status AS task_status,
+            t.owner_agent_id AS owner_agent_id,
+            t.priority AS task_priority,
+            t.risk_level AS task_risk_level,
+            r.agent_id AS run_agent_id,
+            r.status AS run_status,
+            r.output_summary AS run_output_summary,
+            r.created_at AS run_created_at
+        FROM artifacts a
+        LEFT JOIN tasks t ON t.task_id = a.task_id
+        LEFT JOIN runs r ON r.run_id = a.run_id
+        WHERE
+            a.artifact_type IN ('customer_worker_result', 'customer_delivery_report', 'customer_project_report')
+            OR a.artifact_id LIKE 'art_customer_%'
+            OR a.artifact_id LIKE 'art_kb_bot_delivery_%'
+        ORDER BY a.created_at DESC
+        LIMIT ?""",
+        (limit,),
+    ).fetchall())
+    deliveries: list[dict] = []
+    seen_worker_run_ids: set[str] = set()
+    totals = {
+        "deliveries": 0,
+        "ready": 0,
+        "waiting_approval": 0,
+        "in_progress": 0,
+        "needs_attention": 0,
+        "pending_approvals": 0,
+        "artifacts": 0,
+    }
+    for artifact in artifact_rows:
+        task_id = artifact.get("task_id")
+        run_id = artifact.get("run_id")
+        artifact_id = artifact.get("artifact_id")
+        if artifact.get("artifact_type") == "customer_worker_result" and run_id:
+            if run_id in seen_worker_run_ids:
+                continue
+            seen_worker_run_ids.add(run_id)
+        approvals = rows_to_dicts(conn.execute(
+            "SELECT approval_id, decision, reason, created_at, decided_at FROM approvals WHERE task_id=? OR run_id=? ORDER BY created_at DESC LIMIT 8",
+            (task_id or "", run_id or ""),
+        ).fetchall()) if task_id or run_id else []
+        evaluations = rows_to_dicts(conn.execute(
+            "SELECT evaluation_id, score, pass_fail, evaluator_type, created_at FROM evaluations WHERE task_id=? OR run_id=? ORDER BY created_at DESC LIMIT 8",
+            (task_id or "", run_id or ""),
+        ).fetchall()) if task_id or run_id else []
+        evidence = {
+            "tool_calls": conn.execute("SELECT COUNT(*) c FROM tool_calls WHERE run_id=?", (run_id or "",)).fetchone()["c"] if run_id else 0,
+            "evaluations": len(evaluations),
+            "runtime_events": conn.execute("SELECT COUNT(*) c FROM runtime_events WHERE run_id=? OR task_id=?", (run_id or "", task_id or "")).fetchone()["c"] if task_id or run_id else 0,
+            "audit_logs": conn.execute(
+                "SELECT COUNT(*) c FROM audit_logs WHERE entity_id IN (?,?,?)",
+                (artifact_id or "", task_id or "", run_id or ""),
+            ).fetchone()["c"],
+            "approvals": len(approvals),
+            "artifacts": 1,
+        }
+        pending_approvals = [row for row in approvals if row.get("decision") == "pending"]
+        failed_eval = [row for row in evaluations if row.get("pass_fail") == "fail"]
+        run_status = artifact.get("run_status")
+        task_status = artifact.get("task_status")
+        if run_status in {"failed", "blocked", "timeout", "error"} or task_status in {"failed", "blocked"} or failed_eval:
+            status = "needs_attention"
+            next_action = "Review failed evaluation/run evidence before delivery."
+        elif pending_approvals or task_status == "waiting_approval":
+            status = "waiting_approval"
+            next_action = "Open Approvals and decide the customer delivery gate."
+        elif run_status == "completed" and task_status in {"completed", "waiting_approval"}:
+            status = "ready"
+            next_action = "Open the task/run evidence and package the delivery report."
+        else:
+            status = "in_progress"
+            next_action = "Check the linked run and async job status."
+        totals["deliveries"] += 1
+        totals[status] += 1
+        totals["pending_approvals"] += len(pending_approvals)
+        totals["artifacts"] += 1
+        title = artifact.get("task_title") or artifact.get("title") or "Customer delivery"
+        project_id = None
+        match = re.match(r"^art_kb_bot_delivery_(.+)$", artifact_id or "")
+        if match:
+            project_id = match.group(1)
+        if not project_id and task_id:
+            task_match = re.match(r"^tsk_kb_bot_(.+)_\d{2}$", task_id)
+            if task_match:
+                project_id = task_match.group(1)
+        deliveries.append({
+            "delivery_id": artifact_id,
+            "status": status,
+            "title": redact_text(title, 160),
+            "task_id": task_id,
+            "run_id": run_id,
+            "artifact_id": artifact_id,
+            "artifact_type": artifact.get("artifact_type"),
+            "project_id": project_id,
+            "owner_agent_id": artifact.get("owner_agent_id") or artifact.get("run_agent_id"),
+            "run_status": run_status,
+            "task_status": task_status,
+            "priority": artifact.get("task_priority"),
+            "risk_level": artifact.get("task_risk_level"),
+            "summary": redact_text(artifact.get("summary") or artifact.get("run_output_summary") or "", 360),
+            "created_at": artifact.get("created_at"),
+            "report_url": f"/api/workflows/customer-projects/{project_id}/report" if project_id else None,
+            "ui_report_url": f"/workspace/customer-projects/{project_id}/report" if project_id else None,
+            "task_url": f"/admin/tasks/{task_id}" if task_id else None,
+            "run_url": f"/admin/runs/{run_id}" if run_id else None,
+            "approval_ids": [row["approval_id"] for row in approvals],
+            "pending_approval_ids": [row["approval_id"] for row in pending_approvals],
+            "evaluation_summary": {
+                "count": len(evaluations),
+                "failed": len(failed_eval),
+                "latest_score": evaluations[0]["score"] if evaluations else None,
+                "latest_pass_fail": evaluations[0]["pass_fail"] if evaluations else None,
+            },
+            "evidence": evidence,
+            "next_action": next_action,
+        })
+    gates = [
+        {"id": "delivery_artifacts", "label": "Customer delivery artifacts", "ok": totals["artifacts"] > 0, "value": totals["artifacts"]},
+        {"id": "approval_visibility", "label": "Approval state visible", "ok": True, "value": totals["pending_approvals"]},
+        {"id": "evidence_chain", "label": "Run/tool/eval/audit evidence summarized", "ok": all((row.get("evidence") or {}).get("audit_logs", 0) >= 1 for row in deliveries) if deliveries else False, "value": totals["deliveries"]},
+        {"id": "safe_readback", "label": "Read-only safe readback", "ok": True, "value": "summary/hash only"},
+    ]
+    status = "ready" if totals["ready"] > 0 and totals["needs_attention"] == 0 else "attention" if deliveries else "empty"
+    return {
+        "provider": "agentops-customer",
+        "operation": "customer_delivery_board",
+        "status": status,
+        "summary": totals,
+        "deliveries": deliveries,
+        "gates": gates,
+        "next_actions": [
+            "Open waiting approvals before publishing customer-facing results." if totals["pending_approvals"] else "Open the latest ready delivery and review run evidence.",
+            "Use `agentops workflow customer-worker-task` for a new customer request.",
+            "Use `agentops workflow delivery-board` to inspect this board from CLI/API.",
+        ],
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
+
+
 def customer_project_report_artifact(conn, project_id: str) -> tuple[dict, int]:
     report, status = customer_project_report(conn, project_id)
     if status != 200:
@@ -8346,6 +8500,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM template_bindings ORDER BY template_id, base_id").fetchall()))
             if path == "/api/workflows/customer-task-templates":
                 return self.send_json({"templates": customer_task_templates(), "safe_defaults": {"raw_documents_stored": False, "credentials_stored": False, "external_upload_requires_approval": True}})
+            if path == "/api/workflows/customer-delivery-board":
+                limit = int((qs.get("limit") or ["12"])[0])
+                return self.send_json(customer_delivery_board(conn, limit))
             if path == "/api/workflows/customer-projects":
                 limit = int((qs.get("limit") or ["25"])[0])
                 return self.send_json(customer_projects_index(conn, limit))
