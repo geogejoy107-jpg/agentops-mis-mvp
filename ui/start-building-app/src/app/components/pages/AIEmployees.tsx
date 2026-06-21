@@ -14,6 +14,7 @@ import {
   loadAgents,
   loadDashboard,
   loadStuckWorkflowJobs,
+  loadWorkerAdapterReadiness,
   loadWorkerDaemonLogs,
   loadWorkerStatus,
   loadWorkflowJobs,
@@ -31,6 +32,7 @@ import {
   type AgentGatewayEnrollmentCreateResult,
   type AgentGatewayEnrollmentRequestResult,
   type CustomerTaskWorkflowResult,
+  type WorkerAdapterName,
   type WorkflowJob,
 } from "../../data/liveApi";
 import { pick, usePreferences } from "../../context/PreferencesContext";
@@ -116,9 +118,10 @@ export function AIEmployees() {
     scopes: DEFAULT_GATEWAY_SCOPES.join(", "),
   });
   const { data, loading, error, refresh } = useLiveData(async () => {
-    const [metrics, workerStatus, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs] = await Promise.all([
+    const [metrics, workerStatus, adapterReadiness, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs] = await Promise.all([
       loadDashboard(),
       loadWorkerStatus(),
+      loadWorkerAdapterReadiness(),
       loadAgentGatewayEnrollments(),
       loadAgentGatewaySessions(),
       loadAgentGatewayStatus(),
@@ -128,10 +131,11 @@ export function AIEmployees() {
       loadStuckWorkflowJobs(30, 8),
     ]);
     const agents = await loadAgents(metrics);
-    return { agents, workerStatus, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs };
+    return { agents, workerStatus, adapterReadiness, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs };
   }, []);
   const agents = data?.agents || [];
   const workerStatus = data?.workerStatus;
+  const adapterReadiness = data?.adapterReadiness;
   const daemonLogs = data?.daemonLogs || [];
   const selectedDaemonLog = daemonLogs.find(item => item.daemon.adapter === selectedLogAdapter)?.daemon;
   const workflowJobs = data?.workflowJobs?.jobs || [];
@@ -149,6 +153,10 @@ export function AIEmployees() {
   const activeSessions = sessions.filter(item => item.session_state === "active").length;
   const runningDaemons = (workerStatus?.daemons || []).filter(daemon => daemon.running).length;
   const stuckWorkerCount = Number(workerStatus?.stuck_worker_tasks || stuckTasks.length || 0);
+  const liveReadyAdapters = adapterReadiness?.summary.live_ready_adapters || workerStatus?.adapter_readiness?.live_ready_adapters || [];
+  const unavailableAdapters = adapterReadiness?.summary.unavailable_adapters || workerStatus?.adapter_readiness?.unavailable_adapters || [];
+  const blockedAdapters = adapterReadiness?.summary.blocked_adapters || workerStatus?.adapter_readiness?.blocked_adapters || [];
+  const recommendedAdapter = adapterReadiness?.summary.recommended_adapter || workerStatus?.adapter_readiness?.recommended_adapter || "mock";
   const gatewayReady = Boolean(gatewayStatus?.auth.authenticated || ["ready", "ok", "authenticated"].includes(gatewayStatus?.status || ""));
   const copy = pick(locale, {
     en: {
@@ -303,6 +311,14 @@ export function AIEmployees() {
       modeRemoteBody: "External machines use scoped enrollment tokens, short-lived sessions, heartbeat, and workspace-bound permissions.",
       modeRecoveryTitle: "Recovery queue",
       modeRecoveryBody: "Stale running worker tasks can be released back to planned; linked runs are blocked with audit evidence.",
+      adapterRoutesTitle: "Adapter routes",
+      adapterRoutesSummary: "Read-only route selection for agent workers before live dispatch.",
+      recommendedAdapter: "Recommended",
+      trustStatus: "Trust",
+      targetResource: "Target",
+      nextAction: "Next action",
+      liveReady: "live ready",
+      notLiveReady: "not live ready",
       statusRunning: "running",
       statusReady: "ready",
       statusConfirm: "confirm required",
@@ -462,6 +478,14 @@ export function AIEmployees() {
       modeRemoteBody: "其他电脑或服务器用带权限范围的接入 token、短期 session、心跳和工作区绑定权限接入。",
       modeRecoveryTitle: "恢复队列",
       modeRecoveryBody: "卡住的运行中 worker 任务可以释放回 planned；关联 run 会标记 blocked 并留下审计证据。",
+      adapterRoutesTitle: "Adapter 路由",
+      adapterRoutesSummary: "agent worker 真跑前使用的只读选路状态。",
+      recommendedAdapter: "推荐",
+      trustStatus: "信任",
+      targetResource: "目标",
+      nextAction: "下一步",
+      liveReady: "可真跑",
+      notLiveReady: "不可真跑",
       statusRunning: "运行中",
       statusReady: "就绪",
       statusConfirm: "需确认",
@@ -482,10 +506,10 @@ export function AIEmployees() {
     {
       title: copy.modeLiveTitle,
       body: copy.modeLiveBody,
-      status: "pending_approval",
-      label: copy.statusConfirm,
-      attention: false,
-      meta: "Hermes · OpenClaw",
+      status: liveReadyAdapters.length > 0 ? "ready" : "unavailable",
+      label: liveReadyAdapters.length > 0 ? copy.statusReady : copy.statusAttention,
+      attention: liveReadyAdapters.length === 0 || unavailableAdapters.length > 0 || blockedAdapters.length > 0,
+      meta: `${liveReadyAdapters.length} ${copy.liveReady} · ${copy.recommendedAdapter}: ${recommendedAdapter}`,
     },
     {
       title: copy.modeRemoteTitle,
@@ -504,6 +528,26 @@ export function AIEmployees() {
       meta: `${stuckWorkerCount} ${copy.stuckTasks}`,
     },
   ];
+  const adapterRouteCards = WORKER_ADAPTERS.map((adapter) => {
+    const item = adapterReadiness?.adapters?.[adapter] || {
+      adapter: adapter as WorkerAdapterName,
+      ok: false,
+      readiness: "unknown",
+      trust_status: "unknown",
+      target_resource: "—",
+      recommended_action: "agentops worker readiness",
+      checks: {},
+    };
+    const liveReady = item.readiness === "ready" && adapter !== "mock";
+    const attention = ["unavailable", "blocked"].includes(item.readiness);
+    const checks = item.checks || {};
+    const checkSummary = adapter === "hermes"
+      ? `api=${String(checks.api_listening ?? "—")} · port=${String(checks.api_port ?? "—")}`
+      : adapter === "openclaw"
+        ? `bin=${String(checks.binary_exists ?? "—")} · agents=${String(checks.agents_count ?? "—")}`
+        : "local mock worker";
+    return { item, liveReady, attention, checkSummary };
+  });
 
   const updateCustomerTaskText = (field: "title" | "description", value: string) => {
     setCustomerTaskForm(prev => ({ ...prev, [field]: value }));
@@ -1156,6 +1200,61 @@ export function AIEmployees() {
               <div className="text-[10px] mt-2 truncate" style={{ color: "var(--mis-muted)" }}>{item.meta}</div>
             </div>
           ))}
+        </div>
+        <div className="mt-4 rounded-lg p-3" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.adapterRoutesTitle}</div>
+              <div className="text-[10px] mt-0.5" style={{ color: "var(--mis-muted)" }}>{copy.adapterRoutesSummary}</div>
+            </div>
+            <StatusBadge status={adapterReadiness?.status || "unknown"} label={`${copy.recommendedAdapter}: ${recommendedAdapter}`} />
+          </div>
+          <div className="grid grid-cols-3 gap-3 mt-3">
+            {adapterRouteCards.map(({ item, liveReady, attention, checkSummary }) => (
+              <div
+                key={item.adapter}
+                className="rounded px-3 py-2"
+                style={{
+                  background: attention ? "rgba(248,113,113,0.08)" : "var(--mis-bg)",
+                  border: attention ? "1px solid rgba(248,113,113,0.22)" : "1px solid var(--mis-border)",
+                }}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    {attention ? <AlertTriangle size={13} style={{ color: "#F87171" }} /> : <CheckCircle2 size={13} style={{ color: liveReady || item.adapter === "mock" ? "var(--mis-success)" : "var(--mis-muted)" }} />}
+                    <div className="text-[11px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{item.adapter}</div>
+                  </div>
+                  <StatusBadge status={item.readiness} />
+                </div>
+                <div className="grid grid-cols-2 gap-2 mt-2">
+                  <div className="rounded px-2 py-1" style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}>
+                    <div className="text-[9px]" style={{ color: "var(--mis-muted)" }}>{copy.trustStatus}</div>
+                    <div className="text-[10px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{item.trust_status || "—"}</div>
+                  </div>
+                  <div className="rounded px-2 py-1" style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}>
+                    <div className="text-[9px]" style={{ color: "var(--mis-muted)" }}>{copy.liveReady}</div>
+                    <div className="text-[10px] font-semibold truncate" style={{ color: liveReady ? "var(--mis-success)" : "var(--mis-dim)" }}>
+                      {liveReady ? copy.yes : item.adapter === "mock" ? copy.no : copy.notLiveReady}
+                    </div>
+                  </div>
+                </div>
+                <div className="text-[10px] mt-2 truncate" style={{ color: "var(--mis-dim)" }}>
+                  {copy.targetResource}: {item.target_resource || "—"}
+                </div>
+                <div className="text-[10px] mt-1 truncate" style={{ color: "var(--mis-muted)" }}>
+                  {checkSummary}
+                </div>
+                <div className="text-[10px] mt-1 truncate" style={{ color: "var(--mis-cyan)" }}>
+                  {copy.nextAction}: {item.recommended_action || "agentops worker readiness"}
+                </div>
+                {item.last_error && (
+                  <div className="text-[10px] mt-1 truncate" style={{ color: "#F87171" }}>
+                    {item.last_error}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
       </div>
 

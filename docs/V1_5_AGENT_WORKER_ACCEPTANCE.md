@@ -1320,6 +1320,9 @@ the route-selection layer for workers. It reports `mock`, `hermes`, and
 trust status, target resource, availability checks, `summary.recommended_adapter`,
 and `live_execution_performed:false`. This lets a local or remote agent decide
 which adapter path is currently usable before pulling customer work.
+The `/workspace/agents` operator console now renders the same adapter route
+state, including trust status, target resource, live-ready marker, and the next
+safe CLI action for each adapter.
 
 Confirmed live customer-worker dispatch now consumes that readiness signal. If a
 selected Hermes/OpenClaw adapter is `unavailable` or `blocked`, MIS returns
@@ -1373,6 +1376,8 @@ planned MIS task
 - The worker readiness API/CLI now returns adapter route readiness for
   mock/Hermes/OpenClaw without executing live work, so external agents can choose
   a viable route before starting a task.
+- The `/workspace/agents` UI now surfaces that route-readiness state for human
+  operators without changing the machine-facing execution contract.
 - Confirmed customer-worker dispatch now fails early with `adapter_not_ready`
   when the selected live adapter is unavailable, instead of producing an opaque
   worker execution failure.

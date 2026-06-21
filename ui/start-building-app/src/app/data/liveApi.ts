@@ -342,12 +342,48 @@ export interface WorkerStatusPayload {
   never_seen_remote_enrollments: number;
   active_remote_sessions: number;
   remote_worker_health: Record<string, unknown>;
+  adapter_readiness?: WorkerAdapterReadinessSummary;
   daemons: WorkerDaemonStatus[];
   workers: Agent[];
   recent_runs: Run[];
   recent_tasks: Task[];
   stuck_tasks: StuckWorkerTask[];
   recent_events: Record<string, unknown>[];
+}
+
+export type WorkerAdapterName = "mock" | "hermes" | "openclaw";
+
+export interface WorkerAdapterReadinessSummary {
+  ready_adapters?: WorkerAdapterName[];
+  live_ready_adapters?: WorkerAdapterName[];
+  review_required_adapters?: WorkerAdapterName[];
+  blocked_adapters?: WorkerAdapterName[];
+  unavailable_adapters?: WorkerAdapterName[];
+  recommended_adapter?: WorkerAdapterName;
+}
+
+export interface WorkerAdapterReadinessItem {
+  adapter: WorkerAdapterName;
+  ok: boolean;
+  readiness: "ready" | "review_required" | "blocked" | "unavailable" | string;
+  connector_id?: string | null;
+  trust_status?: string;
+  requires_confirm_run?: boolean;
+  target_resource?: string | null;
+  checks?: Record<string, unknown>;
+  recommended_action?: string;
+  last_error?: string | null;
+  token_omitted?: boolean;
+}
+
+export interface WorkerAdapterReadinessPayload {
+  provider: string;
+  status: "ready" | "degraded" | "blocked" | string;
+  summary: WorkerAdapterReadinessSummary;
+  adapters: Record<WorkerAdapterName, WorkerAdapterReadinessItem>;
+  contract?: string;
+  live_execution_performed: boolean;
+  token_omitted?: boolean;
 }
 
 export interface StuckWorkerTask extends Task {
@@ -1048,6 +1084,7 @@ export async function loadWorkerStatus(): Promise<WorkerStatusPayload> {
     never_seen_remote_enrollments: numberValue(raw.never_seen_remote_enrollments, 0),
     active_remote_sessions: numberValue(raw.active_remote_sessions, 0),
     remote_worker_health: typeof raw.remote_worker_health === "object" && raw.remote_worker_health !== null ? raw.remote_worker_health as Record<string, unknown> : {},
+    adapter_readiness: typeof raw.adapter_readiness === "object" && raw.adapter_readiness !== null ? raw.adapter_readiness as WorkerAdapterReadinessSummary : undefined,
     daemons: asArray<Record<string, unknown>>(raw.daemons).map(normalizeWorkerDaemon),
     workers: asArray<Record<string, unknown>>(raw.workers).map((row) => normalizeAgent(row)),
     recent_runs: asArray<Record<string, unknown>>(raw.recent_runs).map(normalizeRun),
@@ -1061,6 +1098,40 @@ export async function loadWorkerStatus(): Promise<WorkerStatusPayload> {
       stuck_reason: row.stuck_reason ? String(row.stuck_reason) : undefined,
     })),
     recent_events: asArray<Record<string, unknown>>(raw.recent_events),
+  };
+}
+
+export async function loadWorkerAdapterReadiness(): Promise<WorkerAdapterReadinessPayload> {
+  const raw = await apiJson<Record<string, unknown>>("/workers/adapter-readiness");
+  const adaptersRaw = typeof raw.adapters === "object" && raw.adapters !== null ? raw.adapters as Record<string, unknown> : {};
+  const normalizeAdapter = (name: WorkerAdapterName): WorkerAdapterReadinessItem => {
+    const item = typeof adaptersRaw[name] === "object" && adaptersRaw[name] !== null ? adaptersRaw[name] as Record<string, unknown> : {};
+    return {
+      adapter: name,
+      ok: boolValue(item.ok),
+      readiness: String(item.readiness || "unavailable"),
+      connector_id: item.connector_id ? String(item.connector_id) : null,
+      trust_status: item.trust_status ? String(item.trust_status) : undefined,
+      requires_confirm_run: boolValue(item.requires_confirm_run),
+      target_resource: item.target_resource ? String(item.target_resource) : null,
+      checks: typeof item.checks === "object" && item.checks !== null ? item.checks as Record<string, unknown> : {},
+      recommended_action: item.recommended_action ? String(item.recommended_action) : undefined,
+      last_error: item.last_error ? String(item.last_error) : null,
+      token_omitted: boolValue(item.token_omitted),
+    };
+  };
+  return {
+    provider: String(raw.provider || "agentops-worker"),
+    status: String(raw.status || "unknown"),
+    summary: typeof raw.summary === "object" && raw.summary !== null ? raw.summary as WorkerAdapterReadinessSummary : {},
+    adapters: {
+      mock: normalizeAdapter("mock"),
+      hermes: normalizeAdapter("hermes"),
+      openclaw: normalizeAdapter("openclaw"),
+    },
+    contract: raw.contract ? String(raw.contract) : undefined,
+    live_execution_performed: boolValue(raw.live_execution_performed),
+    token_omitted: boolValue(raw.token_omitted),
   };
 }
 
