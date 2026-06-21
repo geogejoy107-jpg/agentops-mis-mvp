@@ -229,6 +229,17 @@ def main() -> int:
             require((direct_evidence.get("intake") or {}).get("severity") in {"ready", "attention"}, f"direct dispatch intake summary missing: {direct_evidence}", failures)
             require(direct_counts.get("plan_evidence_manifests", 0) >= 1, f"direct dispatch evidence counts missing manifest: {direct_counts}", failures)
 
+            status, action_plan, raw = http_json("GET", base_url, "/api/operator/action-plan?limit=20")
+            outputs.append(raw)
+            dispatch_source = action_plan.get("dispatch_evidence") or {}
+            dispatch_summary = dispatch_source.get("summary") or {}
+            dispatch_items = dispatch_source.get("items") or []
+            require(status == 200, f"operator action-plan after dispatch failed: {status} {action_plan}", failures)
+            require((action_plan.get("source_status") or {}).get("dispatch_evidence") in {"ready", "attention"}, f"action-plan missing dispatch evidence source: {action_plan}", failures)
+            require(dispatch_source.get("operation") == "dispatch_evidence_lane", f"dispatch evidence source missing: {dispatch_source}", failures)
+            require(dispatch_summary.get("verified_manifests", 0) >= 1, f"dispatch evidence summary missing verified manifest: {dispatch_summary}", failures)
+            require(any(item.get("run_id") == direct_dispatch.get("run_id") for item in dispatch_items), f"dispatch evidence source missing direct dispatch run: {dispatch_items}", failures)
+
             status, workflow, raw = http_json("POST", base_url, "/api/workflows/customer-worker-task", {
                 "adapter": "mock",
                 "title": "Automatic customer worker delivery evidence",

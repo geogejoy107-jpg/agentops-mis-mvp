@@ -149,6 +149,10 @@ def validate_plan(payload: dict, label: str, failures: list[str], limit: int) ->
         "task_intake_blocked",
         "task_intake_attention",
         "task_intake_missing_agent_plan",
+        "dispatch_evidence_proofs",
+        "dispatch_evidence_ready",
+        "dispatch_evidence_waiting_approval",
+        "dispatch_evidence_verified_manifests",
     ]:
         require(isinstance(summary.get(key), int), f"{label} summary.{key} missing: {summary}", failures)
     require(isinstance(summary.get("recommended_adapter"), str), f"{label} recommended_adapter missing: {summary}", failures)
@@ -160,9 +164,12 @@ def validate_plan(payload: dict, label: str, failures: list[str], limit: int) ->
     require("remediation_loop" in (payload.get("source_status") or {}), f"{label} remediation source status missing: {payload.get('source_status')}", failures)
     require("execution_evidence" in (payload.get("source_status") or {}), f"{label} execution evidence source status missing: {payload.get('source_status')}", failures)
     require("task_intake" in (payload.get("source_status") or {}), f"{label} task intake source status missing: {payload.get('source_status')}", failures)
+    require("dispatch_evidence" in (payload.get("source_status") or {}), f"{label} dispatch evidence source status missing: {payload.get('source_status')}", failures)
     evidence_source = payload.get("execution_evidence") or {}
     require(evidence_source.get("operation") == "execution_evidence_gaps", f"{label} execution evidence payload missing: {evidence_source}", failures)
     evidence_summary = evidence_source.get("summary") or {}
+    dispatch_source = payload.get("dispatch_evidence") or {}
+    require(dispatch_source.get("operation") == "dispatch_evidence_lane", f"{label} dispatch evidence payload missing: {dispatch_source}", failures)
     require(isinstance(evidence_summary.get("gap_runs"), int), f"{label} execution evidence gap count missing: {evidence_summary}", failures)
     for key in [
         "synthesis_ready_runs",

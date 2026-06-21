@@ -323,7 +323,9 @@ creates a fresh single worker task and returns `agent_plan_id`,
 with intake severity plus ledger counts. It explicitly uses the worker
 self-plan path for its newly created task: backlog pull enforcement is bypassed,
 but `run_start` still requires a verified Agent Plan and the result must bind
-to a verified plan-evidence manifest.
+to a verified plan-evidence manifest. `agentops operator action-plan` embeds
+recent verified dispatch/customer proofs as `dispatch_evidence` so operators can
+track them in the command center after the immediate result card is gone.
 
 ### `agentops task claim`
 

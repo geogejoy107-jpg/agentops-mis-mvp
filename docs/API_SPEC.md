@@ -193,6 +193,9 @@ ledger counts so the operator can distinguish a freshly proven dispatch from a
 blocked backlog task. This fresh one-shot path uses the worker self-plan flow:
 it bypasses backlog pull enforcement but must still create and verify an
 Agent Plan before `run_start`, then bind the run with a plan-evidence manifest.
+`GET /api/operator/action-plan` also embeds these verified dispatch/customer
+runs as the read-only `dispatch_evidence` source so the command center can keep
+showing proofs after the immediate dispatch result card disappears.
 
 `POST /api/operator/execution-evidence/remediation-task` previews or creates a
 Commander-compatible remediation package for one run gap. Preview is read-only;
