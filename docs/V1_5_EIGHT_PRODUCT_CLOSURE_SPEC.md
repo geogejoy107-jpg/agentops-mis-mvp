@@ -26,6 +26,14 @@ Move AgentOps MIS from a dashboard/mock demo into a usable local control plane w
 6. Be started, stopped, or observed by a human operator.
 7. Use scoped tokens when running outside the browser or on another machine.
 
+The product boundary is deliberate: humans use the browser workspace/admin
+console to create goals, supervise status, approve risky actions, and review
+artifacts; AI workers use Agent Gateway CLI/API/MCP to execute. A dogfood run
+must not prove value by having an agent click the UI. It must prove that a
+normal customer task can be dispatched through the machine-facing contract and
+then become visible in the human-facing ledger, approvals, evaluations, audit,
+and artifact views.
+
 ## The Eight Product Closure Items
 
 ### 1. Real Long-Running Agent Worker

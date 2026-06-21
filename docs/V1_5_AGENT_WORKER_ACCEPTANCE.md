@@ -260,6 +260,18 @@ prefix global args supported: true
 token_omitted: true
 ```
 
+Dogfood execution contract for the current AgentOps MIS project:
+
+- Human/customer experience is validated at the task/result level: create a job,
+  watch status, review approvals, inspect run ledger, and read artifacts.
+- Agent execution is validated through Agent Gateway CLI/API, not browser clicks.
+- Browser UI remains the supervision console; it is not the machine contract for
+  OpenClaw, Hermes, remote workers, or future Dify/OpenAI File Search adapters.
+- Real runtime actions still require explicit `--confirm-run` / `confirm_run`.
+- Safe evidence must include run, tool call, evaluation, runtime event, audit,
+  artifact, memory candidate, and delivery approval rows without raw prompts,
+  raw responses, tokens, or private transcripts.
+
 The remote enrollment launch-step smoke passed:
 
 ```text
@@ -1026,7 +1038,30 @@ Hermes without confirm_run: planned task tsk_983fbfb28103, confirm_run_required_
 secret_leaked: false
 ```
 
-Latest local live dogfood runs for the current AgentOps MIS project:
+Latest CLI/API-first local live dogfood runs for the current AgentOps MIS project:
+
+```text
+script: python3 scripts/customer_worker_live_dogfood.py --adapter openclaw --request-timeout 420
+execution contract: customer/operator uses browser for oversight; agents use Agent Gateway CLI/API for execution
+title: 通过 Agent Gateway CLI 让真实 Hermes / OpenClaw 优化 AgentOps MIS
+OpenClaw run: run_gw_d99689fecad9
+OpenClaw artifact: art_customer_worker_task_run_gw_d99689fecad9
+OpenClaw evidence: tool_calls 1, evaluations 1, runtime_events 10, audit_logs 10, artifacts 1, memories 2, approvals 1
+failures: []
+```
+
+```text
+script: python3 scripts/customer_worker_live_dogfood.py --adapter hermes --request-timeout 720 --hermes-timeout 600
+execution contract: customer/operator uses browser for oversight; agents use Agent Gateway CLI/API for execution
+Hermes run: run_gw_1f4a26e22d50
+Hermes artifact: art_customer_worker_task_run_gw_1f4a26e22d50
+Hermes status: failed
+Hermes error: Remote end closed connection without response
+Hermes evidence: tool_calls 1, evaluations 1, runtime_events 9, audit_logs 10, artifacts 1, memories 1, approvals 1
+product implication: MIS CLI/API and ledger writeback are working; the Hermes gateway/runtime needs crash recovery or daemon supervision before it can be treated as a reliable long-running customer worker.
+```
+
+Earlier local live dogfood runs for the current AgentOps MIS project:
 
 ```text
 script: python3 scripts/customer_worker_live_dogfood.py --adapter hermes
