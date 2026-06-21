@@ -56,6 +56,7 @@ Recording steps:
 ./scripts/agentops worker fleet
 ./scripts/agentops commander inbox --bucket ready_for_review --limit 5
 ./scripts/agentops workflow customer-worker-task --adapter mock
+./scripts/agentops review queue --limit 12
 ./scripts/agentops workflow delivery-board --limit 10
 ./scripts/agentops approval list --decision pending --limit 10
 ./scripts/agentops approval approve --approval-id <approval_id>
@@ -63,6 +64,7 @@ Recording steps:
 ./scripts/agentops memory approve --memory-id <memory_id>
 ./scripts/agentops workflow customer-worker-task --adapter openclaw --confirm-run --async-job
 ./scripts/agentops workflow job-status --job-id <job_id> --wait
+./scripts/agentops review queue --limit 12
 ./scripts/agentops workflow delivery-board --limit 10
 ```
 

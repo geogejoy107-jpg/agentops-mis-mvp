@@ -292,6 +292,10 @@ def cmd_commander_inbox(args, client: AgentOpsClient) -> dict:
     return client.get(path)
 
 
+def cmd_review_queue(args, client: AgentOpsClient) -> dict:
+    return client.get("/api/review/queue", query={"limit": args.limit})
+
+
 def cmd_security_production_readiness(args, client: AgentOpsClient) -> dict:
     return client.get("/api/security/production-readiness")
 
@@ -1169,6 +1173,12 @@ def build_parser() -> argparse.ArgumentParser:
     commander_inbox.add_argument("--threshold-sec", type=int, default=900)
     commander_inbox.set_defaults(handler="commander_inbox")
 
+    review = sub.add_parser("review", help="Human review queue commands.")
+    review_sub = review.add_subparsers(dest="action", required=True)
+    review_queue = review_sub.add_parser("queue", help="Read pending approvals, memory candidates and customer deliveries.")
+    review_queue.add_argument("--limit", type=int, default=20)
+    review_queue.set_defaults(handler="review_queue")
+
     security = sub.add_parser("security", help="Read-only security and production-readiness checks.")
     security_sub = security.add_subparsers(dest="action", required=True)
     security_prod = security_sub.add_parser("production-readiness", help="Show whether the local Gateway is safe for shared/production use.")
@@ -1607,6 +1617,7 @@ HANDLERS = {
     "demo_readiness": cmd_demo_readiness,
     "commander_board": cmd_commander_board,
     "commander_inbox": cmd_commander_inbox,
+    "review_queue": cmd_review_queue,
     "security_production_readiness": cmd_security_production_readiness,
     "agent_register": cmd_agent_register,
     "agent_heartbeat": cmd_agent_heartbeat,

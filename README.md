@@ -173,6 +173,7 @@ agentops doctor
 agentops status
 agentops demo readiness
 agentops local readiness
+agentops review queue
 agentops workflow delivery-board
 ./scripts/agentops login --base-url http://127.0.0.1:8787 --workspace-id local-demo --agent-id agt_local_worker
 ./scripts/agentops agent register --id agt_local_worker --name "Local Worker" --role "AI Digital Employee"
@@ -224,6 +225,7 @@ agentops memory propose
 agentops memory approve/reject
 agentops eval submit
 agentops audit emit
+agentops review queue
 agentops workflow run-task
 ```
 
@@ -297,15 +299,18 @@ CLI 方式从客户/外部 agent 侧派发 worker 任务：
 交付完成后，用只读看板确认客户结果确实进入 MIS 管理账本：
 
 ```bash
+./scripts/agentops review queue --limit 12
 ./scripts/agentops workflow delivery-board --limit 10
 ./scripts/agentops approval list --decision pending --limit 10
 ./scripts/agentops approval approve --approval-id ap_...
 ./scripts/agentops memory list --status candidate --limit 10
 ./scripts/agentops memory approve --memory-id mem_...
 curl -fsS http://127.0.0.1:8787/api/workflows/customer-delivery-board?limit=10 | jq .
+curl -fsS http://127.0.0.1:8787/api/review/queue?limit=12 | jq .
 ```
 
 这个看板聚合 delivery artifact、task、run、approval、evaluation、audit evidence 和下一步动作；它不启动 worker、不写账本、不触发 live runtime。交付审批可以继续走浏览器 `/workspace/approvals`，也可以用 `agentops approval approve/reject` 在 CLI 里完成；项目记忆候选同理可在 `/memory` 或 `agentops memory approve/reject` 审核。
+`agentops review queue` 是更高层的人类审核队列：它把待审批 gate、候选记忆和客户交付状态合到一个只读列表里，适合总指挥在多个 worker/子线程速度不同的时候先处理已返回的工作。
 
 更底层的 agent/API 方式是先创建普通 MIS 任务，再由 worker 拉取执行：
 

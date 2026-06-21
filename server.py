@@ -5630,6 +5630,207 @@ def customer_delivery_board(conn, limit: int = 12) -> dict:
     }
 
 
+def human_review_queue(conn, limit: int = 20) -> dict:
+    limit = max(1, min(int(limit or 20), 100))
+    per_lane_limit = max(limit, 10)
+    approval_total = conn.execute("SELECT COUNT(*) c FROM approvals WHERE decision='pending'").fetchone()["c"]
+    memory_total = conn.execute("SELECT COUNT(*) c FROM memories WHERE review_status='candidate'").fetchone()["c"]
+    approvals = rows_to_dicts(conn.execute(
+        """SELECT approval_id, task_id, run_id, tool_call_id, requested_by_agent_id,
+                  approver_user_id, decision, reason, expires_at, created_at, decided_at
+           FROM approvals
+           WHERE decision='pending'
+           ORDER BY created_at DESC
+           LIMIT ?""",
+        (per_lane_limit,),
+    ).fetchall())
+    memories = rows_to_dicts(conn.execute(
+        """SELECT memory_id, scope, memory_type, canonical_text, source_type, source_ref,
+                  project_id, task_id, agent_id, confidence, review_status, access_tags,
+                  created_at, updated_at
+           FROM memories
+           WHERE review_status='candidate'
+           ORDER BY updated_at DESC
+           LIMIT ?""",
+        (per_lane_limit,),
+    ).fetchall())
+    delivery_board = customer_delivery_board(conn, min(per_lane_limit, 50))
+    delivery_focus = [
+        row for row in delivery_board.get("deliveries", [])
+        if row.get("status") in {"waiting_approval", "needs_attention", "ready"}
+    ][:per_lane_limit]
+
+    items: list[dict] = []
+    for row in approvals:
+        approval_id = row.get("approval_id")
+        if (approval_id or "").startswith("ap_gw_enroll_") or "enrollment" in (row.get("reason") or "").lower():
+            approval_kind = "agent_enrollment"
+        elif row.get("tool_call_id"):
+            approval_kind = "tool_call"
+        else:
+            approval_kind = "delivery_or_run"
+        items.append({
+            "item_type": "approval",
+            "item_id": approval_id,
+            "status": row.get("decision"),
+            "kind": approval_kind,
+            "title": f"Approval required: {approval_kind}",
+            "summary": redact_text(row.get("reason") or "Pending approval requires human decision.", 260),
+            "task_id": row.get("task_id"),
+            "run_id": row.get("run_id"),
+            "agent_id": row.get("requested_by_agent_id"),
+            "created_at": row.get("created_at"),
+            "updated_at": row.get("decided_at") or row.get("created_at"),
+            "expires_at": row.get("expires_at"),
+            "links": {
+                "task_url": f"/admin/tasks/{row.get('task_id')}" if row.get("task_id") else None,
+                "run_url": f"/admin/runs/{row.get('run_id')}" if row.get("run_id") else None,
+                "approvals_url": "/workspace/approvals",
+            },
+            "next_action": "Approve or reject this gate before the linked work is delivered.",
+            "cli_action": f"agentops approval approve --approval-id {approval_id}",
+            "alternate_cli_action": f"agentops approval reject --approval-id {approval_id}",
+        })
+
+    for row in memories:
+        memory_id = row.get("memory_id")
+        try:
+            access_tags = json.loads(row.get("access_tags") or "[]")
+        except Exception:
+            access_tags = []
+        if not isinstance(access_tags, list):
+            access_tags = []
+        items.append({
+            "item_type": "memory_candidate",
+            "item_id": memory_id,
+            "status": row.get("review_status"),
+            "kind": row.get("memory_type"),
+            "title": f"Memory candidate: {row.get('memory_type')}",
+            "summary": redact_text(row.get("canonical_text") or "", 260),
+            "task_id": row.get("task_id"),
+            "run_id": row.get("source_ref") if (row.get("source_ref") or "").startswith("run_") else None,
+            "agent_id": row.get("agent_id"),
+            "created_at": row.get("created_at"),
+            "updated_at": row.get("updated_at") or row.get("created_at"),
+            "confidence": row.get("confidence"),
+            "scope": row.get("scope"),
+            "access_tags": access_tags[:8],
+            "links": {
+                "task_url": f"/admin/tasks/{row.get('task_id')}" if row.get("task_id") else None,
+                "memory_url": "/memory",
+            },
+            "next_action": "Approve useful reusable knowledge or reject noisy memory.",
+            "cli_action": f"agentops memory approve --memory-id {memory_id}",
+            "alternate_cli_action": f"agentops memory reject --memory-id {memory_id}",
+        })
+
+    for row in delivery_focus:
+        delivery_id = row.get("delivery_id") or row.get("artifact_id")
+        if row.get("status") == "waiting_approval":
+            next_action = "Resolve pending delivery approval before sending this to the customer."
+        elif row.get("status") == "needs_attention":
+            next_action = "Inspect failed/blocked evidence before approving delivery."
+        else:
+            next_action = "Review the evidence package and archive/share the customer report."
+        pending_ids = row.get("pending_approval_ids") or []
+        items.append({
+            "item_type": "customer_delivery",
+            "item_id": delivery_id,
+            "status": row.get("status"),
+            "kind": row.get("artifact_type"),
+            "title": row.get("title") or "Customer delivery",
+            "summary": redact_text(row.get("summary") or "", 260),
+            "task_id": row.get("task_id"),
+            "run_id": row.get("run_id"),
+            "agent_id": row.get("owner_agent_id"),
+            "created_at": row.get("created_at"),
+            "updated_at": row.get("created_at"),
+            "artifact_id": row.get("artifact_id"),
+            "approval_ids": row.get("approval_ids") or [],
+            "pending_approval_ids": pending_ids,
+            "links": {
+                "task_url": row.get("task_url"),
+                "run_url": row.get("run_url"),
+                "report_url": row.get("ui_report_url") or row.get("report_url"),
+            },
+            "next_action": next_action,
+            "cli_action": (
+                f"agentops approval approve --approval-id {pending_ids[0]}"
+                if pending_ids else f"agentops workflow delivery-board --limit {min(limit, 20)}"
+            ),
+            "alternate_cli_action": (
+                f"agentops approval reject --approval-id {pending_ids[0]}"
+                if pending_ids else None
+            ),
+        })
+
+    def sort_key(item: dict) -> str:
+        return item.get("updated_at") or item.get("created_at") or ""
+
+    review_items = sorted(items, key=sort_key, reverse=True)[:limit]
+    delivery_summary = delivery_board.get("summary") or {}
+    summary = {
+        "pending_approvals": int(approval_total or 0),
+        "memory_candidates": int(memory_total or 0),
+        "ready_deliveries": int(delivery_summary.get("ready") or 0),
+        "waiting_deliveries": int(delivery_summary.get("waiting_approval") or 0),
+        "needs_attention_deliveries": int(delivery_summary.get("needs_attention") or 0),
+        "review_items_total": len(items),
+        "returned_items": len(review_items),
+        "retrieved_pending_approvals": len(approvals),
+        "retrieved_memory_candidates": len(memories),
+    }
+    if summary["pending_approvals"] or summary["memory_candidates"] or summary["waiting_deliveries"] or summary["needs_attention_deliveries"]:
+        status = "attention"
+    elif summary["ready_deliveries"]:
+        status = "ready"
+    else:
+        status = "empty"
+    safe_approvals = []
+    for row in approvals:
+        safe_row = dict(row)
+        safe_row["reason"] = redact_text(safe_row.get("reason") or "", 260)
+        safe_approvals.append(safe_row)
+    safe_memories = []
+    for row in memories:
+        safe_row = dict(row)
+        safe_row["canonical_text"] = redact_text(safe_row.get("canonical_text") or "", 260)
+        safe_memories.append(safe_row)
+    return {
+        "provider": "agentops-review",
+        "operation": "human_review_queue",
+        "status": status,
+        "limit": limit,
+        "summary": summary,
+        "review_items": review_items,
+        "lanes": {
+            "pending_approvals": safe_approvals,
+            "memory_candidates": safe_memories,
+            "customer_deliveries": delivery_focus,
+        },
+        "gates": [
+            {"id": "pending_approvals_visible", "label": "Pending approvals visible", "ok": True, "value": summary["pending_approvals"]},
+            {"id": "memory_candidates_visible", "label": "Memory candidates visible", "ok": True, "value": summary["memory_candidates"]},
+            {"id": "delivery_board_visible", "label": "Delivery board visible", "ok": True, "value": len(delivery_focus)},
+            {"id": "safe_readback", "label": "Read-only safe readback", "ok": True, "value": "summary/hash only"},
+        ],
+        "next_actions": [
+            "Start with the first review item; do not wait for slower workers if this item is ready.",
+            "Use `agentops review queue` for the combined queue, then approve/reject individual gates.",
+            "Use `agentops commander inbox` for async worker lane state and `agentops workflow delivery-board` for customer handoff.",
+        ],
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
+
+
 def customer_project_report_artifact(conn, project_id: str) -> tuple[dict, int]:
     report, status = customer_project_report(conn, project_id)
     if status != 200:
@@ -8440,6 +8641,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM artifacts ORDER BY created_at DESC").fetchall()))
             if path == "/api/audit":
                 return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT 200").fetchall()))
+            if path == "/api/review/queue":
+                limit = int((qs.get("limit") or ["20"])[0])
+                return self.send_json(human_review_queue(conn, limit))
             if path == "/api/dashboard/metrics":
                 return self.send_json(dashboard_metrics(conn))
             if path == "/api/runtime-connectors":

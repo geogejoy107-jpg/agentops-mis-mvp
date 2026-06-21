@@ -331,12 +331,14 @@ After the worker returns, use the customer delivery board to inspect the
 customer-facing result without mutating the ledger:
 
 ```bash
+agentops review queue --limit 12
 agentops workflow delivery-board --limit 10
 agentops approval list --decision pending --limit 10
 agentops approval approve --approval-id ap_...
 agentops memory list --status candidate --limit 10
 agentops memory approve --memory-id mem_...
 curl -fsS http://127.0.0.1:8787/api/workflows/customer-delivery-board?limit=10 | jq .
+curl -fsS http://127.0.0.1:8787/api/review/queue?limit=12 | jq .
 ```
 
 The board links delivery artifacts to task/run evidence, approvals,
