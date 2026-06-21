@@ -1062,6 +1062,20 @@ token_omitted: true
 
 Repeat verification during final acceptance also passed with run `run_gw_32d433dee013`.
 
+Latest CLI inspect smoke:
+
+```text
+script: python3 scripts/agentops_cli_inspect_smoke.py
+workflow path: ./scripts/agentops workflow customer-worker-task --adapter mock
+task: tsk_worker_ui_mock_20260621102821_3d8b0329
+run: run_gw_43af64100b4f
+artifact: art_customer_worker_task_run_gw_43af64100b4f
+commands verified: task get, task list, run get, run list, run graph, artifact list
+task evidence: runs 1, approvals 1, evaluations 1, memories 2, artifacts 1
+run evidence: tool_calls 1, approvals 1, evaluations 1, artifacts 1
+secret_leaked: false
+```
+
 Latest scoped Gateway task-create smoke:
 
 ```text
@@ -1108,6 +1122,19 @@ Hermes status: failed
 Hermes error: Remote end closed connection without response
 Hermes evidence: tool_calls 1, evaluations 1, runtime_events 9, audit_logs 10, artifacts 1, memories 1, approvals 1
 product implication: MIS CLI/API and ledger writeback are working; the Hermes gateway/runtime needs crash recovery or daemon supervision before it can be treated as a reliable long-running customer worker.
+```
+
+Latest real OpenClaw live dogfood plus CLI inspect:
+
+```text
+script: python3 scripts/customer_worker_live_dogfood.py --adapter openclaw --request-timeout 420
+execution contract: customer/operator uses browser for oversight; agents use Agent Gateway CLI/API for execution
+OpenClaw run: run_gw_2e170f71d433
+OpenClaw task: tsk_worker_ui_openclaw_20260621102836_2cf776dc
+OpenClaw artifact: art_customer_worker_task_run_gw_2e170f71d433
+OpenClaw evidence: tool_calls 1, evaluations 1, runtime_events 10, audit_logs 10, artifacts 1, memories 2, approvals 1
+inspect commands: ./scripts/agentops run get --run-id run_gw_2e170f71d433; ./scripts/agentops artifact list --run-id run_gw_2e170f71d433; ./scripts/agentops run graph --run-id run_gw_2e170f71d433
+inspect result: run status completed, runtime_type openclaw, artifact count 1, token_omitted true
 ```
 
 Earlier local live dogfood runs for the current AgentOps MIS project:

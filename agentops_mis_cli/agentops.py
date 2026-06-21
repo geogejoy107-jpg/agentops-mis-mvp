@@ -110,6 +110,12 @@ def split_csv(value: str | None) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+def apply_limit(rows: list[dict], limit: int | None) -> list[dict]:
+    if limit is None:
+        return rows
+    return rows[: max(0, int(limit))]
+
+
 def now_stamp() -> str:
     return dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d%H%M%S%f")
 
@@ -317,6 +323,51 @@ def cmd_task_create(args, client: AgentOpsClient) -> dict:
     return client.post("/api/agent-gateway/tasks", payload)
 
 
+def cmd_task_list(args, client: AgentOpsClient) -> dict:
+    rows = client.get("/api/tasks")
+    if not isinstance(rows, list):
+        rows = []
+    if args.status:
+        statuses = set(args.status)
+        rows = [row for row in rows if row.get("status") in statuses]
+    if args.owner_agent_id:
+        rows = [row for row in rows if row.get("owner_agent_id") == args.owner_agent_id]
+    if args.requester_id:
+        rows = [row for row in rows if row.get("requester_id") == args.requester_id]
+    rows = apply_limit(rows, args.limit)
+    return {
+        "provider": "agentops-mis",
+        "operation": "task_list",
+        "count": len(rows),
+        "tasks": rows,
+        "workspace_id": client.workspace_id,
+        "token_omitted": True,
+    }
+
+
+def cmd_task_get(args, client: AgentOpsClient) -> dict:
+    payload = client.get(f"/api/tasks/{args.task_id}")
+    return {
+        "provider": "agentops-mis",
+        "operation": "task_get",
+        "task_id": args.task_id,
+        "task": payload.get("task"),
+        "runs": payload.get("runs") or [],
+        "approvals": payload.get("approvals") or [],
+        "evaluations": payload.get("evaluations") or [],
+        "memories": payload.get("memories") or [],
+        "artifacts": payload.get("artifacts") or [],
+        "evidence": {
+            "runs": len(payload.get("runs") or []),
+            "approvals": len(payload.get("approvals") or []),
+            "evaluations": len(payload.get("evaluations") or []),
+            "memories": len(payload.get("memories") or []),
+            "artifacts": len(payload.get("artifacts") or []),
+        },
+        "token_omitted": True,
+    }
+
+
 def cmd_task_claim(args, client: AgentOpsClient) -> dict:
     payload = {
         "workspace_id": client.workspace_id,
@@ -338,6 +389,57 @@ def cmd_run_start(args, client: AgentOpsClient) -> dict:
         "approval_required": args.approval_required,
     }
     return client.post("/api/agent-gateway/runs/start", payload)
+
+
+def cmd_run_list(args, client: AgentOpsClient) -> dict:
+    query = {
+        "task_id": args.task_id,
+        "agent_id": args.agent_id,
+    }
+    rows = client.get("/api/runs", query=query)
+    if not isinstance(rows, list):
+        rows = []
+    if args.status:
+        statuses = set(args.status)
+        rows = [row for row in rows if row.get("status") in statuses]
+    rows = apply_limit(rows, args.limit)
+    return {
+        "provider": "agentops-mis",
+        "operation": "run_list",
+        "count": len(rows),
+        "runs": rows,
+        "workspace_id": client.workspace_id,
+        "token_omitted": True,
+    }
+
+
+def cmd_run_get(args, client: AgentOpsClient) -> dict:
+    payload = client.get(f"/api/runs/{args.run_id}")
+    return {
+        "provider": "agentops-mis",
+        "operation": "run_get",
+        "run_id": args.run_id,
+        "run": payload.get("run"),
+        "tool_calls": payload.get("tool_calls") or [],
+        "approvals": payload.get("approvals") or [],
+        "evaluations": payload.get("evaluations") or [],
+        "artifacts": payload.get("artifacts") or [],
+        "evidence": {
+            "tool_calls": len(payload.get("tool_calls") or []),
+            "approvals": len(payload.get("approvals") or []),
+            "evaluations": len(payload.get("evaluations") or []),
+            "artifacts": len(payload.get("artifacts") or []),
+        },
+        "token_omitted": True,
+    }
+
+
+def cmd_run_graph(args, client: AgentOpsClient) -> dict:
+    payload = client.get(f"/api/runs/{args.run_id}/graph")
+    payload["provider"] = "agentops-mis"
+    payload["operation"] = "run_graph"
+    payload["token_omitted"] = True
+    return payload
 
 
 def cmd_run_heartbeat(args, client: AgentOpsClient) -> dict:
@@ -384,6 +486,27 @@ def cmd_artifact_record(args, client: AgentOpsClient) -> dict:
         "content_hash": args.content_hash,
     }
     return client.post("/api/agent-gateway/artifacts", payload)
+
+
+def cmd_artifact_list(args, client: AgentOpsClient) -> dict:
+    rows = client.get("/api/artifacts")
+    if not isinstance(rows, list):
+        rows = []
+    if args.task_id:
+        rows = [row for row in rows if row.get("task_id") == args.task_id]
+    if args.run_id:
+        rows = [row for row in rows if row.get("run_id") == args.run_id]
+    if args.type:
+        rows = [row for row in rows if row.get("artifact_type") == args.type]
+    rows = apply_limit(rows, args.limit)
+    return {
+        "provider": "agentops-mis",
+        "operation": "artifact_list",
+        "count": len(rows),
+        "artifacts": rows,
+        "workspace_id": client.workspace_id,
+        "token_omitted": True,
+    }
 
 
 def cmd_approval_request(args, client: AgentOpsClient) -> dict:
@@ -967,6 +1090,17 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--budget", type=float, default=3.0)
     create.set_defaults(handler="task_create")
 
+    task_list = task_sub.add_parser("list", help="List normal MIS tasks with optional local filtering.")
+    task_list.add_argument("--limit", type=int, default=25)
+    task_list.add_argument("--status", action="append", default=None, help="Task status filter. Can be repeated.")
+    task_list.add_argument("--owner-agent-id", default=None)
+    task_list.add_argument("--requester-id", default=None)
+    task_list.set_defaults(handler="task_list")
+
+    task_get = task_sub.add_parser("get", help="Inspect one task plus run/evaluation/artifact evidence.")
+    task_get.add_argument("--task-id", required=True)
+    task_get.set_defaults(handler="task_get")
+
     pull = task_sub.add_parser("pull", help="Pull available tasks for an agent.")
     pull.add_argument("--agent-id", default=None)
     pull.add_argument("--limit", type=int, default=10)
@@ -981,6 +1115,21 @@ def build_parser() -> argparse.ArgumentParser:
 
     run = sub.add_parser("run", help="Run lifecycle commands.")
     run_sub = run.add_subparsers(dest="action", required=True)
+    run_list = run_sub.add_parser("list", help="List runs with optional task/agent/status filtering.")
+    run_list.add_argument("--task-id", default=None)
+    run_list.add_argument("--agent-id", default=None)
+    run_list.add_argument("--status", action="append", default=None, help="Run status filter. Can be repeated.")
+    run_list.add_argument("--limit", type=int, default=25)
+    run_list.set_defaults(handler="run_list")
+
+    run_get = run_sub.add_parser("get", help="Inspect one run plus tool/evaluation/artifact evidence.")
+    run_get.add_argument("--run-id", required=True)
+    run_get.set_defaults(handler="run_get")
+
+    graph = run_sub.add_parser("graph", help="Inspect parent/child delegation graph for one run.")
+    graph.add_argument("--run-id", required=True)
+    graph.set_defaults(handler="run_graph")
+
     start = run_sub.add_parser("start", help="Start a run for a task.")
     start.add_argument("--task-id", required=True)
     start.add_argument("--agent-id", default=None)
@@ -1019,6 +1168,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     artifact = sub.add_parser("artifact", help="Artifact evidence commands.")
     artifact_sub = artifact.add_subparsers(dest="action", required=True)
+    artifact_list = artifact_sub.add_parser("list", help="List artifact summaries without fetching raw content.")
+    artifact_list.add_argument("--task-id", default=None)
+    artifact_list.add_argument("--run-id", default=None)
+    artifact_list.add_argument("--type", default=None)
+    artifact_list.add_argument("--limit", type=int, default=25)
+    artifact_list.set_defaults(handler="artifact_list")
+
     artifact_record = artifact_sub.add_parser("record", help="Record an artifact summary without storing raw content.")
     artifact_record.add_argument("--run-id", required=True)
     artifact_record.add_argument("--task-id", default=None)
@@ -1294,11 +1450,17 @@ HANDLERS = {
     "agent_register": cmd_agent_register,
     "agent_heartbeat": cmd_agent_heartbeat,
     "task_create": cmd_task_create,
+    "task_list": cmd_task_list,
+    "task_get": cmd_task_get,
     "task_pull": cmd_task_pull,
     "task_claim": cmd_task_claim,
+    "run_list": cmd_run_list,
+    "run_get": cmd_run_get,
+    "run_graph": cmd_run_graph,
     "run_start": cmd_run_start,
     "run_heartbeat": cmd_run_heartbeat,
     "toolcall_record": cmd_toolcall_record,
+    "artifact_list": cmd_artifact_list,
     "artifact_record": cmd_artifact_record,
     "approval_request": cmd_approval_request,
     "memory_propose": cmd_memory_propose,

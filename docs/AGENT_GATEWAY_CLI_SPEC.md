@@ -262,6 +262,30 @@ Maps to `POST /api/agent-gateway/tasks` for CLI/remote-agent use, writes
 calls with the same `task_id` update the same task instead of creating
 duplicates.
 
+### `agentops task list`
+
+Lists normal MIS tasks as JSON so a customer script, remote worker, or operator
+can inspect the queue without opening the browser UI.
+
+```bash
+agentops task list --status planned --owner-agent-id agt_kb_researcher --limit 20
+```
+
+Maps to `GET /api/tasks` with CLI-side filtering. It is read-only and returns
+`token_omitted:true`.
+
+### `agentops task get`
+
+Returns one task plus related runs, approvals, evaluations, memories, artifacts,
+and evidence counts.
+
+```bash
+agentops task get --task-id tsk_clean_sources
+```
+
+This is the machine-facing proof path after a customer task runs: the agent or
+remote server can verify that MIS recorded work without relying on a human page.
+
 ### `agentops task pull`
 
 Returns available tasks for the agent based on role, scope, and workspace policy.
@@ -301,6 +325,36 @@ agentops run heartbeat --run-id run_123 --status running --summary "Cleaned 4 so
 ```
 
 Maps to `runs` and optionally `audit_logs`.
+
+### `agentops run list`
+
+Lists runs with optional task, agent, and status filters.
+
+```bash
+agentops run list --task-id tsk_clean_sources --limit 5
+agentops run list --agent-id agt_kb_researcher --status completed
+```
+
+Maps to `GET /api/runs`.
+
+### `agentops run get`
+
+Returns one run plus tool calls, approvals, evaluations, artifacts, and evidence
+counts.
+
+```bash
+agentops run get --run-id run_123
+```
+
+### `agentops run graph`
+
+Returns parent/child delegation context for one run.
+
+```bash
+agentops run graph --run-id run_123
+```
+
+Maps to `GET /api/runs/:id/graph`.
 
 ### `agentops toolcall record`
 
@@ -804,6 +858,19 @@ agentops artifact record \
 
 Maps to `artifacts`, `runtime_events`, and `audit_logs`.
 
+### `agentops artifact list`
+
+Lists safe artifact summaries without fetching raw customer files or full report
+bodies.
+
+```bash
+agentops artifact list --task-id tsk_clean_sources --limit 10
+agentops artifact list --run-id run_123 --type customer_worker_result
+```
+
+Maps to `GET /api/artifacts` with CLI-side filtering and returns
+`token_omitted:true`.
+
 ### `POST /api/agent-gateway/approvals/request`
 
 Creates a human approval request.
@@ -1042,6 +1109,7 @@ python3 scripts/agentops_worker_package_smoke.py
 python3 scripts/agentops_customer_worker_cli_smoke.py
 python3 scripts/agentops_task_create_cli_smoke.py
 python3 scripts/agent_gateway_task_create_scope_smoke.py
+python3 scripts/agentops_cli_inspect_smoke.py
 ```
 
 This helper creates a scoped token, creates a normal MIS task for that agent, runs `scripts/agent_worker.py --once` with the token, verifies run/tool/eval evidence, and revokes the token by default. It does not print the raw token.
@@ -1056,6 +1124,7 @@ The live-confirm-gate helper verifies `agentops worker start --adapter hermes|op
 The customer-worker CLI helper verifies `agentops workflow customer-worker-task` creates a real mock worker run with run/tool/evaluation/audit/artifact evidence and keeps Hermes live execution gated by confirmation.
 The task-create CLI helper verifies `agentops task create` can create a normal customer/API task, then a worker can pull it and write run/tool/evaluation evidence without leaking token-like values.
 The task-create scope helper verifies scoped tokens need `tasks:create`, cannot create tasks as another agent, and cannot cross workspace boundaries.
+The CLI inspect helper verifies `agentops task get/list`, `agentops run get/list/graph`, and `agentops artifact list` can retrieve a completed customer worker task's ledger evidence without browser use or token-like leakage.
 The launch-steps helper verifies create/rotate responses include safe remote-worker commands, a short-lived session command, `--use-session`, and do not embed the raw token in those commands.
 The remote launch-packet helper uses the returned environment shape to run a real worker through `--use-session` and verify run/tool/evaluation ledger evidence.
 The scope-matrix helper verifies an observer token can heartbeat/pull/audit but receives `403 forbidden` for claim/run/tool/artifact writes.
