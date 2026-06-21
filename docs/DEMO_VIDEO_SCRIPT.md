@@ -57,6 +57,8 @@ Recording steps:
 ./scripts/agentops commander inbox --bucket ready_for_review --limit 5
 ./scripts/agentops workflow customer-worker-task --adapter mock
 ./scripts/agentops workflow delivery-board --limit 10
+./scripts/agentops approval list --decision pending --limit 10
+./scripts/agentops approval approve --approval-id <approval_id>
 ./scripts/agentops workflow customer-worker-task --adapter openclaw --confirm-run --async-job
 ./scripts/agentops workflow job-status --job-id <job_id> --wait
 ./scripts/agentops workflow delivery-board --limit 10
@@ -65,6 +67,7 @@ Recording steps:
 Then return to:
 
 - `/workspace/reports`: customer delivery board and report links.
+- `/workspace/approvals`: approval gate, or show the same decision through `agentops approval approve/reject`.
 - `/runs`: latest worker run.
 - `/evaluations`: rule result.
 - `/audit`: confirmed worker/audit trail.

@@ -517,6 +517,49 @@ def cmd_approval_request(args, client: AgentOpsClient) -> dict:
     return client.post("/api/agent-gateway/approvals/request", payload)
 
 
+def cmd_approval_list(args, client: AgentOpsClient) -> dict:
+    rows = client.get("/api/approvals")
+    if not isinstance(rows, list):
+        rows = []
+    filtered = rows
+    if args.decision:
+        filtered = [row for row in filtered if row.get("decision") == args.decision]
+    if args.task_id:
+        filtered = [row for row in filtered if row.get("task_id") == args.task_id]
+    if args.run_id:
+        filtered = [row for row in filtered if row.get("run_id") == args.run_id]
+    limited = apply_limit(filtered, args.limit)
+    return {
+        "provider": "agentops-approval",
+        "operation": "approval_list",
+        "approvals": limited,
+        "total": len(filtered),
+        "limit": args.limit,
+        "filters": {
+            "decision": args.decision,
+            "task_id": args.task_id,
+            "run_id": args.run_id,
+        },
+        "token_omitted": True,
+    }
+
+
+def cmd_approval_decide(args, client: AgentOpsClient) -> dict:
+    action = "approve" if args.handler == "approval_approve" else "reject"
+    response = client.post(f"/api/approvals/{args.approval_id}/{action}", {})
+    approval = response.get("approval") if isinstance(response.get("approval"), dict) else response
+    return {
+        "provider": "agentops-approval",
+        "operation": f"approval_{action}",
+        "approval": approval,
+        "approval_id": approval.get("approval_id") or args.approval_id,
+        "decision": approval.get("decision"),
+        "task_id": approval.get("task_id"),
+        "run_id": approval.get("run_id"),
+        "token_omitted": True,
+    }
+
+
 def cmd_memory_propose(args, client: AgentOpsClient) -> dict:
     payload = {
         "workspace_id": client.workspace_id,
@@ -1221,6 +1264,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     approval = sub.add_parser("approval", help="Approval commands.")
     approval_sub = approval.add_subparsers(dest="action", required=True)
+    approval_list = approval_sub.add_parser("list", help="List approvals for operator review.")
+    approval_list.add_argument("--decision", choices=["pending", "approved", "rejected", "expired"], default=None)
+    approval_list.add_argument("--task-id", default=None)
+    approval_list.add_argument("--run-id", default=None)
+    approval_list.add_argument("--limit", type=int, default=25)
+    approval_list.set_defaults(handler="approval_list")
+    approval_approve = approval_sub.add_parser("approve", help="Approve an approval gate and sync linked ledger rows.")
+    approval_approve.add_argument("--approval-id", required=True)
+    approval_approve.set_defaults(handler="approval_approve")
+    approval_reject = approval_sub.add_parser("reject", help="Reject an approval gate and block linked ledger rows.")
+    approval_reject.add_argument("--approval-id", required=True)
+    approval_reject.set_defaults(handler="approval_reject")
     request = approval_sub.add_parser("request", help="Request human approval.")
     request.add_argument("--task-id", required=True)
     request.add_argument("--run-id", required=True)
@@ -1506,6 +1561,9 @@ HANDLERS = {
     "toolcall_record": cmd_toolcall_record,
     "artifact_list": cmd_artifact_list,
     "artifact_record": cmd_artifact_record,
+    "approval_list": cmd_approval_list,
+    "approval_approve": cmd_approval_decide,
+    "approval_reject": cmd_approval_decide,
     "approval_request": cmd_approval_request,
     "memory_propose": cmd_memory_propose,
     "eval_submit": cmd_eval_submit,
