@@ -1130,6 +1130,22 @@ secret_leaked: false
 Latest CLI/API-first local live dogfood runs for the current AgentOps MIS project:
 
 ```text
+script: python3 scripts/customer_worker_live_dogfood.py --adapter openclaw --adapter hermes --request-timeout 720 --hermes-timeout 600
+execution contract: customer/operator uses browser for oversight; agents use Agent Gateway CLI/API for execution
+title: 通过 Agent Gateway CLI 让真实 Hermes / OpenClaw 优化 AgentOps MIS
+OpenClaw run: run_gw_7ede8c8cc5c9
+OpenClaw artifact: art_customer_worker_task_run_gw_7ede8c8cc5c9
+OpenClaw evidence: tool_calls 1, evaluations 1, runtime_events 10, audit_logs 10, artifacts 1, memories 2, approvals 1
+Hermes run: run_gw_1e864c5f6b18
+Hermes artifact: art_customer_worker_task_run_gw_1e864c5f6b18
+Hermes evidence: tool_calls 1, evaluations 1, runtime_events 10, audit_logs 10, artifacts 1, memories 2, approvals 1
+failures: []
+contract: agents execute through Agent Gateway CLI/API; the browser only dispatches, supervises, approves, and reads delivery evidence.
+```
+
+Previous CLI/API-first local live dogfood runs:
+
+```text
 script: python3 scripts/customer_worker_live_dogfood.py --adapter openclaw --request-timeout 420
 execution contract: customer/operator uses browser for oversight; agents use Agent Gateway CLI/API for execution
 title: 通过 Agent Gateway CLI 让真实 Hermes / OpenClaw 优化 AgentOps MIS

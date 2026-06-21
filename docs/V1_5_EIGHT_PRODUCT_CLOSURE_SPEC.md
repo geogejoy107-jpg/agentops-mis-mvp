@@ -114,6 +114,11 @@ Acceptance evidence:
   - Hermes completed customer worker run `run_gw_4b92508d1e33` with artifact `art_customer_worker_task_run_gw_4b92508d1e33`.
   - OpenClaw completed customer worker run `run_gw_328d56c280fa` with artifact `art_customer_worker_task_run_gw_328d56c280fa`.
   - Both runs wrote run/tool/evaluation/runtime/audit/artifact evidence.
+- Customer worker live dogfood on 2026-06-21:
+  - `python3 scripts/customer_worker_live_dogfood.py --adapter openclaw --adapter hermes --request-timeout 720 --hermes-timeout 600`
+  - OpenClaw completed `run_gw_7ede8c8cc5c9` with artifact `art_customer_worker_task_run_gw_7ede8c8cc5c9`.
+  - Hermes completed `run_gw_1e864c5f6b18` with artifact `art_customer_worker_task_run_gw_1e864c5f6b18`.
+  - Both runs used Agent Gateway CLI/API execution, not browser automation, and wrote tool/evaluation/runtime/audit/artifact/memory/approval evidence.
 - Generic customer worker governance closure on 2026-06-20:
   - Mock completed `run_gw_161d789c4469`.
   - Hermes completed `run_gw_5d998a53e469`.
