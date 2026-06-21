@@ -329,6 +329,21 @@ def cmd_commander_dispatch_package(args, client: AgentOpsClient) -> dict:
     return client.post(f"/api/commander/work-packages/{args.task_id}/dispatch", payload)
 
 
+def cmd_commander_dispatch_batch(args, client: AgentOpsClient) -> dict:
+    payload = {
+        "workspace_id": client.workspace_id,
+        "project_id": args.project_id,
+        "plan_id": args.plan_id,
+        "task_ids": args.task_id or [],
+        "status": args.status,
+        "limit": args.limit,
+        "adapter": args.adapter,
+        "confirm_run": bool(args.confirm_run),
+        "hermes_timeout": args.hermes_timeout,
+    }
+    return client.post("/api/commander/work-packages/dispatch-batch", payload)
+
+
 def cmd_review_queue(args, client: AgentOpsClient) -> dict:
     return client.get("/api/agent-gateway/review/queue", query={"limit": args.limit})
 
@@ -1378,6 +1393,16 @@ def build_parser() -> argparse.ArgumentParser:
     commander_dispatch.add_argument("--worker-agent-id", default=None)
     commander_dispatch.add_argument("--hermes-timeout", type=int, default=300)
     commander_dispatch.set_defaults(handler="commander_dispatch_package")
+    commander_dispatch_batch = commander_sub.add_parser("dispatch-batch", help="Queue multiple persisted commander work packages as async workflow jobs.")
+    commander_dispatch_batch.add_argument("--project-id", default=None)
+    commander_dispatch_batch.add_argument("--plan-id", default=None)
+    commander_dispatch_batch.add_argument("--task-id", action="append", default=None, help="Exact task id to queue. Repeatable.")
+    commander_dispatch_batch.add_argument("--status", default="planned")
+    commander_dispatch_batch.add_argument("--limit", type=int, default=5)
+    commander_dispatch_batch.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
+    commander_dispatch_batch.add_argument("--confirm-run", action="store_true", help="Required for Hermes/OpenClaw live execution.")
+    commander_dispatch_batch.add_argument("--hermes-timeout", type=int, default=300)
+    commander_dispatch_batch.set_defaults(handler="commander_dispatch_batch")
 
     review = sub.add_parser("review", help="Human review queue commands.")
     review_sub = review.add_subparsers(dest="action", required=True)
@@ -1939,6 +1964,7 @@ HANDLERS = {
     "commander_plan": cmd_commander_plan,
     "commander_packages": cmd_commander_packages,
     "commander_dispatch_package": cmd_commander_dispatch_package,
+    "commander_dispatch_batch": cmd_commander_dispatch_batch,
     "review_queue": cmd_review_queue,
     "security_production_readiness": cmd_security_production_readiness,
     "agent_register": cmd_agent_register,

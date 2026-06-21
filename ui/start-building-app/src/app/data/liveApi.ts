@@ -828,6 +828,35 @@ export interface CommanderWorkPackageDispatchPayload {
   live_execution_performed: boolean;
 }
 
+export interface CommanderWorkPackageDispatchBatchPayload {
+  provider: string;
+  operation: string;
+  ok: boolean;
+  status?: string;
+  adapter: string;
+  confirm_run: boolean;
+  jobs: WorkflowJob[];
+  job_ids: string[];
+  task_ids: string[];
+  status_urls: string[];
+  reason?: string | null;
+  filter?: {
+    project_id?: string | null;
+    plan_id?: string | null;
+    status?: string;
+    limit?: number;
+  };
+  safety: {
+    ledger_mutated: boolean;
+    jobs_created: number;
+    live_execution_performed: boolean;
+    token_omitted: boolean;
+    raw_prompt_omitted: boolean;
+  };
+  token_omitted: boolean;
+  live_execution_performed: boolean;
+}
+
 export interface ReviewQueueSummary {
   pending_approvals: number;
   memory_candidates: number;
@@ -2357,6 +2386,61 @@ export async function dispatchCommanderWorkPackage(input: {
     safety: {
       ledger_mutated: boolValue(safetyRaw.ledger_mutated),
       run_created: boolValue(safetyRaw.run_created),
+      live_execution_performed: boolValue(safetyRaw.live_execution_performed),
+      token_omitted: boolValue(safetyRaw.token_omitted),
+      raw_prompt_omitted: boolValue(safetyRaw.raw_prompt_omitted),
+    },
+    token_omitted: boolValue(raw.token_omitted),
+    live_execution_performed: boolValue(raw.live_execution_performed),
+  };
+}
+
+export async function dispatchCommanderWorkPackageBatch(input: {
+  project_id?: string;
+  plan_id?: string;
+  task_ids?: string[];
+  status?: string;
+  limit?: number;
+  adapter?: WorkerAdapterName;
+  confirm_run?: boolean;
+  hermes_timeout?: number;
+}): Promise<CommanderWorkPackageDispatchBatchPayload> {
+  const raw = await apiJsonWithStatuses<Record<string, unknown>>("/commander/work-packages/dispatch-batch", {
+    method: "POST",
+    body: JSON.stringify({
+      project_id: input.project_id,
+      plan_id: input.plan_id,
+      task_ids: input.task_ids || [],
+      status: input.status || "planned",
+      limit: input.limit || 5,
+      adapter: input.adapter || "mock",
+      confirm_run: Boolean(input.confirm_run),
+      hermes_timeout: input.hermes_timeout,
+    }),
+  }, [409, 404]);
+  const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
+  const filterRaw = typeof raw.filter === "object" && raw.filter !== null ? raw.filter as Record<string, unknown> : {};
+  return {
+    provider: String(raw.provider || "agentops-commander"),
+    operation: String(raw.operation || "work_package_dispatch_batch"),
+    ok: boolValue(raw.ok),
+    status: raw.status ? String(raw.status) : undefined,
+    adapter: String(raw.adapter || input.adapter || "mock"),
+    confirm_run: boolValue(raw.confirm_run),
+    jobs: asArray<WorkflowJob>(raw.jobs),
+    job_ids: asArray<unknown>(raw.job_ids).map(String),
+    task_ids: asArray<unknown>(raw.task_ids).map(String),
+    status_urls: asArray<unknown>(raw.status_urls).map(String),
+    reason: raw.reason ? String(raw.reason) : null,
+    filter: {
+      project_id: filterRaw.project_id ? String(filterRaw.project_id) : null,
+      plan_id: filterRaw.plan_id ? String(filterRaw.plan_id) : null,
+      status: filterRaw.status ? String(filterRaw.status) : undefined,
+      limit: filterRaw.limit === undefined ? undefined : numberValue(filterRaw.limit, input.limit || 5),
+    },
+    safety: {
+      ledger_mutated: boolValue(safetyRaw.ledger_mutated),
+      jobs_created: numberValue(safetyRaw.jobs_created, 0),
       live_execution_performed: boolValue(safetyRaw.live_execution_performed),
       token_omitted: boolValue(safetyRaw.token_omitted),
       raw_prompt_omitted: boolValue(safetyRaw.raw_prompt_omitted),

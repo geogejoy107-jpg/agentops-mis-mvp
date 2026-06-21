@@ -7,6 +7,7 @@ import {
   decideApproval,
   decideMemory,
   dispatchCommanderWorkPackage,
+  dispatchCommanderWorkPackageBatch,
   dispatchLocalWorkerOnce,
   issueApprovedAgentGatewayEnrollment,
   loadApprovals,
@@ -209,6 +210,7 @@ export function AIEmployees() {
   const integrationInbox = data?.integrationInbox;
   const commanderWorkPackages = data?.commanderWorkPackages;
   const commanderPackageRows = commanderWorkPackages?.work_packages || [];
+  const commanderPlannedPackageCount = commanderPackageRows.filter(pkg => pkg.package_status === "planned" || pkg.status === "planned").length;
   const reviewQueue = data?.reviewQueue as ReviewQueuePayload | undefined;
   const reviewQueueSummary = reviewQueue?.summary;
   const reviewQueueItems = reviewQueue?.review_items || [];
@@ -321,6 +323,7 @@ export function AIEmployees() {
       dispatchPackageMock: "Run mock",
       dispatchPackageHermes: "Run Hermes",
       dispatchPackageOpenClaw: "Run OpenClaw",
+      dispatchBatchMock: "Queue planned mock batch",
       reviewQueueTitle: "Human Review Queue",
       reviewQueueSummary: "One operator queue for approvals, memory candidates and customer deliveries. Handle returned work first without waiting for every worker lane.",
       reviewQueueEmpty: "No review items. Keep dispatching or watch the async inbox.",
@@ -636,6 +639,7 @@ export function AIEmployees() {
       dispatchPackageMock: "运行 mock",
       dispatchPackageHermes: "运行 Hermes",
       dispatchPackageOpenClaw: "运行 OpenClaw",
+      dispatchBatchMock: "批量排队 planned mock",
       reviewQueueTitle: "人工审核队列",
       reviewQueueSummary: "把审批、候选记忆和客户交付聚合成一个 operator 队列；哪个 worker 先回来，就先处理哪个。",
       reviewQueueEmpty: "暂无待审事项。可以继续派发任务，或观察异步 Inbox。",
@@ -1082,6 +1086,34 @@ export function AIEmployees() {
         confirm_run: confirmRun,
       });
       setDispatchResult(`${copy.dispatchPackage}: ${result.ok ? "ok" : result.reason || "failed"} · ${result.run_id || result.task_id}`);
+      await refresh();
+    } catch (err) {
+      setDispatchResult(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDispatching(null);
+    }
+  };
+
+  const dispatchCommanderPlannedBatch = async () => {
+    const plannedTaskIds = commanderPackageRows
+      .filter(pkg => pkg.package_status === "planned" || pkg.status === "planned")
+      .slice(0, 5)
+      .map(pkg => pkg.task_id)
+      .filter(Boolean);
+    if (plannedTaskIds.length === 0) {
+      setDispatchResult(locale === "zh" ? "没有可排队的 planned 工作包" : "No planned work packages to queue");
+      return;
+    }
+    setDispatching("commander-batch-mock");
+    setDispatchResult(null);
+    try {
+      const result = await dispatchCommanderWorkPackageBatch({
+        task_ids: plannedTaskIds,
+        adapter: "mock",
+        status: "planned",
+        limit: plannedTaskIds.length,
+      });
+      setDispatchResult(`${copy.dispatchBatchMock}: ${result.ok ? "queued" : result.reason || "failed"} · ${result.job_ids.length} jobs`);
       await refresh();
     } catch (err) {
       setDispatchResult(err instanceof Error ? err.message : String(err));
@@ -1669,7 +1701,18 @@ export function AIEmployees() {
                 {copy.packageReadback}: {commanderWorkPackages?.summary.total ?? 0} · {copy.readOnlyProof}: {commanderWorkPackages?.safety.read_only ? copy.yes : copy.no}
               </div>
             </div>
-            <StatusBadge status={commanderWorkPackages?.status || "unknown"} />
+            <div className="flex flex-wrap gap-1.5 lg:justify-end">
+              <button
+                onClick={() => void dispatchCommanderPlannedBatch()}
+                disabled={Boolean(dispatching) || commanderPlannedPackageCount === 0}
+                className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded disabled:opacity-50"
+                style={{ background: "rgba(45,212,191,0.10)", color: "var(--mis-success)", border: "1px solid rgba(45,212,191,0.18)" }}
+              >
+                {dispatching === "commander-batch-mock" ? <RefreshCw size={10} /> : <Play size={10} />}
+                {dispatching === "commander-batch-mock" ? copy.dispatching : `${copy.dispatchBatchMock} (${commanderPlannedPackageCount})`}
+              </button>
+              <StatusBadge status={commanderWorkPackages?.status || "unknown"} />
+            </div>
           </div>
           <div className="space-y-2 mt-3">
             {commanderPackageRows.length === 0 && (

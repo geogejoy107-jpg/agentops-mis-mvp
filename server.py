@@ -6156,7 +6156,10 @@ def run_workflow_job_background(job_id: str, body: dict) -> None:
             runtime_event(conn, "rtc_agent_gateway_local", "workflow_job.running", "running", input_summary=f"Workflow job {job_id} started.")
             audit(conn, "system", "workflow-job", "workflow.job.running", "workflow_jobs", job_id, dict(before) if before else None, {"status": "running"}, {"raw_request_omitted": True})
             conn.commit()
-            if workflow_type == "customer_worker_task":
+            if workflow_type == "commander_work_package_dispatch":
+                task_id = body.get("task_id")
+                result, _status = commander_dispatch_work_package(conn, task_id, {**body, "async_job": False})
+            elif workflow_type == "customer_worker_task":
                 result, _status = run_customer_worker_task_workflow(conn, {**body, "async_job": False})
             else:
                 result, _status = run_customer_task_template_workflow(conn, {**body, "async_job": False})
@@ -9221,6 +9224,161 @@ def commander_dispatch_work_package(conn: sqlite3.Connection, task_id: str, body
     }, 201 if run_id else 500
 
 
+def submit_commander_work_package_dispatch_jobs(conn: sqlite3.Connection, body: dict, headers=None) -> tuple[dict, int]:
+    headers = headers or {}
+    workspace_id = normalize_workspace_id(body.get("workspace_id") or headers.get("X-AgentOps-Workspace-Id") or "local-demo")
+    adapter = coerce_choice(body.get("adapter"), {"mock", "hermes", "openclaw"}, "mock")
+    confirm_run = bool(body.get("confirm_run"))
+    if adapter in {"hermes", "openclaw"} and not confirm_run:
+        return {
+            "provider": "agentops-commander",
+            "operation": "work_package_dispatch_batch",
+            "ok": False,
+            "dry_run": True,
+            "adapter": adapter,
+            "reason": "confirm_run_required_for_live_adapter",
+            "requires": {"confirm_run": True},
+            "jobs": [],
+            "job_ids": [],
+            "safety": {
+                "ledger_mutated": False,
+                "jobs_created": 0,
+                "live_execution_performed": False,
+                "token_omitted": True,
+                "raw_prompt_omitted": True,
+            },
+            "token_omitted": True,
+            "live_execution_performed": False,
+        }, 409
+
+    requested_task_ids = [commander_safe_text(item, 120) for item in (body.get("task_ids") or []) if item]
+    limit = min(max(int(body.get("limit") or len(requested_task_ids) or 5), 1), 8)
+    project_id = commander_safe_text(body.get("project_id") or "", 120)
+    plan_id = commander_safe_text(body.get("plan_id") or "", 120)
+    status_filter = commander_safe_text(body.get("status") or "planned", 80)
+    params: list = [workspace_id]
+    sql = """SELECT * FROM tasks
+        WHERE COALESCE(workspace_id,'local-demo')=?
+        AND description LIKE 'Commander project:%'"""
+    if requested_task_ids:
+        placeholders = ",".join("?" for _ in requested_task_ids[:limit])
+        sql += f" AND task_id IN ({placeholders})"
+        params.extend(requested_task_ids[:limit])
+    if project_id:
+        sql += " AND description LIKE ?"
+        params.append(f"%Commander project: {project_id}%")
+    if plan_id:
+        sql += " AND (description LIKE ? OR task_id LIKE ?)"
+        params.extend([f"%Plan: {plan_id}%", f"%{plan_id}%"])
+    if status_filter and status_filter != "all":
+        sql += " AND status=?"
+        params.append(coerce_choice(status_filter, VALID_TASK_STATUSES, "planned"))
+    sql += " ORDER BY created_at ASC LIMIT ?"
+    params.append(limit)
+    rows = conn.execute(sql, params).fetchall()
+    if not rows:
+        return {
+            "provider": "agentops-commander",
+            "operation": "work_package_dispatch_batch",
+            "ok": False,
+            "adapter": adapter,
+            "reason": "no_matching_work_packages",
+            "jobs": [],
+            "job_ids": [],
+            "filter": {"project_id": project_id or None, "plan_id": plan_id or None, "status": status_filter, "limit": limit},
+            "token_omitted": True,
+            "live_execution_performed": False,
+        }, 404
+
+    jobs = []
+    now = now_iso()
+    for row in rows:
+        task = dict(row)
+        task_id = task["task_id"]
+        title = redact_text(task.get("title") or task_id, 180)
+        input_summary = redact_text(task.get("description") or title, 300)
+        job_id = new_id("wfjob")
+        request_hash = stable_hash({
+            "workflow_type": "commander_work_package_dispatch",
+            "task_id": task_id,
+            "adapter": adapter,
+            "confirm_run": confirm_run,
+            "title": title,
+        })
+        job_row = {
+            "job_id": job_id,
+            "workspace_id": workspace_id,
+            "workflow_type": "commander_work_package_dispatch",
+            "status": "queued",
+            "template_id": body.get("template_id") or "commander_work_package",
+            "adapter": adapter,
+            "confirm_run": 1 if confirm_run else 0,
+            "title": title,
+            "input_summary": input_summary,
+            "request_hash": request_hash,
+            "result_json": "{}",
+            "result_task_id": task_id,
+            "result_run_id": None,
+            "result_artifact_id": None,
+            "error_message": None,
+            "created_at": now,
+            "started_at": None,
+            "completed_at": None,
+            "updated_at": now,
+        }
+        conn.execute(
+            """INSERT INTO workflow_jobs(job_id,workspace_id,workflow_type,status,template_id,adapter,confirm_run,title,input_summary,request_hash,result_json,result_task_id,result_run_id,result_artifact_id,error_message,created_at,started_at,completed_at,updated_at)
+            VALUES(:job_id,:workspace_id,:workflow_type,:status,:template_id,:adapter,:confirm_run,:title,:input_summary,:request_hash,:result_json,:result_task_id,:result_run_id,:result_artifact_id,:error_message,:created_at,:started_at,:completed_at,:updated_at)""",
+            job_row,
+        )
+        runtime_event(conn, "rtc_agent_gateway_local", "workflow_job.submitted", "queued", task_id=task_id, input_summary=f"Commander work package job {job_id} submitted.", raw_payload_hash=request_hash)
+        audit(conn, "user", "usr_founder", "commander.work_package_dispatch_job_submitted", "workflow_jobs", job_id, None, job_row, {
+            "task_id": task_id,
+            "adapter": adapter,
+            "raw_request_omitted": True,
+        })
+        jobs.append(workflow_job_public(job_row))
+    conn.commit()
+
+    for job in jobs:
+        task_id = job.get("result_task_id")
+        threading.Thread(
+            target=run_workflow_job_background,
+            args=(job["job_id"], {
+                "workspace_id": workspace_id,
+                "task_id": task_id,
+                "adapter": adapter,
+                "confirm_run": confirm_run,
+                "worker_agent_id": stable_id("agt_cmd_dispatch", adapter, task_id or "", job["job_id"]),
+                "hermes_timeout": body.get("hermes_timeout") or 300,
+            }),
+            daemon=True,
+        ).start()
+
+    return {
+        "provider": "agentops-commander",
+        "operation": "work_package_dispatch_batch",
+        "ok": True,
+        "status": "queued",
+        "adapter": adapter,
+        "confirm_run": confirm_run,
+        "jobs": jobs,
+        "job_ids": [job.get("job_id") for job in jobs],
+        "task_ids": [job.get("result_task_id") for job in jobs],
+        "status_urls": [f"/api/workflows/jobs/{job.get('job_id')}" for job in jobs],
+        "filter": {"project_id": project_id or None, "plan_id": plan_id or None, "status": status_filter, "limit": limit},
+        "safety": {
+            "ledger_mutated": True,
+            "jobs_created": len(jobs),
+            "live_execution_performed": False,
+            "token_omitted": True,
+            "raw_prompt_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }, 202
+
+
 COMMANDER_INBOX_BUCKETS = ["ready_for_review", "still_running", "blocked", "late_or_stale", "needs_memory_review"]
 
 
@@ -11136,6 +11294,9 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/commander/work-packages/plan":
                 payload, status = commander_plan_work_packages(conn, body, self.headers)
                 conn.commit()
+                return self.send_json(payload, status)
+            if path == "/api/commander/work-packages/dispatch-batch":
+                payload, status = submit_commander_work_package_dispatch_jobs(conn, body, self.headers)
                 return self.send_json(payload, status)
             if path.startswith("/api/commander/work-packages/") and path.endswith("/dispatch"):
                 task_id = path.split("/")[-2]

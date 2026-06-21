@@ -70,6 +70,24 @@ curl -s -X POST http://127.0.0.1:8787/api/commander/work-packages/tsk_cmd_exampl
 If `adapter` is `hermes` or `openclaw` and confirmation is omitted, MIS writes a
 confirm-required runtime/audit event and does not create a run.
 
+Queue several planned packages as async workflow jobs:
+
+```bash
+curl -s -X POST http://127.0.0.1:8787/api/commander/work-packages/dispatch-batch \
+  -H "Content-Type: application/json" \
+  -d '{
+    "project_id": "proj_x",
+    "status": "planned",
+    "limit": 5,
+    "adapter": "mock"
+  }' | jq .
+```
+
+The batch endpoint creates `workflow_jobs` rows and returns immediately. Each job
+then executes the exact target work-package `task_id` through the same Agent
+Gateway worker loop. Hermes/OpenClaw batch dispatch is rejected unless
+`confirm_run:true` is present.
+
 ## CLI
 
 Preview:
@@ -112,6 +130,23 @@ Confirmed live dispatch:
   --confirm-run
 ```
 
+Queue planned packages in parallel:
+
+```bash
+./scripts/agentops commander dispatch-batch \
+  --project-id proj_x \
+  --status planned \
+  --limit 5 \
+  --adapter mock
+```
+
+Then poll returned jobs:
+
+```bash
+./scripts/agentops workflow job-status --job-id wfjob_x --wait
+./scripts/agentops commander packages --project-id proj_x --limit 25
+```
+
 ## Default Lanes
 
 - Strategy: clarify goal, acceptance gates, approvals, and scope.
@@ -142,6 +177,7 @@ The panel supports:
 - opening created task detail pages
 - reading persisted work-package status after refresh
 - dispatching a persisted package through mock, Hermes, or OpenClaw worker adapters
+- queueing currently planned packages as mock async workflow jobs
 - seeing safety proof for no live execution and token omission
 
 ## Verification
@@ -149,6 +185,7 @@ The panel supports:
 ```bash
 python3 scripts/commander_work_package_plan_smoke.py
 python3 scripts/commander_work_package_dispatch_smoke.py
+python3 scripts/commander_work_package_batch_dispatch_smoke.py
 python3 -m py_compile server.py scripts/*.py agentops_mis_cli/*.py
 cd ui/start-building-app && npm run build
 ```
