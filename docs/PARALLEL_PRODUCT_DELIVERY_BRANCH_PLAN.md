@@ -21,8 +21,9 @@ The product contract stays fixed:
 
 | Branch | Owner Focus | Primary Files | Avoid Editing |
 | --- | --- | --- | --- |
+| `codex/local-first-ops` | Open-source local-first usable product profile | `docs/REMOTE_WORKER_OPERATIONS_RUNBOOK.md`, `docs/V1_5_EIGHT_PRODUCT_CLOSURE_SPEC.md`, `README.md`, `scripts/*smoke.py`, `ui/start-building-app/src/app/components/pages/AIEmployees.tsx`, `ui/start-building-app/src/app/components/pages/MemoryLibrary.tsx` | Hosted/SaaS, billing, Notion/Dify live sync |
 | `codex/remote-worker-deploy` | Remote agent daemon deployment and server handoff | `docs/REMOTE_WORKER_OPERATIONS_RUNBOOK.md`, `docs/AGENT_GATEWAY_CLI_SPEC.md`, `scripts/remote_*`, `scripts/*service*`, `agentops_mis_cli/worker.py` | Pixel Office UI pages unless needed for status display |
-| `codex/customer-task-flow` | Customer task creation, async job status, delivery review | `ui/start-building-app/src/app/components/pages/PixelOffice.tsx`, `ui/start-building-app/src/app/components/pages/CustomerProjectReport.tsx`, `ui/start-building-app/src/app/api/liveApi.ts`, workflow smoke scripts | Enrollment/session internals |
+| `codex/customer-task-flow` | Customer task creation, async job status, delivery review | `ui/start-building-app/src/app/components/pixel/CustomerDispatchPanel.tsx`, `ui/start-building-app/src/app/components/pages/CustomerProjectReport.tsx`, `ui/start-building-app/src/app/data/liveApi.ts`, workflow smoke scripts | Enrollment/session internals |
 | `codex/rbac-workspace-hardening` | Workspace isolation, token scopes, approval policy | `server.py` Agent Gateway auth helpers, `docs/AGENT_GATEWAY_CLI_SPEC.md`, scope/security smoke scripts | Pixel map visual design |
 | `codex/worker-fleet-console` | Worker fleet UI, readiness, health, stuck recovery | `/workspace/agents` UI files, `GET /api/workers/status`, `GET /api/workers/adapter-readiness`, worker status smoke scripts | Customer report content model |
 | `codex/product-docs-demo` | Demo script, classroom recording, product packaging docs | `docs/DEMO_*`, `docs/V1_5_*`, `README.md`, runbooks | Runtime execution code except doc fixes |
@@ -32,15 +33,17 @@ reason in its final summary and keep the edit small.
 
 ## Merge Order
 
-1. `codex/rbac-workspace-hardening`
-2. `codex/remote-worker-deploy`
-3. `codex/worker-fleet-console`
-4. `codex/customer-task-flow`
-5. `codex/product-docs-demo`
+1. `codex/local-first-ops`
+2. `codex/rbac-workspace-hardening`
+3. `codex/remote-worker-deploy`
+4. `codex/worker-fleet-console`
+5. `codex/customer-task-flow`
+6. `codex/product-docs-demo`
 
-RBAC and remote worker changes affect the base contract, so merge them before
-UI polish and demo documentation. Product docs should merge last so screenshots
-and scripts reflect the final behavior.
+The local-first branch defines the practical open-source baseline and should
+merge first. RBAC and remote worker changes affect the base contract, so merge
+them before UI polish and demo documentation. Product docs should merge last so
+screenshots and scripts reflect the final behavior.
 
 ## Shared Verification Baseline
 
@@ -106,6 +109,19 @@ python3 scripts/customer_worker_live_dogfood.py \
 ```
 
 ## Handoff Prompts
+
+### Local-First Ops
+
+```text
+You are working on geogejoy107-jpg/agentops-mis-mvp branch codex/local-first-ops.
+Goal: make AgentOps MIS useful as an open-source local-first app that the founder can use today for real project management, local OpenClaw/Hermes worker execution, memory/knowledge accumulation, approvals, run ledger, and management UI.
+Start from docs/PARALLEL_PRODUCT_DELIVERY_BRANCH_PLAN.md, docs/V1_5_EIGHT_PRODUCT_CLOSURE_SPEC.md, and docs/REMOTE_WORKER_OPERATIONS_RUNBOOK.md.
+Keep the product local-first: no SaaS billing, hosted multi-tenant work, Notion live sync, or Dify live sync.
+Preserve the core contract: humans supervise in the browser; agents execute through Agent Gateway CLI/API/MCP; Hermes/OpenClaw live execution requires readiness/trust/confirm_run.
+Focus on clarifying the local workflow, readiness checks, memory review, worker management, and demo runbook. Make small product improvements only if they make the local system easier to use.
+Verify with py_compile, git diff --check, worker_adapter_readiness_smoke.py, agentops_worker_status_smoke.py, customer_worker_task_workflow_smoke.py, and npm run build if UI changes.
+Do not commit credentials, local DB, .env, node_modules, dist, runtime logs, generated service files, raw prompts, raw responses, private messages, or full transcripts.
+```
 
 ### Remote Worker Deploy
 
@@ -182,4 +198,3 @@ Before merging a branch back into the integration branch:
 - `git diff --check` passes.
 - The final summary lists touched files, verification commands, and remaining
   product gaps.
-
