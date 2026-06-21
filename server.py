@@ -2579,6 +2579,16 @@ def requested_workspace_from_qs(qs: dict, fallback="local-demo") -> str:
     return normalize_workspace_id(value or fallback)
 
 
+def request_workspace(headers, qs: dict | None = None, fallback: str = "local-demo") -> str:
+    qs = qs or {}
+    value = (qs.get("workspace_id") or [None])[0] or (headers.get("X-AgentOps-Workspace-Id") if headers else None) or fallback
+    return normalize_workspace_id(value)
+
+
+def workspace_hidden(entity_type: str, entity_id: str) -> dict:
+    return {"error": "not found", "message": f"{entity_type} not found in requested workspace.", "entity_id": entity_id}
+
+
 def row_workspace(row) -> str:
     try:
         return normalize_workspace_id(row["workspace_id"] or "local-demo")
@@ -10892,19 +10902,22 @@ class Handler(BaseHTTPRequestHandler):
                 tasks = rows_to_dicts(conn.execute("SELECT * FROM tasks WHERE owner_agent_id=? ORDER BY created_at DESC", (agent_id,)).fetchall())
                 return self.send_json({"agent": dict(agent), "runs": runs, "tasks": tasks})
             if path == "/api/tasks":
-                rows = conn.execute("SELECT * FROM tasks ORDER BY created_at DESC").fetchall()
+                workspace_id = request_workspace(self.headers, qs)
+                rows = conn.execute("SELECT * FROM tasks WHERE COALESCE(workspace_id,'local-demo')=? ORDER BY created_at DESC", (workspace_id,)).fetchall()
                 return self.send_json(rows_to_dicts(rows))
             if path.startswith("/api/tasks/") and "/" not in path[len("/api/tasks/"):].strip("/"):
+                workspace_id = request_workspace(self.headers, qs)
                 task_id = path.split("/")[-1]
-                task = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+                task = conn.execute("SELECT * FROM tasks WHERE task_id=? AND COALESCE(workspace_id,'local-demo')=?", (task_id, workspace_id)).fetchone()
                 if not task:
-                    return self.send_json({"error": "not found"}, 404)
+                    return self.send_json(workspace_hidden("task", task_id), 404)
                 data = {"task": dict(task)}
                 for table in ["runs", "approvals", "evaluations", "memories", "artifacts"]:
                     data[table] = rows_to_dicts(conn.execute(f"SELECT * FROM {table} WHERE task_id=? ORDER BY created_at DESC", (task_id,)).fetchall())
                 return self.send_json(data)
             if path == "/api/runs":
-                where, params = [], []
+                workspace_id = request_workspace(self.headers, qs)
+                where, params = ["COALESCE(workspace_id,'local-demo')=?"], [workspace_id]
                 if "task_id" in qs:
                     where.append("task_id=?"); params.append(qs["task_id"][0])
                 if "agent_id" in qs:
@@ -10912,18 +10925,22 @@ class Handler(BaseHTTPRequestHandler):
                 sql = "SELECT * FROM runs" + (" WHERE " + " AND ".join(where) if where else "") + " ORDER BY created_at DESC"
                 return self.send_json(rows_to_dicts(conn.execute(sql, params).fetchall()))
             if path == "/api/runs/export":
-                return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM runs ORDER BY created_at DESC").fetchall()))
+                workspace_id = request_workspace(self.headers, qs)
+                return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM runs WHERE COALESCE(workspace_id,'local-demo')=? ORDER BY created_at DESC", (workspace_id,)).fetchall()))
             if path.startswith("/api/runs/") and path.endswith("/graph"):
+                workspace_id = request_workspace(self.headers, qs)
                 run_id = path.split("/")[-2]
-                data = run_graph(conn, run_id)
+                run = conn.execute("SELECT run_id FROM runs WHERE run_id=? AND COALESCE(workspace_id,'local-demo')=?", (run_id, workspace_id)).fetchone()
+                data = run_graph(conn, run_id) if run else None
                 if not data:
-                    return self.send_json({"error": "not found"}, 404)
+                    return self.send_json(workspace_hidden("run", run_id), 404)
                 return self.send_json(data)
             if path.startswith("/api/runs/"):
+                workspace_id = request_workspace(self.headers, qs)
                 run_id = path.split("/")[-1]
-                run = conn.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
+                run = conn.execute("SELECT * FROM runs WHERE run_id=? AND COALESCE(workspace_id,'local-demo')=?", (run_id, workspace_id)).fetchone()
                 if not run:
-                    return self.send_json({"error": "not found"}, 404)
+                    return self.send_json(workspace_hidden("run", run_id), 404)
                 return self.send_json({
                     "run": dict(run),
                     "tool_calls": rows_to_dicts(conn.execute("SELECT * FROM tool_calls WHERE run_id=? ORDER BY created_at", (run_id,)).fetchall()),
@@ -10932,7 +10949,14 @@ class Handler(BaseHTTPRequestHandler):
                     "artifacts": rows_to_dicts(conn.execute("SELECT * FROM artifacts WHERE run_id=? ORDER BY created_at", (run_id,)).fetchall()),
                 })
             if path == "/api/tool-calls":
-                return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM tool_calls ORDER BY created_at DESC").fetchall()))
+                workspace_id = request_workspace(self.headers, qs)
+                return self.send_json(rows_to_dicts(conn.execute(
+                    """SELECT tc.* FROM tool_calls tc
+                    JOIN runs r ON r.run_id=tc.run_id
+                    WHERE COALESCE(r.workspace_id,'local-demo')=?
+                    ORDER BY tc.created_at DESC""",
+                    (workspace_id,),
+                ).fetchall()))
             if path == "/api/knowledge/search":
                 payload, status = knowledge_search(conn, dict(qs), self.headers)
                 conn.commit()
@@ -10942,17 +10966,57 @@ class Handler(BaseHTTPRequestHandler):
                 conn.commit()
                 return self.send_json(payload, status)
             if path == "/api/approvals":
-                return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM approvals ORDER BY created_at DESC").fetchall()))
+                workspace_id = request_workspace(self.headers, qs)
+                return self.send_json(rows_to_dicts(conn.execute(
+                    """SELECT ap.* FROM approvals ap
+                    LEFT JOIN tasks t ON t.task_id=ap.task_id
+                    LEFT JOIN runs r ON r.run_id=ap.run_id
+                    WHERE COALESCE(t.workspace_id,r.workspace_id,'local-demo')=?
+                    ORDER BY ap.created_at DESC""",
+                    (workspace_id,),
+                ).fetchall()))
             if path == "/api/memories":
                 return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM memories ORDER BY created_at DESC").fetchall()))
             if path == "/api/memories/export":
                 return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM memories ORDER BY created_at DESC").fetchall()))
             if path == "/api/evaluations":
-                return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM evaluations ORDER BY created_at DESC").fetchall()))
+                workspace_id = request_workspace(self.headers, qs)
+                return self.send_json(rows_to_dicts(conn.execute(
+                    """SELECT ev.* FROM evaluations ev
+                    LEFT JOIN tasks t ON t.task_id=ev.task_id
+                    LEFT JOIN runs r ON r.run_id=ev.run_id
+                    WHERE COALESCE(t.workspace_id,r.workspace_id,'local-demo')=?
+                    ORDER BY ev.created_at DESC""",
+                    (workspace_id,),
+                ).fetchall()))
             if path == "/api/artifacts":
-                return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM artifacts ORDER BY created_at DESC").fetchall()))
+                workspace_id = request_workspace(self.headers, qs)
+                return self.send_json(rows_to_dicts(conn.execute(
+                    """SELECT art.* FROM artifacts art
+                    LEFT JOIN tasks t ON t.task_id=art.task_id
+                    LEFT JOIN runs r ON r.run_id=art.run_id
+                    WHERE COALESCE(t.workspace_id,r.workspace_id,'local-demo')=?
+                    ORDER BY art.created_at DESC""",
+                    (workspace_id,),
+                ).fetchall()))
             if path == "/api/audit":
-                return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT 200").fetchall()))
+                workspace_id = request_workspace(self.headers, qs)
+                return self.send_json(rows_to_dicts(conn.execute(
+                    """SELECT a.* FROM audit_logs a
+                    WHERE
+                      (a.entity_type='tasks' AND EXISTS (
+                        SELECT 1 FROM tasks t WHERE t.task_id=a.entity_id AND COALESCE(t.workspace_id,'local-demo')=?
+                      ))
+                      OR (a.entity_type='runs' AND EXISTS (
+                        SELECT 1 FROM runs r WHERE r.run_id=a.entity_id AND COALESCE(r.workspace_id,'local-demo')=?
+                      ))
+                      OR (a.entity_type='workflow_jobs' AND EXISTS (
+                        SELECT 1 FROM workflow_jobs j WHERE j.job_id=a.entity_id AND COALESCE(j.workspace_id,'local-demo')=?
+                      ))
+                      OR a.metadata_json LIKE ?
+                    ORDER BY a.created_at DESC LIMIT 200""",
+                    (workspace_id, workspace_id, workspace_id, f'%"workspace_id": "{workspace_id}"%'),
+                ).fetchall()))
             if path == "/api/review/queue":
                 limit = int((qs.get("limit") or ["20"])[0])
                 return self.send_json(human_review_queue(conn, limit))
@@ -11477,10 +11541,11 @@ def start_mock_run(conn, body):
     run_id = new_id("run")
     trace_id = new_id("trace")
     start = now_iso()
+    workspace_id = row_workspace(task)
     conn.execute(
-        """INSERT INTO runs(run_id,task_id,agent_id,runtime_type,status,started_at,ended_at,duration_ms,input_summary,output_summary,model_provider,model_name,input_tokens,output_tokens,reasoning_tokens,cost_usd,error_type,error_message,trace_id,parent_run_id,delegation_id,approval_required,created_at)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-        (run_id, task_id, agent_id, agent["runtime_type"], "running", start, None, None, f"Mock run started for task: {task['title']}", None, agent["model_provider"], agent["model_name"], random.randint(400, 1200), random.randint(0, 600), random.randint(0, 400), round(random.uniform(0.05, 1.5), 3), None, None, trace_id, body.get("parent_run_id"), new_id("del"), 0, start)
+        """INSERT INTO runs(run_id,workspace_id,task_id,agent_id,runtime_type,status,started_at,ended_at,duration_ms,input_summary,output_summary,model_provider,model_name,input_tokens,output_tokens,reasoning_tokens,cost_usd,error_type,error_message,trace_id,parent_run_id,delegation_id,approval_required,created_at)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (run_id, workspace_id, task_id, agent_id, agent["runtime_type"], "running", start, None, None, f"Mock run started for task: {task['title']}", None, agent["model_provider"], agent["model_name"], random.randint(400, 1200), random.randint(0, 600), random.randint(0, 400), round(random.uniform(0.05, 1.5), 3), None, None, trace_id, body.get("parent_run_id"), new_id("del"), 0, start)
     )
     conn.execute("UPDATE tasks SET status='running', updated_at=? WHERE task_id=?", (now_iso(), task_id))
     conn.execute("UPDATE agents SET status='running', updated_at=? WHERE agent_id=?", (now_iso(), agent_id))
