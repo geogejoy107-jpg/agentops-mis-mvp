@@ -148,7 +148,13 @@ def final_required_items(text: str) -> list[str]:
     match = re.search(r"`READY_TO_MERGE` requires:\s*```text\s*(.*?)\s*```", text, re.DOTALL)
     if not match:
         return []
-    return [line.strip()[3:].strip() for line in match.group(1).splitlines() if line.strip().startswith("[ ]")]
+    items: list[str] = []
+    for line in match.group(1).splitlines():
+        stripped = line.strip()
+        item = re.match(r"^\[(?: |x|X)\]\s*(.+)$", stripped)
+        if item:
+            items.append(item.group(1).strip())
+    return items
 
 
 def parse_args() -> argparse.Namespace:
