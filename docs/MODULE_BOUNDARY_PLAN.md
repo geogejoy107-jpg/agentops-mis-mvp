@@ -102,6 +102,7 @@ Moved out of `server.py`:
 - `/api/workers/fleet` lane construction, counts, safety metadata and next-action hints
 - token/session omission proof for normalized local daemon, remote worker and registered worker lanes
 - worker fleet hygiene public plan/revoke/error projections with raw token-id omission
+- remote worker/session fleet summary public projections with raw token/session id omission
 
 Still owned by `server.py`:
 
@@ -1071,6 +1072,39 @@ Verification:
 ```bash
 python3 scripts/module_boundary_smoke.py
 python3 scripts/worker_fleet_hygiene_smoke.py --base-url "$AGENTOPS_BASE_URL"
+python3 scripts/secret_scan_smoke.py
+```
+
+### Slice 36: Remote Worker Fleet Summary Projections
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/worker_fleet.py`
+
+Moved out of `server.py`:
+
+- remote worker public projection from enrollment plus optional agent row
+- remote session public projection from short-lived session rows
+- active-session, heartbeat-state and token-status aggregation
+- status selection for ready, attention and waiting-for-heartbeat states
+- raw token id, parent token id and session id omission proof for worker status
+
+Still owned by `server.py`:
+
+- HTTP routes
+- scoped enrollment and session SQLite reads
+- agent row lookup for remote enrollment agent ids
+- final worker status payload assembly with local daemon/status producers
+- enrollment/session mutations, heartbeat/session lifecycle, runtime events and audit writes
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/worker_remote_fleet_status_smoke.py --base-url "$AGENTOPS_BASE_URL"
+python3 scripts/agentops_worker_fleet_smoke.py --base-url "$AGENTOPS_BASE_URL"
 python3 scripts/secret_scan_smoke.py
 ```
 

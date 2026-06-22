@@ -1389,6 +1389,12 @@ active session count, and recent remote worker rows. Token and session IDs are
 represented only by short irreversible refs, so `agtok_` / `agtsess_` shaped
 values do not appear in the worker status output.
 
+The remote worker/session fleet summary public projections now live in
+`agentops_mis_core/worker_fleet.py`. `server.py` still owns scoped enrollment
+and session SQLite reads plus the agent-row lookup, but raw token ids, parent
+token ids and session ids are omitted before the data becomes a public worker
+status payload.
+
 The same status payload now includes a machine-facing `fleet_health` block for
 agent operators and automation:
 

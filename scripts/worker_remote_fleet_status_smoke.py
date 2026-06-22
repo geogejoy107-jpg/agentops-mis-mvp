@@ -16,7 +16,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DB_PATH = ROOT / "agentops_mis.db"
+DEFAULT_DB_PATH = Path(os.environ.get("AGENTOPS_DB_PATH") or ROOT / "agentops_mis.db")
 CLI = ROOT / "scripts" / "agentops"
 
 
@@ -65,9 +65,9 @@ def safe_ref(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
 
 
-def age_token_heartbeat(token_id: str, seconds_ago: int) -> str:
+def age_token_heartbeat(db_path: Path, token_id: str, seconds_ago: int) -> str:
     aged_at = (datetime.now(timezone.utc) - timedelta(seconds=seconds_ago)).isoformat()
-    with sqlite3.connect(DB_PATH) as conn:
+    with sqlite3.connect(db_path) as conn:
         conn.execute(
             "UPDATE agent_gateway_tokens SET last_heartbeat_at=?, last_used_at=? WHERE token_id=?",
             (aged_at, aged_at, token_id),
@@ -89,7 +89,7 @@ def worker_status_payload(base_url: str) -> dict:
     return json.loads(proc.stdout)
 
 
-def smoke(base_url: str, stamp: str) -> dict:
+def smoke(base_url: str, stamp: str, db_path: Path) -> dict:
     agent_id = f"agt_remote_fleet_{stamp}"
     create_status, created = http_json("POST", base_url, "/api/agent-gateway/enrollment/create", {
         "agent_id": agent_id,
@@ -131,7 +131,7 @@ def smoke(base_url: str, stamp: str) -> dict:
         require(isinstance((fresh.get("fleet_health") or {}).get("gates"), list), f"fleet gates missing: {fresh.get('fleet_health')}")
         require((fresh.get("fleet_health") or {}).get("overall") in {"ready", "attention", "blocked"}, f"fleet overall missing: {fresh.get('fleet_health')}")
 
-        aged_at = age_token_heartbeat(token_id, seconds_ago=120)
+        aged_at = age_token_heartbeat(db_path, token_id, seconds_ago=120)
         stale = worker_status_payload(base_url)
         stale_worker = find_remote_worker(stale, agent_id)
         require(stale_worker.get("heartbeat_state") == "stale", f"expected stale after aging heartbeat to {aged_at}, got {stale_worker}")
@@ -155,13 +155,15 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Verify remote worker fleet appears in worker status.")
     parser.add_argument("--base-url", default="http://127.0.0.1:8787")
     parser.add_argument("--stamp", default=datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S"))
+    parser.add_argument("--db-path", default=str(DEFAULT_DB_PATH))
     args = parser.parse_args()
+    db_path = Path(args.db_path)
     try:
-        result = smoke(args.base_url, args.stamp)
+        result = smoke(args.base_url, args.stamp, db_path)
         print(json.dumps({"ok": True, "base_url": args.base_url, "result": result}, ensure_ascii=False, indent=2, sort_keys=True))
         return 0
     except Exception as exc:
-        print(json.dumps({"ok": False, "error": str(exc), "db_path": str(DB_PATH)}, ensure_ascii=False, indent=2, sort_keys=True), file=sys.stderr)
+        print(json.dumps({"ok": False, "error": str(exc), "db_path": str(db_path)}, ensure_ascii=False, indent=2, sort_keys=True), file=sys.stderr)
         return 1
 
 

@@ -92,9 +92,12 @@ from agentops_mis_core.operator_command_center import (
     command_center_status,
 )
 from agentops_mis_core.worker_fleet import (
+    build_worker_remote_fleet_summary,
     build_worker_fleet_hygiene_plan,
     build_worker_fleet_view,
     build_worker_status_payload,
+    public_remote_session,
+    public_remote_worker,
     public_worker_enrollment_error,
     public_worker_revoked_enrollment,
     public_worker_stale_enrollment,
@@ -193,15 +196,19 @@ READ_MODEL_CACHE_FORBIDDEN_SERVER_MARKERS = {
     '"status": "hit"',
 }
 EXTRACTED_WORKER_FLEET_HELPERS = {
+    "build_worker_remote_fleet_summary",
     "build_worker_fleet_hygiene_plan",
     "build_worker_fleet_view",
     "build_worker_status_payload",
+    "public_remote_session",
+    "public_remote_worker",
     "public_worker_enrollment_error",
     "public_worker_revoked_enrollment",
     "public_worker_stale_enrollment",
     "worker_fleet_health",
 }
 SERVER_WORKER_FLEET_IMPORTS = {
+    "build_worker_remote_fleet_summary",
     "build_worker_fleet_hygiene_plan",
     "build_worker_fleet_view",
     "build_worker_status_payload",
@@ -1259,6 +1266,36 @@ def main() -> int:
     )
     revoked_enrollment = public_worker_revoked_enrollment(stale_enrollment, sessions_revoked=2)
     revoke_error = public_worker_enrollment_error(stale_enrollment, status=404, error={"error": "missing"})
+    remote_enrollment = {
+        "token_id": "fixture_remote_fleet_token_ref",
+        "agent_id": "agt_worker_remote_smoke",
+        "workspace_id": "local-demo",
+        "status": "active",
+        "label": "Remote Smoke Worker",
+        "heartbeat_state": "fresh",
+        "heartbeat_timeout_sec": 30,
+        "scopes": ["tasks:read", "agents:heartbeat"],
+    }
+    remote_session = {
+        "session_id": "fixture_remote_session_ref",
+        "parent_token_id": "fixture_remote_fleet_token_ref",
+        "agent_id": "agt_worker_remote_smoke",
+        "workspace_id": "local-demo",
+        "status": "active",
+        "session_state": "active",
+        "scopes": ["tasks:read"],
+    }
+    public_remote = public_remote_worker(
+        remote_enrollment,
+        agent={"agent_id": "agt_worker_remote_smoke", "name": "Remote Smoke Worker", "runtime_type": "mock", "status": "idle"},
+        active_session_count=1,
+    )
+    public_session = public_remote_session(remote_session)
+    remote_summary = build_worker_remote_fleet_summary(
+        enrollments=[remote_enrollment],
+        sessions=[remote_session],
+        agents_by_id={"agt_worker_remote_smoke": {"name": "Remote Smoke Worker", "runtime_type": "mock", "status": "idle"}},
+    )
     require(status_payload.get("status") == "attention", "worker status payload did not reflect stale remote attention", failures)
     require(status_payload.get("fleet_health", {}).get("overall") == "blocked", "worker status payload missing blocked fleet health", failures)
     require(fleet_view.get("summary", {}).get("lane_count") == 3, "worker fleet view did not build expected lanes", failures)
@@ -1273,6 +1310,11 @@ def main() -> int:
     require("fixture_module_boundary_token_ref" not in json.dumps(hygiene_plan, ensure_ascii=False), "worker hygiene plan leaked token id", failures)
     require(revoked_enrollment.get("sessions_revoked") == 2 and revoked_enrollment.get("token_id_omitted") is True and not revoked_enrollment.get("token_id"), "worker revoked enrollment projection leaked token id", failures)
     require(revoke_error.get("token_id_omitted") is True and revoke_error.get("kind") == "enrollment_revoke" and not revoke_error.get("token_id"), "worker enrollment error projection leaked token id", failures)
+    require(public_remote.get("token_id_omitted") is True and public_remote.get("token_ref") and not public_remote.get("token_id"), "remote worker projection leaked token id", failures)
+    require(public_session.get("session_id_omitted") is True and public_session.get("session_ref") and public_session.get("parent_token_ref") and not public_session.get("session_id"), "remote session projection leaked session id", failures)
+    remote_summary_serialized = json.dumps(remote_summary, ensure_ascii=False)
+    require(remote_summary.get("status") == "ready" and remote_summary.get("active_sessions") == 1, "remote fleet summary failed active session aggregation", failures)
+    require("fixture_remote_fleet_token_ref" not in remote_summary_serialized and "fixture_remote_session_ref" not in remote_summary_serialized, "remote fleet summary leaked raw token/session ids", failures)
     workflow_job_projection = workflow_job_public({
         "job_id": "wfjob_projection_smoke",
         "workspace_id": "local-demo",

@@ -261,8 +261,9 @@ coverage for every external side-effect path.
   path-scope, verification-result, pending-approval and approval-run helpers now live in
   `agentops_mis_core/agent_plans.py`; Agent Gateway run heartbeat update and
   terminal task-status projection now live in
-  `agentops_mis_core/gateway_runs.py`; worker status/fleet lane/health
-  aggregation now lives in `agentops_mis_core/worker_fleet.py`; workflow-job
+  `agentops_mis_core/gateway_runs.py`; worker status/fleet lane/health,
+  remote worker/session public readback, and hygiene token-omitting
+  projections now live in `agentops_mis_core/worker_fleet.py`; workflow-job
   public/stuck/recovery response projections now live in `agentops_mis_core/workflow_jobs.py`; Commander
   work-package status/action/readback summary and project-board gate aggregation
   now live in `agentops_mis_core/commander_work_packages.py`; Operator
@@ -270,6 +271,7 @@ coverage for every external side-effect path.
   `agentops_mis_core/operator_command_center.py`; `server.py`
   keeps HTTP routes, health probing, refresh orchestration, trust-route runtime
   events, audit writes, endpoint auth checks, read-model producers,
+  Agent Gateway enrollment/session and remote-agent metadata reads,
   repo-local daemon/process reads, workflow-job reads/writes/status
   transitions/threshold-limit normalization/status validation/stuck-job recovery routing, tool-call row construction/upsert,
   risk default application, provider calls and side-effect id construction,
@@ -279,7 +281,7 @@ coverage for every external side-effect path.
   rebind-blocked audit writes, run-start row upserts/status-code selection, stable
   approval run ids/timestamps, verification persistence/status transitions,
   heartbeat redaction/parsing/default selection, run/task/agent heartbeat writes,
-  and Commander write workflows.
+  fleet hygiene mutations, and Commander write workflows.
   Guarded by
   `scripts/module_boundary_smoke.py`, `docs/MODULE_BOUNDARY_PLAN.md`, and the
   existing runtime capability/readiness/trust plus read-model cache and worker
