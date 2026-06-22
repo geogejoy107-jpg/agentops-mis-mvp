@@ -37,10 +37,13 @@ memory review actions through the Next.js UI, verifies the state change through
 - App Router route: `/workspace/approvals`
 - App Router route: `/workspace/memory`
 - App Router route: `/workspace/audit`
+- App Router route: `/workspace/reports`
+- App Router route: `/workspace/customer-projects/[projectId]/report`
 - Runtime API proxy: `/api/mis/[...path]`
-- Live data contract: dashboard metrics, agents, production readiness, worker readiness, tasks, runs, approvals, memories, audit
+- Live data contract: dashboard metrics, agents, production readiness, worker readiness, tasks, runs, approvals, memories, audit, customer projects, delivery board, customer project report
 - First-paint contract: approval and memory review queues can load on the App Router server path from the configured MIS API
 - Interaction contract: approval review and memory review write through the Next.js UI, with client fetch plus Next form fallback routes, then refresh from the MIS API proxy
+- Customer delivery contract: reports and customer project report pages load from the MIS API, and report archive writes through a Next form fallback route before refreshing the report artifact evidence
 - Canonical predecessors:
   - `ui/start-building-app/src/app/components/pages/WorkspaceHome.tsx`
   - `ui/start-building-app/src/app/components/pages/AIEmployees.tsx`
@@ -49,6 +52,8 @@ memory review actions through the Next.js UI, verifies the state change through
   - `ui/start-building-app/src/app/components/pages/ApprovalsInbox.tsx`
   - `ui/start-building-app/src/app/components/pages/MemoryLibrary.tsx`
   - `ui/start-building-app/src/app/components/pages/AuditCenter.tsx`
+  - `ui/start-building-app/src/app/components/pages/Reports.tsx`
+  - `ui/start-building-app/src/app/components/pages/CustomerProjectReport.tsx`
 
 Do not remove the Vite app until this lane passes route, API, and visual parity
 for each commercial workflow.

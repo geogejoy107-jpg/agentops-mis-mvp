@@ -147,7 +147,9 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   The smoke starts isolated MIS API and Next.js servers, captures route
   snapshots, approves one pending approval through the Next.js approvals page,
   approves one candidate memory through the Next.js memory page, verifies both
-  state changes through `/api/mis/*`, and checks for token-like leakage.
+  state changes through `/api/mis/*`, renders a fixture-backed customer project
+  report, archives that report to the MIS ledger through a Next.js form fallback,
+  verifies `report_artifact_id`, and checks for token-like leakage.
 
 - First migration artifact:
   - `ui/next-app/app/workspace/page.tsx`
@@ -158,9 +160,13 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   - `ui/next-app/app/workspace/approvals/review/route.ts`
   - `ui/next-app/app/workspace/memory/page.tsx`
   - `ui/next-app/app/workspace/memory/review/route.ts`
+  - `ui/next-app/app/workspace/reports/page.tsx`
+  - `ui/next-app/app/workspace/customer-projects/[projectId]/report/page.tsx`
+  - `ui/next-app/app/workspace/customer-projects/[projectId]/report/archive/route.ts`
   - `ui/next-app/app/workspace/audit/page.tsx`
   - `ui/next-app/app/api/mis/[...path]/route.ts`
   - `ui/next-app/src/lib/misServer.ts`
+  - `ui/next-app/src/components/DeliveryPages.tsx`
   - `scripts/nextjs_parity_smoke.py`
   - `scripts/nextjs_playwright_snapshot_smoke.py`
 

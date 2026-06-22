@@ -181,6 +181,10 @@ h2 {
   margin-top: 18px;
 }
 
+.metrics.six {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+
 .metric,
 .panel {
   border: 1px solid var(--border);
@@ -192,6 +196,10 @@ h2 {
   gap: 8px;
   min-height: 118px;
   padding: 14px;
+}
+
+.compactMetric {
+  min-height: 88px;
 }
 
 .metricIcon {
@@ -236,6 +244,10 @@ h2 {
   padding: 10px;
   background: var(--panel-strong);
   border: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.linkRow:hover {
+  border-color: rgba(34, 211, 238, 0.32);
 }
 
 .row strong,
@@ -309,6 +321,15 @@ h2 {
 
 .subtle {
   margin: 6px 0 0;
+}
+
+.backLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+  color: var(--cyan);
+  font-size: 12px;
 }
 
 .panelHeader {
@@ -486,6 +507,42 @@ h2 {
 
 .miniMetrics strong {
   color: var(--text);
+}
+
+.markdownReport {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.markdownReport h2 {
+  margin: 0 0 10px;
+  color: var(--text);
+  font-size: 17px;
+}
+
+.markdownReport h3 {
+  margin: 18px 0 8px;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.markdownReport h4 {
+  margin: 14px 0 6px;
+  color: var(--cyan);
+  font-size: 12px;
+}
+
+.markdownReport p {
+  margin: 5px 0;
+}
+
+.markdownList {
+  padding-left: 12px;
+}
+
+.markdownGap {
+  height: 8px;
 }
 
 .adapterGrid {

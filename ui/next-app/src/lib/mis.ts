@@ -173,6 +173,101 @@ export type WorkerAdapterReadinessSummary = {
   token_omitted?: boolean;
 };
 
+export type CustomerProjectSummary = {
+  project_id: string;
+  title: string;
+  status: string;
+  task_count?: number;
+  completed_tasks?: number;
+  run_count?: number;
+  completed_runs?: number;
+  pending_approvals?: number;
+  artifact_count?: number;
+  delivery_artifact_id?: string | null;
+  report_artifact_id?: string | null;
+  approval_ids?: string[];
+  report_url?: string;
+  ui_report_url?: string;
+  safe_defaults?: Record<string, unknown>;
+};
+
+export type CustomerProjectIndexPayload = {
+  projects: CustomerProjectSummary[];
+  total?: number;
+  limit?: number;
+  safe_defaults?: Record<string, unknown>;
+};
+
+export type CustomerDeliveryBoardItem = {
+  delivery_id: string;
+  status: string;
+  title: string;
+  task_id?: string | null;
+  run_id?: string | null;
+  artifact_id?: string | null;
+  project_id?: string | null;
+  summary?: string;
+  ui_report_url?: string | null;
+  pending_approval_ids?: string[];
+  evaluation_summary?: { count?: number; failed?: number; latest_score?: number | null };
+  delivery_approval_gate?: {
+    required?: boolean;
+    pass?: boolean;
+    status?: string;
+    manifest_id?: string | null;
+    message?: string;
+  };
+  evidence?: Record<string, number>;
+  next_action?: string;
+};
+
+export type CustomerDeliveryBoardPayload = {
+  provider?: string;
+  operation?: string;
+  status?: string;
+  summary?: {
+    deliveries?: number;
+    ready?: number;
+    waiting_approval?: number;
+    in_progress?: number;
+    needs_attention?: number;
+    pending_approvals?: number;
+    artifacts?: number;
+    verified_plan_evidence_manifests?: number;
+  };
+  deliveries: CustomerDeliveryBoardItem[];
+  safety?: {
+    read_only?: boolean;
+    ledger_mutated?: boolean;
+    live_execution_performed?: boolean;
+    token_omitted?: boolean;
+  };
+  token_omitted?: boolean;
+};
+
+export type CustomerProjectReportPayload = {
+  project_id: string;
+  status: string;
+  markdown: string;
+  counts?: {
+    tasks?: number;
+    runs?: number;
+    completed_runs?: number;
+    failed_runs?: number;
+    tool_calls?: number;
+    approvals?: number;
+    pending_approvals?: number;
+    evaluations?: number;
+    memories?: number;
+    artifacts?: number;
+  };
+  artifact_id?: string | null;
+  report_artifact_id?: string | null;
+  approval_ids?: string[];
+  safe_defaults?: Record<string, unknown>;
+  error?: string | null;
+};
+
 export type AgentControlSnapshot = {
   agents: AgentSummary[];
   security: SecurityReadinessSummary;
@@ -262,6 +357,18 @@ export async function loadWorkerStatus(): Promise<WorkerStatusSummary> {
 
 export async function loadWorkerAdapterReadiness(): Promise<WorkerAdapterReadinessSummary> {
   return misJson<WorkerAdapterReadinessSummary>("/workers/adapter-readiness");
+}
+
+export async function loadCustomerProjects(limit = 25): Promise<CustomerProjectIndexPayload> {
+  return misJson<CustomerProjectIndexPayload>(`/workflows/customer-projects?limit=${encodeURIComponent(String(limit))}`);
+}
+
+export async function loadCustomerDeliveryBoard(limit = 12): Promise<CustomerDeliveryBoardPayload> {
+  return misJson<CustomerDeliveryBoardPayload>(`/workflows/customer-delivery-board?limit=${encodeURIComponent(String(limit))}`);
+}
+
+export async function loadCustomerProjectReport(projectId: string): Promise<CustomerProjectReportPayload> {
+  return misJson<CustomerProjectReportPayload>(`/workflows/customer-projects/${encodeURIComponent(projectId)}/report`);
 }
 
 export async function loadAgentControlSnapshot(): Promise<AgentControlSnapshot> {

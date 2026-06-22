@@ -9,10 +9,12 @@ through the Next.js UI and verifies the resulting state through the API proxy.
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import json
 import os
 import re
 import socket
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -85,6 +87,158 @@ def wait_http(url: str, timeout_sec: int = 45) -> None:
 def http_json(url: str) -> object:
     with urllib.request.urlopen(url, timeout=10) as response:
         return json.loads(response.read().decode("utf-8"))
+
+
+def seed_customer_project_fixture(db_path: str) -> str:
+    project_id = f"pwfixture_{uuid.uuid4().hex[:8]}"
+    now = dt.datetime.now(dt.timezone.utc)
+    now_iso = now.isoformat()
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("PRAGMA foreign_keys=ON")
+        for index, title in [(1, "Scope customer knowledge base"), (2, "Deliver customer Q&A bot report")]:
+            task_id = f"tsk_kb_bot_{project_id}_{index:02d}"
+            run_id = f"run_kb_bot_{project_id}_{index:02d}"
+            agent_id = "agt_cos" if index == 2 else "agt_research"
+            conn.execute(
+                """INSERT INTO tasks(task_id,workspace_id,title,description,requester_id,owner_agent_id,collaborator_agent_ids,status,priority,due_date,acceptance_criteria,risk_level,budget_limit_usd,created_at,updated_at)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    task_id,
+                    "local-demo",
+                    title,
+                    "Safe browser smoke fixture for customer project report parity.",
+                    "usr_founder",
+                    agent_id,
+                    "[]",
+                    "completed",
+                    "medium",
+                    None,
+                    "Summary/hash report evidence only.",
+                    "medium",
+                    0.0,
+                    now_iso,
+                    now_iso,
+                ),
+            )
+            conn.execute(
+                """INSERT INTO runs(run_id,workspace_id,task_id,agent_id,runtime_type,status,started_at,ended_at,duration_ms,input_summary,output_summary,model_provider,model_name,input_tokens,output_tokens,reasoning_tokens,cost_usd,error_type,error_message,trace_id,parent_run_id,delegation_id,approval_required,created_at)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    run_id,
+                    "local-demo",
+                    task_id,
+                    agent_id,
+                    "mock",
+                    "completed",
+                    now_iso,
+                    now_iso,
+                    120000,
+                    "Fixture input summary.",
+                    "Fixture output summary for customer delivery report.",
+                    "mock-provider",
+                    "mock-model",
+                    0,
+                    0,
+                    0,
+                    0.0,
+                    None,
+                    None,
+                    f"trace_{project_id}_{index:02d}",
+                    None,
+                    f"kb-bot-fixture:{project_id}:{index:02d}",
+                    1 if index == 2 else 0,
+                    now_iso,
+                ),
+            )
+            conn.execute(
+                """INSERT INTO evaluations(evaluation_id,task_id,run_id,agent_id,evaluator_type,score,pass_fail,rubric_json,notes,created_at)
+                VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    f"eval_kb_bot_{project_id}_{index:02d}",
+                    task_id,
+                    run_id,
+                    agent_id,
+                    "rule",
+                    92.0,
+                    "pass",
+                    "{}",
+                    "Fixture evaluation for Next.js customer report smoke.",
+                    now_iso,
+                ),
+            )
+        final_task_id = f"tsk_kb_bot_{project_id}_02"
+        final_run_id = f"run_kb_bot_{project_id}_02"
+        conn.execute(
+            """INSERT INTO tool_calls(tool_call_id,run_id,agent_id,tool_name,tool_version,tool_category,normalized_args_json,target_resource,risk_level,status,result_summary,side_effect_id,started_at,ended_at,created_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                f"tc_kb_bot_{project_id}_delivery",
+                final_run_id,
+                "agt_cos",
+                "customer.delivery_report",
+                "v1",
+                "custom",
+                "{}",
+                f"agentops://customer-projects/{project_id}/report",
+                "medium",
+                "completed",
+                "Fixture delivery report tool call completed.",
+                None,
+                now_iso,
+                now_iso,
+                now_iso,
+            ),
+        )
+        conn.execute(
+            """INSERT INTO approvals(approval_id,task_id,run_id,tool_call_id,requested_by_agent_id,approver_user_id,decision,reason,expires_at,created_at,decided_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                f"ap_kb_bot_{project_id}_delivery",
+                final_task_id,
+                final_run_id,
+                f"tc_kb_bot_{project_id}_delivery",
+                "agt_cos",
+                "usr_founder",
+                "approved",
+                "Fixture approval for customer delivery report smoke.",
+                (now + dt.timedelta(days=2)).isoformat(),
+                now_iso,
+                now_iso,
+            ),
+        )
+        conn.execute(
+            """INSERT INTO artifacts(artifact_id,task_id,run_id,artifact_type,title,uri,summary,created_at)
+            VALUES(?,?,?,?,?,?,?,?)""",
+            (
+                f"art_kb_bot_delivery_{project_id}",
+                final_task_id,
+                final_run_id,
+                "customer_delivery_report",
+                f"Customer delivery summary {project_id}",
+                f"agentops://kb-bot-demo/{project_id}/delivery-summary",
+                "Safe fixture customer delivery summary; raw documents and credentials omitted.",
+                now_iso,
+            ),
+        )
+        conn.execute(
+            """INSERT INTO audit_logs(audit_id,actor_type,actor_id,action,entity_type,entity_id,before_hash,after_hash,metadata_json,tamper_chain_hash,created_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                f"audit_kb_bot_{project_id}",
+                "system",
+                "nextjs-playwright-smoke",
+                "workflow.kb_bot_project.fixture",
+                "projects",
+                project_id,
+                None,
+                f"hash_{project_id}",
+                json.dumps({"raw_documents_stored": False, "credentials_stored": False, "fixture": True}, sort_keys=True),
+                f"chain_{project_id}",
+                now_iso,
+            ),
+        )
+        conn.commit()
+    return project_id
 
 
 def wait_for_json(url: str, predicate, description: str, timeout_sec: int = 10) -> object:
@@ -270,6 +424,40 @@ def approve_first_candidate_memory(next_base: str, env: dict[str, str]) -> dict:
     }
 
 
+def archive_customer_project_report(next_base: str, project_id: str, env: dict[str, str]) -> dict:
+    report_url = f"{next_base}/api/mis/workflows/customer-projects/{project_id}/report"
+    before_report = http_json(report_url)
+    require(isinstance(before_report, dict), "Customer project report API did not return an object")
+    require(before_report.get("project_id") == project_id, f"Customer report project mismatch before archive: {before_report}")
+
+    target = next_base.rstrip("/") + f"/workspace/customer-projects/{project_id}/report"
+    goto = playwright(env, "goto", target)
+    require(goto.returncode == 0, f"Playwright goto failed for customer report interaction: {goto.stderr or goto.stdout}")
+    before = wait_for_snapshot_text(
+        env,
+        f"/workspace/customer-projects/{project_id}/report",
+        lambda text: "Archive report" in text or "Refresh archive" in text,
+        "customer report page to render an archive button",
+    )
+    button_ref = first_button_ref(before, "Archive report") if "Archive report" in before else first_button_ref(before, "Refresh archive")
+    clicked = playwright(env, "click", button_ref)
+    require(clicked.returncode == 0, f"Playwright report archive click failed: {clicked.stderr or clicked.stdout}")
+
+    def archived(payload: object) -> bool:
+        require(isinstance(payload, dict), "Customer report API did not return an object after archive")
+        return payload.get("project_id") == project_id and bool(payload.get("report_artifact_id"))
+
+    after_payload = wait_for_json(report_url, archived, f"report artifact for {project_id}", timeout_sec=20)
+    time.sleep(0.8)
+    after = snapshot_text(env, f"/workspace/customer-projects/{project_id}/report")
+    require("report artifact" in after.lower(), "Customer report page did not show report artifact evidence after archive")
+    return {
+        "project_id": project_id,
+        "button_ref": button_ref,
+        "report_artifact_id": after_payload.get("report_artifact_id"),
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run Next.js Playwright snapshot smoke.")
     parser.add_argument("--api-port", type=int, default=0)
@@ -297,6 +485,7 @@ def main() -> int:
             reset_env["AGENTOPS_DB_PATH"] = db_path
             reset = run(["python3", "server.py", "--host", "127.0.0.1", "--port", str(api_port), "--reset"], env=reset_env, timeout=30)
             require(reset.returncode == 0, f"seed reset failed: {reset.stderr or reset.stdout}")
+            project_id = seed_customer_project_fixture(db_path)
 
             api_env = os.environ.copy()
             api_env["AGENTOPS_DB_PATH"] = db_path
@@ -317,15 +506,22 @@ def main() -> int:
             resized = playwright(pw_env, "resize", "1365", "900")
             require(resized.returncode == 0, f"Playwright resize failed: {resized.stderr or resized.stdout}")
 
-            snapshots = [snapshot_route(next_base, path, expected, pw_env) for path, expected in ROUTES]
+            routes = [
+                *ROUTES,
+                ("/workspace/reports", ["Reports", "Customer delivery board", "Customer project reports"]),
+                (f"/workspace/customer-projects/{project_id}/report", ["Delivery Report", project_id, "Safety boundary"]),
+            ]
+            snapshots = [snapshot_route(next_base, path, expected, pw_env) for path, expected in routes]
             interactions = {
                 "approval_review": approve_first_pending_approval(next_base, pw_env),
                 "memory_review": approve_first_candidate_memory(next_base, pw_env),
+                "customer_report_archive": archive_customer_project_report(next_base, project_id, pw_env),
             }
             proxy_checks = {
                 "agents": len(http_json(f"{next_base}/api/mis/agents")),
                 "tasks": len(http_json(f"{next_base}/api/mis/tasks")),
                 "memories": len(http_json(f"{next_base}/api/mis/memories")),
+                "customer_projects": len(http_json(f"{next_base}/api/mis/workflows/customer-projects?limit=25").get("projects", [])),
                 "security_status": http_json(f"{next_base}/api/mis/security/production-readiness").get("status"),
                 "worker_status": http_json(f"{next_base}/api/mis/workers/status").get("status"),
             }
@@ -337,6 +533,7 @@ def main() -> int:
             payload = {
                 "ok": True,
                 "api_base": api_base,
+                "customer_project_fixture": project_id,
                 "next_base": next_base,
                 "routes": snapshots,
                 "interactions": interactions,
