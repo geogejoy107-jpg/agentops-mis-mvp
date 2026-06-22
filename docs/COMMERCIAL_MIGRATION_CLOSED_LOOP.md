@@ -165,14 +165,22 @@ Must be true:
   prerequisites, read-only mode, write blocking, fallback status, contract ID,
   and next proof before any storage-backed route replacement is considered.
 - Verification includes current Vite build plus browser snapshots and critical
-  review interactions before a Next.js route is accepted.
+  review interactions before a Next.js route is accepted. The canonical Vite
+  browser snapshot smoke must keep proving the current product UI while the
+  Next.js track advances in parallel.
 - Browser verification is automated by:
 
 ```bash
+python3 scripts/vite_playwright_snapshot_smoke.py
 python3 scripts/nextjs_playwright_snapshot_smoke.py
 ```
 
-  The smoke starts isolated MIS API and Next.js servers, captures route
+  The Vite smoke starts isolated MIS API and Vite dev servers, captures
+  canonical Vite route snapshots for workspace, Pixel Office, tasks, agents,
+  approvals, memory, reports, run ledger, audit, and customer project report,
+  verifies `/mis-api/*` proxy reads, and checks for token-like leakage.
+
+  The Next.js smoke starts isolated MIS API and Next.js servers, captures route
   snapshots, approves one pending approval through the Next.js approvals page,
   approves one candidate memory through the Next.js memory page, verifies both
   state changes through `/api/mis/*`, renders a fixture-backed customer project
@@ -218,6 +226,7 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   - `ui/next-app/src/components/DeliveryPages.tsx`
   - `scripts/nextjs_parity_smoke.py`
   - `scripts/nextjs_playwright_snapshot_smoke.py`
+  - `scripts/vite_playwright_snapshot_smoke.py`
 
 ### Gate 5: BYOC / Enterprise Deployment
 

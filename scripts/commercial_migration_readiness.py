@@ -172,6 +172,15 @@ def main() -> int:
             "parallel Next.js App Router track has API proxy, workspace/storage data contracts, deployment storage gate, and browser snapshot smoke",
         ),
         check(
+            "vite_browser_snapshot_surface_exists",
+            file_contains("docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md", "vite_playwright_snapshot_smoke.py")
+            and file_contains("ui/start-building-app/vite.config.ts", "VITE_AGENTOPS_PROXY_TARGET")
+            and file_contains("scripts/vite_playwright_snapshot_smoke.py", "vite_browser_snapshot_parity_v1")
+            and file_contains("scripts/vite_playwright_snapshot_smoke.py", "/mis-api/dashboard/metrics")
+            and (ROOT / "scripts" / "vite_playwright_snapshot_smoke.py").exists(),
+            "canonical Vite UI browser snapshot smoke and configurable MIS proxy target are present",
+        ),
+        check(
             "postgres_is_gated_not_immediate",
             file_contains("docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md", "Storage Boundary Before Postgres"),
             "Postgres migration is behind a storage-boundary gate",
@@ -281,6 +290,7 @@ def main() -> int:
                 "python3 scripts/nextjs_parity_smoke.py",
                 "cd ui/start-building-app && npm run build",
                 "cd ui/next-app && npm run build",
+                "python3 scripts/vite_playwright_snapshot_smoke.py",
                 "python3 scripts/nextjs_playwright_snapshot_smoke.py",
             ],
         },

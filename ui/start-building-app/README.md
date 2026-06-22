@@ -16,6 +16,9 @@ This UI is wired to the local AgentOps MIS backend through the Vite proxy:
 /mis-api/* -> http://127.0.0.1:8787/api/*
 ```
 
+Set `VITE_AGENTOPS_PROXY_TARGET=http://127.0.0.1:<port>` when an isolated
+smoke or customer deployment runs the MIS backend on a non-default port.
+
 Run the MIS backend first:
 
 ```bash
@@ -30,3 +33,9 @@ npm run dev -- --host 127.0.0.1 --port 19000
 ```
 
 Live-connected pages include `/workspace`, `/workspace/tasks`, `/workspace/agents`, `/admin`, `/admin/runs`, `/admin/runs/:id`, `/admin/connectors`, `/admin/tasks/:id`, and `/admin/agents/:id`.
+
+Browser smoke:
+
+```bash
+python3 scripts/vite_playwright_snapshot_smoke.py
+```
