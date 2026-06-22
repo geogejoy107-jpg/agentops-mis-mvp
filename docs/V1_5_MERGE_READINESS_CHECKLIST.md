@@ -473,7 +473,7 @@ live runtime suite
 - [x] Plan approval is role-separated. Guarded by `scripts/agent_plan_integrity_smoke.py`, including bound-agent approval rejection.
 - [x] Governed execution requires the verified plan. Guarded by `scripts/run_start_plan_gate_smoke.py`.
 - [x] Retrieval references are real and visible. Guarded by `scripts/agent_plan_integrity_smoke.py` negative checks for missing specs, missing bases, candidate memory, and unsafe file scope.
-- [ ] No secret values appear in indexed content.
+- [x] No secret values appear in indexed content: `scripts/knowledge_scope_policy_smoke.py` injects a fake provider token into a temporary knowledge doc, rebuilds the index, and verifies both search output and DB/FTS storage surfaces contain only redacted content.
 
 ### Customer workflow
 

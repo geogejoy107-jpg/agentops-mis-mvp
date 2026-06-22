@@ -130,6 +130,30 @@ def insert_private_doc(db_path: Path, workspace_id: str, doc_id: str, marker: st
         conn.close()
 
 
+def indexed_text_for_path(db_path: Path, rel_path: str) -> str:
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    parts: list[str] = []
+    try:
+        doc = conn.execute("SELECT doc_id, content_summary FROM knowledge_documents WHERE path=?", (rel_path,)).fetchone()
+        if not doc:
+            return ""
+        doc_id = doc["doc_id"]
+        parts.append(doc["content_summary"] or "")
+        parts.extend(row["content_summary"] or "" for row in conn.execute("SELECT content_summary FROM knowledge_chunks WHERE doc_id=?", (doc_id,)).fetchall())
+        try:
+            parts.extend(row["content"] or "" for row in conn.execute("SELECT content FROM knowledge_fts WHERE doc_id=?", (doc_id,)).fetchall())
+        except sqlite3.OperationalError:
+            pass
+        try:
+            parts.extend(row["content"] or "" for row in conn.execute("SELECT content FROM knowledge_chunk_fts WHERE doc_id=?", (doc_id,)).fetchall())
+        except sqlite3.OperationalError:
+            pass
+        return "\n".join(parts)
+    finally:
+        conn.close()
+
+
 def main() -> int:
     failures: list[str] = []
     outputs: list[str] = []
@@ -199,6 +223,10 @@ def main() -> int:
             require(redaction_marker in redaction_text, f"redaction smoke doc missing: {redacted_search}", failures)
             require(fake_secret not in redaction_text, "raw fake secret appeared in search output", failures)
             require("[SECRET_REDACTED]" in redaction_text, f"redacted marker missing from search output: {redacted_search}", failures)
+            indexed_surface = indexed_text_for_path(db_path, str(temp_doc.relative_to(ROOT)))
+            require(redaction_marker in indexed_surface, "redaction smoke doc missing from indexed DB/FTS surface", failures)
+            require(fake_secret not in indexed_surface, "raw fake secret appeared in indexed DB/FTS surface", failures)
+            require("[SECRET_REDACTED]" in indexed_surface, "redacted marker missing from indexed DB/FTS surface", failures)
             fts_quality = redacted_search.get("search_quality") or {}
             require(fts_quality.get("search_mode") == "fts5", f"normal knowledge search should report fts5 quality: {fts_quality}", failures)
             require(fts_quality.get("fallback_used") is False, f"normal knowledge search should not report fallback: {fts_quality}", failures)
