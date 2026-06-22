@@ -68,7 +68,8 @@ execution touches undeclared file/tool      readiness gate fails
 - [x] Direct live worker and local dispatch external-write tasks pause before Hermes/OpenClaw execution and create a prepared action plus approval. Guarded by `scripts/worker_external_write_preflight_gate_smoke.py`.
 - [x] Dify connector live text upload cannot call the provider with only `confirm_upload` or a generic approval id; it creates a prepared action first, waits for approval, verifies the exact upload args on resume, and consumes the prepared action with the Dify document id. Guarded by `scripts/dify_upload_prepared_action_gate_smoke.py`.
 - [x] Notion live report export cannot call the provider with only `confirm_export`; it creates a prepared action first, waits for approval, verifies the exact report snapshot hash on resume, and consumes the prepared action with the Notion page id. Guarded by `scripts/notion_export_prepared_action_gate_smoke.py`.
-- [ ] All high-risk external connector/runtime tool paths use prepared actions before shared/commercial deployment. Agent Gateway high/critical external side-effect tool calls, KB bot external upload, customer-worker external-write intent, direct worker/dispatch external-write intent, Dify live upload, and Notion live export now use prepared actions; fixed live runtime probe paths still need final coverage before shared/commercial deployment.
+- [x] Fixed live runtime probes cannot execute with only `confirm_run`; OpenClaw, Agnesfallback CLI/API, and Hermes default run-task probes create `runtime.fixed_probe` prepared actions first and wait for exact approved resume. Guarded by `scripts/runtime_probe_prepared_action_gate_smoke.py`.
+- [ ] All high-risk external connector/runtime tool paths use prepared actions before shared/commercial deployment. Agent Gateway high/critical external side-effect tool calls, KB bot external upload, customer-worker external-write intent, direct worker/dispatch external-write intent, Dify live upload, Notion live export, and fixed live runtime probes now use prepared actions; continue auditing newly added connector/runtime paths before shared/commercial deployment.
 
 Required check:
 
@@ -79,6 +80,7 @@ python3 scripts/high_risk_toolcall_prepared_action_gate_smoke.py --base-url http
 python3 scripts/worker_external_write_preflight_gate_smoke.py
 python3 scripts/dify_upload_prepared_action_gate_smoke.py
 python3 scripts/notion_export_prepared_action_gate_smoke.py
+python3 scripts/runtime_probe_prepared_action_gate_smoke.py
 ```
 
 ## 3. Knowledge safety and quality

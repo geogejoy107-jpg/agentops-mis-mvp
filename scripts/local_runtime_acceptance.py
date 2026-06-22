@@ -104,6 +104,22 @@ def request_absolute_json(method: str, url: str, payload=None):
         raise RuntimeError(f"Cannot reach {url}: {exc.reason}") from exc
 
 
+def approve_prepared_action(base_url: str, approval_id: str) -> dict:
+    return request_json("POST", base_url, f"/api/approvals/{approval_id}/approve", {})
+
+
+def run_approved_runtime_probe(base_url: str, path: str, payload: dict) -> dict:
+    prepared = request_json("POST", base_url, path, payload)
+    if prepared.get("reason") == "runtime_probe_prepared_action_required":
+        approval_id = prepared.get("approval_id")
+        action_id = prepared.get("prepared_action_id")
+        if not approval_id or not action_id:
+            raise RuntimeError(f"{path} did not return approval/prepared action ids: {prepared}")
+        approve_prepared_action(base_url, approval_id)
+        return request_json("POST", base_url, path, {**payload, "prepared_action_id": action_id})
+    return prepared
+
+
 def run_agent_gateway_cli_smoke(base_url: str) -> dict:
     run_id = stamp()
     agent_id = f"agt_accept_cli_{run_id}"
@@ -204,7 +220,7 @@ def main() -> int:
     capture("GET /api/integrations/openclaw/status", lambda: request_json("GET", args.base_url, "/api/integrations/openclaw/status"))
     capture("POST /api/integrations/openclaw/import", lambda: request_json("POST", args.base_url, "/api/integrations/openclaw/import", {}))
     if args.live_openclaw:
-        capture("POST /api/integrations/openclaw/probe live", lambda: request_json("POST", args.base_url, "/api/integrations/openclaw/probe", {}))
+        capture("POST /api/integrations/openclaw/probe live", lambda: run_approved_runtime_probe(args.base_url, "/api/integrations/openclaw/probe", {"confirm_run": True}))
     capture("GET /api/integrations/hermes/status", lambda: request_json("GET", args.base_url, "/api/integrations/hermes/status"))
     if args.require_hermes_api:
         capture("Hermes default API models", lambda: assert_hermes_api_available(evidence["GET /api/integrations/hermes/status"]))
@@ -212,11 +228,11 @@ def main() -> int:
         capture("Agnesfallback OpenAI-compatible API models", lambda: assert_agnesfallback_api_available(evidence["GET /api/integrations/hermes/status"]))
     capture("POST /api/integrations/hermes/probe", lambda: request_json("POST", args.base_url, "/api/integrations/hermes/probe", {}))
     if args.live_hermes:
-        capture("POST /api/integrations/hermes/run-task live", lambda: request_json("POST", args.base_url, "/api/integrations/hermes/run-task", {"confirm_run": True}))
+        capture("POST /api/integrations/hermes/run-task live", lambda: run_approved_runtime_probe(args.base_url, "/api/integrations/hermes/run-task", {"confirm_run": True}))
     if args.live_agnesfallback:
-        capture("POST /api/integrations/hermes/cli-probe live", lambda: request_json("POST", args.base_url, "/api/integrations/hermes/cli-probe", {"confirm_run": True}))
+        capture("POST /api/integrations/hermes/cli-probe live", lambda: run_approved_runtime_probe(args.base_url, "/api/integrations/hermes/cli-probe", {"confirm_run": True}))
     if args.live_agnesfallback_api:
-        capture("POST /api/integrations/hermes/chat-completion-probe live", lambda: request_json("POST", args.base_url, "/api/integrations/hermes/chat-completion-probe", {"confirm_run": True}))
+        capture("POST /api/integrations/hermes/chat-completion-probe live", lambda: run_approved_runtime_probe(args.base_url, "/api/integrations/hermes/chat-completion-probe", {"confirm_run": True}))
 
     if args.live_openclaw:
         probe = evidence.get("POST /api/integrations/openclaw/probe live", {})

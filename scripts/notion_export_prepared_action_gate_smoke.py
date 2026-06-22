@@ -15,6 +15,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -63,6 +64,11 @@ def choose_port() -> int:
 def require(condition: bool, message: str, failures: list[str]) -> None:
     if not condition:
         failures.append(message)
+
+
+def stable_hash(value) -> str:
+    raw = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 def http_json(method: str, base_url: str, path: str, payload: dict | None = None) -> tuple[int, dict, str]:
@@ -163,11 +169,19 @@ def main() -> int:
 
             with sqlite3.connect(db_path) as conn:
                 conn.row_factory = sqlite3.Row
-                action = conn.execute("SELECT status, consumed_at, provider_side_effect_id FROM prepared_actions WHERE action_id=?", (prepared_action_id,)).fetchone()
+                action = conn.execute("SELECT status, consumed_at, provider_side_effect_id, normalized_args_json, checkpoint_json FROM prepared_actions WHERE action_id=?", (prepared_action_id,)).fetchone()
                 tool = conn.execute("SELECT status, side_effect_id FROM tool_calls WHERE tool_call_id=?", ((exported.get("prepared_action") or {}).get("tool_call_id"),)).fetchone()
                 sync_event = conn.execute("SELECT * FROM sync_events WHERE external_object_id='notion_page_smoke_001' ORDER BY created_at DESC LIMIT 1").fetchone()
                 audit_count = conn.execute("SELECT COUNT(*) c FROM audit_logs WHERE action IN ('notion.export.prepared_action_required','approval_wall.prepared_action_resumed','notion.export_confirmed')").fetchone()["c"]
             require(action and action["status"] == "consumed" and action["provider_side_effect_id"] == "notion_page_smoke_001", f"prepared action ledger mismatch: {dict(action) if action else None}", failures)
+            checkpoint = json.loads(action["checkpoint_json"] or "{}") if action else {}
+            stored_args = json.loads(action["normalized_args_json"] or "{}") if action else {}
+            snapshot_path = Path(checkpoint.get("markdown_snapshot_path") or "")
+            require("markdown_snapshot" not in checkpoint, f"checkpoint should not store raw markdown: {checkpoint}", failures)
+            require(snapshot_path.exists(), f"approved report snapshot file missing: {snapshot_path}", failures)
+            if snapshot_path.exists():
+                snapshot = snapshot_path.read_text(encoding="utf-8")
+                require(stable_hash(snapshot) == stored_args.get("markdown_hash"), "snapshot hash does not match approved action args", failures)
             require(tool and tool["status"] == "completed" and tool["side_effect_id"] == "notion_page_smoke_001", f"tool call ledger mismatch: {dict(tool) if tool else None}", failures)
             require(sync_event and sync_event["status"] == "created", f"sync event missing: {dict(sync_event) if sync_event else None}", failures)
             require(audit_count >= 3, f"expected Notion/prepared-action audit trail, got {audit_count}", failures)

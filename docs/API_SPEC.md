@@ -281,8 +281,18 @@ prepared action, and approval, then returns
 approval, repeat the export request with `prepared_action_id`; MIS verifies the
 prepared action hash and stored report snapshot hash before creating the Notion
 page, then consumes the prepared action with the Notion page id. The snapshot is
-the safe report summary only; credentials, private transcripts, and raw command
-bodies are not exported or stored.
+written as a local runtime file referenced by hash from the prepared action; it
+is the safe report summary only. Credentials, private transcripts, and raw
+command bodies are not exported or stored in the MIS ledger.
+
+Fixed live runtime probes use the same Approval Wall path. OpenClaw
+`POST /api/integrations/openclaw/probe`, Agnesfallback
+`POST /api/integrations/hermes/cli-probe` /
+`POST /api/integrations/hermes/chat-completion-probe`, and Hermes default
+`POST /api/integrations/hermes/run-task` do not execute a live runtime with
+`confirm_run:true` alone; they create a `runtime.fixed_probe` prepared action,
+wait for approval, verify the fixed prompt hash, and then consume the prepared
+action only on exact resume.
 
 `GET /api/operator/action-plan` includes a read-only `execution_evidence`
 source. It audits recent completed or failed runs for missing plan bindings,
@@ -557,7 +567,7 @@ Deterministic IDs prevent duplicate records on repeated import:
 
 Privacy boundary: cron run `summary` raw text is never stored. The database stores a redacted first 200 characters in `runs.output_summary`, plus `summary_hash`, `source_path`, `job_id` and `session_id` style metadata in audit/tool-call metadata.
 
-`POST /api/integrations/openclaw/probe` is manual only. It creates a probe task/run/evaluation and does not run on a schedule.
+`POST /api/integrations/openclaw/probe` is manual only and never runs on a schedule. Without `confirm_run:true` it returns a dry-run plan. With `confirm_run:true`, it first creates a `runtime.fixed_probe` prepared action plus approval and does not call OpenClaw. After approval, repeat the request with `prepared_action_id`; MIS verifies the action hash, executes the fixed probe once, records run/evaluation/runtime/audit evidence, and consumes the prepared action.
 
 ## Integrations / Hermes
 
@@ -577,7 +587,8 @@ Agnesfallback is exposed as a Hermes-compatible runtime connector:
 - CLI connector: `rtc_agnesfallback_cli`
 - OpenAI-compatible API connector: `rtc_agnesfallback_openai_api`
 - Default behavior: dry-run only.
-- Real fixed probes require both `HERMES_ALLOW_REAL_RUN=true` and request body `{"confirm_run": true}`.
+- Real fixed probes require `HERMES_ALLOW_REAL_RUN=true`, request body `{"confirm_run": true}`, and an approved `prepared_action_id` exact resume.
+- If live prerequisites are present but `prepared_action_id` is missing, `/cli-probe`, `/chat-completion-probe`, and `/run-task` create a `runtime.fixed_probe` prepared action plus approval and do not call the runtime provider. After approval, repeat the same endpoint with `prepared_action_id`; MIS verifies the action hash, executes the fixed probe once, records run/evaluation/runtime/audit evidence, and consumes the prepared action.
 - The CLI probe uses a fixed safe prompt and intentionally excludes `--yolo`.
 - `/run-task` supports only a fixed safe Hermes default gateway probe when explicitly confirmed; arbitrary raw task prompts remain disabled.
 

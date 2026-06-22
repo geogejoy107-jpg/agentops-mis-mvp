@@ -9316,7 +9316,174 @@ def agent_gateway_emit_audit(conn, body) -> tuple[dict, int]:
     return {"emitted": True, "entity_type": entity_type, "entity_id": entity_id}, 201
 
 
-def run_openclaw_probe(conn) -> dict:
+def runtime_probe_action_args(provider: str, mode: str, connector_id: str, prompt_hash: str, target_resource: str) -> dict:
+    return {
+        "provider": redact_text(provider, 80),
+        "operation": "runtime.fixed_probe",
+        "mode": redact_text(mode, 80),
+        "connector_id": redact_text(connector_id, 120),
+        "prompt_hash": prompt_hash,
+        "target_resource": redact_text(target_resource, 240),
+        "fixed_prompt": True,
+        "raw_prompt_stored_in_mis": False,
+        "raw_response_stored_in_mis": False,
+        "requires_prepared_action_for_live_runtime": True,
+    }
+
+
+def create_runtime_probe_prepared_action(conn, body: dict, *, provider: str, mode: str, connector_id: str, agent_id: str, task_id: str, runtime_type: str, prompt_hash: str, target_resource: str, risk_level: str = "medium") -> dict:
+    now = now_iso()
+    action_args = runtime_probe_action_args(provider, mode, connector_id, prompt_hash, target_resource)
+    idempotency_key = body.get("idempotency_key") or stable_hash({
+        "provider": provider,
+        "mode": mode,
+        "connector_id": connector_id,
+        "prompt_hash": prompt_hash,
+    })[:32]
+    run_id = body.get("run_id") or stable_id("run_runtime_probe_prepare", provider, mode, prompt_hash, idempotency_key)
+    tool_call_id = body.get("tool_call_id") or stable_id("tc_runtime_probe_prepare", run_id)
+    run_row = {
+        "run_id": run_id,
+        "task_id": task_id,
+        "agent_id": agent_id,
+        "runtime_type": runtime_type,
+        "status": "waiting_approval",
+        "started_at": now,
+        "ended_at": None,
+        "duration_ms": None,
+        "input_summary": f"{provider} fixed runtime probe prompt_hash={prompt_hash[:16]}",
+        "output_summary": "Live runtime probe paused before execution; exact prepared action approval is required.",
+        "model_provider": provider,
+        "model_name": mode,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "reasoning_tokens": 0,
+        "cost_usd": 0.0,
+        "error_type": None,
+        "error_message": None,
+        "trace_id": body.get("trace_id"),
+        "parent_run_id": body.get("parent_run_id"),
+        "delegation_id": f"{provider}:{mode}",
+        "approval_required": 1,
+        "created_at": now,
+    }
+    tool_row = {
+        "tool_call_id": tool_call_id,
+        "run_id": run_id,
+        "agent_id": agent_id,
+        "tool_name": f"{provider}.fixed_probe",
+        "tool_version": "v1",
+        "tool_category": "custom",
+        "normalized_args_json": json.dumps(action_args, ensure_ascii=False, sort_keys=True),
+        "target_resource": target_resource,
+        "risk_level": coerce_choice(risk_level, VALID_RISK_LEVELS, "medium"),
+        "status": "waiting_approval",
+        "result_summary": "Prepared runtime probe action only; no runtime side effect has occurred.",
+        "side_effect_id": None,
+        "started_at": now,
+        "ended_at": None,
+        "created_at": now,
+    }
+    upsert_run(conn, run_row, "runtime-probe", {"prompt_hash": prompt_hash, "prepared_action_required": True})
+    upsert_tool_call(conn, tool_row, "runtime-probe", {"prompt_hash": prompt_hash, "prepared_action_required": True, "raw_prompt_omitted": True, "raw_response_omitted": True})
+    approval_wall, approval_status = agent_gateway_prepare_action(conn, {
+        "workspace_id": body.get("workspace_id") or "local-demo",
+        "run_id": run_id,
+        "tool_call_id": tool_call_id,
+        "agent_id": agent_id,
+        "requested_by_agent_id": agent_id,
+        "action_type": "runtime.fixed_probe",
+        "args": action_args,
+        "target_resource": target_resource,
+        "risk_level": tool_row["risk_level"],
+        "policy_version": "approval-wall-v1",
+        "checkpoint": {
+            "run_id": run_id,
+            "tool_call_id": tool_call_id,
+            "connector_id": connector_id,
+            "checkpoint": "before_runtime_fixed_probe",
+            "prompt_hash": prompt_hash,
+        },
+        "idempotency_key": idempotency_key,
+        "reason": body.get("approval_reason") or f"{provider} fixed live runtime probe requires exact prepared-action approval before execution.",
+    })
+    runtime_event(conn, connector_id, "runtime.fixed_probe.prepared_action_required", "waiting_approval", run_id=run_id, task_id=task_id, agent_id=agent_id, input_summary=f"{provider} fixed probe paused prompt_hash={prompt_hash[:16]}", output_summary="Prepared action created; live runtime probe not executed.", raw_payload_hash=prompt_hash)
+    audit(conn, "system", f"{provider}-runtime-probe", "runtime.fixed_probe.prepared_action_required", "runs", run_id, None, {"status": "waiting_approval"}, {"approval_status": approval_status, "approval_id": (approval_wall.get("approval") or {}).get("approval_id"), "prepared_action_id": (approval_wall.get("prepared_action") or {}).get("action_id"), "prompt_hash": prompt_hash, "token_omitted": True})
+    return {
+        "run_id": run_id,
+        "tool_call_id": tool_call_id,
+        "action_args": action_args,
+        "approval_wall": approval_wall,
+    }
+
+
+def runtime_probe_prepared_action_resume_gate(conn, body: dict, expected_args: dict) -> tuple[sqlite3.Row | None, dict | None]:
+    action_id = body.get("prepared_action_id") or body.get("action_id")
+    if not action_id:
+        return None, {"error": "runtime_probe_prepared_action_required", "message": "Live fixed runtime probes require a prepared_action_id created by the Approval Wall.", "token_omitted": True}
+    row = conn.execute("SELECT * FROM prepared_actions WHERE action_id=?", (action_id,)).fetchone()
+    if not row:
+        return None, {"error": "prepared_action_not_found", "prepared_action_id": action_id, "token_omitted": True}
+    approval = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (row["approval_id"],)).fetchone()
+    if not approval or approval["decision"] != "approved":
+        return None, {
+            "error": "approval_required",
+            "message": "Live fixed runtime probe can execute only after the linked prepared action approval is approved.",
+            "approval_id": row["approval_id"],
+            "prepared_action_id": action_id,
+            "decision": approval["decision"] if approval else None,
+            "token_omitted": True,
+        }
+    if row["consumed_at"] or row["status"] == "consumed":
+        return None, {"error": "prepared_action_already_consumed", "prepared_action": prepared_action_public(row), "token_omitted": True}
+    current_hash = prepared_action_hash(dict(row))
+    if current_hash != row["action_hash"]:
+        return None, {"error": "action_hash_mismatch", "stored_action_hash": row["action_hash"], "current_action_hash": current_hash, "token_omitted": True}
+    try:
+        stored_args = json.loads(row["normalized_args_json"] or "{}")
+    except Exception:
+        stored_args = {}
+    mismatched = [
+        key for key in ("provider", "operation", "mode", "connector_id", "prompt_hash", "target_resource")
+        if stored_args.get(key) != expected_args.get(key)
+    ]
+    if row["action_type"] != "runtime.fixed_probe" or mismatched:
+        return None, {"error": "prepared_action_request_mismatch", "prepared_action_id": action_id, "mismatched_fields": mismatched or ["action_type"], "token_omitted": True}
+    return row, None
+
+
+def runtime_probe_prepared_action_required_response(conn, body: dict, *, provider: str, mode: str, connector_id: str, agent_id: str, task_id: str, runtime_type: str, prompt_hash: str, target_resource: str, risk_level: str = "medium") -> dict:
+    prepared = create_runtime_probe_prepared_action(conn, body, provider=provider, mode=mode, connector_id=connector_id, agent_id=agent_id, task_id=task_id, runtime_type=runtime_type, prompt_hash=prompt_hash, target_resource=target_resource, risk_level=risk_level)
+    wall = prepared["approval_wall"]
+    approval = wall.get("approval") or {}
+    prepared_action = wall.get("prepared_action") or {}
+    conn.commit()
+    return {
+        "provider": provider,
+        "mode": mode,
+        "dry_run": True,
+        "live_probe_performed": False,
+        "status": "waiting_approval",
+        "reason": "runtime_probe_prepared_action_required",
+        "run_id": prepared["run_id"],
+        "task_id": task_id,
+        "tool_call_id": prepared["tool_call_id"],
+        "approval_wall": wall,
+        "approval_id": approval.get("approval_id"),
+        "prepared_action_id": prepared_action.get("action_id"),
+        "prepared_action_hash": prepared_action.get("action_hash"),
+        "prompt_hash": prompt_hash,
+        "next_action": (
+            f"agentops approval inspect --approval-id {approval.get('approval_id')} && "
+            f"agentops approval approve --approval-id {approval.get('approval_id')} && "
+            f"repeat the probe request with confirm_run:true and prepared_action_id={prepared_action.get('action_id')}"
+        ),
+        "token_omitted": True,
+    }
+
+
+def run_openclaw_probe(conn, body: dict | None = None) -> dict:
+    body = body or {}
     for connector in runtime_connector_rows():
         if connector["runtime_connector_id"] == "rtc_openclaw_local":
             upsert_runtime_connector(conn, connector)
@@ -9360,6 +9527,34 @@ def run_openclaw_probe(conn) -> dict:
         "created_at": now_iso(),
         "updated_at": now_iso(),
     }, "openclaw-probe")
+    prompt = "请只回复 OPENCLAW_MIS_PROBE_OK"
+    prompt_hash = stable_hash(prompt)
+    action_args = runtime_probe_action_args("openclaw", "main_agent_cli", "rtc_openclaw_local", prompt_hash, str(OPENCLAW_BIN))
+    confirm = bool(body.get("confirm_run"))
+    if not confirm:
+        plan = {
+            "provider": "openclaw",
+            "mode": "main_agent_cli",
+            "dry_run": True,
+            "live_probe_performed": False,
+            "would_run": [str(OPENCLAW_BIN), "agent", "--agent", "main", "-m", "[FIXED_SAFE_PROMPT]", "--timeout", "180", "--json"],
+            "prompt_hash": prompt_hash,
+            "requires": {"confirm_run": True, "prepared_action_id": True},
+            "reason": "confirm_run_required_for_live_runtime_probe",
+            "token_omitted": True,
+        }
+        runtime_event(conn, "rtc_openclaw_local", "agent_probe_dry_run", "planned", task_id=task_id, agent_id=agent_id, prompt_hash=prompt_hash, input_summary="OpenClaw fixed live probe dry-run.")
+        audit(conn, "system", "openclaw-probe", "runtime.openclaw_probe.dry_run", "runtime_connectors", "rtc_openclaw_local", None, plan, {"confirm_run": confirm, "token_omitted": True})
+        conn.commit()
+        return plan
+    prepared_row, gate_error = runtime_probe_prepared_action_resume_gate(conn, body, action_args)
+    if gate_error:
+        if gate_error.get("error") == "runtime_probe_prepared_action_required":
+            return runtime_probe_prepared_action_required_response(conn, body, provider="openclaw", mode="main_agent_cli", connector_id="rtc_openclaw_local", agent_id=agent_id, task_id=task_id, runtime_type="openclaw", prompt_hash=prompt_hash, target_resource=str(OPENCLAW_BIN), risk_level="medium")
+        runtime_event(conn, "rtc_openclaw_local", "agent_probe_prepared_action_blocked", "blocked", task_id=task_id, agent_id=agent_id, prompt_hash=prompt_hash, output_summary=gate_error.get("error"), raw_payload_hash=prompt_hash)
+        audit(conn, "system", "openclaw-probe", "runtime.openclaw_probe.prepared_action_blocked", "runtime_connectors", "rtc_openclaw_local", None, gate_error, {"prompt_hash": prompt_hash, "token_omitted": True})
+        conn.commit()
+        return {"provider": "openclaw", "mode": "main_agent_cli", "dry_run": True, "live_probe_performed": False, **gate_error, "reason": gate_error.get("error")}
     started = now_iso()
     probe = {"ok": False, "error": None}
     if not OPENCLAW_BIN.exists():
@@ -9387,7 +9582,7 @@ def run_openclaw_probe(conn) -> dict:
                 probe["error"] = redact_text(proc.stderr or visible or "probe failed", 200)
         except Exception as exc:
             probe["error"] = redact_text(str(exc), 200)
-    run_id = stable_id("run_oc_probe", dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d%H%M%S"))
+    run_id = prepared_row["run_id"]
     usage = probe.get("usage") or {}
     row = {
         "run_id": run_id,
@@ -9417,8 +9612,13 @@ def run_openclaw_probe(conn) -> dict:
     upsert_run(conn, row, "openclaw-probe", {"manual_probe": True})
     upsert_evaluation(conn, quality_gate_for_run(row), "openclaw-probe")
     runtime_event(conn, "rtc_openclaw_local", "agent_probe", "completed" if probe["ok"] else "failed", run_id=run_id, task_id=task_id, agent_id=agent_id, model_name=row["model_name"], latency_ms=row["duration_ms"], output_summary=probe.get("visible"), error_message=probe.get("error"), raw_payload_hash=stable_hash({"trace_id": probe.get("run_id"), "visible": probe.get("visible"), "error": probe.get("error")}))
-    audit(conn, "system", "openclaw-probe", "runtime.openclaw_probe", "runs", run_id, None, {"status": row["status"]}, {"manual_probe": True, "trace_id": probe.get("run_id")})
-    return {"provider": "openclaw", "probe": probe, "run_id": run_id}
+    resume_payload, resume_status = agent_gateway_resume_prepared_action(conn, prepared_row["action_id"], {
+        "workspace_id": prepared_row["workspace_id"],
+        "provider_side_effect_id": probe.get("run_id") or stable_id("openclaw_probe", run_id),
+        "result_summary": row["output_summary"],
+    })
+    audit(conn, "system", "openclaw-probe", "runtime.openclaw_probe", "runs", run_id, None, {"status": row["status"]}, {"manual_probe": True, "trace_id": probe.get("run_id"), "prepared_action_id": prepared_row["action_id"], "approval_id": prepared_row["approval_id"], "token_omitted": True})
+    return {"provider": "openclaw", "probe": probe, "run_id": run_id, "dry_run": False, "live_probe_performed": True, "approval_id": prepared_row["approval_id"], "prepared_action": resume_payload.get("prepared_action") if isinstance(resume_payload, dict) else prepared_action_public(prepared_row), "prepared_action_resume_status": resume_status, "token_omitted": True}
 
 
 def hermes_status() -> dict:
@@ -10084,6 +10284,15 @@ def agnesfallback_cli_probe(conn, body: dict) -> dict:
         conn.commit()
         return plan
     agent_id, task_id = ensure_agnesfallback_agent_task(conn, "cli")
+    action_args = runtime_probe_action_args("agnesfallback", "cli_probe", connector_id, stable_hash(prompt), agnes["binary_path"])
+    prepared_row, gate_error = runtime_probe_prepared_action_resume_gate(conn, body, action_args)
+    if gate_error:
+        if gate_error.get("error") == "runtime_probe_prepared_action_required":
+            return runtime_probe_prepared_action_required_response(conn, body, provider="agnesfallback", mode="cli_probe", connector_id=connector_id, agent_id=agent_id, task_id=task_id, runtime_type="hermes", prompt_hash=stable_hash(prompt), target_resource=agnes["binary_path"], risk_level="medium")
+        runtime_event(conn, connector_id, "cli_probe_prepared_action_blocked", "blocked", task_id=task_id, agent_id=agent_id, prompt_hash=stable_hash(prompt), output_summary=gate_error.get("error"), raw_payload_hash=stable_hash(prompt))
+        audit(conn, "system", "agnesfallback-cli", "runtime.cli_probe.prepared_action_blocked", "runtime_connectors", connector_id, None, gate_error, {"prompt_hash": stable_hash(prompt), "token_omitted": True})
+        conn.commit()
+        return {"provider": "agnesfallback", "mode": "cli_probe", "dry_run": True, "live_probe_performed": False, **gate_error, "reason": gate_error.get("error")}
     started_iso = now_iso()
     started = dt.datetime.now(dt.timezone.utc)
     ok = False
@@ -10098,7 +10307,7 @@ def agnesfallback_cli_probe(conn, body: dict) -> dict:
     except Exception as exc:
         error = redact_text(str(exc), 240)
     duration = int((dt.datetime.now(dt.timezone.utc) - started).total_seconds() * 1000)
-    run_id = stable_id("run_agnes_cli_probe", dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d%H%M%S"))
+    run_id = prepared_row["run_id"]
     row = {
         "run_id": run_id,
         "task_id": task_id,
@@ -10127,9 +10336,14 @@ def agnesfallback_cli_probe(conn, body: dict) -> dict:
     upsert_run(conn, row, "agnesfallback-cli", {"prompt_hash": stable_hash(prompt)})
     upsert_evaluation(conn, quality_gate_for_run(row), "agnesfallback-cli")
     runtime_event(conn, connector_id, "cli_probe", "completed" if ok else "failed", run_id=run_id, task_id=task_id, agent_id=agent_id, model_name="agnesfallback", latency_ms=duration, prompt_hash=stable_hash(prompt), output_summary=visible, error_message=error, raw_payload_hash=stable_hash({"visible": visible, "error": error}))
-    audit(conn, "system", "agnesfallback-cli", "runtime.cli_probe", "runs", run_id, None, {"status": row["status"]}, {"prompt_hash": stable_hash(prompt), "confirmed": True})
+    resume_payload, resume_status = agent_gateway_resume_prepared_action(conn, prepared_row["action_id"], {
+        "workspace_id": prepared_row["workspace_id"],
+        "provider_side_effect_id": stable_id("agnesfallback_cli_probe", run_id, stable_hash(visible or error or "")),
+        "result_summary": row["output_summary"],
+    })
+    audit(conn, "system", "agnesfallback-cli", "runtime.cli_probe", "runs", run_id, None, {"status": row["status"]}, {"prompt_hash": stable_hash(prompt), "confirmed": True, "prepared_action_id": prepared_row["action_id"], "approval_id": prepared_row["approval_id"], "token_omitted": True})
     conn.commit()
-    return {"provider": "agnesfallback", "mode": "cli_probe", "dry_run": False, "ok": ok, "run_id": run_id, "duration_ms": duration, "output_summary": row["output_summary"], "error": error}
+    return {"provider": "agnesfallback", "mode": "cli_probe", "dry_run": False, "live_probe_performed": True, "ok": ok, "run_id": run_id, "duration_ms": duration, "output_summary": row["output_summary"], "error": error, "approval_id": prepared_row["approval_id"], "prepared_action": resume_payload.get("prepared_action") if isinstance(resume_payload, dict) else prepared_action_public(prepared_row), "prepared_action_resume_status": resume_status, "token_omitted": True}
 
 
 def agnesfallback_chat_completion_probe(conn, body: dict) -> dict:
@@ -10153,6 +10367,16 @@ def agnesfallback_chat_completion_probe(conn, body: dict) -> dict:
         conn.commit()
         return plan
     agent_id, task_id = ensure_agnesfallback_agent_task(conn, "api")
+    target_resource = agnes["gateway_url"].rstrip("/") + "/v1/chat/completions"
+    action_args = runtime_probe_action_args("agnesfallback", "openai_compatible", connector_id, stable_hash(prompt), target_resource)
+    prepared_row, gate_error = runtime_probe_prepared_action_resume_gate(conn, body, action_args)
+    if gate_error:
+        if gate_error.get("error") == "runtime_probe_prepared_action_required":
+            return runtime_probe_prepared_action_required_response(conn, body, provider="agnesfallback", mode="openai_compatible", connector_id=connector_id, agent_id=agent_id, task_id=task_id, runtime_type="hermes", prompt_hash=stable_hash(prompt), target_resource=target_resource, risk_level="medium")
+        runtime_event(conn, connector_id, "chat_completion_probe_prepared_action_blocked", "blocked", task_id=task_id, agent_id=agent_id, prompt_hash=stable_hash(prompt), output_summary=gate_error.get("error"), raw_payload_hash=stable_hash(prompt))
+        audit(conn, "system", "agnesfallback-api", "runtime.chat_completion_probe.prepared_action_blocked", "runtime_connectors", connector_id, None, gate_error, {"prompt_hash": stable_hash(prompt), "token_omitted": True})
+        conn.commit()
+        return {"provider": "agnesfallback", "mode": "openai_compatible", "dry_run": True, "live_probe_performed": False, **gate_error, "reason": gate_error.get("error")}
     started_iso = now_iso()
     started = dt.datetime.now(dt.timezone.utc)
     payload = {"model": "agnesfallback", "messages": [{"role": "user", "content": prompt}], "temperature": 0}
@@ -10162,7 +10386,7 @@ def agnesfallback_chat_completion_probe(conn, body: dict) -> dict:
     response_hash = None
     try:
         req = Request(
-            agnes["gateway_url"].rstrip("/") + "/v1/chat/completions",
+            target_resource,
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
             method="POST",
             headers={"Content-Type": "application/json"},
@@ -10178,7 +10402,7 @@ def agnesfallback_chat_completion_probe(conn, body: dict) -> dict:
     except Exception as exc:
         error = redact_text(str(exc), 240)
     duration = int((dt.datetime.now(dt.timezone.utc) - started).total_seconds() * 1000)
-    run_id = stable_id("run_agnes_api_probe", dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d%H%M%S"))
+    run_id = prepared_row["run_id"]
     row = {
         "run_id": run_id,
         "task_id": task_id,
@@ -10207,9 +10431,14 @@ def agnesfallback_chat_completion_probe(conn, body: dict) -> dict:
     upsert_run(conn, row, "agnesfallback-api", {"prompt_hash": stable_hash(prompt), "raw_payload_hash": response_hash})
     upsert_evaluation(conn, quality_gate_for_run(row), "agnesfallback-api")
     runtime_event(conn, connector_id, "chat_completion_probe", "completed" if ok else "failed", run_id=run_id, task_id=task_id, agent_id=agent_id, model_name="agnesfallback", latency_ms=duration, prompt_hash=stable_hash(prompt), output_summary=visible, error_message=error, raw_payload_hash=response_hash)
-    audit(conn, "system", "agnesfallback-api", "runtime.chat_completion_probe", "runs", run_id, None, {"status": row["status"]}, {"prompt_hash": stable_hash(prompt), "confirmed": True})
+    resume_payload, resume_status = agent_gateway_resume_prepared_action(conn, prepared_row["action_id"], {
+        "workspace_id": prepared_row["workspace_id"],
+        "provider_side_effect_id": stable_id("agnesfallback_api_probe", run_id, response_hash or stable_hash(visible or error or "")),
+        "result_summary": row["output_summary"],
+    })
+    audit(conn, "system", "agnesfallback-api", "runtime.chat_completion_probe", "runs", run_id, None, {"status": row["status"]}, {"prompt_hash": stable_hash(prompt), "confirmed": True, "prepared_action_id": prepared_row["action_id"], "approval_id": prepared_row["approval_id"], "token_omitted": True})
     conn.commit()
-    return {"provider": "agnesfallback", "mode": "openai_compatible", "dry_run": False, "ok": ok, "run_id": run_id, "duration_ms": duration, "output_summary": row["output_summary"], "error": error}
+    return {"provider": "agnesfallback", "mode": "openai_compatible", "dry_run": False, "live_probe_performed": True, "ok": ok, "run_id": run_id, "duration_ms": duration, "output_summary": row["output_summary"], "error": error, "approval_id": prepared_row["approval_id"], "prepared_action": resume_payload.get("prepared_action") if isinstance(resume_payload, dict) else prepared_action_public(prepared_row), "prepared_action_resume_status": resume_status, "token_omitted": True}
 
 
 def ensure_local_ai_brief_agent_task(conn):
@@ -12425,12 +12654,13 @@ def hermes_run_task(conn, body: dict) -> dict:
     confirm = bool(body.get("confirm_run"))
     prompt = "请只回复 HERMES_DEFAULT_RUN_OK，不要解释。"
     prompt_hash = stable_hash(prompt)
+    target_resource = status["gateway_url"].rstrip("/") + "/v1/chat/completions"
     plan = {
         "created": False,
         "dry_run": True,
         "provider": "hermes",
         "mode": "default_gateway_fixed_probe",
-        "would_post": status["gateway_url"].rstrip("/") + "/v1/chat/completions",
+        "would_post": target_resource,
         "prompt_hash": prompt_hash,
         "requires": {"HERMES_ALLOW_REAL_RUN": True, "confirm_run": True, "api_listening": True},
         "note": "Only a fixed safe probe is enabled here. Arbitrary Hermes task prompts remain disabled.",
@@ -12478,6 +12708,15 @@ def hermes_run_task(conn, body: dict) -> dict:
         "created_at": now_iso(),
         "updated_at": now_iso(),
     }, "hermes-run-task")
+    action_args = runtime_probe_action_args("hermes", "default_gateway_fixed_probe", "rtc_hermes_default_gateway", prompt_hash, target_resource)
+    prepared_row, gate_error = runtime_probe_prepared_action_resume_gate(conn, body, action_args)
+    if gate_error:
+        if gate_error.get("error") == "runtime_probe_prepared_action_required":
+            return runtime_probe_prepared_action_required_response(conn, body, provider="hermes", mode="default_gateway_fixed_probe", connector_id="rtc_hermes_default_gateway", agent_id=agent_id, task_id=task_id, runtime_type="hermes", prompt_hash=prompt_hash, target_resource=target_resource, risk_level="medium")
+        runtime_event(conn, "rtc_hermes_default_gateway", "run_task_prepared_action_blocked", "blocked", task_id=task_id, agent_id=agent_id, prompt_hash=prompt_hash, output_summary=gate_error.get("error"), raw_payload_hash=prompt_hash)
+        audit(conn, "system", "hermes-run-task", "runtime.run_task.prepared_action_blocked", "runtime_connectors", "rtc_hermes_default_gateway", None, gate_error, {"prompt_hash": prompt_hash, "token_omitted": True})
+        conn.commit()
+        return {"created": False, "dry_run": True, "live_probe_performed": False, "provider": "hermes", "mode": "default_gateway_fixed_probe", **gate_error, "reason": gate_error.get("error")}
 
     started_iso = now_iso()
     started = dt.datetime.now(dt.timezone.utc)
@@ -12488,7 +12727,7 @@ def hermes_run_task(conn, body: dict) -> dict:
     response_hash = None
     try:
         req = Request(
-            status["gateway_url"].rstrip("/") + "/v1/chat/completions",
+            target_resource,
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
             method="POST",
             headers={"Content-Type": "application/json"},
@@ -12505,7 +12744,7 @@ def hermes_run_task(conn, body: dict) -> dict:
         error = redact_text(str(exc), 240)
 
     duration = int((dt.datetime.now(dt.timezone.utc) - started).total_seconds() * 1000)
-    run_id = stable_id("run_hermes_default_task", dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d%H%M%S"))
+    run_id = prepared_row["run_id"]
     row = {
         "run_id": run_id,
         "task_id": task_id,
@@ -12534,9 +12773,14 @@ def hermes_run_task(conn, body: dict) -> dict:
     upsert_run(conn, row, "hermes-run-task", {"prompt_hash": prompt_hash, "raw_payload_hash": response_hash})
     upsert_evaluation(conn, quality_gate_for_run(row), "hermes-run-task")
     runtime_event(conn, "rtc_hermes_default_gateway", "run_task", "completed" if ok else "failed", run_id=run_id, task_id=task_id, agent_id=agent_id, model_name="hermes-agent", latency_ms=duration, prompt_hash=prompt_hash, output_summary=visible, error_message=error, raw_payload_hash=response_hash)
-    audit(conn, "system", "hermes-run-task", "runtime.run_task", "runs", run_id, None, {"status": row["status"]}, {"prompt_hash": prompt_hash, "confirmed": True})
+    resume_payload, resume_status = agent_gateway_resume_prepared_action(conn, prepared_row["action_id"], {
+        "workspace_id": prepared_row["workspace_id"],
+        "provider_side_effect_id": stable_id("hermes_default_probe", run_id, response_hash or stable_hash(visible or error or "")),
+        "result_summary": row["output_summary"],
+    })
+    audit(conn, "system", "hermes-run-task", "runtime.run_task", "runs", run_id, None, {"status": row["status"]}, {"prompt_hash": prompt_hash, "confirmed": True, "prepared_action_id": prepared_row["action_id"], "approval_id": prepared_row["approval_id"], "token_omitted": True})
     conn.commit()
-    return {"created": True, "dry_run": False, "provider": "hermes", "mode": "default_gateway_fixed_probe", "ok": ok, "run_id": run_id, "task_id": task_id, "duration_ms": duration, "output_summary": row["output_summary"], "error": error}
+    return {"created": True, "dry_run": False, "live_probe_performed": True, "provider": "hermes", "mode": "default_gateway_fixed_probe", "ok": ok, "run_id": run_id, "task_id": task_id, "duration_ms": duration, "output_summary": row["output_summary"], "error": error, "approval_id": prepared_row["approval_id"], "prepared_action": resume_payload.get("prepared_action") if isinstance(resume_payload, dict) else prepared_action_public(prepared_row), "prepared_action_resume_status": resume_status, "token_omitted": True}
 
 
 def worker_runtime_path(adapter: str, suffix: str) -> Path:
@@ -20510,6 +20754,39 @@ def notion_export_action_args(markdown: str, title: str, cfg: dict) -> dict:
     }
 
 
+def notion_export_snapshot_path(action_id: str) -> Path:
+    safe_action_id = re.sub(r"[^a-zA-Z0-9_.-]+", "_", str(action_id or "notion_export")).strip("._") or "notion_export"
+    return RUNTIME_DIR / "prepared_action_snapshots" / f"{safe_action_id}.md"
+
+
+def notion_export_write_snapshot(action_id: str, markdown: str) -> Path:
+    path = notion_export_snapshot_path(action_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(markdown, encoding="utf-8")
+    return path
+
+
+def notion_export_read_snapshot(checkpoint: dict, expected_hash: str) -> tuple[str | None, str | None]:
+    raw_path = str(checkpoint.get("markdown_snapshot_path") or "")
+    if not raw_path:
+        return None, "markdown_snapshot_path"
+    snapshot_path = Path(raw_path)
+    base = (RUNTIME_DIR / "prepared_action_snapshots").resolve()
+    try:
+        resolved = snapshot_path.resolve()
+    except Exception:
+        return None, "markdown_snapshot_path"
+    if not resolved.is_relative_to(base):
+        return None, "markdown_snapshot_path"
+    try:
+        snapshot = resolved.read_text(encoding="utf-8")
+    except Exception:
+        return None, "markdown_snapshot_path"
+    if not snapshot or stable_hash(snapshot) != expected_hash:
+        return None, "markdown_snapshot"
+    return snapshot, None
+
+
 def ensure_notion_export_agent_task(conn, body: dict, title: str):
     now = now_iso()
     agent_id = body.get("agent_id") or "agt_notion_exporter"
@@ -20541,6 +20818,14 @@ def create_notion_export_prepared_action(conn, body: dict, markdown: str, title:
     run_id = body.get("run_id") or stable_id("run_notion_export_prepare", title, stable_hash(markdown))
     tool_call_id = body.get("tool_call_id") or stable_id("tc_notion_export_prepare", run_id)
     action_args = notion_export_action_args(markdown, title, cfg)
+    idempotency_key = body.get("idempotency_key") or stable_hash({
+        "connector": "notion",
+        "title": title,
+        "markdown_hash": action_args["markdown_hash"],
+        "export_mode": cfg["export_mode"],
+    })[:32]
+    action_id = body.get("action_id") or stable_id("pa", run_id, idempotency_key)
+    snapshot_path = notion_export_write_snapshot(action_id, markdown)
     run_row = {
         "run_id": run_id,
         "task_id": task_id,
@@ -20603,15 +20888,11 @@ def create_notion_export_prepared_action(conn, body: dict, markdown: str, title:
             "connector_id": "conn_notion_templates",
             "checkpoint": "before_notion_pages_create",
             "markdown_hash": action_args["markdown_hash"],
-            "markdown_snapshot": markdown,
+            "markdown_snapshot_path": str(snapshot_path),
             "snapshot_safety": "safe_report_summary_only_no_credentials_no_private_transcripts",
         },
-        "idempotency_key": body.get("idempotency_key") or stable_hash({
-            "connector": "notion",
-            "title": title,
-            "markdown_hash": action_args["markdown_hash"],
-            "export_mode": cfg["export_mode"],
-        })[:32],
+        "action_id": action_id,
+        "idempotency_key": idempotency_key,
         "reason": body.get("approval_reason") or "Notion report export is an external write and requires exact prepared-action approval before provider execution.",
     })
     runtime_event(conn, "rtc_agent_gateway_local", "notion.export.prepared_action_required", "waiting_approval", run_id=run_id, task_id=task_id, agent_id=agent_id, input_summary=f"Notion export paused markdown_hash={action_args['markdown_hash'][:16]}", output_summary="Prepared action created; live Notion export not executed.", raw_payload_hash=action_args["markdown_hash"])
@@ -20653,9 +20934,9 @@ def notion_export_prepared_action_resume_gate(conn, body: dict, expected_args: d
         checkpoint = json.loads(row["checkpoint_json"] or "{}")
     except Exception:
         checkpoint = {}
-    snapshot = str(checkpoint.get("markdown_snapshot") or "")
-    if not snapshot or stable_hash(snapshot) != stored_args.get("markdown_hash"):
-        mismatched.append("markdown_snapshot")
+    _, snapshot_error = notion_export_read_snapshot(checkpoint, stored_args.get("markdown_hash") or "")
+    if snapshot_error:
+        mismatched.append(snapshot_error)
     if row["action_type"] != "notion.report.export" or mismatched:
         return None, {"error": "prepared_action_request_mismatch", "prepared_action_id": action_id, "mismatched_fields": mismatched or ["action_type"], "token_omitted": True}
     return row, None
@@ -20711,7 +20992,9 @@ def notion_export_live_or_gate(conn, body: dict, markdown: str, title: str, acto
             checkpoint = json.loads(prepared_row["checkpoint_json"] or "{}")
         except Exception:
             checkpoint = {}
-        export_markdown = str(checkpoint.get("markdown_snapshot") or markdown)
+        export_markdown, snapshot_error = notion_export_read_snapshot(checkpoint, stored_args.get("markdown_hash") or "")
+        if snapshot_error:
+            return {"provider": "notion", "dry_run": True, "created": False, "live_export_performed": False, "configured": cfg["configured"], "export_mode": cfg["export_mode"], "error": "prepared_action_request_mismatch", "reason": "prepared_action_request_mismatch", "prepared_action_id": prepared_row["action_id"], "mismatched_fields": [snapshot_error], "token_omitted": True}
         export_title = str(stored_args.get("title") or title)
         result = post_notion_page(export_markdown, export_title)
         event = create_sync_event(conn, "conn_notion_templates", "outbound", "report", "created", result, external_object_id=result.get("notion_page_id"))
@@ -21929,7 +22212,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.commit()
                 return self.send_json(result, 201)
             if path == "/api/integrations/openclaw/probe":
-                result = run_openclaw_probe(conn)
+                result = run_openclaw_probe(conn, body)
                 conn.commit()
                 return self.send_json(result, 201)
             if path == "/api/integrations/hermes/probe":
