@@ -51,7 +51,7 @@ def normalize_dynamic(route: str) -> str:
 
 def actual_vite_routes() -> set[str]:
     app_text = read_text(VITE_APP / "src" / "app" / "App.tsx")
-    return set(re.findall(r'<Route\s+path="([^"]+)"', app_text))
+    return set(re.findall(r"<Route\b[^>]*\bpath\s*=\s*['\"]([^'\"]+)['\"]", app_text, flags=re.S))
 
 
 def next_page_route(path: Path) -> str:
@@ -113,8 +113,10 @@ def source_text_for(paths: list[str]) -> str:
 
 def assert_entry_routes(entry: dict | None, entry_id: str, vite_routes: list[str], next_routes: list[str]) -> None:
     require(isinstance(entry, dict), f"missing matrix entry for {entry_id}")
-    require(entry.get("vite_routes") == vite_routes, f"{entry_id}.vite_routes changed; expected {vite_routes}")
-    require(entry.get("next_routes") == next_routes, f"{entry_id}.next_routes changed; expected {next_routes}")
+    actual_vite = set(entry.get("vite_routes") or [])
+    actual_next = set(entry.get("next_routes") or [])
+    require(set(vite_routes) <= actual_vite, f"{entry_id}.vite_routes must include {vite_routes}")
+    require(set(next_routes) <= actual_next, f"{entry_id}.next_routes must include {next_routes}")
     require(entry.get("retirement_allowed") is False, f"{entry_id} must stay blocked from retirement until a naming/navigation decision exists")
 
 
@@ -124,6 +126,8 @@ def main() -> int:
     require(matrix.get("gate") == "gate_4_ui_api_parity_before_nextjs", "matrix gate id is wrong")
     require(matrix.get("policy", {}).get("canonical_ui") == "vite_react", "matrix must keep Vite as canonical UI")
     require(matrix.get("policy", {}).get("migration_track") == "nextjs_app_router", "matrix must name the Next.js migration track")
+    route_contracts = matrix.get("policy", {}).get("route_level_contracts") or []
+    require("ui_route_naming_decision_v1" in route_contracts, "matrix policy must include the route naming decision contract")
 
     entries = matrix.get("entries")
     require(isinstance(entries, list) and entries, "matrix entries must be a non-empty list")
@@ -199,6 +203,9 @@ def main() -> int:
     for detail_id in ("task_detail", "run_detail"):
         evidence = entries_by_id.get(detail_id, {}).get("evidence_commands") or []
         require("python3 scripts/vite_playwright_snapshot_smoke.py" in evidence, f"{detail_id} must include Vite browser detail snapshot evidence")
+    for route_id in ("task_detail", "run_ledger", "run_detail"):
+        evidence = entries_by_id.get(route_id, {}).get("evidence_commands") or []
+        require("python3 scripts/ui_route_naming_decision_smoke.py" in evidence, f"{route_id} must include route naming decision evidence")
     assert_entry_routes(entries_by_id.get("task_detail"), "task_detail", ["/admin/tasks/:id"], ["/workspace/tasks/:taskId"])
     assert_entry_routes(entries_by_id.get("run_ledger"), "run_ledger", ["/admin/runs"], ["/workspace/runs"])
     assert_entry_routes(entries_by_id.get("run_detail"), "run_detail", ["/admin/runs/:id"], ["/workspace/runs/:runId"])

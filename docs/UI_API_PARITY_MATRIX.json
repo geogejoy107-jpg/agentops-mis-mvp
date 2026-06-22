@@ -6,7 +6,8 @@
     "migration_track": "nextjs_app_router",
     "retirement_default": false,
     "route_level_contracts": [
-      "ui_task_run_route_parity_v1"
+      "ui_task_run_route_parity_v1",
+      "ui_route_naming_decision_v1"
     ],
     "retirement_rule": "A Vite route can be retired only after the matrix marks its capability covered, Vite and Next browser evidence both pass, API contracts match, and the route has an explicit retirement decision."
   },
@@ -170,12 +171,13 @@
       ],
       "evidence_commands": [
         "python3 scripts/ui_task_run_route_parity_smoke.py",
+        "python3 scripts/ui_route_naming_decision_smoke.py",
         "python3 scripts/vite_playwright_snapshot_smoke.py",
         "python3 scripts/nextjs_playwright_snapshot_smoke.py",
         "python3 scripts/nextjs_parity_smoke.py"
       ],
       "retirement_allowed": false,
-      "retirement_gate": "Task detail API/proxy diff, related-run links, and Vite detail browser snapshot have route-level evidence; need /admin/tasks/:id to /workspace/tasks/:taskId naming/navigation decision before retiring the admin detail route."
+      "retirement_gate": "Route naming decision records /workspace/tasks/:taskId as the future canonical target while /admin/tasks/:id stays as a compatibility route; retirement still needs backward-compatible redirect or alias evidence, navigation inventory update, and an explicit route retirement commit."
     },
     {
       "id": "worker_console",
@@ -409,12 +411,13 @@
       ],
       "evidence_commands": [
         "python3 scripts/ui_task_run_route_parity_smoke.py",
+        "python3 scripts/ui_route_naming_decision_smoke.py",
         "python3 scripts/vite_playwright_snapshot_smoke.py",
         "python3 scripts/nextjs_playwright_snapshot_smoke.py",
         "python3 scripts/nextjs_parity_smoke.py"
       ],
       "retirement_allowed": false,
-      "retirement_gate": "Run list API/proxy diff and list-to-detail links have route-level evidence; need route naming and navigation migration decision from /admin/runs to /workspace/runs."
+      "retirement_gate": "Route naming decision records /workspace/runs as the future canonical target while /admin/runs stays as a compatibility route; retirement still needs backward-compatible redirect or alias evidence, navigation inventory update, and an explicit route retirement commit."
     },
     {
       "id": "run_detail",
@@ -442,12 +445,13 @@
       ],
       "evidence_commands": [
         "python3 scripts/ui_task_run_route_parity_smoke.py",
+        "python3 scripts/ui_route_naming_decision_smoke.py",
         "python3 scripts/vite_playwright_snapshot_smoke.py",
         "python3 scripts/nextjs_playwright_snapshot_smoke.py",
         "python3 scripts/nextjs_parity_smoke.py"
       ],
       "retirement_allowed": false,
-      "retirement_gate": "Run detail API/proxy diff and Vite detail browser snapshot have route-level evidence; need /admin/runs/:id to /workspace/runs/:runId naming/navigation decision before retiring the admin detail route."
+      "retirement_gate": "Route naming decision records /workspace/runs/:runId as the future canonical target while /admin/runs/:id stays as a compatibility route; retirement still needs backward-compatible redirect or alias evidence, navigation inventory update, and an explicit route retirement commit."
     },
     {
       "id": "tool_calls",

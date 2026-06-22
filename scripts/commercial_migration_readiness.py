@@ -53,6 +53,53 @@ def file_contains(path: str, needle: str) -> bool:
     return needle in target.read_text(encoding="utf-8", errors="replace")
 
 
+def read_json(path: str) -> dict:
+    target = ROOT / path
+    if not target.exists():
+        return {}
+    try:
+        return json.loads(target.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+
+
+def route_naming_decision_semantics_ok() -> bool:
+    decision = read_json("docs/UI_ROUTE_NAMING_DECISION.json")
+    if decision.get("contract_id") != "ui_route_naming_decision_v1":
+        return False
+    if decision.get("status") != "accepted_no_route_retirement":
+        return False
+    policy = decision.get("policy") or {}
+    if policy.get("legacy_namespace") != "/admin" or policy.get("target_namespace") != "/workspace":
+        return False
+    if policy.get("retirement_allowed_by_default") is not False:
+        return False
+    if policy.get("redirects_required_before_retirement") is not True:
+        return False
+    required = {
+        "task_detail": ("/admin/tasks/:id", "/workspace/tasks/:taskId"),
+        "run_ledger": ("/admin/runs", "/workspace/runs"),
+        "run_detail": ("/admin/runs/:id", "/workspace/runs/:runId"),
+    }
+    required_cutover = {
+        "route_level_read_model_parity",
+        "vite_and_next_browser_snapshot_parity",
+        "backward_compatible_redirect_or_alias",
+        "navigation_inventory_update",
+        "explicit_route_retirement_commit",
+    }
+    pairs = {str(pair.get("id")): pair for pair in decision.get("route_pairs") or [] if isinstance(pair, dict)}
+    for pair_id, (legacy, target) in required.items():
+        pair = pairs.get(pair_id) or {}
+        if pair.get("legacy_route") != legacy or pair.get("target_route") != target:
+            return False
+        if pair.get("retirement_allowed") is not False:
+            return False
+        if not required_cutover.issubset(set(pair.get("cutover_requires") or [])):
+            return False
+    return True
+
+
 def status_paths() -> list[str]:
     ok, output = run_git(["status", "--short"])
     if not ok or not output:
@@ -103,6 +150,8 @@ def main() -> int:
         "docs/CODEX_NEXTJS_HANDOFF_PROMPT.md",
         "docs/STORAGE_BOUNDARY_MAP.md",
         "docs/POSTGRES_PARITY_CONTRACT.md",
+        "docs/UI_ROUTE_NAMING_DECISION.md",
+        "docs/UI_ROUTE_NAMING_DECISION.json",
     ]
     required_stack = [
         "server.py",
@@ -205,6 +254,22 @@ def main() -> int:
             and file_contains("ui/next-app/src/components/LedgerPages.tsx", "/workspace/runs/${encodeURIComponent(run.run_id)}")
             and (ROOT / "scripts" / "ui_task_run_route_parity_smoke.py").exists(),
             "Gate 4 task/run route-level read-model parity and Next list-to-detail links are present",
+        ),
+        check(
+            "ui_route_naming_decision_surface_exists",
+            route_naming_decision_semantics_ok()
+            and file_contains("docs/UI_ROUTE_NAMING_DECISION.json", "ui_route_naming_decision_v1")
+            and file_contains("docs/UI_ROUTE_NAMING_DECISION.json", "/admin/tasks/:id")
+            and file_contains("docs/UI_ROUTE_NAMING_DECISION.json", "/workspace/tasks/:taskId")
+            and file_contains("docs/UI_ROUTE_NAMING_DECISION.json", "/admin/runs")
+            and file_contains("docs/UI_ROUTE_NAMING_DECISION.json", "/workspace/runs")
+            and file_contains("docs/UI_ROUTE_NAMING_DECISION.json", "backward_compatible_redirect_or_alias")
+            and file_contains("docs/UI_ROUTE_NAMING_DECISION.md", "ui_route_naming_decision_v1")
+            and file_contains("docs/UI_API_PARITY_MATRIX.json", "ui_route_naming_decision_v1")
+            and file_contains("docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md", "ui_route_naming_decision_smoke.py")
+            and file_contains("scripts/ui_route_naming_decision_smoke.py", "ui_route_naming_decision_v1")
+            and (ROOT / "scripts" / "ui_route_naming_decision_smoke.py").exists(),
+            "Gate 4 task/run route naming decision is recorded and remains fail-closed for legacy route retirement",
         ),
         check(
             "postgres_is_gated_not_immediate",
@@ -318,6 +383,7 @@ def main() -> int:
                 "cd ui/next-app && npm run build",
                 "python3 scripts/ui_api_parity_matrix_smoke.py",
                 "python3 scripts/ui_task_run_route_parity_smoke.py",
+                "python3 scripts/ui_route_naming_decision_smoke.py",
                 "python3 scripts/vite_playwright_snapshot_smoke.py",
                 "python3 scripts/nextjs_playwright_snapshot_smoke.py",
             ],

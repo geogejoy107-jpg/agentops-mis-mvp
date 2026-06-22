@@ -1,0 +1,95 @@
+{
+  "contract_id": "ui_route_naming_decision_v1",
+  "gate": "gate_4_ui_api_parity_before_nextjs",
+  "status": "accepted_no_route_retirement",
+  "updated_at": "2026-06-22",
+  "policy": {
+    "legacy_namespace": "/admin",
+    "target_namespace": "/workspace",
+    "legacy_owner": "vite_react",
+    "target_owner": "nextjs_app_router",
+    "decision": "Task and run operator routes use /workspace as the future commercial namespace. Existing Vite /admin task/run routes remain legacy compatibility routes until explicit retirement gates pass.",
+    "retirement_allowed_by_default": false,
+    "redirects_required_before_retirement": true,
+    "no_breaking_deep_links": true
+  },
+  "route_pairs": [
+    {
+      "id": "task_detail",
+      "matrix_entry_id": "task_detail",
+      "legacy_route": "/admin/tasks/:id",
+      "target_route": "/workspace/tasks/:taskId",
+      "legacy_files": [
+        "ui/start-building-app/src/app/App.tsx",
+        "ui/start-building-app/src/app/components/pages/TaskDetail.tsx"
+      ],
+      "target_files": [
+        "ui/next-app/app/workspace/tasks/[taskId]/page.tsx",
+        "ui/next-app/src/components/LedgerDetailPages.tsx"
+      ],
+      "decision": "next_workspace_route_is_future_canonical",
+      "legacy_route_status": "keep_until_redirect_and_cutover_evidence",
+      "target_route_status": "next_parity_target",
+      "retirement_allowed": false,
+      "cutover_requires": [
+        "route_level_read_model_parity",
+        "vite_and_next_browser_snapshot_parity",
+        "backward_compatible_redirect_or_alias",
+        "navigation_inventory_update",
+        "explicit_route_retirement_commit"
+      ]
+    },
+    {
+      "id": "run_ledger",
+      "matrix_entry_id": "run_ledger",
+      "legacy_route": "/admin/runs",
+      "target_route": "/workspace/runs",
+      "legacy_files": [
+        "ui/start-building-app/src/app/App.tsx",
+        "ui/start-building-app/src/app/components/layout/Sidebar.tsx",
+        "ui/start-building-app/src/app/components/pages/RunLedger.tsx"
+      ],
+      "target_files": [
+        "ui/next-app/app/workspace/runs/page.tsx",
+        "ui/next-app/src/components/AppFrame.tsx",
+        "ui/next-app/src/components/LedgerPages.tsx"
+      ],
+      "decision": "next_workspace_route_is_future_canonical",
+      "legacy_route_status": "keep_until_redirect_and_cutover_evidence",
+      "target_route_status": "next_parity_target",
+      "retirement_allowed": false,
+      "cutover_requires": [
+        "route_level_read_model_parity",
+        "vite_and_next_browser_snapshot_parity",
+        "backward_compatible_redirect_or_alias",
+        "navigation_inventory_update",
+        "explicit_route_retirement_commit"
+      ]
+    },
+    {
+      "id": "run_detail",
+      "matrix_entry_id": "run_detail",
+      "legacy_route": "/admin/runs/:id",
+      "target_route": "/workspace/runs/:runId",
+      "legacy_files": [
+        "ui/start-building-app/src/app/App.tsx",
+        "ui/start-building-app/src/app/components/pages/RunDetail.tsx"
+      ],
+      "target_files": [
+        "ui/next-app/app/workspace/runs/[runId]/page.tsx",
+        "ui/next-app/src/components/LedgerDetailPages.tsx"
+      ],
+      "decision": "next_workspace_route_is_future_canonical",
+      "legacy_route_status": "keep_until_redirect_and_cutover_evidence",
+      "target_route_status": "next_parity_target",
+      "retirement_allowed": false,
+      "cutover_requires": [
+        "route_level_read_model_parity",
+        "vite_and_next_browser_snapshot_parity",
+        "backward_compatible_redirect_or_alias",
+        "navigation_inventory_update",
+        "explicit_route_retirement_commit"
+      ]
+    }
+  ]
+}

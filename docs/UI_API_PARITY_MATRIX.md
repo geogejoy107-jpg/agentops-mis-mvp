@@ -67,10 +67,15 @@ route retirement:
   compares direct MIS API task/run list/detail/graph read models with the Next
   `/api/mis/*` proxy. `python3 scripts/vite_playwright_snapshot_smoke.py`
   (`vite_browser_snapshot_parity_v1`) now also opens seeded Vite task/run detail
-  routes and checks the related task/run IDs plus evidence sections. Retirement
-  still needs a route naming/navigation decision for `/admin/tasks/:id` to
-  `/workspace/tasks/:taskId`, `/admin/runs` to `/workspace/runs`, and
-  `/admin/runs/:id` to `/workspace/runs/:runId`.
+  routes and checks the related task/run IDs plus evidence sections.
+  `python3 scripts/ui_route_naming_decision_smoke.py`
+  (`ui_route_naming_decision_v1`) records `/workspace` as the future commercial
+  namespace for task/run routes while keeping `/admin` as legacy compatibility;
+  the human and machine-readable decision live in
+  `docs/UI_ROUTE_NAMING_DECISION.md` and
+  `docs/UI_ROUTE_NAMING_DECISION.json`.
+  Retirement still needs backward-compatible redirects or aliases, a navigation
+  inventory update, and an explicit route retirement commit for each route pair.
 
 ## Verification Stack
 
@@ -79,6 +84,7 @@ Use this order when advancing Gate 4:
 ```bash
 python3 scripts/ui_api_parity_matrix_smoke.py
 python3 scripts/ui_task_run_route_parity_smoke.py
+python3 scripts/ui_route_naming_decision_smoke.py
 python3 scripts/nextjs_parity_smoke.py
 cd ui/start-building-app && npm run build
 cd ui/next-app && npm run build

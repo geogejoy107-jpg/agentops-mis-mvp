@@ -176,6 +176,7 @@ Must be true:
 ```bash
 python3 scripts/ui_api_parity_matrix_smoke.py
 python3 scripts/ui_task_run_route_parity_smoke.py
+python3 scripts/ui_route_naming_decision_smoke.py
 python3 scripts/vite_playwright_snapshot_smoke.py
 python3 scripts/nextjs_playwright_snapshot_smoke.py
 ```
@@ -188,6 +189,13 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   verifies Next task/run list links to detail routes, compares direct MIS API
   task/run list/detail/graph read models with the Next `/api/mis/*` proxy, and
   checks for token-like leakage.
+
+  The route naming decision smoke verifies the structured
+  `ui_route_naming_decision_v1` contract: Next `/workspace` task/run routes are
+  the future commercial namespace, Vite `/admin` task/run routes remain legacy
+  compatibility routes, and every task/run retirement still requires a
+  backward-compatible redirect or alias, navigation inventory update, and an
+  explicit route retirement commit.
 
   The Vite smoke starts isolated MIS API and Vite dev servers, captures
   canonical Vite route snapshots for workspace, Pixel Office, tasks, agents,
@@ -250,8 +258,11 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   - `scripts/vite_playwright_snapshot_smoke.py`
   - `docs/UI_API_PARITY_MATRIX.md`
   - `docs/UI_API_PARITY_MATRIX.json`
+  - `docs/UI_ROUTE_NAMING_DECISION.md`
+  - `docs/UI_ROUTE_NAMING_DECISION.json`
   - `scripts/ui_api_parity_matrix_smoke.py`
   - `scripts/ui_task_run_route_parity_smoke.py`
+  - `scripts/ui_route_naming_decision_smoke.py`
 
 ### Gate 5: BYOC / Enterprise Deployment
 
