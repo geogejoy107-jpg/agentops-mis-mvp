@@ -181,8 +181,8 @@ def main() -> int:
             source_markers={
                 "server.py": ["/api/operator/runtime-doctor", "/api/operator/execution-mode", "operator_runtime_doctor", "operator_execution_mode"],
                 "agentops_mis_cli/agentops.py": ["operator_runtime_doctor", "operator_execution_mode", "runtime-doctor", "execution-mode"],
-                "ui/start-building-app/src/app/components/pages/AIEmployees.tsx": ["operator_loop_launch_packet", "operator_runtime_doctor", "receipt_state", "Worker Fleet", "operatorHealthLoopControl"],
-                "ui/start-building-app/src/app/data/liveApi.ts": ["loadOperatorLoopLaunchPacket", "loadOperatorRuntimeDoctor", "loadWorkerStatus", "loop_control"],
+                "ui/start-building-app/src/app/components/pages/AIEmployees.tsx": ["operator_loop_launch_packet", "operator_runtime_doctor", "operatorExecutionMode", "receipt_state", "Worker Fleet", "operatorHealthLoopControl"],
+                "ui/start-building-app/src/app/data/liveApi.ts": ["loadOperatorLoopLaunchPacket", "loadOperatorRuntimeDoctor", "loadOperatorExecutionMode", "loadWorkerStatus", "loop_control"],
             },
         ),
         item(

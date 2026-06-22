@@ -28,6 +28,7 @@ import {
   loadOperatorCommandCenter,
   loadOperatorActionPlan,
   loadOperatorEvidenceReport,
+  loadOperatorExecutionMode,
   loadOperatorHandoff,
   loadOperatorHealth,
   loadOperatorLoopLaunchPacket,
@@ -76,6 +77,7 @@ import {
   type OperatorActionReceiptsPayload,
   type OperatorCommandCenterPayload,
   type OperatorEvidenceReportPayload,
+  type OperatorExecutionModePayload,
   type OperatorHandoffPayload,
   type OperatorHealthPayload,
   type OperatorLoopLaunchPacketPayload,
@@ -151,7 +153,10 @@ type AIEmployeesPanelLoadState = {
 type AIEmployeesLiveData = {
   [key: string]: unknown;
   operatorCommandCenter?: OperatorCommandCenterPayload;
+  operatorExecutionMode?: OperatorExecutionModePayload;
   operatorRuntimeDoctor?: OperatorRuntimeDoctorPayload;
+  executionModeAdapter?: WorkerAdapterName;
+  executionModeConfirmRun?: boolean;
   panelLoadState?: Record<string, AIEmployeesPanelLoadState>;
 };
 
@@ -185,6 +190,7 @@ const AI_EMPLOYEES_PANEL_LOADERS: AIEmployeesPanelLoader[] = [
   { id: "adapter_readiness", load: async () => ({ adapterReadiness: await loadWorkerAdapterReadiness() }) },
   { id: "local_readiness", load: async () => ({ localReadiness: await loadLocalReadiness() }) },
   { id: "operator_runtime_doctor", load: async () => ({ operatorRuntimeDoctor: await loadOperatorRuntimeDoctor(8) }) },
+  { id: "operator_execution_mode", load: async (context) => ({ operatorExecutionMode: await loadOperatorExecutionMode(context.executionModeAdapter || "mock", Boolean(context.executionModeConfirmRun), 8) }) },
   { id: "operator_command_center", load: async () => ({ operatorCommandCenter: await loadOperatorCommandCenter(12) }) },
   { id: "operator_action_plan", load: async () => ({ operatorActionPlan: await loadOperatorActionPlan(12) }) },
   { id: "operator_action_receipts", load: async () => ({ operatorActionReceipts: await loadOperatorActionReceipts(8) }) },
@@ -210,6 +216,7 @@ const AI_EMPLOYEES_CORE_PANEL_IDS = new Set([
   "worker_fleet",
   "local_readiness",
   "operator_runtime_doctor",
+  "operator_execution_mode",
   "operator_command_center",
   "operator_action_plan",
   "operator_evidence_report",
@@ -365,7 +372,11 @@ export function AIEmployees() {
       const coreContext = await loadAIEmployeesPanelSet([
         ...AI_EMPLOYEES_CORE_PANEL_LOADERS,
         { id: "operator_health", load: async () => ({ operatorHealth: await loadOperatorHealth(12, "") }) },
-      ], { integrationInboxBucket });
+      ], {
+        integrationInboxBucket,
+        executionModeAdapter: customerTaskForm.adapter,
+        executionModeConfirmRun: liveRuntimeConfirmed,
+      });
       setData((current) => ({
         ...(current || {}),
         ...coreContext,
@@ -413,7 +424,7 @@ export function AIEmployees() {
       setLoading(false);
       setDeferredLoading(false);
     }
-  }, [clearIssuedCredential, integrationInboxBucket]);
+  }, [clearIssuedCredential, customerTaskForm.adapter, integrationInboxBucket, liveRuntimeConfirmed]);
   useEffect(() => {
     void refresh();
   }, [refresh]);
@@ -426,7 +437,13 @@ export function AIEmployees() {
         : [...AI_EMPLOYEES_PANEL_LOADERS, ...AI_EMPLOYEES_SCOPED_PANEL_LOADERS].find((item) => item.id === panelId);
     if (!loader) return;
     const scopedLoopId = latestLoopIdFromReadback(data?.loopLaneReadback as HermesOpenClawLoopReadbackPayload | undefined);
-    const context = { ...(data || {}), integrationInboxBucket, scopedLoopId };
+    const context = {
+      ...(data || {}),
+      integrationInboxBucket,
+      scopedLoopId,
+      executionModeAdapter: customerTaskForm.adapter,
+      executionModeConfirmRun: liveRuntimeConfirmed,
+    };
     setLocalPanelRefreshing(panelId);
     setData((current) => ({
       ...(current || {}),
@@ -467,7 +484,7 @@ export function AIEmployees() {
     } finally {
       setLocalPanelRefreshing((current) => current === panelId ? null : current);
     }
-  }, [clearIssuedCredential, data, integrationInboxBucket]);
+  }, [clearIssuedCredential, customerTaskForm.adapter, data, integrationInboxBucket, liveRuntimeConfirmed]);
   const loadSelectedDaemonLog = async (adapter = selectedLogAdapter) => {
     setDaemonLogsLoading(true);
     setDaemonLogsError(null);
@@ -498,6 +515,7 @@ export function AIEmployees() {
   const operatorEvidenceReport = data?.operatorEvidenceReport as OperatorEvidenceReportPayload | undefined;
   const operatorLoopLaunchPacket = data?.operatorLoopLaunchPacket as OperatorLoopLaunchPacketPayload | undefined;
   const operatorRuntimeDoctor = data?.operatorRuntimeDoctor as OperatorRuntimeDoctorPayload | undefined;
+  const operatorExecutionMode = data?.operatorExecutionMode as OperatorExecutionModePayload | undefined;
   const operatorLoopAudit = data?.operatorLoopAudit as OperatorLoopAuditPayload | undefined;
   const operatorHandoff = data?.operatorHandoff as OperatorHandoffPayload | undefined;
   const operatorHealth = data?.operatorHealth as OperatorHealthPayload | undefined;
@@ -1791,61 +1809,75 @@ export function AIEmployees() {
       <Copy size={9} />
     </button>
   );
-  const activeWorkflowJobCount = workflowJobs.filter((job) => ["queued", "running", "submitted", "planned"].includes(String(job.status || ""))).length;
-  const pendingApprovalCount = Number(reviewQueueSummary?.pending_approvals ?? operatorEvidenceSummary?.pending_approvals ?? customerDeliverySummary?.waiting_approval ?? 0);
-  const selectedExecutionStatus = selectedAdapterLiveBlocked
+  const executionModeSummary = operatorExecutionMode?.summary;
+  const executionModeRoute = operatorExecutionMode?.selected_route;
+  const executionModeGateById = Object.fromEntries((operatorExecutionMode?.gates || []).map((gate) => [gate.id, gate]));
+  const activeWorkflowJobCount = Number(executionModeSummary?.active_workflow_jobs ?? workflowJobs.filter((job) => ["queued", "running", "submitted", "planned"].includes(String(job.status || ""))).length);
+  const pendingApprovalCount = Number(executionModeSummary?.pending_approvals ?? reviewQueueSummary?.pending_approvals ?? operatorEvidenceSummary?.pending_approvals ?? customerDeliverySummary?.waiting_approval ?? 0);
+  const fallbackSelectedExecutionStatus = selectedAdapterLiveBlocked
     ? "blocked"
     : selectedAdapterLiveConfirmMissing
       ? "attention"
       : customerTaskForm.adapter === "mock"
         ? "planned"
         : "pass";
-  const selectedExecutionLabel = selectedAdapterLiveBlocked
+  const selectedExecutionStatus = operatorExecutionMode?.status || fallbackSelectedExecutionStatus;
+  const fallbackSelectedExecutionLabel = selectedAdapterLiveBlocked
     ? copy.adapterBlockedMode
     : selectedAdapterLiveConfirmMissing
       ? copy.liveConfirmMissingMode
       : customerTaskForm.adapter === "mock"
         ? copy.dryRunMode
         : copy.liveConfirmedMode;
-  const selectedRouteDetail = customerTaskForm.adapter === "mock"
+  const selectedExecutionLabel = operatorExecutionMode?.mode
+    ? `${operatorExecutionMode.mode} · ${operatorExecutionMode.selected_path || executionModeSummary?.selected_path || fallbackSelectedExecutionLabel}`
+    : fallbackSelectedExecutionLabel;
+  const selectedRouteDetail = executionModeRoute
+    ? `${executionModeRoute.readiness || "unknown"} · ${executionModeRoute.trust_status || "trust:unknown"}`
+    : customerTaskForm.adapter === "mock"
     ? copy.dryRunMode
     : `${selectedAdapterRoute?.readiness || "unknown"} · ${selectedAdapterRoute?.trust_status || "trust:unknown"}`;
+  const executionModeCommand = operatorExecutionMode?.commands?.execution_mode
+    || executionModeRoute?.recommended_action
+    || selectedAdapterRoute?.recommended_action
+    || runtimeDoctorCommands.worker_readiness
+    || "agentops worker readiness";
   const executionModeCards = [
     {
       id: "execution-mode-selected-path",
       label: copy.selectedExecutionPath,
-      value: selectedExecutionLabel,
+      value: operatorExecutionMode?.selected_path || executionModeSummary?.selected_path || selectedExecutionLabel,
       status: selectedExecutionStatus,
     },
     {
       id: "execution-mode-current-adapter",
       label: copy.currentAdapter,
-      value: `${customerTaskForm.adapter} · ${selectedRouteDetail}`,
-      status: selectedAdapterIsReady ? "pass" : "blocked",
+      value: `${operatorExecutionMode?.adapter || customerTaskForm.adapter} · ${selectedRouteDetail}`,
+      status: executionModeGateById.selected_adapter_route?.status || (selectedAdapterIsReady ? "pass" : "blocked"),
     },
     {
       id: "execution-mode-confirm-run-wall",
       label: copy.confirmRunWall,
-      value: selectedAdapterNeedsLiveConfirm ? (liveRuntimeConfirmed ? copy.liveRuntimeConfirmed : copy.liveRuntimeConfirmRequired) : copy.dryRunMode,
-      status: selectedAdapterNeedsLiveConfirm ? (liveRuntimeConfirmed ? "pass" : "attention") : "planned",
+      value: executionModeSummary?.confirm_run_wall || (selectedAdapterNeedsLiveConfirm ? (liveRuntimeConfirmed ? copy.liveRuntimeConfirmed : copy.liveRuntimeConfirmRequired) : copy.dryRunMode),
+      status: executionModeGateById.confirm_run_wall?.status || (selectedAdapterNeedsLiveConfirm ? (liveRuntimeConfirmed ? "pass" : "attention") : "planned"),
     },
     {
       id: "execution-mode-prepared-action-wall",
       label: copy.preparedActionWall,
-      value: runtimeDoctorSummary?.requires_prepared_action?.length ? runtimeDoctorSummary.requires_prepared_action.join(", ") : copy.statusClear,
-      status: runtimeDoctorSummary?.requires_prepared_action?.length ? "pass" : "planned",
+      value: executionModeSummary?.prepared_action_wall || (runtimeDoctorSummary?.requires_prepared_action?.length ? runtimeDoctorSummary.requires_prepared_action.join(", ") : copy.statusClear),
+      status: executionModeGateById.prepared_action_wall?.status || (runtimeDoctorSummary?.requires_prepared_action?.length ? "pass" : "planned"),
     },
     {
       id: "execution-mode-approval-waiting",
       label: copy.approvalWaitingMode,
       value: pendingApprovalCount,
-      status: pendingApprovalCount > 0 ? "attention" : "pass",
+      status: executionModeGateById.approval_waiting?.status || (pendingApprovalCount > 0 ? "attention" : "pass"),
     },
     {
       id: "execution-mode-async-jobs",
       label: copy.asyncJobsMode,
       value: activeWorkflowJobCount,
-      status: activeWorkflowJobCount > 0 ? "running" : "pass",
+      status: executionModeGateById.async_jobs?.status || (activeWorkflowJobCount > 0 ? "running" : "pass"),
     },
   ];
   const panelReceiptButton = (panelId: string) => {
@@ -3120,20 +3152,24 @@ export function AIEmployees() {
               <ShieldCheck size={15} style={{ color: selectedExecutionStatus === "blocked" ? "#F87171" : selectedExecutionStatus === "attention" ? "var(--mis-warning)" : "var(--mis-cyan)" }} />
               <div className="text-sm font-semibold" style={{ color: "var(--mis-text)" }}>{copy.executionModeTitle}</div>
               <StatusBadge status={selectedExecutionStatus} label={selectedExecutionLabel} />
+              <StatusBadge status={operatorExecutionMode?.safety?.read_only ? "pass" : "attention"} label={operatorExecutionMode?.safety?.read_only ? copy.readOnlyProof : copy.statusAttention} />
               <StatusBadge status={operatorRuntimeDoctor?.status || "unknown"} label={`${copy.runtimeDoctorTitle}: ${operatorRuntimeDoctor?.status || "unknown"}`} />
             </div>
             <p className="text-[11px] mt-1 max-w-4xl" style={{ color: "var(--mis-dim)" }}>{copy.executionModeSummary}</p>
             <p className="text-[10px] mt-1 max-w-4xl truncate" style={{ color: "var(--mis-muted)" }}>
-              {copy.selectedRoute}: {customerTaskForm.adapter} · {selectedRouteDetail} · {copy.nextAction}: {selectedAdapterRoute?.recommended_action || runtimeDoctorCommands.worker_readiness || "agentops worker readiness"}
+              {copy.selectedRoute}: {operatorExecutionMode?.adapter || customerTaskForm.adapter} · {selectedRouteDetail} · {copy.nextAction}: {executionModeCommand}
             </p>
+            {operatorExecutionMode?.contract && (
+              <p className="text-[10px] mt-1 max-w-4xl truncate" style={{ color: "var(--mis-muted)" }}>{copy.contract}: {operatorExecutionMode.contract}</p>
+            )}
           </div>
           <button
-            onClick={() => void copyIntakeCommand(selectedAdapterRoute?.recommended_action || runtimeDoctorCommands.worker_readiness || "agentops worker readiness")}
+            onClick={() => void copyIntakeCommand(executionModeCommand)}
             className="inline-flex items-center justify-center gap-1 text-[11px] px-2.5 py-1.5 rounded shrink-0"
             style={{ background: "rgba(34,211,238,0.12)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.22)" }}
           >
             <Copy size={12} />
-            {copiedIntakeCommand === (selectedAdapterRoute?.recommended_action || runtimeDoctorCommands.worker_readiness || "agentops worker readiness") ? copy.copiedCommand : copy.copyCommand}
+            {copiedIntakeCommand === executionModeCommand ? copy.copiedCommand : copy.copyCommand}
           </button>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-2 mt-3">
