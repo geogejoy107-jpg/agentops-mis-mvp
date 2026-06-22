@@ -970,6 +970,19 @@ export function AIEmployees() {
       confirmLiveTask: "Confirm live run",
       submitAsyncTask: "Submit async job",
       customerTaskRunning: "Running task...",
+      executionModeTitle: "Execution mode",
+      executionModeSummary: "One read-only strip for the current customer task path: dry-run, live confirmation, adapter readiness, approval wall, and async job state.",
+      selectedExecutionPath: "Selected path",
+      currentAdapter: "Current adapter",
+      dryRunMode: "dry-run / mock",
+      liveConfirmedMode: "live confirmed",
+      liveConfirmMissingMode: "live confirmation required",
+      adapterBlockedMode: "adapter route blocked",
+      approvalWaitingMode: "approval waiting",
+      asyncJobsMode: "async jobs",
+      confirmRunWall: "Confirm-run wall",
+      preparedActionWall: "Prepared-action wall",
+      selectedRoute: "Selected route",
       confirmLiveHint: "Hermes/OpenClaw require explicit confirmation before live execution. Mock is the safe default.",
       liveRuntimeConfirmLabel: "I understand this will run a real local Hermes/OpenClaw adapter and write ledger evidence.",
       liveRuntimeConfirmRequired: "Live adapter confirmation required",
@@ -1468,6 +1481,19 @@ export function AIEmployees() {
       confirmLiveTask: "确认真实运行",
       submitAsyncTask: "异步提交 Job",
       customerTaskRunning: "任务运行中...",
+      executionModeTitle: "执行模式",
+      executionModeSummary: "只读汇总当前客户任务路径：dry-run、真实运行确认、adapter 就绪、审批墙和异步 Job 状态。",
+      selectedExecutionPath: "当前路径",
+      currentAdapter: "当前 adapter",
+      dryRunMode: "dry-run / mock",
+      liveConfirmedMode: "已确认真实运行",
+      liveConfirmMissingMode: "需要真实运行确认",
+      adapterBlockedMode: "adapter 路由阻塞",
+      approvalWaitingMode: "等待审批",
+      asyncJobsMode: "异步 Job",
+      confirmRunWall: "Confirm-run 墙",
+      preparedActionWall: "Prepared-action 墙",
+      selectedRoute: "当前路由",
       confirmLiveHint: "Hermes/OpenClaw 真实执行前必须显式确认。mock 是安全默认。",
       liveRuntimeConfirmLabel: "我确认这会运行真实本地 Hermes/OpenClaw adapter，并写入账本证据。",
       liveRuntimeConfirmRequired: "需要确认真实 adapter",
@@ -1765,6 +1791,63 @@ export function AIEmployees() {
       <Copy size={9} />
     </button>
   );
+  const activeWorkflowJobCount = workflowJobs.filter((job) => ["queued", "running", "submitted", "planned"].includes(String(job.status || ""))).length;
+  const pendingApprovalCount = Number(reviewQueueSummary?.pending_approvals ?? operatorEvidenceSummary?.pending_approvals ?? customerDeliverySummary?.waiting_approval ?? 0);
+  const selectedExecutionStatus = selectedAdapterLiveBlocked
+    ? "blocked"
+    : selectedAdapterLiveConfirmMissing
+      ? "attention"
+      : customerTaskForm.adapter === "mock"
+        ? "planned"
+        : "pass";
+  const selectedExecutionLabel = selectedAdapterLiveBlocked
+    ? copy.adapterBlockedMode
+    : selectedAdapterLiveConfirmMissing
+      ? copy.liveConfirmMissingMode
+      : customerTaskForm.adapter === "mock"
+        ? copy.dryRunMode
+        : copy.liveConfirmedMode;
+  const selectedRouteDetail = customerTaskForm.adapter === "mock"
+    ? copy.dryRunMode
+    : `${selectedAdapterRoute?.readiness || "unknown"} · ${selectedAdapterRoute?.trust_status || "trust:unknown"}`;
+  const executionModeCards = [
+    {
+      id: "execution-mode-selected-path",
+      label: copy.selectedExecutionPath,
+      value: selectedExecutionLabel,
+      status: selectedExecutionStatus,
+    },
+    {
+      id: "execution-mode-current-adapter",
+      label: copy.currentAdapter,
+      value: `${customerTaskForm.adapter} · ${selectedRouteDetail}`,
+      status: selectedAdapterIsReady ? "pass" : "blocked",
+    },
+    {
+      id: "execution-mode-confirm-run-wall",
+      label: copy.confirmRunWall,
+      value: selectedAdapterNeedsLiveConfirm ? (liveRuntimeConfirmed ? copy.liveRuntimeConfirmed : copy.liveRuntimeConfirmRequired) : copy.dryRunMode,
+      status: selectedAdapterNeedsLiveConfirm ? (liveRuntimeConfirmed ? "pass" : "attention") : "planned",
+    },
+    {
+      id: "execution-mode-prepared-action-wall",
+      label: copy.preparedActionWall,
+      value: runtimeDoctorSummary?.requires_prepared_action?.length ? runtimeDoctorSummary.requires_prepared_action.join(", ") : copy.statusClear,
+      status: runtimeDoctorSummary?.requires_prepared_action?.length ? "pass" : "planned",
+    },
+    {
+      id: "execution-mode-approval-waiting",
+      label: copy.approvalWaitingMode,
+      value: pendingApprovalCount,
+      status: pendingApprovalCount > 0 ? "attention" : "pass",
+    },
+    {
+      id: "execution-mode-async-jobs",
+      label: copy.asyncJobsMode,
+      value: activeWorkflowJobCount,
+      status: activeWorkflowJobCount > 0 ? "running" : "pass",
+    },
+  ];
   const panelReceiptButton = (panelId: string) => {
     const busy = panelReceiptAction === panelId;
     return (
@@ -3013,6 +3096,57 @@ export function AIEmployees() {
         <button onClick={() => void refresh()} className="mt-3 text-[11px] px-3 py-1.5 rounded" style={{ background: "rgba(34,211,238,0.12)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.2)" }}>
           {copy.refresh}
         </button>
+      </div>
+
+      <div
+        data-testid="execution-mode-strip"
+        className="rounded-xl p-4"
+        style={{
+          background: selectedExecutionStatus === "blocked"
+            ? "rgba(248,113,113,0.08)"
+            : selectedExecutionStatus === "attention"
+              ? "rgba(251,191,36,0.08)"
+              : "var(--mis-surface)",
+          border: selectedExecutionStatus === "blocked"
+            ? "1px solid rgba(248,113,113,0.25)"
+            : selectedExecutionStatus === "attention"
+              ? "1px solid rgba(251,191,36,0.28)"
+              : "1px solid var(--mis-border)",
+        }}
+      >
+        <div className="flex flex-col xl:flex-row xl:items-start justify-between gap-4">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <ShieldCheck size={15} style={{ color: selectedExecutionStatus === "blocked" ? "#F87171" : selectedExecutionStatus === "attention" ? "var(--mis-warning)" : "var(--mis-cyan)" }} />
+              <div className="text-sm font-semibold" style={{ color: "var(--mis-text)" }}>{copy.executionModeTitle}</div>
+              <StatusBadge status={selectedExecutionStatus} label={selectedExecutionLabel} />
+              <StatusBadge status={operatorRuntimeDoctor?.status || "unknown"} label={`${copy.runtimeDoctorTitle}: ${operatorRuntimeDoctor?.status || "unknown"}`} />
+            </div>
+            <p className="text-[11px] mt-1 max-w-4xl" style={{ color: "var(--mis-dim)" }}>{copy.executionModeSummary}</p>
+            <p className="text-[10px] mt-1 max-w-4xl truncate" style={{ color: "var(--mis-muted)" }}>
+              {copy.selectedRoute}: {customerTaskForm.adapter} · {selectedRouteDetail} · {copy.nextAction}: {selectedAdapterRoute?.recommended_action || runtimeDoctorCommands.worker_readiness || "agentops worker readiness"}
+            </p>
+          </div>
+          <button
+            onClick={() => void copyIntakeCommand(selectedAdapterRoute?.recommended_action || runtimeDoctorCommands.worker_readiness || "agentops worker readiness")}
+            className="inline-flex items-center justify-center gap-1 text-[11px] px-2.5 py-1.5 rounded shrink-0"
+            style={{ background: "rgba(34,211,238,0.12)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.22)" }}
+          >
+            <Copy size={12} />
+            {copiedIntakeCommand === (selectedAdapterRoute?.recommended_action || runtimeDoctorCommands.worker_readiness || "agentops worker readiness") ? copy.copiedCommand : copy.copyCommand}
+          </button>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-2 mt-3">
+          {executionModeCards.map((item) => (
+            <div key={item.id} className="rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+              <div className="text-[9px]" style={{ color: "var(--mis-muted)" }}>{item.label}</div>
+              <div className="flex items-center justify-between gap-2 mt-1">
+                <div className="text-[10px] font-semibold truncate" style={{ color: item.status === "blocked" ? "#F87171" : "var(--mis-text)" }}>{item.value}</div>
+                <StatusBadge status={item.status} />
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
 
       <div
