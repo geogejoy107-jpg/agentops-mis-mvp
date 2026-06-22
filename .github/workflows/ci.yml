@@ -81,6 +81,7 @@ jobs:
           python3 scripts/operator_action_receipts_cli_smoke.py
           python3 scripts/operator_action_receipt_cli_record_smoke.py
           python3 scripts/operator_handoff_smoke.py
+          python3 scripts/operator_health_smoke.py
           python3 scripts/prepared_action_approval_wall_smoke.py --base-url "$AGENTOPS_BASE_URL"
           python3 scripts/agent_gateway_scope_matrix_smoke.py --base-url "$AGENTOPS_BASE_URL"
           python3 scripts/agent_gateway_scoped_read_smoke.py

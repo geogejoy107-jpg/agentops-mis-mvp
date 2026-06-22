@@ -138,13 +138,6 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
     require(isinstance(receipt_state.get("recent") or [], list), f"{label} recent receipts missing: {receipt_state}", failures)
     review_state = payload.get("review_state") or {}
     require(isinstance(review_state.get("loop_record") or {}, dict), f"{label} review loop_record missing: {review_state}", failures)
-    loop_health = payload.get("loop_health") or {}
-    require(loop_health.get("operation") == "operator_loop_health", f"{label} loop_health operation missing: {loop_health}", failures)
-    require(loop_health.get("status") in {"blocked", "attention", "ready", "unknown"}, f"{label} loop_health status wrong: {loop_health}", failures)
-    require(isinstance(loop_health.get("score"), int), f"{label} loop_health score missing: {loop_health}", failures)
-    require(isinstance(loop_health.get("gates") or {}, dict), f"{label} loop_health gates missing: {loop_health}", failures)
-    require(isinstance(loop_health.get("risks") or [], list), f"{label} loop_health risks missing: {loop_health}", failures)
-    require(loop_health.get("token_omitted") is True, f"{label} loop_health token omission missing: {loop_health}", failures)
     sources = payload.get("sources") or {}
     require("loop_audit" in sources and "action_plan" in sources, f"{label} sources missing: {sources}", failures)
     require("read-only" in (payload.get("contract") or ""), f"{label} contract missing: {payload}", failures)

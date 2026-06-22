@@ -1518,6 +1518,53 @@ export interface OperatorHandoffPayload {
   live_execution_performed?: boolean;
 }
 
+export interface OperatorHealthComponent {
+  id: string;
+  label: string;
+  status: string;
+  score: number;
+  weight: number;
+  summary?: string;
+  next_action?: string;
+}
+
+export interface OperatorHealthPayload {
+  provider: string;
+  operation: string;
+  status: string;
+  score: number;
+  workspace_id: string;
+  loop_id?: string | null;
+  summary: {
+    components: number;
+    ready: number;
+    attention: number;
+    blocked: number;
+    review_items_total: number;
+    operator_actions: number;
+    loop_health_score: number;
+    worker_fleet_status?: string;
+    security_status?: string;
+    local_readiness_status?: string;
+  };
+  components: OperatorHealthComponent[];
+  risks: { id: string; severity: string; summary?: string; next_action?: string }[];
+  next_actions: string[];
+  sources?: Record<string, unknown>;
+  auth?: OperatorHandoffPayload["auth"];
+  contract?: string;
+  safety: {
+    read_only: boolean;
+    ledger_mutated: boolean;
+    live_execution_performed: boolean;
+    raw_prompt_omitted: boolean;
+    raw_response_omitted: boolean;
+    token_omitted: boolean;
+  };
+  token_omitted?: boolean;
+  live_execution_performed?: boolean;
+}
+
 export interface EvaluationCaseCandidate {
   case_id: string;
   workspace_id: string;
@@ -4397,6 +4444,100 @@ export async function loadOperatorHandoff(limit = 12, loopId = ""): Promise<Oper
       agent_id: authRaw.agent_id ? String(authRaw.agent_id) : null,
       token_omitted: authRaw.token_omitted === undefined ? undefined : boolValue(authRaw.token_omitted),
     },
+    safety: {
+      read_only: boolValue(safetyRaw.read_only),
+      ledger_mutated: boolValue(safetyRaw.ledger_mutated),
+      live_execution_performed: boolValue(safetyRaw.live_execution_performed),
+      raw_prompt_omitted: boolValue(safetyRaw.raw_prompt_omitted),
+      raw_response_omitted: boolValue(safetyRaw.raw_response_omitted),
+      token_omitted: boolValue(safetyRaw.token_omitted),
+    },
+    token_omitted: boolValue(raw.token_omitted),
+    live_execution_performed: boolValue(raw.live_execution_performed),
+  };
+}
+
+export async function loadOperatorHealth(limit = 12, loopId = ""): Promise<OperatorHealthPayload> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (loopId) params.set("loop_id", loopId);
+  const raw = await optionalApiJson<Record<string, unknown>>(`/operator/health?${params.toString()}`, {
+    provider: "agentops-operator",
+    operation: "operator_health",
+    status: "unavailable",
+    score: 0,
+    workspace_id: "local-demo",
+    loop_id: loopId || null,
+    summary: {},
+    components: [],
+    risks: [],
+    next_actions: ["agentops operator health --limit 12"],
+    sources: {},
+    auth: {
+      mode: "local_dev_no_token",
+      scoped: false,
+      required_scope: "tasks:read",
+      workspace_id: "local-demo",
+      token_omitted: true,
+    },
+    safety: {
+      read_only: true,
+      ledger_mutated: false,
+      live_execution_performed: false,
+      raw_prompt_omitted: true,
+      raw_response_omitted: true,
+      token_omitted: true,
+    },
+    token_omitted: true,
+    live_execution_performed: false,
+  });
+  const summaryRaw = typeof raw.summary === "object" && raw.summary !== null ? raw.summary as Record<string, unknown> : {};
+  const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
+  const authRaw = typeof raw.auth === "object" && raw.auth !== null ? raw.auth as Record<string, unknown> : {};
+  return {
+    provider: String(raw.provider || "agentops-operator"),
+    operation: String(raw.operation || "operator_health"),
+    status: String(raw.status || "unknown"),
+    score: numberValue(raw.score, 0),
+    workspace_id: String(raw.workspace_id || "local-demo"),
+    loop_id: raw.loop_id ? String(raw.loop_id) : null,
+    summary: {
+      components: numberValue(summaryRaw.components, 0),
+      ready: numberValue(summaryRaw.ready, 0),
+      attention: numberValue(summaryRaw.attention, 0),
+      blocked: numberValue(summaryRaw.blocked, 0),
+      review_items_total: numberValue(summaryRaw.review_items_total, 0),
+      operator_actions: numberValue(summaryRaw.operator_actions, 0),
+      loop_health_score: numberValue(summaryRaw.loop_health_score, 0),
+      worker_fleet_status: summaryRaw.worker_fleet_status ? String(summaryRaw.worker_fleet_status) : undefined,
+      security_status: summaryRaw.security_status ? String(summaryRaw.security_status) : undefined,
+      local_readiness_status: summaryRaw.local_readiness_status ? String(summaryRaw.local_readiness_status) : undefined,
+    },
+    components: asArray<Record<string, unknown>>(raw.components).map((item) => ({
+      id: String(item.id || ""),
+      label: String(item.label || item.id || ""),
+      status: String(item.status || "unknown"),
+      score: numberValue(item.score, 0),
+      weight: numberValue(item.weight, 0),
+      summary: item.summary ? String(item.summary) : undefined,
+      next_action: item.next_action ? String(item.next_action) : undefined,
+    })).filter((item) => item.id),
+    risks: asArray<Record<string, unknown>>(raw.risks).map((item) => ({
+      id: String(item.id || ""),
+      severity: String(item.severity || "attention"),
+      summary: item.summary ? String(item.summary) : undefined,
+      next_action: item.next_action ? String(item.next_action) : undefined,
+    })).filter((item) => item.id),
+    next_actions: asArray<unknown>(raw.next_actions).map(String).filter(Boolean),
+    sources: typeof raw.sources === "object" && raw.sources !== null ? raw.sources as Record<string, unknown> : undefined,
+    auth: {
+      mode: String(authRaw.mode || "unknown"),
+      scoped: boolValue(authRaw.scoped),
+      required_scope: String(authRaw.required_scope || "tasks:read"),
+      workspace_id: String(authRaw.workspace_id || "local-demo"),
+      agent_id: authRaw.agent_id ? String(authRaw.agent_id) : null,
+      token_omitted: authRaw.token_omitted === undefined ? undefined : boolValue(authRaw.token_omitted),
+    },
+    contract: raw.contract ? String(raw.contract) : undefined,
     safety: {
       read_only: boolValue(safetyRaw.read_only),
       ledger_mutated: boolValue(safetyRaw.ledger_mutated),

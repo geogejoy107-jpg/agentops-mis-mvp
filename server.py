@@ -15848,6 +15848,191 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
     }
 
 
+def operator_health(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) -> dict:
+    qs = qs or {}
+    limit = bounded_int((qs.get("limit") or ["12"])[0], 12, 1, 30)
+    loop_id = redact_text((qs.get("loop_id") or [""])[0], 120)
+    effective_headers = headers
+    if agent_gateway_is_bound_auth(auth_ctx):
+        effective_headers = dict(headers)
+        effective_headers["X-AgentOps-Workspace-Id"] = auth_ctx.get("workspace_id") or "local-demo"
+        effective_headers["X-AgentOps-Agent-Id"] = auth_ctx.get("agent_id") or ""
+
+    handoff = operator_handoff(conn, effective_headers, {"limit": [str(limit)], "loop_id": [loop_id]} if loop_id else {"limit": [str(limit)]}, auth_ctx)
+    local = local_readiness(conn, effective_headers)
+    security = security_production_readiness(conn, effective_headers)
+    worker = worker_status(conn)
+    review = human_review_queue(conn, limit)
+    action_plan_source = ((handoff.get("sources") or {}).get("action_plan") or {})
+    action_plan_summary = action_plan_source.get("summary") or {}
+
+    def component_status(value: str | None) -> str:
+        value = str(value or "unknown")
+        if value in {"ready", "pass", "running", "ok"}:
+            return "ready"
+        if value in {"blocked", "fail", "failed", "error"}:
+            return "blocked"
+        if value in {"attention", "warn", "warning", "planned", "unknown", "unavailable"}:
+            return "attention"
+        return value
+
+    def score_for(status: str, weight: int, partial: int | None = None) -> int:
+        status = component_status(status)
+        if status == "ready":
+            return weight
+        if status == "attention":
+            return partial if partial is not None else weight // 2
+        return 0
+
+    loop_health = handoff.get("loop_health") or {}
+    worker_health = worker.get("fleet_health") or {}
+    review_summary = review.get("summary") or {}
+    review_items_total = int(review_summary.get("review_items_total") or len(review.get("review_items") or []))
+    review_status = "attention" if review_items_total else "ready"
+    components = [
+        {
+            "id": "loop_health",
+            "label": "Loop method and handoff health",
+            "status": component_status(loop_health.get("status")),
+            "score": int(loop_health.get("score") or 0),
+            "weight": 30,
+            "summary": f"score={int(loop_health.get('score') or 0)} risks={len(loop_health.get('risks') or [])}",
+            "next_action": loop_health.get("next_action") or "agentops operator handoff --limit 12",
+        },
+        {
+            "id": "local_readiness",
+            "label": "Local MIS readiness",
+            "status": component_status(local.get("status")),
+            "score": score_for(local.get("status"), 20),
+            "weight": 20,
+            "summary": f"gates={len(local.get('gates') or [])}",
+            "next_action": (local.get("next_actions") or ["agentops local readiness"])[0],
+        },
+        {
+            "id": "security_readiness",
+            "label": "Security boundary",
+            "status": component_status(security.get("status")),
+            "score": score_for(security.get("status"), 15),
+            "weight": 15,
+            "summary": f"auth_mode={security.get('auth_mode') or 'unknown'} production_ready={bool(security.get('production_ready'))}",
+            "next_action": (security.get("next_actions") or ["agentops security production-readiness"])[0],
+        },
+        {
+            "id": "worker_fleet",
+            "label": "Worker fleet",
+            "status": component_status(worker_health.get("overall") or worker.get("status")),
+            "score": score_for(worker_health.get("overall") or worker.get("status"), 15),
+            "weight": 15,
+            "summary": f"running={worker.get('running_workers', 0)} stuck_tasks={worker.get('stuck_worker_tasks', 0)} stuck_jobs={worker.get('stuck_workflow_jobs', 0)}",
+            "next_action": ((worker_health.get("recommended_actions") or []) + ["agentops worker status"])[0],
+        },
+        {
+            "id": "review_queue",
+            "label": "Human review queue",
+            "status": review_status,
+            "score": score_for(review_status, 10, partial=5),
+            "weight": 10,
+            "summary": f"review_items={review_items_total} approvals={review_summary.get('pending_approvals', 0)} memories={review_summary.get('memory_candidates', 0)}",
+            "next_action": (review.get("next_actions") or ["agentops review queue --limit 20"])[0],
+        },
+        {
+            "id": "operator_action_plan",
+            "label": "Operator action queue",
+            "status": component_status(action_plan_source.get("status") or handoff.get("summary", {}).get("action_plan_status")),
+            "score": score_for(action_plan_source.get("status") or handoff.get("summary", {}).get("action_plan_status"), 10, partial=5),
+            "weight": 10,
+            "summary": f"actions={action_plan_summary.get('actions', 0)} blocked={action_plan_summary.get('blocked', 0)} attention={action_plan_summary.get('attention', 0)}",
+            "next_action": "agentops operator action-plan --limit 20",
+        },
+    ]
+    total_score = min(max(sum(int(item.get("score") or 0) for item in components), 0), 100)
+    blocked = [item for item in components if item.get("status") == "blocked"]
+    attention = [item for item in components if item.get("status") == "attention"]
+    status = "blocked" if blocked else "attention" if attention or total_score < 90 else "ready"
+    risks = [
+        {
+            "id": item["id"],
+            "severity": item["status"],
+            "summary": item["summary"],
+            "next_action": item["next_action"],
+        }
+        for item in components
+        if item.get("status") != "ready"
+    ]
+    next_actions = []
+    for item in components:
+        if item.get("status") != "ready" and item.get("next_action") and item["next_action"] not in next_actions:
+            next_actions.append(item["next_action"])
+    if not next_actions:
+        next_actions = [
+            "agentops operator handoff --limit 12",
+            "agentops workflow customer-worker-task --adapter mock --title 'Operator health smoke' --description 'Verify full MIS governance loop.'",
+        ]
+    return {
+        "provider": "agentops-operator",
+        "operation": "operator_health",
+        "status": status,
+        "score": total_score,
+        "workspace_id": handoff.get("workspace_id") or normalize_workspace_id(effective_headers.get("X-AgentOps-Workspace-Id") or "local-demo"),
+        "loop_id": handoff.get("loop_id"),
+        "summary": {
+            "components": len(components),
+            "ready": len([item for item in components if item.get("status") == "ready"]),
+            "attention": len(attention),
+            "blocked": len(blocked),
+            "review_items_total": review_items_total,
+            "operator_actions": action_plan_summary.get("actions", handoff.get("summary", {}).get("operator_actions", 0)),
+            "loop_health_score": int(loop_health.get("score") or 0),
+            "worker_fleet_status": worker_health.get("overall") or worker.get("status"),
+            "security_status": security.get("status"),
+            "local_readiness_status": local.get("status"),
+        },
+        "components": components,
+        "risks": risks[:12],
+        "next_actions": next_actions[:8],
+        "sources": {
+            "handoff": {
+                "status": handoff.get("status"),
+                "loop_health": loop_health,
+                "summary": handoff.get("summary") or {},
+            },
+            "local_readiness": {
+                "status": local.get("status"),
+                "gate_count": len(local.get("gates") or []),
+            },
+            "security_readiness": {
+                "status": security.get("status"),
+                "auth_mode": security.get("auth_mode"),
+                "production_ready": security.get("production_ready"),
+            },
+            "worker_status": {
+                "status": worker.get("status"),
+                "fleet_health": worker_health,
+            },
+            "review_queue": {
+                "status": review.get("status"),
+                "summary": review_summary,
+            },
+        },
+        "auth": handoff.get("auth") or {
+            "mode": (auth_ctx or {}).get("mode") or "unknown",
+            "required_scope": "tasks:read",
+            "token_omitted": True,
+        },
+        "contract": "read-only operator health snapshot; aggregates handoff, local readiness, security readiness, worker fleet, review queue, and action-plan state without executing commands or mutating ledgers",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+
+
 def request_base_url(headers=None) -> str | None:
     host = headers.get("Host") if headers else ""
     return f"http://{host}" if host else None
@@ -16862,6 +17047,19 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(payload)
             if path == "/api/operator/loop-audit":
                 payload = operator_loop_audit(conn, self.headers, qs)
+                conn.rollback()
+                return self.send_json(payload)
+            if path == "/api/operator/health":
+                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                if auth_error:
+                    conn.rollback()
+                    return self.send_json(auth_error, agent_gateway_error_status(auth_error))
+                if agent_gateway_is_bound_auth(auth_ctx):
+                    requested_header_workspace = normalize_workspace_id(self.headers.get("X-AgentOps-Workspace-Id") or auth_ctx["workspace_id"])
+                    if requested_header_workspace != auth_ctx["workspace_id"]:
+                        conn.rollback()
+                        return self.send_json({"error": "forbidden", "message": "Agent token cannot use another workspace header."}, 403)
+                payload = operator_health(conn, self.headers, qs, auth_ctx)
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/operator/handoff":

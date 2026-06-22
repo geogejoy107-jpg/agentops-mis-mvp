@@ -383,6 +383,24 @@ valid and carry `tasks:read`. Invalid or out-of-range `limit` values are safely
 bounded to the supported 1..30 range instead of turning the handoff endpoint
 into a 500.
 
+### `agentops operator health`
+
+Reads a compact commander health snapshot for the current workspace or scoped
+loop:
+
+```bash
+agentops operator health --limit 12
+agentops operator health --loop-id loop_smoke_api_123 --limit 10
+```
+
+Maps to `GET /api/operator/health`. This is read-only and aggregates operator
+handoff, local readiness, security readiness, worker fleet health, review queue
+pressure, and the action-plan summary. It returns a 0..100 score, component
+statuses, risks, next actions, source summaries, `auth` boundary proof, and
+safety flags. Like handoff, local no-token demo reads are allowed only when the
+server has no configured API key; supplied Agent Gateway tokens/sessions must be
+valid, carry `tasks:read`, and remain bound to their workspace.
+
 ### `agentops approval prepared-action`
 
 Creates and resumes the durable Approval Wall primitive for exact tool/action

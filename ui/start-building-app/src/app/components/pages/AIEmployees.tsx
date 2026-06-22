@@ -27,6 +27,7 @@ import {
   loadOperatorActionReceipts,
   loadOperatorActionPlan,
   loadOperatorHandoff,
+  loadOperatorHealth,
   loadOperatorLoopAudit,
   loadReviewQueue,
   loadSecurityProductionReadiness,
@@ -69,6 +70,7 @@ import {
   type OperatorActionPlanPayload,
   type OperatorActionReceiptsPayload,
   type OperatorHandoffPayload,
+  type OperatorHealthPayload,
   type OperatorLoopAuditPayload,
   type ReviewQueuePayload,
   type TaskIntakeChecklistItem,
@@ -241,12 +243,13 @@ export function AIEmployees() {
       loadStuckWorkflowJobs(30, 8),
     ]);
     const scopedLoopId = latestLoopIdFromReadback(loopLaneReadback);
-    const [operatorLoopAudit, operatorHandoff] = await Promise.all([
+    const [operatorLoopAudit, operatorHandoff, operatorHealth] = await Promise.all([
       loadOperatorLoopAudit(12, scopedLoopId),
       loadOperatorHandoff(12, scopedLoopId),
+      loadOperatorHealth(12, scopedLoopId),
     ]);
     const agents = await loadAgents(metrics);
-    return { agents, demoReadiness, workerStatus, workerFleet, workerHygiene, adapterReadiness, localReadiness, operatorActionPlan, operatorActionReceipts, operatorLoopAudit, operatorHandoff, securityReadiness, integrationInbox, commanderWorkPackages, reviewQueue, customerDeliveryBoard, loopLaneReadback, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs };
+    return { agents, demoReadiness, workerStatus, workerFleet, workerHygiene, adapterReadiness, localReadiness, operatorActionPlan, operatorActionReceipts, operatorLoopAudit, operatorHandoff, operatorHealth, securityReadiness, integrationInbox, commanderWorkPackages, reviewQueue, customerDeliveryBoard, loopLaneReadback, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs };
   }, [integrationInboxBucket]);
   const agents = data?.agents || [];
   const demoReadiness = data?.demoReadiness;
@@ -260,6 +263,7 @@ export function AIEmployees() {
   const operatorActionReceipts = data?.operatorActionReceipts as OperatorActionReceiptsPayload | undefined;
   const operatorLoopAudit = data?.operatorLoopAudit as OperatorLoopAuditPayload | undefined;
   const operatorHandoff = data?.operatorHandoff as OperatorHandoffPayload | undefined;
+  const operatorHealth = data?.operatorHealth as OperatorHealthPayload | undefined;
   const operatorPlanActions = operatorActionPlan?.actions || [];
   const operatorPlanSummary = operatorActionPlan?.summary;
   const operatorReceiptCoverage = operatorActionPlan?.receipt_coverage;
@@ -348,6 +352,10 @@ export function AIEmployees() {
       refresh: "Refresh live agents",
       commandCenterTitle: "Worker Fleet Console",
       commandCenterSummary: "Adapter readiness, daemon capacity, remote heartbeat/session health, stuck recovery, and the next safe CLI/API action.",
+      operatorHealthTitle: "Operator health",
+      operatorHealthSummary: "Aggregate read-only health across loop handoff, local readiness, security, worker fleet, review queue, and action plan.",
+      healthScore: "Health score",
+      healthRisks: "Health risks",
       demoReadinessTitle: "Demo readiness",
       demoReadinessSummary: "Canonical v1.5 recording path: readiness, security boundary, fleet lanes, async inbox, customer task loop, and run ledger evidence.",
       demoReady: "Demo ready",
@@ -741,6 +749,10 @@ export function AIEmployees() {
       refresh: "刷新实时代理",
       commandCenterTitle: "Worker Fleet 控制台",
       commandCenterSummary: "集中查看 adapter 就绪、daemon 容量、远程心跳/session、卡住恢复和下一步安全 CLI/API 动作。",
+      operatorHealthTitle: "Operator 健康",
+      operatorHealthSummary: "聚合 Loop 交接、本地就绪、安全边界、Worker Fleet、评审队列和动作计划的只读健康快照。",
+      healthScore: "健康分",
+      healthRisks: "健康风险",
       demoReadinessTitle: "Demo 就绪",
       demoReadinessSummary: "v1.5 录屏主路径：本地就绪、安全边界、Fleet 队伍、异步 Inbox、客户任务闭环、Run 账本证据。",
       demoReady: "可录 Demo",
@@ -2725,9 +2737,14 @@ export function AIEmployees() {
             <div className="flex items-center gap-2">
               <Activity size={14} style={{ color: "var(--mis-cyan)" }} />
               <h2 className="text-sm font-semibold" style={{ color: "var(--mis-text)" }}>{copy.commandCenterTitle}</h2>
-              <StatusBadge status={fleetHealth?.overall || workerStatus?.status || "unknown"} />
+              <StatusBadge status={operatorHealth?.status || fleetHealth?.overall || workerStatus?.status || "unknown"} />
             </div>
             <p className="text-[11px] mt-1 max-w-3xl" style={{ color: "var(--mis-dim)" }}>{copy.commandCenterSummary}</p>
+            {operatorHealth && (
+              <p className="text-[10px] mt-1 max-w-3xl" style={{ color: "var(--mis-muted)" }}>
+                {copy.operatorHealthSummary} · {copy.healthScore}: {operatorHealth.score}/100 · {copy.healthRisks}: {operatorHealth.risks.length}
+              </p>
+            )}
             {fleetHealth?.contract && (
               <p className="text-[10px] mt-1 max-w-3xl" style={{ color: "var(--mis-muted)" }}>
                 {copy.contract}: {fleetHealth.contract}
@@ -2742,12 +2759,12 @@ export function AIEmployees() {
 
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 mt-4">
           {[
+            { label: copy.operatorHealthTitle, value: `${operatorHealth?.score ?? 0}/100`, status: operatorHealth?.status || "unknown" },
             { label: copy.overallFleetHealth, value: fleetHealth?.overall || workerStatus?.status || "—", status: fleetHealth?.overall || workerStatus?.status || "unknown" },
             { label: copy.daemonStatus, value: `${runningDaemons}/${workerStatus?.daemons?.length ?? 0}`, status: runningDaemons > 0 ? "running" : "ready" },
             { label: copy.pendingTasks, value: workerStatus?.pending_worker_tasks ?? "—", status: (workerStatus?.pending_worker_tasks || 0) > 0 ? "planned" : "pass" },
             { label: copy.stuckTasks, value: stuckWorkerCount, status: stuckWorkerCount > 0 ? "blocked" : "pass" },
             { label: copy.workflowRecovery, value: stuckWorkflowJobCount, status: stuckWorkflowJobCount > 0 ? "blocked" : "pass" },
-            { label: copy.remoteWorkersTitle, value: `${workerStatus?.fresh_remote_enrollments ?? 0}/${workerStatus?.active_remote_enrollments ?? 0}`, status: remoteHealth?.status || "unknown" },
           ].map((item) => (
             <div key={item.label} className="rounded-lg px-3 py-2" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
               <div className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{item.label}</div>
