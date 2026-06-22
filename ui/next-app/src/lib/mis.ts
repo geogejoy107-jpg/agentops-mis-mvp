@@ -40,6 +40,24 @@ export type RunSummary = {
   created_at?: string;
 };
 
+export type ToolCallSummary = {
+  tool_call_id: string;
+  run_id?: string;
+  agent_id?: string;
+  tool_name?: string;
+  tool_version?: string;
+  tool_category?: string;
+  normalized_args_json?: string;
+  target_resource?: string;
+  risk_level?: string;
+  status?: string;
+  result_summary?: string;
+  side_effect_id?: string | null;
+  started_at?: string;
+  ended_at?: string | null;
+  created_at?: string;
+};
+
 export type ApprovalSummary = {
   approval_id: string;
   decision: string;
@@ -600,6 +618,10 @@ export async function loadTasks(): Promise<TaskSummary[]> {
 
 export async function loadRuns(): Promise<RunSummary[]> {
   return misJson<RunSummary[]>("/runs");
+}
+
+export async function loadToolCalls(): Promise<ToolCallSummary[]> {
+  return misJson<ToolCallSummary[]>("/tool-calls");
 }
 
 export async function loadApprovals(): Promise<ApprovalSummary[]> {

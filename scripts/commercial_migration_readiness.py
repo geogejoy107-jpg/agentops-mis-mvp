@@ -230,11 +230,15 @@ def main() -> int:
             and file_contains("ui/next-app/app/api/mis/[...path]/route.ts", "AGENTOPS_API_BASE")
             and file_contains("ui/next-app/src/lib/mis.ts", "/dashboard/metrics")
             and file_contains("ui/next-app/src/lib/mis.ts", "/storage/backend-status")
+            and file_contains("ui/next-app/src/lib/mis.ts", "/tool-calls")
             and file_contains("ui/next-app/src/lib/misServer.ts", "loadServerStorageBackendStatus")
             and file_contains("ui/next-app/src/components/DeploymentPage.tsx", "Storage backend migration gate")
+            and file_contains("ui/next-app/src/components/ToolCallPages.tsx", "ToolCallsParityPage")
+            and file_contains("ui/next-app/src/components/AppFrame.tsx", "/workspace/tool-calls")
+            and (ROOT / "ui" / "next-app" / "app" / "workspace" / "tool-calls" / "page.tsx").exists()
             and (ROOT / "scripts" / "nextjs_parity_smoke.py").exists()
             and (ROOT / "scripts" / "nextjs_playwright_snapshot_smoke.py").exists(),
-            "parallel Next.js App Router track has API proxy, workspace/storage data contracts, deployment storage gate, and browser snapshot smoke",
+            "parallel Next.js App Router track has API proxy, workspace/storage/tool-call data contracts, deployment storage gate, and browser snapshot smoke",
         ),
         check(
             "vite_browser_snapshot_surface_exists",

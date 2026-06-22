@@ -471,12 +471,14 @@
     {
       "id": "tool_calls",
       "capability": "Tool call ledger.",
-      "status": "deferred",
-      "gate4_required": false,
+      "status": "covered",
+      "gate4_required": true,
       "vite_routes": [
         "/admin/toolcalls"
       ],
-      "next_routes": [],
+      "next_routes": [
+        "/workspace/tool-calls"
+      ],
       "api_contracts": [
         "GET /tool-calls"
       ],
@@ -484,12 +486,18 @@
         "ui/start-building-app/src/app/components/pages/ToolCallLedger.tsx",
         "ui/start-building-app/src/app/data/liveApi.ts"
       ],
-      "next_files": [],
+      "next_files": [
+        "ui/next-app/app/workspace/tool-calls/page.tsx",
+        "ui/next-app/src/components/ToolCallPages.tsx",
+        "ui/next-app/src/lib/mis.ts"
+      ],
       "evidence_commands": [
-        "python3 scripts/ui_api_parity_matrix_smoke.py"
+        "python3 scripts/ui_api_parity_matrix_smoke.py",
+        "python3 scripts/nextjs_parity_smoke.py",
+        "python3 scripts/nextjs_playwright_snapshot_smoke.py"
       ],
       "retirement_allowed": false,
-      "retirement_gate": "Deferred until run detail and evidence drilldown parity are accepted."
+      "retirement_gate": "Next read-only tool call ledger covers list/risk/status/run-link parity; Vite remains canonical until browser snapshot evidence and route retirement decision are explicit."
     },
     {
       "id": "evaluation_room",

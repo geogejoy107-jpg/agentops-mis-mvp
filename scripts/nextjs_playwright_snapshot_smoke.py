@@ -37,6 +37,7 @@ ROUTES = [
     ("/workspace/deployment", ["Deployment", "Storage backend migration gate", "Storage and retention"]),
     ("/workspace/tasks", ["Tasks", "running", "planned"]),
     ("/workspace/runs", ["Run Ledger", "Run", "Status"]),
+    ("/workspace/tool-calls", ["Tool Call Ledger", "high-risk", "Run"]),
     ("/workspace/approvals", ["Approvals", "Pending approval", "Decision history"]),
     ("/workspace/memory", ["Memory", "candidate", "approved"]),
     ("/workspace/audit", ["Audit", "audit events", "Actor"]),
