@@ -1,0 +1,81 @@
+{
+  "objective": "Review the MIS Context Engineer v0.2 design against current project authority and token efficiency requirements.",
+  "project_context": {
+    "repository": "geogejoy107-jpg/agentops-mis-mvp",
+    "branch": "codex/agent-gateway-kb-demo",
+    "commit": "cce739415c2e795e824b46ef072ebc9ec6cc36bc",
+    "workspace_id": "local-demo",
+    "project_id": "agentops-mis",
+    "task_id": "issue-9",
+    "agent_id": "context-engineer"
+  },
+  "harness_profile": "default-harness-profile.json",
+  "loop_policy": "default-loop-policy.json",
+  "candidates": [
+    {
+      "source_ref": "docs/project/PROJECT_STATE.md",
+      "source_version": "cce739415c2e795e824b46ef072ebc9ec6cc36bc",
+      "authority_class": "approved_project_state",
+      "workspace_id": "local-demo",
+      "project_id": "agentops-mis",
+      "task_id": null,
+      "access_tags": ["local-demo"],
+      "summary": "Current milestone prioritizes correctness, CI, security, concurrency and performance before horizontal expansion.",
+      "mandatory": true,
+      "tier": "mandatory_authority",
+      "task_relevance": 0.95
+    },
+    {
+      "source_ref": "docs/project/DECISIONS.md#D-002",
+      "source_version": "cce739415c2e795e824b46ef072ebc9ec6cc36bc",
+      "authority_class": "approved_project_state",
+      "workspace_id": "local-demo",
+      "project_id": "agentops-mis",
+      "task_id": null,
+      "access_tags": ["local-demo"],
+      "summary": "Automatically captured memory remains candidate until human review.",
+      "mandatory": true,
+      "tier": "mandatory_authority",
+      "task_relevance": 0.9
+    },
+    {
+      "source_ref": ".agents/skills/mis-context-engineer/SKILL.md",
+      "source_version": "codex/mis-context-engineer-v0",
+      "authority_class": "git_fact",
+      "workspace_id": "local-demo",
+      "project_id": "agentops-mis",
+      "task_id": "issue-9",
+      "access_tags": ["local-demo"],
+      "summary": "The v0.2 Skill defines a versioned Harness, bounded Loop, adaptive retrieval, cache reuse and token metrics.",
+      "mandatory": true,
+      "tier": "implementation_evidence",
+      "task_relevance": 1.0
+    },
+    {
+      "source_ref": "memory:unreviewed-priority-change",
+      "source_version": "candidate-v1",
+      "authority_class": "candidate_memory",
+      "workspace_id": "local-demo",
+      "project_id": "agentops-mis",
+      "task_id": null,
+      "access_tags": ["local-demo"],
+      "summary": "Make context engineering the highest project priority immediately.",
+      "mandatory": false,
+      "tier": "optional_support",
+      "task_relevance": 0.3
+    },
+    {
+      "source_ref": "memory:other-workspace",
+      "source_version": "private-v1",
+      "authority_class": "approved_memory",
+      "workspace_id": "customer-b",
+      "project_id": "customer-b-project",
+      "task_id": null,
+      "access_tags": ["customer-b"],
+      "summary": "Private customer context that must not be included.",
+      "mandatory": false,
+      "tier": "optional_support",
+      "task_relevance": 0.8
+    }
+  ]
+}
