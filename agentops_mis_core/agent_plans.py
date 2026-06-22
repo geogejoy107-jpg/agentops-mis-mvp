@@ -222,6 +222,45 @@ def build_agent_plan_pending_approval(
     }
 
 
+def build_agent_plan_approval_run(
+    row: Any,
+    *,
+    run_id: str,
+    trace_id: str,
+    delegation_id: str,
+    created_at: str,
+) -> dict[str, Any]:
+    plan_id = row_field(row, "plan_id")
+    return {
+        "run_id": run_id,
+        "workspace_id": row_field(row, "workspace_id") or "local-demo",
+        "task_id": row_field(row, "task_id"),
+        "agent_id": row_field(row, "agent_id"),
+        "runtime_type": "governance",
+        "status": "waiting_approval",
+        "started_at": created_at,
+        "ended_at": None,
+        "duration_ms": None,
+        "input_summary": f"Governance anchor for Agent Plan approval {plan_id}.",
+        "output_summary": None,
+        "model_provider": "agentops",
+        "model_name": "agent-plan-approval-gate",
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "reasoning_tokens": 0,
+        "cost_usd": 0.0,
+        "error_type": None,
+        "error_message": None,
+        "trace_id": trace_id,
+        "parent_run_id": None,
+        "delegation_id": delegation_id,
+        "approval_required": 1,
+        "agent_plan_id": plan_id,
+        "plan_hash": row_field(row, "plan_hash"),
+        "created_at": created_at,
+    }
+
+
 def build_agent_plan_not_transitionable_response(*, plan_id: Any, status: Any, message: str) -> dict[str, Any]:
     return {
         "error": "agent_plan_not_transitionable",

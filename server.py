@@ -63,6 +63,7 @@ from agentops_mis_core.agent_plans import (
     agent_plan_verification_hash,
     build_agent_plan_approval_anchor_required_response,
     build_agent_plan_approval_decision_response,
+    build_agent_plan_approval_run,
     build_agent_plan_bound_approval_forbidden_response,
     build_agent_plan_not_approvable_response,
     build_agent_plan_not_transitionable_response,
@@ -5053,34 +5054,14 @@ def ensure_agent_plan_approval_run(conn: sqlite3.Connection, row: sqlite3.Row | 
     if existing:
         return run_id
     now = now_iso()
-    upsert_run(conn, {
-        "run_id": run_id,
-        "workspace_id": row_field(row, "workspace_id") or "local-demo",
-        "task_id": task_id,
-        "agent_id": agent_id,
-        "runtime_type": "governance",
-        "status": "waiting_approval",
-        "started_at": now,
-        "ended_at": None,
-        "duration_ms": None,
-        "input_summary": f"Governance anchor for Agent Plan approval {plan_id}.",
-        "output_summary": None,
-        "model_provider": "agentops",
-        "model_name": "agent-plan-approval-gate",
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "reasoning_tokens": 0,
-        "cost_usd": 0.0,
-        "error_type": None,
-        "error_message": None,
-        "trace_id": stable_id("trace_plan_approval", plan_id),
-        "parent_run_id": None,
-        "delegation_id": stable_id("del_plan_approval", plan_id),
-        "approval_required": 1,
-        "agent_plan_id": plan_id,
-        "plan_hash": row_field(row, "plan_hash"),
-        "created_at": now,
-    }, actor_id="agent-plan-approval-gate", audit_metadata={"plan_id": plan_id, "token_omitted": True})
+    approval_run = build_agent_plan_approval_run(
+        row,
+        run_id=run_id,
+        trace_id=stable_id("trace_plan_approval", plan_id),
+        delegation_id=stable_id("del_plan_approval", plan_id),
+        created_at=now,
+    )
+    upsert_run(conn, approval_run, actor_id="agent-plan-approval-gate", audit_metadata={"plan_id": plan_id, "token_omitted": True})
     return run_id
 
 
