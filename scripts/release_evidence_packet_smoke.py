@@ -125,6 +125,18 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "operator_action_queue_ui",
+        "command": "python3 scripts/operator_action_queue_ui_smoke.py",
+        "summary": "AI Employees operator queue, loop-control readback and live API UI contract.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
+        "id": "operator_advance_loop",
+        "command": "python3 scripts/operator_advance_loop_smoke.py",
+        "summary": "Bounded advance-loop runner records receipts plus persisted control readback evidence.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "task_detail_evidence_ui",
         "command": "python3 scripts/task_detail_evidence_ui_smoke.py",
         "summary": "Task detail page exposes delivery evidence state, latest run and approval links.",

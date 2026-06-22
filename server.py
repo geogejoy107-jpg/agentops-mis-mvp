@@ -6888,6 +6888,29 @@ def operator_close_execution_evidence_gap(conn: sqlite3.Connection, body: dict, 
 VALID_OPERATOR_ACTION_RECEIPT_STATUSES = {"recorded", "verified", "failed", "skipped"}
 
 
+def operator_control_readback_public(row: sqlite3.Row | dict | None) -> dict | None:
+    if not row:
+        return None
+    row_dict = dict(row)
+    try:
+        metadata = json.loads(row_dict.get("metadata_json") or "{}")
+    except Exception:
+        metadata = {}
+    control_readback = metadata.get("control_readback") if isinstance(metadata.get("control_readback"), dict) else {}
+    return {
+        "readback_id": metadata.get("readback_id"),
+        "receipt_id": metadata.get("receipt_id") or row_dict.get("entity_id"),
+        "workspace_id": metadata.get("workspace_id") or "local-demo",
+        "action_id": metadata.get("action_id"),
+        "action_signature": metadata.get("action_signature"),
+        "source": metadata.get("source") or "operator.action_queue_control_readback",
+        "control_readback": control_readback,
+        "created_at": row_dict.get("created_at"),
+        "tamper_chain_hash": row_dict.get("tamper_chain_hash"),
+        "token_omitted": True,
+    }
+
+
 def operator_action_evaluation_public(row: sqlite3.Row | dict | None) -> dict | None:
     if not row:
         return None
@@ -6934,6 +6957,7 @@ def operator_action_receipt_public(row: sqlite3.Row) -> dict:
         "verify_command": metadata.get("verify_command"),
         "verify_hash": metadata.get("verify_hash"),
         "result_summary": metadata.get("result_summary"),
+        "control_readback": metadata.get("control_readback") if isinstance(metadata.get("control_readback"), dict) else None,
         "created_at": row["created_at"],
         "tamper_chain_hash": row["tamper_chain_hash"],
         "token_omitted": True,
@@ -6976,6 +7000,27 @@ def operator_action_receipt_rows(conn: sqlite3.Connection, workspace_id: str, li
                 receipt["evaluation_id"] = evaluation.get("evaluation_id")
                 receipt["evaluation_pass_fail"] = evaluation.get("pass_fail")
                 receipt["evaluation_score"] = evaluation.get("score")
+        readback_rows = conn.execute(
+            f"""SELECT audit_id, actor_id, entity_id, metadata_json, tamper_chain_hash, created_at
+                FROM audit_logs
+                WHERE action='operator.action_queue_control_readback'
+                  AND entity_type='operator_action_control_readbacks'
+                  AND entity_id IN ({placeholders})
+                ORDER BY created_at DESC""",
+            receipt_ids,
+        ).fetchall()
+        readback_by_receipt: dict[str, dict] = {}
+        for row in readback_rows:
+            readback = operator_control_readback_public(row) or {}
+            receipt_id = str(readback.get("receipt_id") or "")
+            if receipt_id and readback.get("workspace_id") == workspace_id and receipt_id not in readback_by_receipt:
+                readback_by_receipt[receipt_id] = readback
+        for receipt in receipts:
+            readback = readback_by_receipt.get(str(receipt.get("receipt_id") or ""))
+            if readback:
+                receipt["control_readback"] = readback.get("control_readback") or {}
+                receipt["control_readback_id"] = readback.get("readback_id")
+                receipt["control_readback_hash"] = readback.get("tamper_chain_hash")
     return receipts
 
 
@@ -7133,6 +7178,113 @@ def record_operator_action_receipt(conn: sqlite3.Connection, body: dict, headers
         "receipt": operator_action_receipt_public(audit_row) if audit_row else after,
         "evaluation": evaluation,
         "next_actions": [after["verify_command"]] if after.get("verify_command") and status == "recorded" else ["agentops operator action-plan --limit 20"],
+        "safety": {
+            "read_only": False,
+            "ledger_mutated": True,
+            "live_execution_performed": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }, 201
+
+
+def sanitize_operator_control_readback(value, *, depth: int = 0):
+    if depth > 5:
+        return None
+    if value is None or isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value
+    if isinstance(value, str):
+        return redact_text(value, 900)
+    if isinstance(value, list):
+        return [sanitize_operator_control_readback(item, depth=depth + 1) for item in value[:20]]
+    if isinstance(value, dict):
+        sanitized = {}
+        for key, item in list(value.items())[:80]:
+            key_text = redact_text(str(key), 120)
+            sanitized[key_text] = sanitize_operator_control_readback(item, depth=depth + 1)
+        sanitized["token_omitted"] = True
+        return sanitized
+    return redact_text(str(value), 300)
+
+
+def record_operator_action_control_readback(conn: sqlite3.Connection, body: dict, headers=None) -> tuple[dict, int]:
+    headers = headers or {}
+    workspace_id = normalize_workspace_id(body.get("workspace_id") or headers.get("X-AgentOps-Workspace-Id") or "local-demo")
+    actor_id = redact_text(body.get("actor_id") or "usr_founder", 120)
+    receipt_id = redact_text(body.get("receipt_id") or "", 160)
+    if not receipt_id:
+        return {"error": "receipt_id_required", "message": "receipt_id is required.", "token_omitted": True}, 400
+    receipt_row = conn.execute(
+        """SELECT audit_id, actor_id, entity_id, metadata_json, tamper_chain_hash, created_at
+           FROM audit_logs
+           WHERE action='operator.action_queue_receipt'
+             AND entity_type='operator_action_receipts'
+             AND entity_id=?
+           ORDER BY created_at DESC
+           LIMIT 1""",
+        (receipt_id,),
+    ).fetchone()
+    if not receipt_row:
+        return {"error": "receipt_not_found", "message": "No Action Queue receipt matched receipt_id.", "token_omitted": True}, 404
+    receipt = operator_action_receipt_public(receipt_row)
+    if receipt.get("workspace_id") != workspace_id:
+        return {"error": "receipt_workspace_mismatch", "message": "Receipt belongs to a different workspace.", "token_omitted": True}, 403
+    control_readback = sanitize_operator_control_readback(body.get("control_readback") or {})
+    if not isinstance(control_readback, dict):
+        control_readback = {"raw": control_readback, "token_omitted": True}
+    readback_id = new_id("ocr")
+    after = {
+        "readback_id": readback_id,
+        "receipt_id": receipt_id,
+        "workspace_id": workspace_id,
+        "source": redact_text(body.get("source") or "operator.advance_loop.control_readback", 160),
+        "action_id": receipt.get("action_id"),
+        "action_signature": receipt.get("action_signature"),
+        "control_readback": control_readback,
+        "raw_secret_omitted": True,
+        "raw_prompt_omitted": True,
+        "raw_response_omitted": True,
+        "token_omitted": True,
+    }
+    runtime_event(
+        conn,
+        "rtc_agent_gateway_local",
+        "operator.action_queue_control_readback",
+        "recorded",
+        input_summary=f"Control readback for receipt={receipt_id}",
+        output_summary=(
+            f"before={(control_readback.get('before') or {}).get('selected_gate') or 'unknown'} "
+            f"after={(control_readback.get('after') or {}).get('selected_gate') or 'unknown'}"
+        ),
+        raw_payload_hash=stable_hash(after),
+    )
+    audit(conn, "user", actor_id, "operator.action_queue_control_readback", "operator_action_control_readbacks", receipt_id, None, after, {
+        **after,
+        "append_only_control_readback": True,
+        "command_text_is_redacted": True,
+        "live_execution_performed": False,
+        "ledger_mutated": True,
+    })
+    audit_row = conn.execute(
+        """SELECT audit_id, actor_id, entity_id, metadata_json, tamper_chain_hash, created_at
+           FROM audit_logs
+           WHERE action='operator.action_queue_control_readback'
+             AND entity_type='operator_action_control_readbacks'
+             AND entity_id=?
+           ORDER BY created_at DESC
+           LIMIT 1""",
+        (receipt_id,),
+    ).fetchone()
+    return {
+        "provider": "agentops-operator",
+        "operation": "operator_action_control_readback",
+        "status": "recorded",
+        "workspace_id": workspace_id,
+        "readback": operator_control_readback_public(audit_row) if audit_row else after,
         "safety": {
             "read_only": False,
             "ledger_mutated": True,
@@ -22823,6 +22975,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(payload, status)
             if path == "/api/operator/action-receipts":
                 payload, status = record_operator_action_receipt(conn, body, self.headers)
+                conn.commit()
+                clear_read_model_cache()
+                return self.send_json(payload, status)
+            if path == "/api/operator/action-receipts/control-readback":
+                payload, status = record_operator_action_control_readback(conn, body, self.headers)
                 conn.commit()
                 clear_read_model_cache()
                 return self.send_json(payload, status)

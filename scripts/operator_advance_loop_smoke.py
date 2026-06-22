@@ -184,11 +184,14 @@ def main() -> int:
             global_before_control = global_control.get("before") or {}
             global_after_control = global_control.get("after") or {}
             global_after_self_check = global_control.get("after_self_check") or {}
+            global_readback_receipt = ((global_advanced_payload.get("control_readback_receipt") or {}).get("readback") or {})
             require(global_control.get("refresh_cache_requested") is True, f"global advance should request control refresh: {global_advanced_payload}", failures)
             require(global_control.get("cache_bypassed") is True, f"global advance should bypass read-model cache after receipt: {global_advanced_payload}", failures)
             require(global_before_control.get("selected_gate") == "evidence_report", f"global advance before control should target evidence report: {global_control}", failures)
             require(global_after_control.get("selected_gate") != "evidence_report", f"global advance after control should move past verified evidence report: {global_control}", failures)
             require(global_after_self_check.get("operation") == "operator_loop_control_summary", f"global advance self-check control missing: {global_control}", failures)
+            require((global_readback_receipt.get("control_readback") or {}).get("cache_bypassed") is True, f"global control readback receipt missing cache proof: {global_advanced_payload}", failures)
+            require(((global_readback_receipt.get("control_readback") or {}).get("before") or {}).get("selected_gate") == "evidence_report", f"global persisted control readback before mismatch: {global_advanced_payload}", failures)
             require(global_after_receipts >= global_before_receipts + 1, f"global evidence advance receipt missing: {global_before_receipts} -> {global_after_receipts}", failures)
             global_second_preview = run_cli(["operator", "advance-loop", "--limit", "10"], base_url, outputs)
             global_second_payload = load_json(global_second_preview.stdout)
@@ -259,11 +262,21 @@ def main() -> int:
             require((advanced_payload.get("action_result") or {}).get("ok") is True, f"advance action failed: {advanced_payload}", failures)
             require((advanced_payload.get("verify_result") or {}).get("ok") is True, f"advance verify failed: {advanced_payload}", failures)
             loop_control = advanced_payload.get("control_readback") or {}
+            loop_readback_receipt = ((advanced_payload.get("control_readback_receipt") or {}).get("readback") or {})
             require((loop_control.get("before") or {}).get("selected_gate") == "record", f"loop advance before control should target record: {advanced_payload}", failures)
             require(loop_control.get("refresh_cache_requested") is True, f"loop advance should request control refresh: {advanced_payload}", failures)
             require(loop_control.get("cache_bypassed") is True, f"loop advance should bypass read-model cache after receipt: {advanced_payload}", failures)
             require((loop_control.get("after") or {}).get("operation") == "operator_loop_control_summary", f"loop advance after handoff control missing: {advanced_payload}", failures)
             require((loop_control.get("after_self_check") or {}).get("operation") == "operator_loop_control_summary", f"loop advance after self-check control missing: {advanced_payload}", failures)
+            require(((loop_readback_receipt.get("control_readback") or {}).get("before") or {}).get("selected_gate") == "record", f"loop persisted control readback before mismatch: {advanced_payload}", failures)
+            receipts_after_advance = run_cli(["operator", "action-receipts", "--limit", "20"], base_url, outputs)
+            receipts_payload = load_json(receipts_after_advance.stdout)
+            persisted_readbacks = [
+                receipt.get("control_readback") or {}
+                for receipt in receipts_payload.get("receipts") or []
+                if (receipt.get("control_readback") or {}).get("before")
+            ]
+            require(any((item.get("before") or {}).get("selected_gate") == "record" and item.get("cache_bypassed") is True for item in persisted_readbacks), f"action receipts should expose persisted loop control readback: {receipts_payload}", failures)
             require((advanced_payload.get("safety") or {}).get("ledger_mutated") is True, f"advance should record receipt: {advanced_payload}", failures)
             require((advanced_payload.get("safety") or {}).get("live_execution_performed") is False, f"advance must not run live work: {advanced_payload}", failures)
             require(after_advance["memories"].get("candidate", 0) == 1, f"advance should propose one loop memory candidate: {after_advance}", failures)

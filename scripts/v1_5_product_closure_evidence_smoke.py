@@ -170,13 +170,14 @@ def main() -> int:
             docs=["docs/PIXEL_OPERATING_MAP_SPEC.md", "docs/DEMO_VIDEO_SCRIPT.md"],
             scripts=[
                 "scripts/operator_action_queue_ui_smoke.py",
+                "scripts/operator_advance_loop_smoke.py",
                 "scripts/ai_employees_responsiveness_smoke.py",
                 "scripts/production_security_warning_ui_smoke.py",
                 "scripts/real_runtime_ui_confirm_smoke.py",
             ],
             source_markers={
-                "ui/start-building-app/src/app/components/pages/AIEmployees.tsx": ["operator_loop_launch_packet", "receipt_state", "Worker Fleet"],
-                "ui/start-building-app/src/app/data/liveApi.ts": ["loadOperatorLoopLaunchPacket", "loadWorkerStatus"],
+                "ui/start-building-app/src/app/components/pages/AIEmployees.tsx": ["operator_loop_launch_packet", "receipt_state", "Worker Fleet", "operatorHealthLoopControl"],
+                "ui/start-building-app/src/app/data/liveApi.ts": ["loadOperatorLoopLaunchPacket", "loadWorkerStatus", "loop_control"],
             },
         ),
         item(
@@ -237,6 +238,12 @@ def main() -> int:
     command = "python3 scripts/v1_5_product_closure_evidence_smoke.py"
     require(command in release_text, "release evidence packet missing product closure evidence smoke", failures)
     require(command in ci_text, "CI workflow missing product closure evidence smoke", failures)
+    operator_ui_command = "python3 scripts/operator_action_queue_ui_smoke.py"
+    require(operator_ui_command in release_text, "release evidence packet missing operator action queue UI smoke", failures)
+    require(operator_ui_command in ci_text, "CI workflow missing operator action queue UI smoke", failures)
+    advance_loop_command = "python3 scripts/operator_advance_loop_smoke.py"
+    require(advance_loop_command in release_text, "release evidence packet missing operator advance-loop smoke", failures)
+    require(advance_loop_command in ci_text, "CI workflow missing operator advance-loop smoke", failures)
 
     output = json.dumps({"operation": "v1_5_product_closure_evidence", "ok": not failures, "items": items, "failures": failures, "safety": {"read_only": True, "ledger_mutated": False, "live_execution_performed": False, "token_omitted": True}}, ensure_ascii=False, indent=2)
     require(not any(pattern.search(output) for pattern in SECRET_PATTERNS), "evidence output leaked token-like material", failures)

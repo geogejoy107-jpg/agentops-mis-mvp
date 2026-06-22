@@ -1581,8 +1581,12 @@ exactly one local allowlisted action, runs the paired verify command, and record
 an Action Queue receipt as `verified` or `failed`. Confirmed runs also return
 `control_readback`: the pre-action handoff control summary plus post-receipt
 handoff and loop-self-check control summaries fetched with `refresh_cache=true`,
-including cache-bypass proof. This lets agents see that the next recommendation
-has moved after receipt/evaluation instead of reading stale handoff state. The
+including cache-bypass proof. The same readback is also written as an append-only
+`operator.action_queue_control_readback` audit row attached to the Action Queue
+receipt, so `/api/operator/action-receipts` and the Operator Command Center can
+show before/after/self-check control proof with the readback tamper hash. This
+lets agents see that the next recommendation has moved after receipt/evaluation
+instead of reading stale handoff state. The
 policy scope allows safe local actions such as `knowledge index`, `memory
 propose --type loop_record`, and read-only `operator remediate-evidence-gap
 --run-id ...` previews after the run-level evidence-report work order is

@@ -748,6 +748,8 @@ python3 scripts/worker_adapter_retry_smoke.py
 python3 scripts/customer_task_template_smoke.py
 python3 scripts/agentops_workflow_template_cli_smoke.py
 python3 scripts/agentops_workflow_async_job_smoke.py
+python3 scripts/operator_action_queue_ui_smoke.py
+python3 scripts/operator_advance_loop_smoke.py
 cd ui/start-building-app && npm run build
 # Optional live/local-runtime evidence, not part of default CI because it can take several minutes:
 python3 scripts/template_worker_live_dogfood.py --adapter openclaw

@@ -671,6 +671,10 @@ export function AIEmployees() {
       recommendedStep: "Recommended step",
       controlMode: "Control mode",
       controlReadbackSource: "Readback source",
+      controlReadback: "Control readback",
+      controlBefore: "Before",
+      controlAfter: "After",
+      controlSelfCheck: "Self-check",
       cacheRefresh: "Cache refresh",
       commandSource: "Command source",
       humanRequired: "Human required",
@@ -1155,6 +1159,10 @@ export function AIEmployees() {
       recommendedStep: "推荐步骤",
       controlMode: "控制模式",
       controlReadbackSource: "回读来源",
+      controlReadback: "控制回执",
+      controlBefore: "推进前",
+      controlAfter: "推进后",
+      controlSelfCheck: "自检后",
       cacheRefresh: "缓存刷新",
       commandSource: "命令来源",
       humanRequired: "需要人工",
@@ -4904,6 +4912,30 @@ export function AIEmployees() {
               const queueReceiptEvaluationStatus = typeof queueReceiptEvaluation === "object" && queueReceiptEvaluation !== null ? String((queueReceiptEvaluation as Record<string, unknown>).pass_fail || "") : "";
               const queueReceiptStatus = backendReceiptStatus || queueReceipt?.status;
               const queueReceiptHash = receiptShortHash(queueReceipt) || String(backendReceiptHash || "").slice(0, 12);
+              const queueControlReadbackRaw = queueReceipt?.control_readback;
+              const queueControlReadback = (
+                typeof queueControlReadbackRaw === "object" && queueControlReadbackRaw !== null
+                  ? queueControlReadbackRaw
+                  : {}
+              ) as Record<string, unknown>;
+              const queueControlBefore = (
+                typeof queueControlReadback.before === "object" && queueControlReadback.before !== null
+                  ? queueControlReadback.before
+                  : {}
+              ) as Record<string, unknown>;
+              const queueControlAfter = (
+                typeof queueControlReadback.after === "object" && queueControlReadback.after !== null
+                  ? queueControlReadback.after
+                  : {}
+              ) as Record<string, unknown>;
+              const queueControlSelfCheck = (
+                typeof queueControlReadback.after_self_check === "object" && queueControlReadback.after_self_check !== null
+                  ? queueControlReadback.after_self_check
+                  : {}
+              ) as Record<string, unknown>;
+              const queueControlReadbackHash = String(queueReceipt?.control_readback_hash || "").slice(0, 12);
+              const queueControlReadbackVisible = Boolean(queueControlBefore.selected_gate || queueControlAfter.selected_gate || queueControlSelfCheck.selected_gate);
+              const queueControlCacheProof = queueControlReadback.cache_bypassed === true ? "bypass" : queueControlReadback.refresh_cache_requested === true ? "refresh" : "";
               const queueNeedsReceipt = !candidateReceiptVerified(item);
               const receiptRecordCommand = "receiptRecordCommand" in item ? item.receiptRecordCommand : undefined;
               const receiptVerifyRecordCommand = "receiptVerifyRecordCommand" in item ? item.receiptVerifyRecordCommand : undefined;
@@ -4980,6 +5012,21 @@ export function AIEmployees() {
                     {queueReceiptEvaluationStatus && (
                       <div className="text-[10px] mt-0.5 truncate" style={{ color: queueReceiptEvaluationStatus === "pass" ? "var(--mis-success)" : "#F87171" }}>
                         {copy.receiptEvaluation}: {queueReceiptEvaluationStatus}
+                      </div>
+                    )}
+                    {queueControlReadbackVisible && (
+                      <div className="flex flex-wrap items-center gap-1.5 mt-0.5 text-[10px]" style={{ color: "var(--mis-muted)" }}>
+                        <span className="truncate">
+                          {copy.controlReadback}: {copy.controlBefore} {String(queueControlBefore.selected_gate || "—")}/{String(queueControlBefore.selected_status || queueControlBefore.status || "—")}
+                        </span>
+                        <span className="truncate">
+                          {copy.controlAfter} {String(queueControlAfter.selected_gate || "—")}/{String(queueControlAfter.selected_status || queueControlAfter.status || "—")}
+                        </span>
+                        <span className="truncate">
+                          {copy.controlSelfCheck} {String(queueControlSelfCheck.selected_gate || "—")}/{String(queueControlSelfCheck.selected_status || queueControlSelfCheck.status || "—")}
+                        </span>
+                        {queueControlCacheProof && <StatusBadge status={queueControlCacheProof === "bypass" ? "pass" : "attention"} label={`${copy.cacheRefresh}: ${queueControlCacheProof}`} />}
+                        {queueControlReadbackHash && <StatusBadge status="pass" label={`${copy.tamperChain}: ${queueControlReadbackHash}`} />}
                       </div>
                     )}
                     {queueNeedsReceipt && (

@@ -307,6 +307,10 @@ liveApi.ts                        > 2.2k lines
 - `agentops operator advance-loop --confirm-advance` 的 `control_readback`
   仍是一次推进的前后读回执；确认路径必须请求
   `refresh_cache=true`，并返回 handoff/self-check 两份后置控制摘要。
+  已确认推进还必须把同一份读回执作为 append-only
+  `operator.action_queue_control_readback` 审计行挂到 Action Queue receipt
+  上，`/api/operator/action-receipts` 和 `/workspace/agents` 需要展示
+  before/after/self-check、cache bypass 与 tamper hash 证明。
 - `agentops operator handoff` 的 `loop_health.gates.loop_control` 是当前
   推荐控制面的机器可读审计入口，字段包含 mode、selected gate、next
   action、verify command、receipt command、copy-only、server-shell boundary、

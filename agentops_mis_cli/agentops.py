@@ -778,6 +778,27 @@ def cmd_operator_advance_loop(args, client: AgentOpsClient) -> dict:
     refresh_query = {"limit": args.limit, "loop_id": args.loop_id or None, "refresh_cache": "true"}
     after_handoff = client.get("/api/operator/handoff", query=refresh_query)
     after_self_check = client.get("/api/operator/loop-self-check", query=refresh_query)
+    control_readback = {
+        "before": before_control,
+        "after": compact_loop_control(after_handoff),
+        "after_self_check": compact_loop_control(after_self_check),
+        "refresh_cache_requested": True,
+        "cache_bypassed": (
+            ((after_handoff.get("read_model_cache") or {}).get("status") == "bypass")
+            and ((after_self_check.get("read_model_cache") or {}).get("status") == "bypass")
+        ),
+        "token_omitted": True,
+    }
+    receipt_id = ((receipt.get("receipt") or {}).get("receipt_id") or receipt.get("receipt_id"))
+    control_readback_receipt = None
+    if receipt_id:
+        control_readback_receipt = client.post("/api/operator/action-receipts/control-readback", {
+            "workspace_id": client.workspace_id,
+            "actor_id": args.actor_id,
+            "receipt_id": receipt_id,
+            "source": f"advance_loop:{selected.get('gate_id') or 'gate'}:control_readback",
+            "control_readback": control_readback,
+        })
     return {
         "provider": "agentops-operator",
         "operation": "operator_advance_loop",
@@ -789,17 +810,8 @@ def cmd_operator_advance_loop(args, client: AgentOpsClient) -> dict:
         "action_result": action_result,
         "verify_result": verify_result,
         "receipt": receipt,
-        "control_readback": {
-            "before": before_control,
-            "after": compact_loop_control(after_handoff),
-            "after_self_check": compact_loop_control(after_self_check),
-            "refresh_cache_requested": True,
-            "cache_bypassed": (
-                ((after_handoff.get("read_model_cache") or {}).get("status") == "bypass")
-                and ((after_self_check.get("read_model_cache") or {}).get("status") == "bypass")
-            ),
-            "token_omitted": True,
-        },
+        "control_readback": control_readback,
+        "control_readback_receipt": control_readback_receipt,
         "contract": "bounded CLI runner; executes at most one allowlisted local agentops action, verifies it, and records an append-only receipt; never approves memory or runs live/workflow commands",
         "safety": {
             "read_only": False,

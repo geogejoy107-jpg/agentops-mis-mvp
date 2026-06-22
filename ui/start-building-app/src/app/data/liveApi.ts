@@ -1330,6 +1330,9 @@ export interface OperatorActionReceipt {
   evaluation_id?: string | null;
   evaluation_pass_fail?: string | null;
   evaluation_score?: number | null;
+  control_readback?: Record<string, unknown> | null;
+  control_readback_id?: string | null;
+  control_readback_hash?: string | null;
   created_at?: string;
   tamper_chain_hash?: string;
   token_omitted?: boolean;
@@ -4305,6 +4308,9 @@ function normalizeOperatorActionReceipt(raw: Record<string, unknown>): OperatorA
     evaluation_id: raw.evaluation_id ? String(raw.evaluation_id) : null,
     evaluation_pass_fail: raw.evaluation_pass_fail ? String(raw.evaluation_pass_fail) : null,
     evaluation_score: raw.evaluation_score === undefined || raw.evaluation_score === null ? null : numberValue(raw.evaluation_score, 0),
+    control_readback: typeof raw.control_readback === "object" && raw.control_readback !== null ? raw.control_readback as Record<string, unknown> : null,
+    control_readback_id: raw.control_readback_id ? String(raw.control_readback_id) : null,
+    control_readback_hash: raw.control_readback_hash ? String(raw.control_readback_hash) : null,
     created_at: raw.created_at ? String(raw.created_at) : undefined,
     tamper_chain_hash: raw.tamper_chain_hash ? String(raw.tamper_chain_hash) : undefined,
     token_omitted: raw.token_omitted === undefined ? undefined : boolValue(raw.token_omitted),
