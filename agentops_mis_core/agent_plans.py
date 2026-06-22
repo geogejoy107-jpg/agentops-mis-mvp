@@ -142,6 +142,58 @@ def resolve_agent_plan_file_scope(refs: list, repo_root: Path | str) -> dict[str
     }
 
 
+def build_agent_plan_verification(
+    row: Any,
+    *,
+    spec_authority: dict[str, Any],
+    memory_authority: dict[str, Any],
+    base_authority: dict[str, Any],
+    file_scope: dict[str, Any],
+) -> dict[str, Any]:
+    specs = load_json_list_field(row, "referenced_specs_json")
+    memories = load_json_list_field(row, "referenced_memories_json")
+    bases = load_json_list_field(row, "referenced_bases_json")
+    files = load_json_list_field(row, "proposed_files_to_change_json")
+    steps = load_json_list_field(row, "execution_steps_json")
+    risk = row_field(row, "risk_level")
+    approval_required = bool(row_field(row, "approval_required"))
+    checks = [
+        {"id": "read_specs", "ok": bool(specs) and bool(spec_authority.get("ok")), "message": "Plan references readable specs or workflow docs.", "details": spec_authority},
+        {"id": "retrieve_memory", "ok": bool(memories), "message": "Plan references memory, knowledge, or failure-case context."},
+        {"id": "memory_authority", "ok": bool(memory_authority.get("ok")), "message": "Referenced memory ids exist and are approved before acting as authority.", "details": memory_authority},
+        {"id": "compare_bases", "ok": bool(bases) and bool(base_authority.get("ok")), "message": "Plan references existing base constraints or reusable foundations.", "details": base_authority},
+        {"id": "execution_steps", "ok": len(steps) >= 3, "message": "Plan includes concrete execution steps."},
+        {"id": "verification_plan", "ok": bool(str(row_field(row, "verification_plan") or "").strip()), "message": "Plan includes verification path."},
+        {"id": "rollback_plan", "ok": bool(str(row_field(row, "rollback_plan") or "").strip()), "message": "Plan includes rollback path."},
+        {"id": "risk_gate", "ok": risk not in {"high", "critical"} or approval_required, "message": "High/critical risk requires approval."},
+        {"id": "file_scope", "ok": (bool(files) or risk == "low") and bool(file_scope.get("ok")), "message": "Non-low work names proposed files or surfaces inside the repository.", "details": file_scope},
+    ]
+    failed = [check for check in checks if not check["ok"]]
+    return {
+        "pass": not failed,
+        "plan_hash": row_field(row, "plan_hash") or compute_agent_plan_hash(row),
+        "checks": checks,
+        "failed_checks": failed,
+        "summary": {
+            "referenced_specs": len(specs),
+            "readable_spec_refs": len(spec_authority.get("readable") or []),
+            "referenced_memories": len(memories),
+            "approved_memory_refs": len(memory_authority.get("approved") or []),
+            "non_authoritative_memory_refs": len(memory_authority.get("non_authoritative") or []),
+            "missing_memory_refs": len(memory_authority.get("missing") or []),
+            "knowledge_context_refs": len(memory_authority.get("knowledge_context") or []),
+            "referenced_bases": len(bases),
+            "resolved_base_refs": len((base_authority.get("table_bases") or []) + (base_authority.get("file_bases") or []) + (base_authority.get("virtual_bases") or [])),
+            "proposed_files_to_change": len(files),
+            "scoped_file_refs": len(file_scope.get("scoped") or []),
+            "execution_steps": len(steps),
+            "risk_level": risk,
+            "approval_required": approval_required,
+        },
+        "token_omitted": True,
+    }
+
+
 def build_agent_plan_approval_anchor_required_response(*, plan_id: Any = None) -> dict[str, Any]:
     payload = {
         "error": "agent_plan_approval_anchor_required",

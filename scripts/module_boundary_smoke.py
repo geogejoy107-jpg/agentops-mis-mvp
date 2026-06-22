@@ -47,6 +47,7 @@ from agentops_mis_core.agent_plans import (
     build_agent_plan_approval_decision_response,
     build_agent_plan_bound_approval_forbidden_response,
     build_agent_plan_status_transition_required_response,
+    build_agent_plan_verification,
     compute_agent_plan_hash,
     load_json_list_field,
     plan_ref_is_safe_relative_path,
@@ -254,6 +255,7 @@ EXTRACTED_AGENT_PLAN_HELPERS = {
     "build_agent_plan_approval_decision_response",
     "build_agent_plan_bound_approval_forbidden_response",
     "build_agent_plan_status_transition_required_response",
+    "build_agent_plan_verification",
     "compute_agent_plan_hash",
     "load_json_list_field",
     "plan_ref_is_safe_relative_path",
@@ -269,6 +271,7 @@ SERVER_AGENT_PLAN_IMPORTS = {
     "build_agent_plan_approval_decision_response",
     "build_agent_plan_bound_approval_forbidden_response",
     "build_agent_plan_status_transition_required_response",
+    "build_agent_plan_verification",
     "compute_agent_plan_hash",
     "load_json_list_field",
     "plan_ref_path",
@@ -732,6 +735,20 @@ def main() -> int:
     missing_spec_authority = resolve_agent_plan_spec_authority(["missing/not-real.md"], repo_root=ROOT)
     file_scope = resolve_agent_plan_file_scope(["server.py", "docs/MODULE_BOUNDARY_PLAN.md"], repo_root=ROOT)
     unsafe_file_scope = resolve_agent_plan_file_scope(["../outside.py", "https://example.com/file.py"], repo_root=ROOT)
+    agent_plan_verification = build_agent_plan_verification(
+        agent_plan_row,
+        spec_authority=spec_authority,
+        memory_authority={"ok": True, "approved": [{"memory_id": "mem_smoke"}], "non_authoritative": [], "missing": [], "knowledge_context": []},
+        base_authority={"ok": True, "table_bases": [], "file_bases": [], "virtual_bases": [{"ref": "agent_gateway_ledger"}]},
+        file_scope=file_scope,
+    )
+    agent_plan_bad_verification = build_agent_plan_verification(
+        {**agent_plan_row, "risk_level": "critical", "approval_required": 0, "execution_steps_json": '["read"]', "verification_plan": "", "rollback_plan": ""},
+        spec_authority=missing_spec_authority,
+        memory_authority={"ok": False, "approved": [], "non_authoritative": [{"memory_id": "mem_candidate"}], "missing": [], "knowledge_context": []},
+        base_authority={"ok": False, "table_bases": [], "file_bases": [], "virtual_bases": [], "missing": ["missing_base"]},
+        file_scope=unsafe_file_scope,
+    )
     agent_plan_approval_decision_response = build_agent_plan_approval_decision_response(
         approval={"approval_id": "ap_plan_smoke", "decision": "approved"},
         agent_plan_decision={
@@ -798,6 +815,10 @@ def main() -> int:
     require(missing_spec_authority.get("ok") is False and missing_spec_authority.get("missing") == ["missing/not-real.md"], "agent plan spec authority missing-file failed", failures)
     require(file_scope.get("ok") is True and len(file_scope.get("scoped") or []) == 2, "agent plan file scope failed for repo paths", failures)
     require(unsafe_file_scope.get("ok") is False and len(unsafe_file_scope.get("unsafe") or []) == 2, "agent plan file scope accepted unsafe paths", failures)
+    require(agent_plan_verification.get("pass") is True, "agent plan verification builder failed passing plan", failures)
+    require(agent_plan_verification.get("summary", {}).get("resolved_base_refs") == 1, "agent plan verification summary failed", failures)
+    require(agent_plan_bad_verification.get("pass") is False, "agent plan verification builder failed negative plan", failures)
+    require({"read_specs", "memory_authority", "compare_bases", "execution_steps", "verification_plan", "rollback_plan", "risk_gate", "file_scope"}.issubset({check.get("id") for check in agent_plan_bad_verification.get("failed_checks") or []}), "agent plan verification failed-check coverage missing", failures)
     require((agent_plan_approval_decision_response.get("agent_plan") or {}).get("status") == "approved", "agent plan approval decision response plan failed", failures)
     require(agent_plan_approval_decision_response.get("verification_result_hash") == "hash_plan_verification_smoke", "agent plan approval decision response hash failed", failures)
     require(agent_plan_approval_decision_response.get("token_omitted") is True, "agent plan approval decision response omission proof missing", failures)
