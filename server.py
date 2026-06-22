@@ -19092,6 +19092,78 @@ def operator_loop_audit(conn: sqlite3.Connection, headers, qs=None) -> dict:
     }
 
 
+def operator_loop_control_summary_from_handoff(advance_loop: dict, loop_health: dict | None = None, *, loop_id: str | None = None) -> dict:
+    loop_health = loop_health or {}
+    selected = advance_loop.get("selected_item") or {}
+    summary = advance_loop.get("summary") or {}
+    policy = advance_loop.get("policy") or {}
+    safety = advance_loop.get("safety") or {}
+    selected_status = str(selected.get("gate_status") or summary.get("selected_status") or advance_loop.get("status") or "unknown")
+    has_selected = bool(selected)
+    if has_selected:
+        control_mode = "human_confirm_required"
+        next_command = advance_loop.get("confirm_command") or advance_loop.get("preview_command")
+        verify_command = selected.get("verify_command")
+        receipt_command = selected.get("receipt_verify_record_command")
+        step_status = "blocked" if selected_status in {"blocked", "failed", "fail", "error"} else "attention"
+        reason = "selected handoff action requires local CLI confirmation, verification, and receipt recording"
+    else:
+        control_mode = "read_only_copy"
+        next_command = advance_loop.get("preview_command") or "agentops operator advance-loop --limit 12"
+        verify_command = "agentops operator handoff --limit 12"
+        receipt_command = None
+        step_status = "ready" if (loop_health.get("status") or advance_loop.get("status")) in {"ready", "pass"} else "attention"
+        reason = "no selected bounded action; preview the handoff queue before advancing"
+    recommended = {
+        "step_id": "handoff_advance_loop",
+        "label": selected.get("gate_label") or "Bounded handoff advance",
+        "phase": "EXECUTE" if has_selected else "READ",
+        "status": step_status,
+        "control_mode": control_mode,
+        "command": next_command,
+        "verify_command": verify_command,
+        "receipt_command": receipt_command,
+        "reason": reason,
+        "mutating": has_selected,
+        "confirm_required": has_selected,
+        "receipt_required": has_selected,
+        "receipt_verified": False,
+        "receipt_status": "missing" if has_selected else "not_required",
+        "action_signature": selected.get("action_signature"),
+        "policy_id": policy.get("policy_id") or summary.get("policy_id"),
+        "selected_gate": selected.get("gate_id") or summary.get("selected_gate"),
+        "source": selected.get("source") or "operator_handoff.advance_loop",
+        "run_id": selected.get("run_id"),
+        "token_omitted": True,
+    }
+    status = "blocked" if step_status == "blocked" else "attention" if has_selected or loop_health.get("status") == "attention" else "ready"
+    return {
+        "operation": "operator_loop_control_summary",
+        "status": status,
+        "mode": control_mode,
+        "loop_id": loop_id or None,
+        "recommended_step": recommended,
+        "next_command": next_command,
+        "verify_command": verify_command,
+        "receipt_command": receipt_command,
+        "requires_human": has_selected,
+        "requires_receipt": has_selected,
+        "server_executes_shell": False,
+        "copy_only": True,
+        "step_counts": {
+            "selected": 1 if has_selected else 0,
+            "ready": 0 if has_selected else 1,
+            "attention": 1 if has_selected else 0,
+            "blocked": 1 if step_status == "blocked" else 0,
+        },
+        "selected_gate": selected.get("gate_id") or summary.get("selected_gate"),
+        "selected_status": selected_status,
+        "policy_id": policy.get("policy_id") or summary.get("policy_id"),
+        "server_shell_execution": bool(safety.get("server_shell_execution")),
+        "token_omitted": True,
+    }
+
+
 def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) -> dict:
     qs = qs or {}
     limit = bounded_int((qs.get("limit") or ["12"])[0], 12, 1, 30)
@@ -19898,6 +19970,29 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
     ]
     loop_health_score = min(max(sum(score_parts), 0), 100)
     loop_health_status = "blocked" if loop_blocked or receipt_evaluation_fail or evidence_report_blocked or remediation_workflow_blocked or not auth_ready or not safety_ready else "attention" if loop_health_risks or loop_health_score < 90 else "ready"
+    loop_health_payload = {
+        "operation": "operator_loop_health",
+        "status": loop_health_status,
+        "score": loop_health_score,
+        "score_parts": {
+            "method_gates": score_parts[0],
+            "receipts": score_parts[1],
+            "receipt_evaluations": score_parts[2],
+            "record": score_parts[3],
+            "auth": score_parts[4],
+            "safety": score_parts[5],
+        },
+        "gates": gate_checks,
+        "risks": loop_health_risks[:8],
+        "next_action": (loop_health_risks[0]["next_action"] if loop_health_risks else (loop_audit.get("next_actions") or ["agentops operator loop-audit --limit 20"])[0]),
+        "contract": "read-only loop health snapshot derived from loop-audit, action-plan receipts, evidence report, review state, auth, and safety; it never executes commands or writes ledger rows",
+        "token_omitted": True,
+    }
+    control_summary = operator_loop_control_summary_from_handoff(
+        advance_loop_work_order,
+        loop_health_payload,
+        loop_id=str(loop_audit.get("loop_id") or scoped_loop_id or "") or None,
+    )
     return {
         "provider": "agentops-operator",
         "operation": "operator_handoff",
@@ -19929,6 +20024,9 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
             "receipt_failure_memory_existing_candidates": receipt_failure_memory_existing_candidates,
             "receipt_failure_memory_work_items": len(receipt_failure_work_order_items),
             "advance_loop_work_items": 1 if advance_loop_selected_item else 0,
+            "control_status": control_summary.get("status"),
+            "control_mode": control_summary.get("mode"),
+            "control_selected_gate": control_summary.get("selected_gate"),
             "loop_record_status": loop_record.get("status"),
             "loop_record_candidates": loop_record.get("candidate_count", 0),
             "loop_record_approved": loop_record.get("approved_count", 0),
@@ -19945,6 +20043,7 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
             "commands": handoff_commands[:20],
             "token_omitted": True,
         },
+        "control_summary": control_summary,
         "receipt_state": {
             "coverage": receipt_coverage,
             "recent": (action_receipts.get("receipts") or [])[: min(limit, 8)],
@@ -19981,24 +20080,7 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
                 "contract": evidence_report.get("contract"),
             },
         },
-        "loop_health": {
-            "operation": "operator_loop_health",
-            "status": loop_health_status,
-            "score": loop_health_score,
-            "score_parts": {
-                "method_gates": score_parts[0],
-                "receipts": score_parts[1],
-                "receipt_evaluations": score_parts[2],
-                "record": score_parts[3],
-                "auth": score_parts[4],
-                "safety": score_parts[5],
-            },
-            "gates": gate_checks,
-            "risks": loop_health_risks[:8],
-            "next_action": (loop_health_risks[0]["next_action"] if loop_health_risks else (loop_audit.get("next_actions") or ["agentops operator loop-audit --limit 20"])[0]),
-            "contract": "read-only loop health snapshot derived from loop-audit, action-plan receipts, evidence report, review state, auth, and safety; it never executes commands or writes ledger rows",
-            "token_omitted": True,
-        },
+        "loop_health": loop_health_payload,
         "contract": "read-only operator handoff; combines loop work order, run evidence report, action queue receipts, and review state without executing commands or mutating ledgers",
         "auth": {
             "mode": (auth_ctx or {}).get("mode") or "unknown",
@@ -20033,6 +20115,11 @@ def operator_loop_self_check(conn: sqlite3.Connection, headers, qs=None, auth_ct
     handoff = operator_handoff(conn, effective_headers, {"limit": [str(limit)], "loop_id": [loop_id]} if loop_id else {"limit": [str(limit)]}, auth_ctx)
     work_order = handoff.get("work_order") or {}
     advance_loop = work_order.get("advance_loop") or {}
+    control_summary = handoff.get("control_summary") or operator_loop_control_summary_from_handoff(
+        advance_loop,
+        handoff.get("loop_health") or {},
+        loop_id=str(handoff.get("loop_id") or loop_id or "") or None,
+    )
     selected_item = advance_loop.get("selected_item") or {}
     selected_action = str(selected_item.get("action_command") or "").strip()
     policy = advance_loop.get("policy") or advance_loop_policy_summary()
@@ -20160,6 +20247,16 @@ def operator_loop_self_check(conn: sqlite3.Connection, headers, qs=None, auth_ct
             "risks": len(loop_health.get("risks") or []),
             "auth_mode": ((handoff.get("auth") or {}).get("mode") or "unknown"),
         },
+        "loop_control": {
+            "status": "pass" if control_summary.get("status") == "ready" else control_summary.get("status") or "unknown",
+            "mode": control_summary.get("mode"),
+            "recommended_step": (control_summary.get("recommended_step") or {}).get("step_id"),
+            "selected_gate": control_summary.get("selected_gate"),
+            "copy_only": control_summary.get("copy_only") is True,
+            "server_executes_shell": control_summary.get("server_executes_shell") is True,
+            "requires_human": control_summary.get("requires_human") is True,
+            "requires_receipt": control_summary.get("requires_receipt") is True,
+        },
     }
     blocked = [gate_id for gate_id, gate in gate_checks.items() if gate.get("status") == "blocked"]
     attention = [gate_id for gate_id, gate in gate_checks.items() if gate.get("status") == "attention"]
@@ -20201,14 +20298,19 @@ def operator_loop_self_check(conn: sqlite3.Connection, headers, qs=None, auth_ct
             "policy_id": policy.get("policy_id"),
             "policy_version": policy.get("policy_version"),
             "local_ui_write_guard_status": local_write_guard_status,
+            "control_status": control_summary.get("status"),
+            "control_mode": control_summary.get("mode"),
+            "control_selected_gate": control_summary.get("selected_gate"),
         },
         "gates": gate_checks,
+        "control_summary": control_summary,
         "policy_decisions": policy_decisions,
         "handoff_snapshot": {
             "operation": handoff.get("operation"),
             "status": handoff.get("status"),
             "loop_health": loop_health,
             "advance_loop": advance_loop,
+            "control_summary": control_summary,
             "receipt_coverage": receipt_coverage,
             "token_omitted": True,
         },

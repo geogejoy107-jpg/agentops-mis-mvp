@@ -1887,10 +1887,16 @@ export function AIEmployees() {
   const advanceLoopServerShell = Boolean(advanceLoopPolicyRaw.server_executes_shell);
   const advanceLoopPolicyId = String(advanceLoopPolicyRaw.policy_id || "advance_loop_local_bounded_v1");
   const advanceLoopPolicyVersion = String(advanceLoopPolicyRaw.policy_version || "unknown");
+  const handoffControlSummary = operatorHandoff?.control_summary;
+  const handoffControlStep = handoffControlSummary?.recommended_step || {};
+  const handoffControlCommand = String(handoffControlSummary?.next_command || handoffControlStep.command || "");
+  const handoffControlVerifyCommand = String(handoffControlSummary?.verify_command || handoffControlStep.verify_command || "");
+  const handoffControlReceiptCommand = String(handoffControlSummary?.receipt_command || handoffControlStep.receipt_command || "");
   const operatorHandoffSources = operatorHandoff?.sources || {};
   const operatorHandoffJson = operatorHandoff ? JSON.stringify({
     summary: operatorHandoff.summary,
     work_order: operatorHandoff.work_order,
+    control_summary: operatorHandoff.control_summary,
     receipt_state: operatorHandoff.receipt_state,
     review_state: operatorHandoff.review_state,
     loop_health: operatorHandoff.loop_health,
@@ -4261,6 +4267,63 @@ export function AIEmployees() {
                   {copiedIntakeCommand === operatorHandoffJson ? copy.copiedCommand : copy.copyHandoffJson}
                 </button>
               </div>
+              {handoffControlSummary && (
+                <div className="mt-3 rounded px-2 py-1.5" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                  <div className="flex flex-col xl:flex-row xl:items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <Activity size={12} style={{ color: "var(--mis-cyan)" }} />
+                        <div className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.loopControlTitle}</div>
+                        <StatusBadge status={handoffControlSummary.status || "unknown"} />
+                        <StatusBadge status={handoffControlSummary.server_executes_shell ? "blocked" : "pass"} label={handoffControlSummary.server_executes_shell ? "server shell" : "copy only"} />
+                      </div>
+                      <div className="text-[9px] mt-0.5 truncate" style={{ color: "var(--mis-muted)" }}>
+                        {copy.recommendedStep}: {String(handoffControlStep.label || handoffControlStep.step_id || handoffControlSummary.selected_gate || "—")} · {copy.controlMode}: {handoffControlSummary.mode || "unknown"}
+                      </div>
+                      {(handoffControlStep.reason || handoffControlSummary.selected_status) && (
+                        <div className="text-[8px] mt-0.5 line-clamp-2" style={{ color: handoffControlSummary.requires_human ? "var(--mis-warning)" : "var(--mis-dim)" }}>
+                          {handoffControlSummary.requires_human ? copy.confirmRequired : copy.readyReason}: {String(handoffControlStep.reason || handoffControlSummary.selected_status)}
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-1 shrink-0">
+                      {handoffControlCommand && (
+                        <button
+                          onClick={() => void copyIntakeCommand(handoffControlCommand)}
+                          className="inline-flex items-center gap-1 text-[8px] px-1.5 py-0.5 rounded max-w-full"
+                          style={{ color: handoffControlSummary.requires_human ? "var(--mis-warning)" : "var(--mis-cyan)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}
+                          title={handoffControlCommand}
+                        >
+                          <Copy size={8} />
+                          <span className="truncate max-w-[96px]">{copiedIntakeCommand === handoffControlCommand ? copy.copiedCommand : copy.nextSafeCommand}</span>
+                        </button>
+                      )}
+                      {handoffControlVerifyCommand && (
+                        <button
+                          onClick={() => void copyIntakeCommand(handoffControlVerifyCommand)}
+                          className="inline-flex items-center gap-1 text-[8px] px-1.5 py-0.5 rounded max-w-full"
+                          style={{ color: "var(--mis-success)", background: "rgba(45,212,191,0.08)", border: "1px solid rgba(45,212,191,0.18)" }}
+                          title={handoffControlVerifyCommand}
+                        >
+                          <Copy size={8} />
+                          <span className="truncate max-w-[86px]">{copiedIntakeCommand === handoffControlVerifyCommand ? copy.copiedCommand : copy.verifyAfterAction}</span>
+                        </button>
+                      )}
+                      {handoffControlReceiptCommand && (
+                        <button
+                          onClick={() => void copyIntakeCommand(handoffControlReceiptCommand)}
+                          className="inline-flex items-center gap-1 text-[8px] px-1.5 py-0.5 rounded max-w-full"
+                          style={{ color: "var(--mis-warning)", background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.18)" }}
+                          title={handoffControlReceiptCommand}
+                        >
+                          <Copy size={8} />
+                          <span className="truncate max-w-[86px]">{copiedIntakeCommand === handoffControlReceiptCommand ? copy.copiedCommand : copy.copyVerifyReceiptCommand}</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3">
                 {[
                   { label: copy.loopAuditTitle, value: operatorHandoffSummary?.loop_status || "unknown", status: operatorHandoffSummary?.loop_status || operatorHandoff.status },

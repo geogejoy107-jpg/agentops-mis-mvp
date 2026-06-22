@@ -1684,6 +1684,25 @@ export interface OperatorHandoffPayload {
     commands: string[];
     token_omitted?: boolean;
   };
+  control_summary?: {
+    operation: string;
+    status: string;
+    mode?: string;
+    loop_id?: string | null;
+    recommended_step?: Record<string, unknown>;
+    next_command?: string | null;
+    verify_command?: string | null;
+    receipt_command?: string | null;
+    requires_human?: boolean;
+    requires_receipt?: boolean;
+    server_executes_shell?: boolean;
+    copy_only?: boolean;
+    step_counts?: Record<string, number>;
+    selected_gate?: string | null;
+    selected_status?: string | null;
+    policy_id?: string;
+    token_omitted?: boolean;
+  };
   receipt_state: {
     coverage?: OperatorActionPlanPayload["receipt_coverage"];
     recent: OperatorActionReceipt[];
@@ -4894,6 +4913,7 @@ export async function loadOperatorHandoff(limit = 12, loopId = ""): Promise<Oper
   const loopRecordRaw = typeof reviewStateRaw.loop_record === "object" && reviewStateRaw.loop_record !== null ? reviewStateRaw.loop_record as Record<string, unknown> : {};
   const loopHealthRaw = typeof raw.loop_health === "object" && raw.loop_health !== null ? raw.loop_health as Record<string, unknown> : {};
   const loopHealthScorePartsRaw = typeof loopHealthRaw.score_parts === "object" && loopHealthRaw.score_parts !== null ? loopHealthRaw.score_parts as Record<string, unknown> : {};
+  const controlRaw = typeof raw.control_summary === "object" && raw.control_summary !== null ? raw.control_summary as Record<string, unknown> : {};
   const authRaw = typeof raw.auth === "object" && raw.auth !== null ? raw.auth as Record<string, unknown> : {};
   const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
   return {
@@ -4968,6 +4988,25 @@ export async function loadOperatorHandoff(limit = 12, loopId = ""): Promise<Oper
       })).filter((item) => item.command),
       commands: asArray<unknown>(workOrderRaw.commands).map(String).filter(Boolean),
       token_omitted: workOrderRaw.token_omitted === undefined ? undefined : boolValue(workOrderRaw.token_omitted),
+    },
+    control_summary: {
+      operation: String(controlRaw.operation || "operator_loop_control_summary"),
+      status: String(controlRaw.status || "unknown"),
+      mode: controlRaw.mode ? String(controlRaw.mode) : undefined,
+      loop_id: controlRaw.loop_id ? String(controlRaw.loop_id) : null,
+      recommended_step: typeof controlRaw.recommended_step === "object" && controlRaw.recommended_step !== null ? controlRaw.recommended_step as Record<string, unknown> : {},
+      next_command: controlRaw.next_command ? String(controlRaw.next_command) : null,
+      verify_command: controlRaw.verify_command ? String(controlRaw.verify_command) : null,
+      receipt_command: controlRaw.receipt_command ? String(controlRaw.receipt_command) : null,
+      requires_human: controlRaw.requires_human === undefined ? undefined : boolValue(controlRaw.requires_human),
+      requires_receipt: controlRaw.requires_receipt === undefined ? undefined : boolValue(controlRaw.requires_receipt),
+      server_executes_shell: controlRaw.server_executes_shell === undefined ? undefined : boolValue(controlRaw.server_executes_shell),
+      copy_only: controlRaw.copy_only === undefined ? undefined : boolValue(controlRaw.copy_only),
+      step_counts: typeof controlRaw.step_counts === "object" && controlRaw.step_counts !== null ? controlRaw.step_counts as Record<string, number> : {},
+      selected_gate: controlRaw.selected_gate ? String(controlRaw.selected_gate) : null,
+      selected_status: controlRaw.selected_status ? String(controlRaw.selected_status) : null,
+      policy_id: controlRaw.policy_id ? String(controlRaw.policy_id) : undefined,
+      token_omitted: controlRaw.token_omitted === undefined ? undefined : boolValue(controlRaw.token_omitted),
     },
     receipt_state: {
       coverage: {

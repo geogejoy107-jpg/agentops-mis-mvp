@@ -275,6 +275,16 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
     require(advance_safety.get("read_only") is True, f"{label} advance loop handoff should be read-only: {advance_safety}", failures)
     require(advance_safety.get("server_shell_execution") is False, f"{label} advance loop should not execute shell from server: {advance_safety}", failures)
     require(advance_loop.get("token_omitted") is True, f"{label} advance loop token omission missing: {advance_loop}", failures)
+    control_summary = payload.get("control_summary") or {}
+    control_step = control_summary.get("recommended_step") or {}
+    require(control_summary.get("operation") == "operator_loop_control_summary", f"{label} loop control summary missing: {control_summary}", failures)
+    require(control_summary.get("status") in {"ready", "attention", "blocked"}, f"{label} loop control status wrong: {control_summary}", failures)
+    require(control_summary.get("copy_only") is True, f"{label} loop control copy-only proof missing: {control_summary}", failures)
+    require(control_summary.get("server_executes_shell") is False, f"{label} loop control server shell boundary missing: {control_summary}", failures)
+    require(control_step.get("step_id") == "handoff_advance_loop", f"{label} loop control recommended step wrong: {control_step}", failures)
+    require(str(control_summary.get("next_command") or "").startswith("agentops operator advance-loop"), f"{label} loop control next command missing: {control_summary}", failures)
+    require((control_step.get("control_mode") or control_summary.get("mode")) in {"read_only_copy", "human_confirm_required"}, f"{label} loop control mode wrong: {control_summary}", failures)
+    require(control_summary.get("token_omitted") is True and control_step.get("token_omitted") is True, f"{label} loop control token omission missing: {control_summary}", failures)
     receipt_failure_work_order = work_order.get("receipt_failure_memory") or {}
     require(receipt_failure_work_order.get("operation") == "receipt_failure_memory_work_order", f"{label} receipt failure memory work order missing: {receipt_failure_work_order}", failures)
     require(receipt_failure_work_order.get("status") in {"attention", "empty"}, f"{label} receipt failure memory work order status wrong: {receipt_failure_work_order}", failures)

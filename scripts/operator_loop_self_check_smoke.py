@@ -141,7 +141,7 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
     require(safety.get("live_execution_performed") is False, f"{label} live execution flag wrong: {safety}", failures)
     require(safety.get("server_shell_execution") is False, f"{label} server shell flag wrong: {safety}", failures)
     gates = payload.get("gates") or {}
-    for gate_id in ["policy_contract", "advance_boundary", "receipt_coverage", "receipt_evaluations", "evidence_remediation_workflow", "audit_ledger", "local_ui_write_guard", "handoff_health"]:
+    for gate_id in ["policy_contract", "advance_boundary", "receipt_coverage", "receipt_evaluations", "evidence_remediation_workflow", "audit_ledger", "local_ui_write_guard", "handoff_health", "loop_control"]:
         require(gate_id in gates, f"{label} missing gate {gate_id}: {gates}", failures)
     policy_gate = gates.get("policy_contract") or {}
     require(policy_gate.get("status") == "pass", f"{label} policy gate should pass: {policy_gate}", failures)
@@ -165,11 +165,22 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
     summary = payload.get("summary") or {}
     require(summary.get("local_ui_write_guard_status") == write_guard.get("gate_status"), f"{label} write guard summary mismatch: {summary} {write_guard}", failures)
     require(summary.get("evidence_remediation_workflow_status") == remediation_workflow.get("status"), f"{label} remediation workflow summary mismatch: {summary} {remediation_workflow}", failures)
+    loop_control = gates.get("loop_control") or {}
+    control_summary = payload.get("control_summary") or {}
+    recommended_step = control_summary.get("recommended_step") or {}
+    require(loop_control.get("status") in {"pass", "attention", "blocked"}, f"{label} loop control gate status wrong: {loop_control}", failures)
+    require(control_summary.get("operation") == "operator_loop_control_summary", f"{label} loop control summary missing: {control_summary}", failures)
+    require(control_summary.get("copy_only") is True, f"{label} loop control copy-only proof missing: {control_summary}", failures)
+    require(control_summary.get("server_executes_shell") is False, f"{label} loop control server shell boundary missing: {control_summary}", failures)
+    require(recommended_step.get("step_id") == "handoff_advance_loop", f"{label} loop control recommended step wrong: {recommended_step}", failures)
+    require(summary.get("control_status") == control_summary.get("status"), f"{label} loop control summary mismatch: {summary} {control_summary}", failures)
+    require((recommended_step.get("control_mode") or control_summary.get("mode")) in {"read_only_copy", "human_confirm_required"}, f"{label} loop control mode wrong: {control_summary}", failures)
     decisions = payload.get("policy_decisions") or []
     denied = next((item for item in decisions if item.get("id") == "deny_memory_approval"), {})
     require(((denied.get("decision") or {}).get("allowed") is False), f"{label} denied decision missing: {decisions}", failures)
     handoff_snapshot = payload.get("handoff_snapshot") or {}
     require((handoff_snapshot.get("loop_health") or {}).get("operation") == "operator_loop_health", f"{label} loop health snapshot missing: {handoff_snapshot}", failures)
+    require((handoff_snapshot.get("control_summary") or {}).get("operation") == "operator_loop_control_summary", f"{label} handoff control snapshot missing: {handoff_snapshot}", failures)
     require(isinstance(payload.get("next_actions") or [], list), f"{label} next actions missing: {payload}", failures)
 
 

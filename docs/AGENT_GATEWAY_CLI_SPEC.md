@@ -387,8 +387,11 @@ without executing commands or mutating audit/runtime ledgers. `work_order` also
 contains `receipt_failure_memory`, a machine-readable preview/create/review
 work order for repeated failed receipt evaluations: preview is read-only, create
 requires explicit `--confirm-create`, and approval/rejection remains a separate
-review-queue step. `loop_health` is
-a read-only score/status snapshot derived from method gates, receipt coverage,
+review-queue step. The payload also includes `control_summary`, the same
+copy-only loop control view consumed by the command center: recommended handoff
+step, next command, verify command, receipt command, control mode,
+human/receipt requirements, selected gate, policy id, and server-shell omission
+proof. `loop_health` is a read-only score/status snapshot derived from method gates, receipt coverage,
 receipt evaluation coverage, receipt-failure memory learning, loop RECORD
 state, auth, and safety; it carries gate summaries, risks, and the next
 recommended action. Failed receipt evaluations block loop health because they
@@ -411,9 +414,11 @@ Maps to `GET /api/operator/loop-self-check`. This is the pre-advance read-only
 check for Hermes, OpenClaw, Codex, or a remote Agent. It reuses the handoff
 snapshot and reports gates for the bounded runner policy, local CLI/server-shell
 boundary, receipt coverage, receipt evaluations, audit ledger proof, and handoff
-health. It returns policy decisions such as "memory approve is denied" and the
-selected loop action's allowlist decision, but it never executes commands,
-starts workers, approves memory, or mutates ledgers.
+health. It also returns the handoff `control_summary` plus a `loop_control`
+gate so agents can verify the recommended next command before copying it. It
+returns policy decisions such as "memory approve is denied" and the selected
+loop action's allowlist decision, but it never executes commands, starts
+workers, approves memory, or mutates ledgers.
 
 ### `agentops operator health`
 
