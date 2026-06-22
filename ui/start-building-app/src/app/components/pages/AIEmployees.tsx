@@ -29,6 +29,7 @@ import {
   loadOperatorEvidenceReport,
   loadOperatorHandoff,
   loadOperatorHealth,
+  loadOperatorLoopLaunchPacket,
   loadOperatorLoopAudit,
   loadOperatorLoopSelfCheck,
   loadReviewQueue,
@@ -74,6 +75,7 @@ import {
   type OperatorEvidenceReportPayload,
   type OperatorHandoffPayload,
   type OperatorHealthPayload,
+  type OperatorLoopLaunchPacketPayload,
   type OperatorLoopAuditPayload,
   type OperatorLoopSelfCheckPayload,
   type ReviewQueuePayload,
@@ -179,6 +181,7 @@ const AI_EMPLOYEES_PANEL_LOADERS: AIEmployeesPanelLoader[] = [
   { id: "operator_action_plan", load: async () => ({ operatorActionPlan: await loadOperatorActionPlan(12) }) },
   { id: "operator_action_receipts", load: async () => ({ operatorActionReceipts: await loadOperatorActionReceipts(8) }) },
   { id: "operator_evidence_report", load: async () => ({ operatorEvidenceReport: await loadOperatorEvidenceReport(8) }) },
+  { id: "operator_loop_launch_packet", load: async () => ({ operatorLoopLaunchPacket: await loadOperatorLoopLaunchPacket(8) }) },
   { id: "security_readiness", load: async () => ({ securityReadiness: await loadSecurityProductionReadiness() }) },
   { id: "integration_inbox", load: async (context) => ({ integrationInbox: await loadIntegrationInbox({ bucket: String(context.integrationInboxBucket || "all"), limit: 20 }) }) },
   { id: "commander_work_packages", load: async () => ({ commanderWorkPackages: await loadCommanderWorkPackages({ limit: 8 }) }) },
@@ -482,6 +485,7 @@ export function AIEmployees() {
   const operatorActionPlan = data?.operatorActionPlan as OperatorActionPlanPayload | undefined;
   const operatorActionReceipts = data?.operatorActionReceipts as OperatorActionReceiptsPayload | undefined;
   const operatorEvidenceReport = data?.operatorEvidenceReport as OperatorEvidenceReportPayload | undefined;
+  const operatorLoopLaunchPacket = data?.operatorLoopLaunchPacket as OperatorLoopLaunchPacketPayload | undefined;
   const operatorLoopAudit = data?.operatorLoopAudit as OperatorLoopAuditPayload | undefined;
   const operatorHandoff = data?.operatorHandoff as OperatorHandoffPayload | undefined;
   const operatorHealth = data?.operatorHealth as OperatorHealthPayload | undefined;
@@ -497,6 +501,28 @@ export function AIEmployees() {
     .filter(item => item.status !== "ready")
     .concat(operatorEvidenceRuns.filter(item => item.status === "ready"))
     .slice(0, 3);
+  const loopLaunchEvaluationContract = operatorLoopLaunchPacket?.evaluation_contract;
+  const loopLaunchAuditContract = operatorLoopLaunchPacket?.audit_contract;
+  const loopLaunchExitCriteria = loopLaunchEvaluationContract?.minimum_exit_criteria || [];
+  const loopLaunchRequiredLedgers = loopLaunchEvaluationContract?.required_ledgers || [];
+  const loopLaunchRequiredCommands = loopLaunchEvaluationContract?.required_commands || [];
+  const loopLaunchRecordCommands = loopLaunchAuditContract?.record_commands || [];
+  const loopLaunchBoundedRunner = loopLaunchAuditContract?.bounded_runner || {};
+  const loopLaunchReceiptEvaluation = loopLaunchEvaluationContract?.receipt_evaluation || {};
+  const loopLaunchCommands = operatorLoopLaunchPacket?.commands || [];
+  const loopLaunchPacketJson = operatorLoopLaunchPacket ? JSON.stringify({
+    status: operatorLoopLaunchPacket.status,
+    method: operatorLoopLaunchPacket.method,
+    task_id: operatorLoopLaunchPacket.task_id,
+    agent_id: operatorLoopLaunchPacket.agent_id,
+    summary: operatorLoopLaunchPacket.summary,
+    agent_plan_draft: operatorLoopLaunchPacket.agent_plan_draft,
+    evaluation_contract: operatorLoopLaunchPacket.evaluation_contract,
+    audit_contract: operatorLoopLaunchPacket.audit_contract,
+    commands: operatorLoopLaunchPacket.commands,
+    safety: operatorLoopLaunchPacket.safety,
+    token_omitted: operatorLoopLaunchPacket.token_omitted,
+  }, null, 2) : "";
   const taskIntakeChecklist = operatorActionPlan?.task_intake;
   const taskIntakeSummary = taskIntakeChecklist?.summary;
   const taskIntakeItems = taskIntakeChecklist?.items || [];
@@ -628,6 +654,15 @@ export function AIEmployees() {
       loopChainTitle: "Latest loop chain",
       loopWorkOrderTitle: "Loop work order",
       loopWorkOrderSummary: "Copy the next gate action, verify command, and audited receipt commands from the loop action package.",
+      loopLaunchContractTitle: "Loop launch contract",
+      loopLaunchContractSummary: "Machine-readable launch packet for the next agent: method, evaluation exit criteria, audit contract, ledgers, and safe commands.",
+      evaluationContract: "Evaluation contract",
+      auditContract: "Audit contract",
+      exitCriteria: "Exit criteria",
+      requiredLedgers: "Required ledgers",
+      tamperChain: "Tamper chain",
+      rawContentPolicy: "Raw-content policy",
+      copyLaunchPacketJson: "Copy launch packet",
       operatorHandoffTitle: "Operator handoff",
       operatorHandoffSummary: "Read-only handoff package for Hermes, OpenClaw, Codex, or a human operator: loop work order, receipts, review state, and source proof.",
       handoffCommands: "Handoff commands",
@@ -1091,6 +1126,15 @@ export function AIEmployees() {
       loopChainTitle: "最新 Loop 链路",
       loopWorkOrderTitle: "Loop 执行包",
       loopWorkOrderSummary: "从 loop action package 复制下一步 Gate 动作、验收命令和审计收据命令。",
+      loopLaunchContractTitle: "Loop 启动契约",
+      loopLaunchContractSummary: "给下一位 Agent 的机器可读启动包：方法、评估退出标准、审计契约、账本和安全命令。",
+      evaluationContract: "评估契约",
+      auditContract: "审计契约",
+      exitCriteria: "退出标准",
+      requiredLedgers: "必需账本",
+      tamperChain: "防篡改链",
+      rawContentPolicy: "原始内容规则",
+      copyLaunchPacketJson: "复制启动包",
       operatorHandoffTitle: "Operator 交接包",
       operatorHandoffSummary: "给 Hermes、OpenClaw、Codex 或人工 operator 的只读交接包：Loop 执行包、收据、评审状态和来源证明。",
       handoffCommands: "交接命令",
@@ -3825,6 +3869,100 @@ export function AIEmployees() {
                       </div>
                     );
                   })}
+                </div>
+              </div>
+            </div>
+          )}
+          {operatorLoopLaunchPacket && (
+            <div className="mt-3 rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+              <div className="flex flex-col xl:flex-row xl:items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <Terminal size={12} style={{ color: "var(--mis-cyan)" }} />
+                    <div className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.loopLaunchContractTitle}</div>
+                    <StatusBadge status={operatorLoopLaunchPacket.status || "unknown"} />
+                    {panelStatusBadge("operator_loop_launch_packet")}
+                    {panelRefreshButton("operator_loop_launch_packet")}
+                    {panelDiagnosticsButton("operator_loop_launch_packet")}
+                    {panelReceiptButton("operator_loop_launch_packet")}
+                    <StatusBadge status={operatorLoopLaunchPacket.safety.read_only && !operatorLoopLaunchPacket.safety.ledger_mutated ? "pass" : "attention"} label={operatorLoopLaunchPacket.safety.read_only ? copy.readOnlyProof : copy.statusAttention} />
+                  </div>
+                  <div className="text-[9px] mt-0.5 max-w-4xl" style={{ color: "var(--mis-muted)" }}>{copy.loopLaunchContractSummary}</div>
+                  {panelEvidenceLine("operator_loop_launch_packet")}
+                  <div className="text-[9px] mt-0.5 truncate" style={{ color: "var(--mis-dim)" }}>
+                    {copy.methodBlock}: {operatorLoopLaunchPacket.method}
+                  </div>
+                </div>
+                <button
+                  onClick={() => void copyIntakeCommand(loopLaunchPacketJson)}
+                  className="inline-flex items-center gap-1 text-[9px] px-2 py-1 rounded shrink-0"
+                  style={{ color: "var(--mis-cyan)", background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}
+                  title={operatorLoopLaunchPacket.contract || copy.loopLaunchContractTitle}
+                >
+                  <Copy size={10} />
+                  {copiedIntakeCommand === loopLaunchPacketJson ? copy.copiedCommand : copy.copyLaunchPacketJson}
+                </button>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3">
+                {[
+                  { label: copy.evaluationContract, value: loopLaunchEvaluationContract?.status || "unknown", status: loopLaunchEvaluationContract?.status || "unknown" },
+                  { label: copy.auditContract, value: loopLaunchAuditContract?.operation || "unknown", status: loopLaunchAuditContract?.record_required ? "pass" : "attention" },
+                  { label: copy.requiredLedgers, value: loopLaunchRequiredLedgers.length, status: loopLaunchRequiredLedgers.length >= 6 ? "pass" : "attention" },
+                  { label: copy.receiptEvaluations, value: `${Number(loopLaunchReceiptEvaluation.evaluated ?? 0)}/${Number(loopLaunchReceiptEvaluation.required ?? 0)}`, status: String(loopLaunchReceiptEvaluation.status || "unknown") },
+                  { label: copy.tamperChain, value: loopLaunchAuditContract?.tamper_chain_required ? "required" : "missing", status: loopLaunchAuditContract?.tamper_chain_required ? "pass" : "blocked" },
+                  { label: copy.agentPlan, value: operatorLoopLaunchPacket.task_id || "—", status: operatorLoopLaunchPacket.task_id ? "attention" : "unknown" },
+                  { label: copy.handoffCommands, value: loopLaunchCommands.length, status: loopLaunchCommands.length > 0 ? "attention" : "unknown" },
+                  { label: copy.advanceLoopPolicyLabel, value: String(loopLaunchBoundedRunner.policy_id || "advance_loop_local_bounded_v1"), status: loopLaunchBoundedRunner.server_executes_shell ? "blocked" : "pass" },
+                ].map((item) => (
+                  <div key={item.label} className="rounded px-2 py-1" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                    <div className="text-[9px]" style={{ color: "var(--mis-muted)" }}>{item.label}</div>
+                    <div className="flex items-center justify-between gap-2 mt-0.5">
+                      <div className="text-[10px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{item.value}</div>
+                      <StatusBadge status={item.status} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="grid grid-cols-1 xl:grid-cols-3 gap-2 mt-2">
+                <div className="rounded px-2 py-1.5" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                  <div className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.exitCriteria}</div>
+                  <div className="space-y-1 mt-1">
+                    {loopLaunchExitCriteria.slice(0, 4).map((criterion, index) => (
+                      <div key={`${criterion}-${index}`} className="text-[9px] leading-snug" style={{ color: "var(--mis-muted)" }}>
+                        {index + 1}. {criterion}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="rounded px-2 py-1.5" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                  <div className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.requiredLedgers}</div>
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {loopLaunchRequiredLedgers.slice(0, 8).map((ledger) => (
+                      <span key={ledger} className="text-[8px] px-1.5 py-0.5 rounded" style={{ color: "var(--mis-cyan)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                        {ledger}
+                      </span>
+                    ))}
+                  </div>
+                  <div className="text-[9px] mt-2 line-clamp-2" style={{ color: "var(--mis-dim)" }}>
+                    {copy.rawContentPolicy}: {loopLaunchAuditContract?.raw_content_policy || "—"}
+                  </div>
+                </div>
+                <div className="rounded px-2 py-1.5" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                  <div className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.handoffCommands}</div>
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {[...loopLaunchRequiredCommands.slice(0, 2), ...loopLaunchRecordCommands.slice(0, 2)].filter(Boolean).map((command) => (
+                      <button
+                        key={command}
+                        onClick={() => void copyIntakeCommand(command)}
+                        className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded max-w-full"
+                        style={{ color: "var(--mis-cyan)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}
+                        title={command}
+                      >
+                        <Copy size={9} />
+                        <span className="truncate max-w-[150px]">{copiedIntakeCommand === command ? copy.copiedCommand : command}</span>
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
             </div>

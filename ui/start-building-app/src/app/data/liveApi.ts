@@ -1752,6 +1752,53 @@ export interface OperatorLoopSelfCheckPayload {
   live_execution_performed?: boolean;
 }
 
+export interface OperatorLoopLaunchPacketPayload {
+  provider: string;
+  operation: string;
+  status: string;
+  workspace_id: string;
+  task_id?: string | null;
+  agent_id?: string | null;
+  method: string;
+  summary: Record<string, number | string | boolean | null | undefined>;
+  launch_sequence: Record<string, unknown>[];
+  agent_plan_draft: Record<string, unknown>;
+  evaluation_contract: {
+    operation: string;
+    status: string;
+    score?: number | null;
+    minimum_exit_criteria: string[];
+    required_commands: string[];
+    required_ledgers: string[];
+    receipt_evaluation: Record<string, unknown>;
+    token_omitted?: boolean;
+  };
+  audit_contract: {
+    operation: string;
+    method: string;
+    tamper_chain_required: boolean;
+    raw_content_policy?: string;
+    record_required: boolean;
+    record_commands: string[];
+    evidence_report?: Record<string, unknown>;
+    bounded_runner?: Record<string, unknown>;
+    token_omitted?: boolean;
+  };
+  commands: string[];
+  sources?: Record<string, unknown>;
+  contract?: string;
+  safety: {
+    read_only: boolean;
+    ledger_mutated: boolean;
+    live_execution_performed: boolean;
+    raw_prompt_omitted: boolean;
+    raw_response_omitted: boolean;
+    token_omitted: boolean;
+  };
+  token_omitted?: boolean;
+  live_execution_performed?: boolean;
+}
+
 export interface OperatorHealthComponent {
   id: string;
   label: string;
@@ -5001,6 +5048,101 @@ export async function loadOperatorLoopSelfCheck(limit = 12, loopId = ""): Promis
       ledger_mutated: boolValue(safetyRaw.ledger_mutated),
       live_execution_performed: boolValue(safetyRaw.live_execution_performed),
       server_shell_execution: boolValue(safetyRaw.server_shell_execution),
+      raw_prompt_omitted: boolValue(safetyRaw.raw_prompt_omitted),
+      raw_response_omitted: boolValue(safetyRaw.raw_response_omitted),
+      token_omitted: boolValue(safetyRaw.token_omitted),
+    },
+    token_omitted: raw.token_omitted === undefined ? undefined : boolValue(raw.token_omitted),
+    live_execution_performed: raw.live_execution_performed === undefined ? undefined : boolValue(raw.live_execution_performed),
+  };
+}
+
+export async function loadOperatorLoopLaunchPacket(limit = 8, query = "Agent Work Method Block"): Promise<OperatorLoopLaunchPacketPayload> {
+  const params = new URLSearchParams({ limit: String(limit), q: query });
+  const raw = await optionalApiJson<Record<string, unknown>>(`/operator/loop-launch-packet?${params.toString()}`, {
+    provider: "agentops-operator",
+    operation: "operator_loop_launch_packet",
+    status: "unavailable",
+    workspace_id: "local-demo",
+    task_id: null,
+    agent_id: null,
+    method: "READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD",
+    summary: {},
+    launch_sequence: [],
+    agent_plan_draft: {},
+    evaluation_contract: {
+      operation: "loop_evaluation_contract",
+      status: "unknown",
+      minimum_exit_criteria: [],
+      required_commands: [],
+      required_ledgers: [],
+      receipt_evaluation: {},
+      token_omitted: true,
+    },
+    audit_contract: {
+      operation: "loop_audit_contract",
+      method: "READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD",
+      tamper_chain_required: true,
+      record_required: true,
+      record_commands: [],
+      token_omitted: true,
+    },
+    commands: [],
+    sources: {},
+    safety: {
+      read_only: true,
+      ledger_mutated: false,
+      live_execution_performed: false,
+      raw_prompt_omitted: true,
+      raw_response_omitted: true,
+      token_omitted: true,
+    },
+    token_omitted: true,
+    live_execution_performed: false,
+  });
+  const summaryRaw = typeof raw.summary === "object" && raw.summary !== null ? raw.summary as Record<string, unknown> : {};
+  const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
+  const evaluationRaw = typeof raw.evaluation_contract === "object" && raw.evaluation_contract !== null ? raw.evaluation_contract as Record<string, unknown> : {};
+  const auditRaw = typeof raw.audit_contract === "object" && raw.audit_contract !== null ? raw.audit_contract as Record<string, unknown> : {};
+  return {
+    provider: String(raw.provider || "agentops-operator"),
+    operation: String(raw.operation || "operator_loop_launch_packet"),
+    status: String(raw.status || "unknown"),
+    workspace_id: String(raw.workspace_id || "local-demo"),
+    task_id: raw.task_id ? String(raw.task_id) : null,
+    agent_id: raw.agent_id ? String(raw.agent_id) : null,
+    method: String(raw.method || "READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD"),
+    summary: summaryRaw as Record<string, number | string | boolean | null | undefined>,
+    launch_sequence: asArray<Record<string, unknown>>(raw.launch_sequence),
+    agent_plan_draft: typeof raw.agent_plan_draft === "object" && raw.agent_plan_draft !== null ? raw.agent_plan_draft as Record<string, unknown> : {},
+    evaluation_contract: {
+      operation: String(evaluationRaw.operation || "loop_evaluation_contract"),
+      status: String(evaluationRaw.status || "unknown"),
+      score: evaluationRaw.score === undefined || evaluationRaw.score === null ? null : numberValue(evaluationRaw.score, 0),
+      minimum_exit_criteria: asArray<unknown>(evaluationRaw.minimum_exit_criteria).map(String).filter(Boolean),
+      required_commands: asArray<unknown>(evaluationRaw.required_commands).map(String).filter(Boolean),
+      required_ledgers: asArray<unknown>(evaluationRaw.required_ledgers).map(String).filter(Boolean),
+      receipt_evaluation: typeof evaluationRaw.receipt_evaluation === "object" && evaluationRaw.receipt_evaluation !== null ? evaluationRaw.receipt_evaluation as Record<string, unknown> : {},
+      token_omitted: evaluationRaw.token_omitted === undefined ? undefined : boolValue(evaluationRaw.token_omitted),
+    },
+    audit_contract: {
+      operation: String(auditRaw.operation || "loop_audit_contract"),
+      method: String(auditRaw.method || raw.method || "READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD"),
+      tamper_chain_required: boolValue(auditRaw.tamper_chain_required),
+      raw_content_policy: auditRaw.raw_content_policy ? String(auditRaw.raw_content_policy) : undefined,
+      record_required: boolValue(auditRaw.record_required),
+      record_commands: asArray<unknown>(auditRaw.record_commands).map(String).filter(Boolean),
+      evidence_report: typeof auditRaw.evidence_report === "object" && auditRaw.evidence_report !== null ? auditRaw.evidence_report as Record<string, unknown> : undefined,
+      bounded_runner: typeof auditRaw.bounded_runner === "object" && auditRaw.bounded_runner !== null ? auditRaw.bounded_runner as Record<string, unknown> : undefined,
+      token_omitted: auditRaw.token_omitted === undefined ? undefined : boolValue(auditRaw.token_omitted),
+    },
+    commands: asArray<unknown>(raw.commands).map(String).filter(Boolean),
+    sources: typeof raw.sources === "object" && raw.sources !== null ? raw.sources as Record<string, unknown> : undefined,
+    contract: raw.contract ? String(raw.contract) : undefined,
+    safety: {
+      read_only: boolValue(safetyRaw.read_only),
+      ledger_mutated: boolValue(safetyRaw.ledger_mutated),
+      live_execution_performed: boolValue(safetyRaw.live_execution_performed),
       raw_prompt_omitted: boolValue(safetyRaw.raw_prompt_omitted),
       raw_response_omitted: boolValue(safetyRaw.raw_response_omitted),
       token_omitted: boolValue(safetyRaw.token_omitted),
