@@ -10,6 +10,9 @@ import type {
   MemorySummary,
   PlanEvidenceVerifyPayload,
   RunGraphPayload,
+  RunDetailPayload,
+  RunDetailSnapshot,
+  TaskDetailPayload,
 } from "./mis";
 
 const TARGET_BASE = process.env.AGENTOPS_API_BASE || "http://127.0.0.1:8765/api";
@@ -97,5 +100,25 @@ export async function loadServerEvidenceDrilldown(manifestId: string): Promise<S
     return { data: { manifest, plan, runGraph }, error: null };
   } catch (err) {
     return { data: { manifest: null, plan: null, runGraph: null }, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export async function loadServerTaskDetail(taskId: string): Promise<ServerLoadResult<TaskDetailPayload | null>> {
+  try {
+    return { data: await serverMisJson<TaskDetailPayload>(`/tasks/${encodeURIComponent(taskId)}`), error: null };
+  } catch (err) {
+    return { data: null, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export async function loadServerRunDetail(runId: string): Promise<ServerLoadResult<RunDetailSnapshot>> {
+  try {
+    const [detail, graph] = await Promise.all([
+      serverMisJson<RunDetailPayload>(`/runs/${encodeURIComponent(runId)}`),
+      serverMisJson<RunGraphPayload>(`/runs/${encodeURIComponent(runId)}/graph`),
+    ]);
+    return { data: { detail, graph }, error: null };
+  } catch (err) {
+    return { data: { detail: null, graph: null }, error: err instanceof Error ? err.message : String(err) };
   }
 }

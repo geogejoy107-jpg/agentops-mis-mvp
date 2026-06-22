@@ -33,7 +33,9 @@ def main() -> int:
         NEXT_APP / "app" / "workspace" / "dispatch" / "template-run" / "route.ts",
         NEXT_APP / "app" / "workspace" / "evidence" / "[manifestId]" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "tasks" / "page.tsx",
+        NEXT_APP / "app" / "workspace" / "tasks" / "[taskId]" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "runs" / "page.tsx",
+        NEXT_APP / "app" / "workspace" / "runs" / "[runId]" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "approvals" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "approvals" / "review" / "route.ts",
         NEXT_APP / "app" / "workspace" / "memory" / "page.tsx",
@@ -47,6 +49,7 @@ def main() -> int:
         NEXT_APP / "src" / "components" / "AgentsParityPage.tsx",
         NEXT_APP / "src" / "components" / "DispatchPage.tsx",
         NEXT_APP / "src" / "components" / "EvidencePage.tsx",
+        NEXT_APP / "src" / "components" / "LedgerDetailPages.tsx",
         NEXT_APP / "src" / "components" / "DeliveryPages.tsx",
         NEXT_APP / "src" / "components" / "LedgerPages.tsx",
         NEXT_APP / "src" / "components" / "GovernancePages.tsx",
@@ -68,6 +71,7 @@ def main() -> int:
     agents_page_text = read_text(NEXT_APP / "src" / "components" / "AgentsParityPage.tsx")
     dispatch_page_text = read_text(NEXT_APP / "src" / "components" / "DispatchPage.tsx")
     evidence_page_text = read_text(NEXT_APP / "src" / "components" / "EvidencePage.tsx")
+    ledger_detail_pages_text = read_text(NEXT_APP / "src" / "components" / "LedgerDetailPages.tsx")
     delivery_pages_text = read_text(NEXT_APP / "src" / "components" / "DeliveryPages.tsx")
     ledger_pages_text = read_text(NEXT_APP / "src" / "components" / "LedgerPages.tsx")
     governance_pages_text = read_text(NEXT_APP / "src" / "components" / "GovernancePages.tsx")
@@ -112,6 +116,9 @@ def main() -> int:
     require("/workspace/evidence/" in delivery_pages_text and "EvidenceDrilldownPage" in evidence_page_text, "customer report page must link to evidence drilldown")
     require("loadServerEvidenceDrilldown" in server_lib_text and "/agent-gateway/plan-evidence-manifests/" in server_lib_text, "evidence drilldown must load Agent Gateway read evidence")
     require("Manifest verification" in evidence_page_text and "Run graph" in evidence_page_text, "evidence drilldown must expose verification and run graph")
+    require("/workspace/runs/" in evidence_page_text and "/workspace/tasks/" in evidence_page_text, "evidence drilldown must link to task/run detail")
+    require("TaskDetailPage" in ledger_detail_pages_text and "RunDetailPage" in ledger_detail_pages_text, "task/run detail pages are missing")
+    require("loadServerTaskDetail" in server_lib_text and "loadServerRunDetail" in server_lib_text, "task/run detail loaders are missing")
     require("TasksParityPage" in ledger_pages_text and "RunsParityPage" in ledger_pages_text, "ledger parity pages are missing")
     require("ApprovalsParityPage" in ledger_pages_text and "decideApproval" in ledger_pages_text, "approval parity page must expose decision action")
     require('action="/workspace/approvals/review"' in ledger_pages_text, "approval parity page must keep the Next form fallback")
@@ -129,7 +136,9 @@ def main() -> int:
             "/workspace/dispatch",
             "/workspace/evidence/[manifestId]",
             "/workspace/tasks",
+            "/workspace/tasks/[taskId]",
             "/workspace/runs",
+            "/workspace/runs/[runId]",
             "/workspace/approvals",
             "/workspace/memory",
             "/workspace/reports",

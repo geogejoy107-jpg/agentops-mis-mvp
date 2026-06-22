@@ -561,6 +561,19 @@ h2 {
   height: 8px;
 }
 
+.jsonPreview {
+  max-height: 320px;
+  margin: 12px 0 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--border);
+  background: #0d1118;
+  padding: 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .adapterGrid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

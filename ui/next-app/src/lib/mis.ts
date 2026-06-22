@@ -410,6 +410,9 @@ export type RunGraphPayload = {
   operation?: string;
   run?: RunSummary;
   task?: TaskSummary;
+  parent?: RunSummary | null;
+  children?: RunSummary[];
+  siblings_by_delegation?: RunSummary[];
   tool_calls?: unknown[];
   evaluations?: unknown[];
   artifacts?: unknown[];
@@ -418,6 +421,40 @@ export type RunGraphPayload = {
   runtime_events?: unknown[];
   token_omitted?: boolean;
   error?: string;
+};
+
+export type TaskDetailPayload = {
+  provider?: string;
+  operation?: string;
+  task?: TaskSummary;
+  runs?: RunSummary[];
+  approvals?: ApprovalSummary[];
+  evaluations?: unknown[];
+  memories?: MemorySummary[];
+  artifacts?: unknown[];
+  token_omitted?: boolean;
+  error?: string;
+};
+
+export type RunDetailPayload = {
+  provider?: string;
+  operation?: string;
+  run?: RunSummary;
+  task?: TaskSummary;
+  tool_calls?: unknown[];
+  approvals?: ApprovalSummary[];
+  evaluations?: unknown[];
+  memories?: MemorySummary[];
+  artifacts?: unknown[];
+  runtime_events?: unknown[];
+  audit_logs?: unknown[];
+  token_omitted?: boolean;
+  error?: string;
+};
+
+export type RunDetailSnapshot = {
+  detail: RunDetailPayload | null;
+  graph: RunGraphPayload | null;
 };
 
 export type EvidenceDrilldownPayload = {

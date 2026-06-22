@@ -35,7 +35,9 @@ memory review actions through the Next.js UI, verifies the state change through
 - App Router route: `/workspace/dispatch`
 - App Router route: `/workspace/evidence/[manifestId]`
 - App Router route: `/workspace/tasks`
+- App Router route: `/workspace/tasks/[taskId]`
 - App Router route: `/workspace/runs`
+- App Router route: `/workspace/runs/[runId]`
 - App Router route: `/workspace/approvals`
 - App Router route: `/workspace/memory`
 - App Router route: `/workspace/audit`
@@ -45,6 +47,7 @@ memory review actions through the Next.js UI, verifies the state change through
 - Live data contract: dashboard metrics, agents, production readiness, worker readiness, tasks, runs, approvals, memories, audit, customer projects, delivery board, customer project report
 - First-paint contract: approval and memory review queues can load on the App Router server path from the configured MIS API
 - Interaction contract: approval review and memory review write through the Next.js UI, with client fetch plus Next form fallback routes, then refresh from the MIS API proxy
+- Ledger detail contract: task/run detail routes are read-only, load through the MIS API proxy, and expose linked evidence rows plus token omission state
 - Customer delivery contract: reports and customer project report pages load from the MIS API, surface Agent Plan / plan-evidence status, link to a read-only evidence drilldown, and report archive writes through a Next form fallback route before refreshing the report artifact evidence
 - Dispatch contract: customer task templates and commercial entitlement gates load from the MIS API; template execution uses a Next form fallback and must surface Free Local `report_templates` blocking without creating a project, then create a ledger-backed project/report artifact when an isolated `pro_workspace` entitlement fixture is active. The entitled path must preserve Agent Gateway Agent Plan and plan-evidence boundaries.
 - Canonical predecessors:

@@ -156,7 +156,8 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   again, verifies a customer project and report artifact are created, opens the
   created project report page, verifies visible Agent Plan / plan-evidence
   status, opens a manifest evidence drilldown page, verifies read-only
-  verification/run-graph evidence, and checks for token-like leakage.
+  verification/run-graph evidence, opens linked task and run detail pages, and
+  checks for token-like leakage.
 
 - First migration artifact:
   - `ui/next-app/app/workspace/page.tsx`
@@ -165,7 +166,9 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   - `ui/next-app/app/workspace/dispatch/template-run/route.ts`
   - `ui/next-app/app/workspace/evidence/[manifestId]/page.tsx`
   - `ui/next-app/app/workspace/tasks/page.tsx`
+  - `ui/next-app/app/workspace/tasks/[taskId]/page.tsx`
   - `ui/next-app/app/workspace/runs/page.tsx`
+  - `ui/next-app/app/workspace/runs/[runId]/page.tsx`
   - `ui/next-app/app/workspace/approvals/page.tsx`
   - `ui/next-app/app/workspace/approvals/review/route.ts`
   - `ui/next-app/app/workspace/memory/page.tsx`
@@ -286,6 +289,9 @@ Initial status:
 - The Next.js evidence drilldown must remain read-only and load through Agent
   Gateway read APIs for plan-evidence manifest verification, Agent Plan
   verification, and run graph readback.
+- Task and run detail drilldowns must remain read-only and expose linked
+  approvals, evaluations, artifacts, audit/runtime evidence, and token-omission
+  proof through the Next.js MIS proxy.
 - Smoke: `python3 scripts/commercial_entitlements_smoke.py`
 
 ### WP2: Production Safety Contract

@@ -91,8 +91,8 @@ export function EvidenceDrilldownPage({
           <div className="proofStrip">
             <span>manifest {manifest?.manifest_id || manifestId}</span>
             <span>plan {manifest?.plan_id || "none"}</span>
-            <span>run {manifest?.run_id || "none"}</span>
-            <span>task {manifest?.task_id || "none"}</span>
+            <span>run {manifest?.run_id ? <Link href={`/workspace/runs/${encodeURIComponent(manifest.run_id)}`}>{manifest.run_id}</Link> : "none"}</span>
+            <span>task {manifest?.task_id ? <Link href={`/workspace/tasks/${encodeURIComponent(manifest.task_id)}`}>{manifest.task_id}</Link> : "none"}</span>
             <span>agent {manifest?.agent_id || "none"}</span>
             <span>policy {manifest?.mismatch_policy || "unknown"}</span>
           </div>
@@ -137,7 +137,7 @@ export function EvidenceDrilldownPage({
           <span>{runGraph.run?.run_id || manifest?.run_id || "run"}</span>
         </div>
         <div className="proofStrip">
-          <span>task {runGraph.task?.task_id || manifest?.task_id || "none"}</span>
+          <span>task {runGraph.task?.task_id ? <Link href={`/workspace/tasks/${encodeURIComponent(runGraph.task.task_id)}`}>{runGraph.task.task_id}</Link> : manifest?.task_id || "none"}</span>
           <span>run status {runGraph.run?.status || "unknown"}</span>
           <span>runtime {runGraph.run?.runtime_type || "unknown"}</span>
           <span>artifact rows {count(runGraph.artifacts)}</span>

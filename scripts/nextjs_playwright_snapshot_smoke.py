@@ -554,6 +554,7 @@ def verify_dispatch_template_run_success(next_base: str, entitlement_path: Path,
     require((execution_evidence.get("verified_plan_evidence_manifests") or 0) >= 1, f"Created project report has no verified plan evidence: {execution_evidence}")
     manifest_ids = execution_evidence.get("verified_manifest_ids") or execution_evidence.get("manifest_ids") or []
     require(bool(manifest_ids), f"Created project report did not expose manifest ids: {execution_evidence}")
+    recent_manifests = execution_evidence.get("recent_manifests") or []
     report_target = next_base.rstrip("/") + f"/workspace/customer-projects/{project_id}/report"
     report_goto = playwright(env, "goto", report_target)
     require(report_goto.returncode == 0, f"Playwright goto failed for created project report: {report_goto.stderr or report_goto.stdout}")
@@ -576,12 +577,38 @@ def verify_dispatch_template_run_success(next_base: str, entitlement_path: Path,
         timeout_sec=12,
     )
     require("pass" in evidence_snapshot and "Token omitted" in evidence_snapshot, "Evidence drilldown did not show verification pass and token omission")
+    manifest_row = next((row for row in recent_manifests if isinstance(row, dict) and str(row.get("manifest_id")) == manifest_id), {})
+    run_id = str(manifest_row.get("run_id") or "")
+    task_id = str(manifest_row.get("task_id") or "")
+    require(bool(run_id and task_id), f"Created report evidence did not expose task/run ids for {manifest_id}: {recent_manifests}")
+    run_goto = playwright(env, "goto", next_base.rstrip("/") + f"/workspace/runs/{run_id}")
+    require(run_goto.returncode == 0, f"Playwright goto failed for run detail: {run_goto.stderr or run_goto.stdout}")
+    run_snapshot = wait_for_snapshot_text(
+        env,
+        f"/workspace/runs/{run_id}",
+        lambda text: "Run Detail" in text and "Tool and evaluation evidence" in text and "Audit and artifact evidence" in text,
+        "run detail page to render evidence sections",
+        timeout_sec=12,
+    )
+    require(run_id in run_snapshot and "Token omitted" in run_snapshot, "Run detail did not show run id and token omission")
+    task_goto = playwright(env, "goto", next_base.rstrip("/") + f"/workspace/tasks/{task_id}")
+    require(task_goto.returncode == 0, f"Playwright goto failed for task detail: {task_goto.stderr or task_goto.stdout}")
+    task_snapshot = wait_for_snapshot_text(
+        env,
+        f"/workspace/tasks/{task_id}",
+        lambda text: "Task Detail" in text and "Approvals" in text and "Artifacts" in text,
+        "task detail page to render approvals and artifacts",
+        timeout_sec=12,
+    )
+    require(task_id in task_snapshot and "Token omitted" in task_snapshot, "Task detail did not show task id and token omission")
     serialized = json.dumps(report, ensure_ascii=False)
     require(not leaked_secret(serialized), "Created project report leaked token-like material")
     return {
         "button_ref": button_ref,
         "created_project_id": project_id,
         "evidence_manifest_id": manifest_id,
+        "evidence_run_id": run_id,
+        "evidence_task_id": task_id,
         "project_count_before": len(before_ids),
         "project_count_after": len(after_ids),
         "artifact_id": report.get("artifact_id"),
