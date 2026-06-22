@@ -15423,6 +15423,74 @@ def operator_loop_audit(conn: sqlite3.Connection, headers, qs=None) -> dict:
     blocked = [step for step in steps if step["status"] == "blocked"]
     attention = [step for step in steps if step["status"] == "attention"]
     status = "blocked" if blocked else "attention" if attention else "ready"
+    verify_audit_command = (
+        f"agentops operator loop-audit --loop-id {shlex.quote(loop_id)} --limit {limit}"
+        if loop_id
+        else f"agentops operator loop-audit --limit {limit}"
+    )
+
+    def loop_action_package_item(step: dict) -> dict:
+        action_command = str(step.get("command") or "").strip()
+        action_signature = stable_id("loop_action_sig", loop_id or "global", step.get("id"), step.get("source"), action_command)[-18:]
+        action_id = stable_id("loop_action", loop_id or "global", step.get("id"), action_command)[-18:]
+
+        def receipt_command(receipt_status: str, *, confirm: bool = False, summary_text: str = "") -> str:
+            parts = [
+                "agentops", "operator", "record-action-receipt",
+                "--action-command", action_command,
+                "--verify-command", verify_audit_command,
+                "--action-id", action_id,
+                "--action-signature", action_signature,
+                "--source", f"loop_audit:{step.get('id') or 'gate'}",
+                "--status", receipt_status,
+            ]
+            if summary_text:
+                parts.extend(["--result-summary", summary_text])
+            if confirm:
+                parts.append("--confirm-record")
+            return " ".join(shlex.quote(str(part)) for part in parts if part is not None)
+
+        return {
+            "package_id": stable_id("loop_action_package", loop_id or "global", step.get("id"), action_command)[-18:],
+            "loop_id": loop_id or None,
+            "gate_id": step.get("id"),
+            "gate_label": step.get("label"),
+            "gate_status": step.get("status"),
+            "source": step.get("source"),
+            "action_id": action_id,
+            "action_signature": action_signature,
+            "action_command": redact_text(action_command, 500),
+            "verify_command": redact_text(verify_audit_command, 500),
+            "receipt_record_command": redact_text(receipt_command("recorded"), 900),
+            "receipt_verify_record_command": redact_text(receipt_command("verified", confirm=True, summary_text=f"Loop gate {step.get('label') or step.get('id')} action and verification completed."), 900),
+            "message": step.get("message"),
+            "evidence": step.get("evidence") or {},
+            "token_omitted": True,
+        }
+
+    package_items = [loop_action_package_item(step) for step in steps if step["status"] != "pass" and step.get("command")]
+    action_package = {
+        "operation": "loop_action_package",
+        "status": "ready" if package_items else "empty",
+        "loop_id": loop_id or None,
+        "method": "READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD",
+        "verify_command": verify_audit_command,
+        "items": package_items[:5],
+        "summary": {
+            "items": len(package_items[:5]),
+            "blocked": len([item for item in package_items if item.get("gate_status") == "blocked"]),
+            "attention": len([item for item in package_items if item.get("gate_status") == "attention"]),
+            "loop_scoped": loop_scoped,
+        },
+        "contract": "read-only loop action package; commands are explicit operator steps and receipt helpers, never auto-executed by loop-audit",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
     return {
         "provider": "agentops-operator",
         "operation": "loop_audit",
@@ -15459,6 +15527,7 @@ def operator_loop_audit(conn: sqlite3.Connection, headers, qs=None) -> dict:
             "audit_logs": audit_rows,
         },
         "steps": steps,
+        "action_package": action_package,
         "next_actions": [step["command"] for step in steps if step["status"] != "pass"][:5] or ["agentops operator action-plan --limit 20"],
         "source_status": source_status,
         "sources": {

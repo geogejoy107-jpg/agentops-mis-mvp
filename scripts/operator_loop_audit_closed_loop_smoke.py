@@ -205,12 +205,21 @@ def main() -> int:
             first_payload = load_json(first_audit.stdout)
             first_record = record_step(first_payload)
             first_loop_record = first_payload.get("loop_record") or {}
+            first_action_package = first_payload.get("action_package") or {}
+            first_package_items = first_action_package.get("items") or []
+            first_record_package = next((item for item in first_package_items if item.get("gate_id") == "record"), {})
             require(first_audit.returncode == 0, f"first loop-audit failed: {first_audit.stderr or first_audit.stdout}", failures)
             require(first_payload.get("status") == "attention", f"loop without memory should need RECORD attention: {first_payload}", failures)
             require(first_record.get("status") == "attention", f"record should wait for loop memory: {first_record}", failures)
             require((first_payload.get("summary") or {}).get("loop_approved_memories") == 0, f"unexpected approved loop memory: {first_payload}", failures)
             require(first_loop_record.get("status") == "missing_memory", f"loop_record should report missing memory before proposal: {first_loop_record}", failures)
             require("--type loop_record" in (first_record.get("command") or ""), f"record command should request loop_record: {first_record}", failures)
+            require(first_action_package.get("operation") == "loop_action_package", f"loop action package missing: {first_action_package}", failures)
+            require(first_record_package.get("gate_status") == "attention", f"record package should be attention: {first_record_package}", failures)
+            require("--type loop_record" in (first_record_package.get("action_command") or ""), f"record package action should propose loop_record: {first_record_package}", failures)
+            require(str(first_record_package.get("verify_command") or "").startswith("agentops operator loop-audit --loop-id"), f"record package verify command wrong: {first_record_package}", failures)
+            require("--confirm-record" not in str(first_record_package.get("receipt_record_command") or ""), f"record package preview receipt should not confirm: {first_record_package}", failures)
+            require("--confirm-record" in str(first_record_package.get("receipt_verify_record_command") or ""), f"record package verify receipt should confirm: {first_record_package}", failures)
 
             agent_id = (ledger.get("registered_agents") or ["agt_loop_supervisor_local_demo_hermes_openclaw"])[0]
             parent_task_id = ledger.get("parent_task_id")

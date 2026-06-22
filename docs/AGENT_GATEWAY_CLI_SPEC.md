@@ -351,6 +351,11 @@ rows, candidate/approved/pending counts, exact approve/reject commands, and a
 safe audit trail for the scoped loop's review entities. This is what the
 `/workspace/agents` Loop Audit panel uses to show both the human review action
 and the ledger proof that closes RECORD.
+It also includes an `action_package` section: each non-passing gate gets a
+copyable `action_command`, a scoped `verify_command`, a preview-only
+`receipt_record_command`, and a confirmed `receipt_verify_record_command`.
+Hermes, OpenClaw, Codex, or a human operator can use this package as the
+repeatable loop work order after each audit pass.
 It recommends explicit next commands but does not create runs, approvals,
 memories, audit rows, or live adapter work.
 

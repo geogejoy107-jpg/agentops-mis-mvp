@@ -152,6 +152,28 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
         require(step.get("token_omitted") is True, f"{label} step token omission missing: {step}", failures)
     require(bool(payload.get("next_actions")), f"{label} next_actions missing", failures)
     require(isinstance(payload.get("source_status"), dict), f"{label} source_status missing", failures)
+    action_package = payload.get("action_package") or {}
+    require(action_package.get("operation") == "loop_action_package", f"{label} action_package operation missing: {action_package}", failures)
+    require(action_package.get("status") in {"ready", "empty"}, f"{label} action_package status wrong: {action_package}", failures)
+    require(action_package.get("token_omitted") is True, f"{label} action_package token omission missing: {action_package}", failures)
+    package_safety = action_package.get("safety") or {}
+    require(package_safety.get("read_only") is True, f"{label} action_package read_only missing: {action_package}", failures)
+    require(package_safety.get("ledger_mutated") is False, f"{label} action_package must not mutate ledger: {action_package}", failures)
+    require(package_safety.get("live_execution_performed") is False, f"{label} action_package must not run live work: {action_package}", failures)
+    require(isinstance((action_package.get("summary") or {}).get("items"), int), f"{label} action_package summary missing: {action_package}", failures)
+    require(isinstance(action_package.get("items") or [], list), f"{label} action_package items missing: {action_package}", failures)
+    for item in action_package.get("items") or []:
+        require(item.get("gate_id") in EXPECTED_STEPS, f"{label} action_package gate_id wrong: {item}", failures)
+        require(item.get("gate_status") in {"attention", "blocked"}, f"{label} action_package gate status wrong: {item}", failures)
+        require(bool(item.get("action_command")), f"{label} action_package action_command missing: {item}", failures)
+        require(str(item.get("verify_command") or "").startswith("agentops operator loop-audit"), f"{label} action_package verify command wrong: {item}", failures)
+        receipt_record = item.get("receipt_record_command") or ""
+        receipt_verify = item.get("receipt_verify_record_command") or ""
+        require(str(receipt_record).startswith("agentops operator record-action-receipt "), f"{label} action_package receipt record command missing: {item}", failures)
+        require("--confirm-record" not in str(receipt_record), f"{label} action_package preview receipt command should not confirm: {item}", failures)
+        require(str(receipt_verify).startswith("agentops operator record-action-receipt "), f"{label} action_package receipt verify command missing: {item}", failures)
+        require("--confirm-record" in str(receipt_verify), f"{label} action_package verify receipt command should confirm: {item}", failures)
+        require(item.get("token_omitted") is True, f"{label} action_package item token omission missing: {item}", failures)
     sources = payload.get("sources") or {}
     for key in ["action_plan", "task_intake", "execution_evidence", "dispatch_evidence", "action_receipts", "loop_readback"]:
         require(key in sources, f"{label} sources.{key} missing: {sources}", failures)
