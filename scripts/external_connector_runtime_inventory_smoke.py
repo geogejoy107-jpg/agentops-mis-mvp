@@ -122,6 +122,18 @@ INVENTORY: list[dict[str, Any]] = [
             ],
         },
     },
+    {
+        "id": "runtime_connector_trust_gate",
+        "description": "Runtime connector trust policy can block live Hermes/OpenClaw execution before adapter invocation.",
+        "guard_script": "scripts/runtime_connector_trust_smoke.py",
+        "source_markers": {
+            "server.py": [
+                "runtime_connector_trust",
+                "runtime_connector_trust_blocked",
+                "workflow.customer_worker_task.trust_blocked",
+            ],
+        },
+    },
 ]
 
 RISK_MARKERS = {
@@ -135,6 +147,7 @@ RISK_MARKERS = {
     "runtime_probe_prepared_action_required",
     "dify_prepared_action_required",
     "notion_prepared_action_required",
+    "runtime_connector_trust_blocked",
     "agent_worker.external_write_prepared_action_required",
     "workflow.customer_worker_task.external_write_prepared_action_required",
 }
