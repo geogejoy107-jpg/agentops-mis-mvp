@@ -47,6 +47,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "clean_machine_rc",
+        "command": "python3 scripts/clean_machine_rc_smoke.py",
+        "summary": "Fresh temporary clone, isolated SQLite state and core RC gate replay.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "release_evidence_packet",
         "command": "python3 scripts/release_evidence_packet_smoke.py",
         "summary": "Runtime RC SHA, CI link/status, canonical test list and release-packet boundaries.",

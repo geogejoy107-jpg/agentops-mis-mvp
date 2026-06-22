@@ -591,7 +591,7 @@ MERGED
 ```text
 [ ] all blocking security/correctness gates pass
 [ ] CI is green on the exact HEAD
-[ ] clean-machine RC passes
+[x] clean-machine RC passes. Guarded by `scripts/clean_machine_rc_smoke.py`, which clones the current repository into a temporary directory, checks out the exact current `HEAD`, rejects tracked runtime/generated files, runs core RC evidence gates with an isolated SQLite database, and relies on the dedicated CI UI build job for frontend build evidence.
 [ ] migration and rollback pass
 [ ] public claims match tested behavior
 [ ] license and provenance are resolved

@@ -45,6 +45,7 @@ REQUIRED_CI_COMMANDS = [
     "git diff --check",
     "python3 scripts/release_branch_control_smoke.py",
     "python3 scripts/release_freeze_protocol_smoke.py",
+    "python3 scripts/clean_machine_rc_smoke.py",
     "python3 scripts/release_evidence_packet_smoke.py",
     "python3 scripts/merge_readiness_status_smoke.py",
     "python3 scripts/secret_scan_smoke.py",
