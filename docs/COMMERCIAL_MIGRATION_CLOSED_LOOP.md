@@ -175,6 +175,7 @@ Must be true:
 
 ```bash
 python3 scripts/ui_api_parity_matrix_smoke.py
+python3 scripts/ui_task_run_route_parity_smoke.py
 python3 scripts/vite_playwright_snapshot_smoke.py
 python3 scripts/nextjs_playwright_snapshot_smoke.py
 ```
@@ -182,6 +183,11 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   The matrix smoke statically compares actual Vite routes, actual Next App
   Router pages/routes, API contracts, evidence commands, and retirement gates so
   page parity cannot drift into undocumented route replacement.
+
+  The task/run route parity smoke starts isolated MIS API and Next.js servers,
+  verifies Next task/run list links to detail routes, compares direct MIS API
+  task/run list/detail/graph read models with the Next `/api/mis/*` proxy, and
+  checks for token-like leakage.
 
   The Vite smoke starts isolated MIS API and Vite dev servers, captures
   canonical Vite route snapshots for workspace, Pixel Office, tasks, agents,
@@ -226,18 +232,23 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   - `ui/next-app/app/workspace/customer-projects/[projectId]/report/archive/route.ts`
   - `ui/next-app/app/workspace/audit/page.tsx`
   - `ui/next-app/app/api/mis/[...path]/route.ts`
+  - `ui/next-app/src/lib/mis.ts`
   - `ui/next-app/src/lib/misServer.ts`
+  - `ui/next-app/src/components/LedgerPages.tsx`
+  - `ui/next-app/src/components/LedgerDetailPages.tsx`
   - `ui/next-app/src/components/CommercialPage.tsx`
   - `ui/next-app/src/components/GovernancePage.tsx`
   - `ui/next-app/src/components/DeploymentPage.tsx`
   - `ui/next-app/src/components/DispatchPage.tsx`
   - `ui/next-app/src/components/DeliveryPages.tsx`
+  - `ui/next-app/src/styles/globals.css`
   - `scripts/nextjs_parity_smoke.py`
   - `scripts/nextjs_playwright_snapshot_smoke.py`
   - `scripts/vite_playwright_snapshot_smoke.py`
   - `docs/UI_API_PARITY_MATRIX.md`
   - `docs/UI_API_PARITY_MATRIX.json`
   - `scripts/ui_api_parity_matrix_smoke.py`
+  - `scripts/ui_task_run_route_parity_smoke.py`
 
 ### Gate 5: BYOC / Enterprise Deployment
 

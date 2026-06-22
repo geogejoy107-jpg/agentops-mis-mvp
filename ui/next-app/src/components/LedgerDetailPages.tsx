@@ -124,6 +124,7 @@ export function RunDetailPage({
   const graph = snapshot.graph;
   const run = detail?.run || graph?.run;
   const task = detail?.task || graph?.task;
+  const taskIdForLink = task?.task_id || run?.task_id;
 
   return (
     <AppFrame>
@@ -134,7 +135,7 @@ export function RunDetailPage({
           <h1>Run Detail</h1>
           <p className="subtle">{runId}</p>
         </div>
-        {task?.task_id ? <Link className="miniButton" href={`/workspace/tasks/${encodeURIComponent(task.task_id)}`}>Open task</Link> : null}
+        {taskIdForLink ? <Link className="miniButton" href={`/workspace/tasks/${encodeURIComponent(taskIdForLink)}`}>Open task</Link> : null}
       </header>
       {error || detail?.error || graph?.error || !run ? <div className="banner error">{error || detail?.error || graph?.error || "Run not found"}</div> : (
         <>

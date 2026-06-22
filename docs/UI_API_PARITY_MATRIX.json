@@ -5,6 +5,9 @@
     "canonical_ui": "vite_react",
     "migration_track": "nextjs_app_router",
     "retirement_default": false,
+    "route_level_contracts": [
+      "ui_task_run_route_parity_v1"
+    ],
     "retirement_rule": "A Vite route can be retired only after the matrix marks its capability covered, Vite and Next browser evidence both pass, API contracts match, and the route has an explicit retirement decision."
   },
   "entries": [
@@ -59,6 +62,7 @@
         "ui/next-app/src/lib/mis.ts"
       ],
       "evidence_commands": [
+        "python3 scripts/ui_task_run_route_parity_smoke.py",
         "python3 scripts/vite_playwright_snapshot_smoke.py",
         "python3 scripts/nextjs_playwright_snapshot_smoke.py",
         "python3 scripts/nextjs_parity_smoke.py"
@@ -133,12 +137,13 @@
         "ui/next-app/src/lib/mis.ts"
       ],
       "evidence_commands": [
+        "python3 scripts/ui_task_run_route_parity_smoke.py",
         "python3 scripts/vite_playwright_snapshot_smoke.py",
         "python3 scripts/nextjs_playwright_snapshot_smoke.py",
         "python3 scripts/nextjs_parity_smoke.py"
       ],
       "retirement_allowed": false,
-      "retirement_gate": "Need visual/action parity review for filters and task links before retirement."
+      "retirement_gate": "Need visual/action parity review for filters before retirement; list-to-detail links now have route-level parity evidence."
     },
     {
       "id": "task_detail",
@@ -164,11 +169,12 @@
         "ui/next-app/src/lib/misServer.ts"
       ],
       "evidence_commands": [
+        "python3 scripts/ui_task_run_route_parity_smoke.py",
         "python3 scripts/nextjs_playwright_snapshot_smoke.py",
         "python3 scripts/nextjs_parity_smoke.py"
       ],
       "retirement_allowed": false,
-      "retirement_gate": "Need Vite detail snapshot or route-level diff before retiring the admin detail route."
+      "retirement_gate": "Task detail API/proxy diff and related-run links have route-level evidence; need Vite detail browser snapshot before retiring the admin detail route."
     },
     {
       "id": "worker_console",
@@ -205,6 +211,7 @@
         "ui/next-app/src/lib/mis.ts"
       ],
       "evidence_commands": [
+        "python3 scripts/ui_task_run_route_parity_smoke.py",
         "python3 scripts/vite_playwright_snapshot_smoke.py",
         "python3 scripts/nextjs_playwright_snapshot_smoke.py",
         "python3 scripts/nextjs_parity_smoke.py"
@@ -264,6 +271,7 @@
         "ui/next-app/src/lib/misServer.ts"
       ],
       "evidence_commands": [
+        "python3 scripts/ui_task_run_route_parity_smoke.py",
         "python3 scripts/vite_playwright_snapshot_smoke.py",
         "python3 scripts/nextjs_playwright_snapshot_smoke.py",
         "python3 scripts/nextjs_parity_smoke.py"
@@ -399,12 +407,13 @@
         "ui/next-app/src/lib/mis.ts"
       ],
       "evidence_commands": [
+        "python3 scripts/ui_task_run_route_parity_smoke.py",
         "python3 scripts/vite_playwright_snapshot_smoke.py",
         "python3 scripts/nextjs_playwright_snapshot_smoke.py",
         "python3 scripts/nextjs_parity_smoke.py"
       ],
       "retirement_allowed": false,
-      "retirement_gate": "Need route naming and navigation migration decision from /admin/runs to /workspace/runs."
+      "retirement_gate": "Run list API/proxy diff and list-to-detail links have route-level evidence; need route naming and navigation migration decision from /admin/runs to /workspace/runs."
     },
     {
       "id": "run_detail",
@@ -431,11 +440,12 @@
         "ui/next-app/src/lib/misServer.ts"
       ],
       "evidence_commands": [
+        "python3 scripts/ui_task_run_route_parity_smoke.py",
         "python3 scripts/nextjs_playwright_snapshot_smoke.py",
         "python3 scripts/nextjs_parity_smoke.py"
       ],
       "retirement_allowed": false,
-      "retirement_gate": "Need Vite detail snapshot or route-level diff before retiring the admin detail route."
+      "retirement_gate": "Run detail API/proxy diff has route-level evidence; need Vite detail browser snapshot and route naming decision before retiring the admin detail route."
     },
     {
       "id": "tool_calls",

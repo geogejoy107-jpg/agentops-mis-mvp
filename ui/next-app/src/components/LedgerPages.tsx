@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { CheckCircle2, Clock, Filter, RefreshCw, ShieldAlert, XCircle } from "lucide-react";
 import {
@@ -98,7 +99,7 @@ export function TasksParityPage() {
 
       <div className="list">
         {filtered.length ? filtered.map((task) => (
-          <article className="row tall" key={task.task_id}>
+          <Link className="row tall linkRow" href={`/workspace/tasks/${encodeURIComponent(task.task_id)}`} key={task.task_id}>
             <div>
               <strong>{task.title}</strong>
               <span>{task.task_id} · owner {task.owner_agent_id || "unassigned"}</span>
@@ -109,7 +110,7 @@ export function TasksParityPage() {
               <span className="metaPill">{task.priority || "medium"}</span>
               <span className="metaPill">{task.risk_level || "risk unknown"}</span>
             </div>
-          </article>
+          </Link>
         )) : (
           <div className="emptyState">
             <Filter size={24} />
@@ -163,7 +164,11 @@ export function RunsParityPage() {
           <tbody>
             {state.data.slice(0, 120).map((run) => (
               <tr key={run.run_id}>
-                <td className="mono">{run.run_id}</td>
+                <td className="mono">
+                  <Link className="tableLink" href={`/workspace/runs/${encodeURIComponent(run.run_id)}`}>
+                    {run.run_id}
+                  </Link>
+                </td>
                 <td><span className={statusClass(run.status)}>{run.status}</span></td>
                 <td className="mono">{run.agent_id || "-"}</td>
                 <td>{run.runtime_type || "-"}</td>

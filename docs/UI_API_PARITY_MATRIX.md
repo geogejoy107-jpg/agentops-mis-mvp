@@ -61,9 +61,12 @@ route retirement:
 - Several `covered` routes still need a route-level Vite/Next data-shape diff
   before a retirement decision. Browser snapshot evidence is necessary but not
   sufficient.
-- Task and run detail pages exist in Next.js, but list-row navigation parity is
-  still incomplete. Vite task/run lists link directly into their detail routes;
-  Next detail pages are currently proven through the evidence drilldown smoke.
+- Task and run list/detail now have first route-level evidence:
+  `python3 scripts/ui_task_run_route_parity_smoke.py`
+  (`ui_task_run_route_parity_v1`) checks Next list links to detail routes and
+  compares direct MIS API task/run list/detail/graph read models with the Next
+  `/api/mis/*` proxy. Retirement still needs Vite detail browser snapshots and
+  a route naming decision for `/admin/*` to `/workspace/*`.
 
 ## Verification Stack
 
@@ -71,6 +74,7 @@ Use this order when advancing Gate 4:
 
 ```bash
 python3 scripts/ui_api_parity_matrix_smoke.py
+python3 scripts/ui_task_run_route_parity_smoke.py
 python3 scripts/nextjs_parity_smoke.py
 cd ui/start-building-app && npm run build
 cd ui/next-app && npm run build

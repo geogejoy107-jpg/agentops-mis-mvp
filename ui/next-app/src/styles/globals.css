@@ -462,6 +462,16 @@ h2 {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
 }
 
+.tableLink {
+  color: #67e8f9;
+  font-weight: 650;
+}
+
+.tableLink:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 .tableEmpty {
   padding: 20px;
 }

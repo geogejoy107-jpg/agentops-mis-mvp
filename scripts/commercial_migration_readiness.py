@@ -190,6 +190,16 @@ def main() -> int:
             "Gate 4 page-by-page Vite/Next route and API parity matrix is present and machine-checkable",
         ),
         check(
+            "ui_task_run_route_parity_surface_exists",
+            file_contains("docs/UI_API_PARITY_MATRIX.json", "ui_task_run_route_parity_v1")
+            and file_contains("docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md", "ui_task_run_route_parity_smoke.py")
+            and file_contains("scripts/ui_task_run_route_parity_smoke.py", "ui_task_run_route_parity_v1")
+            and file_contains("ui/next-app/src/components/LedgerPages.tsx", "/workspace/tasks/${encodeURIComponent(task.task_id)}")
+            and file_contains("ui/next-app/src/components/LedgerPages.tsx", "/workspace/runs/${encodeURIComponent(run.run_id)}")
+            and (ROOT / "scripts" / "ui_task_run_route_parity_smoke.py").exists(),
+            "Gate 4 task/run route-level read-model parity and Next list-to-detail links are present",
+        ),
+        check(
             "postgres_is_gated_not_immediate",
             file_contains("docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md", "Storage Boundary Before Postgres"),
             "Postgres migration is behind a storage-boundary gate",
@@ -300,6 +310,7 @@ def main() -> int:
                 "cd ui/start-building-app && npm run build",
                 "cd ui/next-app && npm run build",
                 "python3 scripts/ui_api_parity_matrix_smoke.py",
+                "python3 scripts/ui_task_run_route_parity_smoke.py",
                 "python3 scripts/vite_playwright_snapshot_smoke.py",
                 "python3 scripts/nextjs_playwright_snapshot_smoke.py",
             ],

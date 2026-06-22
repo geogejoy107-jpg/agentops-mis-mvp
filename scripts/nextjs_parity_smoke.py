@@ -63,6 +63,7 @@ def main() -> int:
         NEXT_APP / "src" / "lib" / "mis.ts",
         NEXT_APP / "src" / "lib" / "misServer.ts",
         NEXT_APP / "src" / "styles" / "globals.css",
+        ROOT / "scripts" / "ui_task_run_route_parity_smoke.py",
     ]
 
     for path in required_files:
@@ -85,9 +86,11 @@ def main() -> int:
     ledger_pages_text = read_text(NEXT_APP / "src" / "components" / "LedgerPages.tsx")
     governance_pages_text = read_text(NEXT_APP / "src" / "components" / "GovernancePages.tsx")
     dashboard_text = read_text(NEXT_APP / "src" / "components" / "WorkspaceDashboard.tsx")
+    globals_text = read_text(NEXT_APP / "src" / "styles" / "globals.css")
     lib_text = read_text(NEXT_APP / "src" / "lib" / "mis.ts")
     server_lib_text = read_text(NEXT_APP / "src" / "lib" / "misServer.ts")
     playwright_smoke_text = read_text(ROOT / "scripts" / "nextjs_playwright_snapshot_smoke.py")
+    route_parity_smoke_text = read_text(ROOT / "scripts" / "ui_task_run_route_parity_smoke.py")
 
     require(dependencies.get("next") == "16.2.9", "Next.js version is not pinned to the selected migration version")
     require(dependencies.get("react") == "19.2.7", "React version is not pinned to the selected migration version")
@@ -145,6 +148,13 @@ def main() -> int:
     require("TaskDetailPage" in ledger_detail_pages_text and "RunDetailPage" in ledger_detail_pages_text, "task/run detail pages are missing")
     require("loadServerTaskDetail" in server_lib_text and "loadServerRunDetail" in server_lib_text, "task/run detail loaders are missing")
     require("TasksParityPage" in ledger_pages_text and "RunsParityPage" in ledger_pages_text, "ledger parity pages are missing")
+    require("next/link" in ledger_pages_text, "task/run list parity pages must use Next links")
+    require("/workspace/tasks/${encodeURIComponent(task.task_id)}" in ledger_pages_text, "task list rows must link to task detail")
+    require("/workspace/runs/${encodeURIComponent(run.run_id)}" in ledger_pages_text, "run list rows must link to run detail")
+    require("taskIdForLink = task?.task_id || run?.task_id" in ledger_detail_pages_text, "run detail must fall back to run.task_id for task links")
+    require("/workspace/tasks/${encodeURIComponent(taskIdForLink)}" in ledger_detail_pages_text, "run detail must link back to task")
+    require(".tableLink" in globals_text, "run list detail links must have stable table styling")
+    require("ui_task_run_route_parity_v1" in route_parity_smoke_text, "task/run route parity smoke contract is missing")
     require("ApprovalsParityPage" in ledger_pages_text and "decideApproval" in ledger_pages_text, "approval parity page must expose decision action")
     require('action="/workspace/approvals/review"' in ledger_pages_text, "approval parity page must keep the Next form fallback")
     require("MemoryParityPage" in governance_pages_text and "decideMemory" in governance_pages_text, "memory parity page must expose review action")
