@@ -25,15 +25,16 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
+PYTHON = sys.executable
 DEFAULT_COMMANDS = [
-    ["python3", "-m", "py_compile", "server.py", "agentops_mis_cli/agentops.py", "agentops_mis_cli/worker.py"],
-    ["python3", "scripts/agentops_pip_install_smoke.py"],
-    ["python3", "scripts/release_freeze_protocol_smoke.py"],
-    ["python3", "scripts/release_evidence_packet_smoke.py"],
-    ["python3", "scripts/license_provenance_smoke.py"],
-    ["python3", "scripts/public_claims_release_gate_smoke.py"],
-    ["python3", "scripts/migration_rollback_smoke.py"],
-    ["python3", "scripts/safe_closure_evidence_packet_smoke.py"],
+    [PYTHON, "-m", "py_compile", "server.py", "agentops_mis_cli/agentops.py", "agentops_mis_cli/worker.py"],
+    [PYTHON, "scripts/agentops_pip_install_smoke.py"],
+    [PYTHON, "scripts/release_freeze_protocol_smoke.py"],
+    [PYTHON, "scripts/release_evidence_packet_smoke.py"],
+    [PYTHON, "scripts/license_provenance_smoke.py"],
+    [PYTHON, "scripts/public_claims_release_gate_smoke.py"],
+    [PYTHON, "scripts/migration_rollback_smoke.py"],
+    [PYTHON, "scripts/safe_closure_evidence_packet_smoke.py"],
 ]
 FORBIDDEN_TRACKED_PATTERNS = [
     re.compile(r"(^|/)(node_modules|\.next|dist|__pycache__|\.pytest_cache|\.agentops_runtime)(/|$)"),
@@ -141,7 +142,7 @@ def run_reset_delivery_board(clone_dir: Path, tmp_path: Path, env: dict[str, str
     server_env["AGENTOPS_DB_PATH"] = str(tmp_path / "clean_machine_reset_delivery.sqlite")
     server_env["AGENTOPS_BASE_URL"] = base_url
     proc = subprocess.Popen(
-        ["python3", "server.py", "--host", "127.0.0.1", "--port", str(port), "--reset", "--serve"],
+        [PYTHON, "server.py", "--host", "127.0.0.1", "--port", str(port), "--reset", "--serve"],
         cwd=clone_dir,
         env=server_env,
         stdout=subprocess.PIPE,
@@ -156,7 +157,7 @@ def run_reset_delivery_board(clone_dir: Path, tmp_path: Path, env: dict[str, str
         ready = wait_ready(base_url, proc)
         if ready:
             delivery = run(
-                ["python3", "scripts/customer_delivery_board_smoke.py", "--base-url", base_url],
+                [PYTHON, "scripts/customer_delivery_board_smoke.py", "--base-url", base_url],
                 cwd=clone_dir,
                 env=server_env,
                 timeout=180,
@@ -246,6 +247,11 @@ def main() -> int:
                 ],
                 "ui_build_evidence": "Covered by dedicated CI UI build job; package-lock presence is verified in the clean clone.",
                 "closure_evidence": "Clean clone runs pip install, agentops/agentops-worker help, release gates, safe closure packet, server reset and delivery board smoke with isolated SQLite state.",
+                "failed_output_tails": [
+                    {"command": item["command"], "output_tail": item.get("output_tail", "")}
+                    for item in command_results
+                    if not item.get("ok")
+                ],
                 "safety": {
                     "temporary_directory": True,
                     "temporary_sqlite": True,

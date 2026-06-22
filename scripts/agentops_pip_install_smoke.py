@@ -9,21 +9,25 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from subprocess import CompletedProcess
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def run(cmd: list[str], *, cwd: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        cmd,
-        cwd=cwd,
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=90,
-        check=False,
-    )
+    try:
+        return subprocess.run(
+            cmd,
+            cwd=cwd,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=90,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        return CompletedProcess(cmd, 127, "", str(exc))
 
 
 def main() -> int:
