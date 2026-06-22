@@ -19,14 +19,17 @@ REQUIRED_ROUTE_PAIRS = {
     "task_detail": {
         "legacy_route": "/admin/tasks/:id",
         "target_route": "/workspace/tasks/:taskId",
+        "next_alias_route": "/admin/tasks/:taskId",
     },
     "run_ledger": {
         "legacy_route": "/admin/runs",
         "target_route": "/workspace/runs",
+        "next_alias_route": "/admin/runs",
     },
     "run_detail": {
         "legacy_route": "/admin/runs/:id",
         "target_route": "/workspace/runs/:runId",
+        "next_alias_route": "/admin/runs/:runId",
     },
 }
 
@@ -99,6 +102,7 @@ def main() -> int:
     require(policy.get("target_namespace") == "/workspace", "target namespace must be /workspace")
     require(policy.get("legacy_owner") == "vite_react", "legacy owner must be Vite React")
     require(policy.get("target_owner") == "nextjs_app_router", "target owner must be Next.js App Router")
+    require(policy.get("alias_contract") == "ui_legacy_route_alias_v1", "route naming decision must bind the legacy alias contract")
     require(policy.get("retirement_allowed_by_default") is False, "route retirement must remain fail-closed by default")
     require(policy.get("redirects_required_before_retirement") is True, "route retirement must require redirects or aliases")
     require(policy.get("no_breaking_deep_links") is True, "route retirement must preserve deep links")
@@ -116,20 +120,27 @@ def main() -> int:
         pair = pairs_by_id[pair_id]
         legacy_route = expected["legacy_route"]
         target_route = expected["target_route"]
+        next_alias_route = expected["next_alias_route"]
         require(pair.get("matrix_entry_id") == pair_id, f"{pair_id} must bind to its matrix entry")
         require(pair.get("legacy_route") == legacy_route, f"{pair_id} legacy route changed")
         require(pair.get("target_route") == target_route, f"{pair_id} target route changed")
+        require(pair.get("next_alias_route") == next_alias_route, f"{pair_id} Next alias route changed")
         require(pair.get("decision") == "next_workspace_route_is_future_canonical", f"{pair_id} decision is not explicit")
         require(pair.get("legacy_route_status") == "keep_until_redirect_and_cutover_evidence", f"{pair_id} legacy route status must preserve compatibility")
+        require(pair.get("next_alias_status") == "redirects_to_target_route", f"{pair_id} Next alias must redirect to target route")
         require(pair.get("target_route_status") == "next_parity_target", f"{pair_id} target route status must identify the Next target")
         require(pair.get("retirement_allowed") is False, f"{pair_id} must not allow route retirement yet")
+        evidence = set(pair.get("cutover_evidence") or [])
+        require("backward_compatible_redirect_or_alias" in evidence, f"{pair_id} must record redirect or alias cutover evidence")
         cutover = set(pair.get("cutover_requires") or [])
         require(REQUIRED_CUTOVER_ITEMS <= cutover, f"{pair_id} is missing cutover requirements: {sorted(REQUIRED_CUTOVER_ITEMS - cutover)}")
         assert_files_exist(pair.get("legacy_files") or [], pair_id, "legacy_files")
+        assert_files_exist(pair.get("alias_files") or [], pair_id, "alias_files")
         assert_files_exist(pair.get("target_files") or [], pair_id, "target_files")
 
         require(legacy_route in vite_routes, f"{pair_id} legacy route is not implemented in Vite App.tsx: {legacy_route}")
         require(target_route in next_routes, f"{pair_id} target route is not implemented in Next app: {target_route}")
+        require(next_alias_route in next_routes, f"{pair_id} Next alias route is not implemented: {next_alias_route}")
 
         matrix_entry = entries.get(pair_id)
         require(isinstance(matrix_entry, dict), f"matrix entry missing for {pair_id}")
@@ -137,18 +148,24 @@ def main() -> int:
         matrix_next_routes = matrix_entry.get("next_routes") or []
         require(legacy_route in matrix_vite_routes, f"{pair_id} matrix vite routes must include naming decision route")
         require(target_route in matrix_next_routes, f"{pair_id} matrix next routes must include naming decision route")
+        require(next_alias_route in matrix_next_routes, f"{pair_id} matrix next routes must include legacy alias route")
         require(matrix_entry.get("retirement_allowed") is False, f"{pair_id} matrix retirement must remain false")
-        evidence = matrix_entry.get("evidence_commands") or []
-        require("python3 scripts/ui_route_naming_decision_smoke.py" in evidence, f"{pair_id} matrix evidence must include route naming decision smoke")
+        matrix_evidence = matrix_entry.get("evidence_commands") or []
+        require("python3 scripts/ui_route_naming_decision_smoke.py" in matrix_evidence, f"{pair_id} matrix evidence must include route naming decision smoke")
+        require("python3 scripts/ui_legacy_route_alias_smoke.py" in matrix_evidence, f"{pair_id} matrix evidence must include legacy route alias smoke")
 
     md_text = read_text(ROOT / "docs" / "UI_ROUTE_NAMING_DECISION.md")
     require(CONTRACT_ID in md_text, "human route naming doc must name the contract")
     for expected in REQUIRED_ROUTE_PAIRS.values():
-        require(expected["legacy_route"] in md_text and expected["target_route"] in md_text, "human route naming doc must list every route pair")
+        require(
+            expected["legacy_route"] in md_text and expected["target_route"] in md_text and expected["next_alias_route"] in md_text,
+            "human route naming doc must list every route pair and alias",
+        )
 
     closed_loop_text = read_text(ROOT / "docs" / "COMMERCIAL_MIGRATION_CLOSED_LOOP.md")
     readiness_text = read_text(ROOT / "scripts" / "commercial_migration_readiness.py")
     require("scripts/ui_route_naming_decision_smoke.py" in closed_loop_text, "closed-loop doc must include route naming decision smoke")
+    require("scripts/ui_legacy_route_alias_smoke.py" in closed_loop_text, "closed-loop doc must include legacy route alias smoke")
     require(CONTRACT_ID in readiness_text, "readiness checker must require the route naming decision contract")
 
     print(json.dumps({

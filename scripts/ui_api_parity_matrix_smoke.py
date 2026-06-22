@@ -128,6 +128,7 @@ def main() -> int:
     require(matrix.get("policy", {}).get("migration_track") == "nextjs_app_router", "matrix must name the Next.js migration track")
     route_contracts = matrix.get("policy", {}).get("route_level_contracts") or []
     require("ui_route_naming_decision_v1" in route_contracts, "matrix policy must include the route naming decision contract")
+    require("ui_legacy_route_alias_v1" in route_contracts, "matrix policy must include the legacy route alias contract")
 
     entries = matrix.get("entries")
     require(isinstance(entries, list) and entries, "matrix entries must be a non-empty list")
@@ -206,6 +207,7 @@ def main() -> int:
     for route_id in ("task_detail", "run_ledger", "run_detail"):
         evidence = entries_by_id.get(route_id, {}).get("evidence_commands") or []
         require("python3 scripts/ui_route_naming_decision_smoke.py" in evidence, f"{route_id} must include route naming decision evidence")
+        require("python3 scripts/ui_legacy_route_alias_smoke.py" in evidence, f"{route_id} must include legacy route alias evidence")
     assert_entry_routes(entries_by_id.get("task_detail"), "task_detail", ["/admin/tasks/:id"], ["/workspace/tasks/:taskId"])
     assert_entry_routes(entries_by_id.get("run_ledger"), "run_ledger", ["/admin/runs"], ["/workspace/runs"])
     assert_entry_routes(entries_by_id.get("run_detail"), "run_detail", ["/admin/runs/:id"], ["/workspace/runs/:runId"])

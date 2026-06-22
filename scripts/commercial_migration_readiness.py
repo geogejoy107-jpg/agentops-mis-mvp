@@ -72,6 +72,8 @@ def route_naming_decision_semantics_ok() -> bool:
     policy = decision.get("policy") or {}
     if policy.get("legacy_namespace") != "/admin" or policy.get("target_namespace") != "/workspace":
         return False
+    if policy.get("alias_contract") != "ui_legacy_route_alias_v1":
+        return False
     if policy.get("retirement_allowed_by_default") is not False:
         return False
     if policy.get("redirects_required_before_retirement") is not True:
@@ -92,6 +94,10 @@ def route_naming_decision_semantics_ok() -> bool:
     for pair_id, (legacy, target) in required.items():
         pair = pairs.get(pair_id) or {}
         if pair.get("legacy_route") != legacy or pair.get("target_route") != target:
+            return False
+        if pair.get("next_alias_status") != "redirects_to_target_route":
+            return False
+        if "backward_compatible_redirect_or_alias" not in set(pair.get("cutover_evidence") or []):
             return False
         if pair.get("retirement_allowed") is not False:
             return False
@@ -272,6 +278,18 @@ def main() -> int:
             "Gate 4 task/run route naming decision is recorded and remains fail-closed for legacy route retirement",
         ),
         check(
+            "ui_legacy_route_alias_surface_exists",
+            file_contains("docs/UI_ROUTE_NAMING_DECISION.json", "ui_legacy_route_alias_v1")
+            and file_contains("docs/UI_API_PARITY_MATRIX.json", "ui_legacy_route_alias_v1")
+            and file_contains("docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md", "ui_legacy_route_alias_smoke.py")
+            and file_contains("scripts/ui_legacy_route_alias_smoke.py", "ui_legacy_route_alias_v1")
+            and file_contains("ui/next-app/app/admin/tasks/[taskId]/page.tsx", "/workspace/tasks/")
+            and file_contains("ui/next-app/app/admin/runs/page.tsx", "/workspace/runs")
+            and file_contains("ui/next-app/app/admin/runs/[runId]/page.tsx", "/workspace/runs/")
+            and (ROOT / "scripts" / "ui_legacy_route_alias_smoke.py").exists(),
+            "Gate 4 Next.js legacy /admin task/run aliases redirect to /workspace targets while route retirement remains blocked",
+        ),
+        check(
             "postgres_is_gated_not_immediate",
             file_contains("docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md", "Storage Boundary Before Postgres"),
             "Postgres migration is behind a storage-boundary gate",
@@ -384,6 +402,7 @@ def main() -> int:
                 "python3 scripts/ui_api_parity_matrix_smoke.py",
                 "python3 scripts/ui_task_run_route_parity_smoke.py",
                 "python3 scripts/ui_route_naming_decision_smoke.py",
+                "python3 scripts/ui_legacy_route_alias_smoke.py",
                 "python3 scripts/vite_playwright_snapshot_smoke.py",
                 "python3 scripts/nextjs_playwright_snapshot_smoke.py",
             ],

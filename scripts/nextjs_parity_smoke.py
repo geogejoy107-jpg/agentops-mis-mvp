@@ -39,6 +39,9 @@ def main() -> int:
         NEXT_APP / "app" / "workspace" / "tasks" / "[taskId]" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "runs" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "runs" / "[runId]" / "page.tsx",
+        NEXT_APP / "app" / "admin" / "tasks" / "[taskId]" / "page.tsx",
+        NEXT_APP / "app" / "admin" / "runs" / "page.tsx",
+        NEXT_APP / "app" / "admin" / "runs" / "[runId]" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "approvals" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "approvals" / "review" / "route.ts",
         NEXT_APP / "app" / "workspace" / "memory" / "page.tsx",
@@ -64,6 +67,7 @@ def main() -> int:
         NEXT_APP / "src" / "lib" / "misServer.ts",
         NEXT_APP / "src" / "styles" / "globals.css",
         ROOT / "scripts" / "ui_task_run_route_parity_smoke.py",
+        ROOT / "scripts" / "ui_legacy_route_alias_smoke.py",
     ]
 
     for path in required_files:
@@ -74,6 +78,9 @@ def main() -> int:
     memory_review_route_text = read_text(NEXT_APP / "app" / "workspace" / "memory" / "review" / "route.ts")
     report_archive_route_text = read_text(NEXT_APP / "app" / "workspace" / "customer-projects" / "[projectId]" / "report" / "archive" / "route.ts")
     dispatch_route_text = read_text(NEXT_APP / "app" / "workspace" / "dispatch" / "template-run" / "route.ts")
+    admin_task_alias_text = read_text(NEXT_APP / "app" / "admin" / "tasks" / "[taskId]" / "page.tsx")
+    admin_runs_alias_text = read_text(NEXT_APP / "app" / "admin" / "runs" / "page.tsx")
+    admin_run_alias_text = read_text(NEXT_APP / "app" / "admin" / "runs" / "[runId]" / "page.tsx")
     app_frame_text = read_text(NEXT_APP / "src" / "components" / "AppFrame.tsx")
     agents_page_text = read_text(NEXT_APP / "src" / "components" / "AgentsParityPage.tsx")
     commercial_page_text = read_text(NEXT_APP / "src" / "components" / "CommercialPage.tsx")
@@ -91,6 +98,7 @@ def main() -> int:
     server_lib_text = read_text(NEXT_APP / "src" / "lib" / "misServer.ts")
     playwright_smoke_text = read_text(ROOT / "scripts" / "nextjs_playwright_snapshot_smoke.py")
     route_parity_smoke_text = read_text(ROOT / "scripts" / "ui_task_run_route_parity_smoke.py")
+    route_alias_smoke_text = read_text(ROOT / "scripts" / "ui_legacy_route_alias_smoke.py")
 
     require(dependencies.get("next") == "16.2.9", "Next.js version is not pinned to the selected migration version")
     require(dependencies.get("react") == "19.2.7", "React version is not pinned to the selected migration version")
@@ -148,6 +156,10 @@ def main() -> int:
     require("TaskDetailPage" in ledger_detail_pages_text and "RunDetailPage" in ledger_detail_pages_text, "task/run detail pages are missing")
     require("loadServerTaskDetail" in server_lib_text and "loadServerRunDetail" in server_lib_text, "task/run detail loaders are missing")
     require("TasksParityPage" in ledger_pages_text and "RunsParityPage" in ledger_pages_text, "ledger parity pages are missing")
+    require("/workspace/tasks/${encodeURIComponent(taskId)}" in admin_task_alias_text and "redirect(" in admin_task_alias_text, "legacy admin task detail must redirect to workspace task detail")
+    require('redirect("/workspace/runs")' in admin_runs_alias_text, "legacy admin run ledger must redirect to workspace runs")
+    require("/workspace/runs/${encodeURIComponent(runId)}" in admin_run_alias_text and "redirect(" in admin_run_alias_text, "legacy admin run detail must redirect to workspace run detail")
+    require("ui_legacy_route_alias_v1" in route_alias_smoke_text, "legacy route alias smoke contract is missing")
     require("next/link" in ledger_pages_text, "task/run list parity pages must use Next links")
     require("/workspace/tasks/${encodeURIComponent(task.task_id)}" in ledger_pages_text, "task list rows must link to task detail")
     require("/workspace/runs/${encodeURIComponent(run.run_id)}" in ledger_pages_text, "run list rows must link to run detail")
@@ -177,6 +189,9 @@ def main() -> int:
             "/workspace/tasks/[taskId]",
             "/workspace/runs",
             "/workspace/runs/[runId]",
+            "/admin/tasks/[taskId]",
+            "/admin/runs",
+            "/admin/runs/[runId]",
             "/workspace/approvals",
             "/workspace/memory",
             "/workspace/reports",

@@ -177,6 +177,7 @@ Must be true:
 python3 scripts/ui_api_parity_matrix_smoke.py
 python3 scripts/ui_task_run_route_parity_smoke.py
 python3 scripts/ui_route_naming_decision_smoke.py
+python3 scripts/ui_legacy_route_alias_smoke.py
 python3 scripts/vite_playwright_snapshot_smoke.py
 python3 scripts/nextjs_playwright_snapshot_smoke.py
 ```
@@ -196,6 +197,11 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   compatibility routes, and every task/run retirement still requires a
   backward-compatible redirect or alias, navigation inventory update, and an
   explicit route retirement commit.
+
+  The legacy route alias smoke starts a Next.js dev server and verifies Next
+  `/admin/tasks/:taskId`, `/admin/runs`, and `/admin/runs/:runId` deep links
+  redirect to their `/workspace` task/run targets without allowing Vite route
+  retirement.
 
   The Vite smoke starts isolated MIS API and Vite dev servers, captures
   canonical Vite route snapshots for workspace, Pixel Office, tasks, agents,
@@ -234,6 +240,9 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   - `ui/next-app/app/workspace/tasks/[taskId]/page.tsx`
   - `ui/next-app/app/workspace/runs/page.tsx`
   - `ui/next-app/app/workspace/runs/[runId]/page.tsx`
+  - `ui/next-app/app/admin/tasks/[taskId]/page.tsx`
+  - `ui/next-app/app/admin/runs/page.tsx`
+  - `ui/next-app/app/admin/runs/[runId]/page.tsx`
   - `ui/next-app/app/workspace/approvals/page.tsx`
   - `ui/next-app/app/workspace/approvals/review/route.ts`
   - `ui/next-app/app/workspace/memory/page.tsx`
@@ -263,6 +272,7 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   - `scripts/ui_api_parity_matrix_smoke.py`
   - `scripts/ui_task_run_route_parity_smoke.py`
   - `scripts/ui_route_naming_decision_smoke.py`
+  - `scripts/ui_legacy_route_alias_smoke.py`
 
 ### Gate 5: BYOC / Enterprise Deployment
 
