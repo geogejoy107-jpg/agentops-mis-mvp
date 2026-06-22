@@ -35,6 +35,7 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
 from agentops_mis_core.approval_wall import (
+    RISKY_TOOLS,
     approval_wall_recommended_actions,
     build_high_risk_toolcall_prepared_action_required_response,
     build_prepared_action_approval_decision_response,
@@ -57,6 +58,7 @@ from agentops_mis_core.approval_wall import (
     prepared_action_stored_args,
     runtime_probe_blocked_payload,
     runtime_probe_prepared_action_required_payload,
+    tool_call_has_external_side_effect_intent,
 )
 from agentops_mis_core.agent_plans import (
     agent_plan_contract,
@@ -145,39 +147,6 @@ READ_MODEL_CACHE_TTL_SEC = float(os.environ.get("AGENTOPS_READ_MODEL_CACHE_TTL_S
 READ_MODEL_CACHE_MAX_ITEMS = int(os.environ.get("AGENTOPS_READ_MODEL_CACHE_MAX_ITEMS", "96"))
 READ_MODEL_CACHE = ReadModelCache(ttl_sec=READ_MODEL_CACHE_TTL_SEC, max_items=READ_MODEL_CACHE_MAX_ITEMS)
 
-RISKY_TOOLS = {
-    "shell.exec",
-    "github.push",
-    "email.send",
-    "file.delete",
-    "database.write",
-    "dify.knowledge.upload",
-    "openai.file_search.upload",
-}
-EXTERNAL_SIDE_EFFECT_KEYWORDS = {
-    "external",
-    "publish",
-    "upload",
-    "write",
-    "send",
-    "post",
-    "push",
-    "export",
-    "deliver",
-    "file_search",
-    "knowledge",
-}
-EXTERNAL_SIDE_EFFECT_SCHEMES = (
-    "http://",
-    "https://",
-    "openai://",
-    "dify://",
-    "notion://",
-    "github://",
-    "slack://",
-    "discord://",
-    "email://",
-)
 HIGH_RISK_CATEGORIES = {"shell", "email", "database"}
 VALID_TASK_STATUSES = {"backlog", "planned", "running", "waiting_approval", "blocked", "completed", "failed", "canceled"}
 VALID_RISK_LEVELS = {"low", "medium", "high", "critical"}
@@ -7504,48 +7473,6 @@ def agent_gateway_run_heartbeat(conn, run_id: str, body) -> tuple[dict, int]:
     runtime_event(conn, "rtc_agent_gateway_local", "run.heartbeat", status, run_id=run_id, task_id=before["task_id"], agent_id=before["agent_id"], output_summary=output_summary, error_message=body.get("error_message"))
     audit(conn, "agent", before["agent_id"], "agent_gateway.run_heartbeat", "runs", run_id, dict(before), dict(after), {"status": status})
     return {"run": dict(after)}, 200
-
-
-def tool_call_has_external_side_effect_intent(tool_name: str, category: str, target_resource: str | None, args: dict) -> bool:
-    scanned_args = dict(args or {})
-    # Capability metadata says whether a runtime would need a prepared action for
-    # external writes; it is not itself an external write intent.
-    safe_metadata_keys = {
-        "requires_prepared_action_for_external_write",
-        "credential_storage",
-        "credential_storage_policy",
-        "credentials_stored",
-        "raw_document_storage",
-        "raw_documents_stored",
-        "raw_payload_stored",
-        "raw_text_omitted",
-        "summary_only",
-    }
-    for key in list(scanned_args):
-        if key in safe_metadata_keys or str(key).endswith("_storage"):
-            scanned_args.pop(key, None)
-    explicit_target = str(
-        scanned_args.get("target")
-        or scanned_args.get("url")
-        or scanned_args.get("endpoint")
-        or scanned_args.get("resource")
-        or scanned_args.get("destination")
-        or ""
-    ).strip().lower()
-    haystack = " ".join([
-        tool_name or "",
-        category or "",
-        target_resource or "",
-        json.dumps(scanned_args, ensure_ascii=False, sort_keys=True),
-    ]).lower()
-    target = (target_resource or "").strip().lower()
-    if target.startswith(EXTERNAL_SIDE_EFFECT_SCHEMES) or explicit_target.startswith(EXTERNAL_SIDE_EFFECT_SCHEMES):
-        return True
-    if tool_name in RISKY_TOOLS:
-        return True
-    if category in {"email", "notion", "github", "discord", "mcp", "database"} and any(keyword in haystack for keyword in EXTERNAL_SIDE_EFFECT_KEYWORDS):
-        return True
-    return any(keyword in haystack for keyword in EXTERNAL_SIDE_EFFECT_KEYWORDS)
 
 
 def agent_gateway_record_tool_call(conn, body) -> tuple[dict, int]:

@@ -918,6 +918,39 @@ python3 scripts/agent_gateway_scoped_read_smoke.py
 python3 scripts/workspace_isolation_smoke.py
 ```
 
+### Slice 31: External Side-Effect Intent Detection
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/approval_wall.py`
+
+Moved out of `server.py`:
+
+- risky tool registry for high-risk Agent Gateway tool calls
+- external side-effect URL/scheme and keyword detection
+- generic tool-call external side-effect intent detection
+- metadata-only false-positive guard for runtime capability reports
+
+Still owned by `server.py`:
+
+- HTTP routes
+- Agent Gateway identity and run access checks
+- tool-call row construction and SQLite upsert orchestration
+- risk default application from the Approval Wall registry
+- runtime events, audit logs and commits
+- prepared-action creation orchestration when `prepare_action=true`
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/high_risk_toolcall_prepared_action_gate_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/generic_external_side_effect_gate_smoke.py
+python3 scripts/external_connector_runtime_inventory_smoke.py
+```
+
 ## Next Candidate Slices
 
 - Continue P1-05 with small smoke-backed strangler slices only; prefer pure

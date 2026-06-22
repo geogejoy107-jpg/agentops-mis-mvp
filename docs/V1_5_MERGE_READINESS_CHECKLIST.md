@@ -253,7 +253,7 @@ coverage for every external side-effect path.
   `agentops_mis_runtime/trust.py`; read-model cache behavior now lives in
   `agentops_mis_core/read_model_cache.py`; Approval Wall prepared-action
   hash, public projection, gate, readback, resume-gate mismatch, waiting-response,
-  route blocked/error, route access/error, prepare-response, prepared-action decision projection, high-risk tool-call required response, resume-success, provider-result reconciliation and
+  route blocked/error, route access/error, prepare-response, prepared-action decision projection, high-risk tool-call required response, risky tool registry, external side-effect intent detection, metadata-only false-positive guard, resume-success, provider-result reconciliation and
   next-action helpers now live in
   `agentops_mis_core/approval_wall.py`; Agent Plan approval-decision,
   create-status, bound-approval-forbidden, transition-error, run-start gate,
@@ -269,8 +269,9 @@ coverage for every external side-effect path.
   `agentops_mis_core/operator_command_center.py`; `server.py`
   keeps HTTP routes, health probing, refresh orchestration, trust-route runtime
   events, audit writes, endpoint auth checks, read-model producers,
-  repo-local daemon/process reads, provider calls and side-effect id
-  construction, Approval Wall exact-once resume invocation/writes,
+  repo-local daemon/process reads, tool-call row construction/upsert, risk
+  default application, provider calls and side-effect id construction,
+  Approval Wall exact-once resume invocation/writes,
   route-level hash-mismatch audit writes, Agent Plan DB-backed memory/base
   checks, run-start plan lookup/matching/approval/hash checks,
   rebind-blocked audit writes, run-start row upserts/status-code selection, stable

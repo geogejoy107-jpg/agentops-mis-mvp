@@ -21,6 +21,40 @@ REDACTION_RULES: tuple[tuple[str, str], ...] = (
     (r"(?<![\w])(?:\+\d{1,3}[\s.-]*)?(?:\(?\d{2,4}\)?[\s.-]+){2,4}\d{2,4}(?![\w])", "[PHONE_REDACTED]"),
 )
 
+RISKY_TOOLS = {
+    "shell.exec",
+    "github.push",
+    "email.send",
+    "file.delete",
+    "database.write",
+    "dify.knowledge.upload",
+    "openai.file_search.upload",
+}
+EXTERNAL_SIDE_EFFECT_KEYWORDS = {
+    "external",
+    "publish",
+    "upload",
+    "write",
+    "send",
+    "post",
+    "push",
+    "export",
+    "deliver",
+    "file_search",
+    "knowledge",
+}
+EXTERNAL_SIDE_EFFECT_SCHEMES = (
+    "http://",
+    "https://",
+    "openai://",
+    "dify://",
+    "notion://",
+    "github://",
+    "slack://",
+    "discord://",
+    "email://",
+)
+
 
 def stable_hash(value: Any) -> str:
     raw = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
@@ -318,6 +352,53 @@ def build_high_risk_toolcall_prepared_action_required_response(
         "next_action": "Record again with prepare_action=true, inspect/approve the generated approval, then resume the prepared action exactly once with provider_side_effect_id.",
         "token_omitted": True,
     }
+
+
+def tool_call_has_external_side_effect_intent(
+    tool_name: str,
+    category: str,
+    target_resource: str | None,
+    args: dict,
+) -> bool:
+    scanned_args = dict(args or {})
+    # Capability metadata says whether a runtime would need a prepared action
+    # for external writes; it is not itself an external write intent.
+    safe_metadata_keys = {
+        "requires_prepared_action_for_external_write",
+        "credential_storage",
+        "credential_storage_policy",
+        "credentials_stored",
+        "raw_document_storage",
+        "raw_documents_stored",
+        "raw_payload_stored",
+        "raw_text_omitted",
+        "summary_only",
+    }
+    for key in list(scanned_args):
+        if key in safe_metadata_keys or str(key).endswith("_storage"):
+            scanned_args.pop(key, None)
+    explicit_target = str(
+        scanned_args.get("target")
+        or scanned_args.get("url")
+        or scanned_args.get("endpoint")
+        or scanned_args.get("resource")
+        or scanned_args.get("destination")
+        or ""
+    ).strip().lower()
+    haystack = " ".join([
+        tool_name or "",
+        category or "",
+        target_resource or "",
+        json.dumps(scanned_args, ensure_ascii=False, sort_keys=True),
+    ]).lower()
+    target = (target_resource or "").strip().lower()
+    if target.startswith(EXTERNAL_SIDE_EFFECT_SCHEMES) or explicit_target.startswith(EXTERNAL_SIDE_EFFECT_SCHEMES):
+        return True
+    if tool_name in RISKY_TOOLS:
+        return True
+    if category in {"email", "notion", "github", "discord", "mcp", "database"} and any(keyword in haystack for keyword in EXTERNAL_SIDE_EFFECT_KEYWORDS):
+        return True
+    return any(keyword in haystack for keyword in EXTERNAL_SIDE_EFFECT_KEYWORDS)
 
 
 def build_prepared_action_blocked_response(

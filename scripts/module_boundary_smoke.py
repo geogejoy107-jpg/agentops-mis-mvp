@@ -13,6 +13,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from agentops_mis_core.approval_wall import (
+    RISKY_TOOLS,
     approval_wall_recommended_actions,
     build_high_risk_toolcall_prepared_action_required_response,
     build_prepared_action_approval_decision_response,
@@ -39,6 +40,7 @@ from agentops_mis_core.approval_wall import (
     prepared_action_waiting_next_action,
     runtime_probe_blocked_payload,
     runtime_probe_prepared_action_required_payload,
+    tool_call_has_external_side_effect_intent,
 )
 from agentops_mis_core.agent_plans import (
     agent_plan_contract,
@@ -242,8 +244,10 @@ EXTRACTED_APPROVAL_WALL_HELPERS = {
     "prepared_action_waiting_next_action",
     "runtime_probe_blocked_payload",
     "runtime_probe_prepared_action_required_payload",
+    "tool_call_has_external_side_effect_intent",
 }
 SERVER_APPROVAL_WALL_IMPORTS = {
+    "RISKY_TOOLS",
     "approval_wall_recommended_actions",
     "build_high_risk_toolcall_prepared_action_required_response",
     "build_prepared_action_approval_decision_response",
@@ -266,6 +270,7 @@ SERVER_APPROVAL_WALL_IMPORTS = {
     "prepared_action_stored_args",
     "runtime_probe_blocked_payload",
     "runtime_probe_prepared_action_required_payload",
+    "tool_call_has_external_side_effect_intent",
 }
 EXTRACTED_AGENT_PLAN_HELPERS = {
     "agent_plan_contract",
@@ -371,6 +376,7 @@ def imported_symbol_sources(path: Path, symbols: set[str]) -> dict[str, set[str]
 def main() -> int:
     failures: list[str] = []
     server_text = SERVER.read_text(encoding="utf-8")
+    approval_wall_text = APPROVAL_WALL.read_text(encoding="utf-8") if APPROVAL_WALL.exists() else ""
     read_model_cache_text = READ_MODEL_CACHE.read_text(encoding="utf-8") if READ_MODEL_CACHE.exists() else ""
     backlog_text = BACKLOG.read_text(encoding="utf-8")
     plan_text = PLAN.read_text(encoding="utf-8") if PLAN.exists() else ""
@@ -422,6 +428,8 @@ def main() -> int:
     for helper in sorted(EXTRACTED_APPROVAL_WALL_HELPERS):
         require(helper not in server_functions, f"server.py still defines {helper}", failures)
         require(helper in approval_wall_functions, f"approval wall module missing {helper}", failures)
+    require("RISKY_TOOLS =" not in server_text, "server.py still defines RISKY_TOOLS", failures)
+    require("RISKY_TOOLS =" in approval_wall_text, "approval wall module missing RISKY_TOOLS", failures)
     for helper in sorted(EXTRACTED_AGENT_PLAN_HELPERS):
         require(helper not in server_functions, f"server.py still defines {helper}", failures)
         require(helper in agent_plan_functions, f"agent plans module missing {helper}", failures)
@@ -666,6 +674,24 @@ def main() -> int:
     require(prepared_action_id_from_request({"prepared_action_id": "pa_smoke"}) == "pa_smoke", "prepared action request id helper failed", failures)
     require(prepared_action_stored_args(prepared_row).get("operation") == "publish", "prepared action stored args helper failed", failures)
     require(prepared_action_checkpoint(prepared_row).get("checkpoint") == "before_publish", "prepared action checkpoint helper failed", failures)
+    external_side_effect_detected = tool_call_has_external_side_effect_intent(
+        "custom.integration.note",
+        "custom",
+        "https://api.example.local/upload",
+        {"operation": "upload", "summary_only": True},
+    )
+    metadata_side_effect_ignored = tool_call_has_external_side_effect_intent(
+        "runtime.capability.report",
+        "custom",
+        None,
+        {
+            "requires_prepared_action_for_external_write": True,
+            "raw_payload_stored": False,
+        },
+    )
+    require("openai.file_search.upload" in RISKY_TOOLS, "Approval Wall risky tool registry missing file-search upload", failures)
+    require(external_side_effect_detected is True, "Approval Wall external side-effect detection failed", failures)
+    require(metadata_side_effect_ignored is False, "Approval Wall metadata-only side-effect detection should be ignored", failures)
     missing_gate = prepared_action_resume_gate_error(
         action_id=None,
         row=None,

@@ -47,10 +47,10 @@ INVENTORY: list[dict[str, Any]] = [
             "server.py": [
                 "tool_call.prepared_action_required",
                 "build_high_risk_toolcall_prepared_action_required_response",
-                "openai.file_search.upload",
             ],
             "agentops_mis_core/approval_wall.py": [
                 "high_risk_prepared_action_required",
+                "openai.file_search.upload",
             ],
         },
     },
@@ -59,7 +59,7 @@ INVENTORY: list[dict[str, Any]] = [
         "description": "Generic external side-effect detection escalates risk and requires prepared actions.",
         "guard_script": "scripts/generic_external_side_effect_gate_smoke.py",
         "source_markers": {
-            "server.py": [
+            "agentops_mis_core/approval_wall.py": [
                 "tool_call_has_external_side_effect_intent",
                 "EXTERNAL_SIDE_EFFECT_KEYWORDS",
                 "EXTERNAL_SIDE_EFFECT_SCHEMES",
