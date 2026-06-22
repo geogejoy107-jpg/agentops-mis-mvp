@@ -42,6 +42,10 @@ def main() -> int:
     task_b = "tsk_storage_b"
     write_task = "tsk_storage_write"
     write_run = "run_storage_write"
+    write_approval = "ap_storage_write"
+    write_eval = "eval_storage_write"
+    write_artifact = "art_storage_write"
+    write_memory = "mem_storage_write"
     job_a = "wfjob_storage_a"
     job_b = "wfjob_storage_b"
     token_id_a = ""
@@ -305,11 +309,101 @@ def main() -> int:
             require(before_run and run_outcome == "updated", f"run write helper update failed: {run_outcome}")
             require(server.repo_get_workspace_run(conn, workspace_a, write_run)["status"] == "completed", "run write helper did not persist update")
 
+            write_approval_row = {
+                "approval_id": write_approval,
+                "task_id": write_task,
+                "run_id": write_run,
+                "tool_call_id": None,
+                "requested_by_agent_id": agent_a,
+                "approver_user_id": "usr_founder",
+                "decision": "pending",
+                "reason": "Storage write boundary approval.",
+                "expires_at": server.now_iso(),
+                "created_at": write_now,
+                "decided_at": None,
+            }
+            before_approval, approval_outcome = server.repo_upsert_approval(conn, dict(write_approval_row))
+            require(before_approval is None and approval_outcome == "created", f"approval write helper create failed: {approval_outcome}")
+            write_approval_row["decision"] = "approved"
+            write_approval_row["decided_at"] = server.now_iso()
+            before_approval, approval_outcome = server.repo_upsert_approval(conn, dict(write_approval_row))
+            require(before_approval and approval_outcome == "updated", f"approval write helper update failed: {approval_outcome}")
+            approval_ids_after_write = ids(server.repo_list_workspace_approvals(conn, workspace_a), "approval_id")
+            require(write_approval in approval_ids_after_write, f"approval write helper row not visible in workspace list: {approval_ids_after_write}")
+
+            write_eval_row = {
+                "evaluation_id": write_eval,
+                "task_id": write_task,
+                "run_id": write_run,
+                "agent_id": agent_a,
+                "evaluator_type": "rule",
+                "score": 0.8,
+                "pass_fail": "pass",
+                "rubric_json": json.dumps({"storage_boundary": True}, ensure_ascii=False),
+                "notes": "Storage write boundary evaluation.",
+                "created_at": write_now,
+            }
+            before_eval, eval_outcome = server.repo_upsert_evaluation(conn, dict(write_eval_row))
+            require(before_eval is None and eval_outcome == "created", f"evaluation write helper create failed: {eval_outcome}")
+            write_eval_row["score"] = 0.93
+            write_eval_row["notes"] = "Storage write boundary evaluation updated."
+            before_eval, eval_outcome = server.repo_upsert_evaluation(conn, dict(write_eval_row))
+            require(before_eval and eval_outcome == "updated", f"evaluation write helper update failed: {eval_outcome}")
+            evaluation_ids_after_write = ids(server.repo_list_workspace_evaluations(conn, workspace_a), "evaluation_id")
+            require(write_eval in evaluation_ids_after_write, f"evaluation write helper row not visible in workspace list: {evaluation_ids_after_write}")
+
+            write_artifact_row = {
+                "artifact_id": write_artifact,
+                "task_id": write_task,
+                "run_id": write_run,
+                "artifact_type": "markdown",
+                "title": "Storage Write Boundary Artifact",
+                "uri": "artifact://storage/write",
+                "summary": "Storage write boundary artifact.",
+                "created_at": write_now,
+            }
+            before_artifact, artifact_outcome = server.repo_upsert_artifact(conn, dict(write_artifact_row))
+            require(before_artifact is None and artifact_outcome == "created", f"artifact write helper create failed: {artifact_outcome}")
+            write_artifact_row["summary"] = "Storage write boundary artifact updated."
+            before_artifact, artifact_outcome = server.repo_upsert_artifact(conn, dict(write_artifact_row))
+            require(before_artifact and artifact_outcome == "updated", f"artifact write helper update failed: {artifact_outcome}")
+            artifact_ids_after_write = ids(server.repo_list_workspace_artifacts(conn, workspace_a), "artifact_id")
+            require(write_artifact in artifact_ids_after_write, f"artifact write helper row not visible in workspace list: {artifact_ids_after_write}")
+
+            write_memory_row = {
+                "memory_id": write_memory,
+                "workspace_id": workspace_a,
+                "scope": "task",
+                "memory_type": "artifact_summary",
+                "canonical_text": "Storage write boundary memory.",
+                "source_type": "run_log",
+                "source_ref": write_run,
+                "project_id": "proj_mvp",
+                "task_id": write_task,
+                "agent_id": agent_a,
+                "confidence": 0.77,
+                "review_status": "candidate",
+                "owner_user_id": "usr_founder",
+                "ttl_review_due_at": server.now_iso(),
+                "supersedes_memory_id": None,
+                "access_tags": json.dumps(["storage-boundary"], ensure_ascii=False),
+                "created_at": write_now,
+                "updated_at": write_now,
+            }
+            before_memory, memory_outcome = server.repo_upsert_memory_candidate(conn, dict(write_memory_row))
+            require(before_memory is None and memory_outcome == "created", f"memory write helper create failed: {memory_outcome}")
+            write_memory_row["canonical_text"] = "Storage write boundary memory updated."
+            write_memory_row["confidence"] = 0.91
+            write_memory_row["updated_at"] = server.now_iso()
+            before_memory, memory_outcome = server.repo_upsert_memory_candidate(conn, dict(write_memory_row))
+            require(before_memory and memory_outcome == "updated", f"memory write helper update failed: {memory_outcome}")
+            require(server.repo_get_workspace_memory(conn, workspace_a, write_memory)["confidence"] == 0.91, "memory write helper did not persist update")
+
             memory_id_a = memory_a["memory"]["memory_id"]
             memory_id_b = memory_b["memory"]["memory_id"]
             org_memory_id_a = org_memory_a["memory"]["memory_id"]
             memory_ids = ids(server.repo_list_workspace_memories(conn, workspace_a), "memory_id")
-            require(memory_id_a in memory_ids and org_memory_id_a in memory_ids, f"memory helper missed workspace A rows: {memory_ids}")
+            require(memory_id_a in memory_ids and org_memory_id_a in memory_ids and write_memory in memory_ids, f"memory helper missed workspace A rows: {memory_ids}")
             require(memory_id_b not in memory_ids, f"memory helper leaked workspace B rows: {memory_ids}")
             require(server.repo_get_workspace_memory(conn, workspace_a, memory_id_a), "memory helper missed workspace A memory")
             require(not server.repo_get_workspace_memory(conn, workspace_a, memory_id_b), "memory helper exposed workspace B memory")
@@ -327,7 +421,7 @@ def main() -> int:
             artifact_id_a = artifact_a["artifact"]["artifact_id"]
             artifact_id_b = artifact_b["artifact"]["artifact_id"]
             artifact_ids = ids(server.repo_list_workspace_artifacts(conn, workspace_a), "artifact_id")
-            require(artifact_id_a in artifact_ids and artifact_id_b not in artifact_ids, f"artifact helper leaked workspace rows: {artifact_ids}")
+            require(artifact_id_a in artifact_ids and write_artifact in artifact_ids and artifact_id_b not in artifact_ids, f"artifact helper leaked workspace rows: {artifact_ids}")
             gateway_artifact_ids = ids(server.repo_list_agent_gateway_artifacts(conn, workspace_a, agent_id=agent_a, bound_visibility=True, limit=20), "artifact_id")
             require(artifact_id_a in gateway_artifact_ids and artifact_id_b not in gateway_artifact_ids, f"gateway artifact helper leaked workspace rows: {gateway_artifact_ids}")
             gateway_approval_ids = ids(server.repo_list_agent_gateway_approvals(conn, workspace_a, agent_id=agent_a, bound_visibility=True, decisions=["pending"], limit=20), "approval_id")
@@ -398,6 +492,10 @@ def main() -> int:
                 "repo_list_agent_gateway_memories",
                 "repo_upsert_task",
                 "repo_upsert_run",
+                "repo_upsert_approval",
+                "repo_upsert_evaluation",
+                "repo_upsert_artifact",
+                "repo_upsert_memory_candidate",
             ],
             "workspace_a": workspace_a,
             "workspace_b": workspace_b,
@@ -407,6 +505,10 @@ def main() -> int:
             "workflow_job_b": job_b,
             "write_task": write_task,
             "write_run": write_run,
+            "write_approval": write_approval,
+            "write_evaluation": write_eval,
+            "write_artifact": write_artifact,
+            "write_memory": write_memory,
             "gateway_enrollment_a": token_id_a,
             "gateway_session_a": session_id_a,
             "token_omitted": True,
