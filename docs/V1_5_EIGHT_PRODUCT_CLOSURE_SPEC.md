@@ -87,6 +87,14 @@ handoff map. It keeps remote worker, customer task flow, RBAC, fleet console,
 and demo/documentation workstreams separated while preserving the same
 CLI/API-first agent execution contract.
 
+The current hardening overlay is
+`docs/V1_5_AGENT_GATEWAY_HARDENING_OBJECTIVE.md`. It captures the P0 gates from
+the first `audit/v1-5-agent-gateway-hardening` review: immutable Agent Plan
+binding, approval role separation, prepared-action Approval Wall, redaction,
+workspace/knowledge visibility, SQLite reliability, CI, and public-claim
+limits. Treat that file as the release-candidate blocker list before adding
+more horizontal product features.
+
 ## The Eight Product Closure Items
 
 ### 1. Real Long-Running Agent Worker
