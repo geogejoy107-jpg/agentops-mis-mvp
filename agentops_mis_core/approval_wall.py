@@ -294,6 +294,33 @@ def build_prepared_action_agent_forbidden_response(*, operation: str) -> dict[st
     }
 
 
+def prepared_action_route_access_error(
+    *,
+    action_id: Any,
+    row: Any,
+    identity: dict[str, Any],
+    operation: str,
+    enforce_agent_match: bool,
+) -> tuple[dict[str, Any], int] | None:
+    if row is None:
+        if operation == "resume":
+            return {"error": "prepared_action_not_found", "token_omitted": True}, 404
+        return build_prepared_action_get_not_found_response(action_id), 404
+
+    data = dict(row)
+    requested_workspace = normalize_workspace_id(identity.get("workspace_id"))
+    actual_workspace = normalize_workspace_id(data.get("workspace_id"))
+    if actual_workspace != requested_workspace:
+        return {
+            "error": "forbidden",
+            "message": f"prepared_action {action_id} belongs to workspace '{actual_workspace}', not '{requested_workspace}'.",
+        }, 403
+
+    if enforce_agent_match and data.get("requested_by_agent_id") != identity.get("agent_id"):
+        return build_prepared_action_agent_forbidden_response(operation=operation), 403
+    return None
+
+
 def build_prepared_action_hash_mismatch_response(
     row: Any,
     current_action_hash: str | None = None,

@@ -50,6 +50,7 @@ from agentops_mis_core.approval_wall import (
     prepared_action_id_from_request,
     prepared_action_public,
     prepared_action_resume_gate_error,
+    prepared_action_route_access_error,
     prepared_action_stored_args,
     runtime_probe_blocked_payload,
     runtime_probe_prepared_action_required_payload,
@@ -7878,12 +7879,15 @@ def get_prepared_action_for_approval(conn: sqlite3.Connection, approval_id: str)
 def agent_gateway_get_prepared_action(conn: sqlite3.Connection, action_id: str, headers, auth_ctx=None) -> tuple[dict, int]:
     ident = agent_gateway_identity(headers, auth_ctx=auth_ctx)
     row = conn.execute("SELECT * FROM prepared_actions WHERE action_id=?", (action_id,)).fetchone()
-    if not row:
-        return build_prepared_action_get_not_found_response(action_id), 404
-    if row_workspace(row) != ident["workspace_id"]:
-        return workspace_forbidden("prepared_action", action_id, ident["workspace_id"], row_workspace(row))
-    if agent_gateway_is_bound_auth(auth_ctx) and row["requested_by_agent_id"] != ident["agent_id"]:
-        return build_prepared_action_agent_forbidden_response(operation="inspect"), 403
+    access_error = prepared_action_route_access_error(
+        action_id=action_id,
+        row=row,
+        identity=ident,
+        operation="inspect",
+        enforce_agent_match=agent_gateway_is_bound_auth(auth_ctx),
+    )
+    if access_error:
+        return access_error
     approval = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (row["approval_id"],)).fetchone()
     return build_prepared_action_get_response(row, approval), 200
 
@@ -8008,15 +8012,16 @@ def agent_gateway_prepare_action(conn, body) -> tuple[dict, int]:
 
 def agent_gateway_resume_prepared_action(conn, action_id: str, body) -> tuple[dict, int]:
     row = conn.execute("SELECT * FROM prepared_actions WHERE action_id=?", (action_id,)).fetchone()
-    if row is None:
-        missing_response = build_prepared_action_resume_blocked_response(action_id=action_id, row=None, approval=None)
-        if missing_response:
-            return missing_response
     ident = agent_gateway_identity({}, body)
-    if row_workspace(row) != ident["workspace_id"]:
-        return workspace_forbidden("prepared_action", action_id, ident["workspace_id"], row_workspace(row))
-    if ident.get("agent_id") and row["requested_by_agent_id"] != ident["agent_id"]:
-        return build_prepared_action_agent_forbidden_response(operation="resume"), 403
+    access_error = prepared_action_route_access_error(
+        action_id=action_id,
+        row=row,
+        identity=ident,
+        operation="resume",
+        enforce_agent_match=bool(ident.get("agent_id")),
+    )
+    if access_error:
+        return access_error
     approval = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (row["approval_id"],)).fetchone()
     blocked_response = build_prepared_action_resume_blocked_response(action_id=action_id, row=row, approval=approval)
     if blocked_response:

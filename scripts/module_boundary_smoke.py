@@ -31,6 +31,7 @@ from agentops_mis_core.approval_wall import (
     prepared_action_id_from_request,
     prepared_action_public,
     prepared_action_resume_gate_error,
+    prepared_action_route_access_error,
     prepared_action_stored_args,
     prepared_action_waiting_next_action,
     runtime_probe_blocked_payload,
@@ -194,6 +195,7 @@ EXTRACTED_APPROVAL_WALL_HELPERS = {
     "prepared_action_id_from_request",
     "prepared_action_public",
     "prepared_action_resume_gate_error",
+    "prepared_action_route_access_error",
     "prepared_action_stored_args",
     "prepared_action_waiting_next_action",
     "runtime_probe_blocked_payload",
@@ -215,6 +217,7 @@ SERVER_APPROVAL_WALL_IMPORTS = {
     "prepared_action_id_from_request",
     "prepared_action_public",
     "prepared_action_resume_gate_error",
+    "prepared_action_route_access_error",
     "prepared_action_stored_args",
     "runtime_probe_blocked_payload",
     "runtime_probe_prepared_action_required_payload",
@@ -474,6 +477,41 @@ def main() -> int:
     prepared_get_missing = build_prepared_action_get_not_found_response("pa_missing_smoke")
     prepared_inspect_forbidden = build_prepared_action_agent_forbidden_response(operation="inspect")
     prepared_resume_forbidden = build_prepared_action_agent_forbidden_response(operation="resume")
+    inspect_missing_access = prepared_action_route_access_error(
+        action_id="pa_missing_smoke",
+        row=None,
+        identity={"workspace_id": "local-demo", "agent_id": "agt_smoke"},
+        operation="inspect",
+        enforce_agent_match=True,
+    )
+    resume_missing_access = prepared_action_route_access_error(
+        action_id="pa_missing_smoke",
+        row=None,
+        identity={"workspace_id": "local-demo", "agent_id": "agt_smoke"},
+        operation="resume",
+        enforce_agent_match=True,
+    )
+    workspace_forbidden_access = prepared_action_route_access_error(
+        action_id="pa_smoke",
+        row={**prepared_row, "workspace_id": "other-workspace"},
+        identity={"workspace_id": "local-demo", "agent_id": "agt_research"},
+        operation="inspect",
+        enforce_agent_match=True,
+    )
+    agent_forbidden_access = prepared_action_route_access_error(
+        action_id="pa_smoke",
+        row=prepared_row,
+        identity={"workspace_id": "local-demo", "agent_id": "agt_other_smoke"},
+        operation="resume",
+        enforce_agent_match=True,
+    )
+    agent_unenforced_access = prepared_action_route_access_error(
+        action_id="pa_smoke",
+        row=prepared_row,
+        identity={"workspace_id": "local-demo", "agent_id": "agt_other_smoke"},
+        operation="inspect",
+        enforce_agent_match=False,
+    )
     prepared_gate = prepared_action_gate(prepared_row)
     prepared_actions = approval_wall_recommended_actions({"decision": "pending"}, prepared_row, "ap_pa_smoke")
     prepared_serialized = json.dumps([prepared_public, prepared_get], ensure_ascii=False)
@@ -482,6 +520,11 @@ def main() -> int:
     require(prepared_get_missing.get("error") == "not_found" and "pa_missing_smoke" in prepared_get_missing.get("message", ""), "prepared action get missing response failed", failures)
     require(prepared_inspect_forbidden.get("message") == "Agent token cannot inspect another agent's prepared action.", "prepared action inspect-forbidden response failed", failures)
     require(prepared_resume_forbidden.get("message") == "Agent token cannot resume another agent's prepared action.", "prepared action resume-forbidden response failed", failures)
+    require(inspect_missing_access and inspect_missing_access[0].get("error") == "not_found" and inspect_missing_access[1] == 404, "prepared action inspect route missing access failed", failures)
+    require(resume_missing_access and resume_missing_access[0].get("error") == "prepared_action_not_found" and resume_missing_access[1] == 404, "prepared action resume route missing access failed", failures)
+    require(workspace_forbidden_access and workspace_forbidden_access[0].get("error") == "forbidden" and "other-workspace" in workspace_forbidden_access[0].get("message", ""), "prepared action route workspace access failed", failures)
+    require(agent_forbidden_access and agent_forbidden_access[0].get("message") == "Agent token cannot resume another agent's prepared action." and agent_forbidden_access[1] == 403, "prepared action route agent access failed", failures)
+    require(agent_unenforced_access is None, "prepared action route access must allow agent mismatch when not enforced", failures)
     require("approval prepared-action resume" in " ".join(prepared_actions), "approval wall recommended actions missing prepared-action resume", failures)
     require("fixture_secret_value" not in prepared_serialized and "fixture_session_value" not in prepared_serialized, "prepared action public projection leaked token-like metadata", failures)
     require(prepared_action_id_from_request({"prepared_action_id": "pa_smoke"}) == "pa_smoke", "prepared action request id helper failed", failures)
