@@ -8,6 +8,7 @@ import type {
   CustomerTaskTemplateListPayload,
   EvidenceDrilldownPayload,
   AgentPlanVerifyPayload,
+  LocalReadinessPayload,
   MemorySummary,
   PlanEvidenceVerifyPayload,
   RunGraphPayload,
@@ -79,6 +80,14 @@ export async function loadServerCustomerProjectReport(projectId: string): Promis
 export async function loadServerCommercialEntitlements(): Promise<ServerLoadResult<CommercialEntitlementStatus>> {
   try {
     return { data: await serverMisJson<CommercialEntitlementStatus>("/commercial/entitlements"), error: null };
+  } catch (err) {
+    return { data: {}, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export async function loadServerLocalReadiness(): Promise<ServerLoadResult<LocalReadinessPayload>> {
+  try {
+    return { data: await serverMisJson<LocalReadinessPayload>("/local/readiness"), error: null };
   } catch (err) {
     return { data: {}, error: err instanceof Error ? err.message : String(err) };
   }

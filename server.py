@@ -10207,8 +10207,12 @@ def local_readiness(conn: sqlite3.Connection, headers) -> dict:
         ("README", ROOT / "README.md"),
         ("remote_worker_runbook", ROOT / "docs" / "REMOTE_WORKER_OPERATIONS_RUNBOOK.md"),
         ("agent_gateway_cli_spec", ROOT / "docs" / "AGENT_GATEWAY_CLI_SPEC.md"),
+        ("customer_local_deployment_runbook", ROOT / "docs" / "CUSTOMER_LOCAL_DEPLOYMENT_RUNBOOK.md"),
+        ("commercial_migration_closed_loop", ROOT / "docs" / "COMMERCIAL_MIGRATION_CLOSED_LOOP.md"),
         ("local_runtime_acceptance", ROOT / "scripts" / "local_runtime_acceptance.py"),
         ("worker_adapter_readiness_smoke", ROOT / "scripts" / "worker_adapter_readiness_smoke.py"),
+        ("local_backup_utility", ROOT / "scripts" / "agentops_local_backup.py"),
+        ("local_backup_smoke", ROOT / "scripts" / "agentops_local_backup_smoke.py"),
     ]
     doc_status = [{"id": doc_id, "path": str(path.relative_to(ROOT)), "exists": path.exists()} for doc_id, path in docs]
     evidence = {

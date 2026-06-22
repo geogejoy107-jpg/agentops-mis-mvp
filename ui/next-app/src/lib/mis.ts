@@ -116,6 +116,39 @@ export type SecurityReadinessSummary = {
     token_omitted?: boolean;
     raw_prompt_omitted?: boolean;
   };
+  token_omitted?: boolean;
+};
+
+export type LocalReadinessPayload = {
+  provider?: string;
+  operation?: string;
+  status?: string;
+  ok?: boolean;
+  workspace_id?: string;
+  gates?: ReadinessGate[];
+  evidence?: Record<string, number | boolean>;
+  adapter_readiness?: {
+    recommended_adapter?: string;
+    ready_adapters?: string[];
+    live_ready_adapters?: string[];
+    unavailable_adapters?: string[];
+    blocked_adapters?: string[];
+  };
+  worker_fleet_health?: {
+    overall?: string;
+    contract?: string;
+    gates?: ReadinessGate[];
+    recommended_actions?: string[];
+    token_omitted?: boolean;
+  };
+  security_production_readiness?: SecurityReadinessSummary;
+  docs?: { id?: string; path?: string; exists?: boolean }[];
+  ui_routes?: Record<string, string>;
+  next_actions?: string[];
+  contract?: string;
+  live_execution_performed?: boolean;
+  token_omitted?: boolean;
+  error?: string;
 };
 
 export type WorkerStatusSummary = {

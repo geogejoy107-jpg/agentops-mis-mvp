@@ -31,6 +31,7 @@ def main() -> int:
         NEXT_APP / "app" / "workspace" / "agents" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "commercial" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "governance" / "page.tsx",
+        NEXT_APP / "app" / "workspace" / "deployment" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "dispatch" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "dispatch" / "template-run" / "route.ts",
         NEXT_APP / "app" / "workspace" / "evidence" / "[manifestId]" / "page.tsx",
@@ -51,6 +52,7 @@ def main() -> int:
         NEXT_APP / "src" / "components" / "AgentsParityPage.tsx",
         NEXT_APP / "src" / "components" / "CommercialPage.tsx",
         NEXT_APP / "src" / "components" / "GovernancePage.tsx",
+        NEXT_APP / "src" / "components" / "DeploymentPage.tsx",
         NEXT_APP / "src" / "components" / "DispatchPage.tsx",
         NEXT_APP / "src" / "components" / "EvidencePage.tsx",
         NEXT_APP / "src" / "components" / "LedgerDetailPages.tsx",
@@ -75,6 +77,7 @@ def main() -> int:
     agents_page_text = read_text(NEXT_APP / "src" / "components" / "AgentsParityPage.tsx")
     commercial_page_text = read_text(NEXT_APP / "src" / "components" / "CommercialPage.tsx")
     governance_page_text = read_text(NEXT_APP / "src" / "components" / "GovernancePage.tsx")
+    deployment_page_text = read_text(NEXT_APP / "src" / "components" / "DeploymentPage.tsx")
     dispatch_page_text = read_text(NEXT_APP / "src" / "components" / "DispatchPage.tsx")
     evidence_page_text = read_text(NEXT_APP / "src" / "components" / "EvidencePage.tsx")
     ledger_detail_pages_text = read_text(NEXT_APP / "src" / "components" / "LedgerDetailPages.tsx")
@@ -96,6 +99,7 @@ def main() -> int:
     require("/memories" in lib_text and "/audit?limit=120" in lib_text, "governance parity data misses memory or audit ledgers")
     require("/workers/status" in lib_text and "/workers/adapter-readiness" in lib_text, "agent-control parity data misses worker readiness")
     require("/security/production-readiness" in lib_text, "agent-control parity data misses production readiness")
+    require("/local/readiness" in server_lib_text, "deployment parity data misses local readiness")
     require("/agent-gateway/sessions" in server_lib_text, "governance parity data misses session readback")
     require("/workflows/customer-projects?limit=" in lib_text, "customer project index parity data is missing")
     require("/workflows/customer-delivery-board?limit=" in lib_text, "customer delivery board parity data is missing")
@@ -113,6 +117,7 @@ def main() -> int:
     require("/workspace/reports" in app_frame_text, "Next.js nav must expose reports parity route")
     require("/workspace/commercial" in app_frame_text, "Next.js nav must expose commercial parity route")
     require("/workspace/governance" in app_frame_text, "Next.js nav must expose governance control route")
+    require("/workspace/deployment" in app_frame_text, "Next.js nav must expose deployment/BYOC route")
     require("/workspace/dispatch" in app_frame_text, "Next.js nav must expose dispatch parity route")
     require("/workspace/agents" in app_frame_text, "Next.js nav must expose agents parity route")
     require("loadAgentControlSnapshot" in agents_page_text and "Production security" in agents_page_text, "agents parity page must expose safety/readiness control plane")
@@ -122,6 +127,9 @@ def main() -> int:
     require("GovernanceParityPage" in governance_page_text and "Production readiness" in governance_page_text and "Session governance" in governance_page_text, "governance parity page must expose production/session governance")
     require("session id omitted" in governance_page_text and "Audit evidence" in governance_page_text, "governance parity page must avoid raw session ids and expose audit evidence")
     require("loadServerSecurityProductionReadiness" in server_lib_text and "loadServerGatewaySessions" in server_lib_text, "governance parity loaders are missing")
+    require("DeploymentParityPage" in deployment_page_text and "Backup and restore evidence" in deployment_page_text and "Storage and retention" in deployment_page_text, "deployment parity page must expose BYOC evidence")
+    require("raw rows printed false" in deployment_page_text and "Backup restore remains CLI-confirmed" in deployment_page_text, "deployment parity page must keep restore explicit and read-only")
+    require("loadServerLocalReadiness" in server_lib_text, "deployment parity loader is missing")
     require("DispatchParityPage" in dispatch_page_text and "Entitlement required" in dispatch_page_text, "dispatch parity page must expose fail-closed entitlement state")
     require("verify_dispatch_entitlement_block" in playwright_smoke_text and "verify_dispatch_template_run_success" in playwright_smoke_text, "browser smoke must verify both blocked and entitled dispatch paths")
     require("AGENTOPS_ENTITLEMENTS_PATH" in playwright_smoke_text and "pro_workspace" in playwright_smoke_text, "browser smoke must use an isolated commercial entitlement fixture")
@@ -150,6 +158,7 @@ def main() -> int:
             "/workspace/agents",
             "/workspace/commercial",
             "/workspace/governance",
+            "/workspace/deployment",
             "/workspace/dispatch",
             "/workspace/evidence/[manifestId]",
             "/workspace/tasks",

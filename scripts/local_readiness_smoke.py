@@ -68,6 +68,10 @@ def validate(payload: dict) -> None:
         require(isinstance(evidence.get(key), int), f"missing evidence count {key}: {evidence}")
     require(isinstance(payload.get("next_actions"), list), "next_actions must be a list")
     require(payload.get("contract") and "single local" in payload.get("contract"), "local contract missing")
+    docs = payload.get("docs") or []
+    doc_ids = {item.get("id") for item in docs if item.get("exists") is True}
+    for doc_id in {"customer_local_deployment_runbook", "local_backup_utility", "local_backup_smoke"}:
+        require(doc_id in doc_ids, f"missing local deployment/backup readiness doc {doc_id}: {docs}")
     security = payload.get("security_production_readiness") or {}
     require(security.get("operation") == "production_readiness", f"security readiness missing: {security}")
     require(security.get("token_omitted") is True, "security readiness token omission proof missing")

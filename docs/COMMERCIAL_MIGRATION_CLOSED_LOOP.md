@@ -151,8 +151,8 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   snapshots, approves one pending approval through the Next.js approvals page,
   approves one candidate memory through the Next.js memory page, verifies both
   state changes through `/api/mis/*`, renders a fixture-backed customer project
-  report, opens the commercial entitlement parity page and the governance
-  parity page, archives that report to the MIS ledger through a Next.js form fallback,
+  report, opens the commercial entitlement, governance, and deployment parity
+  pages, archives that report to the MIS ledger through a Next.js form fallback,
   verifies `report_artifact_id`, clicks a customer template dispatch action,
   verifies the Free Local `report_templates` entitlement block, confirms no
   customer project was created by the blocked action, flips an isolated temporary
@@ -168,6 +168,7 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   - `ui/next-app/app/workspace/agents/page.tsx`
   - `ui/next-app/app/workspace/commercial/page.tsx`
   - `ui/next-app/app/workspace/governance/page.tsx`
+  - `ui/next-app/app/workspace/deployment/page.tsx`
   - `ui/next-app/app/workspace/dispatch/page.tsx`
   - `ui/next-app/app/workspace/dispatch/template-run/route.ts`
   - `ui/next-app/app/workspace/evidence/[manifestId]/page.tsx`
@@ -187,6 +188,7 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   - `ui/next-app/src/lib/misServer.ts`
   - `ui/next-app/src/components/CommercialPage.tsx`
   - `ui/next-app/src/components/GovernancePage.tsx`
+  - `ui/next-app/src/components/DeploymentPage.tsx`
   - `ui/next-app/src/components/DispatchPage.tsx`
   - `ui/next-app/src/components/DeliveryPages.tsx`
   - `scripts/nextjs_parity_smoke.py`
@@ -201,6 +203,10 @@ Must be true:
 - Deployment mode, backup/restore, retention, signed export, SSO/RBAC hooks, and
   private connector policy are documented and smoke-tested where local
   simulation is possible.
+- The Next.js deployment parity page renders local readiness, backup/restore
+  evidence, retention/export gates, SSO hooks, and private connector policy
+  through read-only MIS proxy loaders; restore remains CLI-confirmed and is not
+  exposed as a browser write.
 - Postgres adapter and migrations pass the same core ledger acceptance used for
   SQLite.
 - Runtime connectors remain policy-gated and do not store raw secrets, raw
