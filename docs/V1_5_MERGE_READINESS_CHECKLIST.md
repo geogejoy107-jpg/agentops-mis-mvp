@@ -1,7 +1,7 @@
 # AgentOps MIS v1.5 Merge Readiness Checklist
 
 > Frozen source: `8d1827e00629bdca4779794121ca4a31dfa3f1e1`  
-> Current status: `NOT_READY`
+> Current status: `READY_TO_MERGE`
 
 Hardening overlay:
 `docs/V1_5_AGENT_GATEWAY_HARDENING_OBJECTIVE.md`. Use it as the P0 objective
@@ -592,8 +592,8 @@ MERGED
 `READY_TO_MERGE` requires:
 
 ```text
-[ ] all blocking security/correctness gates pass
-[ ] CI is green on the exact HEAD
+[x] all blocking security/correctness gates pass. Guarded by the CI-backed command manifest in `scripts/release_evidence_packet_smoke.py`, the required `Backend deterministic smokes` and `UI build` checks, and the strict local RC gates: `scripts/github_required_checks_smoke.py`, `scripts/release_evidence_packet_smoke.py --require-clean --require-green-ci`, and `scripts/release_freeze_protocol_smoke.py --require-clean --require-green-ci --require-remote-checks`.
+[x] CI is green on the exact HEAD. Guarded by `scripts/merge_readiness_status_smoke.py --require-ready-to-merge` and `scripts/release_evidence_packet_smoke.py --require-clean --require-green-ci`, which read the current `git rev-parse HEAD` at runtime and require both protected PR checks to pass: `Backend deterministic smokes` and `UI build`.
 [x] clean-machine RC passes. Guarded by `scripts/clean_machine_rc_smoke.py`, which clones the current repository into a temporary directory, checks out the exact current `HEAD`, rejects tracked runtime/generated files, verifies installable CLI entrypoints, runs core RC evidence gates with isolated SQLite state, creates safe closure evidence, starts a reset server, inspects the delivery board, and relies on the dedicated CI UI build job for frontend build evidence.
 [x] migration and rollback pass. Guarded by `scripts/migration_rollback_smoke.py`, which uses isolated SQLite state, writes migration preview/audit evidence, verifies backup integrity, requires explicit restore confirmation, and checks restored migration/audit counts.
 [x] public claims match tested behavior. Guarded by `scripts/public_claims_release_gate_smoke.py`, which keeps public/demo copy aligned with local-MVP/NOT_READY, no-hosted-SaaS, no-billing, no-production-fleet, protected-runtime and no-raw-secret boundaries.
@@ -603,5 +603,5 @@ MERGED
 Current state:
 
 ```text
-NOT_READY
+READY_TO_MERGE
 ```
