@@ -755,6 +755,43 @@ python3 scripts/agent_plan_integrity_smoke.py --base-url http://127.0.0.1:8787
 python3 scripts/run_start_plan_gate_smoke.py --base-url http://127.0.0.1:8787
 ```
 
+### Slice 26: Agent Plan Run-Start Gate Responses
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/agent_plans.py`
+
+Moved out of `server.py`:
+
+- Agent Plan required response for run start
+- Agent Plan task/agent mismatch response projections
+- Agent Plan not-executable response projection
+- Agent Plan approval-required response projection
+- Agent Plan hash-mismatch response projection
+- Run-start verification-failed response now uses the shared Agent Plan
+  verification-failed helper
+
+Still owned by `server.py`:
+
+- HTTP routes
+- requested/default Agent Plan lookup
+- workspace authorization
+- task and agent matching checks
+- approval row lookup
+- hash recomputation and plan verification
+- verification persistence
+- run insertion, runtime events, audit logs and commits
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/agent_plan_integrity_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/run_start_plan_gate_smoke.py --base-url http://127.0.0.1:8787
+```
+
 ## Next Candidate Slices
 
 - Continue P1-05 with small smoke-backed strangler slices only; prefer pure

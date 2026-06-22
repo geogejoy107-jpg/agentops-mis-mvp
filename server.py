@@ -68,6 +68,12 @@ from agentops_mis_core.agent_plans import (
     build_agent_plan_not_approvable_response,
     build_agent_plan_not_transitionable_response,
     build_agent_plan_pending_approval,
+    build_agent_plan_run_agent_mismatch_response,
+    build_agent_plan_run_approval_required_response,
+    build_agent_plan_run_hash_mismatch_response,
+    build_agent_plan_run_not_executable_response,
+    build_agent_plan_run_required_response,
+    build_agent_plan_run_task_mismatch_response,
     build_agent_plan_status_transition_required_response,
     build_agent_plan_verification,
     build_agent_plan_verification_failed_response,
@@ -7206,54 +7212,30 @@ def resolve_agent_plan_for_run(conn: sqlite3.Connection, body: dict, task: sqlit
             (ident["workspace_id"], task["task_id"], agent_id),
         ).fetchone()
     if not plan:
-        return None, ({
-            "error": "agent_plan_required",
-            "message": "Agent Gateway run_start requires a submitted, verified Agent Plan for this task and agent.",
-            "task_id": task["task_id"],
-            "agent_id": agent_id,
-            "hint": "Create and verify a plan first: agentops agent-plan create ... && agentops agent-plan verify --plan-id <plan_id>",
-            "token_omitted": True,
-        }, 428)
+        return None, (build_agent_plan_run_required_response(task_id=task["task_id"], agent_id=agent_id), 428)
     if plan["workspace_id"] != ident["workspace_id"]:
         return None, workspace_forbidden("agent_plan", plan["plan_id"], ident["workspace_id"], plan["workspace_id"])
     if plan["task_id"] != task["task_id"]:
-        return None, ({"error": "agent_plan_task_mismatch", "message": "Agent Plan task_id must match run_start task_id.", "plan_id": plan["plan_id"], "token_omitted": True}, 409)
+        return None, (build_agent_plan_run_task_mismatch_response(plan_id=plan["plan_id"]), 409)
     if plan["agent_id"] != agent_id:
-        return None, ({"error": "agent_plan_agent_mismatch", "message": "Agent Plan agent_id must match run_start agent_id.", "plan_id": plan["plan_id"], "token_omitted": True}, 409)
+        return None, (build_agent_plan_run_agent_mismatch_response(plan_id=plan["plan_id"]), 409)
     if plan["status"] not in {"submitted", "approved"}:
-        return None, ({"error": "agent_plan_not_executable", "message": "Agent Plan must be submitted or approved before run_start.", "plan_id": plan["plan_id"], "status": plan["status"], "token_omitted": True}, 409)
+        return None, (build_agent_plan_run_not_executable_response(plan_id=plan["plan_id"], status=plan["status"]), 409)
     if bool(plan["approval_required"]):
         approval = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (plan["approval_id"] or "",)).fetchone()
         if plan["status"] != "approved" or not approval or approval["decision"] != "approved":
-            return None, ({
-                "error": "agent_plan_approval_required",
-                "message": "This Agent Plan requires human/admin/policy approval before run_start.",
-                "plan_id": plan["plan_id"],
-                "status": plan["status"],
-                "approval_id": plan["approval_id"],
-                "approval_decision": approval["decision"] if approval else None,
-                "token_omitted": True,
-            }, 428)
+            return None, (build_agent_plan_run_approval_required_response(plan=plan, approval=approval), 428)
     stored_hash = plan["plan_hash"]
     current_hash = compute_agent_plan_hash(plan)
     if stored_hash and stored_hash != current_hash:
-        return None, ({
-            "error": "agent_plan_hash_mismatch",
-            "message": "Agent Plan content no longer matches its stored plan_hash.",
-            "plan_id": plan["plan_id"],
-            "stored_plan_hash": stored_hash,
-            "current_plan_hash": current_hash,
-            "token_omitted": True,
-        }, 409)
+        return None, (build_agent_plan_run_hash_mismatch_response(plan_id=plan["plan_id"], stored_plan_hash=stored_hash, current_plan_hash=current_hash), 409)
     verification = verify_agent_plan_row(plan, conn)
     if not verification.get("pass"):
-        return None, ({
-            "error": "agent_plan_verification_failed",
-            "message": "Agent Plan failed method-block verification and cannot authorize run_start.",
-            "plan_id": plan["plan_id"],
-            "failed_checks": verification.get("failed_checks") or [],
-            "token_omitted": True,
-        }, 428)
+        return None, (build_agent_plan_verification_failed_response(
+            plan_id=plan["plan_id"],
+            failed_checks=verification.get("failed_checks") or [],
+            message="Agent Plan failed method-block verification and cannot authorize run_start.",
+        ), 428)
     plan, verification_hash = persist_agent_plan_verification(conn, plan["plan_id"], verification)
     return {
         "plan": plan,

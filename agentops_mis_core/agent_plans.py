@@ -331,3 +331,65 @@ def build_agent_plan_approval_decision_response(*, approval: Any, agent_plan_dec
         "verification_result_hash": agent_plan_decision["verification_result_hash"],
         "token_omitted": True,
     }
+
+
+def build_agent_plan_run_required_response(*, task_id: Any, agent_id: Any) -> dict[str, Any]:
+    return {
+        "error": "agent_plan_required",
+        "message": "Agent Gateway run_start requires a submitted, verified Agent Plan for this task and agent.",
+        "task_id": task_id,
+        "agent_id": agent_id,
+        "hint": "Create and verify a plan first: agentops agent-plan create ... && agentops agent-plan verify --plan-id <plan_id>",
+        "token_omitted": True,
+    }
+
+
+def build_agent_plan_run_task_mismatch_response(*, plan_id: Any) -> dict[str, Any]:
+    return {
+        "error": "agent_plan_task_mismatch",
+        "message": "Agent Plan task_id must match run_start task_id.",
+        "plan_id": plan_id,
+        "token_omitted": True,
+    }
+
+
+def build_agent_plan_run_agent_mismatch_response(*, plan_id: Any) -> dict[str, Any]:
+    return {
+        "error": "agent_plan_agent_mismatch",
+        "message": "Agent Plan agent_id must match run_start agent_id.",
+        "plan_id": plan_id,
+        "token_omitted": True,
+    }
+
+
+def build_agent_plan_run_not_executable_response(*, plan_id: Any, status: Any) -> dict[str, Any]:
+    return {
+        "error": "agent_plan_not_executable",
+        "message": "Agent Plan must be submitted or approved before run_start.",
+        "plan_id": plan_id,
+        "status": status,
+        "token_omitted": True,
+    }
+
+
+def build_agent_plan_run_approval_required_response(*, plan: Any, approval: Any = None) -> dict[str, Any]:
+    return {
+        "error": "agent_plan_approval_required",
+        "message": "This Agent Plan requires human/admin/policy approval before run_start.",
+        "plan_id": row_field(plan, "plan_id"),
+        "status": row_field(plan, "status"),
+        "approval_id": row_field(plan, "approval_id"),
+        "approval_decision": row_field(approval, "decision") if approval is not None else None,
+        "token_omitted": True,
+    }
+
+
+def build_agent_plan_run_hash_mismatch_response(*, plan_id: Any, stored_plan_hash: Any, current_plan_hash: Any) -> dict[str, Any]:
+    return {
+        "error": "agent_plan_hash_mismatch",
+        "message": "Agent Plan content no longer matches its stored plan_hash.",
+        "plan_id": plan_id,
+        "stored_plan_hash": stored_plan_hash,
+        "current_plan_hash": current_plan_hash,
+        "token_omitted": True,
+    }

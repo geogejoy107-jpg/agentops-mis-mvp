@@ -50,6 +50,12 @@ from agentops_mis_core.agent_plans import (
     build_agent_plan_not_approvable_response,
     build_agent_plan_not_transitionable_response,
     build_agent_plan_pending_approval,
+    build_agent_plan_run_agent_mismatch_response,
+    build_agent_plan_run_approval_required_response,
+    build_agent_plan_run_hash_mismatch_response,
+    build_agent_plan_run_not_executable_response,
+    build_agent_plan_run_required_response,
+    build_agent_plan_run_task_mismatch_response,
     build_agent_plan_status_transition_required_response,
     build_agent_plan_verification,
     build_agent_plan_verification_failed_response,
@@ -263,6 +269,12 @@ EXTRACTED_AGENT_PLAN_HELPERS = {
     "build_agent_plan_not_approvable_response",
     "build_agent_plan_not_transitionable_response",
     "build_agent_plan_pending_approval",
+    "build_agent_plan_run_agent_mismatch_response",
+    "build_agent_plan_run_approval_required_response",
+    "build_agent_plan_run_hash_mismatch_response",
+    "build_agent_plan_run_not_executable_response",
+    "build_agent_plan_run_required_response",
+    "build_agent_plan_run_task_mismatch_response",
     "build_agent_plan_status_transition_required_response",
     "build_agent_plan_verification",
     "build_agent_plan_verification_failed_response",
@@ -284,6 +296,12 @@ SERVER_AGENT_PLAN_IMPORTS = {
     "build_agent_plan_not_approvable_response",
     "build_agent_plan_not_transitionable_response",
     "build_agent_plan_pending_approval",
+    "build_agent_plan_run_agent_mismatch_response",
+    "build_agent_plan_run_approval_required_response",
+    "build_agent_plan_run_hash_mismatch_response",
+    "build_agent_plan_run_not_executable_response",
+    "build_agent_plan_run_required_response",
+    "build_agent_plan_run_task_mismatch_response",
     "build_agent_plan_status_transition_required_response",
     "build_agent_plan_verification",
     "build_agent_plan_verification_failed_response",
@@ -809,6 +827,29 @@ def main() -> int:
     agent_plan_bound_response = build_agent_plan_bound_approval_forbidden_response(
         auth_ctx={"mode": "session", "agent_id": "agt_bound_smoke"},
     )
+    agent_plan_run_required_response = build_agent_plan_run_required_response(
+        task_id="tsk_run_gate_smoke",
+        agent_id="agt_run_gate_smoke",
+    )
+    agent_plan_run_task_mismatch_response = build_agent_plan_run_task_mismatch_response(
+        plan_id="plan_run_gate_smoke",
+    )
+    agent_plan_run_agent_mismatch_response = build_agent_plan_run_agent_mismatch_response(
+        plan_id="plan_run_gate_smoke",
+    )
+    agent_plan_run_not_executable_response = build_agent_plan_run_not_executable_response(
+        plan_id="plan_run_gate_smoke",
+        status="draft",
+    )
+    agent_plan_run_approval_required_response = build_agent_plan_run_approval_required_response(
+        plan={"plan_id": "plan_run_gate_smoke", "status": "submitted", "approval_id": "ap_plan_run_gate_smoke"},
+        approval={"approval_id": "ap_plan_run_gate_smoke", "decision": "pending"},
+    )
+    agent_plan_run_hash_mismatch_response = build_agent_plan_run_hash_mismatch_response(
+        plan_id="plan_run_gate_smoke",
+        stored_plan_hash="stored_hash_smoke",
+        current_plan_hash="current_hash_smoke",
+    )
     high_risk_required_response = build_high_risk_toolcall_prepared_action_required_response(
         tool_name="openai.file_search.upload",
         risk_level="critical",
@@ -883,7 +924,24 @@ def main() -> int:
     require(agent_plan_status_response.get("allowed_create_statuses") == ["draft", "submitted"], "agent plan status allowed statuses failed", failures)
     require(agent_plan_bound_response.get("error") == "agent_plan_human_approval_required", "agent plan bound approval response failed", failures)
     require(agent_plan_bound_response.get("agent_id") == "agt_bound_smoke", "agent plan bound approval agent failed", failures)
-    require(all(payload.get("token_omitted") is True for payload in [agent_plan_anchor_response, agent_plan_status_response, agent_plan_bound_response]), "agent plan response omission proof missing", failures)
+    require(agent_plan_run_required_response.get("error") == "agent_plan_required" and agent_plan_run_required_response.get("task_id") == "tsk_run_gate_smoke", "agent plan run-required response failed", failures)
+    require("agent-plan create" in agent_plan_run_required_response.get("hint", ""), "agent plan run-required hint failed", failures)
+    require(agent_plan_run_task_mismatch_response.get("error") == "agent_plan_task_mismatch", "agent plan run task-mismatch response failed", failures)
+    require(agent_plan_run_agent_mismatch_response.get("error") == "agent_plan_agent_mismatch", "agent plan run agent-mismatch response failed", failures)
+    require(agent_plan_run_not_executable_response.get("error") == "agent_plan_not_executable" and agent_plan_run_not_executable_response.get("status") == "draft", "agent plan run not-executable response failed", failures)
+    require(agent_plan_run_approval_required_response.get("error") == "agent_plan_approval_required" and agent_plan_run_approval_required_response.get("approval_decision") == "pending", "agent plan run approval-required response failed", failures)
+    require(agent_plan_run_hash_mismatch_response.get("error") == "agent_plan_hash_mismatch" and agent_plan_run_hash_mismatch_response.get("current_plan_hash") == "current_hash_smoke", "agent plan run hash-mismatch response failed", failures)
+    require(all(payload.get("token_omitted") is True for payload in [
+        agent_plan_anchor_response,
+        agent_plan_status_response,
+        agent_plan_bound_response,
+        agent_plan_run_required_response,
+        agent_plan_run_task_mismatch_response,
+        agent_plan_run_agent_mismatch_response,
+        agent_plan_run_not_executable_response,
+        agent_plan_run_approval_required_response,
+        agent_plan_run_hash_mismatch_response,
+    ]), "agent plan response omission proof missing", failures)
     require(high_risk_required_response.get("error") == "high_risk_prepared_action_required", "high-risk prepared-action required response error failed", failures)
     require(high_risk_required_response.get("external_side_effect_intent") is True, "high-risk prepared-action required response intent failed", failures)
     require("prepare_action=true" in high_risk_required_response.get("message", ""), "high-risk prepared-action guidance failed", failures)
