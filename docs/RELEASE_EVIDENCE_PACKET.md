@@ -75,6 +75,8 @@ The packet includes the canonical command manifest used for release review:
 - `python3 scripts/clean_machine_rc_smoke.py`
 - `python3 scripts/release_evidence_packet_smoke.py`
 - `python3 scripts/merge_readiness_status_smoke.py`
+- `python3 scripts/v1_5_product_closure_evidence_smoke.py`
+- `python3 scripts/open_source_adoption_boundary_smoke.py`
 - `python3 scripts/external_connector_runtime_inventory_smoke.py`
 - `python3 scripts/sqlite_concurrency_smoke.py`
 - `python3 scripts/secret_scan_smoke.py`
@@ -82,7 +84,13 @@ The packet includes the canonical command manifest used for release review:
 - `python3 scripts/public_claims_release_gate_smoke.py`
 - `python3 scripts/migration_rollback_smoke.py`
 - `python3 scripts/knowledge_retrieval_quality_smoke.py`
+- `python3 scripts/commander_repo_map_smoke.py`
+- `python3 scripts/commander_work_package_plan_smoke.py`
+- `python3 scripts/commander_work_package_dispatch_smoke.py`
 - `python3 scripts/ai_employees_responsiveness_smoke.py`
+- `python3 scripts/operator_action_queue_ui_smoke.py`
+- `python3 scripts/operator_advance_loop_smoke.py`
+- `python3 scripts/task_detail_evidence_ui_smoke.py`
 - `python3 scripts/security_production_readiness_smoke.py --base-url "$AGENTOPS_BASE_URL"`
 - `python3 scripts/agent_gateway_knowledge_scope_smoke.py`
 - `python3 scripts/safe_closure_evidence_packet_smoke.py`

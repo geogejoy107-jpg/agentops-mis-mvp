@@ -400,6 +400,8 @@ def validate_docs(checklist: str, packet_doc: str, ci_text: str, failures: list[
     ]
     for phrase in required_packet_phrases:
         require(phrase in packet_doc, f"release evidence packet doc missing phrase: {phrase}", failures)
+    for item in TEST_COMMANDS:
+        require(item["command"] in packet_doc, f"release evidence packet doc missing canonical command: {item['command']}", failures)
 
     checklist_requirements = [
         "- [x] Exact RC SHA.",

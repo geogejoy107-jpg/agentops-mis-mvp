@@ -32,7 +32,7 @@ Next | Verify Current Head | Ready | In Progress | Blocked | Done | Keep Green |
 
 | ID | Work item | Status | Acceptance evidence |
 |---|---|---|---|
-| P1-01 | Aider-style repository map and task localization | In Progress | `GET /api/commander/repo-map`, `agentops commander repo-map`, `operator loop-launch-packet`, and Commander work-package `commander_repo_map_localization` artifacts provide deterministic file/symbol candidates with provenance and redacted snippets; remaining work is merge-gate wiring |
+| P1-01 | Aider-style repository map and task localization | Done | `GET /api/commander/repo-map`, `agentops commander repo-map`, `operator loop-launch-packet`, Commander work-package `commander_repo_map_localization` artifacts, and CI-backed `commander_repo_map` / `commander_work_package_plan` / `commander_work_package_dispatch` release commands provide deterministic file/symbol candidates, task-bound localization artifacts, dispatch-time restoration, provenance, redaction, and merge-gate evidence |
 | P1-02 | Local Coding Project Template | Ready | WorkPackage, worktree/branch workspace, localization artifact, patch, tests, verifier, and merge gate linked in MIS |
 | P1-03 | Command Center BFF | Ready | One stable operator read model for projects, blocked runs, approvals, deliveries, stale workers, and next actions |
 | P1-04 | Runtime Capability Manifest | Ready | Each adapter declares file, shell, network, Git, secret, external-write, confirmation, and trust capabilities |
