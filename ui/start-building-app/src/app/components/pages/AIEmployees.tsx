@@ -1,5 +1,5 @@
 import { Link } from "react-router";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { AlertTriangle, Bot, CheckCircle2, Play, RefreshCw, Activity, Power, Square, KeyRound, ShieldCheck, Trash2, RotateCw, Inbox, GripVertical, XCircle, Copy, Terminal } from "lucide-react";
 import { StatusBadge } from "../shared/StatusBadge";
 import {
@@ -134,7 +134,7 @@ const WORKER_ADAPTERS = ["mock", "hermes", "openclaw"] as const;
 
 type AIEmployeesPanelLoadState = {
   id: string;
-  status: "ready" | "unavailable";
+  status: "ready" | "unavailable" | "running";
   error?: string;
 };
 
@@ -317,6 +317,7 @@ export function AIEmployees() {
   const [error, setError] = useState<string | null>(null);
   const [deferredLoading, setDeferredLoading] = useState(false);
   const [deferredError, setDeferredError] = useState<string | null>(null);
+  const [localPanelRefreshing, setLocalPanelRefreshing] = useState<string | null>(null);
   const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -377,6 +378,49 @@ export function AIEmployees() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+  const refreshPanel = useCallback(async (panelId: string) => {
+    const loader = panelId === "operator_health"
+      ? { id: "operator_health", load: async () => ({ operatorHealth: await loadOperatorHealth(12, "") }) }
+      : panelId === "agents"
+        ? { id: "agents", load: async (context: AIEmployeesLiveData) => ({ agents: await loadAgents(context.metrics as Parameters<typeof loadAgents>[0]) }) }
+        : [...AI_EMPLOYEES_PANEL_LOADERS, ...AI_EMPLOYEES_SCOPED_PANEL_LOADERS].find((item) => item.id === panelId);
+    if (!loader) return;
+    const scopedLoopId = latestLoopIdFromReadback(data?.loopLaneReadback as HermesOpenClawLoopReadbackPayload | undefined);
+    const context = { ...(data || {}), integrationInboxBucket, scopedLoopId };
+    setLocalPanelRefreshing(panelId);
+    setData((current) => ({
+      ...(current || {}),
+      panelLoadState: {
+        ...((current || {}).panelLoadState || {}),
+        [panelId]: { id: panelId, status: "running" },
+      },
+    }));
+    try {
+      const payload = await loader.load(context);
+      setData((current) => ({
+        ...(current || {}),
+        ...payload,
+        panelLoadState: {
+          ...((current || {}).panelLoadState || {}),
+          [panelId]: { id: panelId, status: "ready" },
+        },
+      }));
+    } catch (err) {
+      setData((current) => ({
+        ...(current || {}),
+        panelLoadState: {
+          ...((current || {}).panelLoadState || {}),
+          [panelId]: {
+            id: panelId,
+            status: "unavailable",
+            error: err instanceof Error ? err.message : String(err),
+          },
+        },
+      }));
+    } finally {
+      setLocalPanelRefreshing((current) => current === panelId ? null : current);
+    }
+  }, [data, integrationInboxBucket]);
   const loadSelectedDaemonLog = async (adapter = selectedLogAdapter) => {
     setDaemonLogsLoading(true);
     setDaemonLogsError(null);
@@ -507,6 +551,8 @@ export function AIEmployees() {
       panelLoadReady: "panel ready",
       panelLoadUnavailable: "panel unavailable",
       panelLoadLoading: "panel loading",
+      refreshPanel: "Refresh panel",
+      panelRefreshRunning: "Refreshing panel...",
       refresh: "Refresh live agents",
       commandCenterTitle: "Worker Fleet Console",
       commandCenterSummary: "Adapter readiness, daemon capacity, remote heartbeat/session health, stuck recovery, and the next safe CLI/API action.",
@@ -950,6 +996,8 @@ export function AIEmployees() {
       panelLoadReady: "面板就绪",
       panelLoadUnavailable: "面板不可用",
       panelLoadLoading: "面板加载中",
+      refreshPanel: "刷新面板",
+      panelRefreshRunning: "面板刷新中...",
       refresh: "刷新实时代理",
       commandCenterTitle: "Worker Fleet 控制台",
       commandCenterSummary: "集中查看 adapter 就绪、daemon 容量、远程心跳/session、卡住恢复和下一步安全 CLI/API 动作。",
@@ -1387,6 +1435,7 @@ export function AIEmployees() {
   const panelLoadState = data?.panelLoadState || {};
   const panelStatus = (panelId: string) => {
     if (panelLoadState[panelId]?.status === "unavailable") return "unavailable";
+    if (panelLoadState[panelId]?.status === "running") return "running";
     if (panelLoadState[panelId]?.status === "ready") return "ready";
     return loading || deferredLoading ? "running" : "unknown";
   };
@@ -1399,6 +1448,18 @@ export function AIEmployees() {
   };
   const panelStatusBadge = (panelId: string) => (
     <StatusBadge status={panelStatus(panelId)} label={panelStatusLabel(panelId)} />
+  );
+  const panelRefreshButton = (panelId: string) => (
+    <button
+      onClick={() => void refreshPanel(panelId)}
+      disabled={localPanelRefreshing === panelId}
+      className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded"
+      style={{ color: "var(--mis-cyan)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)", opacity: localPanelRefreshing === panelId ? 0.65 : 1 }}
+      title={localPanelRefreshing === panelId ? copy.panelRefreshRunning : copy.refreshPanel}
+    >
+      <RotateCw size={9} />
+      {localPanelRefreshing === panelId ? copy.panelRefreshRunning : copy.refreshPanel}
+    </button>
   );
   const operatorReadiness = [
     {
@@ -3157,6 +3218,7 @@ export function AIEmployees() {
               <h2 className="text-sm font-semibold" style={{ color: "var(--mis-text)" }}>{copy.commandCenterTitle}</h2>
               <StatusBadge status={operatorHealth?.status || fleetHealth?.overall || workerStatus?.status || "unknown"} />
               {panelStatusBadge("worker_status")}
+              {panelRefreshButton("worker_status")}
             </div>
             <p className="text-[11px] mt-1 max-w-3xl" style={{ color: "var(--mis-dim)" }}>{copy.commandCenterSummary}</p>
             {operatorHealth && (
@@ -3203,6 +3265,7 @@ export function AIEmployees() {
                 <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.evidenceReportTitle}</div>
                 <StatusBadge status={operatorEvidenceReport?.status || "unknown"} />
                 {panelStatusBadge("operator_evidence_report")}
+                {panelRefreshButton("operator_evidence_report")}
                 <StatusBadge status={operatorEvidenceReport?.safety?.read_only && !operatorEvidenceReport?.safety?.ledger_mutated ? "pass" : "attention"} label={operatorEvidenceReport?.safety?.read_only ? copy.readOnlyProof : copy.statusAttention} />
               </div>
               <p className="text-[10px] mt-1 max-w-4xl" style={{ color: "var(--mis-dim)" }}>{copy.evidenceReportSummary}</p>
@@ -3423,6 +3486,7 @@ export function AIEmployees() {
                 <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.loopAuditTitle}</div>
                 <StatusBadge status={operatorLoopAudit?.status || "unknown"} />
                 {panelStatusBadge("operator_loop_audit")}
+                {panelRefreshButton("operator_loop_audit")}
               </div>
               <p className="text-[10px] mt-1 max-w-4xl" style={{ color: "var(--mis-dim)" }}>
                 {copy.loopAuditSummary}
@@ -3599,6 +3663,7 @@ export function AIEmployees() {
                     <div className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.operatorHandoffTitle}</div>
                     <StatusBadge status={operatorHandoff.status || "unknown"} />
                     {panelStatusBadge("operator_handoff")}
+                    {panelRefreshButton("operator_handoff")}
                     <StatusBadge status={operatorHandoff.safety.read_only && !operatorHandoff.safety.ledger_mutated && !operatorHandoff.safety.live_execution_performed ? "pass" : "attention"} label={operatorHandoff.safety.read_only ? copy.readOnlyProof : copy.statusAttention} />
                   </div>
                   <div className="text-[9px] mt-0.5 max-w-4xl" style={{ color: "var(--mis-muted)" }}>{copy.operatorHandoffSummary}</div>
@@ -4096,6 +4161,7 @@ export function AIEmployees() {
                 <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.actionQueueTitle}</div>
                 <StatusBadge status={operatorActionPlan?.status || "unknown"} />
                 {panelStatusBadge("operator_action_plan")}
+                {panelRefreshButton("operator_action_plan")}
               </div>
               <p className="text-[10px] mt-1" style={{ color: "var(--mis-muted)" }}>
                 {copy.actionQueueSummary}

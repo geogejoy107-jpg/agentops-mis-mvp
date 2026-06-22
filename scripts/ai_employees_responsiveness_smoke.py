@@ -20,17 +20,21 @@ from urllib.request import Request, urlopen
 ROOT = Path(__file__).resolve().parents[1]
 AI_EMPLOYEES_TSX = ROOT / "ui" / "start-building-app" / "src" / "app" / "components" / "pages" / "AIEmployees.tsx"
 
-PHASE1_ENDPOINTS = [
+CORE_ENDPOINTS = [
     ("/api/dashboard/metrics", "dashboard"),
-    ("/api/demo/readiness", "demo_readiness"),
     ("/api/workers/status", "worker_status"),
     ("/api/workers/fleet", "worker_fleet"),
-    ("/api/workers/fleet/hygiene?limit=5", "worker_hygiene"),
-    ("/api/workers/adapter-readiness", "adapter_readiness"),
     ("/api/local/readiness", "local_readiness"),
     ("/api/operator/action-plan?limit=12", "operator_action_plan"),
-    ("/api/operator/action-receipts?limit=8", "operator_action_receipts"),
     ("/api/operator/evidence-report?limit=8", "operator_evidence_report"),
+    ("/api/agent-gateway/status", "agent_gateway_status"),
+    ("/api/operator/health?limit=12", "operator_health"),
+]
+DEFERRED_ENDPOINTS = [
+    ("/api/demo/readiness", "demo_readiness"),
+    ("/api/workers/fleet/hygiene?limit=5", "worker_hygiene"),
+    ("/api/workers/adapter-readiness", "adapter_readiness"),
+    ("/api/operator/action-receipts?limit=8", "operator_action_receipts"),
     ("/api/security/production-readiness", "security_readiness"),
     ("/api/commander/integration-inbox?limit=20", "integration_inbox"),
     ("/api/commander/work-packages?limit=8", "commander_work_packages"),
@@ -39,21 +43,20 @@ PHASE1_ENDPOINTS = [
     ("/api/workflows/hermes-openclaw-loop?limit=6", "loop_lane_readback"),
     ("/api/agent-gateway/enrollments", "agent_gateway_enrollments"),
     ("/api/agent-gateway/sessions", "agent_gateway_sessions"),
-    ("/api/agent-gateway/status", "agent_gateway_status"),
     ("/api/approvals", "approvals"),
     ("/api/workflows/jobs?limit=8", "workflow_jobs"),
     ("/api/workflows/jobs/stuck?threshold_sec=30&limit=8", "stuck_workflow_jobs"),
 ]
-PHASE2_ENDPOINTS = [
+SCOPED_DEFERRED_ENDPOINTS = [
     ("/api/operator/loop-audit?limit=12", "operator_loop_audit"),
     ("/api/operator/handoff?limit=12", "operator_handoff"),
     ("/api/operator/health?limit=12", "operator_health"),
     ("/api/operator/loop-self-check?limit=12", "operator_loop_self_check"),
 ]
-PHASE3_ENDPOINTS = [
+AGENT_ENDPOINTS = [
     ("/api/agents", "agents"),
 ]
-ALL_ENDPOINTS = PHASE1_ENDPOINTS + PHASE2_ENDPOINTS + PHASE3_ENDPOINTS
+ALL_ENDPOINTS = CORE_ENDPOINTS + DEFERRED_ENDPOINTS + SCOPED_DEFERRED_ENDPOINTS + AGENT_ENDPOINTS
 CRITICAL_COMMAND_CENTER_LABELS = {"dashboard", "worker_status", "worker_fleet", "operator_health"}
 SECRET_PATTERNS = [
     re.compile(r"Authorization:", re.IGNORECASE),
@@ -151,8 +154,13 @@ def static_contract() -> dict:
         "has_initial_daemon_log_prefetch": "WORKER_ADAPTERS.map(loadWorkerDaemonLogs)" in text,
         "has_lazy_daemon_log_effect": "if (!daemonLogsOpen) return;" in text and "loadSelectedDaemonLog(selectedLogAdapter)" in text,
         "has_panel_loader_manifest": "AI_EMPLOYEES_PANEL_LOADERS" in text and "AI_EMPLOYEES_SCOPED_PANEL_LOADERS" in text,
+        "has_core_panel_loader_manifest": "AI_EMPLOYEES_CORE_PANEL_LOADERS" in text,
+        "has_deferred_panel_loader_manifest": "AI_EMPLOYEES_DEFERRED_PANEL_LOADERS" in text,
+        "has_deferred_loading_state": "setDeferredLoading(true)" in text and "deferredLoading" in text,
         "has_independent_panel_settling": "Promise.allSettled(loaders.map" in text and "panelLoadState" in text,
         "has_visible_panel_status": "panelStatusBadge" in text and "panelLoadReady" in text and "panelLoadUnavailable" in text,
+        "has_panel_local_refresh": "const refreshPanel = useCallback" in text and "panelRefreshButton" in text and "localPanelRefreshing" in text,
+        "has_use_live_data_loader": "useLiveData(" in text,
         "has_monolithic_initial_loader": "const [metrics, demoReadiness, workerStatus" in text,
         "has_monolithic_scoped_loader": "const [operatorLoopAudit, operatorHandoff, operatorHealth, operatorLoopSelfCheck]" in text,
         "initial_loader_mentions": len(re.findall(r"load[A-Za-z0-9_]+\(", text[: text.find("const loadSelectedDaemonLog")])),
@@ -189,9 +197,10 @@ def main() -> int:
         try:
             wait_ready(base_url, proc)
             before = db_fingerprint(db_path)
-            phase1_results, phase1_ms = run_phase(base_url, PHASE1_ENDPOINTS)
-            phase2_results, phase2_ms = run_phase(base_url, PHASE2_ENDPOINTS)
-            phase3_results, phase3_ms = run_phase(base_url, PHASE3_ENDPOINTS, max_workers=2)
+            core_results, core_ms = run_phase(base_url, CORE_ENDPOINTS)
+            deferred_results, deferred_ms = run_phase(base_url, DEFERRED_ENDPOINTS)
+            scoped_results, scoped_ms = run_phase(base_url, SCOPED_DEFERRED_ENDPOINTS)
+            agent_results, agent_ms = run_phase(base_url, AGENT_ENDPOINTS, max_workers=2)
             after = db_fingerprint(db_path)
         finally:
             proc.terminate()
@@ -200,13 +209,14 @@ def main() -> int:
             except subprocess.TimeoutExpired:
                 proc.kill()
 
-    results = phase1_results + phase2_results + phase3_results
+    results = core_results + deferred_results + scoped_results + agent_results
     status_failures = [item for item in results if not item["ok"]]
     for item in status_failures:
         failures.append(f"{item['label']} failed: status={item['status']} error={item.get('error')}")
     duration_by_label = {item["label"]: int(item["duration_ms"]) for item in results}
     critical_ms = max(duration_by_label.get(label, 0) for label in CRITICAL_COMMAND_CENTER_LABELS)
-    current_first_useful_panel_ms = phase1_ms + phase2_ms + phase3_ms
+    current_first_useful_panel_ms = core_ms
+    background_panels_ms = deferred_ms + scoped_ms + agent_ms
     durations = [int(item["duration_ms"]) for item in results]
     contract = static_contract()
     request_paths = [path for path, _label in ALL_ENDPOINTS]
@@ -217,21 +227,25 @@ def main() -> int:
         "page": "/workspace/agents",
         "initial_api_request_count": len(ALL_ENDPOINTS),
         "phase_counts": {
-            "phase1_parallel": len(PHASE1_ENDPOINTS),
-            "phase2_loop_scoped": len(PHASE2_ENDPOINTS),
-            "phase3_agents": len(PHASE3_ENDPOINTS),
+            "core_parallel": len(CORE_ENDPOINTS),
+            "deferred_governance": len(DEFERRED_ENDPOINTS),
+            "scoped_loop_deferred": len(SCOPED_DEFERRED_ENDPOINTS),
+            "agents_deferred": len(AGENT_ENDPOINTS),
         },
         "budgets": {
             "max_initial_api_requests": 32,
             "critical_command_center_ms": 1000,
             "current_first_useful_panel_ms": 1500,
+            "background_panels_ms": 2000,
         },
         "measurements": {
-            "phase1_parallel_ms": phase1_ms,
-            "phase2_loop_scoped_ms": phase2_ms,
-            "phase3_agents_ms": phase3_ms,
+            "core_parallel_ms": core_ms,
+            "deferred_governance_ms": deferred_ms,
+            "scoped_loop_deferred_ms": scoped_ms,
+            "agents_deferred_ms": agent_ms,
             "critical_command_center_ms": critical_ms,
             "current_first_useful_panel_ms": current_first_useful_panel_ms,
+            "background_panels_ms": background_panels_ms,
             "endpoint_p95_ms": percentile(durations, 0.95),
             "slowest": sorted(results, key=lambda item: int(item["duration_ms"]), reverse=True)[:6],
         },
@@ -247,14 +261,22 @@ def main() -> int:
         failures.append(f"critical command-center API readiness too slow: {critical_ms}ms")
     if current_first_useful_panel_ms > output["budgets"]["current_first_useful_panel_ms"]:
         failures.append(f"current first useful panel budget exceeded: {current_first_useful_panel_ms}ms")
+    if background_panels_ms > output["budgets"]["background_panels_ms"]:
+        failures.append(f"background panel budget exceeded: {background_panels_ms}ms")
     if daemon_log_prefetch_paths or contract["has_initial_daemon_log_prefetch"]:
         failures.append("AI Employees initial load includes daemon log prefetch")
     if not contract["has_lazy_daemon_log_effect"]:
         failures.append("AI Employees lazy daemon log effect is missing")
     if not contract["has_panel_loader_manifest"] or not contract["has_independent_panel_settling"]:
         failures.append(f"AI Employees panels are not independently loadable: {contract}")
+    if not contract["has_core_panel_loader_manifest"] or not contract["has_deferred_panel_loader_manifest"] or not contract["has_deferred_loading_state"]:
+        failures.append(f"AI Employees panels are not split into core and deferred loaders: {contract}")
     if not contract["has_visible_panel_status"]:
         failures.append(f"AI Employees panel load state is not visible to operators: {contract}")
+    if not contract["has_panel_local_refresh"]:
+        failures.append(f"AI Employees key panels do not have local refresh controls: {contract}")
+    if contract["has_use_live_data_loader"]:
+        failures.append(f"AI Employees still uses one page-level useLiveData loader: {contract}")
     if contract["has_monolithic_initial_loader"] or contract["has_monolithic_scoped_loader"]:
         failures.append(f"AI Employees still has a monolithic panel loader: {contract}")
     if before != after:
