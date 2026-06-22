@@ -173,6 +173,69 @@ def worker_fleet_health(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def public_worker_stale_enrollment(enrollment: dict[str, Any]) -> dict[str, Any]:
+    token_id = enrollment.get("token_id") or ""
+    public = dict(enrollment)
+    public.pop("token_id", None)
+    public["token_ref"] = stable_id("token_ref", token_id)[-12:] if token_id else ""
+    public["token_id_omitted"] = True
+    return public
+
+
+def build_worker_fleet_hygiene_plan(
+    *,
+    stuck_tasks: list[dict[str, Any]],
+    stale_enrollments: list[dict[str, Any]],
+    threshold_sec: int,
+    enrollment_age_sec: int,
+    apply: bool = False,
+) -> dict[str, Any]:
+    return {
+        "provider": "agentops-worker",
+        "operation": "fleet_hygiene",
+        "status": "actionable" if stuck_tasks or stale_enrollments else "ready",
+        "threshold_sec": threshold_sec,
+        "enrollment_age_sec": enrollment_age_sec,
+        "summary": {
+            "stuck_tasks": len(stuck_tasks),
+            "stale_never_seen_enrollments": len(stale_enrollments),
+            "actions_available": len(stuck_tasks) + len(stale_enrollments),
+        },
+        "stuck_tasks": stuck_tasks,
+        "stale_never_seen_enrollments": [public_worker_stale_enrollment(enrollment) for enrollment in stale_enrollments],
+        "recommended_actions": [
+            "agentops worker hygiene --apply --confirm-cleanup",
+        ] if stuck_tasks or stale_enrollments else ["agentops worker status"],
+        "safety": {
+            "read_only": not apply,
+            "requires_confirm_cleanup": True,
+            "live_execution_performed": False,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+
+
+def public_worker_revoked_enrollment(enrollment: dict[str, Any], sessions_revoked: int = 0) -> dict[str, Any]:
+    return {
+        "token_ref": stable_id("token_ref", enrollment.get("token_id") or "")[-12:],
+        "token_id_omitted": True,
+        "agent_id": enrollment.get("agent_id"),
+        "sessions_revoked": sessions_revoked,
+    }
+
+
+def public_worker_enrollment_error(enrollment: dict[str, Any], *, status: int, error: Any) -> dict[str, Any]:
+    return {
+        "kind": "enrollment_revoke",
+        "token_ref": stable_id("token_ref", enrollment.get("token_id") or "")[-12:],
+        "token_id_omitted": True,
+        "status": status,
+        "error": error,
+    }
+
+
 def build_worker_status_payload(
     *,
     worker_agents: list[dict[str, Any]],

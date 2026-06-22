@@ -1556,6 +1556,9 @@ raw enrollment `token_id` values. The public response now uses `token_ref` and
 `token_id_omitted:true` for plan, rejected-apply, and confirmed-apply payloads;
 `worker_fleet_hygiene_smoke.py` fails if `agtok_...` appears in any hygiene
 response.
+The public hygiene plan/revoke/error projections now live in
+`agentops_mis_core/worker_fleet.py`; `server.py` keeps only the SQLite reads,
+task release, enrollment revoke invocation, runtime events and audit writes.
 
 Latest isolated real OpenClaw customer-worker acceptance:
 

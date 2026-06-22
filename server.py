@@ -109,8 +109,11 @@ from agentops_mis_core.operator_command_center import (
 )
 from agentops_mis_core.read_model_cache import ReadModelCache
 from agentops_mis_core.worker_fleet import (
+    build_worker_fleet_hygiene_plan,
     build_worker_fleet_view,
     build_worker_status_payload,
+    public_worker_enrollment_error,
+    public_worker_revoked_enrollment,
 )
 from agentops_mis_core.workflow_jobs import (
     workflow_job_mark_failed_response,
@@ -12921,15 +12924,6 @@ def worker_stale_never_seen_enrollments(conn, enrollment_age_sec: int = 900, lim
     return stale
 
 
-def public_worker_stale_enrollment(enrollment: dict) -> dict:
-    token_id = enrollment.get("token_id") or ""
-    public = dict(enrollment)
-    public.pop("token_id", None)
-    public["token_ref"] = stable_id("token_ref", token_id)[-12:] if token_id else ""
-    public["token_id_omitted"] = True
-    return public
-
-
 def worker_fleet_hygiene(conn, body: dict | None = None, *, apply: bool = False) -> tuple[dict, int]:
     body = body or {}
     threshold_raw = body.get("threshold_sec")
@@ -12940,32 +12934,13 @@ def worker_fleet_hygiene(conn, body: dict | None = None, *, apply: bool = False)
     limit = min(max(int(limit_raw if limit_raw is not None else 25), 1), 100)
     stuck_tasks = worker_stuck_tasks(conn, threshold_sec, limit)
     stale_enrollments = worker_stale_never_seen_enrollments(conn, enrollment_age_sec, limit)
-    public_stale_enrollments = [public_worker_stale_enrollment(enrollment) for enrollment in stale_enrollments]
-    plan = {
-        "provider": "agentops-worker",
-        "operation": "fleet_hygiene",
-        "status": "actionable" if stuck_tasks or stale_enrollments else "ready",
-        "threshold_sec": threshold_sec,
-        "enrollment_age_sec": enrollment_age_sec,
-        "summary": {
-            "stuck_tasks": len(stuck_tasks),
-            "stale_never_seen_enrollments": len(stale_enrollments),
-            "actions_available": len(stuck_tasks) + len(stale_enrollments),
-        },
-        "stuck_tasks": stuck_tasks,
-        "stale_never_seen_enrollments": public_stale_enrollments,
-        "recommended_actions": [
-            "agentops worker hygiene --apply --confirm-cleanup",
-        ] if stuck_tasks or stale_enrollments else ["agentops worker status"],
-        "safety": {
-            "read_only": not apply,
-            "requires_confirm_cleanup": True,
-            "live_execution_performed": False,
-            "token_omitted": True,
-        },
-        "token_omitted": True,
-        "live_execution_performed": False,
-    }
+    plan = build_worker_fleet_hygiene_plan(
+        stuck_tasks=stuck_tasks,
+        stale_enrollments=stale_enrollments,
+        threshold_sec=threshold_sec,
+        enrollment_age_sec=enrollment_age_sec,
+        apply=apply,
+    )
     if not apply:
         return plan, 200
     if body.get("confirm_cleanup") is not True:
@@ -12987,16 +12962,10 @@ def worker_fleet_hygiene(conn, body: dict | None = None, *, apply: bool = False)
             errors.append({"kind": "task_release", "task_id": task.get("task_id"), "status": status, "error": payload})
     for enrollment in stale_enrollments:
         payload, status = agent_gateway_revoke_enrollment(conn, {"token_id": enrollment["token_id"]})
-        token_ref = stable_id("token_ref", enrollment.get("token_id") or "")[-12:]
         if status == 200:
-            revoked.append({
-                "token_ref": token_ref,
-                "token_id_omitted": True,
-                "agent_id": enrollment.get("agent_id"),
-                "sessions_revoked": payload.get("sessions_revoked", 0),
-            })
+            revoked.append(public_worker_revoked_enrollment(enrollment, sessions_revoked=payload.get("sessions_revoked", 0)))
         else:
-            errors.append({"kind": "enrollment_revoke", "token_ref": token_ref, "token_id_omitted": True, "status": status, "error": payload})
+            errors.append(public_worker_enrollment_error(enrollment, status=status, error=payload))
 
     applied = {
         **plan,

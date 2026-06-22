@@ -101,6 +101,7 @@ Moved out of `server.py`:
 - `/api/workers/status` payload shaping after server-owned row collection
 - `/api/workers/fleet` lane construction, counts, safety metadata and next-action hints
 - token/session omission proof for normalized local daemon, remote worker and registered worker lanes
+- worker fleet hygiene public plan/revoke/error projections with raw token-id omission
 
 Still owned by `server.py`:
 
@@ -109,7 +110,7 @@ Still owned by `server.py`:
 - local worker daemon process/status discovery
 - stuck task and workflow job lookup
 - runtime adapter readiness and Hermes/OpenClaw/OpenClaw-bin probing
-- fleet hygiene mutations, task release, enrollment revoke, runtime events and audit writes
+- fleet hygiene mutations, task release, enrollment revoke invocation, runtime events and audit writes
 
 ### Slice 5: Runtime Connector Refresh Projection
 
@@ -1041,6 +1042,36 @@ Verification:
 python3 scripts/module_boundary_smoke.py
 python3 scripts/workflow_job_stuck_recovery_smoke.py
 python3 scripts/workflow_jobs_list_poll_smoke.py
+```
+
+### Slice 35: Worker Fleet Hygiene Public Projections
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/worker_fleet.py`
+
+Moved out of `server.py`:
+
+- stale never-seen enrollment public projection
+- worker fleet hygiene read-only plan shape
+- stale enrollment revoke success/error public projection
+- raw `token_id` omission proof for plan, rejected cleanup and confirmed cleanup payloads
+
+Still owned by `server.py`:
+
+- stuck task and stale enrollment SQLite reads
+- task release mutation
+- Agent Gateway enrollment revoke invocation
+- runtime event and audit writes
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/worker_fleet_hygiene_smoke.py --base-url "$AGENTOPS_BASE_URL"
+python3 scripts/secret_scan_smoke.py
 ```
 
 ## Next Candidate Slices
