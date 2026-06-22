@@ -2,8 +2,8 @@
 
 > Status date: 2026-06-22
 > Development line: `codex/agent-gateway-kb-demo`
-> Latest observed head when this backlog was updated: `1217ab612bf560db9c9bacaeee915285be3e8a43`
 > Current release status: `READY_TO_MERGE`
+> Exact release SHA source: `git rev-parse HEAD` plus strict release scripts.
 
 ## Status Vocabulary
 
@@ -24,7 +24,7 @@ Next | Verify Current Head | Ready | In Progress | Blocked | Done | Keep Green |
 | P0-06 | Replace approximate collaborator and workspace visibility checks | Keep Green | Guarded by workspace isolation and scoped reviewable-list smokes |
 | P0-07 | Add Knowledge workspace/ACL isolation and retrieval provenance | Keep Green | Guarded by knowledge scope, retrieval quality, and search policy smokes |
 | P0-08 | Establish SQLite concurrency baseline | Keep Green | Guarded by `scripts/sqlite_pragmas_smoke.py` and `scripts/sqlite_concurrency_smoke.py` |
-| P0-09 | Establish CI, secret scan, SBOM, license, and release evidence | Keep Green | Required PR checks `Backend deterministic smokes` and `UI build` are green on `1217ab6`; strict release evidence gates remain required after any new commit |
+| P0-09 | Establish CI, secret scan, SBOM, license, and release evidence | Keep Green | Required PR checks `Backend deterministic smokes` and `UI build` must be green on the exact current HEAD; strict release evidence gates remain required after any new commit |
 | P0-10 | Install durable project governance in repository and Notion | Done | `AGENTS.md`, project state/decision/backlog/handoff files, Project Ledger views, repo-local skill, and governance PR #6 exist |
 | P0-11 | Install the prepared ChatGPT Project Instructions | Blocked | Project owner pastes the versioned template into ChatGPT Project Instructions and confirms a new project chat follows it |
 

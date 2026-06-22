@@ -4,12 +4,11 @@
 > Repository: `geogejoy107-jpg/agentops-mis-mvp`
 > Development line: `codex/agent-gateway-kb-demo`
 > Project-governance integration commit: `5f1706c3afed22156e0bb3dc06ca351f698713d9`
-> Current observed HEAD: `1217ab612bf560db9c9bacaeee915285be3e8a43`
 > Current release status: `READY_TO_MERGE`
 > Governance PR: `#6` merged
 > Audit PR: `#5` remains the last full audit package; its P0 findings are incorporated into v1.5 release gates.
 
-Always verify the exact current development HEAD from GitHub before implementation. The integration commit is a stable point showing where governance entered the development line.
+Always verify the exact current development HEAD from GitHub before implementation. The integration commit is a stable point showing where governance entered the development line. Do not treat any SHA in this handoff as release evidence; use `git rev-parse HEAD` plus the strict release scripts.
 
 ## Read First
 
@@ -55,7 +54,7 @@ The ledger contains accepted decisions, current risks, audit evidence, tasks, an
 - Post-audit development includes customer local-deployment backup/restore, Commander Work Package Planner work, Agent Plan hard gating, prepared-action Approval Wall coverage, redaction/auth hardening, workspace/knowledge visibility gates, SQLite reliability gates, release evidence gates, and loop-launch contract UI/readback work.
 - Governance was merged into `codex/agent-gateway-kb-demo` at `5f1706c3afed22156e0bb3dc06ca351f698713d9`.
 - Historical P0 findings are reconciled through `docs/V1_5_AGENT_GATEWAY_HARDENING_OBJECTIVE.md` and `docs/V1_5_MERGE_READINESS_CHECKLIST.md`; treat them as keep-green release gates after every new commit.
-- Current PR #1 at `1217ab6` has green `Backend deterministic smokes` and `UI build` checks.
+- Current PR #1 must have green `Backend deterministic smokes` and `UI build` checks on the exact current HEAD before merge.
 
 ## Current Decision
 
@@ -72,7 +71,7 @@ The current connectors cannot edit ChatGPT Project Instructions. The project own
 - Confirmed GitHub reported the PR mergeable before merge.
 - Squash-merged PR `#6`; resulting development integration commit is `5f1706c3afed22156e0bb3dc06ca351f698713d9`.
 - Confirmed the Notion Control Center, Project Ledger, views, seed entries, and Docs SOP exist.
-- Current PR #1 head `1217ab6` has green required checks: `Backend deterministic smokes` and `UI build`.
+- Strict release verification has confirmed that PR #1's required checks are green on the exact current HEAD when `merge_readiness_status_smoke.py --require-ready-to-merge` passes.
 
 ## Next Single Action
 
@@ -88,7 +87,7 @@ priority: P0
 module: Project Governance
 repository: geogejoy107-jpg/agentops-mis-mvp
 branch: codex/agent-gateway-kb-demo
-commit: 1217ab612bf560db9c9bacaeee915285be3e8a43
+commit: runtime-derived by `git rev-parse HEAD`
 source: Notion Control Center, merged GitHub PR #6, audit PR #5 findings, and PR #1 release-readiness checks
 supersedes: ad-hoc conversation-only continuity
 next_action: keep strict release gates green after any new commit; merge through reviewed PR while READY_TO_MERGE remains true

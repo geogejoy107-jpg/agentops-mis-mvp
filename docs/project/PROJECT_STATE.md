@@ -5,12 +5,11 @@
 > Development line: `codex/agent-gateway-kb-demo`
 > Project-governance integration commit: `5f1706c3afed22156e0bb3dc06ca351f698713d9`
 > Last full audit baseline: `8d1827e00629bdca4779794121ca4a31dfa3f1e1`
-> Current observed HEAD: `1217ab612bf560db9c9bacaeee915285be3e8a43`
 > Current release status: `READY_TO_MERGE` by `docs/V1_5_MERGE_READINESS_CHECKLIST.md`
 > Governance PR: `#6` merged
 > Audit PR: `#5` draft; its P0 findings are now incorporated into the hardening overlay.
 
-Always fetch the exact current development HEAD from GitHub before code or architecture work. The integration commit above is a stable baseline, not a claim that the branch will never advance.
+Always fetch the exact current development HEAD from GitHub before code or architecture work. The integration commit above is a stable baseline, not a claim that the branch will never advance. Exact release evidence must come from `git rev-parse HEAD` and the strict release scripts at runtime, not from a tracked SHA in this file.
 
 ## Product Position
 
