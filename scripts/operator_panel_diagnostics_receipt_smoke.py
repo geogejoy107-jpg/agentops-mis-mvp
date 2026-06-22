@@ -110,12 +110,33 @@ def main() -> int:
             require(status == 201, f"panel diagnostic receipt POST failed: {status} {receipt}", failures)
             require(((receipt.get("receipt") or {}).get("source") == "ui.panel_diagnostics"), f"panel source not preserved: {receipt}", failures)
             require(((receipt.get("evaluation") or {}).get("pass_fail") == "fail"), f"failed panel receipt should create failed evaluation: {receipt}", failures)
+            action_hash = ((receipt.get("receipt") or {}).get("action_hash") or "")
+            repeated_body = {
+                **receipt_body,
+                "result_summary": "panel=operator_action_plan; status=unavailable; attempts=3; token_omitted=true",
+            }
+            status, repeated_receipt = http_json(base_url, "/api/operator/action-receipts", "POST", repeated_body)
+            outputs.append(json.dumps(repeated_receipt, ensure_ascii=False))
+            require(status == 201, f"repeated panel diagnostic receipt POST failed: {status} {repeated_receipt}", failures)
+            require(((repeated_receipt.get("receipt") or {}).get("action_hash") == action_hash), f"repeated panel receipt should share action hash: {repeated_receipt}", failures)
+            require(((repeated_receipt.get("evaluation") or {}).get("pass_fail") == "fail"), f"repeated failed panel receipt should fail evaluation: {repeated_receipt}", failures)
 
             status, readback = http_json(base_url, "/api/operator/action-receipts?limit=8")
             outputs.append(json.dumps(readback, ensure_ascii=False))
             require(status == 200, f"receipt readback failed: {status} {readback}", failures)
             recent_sources = [item.get("source") for item in readback.get("receipts") or []]
             require("ui.panel_diagnostics" in recent_sources, f"panel receipt missing from recent receipts: {readback}", failures)
+
+            status, action_plan = http_json(base_url, "/api/operator/action-plan?limit=30")
+            outputs.append(json.dumps(action_plan, ensure_ascii=False))
+            require(status == 200, f"action-plan failed: {status} {action_plan}", failures)
+            failure_memory = action_plan.get("receipt_failure_memory") or {}
+            failure_candidate = next((item for item in failure_memory.get("candidates") or [] if item.get("action_hash") == action_hash), {})
+            require(failure_memory.get("operation") == "receipt_failure_memory_lane", f"action-plan failure-memory lane missing: {failure_memory}", failures)
+            require(int(failure_candidate.get("failures") or 0) >= 2, f"panel failures did not become failure-memory candidate: {failure_memory}", failures)
+            require("ui.panel_diagnostics" in (failure_candidate.get("sources") or []), f"panel failure-memory source missing: {failure_candidate}", failures)
+            memory_action = next((item for item in action_plan.get("actions") or [] if item.get("source") == "receipt_failure_memory"), {})
+            require("propose-receipt-failure-memory" in str(memory_action.get("command") or ""), f"action-plan memory action missing: {memory_action}", failures)
 
             status, loop_audit = http_json(base_url, "/api/operator/loop-audit?limit=12")
             outputs.append(json.dumps(loop_audit, ensure_ascii=False))
@@ -126,8 +147,10 @@ def main() -> int:
             status, handoff = http_json(base_url, "/api/operator/handoff?limit=12")
             outputs.append(json.dumps(handoff, ensure_ascii=False))
             recent = ((handoff.get("receipt_state") or {}).get("recent") or [])
+            failure_work_order = (((handoff.get("work_order") or {}).get("receipt_failure_memory") or {}).get("items") or [])
             require(status == 200, f"handoff failed: {status} {handoff}", failures)
             require(any(item.get("source") == "ui.panel_diagnostics" for item in recent), f"handoff did not package panel receipt: {recent}", failures)
+            require(any(item.get("action_hash") == action_hash for item in failure_work_order), f"handoff did not package panel failure-memory work item: {failure_work_order}", failures)
             require((handoff.get("safety") or {}).get("token_omitted") is True, f"handoff token omission proof missing: {handoff.get('safety')}", failures)
         finally:
             proc.terminate()
