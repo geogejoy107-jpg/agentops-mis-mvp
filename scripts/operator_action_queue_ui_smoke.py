@@ -18,7 +18,7 @@ SECRET_PATTERNS = [
     re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+"),
     re.compile(r"agtok_[A-Za-z0-9_]+"),
     re.compile(r"agtsess_[A-Za-z0-9_]+"),
-    re.compile(r"sk-[A-Za-z0-9]{20,}"),
+    re.compile(r"sk-[A-Za-z0-9]{8,}"),
     re.compile(r"ntn_[A-Za-z0-9]{8,}"),
     re.compile(r"AGENTOPS_API_KEY=", re.IGNORECASE),
 ]
