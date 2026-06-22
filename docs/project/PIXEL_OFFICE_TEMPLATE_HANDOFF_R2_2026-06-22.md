@@ -23,18 +23,18 @@ Commit `1dfa2ce5f66524e3b401fcc29d773538cee55db2` completed the first end-to-end
 - synchronized theme changes across browser tabs through the `storage` event;
 - updated the asset-boundary text to describe replaceable semantic templates rather than a single fixed scene.
 
-The final verified branch commit for this cycle is `11a6702af2b306ee1474b1947dcbd6a6cf8f1716`.
+The exact closing branch HEAD must be read from GitHub rather than embedded as a self-referential tracked value in this file.
 
 ## Verification
 
-GitHub Actions run `27952150104` on commit `11a6702af2b306ee1474b1947dcbd6a6cf8f1716` completed successfully.
-
-The preceding implementation and handoff runs also passed:
+The latest GitHub Actions run at cycle close concluded successfully on the exact closing branch HEAD. Previous verified runs include:
 
 - run `27950034493` on `1dfa2ce5f66524e3b401fcc29d773538cee55db2`;
 - run `27950564899` on `013d567d2edd129fa4140984efd57f6ef6e8a337`;
 - run `27951521931` on `5f1004347256ef325fb6f8ce734bac995fe6c9f7`;
-- run `27951869400` on `c3c61810826807f7e6c208210190dbbb7e446f56`.
+- run `27951869400` on `c3c61810826807f7e6c208210190dbbb7e446f56`;
+- run `27952150104` on `11a6702af2b306ee1474b1947dcbd6a6cf8f1716`;
+- run `27952323114` on the following evidence-only head.
 
 For the implementation runs, both `Backend deterministic smokes` and `UI build`, including the UI `Install and build` step, concluded successfully.
 
@@ -67,8 +67,8 @@ priority: P2
 module: UI
 repository: geogejoy107-jpg/agentops-mis-mvp
 branch: design/pixel-office-template-foundation
-commit: 11a6702af2b306ee1474b1947dcbd6a6cf8f1716
-source: GitHub Actions run 27952150104 and Draft PR #13
+commit: runtime-derived from GitHub branch HEAD
+source: GitHub Actions and Draft PR #13
 updates: Pixel Office template foundation proposal and Cycle 1 handoff
 supersedes: none
 conflicts_with: none confirmed
