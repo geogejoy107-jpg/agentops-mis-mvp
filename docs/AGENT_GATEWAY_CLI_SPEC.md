@@ -1421,7 +1421,9 @@ safety flags. `--confirm-create` writes a `memories` row with
 `review_status:candidate` plus runtime evidence, then the item must be approved
 or rejected through `agentops review queue` / `agentops memory approve|reject`.
 This prevents failed recovery paths from silently becoming authoritative
-project memory.
+project memory. `/workspace/agents` exposes the same preview/confirm path in
+the Operator Handoff receipt-failure-memory card: preview stays read-only,
+while create requires explicit confirmation and refreshes the review queue.
 
 ```bash
 agentops operator intake-checklist --limit 12
