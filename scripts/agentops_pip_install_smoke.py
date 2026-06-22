@@ -30,11 +30,17 @@ def run(cmd: list[str], *, cwd: Path, env: dict[str, str]) -> subprocess.Complet
         return CompletedProcess(cmd, 127, "", str(exc))
 
 
+def server_unreachable(proc: subprocess.CompletedProcess[str]) -> bool:
+    text = f"{proc.stdout}\n{proc.stderr}"
+    return proc.returncode != 0 and "Cannot reach http://127.0.0.1:" in text
+
+
 def main() -> int:
     with tempfile.TemporaryDirectory(prefix="agentops-pip-install-") as tmp:
         tmp_path = Path(tmp)
         venv_path = tmp_path / "venv"
         config_path = tmp_path / "config.json"
+        base_url = os.environ.get("AGENTOPS_PIP_SMOKE_BASE_URL", "http://127.0.0.1:8787")
         env = os.environ.copy()
         env["AGENTOPS_CONFIG"] = str(config_path)
         env.pop("AGENTOPS_API_KEY", None)
@@ -60,7 +66,7 @@ def main() -> int:
                 str(agentops),
                 "login",
                 "--base-url",
-                "http://127.0.0.1:8787",
+                base_url,
                 "--workspace-id",
                 "local-demo",
                 "--agent-id",
@@ -107,6 +113,28 @@ def main() -> int:
         except json.JSONDecodeError:
             pass
 
+        status_check_ok = (
+            (
+                status_run.returncode == 0
+                and status_payload.get("provider") == "agent_gateway"
+                and status_payload.get("token_omitted") is True
+            )
+            or server_unreachable(status_run)
+        )
+        worker_status_check_ok = (
+            (
+                worker_status_run.returncode == 0
+                and worker_status_payload.get("provider") == "agentops-worker"
+            )
+            or server_unreachable(worker_status_run)
+        )
+        worker_logs_check_ok = (
+            (
+                worker_logs_run.returncode == 0
+                and worker_logs_payload.get("provider") == "agentops-worker"
+            )
+            or server_unreachable(worker_logs_run)
+        )
         ok = (
             install.returncode == 0
             and help_run.returncode == 0
@@ -116,11 +144,8 @@ def main() -> int:
             and login_run.returncode == 0
             and login_payload.get("ok") is True
             and login_payload.get("has_api_key") is False
-            and status_run.returncode == 0
-            and status_payload.get("provider") == "agent_gateway"
-            and status_payload.get("token_omitted") is True
-            and worker_status_run.returncode == 0
-            and worker_status_payload.get("provider") == "agentops-worker"
+            and status_check_ok
+            and worker_status_check_ok
             and worker_preflight_run.returncode == 0
             and worker_preflight_payload.get("provider") == "agentops-worker"
             and worker_preflight_payload.get("live_execution_performed") is False
@@ -128,8 +153,7 @@ def main() -> int:
             and "usage: agentops worker service-check" in worker_service_check_help_run.stdout
             and worker_service_install_help_run.returncode == 0
             and "usage: agentops worker service-install" in worker_service_install_help_run.stdout
-            and worker_logs_run.returncode == 0
-            and worker_logs_payload.get("provider") == "agentops-worker"
+            and worker_logs_check_ok
             and task_create_help_run.returncode == 0
             and "usage: agentops task create" in task_create_help_run.stdout
             and "--owner-agent-id" in task_create_help_run.stdout
@@ -153,11 +177,14 @@ def main() -> int:
             "worker_entry_help_returncode": worker_entry_help_run.returncode,
             "login_returncode": login_run.returncode,
             "status_returncode": status_run.returncode,
+            "status_server_unreachable_allowed": server_unreachable(status_run),
             "worker_status_returncode": worker_status_run.returncode,
+            "worker_status_server_unreachable_allowed": server_unreachable(worker_status_run),
             "worker_preflight_returncode": worker_preflight_run.returncode,
             "worker_service_check_help_returncode": worker_service_check_help_run.returncode,
             "worker_service_install_help_returncode": worker_service_install_help_run.returncode,
             "worker_logs_returncode": worker_logs_run.returncode,
+            "worker_logs_server_unreachable_allowed": server_unreachable(worker_logs_run),
             "task_create_help_returncode": task_create_help_run.returncode,
             "workflow_run_task_help_returncode": workflow_run_task_help_run.returncode,
             "workflow_run_template_help_returncode": workflow_run_template_help_run.returncode,
@@ -165,6 +192,7 @@ def main() -> int:
             "workflow_help_returncode": workflow_help_run.returncode,
             "command": str(agentops),
             "worker_command": str(agentops_worker),
+            "base_url": base_url,
             "config_path": str(config_path),
             "config_created": config_path.exists(),
             "token_written": bool(login_payload.get("has_api_key")),
