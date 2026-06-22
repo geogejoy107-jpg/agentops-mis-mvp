@@ -1066,6 +1066,29 @@ def cmd_run_heartbeat(args, client: AgentOpsClient) -> dict:
     return client.post(f"/api/agent-gateway/runs/{args.run_id}/heartbeat", payload)
 
 
+def cmd_runtime_event_record(args, client: AgentOpsClient) -> dict:
+    payload = {
+        "workspace_id": client.workspace_id,
+        "agent_id": args.agent_id or client.agent_id,
+        "run_id": args.run_id,
+        "adapter": args.adapter,
+        "runtime_connector_id": args.connector_id,
+        "event_type": args.event_type,
+        "status": args.status,
+        "input_summary": args.input_summary,
+        "output_summary": args.output_summary or args.summary,
+        "error_message": args.error_message,
+        "latency_ms": args.latency_ms,
+        "model_name": args.model,
+        "prompt_hash": args.prompt_hash,
+        "raw_payload_hash": args.payload_hash,
+        "payload": parse_json_value(args.payload_json, None) if args.payload_json else None,
+        "metadata": parse_json_value(args.metadata_json, {}) if args.metadata_json else {},
+        "source": args.source,
+    }
+    return client.post("/api/agent-gateway/runtime-events", payload)
+
+
 def cmd_toolcall_record(args, client: AgentOpsClient) -> dict:
     payload = {
         "workspace_id": client.workspace_id,
@@ -2357,6 +2380,27 @@ def build_parser() -> argparse.ArgumentParser:
     run_hb.add_argument("--error-message", default=None)
     run_hb.set_defaults(handler="run_heartbeat")
 
+    runtime_event = sub.add_parser("runtime-event", help="Runtime internal event evidence commands.")
+    runtime_event_sub = runtime_event.add_subparsers(dest="action", required=True)
+    runtime_event_record = runtime_event_sub.add_parser("record", help="Record a redacted runtime/tool event summary for a run.")
+    runtime_event_record.add_argument("--run-id", required=True)
+    runtime_event_record.add_argument("--agent-id", default=None)
+    runtime_event_record.add_argument("--adapter", default=None, choices=["mock", "hermes", "openclaw", "agnesfallback"])
+    runtime_event_record.add_argument("--connector-id", default=None)
+    runtime_event_record.add_argument("--event-type", default="runtime.tool_event")
+    runtime_event_record.add_argument("--status", default="completed", choices=["planned", "running", "completed", "failed", "blocked", "waiting_approval", "unavailable"])
+    runtime_event_record.add_argument("--input-summary", default=None)
+    runtime_event_record.add_argument("--output-summary", "--summary", dest="output_summary", default=None)
+    runtime_event_record.add_argument("--error-message", default=None)
+    runtime_event_record.add_argument("--latency-ms", type=int, default=None)
+    runtime_event_record.add_argument("--model", default=None)
+    runtime_event_record.add_argument("--prompt-hash", default=None)
+    runtime_event_record.add_argument("--payload-hash", default=None)
+    runtime_event_record.add_argument("--payload-json", default=None, help="Optional raw event payload used only to compute a hash server-side; it is not stored.")
+    runtime_event_record.add_argument("--metadata-json", default=None)
+    runtime_event_record.add_argument("--source", default="agentops-cli.runtime-event")
+    runtime_event_record.set_defaults(handler="runtime_event_record")
+
     toolcall = sub.add_parser("toolcall", help="Tool call evidence commands.")
     tool_sub = toolcall.add_subparsers(dest="action", required=True)
     record = tool_sub.add_parser("record", help="Record a tool call.")
@@ -2864,7 +2908,7 @@ def build_parser() -> argparse.ArgumentParser:
     enroll_create.add_argument("--name", default="Remote Agent")
     enroll_create.add_argument("--role", default="Remote AI Digital Employee")
     enroll_create.add_argument("--runtime", default="mock")
-    enroll_create.add_argument("--scopes", default="agents:write,agents:heartbeat,knowledge:read,agent_plans:read,agent_plans:write,plan_evidence:read,plan_evidence:write,tasks:create,tasks:read,tasks:claim,runs:write,toolcalls:write,artifacts:write,approvals:request,memories:propose,evaluations:submit,audit:write")
+    enroll_create.add_argument("--scopes", default="agents:write,agents:heartbeat,knowledge:read,agent_plans:read,agent_plans:write,plan_evidence:read,plan_evidence:write,tasks:create,tasks:read,tasks:claim,runs:write,runtime_events:write,toolcalls:write,artifacts:write,approvals:request,memories:propose,evaluations:submit,audit:write")
     enroll_create.add_argument("--ttl-days", type=int, default=30)
     enroll_create.add_argument("--heartbeat-timeout-sec", type=int, default=300)
     enroll_create.add_argument("--label", default="")
@@ -2876,7 +2920,7 @@ def build_parser() -> argparse.ArgumentParser:
     enroll_request.add_argument("--name", default="Remote Agent")
     enroll_request.add_argument("--role", default="Remote AI Digital Employee")
     enroll_request.add_argument("--runtime", default="mock")
-    enroll_request.add_argument("--scopes", default="agents:heartbeat,knowledge:read,agent_plans:read,agent_plans:write,plan_evidence:read,plan_evidence:write,tasks:create,tasks:read,tasks:claim,runs:write,toolcalls:write,artifacts:write,memories:propose,evaluations:submit,audit:write")
+    enroll_request.add_argument("--scopes", default="agents:heartbeat,knowledge:read,agent_plans:read,agent_plans:write,plan_evidence:read,plan_evidence:write,tasks:create,tasks:read,tasks:claim,runs:write,runtime_events:write,toolcalls:write,artifacts:write,memories:propose,evaluations:submit,audit:write")
     enroll_request.add_argument("--reason", default="Remote worker needs scoped access to process assigned MIS tasks.")
     enroll_request.set_defaults(handler="enrollment_request")
 
@@ -2968,6 +3012,7 @@ HANDLERS = {
     "run_graph": cmd_run_graph,
     "run_start": cmd_run_start,
     "run_heartbeat": cmd_run_heartbeat,
+    "runtime_event_record": cmd_runtime_event_record,
     "toolcall_record": cmd_toolcall_record,
     "artifact_list": cmd_artifact_list,
     "artifact_record": cmd_artifact_record,

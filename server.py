@@ -2716,6 +2716,7 @@ VALID_AGENT_GATEWAY_SCOPES = {
     "tasks:read",
     "tasks:claim",
     "runs:write",
+    "runtime_events:write",
     "toolcalls:write",
     "artifacts:write",
     "approvals:request",
@@ -2739,6 +2740,7 @@ AGENT_GATEWAY_WORKER_WRITE_SCOPES = {
     "tasks:create",
     "tasks:claim",
     "runs:write",
+    "runtime_events:write",
     "toolcalls:write",
     "artifacts:write",
     "memories:propose",
@@ -3087,6 +3089,65 @@ def workspace_forbidden(entity_type: str, entity_id: str, requested_workspace: s
     }, 403
 
 
+AGENT_GATEWAY_SCOPE_SERVICE_VERSION = "agent_gateway_scope_v1"
+
+
+def sql_ref(alias: str | None, column: str) -> str:
+    return f"{alias}.{column}" if alias else column
+
+
+def agent_gateway_scope_metadata(ident: dict, auth_ctx: dict | None, required_scope: str = "tasks:read", **extra) -> dict:
+    return {
+        "required_scope": required_scope,
+        "scope_service": AGENT_GATEWAY_SCOPE_SERVICE_VERSION,
+        "workspace_id": ident.get("workspace_id"),
+        "agent_id": ident.get("agent_id"),
+        "auth_mode": (auth_ctx or {}).get("mode") or "unknown",
+        "bound_visibility_enforced": agent_gateway_is_bound_auth(auth_ctx),
+        "token_omitted": True,
+        **extra,
+    }
+
+
+def agent_gateway_task_visibility_clause(task_alias: str | None, ident: dict, auth_ctx: dict | None) -> tuple[str, list]:
+    if not agent_gateway_is_bound_auth(auth_ctx):
+        return "1=1", []
+    owner_col = sql_ref(task_alias, "owner_agent_id")
+    collaborator_col = sql_ref(task_alias, "collaborator_agent_ids")
+    return (
+        f"({owner_col}=? OR agentops_json_array_contains({collaborator_col}, ?) OR {owner_col} IS NULL OR {owner_col}='')",
+        [ident["agent_id"], ident["agent_id"]],
+    )
+
+
+def agent_gateway_run_visibility_clause(run_alias: str | None, task_alias: str | None, ident: dict, auth_ctx: dict | None) -> tuple[str, list]:
+    if not agent_gateway_is_bound_auth(auth_ctx):
+        return "1=1", []
+    task_clause, task_params = agent_gateway_task_visibility_clause(task_alias, ident, auth_ctx)
+    run_agent_col = sql_ref(run_alias, "agent_id")
+    return f"({task_clause} OR {run_agent_col}=?)", [*task_params, ident["agent_id"]]
+
+
+def agent_gateway_approval_visibility_clause(approval_alias: str | None, run_alias: str | None, task_alias: str | None, ident: dict, auth_ctx: dict | None) -> tuple[str, list]:
+    if not agent_gateway_is_bound_auth(auth_ctx):
+        return "1=1", []
+    run_clause, run_params = agent_gateway_run_visibility_clause(run_alias, task_alias, ident, auth_ctx)
+    requested_col = sql_ref(approval_alias, "requested_by_agent_id")
+    return f"({run_clause} OR {requested_col}=?)", [*run_params, ident["agent_id"]]
+
+
+def agent_gateway_memory_visibility_clause(memory_alias: str | None, task_alias: str | None, ident: dict, auth_ctx: dict | None) -> tuple[str, list]:
+    if not agent_gateway_is_bound_auth(auth_ctx):
+        return "1=1", []
+    task_id_col = sql_ref(memory_alias, "task_id")
+    memory_agent_col = sql_ref(memory_alias, "agent_id")
+    task_clause, task_params = agent_gateway_task_visibility_clause(task_alias, ident, auth_ctx)
+    return (
+        f"(({task_id_col} IS NOT NULL AND {task_clause}) OR ({task_id_col} IS NULL AND {memory_agent_col}=?) OR {memory_agent_col}=?)",
+        [*task_params, ident["agent_id"], ident["agent_id"]],
+    )
+
+
 def ensure_run_access(conn: sqlite3.Connection, run_id: str, ident: dict) -> tuple[sqlite3.Row | None, tuple[dict, int] | None]:
     run = conn.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
     if not run:
@@ -3226,6 +3287,7 @@ def agent_gateway_create_enrollment(conn, body) -> tuple[dict, int]:
         "tasks:read",
         "tasks:claim",
         "runs:write",
+        "runtime_events:write",
         "toolcalls:write",
         "artifacts:write",
         "approvals:request",
@@ -3297,6 +3359,7 @@ def agent_gateway_request_enrollment(conn, body) -> tuple[dict, int]:
         "tasks:read",
         "tasks:claim",
         "runs:write",
+        "runtime_events:write",
         "toolcalls:write",
         "artifacts:write",
         "evaluations:submit",
@@ -4166,15 +4229,17 @@ def run_detail_payload(conn: sqlite3.Connection, run_id: str) -> dict | None:
         "approvals": rows_to_dicts(conn.execute("SELECT * FROM approvals WHERE run_id=? ORDER BY created_at", (run_id,)).fetchall()),
         "evaluations": rows_to_dicts(conn.execute("SELECT * FROM evaluations WHERE run_id=? ORDER BY created_at", (run_id,)).fetchall()),
         "artifacts": rows_to_dicts(conn.execute("SELECT * FROM artifacts WHERE run_id=? ORDER BY created_at", (run_id,)).fetchall()),
+        "runtime_events": rows_to_dicts(conn.execute("SELECT * FROM runtime_events WHERE run_id=? ORDER BY created_at", (run_id,)).fetchall()),
     }
 
 
 def agent_gateway_visible_task_sql(ident: dict, auth_ctx: dict | None) -> tuple[str, list]:
     sql = "COALESCE(workspace_id,'local-demo')=?"
     params: list = [ident["workspace_id"]]
-    if agent_gateway_is_bound_auth(auth_ctx):
-        sql += " AND (owner_agent_id=? OR agentops_json_array_contains(collaborator_agent_ids, ?) OR owner_agent_id IS NULL OR owner_agent_id='')"
-        params.extend([ident["agent_id"], ident["agent_id"]])
+    visibility_sql, visibility_params = agent_gateway_task_visibility_clause(None, ident, auth_ctx)
+    if visibility_sql != "1=1":
+        sql += f" AND {visibility_sql}"
+        params.extend(visibility_params)
     return sql, params
 
 
@@ -4226,7 +4291,7 @@ def agent_gateway_list_tasks(conn: sqlite3.Connection, qs: dict, headers, auth_c
         where += " AND requester_id=?"
         params.append(requester)
     rows = rows_to_dicts(conn.execute(f"SELECT * FROM tasks WHERE {where} ORDER BY created_at DESC LIMIT ?", [*params, limit]).fetchall())
-    return {"provider": "agent_gateway", "operation": "task_list", "tasks": rows, "count": len(rows), "workspace_id": ident["workspace_id"], "token_omitted": True}, 200
+    return {"provider": "agent_gateway", "operation": "task_list", "tasks": rows, "count": len(rows), "workspace_id": ident["workspace_id"], "gateway_scope": agent_gateway_scope_metadata(ident, auth_ctx), "token_omitted": True}, 200
 
 
 def agent_gateway_get_task(conn: sqlite3.Connection, task_id: str, headers, auth_ctx=None) -> tuple[dict, int]:
@@ -4235,7 +4300,7 @@ def agent_gateway_get_task(conn: sqlite3.Connection, task_id: str, headers, auth
     if access_error:
         return access_error
     data = task_detail_payload(conn, task_id) or {}
-    data.update({"provider": "agent_gateway", "operation": "task_get", "workspace_id": ident["workspace_id"], "token_omitted": True})
+    data.update({"provider": "agent_gateway", "operation": "task_get", "workspace_id": ident["workspace_id"], "gateway_scope": agent_gateway_scope_metadata(ident, auth_ctx), "token_omitted": True})
     return data, 200
 
 
@@ -4254,9 +4319,10 @@ def agent_gateway_list_runs(conn: sqlite3.Connection, qs: dict, headers, auth_ct
     if "agent_id" in qs and not agent_gateway_is_bound_auth(auth_ctx):
         where.append("r.agent_id=?")
         params.append(qs["agent_id"][0])
-    if agent_gateway_is_bound_auth(auth_ctx):
-        where.append("(t.owner_agent_id=? OR agentops_json_array_contains(t.collaborator_agent_ids, ?) OR t.owner_agent_id IS NULL OR t.owner_agent_id='' OR r.agent_id=?)")
-        params.extend([ident["agent_id"], ident["agent_id"], ident["agent_id"]])
+    visibility_sql, visibility_params = agent_gateway_run_visibility_clause("r", "t", ident, auth_ctx)
+    if visibility_sql != "1=1":
+        where.append(visibility_sql)
+        params.extend(visibility_params)
     statuses = qs.get("status") or []
     statuses = [coerce_choice(status, {"running", "completed", "failed", "blocked", "waiting_approval"}, "running") for status in statuses]
     if statuses:
@@ -4264,7 +4330,7 @@ def agent_gateway_list_runs(conn: sqlite3.Connection, qs: dict, headers, auth_ct
         params.extend(statuses)
     sql = "SELECT r.* FROM runs r LEFT JOIN tasks t ON t.task_id=r.task_id WHERE " + " AND ".join(where) + " ORDER BY r.created_at DESC LIMIT ?"
     rows = rows_to_dicts(conn.execute(sql, [*params, limit]).fetchall())
-    return {"provider": "agent_gateway", "operation": "run_list", "runs": rows, "count": len(rows), "workspace_id": ident["workspace_id"], "token_omitted": True}, 200
+    return {"provider": "agent_gateway", "operation": "run_list", "runs": rows, "count": len(rows), "workspace_id": ident["workspace_id"], "gateway_scope": agent_gateway_scope_metadata(ident, auth_ctx), "token_omitted": True}, 200
 
 
 def agent_gateway_get_run(conn: sqlite3.Connection, run_id: str, headers, auth_ctx=None) -> tuple[dict, int]:
@@ -4273,7 +4339,7 @@ def agent_gateway_get_run(conn: sqlite3.Connection, run_id: str, headers, auth_c
     if access_error:
         return access_error
     data = run_detail_payload(conn, run_id) or {}
-    data.update({"provider": "agent_gateway", "operation": "run_get", "workspace_id": ident["workspace_id"], "token_omitted": True})
+    data.update({"provider": "agent_gateway", "operation": "run_get", "workspace_id": ident["workspace_id"], "gateway_scope": agent_gateway_scope_metadata(ident, auth_ctx), "token_omitted": True})
     return data, 200
 
 
@@ -4285,7 +4351,7 @@ def agent_gateway_get_run_graph(conn: sqlite3.Connection, run_id: str, headers, 
     data = run_graph(conn, run_id)
     if not data:
         return {"error": "not found"}, 404
-    data.update({"provider": "agent_gateway", "operation": "run_graph", "workspace_id": ident["workspace_id"], "token_omitted": True})
+    data.update({"provider": "agent_gateway", "operation": "run_graph", "workspace_id": ident["workspace_id"], "gateway_scope": agent_gateway_scope_metadata(ident, auth_ctx), "token_omitted": True})
     return data, 200
 
 
@@ -4313,14 +4379,16 @@ def agent_gateway_list_artifacts(conn: sqlite3.Connection, qs: dict, headers, au
         params.append(qs["type"][0])
     if agent_gateway_is_bound_auth(auth_ctx):
         where.append("(a.task_id IS NOT NULL OR a.run_id IS NOT NULL)")
-        where.append("(t.owner_agent_id=? OR agentops_json_array_contains(t.collaborator_agent_ids, ?) OR t.owner_agent_id IS NULL OR t.owner_agent_id='' OR r.agent_id=?)")
-        params.extend([ident["agent_id"], ident["agent_id"], ident["agent_id"]])
+    visibility_sql, visibility_params = agent_gateway_run_visibility_clause("r", "t", ident, auth_ctx)
+    if visibility_sql != "1=1":
+        where.append(visibility_sql)
+        params.extend(visibility_params)
     sql = """SELECT a.* FROM artifacts a
-        LEFT JOIN tasks t ON t.task_id=a.task_id
         LEFT JOIN runs r ON r.run_id=a.run_id
+        LEFT JOIN tasks t ON t.task_id=COALESCE(a.task_id,r.task_id)
         WHERE """ + " AND ".join(where) + " ORDER BY a.created_at DESC LIMIT ?"
     rows = rows_to_dicts(conn.execute(sql, [*params, limit]).fetchall())
-    return {"provider": "agent_gateway", "operation": "artifact_list", "artifacts": rows, "count": len(rows), "workspace_id": ident["workspace_id"], "token_omitted": True}, 200
+    return {"provider": "agent_gateway", "operation": "artifact_list", "artifacts": rows, "count": len(rows), "workspace_id": ident["workspace_id"], "gateway_scope": agent_gateway_scope_metadata(ident, auth_ctx), "token_omitted": True}, 200
 
 
 def agent_gateway_list_approvals(conn: sqlite3.Connection, qs: dict, headers, auth_ctx=None) -> tuple[dict, int]:
@@ -4347,25 +4415,17 @@ def agent_gateway_list_approvals(conn: sqlite3.Connection, qs: dict, headers, au
     if decisions:
         where.append("ap.decision IN (" + ",".join("?" for _ in decisions) + ")")
         params.extend(decisions)
-    if agent_gateway_is_bound_auth(auth_ctx):
-        where.append(
-            """(
-                t.owner_agent_id=?
-                OR agentops_json_array_contains(t.collaborator_agent_ids, ?)
-                OR t.owner_agent_id IS NULL
-                OR t.owner_agent_id=''
-                OR r.agent_id=?
-                OR ap.requested_by_agent_id=?
-            )"""
-        )
-        params.extend([ident["agent_id"], ident["agent_id"], ident["agent_id"], ident["agent_id"]])
+    visibility_sql, visibility_params = agent_gateway_approval_visibility_clause("ap", "r", "t", ident, auth_ctx)
+    if visibility_sql != "1=1":
+        where.append(visibility_sql)
+        params.extend(visibility_params)
     requested_by = (qs.get("requested_by_agent_id") or [None])[0]
     if requested_by and not agent_gateway_is_bound_auth(auth_ctx):
         where.append("ap.requested_by_agent_id=?")
         params.append(requested_by)
     sql = """SELECT ap.* FROM approvals ap
-        LEFT JOIN tasks t ON t.task_id=ap.task_id
         LEFT JOIN runs r ON r.run_id=ap.run_id
+        LEFT JOIN tasks t ON t.task_id=COALESCE(ap.task_id,r.task_id)
         WHERE """ + " AND ".join(where) + " ORDER BY ap.created_at DESC LIMIT ?"
     rows = rows_to_dicts(conn.execute(sql, [*params, limit]).fetchall())
     return {
@@ -4374,14 +4434,7 @@ def agent_gateway_list_approvals(conn: sqlite3.Connection, qs: dict, headers, au
         "approvals": rows,
         "count": len(rows),
         "workspace_id": ident["workspace_id"],
-        "gateway_scope": {
-            "required_scope": "tasks:read",
-            "workspace_id": ident["workspace_id"],
-            "agent_id": ident["agent_id"],
-            "auth_mode": (auth_ctx or {}).get("mode") or "unknown",
-            "bound_visibility_enforced": agent_gateway_is_bound_auth(auth_ctx),
-            "token_omitted": True,
-        },
+        "gateway_scope": agent_gateway_scope_metadata(ident, auth_ctx),
         "token_omitted": True,
     }, 200
 
@@ -4400,14 +4453,14 @@ def agent_gateway_get_approval(conn: sqlite3.Connection, approval_id: str, heade
     if workspace_id != ident["workspace_id"]:
         return workspace_forbidden("approvals", approval_id, ident["workspace_id"], workspace_id)
     if agent_gateway_is_bound_auth(auth_ctx):
-        visible = (
-            (task and (
-                task.get("owner_agent_id") in {None, "", ident["agent_id"]}
-                or ident["agent_id"] in parse_json_array(task.get("collaborator_agent_ids"))
-            ))
-            or (run and run.get("agent_id") == ident["agent_id"])
-            or approval.get("requested_by_agent_id") == ident["agent_id"]
-        )
+        visibility_sql, visibility_params = agent_gateway_approval_visibility_clause("ap", "r", "t", ident, auth_ctx)
+        visible = conn.execute(
+            f"""SELECT 1 FROM approvals ap
+                LEFT JOIN runs r ON r.run_id=ap.run_id
+                LEFT JOIN tasks t ON t.task_id=COALESCE(ap.task_id,r.task_id)
+                WHERE ap.approval_id=? AND {visibility_sql}""",
+            [approval_id, *visibility_params],
+        ).fetchone()
         if not visible:
             return {"error": "forbidden", "message": "Agent token cannot inspect this approval.", "token_omitted": True}, 403
     tool_call = conn.execute("SELECT * FROM tool_calls WHERE tool_call_id=?", (approval.get("tool_call_id") or "",)).fetchone() if approval.get("tool_call_id") else None
@@ -4493,14 +4546,7 @@ def agent_gateway_get_approval(conn: sqlite3.Connection, approval_id: str, heade
             "raw_response_omitted": True,
             "token_omitted": True,
         },
-        "gateway_scope": {
-            "required_scope": "tasks:read",
-            "workspace_id": ident["workspace_id"],
-            "agent_id": ident["agent_id"],
-            "auth_mode": (auth_ctx or {}).get("mode") or "unknown",
-            "bound_visibility_enforced": agent_gateway_is_bound_auth(auth_ctx),
-            "token_omitted": True,
-        },
+        "gateway_scope": agent_gateway_scope_metadata(ident, auth_ctx),
         "token_omitted": True,
     }, 200
 
@@ -4533,20 +4579,10 @@ def agent_gateway_list_memories(conn: sqlite3.Connection, qs: dict, headers, aut
         cleaned_types = [coerce_choice(memory_type, allowed, "artifact_summary") for memory_type in types]
         where.append("m.memory_type IN (" + ",".join("?" for _ in cleaned_types) + ")")
         params.extend(cleaned_types)
-    if agent_gateway_is_bound_auth(auth_ctx):
-        where.append(
-            """(
-                (m.task_id IS NOT NULL AND (
-                    t.owner_agent_id=?
-                    OR agentops_json_array_contains(t.collaborator_agent_ids, ?)
-                    OR t.owner_agent_id IS NULL
-                    OR t.owner_agent_id=''
-                ))
-                OR (m.task_id IS NULL AND m.agent_id=?)
-                OR m.agent_id=?
-            )"""
-        )
-        params.extend([ident["agent_id"], ident["agent_id"], ident["agent_id"], ident["agent_id"]])
+    visibility_sql, visibility_params = agent_gateway_memory_visibility_clause("m", "t", ident, auth_ctx)
+    if visibility_sql != "1=1":
+        where.append(visibility_sql)
+        params.extend(visibility_params)
     agent_id = (qs.get("agent_id") or [None])[0]
     if agent_id and not agent_gateway_is_bound_auth(auth_ctx):
         where.append("m.agent_id=?")
@@ -4561,14 +4597,7 @@ def agent_gateway_list_memories(conn: sqlite3.Connection, qs: dict, headers, aut
         "memories": rows,
         "count": len(rows),
         "workspace_id": ident["workspace_id"],
-        "gateway_scope": {
-            "required_scope": "tasks:read",
-            "workspace_id": ident["workspace_id"],
-            "agent_id": ident["agent_id"],
-            "auth_mode": (auth_ctx or {}).get("mode") or "unknown",
-            "bound_visibility_enforced": agent_gateway_is_bound_auth(auth_ctx),
-            "token_omitted": True,
-        },
+        "gateway_scope": agent_gateway_scope_metadata(ident, auth_ctx),
         "token_omitted": True,
     }, 200
 
@@ -7637,17 +7666,13 @@ def agent_gateway_review_queue(conn: sqlite3.Connection, qs: dict, headers, auth
         payload["status"] = "ready"
     else:
         payload["status"] = "empty"
-    payload["gateway_scope"] = {
-        "required_scope": "tasks:read",
-        "workspace_id": ident["workspace_id"],
-        "agent_id": ident["agent_id"],
-        "auth_mode": (auth_ctx or {}).get("mode") or "unknown",
-        "bound_visibility_enforced": bound_auth,
-        "scope_before_limit": bound_auth,
-        "scoped_totals_before_limit": bound_auth,
-        "post_filter_safety_check": bound_auth,
-        "token_omitted": True,
-    }
+    payload["gateway_scope"] = agent_gateway_scope_metadata(
+        ident,
+        auth_ctx,
+        scope_before_limit=bound_auth,
+        scoped_totals_before_limit=bound_auth,
+        post_filter_safety_check=bound_auth,
+    )
     payload["token_omitted"] = True
     return payload, 200
 
@@ -9298,6 +9323,72 @@ def agent_gateway_record_artifact(conn, body) -> tuple[dict, int]:
     runtime_event(conn, "rtc_agent_gateway_local", "artifact.record", "completed", run_id=run_id, task_id=row["task_id"], agent_id=run["agent_id"], output_summary=row["summary"], raw_payload_hash=body.get("content_hash"))
     audit(conn, "agent", run["agent_id"], "agent_gateway.artifact_record", "artifacts", artifact_id, None, row, metadata)
     return {"artifact": row}, 201
+
+
+def agent_gateway_record_runtime_event(conn, body, auth_ctx=None) -> tuple[dict, int]:
+    run_id = body.get("run_id")
+    if not run_id:
+        return {"error": "run_id is required", "token_omitted": True}, 400
+    ident = agent_gateway_identity({}, body)
+    run, access_error = ensure_run_access(conn, run_id, ident)
+    if access_error:
+        return access_error
+    connector_id = body.get("runtime_connector_id") or body.get("connector_id") or runtime_connector_for_adapter(body.get("adapter") or run["runtime_type"]) or "rtc_agent_gateway_local"
+    event_type = redact_text(body.get("event_type") or "runtime.tool_event", 120)
+    if not event_type.startswith("runtime.") and not event_type.startswith("agent_worker.") and not event_type.startswith("tool."):
+        event_type = f"runtime.{event_type}"
+    status = coerce_choice(
+        body.get("status"),
+        {"planned", "running", "completed", "failed", "blocked", "waiting_approval", "unavailable"},
+        "completed",
+    )
+    raw_payload_hash = body.get("raw_payload_hash") or body.get("payload_hash")
+    if not raw_payload_hash and body.get("payload") is not None:
+        raw_payload_hash = stable_hash(safe_json_metadata(body.get("payload")))
+    if not raw_payload_hash and body.get("metadata") is not None:
+        raw_payload_hash = stable_hash(safe_json_metadata(body.get("metadata")))
+    row = runtime_event(
+        conn,
+        connector_id,
+        event_type,
+        status,
+        run_id=run_id,
+        task_id=run["task_id"],
+        agent_id=run["agent_id"],
+        model_name=redact_text(body.get("model_name") or body.get("model"), 120) if body.get("model_name") or body.get("model") else None,
+        latency_ms=parse_ms(body.get("latency_ms")),
+        prompt_hash=body.get("prompt_hash"),
+        input_summary=body.get("input_summary"),
+        output_summary=body.get("output_summary") or body.get("summary"),
+        error_message=body.get("error_message"),
+        raw_payload_hash=raw_payload_hash,
+    )
+    metadata = safe_json_metadata({
+        "workspace_id": ident["workspace_id"],
+        "source": body.get("source") or "agent_gateway.runtime_event",
+        "adapter": body.get("adapter") or run["runtime_type"],
+        "event_type": event_type,
+        "status": status,
+        "raw_payload_omitted": True,
+        "payload_hash_present": bool(raw_payload_hash),
+        "token_omitted": True,
+    })
+    audit(conn, "agent", run["agent_id"], "agent_gateway.runtime_event_record", "runtime_events", row["runtime_event_id"], None, row, metadata)
+    return {
+        "provider": "agent_gateway",
+        "operation": "runtime_event_record",
+        "runtime_event": row,
+        "run_id": run_id,
+        "task_id": run["task_id"],
+        "workspace_id": ident["workspace_id"],
+        "gateway_scope": agent_gateway_scope_metadata(ident, auth_ctx, "runtime_events:write"),
+        "safety": {
+            "raw_payload_omitted": True,
+            "token_omitted": True,
+            "live_execution_performed": False,
+        },
+        "token_omitted": True,
+    }, 201
 
 
 def agent_gateway_emit_audit(conn, body) -> tuple[dict, int]:
@@ -12167,32 +12258,18 @@ def human_review_queue(conn, limit: int = 20, *, ident: dict | None = None, auth
     failed_eval_where = ["ecr.pass_fail='fail'", "ecr.review_status IN ('open','investigating')"]
     failed_eval_params: list = []
     if scoped:
+        approval_visibility_sql, approval_visibility_params = agent_gateway_approval_visibility_clause("ap", "r", "t", {"workspace_id": workspace_id, "agent_id": agent_id}, auth_ctx)
+        memory_visibility_sql, memory_visibility_params = agent_gateway_memory_visibility_clause("m", "t", {"workspace_id": workspace_id, "agent_id": agent_id}, auth_ctx)
         approval_where.extend([
             "COALESCE(t.workspace_id,r.workspace_id,'local-demo')=?",
-            """(
-                t.owner_agent_id=?
-                OR agentops_json_array_contains(t.collaborator_agent_ids, ?)
-                OR t.owner_agent_id IS NULL
-                OR t.owner_agent_id=''
-                OR r.agent_id=?
-                OR ap.requested_by_agent_id=?
-            )""",
+            approval_visibility_sql,
         ])
-        approval_params.extend([workspace_id, agent_id, agent_id, agent_id, agent_id])
+        approval_params.extend([workspace_id, *approval_visibility_params])
         memory_where.extend([
             "COALESCE(t.workspace_id,'local-demo')=?",
-            """(
-                (m.task_id IS NOT NULL AND (
-                    t.owner_agent_id=?
-                    OR agentops_json_array_contains(t.collaborator_agent_ids, ?)
-                    OR t.owner_agent_id IS NULL
-                    OR t.owner_agent_id=''
-                ))
-                OR (m.task_id IS NULL AND m.agent_id=?)
-                OR m.agent_id=?
-            )""",
+            memory_visibility_sql,
         ])
-        memory_params.extend([workspace_id, agent_id, agent_id, agent_id, agent_id])
+        memory_params.extend([workspace_id, *memory_visibility_params])
         eval_case_where.extend([
             "COALESCE(c.workspace_id,t.workspace_id,'local-demo')=?",
             """(
@@ -12226,8 +12303,8 @@ def human_review_queue(conn, limit: int = 20, *, ident: dict | None = None, auth
     failed_eval_where_sql = " AND ".join(failed_eval_where)
     approval_total = conn.execute(
         f"""SELECT COUNT(*) c FROM approvals ap
-            LEFT JOIN tasks t ON t.task_id=ap.task_id
             LEFT JOIN runs r ON r.run_id=ap.run_id
+            LEFT JOIN tasks t ON t.task_id=COALESCE(ap.task_id,r.task_id)
             WHERE {approval_where_sql}""",
         approval_params,
     ).fetchone()["c"]
@@ -12254,8 +12331,8 @@ def human_review_queue(conn, limit: int = 20, *, ident: dict | None = None, auth
         f"""SELECT ap.approval_id, ap.task_id, ap.run_id, ap.tool_call_id, ap.requested_by_agent_id,
                   ap.approver_user_id, ap.decision, ap.reason, ap.expires_at, ap.created_at, ap.decided_at
            FROM approvals ap
-           LEFT JOIN tasks t ON t.task_id=ap.task_id
            LEFT JOIN runs r ON r.run_id=ap.run_id
+           LEFT JOIN tasks t ON t.task_id=COALESCE(ap.task_id,r.task_id)
            WHERE {approval_where_sql}
            ORDER BY ap.created_at DESC
            LIMIT ?""",
@@ -12626,6 +12703,7 @@ def human_review_queue(conn, limit: int = 20, *, ident: dict | None = None, auth
     return {
         "provider": "agentops-review",
         "operation": "human_review_queue",
+        "scope_service": AGENT_GATEWAY_SCOPE_SERVICE_VERSION if scoped else None,
         "status": status,
         "limit": limit,
         "summary": summary,
@@ -21736,6 +21814,7 @@ class Handler(BaseHTTPRequestHandler):
                     "approvals": rows_to_dicts(conn.execute("SELECT * FROM approvals WHERE run_id=? ORDER BY created_at", (run_id,)).fetchall()),
                     "evaluations": rows_to_dicts(conn.execute("SELECT * FROM evaluations WHERE run_id=? ORDER BY created_at", (run_id,)).fetchall()),
                     "artifacts": rows_to_dicts(conn.execute("SELECT * FROM artifacts WHERE run_id=? ORDER BY created_at", (run_id,)).fetchall()),
+                    "runtime_events": rows_to_dicts(conn.execute("SELECT * FROM runtime_events WHERE run_id=? ORDER BY created_at", (run_id,)).fetchall()),
                     "evaluation_case_runs": evaluation_case_runs_for_run(conn, run),
                 })
             if path == "/api/tool-calls":
@@ -22008,6 +22087,7 @@ class Handler(BaseHTTPRequestHandler):
                     "/api/agent-gateway/heartbeat": "agents:heartbeat",
                     "/api/agent-gateway/tasks": "tasks:create",
                     "/api/agent-gateway/runs/start": "runs:write",
+                    "/api/agent-gateway/runtime-events": "runtime_events:write",
                     "/api/agent-gateway/tool-calls": "toolcalls:write",
                     "/api/agent-gateway/artifacts": "artifacts:write",
                     "/api/agent-gateway/knowledge/index": "knowledge:write",
@@ -22062,6 +22142,8 @@ class Handler(BaseHTTPRequestHandler):
                 elif path.startswith("/api/agent-gateway/runs/") and path.endswith("/heartbeat"):
                     run_id = path_segment(path, -2)
                     payload, status = agent_gateway_run_heartbeat(conn, run_id, body)
+                elif path == "/api/agent-gateway/runtime-events":
+                    payload, status = agent_gateway_record_runtime_event(conn, body, auth_ctx)
                 elif path == "/api/agent-gateway/tool-calls":
                     payload, status = agent_gateway_record_tool_call(conn, body)
                 elif path == "/api/agent-gateway/artifacts":

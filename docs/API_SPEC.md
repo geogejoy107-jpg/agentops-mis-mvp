@@ -145,6 +145,21 @@ Worker-created `agent_worker.<adapter>` tool calls consume the same manifest:
 Hermes/OpenClaw record at least a medium risk floor plus observation and
 commercial restriction metadata instead of being treated as always low risk.
 
+Runtime-internal events can now be ingested when a runtime or adapter can expose
+them:
+
+```http
+POST /api/agent-gateway/runtime-events
+```
+
+This endpoint requires `runtime_events:write`, a visible `run_id`, and a
+workspace/agent binding that matches the run. It records only redacted summaries
+and a `raw_payload_hash`; optional `payload` or `metadata` values are hash
+inputs only and are not stored as raw runtime logs. Run detail readback includes
+the bounded `runtime_events[]` list so an external Hermes/OpenClaw/Dify-style
+adapter can prove internal tool progress without bypassing MIS approval and
+audit boundaries.
+
 ## Knowledge Search
 
 ```http

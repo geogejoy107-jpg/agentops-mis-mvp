@@ -196,16 +196,17 @@ python3 scripts/enrollment_credential_ui_smoke.py
 python3 scripts/review_queue_smoke.py
 python3 scripts/agent_gateway_review_queue_smoke.py
 python3 scripts/prepared_action_approval_wall_smoke.py
+python3 scripts/agent_gateway_runtime_event_smoke.py
 python3 scripts/kb_bot_demo_smoke.py
 ```
 
 ### Runtime capabilities
 
-- [ ] Runtime execution is not always recorded as low risk.
+- [x] Runtime execution is not always recorded as low risk. Guarded by `scripts/worker_adapter_retry_smoke.py`, which verifies Hermes worker evidence uses the medium runtime capability risk floor instead of low.
 - [x] Each adapter declares filesystem, shell, network, Git and external-write capabilities through a runtime capability manifest.
-- [ ] Live execution requires compatible trust and policy decisions.
+- [x] Live execution requires compatible trust and policy decisions. Guarded by `scripts/runtime_connector_trust_smoke.py`, `scripts/worker_live_confirm_gate_smoke.py`, and external-write prepared-action gate smokes.
 - [x] Work directory and write boundaries are explicit in the manifest/readiness payload.
-- [ ] Runtime tool events are ingested when available.
+- [x] Runtime tool events are ingested when available through the scoped `POST /api/agent-gateway/runtime-events` and `agentops runtime-event record` contract. Guarded by `scripts/agent_gateway_runtime_event_smoke.py`, which records a hash-only runtime-internal event with a scoped token and verifies run readback, audit evidence and redaction.
 - [x] Shared/commercial mode is restricted when detailed tool events are unavailable.
 - [ ] Secrets are consumed inside trusted tools rather than returned to model output.
 
@@ -254,7 +255,7 @@ python3 scripts/worker_adapter_retry_smoke.py
 
 - [x] Replace JSON-text `LIKE` collaborator authorization for Agent Gateway task/run/artifact/approval/memory list paths.
 - [x] Use exact JSON-array comparison via `agentops_json_array_contains`; normalized collaborator rows remain a later storage refactor.
-- [ ] Task, run, artifact, approval, memory and review queue use the same scope service.
+- [x] Task, run, artifact, approval, memory and review queue use the same scope service. Guarded by `agent_gateway_scope_v1`, exposed in `gateway_scope.scope_service`, with scoped task/run/artifact readback, approval/memory list, and review queue smokes asserting the shared service.
 - [x] Knowledge search applies its intended workspace/access policy.
 - [x] Add similar-ID regression with `scripts/collaborator_exact_scope_smoke.py`.
 - [x] Add special-character-ID regression with `scripts/agent_gateway_special_char_scope_smoke.py`.
@@ -276,6 +277,9 @@ workspace, agent, and task ids containing spaces, `+`, `%`, quotes, commas, and
 an encoded slash. It requires exact collaborator visibility, workspace-spoof
 rejection, scoped ledger list isolation, scoped review queue visibility, and no
 token-like leakage.
+`agent_gateway_scope_v1` centralizes the Agent Gateway task/run/approval/memory
+visibility SQL helpers and the `gateway_scope` evidence envelope used by task,
+run, artifact, approval, memory and review-queue readbacks.
 
 ```bash
 python3 scripts/workspace_isolation_smoke.py
@@ -418,6 +422,7 @@ python3 scripts/task_claim_conflict_smoke.py
 python3 scripts/agent_gateway_scoped_read_smoke.py
 python3 scripts/agent_gateway_reviewable_lists_smoke.py
 python3 scripts/agent_gateway_review_queue_smoke.py
+python3 scripts/agent_gateway_runtime_event_smoke.py
 python3 scripts/operator_advance_loop_smoke.py
 python3 scripts/redaction_policy_smoke.py
 python3 scripts/security_production_readiness_smoke.py

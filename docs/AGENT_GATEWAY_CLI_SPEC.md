@@ -147,7 +147,7 @@ agentops agent register \
   --name "Knowledge Base Researcher" \
   --role researcher \
   --runtime openclaw \
-  --scope tasks:read,runs:write,toolcalls:write,artifacts:write,approvals:request
+  --scope tasks:read,runs:write,runtime_events:write,toolcalls:write,artifacts:write,approvals:request
 ```
 
 Maps to `agents`.
@@ -161,7 +161,7 @@ agentops enrollment create \
   --agent-id agt_remote_builder \
   --name "Remote Builder" \
   --runtime openclaw \
-  --scopes agents:write,agents:heartbeat,knowledge:read,agent_plans:read,agent_plans:write,plan_evidence:read,plan_evidence:write,tasks:create,tasks:read,tasks:claim,runs:write,toolcalls:write,artifacts:write,memories:propose,evaluations:submit,audit:write \
+  --scopes agents:write,agents:heartbeat,knowledge:read,agent_plans:read,agent_plans:write,plan_evidence:read,plan_evidence:write,tasks:create,tasks:read,tasks:claim,runs:write,runtime_events:write,toolcalls:write,artifacts:write,memories:propose,evaluations:submit,audit:write \
   --ttl-days 30
 ```
 
@@ -199,7 +199,7 @@ agentops enrollment request \
   --agent-id agt_customer_worker \
   --name "Customer Worker" \
   --runtime mock \
-  --scopes agents:heartbeat,knowledge:read,agent_plans:read,agent_plans:write,plan_evidence:read,plan_evidence:write,tasks:create,tasks:read,tasks:claim,runs:write,toolcalls:write,artifacts:write,memories:propose,evaluations:submit,audit:write \
+  --scopes agents:heartbeat,knowledge:read,agent_plans:read,agent_plans:write,plan_evidence:read,plan_evidence:write,tasks:create,tasks:read,tasks:claim,runs:write,runtime_events:write,toolcalls:write,artifacts:write,memories:propose,evaluations:submit,audit:write \
   --reason "Customer server worker needs to process assigned MIS tasks"
 ```
 
@@ -631,6 +631,28 @@ agentops toolcall record \
 ```
 
 Maps to `tool_calls`.
+
+### `agentops runtime-event record`
+
+Records a runtime-internal event summary for a run when Hermes, OpenClaw, Dify,
+or another adapter can expose an internal tool/checkpoint event. This is an
+evidence-ingestion command only; it does not execute the runtime.
+
+```bash
+agentops runtime-event record \
+  --run-id run_123 \
+  --adapter hermes \
+  --event-type runtime.tool_event \
+  --status completed \
+  --output-summary "Hermes internal browser check completed" \
+  --payload-hash sha256_abc123
+```
+
+Maps to `runtime_events` and `audit_logs`. The endpoint requires
+`runtime_events:write`, verifies the run/workspace/agent binding, stores
+redacted summaries, and keeps raw runtime payloads out of the ledger. If
+`--payload-json` is supplied, the server hashes its redacted metadata surface and
+stores only `raw_payload_hash`.
 
 ### `agentops approval request`
 
@@ -1118,7 +1140,7 @@ Mints a short-lived session token from a scoped enrollment token. The session in
 ```bash
 agentops session create \
   --ttl-sec 900 \
-  --scopes agents:heartbeat,tasks:read,runs:write,toolcalls:write,evaluations:submit,audit:write
+  --scopes agents:heartbeat,tasks:read,runs:write,runtime_events:write,toolcalls:write,evaluations:submit,audit:write
 ```
 
 Session tokens cannot mint more sessions. They are for worker loops, not for browser users.
@@ -1749,6 +1771,7 @@ tasks:create
 tasks:read
 tasks:claim
 runs:write
+runtime_events:write
 toolcalls:write
 artifacts:write
 approvals:request
@@ -1817,6 +1840,7 @@ Current endpoint scope map:
 | `GET /api/agent-gateway/runs/:id/graph` | `tasks:read` |
 | `POST /api/agent-gateway/runs/start` | `runs:write` |
 | `POST /api/agent-gateway/runs/:id/heartbeat` | `runs:write` |
+| `POST /api/agent-gateway/runtime-events` | `runtime_events:write` |
 | `POST /api/agent-gateway/tool-calls` | `toolcalls:write` |
 | `GET /api/agent-gateway/artifacts` | `tasks:read` |
 | `POST /api/agent-gateway/artifacts` | `artifacts:write` |

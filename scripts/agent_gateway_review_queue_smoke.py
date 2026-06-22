@@ -193,6 +193,7 @@ def main() -> int:
         require(queue.get("operation") == "human_review_queue", f"operation mismatch: {queue}")
         gateway_scope = queue.get("gateway_scope") or {}
         require(gateway_scope.get("required_scope") == "tasks:read", f"scope mismatch: {gateway_scope}")
+        require(gateway_scope.get("scope_service") == "agent_gateway_scope_v1", f"unified scope service missing: {gateway_scope}")
         require(gateway_scope.get("bound_visibility_enforced") is True, f"bound visibility missing: {gateway_scope}")
         require(gateway_scope.get("scope_before_limit") is True, f"scope-before-limit proof missing: {gateway_scope}")
         require(gateway_scope.get("scoped_totals_before_limit") is True, f"scoped totals proof missing: {gateway_scope}")

@@ -68,6 +68,12 @@ def secret_leaked(text: str) -> bool:
     return any(pattern.search(text) for pattern in SECRET_PATTERNS)
 
 
+def require_scope_service(payload: dict, label: str) -> None:
+    scope = payload.get("gateway_scope") or {}
+    require(scope.get("scope_service") == "agent_gateway_scope_v1", f"{label} missing unified scope service: {scope}")
+    require(scope.get("bound_visibility_enforced") is True, f"{label} missing bound visibility proof: {scope}")
+
+
 def create_verified_plan(base_url: str, token: str, workspace: str, agent_id: str, task_id: str, output_chunks: list[str]) -> str:
     status, plan, raw = http_json("POST", base_url, "/api/agent-gateway/agent-plans", {
         "workspace_id": workspace,
@@ -144,6 +150,7 @@ def main() -> int:
         output_chunks.append(raw)
         require(status == 200, f"task A scoped get failed: {status} {task_ok}")
         require((task_ok.get("task") or {}).get("task_id") == task_a, f"task A payload mismatch: {task_ok}")
+        require_scope_service(task_ok, "task get")
 
         status, task_forbidden, raw = http_json("GET", base_url, f"/api/agent-gateway/tasks/{task_b}", token=token, workspace_header=workspace_a)
         output_chunks.append(raw)
@@ -155,6 +162,7 @@ def main() -> int:
         require(status == 200, f"scoped task list failed: {status} {task_list}")
         require(task_a in listed_task_ids, f"task A missing from scoped list: {listed_task_ids}")
         require(task_b not in listed_task_ids, f"task B leaked into scoped list: {listed_task_ids}")
+        require_scope_service(task_list, "task list")
 
         status, claim, raw = http_json("POST", base_url, f"/api/agent-gateway/tasks/{task_a}/claim", {"runtime_type": "mock"}, token=token, workspace_header=workspace_a)
         output_chunks.append(raw)
@@ -202,22 +210,26 @@ def main() -> int:
         require((run_get.get("run") or {}).get("run_id") == run_id, f"run get mismatch: {run_get}")
         require(len(run_get.get("tool_calls") or []) >= 1, f"run get missing tool evidence: {run_get}")
         require(len(run_get.get("artifacts") or []) >= 1, f"run get missing artifact evidence: {run_get}")
+        require_scope_service(run_get, "run get")
 
         status, run_list, raw = http_json("GET", base_url, "/api/agent-gateway/runs", token=token, workspace_header=workspace_a, query={"task_id": task_a, "limit": 10})
         output_chunks.append(raw)
         listed_run_ids = {item.get("run_id") for item in run_list.get("runs") or []}
         require(status == 200, f"scoped run list failed: {status} {run_list}")
         require(run_id in listed_run_ids, f"run missing from scoped list: {run_list}")
+        require_scope_service(run_list, "run list")
 
         status, artifact_list, raw = http_json("GET", base_url, "/api/agent-gateway/artifacts", token=token, workspace_header=workspace_a, query={"run_id": run_id, "limit": 10})
         output_chunks.append(raw)
         listed_artifact_ids = {item.get("artifact_id") for item in artifact_list.get("artifacts") or []}
         require(status == 200, f"scoped artifact list failed: {status} {artifact_list}")
         require(artifact_id in listed_artifact_ids, f"artifact missing from scoped list: {artifact_list}")
+        require_scope_service(artifact_list, "artifact list")
 
         status, graph, raw = http_json("GET", base_url, f"/api/agent-gateway/runs/{run_id}/graph", token=token, workspace_header=workspace_a)
         output_chunks.append(raw)
         require(status == 200, f"scoped run graph failed: {status} {graph}")
+        require_scope_service(graph, "run graph")
 
         require(not secret_leaked("\n".join(output_chunks)), "scoped read smoke leaked token-like material")
         print(json.dumps({

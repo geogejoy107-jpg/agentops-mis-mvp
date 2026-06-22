@@ -100,6 +100,12 @@ def secret_leaked(text: str) -> bool:
     return any(pattern.search(text) for pattern in SECRET_PATTERNS)
 
 
+def require_scope_service(payload: dict, label: str) -> None:
+    scope = payload.get("gateway_scope") or {}
+    require(scope.get("scope_service") == "agent_gateway_scope_v1", f"{label} missing unified scope service: {scope}")
+    require(scope.get("bound_visibility_enforced") is True, f"{label} missing bound visibility proof: {scope}")
+
+
 def create_enrollment(base_url: str, admin_key: str | None, agent_id: str, workspace_id: str, scopes: list[str]) -> tuple[str, str]:
     status, payload, _raw = http_json("POST", base_url, "/api/agent-gateway/enrollment/create", {
         "workspace_id": workspace_id,
@@ -254,6 +260,7 @@ def main() -> int:
         require(approval_a in approval_payload and marker_a in approval_payload, "workspace A approval missing from scoped list")
         require(approval_b not in approval_payload and marker_b not in approval_payload and task_b not in approval_payload, "workspace B approval leaked into scoped list")
         require((approvals.get("gateway_scope") or {}).get("bound_visibility_enforced") is True, f"approval scope missing: {approvals}")
+        require_scope_service(approvals, "approval list")
 
         status, memories, raw = http_json(
             "GET",
@@ -269,6 +276,7 @@ def main() -> int:
         require(memory_a in memory_payload and marker_a in memory_payload, "workspace A memory missing from scoped list")
         require(memory_b not in memory_payload and marker_b not in memory_payload and task_b not in memory_payload, "workspace B memory leaked into scoped list")
         require((memories.get("gateway_scope") or {}).get("bound_visibility_enforced") is True, f"memory scope missing: {memories}")
+        require_scope_service(memories, "memory list")
 
         for path in ["/api/agent-gateway/approvals", "/api/agent-gateway/memories"]:
             status, forbidden, raw = http_json("GET", args.base_url, path, token=token_limited, workspace_header=workspace_a, query={"limit": 5})
@@ -283,6 +291,7 @@ def main() -> int:
         require(approval_a in approval_cli_payload and marker_a in approval_cli_payload, "workspace A approval missing from CLI list")
         require(approval_b not in approval_cli_payload and marker_b not in approval_cli_payload and task_b not in approval_cli_payload, "workspace B approval leaked into CLI list")
         require(((approval_cli.get("gateway_scope") or {}).get("required_scope")) == "tasks:read", f"approval CLI scope missing: {approval_cli}")
+        require_scope_service(approval_cli, "approval CLI list")
 
         memory_rc, memory_cli, raw = run_cli(args.base_url, token_a, workspace_a, agent_a, ["memory", "list", "--status", "candidate", "--limit", "50"])
         outputs.append(raw)
@@ -291,6 +300,7 @@ def main() -> int:
         require(memory_a in memory_cli_payload and marker_a in memory_cli_payload, "workspace A memory missing from CLI list")
         require(memory_b not in memory_cli_payload and marker_b not in memory_cli_payload and task_b not in memory_cli_payload, "workspace B memory leaked into CLI list")
         require(((memory_cli.get("gateway_scope") or {}).get("required_scope")) == "tasks:read", f"memory CLI scope missing: {memory_cli}")
+        require_scope_service(memory_cli, "memory CLI list")
 
         require(not secret_leaked("\n".join(outputs)), "scoped reviewable list output leaked token-like material")
         print(json.dumps({
