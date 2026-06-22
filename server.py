@@ -37,6 +37,7 @@ from urllib.error import HTTPError, URLError
 from agentops_mis_core.approval_wall import (
     approval_wall_recommended_actions,
     build_prepared_action_get_response,
+    build_prepared_action_waiting_response,
     prepared_action_checkpoint,
     prepared_action_gate,
     prepared_action_hash,
@@ -44,6 +45,8 @@ from agentops_mis_core.approval_wall import (
     prepared_action_public,
     prepared_action_resume_gate_error,
     prepared_action_stored_args,
+    runtime_probe_blocked_payload,
+    runtime_probe_prepared_action_required_payload,
 )
 from agentops_mis_core.commander_work_packages import (
     build_commander_work_packages_readback,
@@ -9335,32 +9338,8 @@ def runtime_probe_prepared_action_resume_gate(conn, body: dict, expected_args: d
 
 def runtime_probe_prepared_action_required_response(conn, body: dict, *, provider: str, mode: str, connector_id: str, agent_id: str, task_id: str, runtime_type: str, prompt_hash: str, target_resource: str, risk_level: str = "medium") -> dict:
     prepared = create_runtime_probe_prepared_action(conn, body, provider=provider, mode=mode, connector_id=connector_id, agent_id=agent_id, task_id=task_id, runtime_type=runtime_type, prompt_hash=prompt_hash, target_resource=target_resource, risk_level=risk_level)
-    wall = prepared["approval_wall"]
-    approval = wall.get("approval") or {}
-    prepared_action = wall.get("prepared_action") or {}
     conn.commit()
-    return {
-        "provider": provider,
-        "mode": mode,
-        "dry_run": True,
-        "live_probe_performed": False,
-        "status": "waiting_approval",
-        "reason": "runtime_probe_prepared_action_required",
-        "run_id": prepared["run_id"],
-        "task_id": task_id,
-        "tool_call_id": prepared["tool_call_id"],
-        "approval_wall": wall,
-        "approval_id": approval.get("approval_id"),
-        "prepared_action_id": prepared_action.get("action_id"),
-        "prepared_action_hash": prepared_action.get("action_hash"),
-        "prompt_hash": prompt_hash,
-        "next_action": (
-            f"agentops approval inspect --approval-id {approval.get('approval_id')} && "
-            f"agentops approval approve --approval-id {approval.get('approval_id')} && "
-            f"repeat the probe request with confirm_run:true and prepared_action_id={prepared_action.get('action_id')}"
-        ),
-        "token_omitted": True,
-    }
+    return runtime_probe_prepared_action_required_payload(prepared=prepared, provider=provider, mode=mode, task_id=task_id, prompt_hash=prompt_hash)
 
 
 def run_openclaw_probe(conn, body: dict | None = None) -> dict:
@@ -9435,7 +9414,7 @@ def run_openclaw_probe(conn, body: dict | None = None) -> dict:
         runtime_event(conn, "rtc_openclaw_local", "agent_probe_prepared_action_blocked", "blocked", task_id=task_id, agent_id=agent_id, prompt_hash=prompt_hash, output_summary=gate_error.get("error"), raw_payload_hash=prompt_hash)
         audit(conn, "system", "openclaw-probe", "runtime.openclaw_probe.prepared_action_blocked", "runtime_connectors", "rtc_openclaw_local", None, gate_error, {"prompt_hash": prompt_hash, "token_omitted": True})
         conn.commit()
-        return {"provider": "openclaw", "mode": "main_agent_cli", "dry_run": True, "live_probe_performed": False, **gate_error, "reason": gate_error.get("error")}
+        return runtime_probe_blocked_payload(provider="openclaw", mode="main_agent_cli", gate_error=gate_error)
     started = now_iso()
     probe = {"ok": False, "error": None}
     if not OPENCLAW_BIN.exists():
@@ -9932,21 +9911,17 @@ def dify_create_document_by_text(conn, body: dict) -> dict:
     if gate_error:
         if gate_error.get("error") == "dify_prepared_action_required":
             prepared = dify_prepared_action_payload(conn, body, cfg, agent_id, task_id, dataset_id, document_name, text_hash)
-            wall = prepared["approval_wall"]
-            plan.update({
-                "reason": "dify_external_write_prepared_action_required",
-                "status": "waiting_approval",
-                "run_id": prepared["run_id"],
-                "tool_call_id": prepared["tool_call_id"],
-                "approval_wall": wall,
-                "approval_id": (wall.get("approval") or {}).get("approval_id"),
-                "prepared_action_id": (wall.get("prepared_action") or {}).get("action_id"),
-                "prepared_action_hash": (wall.get("prepared_action") or {}).get("action_hash"),
-                "next_action": f"agentops approval inspect --approval-id {(wall.get('approval') or {}).get('approval_id')} && agentops approval approve --approval-id {(wall.get('approval') or {}).get('approval_id')} && POST /api/integrations/dify/upload-text with prepared_action_id={(wall.get('prepared_action') or {}).get('action_id')}",
-                "token_omitted": True,
-            })
             conn.commit()
-            return plan
+            return build_prepared_action_waiting_response(
+                base={
+                    **plan,
+                    "run_id": prepared["run_id"],
+                    "tool_call_id": prepared["tool_call_id"],
+                },
+                approval_wall=prepared["approval_wall"],
+                reason="dify_external_write_prepared_action_required",
+                resume_instruction="POST /api/integrations/dify/upload-text with prepared_action_id={prepared_action_id}",
+            )
         runtime_event(conn, "rtc_agent_gateway_local", "dify.upload_text.prepared_action_blocked", "blocked", task_id=task_id, agent_id=agent_id, input_summary=f"Dify upload blocked text_hash={text_hash[:16]}", output_summary=gate_error.get("error"), raw_payload_hash=text_hash)
         audit(conn, "agent", agent_id, "dify.upload_text.prepared_action_blocked", "connectors", "conn_dify_knowledge", None, gate_error, {"text_hash": text_hash, "raw_text_omitted": True, "token_omitted": True})
         conn.commit()
@@ -10128,7 +10103,7 @@ def agnesfallback_cli_probe(conn, body: dict) -> dict:
         runtime_event(conn, connector_id, "cli_probe_prepared_action_blocked", "blocked", task_id=task_id, agent_id=agent_id, prompt_hash=stable_hash(prompt), output_summary=gate_error.get("error"), raw_payload_hash=stable_hash(prompt))
         audit(conn, "system", "agnesfallback-cli", "runtime.cli_probe.prepared_action_blocked", "runtime_connectors", connector_id, None, gate_error, {"prompt_hash": stable_hash(prompt), "token_omitted": True})
         conn.commit()
-        return {"provider": "agnesfallback", "mode": "cli_probe", "dry_run": True, "live_probe_performed": False, **gate_error, "reason": gate_error.get("error")}
+        return runtime_probe_blocked_payload(provider="agnesfallback", mode="cli_probe", gate_error=gate_error)
     started_iso = now_iso()
     started = dt.datetime.now(dt.timezone.utc)
     ok = False
@@ -10212,7 +10187,7 @@ def agnesfallback_chat_completion_probe(conn, body: dict) -> dict:
         runtime_event(conn, connector_id, "chat_completion_probe_prepared_action_blocked", "blocked", task_id=task_id, agent_id=agent_id, prompt_hash=stable_hash(prompt), output_summary=gate_error.get("error"), raw_payload_hash=stable_hash(prompt))
         audit(conn, "system", "agnesfallback-api", "runtime.chat_completion_probe.prepared_action_blocked", "runtime_connectors", connector_id, None, gate_error, {"prompt_hash": stable_hash(prompt), "token_omitted": True})
         conn.commit()
-        return {"provider": "agnesfallback", "mode": "openai_compatible", "dry_run": True, "live_probe_performed": False, **gate_error, "reason": gate_error.get("error")}
+        return runtime_probe_blocked_payload(provider="agnesfallback", mode="openai_compatible", gate_error=gate_error)
     started_iso = now_iso()
     started = dt.datetime.now(dt.timezone.utc)
     payload = {"model": "agnesfallback", "messages": [{"role": "user", "content": prompt}], "temperature": 0}
@@ -12772,7 +12747,7 @@ def hermes_run_task(conn, body: dict) -> dict:
         runtime_event(conn, "rtc_hermes_default_gateway", "run_task_prepared_action_blocked", "blocked", task_id=task_id, agent_id=agent_id, prompt_hash=prompt_hash, output_summary=gate_error.get("error"), raw_payload_hash=prompt_hash)
         audit(conn, "system", "hermes-run-task", "runtime.run_task.prepared_action_blocked", "runtime_connectors", "rtc_hermes_default_gateway", None, gate_error, {"prompt_hash": prompt_hash, "token_omitted": True})
         conn.commit()
-        return {"created": False, "dry_run": True, "live_probe_performed": False, "provider": "hermes", "mode": "default_gateway_fixed_probe", **gate_error, "reason": gate_error.get("error")}
+        return runtime_probe_blocked_payload(provider="hermes", mode="default_gateway_fixed_probe", gate_error=gate_error, created=False)
 
     started_iso = now_iso()
     started = dt.datetime.now(dt.timezone.utc)
@@ -22071,31 +22046,25 @@ def create_customer_worker_external_write_gate(conn, body: dict, adapter: str, c
     runtime_event(conn, connector_id or "rtc_agent_gateway_local", "customer_worker_task.external_write_prepared_action_required", "waiting_approval", run_id=run_id, task_id=task_id, agent_id=agent_id, input_summary=f"{adapter} external write intent requires prepared action.", output_summary="Live execution paused before runtime invocation.", raw_payload_hash=stable_hash(normalized_args))
     audit(conn, "system", "runtime-capability-policy", "workflow.customer_worker_task.external_write_prepared_action_required", "runs", run_id, None, {"status": "waiting_approval"}, {"adapter": adapter, "connector_id": connector_id, "approval_status": approval_status, "raw_output_omitted": True, "token_omitted": True})
     conn.commit()
-    approval = approval_wall.get("approval") or {}
-    prepared_action = approval_wall.get("prepared_action") or {}
-    return {
-        "provider": "agentops-worker",
-        "workflow": "customer_worker_task",
-        "dry_run": True,
-        "ok": False,
-        "adapter": adapter,
-        "task_id": task_id,
-        "run_id": run_id,
-        "tool_call_id": tool_call_id,
-        "connector_id": connector_id,
-        "reason": "external_write_prepared_action_required",
-        "note": "Live runtime execution was not started. Approve and resume the exact prepared action before external write execution.",
-        "approval_wall": approval_wall,
-        "approval_id": approval.get("approval_id"),
-        "prepared_action_id": prepared_action.get("action_id"),
-        "next_action": (
-            f"agentops approval inspect --approval-id {approval.get('approval_id')} && "
-            f"agentops approval approve --approval-id {approval.get('approval_id')} && "
-            f"agentops approval prepared-action resume --action-id {prepared_action.get('action_id')} --provider-side-effect-id <id>"
-        ),
-        "live_execution_performed": False,
-        "token_omitted": True,
-    }, 202
+    return build_prepared_action_waiting_response(
+        base={
+            "provider": "agentops-worker",
+            "workflow": "customer_worker_task",
+            "dry_run": True,
+            "ok": False,
+            "adapter": adapter,
+            "task_id": task_id,
+            "run_id": run_id,
+            "tool_call_id": tool_call_id,
+            "connector_id": connector_id,
+            "note": "Live runtime execution was not started. Approve and resume the exact prepared action before external write execution.",
+            "live_execution_performed": False,
+        },
+        approval_wall=approval_wall,
+        reason="external_write_prepared_action_required",
+        resume_instruction="agentops approval prepared-action resume --action-id {prepared_action_id} --provider-side-effect-id <id>",
+        include_prepared_action_hash=False,
+    ), 202
 
 
 def run_customer_worker_task_workflow(conn, body: dict) -> tuple[dict, int]:
@@ -22783,35 +22752,25 @@ def notion_export_live_or_gate(conn, body: dict, markdown: str, title: str, acto
     if gate_error:
         if gate_error.get("error") == "notion_prepared_action_required":
             prepared = create_notion_export_prepared_action(conn, body, markdown, title, cfg, actor)
-            wall = prepared["approval_wall"]
-            approval = wall.get("approval") or {}
-            prepared_action = wall.get("prepared_action") or {}
             conn.commit()
-            return {
-                "provider": "notion",
-                "dry_run": True,
-                "created": False,
-                "live_export_performed": False,
-                "status": "waiting_approval",
-                "reason": "notion_external_write_prepared_action_required",
-                "configured": cfg["configured"],
-                "export_mode": cfg["export_mode"],
-                "run_id": prepared["run_id"],
-                "task_id": prepared["task_id"],
-                "tool_call_id": prepared["tool_call_id"],
-                "approval_wall": wall,
-                "approval_id": approval.get("approval_id"),
-                "prepared_action_id": prepared_action.get("action_id"),
-                "prepared_action_hash": prepared_action.get("action_hash"),
-                "markdown_hash": action_args["markdown_hash"],
-                "block_count": action_args["block_count"],
-                "next_action": (
-                    f"agentops approval inspect --approval-id {approval.get('approval_id')} && "
-                    f"agentops approval approve --approval-id {approval.get('approval_id')} && "
-                    f"POST /api/integrations/notion/export-report with prepared_action_id={prepared_action.get('action_id')}"
-                ),
-                "token_omitted": True,
-            }
+            return build_prepared_action_waiting_response(
+                base={
+                    "provider": "notion",
+                    "dry_run": True,
+                    "created": False,
+                    "live_export_performed": False,
+                    "configured": cfg["configured"],
+                    "export_mode": cfg["export_mode"],
+                    "run_id": prepared["run_id"],
+                    "task_id": prepared["task_id"],
+                    "tool_call_id": prepared["tool_call_id"],
+                    "markdown_hash": action_args["markdown_hash"],
+                    "block_count": action_args["block_count"],
+                },
+                approval_wall=prepared["approval_wall"],
+                reason="notion_external_write_prepared_action_required",
+                resume_instruction="POST /api/integrations/notion/export-report with prepared_action_id={prepared_action_id}",
+            )
         runtime_event(conn, "rtc_agent_gateway_local", "notion.export.prepared_action_blocked", "blocked", input_summary=f"Notion export blocked markdown_hash={action_args['markdown_hash'][:16]}", output_summary=gate_error.get("error"), raw_payload_hash=action_args["markdown_hash"])
         audit(conn, "system", actor, "notion.export.prepared_action_blocked", "integrations", "notion", None, gate_error, {"markdown_hash": action_args["markdown_hash"], "token_omitted": True})
         conn.commit()

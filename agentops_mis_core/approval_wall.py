@@ -208,6 +208,106 @@ def prepared_action_resume_gate_error(
     return None
 
 
+def prepared_action_waiting_next_action(
+    *,
+    approval_id: Any,
+    prepared_action_id: Any,
+    resume_instruction: str,
+) -> str:
+    template_values = {
+        "approval_id": approval_id,
+        "prepared_action_id": prepared_action_id,
+        "action_id": prepared_action_id,
+    }
+    try:
+        formatted_resume = resume_instruction.format(**template_values)
+    except Exception:
+        formatted_resume = resume_instruction
+    return (
+        f"agentops approval inspect --approval-id {approval_id} && "
+        f"agentops approval approve --approval-id {approval_id} && "
+        f"{formatted_resume}"
+    )
+
+
+def build_prepared_action_waiting_response(
+    *,
+    base: dict[str, Any],
+    approval_wall: dict[str, Any],
+    reason: str,
+    resume_instruction: str,
+    include_prepared_action_hash: bool = True,
+) -> dict[str, Any]:
+    wall = dict(approval_wall or {})
+    approval = wall.get("approval") or {}
+    prepared_action = wall.get("prepared_action") or {}
+    approval_id = approval.get("approval_id")
+    prepared_action_id = prepared_action.get("action_id")
+    response = {
+        **base,
+        "status": "waiting_approval",
+        "reason": reason,
+        "approval_wall": wall,
+        "approval_id": approval_id,
+        "prepared_action_id": prepared_action_id,
+        "next_action": prepared_action_waiting_next_action(
+            approval_id=approval_id,
+            prepared_action_id=prepared_action_id,
+            resume_instruction=resume_instruction,
+        ),
+        "token_omitted": True,
+    }
+    if include_prepared_action_hash:
+        response["prepared_action_hash"] = prepared_action.get("action_hash")
+    return response
+
+
+def runtime_probe_prepared_action_required_payload(
+    *,
+    prepared: dict[str, Any],
+    provider: str,
+    mode: str,
+    task_id: str,
+    prompt_hash: str,
+) -> dict[str, Any]:
+    return build_prepared_action_waiting_response(
+        base={
+            "provider": provider,
+            "mode": mode,
+            "dry_run": True,
+            "live_probe_performed": False,
+            "run_id": prepared.get("run_id"),
+            "task_id": task_id,
+            "tool_call_id": prepared.get("tool_call_id"),
+            "prompt_hash": prompt_hash,
+        },
+        approval_wall=prepared.get("approval_wall") or {},
+        reason="runtime_probe_prepared_action_required",
+        resume_instruction="repeat the probe request with confirm_run:true and prepared_action_id={prepared_action_id}",
+    )
+
+
+def runtime_probe_blocked_payload(
+    *,
+    provider: str,
+    mode: str,
+    gate_error: dict[str, Any],
+    created: bool | None = None,
+) -> dict[str, Any]:
+    payload = {
+        "provider": provider,
+        "mode": mode,
+        "dry_run": True,
+        "live_probe_performed": False,
+        **gate_error,
+        "reason": gate_error.get("error"),
+        "token_omitted": True,
+    }
+    if created is not None:
+        payload["created"] = created
+    return payload
+
+
 def build_prepared_action_get_response(prepared_action: Any, approval: Any) -> dict[str, Any]:
     row = dict(prepared_action)
     verification = prepared_action_hash_verification(row)

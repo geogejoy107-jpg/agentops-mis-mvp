@@ -252,7 +252,8 @@ coverage for every external side-effect path.
   runtime connector trust state helpers now live in
   `agentops_mis_runtime/trust.py`; read-model cache behavior now lives in
   `agentops_mis_core/read_model_cache.py`; Approval Wall prepared-action
-  hash, public projection, gate, readback and resume-gate mismatch helpers now live in
+  hash, public projection, gate, readback, resume-gate mismatch, waiting-response
+  and next-action helpers now live in
   `agentops_mis_core/approval_wall.py`; worker status/fleet lane/health
   aggregation now lives in `agentops_mis_core/worker_fleet.py`; Commander
   work-package status/action/readback summary and project-board gate aggregation

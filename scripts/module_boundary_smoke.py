@@ -15,6 +15,7 @@ if str(ROOT) not in sys.path:
 from agentops_mis_core.approval_wall import (
     approval_wall_recommended_actions,
     build_prepared_action_get_response,
+    build_prepared_action_waiting_response,
     prepared_action_checkpoint,
     prepared_action_gate,
     prepared_action_hash,
@@ -23,6 +24,9 @@ from agentops_mis_core.approval_wall import (
     prepared_action_public,
     prepared_action_resume_gate_error,
     prepared_action_stored_args,
+    prepared_action_waiting_next_action,
+    runtime_probe_blocked_payload,
+    runtime_probe_prepared_action_required_payload,
 )
 from agentops_mis_core.read_model_cache import ReadModelCache
 from agentops_mis_core.commander_work_packages import (
@@ -166,6 +170,7 @@ SERVER_OPERATOR_COMMAND_CENTER_IMPORTS = {
 EXTRACTED_APPROVAL_WALL_HELPERS = {
     "approval_wall_recommended_actions",
     "build_prepared_action_get_response",
+    "build_prepared_action_waiting_response",
     "prepared_action_checkpoint",
     "prepared_action_gate",
     "prepared_action_hash",
@@ -174,10 +179,14 @@ EXTRACTED_APPROVAL_WALL_HELPERS = {
     "prepared_action_public",
     "prepared_action_resume_gate_error",
     "prepared_action_stored_args",
+    "prepared_action_waiting_next_action",
+    "runtime_probe_blocked_payload",
+    "runtime_probe_prepared_action_required_payload",
 }
 SERVER_APPROVAL_WALL_IMPORTS = {
     "approval_wall_recommended_actions",
     "build_prepared_action_get_response",
+    "build_prepared_action_waiting_response",
     "prepared_action_checkpoint",
     "prepared_action_gate",
     "prepared_action_hash",
@@ -185,6 +194,8 @@ SERVER_APPROVAL_WALL_IMPORTS = {
     "prepared_action_public",
     "prepared_action_resume_gate_error",
     "prepared_action_stored_args",
+    "runtime_probe_blocked_payload",
+    "runtime_probe_prepared_action_required_payload",
 }
 
 
@@ -497,6 +508,54 @@ def main() -> int:
     require(pending_gate and pending_gate.get("error") == "approval_required", "resume gate approval-required error failed", failures)
     require(mismatch_gate and mismatch_gate.get("error") == "prepared_action_request_mismatch" and "operation" in mismatch_gate.get("mismatched_fields", []), "resume gate mismatch error failed", failures)
     require(consumed_gate and consumed_gate.get("error") == "prepared_action_already_consumed", "resume gate consumed error failed", failures)
+    runtime_waiting_payload = runtime_probe_prepared_action_required_payload(
+        prepared={
+            "run_id": "run_runtime_probe_smoke",
+            "tool_call_id": "tc_runtime_probe_smoke",
+            "approval_wall": {
+                "approval": {"approval_id": "ap_runtime_probe_smoke"},
+                "prepared_action": {"action_id": "pa_runtime_probe_smoke", "action_hash": "hash_runtime_probe_smoke"},
+            },
+        },
+        provider="hermes",
+        mode="default_gateway_fixed_probe",
+        task_id="tsk_runtime_probe_smoke",
+        prompt_hash="prompt_hash_runtime_probe_smoke",
+    )
+    shared_waiting_payload = build_prepared_action_waiting_response(
+        base={"provider": "smoke", "dry_run": True, "run_id": "run_waiting_smoke"},
+        approval_wall={
+            "approval": {"approval_id": "ap_waiting_smoke"},
+            "prepared_action": {"action_id": "pa_waiting_smoke", "action_hash": "hash_waiting_smoke"},
+        },
+        reason="smoke_prepared_action_required",
+        resume_instruction="POST /api/smoke with prepared_action_id={prepared_action_id}",
+    )
+    shared_next_action = prepared_action_waiting_next_action(
+        approval_id="ap_waiting_smoke",
+        prepared_action_id="pa_waiting_smoke",
+        resume_instruction="resume action {action_id}",
+    )
+    runtime_blocked_payload = runtime_probe_blocked_payload(
+        provider="hermes",
+        mode="default_gateway_fixed_probe",
+        gate_error={"error": "prepared_action_request_mismatch", "mismatched_fields": ["prompt_hash"], "token_omitted": True},
+        created=False,
+    )
+    require(shared_waiting_payload.get("status") == "waiting_approval", "shared waiting response status failed", failures)
+    require(shared_waiting_payload.get("approval_id") == "ap_waiting_smoke", "shared waiting response approval id failed", failures)
+    require(shared_waiting_payload.get("prepared_action_id") == "pa_waiting_smoke", "shared waiting response prepared action id failed", failures)
+    require(shared_waiting_payload.get("prepared_action_hash") == "hash_waiting_smoke", "shared waiting response action hash failed", failures)
+    require("prepared_action_id=pa_waiting_smoke" in shared_waiting_payload.get("next_action", ""), "shared waiting response next action failed", failures)
+    require(shared_waiting_payload.get("token_omitted") is True, "shared waiting response omission proof missing", failures)
+    require(shared_next_action.endswith("resume action pa_waiting_smoke"), "prepared action waiting next-action template failed", failures)
+    require(runtime_waiting_payload.get("reason") == "runtime_probe_prepared_action_required", "runtime prepared-action waiting response reason failed", failures)
+    require(runtime_waiting_payload.get("prepared_action_id") == "pa_runtime_probe_smoke", "runtime prepared-action waiting response id failed", failures)
+    require(runtime_waiting_payload.get("live_probe_performed") is False, "runtime waiting response must not claim live execution", failures)
+    require("prepared_action_id=pa_runtime_probe_smoke" in runtime_waiting_payload.get("next_action", ""), "runtime waiting next_action missing prepared action id", failures)
+    require(runtime_blocked_payload.get("created") is False, "runtime blocked payload created flag failed", failures)
+    require(runtime_blocked_payload.get("reason") == "prepared_action_request_mismatch", "runtime blocked payload reason failed", failures)
+    require(runtime_blocked_payload.get("live_probe_performed") is False, "runtime blocked payload must not claim live execution", failures)
     daemons = [{
         "adapter": "mock",
         "agent_id": "agt_worker_local_smoke",

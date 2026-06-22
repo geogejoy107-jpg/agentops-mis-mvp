@@ -267,8 +267,46 @@ python3 scripts/commander_work_package_dispatch_smoke.py
 python3 scripts/operator_command_center_smoke.py
 ```
 
+### Slice 11: Runtime Prepared-Action Response Helpers
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/approval_wall.py`
+
+Moved out of `server.py`:
+
+- shared waiting-approval response shaping for prepared actions
+- Approval Wall approval/action id extraction for response payloads
+- prepared-action hash exposure for waiting responses
+- next-action construction for inspect, approve and exact resume instructions
+- token-omission proof on prepared-action waiting responses
+- runtime probe, Dify upload, Notion export and customer-worker external-write
+  response assembly now reuse the shared helper
+
+Still owned by `server.py`:
+
+- HTTP routes
+- provider-specific prepared-action creation
+- SQLite task/run/tool-call writes
+- runtime events, audit logs and commits
+- Dify/Notion/runtime resume-gate reads
+- exact-once prepared-action resume writes and provider side-effect evidence
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/prepared_action_approval_wall_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/runtime_probe_prepared_action_gate_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/dify_upload_prepared_action_gate_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/notion_export_prepared_action_gate_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/customer_worker_external_write_gate_smoke.py
+```
+
 ## Next Candidate Slices
 
-- Runtime prepared-action response helpers.
+- Prepared-action route error/blocked response helpers.
 
 Each candidate must be extracted in a separate, smoke-backed slice.
