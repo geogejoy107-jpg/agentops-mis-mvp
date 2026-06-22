@@ -1,0 +1,772 @@
+{
+  "contract_id": "ui_api_parity_matrix_v1",
+  "gate": "gate_4_ui_api_parity_before_nextjs",
+  "policy": {
+    "canonical_ui": "vite_react",
+    "migration_track": "nextjs_app_router",
+    "retirement_default": false,
+    "retirement_rule": "A Vite route can be retired only after the matrix marks its capability covered, Vite and Next browser evidence both pass, API contracts match, and the route has an explicit retirement decision."
+  },
+  "entries": [
+    {
+      "id": "root_redirect",
+      "capability": "Root route redirects to the workspace cockpit.",
+      "status": "covered",
+      "gate4_required": false,
+      "vite_routes": [
+        "/"
+      ],
+      "next_routes": [
+        "/"
+      ],
+      "api_contracts": [],
+      "vite_files": [
+        "ui/start-building-app/src/app/App.tsx"
+      ],
+      "next_files": [
+        "ui/next-app/app/page.tsx"
+      ],
+      "evidence_commands": [
+        "python3 scripts/ui_api_parity_matrix_smoke.py"
+      ],
+      "retirement_allowed": false,
+      "retirement_gate": "Keep both redirects until all workspace routes are replaced."
+    },
+    {
+      "id": "workspace_home",
+      "capability": "Operator cockpit with metrics, recent runs, tasks, and pending approvals.",
+      "status": "covered",
+      "gate4_required": true,
+      "vite_routes": [
+        "/workspace"
+      ],
+      "next_routes": [
+        "/workspace"
+      ],
+      "api_contracts": [
+        "GET /dashboard/metrics",
+        "GET /tasks",
+        "GET /runs",
+        "GET /approvals"
+      ],
+      "vite_files": [
+        "ui/start-building-app/src/app/components/pages/WorkspaceHome.tsx",
+        "ui/start-building-app/src/app/data/liveApi.ts"
+      ],
+      "next_files": [
+        "ui/next-app/app/workspace/page.tsx",
+        "ui/next-app/src/components/WorkspaceDashboard.tsx",
+        "ui/next-app/src/lib/mis.ts"
+      ],
+      "evidence_commands": [
+        "python3 scripts/vite_playwright_snapshot_smoke.py",
+        "python3 scripts/nextjs_playwright_snapshot_smoke.py",
+        "python3 scripts/nextjs_parity_smoke.py"
+      ],
+      "retirement_allowed": false,
+      "retirement_gate": "Need side-by-side data-shape diff before retiring the Vite cockpit."
+    },
+    {
+      "id": "pixel_office_and_dispatch",
+      "capability": "Pixel Office map plus customer task/template dispatch.",
+      "status": "partial",
+      "gate4_required": true,
+      "vite_routes": [
+        "/workspace/pixel-office"
+      ],
+      "next_routes": [
+        "/workspace/dispatch",
+        "/workspace/dispatch/template-run"
+      ],
+      "api_contracts": [
+        "GET /dashboard/metrics",
+        "GET /agents",
+        "GET /tasks",
+        "GET /workflows/customer-task-templates",
+        "POST /workflows/customer-task-templates/run",
+        "POST /workflows/customer-task-templates/submit",
+        "POST /workflows/customer-task",
+        "POST /workflows/customer-worker-task",
+        "POST /workflows/customer-worker-task/submit"
+      ],
+      "vite_files": [
+        "ui/start-building-app/src/app/components/pages/PixelOffice.tsx",
+        "ui/start-building-app/src/app/components/pixel/CustomerDispatchPanel.tsx",
+        "ui/start-building-app/src/app/data/liveApi.ts"
+      ],
+      "next_files": [
+        "ui/next-app/app/workspace/dispatch/page.tsx",
+        "ui/next-app/app/workspace/dispatch/template-run/route.ts",
+        "ui/next-app/src/components/DispatchPage.tsx",
+        "ui/next-app/src/lib/mis.ts",
+        "ui/next-app/src/lib/misServer.ts"
+      ],
+      "evidence_commands": [
+        "python3 scripts/vite_playwright_snapshot_smoke.py",
+        "python3 scripts/nextjs_playwright_snapshot_smoke.py",
+        "python3 scripts/nextjs_parity_smoke.py"
+      ],
+      "retirement_allowed": false,
+      "retirement_gate": "Next currently proves template entitlement dispatch, not the full Pixel map, customer-worker dispatch form, async jobs, or local-brief controls."
+    },
+    {
+      "id": "task_list",
+      "capability": "Task list and task status triage.",
+      "status": "covered",
+      "gate4_required": true,
+      "vite_routes": [
+        "/workspace/tasks"
+      ],
+      "next_routes": [
+        "/workspace/tasks"
+      ],
+      "api_contracts": [
+        "GET /tasks"
+      ],
+      "vite_files": [
+        "ui/start-building-app/src/app/components/pages/MyTasks.tsx",
+        "ui/start-building-app/src/app/data/liveApi.ts"
+      ],
+      "next_files": [
+        "ui/next-app/app/workspace/tasks/page.tsx",
+        "ui/next-app/src/components/LedgerPages.tsx",
+        "ui/next-app/src/lib/mis.ts"
+      ],
+      "evidence_commands": [
+        "python3 scripts/vite_playwright_snapshot_smoke.py",
+        "python3 scripts/nextjs_playwright_snapshot_smoke.py",
+        "python3 scripts/nextjs_parity_smoke.py"
+      ],
+      "retirement_allowed": false,
+      "retirement_gate": "Need visual/action parity review for filters and task links before retirement."
+    },
+    {
+      "id": "task_detail",
+      "capability": "Task detail with linked runs, approvals, evaluations, memories, and artifacts.",
+      "status": "covered",
+      "gate4_required": true,
+      "vite_routes": [
+        "/admin/tasks/:id"
+      ],
+      "next_routes": [
+        "/workspace/tasks/:taskId"
+      ],
+      "api_contracts": [
+        "GET /tasks/:id"
+      ],
+      "vite_files": [
+        "ui/start-building-app/src/app/components/pages/TaskDetail.tsx",
+        "ui/start-building-app/src/app/data/liveApi.ts"
+      ],
+      "next_files": [
+        "ui/next-app/app/workspace/tasks/[taskId]/page.tsx",
+        "ui/next-app/src/components/LedgerDetailPages.tsx",
+        "ui/next-app/src/lib/misServer.ts"
+      ],
+      "evidence_commands": [
+        "python3 scripts/nextjs_playwright_snapshot_smoke.py",
+        "python3 scripts/nextjs_parity_smoke.py"
+      ],
+      "retirement_allowed": false,
+      "retirement_gate": "Need Vite detail snapshot or route-level diff before retiring the admin detail route."
+    },
+    {
+      "id": "worker_console",
+      "capability": "AI employee registry, worker readiness, local worker controls, remote enrollment, and customer dispatch.",
+      "status": "partial",
+      "gate4_required": true,
+      "vite_routes": [
+        "/workspace/agents"
+      ],
+      "next_routes": [
+        "/workspace/agents"
+      ],
+      "api_contracts": [
+        "GET /agents",
+        "GET /security/production-readiness",
+        "GET /workers/status",
+        "GET /workers/adapter-readiness",
+        "GET /agent-gateway/enrollments",
+        "GET /agent-gateway/sessions",
+        "GET /agent-gateway/status",
+        "POST /workers/local/dispatch-once",
+        "POST /workers/local/start",
+        "POST /workers/local/stop",
+        "POST /workers/local/restart",
+        "POST /workers/tasks/release"
+      ],
+      "vite_files": [
+        "ui/start-building-app/src/app/components/pages/AIEmployees.tsx",
+        "ui/start-building-app/src/app/data/liveApi.ts"
+      ],
+      "next_files": [
+        "ui/next-app/app/workspace/agents/page.tsx",
+        "ui/next-app/src/components/AgentsParityPage.tsx",
+        "ui/next-app/src/lib/mis.ts"
+      ],
+      "evidence_commands": [
+        "python3 scripts/vite_playwright_snapshot_smoke.py",
+        "python3 scripts/nextjs_playwright_snapshot_smoke.py",
+        "python3 scripts/nextjs_parity_smoke.py"
+      ],
+      "retirement_allowed": false,
+      "retirement_gate": "Next route is intentionally read-only; Vite worker start/stop/restart, enrollment mutation, release, and dispatch controls remain canonical."
+    },
+    {
+      "id": "agent_detail",
+      "capability": "Per-agent performance detail.",
+      "status": "deferred",
+      "gate4_required": false,
+      "vite_routes": [
+        "/admin/agents/:id"
+      ],
+      "next_routes": [],
+      "api_contracts": [
+        "GET /agents/:id/performance"
+      ],
+      "vite_files": [
+        "ui/start-building-app/src/app/components/pages/AgentDetail.tsx",
+        "ui/start-building-app/src/app/data/liveApi.ts"
+      ],
+      "next_files": [],
+      "evidence_commands": [
+        "python3 scripts/ui_api_parity_matrix_smoke.py"
+      ],
+      "retirement_allowed": false,
+      "retirement_gate": "Deferred until worker console read-model parity is complete."
+    },
+    {
+      "id": "approvals",
+      "capability": "Approval inbox and approve/reject decisions.",
+      "status": "covered",
+      "gate4_required": true,
+      "vite_routes": [
+        "/workspace/approvals"
+      ],
+      "next_routes": [
+        "/workspace/approvals",
+        "/workspace/approvals/review"
+      ],
+      "api_contracts": [
+        "GET /approvals",
+        "POST /approvals/:id/approve",
+        "POST /approvals/:id/reject"
+      ],
+      "vite_files": [
+        "ui/start-building-app/src/app/components/pages/ApprovalsInbox.tsx",
+        "ui/start-building-app/src/app/data/liveApi.ts"
+      ],
+      "next_files": [
+        "ui/next-app/app/workspace/approvals/page.tsx",
+        "ui/next-app/app/workspace/approvals/review/route.ts",
+        "ui/next-app/src/components/LedgerPages.tsx",
+        "ui/next-app/src/lib/mis.ts",
+        "ui/next-app/src/lib/misServer.ts"
+      ],
+      "evidence_commands": [
+        "python3 scripts/vite_playwright_snapshot_smoke.py",
+        "python3 scripts/nextjs_playwright_snapshot_smoke.py",
+        "python3 scripts/nextjs_parity_smoke.py"
+      ],
+      "retirement_allowed": false,
+      "retirement_gate": "Need route-level Vite/Next decision side-effect diff before retirement."
+    },
+    {
+      "id": "memory",
+      "capability": "Memory candidate review and approve/reject decisions.",
+      "status": "covered",
+      "gate4_required": true,
+      "vite_routes": [
+        "/workspace/memory"
+      ],
+      "next_routes": [
+        "/workspace/memory",
+        "/workspace/memory/review"
+      ],
+      "api_contracts": [
+        "GET /memories",
+        "POST /memories/:id/approve",
+        "POST /memories/:id/reject"
+      ],
+      "vite_files": [
+        "ui/start-building-app/src/app/components/pages/MemoryLibrary.tsx",
+        "ui/start-building-app/src/app/data/liveApi.ts"
+      ],
+      "next_files": [
+        "ui/next-app/app/workspace/memory/page.tsx",
+        "ui/next-app/app/workspace/memory/review/route.ts",
+        "ui/next-app/src/components/GovernancePages.tsx",
+        "ui/next-app/src/lib/mis.ts",
+        "ui/next-app/src/lib/misServer.ts"
+      ],
+      "evidence_commands": [
+        "python3 scripts/vite_playwright_snapshot_smoke.py",
+        "python3 scripts/nextjs_playwright_snapshot_smoke.py",
+        "python3 scripts/nextjs_parity_smoke.py"
+      ],
+      "retirement_allowed": false,
+      "retirement_gate": "Need route-level Vite/Next decision side-effect diff before retirement."
+    },
+    {
+      "id": "reports",
+      "capability": "Customer delivery board and customer project index.",
+      "status": "covered",
+      "gate4_required": true,
+      "vite_routes": [
+        "/workspace/reports"
+      ],
+      "next_routes": [
+        "/workspace/reports"
+      ],
+      "api_contracts": [
+        "GET /workflows/customer-projects?limit=:limit",
+        "GET /workflows/customer-delivery-board?limit=:limit"
+      ],
+      "vite_files": [
+        "ui/start-building-app/src/app/components/pages/Reports.tsx",
+        "ui/start-building-app/src/app/data/liveApi.ts"
+      ],
+      "next_files": [
+        "ui/next-app/app/workspace/reports/page.tsx",
+        "ui/next-app/src/components/DeliveryPages.tsx",
+        "ui/next-app/src/lib/mis.ts",
+        "ui/next-app/src/lib/misServer.ts"
+      ],
+      "evidence_commands": [
+        "python3 scripts/vite_playwright_snapshot_smoke.py",
+        "python3 scripts/nextjs_playwright_snapshot_smoke.py",
+        "python3 scripts/nextjs_parity_smoke.py"
+      ],
+      "retirement_allowed": false,
+      "retirement_gate": "Need side-by-side route read-model diff for project and delivery board counts before retirement."
+    },
+    {
+      "id": "customer_project_report",
+      "capability": "Customer project delivery report, report artifact archive, and Agent Plan evidence.",
+      "status": "covered",
+      "gate4_required": true,
+      "vite_routes": [
+        "/workspace/customer-projects/:projectId/report"
+      ],
+      "next_routes": [
+        "/workspace/customer-projects/:projectId/report",
+        "/workspace/customer-projects/:projectId/report/archive"
+      ],
+      "api_contracts": [
+        "GET /workflows/customer-projects/:projectId/report",
+        "POST /workflows/customer-projects/:projectId/report-artifact"
+      ],
+      "vite_files": [
+        "ui/start-building-app/src/app/components/pages/CustomerProjectReport.tsx",
+        "ui/start-building-app/src/app/data/liveApi.ts"
+      ],
+      "next_files": [
+        "ui/next-app/app/workspace/customer-projects/[projectId]/report/page.tsx",
+        "ui/next-app/app/workspace/customer-projects/[projectId]/report/archive/route.ts",
+        "ui/next-app/src/components/DeliveryPages.tsx",
+        "ui/next-app/src/lib/mis.ts",
+        "ui/next-app/src/lib/misServer.ts"
+      ],
+      "evidence_commands": [
+        "python3 scripts/vite_playwright_snapshot_smoke.py",
+        "python3 scripts/nextjs_playwright_snapshot_smoke.py",
+        "python3 scripts/nextjs_parity_smoke.py"
+      ],
+      "retirement_allowed": false,
+      "retirement_gate": "Need side-by-side archive and visible evidence parity before Vite report route retirement."
+    },
+    {
+      "id": "run_ledger",
+      "capability": "Run ledger list.",
+      "status": "covered",
+      "gate4_required": true,
+      "vite_routes": [
+        "/admin/runs"
+      ],
+      "next_routes": [
+        "/workspace/runs"
+      ],
+      "api_contracts": [
+        "GET /runs"
+      ],
+      "vite_files": [
+        "ui/start-building-app/src/app/components/pages/RunLedger.tsx",
+        "ui/start-building-app/src/app/data/liveApi.ts"
+      ],
+      "next_files": [
+        "ui/next-app/app/workspace/runs/page.tsx",
+        "ui/next-app/src/components/LedgerPages.tsx",
+        "ui/next-app/src/lib/mis.ts"
+      ],
+      "evidence_commands": [
+        "python3 scripts/vite_playwright_snapshot_smoke.py",
+        "python3 scripts/nextjs_playwright_snapshot_smoke.py",
+        "python3 scripts/nextjs_parity_smoke.py"
+      ],
+      "retirement_allowed": false,
+      "retirement_gate": "Need route naming and navigation migration decision from /admin/runs to /workspace/runs."
+    },
+    {
+      "id": "run_detail",
+      "capability": "Run detail with graph, tool calls, approvals, evaluations, artifacts, and token omission proof.",
+      "status": "covered",
+      "gate4_required": true,
+      "vite_routes": [
+        "/admin/runs/:id"
+      ],
+      "next_routes": [
+        "/workspace/runs/:runId"
+      ],
+      "api_contracts": [
+        "GET /runs/:id",
+        "GET /runs/:id/graph"
+      ],
+      "vite_files": [
+        "ui/start-building-app/src/app/components/pages/RunDetail.tsx",
+        "ui/start-building-app/src/app/data/liveApi.ts"
+      ],
+      "next_files": [
+        "ui/next-app/app/workspace/runs/[runId]/page.tsx",
+        "ui/next-app/src/components/LedgerDetailPages.tsx",
+        "ui/next-app/src/lib/misServer.ts"
+      ],
+      "evidence_commands": [
+        "python3 scripts/nextjs_playwright_snapshot_smoke.py",
+        "python3 scripts/nextjs_parity_smoke.py"
+      ],
+      "retirement_allowed": false,
+      "retirement_gate": "Need Vite detail snapshot or route-level diff before retiring the admin detail route."
+    },
+    {
+      "id": "tool_calls",
+      "capability": "Tool call ledger.",
+      "status": "deferred",
+      "gate4_required": false,
+      "vite_routes": [
+        "/admin/toolcalls"
+      ],
+      "next_routes": [],
+      "api_contracts": [
+        "GET /tool-calls"
+      ],
+      "vite_files": [
+        "ui/start-building-app/src/app/components/pages/ToolCallLedger.tsx",
+        "ui/start-building-app/src/app/data/liveApi.ts"
+      ],
+      "next_files": [],
+      "evidence_commands": [
+        "python3 scripts/ui_api_parity_matrix_smoke.py"
+      ],
+      "retirement_allowed": false,
+      "retirement_gate": "Deferred until run detail and evidence drilldown parity are accepted."
+    },
+    {
+      "id": "evaluation_room",
+      "capability": "Evaluation case and quality gate console.",
+      "status": "deferred",
+      "gate4_required": false,
+      "vite_routes": [
+        "/admin/evaluations"
+      ],
+      "next_routes": [],
+      "api_contracts": [
+        "GET /evaluations"
+      ],
+      "vite_files": [
+        "ui/start-building-app/src/app/components/pages/EvaluationRoom.tsx"
+      ],
+      "next_files": [],
+      "evidence_commands": [
+        "python3 scripts/ui_api_parity_matrix_smoke.py"
+      ],
+      "retirement_allowed": false,
+      "retirement_gate": "Deferred until core customer dispatch, approvals, memory, reports, audit, and worker console parity are accepted."
+    },
+    {
+      "id": "control_tower",
+      "capability": "Admin dashboard and control tower.",
+      "status": "partial",
+      "gate4_required": false,
+      "vite_routes": [
+        "/admin"
+      ],
+      "next_routes": [
+        "/workspace",
+        "/workspace/governance",
+        "/workspace/deployment"
+      ],
+      "api_contracts": [
+        "GET /dashboard/metrics",
+        "GET /security/production-readiness",
+        "GET /local/readiness",
+        "GET /storage/backend-status"
+      ],
+      "vite_files": [
+        "ui/start-building-app/src/app/components/pages/ControlTower.tsx",
+        "ui/start-building-app/src/app/data/liveApi.ts"
+      ],
+      "next_files": [
+        "ui/next-app/src/components/WorkspaceDashboard.tsx",
+        "ui/next-app/src/components/GovernancePage.tsx",
+        "ui/next-app/src/components/DeploymentPage.tsx"
+      ],
+      "evidence_commands": [
+        "python3 scripts/nextjs_playwright_snapshot_smoke.py",
+        "python3 scripts/nextjs_parity_smoke.py"
+      ],
+      "retirement_allowed": false,
+      "retirement_gate": "Admin control tower is split across Next cockpit, governance, and deployment routes; needs operator workflow review before retirement."
+    },
+    {
+      "id": "runtime_connectors",
+      "capability": "Runtime connector status and trust updates.",
+      "status": "deferred",
+      "gate4_required": false,
+      "vite_routes": [
+        "/admin/connectors"
+      ],
+      "next_routes": [],
+      "api_contracts": [
+        "GET /runtime-connectors",
+        "POST /runtime-connectors/:id/trust"
+      ],
+      "vite_files": [
+        "ui/start-building-app/src/app/components/pages/RuntimeConnectors.tsx",
+        "ui/start-building-app/src/app/data/liveApi.ts"
+      ],
+      "next_files": [],
+      "evidence_commands": [
+        "python3 scripts/ui_api_parity_matrix_smoke.py"
+      ],
+      "retirement_allowed": false,
+      "retirement_gate": "Deferred because connector trust mutation is not part of the first Next route set."
+    },
+    {
+      "id": "external_bases_notion",
+      "capability": "External base and Notion sync controls.",
+      "status": "deferred",
+      "gate4_required": false,
+      "vite_routes": [
+        "/admin/bases/notion"
+      ],
+      "next_routes": [],
+      "api_contracts": [
+        "GET /integrations/notion/*",
+        "POST /integrations/notion/*"
+      ],
+      "vite_files": [
+        "ui/start-building-app/src/app/components/pages/NotionBase.tsx"
+      ],
+      "next_files": [],
+      "evidence_commands": [
+        "python3 scripts/ui_api_parity_matrix_smoke.py"
+      ],
+      "retirement_allowed": false,
+      "retirement_gate": "Deferred until external-write approval and entitlement gates are mapped into Next."
+    },
+    {
+      "id": "template_switching",
+      "capability": "Template catalog and base switching administration.",
+      "status": "partial",
+      "gate4_required": false,
+      "vite_routes": [
+        "/admin/templates"
+      ],
+      "next_routes": [
+        "/workspace/dispatch"
+      ],
+      "api_contracts": [
+        "GET /workflows/customer-task-templates",
+        "POST /workflows/customer-task-templates/run",
+        "POST /workflows/customer-task-templates/submit"
+      ],
+      "vite_files": [
+        "ui/start-building-app/src/app/components/pages/TemplateSwitching.tsx",
+        "ui/start-building-app/src/app/data/liveApi.ts"
+      ],
+      "next_files": [
+        "ui/next-app/app/workspace/dispatch/page.tsx",
+        "ui/next-app/src/components/DispatchPage.tsx"
+      ],
+      "evidence_commands": [
+        "python3 scripts/nextjs_playwright_snapshot_smoke.py",
+        "python3 scripts/nextjs_parity_smoke.py"
+      ],
+      "retirement_allowed": false,
+      "retirement_gate": "Next covers template dispatch entitlement, not the full admin template/base-switching surface."
+    },
+    {
+      "id": "audit",
+      "capability": "Audit evidence ledger.",
+      "status": "covered",
+      "gate4_required": true,
+      "vite_routes": [
+        "/admin/audit"
+      ],
+      "next_routes": [
+        "/workspace/audit"
+      ],
+      "api_contracts": [
+        "GET /audit",
+        "GET /audit?limit=:limit"
+      ],
+      "vite_files": [
+        "ui/start-building-app/src/app/components/pages/AuditCenter.tsx",
+        "ui/start-building-app/src/app/data/liveApi.ts"
+      ],
+      "next_files": [
+        "ui/next-app/app/workspace/audit/page.tsx",
+        "ui/next-app/src/components/GovernancePages.tsx",
+        "ui/next-app/src/lib/mis.ts",
+        "ui/next-app/src/lib/misServer.ts"
+      ],
+      "evidence_commands": [
+        "python3 scripts/vite_playwright_snapshot_smoke.py",
+        "python3 scripts/nextjs_playwright_snapshot_smoke.py",
+        "python3 scripts/nextjs_parity_smoke.py"
+      ],
+      "retirement_allowed": false,
+      "retirement_gate": "Need hash-chain and pagination route diff before retiring the Vite audit route."
+    },
+    {
+      "id": "commercial_entitlements_next_only",
+      "capability": "Commercial edition, capability matrix, and fail-closed gates.",
+      "status": "next_only",
+      "gate4_required": true,
+      "vite_routes": [],
+      "next_routes": [
+        "/workspace/commercial"
+      ],
+      "api_contracts": [
+        "GET /commercial/entitlements"
+      ],
+      "vite_files": [],
+      "next_files": [
+        "ui/next-app/app/workspace/commercial/page.tsx",
+        "ui/next-app/src/components/CommercialPage.tsx",
+        "ui/next-app/src/lib/mis.ts",
+        "ui/next-app/src/lib/misServer.ts"
+      ],
+      "evidence_commands": [
+        "python3 scripts/nextjs_playwright_snapshot_smoke.py",
+        "python3 scripts/nextjs_parity_smoke.py",
+        "python3 scripts/commercial_entitlements_smoke.py"
+      ],
+      "retirement_allowed": false,
+      "retirement_gate": "No Vite route is replaced; this is a commercial migration addition."
+    },
+    {
+      "id": "governance_next_only",
+      "capability": "Production readiness, workspace/RBAC/session governance, and audit evidence.",
+      "status": "next_only",
+      "gate4_required": true,
+      "vite_routes": [],
+      "next_routes": [
+        "/workspace/governance"
+      ],
+      "api_contracts": [
+        "GET /security/production-readiness",
+        "GET /commercial/entitlements",
+        "GET /workers/status",
+        "GET /agent-gateway/sessions",
+        "GET /audit?limit=:limit"
+      ],
+      "vite_files": [],
+      "next_files": [
+        "ui/next-app/app/workspace/governance/page.tsx",
+        "ui/next-app/src/components/GovernancePage.tsx",
+        "ui/next-app/src/lib/misServer.ts"
+      ],
+      "evidence_commands": [
+        "python3 scripts/nextjs_playwright_snapshot_smoke.py",
+        "python3 scripts/nextjs_parity_smoke.py",
+        "python3 scripts/workspace_rbac_governance_smoke.py",
+        "python3 scripts/workspace_memory_session_governance_smoke.py"
+      ],
+      "retirement_allowed": false,
+      "retirement_gate": "No Vite route is replaced; this is a commercial governance addition."
+    },
+    {
+      "id": "deployment_next_only",
+      "capability": "Local/BYOC deployment readiness, backup/restore evidence, retention/export gates, and storage backend status.",
+      "status": "next_only",
+      "gate4_required": true,
+      "vite_routes": [],
+      "next_routes": [
+        "/workspace/deployment"
+      ],
+      "api_contracts": [
+        "GET /local/readiness",
+        "GET /security/production-readiness",
+        "GET /commercial/entitlements",
+        "GET /storage/backend-status",
+        "GET /audit?limit=:limit"
+      ],
+      "vite_files": [],
+      "next_files": [
+        "ui/next-app/app/workspace/deployment/page.tsx",
+        "ui/next-app/src/components/DeploymentPage.tsx",
+        "ui/next-app/src/lib/misServer.ts"
+      ],
+      "evidence_commands": [
+        "python3 scripts/nextjs_playwright_snapshot_smoke.py",
+        "python3 scripts/nextjs_parity_smoke.py",
+        "python3 scripts/storage_backend_selection_smoke.py"
+      ],
+      "retirement_allowed": false,
+      "retirement_gate": "No Vite route is replaced; this is a BYOC/deployment migration addition."
+    },
+    {
+      "id": "evidence_drilldown_next_only",
+      "capability": "Agent Plan evidence drilldown with manifest verification, plan verification, run graph, and task/run links.",
+      "status": "next_only",
+      "gate4_required": true,
+      "vite_routes": [],
+      "next_routes": [
+        "/workspace/evidence/:manifestId"
+      ],
+      "api_contracts": [
+        "GET /agent-gateway/plan-evidence-manifests/:manifestId/verify",
+        "GET /agent-gateway/agent-plans/:planId/verify",
+        "GET /agent-gateway/runs/:runId/graph"
+      ],
+      "vite_files": [],
+      "next_files": [
+        "ui/next-app/app/workspace/evidence/[manifestId]/page.tsx",
+        "ui/next-app/src/components/EvidencePage.tsx",
+        "ui/next-app/src/lib/misServer.ts"
+      ],
+      "evidence_commands": [
+        "python3 scripts/nextjs_playwright_snapshot_smoke.py",
+        "python3 scripts/nextjs_parity_smoke.py"
+      ],
+      "retirement_allowed": false,
+      "retirement_gate": "No Vite route is replaced; this adds evidence visibility required before route retirement."
+    },
+    {
+      "id": "next_mis_proxy",
+      "capability": "Next.js API proxy preserving current MIS API semantics.",
+      "status": "next_only",
+      "gate4_required": true,
+      "vite_routes": [],
+      "next_routes": [
+        "/api/mis/:path*"
+      ],
+      "api_contracts": [
+        "ANY /api/mis/:path* -> AGENTOPS_API_BASE/:path*"
+      ],
+      "vite_files": [],
+      "next_files": [
+        "ui/next-app/app/api/mis/[...path]/route.ts",
+        "ui/next-app/src/lib/mis.ts",
+        "ui/next-app/src/lib/misServer.ts"
+      ],
+      "evidence_commands": [
+        "python3 scripts/nextjs_playwright_snapshot_smoke.py",
+        "python3 scripts/nextjs_parity_smoke.py"
+      ],
+      "retirement_allowed": false,
+      "retirement_gate": "Proxy must remain a compatibility layer until backend/API ownership changes through a separate gate."
+    }
+  ]
+}

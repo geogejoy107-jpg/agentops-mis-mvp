@@ -155,6 +155,9 @@ Purpose: prevent a frontend rewrite from becoming a product regression.
 Must be true:
 
 - Current Vite/React routes and API calls have a page-by-page parity checklist.
+  The canonical checklist is `docs/UI_API_PARITY_MATRIX.md`, backed by
+  `docs/UI_API_PARITY_MATRIX.json` (`ui_api_parity_matrix_v1`) and verified by
+  `python3 scripts/ui_api_parity_matrix_smoke.py`.
 - Next.js work starts in a separate app or worktree and consumes the same API
   semantics first.
 - No route is retired until customer dispatch, worker console, reports,
@@ -171,9 +174,14 @@ Must be true:
 - Browser verification is automated by:
 
 ```bash
+python3 scripts/ui_api_parity_matrix_smoke.py
 python3 scripts/vite_playwright_snapshot_smoke.py
 python3 scripts/nextjs_playwright_snapshot_smoke.py
 ```
+
+  The matrix smoke statically compares actual Vite routes, actual Next App
+  Router pages/routes, API contracts, evidence commands, and retirement gates so
+  page parity cannot drift into undocumented route replacement.
 
   The Vite smoke starts isolated MIS API and Vite dev servers, captures
   canonical Vite route snapshots for workspace, Pixel Office, tasks, agents,
@@ -227,6 +235,9 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   - `scripts/nextjs_parity_smoke.py`
   - `scripts/nextjs_playwright_snapshot_smoke.py`
   - `scripts/vite_playwright_snapshot_smoke.py`
+  - `docs/UI_API_PARITY_MATRIX.md`
+  - `docs/UI_API_PARITY_MATRIX.json`
+  - `scripts/ui_api_parity_matrix_smoke.py`
 
 ### Gate 5: BYOC / Enterprise Deployment
 

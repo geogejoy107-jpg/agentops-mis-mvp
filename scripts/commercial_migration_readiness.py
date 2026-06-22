@@ -181,6 +181,15 @@ def main() -> int:
             "canonical Vite UI browser snapshot smoke and configurable MIS proxy target are present",
         ),
         check(
+            "ui_api_parity_matrix_surface_exists",
+            file_contains("docs/UI_API_PARITY_MATRIX.json", "ui_api_parity_matrix_v1")
+            and file_contains("docs/UI_API_PARITY_MATRIX.md", "scripts/ui_api_parity_matrix_smoke.py")
+            and file_contains("scripts/ui_api_parity_matrix_smoke.py", "ui_api_parity_matrix_v1")
+            and file_contains("docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md", "UI_API_PARITY_MATRIX")
+            and (ROOT / "scripts" / "ui_api_parity_matrix_smoke.py").exists(),
+            "Gate 4 page-by-page Vite/Next route and API parity matrix is present and machine-checkable",
+        ),
+        check(
             "postgres_is_gated_not_immediate",
             file_contains("docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md", "Storage Boundary Before Postgres"),
             "Postgres migration is behind a storage-boundary gate",
@@ -290,6 +299,7 @@ def main() -> int:
                 "python3 scripts/nextjs_parity_smoke.py",
                 "cd ui/start-building-app && npm run build",
                 "cd ui/next-app && npm run build",
+                "python3 scripts/ui_api_parity_matrix_smoke.py",
                 "python3 scripts/vite_playwright_snapshot_smoke.py",
                 "python3 scripts/nextjs_playwright_snapshot_smoke.py",
             ],
