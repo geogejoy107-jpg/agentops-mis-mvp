@@ -1,8 +1,8 @@
 # AgentOps MIS Prioritized Backlog
 
-> Status date: 2026-06-21  
+> Status date: 2026-06-22  
 > Development line: `codex/agent-gateway-kb-demo`  
-> Latest observed head when this backlog was created: `6305b2533f7219ecdeb1fc3763e1196a25a38272`
+> Latest verified development head for this update: `9fc10a67694013c277a30847d72917c6845016c5`
 
 ## Status Vocabulary
 
@@ -24,7 +24,7 @@ Next | Verify Current Head | Ready | In Progress | Blocked | Done | Superseded
 | P0-07 | Add Knowledge workspace/ACL isolation and retrieval provenance | Verify Current Head | Search filters by workspace/project/access tags; result carries source, version/hash, authority class, and visibility proof |
 | P0-08 | Establish SQLite concurrency baseline | Verify Current Head | Central connection factory uses foreign keys, WAL, busy timeout, short transactions; concurrent benchmark reports lock/error rates |
 | P0-09 | Establish CI, secret scan, SBOM, license, and release evidence | Verify Current Head | PR head receives automated checks; safe smoke/build commands pass; Gitleaks/SBOM/license/provenance evidence attached |
-| P0-10 | Install durable project governance in repository and Notion | In Progress | `AGENTS.md`, project state/decision/backlog/handoff files, Project Ledger views, repo-local skill, and a governance PR exist |
+| P0-10 | Install durable project governance in repository and Notion | In Progress | `AGENTS.md`, project state/decision/backlog/handoff files, Project Ledger views, repo-local skill, and governance PRs exist |
 | P0-11 | Install the prepared ChatGPT Project Instructions | Blocked | Project owner pastes the versioned template into ChatGPT Project Instructions and confirms a new project chat follows it |
 
 ## P1 — Productization After P0
@@ -37,6 +37,9 @@ Next | Verify Current Head | Ready | In Progress | Blocked | Done | Superseded
 | P1-04 | Runtime Capability Manifest | Ready after P0 | Each adapter declares file, shell, network, Git, secret, external-write, confirmation, and trust capabilities |
 | P1-05 | Split oversized horizontal modules | Ready after P0 | Strangler-style module boundaries; no big-bang rewrite; existing contracts preserved and tested |
 | P1-06 | Knowledge chunking, retrieval evaluation, Repo Map, then hybrid search | Ready after P0 | FTS baseline measured first; chunking/Repo Map improves named retrieval cases; vectors remain optional |
+| P1-07 | Governed External Base Manager and Notion Project Ledger integration | In Progress (v0 contract only) | Notion registry/policy and Project Ledger governance fields exist; versioned manifest, knowledge entry, validator, runbook, and Draft PR #19 exist; live connector ingestion/writeback remains separately planned and approval-gated |
+
+P1-07 does not displace any P0 item. Runtime ingestion, writeback, polling/webhooks, and bidirectional synchronization remain blocked behind the current authority, ACL, approval-resume, redaction, and CI correctness gates.
 
 ## P2 — Differentiation
 
