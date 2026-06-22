@@ -18951,7 +18951,7 @@ def operator_loop_audit(conn: sqlite3.Connection, headers, qs=None) -> dict:
             record_command = f"agentops operator loop-audit --loop-id {loop_id} --limit 10"
         else:
             record_status = "attention"
-            record_command = f"agentops memory propose --source-ref loop://{loop_id} --scope project --type loop_record --text \"Summarize approved loop outcome\""
+            record_command = f"agentops memory propose --agent-id agt_operator --source-ref loop://{loop_id} --scope project --type loop_record --text \"Summarize approved loop outcome\""
     else:
         record_status = "attention" if pending_approvals or memory_candidates or int(summary.get("review_items_total") or 0) else "pass" if audit_rows > 0 else "attention"
         record_command = "agentops review queue --limit 20" if record_status == "attention" else "agentops operator action-plan --limit 20"

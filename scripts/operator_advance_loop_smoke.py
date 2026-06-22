@@ -101,6 +101,7 @@ def run_cli(args: list[str], base_url: str, outputs: list[str], timeout: int = 1
     env["AGENTOPS_BASE_URL"] = base_url
     env["AGENTOPS_WORKSPACE_ID"] = "local-demo"
     env.pop("AGENTOPS_API_KEY", None)
+    env.pop("AGENTOPS_AGENT_ID", None)
     proc = subprocess.run([str(CLI), *args], cwd=ROOT, env=env, capture_output=True, text=True, timeout=timeout, check=False)
     outputs.extend([proc.stdout, proc.stderr])
     return proc
