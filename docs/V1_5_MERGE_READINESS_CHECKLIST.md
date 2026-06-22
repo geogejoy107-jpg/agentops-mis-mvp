@@ -401,6 +401,19 @@ The workflow intentionally keeps Hermes/OpenClaw live runtime work out of CI.
 Those checks remain protected local/manual acceptance commands with explicit
 confirmation and no default credentials.
 
+Merge readiness state itself is also machine-checked:
+
+```bash
+python3 scripts/merge_readiness_status_smoke.py
+python3 scripts/merge_readiness_status_smoke.py --require-ready-to-merge
+```
+
+The first command is CI-safe and may pass while the branch is still
+`NOT_READY`; it proves the checklist state is internally consistent and the
+remaining blockers are explicit. The strict command is for the final merge
+candidate and must fail until no unchecked blocker remains, the exact HEAD has
+green CI, the working tree is clean and the branch is upstream-synced.
+
 Minimum jobs:
 
 ```text

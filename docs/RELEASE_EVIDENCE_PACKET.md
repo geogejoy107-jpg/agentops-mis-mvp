@@ -12,6 +12,7 @@ For a final RC candidate, run the stricter form:
 
 ```bash
 python3 scripts/release_evidence_packet_smoke.py --require-clean --require-green-ci
+python3 scripts/merge_readiness_status_smoke.py --require-ready-to-merge
 ```
 
 ## Required Evidence
@@ -36,6 +37,18 @@ python3 scripts/release_evidence_packet_smoke.py --require-clean --require-green
 - READY evidence requires current-head CI with status `completed` and conclusion
   `success`.
 
+### Merge Readiness State
+
+- Source: `docs/V1_5_MERGE_READINESS_CHECKLIST.md`.
+- Default check: `python3 scripts/merge_readiness_status_smoke.py`.
+- Strict check: `python3 scripts/merge_readiness_status_smoke.py --require-ready-to-merge`.
+- The default check may pass while the branch is still `NOT_READY`; it proves
+  that the checklist is honest, the final state matches the header state, and
+  remaining blockers are explicit.
+- The strict check must fail until the checklist is advanced to
+  `READY_TO_MERGE`, the working tree is clean, upstream is synchronized, the
+  exact HEAD has green CI, and no unchecked blocker remains.
+
 ### Test Command List and Summary
 
 Checklist phrase: Test command list and summary.
@@ -45,6 +58,7 @@ The packet includes the canonical command manifest used for release review:
 - `python3 -m py_compile server.py agentops_mis_cli/*.py scripts/*.py && git diff --check`
 - `python3 scripts/release_branch_control_smoke.py`
 - `python3 scripts/release_evidence_packet_smoke.py`
+- `python3 scripts/merge_readiness_status_smoke.py`
 - `python3 scripts/secret_scan_smoke.py`
 - `python3 scripts/license_provenance_smoke.py`
 - `python3 scripts/public_claims_release_gate_smoke.py`

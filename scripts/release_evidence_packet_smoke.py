@@ -47,6 +47,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "merge_readiness_status",
+        "command": "python3 scripts/merge_readiness_status_smoke.py",
+        "summary": "Checklist state consistency, explicit blockers and strict READY_TO_MERGE guard.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "secret_scan",
         "command": "python3 scripts/secret_scan_smoke.py",
         "summary": "Tracked files remain free of real credentials and token-like material.",
