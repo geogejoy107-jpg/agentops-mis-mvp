@@ -15,7 +15,9 @@ if str(ROOT) not in sys.path:
 from agentops_mis_core.approval_wall import (
     approval_wall_recommended_actions,
     build_prepared_action_blocked_response,
+    build_prepared_action_agent_forbidden_response,
     build_prepared_action_get_response,
+    build_prepared_action_get_not_found_response,
     build_prepared_action_hash_mismatch_response,
     build_prepared_action_provider_result_fields,
     build_prepared_action_provider_resume_request,
@@ -175,8 +177,10 @@ SERVER_OPERATOR_COMMAND_CENTER_IMPORTS = {
 }
 EXTRACTED_APPROVAL_WALL_HELPERS = {
     "approval_wall_recommended_actions",
+    "build_prepared_action_agent_forbidden_response",
     "build_prepared_action_blocked_response",
     "build_prepared_action_get_response",
+    "build_prepared_action_get_not_found_response",
     "build_prepared_action_hash_mismatch_response",
     "build_prepared_action_provider_result_fields",
     "build_prepared_action_provider_resume_request",
@@ -467,11 +471,17 @@ def main() -> int:
     prepared_row["action_hash"] = prepared_action_hash(prepared_row)
     prepared_public = prepared_action_public(prepared_row)
     prepared_get = build_prepared_action_get_response(prepared_row, {"approval_id": "ap_pa_smoke", "decision": "pending"})
+    prepared_get_missing = build_prepared_action_get_not_found_response("pa_missing_smoke")
+    prepared_inspect_forbidden = build_prepared_action_agent_forbidden_response(operation="inspect")
+    prepared_resume_forbidden = build_prepared_action_agent_forbidden_response(operation="resume")
     prepared_gate = prepared_action_gate(prepared_row)
     prepared_actions = approval_wall_recommended_actions({"decision": "pending"}, prepared_row, "ap_pa_smoke")
     prepared_serialized = json.dumps([prepared_public, prepared_get], ensure_ascii=False)
     require(prepared_gate.get("hash_match") is True, "prepared action gate hash verification failed", failures)
     require((prepared_get.get("hash_verification") or {}).get("match") is True, "prepared action get response hash verification failed", failures)
+    require(prepared_get_missing.get("error") == "not_found" and "pa_missing_smoke" in prepared_get_missing.get("message", ""), "prepared action get missing response failed", failures)
+    require(prepared_inspect_forbidden.get("message") == "Agent token cannot inspect another agent's prepared action.", "prepared action inspect-forbidden response failed", failures)
+    require(prepared_resume_forbidden.get("message") == "Agent token cannot resume another agent's prepared action.", "prepared action resume-forbidden response failed", failures)
     require("approval prepared-action resume" in " ".join(prepared_actions), "approval wall recommended actions missing prepared-action resume", failures)
     require("fixture_secret_value" not in prepared_serialized and "fixture_session_value" not in prepared_serialized, "prepared action public projection leaked token-like metadata", failures)
     require(prepared_action_id_from_request({"prepared_action_id": "pa_smoke"}) == "pa_smoke", "prepared action request id helper failed", failures)

@@ -379,8 +379,43 @@ python3 scripts/notion_export_prepared_action_gate_smoke.py --base-url http://12
 python3 scripts/prepared_action_approval_wall_smoke.py --base-url http://127.0.0.1:8787
 ```
 
+### Slice 14: Prepared-Action Route Access/Error Helpers
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/approval_wall.py`
+
+Moved out of `server.py`:
+
+- prepared-action get-route not-found response shaping
+- prepared-action bound-agent inspect-forbidden response shaping
+- prepared-action resume-forbidden response shaping
+- prepared-action route workspace-mismatch response shaping
+- unified prepared-action route access/error branch selection for inspect and
+  resume paths
+- route access/error response token-omission proof for these cases
+
+Still owned by `server.py`:
+
+- HTTP routes
+- Agent Gateway identity resolution
+- bound-token detection
+- workspace and agent identity inputs used by the route access helper
+- SQLite reads for prepared action and approval rows
+- exact-once prepared-action resume writes and provider side-effect evidence
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/prepared_action_approval_wall_smoke.py --base-url http://127.0.0.1:8787
+```
+
 ## Next Candidate Slices
 
-- Approval Wall route access/error helper extraction.
+- Continue P1-05 with small smoke-backed strangler slices only; prefer pure
+  helper extraction before moving stateful route orchestration.
 
 Each candidate must be extracted in a separate, smoke-backed slice.

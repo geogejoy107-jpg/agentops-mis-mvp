@@ -7879,11 +7879,11 @@ def agent_gateway_get_prepared_action(conn: sqlite3.Connection, action_id: str, 
     ident = agent_gateway_identity(headers, auth_ctx=auth_ctx)
     row = conn.execute("SELECT * FROM prepared_actions WHERE action_id=?", (action_id,)).fetchone()
     if not row:
-        return {"error": "not_found", "message": f"prepared action {action_id} not found", "token_omitted": True}, 404
+        return build_prepared_action_get_not_found_response(action_id), 404
     if row_workspace(row) != ident["workspace_id"]:
         return workspace_forbidden("prepared_action", action_id, ident["workspace_id"], row_workspace(row))
     if agent_gateway_is_bound_auth(auth_ctx) and row["requested_by_agent_id"] != ident["agent_id"]:
-        return {"error": "forbidden", "message": "Agent token cannot inspect another agent's prepared action.", "token_omitted": True}, 403
+        return build_prepared_action_agent_forbidden_response(operation="inspect"), 403
     approval = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (row["approval_id"],)).fetchone()
     return build_prepared_action_get_response(row, approval), 200
 
@@ -8016,7 +8016,7 @@ def agent_gateway_resume_prepared_action(conn, action_id: str, body) -> tuple[di
     if row_workspace(row) != ident["workspace_id"]:
         return workspace_forbidden("prepared_action", action_id, ident["workspace_id"], row_workspace(row))
     if ident.get("agent_id") and row["requested_by_agent_id"] != ident["agent_id"]:
-        return {"error": "forbidden", "message": "Agent token cannot resume another agent's prepared action.", "token_omitted": True}, 403
+        return build_prepared_action_agent_forbidden_response(operation="resume"), 403
     approval = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (row["approval_id"],)).fetchone()
     blocked_response = build_prepared_action_resume_blocked_response(action_id=action_id, row=row, approval=approval)
     if blocked_response:

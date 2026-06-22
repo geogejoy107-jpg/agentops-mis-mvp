@@ -277,6 +277,23 @@ def build_prepared_action_blocked_response(
     }
 
 
+def build_prepared_action_get_not_found_response(action_id: Any) -> dict[str, Any]:
+    return {
+        "error": "not_found",
+        "message": f"prepared action {action_id} not found",
+        "token_omitted": True,
+    }
+
+
+def build_prepared_action_agent_forbidden_response(*, operation: str) -> dict[str, Any]:
+    verb = "resume" if operation == "resume" else "inspect"
+    return {
+        "error": "forbidden",
+        "message": f"Agent token cannot {verb} another agent's prepared action.",
+        "token_omitted": True,
+    }
+
+
 def build_prepared_action_hash_mismatch_response(
     row: Any,
     current_action_hash: str | None = None,
