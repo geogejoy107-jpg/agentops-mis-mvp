@@ -16790,11 +16790,84 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
     execute_command = f"agentops task pull --agent-id {shlex.quote(agent_id)} --status planned --limit 5 --enforce-intake"
     self_check_command = "agentops operator loop-self-check --limit 12"
     verify_command = "agentops operator loop-audit --limit 20"
+    evidence_report_command = "agentops operator evidence-report --limit 12"
+    handoff_command = "agentops operator handoff --limit 12"
+    action_receipts_command = "agentops operator action-receipts --limit 20"
     record_command = "agentops review queue --limit 20"
+    loop_health = handoff.get("loop_health") or {}
+    health_gates = loop_health.get("gates") or {}
+    receipt_eval_gate = health_gates.get("receipt_evaluations") or {}
+    evidence_work_order = ((handoff.get("work_order") or {}).get("evidence_report") or {})
+    advance_policy = advance_loop_policy_summary()
+    evaluation_contract = {
+        "operation": "loop_evaluation_contract",
+        "status": loop_health.get("status") or handoff.get("status") or "unknown",
+        "score": loop_health.get("score"),
+        "score_source": "operator_handoff.loop_health",
+        "minimum_exit_criteria": [
+            "Agent Plan verifies before execution",
+            "intake gates are not blocked for the selected task",
+            "targeted task checks pass and failed evidence remains visible",
+            "plan_evidence_manifest verifies against tool/evaluation/artifact/audit rows",
+            "operator loop-audit reports no loop-local blocked gates",
+            "Action Queue receipt is recorded and evaluated when a bounded advance action is used",
+            "no raw prompt, raw response, customer body, token, or credential is exposed",
+        ],
+        "required_commands": [self_check_command, verify_command, evidence_report_command, action_receipts_command],
+        "required_ledgers": [
+            "agent_plans",
+            "plan_evidence_manifests",
+            "tool_calls",
+            "evaluations",
+            "artifacts",
+            "audit_logs",
+            "operator_action_receipts",
+            "operator_action_evaluations",
+        ],
+        "receipt_evaluation": {
+            "status": receipt_eval_gate.get("status"),
+            "required": receipt_eval_gate.get("required"),
+            "evaluated": receipt_eval_gate.get("evaluated"),
+            "failed": receipt_eval_gate.get("failed"),
+            "missing": receipt_eval_gate.get("missing"),
+            "coverage_percent": receipt_eval_gate.get("coverage_percent"),
+        },
+        "token_omitted": True,
+    }
+    audit_contract = {
+        "operation": "loop_audit_contract",
+        "method": "READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD",
+        "tamper_chain_required": True,
+        "raw_content_policy": "omit raw prompts, raw responses, credentials, customer bodies, and full knowledge snippets from launch packets",
+        "record_required": True,
+        "record_commands": [plan_evidence_command, record_command, action_receipts_command],
+        "evidence_report": {
+            "operation": evidence_work_order.get("operation"),
+            "status": evidence_work_order.get("status"),
+            "action_signature": evidence_work_order.get("action_signature"),
+            "receipt_state": evidence_work_order.get("receipt_state") or {},
+            "summary": evidence_work_order.get("summary") or {},
+            "token_omitted": True,
+        },
+        "bounded_runner": {
+            "policy_id": advance_policy.get("policy_id"),
+            "policy_version": advance_policy.get("policy_version"),
+            "runner_location": advance_policy.get("runner_location"),
+            "max_actions": advance_policy.get("max_actions"),
+            "server_executes_shell": advance_policy.get("server_executes_shell"),
+            "denied_flags": advance_policy.get("denied_flags") or [],
+            "denied_namespaces": advance_policy.get("denied_namespaces") or [],
+            "denied_memory_actions": advance_policy.get("denied_memory_actions") or [],
+            "denied_worker_actions": advance_policy.get("denied_worker_actions") or [],
+            "denied_operator_actions": advance_policy.get("denied_operator_actions") or [],
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
     launch_sequence = [
         {
             "phase": "READ",
-            "commands": ["git status --short --branch", "git rev-parse --short HEAD", "agentops operator handoff --limit 12", self_check_command],
+            "commands": ["git status --short --branch", "git rev-parse --short HEAD", handoff_command, self_check_command],
             "evidence": referenced_specs,
         },
         {
@@ -16831,18 +16904,20 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
         },
         {
             "phase": "VERIFY",
-            "commands": [verify_command],
+            "commands": [verify_command, evidence_report_command],
             "contract": "run targeted checks and keep failed evidence visible",
+            "evaluation_contract": evaluation_contract,
         },
         {
             "phase": "RECORD",
-            "commands": [plan_evidence_command, record_command],
+            "commands": [plan_evidence_command, record_command, action_receipts_command],
             "contract": "bind run evidence to the plan, then review approvals and memory candidates",
+            "audit_contract": audit_contract,
         },
     ]
     handoff_commands = ((handoff.get("work_order") or {}).get("commands") or [])[:8]
     commands = []
-    for item in [self_check_command, retrieve_command, plan_create_command, plan_verify_command, compare_command, execute_command, verify_command, plan_evidence_command, record_command, *handoff_commands]:
+    for item in [self_check_command, retrieve_command, plan_create_command, plan_verify_command, compare_command, execute_command, verify_command, evidence_report_command, plan_evidence_command, record_command, action_receipts_command, *handoff_commands]:
         if item and item not in commands:
             commands.append(item)
     return {
@@ -16861,9 +16936,13 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
             "handoff_status": handoff.get("status"),
             "commands": len(commands),
             "approval_required": approval_required,
+            "evaluation_status": evaluation_contract.get("status"),
+            "audit_contract": audit_contract.get("operation"),
         },
         "launch_sequence": launch_sequence,
         "agent_plan_draft": launch_sequence[1]["draft"],
+        "evaluation_contract": evaluation_contract,
+        "audit_contract": audit_contract,
         "commands": commands[:24],
         "sources": {
             "intake": intake,

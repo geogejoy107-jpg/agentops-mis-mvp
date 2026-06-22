@@ -162,7 +162,31 @@ def validate_packet(payload: dict, label: str, task_id: str, agent_id: str, fail
     require("agentops agent-plan verify" in joined, f"{label} missing plan verify command: {commands}", failures)
     require("agentops knowledge search" in joined, f"{label} missing knowledge search command: {commands}", failures)
     require("agentops operator loop-self-check" in joined, f"{label} missing loop self-check command: {commands}", failures)
+    require("agentops operator evidence-report" in joined, f"{label} missing evidence report command: {commands}", failures)
+    require("agentops operator action-receipts" in joined, f"{label} missing action receipts command: {commands}", failures)
     require("agentops plan-evidence create" in joined, f"{label} missing plan evidence command: {commands}", failures)
+    evaluation_contract = payload.get("evaluation_contract") or {}
+    require(evaluation_contract.get("operation") == "loop_evaluation_contract", f"{label} evaluation contract missing: {evaluation_contract}", failures)
+    require(evaluation_contract.get("status") in {"ready", "attention", "blocked", "unknown"}, f"{label} evaluation status wrong: {evaluation_contract}", failures)
+    require(evaluation_contract.get("token_omitted") is True, f"{label} evaluation token omission missing: {evaluation_contract}", failures)
+    for ledger in ["agent_plans", "plan_evidence_manifests", "tool_calls", "evaluations", "artifacts", "audit_logs", "operator_action_receipts", "operator_action_evaluations"]:
+        require(ledger in (evaluation_contract.get("required_ledgers") or []), f"{label} evaluation required ledger missing {ledger}: {evaluation_contract}", failures)
+    criteria = "\n".join(evaluation_contract.get("minimum_exit_criteria") or [])
+    require("Agent Plan verifies" in criteria, f"{label} evaluation criteria missing plan verify: {criteria}", failures)
+    require("plan_evidence_manifest" in criteria, f"{label} evaluation criteria missing manifest: {criteria}", failures)
+    audit_contract = payload.get("audit_contract") or {}
+    require(audit_contract.get("operation") == "loop_audit_contract", f"{label} audit contract missing: {audit_contract}", failures)
+    require(audit_contract.get("tamper_chain_required") is True, f"{label} tamper chain requirement missing: {audit_contract}", failures)
+    require(audit_contract.get("record_required") is True, f"{label} record requirement missing: {audit_contract}", failures)
+    require(audit_contract.get("token_omitted") is True, f"{label} audit token omission missing: {audit_contract}", failures)
+    bounded_runner = audit_contract.get("bounded_runner") or {}
+    require(bounded_runner.get("policy_id") == "advance_loop_local_bounded_v1", f"{label} bounded policy missing: {bounded_runner}", failures)
+    require(bounded_runner.get("server_executes_shell") is False, f"{label} server shell boundary missing: {bounded_runner}", failures)
+    require("--confirm-live" in (bounded_runner.get("denied_flags") or []), f"{label} live confirm denied flag missing: {bounded_runner}", failures)
+    verify_phase = next((item for item in payload.get("launch_sequence") or [] if item.get("phase") == "VERIFY"), {})
+    record_phase = next((item for item in payload.get("launch_sequence") or [] if item.get("phase") == "RECORD"), {})
+    require((verify_phase.get("evaluation_contract") or {}).get("operation") == "loop_evaluation_contract", f"{label} verify phase lacks evaluation contract: {verify_phase}", failures)
+    require((record_phase.get("audit_contract") or {}).get("operation") == "loop_audit_contract", f"{label} record phase lacks audit contract: {record_phase}", failures)
     sources = payload.get("sources") or {}
     require((sources.get("intake") or {}).get("operation") == "task_intake_checklist", f"{label} missing intake source: {sources}", failures)
     require((sources.get("knowledge_search") or {}).get("operation") == "knowledge_search", f"{label} missing knowledge source: {sources}", failures)

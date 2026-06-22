@@ -1540,8 +1540,11 @@ and a complete agent-plan draft into one machine-readable
 `READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD` sequence.
 It emits commands for loop self-check, knowledge search, plan creation/verification,
 intake comparison, enforced task pull, loop verification, plan-evidence
-binding, and review queue drain. It does not create plans, run workers, approve
-gates, create memories, or mutate ledgers.
+binding, evidence reporting, Action Queue receipt readback, and review queue
+drain. The payload includes an `evaluation_contract` with minimum exit
+criteria and required ledgers, plus an `audit_contract` with tamper-chain,
+recording, bounded-runner, and raw-content omission requirements. It does not
+create plans, run workers, approve gates, create memories, or mutate ledgers.
 
 ```bash
 agentops operator advance-loop --loop-id loop_123 --limit 10
