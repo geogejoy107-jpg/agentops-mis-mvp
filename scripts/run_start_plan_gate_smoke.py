@@ -186,6 +186,54 @@ def main() -> int:
     require(run_row.get("agent_plan_id") == plan_id, f"run missing agent_plan_id: {started_payload}", failures)
     require(run_row.get("plan_hash") == plan_hash, f"run plan_hash mismatch: {started_payload}", failures)
     require(bound.get("plan_id") == plan_id and bound.get("verification_pass") is True, f"response missing plan binding: {started_payload}", failures)
+
+    second_plan = run([
+        "agent-plan",
+        "create",
+        "--agent-id",
+        agent_id,
+        "--task-id",
+        task_with_plan,
+        "--task-understanding",
+        "A different verified plan must not be allowed to rebind an existing run.",
+        "--referenced-specs",
+        "PROJECT_SPEC.md,AGENT_WORKFLOW.md",
+        "--referenced-memories",
+        "knowledge/shared/common_failures.md",
+        "--referenced-bases",
+        "base_local_tasks",
+        "--proposed-files-to-change",
+        "agentops_mis_cli/agentops.py",
+        "--risk",
+        "low",
+        "--execution-steps",
+        "READ,PLAN,VERIFY,RECORD",
+        "--verification-plan",
+        "Attempted run rebind must be rejected.",
+        "--rollback-plan",
+        "Keep the original run bound to its first plan hash.",
+    ], args.base_url, agent_id)
+    outputs.extend([second_plan.stdout, second_plan.stderr])
+    second_plan_payload = load_json(second_plan)
+    second_plan_row = second_plan_payload.get("agent_plan") or {}
+    second_plan_id = second_plan_row.get("plan_id")
+    require(second_plan.returncode == 0 and bool(second_plan_id), f"second plan create failed: {second_plan.stderr or second_plan.stdout}", failures)
+    second_verify = run(["agent-plan", "verify", "--plan-id", str(second_plan_id)], args.base_url, agent_id)
+    outputs.extend([second_verify.stdout, second_verify.stderr])
+    require(second_verify.returncode == 0, f"second plan verify failed: {second_verify.stderr or second_verify.stdout}", failures)
+    rebind_status, rebind_payload = http_json(args.base_url, "/api/agent-gateway/runs/start", {
+        "workspace_id": "local-demo",
+        "agent_id": agent_id,
+        "task_id": task_with_plan,
+        "run_id": run_row.get("run_id"),
+        "plan_id": second_plan_id,
+        "runtime_type": "mock",
+        "input_summary": "This run_start should not rebind an existing run to another plan.",
+    })
+    outputs.append(json.dumps(rebind_payload, ensure_ascii=False))
+    require(rebind_status == 409, f"run_start rebind should fail: {rebind_status} {rebind_payload}", failures)
+    require(rebind_payload.get("error") == "run_start_rebind_forbidden", f"wrong rebind error: {rebind_payload}", failures)
+    require("agent_plan_id" in (rebind_payload.get("mismatches") or []) or "plan_hash" in (rebind_payload.get("mismatches") or []), f"rebind mismatch should include plan identity: {rebind_payload}", failures)
     require(not leaked("\n".join(outputs)), "run_start plan gate leaked token-like material", failures)
 
     print(json.dumps({
@@ -195,6 +243,7 @@ def main() -> int:
         "plan_id": plan_id,
         "run_id": run_row.get("run_id"),
         "plan_hash": plan_hash,
+        "rebind_rejected": rebind_status == 409,
         "failures": failures,
     }, ensure_ascii=False, indent=2, sort_keys=True))
     return 0 if not failures else 1

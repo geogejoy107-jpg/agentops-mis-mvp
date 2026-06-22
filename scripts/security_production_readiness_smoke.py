@@ -63,7 +63,7 @@ def validate(payload: dict, label: str) -> None:
     require(startup.get("status") in {"ready", "attention", "blocked"}, f"{label} bad startup status: {startup}")
     gates = payload.get("gates") or []
     gate_ids = {gate.get("id") for gate in gates if isinstance(gate, dict)}
-    for gate_id in {"agent_gateway_auth", "admin_key", "scoped_agent_tokens", "local_dev_boundary"}:
+    for gate_id in {"agent_gateway_auth", "admin_key", "local_ui_write_guard", "scoped_agent_tokens", "local_dev_boundary"}:
         require(gate_id in gate_ids, f"{label} missing gate {gate_id}: {payload}")
     require(isinstance(payload.get("next_actions"), list) and payload.get("next_actions"), f"{label} next_actions missing")
     safety = payload.get("safety") or {}

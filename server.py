@@ -3586,6 +3586,18 @@ def security_production_readiness(conn: sqlite3.Connection, headers) -> dict:
             "next_action": "Set AGENTOPS_ADMIN_KEY before shared or hosted deployment.",
         },
         {
+            "id": "local_ui_write_guard",
+            "label": "Local UI/API write guard",
+            "status": "pass" if admin_key_configured else "fail" if production_requested else "warn",
+            "ok": admin_key_configured,
+            "detail": (
+                "Shared/production local POST/PATCH writes require AGENTOPS_ADMIN_KEY."
+                if admin_key_configured
+                else "Local browser writes are local-dev only until AGENTOPS_ADMIN_KEY is configured."
+            ),
+            "next_action": "Set AGENTOPS_ADMIN_KEY and send X-AgentOps-Admin-Key for browser/local writes before shared or hosted deployment.",
+        },
+        {
             "id": "scoped_agent_tokens",
             "label": "Scoped agent token/session model",
             "status": "pass",
@@ -6848,6 +6860,35 @@ def agent_gateway_start_run(conn, body) -> tuple[dict, int]:
     agent = conn.execute("SELECT * FROM agents WHERE agent_id=?", (agent_id,)).fetchone()
     started = now_iso()
     run_id = body.get("run_id") or new_id("run_gw")
+    existing_run = conn.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
+    if existing_run:
+        expected = {
+            "workspace_id": ident["workspace_id"],
+            "task_id": task_id,
+            "agent_id": agent_id,
+            "agent_plan_id": plan_binding["plan_id"],
+            "plan_hash": plan_binding["plan_hash"],
+        }
+        actual = {key: existing_run[key] for key in expected}
+        mismatches = [key for key, value in expected.items() if actual.get(key) != value]
+        if mismatches:
+            audit(conn, "agent", agent_id, "agent_gateway.run_start_rebind_blocked", "runs", run_id, dict(existing_run), dict(existing_run), {
+                "requested_agent_plan_id": plan_binding["plan_id"],
+                "requested_plan_hash": plan_binding["plan_hash"],
+                "mismatches": mismatches,
+                "token_omitted": True,
+            })
+            return {
+                "error": "run_start_rebind_forbidden",
+                "message": "Existing runs cannot be rebound to a different workspace, task, agent, agent_plan_id, or plan_hash.",
+                "run_id": run_id,
+                "existing_agent_plan_id": existing_run["agent_plan_id"],
+                "existing_plan_hash": existing_run["plan_hash"],
+                "requested_agent_plan_id": plan_binding["plan_id"],
+                "requested_plan_hash": plan_binding["plan_hash"],
+                "mismatches": mismatches,
+                "token_omitted": True,
+            }, 409
     row = {
         "run_id": run_id,
         "workspace_id": ident["workspace_id"],
@@ -7252,10 +7293,17 @@ def agent_gateway_resume_prepared_action(conn, action_id: str, body) -> tuple[di
     provider_side_effect_id = redact_text(body.get("provider_side_effect_id") or f"side_effect_{action_id}_{row['action_hash'][:12]}", 180)
     result_summary = redact_text(body.get("result_summary") or f"Prepared action {action_id} resumed exactly once after approval.", 260)
     before = dict(row)
-    conn.execute(
+    cursor = conn.execute(
         """UPDATE prepared_actions SET status='consumed', consumed_at=?, provider_side_effect_id=?, result_summary=? WHERE action_id=? AND consumed_at IS NULL""",
         (now, provider_side_effect_id, result_summary, action_id),
     )
+    if cursor.rowcount != 1:
+        refreshed = conn.execute("SELECT * FROM prepared_actions WHERE action_id=?", (action_id,)).fetchone()
+        return {
+            "error": "prepared_action_already_consumed",
+            "prepared_action": prepared_action_public(refreshed or row),
+            "token_omitted": True,
+        }, 409
     after = conn.execute("SELECT * FROM prepared_actions WHERE action_id=?", (action_id,)).fetchone()
     if row["tool_call_id"]:
         tool_before = conn.execute("SELECT * FROM tool_calls WHERE tool_call_id=?", (row["tool_call_id"],)).fetchone()

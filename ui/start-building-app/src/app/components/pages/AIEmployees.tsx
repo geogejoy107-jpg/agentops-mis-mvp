@@ -279,6 +279,9 @@ export function AIEmployees() {
   const taskIntakeSummary = taskIntakeChecklist?.summary;
   const taskIntakeItems = taskIntakeChecklist?.items || [];
   const securityReadiness = data?.securityReadiness;
+  const securityGates = securityReadiness?.gates || [];
+  const localWriteGuardGate = securityGates.find(gate => gate.id === "local_ui_write_guard");
+  const visibleSecurityGates = securityGates.filter(gate => gate.id !== "local_ui_write_guard").slice(0, 4);
   const integrationInbox = data?.integrationInbox;
   const commanderWorkPackages = data?.commanderWorkPackages;
   const commanderPackageRows = commanderWorkPackages?.work_packages || [];
@@ -587,6 +590,8 @@ export function AIEmployees() {
       productionReady: "Production ready",
       localDevOnly: "Local demo only",
       securityGate: "Security gate",
+      localWriteGuard: "Local write guard",
+      localWriteGuardSummary: "Browser/local POST and PATCH writes must use the admin key before shared deployment.",
       gatewayWorkspace: "Workspace",
       gatewayScopes: "Allowed scopes",
       activeEnrollments: "Active enrollments",
@@ -1008,6 +1013,8 @@ export function AIEmployees() {
       productionReady: "生产就绪",
       localDevOnly: "仅本地演示",
       securityGate: "安全 Gate",
+      localWriteGuard: "本地写保护",
+      localWriteGuardSummary: "共享部署前，浏览器/本地 POST 与 PATCH 写入必须使用 Admin Key。",
       gatewayWorkspace: "工作区",
       gatewayScopes: "权限数量",
       activeEnrollments: "有效接入",
@@ -4797,7 +4804,21 @@ export function AIEmployees() {
             <StatusBadge status={securityReadiness?.safety?.read_only ? "pass" : "fail"} label={securityReadiness?.safety?.read_only ? copy.readOnlyProof : copy.statusAttention} />
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-3">
-            {(securityReadiness?.gates || []).slice(0, 4).map((gate) => (
+            <div className="rounded px-3 py-2 md:col-span-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.localWriteGuard}</div>
+                  <div className="text-[10px] mt-1 line-clamp-2" style={{ color: "var(--mis-muted)" }}>
+                    {localWriteGuardGate?.detail || copy.localWriteGuardSummary}
+                  </div>
+                </div>
+                <StatusBadge status={localWriteGuardGate?.status || "unknown"} />
+              </div>
+              <div className="text-[10px] mt-2 line-clamp-2" style={{ color: "var(--mis-dim)" }}>
+                {copy.nextAction}: {localWriteGuardGate?.next_action || "agentops security production-readiness"}
+              </div>
+            </div>
+            {visibleSecurityGates.map((gate) => (
               <div key={gate.id} className="rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
                 <div className="flex items-center justify-between gap-2">
                   <div className="text-[10px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{gate.label || copy.securityGate}</div>

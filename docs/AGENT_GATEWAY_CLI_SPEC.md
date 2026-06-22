@@ -1237,6 +1237,10 @@ Example:
 The created run stores `agent_plan_id` and `plan_hash`; the response includes
 an `agent_plan.verification_pass` summary so operators can audit the execution
 boundary before later binding a plan-evidence manifest.
+If `run_id` already exists, `runs/start` is idempotent only for the same
+`workspace_id`, `task_id`, `agent_id`, `agent_plan_id`, and `plan_hash`.
+Attempts to rebind an existing run to another Agent Plan or hash fail with
+`409 run_start_rebind_forbidden`.
 
 Writes:
 

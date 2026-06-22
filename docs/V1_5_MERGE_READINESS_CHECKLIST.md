@@ -20,26 +20,26 @@ git diff --check main...codex/agent-gateway-kb-demo
 
 ## 2. Agent Plan integrity
 
-- [ ] Agent-created plans can only be `draft` or `submitted`.
+- [x] Agent-created plans can only be `draft` or `submitted`.
 - [ ] Human/admin/policy identity alone can approve or reject a plan.
 - [ ] High/critical plans create or reference a real approval object.
 - [ ] Plan transitions are append-only and audited.
-- [ ] Plan has an immutable hash/version.
-- [ ] Verification result has a hash and timestamp.
+- [x] Plan has an immutable hash/version.
+- [x] Verification result has a hash and timestamp.
 - [ ] Every referenced spec exists and is readable.
 - [ ] Every referenced base exists.
-- [ ] Every referenced memory exists, is visible and has an allowed review status.
+- [x] Every referenced memory exists, is visible and has an allowed review status.
 - [ ] Proposed files stay inside the allowed workspace/repository.
-- [ ] Real run links an `agent_plan_id`.
-- [ ] Run Agent/task/workspace match the plan.
-- [ ] Superseded or changed plans cannot authorize execution.
+- [x] Real run links an `agent_plan_id`.
+- [x] Run Agent/task/workspace match the plan.
+- [x] Superseded, changed, or alternate plans cannot authorize/rebind execution.
 - [ ] Delivery gate compares execution evidence with the declared plan.
 
 Required checks:
 
 ```bash
-python3 scripts/agent_work_method_block_smoke.py
-python3 scripts/agentops_workflow_run_task_smoke.py
+python3 scripts/agent_plan_integrity_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/run_start_plan_gate_smoke.py --base-url http://127.0.0.1:8787
 ```
 
 Add new negative tests:
@@ -117,6 +117,7 @@ python3 scripts/security_production_readiness_smoke.py
 - [x] Non-loopback binding requires admin authentication.
 - [x] Production/shared mode rejects `local_dev_no_token`.
 - [x] Browser/local write APIs are protected in shared mode.
+- [x] `security production-readiness` exposes `local_ui_write_guard`, and `/workspace/agents` renders it as a visible pre-loop safety gate.
 - [x] `agentops doctor` blocks unsafe shared deployment.
 - [x] README and runbook state the same rule.
 
