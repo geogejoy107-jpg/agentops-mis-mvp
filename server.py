@@ -6236,6 +6236,236 @@ def record_operator_action_receipt(conn: sqlite3.Connection, body: dict, headers
     }, 201
 
 
+def operator_receipt_failure_memory_lane(conn: sqlite3.Connection, workspace_id: str, *, min_failures: int = 2, limit: int = 8) -> dict:
+    min_failures = max(2, min(int(min_failures or 2), 20))
+    limit = max(1, min(int(limit or 8), 25))
+    receipts = operator_action_receipt_rows(conn, workspace_id, 1000)
+    groups: dict[str, dict] = {}
+    for receipt in receipts:
+        evaluation = receipt.get("evaluation") or {}
+        if evaluation.get("pass_fail") != "fail":
+            continue
+        action_hash = str(receipt.get("action_hash") or evaluation.get("action_hash") or "").strip()
+        if not action_hash:
+            continue
+        group = groups.setdefault(action_hash, {
+            "action_hash": action_hash,
+            "workspace_id": workspace_id,
+            "failures": 0,
+            "receipt_ids": [],
+            "evaluation_ids": [],
+            "latest_receipt": receipt,
+            "action_command": receipt.get("action_command"),
+            "verify_command": receipt.get("verify_command"),
+            "sources": set(),
+        })
+        group["failures"] += 1
+        if receipt.get("receipt_id"):
+            group["receipt_ids"].append(receipt.get("receipt_id"))
+        if evaluation.get("evaluation_id"):
+            group["evaluation_ids"].append(evaluation.get("evaluation_id"))
+        if receipt.get("source"):
+            group["sources"].add(str(receipt.get("source")))
+    candidates: list[dict] = []
+    for action_hash, group in groups.items():
+        if int(group["failures"]) < min_failures:
+            continue
+        source_ref = f"operator_action_receipts://{action_hash}"
+        memory_id = stable_id("mem_receipt_failure", workspace_id, action_hash)
+        existing = conn.execute(
+            "SELECT memory_id, review_status, updated_at FROM memories WHERE memory_id=? OR source_ref=? ORDER BY updated_at DESC LIMIT 1",
+            (memory_id, source_ref),
+        ).fetchone()
+        existing_status = existing["review_status"] if existing else None
+        command = (
+            "agentops review queue --limit 20"
+            if existing and existing_status in {"candidate", "stale"}
+            else f"agentops operator propose-receipt-failure-memory --action-hash {action_hash} --min-failures {min_failures} --confirm-create"
+        )
+        candidates.append({
+            "action_hash": action_hash,
+            "action_hash_short": action_hash[:16],
+            "workspace_id": workspace_id,
+            "failures": int(group["failures"]),
+            "receipt_ids": group["receipt_ids"][:10],
+            "evaluation_ids": group["evaluation_ids"][:10],
+            "latest_receipt_id": (group.get("latest_receipt") or {}).get("receipt_id"),
+            "latest_evaluation_id": ((group.get("latest_receipt") or {}).get("evaluation") or {}).get("evaluation_id"),
+            "action_command": redact_text(group.get("action_command"), 500),
+            "verify_command": redact_text(group.get("verify_command"), 500),
+            "sources": sorted(group.get("sources") or []),
+            "memory_id": memory_id,
+            "source_ref": source_ref,
+            "existing_memory_id": existing["memory_id"] if existing else None,
+            "existing_review_status": existing_status,
+            "command": command,
+            "ui_route": "/workspace/agents",
+            "token_omitted": True,
+        })
+    candidates.sort(key=lambda item: (int(item.get("failures") or 0), item.get("action_hash") or ""), reverse=True)
+    returned = candidates[:limit]
+    status = "attention" if returned else "ready"
+    return {
+        "provider": "agentops-operator",
+        "operation": "receipt_failure_memory_lane",
+        "status": status,
+        "workspace_id": workspace_id,
+        "min_failures": min_failures,
+        "summary": {
+            "candidates": len(returned),
+            "total_repeated_failures": len(candidates),
+            "failed_receipts": sum(int(item.get("failures") or 0) for item in candidates),
+            "existing_memory_candidates": len([item for item in candidates if item.get("existing_memory_id")]),
+        },
+        "candidates": returned,
+        "next_actions": [item["command"] for item in returned[:5]] or ["agentops operator action-receipts --limit 20 --plan-limit 20"],
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+
+
+def operator_receipt_failure_memory_candidate(conn: sqlite3.Connection, body: dict, headers=None) -> tuple[dict, int]:
+    headers = headers or {}
+    workspace_id = normalize_workspace_id(body.get("workspace_id") or headers.get("X-AgentOps-Workspace-Id") or "local-demo")
+    action_hash = str(body.get("action_hash") or "").strip()
+    min_failures = max(2, min(int(body.get("min_failures") or 2), 20))
+    confirm_create = bool(body.get("confirm_create"))
+    actor_id = redact_text(body.get("actor_id") or "usr_founder", 120)
+    lane = operator_receipt_failure_memory_lane(conn, workspace_id, min_failures=min_failures, limit=25)
+    candidates = lane.get("candidates") or []
+    candidate = next((item for item in candidates if not action_hash or item.get("action_hash") == action_hash), None)
+    if not candidate:
+        return {
+            "provider": "agentops-operator",
+            "operation": "receipt_failure_memory_candidate",
+            "status": "no_repeated_failure",
+            "created": False,
+            "workspace_id": workspace_id,
+            "action_hash": action_hash or None,
+            "min_failures": min_failures,
+            "lane": lane,
+            "message": "No repeated failed Action Queue receipt evaluation matched the request.",
+            "safety": {
+                "read_only": True,
+                "ledger_mutated": False,
+                "live_execution_performed": False,
+                "raw_prompt_omitted": True,
+                "raw_response_omitted": True,
+                "token_omitted": True,
+            },
+            "token_omitted": True,
+        }, 200
+    memory_id = str(body.get("memory_id") or candidate.get("memory_id"))
+    existing = conn.execute("SELECT * FROM memories WHERE memory_id=? OR source_ref=? ORDER BY updated_at DESC LIMIT 1", (memory_id, candidate.get("source_ref"))).fetchone()
+    canonical_text = redact_text(
+        body.get("canonical_text")
+        or (
+            f"Repeated Action Queue recovery failure for action hash {candidate.get('action_hash_short')}: "
+            f"{candidate.get('failures')} failed receipt evaluation(s). "
+            f"Latest action command: {candidate.get('action_command') or 'omitted'}. "
+            "Before reusing this recovery path, inspect the action, update the runbook or command, and record a verified receipt after validation."
+        ),
+        900,
+    )
+    due = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=30)).isoformat()
+    memory_row = {
+        "memory_id": memory_id,
+        "scope": "project",
+        "memory_type": "failure_case",
+        "canonical_text": canonical_text,
+        "source_type": "run_log",
+        "source_ref": candidate.get("source_ref"),
+        "project_id": "operator_action_queue",
+        "task_id": None,
+        "agent_id": None,
+        "confidence": min(0.92, 0.68 + 0.04 * int(candidate.get("failures") or 0)),
+        "review_status": "candidate",
+        "owner_user_id": actor_id,
+        "ttl_review_due_at": due,
+        "supersedes_memory_id": None,
+        "access_tags": json.dumps(["operator", "action_queue", "receipt_evaluation", "failure_case"], ensure_ascii=False),
+        "created_at": now_iso(),
+        "updated_at": now_iso(),
+    }
+    safety = {
+        "read_only": not confirm_create or bool(existing),
+        "ledger_mutated": False,
+        "live_execution_performed": False,
+        "raw_prompt_omitted": True,
+        "raw_response_omitted": True,
+        "token_omitted": True,
+    }
+    if not confirm_create:
+        return {
+            "provider": "agentops-operator",
+            "operation": "receipt_failure_memory_candidate",
+            "status": "preview",
+            "created": False,
+            "workspace_id": workspace_id,
+            "candidate": candidate,
+            "memory": memory_row,
+            "next_actions": [
+                f"agentops operator propose-receipt-failure-memory --action-hash {candidate.get('action_hash')} --min-failures {min_failures} --confirm-create",
+                "agentops review queue --limit 20",
+            ],
+            "safety": safety,
+            "token_omitted": True,
+        }, 200
+    if existing:
+        return {
+            "provider": "agentops-operator",
+            "operation": "receipt_failure_memory_candidate",
+            "status": "already_exists",
+            "created": False,
+            "workspace_id": workspace_id,
+            "candidate": candidate,
+            "memory": dict(existing),
+            "memory_id": existing["memory_id"],
+            "review_status": existing["review_status"],
+            "next_actions": ["agentops review queue --limit 20"],
+            "safety": safety,
+            "token_omitted": True,
+        }, 200
+    outcome = upsert_memory_candidate(conn, memory_row, "operator-receipt-failure")
+    runtime_event(
+        conn,
+        "rtc_agent_gateway_local",
+        "operator.receipt_failure_memory_candidate",
+        "created",
+        input_summary=f"Repeated failed Action Queue receipt evaluation for action_hash={candidate.get('action_hash_short')}",
+        output_summary=f"Memory candidate {memory_id} proposed for {candidate.get('failures')} failed receipt evaluations.",
+        raw_payload_hash=stable_hash({"candidate": candidate, "memory_id": memory_id}),
+    )
+    safety["read_only"] = False
+    safety["ledger_mutated"] = True
+    return {
+        "provider": "agentops-operator",
+        "operation": "receipt_failure_memory_candidate",
+        "status": "created" if outcome == "created" else "updated",
+        "created": outcome == "created",
+        "workspace_id": workspace_id,
+        "candidate": candidate,
+        "memory": memory_row,
+        "memory_id": memory_id,
+        "review_status": "candidate",
+        "next_actions": [
+            "agentops review queue --limit 20",
+            f"agentops memory approve --memory-id {memory_id}",
+            f"agentops memory reject --memory-id {memory_id}",
+        ],
+        "safety": safety,
+        "token_omitted": True,
+    }, 201
+
+
 def latest_agent_plan_for_run(conn: sqlite3.Connection, run: sqlite3.Row) -> sqlite3.Row | None:
     return conn.execute(
         """SELECT * FROM agent_plans
@@ -14794,6 +15024,8 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
     security_readiness_snapshot = security_production_readiness(conn, headers)
     action_receipts = list_operator_action_receipts(conn, {"limit": [str(max(limit, 8))], "workspace_id": [workspace_id]}, headers)
     action_receipt_summary = action_receipts.get("summary") or {}
+    receipt_failure_memory = operator_receipt_failure_memory_lane(conn, workspace_id, min_failures=2, limit=max(limit, 8))
+    receipt_failure_memory_summary = receipt_failure_memory.get("summary") or {}
     receipt_lookup_limit = min(max(max(limit, 8) * 40, 200), 1000)
     receipt_rows = operator_action_receipt_rows(conn, workspace_id, receipt_lookup_limit)
 
@@ -14832,6 +15064,8 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             return "agentops operator intake-checklist --limit 20"
         if lane == "operator_health":
             return "agentops operator health --limit 20"
+        if lane == "receipt_failure_memory":
+            return "agentops review queue --limit 20"
         if lane in {"execution_evidence", "dispatch_evidence", "remediation_loop", "review"}:
             return "agentops operator action-plan --limit 20"
         return None
@@ -15228,6 +15462,22 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             },
         )
 
+    for item in (receipt_failure_memory.get("candidates") or [])[:limit]:
+        add_action(
+            "receipt_failure_memory",
+            "Promote repeated failed receipt recovery into memory review",
+            item.get("command") or "agentops review queue --limit 20",
+            priority=91,
+            severity="attention",
+            source="receipt_failure_memory",
+            summary=(
+                f"{item.get('failures') or 0} failed receipt evaluation(s) for "
+                f"action_hash={item.get('action_hash_short') or 'unknown'}."
+            ),
+            ui_route=item.get("ui_route") or "/workspace/agents",
+            evidence=item,
+        )
+
     deduped: list[dict] = []
     seen: set[tuple[str, str | None]] = set()
     severity_rank = {"blocked": 3, "attention": 2, "ready": 1, "info": 0}
@@ -15470,6 +15720,9 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             "action_receipts_evaluated": action_receipt_summary.get("evaluated", 0),
             "action_receipts_evaluation_pass": action_receipt_summary.get("evaluation_pass", 0),
             "action_receipts_evaluation_fail": action_receipt_summary.get("evaluation_fail", 0),
+            "receipt_failure_memory_candidates": receipt_failure_memory_summary.get("candidates", 0),
+            "receipt_failure_memory_failed_receipts": receipt_failure_memory_summary.get("failed_receipts", 0),
+            "receipt_failure_memory_existing_candidates": receipt_failure_memory_summary.get("existing_memory_candidates", 0),
             "receipt_required_actions": receipt_required_count,
             "receipt_verified_actions": receipt_verified_count,
             "receipt_missing_actions": receipt_missing_count,
@@ -15500,6 +15753,7 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             "operator_health": operator_health_source.get("status"),
             "action_receipts": action_receipts.get("status"),
             "receipt_evaluation": receipt_evaluation_status,
+            "receipt_failure_memory": receipt_failure_memory.get("status"),
         },
         "remediation_loop": remediation_loop,
         "execution_evidence": evidence_gaps,
@@ -15507,6 +15761,7 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
         "dispatch_evidence": dispatch_evidence,
         "operator_health": operator_health_source,
         "action_receipts": action_receipts,
+        "receipt_failure_memory": receipt_failure_memory,
         "contract": "read-only operator action plan; execution stays in explicit CLI/API commands and live adapters still require confirmation",
         "safety": {
             "read_only": True,
@@ -15536,6 +15791,8 @@ def operator_loop_audit(conn: sqlite3.Connection, headers, qs=None) -> dict:
     dispatch_summary = dispatch_evidence.get("summary") or {}
     action_receipts = action_plan.get("action_receipts") or {}
     action_receipt_summary = action_receipts.get("summary") or {}
+    receipt_failure_memory = action_plan.get("receipt_failure_memory") or {}
+    receipt_failure_memory_summary = receipt_failure_memory.get("summary") or {}
     receipt_coverage = action_plan.get("receipt_coverage") or {}
     source_status = action_plan.get("source_status") or {}
     loop_readback = hermes_openclaw_loop_readback(conn, loop_id=loop_id or None, limit=limit)
@@ -15784,6 +16041,9 @@ def operator_loop_audit(conn: sqlite3.Connection, headers, qs=None) -> dict:
             "receipt_evaluation_missing_actions": summary.get("receipt_evaluation_missing_actions", 0),
             "receipt_evaluation_coverage_percent": summary.get("receipt_evaluation_coverage_percent", 0),
             "receipt_evaluation_status": receipt_coverage.get("evaluation_status"),
+            "receipt_failure_memory_candidates": summary.get("receipt_failure_memory_candidates", 0),
+            "receipt_failure_memory_failed_receipts": summary.get("receipt_failure_memory_failed_receipts", 0),
+            "receipt_failure_memory_existing_candidates": summary.get("receipt_failure_memory_existing_candidates", 0),
             "receipt_coverage_percent": summary.get("receipt_coverage_percent", 0),
             "receipt_coverage_status": receipt_coverage.get("status"),
             "receipt_lookup_window": summary.get("receipt_lookup_window", 0),
@@ -15889,6 +16149,9 @@ def operator_loop_audit(conn: sqlite3.Connection, headers, qs=None) -> dict:
             "action_receipts_verified": action_receipt_summary.get("verified", 0),
             "action_receipts_evaluated": action_receipt_summary.get("evaluated", 0),
             "action_receipts_evaluation_fail": action_receipt_summary.get("evaluation_fail", 0),
+            "receipt_failure_memory_candidates": receipt_failure_memory_summary.get("candidates", 0),
+            "receipt_failure_memory_failed_receipts": receipt_failure_memory_summary.get("failed_receipts", 0),
+            "receipt_failure_memory_existing_candidates": receipt_failure_memory_summary.get("existing_memory_candidates", 0),
             "receipt_verified_actions": summary.get("receipt_verified_actions", 0),
             "receipt_missing_actions": summary.get("receipt_missing_actions", 0),
             "receipt_stale_actions": summary.get("receipt_stale_actions", 0),
@@ -15932,6 +16195,12 @@ def operator_loop_audit(conn: sqlite3.Connection, headers, qs=None) -> dict:
                 "summary": action_receipt_summary,
                 "recent": action_receipts.get("receipts") or [],
                 "coverage": receipt_coverage,
+            },
+            "receipt_failure_memory": {
+                "status": receipt_failure_memory.get("status"),
+                "summary": receipt_failure_memory_summary,
+                "candidates": receipt_failure_memory.get("candidates") or [],
+                "next_actions": receipt_failure_memory.get("next_actions") or [],
             },
             "loop_readback": {
                 "status": loop_readback.get("status"),
@@ -16044,6 +16313,8 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
     receipt_coverage = action_plan.get("receipt_coverage") or {}
     loop_record = loop_audit.get("loop_record") or {}
     action_receipts = action_plan.get("action_receipts") or {}
+    receipt_failure_memory = action_plan.get("receipt_failure_memory") or {}
+    receipt_failure_memory_summary = receipt_failure_memory.get("summary") or {}
     loop_steps = loop_audit.get("steps") or []
     loop_pass = len([step for step in loop_steps if step.get("status") == "pass"])
     loop_blocked = len([step for step in loop_steps if step.get("status") == "blocked"])
@@ -16057,6 +16328,9 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
     receipt_evaluated = int(receipt_coverage.get("evaluated") or 0)
     receipt_evaluation_fail = int(receipt_coverage.get("evaluation_fail") or 0)
     receipt_evaluation_missing = int(receipt_coverage.get("evaluation_missing") or 0)
+    receipt_failure_memory_candidates = int(receipt_failure_memory_summary.get("candidates") or 0)
+    receipt_failure_memory_failed_receipts = int(receipt_failure_memory_summary.get("failed_receipts") or 0)
+    receipt_failure_memory_existing_candidates = int(receipt_failure_memory_summary.get("existing_memory_candidates") or 0)
     loop_record_status = str(loop_record.get("status") or "unknown")
     loop_health_risks: list[dict] = []
     if loop_blocked:
@@ -16071,6 +16345,9 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
         loop_health_risks.append({"id": "receipt_evaluation_failed", "severity": "blocked", "count": receipt_evaluation_fail, "next_action": "agentops operator action-receipts --limit 20 --plan-limit 20"})
     elif receipt_evaluation_missing:
         loop_health_risks.append({"id": "receipt_evaluation_missing", "severity": "attention", "count": receipt_evaluation_missing, "next_action": "agentops operator action-receipts --limit 20 --plan-limit 20"})
+    if receipt_failure_memory_candidates:
+        next_action = (receipt_failure_memory.get("next_actions") or ["agentops operator receipt-failure-memories --min-failures 2 --limit 8"])[0]
+        loop_health_risks.append({"id": "receipt_failure_memory_review", "severity": "attention", "count": receipt_failure_memory_candidates, "next_action": next_action})
     if loop_record_status not in {"ready", "pass", "closed"}:
         loop_health_risks.append({"id": "loop_record_not_closed", "severity": "attention", "count": int(loop_record.get("candidate_count") or 0) + int(loop_record.get("pending_approval_count") or 0), "next_action": loop_record.get("next_action") or "agentops review queue --limit 20"})
     auth_mode = (auth_ctx or {}).get("mode") or "unknown"
@@ -16115,6 +16392,13 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
             "failed": receipt_evaluation_fail,
             "missing": receipt_evaluation_missing,
             "coverage_percent": receipt_coverage.get("evaluation_coverage_percent", 100),
+        },
+        "receipt_failure_memory": {
+            "status": "attention" if receipt_failure_memory_candidates else "pass",
+            "candidates": receipt_failure_memory_candidates,
+            "failed_receipts": receipt_failure_memory_failed_receipts,
+            "existing_candidates": receipt_failure_memory_existing_candidates,
+            "next_action": (receipt_failure_memory.get("next_actions") or ["agentops operator receipt-failure-memories --min-failures 2 --limit 8"])[0],
         },
         "record": {
             "status": loop_record_status,
@@ -16166,6 +16450,9 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
             "receipt_evaluated": receipt_coverage.get("evaluated", 0),
             "receipt_evaluation_fail": receipt_coverage.get("evaluation_fail", 0),
             "receipt_evaluation_missing": receipt_coverage.get("evaluation_missing", 0),
+            "receipt_failure_memory_candidates": receipt_failure_memory_candidates,
+            "receipt_failure_memory_failed_receipts": receipt_failure_memory_failed_receipts,
+            "receipt_failure_memory_existing_candidates": receipt_failure_memory_existing_candidates,
             "loop_record_status": loop_record.get("status"),
             "loop_record_candidates": loop_record.get("candidate_count", 0),
             "loop_record_approved": loop_record.get("approved_count", 0),
@@ -16183,6 +16470,13 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
             "coverage": receipt_coverage,
             "recent": (action_receipts.get("receipts") or [])[: min(limit, 8)],
             "summary": action_receipts.get("summary") or {},
+            "failure_memory": {
+                "status": receipt_failure_memory.get("status"),
+                "summary": receipt_failure_memory_summary,
+                "candidates": receipt_failure_memory.get("candidates") or [],
+                "next_actions": receipt_failure_memory.get("next_actions") or [],
+                "token_omitted": True,
+            },
             "token_omitted": True,
         },
         "review_state": {
@@ -16285,9 +16579,13 @@ def operator_health(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) -
     action_plan_status = component_status(action_plan_source.get("status") or handoff.get("summary", {}).get("action_plan_status"))
     if int(action_plan_summary.get("receipt_evaluation_fail_actions") or 0) > 0:
         action_plan_status = "blocked"
+    elif int(action_plan_summary.get("receipt_failure_memory_candidates") or 0) > 0:
+        action_plan_status = "attention"
     action_plan_next_action = (
         "agentops operator action-receipts --limit 20 --plan-limit 20"
         if int(action_plan_summary.get("receipt_evaluation_fail_actions") or 0) > 0
+        else "agentops operator receipt-failure-memories --min-failures 2 --limit 8"
+        if int(action_plan_summary.get("receipt_failure_memory_candidates") or 0) > 0
         else "agentops operator action-plan --limit 20"
     )
     components = [
@@ -16344,7 +16642,8 @@ def operator_health(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) -
             "weight": 10,
             "summary": (
                 f"actions={action_plan_summary.get('actions', 0)} blocked={action_plan_summary.get('blocked', 0)} "
-                f"attention={action_plan_summary.get('attention', 0)} receipt_eval_fail={action_plan_summary.get('receipt_evaluation_fail_actions', 0)}"
+                f"attention={action_plan_summary.get('attention', 0)} receipt_eval_fail={action_plan_summary.get('receipt_evaluation_fail_actions', 0)} "
+                f"receipt_failure_memory={action_plan_summary.get('receipt_failure_memory_candidates', 0)}"
             ),
             "next_action": action_plan_next_action,
         },
@@ -17516,6 +17815,20 @@ class Handler(BaseHTTPRequestHandler):
                 payload = list_operator_action_receipts(conn, qs, self.headers)
                 conn.rollback()
                 return self.send_json(payload)
+            if path == "/api/operator/receipt-failure-memories":
+                workspace_id = normalize_workspace_id(self.headers.get("X-AgentOps-Workspace-Id") or (qs.get("workspace_id") or ["local-demo"])[0])
+                min_failures = int((qs.get("min_failures") or ["2"])[0])
+                limit = int((qs.get("limit") or ["8"])[0])
+                payload = operator_receipt_failure_memory_lane(conn, workspace_id, min_failures=min_failures, limit=limit)
+                conn.rollback()
+                return self.send_json(payload)
+            if path == "/api/operator/action-receipts/failure-memory":
+                workspace_id = normalize_workspace_id(self.headers.get("X-AgentOps-Workspace-Id") or "local-demo")
+                min_failures = min(max(int((qs.get("min_failures") or ["2"])[0]), 2), 20)
+                limit = min(max(int((qs.get("limit") or ["8"])[0]), 1), 25)
+                payload = operator_receipt_failure_memory_lane(conn, workspace_id, min_failures=min_failures, limit=limit)
+                conn.rollback()
+                return self.send_json(payload)
             if path == "/api/operator/intake-checklist":
                 workspace_id = normalize_workspace_id(self.headers.get("X-AgentOps-Workspace-Id") or "local-demo")
                 limit = min(max(int((qs.get("limit") or ["12"])[0]), 1), 30)
@@ -18164,6 +18477,14 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(payload, status)
             if path == "/api/operator/action-receipts":
                 payload, status = record_operator_action_receipt(conn, body, self.headers)
+                conn.commit()
+                return self.send_json(payload, status)
+            if path == "/api/operator/receipt-failure-memories/propose":
+                payload, status = operator_receipt_failure_memory_candidate(conn, body, self.headers)
+                conn.commit()
+                return self.send_json(payload, status)
+            if path == "/api/operator/action-receipts/failure-memory":
+                payload, status = operator_receipt_failure_memory_candidate(conn, body, self.headers)
                 conn.commit()
                 return self.send_json(payload, status)
             if path == "/api/agents":

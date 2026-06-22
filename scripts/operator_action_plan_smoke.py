@@ -163,6 +163,9 @@ def validate_plan(payload: dict, label: str, failures: list[str], limit: int) ->
         "action_receipts_evaluated",
         "action_receipts_evaluation_pass",
         "action_receipts_evaluation_fail",
+        "receipt_failure_memory_candidates",
+        "receipt_failure_memory_failed_receipts",
+        "receipt_failure_memory_existing_candidates",
         "receipt_required_actions",
         "receipt_verified_actions",
         "receipt_missing_actions",
@@ -202,6 +205,7 @@ def validate_plan(payload: dict, label: str, failures: list[str], limit: int) ->
     require("dispatch_evidence" in (payload.get("source_status") or {}), f"{label} dispatch evidence source status missing: {payload.get('source_status')}", failures)
     require("operator_health" in (payload.get("source_status") or {}), f"{label} operator health source status missing: {payload.get('source_status')}", failures)
     require("action_receipts" in (payload.get("source_status") or {}), f"{label} action receipts source status missing: {payload.get('source_status')}", failures)
+    require("receipt_failure_memory" in (payload.get("source_status") or {}), f"{label} receipt failure memory source status missing: {payload.get('source_status')}", failures)
     evidence_source = payload.get("execution_evidence") or {}
     require(evidence_source.get("operation") == "execution_evidence_gaps", f"{label} execution evidence payload missing: {evidence_source}", failures)
     evidence_summary = evidence_source.get("summary") or {}
@@ -209,6 +213,8 @@ def validate_plan(payload: dict, label: str, failures: list[str], limit: int) ->
     require(dispatch_source.get("operation") == "dispatch_evidence_lane", f"{label} dispatch evidence payload missing: {dispatch_source}", failures)
     receipt_source = payload.get("action_receipts") or {}
     require(receipt_source.get("operation") == "operator_action_receipts", f"{label} action receipts payload missing: {receipt_source}", failures)
+    receipt_failure_memory = payload.get("receipt_failure_memory") or {}
+    require(receipt_failure_memory.get("operation") == "receipt_failure_memory_lane", f"{label} receipt failure memory payload missing: {receipt_failure_memory}", failures)
     operator_health_source = payload.get("operator_health") or {}
     require(operator_health_source.get("status") in {"blocked", "attention", "ready"}, f"{label} operator health source missing: {operator_health_source}", failures)
     operator_health_summary = operator_health_source.get("summary") or {}

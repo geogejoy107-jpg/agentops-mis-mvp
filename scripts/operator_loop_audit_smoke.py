@@ -141,6 +141,9 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
         "action_receipts_verified",
         "action_receipts_evaluated",
         "action_receipts_evaluation_fail",
+        "receipt_failure_memory_candidates",
+        "receipt_failure_memory_failed_receipts",
+        "receipt_failure_memory_existing_candidates",
         "audit_logs",
     ]:
         require(isinstance(summary.get(key), int), f"{label} summary.{key} missing: {summary}", failures)
@@ -177,7 +180,7 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
         require("--confirm-record" in str(receipt_verify), f"{label} action_package verify receipt command should confirm: {item}", failures)
         require(item.get("token_omitted") is True, f"{label} action_package item token omission missing: {item}", failures)
     sources = payload.get("sources") or {}
-    for key in ["action_plan", "task_intake", "execution_evidence", "dispatch_evidence", "action_receipts", "loop_readback"]:
+    for key in ["action_plan", "task_intake", "execution_evidence", "dispatch_evidence", "action_receipts", "receipt_failure_memory", "loop_readback"]:
         require(key in sources, f"{label} sources.{key} missing: {sources}", failures)
     receipt_source = sources.get("action_receipts") or {}
     receipt_summary = receipt_source.get("summary") or {}
@@ -198,8 +201,15 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
         "receipt_evaluation_fail_actions",
         "receipt_evaluation_missing_actions",
         "receipt_evaluation_coverage_percent",
+        "receipt_failure_memory_candidates",
+        "receipt_failure_memory_failed_receipts",
+        "receipt_failure_memory_existing_candidates",
     ]:
         require(isinstance(record_evidence.get(key), int), f"{label} RECORD evidence {key} missing: {record_evidence}", failures)
+    receipt_failure_memory = sources.get("receipt_failure_memory") or {}
+    receipt_failure_summary = receipt_failure_memory.get("summary") or {}
+    for key in ["candidates", "failed_receipts", "existing_memory_candidates"]:
+        require(isinstance(receipt_failure_summary.get(key), int), f"{label} receipt failure memory summary.{key} missing: {receipt_failure_summary}", failures)
     loop_readback = payload.get("loop_readback") or {}
     require(loop_readback.get("operation") == "hermes_openclaw_loop_readback", f"{label} loop readback missing: {loop_readback}", failures)
     require(loop_readback.get("token_omitted") is True, f"{label} loop readback token omission missing", failures)

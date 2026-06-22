@@ -55,6 +55,23 @@ def http_json(base_url: str, path: str, method: str = "GET", body: dict | None =
             return exc.code, {"raw": raw}
 
 
+def cli_json(base_url: str, *args: str) -> tuple[int, dict, str]:
+    proc = subprocess.run(
+        [str(ROOT / "scripts" / "agentops"), "--base-url", base_url, *args],
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=30,
+        check=False,
+    )
+    try:
+        payload = json.loads(proc.stdout or "{}")
+    except Exception:
+        payload = {"raw": proc.stdout}
+    return proc.returncode, payload, proc.stderr
+
+
 def leaked_secret(text: str) -> bool:
     return any(pattern.search(text) for pattern in SECRET_PATTERNS)
 
@@ -80,11 +97,15 @@ def db_counts(db_path: Path) -> dict:
         evaluation_audit_row = conn.execute(
             "SELECT COUNT(*) AS c FROM audit_logs WHERE action='operator.action_queue_evaluation'"
         ).fetchone()
+        receipt_failure_memory_row = conn.execute(
+            "SELECT COUNT(*) AS c FROM memories WHERE source_ref LIKE 'operator_action_receipts://%'"
+        ).fetchone()
         return {
             "audit_logs": int(audit_row["c"] or 0),
             "runtime_events": int(runtime_row["c"] or 0),
             "operator_action_evaluations": int(evaluation_row["c"] or 0),
             "evaluation_audit_logs": int(evaluation_audit_row["c"] or 0),
+            "receipt_failure_memories": int(receipt_failure_memory_row["c"] or 0),
         }
     finally:
         conn.close()
@@ -270,6 +291,7 @@ def main() -> int:
 
             failed_payload = None
             failed_item = None
+            repeated_failure_memory_id = None
             if failed_seed_action:
                 failed_payload = {
                     "action_command": str(failed_seed_action.get("command") or "agentops worker status"),
@@ -288,13 +310,35 @@ def main() -> int:
                 require(failed_evaluation.get("pass_fail") == "fail", f"failed receipt evaluation should fail: {failed_evaluation}", failures)
                 require(float(failed_evaluation.get("score") if failed_evaluation.get("score") is not None else 1) == 0.0, f"failed receipt evaluation score wrong: {failed_evaluation}", failures)
 
+                repeated_failed_payload = {
+                    **failed_payload,
+                    "source": "smoke.operator_action_queue.failed.repeat",
+                    "result_summary": "Smoke repeated failed receipt should propose a memory candidate.",
+                }
+                status, repeated_failed_receipt = http_json(base_url, "/api/operator/action-receipts", "POST", repeated_failed_payload)
+                outputs.append(json.dumps(repeated_failed_receipt, ensure_ascii=False))
+                require(status == 201, f"repeated failed POST status mismatch: {status} {repeated_failed_receipt}", failures)
+                repeated_failed_item = repeated_failed_receipt.get("receipt") or {}
+                repeated_failed_evaluation = repeated_failed_receipt.get("evaluation") or {}
+                require(repeated_failed_item.get("action_hash") == failed_item.get("action_hash"), f"repeated failed action hash mismatch: {repeated_failed_item} {failed_item}", failures)
+                require(repeated_failed_evaluation.get("pass_fail") == "fail", f"repeated failed receipt evaluation should fail: {repeated_failed_evaluation}", failures)
+
                 status, failed_plan = http_json(base_url, "/api/operator/action-plan?limit=30")
                 outputs.append(json.dumps(failed_plan, ensure_ascii=False))
                 require(status == 200, f"failed action-plan status mismatch: {status} {failed_plan}", failures)
                 failed_plan_summary = failed_plan.get("summary") or {}
                 failed_coverage = failed_plan.get("receipt_coverage") or {}
                 require(int(failed_plan_summary.get("receipt_evaluation_fail_actions") or 0) >= 1, f"failed receipt evaluation not counted: {failed_plan_summary}", failures)
+                require(int(failed_plan_summary.get("receipt_failure_memory_candidates") or 0) >= 1, f"receipt failure memory candidate not counted: {failed_plan_summary}", failures)
                 require(failed_coverage.get("evaluation_status") == "blocked", f"failed receipt evaluation should block coverage: {failed_coverage}", failures)
+                failure_memory_source = failed_plan.get("receipt_failure_memory") or {}
+                require(failure_memory_source.get("operation") == "receipt_failure_memory_lane", f"receipt failure memory source missing: {failure_memory_source}", failures)
+                failure_memory_candidate = next((row for row in failure_memory_source.get("candidates") or [] if row.get("action_hash") == failed_item.get("action_hash")), {})
+                require(bool(failure_memory_candidate), f"receipt failure memory candidate missing for failed action: {failure_memory_source}", failures)
+                require(int(failure_memory_candidate.get("failures") or 0) >= 2, f"receipt failure memory failure count wrong: {failure_memory_candidate}", failures)
+                memory_action = next((row for row in failed_plan.get("actions") or [] if row.get("source") == "receipt_failure_memory"), {})
+                require(bool(memory_action), f"receipt failure memory action missing: {failed_plan.get('actions')}", failures)
+                require("propose-receipt-failure-memory" in str(memory_action.get("command") or ""), f"receipt failure memory command wrong: {memory_action}", failures)
                 recovery_action = next((row for row in failed_plan.get("actions") or [] if row.get("source") == "receipt_evaluation"), {})
                 require(bool(recovery_action), f"failed receipt recovery action missing: {failed_plan.get('actions')}", failures)
                 require(recovery_action.get("severity") == "blocked", f"failed receipt recovery action should be blocked: {recovery_action}", failures)
@@ -302,6 +346,65 @@ def main() -> int:
                 require(failed_matched_action.get("receipt_status") == "failed", f"failed action receipt status missing: {failed_matched_action}", failures)
                 failed_matched_eval = failed_matched_action.get("receipt_evaluation") or (failed_matched_action.get("receipt_state") or {}).get("evaluation") or {}
                 require(failed_matched_eval.get("pass_fail") == "fail", f"failed action receipt evaluation missing: {failed_matched_action}", failures)
+
+                cli_code, cli_lane, cli_stderr = cli_json(base_url, "operator", "receipt-failure-memories", "--min-failures", "2", "--limit", "5")
+                outputs.append(json.dumps(cli_lane, ensure_ascii=False) + cli_stderr)
+                require(cli_code == 0, f"receipt failure memory CLI lane failed: {cli_code} {cli_lane} {cli_stderr}", failures)
+                require(cli_lane.get("operation") == "receipt_failure_memory_lane", f"receipt failure memory CLI lane operation wrong: {cli_lane}", failures)
+                cli_candidate = next((row for row in cli_lane.get("candidates") or [] if row.get("action_hash") == failed_item.get("action_hash")), {})
+                require(int(cli_candidate.get("failures") or 0) >= 2, f"receipt failure memory CLI candidate missing: {cli_lane}", failures)
+
+                cli_code, cli_preview, cli_stderr = cli_json(
+                    base_url,
+                    "operator",
+                    "propose-receipt-failure-memory",
+                    "--action-hash",
+                    str(failed_item.get("action_hash") or ""),
+                    "--min-failures",
+                    "2",
+                )
+                outputs.append(json.dumps(cli_preview, ensure_ascii=False) + cli_stderr)
+                require(cli_code == 0, f"receipt failure memory CLI preview failed: {cli_code} {cli_preview} {cli_stderr}", failures)
+                require(cli_preview.get("status") == "preview", f"receipt failure memory CLI preview wrong: {cli_preview}", failures)
+                require(cli_preview.get("confirm_create") is False, f"receipt failure memory CLI preview should not confirm: {cli_preview}", failures)
+                require((cli_preview.get("safety") or {}).get("ledger_mutated") is False, f"receipt failure memory CLI preview mutated ledger: {cli_preview}", failures)
+
+                status, failure_memory_preview = http_json(
+                    base_url,
+                    "/api/operator/receipt-failure-memories/propose",
+                    "POST",
+                    {"action_hash": failed_item.get("action_hash"), "min_failures": 2},
+                )
+                outputs.append(json.dumps(failure_memory_preview, ensure_ascii=False))
+                require(status == 200, f"receipt failure memory preview status mismatch: {status} {failure_memory_preview}", failures)
+                require(failure_memory_preview.get("status") == "preview", f"receipt failure memory preview wrong: {failure_memory_preview}", failures)
+                preview_safety = failure_memory_preview.get("safety") or {}
+                require(preview_safety.get("read_only") is True, f"receipt failure memory preview should be read-only: {preview_safety}", failures)
+                require(preview_safety.get("ledger_mutated") is False, f"receipt failure memory preview mutated ledger: {preview_safety}", failures)
+                preview_memory = failure_memory_preview.get("memory") or {}
+                require(preview_memory.get("review_status") == "candidate", f"receipt failure memory preview status missing: {preview_memory}", failures)
+
+                status, failure_memory_created = http_json(
+                    base_url,
+                    "/api/operator/receipt-failure-memories/propose",
+                    "POST",
+                    {"action_hash": failed_item.get("action_hash"), "min_failures": 2, "confirm_create": True},
+                )
+                outputs.append(json.dumps(failure_memory_created, ensure_ascii=False))
+                require(status in {200, 201}, f"receipt failure memory create status mismatch: {status} {failure_memory_created}", failures)
+                require(failure_memory_created.get("status") in {"created", "updated"}, f"receipt failure memory create wrong: {failure_memory_created}", failures)
+                create_safety = failure_memory_created.get("safety") or {}
+                require(create_safety.get("ledger_mutated") is True, f"receipt failure memory create should mutate ledger: {create_safety}", failures)
+                repeated_failure_memory_id = failure_memory_created.get("memory_id")
+                require(bool(repeated_failure_memory_id), f"receipt failure memory id missing: {failure_memory_created}", failures)
+                require(failure_memory_created.get("review_status") == "candidate", f"receipt failure memory review status wrong: {failure_memory_created}", failures)
+
+                status, review_queue = http_json(base_url, "/api/review/queue?limit=20")
+                outputs.append(json.dumps(review_queue, ensure_ascii=False))
+                require(status == 200, f"review queue status mismatch: {status} {review_queue}", failures)
+                review_item = next((row for row in review_queue.get("review_items") or [] if row.get("item_id") == repeated_failure_memory_id), {})
+                require(review_item.get("item_type") == "memory_candidate", f"receipt failure memory not visible in review queue: {review_queue}", failures)
+                require(review_item.get("kind") == "failure_case", f"receipt failure memory kind wrong: {review_item}", failures)
 
             status, loop_audit = http_json(base_url, "/api/operator/loop-audit?limit=30")
             outputs.append(json.dumps(loop_audit, ensure_ascii=False))
@@ -321,12 +424,14 @@ def main() -> int:
                 require(int(record_evidence.get("receipt_evaluation_fail_actions") or 0) >= 1, f"RECORD evidence lacks failed receipt evaluation: {record_evidence}", failures)
 
             after = db_counts(db_path)
-            expected_writes = 1 + (1 if stale_payload else 0) + unrelated_writes + (1 if failed_payload else 0)
+            expected_writes = 1 + (1 if stale_payload else 0) + unrelated_writes + (2 if failed_payload else 0)
             require(after["audit_logs"] == before["audit_logs"] + expected_writes, f"audit count did not increase by {expected_writes}: {before} -> {after}", failures)
-            expected_evaluations = 1 + (1 if stale_payload else 0) + (1 if failed_payload else 0)
+            expected_evaluations = 1 + (1 if stale_payload else 0) + (2 if failed_payload else 0)
             require(after["operator_action_evaluations"] == before["operator_action_evaluations"] + expected_evaluations, f"operator action evaluation count wrong: {before} -> {after}", failures)
             require(after["evaluation_audit_logs"] == before["evaluation_audit_logs"] + expected_evaluations, f"operator action evaluation audit count wrong: {before} -> {after}", failures)
             require(after["runtime_events"] == before["runtime_events"] + expected_writes, f"runtime count did not increase by {expected_writes}: {before} -> {after}", failures)
+            if repeated_failure_memory_id:
+                require(after["receipt_failure_memories"] == before["receipt_failure_memories"] + 1, f"receipt failure memory count wrong: {before} -> {after}", failures)
             require(not leaked_secret("\n".join(outputs)), "receipt output leaked token-like material", failures)
         finally:
             proc.terminate()

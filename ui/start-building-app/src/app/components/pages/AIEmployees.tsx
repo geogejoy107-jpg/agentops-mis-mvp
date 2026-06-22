@@ -43,6 +43,7 @@ import {
   planCommanderWorkPackages,
   promoteCommanderSynthesis,
   previewAgentGatewayEnrollmentPolicy,
+  proposeReceiptFailureMemory,
   recordOperatorActionReceipt,
   releaseWorkerTask,
   restartLocalWorkerDaemon,
@@ -188,6 +189,8 @@ export function AIEmployees() {
   const [actionQueueOrder, setActionQueueOrder] = useState<string[]>([]);
   const [draggedActionId, setDraggedActionId] = useState<string | null>(null);
   const [receiptAction, setReceiptAction] = useState<string | null>(null);
+  const [receiptFailureMemoryAction, setReceiptFailureMemoryAction] = useState<string | null>(null);
+  const [receiptFailureMemoryResult, setReceiptFailureMemoryResult] = useState<string | null>(null);
   const [customerTaskForm, setCustomerTaskForm] = useState<{
     adapter: (typeof WORKER_ADAPTERS)[number];
     title: string;
@@ -405,6 +408,16 @@ export function AIEmployees() {
       recordActionReceipt: "Record",
       recordVerifyReceipt: "Verify receipt",
       receiptEvaluation: "Receipt eval",
+      receiptFailureMemoryTitle: "Receipt failure memory",
+      receiptFailureMemorySummary: "Repeated failed receipt evaluations become reviewable failure-case memory candidates before the same recovery path is reused.",
+      failureCandidates: "Failure candidates",
+      failedReceipts: "Failed receipts",
+      existingCandidates: "Existing candidates",
+      proposeFailureMemory: "Propose failure memory",
+      previewFailureMemory: "Preview memory",
+      createFailureMemory: "Create candidate",
+      memoryCandidateResult: "Memory candidate",
+      createFailureMemoryConfirm: "Create a reviewable failure-case memory candidate from repeated failed receipt evaluations?",
       copyReceiptCommand: "Copy receipt CLI",
       copyVerifyReceiptCommand: "Copy verify CLI",
       copyActionCommand: "Copy action",
@@ -803,6 +816,16 @@ export function AIEmployees() {
       recordActionReceipt: "记账",
       recordVerifyReceipt: "验收记账",
       receiptEvaluation: "收据评估",
+      receiptFailureMemoryTitle: "失败收据记忆",
+      receiptFailureMemorySummary: "重复失败的收据评估会先进入可评审 failure-case 记忆候选，再决定是否复用同一恢复路径。",
+      failureCandidates: "失败候选",
+      failedReceipts: "失败收据",
+      existingCandidates: "已有候选",
+      proposeFailureMemory: "提出失败记忆",
+      previewFailureMemory: "预览记忆",
+      createFailureMemory: "创建候选",
+      memoryCandidateResult: "记忆候选",
+      createFailureMemoryConfirm: "确认根据重复失败的收据评估创建可评审 failure-case 记忆候选？",
       copyReceiptCommand: "复制记账 CLI",
       copyVerifyReceiptCommand: "复制验收 CLI",
       copyActionCommand: "复制动作",
@@ -1223,6 +1246,27 @@ export function AIEmployees() {
     safety: operatorHandoff.safety,
     token_omitted: operatorHandoff.token_omitted,
   }, null, 2) : "";
+  const receiptFailureMemoryRaw = (
+    operatorHandoff?.receipt_state.failure_memory ||
+    operatorActionPlan?.receipt_failure_memory ||
+    {}
+  ) as Record<string, unknown>;
+  const receiptFailureMemorySummary = (
+    typeof receiptFailureMemoryRaw.summary === "object" && receiptFailureMemoryRaw.summary !== null
+      ? receiptFailureMemoryRaw.summary
+      : {}
+  ) as Record<string, unknown>;
+  const receiptFailureMemoryCandidates = Array.isArray(receiptFailureMemoryRaw.candidates)
+    ? receiptFailureMemoryRaw.candidates as Record<string, unknown>[]
+    : [];
+  const receiptFailureMemoryNextActions = Array.isArray(receiptFailureMemoryRaw.next_actions)
+    ? receiptFailureMemoryRaw.next_actions.map(String).filter(Boolean)
+    : [];
+  const receiptFailureMemoryCandidateCount = Number(receiptFailureMemorySummary.candidates ?? operatorPlanSummary?.receipt_failure_memory_candidates ?? operatorHandoffSummary?.receipt_failure_memory_candidates ?? 0) || 0;
+  const receiptFailureMemoryFailedReceipts = Number(receiptFailureMemorySummary.failed_receipts ?? operatorPlanSummary?.receipt_failure_memory_failed_receipts ?? operatorHandoffSummary?.receipt_failure_memory_failed_receipts ?? 0) || 0;
+  const receiptFailureMemoryExistingCandidates = Number(receiptFailureMemorySummary.existing_memory_candidates ?? operatorPlanSummary?.receipt_failure_memory_existing_candidates ?? operatorHandoffSummary?.receipt_failure_memory_existing_candidates ?? 0) || 0;
+  const receiptFailureMemoryPrimaryHash = String(receiptFailureMemoryCandidates[0]?.action_hash || "");
+  const receiptFailureMemoryNextAction = receiptFailureMemoryNextActions[0] || "agentops operator receipt-failure-memories --min-failures 2 --limit 8";
   const loopAuditNextAction = operatorLoopAudit?.next_actions?.[0] || "agentops operator loop-audit --limit 20";
   const firstLoopIssueStep = loopAuditSteps.find((step) => step.status !== "pass");
   const actionReceiptRows = operatorActionReceipts?.receipts || operatorActionPlan?.action_receipts?.receipts || [];
@@ -1242,11 +1286,12 @@ export function AIEmployees() {
     candidate.receiptRequired === false ? true :
     typeof candidate.receiptVerified === "boolean" ? candidate.receiptVerified : latestReceiptForAction(candidate.action, candidate.actionSignature)?.status === "verified"
   );
-  const actionQueueCandidateScore = (candidate: { id: string; action: string; actionSignature?: string | null; receiptRequired?: boolean; receiptVerified?: boolean; isReceiptCoverageRecovery?: boolean; isReceiptEvaluationRecovery?: boolean; isOperatorHealthRisk?: boolean }) => (
+  const actionQueueCandidateScore = (candidate: { id: string; action: string; actionSignature?: string | null; receiptRequired?: boolean; receiptVerified?: boolean; isReceiptCoverageRecovery?: boolean; isReceiptEvaluationRecovery?: boolean; isReceiptFailureMemoryRecovery?: boolean; isOperatorHealthRisk?: boolean }) => (
     isCloseEvidenceGapCommand(candidate.action) ? 120 :
     candidate.isOperatorHealthRisk ? 118 :
     candidate.isReceiptEvaluationRecovery ? 116 :
     candidate.isReceiptCoverageRecovery ? 115 :
+    candidate.isReceiptFailureMemoryRecovery ? 114 :
     candidate.id.startsWith("loop-first-issue:") ? 110 :
     !candidateReceiptVerified(candidate) ? 80 :
     0
@@ -1278,6 +1323,7 @@ export function AIEmployees() {
       receiptVerifyRecordCommand: item.receipt_verify_record_command,
       isReceiptCoverageRecovery: item.source === "receipt_coverage",
       isReceiptEvaluationRecovery: item.source === "receipt_evaluation",
+      isReceiptFailureMemoryRecovery: item.source === "receipt_failure_memory",
       isOperatorHealthRisk: item.lane === "operator_health" || item.source.startsWith("operator_health:"),
     })),
     ...recommendedActions.map((action, index) => ({
@@ -1938,6 +1984,30 @@ export function AIEmployees() {
       setReviewResult(err instanceof Error ? err.message : String(err));
     } finally {
       setReviewAction(null);
+    }
+  };
+
+  const handleReceiptFailureMemory = async (confirmCreate: boolean) => {
+    if (confirmCreate && !window.confirm(copy.createFailureMemoryConfirm)) return;
+    const actionKey = confirmCreate ? "receipt-failure-memory-create" : "receipt-failure-memory-preview";
+    setReceiptFailureMemoryAction(actionKey);
+    setReceiptFailureMemoryResult(null);
+    try {
+      const result = await proposeReceiptFailureMemory({
+        action_hash: receiptFailureMemoryPrimaryHash || undefined,
+        min_failures: 2,
+        confirm_create: confirmCreate,
+      });
+      const status = String(result.status || "unknown");
+      const memoryId = String(result.memory_id || ((result.memory as Record<string, unknown> | undefined)?.memory_id) || "");
+      setReceiptFailureMemoryResult(`${copy.memoryCandidateResult}: ${status}${memoryId ? ` · ${memoryId}` : ""}`);
+      if (confirmCreate) {
+        await refresh();
+      }
+    } catch (err) {
+      setReceiptFailureMemoryResult(err instanceof Error ? err.message : String(err));
+    } finally {
+      setReceiptFailureMemoryAction(null);
     }
   };
 
@@ -3111,7 +3181,7 @@ export function AIEmployees() {
                   </div>
                 ))}
               </div>
-              <div className="grid grid-cols-1 xl:grid-cols-3 gap-2 mt-2">
+              <div className="grid grid-cols-1 xl:grid-cols-4 gap-2 mt-2">
                 <div className="rounded px-2 py-1.5" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
                   <div className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.loopHealth}</div>
                   <div className="text-[9px] mt-1" style={{ color: "var(--mis-muted)" }}>
@@ -3129,6 +3199,27 @@ export function AIEmployees() {
                   <div className="text-[9px] mt-0.5" style={{ color: "var(--mis-dim)" }}>
                     {copy.actionReceipts}: {operatorHandoff.receipt_state.summary.receipts ?? operatorHandoff.receipt_state.recent.length}/{operatorHandoff.receipt_state.summary.verified ?? 0}
                   </div>
+                </div>
+                <div className="rounded px-2 py-1.5" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-[10px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{copy.receiptFailureMemoryTitle}</div>
+                    <StatusBadge status={receiptFailureMemoryCandidateCount > 0 ? "attention" : "pass"} />
+                  </div>
+                  <div className="text-[9px] mt-1" style={{ color: "var(--mis-muted)" }}>
+                    {copy.failureCandidates}: {receiptFailureMemoryCandidateCount} · {copy.failedReceipts}: {receiptFailureMemoryFailedReceipts}
+                  </div>
+                  <div className="text-[9px] mt-0.5" style={{ color: "var(--mis-dim)" }}>
+                    {copy.existingCandidates}: {receiptFailureMemoryExistingCandidates} · {receiptFailureMemoryCandidates[0]?.action_hash_short ? String(receiptFailureMemoryCandidates[0].action_hash_short) : "—"}
+                  </div>
+                  <button
+                    onClick={() => void copyIntakeCommand(receiptFailureMemoryNextAction)}
+                    className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded mt-1 max-w-full"
+                    style={{ color: "var(--mis-cyan)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}
+                    title={receiptFailureMemoryNextAction}
+                  >
+                    <Copy size={9} />
+                    <span className="truncate max-w-[190px]">{copiedIntakeCommand === receiptFailureMemoryNextAction ? copy.copiedCommand : copy.proposeFailureMemory}</span>
+                  </button>
                 </div>
                 <div className="rounded px-2 py-1.5" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
                   <div className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.reviewQueueTitle}</div>
@@ -3404,6 +3495,7 @@ export function AIEmployees() {
                 {operatorPlanSummary && ` · intake ${operatorPlanSummary.task_intake_ready}/${operatorPlanSummary.task_intake_blocked}/${operatorPlanSummary.task_intake_attention}`}
                 {operatorReceiptCoverage && ` · receipt coverage ${operatorReceiptCoverage.verified}/${operatorReceiptCoverage.required} · stale ${operatorReceiptCoverage.stale} · missing ${operatorReceiptCoverage.missing} · ${operatorReceiptCoverage.coverage_percent}%`}
                 {operatorReceiptCoverage && ` · receipt eval ${operatorReceiptCoverage.evaluated ?? 0}/${operatorReceiptCoverage.evaluation_required ?? 0} · failed ${operatorReceiptCoverage.evaluation_fail ?? 0} · ${operatorReceiptCoverage.evaluation_coverage_percent ?? 100}%`}
+                {operatorPlanSummary && ` · failure memory ${operatorPlanSummary.receipt_failure_memory_candidates}/${operatorPlanSummary.receipt_failure_memory_failed_receipts}/${operatorPlanSummary.receipt_failure_memory_existing_candidates}`}
                 {operatorActionReceipts?.summary && ` · ${copy.actionReceipts.toLowerCase()} ${operatorActionReceipts.summary.receipts}/${operatorActionReceipts.summary.verified}`}
               </p>
             </div>

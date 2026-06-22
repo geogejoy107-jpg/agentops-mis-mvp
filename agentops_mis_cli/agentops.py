@@ -396,6 +396,40 @@ def cmd_operator_record_action_receipt(args, client: AgentOpsClient) -> dict:
     }
 
 
+def cmd_operator_propose_receipt_failure_memory(args, client: AgentOpsClient) -> dict:
+    payload = {
+        "workspace_id": client.workspace_id,
+        "action_hash": args.action_hash,
+        "min_failures": args.min_failures,
+        "memory_id": args.memory_id,
+        "canonical_text": args.canonical_text,
+        "actor_id": args.actor_id,
+        "confirm_create": bool(args.confirm_create),
+    }
+    result = client.post(
+        "/api/operator/receipt-failure-memories/propose",
+        {key: value for key, value in payload.items() if value not in (None, "")},
+    )
+    return {
+        **result,
+        "cli_operation": "operator_propose_receipt_failure_memory",
+        "confirm_create": bool(args.confirm_create),
+        "contract": "preview-only unless --confirm-create is supplied; proposes a memory candidate from repeated failed Action Queue receipt evaluations without executing commands",
+        "token_omitted": True,
+    }
+
+
+def cmd_operator_receipt_failure_memories(args, client: AgentOpsClient) -> dict:
+    return client.get(
+        "/api/operator/receipt-failure-memories",
+        query={
+            "workspace_id": client.workspace_id,
+            "min_failures": args.min_failures,
+            "limit": args.limit,
+        },
+    )
+
+
 def cmd_operator_loop_audit(args, client: AgentOpsClient) -> dict:
     return client.get("/api/operator/loop-audit", query={"limit": args.limit, "loop_id": args.loop_id or None})
 
@@ -1729,6 +1763,18 @@ def build_parser() -> argparse.ArgumentParser:
     operator_record_receipt.add_argument("--actor-id", default="usr_founder")
     operator_record_receipt.add_argument("--confirm-record", action="store_true", help="Actually append runtime/audit receipt evidence. Default is preview only.")
     operator_record_receipt.set_defaults(handler="operator_record_action_receipt")
+    operator_receipt_memory_lane = operator_sub.add_parser("receipt-failure-memories", help="Read repeated failed receipt evaluations that should become memory candidates.")
+    operator_receipt_memory_lane.add_argument("--min-failures", type=int, default=2)
+    operator_receipt_memory_lane.add_argument("--limit", type=int, default=8)
+    operator_receipt_memory_lane.set_defaults(handler="operator_receipt_failure_memories")
+    operator_receipt_memory = operator_sub.add_parser("propose-receipt-failure-memory", help="Preview or create a memory candidate from repeated failed Action Queue receipt evaluations.")
+    operator_receipt_memory.add_argument("--action-hash", default="")
+    operator_receipt_memory.add_argument("--min-failures", type=int, default=2)
+    operator_receipt_memory.add_argument("--memory-id", default=None)
+    operator_receipt_memory.add_argument("--canonical-text", default=None)
+    operator_receipt_memory.add_argument("--actor-id", default="usr_founder")
+    operator_receipt_memory.add_argument("--confirm-create", action="store_true")
+    operator_receipt_memory.set_defaults(handler="operator_propose_receipt_failure_memory")
     operator_loop = operator_sub.add_parser("loop-audit", help="Audit the READ/PLAN/RETRIEVE/COMPARE/EXECUTE/VERIFY/RECORD loop contract.")
     operator_loop.add_argument("--loop-id", default=None)
     operator_loop.add_argument("--limit", type=int, default=12)
@@ -2502,6 +2548,8 @@ HANDLERS = {
     "operator_action_plan": cmd_operator_action_plan,
     "operator_action_receipts": cmd_operator_action_receipts,
     "operator_record_action_receipt": cmd_operator_record_action_receipt,
+    "operator_receipt_failure_memories": cmd_operator_receipt_failure_memories,
+    "operator_propose_receipt_failure_memory": cmd_operator_propose_receipt_failure_memory,
     "operator_loop_audit": cmd_operator_loop_audit,
     "operator_handoff": cmd_operator_handoff,
     "operator_health": cmd_operator_health,

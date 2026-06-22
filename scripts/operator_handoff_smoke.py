@@ -137,6 +137,9 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
         "receipt_evaluated",
         "receipt_evaluation_fail",
         "receipt_evaluation_missing",
+        "receipt_failure_memory_candidates",
+        "receipt_failure_memory_failed_receipts",
+        "receipt_failure_memory_existing_candidates",
     ]:
         require(isinstance(summary.get(key), int), f"{label} summary.{key} missing: {summary}", failures)
     loop_health_gates = loop_health.get("gates") or {}
@@ -144,6 +147,10 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
     require(receipt_eval_gate.get("status") in {"pass", "attention", "blocked"}, f"{label} receipt evaluation gate missing: {receipt_eval_gate}", failures)
     for key in ["required", "evaluated", "failed", "missing", "coverage_percent"]:
         require(isinstance(receipt_eval_gate.get(key), int), f"{label} receipt evaluation gate {key} missing: {receipt_eval_gate}", failures)
+    receipt_failure_gate = loop_health_gates.get("receipt_failure_memory") or {}
+    require(receipt_failure_gate.get("status") in {"pass", "attention"}, f"{label} receipt failure memory gate missing: {receipt_failure_gate}", failures)
+    for key in ["candidates", "failed_receipts", "existing_candidates"]:
+        require(isinstance(receipt_failure_gate.get(key), int), f"{label} receipt failure memory gate {key} missing: {receipt_failure_gate}", failures)
     score_parts = loop_health.get("score_parts") or {}
     require(isinstance(score_parts.get("receipt_evaluations"), int), f"{label} receipt evaluation score part missing: {score_parts}", failures)
     work_order = payload.get("work_order") or {}

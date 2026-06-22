@@ -1194,6 +1194,9 @@ export interface OperatorActionPlanPayload {
     action_receipts_evaluated: number;
     action_receipts_evaluation_pass: number;
     action_receipts_evaluation_fail: number;
+    receipt_failure_memory_candidates: number;
+    receipt_failure_memory_failed_receipts: number;
+    receipt_failure_memory_existing_candidates: number;
     receipt_required_actions: number;
     receipt_verified_actions: number;
     receipt_missing_actions: number;
@@ -1235,6 +1238,7 @@ export interface OperatorActionPlanPayload {
   dispatch_evidence?: Record<string, unknown>;
   operator_health?: Record<string, unknown>;
   action_receipts?: OperatorActionReceiptsPayload;
+  receipt_failure_memory?: Record<string, unknown>;
   safety: {
     read_only: boolean;
     ledger_mutated: boolean;
@@ -1491,6 +1495,13 @@ export interface OperatorHandoffPayload {
     receipt_verified: number;
     receipt_missing: number;
     receipt_stale: number;
+    receipt_evaluation_required: number;
+    receipt_evaluated: number;
+    receipt_evaluation_fail: number;
+    receipt_evaluation_missing: number;
+    receipt_failure_memory_candidates: number;
+    receipt_failure_memory_failed_receipts: number;
+    receipt_failure_memory_existing_candidates: number;
     loop_record_status?: string;
     loop_record_candidates: number;
     loop_record_approved: number;
@@ -1508,6 +1519,7 @@ export interface OperatorHandoffPayload {
     coverage?: OperatorActionPlanPayload["receipt_coverage"];
     recent: OperatorActionReceipt[];
     summary: Record<string, number>;
+    failure_memory?: Record<string, unknown>;
     token_omitted?: boolean;
   };
   review_state: {
@@ -3985,6 +3997,25 @@ export async function recordOperatorActionReceipt(input: {
   };
 }
 
+export async function proposeReceiptFailureMemory(input: {
+  action_hash?: string;
+  min_failures?: number;
+  confirm_create?: boolean;
+  memory_id?: string;
+  canonical_text?: string;
+}): Promise<Record<string, unknown>> {
+  return apiJsonWithStatuses<Record<string, unknown>>("/operator/receipt-failure-memories/propose", {
+    method: "POST",
+    body: JSON.stringify({
+      action_hash: input.action_hash || undefined,
+      min_failures: input.min_failures || 2,
+      confirm_create: Boolean(input.confirm_create),
+      memory_id: input.memory_id || undefined,
+      canonical_text: input.canonical_text || undefined,
+    }),
+  }, [200, 201, 400]);
+}
+
 export async function loadOperatorActionPlan(limit = 12): Promise<OperatorActionPlanPayload> {
   const raw = await optionalApiJson<Record<string, unknown>>(`/operator/action-plan?limit=${encodeURIComponent(String(limit))}`, {
     provider: "agentops-operator",
@@ -4061,6 +4092,9 @@ export async function loadOperatorActionPlan(limit = 12): Promise<OperatorAction
       action_receipts_evaluated: numberValue(summaryRaw.action_receipts_evaluated, 0),
       action_receipts_evaluation_pass: numberValue(summaryRaw.action_receipts_evaluation_pass, 0),
       action_receipts_evaluation_fail: numberValue(summaryRaw.action_receipts_evaluation_fail, 0),
+      receipt_failure_memory_candidates: numberValue(summaryRaw.receipt_failure_memory_candidates, 0),
+      receipt_failure_memory_failed_receipts: numberValue(summaryRaw.receipt_failure_memory_failed_receipts, 0),
+      receipt_failure_memory_existing_candidates: numberValue(summaryRaw.receipt_failure_memory_existing_candidates, 0),
       receipt_required_actions: numberValue(summaryRaw.receipt_required_actions, 0),
       receipt_verified_actions: numberValue(summaryRaw.receipt_verified_actions, 0),
       receipt_missing_actions: numberValue(summaryRaw.receipt_missing_actions, 0),
@@ -4133,6 +4167,7 @@ export async function loadOperatorActionPlan(limit = 12): Promise<OperatorAction
       ...(raw.action_receipts as OperatorActionReceiptsPayload),
       receipts: asArray<Record<string, unknown>>((raw.action_receipts as Record<string, unknown>).receipts).map(normalizeOperatorActionReceipt).filter(item => item.receipt_id),
     } : undefined,
+    receipt_failure_memory: typeof raw.receipt_failure_memory === "object" && raw.receipt_failure_memory !== null ? raw.receipt_failure_memory as Record<string, unknown> : undefined,
     safety: {
       read_only: boolValue(safetyRaw.read_only),
       ledger_mutated: boolValue(safetyRaw.ledger_mutated),
@@ -4410,6 +4445,13 @@ export async function loadOperatorHandoff(limit = 12, loopId = ""): Promise<Oper
       receipt_verified: numberValue(summaryRaw.receipt_verified, 0),
       receipt_missing: numberValue(summaryRaw.receipt_missing, 0),
       receipt_stale: numberValue(summaryRaw.receipt_stale, 0),
+      receipt_evaluation_required: numberValue(summaryRaw.receipt_evaluation_required, 0),
+      receipt_evaluated: numberValue(summaryRaw.receipt_evaluated, 0),
+      receipt_evaluation_fail: numberValue(summaryRaw.receipt_evaluation_fail, 0),
+      receipt_evaluation_missing: numberValue(summaryRaw.receipt_evaluation_missing, 0),
+      receipt_failure_memory_candidates: numberValue(summaryRaw.receipt_failure_memory_candidates, 0),
+      receipt_failure_memory_failed_receipts: numberValue(summaryRaw.receipt_failure_memory_failed_receipts, 0),
+      receipt_failure_memory_existing_candidates: numberValue(summaryRaw.receipt_failure_memory_existing_candidates, 0),
       loop_record_status: summaryRaw.loop_record_status ? String(summaryRaw.loop_record_status) : undefined,
       loop_record_candidates: numberValue(summaryRaw.loop_record_candidates, 0),
       loop_record_approved: numberValue(summaryRaw.loop_record_approved, 0),
@@ -4466,6 +4508,7 @@ export async function loadOperatorHandoff(limit = 12, loopId = ""): Promise<Oper
       },
       recent: asArray<Record<string, unknown>>(receiptStateRaw.recent).map(normalizeOperatorActionReceipt).filter(item => item.receipt_id),
       summary: Object.fromEntries(Object.entries(receiptSummaryRaw).map(([key, value]) => [key, numberValue(value, 0)])),
+      failure_memory: typeof receiptStateRaw.failure_memory === "object" && receiptStateRaw.failure_memory !== null ? receiptStateRaw.failure_memory as Record<string, unknown> : undefined,
       token_omitted: receiptStateRaw.token_omitted === undefined ? undefined : boolValue(receiptStateRaw.token_omitted),
     },
     review_state: {

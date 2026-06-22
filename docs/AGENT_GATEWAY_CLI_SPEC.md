@@ -351,6 +351,10 @@ rows, candidate/approved/pending counts, exact approve/reject commands, and a
 safe audit trail for the scoped loop's review entities. This is what the
 `/workspace/agents` Loop Audit panel uses to show both the human review action
 and the ledger proof that closes RECORD.
+The RECORD gate evidence also includes `receipt_failure_memory_*` counters from
+the action-plan learning lane, so repeated failed recovery receipts are visible
+as memory-review work instead of disappearing after the receipt evaluation
+fails.
 It also includes an `action_package` section: each non-passing gate gets a
 copyable `action_command`, a scoped `verify_command`, a preview-only
 `receipt_record_command`, and a confirmed `receipt_verify_record_command`.
@@ -376,10 +380,12 @@ loop review state into a single handoff payload. It returns `work_order`,
 boundary (`mode`, scoped flag, required `tasks:read` scope), and safety flags
 without executing commands or mutating audit/runtime ledgers. `loop_health` is
 a read-only score/status snapshot derived from method gates, receipt coverage,
-receipt evaluation coverage, loop RECORD state, auth, and safety; it carries
-gate summaries, risks, and the next recommended action. Failed receipt
-evaluations block loop health because they mean a recovery action was recorded
-but did not pass the operator-quality gate. Local no-token demo reads remain supported when
+receipt evaluation coverage, receipt-failure memory learning, loop RECORD
+state, auth, and safety; it carries gate summaries, risks, and the next
+recommended action. Failed receipt evaluations block loop health because they
+mean a recovery action was recorded but did not pass the operator-quality gate.
+Repeated failed receipt evaluations create an attention risk until the
+`failure_case` memory candidate is created and reviewed. Local no-token demo reads remain supported when
 `AGENTOPS_API_KEY` is unset; supplied Agent Gateway tokens/sessions must be
 valid and carry `tasks:read`. Invalid or out-of-range `limit` values are safely
 bounded to the supported 1..30 range instead of turning the handoff endpoint
@@ -403,7 +409,11 @@ safety flags. Each risk includes an explicit action command, verify command,
 action signature, and receipt helper commands so the same health issue can be
 closed with an audited receipt. The shared Operator Action Queue consumes the
 backend `operator action-plan` `operator_health` lane instead of synthesizing
-frontend-only health actions. Like
+frontend-only health actions. When `receipt_failure_memory_candidates` is
+non-zero, the action-plan component moves to attention and recommends
+`agentops operator receipt-failure-memories --min-failures 2 --limit 8` so the
+operator can promote or review the repeated failure before retrying the same
+recovery path. Like
 handoff, local no-token demo reads are allowed only when the server has no
 configured API key; supplied Agent Gateway tokens/sessions must be valid, carry
 `tasks:read`, and remain bound to their workspace.
@@ -1338,7 +1348,11 @@ references, and high-risk approval boundaries before the task is pulled.
 `operator_health` actions mirror health components that can be checked without
 calling full health recursively, such as local readiness, security readiness,
 worker fleet health, or human-review pressure, and verify through
-`agentops operator health --limit 20`. Each
+`agentops operator health --limit 20`. `receipt_failure_memory` is the learning
+source for repeated failed Action Queue receipt evaluations: it stays
+preview-first, proposes a memory candidate only after repeated failures, and
+routes confirmed candidates into the normal review queue instead of making them
+authoritative automatically. Each
 receipt-required `actions[]` row also includes `receipt_record_command`
 (preview-only), `receipt_record_confirm_command` (append a recorded receipt),
 and `receipt_verify_record_command` (append a verified action/VERIFY receipt)
@@ -1384,6 +1398,30 @@ and VERIFY-quality evidence. `operator action-plan`, `operator loop-audit`, and
 surface as a blocked `receipt_evaluation` recovery action, and coverage
 summaries include evaluated/pass/fail/missing counts. Valid receipt statuses
 are `recorded`, `verified`, `failed`, and `skipped`.
+
+```bash
+agentops operator receipt-failure-memories --min-failures 2 --limit 8
+
+agentops operator propose-receipt-failure-memory \
+  --action-hash <action_hash> \
+  --min-failures 2
+
+agentops operator propose-receipt-failure-memory \
+  --action-hash <action_hash> \
+  --min-failures 2 \
+  --confirm-create
+```
+
+Maps to `GET /api/operator/receipt-failure-memories` and
+`POST /api/operator/receipt-failure-memories/propose`. The read command is
+ledger read-only and groups failed receipt evaluations by `action_hash`. The
+proposal command is also read-only by default: it returns a deterministic
+`failure_case` memory draft, source refs, receipt/evaluation evidence ids, and
+safety flags. `--confirm-create` writes a `memories` row with
+`review_status:candidate` plus runtime evidence, then the item must be approved
+or rejected through `agentops review queue` / `agentops memory approve|reject`.
+This prevents failed recovery paths from silently becoming authoritative
+project memory.
 
 ```bash
 agentops operator intake-checklist --limit 12
