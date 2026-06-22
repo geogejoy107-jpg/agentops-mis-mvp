@@ -537,7 +537,7 @@ Optional live runtime checks occur only after preflight and explicit human confi
 - [ ] Performance and retrieval baseline.
 - [ ] Migration and rollback result.
 - [x] Security readiness and secret scan. Guarded by `scripts/security_production_readiness_smoke.py` plus `scripts/secret_scan_smoke.py`, which scans tracked files for token-like credentials while allowing only narrow fake-token smoke fixtures.
-- [ ] License/provenance/SBOM.
+- [x] License/provenance/SBOM. Guarded by `scripts/license_provenance_smoke.py` and `scripts/pixel_office_visualizer_boundary_smoke.py`; evidence files are `LICENSE`, `docs/THIRD_PARTY_NOTICES.md`, `docs/RELEASE_PROVENANCE.md`, `docs/SBOM_MINIMAL.md`, `docs/PIXEL_OFFICE_REFERENCE_AUDIT.md`, and `docs/PIXEL_OFFICE_ASSET_REPLACEMENT_PLAN.md`.
 - [ ] Plan, task, run, artifact and review IDs for safe closure.
 - [ ] Optional protected live-runtime IDs.
 - [ ] Known limitations and public-claims checklist.

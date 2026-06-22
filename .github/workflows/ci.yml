@@ -54,6 +54,7 @@ jobs:
           python3 scripts/sqlite_pragmas_smoke.py
           python3 scripts/sqlite_reliability_smoke.py
           python3 scripts/secret_scan_smoke.py
+          python3 scripts/license_provenance_smoke.py
           python3 scripts/startup_security_guard_smoke.py
           python3 scripts/operator_loop_audit_closed_loop_smoke.py
 
