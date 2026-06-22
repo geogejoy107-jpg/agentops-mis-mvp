@@ -57,6 +57,7 @@ jobs:
           python3 scripts/release_branch_control_smoke.py
           python3 scripts/secret_scan_smoke.py
           python3 scripts/license_provenance_smoke.py
+          python3 scripts/public_claims_release_gate_smoke.py
           python3 scripts/approval_semantics_boundary_smoke.py
           python3 scripts/knowledge_retrieval_quality_smoke.py
           python3 scripts/ai_employees_responsiveness_smoke.py

@@ -205,7 +205,8 @@ Memory candidates must be reviewable. AI agents can propose memory, but approved
 - Review outputs and evaluations.
 - Decide what becomes approved memory.
 - Accept final deliverables.
-- Configure billing, credentials, connectors, and workspace permissions.
+- Future billing setup is excluded from the current local MVP; humans currently
+  configure credentials, connectors, and workspace permissions.
 
 ## What AI Agents Do
 

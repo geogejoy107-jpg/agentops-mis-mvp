@@ -12,7 +12,8 @@ Excluded from this closure spec:
 
 - Dify live dataset upload and deployed chatbot hosting.
 - Notion bidirectional sync.
-- SaaS billing, hosted multi-tenant deployment, and marketplace connectors.
+- Future SaaS billing, hosted multi-tenant deployment, and marketplace
+  connectors are excluded from this local closure spec.
 
 ## Product Objective
 
@@ -479,7 +480,7 @@ Acceptance evidence:
 Remaining product work:
 
 - Full RBAC.
-- Multi-tenant hosted isolation beyond this local SQLite MVP.
+- Future multi-tenant hosted isolation beyond this local SQLite MVP.
 - Secret manager.
 - Rich connector trust policy UI beyond the current local trusted/review/blocked controls.
 
@@ -692,7 +693,7 @@ Remaining product work:
 - Hosted server mode.
 - Multi-workspace and user accounts.
 - RBAC and workspace isolation.
-- Billing/plan model.
+- Future billing/plan model.
 - Monitoring/logging.
 
 ## Current Verification Commands
@@ -815,6 +816,6 @@ Implemented and verified:
 Not yet product-complete:
 
 - Published global CLI distribution.
-- Full RBAC and hosted multi-tenant isolation.
+- Future full RBAC and hosted multi-tenant isolation.
 - Production worker fleet manager.
-- Hosted SaaS/commercial deployment layer.
+- Future hosted SaaS/commercial deployment layer.

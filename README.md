@@ -2,6 +2,13 @@
 
 这是一个面向“一人公司 / 小团队”的 **AgentOps MIS（AI 数字员工管理信息系统）** 本地原型包。它不是 LLM runtime、不是 agent builder；它是运行在 agent runtime 之上的管理控制面。默认本地优先、外部写入关闭，只有显式确认后才会尝试 Notion 导出或固定安全 runtime probe。
 
+Public claim boundary: v1.5 is for loopback local use, classroom demonstration,
+controlled dogfood and single-customer validation with explicit confirmation.
+It does not claim hosted SaaS, full multi-tenant RBAC, billing or universal
+runtime per-action governance. See
+`docs/PUBLIC_CLAIMS_AND_LIMITATIONS.md` before writing demos, release notes or
+customer-facing descriptions.
+
 - Agent Registry
 - Task Management
 - Run Ledger
