@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Non-live v1.5 product acceptance for the local AgentOps MIS loop.
+"""Non-live v1.5 local readiness acceptance for AgentOps MIS.
 
 This runner is intentionally read-only: it calls status/readiness endpoints and
 matching CLI readback commands only. It does not create tasks/runs, start
-workers, dispatch work, or invoke live Hermes/OpenClaw execution.
+workers, dispatch work, or invoke live Hermes/OpenClaw execution. It is not a
+product-readiness proof; use customer_worker_real_runtime_acceptance.py for
+manual live Hermes/OpenClaw dogfood evidence.
 """
 from __future__ import annotations
 
@@ -231,7 +233,7 @@ def ledger_counts(payload: dict[str, Any]) -> dict[str, int]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run v1.5 local product acceptance without live sync/execution.")
+    parser = argparse.ArgumentParser(description="Run v1.5 local readiness acceptance without live sync/execution.")
     parser.add_argument("--base-url", default="http://127.0.0.1:8787")
     parser.add_argument("--verbose", action="store_true", help="Include every individual check in the JSON output.")
     args = parser.parse_args()
@@ -257,7 +259,9 @@ def main() -> int:
         summary = {
             "ok": False,
             "base_url": args.base_url,
-            "scope": "v1.5 local product acceptance, non-live",
+            "scope": "v1.5 local readiness acceptance, non-live",
+            "evidence_class": "read_only_non_live_readiness",
+            "product_readiness_proof": False,
             "limitation": limitation,
             "failure_count": len(acc.failures),
             "failures": acc.failures,
@@ -351,7 +355,9 @@ def main() -> int:
     summary = {
         "ok": acc.ok,
         "base_url": args.base_url,
-        "scope": "v1.5 local product acceptance, non-live",
+        "scope": "v1.5 local readiness acceptance, non-live",
+        "evidence_class": "read_only_non_live_readiness",
+        "product_readiness_proof": False,
         "live_execution_performed": False,
         "mutating_actions_performed": False,
         "checked_endpoints": sorted(path for path, payload in endpoints.items() if payload is not None),

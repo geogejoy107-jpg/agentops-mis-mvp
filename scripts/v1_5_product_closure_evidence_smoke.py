@@ -246,10 +246,10 @@ def main() -> int:
     require(advance_loop_command in release_text, "release evidence packet missing operator advance-loop smoke", failures)
     require(advance_loop_command in ci_text, "CI workflow missing operator advance-loop smoke", failures)
 
-    output = json.dumps({"operation": "v1_5_product_closure_evidence", "ok": not failures, "items": items, "failures": failures, "safety": {"read_only": True, "ledger_mutated": False, "live_execution_performed": False, "token_omitted": True}}, ensure_ascii=False, indent=2)
+    output = json.dumps({"operation": "v1_5_product_closure_evidence", "ok": not failures, "evidence_class": "static_ci_matrix", "product_readiness_proof": False, "items": items, "failures": failures, "safety": {"read_only": True, "ledger_mutated": False, "live_execution_performed": False, "token_omitted": True}}, ensure_ascii=False, indent=2)
     require(not any(pattern.search(output) for pattern in SECRET_PATTERNS), "evidence output leaked token-like material", failures)
     if failures:
-        output = json.dumps({"operation": "v1_5_product_closure_evidence", "ok": False, "items": items, "failures": failures, "safety": {"read_only": True, "ledger_mutated": False, "live_execution_performed": False, "token_omitted": True}}, ensure_ascii=False, indent=2)
+        output = json.dumps({"operation": "v1_5_product_closure_evidence", "ok": False, "evidence_class": "static_ci_matrix", "product_readiness_proof": False, "items": items, "failures": failures, "safety": {"read_only": True, "ledger_mutated": False, "live_execution_performed": False, "token_omitted": True}}, ensure_ascii=False, indent=2)
     print(output)
     return 0 if not failures else 1
 

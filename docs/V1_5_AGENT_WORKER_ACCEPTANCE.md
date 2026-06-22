@@ -19,6 +19,17 @@ Result: passed.
 - OpenClaw CLI: `/opt/homebrew/bin/openclaw`
 - Dify and Notion: not used in this acceptance pass.
 
+## Product Validation Rule
+
+Use real Hermes/OpenClaw runs for product-readiness, dogfood, demo, or customer
+usefulness claims whenever those runtimes are locally available and explicitly
+authorized. Mock adapter runs are deterministic CI/offline fallback evidence
+only; they can protect regressions, but they do not prove product-level
+completion by themselves. Live validation must still pass through explicit
+`confirm_run`, prepared-action approval when required, summary/hash-only ledger
+storage, and no raw prompt, raw response, credential, private-message, or
+full-transcript persistence.
+
 ## Commander-Style Async Management Model
 
 v1.5 is now documented as a local-first commander console, not just a worker

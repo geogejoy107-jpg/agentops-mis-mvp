@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Verify a customer task can run through the real AgentOps worker loop."""
+"""Verify worker-loop ledger plumbing with the mock adapter.
+
+This is CI/offline fallback evidence. Product-readiness claims must use
+customer_worker_real_runtime_acceptance.py with real Hermes/OpenClaw when
+those runtimes are available and authorized.
+"""
 from __future__ import annotations
 
 import argparse
@@ -55,6 +60,8 @@ def main() -> int:
     require(bool(result.get("task_id")), f"missing task id: {result}", failures)
     require(bool(result.get("run_id")), f"missing run id: {result}", failures)
     require(bool(result.get("artifact_id")), f"missing artifact id: {result}", failures)
+    worker_state = ((result.get("worker_result") or {}).get("state") or {})
+    require(worker_state.get("base_url") == args.base_url.rstrip("/"), f"worker used wrong MIS base_url: {worker_state}", failures)
     require(evidence.get("tool_calls", 0) >= 1, f"missing tool call evidence: {evidence}", failures)
     require(evidence.get("evaluations", 0) >= 1, f"missing evaluation evidence: {evidence}", failures)
     require(evidence.get("runtime_events", 0) >= 1, f"missing runtime event evidence: {evidence}", failures)
@@ -90,9 +97,13 @@ def main() -> int:
 
     print(json.dumps({
         "ok": not failures,
+        "evidence_class": "ci_offline_fallback",
+        "product_readiness_proof": False,
+        "live_execution_performed": False,
         "task_id": result.get("task_id"),
         "run_id": result.get("run_id"),
         "artifact_id": result.get("artifact_id"),
+        "worker_base_url": worker_state.get("base_url"),
         "evidence": evidence,
         "confirm_gate_task_id": confirm_gate.get("task_id"),
         "failures": failures,

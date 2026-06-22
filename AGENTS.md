@@ -66,10 +66,12 @@ New ideas start as `Inbox` or `Proposed`. Only human-reviewed `Approved` or veri
 ## 5. Execution Rules
 
 - Create and verify an Agent Plan before meaningful changes.
+- Manage slow live runtimes, CI, browser builds, and subagent work as asynchronous lanes. Do not sit idle waiting for Hermes/OpenClaw/CI/subagents unless their result is on the immediate critical path; while a lane is running, continue non-overlapping implementation, verification, docs/spec updates, or another independent lane.
 - Do not let an Agent self-approve its own high-risk plan.
 - Keep plan, run, tool, approval, artifact, evaluation, and audit evidence linked.
 - Preserve workspace, scope, redaction, confirm-run, and external-write boundaries.
 - Never use a status change as a substitute for real execution evidence.
+- For AgentOps MIS product-readiness, dogfood, demo, or customer-usefulness claims, use real Hermes/OpenClaw execution whenever the local runtimes are available and explicitly authorized. Mock adapter evidence is CI/offline fallback only, must be labeled as such, and must never be presented as product-level completion.
 - Do not commit secrets, raw private transcripts, raw prompts/responses, temporary databases, generated indexes, runtime logs, or caches.
 
 ## 6. Verification and Handoff

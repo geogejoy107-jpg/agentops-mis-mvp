@@ -23678,9 +23678,11 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/workflows/customer-task":
                 return self.send_json(run_customer_task_workflow(conn, body), 201)
             if path == "/api/workflows/customer-worker-task":
+                body.setdefault("base_url", request_base_url(self.headers) or "http://127.0.0.1:8787")
                 payload, status = run_customer_worker_task_workflow(conn, body)
                 return self.send_json(payload, status)
             if path == "/api/workflows/customer-worker-task/submit":
+                body.setdefault("base_url", request_base_url(self.headers) or "http://127.0.0.1:8787")
                 payload, status = submit_customer_worker_task_job(conn, body)
                 return self.send_json(payload, status)
             if path == "/api/workflows/hermes-openclaw-loop":

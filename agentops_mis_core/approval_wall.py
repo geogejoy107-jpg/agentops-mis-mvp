@@ -54,6 +54,11 @@ EXTERNAL_SIDE_EFFECT_SCHEMES = (
     "discord://",
     "email://",
 )
+LOOPBACK_HTTP_PREFIXES = (
+    "http://127.0.0.1",
+    "http://localhost",
+    "http://[::1]",
+)
 
 
 def stable_hash(value: Any) -> str:
@@ -392,7 +397,12 @@ def tool_call_has_external_side_effect_intent(
         json.dumps(scanned_args, ensure_ascii=False, sort_keys=True),
     ]).lower()
     target = (target_resource or "").strip().lower()
-    if target.startswith(EXTERNAL_SIDE_EFFECT_SCHEMES) or explicit_target.startswith(EXTERNAL_SIDE_EFFECT_SCHEMES):
+    target_is_loopback = target.startswith(LOOPBACK_HTTP_PREFIXES)
+    explicit_target_is_loopback = explicit_target.startswith(LOOPBACK_HTTP_PREFIXES)
+    if (
+        (target.startswith(EXTERNAL_SIDE_EFFECT_SCHEMES) and not target_is_loopback)
+        or (explicit_target.startswith(EXTERNAL_SIDE_EFFECT_SCHEMES) and not explicit_target_is_loopback)
+    ):
         return True
     if tool_name in RISKY_TOOLS:
         return True

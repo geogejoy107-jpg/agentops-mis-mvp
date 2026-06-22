@@ -76,6 +76,8 @@ The packet includes the canonical command manifest used for release review:
 - `python3 scripts/release_evidence_packet_smoke.py`
 - `python3 scripts/merge_readiness_status_smoke.py`
 - `python3 scripts/v1_5_product_closure_evidence_smoke.py`
+- Manual product-readiness gate, intentionally not CI-backed:
+  `python3 scripts/customer_worker_real_runtime_acceptance.py --confirm-live --adapter hermes --adapter openclaw`
 - `python3 scripts/module_boundary_smoke.py`
 - `python3 scripts/read_model_cache_smoke.py`
 - `python3 scripts/open_source_adoption_boundary_smoke.py`
@@ -104,8 +106,28 @@ The packet includes the canonical command manifest used for release review:
 - `python3 scripts/protected_live_runtime_ids_smoke.py`
 - `cd ui/start-building-app && npm ci && npm run build`
 
-The smoke verifies each command is backed by `.github/workflows/ci.yml` and that
-referenced script files exist.
+The smoke verifies each CI command is backed by `.github/workflows/ci.yml` and
+that referenced script files exist. Manual-live commands are tracked in the
+packet but intentionally excluded from CI because they call real local
+Hermes/OpenClaw runtimes and require explicit operator confirmation.
+
+### Manual Live Product Evidence
+
+CI/offline smokes prove merge hygiene and regression coverage; they do not prove
+product readiness by themselves. Product-readiness, demo, dogfood, or
+customer-usefulness claims require current manual live evidence when local
+Hermes/OpenClaw are available and authorized:
+
+```bash
+python3 scripts/customer_worker_real_runtime_acceptance.py \
+  --confirm-live \
+  --adapter hermes \
+  --adapter openclaw
+```
+
+The release note or handoff must cite the resulting Hermes/OpenClaw run IDs and
+artifact IDs. Mock-only evidence must be described as CI/offline fallback, not
+as product-level completion.
 
 Server-backed commands, including
 `python3 scripts/local_coding_project_template_smoke.py`, require a running

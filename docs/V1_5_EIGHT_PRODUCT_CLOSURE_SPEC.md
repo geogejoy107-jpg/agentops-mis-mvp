@@ -102,6 +102,17 @@ workspace/knowledge visibility, SQLite reliability, CI, and public-claim
 limits. Treat that file as the release-candidate blocker list before adding
 more horizontal product features.
 
+## Product Validation Rule
+
+Product-readiness and dogfood claims must use real Hermes/OpenClaw execution
+when the local runtimes are available and explicitly authorized. Mock adapter
+evidence is allowed for deterministic CI, offline development, and safety
+fallbacks only; it must be labeled as mock/offline evidence and must not be
+presented as product-level completion. Real Hermes/OpenClaw validation still
+uses the MIS safety contract: explicit `confirm_run`, prepared-action approval
+where required, summary/hash ledger storage, and no raw prompt, raw response,
+credential, private-message, or full-transcript persistence.
+
 ## The Eight Product Closure Items
 
 ### 1. Real Long-Running Agent Worker

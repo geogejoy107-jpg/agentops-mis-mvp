@@ -81,6 +81,28 @@ def main() -> int:
     run_id = (run_payload.get("run") or {}).get("run_id") or run_payload.get("run_id")
     require(bool(run_id), f"run_id missing: {run_payload}", failures)
 
+    status, local_runtime_evidence = http_json(args.base_url, "/api/agent-gateway/tool-calls", {
+        "workspace_id": "local-demo",
+        "run_id": run_id,
+        "agent_id": agent_id,
+        "tool_name": "agent_worker.hermes",
+        "tool_category": "custom",
+        "risk_level": "medium",
+        "status": "completed",
+        "target_resource": "http://127.0.0.1:8642/v1/chat/completions",
+        "args": {
+            "adapter": "hermes",
+            "observation_level": "ledger_summary_only",
+            "requires_prepared_action_for_external_write": True,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+        },
+        "result_summary": "Local Hermes worker execution evidence should not be treated as an external write.",
+    })
+    outputs.append(json.dumps(local_runtime_evidence, ensure_ascii=False))
+    require(status in {200, 201}, f"loopback runtime evidence should not require prepared action: {status} {local_runtime_evidence}", failures)
+    require((local_runtime_evidence.get("tool_call") or {}).get("status") == "completed", f"loopback runtime evidence should be completed: {local_runtime_evidence}", failures)
+
     generic_external = {
         "workspace_id": "local-demo",
         "run_id": run_id,

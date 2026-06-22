@@ -67,8 +67,15 @@ TEST_COMMANDS = [
     {
         "id": "v1_5_product_closure_evidence",
         "command": "python3 scripts/v1_5_product_closure_evidence_smoke.py",
-        "summary": "Static evidence matrix for the eight v1.5 product-closure items.",
+        "summary": "Static CI coverage matrix for v1.5 closure items; not live product-readiness proof.",
         "ci_step": "Offline safety smokes",
+    },
+    {
+        "id": "customer_worker_real_runtime_acceptance",
+        "command": "python3 scripts/customer_worker_real_runtime_acceptance.py --confirm-live --adapter hermes --adapter openclaw",
+        "summary": "Manual live product-readiness dogfood gate for real Hermes/OpenClaw customer-worker execution; intentionally excluded from CI.",
+        "ci_step": "manual-live-local",
+        "manual_only": True,
     },
     {
         "id": "module_boundary",
@@ -405,10 +412,13 @@ def validate_test_commands(ci_text: str, failures: list[str]) -> list[dict[str, 
     manifest: list[dict[str, Any]] = []
     for item in TEST_COMMANDS:
         command = item["command"]
+        manual_only = bool(item.get("manual_only"))
         scripts = command_script_paths(command)
         for path in scripts:
             require(path.exists(), f"test command references missing script: {path.relative_to(ROOT)}", failures)
-        if scripts:
+        if manual_only:
+            pass
+        elif scripts:
             for path in scripts:
                 require(path.relative_to(ROOT).as_posix() in ci_text, f"CI workflow does not run {path.relative_to(ROOT)}", failures)
         elif "py_compile" in command:
@@ -422,7 +432,8 @@ def validate_test_commands(ci_text: str, failures: list[str]) -> list[dict[str, 
                 "command": command,
                 "summary": item["summary"],
                 "ci_step": item["ci_step"],
-                "ci_backed": True,
+                "ci_backed": not manual_only,
+                "manual_only": manual_only,
             }
         )
     return manifest
