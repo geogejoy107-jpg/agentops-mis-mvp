@@ -7,10 +7,15 @@ Local. SQLite remains the executable local ledger until Postgres has proven the
 same helper contract with the same response shapes, redaction behavior, and
 workspace isolation.
 
-This contract is the pre-container parity layer. Its machine-readable contract
-ID is `postgres_parity_pre_container_v1`. It is intentionally derived from
-`server.SCHEMA_SQL`, because `server.py` is still the executable schema
-authority for the dependency-free local product line.
+The first layer is the pre-container parity contract. Its machine-readable
+contract ID is `postgres_parity_pre_container_v1`. The second layer is the
+container parity contract, `postgres_container_parity_v1`, which proves the
+generated DDL and representative storage-boundary fixture inside a real
+Postgres container before a Python Postgres adapter is accepted.
+
+Both layers are intentionally derived from `server.SCHEMA_SQL`, because
+`server.py` is still the executable schema authority for the dependency-free
+local product line.
 
 ## Contract v1
 
@@ -49,20 +54,33 @@ schema to include:
 
 ## Verification
 
-Current pre-container proof:
+Gate 3 proof commands:
 
 ```bash
 python3 scripts/storage_postgres_contract_smoke.py
+python3 scripts/storage_postgres_container_smoke.py
 python3 scripts/storage_boundary_sqlite_smoke.py
 ```
 
 The first command validates the Postgres DDL contract derived from
-`server.SCHEMA_SQL`. The second command proves the current SQLite helper
-behavior that Postgres must match.
+`server.SCHEMA_SQL`. The second command starts a temporary Postgres container,
+creates the generated schema, inserts representative task/run/tool/approval/
+prepared-action/plan-evidence rows, and proves workspace isolation plus parity
+indexes. The third command proves the current SQLite helper behavior that
+Postgres must match.
+
+When Docker is unavailable on a local machine, use the non-authoritative
+diagnostic mode only to keep wider readiness checks moving:
+
+```bash
+python3 scripts/storage_postgres_container_smoke.py --skip-if-unavailable
+```
+
+This mode reports `skipped: true`; it is not final BYOC/Postgres evidence.
 
 ## Next Gate
 
-Postgres parity is not complete until a container-backed smoke:
+Postgres parity is not complete until the container-backed smoke:
 
 - creates the generated Postgres schema;
 - runs the storage-boundary fixture against a Postgres adapter;
