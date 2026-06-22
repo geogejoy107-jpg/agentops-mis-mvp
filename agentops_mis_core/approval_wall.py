@@ -262,6 +262,102 @@ def build_prepared_action_waiting_response(
     return response
 
 
+def build_prepared_action_blocked_response(
+    *,
+    base: dict[str, Any],
+    gate_error: dict[str, Any],
+    status: str = "blocked",
+) -> dict[str, Any]:
+    return {
+        **base,
+        **gate_error,
+        "status": status,
+        "reason": gate_error.get("error"),
+        "token_omitted": True,
+    }
+
+
+def build_prepared_action_hash_mismatch_response(
+    row: Any,
+    current_action_hash: str | None = None,
+    *,
+    message: str,
+    error: str = "action_hash_mismatch",
+    approval: Any = None,
+    include_prepared_action: bool = False,
+) -> dict[str, Any]:
+    data = dict(row) if row is not None else {}
+    current_hash = current_action_hash or prepared_action_hash(data)
+    payload: dict[str, Any] = {
+        "error": error,
+        "message": message,
+        "stored_action_hash": data.get("action_hash"),
+        "current_action_hash": current_hash,
+        "token_omitted": True,
+    }
+    if approval is not None:
+        payload["approval"] = dict(approval)
+    if include_prepared_action:
+        payload["prepared_action"] = prepared_action_public(data)
+    return payload
+
+
+def build_prepared_action_resume_blocked_response(
+    *,
+    action_id: Any,
+    row: Any,
+    approval: Any,
+) -> tuple[dict[str, Any], int] | None:
+    if row is None:
+        return {"error": "prepared_action_not_found", "token_omitted": True}, 404
+
+    data = dict(row)
+    approval_data = dict(approval) if approval is not None else None
+    if not approval_data or approval_data.get("decision") != "approved":
+        return {
+            "error": "approval_required",
+            "message": "Prepared action can resume only after its approval is approved.",
+            "approval_id": data.get("approval_id"),
+            "decision": approval_data.get("decision") if approval_data else None,
+            "token_omitted": True,
+        }, 409
+    if data.get("consumed_at") or data.get("status") == "consumed":
+        return {
+            "error": "prepared_action_already_consumed",
+            "prepared_action": prepared_action_public(data),
+            "token_omitted": True,
+        }, 409
+
+    verification = prepared_action_hash_verification(data)
+    if not verification["match"]:
+        return build_prepared_action_hash_mismatch_response(
+            data,
+            verification["current_action_hash"],
+            message="Prepared action changed after approval; request a new approval.",
+        ), 409
+    return None
+
+
+def build_prepared_action_resume_success_response(
+    *,
+    prepared_action: Any,
+    approval: Any,
+    provider_side_effect_id: str,
+    hash_verification: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "provider": "agentops-approval-wall",
+        "operation": "prepared_action_resume",
+        "status": "completed",
+        "prepared_action": prepared_action_public(prepared_action),
+        "approval": dict(approval),
+        "provider_side_effect_id": provider_side_effect_id,
+        "execute_once": True,
+        "hash_verification": hash_verification,
+        "token_omitted": True,
+    }
+
+
 def runtime_probe_prepared_action_required_payload(
     *,
     prepared: dict[str, Any],
@@ -294,15 +390,15 @@ def runtime_probe_blocked_payload(
     gate_error: dict[str, Any],
     created: bool | None = None,
 ) -> dict[str, Any]:
-    payload = {
-        "provider": provider,
-        "mode": mode,
-        "dry_run": True,
-        "live_probe_performed": False,
-        **gate_error,
-        "reason": gate_error.get("error"),
-        "token_omitted": True,
-    }
+    payload = build_prepared_action_blocked_response(
+        base={
+            "provider": provider,
+            "mode": mode,
+            "dry_run": True,
+            "live_probe_performed": False,
+        },
+        gate_error=gate_error,
+    )
     if created is not None:
         payload["created"] = created
     return payload

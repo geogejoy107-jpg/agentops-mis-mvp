@@ -305,8 +305,48 @@ python3 scripts/notion_export_prepared_action_gate_smoke.py --base-url http://12
 python3 scripts/customer_worker_external_write_gate_smoke.py
 ```
 
+### Slice 12: Prepared-Action Route and Blocked Response Helpers
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/approval_wall.py`
+
+Moved out of `server.py`:
+
+- shared prepared-action blocked/error response shaping
+- gate-error to `reason` projection for blocked responses
+- consistent `status=blocked` and `token_omitted` proof for blocked responses
+- route-level prepared-action resume not-found, approval-required, consumed and
+  hash-mismatch response shaping
+- route-level prepared-action resume success response shaping with
+  `execute_once` and hash-verification proof
+- runtime probe blocked payload now wraps the shared blocked-response helper
+- Dify upload and Notion export prepared-action blocked responses now reuse the
+  shared helper while keeping route-specific base fields
+
+Still owned by `server.py`:
+
+- HTTP routes
+- provider-specific dry-run plans and response base fields
+- runtime events, audit logs and commits for blocked routes
+- SQLite reads for prepared action and approval rows
+- exact-once prepared-action resume writes and provider side-effect evidence
+- hash-mismatch audit writes before returning route-level blocked responses
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/prepared_action_approval_wall_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/runtime_probe_prepared_action_gate_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/dify_upload_prepared_action_gate_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/notion_export_prepared_action_gate_smoke.py --base-url http://127.0.0.1:8787
+```
+
 ## Next Candidate Slices
 
-- Prepared-action route error/blocked response helpers.
+- Prepared-action provider result reconciliation helpers.
 
 Each candidate must be extracted in a separate, smoke-backed slice.

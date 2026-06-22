@@ -252,8 +252,8 @@ coverage for every external side-effect path.
   runtime connector trust state helpers now live in
   `agentops_mis_runtime/trust.py`; read-model cache behavior now lives in
   `agentops_mis_core/read_model_cache.py`; Approval Wall prepared-action
-  hash, public projection, gate, readback, resume-gate mismatch, waiting-response
-  and next-action helpers now live in
+  hash, public projection, gate, readback, resume-gate mismatch, waiting-response,
+  route blocked/error, resume-success and next-action helpers now live in
   `agentops_mis_core/approval_wall.py`; worker status/fleet lane/health
   aggregation now lives in `agentops_mis_core/worker_fleet.py`; Commander
   work-package status/action/readback summary and project-board gate aggregation
@@ -262,7 +262,8 @@ coverage for every external side-effect path.
   `agentops_mis_core/operator_command_center.py`; `server.py`
   keeps HTTP routes, health probing, refresh orchestration, trust-route runtime
   events, audit writes, endpoint auth checks, read-model producers,
-  repo-local daemon/process reads, Approval Wall exact-once resume writes and
+  repo-local daemon/process reads, Approval Wall exact-once resume writes,
+  route-level hash-mismatch audit writes and
   Commander write workflows.
   Guarded by
   `scripts/module_boundary_smoke.py`, `docs/MODULE_BOUNDARY_PLAN.md`, and the

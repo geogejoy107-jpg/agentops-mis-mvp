@@ -14,7 +14,11 @@ if str(ROOT) not in sys.path:
 
 from agentops_mis_core.approval_wall import (
     approval_wall_recommended_actions,
+    build_prepared_action_blocked_response,
     build_prepared_action_get_response,
+    build_prepared_action_hash_mismatch_response,
+    build_prepared_action_resume_blocked_response,
+    build_prepared_action_resume_success_response,
     build_prepared_action_waiting_response,
     prepared_action_checkpoint,
     prepared_action_gate,
@@ -169,7 +173,11 @@ SERVER_OPERATOR_COMMAND_CENTER_IMPORTS = {
 }
 EXTRACTED_APPROVAL_WALL_HELPERS = {
     "approval_wall_recommended_actions",
+    "build_prepared_action_blocked_response",
     "build_prepared_action_get_response",
+    "build_prepared_action_hash_mismatch_response",
+    "build_prepared_action_resume_blocked_response",
+    "build_prepared_action_resume_success_response",
     "build_prepared_action_waiting_response",
     "prepared_action_checkpoint",
     "prepared_action_gate",
@@ -185,7 +193,11 @@ EXTRACTED_APPROVAL_WALL_HELPERS = {
 }
 SERVER_APPROVAL_WALL_IMPORTS = {
     "approval_wall_recommended_actions",
+    "build_prepared_action_blocked_response",
     "build_prepared_action_get_response",
+    "build_prepared_action_hash_mismatch_response",
+    "build_prepared_action_resume_blocked_response",
+    "build_prepared_action_resume_success_response",
     "build_prepared_action_waiting_response",
     "prepared_action_checkpoint",
     "prepared_action_gate",
@@ -504,10 +516,56 @@ def main() -> int:
         missing_message="External publish requires a prepared action.",
         approval_message="External publish can execute only after approval.",
     )
+    missing_resume_response = build_prepared_action_resume_blocked_response(
+        action_id="pa_missing_smoke",
+        row=None,
+        approval=None,
+    )
+    pending_resume_response = build_prepared_action_resume_blocked_response(
+        action_id="pa_smoke",
+        row=prepared_row,
+        approval={"approval_id": "ap_pa_smoke", "decision": "pending"},
+    )
+    consumed_resume_response = build_prepared_action_resume_blocked_response(
+        action_id="pa_smoke",
+        row=consumed_row,
+        approval={"approval_id": "ap_pa_smoke", "decision": "approved"},
+    )
+    tampered_row = {**prepared_row, "target_resource": "mock://customer/changed-delivery"}
+    hash_mismatch_response = build_prepared_action_hash_mismatch_response(
+        tampered_row,
+        message="Prepared action changed after approval request; create a new prepared action.",
+        approval={"approval_id": "ap_pa_smoke", "decision": "pending"},
+        include_prepared_action=True,
+    )
+    resume_hash_mismatch_response = build_prepared_action_resume_blocked_response(
+        action_id="pa_smoke",
+        row=tampered_row,
+        approval={"approval_id": "ap_pa_smoke", "decision": "approved"},
+    )
+    success_resume_response = build_prepared_action_resume_success_response(
+        prepared_action=consumed_row,
+        approval={"approval_id": "ap_pa_smoke", "decision": "approved"},
+        provider_side_effect_id="side_effect_smoke",
+        hash_verification={
+            "stored_action_hash": prepared_row["action_hash"],
+            "current_action_hash": prepared_row["action_hash"],
+            "match": True,
+        },
+    )
     require(missing_gate and missing_gate.get("error") == "external_publish_prepared_action_required", "resume gate missing-id error failed", failures)
     require(pending_gate and pending_gate.get("error") == "approval_required", "resume gate approval-required error failed", failures)
     require(mismatch_gate and mismatch_gate.get("error") == "prepared_action_request_mismatch" and "operation" in mismatch_gate.get("mismatched_fields", []), "resume gate mismatch error failed", failures)
     require(consumed_gate and consumed_gate.get("error") == "prepared_action_already_consumed", "resume gate consumed error failed", failures)
+    require(missing_resume_response and missing_resume_response[0].get("error") == "prepared_action_not_found" and missing_resume_response[1] == 404, "resume route missing response failed", failures)
+    require(pending_resume_response and pending_resume_response[0].get("error") == "approval_required" and pending_resume_response[1] == 409, "resume route approval-required response failed", failures)
+    require(consumed_resume_response and consumed_resume_response[0].get("error") == "prepared_action_already_consumed" and consumed_resume_response[1] == 409, "resume route consumed response failed", failures)
+    require(hash_mismatch_response.get("error") == "action_hash_mismatch", "prepared-action hash mismatch response failed", failures)
+    require(hash_mismatch_response.get("approval", {}).get("approval_id") == "ap_pa_smoke", "prepared-action hash mismatch approval field failed", failures)
+    require((hash_mismatch_response.get("prepared_action") or {}).get("raw_prompt_omitted") is True, "prepared-action hash mismatch public projection failed", failures)
+    require(resume_hash_mismatch_response and resume_hash_mismatch_response[0].get("error") == "action_hash_mismatch" and resume_hash_mismatch_response[1] == 409, "resume route hash mismatch response failed", failures)
+    require(success_resume_response.get("status") == "completed" and success_resume_response.get("execute_once") is True, "resume success response failed", failures)
+    require((success_resume_response.get("hash_verification") or {}).get("match") is True, "resume success hash verification failed", failures)
     runtime_waiting_payload = runtime_probe_prepared_action_required_payload(
         prepared={
             "run_id": "run_runtime_probe_smoke",
@@ -542,6 +600,20 @@ def main() -> int:
         gate_error={"error": "prepared_action_request_mismatch", "mismatched_fields": ["prompt_hash"], "token_omitted": True},
         created=False,
     )
+    shared_blocked_payload = build_prepared_action_blocked_response(
+        base={
+            "provider": "smoke",
+            "dry_run": True,
+            "live_export_performed": False,
+            "configured": True,
+        },
+        gate_error={
+            "error": "prepared_action_request_mismatch",
+            "prepared_action_id": "pa_blocked_smoke",
+            "mismatched_fields": ["title"],
+            "token_omitted": True,
+        },
+    )
     require(shared_waiting_payload.get("status") == "waiting_approval", "shared waiting response status failed", failures)
     require(shared_waiting_payload.get("approval_id") == "ap_waiting_smoke", "shared waiting response approval id failed", failures)
     require(shared_waiting_payload.get("prepared_action_id") == "pa_waiting_smoke", "shared waiting response prepared action id failed", failures)
@@ -549,6 +621,11 @@ def main() -> int:
     require("prepared_action_id=pa_waiting_smoke" in shared_waiting_payload.get("next_action", ""), "shared waiting response next action failed", failures)
     require(shared_waiting_payload.get("token_omitted") is True, "shared waiting response omission proof missing", failures)
     require(shared_next_action.endswith("resume action pa_waiting_smoke"), "prepared action waiting next-action template failed", failures)
+    require(shared_blocked_payload.get("status") == "blocked", "shared blocked response status failed", failures)
+    require(shared_blocked_payload.get("reason") == "prepared_action_request_mismatch", "shared blocked response reason failed", failures)
+    require(shared_blocked_payload.get("provider") == "smoke", "shared blocked response base field failed", failures)
+    require(shared_blocked_payload.get("live_export_performed") is False, "shared blocked response execution proof failed", failures)
+    require(shared_blocked_payload.get("token_omitted") is True, "shared blocked response omission proof missing", failures)
     require(runtime_waiting_payload.get("reason") == "runtime_probe_prepared_action_required", "runtime prepared-action waiting response reason failed", failures)
     require(runtime_waiting_payload.get("prepared_action_id") == "pa_runtime_probe_smoke", "runtime prepared-action waiting response id failed", failures)
     require(runtime_waiting_payload.get("live_probe_performed") is False, "runtime waiting response must not claim live execution", failures)

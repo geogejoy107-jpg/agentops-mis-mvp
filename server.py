@@ -36,7 +36,11 @@ from urllib.error import HTTPError, URLError
 
 from agentops_mis_core.approval_wall import (
     approval_wall_recommended_actions,
+    build_prepared_action_blocked_response,
     build_prepared_action_get_response,
+    build_prepared_action_hash_mismatch_response,
+    build_prepared_action_resume_blocked_response,
+    build_prepared_action_resume_success_response,
     build_prepared_action_waiting_response,
     prepared_action_checkpoint,
     prepared_action_gate,
@@ -8002,38 +8006,22 @@ def agent_gateway_prepare_action(conn, body) -> tuple[dict, int]:
 
 def agent_gateway_resume_prepared_action(conn, action_id: str, body) -> tuple[dict, int]:
     row = conn.execute("SELECT * FROM prepared_actions WHERE action_id=?", (action_id,)).fetchone()
-    if not row:
-        return {"error": "prepared_action_not_found", "token_omitted": True}, 404
+    missing_response = build_prepared_action_resume_blocked_response(action_id=action_id, row=row, approval=None)
+    if missing_response:
+        return missing_response
     ident = agent_gateway_identity({}, body)
     if row_workspace(row) != ident["workspace_id"]:
         return workspace_forbidden("prepared_action", action_id, ident["workspace_id"], row_workspace(row))
     if ident.get("agent_id") and row["requested_by_agent_id"] != ident["agent_id"]:
         return {"error": "forbidden", "message": "Agent token cannot resume another agent's prepared action.", "token_omitted": True}, 403
     approval = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (row["approval_id"],)).fetchone()
-    if not approval or approval["decision"] != "approved":
-        return {
-            "error": "approval_required",
-            "message": "Prepared action can resume only after its approval is approved.",
-            "approval_id": row["approval_id"],
-            "decision": approval["decision"] if approval else None,
-            "token_omitted": True,
-        }, 409
-    if row["consumed_at"] or row["status"] == "consumed":
-        return {
-            "error": "prepared_action_already_consumed",
-            "prepared_action": prepared_action_public(row),
-            "token_omitted": True,
-        }, 409
+    blocked_response = build_prepared_action_resume_blocked_response(action_id=action_id, row=row, approval=approval)
+    if blocked_response:
+        payload, status = blocked_response
+        if payload.get("error") == "action_hash_mismatch":
+            audit(conn, "agent", row["requested_by_agent_id"], "approval_wall.prepared_action_hash_mismatch", "prepared_actions", action_id, dict(row), dict(row), {"stored_action_hash": row["action_hash"], "current_action_hash": payload.get("current_action_hash"), "token_omitted": True})
+        return payload, status
     current_hash = prepared_action_hash(dict(row))
-    if current_hash != row["action_hash"]:
-        audit(conn, "agent", row["requested_by_agent_id"], "approval_wall.prepared_action_hash_mismatch", "prepared_actions", action_id, dict(row), dict(row), {"stored_action_hash": row["action_hash"], "current_action_hash": current_hash, "token_omitted": True})
-        return {
-            "error": "action_hash_mismatch",
-            "message": "Prepared action changed after approval; request a new approval.",
-            "stored_action_hash": row["action_hash"],
-            "current_action_hash": current_hash,
-            "token_omitted": True,
-        }, 409
     now = now_iso()
     provider_side_effect_id = redact_text(body.get("provider_side_effect_id") or f"side_effect_{action_id}_{row['action_hash'][:12]}", 180)
     result_summary = redact_text(body.get("result_summary") or f"Prepared action {action_id} resumed exactly once after approval.", 260)
@@ -8044,11 +8032,7 @@ def agent_gateway_resume_prepared_action(conn, action_id: str, body) -> tuple[di
     )
     if cursor.rowcount != 1:
         refreshed = conn.execute("SELECT * FROM prepared_actions WHERE action_id=?", (action_id,)).fetchone()
-        return {
-            "error": "prepared_action_already_consumed",
-            "prepared_action": prepared_action_public(refreshed or row),
-            "token_omitted": True,
-        }, 409
+        return build_prepared_action_resume_blocked_response(action_id=action_id, row=refreshed or row, approval=approval) or ({"error": "prepared_action_already_consumed", "token_omitted": True}, 409)
     after = conn.execute("SELECT * FROM prepared_actions WHERE action_id=?", (action_id,)).fetchone()
     if row["tool_call_id"]:
         tool_before = conn.execute("SELECT * FROM tool_calls WHERE tool_call_id=?", (row["tool_call_id"],)).fetchone()
@@ -8062,21 +8046,16 @@ def agent_gateway_resume_prepared_action(conn, action_id: str, body) -> tuple[di
     conn.execute("UPDATE tasks SET status=CASE WHEN status='waiting_approval' THEN 'running' ELSE status END, updated_at=? WHERE task_id=?", (now, row["task_id"]))
     runtime_event(conn, "rtc_agent_gateway_local", "prepared_action.resume", "completed", run_id=row["run_id"], task_id=row["task_id"], agent_id=row["requested_by_agent_id"], input_summary=row["action_type"], output_summary=result_summary, raw_payload_hash=row["action_hash"])
     audit(conn, "agent", row["requested_by_agent_id"], "approval_wall.prepared_action_resumed", "prepared_actions", action_id, before, dict(after), {"approval_id": row["approval_id"], "action_hash": row["action_hash"], "provider_side_effect_id": provider_side_effect_id, "execute_once": True, "token_omitted": True})
-    return {
-        "provider": "agentops-approval-wall",
-        "operation": "prepared_action_resume",
-        "status": "completed",
-        "prepared_action": prepared_action_public(after),
-        "approval": dict(approval),
-        "provider_side_effect_id": provider_side_effect_id,
-        "execute_once": True,
-        "hash_verification": {
+    return build_prepared_action_resume_success_response(
+        prepared_action=after,
+        approval=approval,
+        provider_side_effect_id=provider_side_effect_id,
+        hash_verification={
             "stored_action_hash": row["action_hash"],
             "current_action_hash": current_hash,
             "match": True,
         },
-        "token_omitted": True,
-    }, 200
+    ), 200
 
 
 def agent_gateway_request_approval(conn, body) -> tuple[dict, int]:
@@ -9925,7 +9904,7 @@ def dify_create_document_by_text(conn, body: dict) -> dict:
         runtime_event(conn, "rtc_agent_gateway_local", "dify.upload_text.prepared_action_blocked", "blocked", task_id=task_id, agent_id=agent_id, input_summary=f"Dify upload blocked text_hash={text_hash[:16]}", output_summary=gate_error.get("error"), raw_payload_hash=text_hash)
         audit(conn, "agent", agent_id, "dify.upload_text.prepared_action_blocked", "connectors", "conn_dify_knowledge", None, gate_error, {"text_hash": text_hash, "raw_text_omitted": True, "token_omitted": True})
         conn.commit()
-        return {**plan, **gate_error, "reason": gate_error.get("error"), "status": "blocked"}
+        return build_prepared_action_blocked_response(base=plan, gate_error=gate_error)
 
     started_iso = now_iso()
     started = dt.datetime.now(dt.timezone.utc)
@@ -22774,7 +22753,17 @@ def notion_export_live_or_gate(conn, body: dict, markdown: str, title: str, acto
         runtime_event(conn, "rtc_agent_gateway_local", "notion.export.prepared_action_blocked", "blocked", input_summary=f"Notion export blocked markdown_hash={action_args['markdown_hash'][:16]}", output_summary=gate_error.get("error"), raw_payload_hash=action_args["markdown_hash"])
         audit(conn, "system", actor, "notion.export.prepared_action_blocked", "integrations", "notion", None, gate_error, {"markdown_hash": action_args["markdown_hash"], "token_omitted": True})
         conn.commit()
-        return {"provider": "notion", "dry_run": True, "created": False, "live_export_performed": False, "configured": cfg["configured"], "export_mode": cfg["export_mode"], **gate_error, "reason": gate_error.get("error")}
+        return build_prepared_action_blocked_response(
+            base={
+                "provider": "notion",
+                "dry_run": True,
+                "created": False,
+                "live_export_performed": False,
+                "configured": cfg["configured"],
+                "export_mode": cfg["export_mode"],
+            },
+            gate_error=gate_error,
+        )
 
     try:
         try:
@@ -24225,15 +24214,13 @@ class Handler(BaseHTTPRequestHandler):
                     {"approval_id": approval_id, "stored_action_hash": prepared_action["action_hash"], "current_action_hash": current_hash, "token_omitted": True},
                 )
                 conn.commit()
-                return self.send_json({
-                    "error": "action_hash_mismatch",
-                    "message": "Prepared action changed after approval request; create a new prepared action.",
-                    "approval": dict(before),
-                    "prepared_action": prepared_action_public(prepared_action),
-                    "stored_action_hash": prepared_action["action_hash"],
-                    "current_action_hash": current_hash,
-                    "token_omitted": True,
-                }, 409)
+                return self.send_json(build_prepared_action_hash_mismatch_response(
+                    prepared_action,
+                    current_hash,
+                    message="Prepared action changed after approval request; create a new prepared action.",
+                    approval=before,
+                    include_prepared_action=True,
+                ), 409)
             conn.execute("UPDATE approvals SET decision=?, decided_at=? WHERE approval_id=?", (decision, now_iso(), approval_id))
             prepared_status = "approved" if decision == "approved" else "rejected"
             conn.execute(
