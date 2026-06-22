@@ -25,6 +25,24 @@
   --ui-context-height: 38px;
 }
 
+.theme-enterprise,
+.theme-ops,
+.theme-workforce {
+  --ui-bg: var(--mis-bg);
+  --ui-surface-1: var(--mis-surface);
+  --ui-surface-2: var(--mis-surface2);
+  --ui-surface-raised: color-mix(in srgb, var(--mis-surface) 92%, white 8%);
+  --ui-text: var(--mis-text);
+  --ui-text-muted: var(--mis-dim);
+  --ui-text-subtle: var(--mis-muted);
+  --ui-border: var(--mis-border);
+  --ui-border-strong: color-mix(in srgb, var(--mis-border) 70%, var(--mis-text) 30%);
+  --ui-accent: var(--mis-primary);
+  --ui-accent-strong: var(--mis-cyan);
+  --ui-success: var(--mis-success);
+  --ui-purple: var(--mis-purple);
+}
+
 .theme-enterprise {
   --ui-surface-raised: #ffffff;
   --ui-shadow-md: 0 16px 40px rgba(15, 23, 42, 0.08);
