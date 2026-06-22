@@ -466,11 +466,11 @@ live runtime suite
 
 ### Method and knowledge
 
-- [ ] A new Agent can find project spec, workflow and base notes.
-- [ ] A plan can be created and verified.
-- [ ] Plan approval is role-separated.
-- [ ] Governed execution requires the verified plan.
-- [ ] Retrieval references are real and visible.
+- [x] A new Agent can find project spec, workflow and base notes. Guarded by `scripts/agent_plan_integrity_smoke.py` and `scripts/run_start_plan_gate_smoke.py` using `PROJECT_SPEC.md`, `AGENT_WORKFLOW.md`, `knowledge/shared/common_failures.md`, and `base_local_tasks`.
+- [x] A plan can be created and verified. Guarded by `scripts/agent_plan_integrity_smoke.py`.
+- [x] Plan approval is role-separated. Guarded by `scripts/agent_plan_integrity_smoke.py`, including bound-agent approval rejection.
+- [x] Governed execution requires the verified plan. Guarded by `scripts/run_start_plan_gate_smoke.py`.
+- [x] Retrieval references are real and visible. Guarded by `scripts/agent_plan_integrity_smoke.py` negative checks for missing specs, missing bases, candidate memory, and unsafe file scope.
 - [ ] No secret values appear in indexed content.
 
 ### Customer workflow
