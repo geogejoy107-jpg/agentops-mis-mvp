@@ -293,6 +293,7 @@ export function AIEmployees() {
   const [actionQueueOrder, setActionQueueOrder] = useState<string[]>([]);
   const [draggedActionId, setDraggedActionId] = useState<string | null>(null);
   const [receiptAction, setReceiptAction] = useState<string | null>(null);
+  const [panelReceiptAction, setPanelReceiptAction] = useState<string | null>(null);
   const [receiptFailureMemoryAction, setReceiptFailureMemoryAction] = useState<string | null>(null);
   const [receiptFailureMemoryResult, setReceiptFailureMemoryResult] = useState<string | null>(null);
   const [customerTaskForm, setCustomerTaskForm] = useState<{
@@ -577,6 +578,8 @@ export function AIEmployees() {
       refreshPanel: "Refresh panel",
       panelRefreshRunning: "Refreshing panel...",
       copyPanelDiagnostics: "Copy diagnostics",
+      recordPanelDiagnostics: "Record diagnostics",
+      panelReceiptRecorded: "Panel receipt",
       panelAttempts: "attempts",
       panelUpdated: "updated",
       panelLastError: "last error",
@@ -1026,6 +1029,8 @@ export function AIEmployees() {
       refreshPanel: "刷新面板",
       panelRefreshRunning: "面板刷新中...",
       copyPanelDiagnostics: "复制诊断",
+      recordPanelDiagnostics: "诊断记账",
+      panelReceiptRecorded: "面板收据",
       panelAttempts: "尝试",
       panelUpdated: "更新",
       panelLastError: "最近错误",
@@ -1521,6 +1526,49 @@ export function AIEmployees() {
     if (!evidence) return null;
     return <p className="text-[9px] mt-0.5 max-w-4xl truncate" style={{ color: "var(--mis-muted)" }}>{evidence}</p>;
   };
+  const panelDiagnosticReceiptStatus = (panelId: string): "recorded" | "verified" | "failed" => {
+    const status = panelStatus(panelId);
+    if (status === "ready") return "verified";
+    if (status === "unavailable") return "failed";
+    return "recorded";
+  };
+  const panelDiagnosticSummary = (panelId: string) => {
+    const state = panelLoadState[panelId];
+    const lastError = (state?.last_error || state?.error || "").replace(/Bearer\s+\S+|agtok_[A-Za-z0-9_]+|agtsess_[A-Za-z0-9_]+|sk-[A-Za-z0-9]{8,}|ntn_[A-Za-z0-9]{8,}/g, "[redacted]");
+    return [
+      `panel=${panelId}`,
+      `status=${panelStatus(panelId)}`,
+      `attempts=${state?.attempts ?? 0}`,
+      state?.updated_at ? `updated_at=${state.updated_at}` : "",
+      lastError ? `last_error=${lastError.slice(0, 96)}` : "",
+      "token_omitted=true",
+    ].filter(Boolean).join("; ");
+  };
+  const recordPanelDiagnosticReceipt = async (panelId: string) => {
+    const actionKey = `panel-diagnostics:${panelId}`;
+    setPanelReceiptAction(panelId);
+    setDispatchResult(null);
+    try {
+      const result = await recordOperatorActionReceipt({
+        action_command: `ui://workspace/agents/panel/${panelId}:refresh`,
+        verify_command: "agentops operator action-receipts --limit 20",
+        action_id: `ui_panel_diagnostics:${panelId}`,
+        action_signature: `ui_panel_diagnostics:${panelId}`,
+        source: "ui.panel_diagnostics",
+        status: panelDiagnosticReceiptStatus(panelId),
+        result_summary: panelDiagnosticSummary(panelId),
+      });
+      setDispatchResult(`${copy.panelReceiptRecorded}: ${result.status} · ${result.receipt?.receipt_id || actionKey}`);
+      await refreshPanel("operator_action_receipts");
+      await refreshPanel("operator_action_plan");
+      await refreshPanel("operator_loop_audit");
+      await refreshPanel("operator_handoff");
+    } catch (err) {
+      setDispatchResult(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPanelReceiptAction((current) => current === panelId ? null : current);
+    }
+  };
   const panelDiagnosticsButton = (panelId: string) => (
     <button
       onClick={() => void copyIntakeCommand(panelDiagnosticJson(panelId))}
@@ -1532,6 +1580,21 @@ export function AIEmployees() {
       <Copy size={9} />
     </button>
   );
+  const panelReceiptButton = (panelId: string) => {
+    const busy = panelReceiptAction === panelId;
+    return (
+      <button
+        onClick={() => void recordPanelDiagnosticReceipt(panelId)}
+        disabled={Boolean(panelReceiptAction)}
+        className="inline-flex items-center justify-center h-5 w-5 rounded disabled:opacity-50"
+        style={{ color: busy ? "var(--mis-cyan)" : "var(--mis-success)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}
+        title={copy.recordPanelDiagnostics}
+        aria-label={copy.recordPanelDiagnostics}
+      >
+        {busy ? <RefreshCw size={9} /> : <Activity size={9} />}
+      </button>
+    );
+  };
   const panelRefreshButton = (panelId: string) => (
     <button
       onClick={() => void refreshPanel(panelId)}
@@ -3299,6 +3362,7 @@ export function AIEmployees() {
               {panelStatusBadge("worker_status")}
               {panelRefreshButton("worker_status")}
               {panelDiagnosticsButton("worker_status")}
+              {panelReceiptButton("worker_status")}
             </div>
             <p className="text-[11px] mt-1 max-w-3xl" style={{ color: "var(--mis-dim)" }}>{copy.commandCenterSummary}</p>
             {panelEvidenceLine("worker_status")}
@@ -3348,6 +3412,7 @@ export function AIEmployees() {
                 {panelStatusBadge("operator_evidence_report")}
                 {panelRefreshButton("operator_evidence_report")}
                 {panelDiagnosticsButton("operator_evidence_report")}
+                {panelReceiptButton("operator_evidence_report")}
                 <StatusBadge status={operatorEvidenceReport?.safety?.read_only && !operatorEvidenceReport?.safety?.ledger_mutated ? "pass" : "attention"} label={operatorEvidenceReport?.safety?.read_only ? copy.readOnlyProof : copy.statusAttention} />
               </div>
               <p className="text-[10px] mt-1 max-w-4xl" style={{ color: "var(--mis-dim)" }}>{copy.evidenceReportSummary}</p>
@@ -3571,6 +3636,7 @@ export function AIEmployees() {
                 {panelStatusBadge("operator_loop_audit")}
                 {panelRefreshButton("operator_loop_audit")}
                 {panelDiagnosticsButton("operator_loop_audit")}
+                {panelReceiptButton("operator_loop_audit")}
               </div>
               <p className="text-[10px] mt-1 max-w-4xl" style={{ color: "var(--mis-dim)" }}>
                 {copy.loopAuditSummary}
@@ -3750,6 +3816,7 @@ export function AIEmployees() {
                     {panelStatusBadge("operator_handoff")}
                     {panelRefreshButton("operator_handoff")}
                     {panelDiagnosticsButton("operator_handoff")}
+                    {panelReceiptButton("operator_handoff")}
                     <StatusBadge status={operatorHandoff.safety.read_only && !operatorHandoff.safety.ledger_mutated && !operatorHandoff.safety.live_execution_performed ? "pass" : "attention"} label={operatorHandoff.safety.read_only ? copy.readOnlyProof : copy.statusAttention} />
                   </div>
                   <div className="text-[9px] mt-0.5 max-w-4xl" style={{ color: "var(--mis-muted)" }}>{copy.operatorHandoffSummary}</div>
@@ -4250,6 +4317,7 @@ export function AIEmployees() {
                 {panelStatusBadge("operator_action_plan")}
                 {panelRefreshButton("operator_action_plan")}
                 {panelDiagnosticsButton("operator_action_plan")}
+                {panelReceiptButton("operator_action_plan")}
               </div>
               <p className="text-[10px] mt-1" style={{ color: "var(--mis-muted)" }}>
                 {copy.actionQueueSummary}
