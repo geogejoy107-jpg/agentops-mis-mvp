@@ -141,6 +141,7 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
         "receipt_failure_memory_failed_receipts",
         "receipt_failure_memory_existing_candidates",
         "receipt_failure_memory_work_items",
+        "advance_loop_work_items",
     ]:
         require(isinstance(summary.get(key), int), f"{label} summary.{key} missing: {summary}", failures)
     loop_health_gates = loop_health.get("gates") or {}
@@ -159,6 +160,15 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
     require(isinstance(work_order.get("commands") or [], list), f"{label} commands missing: {work_order}", failures)
     action_package = work_order.get("action_package") or {}
     require(action_package.get("operation") == "loop_action_package", f"{label} action_package missing: {action_package}", failures)
+    advance_loop = work_order.get("advance_loop") or {}
+    require(advance_loop.get("operation") == "advance_loop_work_order", f"{label} advance loop work order missing: {advance_loop}", failures)
+    require(advance_loop.get("status") in {"attention", "empty"}, f"{label} advance loop status wrong: {advance_loop}", failures)
+    require("advance-loop" in str(advance_loop.get("preview_command") or ""), f"{label} advance loop preview command missing: {advance_loop}", failures)
+    require("--confirm-advance" in str(advance_loop.get("confirm_command") or ""), f"{label} advance loop confirm command missing: {advance_loop}", failures)
+    advance_safety = advance_loop.get("safety") or {}
+    require(advance_safety.get("read_only") is True, f"{label} advance loop handoff should be read-only: {advance_safety}", failures)
+    require(advance_safety.get("server_shell_execution") is False, f"{label} advance loop should not execute shell from server: {advance_safety}", failures)
+    require(advance_loop.get("token_omitted") is True, f"{label} advance loop token omission missing: {advance_loop}", failures)
     receipt_failure_work_order = work_order.get("receipt_failure_memory") or {}
     require(receipt_failure_work_order.get("operation") == "receipt_failure_memory_work_order", f"{label} receipt failure memory work order missing: {receipt_failure_work_order}", failures)
     require(receipt_failure_work_order.get("status") in {"attention", "empty"}, f"{label} receipt failure memory work order status wrong: {receipt_failure_work_order}", failures)

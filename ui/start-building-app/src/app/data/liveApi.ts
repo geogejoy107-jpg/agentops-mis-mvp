@@ -1502,6 +1502,7 @@ export interface OperatorHandoffPayload {
     receipt_failure_memory_candidates: number;
     receipt_failure_memory_failed_receipts: number;
     receipt_failure_memory_existing_candidates: number;
+    advance_loop_work_items?: number;
     loop_record_status?: string;
     loop_record_candidates: number;
     loop_record_approved: number;
@@ -1512,6 +1513,7 @@ export interface OperatorHandoffPayload {
     action_package?: OperatorLoopActionPackagePayload;
     next_actions: string[];
     top_operator_actions: OperatorActionPlanItem[];
+    advance_loop?: Record<string, unknown>;
     commands: string[];
     token_omitted?: boolean;
   };
@@ -4452,6 +4454,7 @@ export async function loadOperatorHandoff(limit = 12, loopId = ""): Promise<Oper
       receipt_failure_memory_candidates: numberValue(summaryRaw.receipt_failure_memory_candidates, 0),
       receipt_failure_memory_failed_receipts: numberValue(summaryRaw.receipt_failure_memory_failed_receipts, 0),
       receipt_failure_memory_existing_candidates: numberValue(summaryRaw.receipt_failure_memory_existing_candidates, 0),
+      advance_loop_work_items: numberValue(summaryRaw.advance_loop_work_items, 0),
       loop_record_status: summaryRaw.loop_record_status ? String(summaryRaw.loop_record_status) : undefined,
       loop_record_candidates: numberValue(summaryRaw.loop_record_candidates, 0),
       loop_record_approved: numberValue(summaryRaw.loop_record_approved, 0),
@@ -4461,6 +4464,7 @@ export async function loadOperatorHandoff(limit = 12, loopId = ""): Promise<Oper
       method: workOrderRaw.method ? String(workOrderRaw.method) : undefined,
       action_package: normalizeOperatorLoopActionPackage(workOrderRaw.action_package, loopId),
       next_actions: asArray<unknown>(workOrderRaw.next_actions).map(String).filter(Boolean),
+      advance_loop: typeof workOrderRaw.advance_loop === "object" && workOrderRaw.advance_loop !== null ? workOrderRaw.advance_loop as Record<string, unknown> : undefined,
       top_operator_actions: asArray<Record<string, unknown>>(workOrderRaw.top_operator_actions).map((item) => ({
         action_id: String(item.action_id || item.command || item.title || ""),
         action_signature: item.action_signature ? String(item.action_signature) : null,

@@ -16,7 +16,9 @@ import hashlib
 import io
 import json
 import os
+import shlex
 import stat
+import subprocess
 import sys
 import time
 import uuid
@@ -456,6 +458,252 @@ def cmd_operator_loop_launch_packet(args, client: AgentOpsClient) -> dict:
             "q": args.query,
         },
     )
+
+
+def agentops_cli_command(argv: list[str], client: AgentOpsClient) -> tuple[list[str], dict]:
+    repo_cli = Path(__file__).resolve().parents[1] / "scripts" / "agentops"
+    cli_entry = Path(sys.argv[0])
+    if repo_cli.exists():
+        executable = str(repo_cli)
+    elif cli_entry.exists() and os.access(cli_entry, os.X_OK):
+        executable = str(cli_entry)
+    else:
+        executable = "agentops"
+    env = os.environ.copy()
+    env["AGENTOPS_BASE_URL"] = client.base_url
+    env["AGENTOPS_WORKSPACE_ID"] = client.workspace_id
+    if client.agent_id:
+        env["AGENTOPS_AGENT_ID"] = client.agent_id
+    if client.api_key:
+        env["AGENTOPS_API_KEY"] = client.api_key
+    return [executable, "--base-url", client.base_url, *argv[1:]], env
+
+
+def advance_loop_command_policy(command: str, *, phase: str) -> dict:
+    try:
+        argv = shlex.split(command)
+    except ValueError as exc:
+        return {"allowed": False, "reason": f"invalid shell syntax: {exc}", "argv": [], "token_omitted": True}
+    if not argv or argv[0] != "agentops":
+        return {"allowed": False, "reason": "command must start with agentops", "argv": argv, "token_omitted": True}
+    joined = " ".join(argv)
+    denied_flags = {
+        "--confirm-run",
+        "--confirm-live",
+        "--confirm-create",
+        "--confirm-upload",
+        "--confirm-delete",
+        "--live",
+        "--async-job",
+    }
+    if any(flag in argv for flag in denied_flags):
+        return {"allowed": False, "reason": "command contains a confirmation/live/external-write flag", "argv": argv[:4], "token_omitted": True}
+    if len(argv) < 3:
+        return {"allowed": False, "reason": "command is too short for bounded runner policy", "argv": argv, "token_omitted": True}
+    namespace = argv[1]
+    action = argv[2]
+    if namespace in {"approval", "session", "enrollment"}:
+        return {"allowed": False, "reason": f"{namespace} commands require explicit human/session handling", "argv": argv[:4], "token_omitted": True}
+    if namespace == "memory" and action in {"approve", "reject"}:
+        return {"allowed": False, "reason": "memory approval/rejection remains human-review only", "argv": argv[:4], "token_omitted": True}
+    if namespace == "worker" and action in {"start", "stop", "restart", "release-stuck"}:
+        return {"allowed": False, "reason": "worker lifecycle commands are outside bounded loop advance", "argv": argv[:4], "token_omitted": True}
+    if namespace == "workflow":
+        return {"allowed": False, "reason": "workflow commands can dispatch substantial work and are not auto-run here", "argv": argv[:4], "token_omitted": True}
+    if namespace == "task" and action in {"pull", "claim", "create"}:
+        return {"allowed": False, "reason": "task queue mutation is not part of this bounded operator runner", "argv": argv[:4], "token_omitted": True}
+    if namespace == "operator" and action in {"remediate-evidence-gap", "close-evidence-gap", "propose-receipt-failure-memory"}:
+        return {"allowed": False, "reason": f"operator {action} requires a dedicated explicit confirmation path", "argv": argv[:4], "token_omitted": True}
+    allowed_read_commands = {
+        ("operator", "loop-audit"),
+        ("operator", "action-plan"),
+        ("operator", "handoff"),
+        ("operator", "health"),
+        ("operator", "intake-checklist"),
+        ("operator", "receipt-failure-memories"),
+        ("knowledge", "search"),
+        ("review", "queue"),
+        ("security", "production-readiness"),
+        ("worker", "status"),
+        ("worker", "readiness"),
+        ("status", ""),
+        ("doctor", ""),
+    }
+    allowed_mutating_commands = {
+        ("knowledge", "index"),
+        ("memory", "propose"),
+    }
+    key = (namespace, action)
+    if phase == "verify":
+        if key in allowed_read_commands or namespace in {"status", "doctor"}:
+            return {"allowed": True, "reason": "read-only verify command is allowlisted", "argv": argv, "token_omitted": True}
+        return {"allowed": False, "reason": f"verify command {namespace} {action} is not allowlisted", "argv": argv[:4], "token_omitted": True}
+    if key == ("memory", "propose") and ("--type" not in argv or "loop_record" not in argv):
+        return {"allowed": False, "reason": "bounded runner can only auto-propose loop_record memory candidates", "argv": argv[:6], "token_omitted": True}
+    if key in allowed_mutating_commands or key in allowed_read_commands:
+        return {"allowed": True, "reason": f"{namespace} {action} is allowlisted for bounded loop advance", "argv": argv, "token_omitted": True}
+    return {"allowed": False, "reason": f"command {namespace} {action} is not allowlisted", "argv": argv[:4], "token_omitted": True}
+
+
+def run_bounded_agentops_command(command: str, client: AgentOpsClient, *, timeout: int) -> dict:
+    policy = advance_loop_command_policy(command, phase="action")
+    if not policy.get("allowed"):
+        return {
+            "ok": False,
+            "blocked": True,
+            "policy": policy,
+            "returncode": None,
+            "stdout_summary": None,
+            "stderr_summary": policy.get("reason"),
+            "raw_output_omitted": True,
+            "token_omitted": True,
+        }
+    argv, env = agentops_cli_command(policy["argv"], client)
+    proc = subprocess.run(argv, cwd=Path.cwd(), env=env, capture_output=True, text=True, timeout=timeout, check=False)
+    return {
+        "ok": proc.returncode == 0,
+        "blocked": False,
+        "policy": {**policy, "argv": policy.get("argv", [])[:4]},
+        "returncode": proc.returncode,
+        "stdout_summary": redact_text(proc.stdout, 600) if proc.stdout else None,
+        "stderr_summary": redact_text(proc.stderr, 600) if proc.stderr else None,
+        "raw_output_omitted": True,
+        "token_omitted": True,
+    }
+
+
+def select_advance_loop_item(handoff: dict) -> dict:
+    action_package = ((handoff.get("work_order") or {}).get("action_package") or {})
+    for item in action_package.get("items") or []:
+        command = str(item.get("action_command") or "").strip()
+        if not command:
+            continue
+        if item.get("gate_status") == "pass":
+            continue
+        policy = advance_loop_command_policy(command, phase="action")
+        if policy.get("allowed"):
+            return {**item, "advance_policy": policy}
+    return {}
+
+
+def cmd_operator_advance_loop(args, client: AgentOpsClient) -> dict:
+    handoff = client.get("/api/operator/handoff", query={"limit": args.limit, "loop_id": args.loop_id or None})
+    selected = select_advance_loop_item(handoff)
+    if not selected:
+        return {
+            "provider": "agentops-operator",
+            "operation": "operator_advance_loop",
+            "status": "empty",
+            "advanced": False,
+            "message": "No allowlisted non-passing loop action is available in the handoff action package.",
+            "handoff_status": handoff.get("status"),
+            "safety": {
+                "read_only": True,
+                "ledger_mutated": False,
+                "live_execution_performed": False,
+                "token_omitted": True,
+            },
+            "token_omitted": True,
+        }
+    action_command = str(selected.get("action_command") or "")
+    verify_command = str(selected.get("verify_command") or "")
+    verify_policy = advance_loop_command_policy(verify_command, phase="verify") if verify_command else {"allowed": True, "reason": "no verify command supplied", "argv": [], "token_omitted": True}
+    preview = {
+        "package_id": selected.get("package_id"),
+        "gate_id": selected.get("gate_id"),
+        "gate_status": selected.get("gate_status"),
+        "action_command": redact_text(action_command, 500),
+        "verify_command": redact_text(verify_command, 500) if verify_command else None,
+        "action_policy": selected.get("advance_policy") or {},
+        "verify_policy": verify_policy,
+        "receipt_status_on_success": "verified",
+        "receipt_status_on_failure": "failed",
+        "token_omitted": True,
+    }
+    if not args.confirm_advance:
+        return {
+            "provider": "agentops-operator",
+            "operation": "operator_advance_loop",
+            "status": "preview",
+            "advanced": False,
+            "preview": preview,
+            "next_actions": ["rerun with --confirm-advance to execute exactly one allowlisted loop action"],
+            "contract": "preview-only; does not execute commands and does not mutate ledgers without --confirm-advance",
+            "safety": {
+                "read_only": True,
+                "ledger_mutated": False,
+                "live_execution_performed": False,
+                "token_omitted": True,
+            },
+            "token_omitted": True,
+        }
+    if not verify_policy.get("allowed"):
+        return {
+            "provider": "agentops-operator",
+            "operation": "operator_advance_loop",
+            "status": "blocked",
+            "advanced": False,
+            "preview": preview,
+            "message": "Verify command failed bounded-runner policy.",
+            "safety": {
+                "read_only": True,
+                "ledger_mutated": False,
+                "live_execution_performed": False,
+                "token_omitted": True,
+            },
+            "token_omitted": True,
+        }
+    action_result = run_bounded_agentops_command(action_command, client, timeout=args.timeout)
+    verify_result = None
+    if action_result.get("ok") and verify_command:
+        verify_policy_payload = advance_loop_command_policy(verify_command, phase="verify")
+        argv, env = agentops_cli_command(verify_policy_payload["argv"], client)
+        proc = subprocess.run(argv, cwd=Path.cwd(), env=env, capture_output=True, text=True, timeout=args.timeout, check=False)
+        verify_result = {
+            "ok": proc.returncode == 0,
+            "policy": {**verify_policy_payload, "argv": verify_policy_payload.get("argv", [])[:4]},
+            "returncode": proc.returncode,
+            "stdout_summary": redact_text(proc.stdout, 600) if proc.stdout else None,
+            "stderr_summary": redact_text(proc.stderr, 600) if proc.stderr else None,
+            "raw_output_omitted": True,
+            "token_omitted": True,
+        }
+    succeeded = bool(action_result.get("ok")) and (verify_result is None or bool(verify_result.get("ok")))
+    receipt_payload = {
+        "workspace_id": client.workspace_id,
+        "actor_id": args.actor_id,
+        "action_command": action_command,
+        "verify_command": verify_command,
+        "action_id": selected.get("action_id"),
+        "action_signature": selected.get("action_signature"),
+        "source": f"advance_loop:{selected.get('gate_id') or 'gate'}",
+        "status": "verified" if succeeded else "failed",
+        "result_summary": (
+            f"advance-loop {'verified' if succeeded else 'failed'} gate {selected.get('gate_id') or 'unknown'}; "
+            f"action_rc={action_result.get('returncode')} verify_rc={(verify_result or {}).get('returncode')}"
+        ),
+    }
+    receipt = client.post("/api/operator/action-receipts", receipt_payload)
+    return {
+        "provider": "agentops-operator",
+        "operation": "operator_advance_loop",
+        "status": "advanced" if succeeded else "failed",
+        "advanced": True,
+        "confirm_advance": True,
+        "preview": preview,
+        "action_result": action_result,
+        "verify_result": verify_result,
+        "receipt": receipt,
+        "contract": "bounded CLI runner; executes at most one allowlisted local agentops action, verifies it, and records an append-only receipt; never approves memory or runs live/workflow commands",
+        "safety": {
+            "read_only": False,
+            "ledger_mutated": True,
+            "live_execution_performed": False,
+            "raw_output_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
 
 
 def cmd_operator_remediate_evidence_gap(args, client: AgentOpsClient) -> dict:
@@ -1795,6 +2043,13 @@ def build_parser() -> argparse.ArgumentParser:
     operator_handoff.add_argument("--loop-id", default=None)
     operator_handoff.add_argument("--limit", type=int, default=12)
     operator_handoff.set_defaults(handler="operator_handoff")
+    operator_advance = operator_sub.add_parser("advance-loop", help="Preview or execute one bounded allowlisted loop action, verify it, and record a receipt.")
+    operator_advance.add_argument("--loop-id", default=None)
+    operator_advance.add_argument("--limit", type=int, default=12)
+    operator_advance.add_argument("--timeout", type=int, default=90)
+    operator_advance.add_argument("--actor-id", default="usr_founder")
+    operator_advance.add_argument("--confirm-advance", action="store_true", help="Execute exactly one allowlisted local agentops action and record its receipt.")
+    operator_advance.set_defaults(handler="operator_advance_loop")
     operator_health = operator_sub.add_parser("health", help="Read the aggregate operator health snapshot across loop, readiness, security, worker, review, and action queues.")
     operator_health.add_argument("--loop-id", default=None)
     operator_health.add_argument("--limit", type=int, default=12)
@@ -2570,6 +2825,7 @@ HANDLERS = {
     "operator_propose_receipt_failure_memory": cmd_operator_propose_receipt_failure_memory,
     "operator_loop_audit": cmd_operator_loop_audit,
     "operator_handoff": cmd_operator_handoff,
+    "operator_advance_loop": cmd_operator_advance_loop,
     "operator_health": cmd_operator_health,
     "operator_intake_checklist": cmd_operator_intake_checklist,
     "operator_loop_launch_packet": cmd_operator_loop_launch_packet,

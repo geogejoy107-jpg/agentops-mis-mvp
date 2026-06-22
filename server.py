@@ -30,7 +30,7 @@ import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
@@ -186,6 +186,11 @@ def db() -> sqlite3.Connection:
 
 def rows_to_dicts(rows):
     return [dict(r) for r in rows]
+
+
+def path_segment(path: str, index: int = -1) -> str:
+    """Return a URL-decoded path segment for IDs carried in REST paths."""
+    return unquote(path.split("/")[index])
 
 
 def row_unchanged(before, row: dict, ignore=None) -> bool:
@@ -16722,6 +16727,54 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
         },
         "token_omitted": True,
     }
+    advance_loop_args = ["agentops", "operator", "advance-loop", "--limit", str(limit)]
+    scoped_loop_id = str(loop_audit.get("loop_id") or loop_id or "").strip()
+    if scoped_loop_id:
+        advance_loop_args.extend(["--loop-id", scoped_loop_id])
+    advance_loop_preview_command = " ".join(shlex.quote(str(part)) for part in advance_loop_args)
+    advance_loop_confirm_command = " ".join(shlex.quote(str(part)) for part in [*advance_loop_args, "--confirm-advance"])
+    advance_loop_selected_item = next((item for item in action_package_items if item.get("gate_status") != "pass" and item.get("action_command")), None)
+    advance_loop_work_order = {
+        "operation": "advance_loop_work_order",
+        "status": "attention" if advance_loop_selected_item else "empty",
+        "summary": {
+            "items": len(action_package_items),
+            "selected_gate": (advance_loop_selected_item or {}).get("gate_id"),
+            "selected_status": (advance_loop_selected_item or {}).get("gate_status"),
+            "loop_scoped": bool(scoped_loop_id),
+        },
+        "selected_item": {
+            "package_id": (advance_loop_selected_item or {}).get("package_id"),
+            "gate_id": (advance_loop_selected_item or {}).get("gate_id"),
+            "gate_label": (advance_loop_selected_item or {}).get("gate_label"),
+            "gate_status": (advance_loop_selected_item or {}).get("gate_status"),
+            "action_command": (advance_loop_selected_item or {}).get("action_command"),
+            "verify_command": (advance_loop_selected_item or {}).get("verify_command"),
+            "receipt_verify_record_command": (advance_loop_selected_item or {}).get("receipt_verify_record_command"),
+            "token_omitted": True,
+        } if advance_loop_selected_item else None,
+        "preview_command": advance_loop_preview_command,
+        "confirm_command": advance_loop_confirm_command,
+        "next_actions": [advance_loop_preview_command, advance_loop_confirm_command] if advance_loop_selected_item else [advance_loop_preview_command],
+        "policy": {
+            "runner_location": "local_cli",
+            "max_actions": 1,
+            "allowlisted_examples": ["agentops knowledge index", "agentops memory propose --type loop_record"],
+            "refuses": ["approval decisions", "memory approval", "worker lifecycle", "workflow dispatch", "live/confirm flags", "external-write paths"],
+            "server_executes_shell": False,
+            "token_omitted": True,
+        },
+        "contract": "handoff only exposes bounded runner commands; the server does not execute shell commands and confirmation must happen through the local CLI",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_shell_execution": False,
+            "confirm_required": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
     loop_record_status = str(loop_record.get("status") or "unknown")
     loop_health_risks: list[dict] = []
     if loop_blocked:
@@ -16747,6 +16800,10 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
         loop_health_risks.append({"id": "auth_boundary_unknown", "severity": "blocked", "count": 1, "next_action": "agentops status"})
     safety_ready = True
     handoff_commands: list[str] = []
+    for command in advance_loop_work_order.get("next_actions") or []:
+        command = str(command or "").strip()
+        if command and command not in handoff_commands:
+            handoff_commands.append(command)
     for item in receipt_failure_work_order_items:
         for key in ["preview_command", "create_command", "review_command"]:
             command = str(item.get(key) or "").strip()
@@ -16855,6 +16912,7 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
             "receipt_failure_memory_failed_receipts": receipt_failure_memory_failed_receipts,
             "receipt_failure_memory_existing_candidates": receipt_failure_memory_existing_candidates,
             "receipt_failure_memory_work_items": len(receipt_failure_work_order_items),
+            "advance_loop_work_items": 1 if advance_loop_selected_item else 0,
             "loop_record_status": loop_record.get("status"),
             "loop_record_candidates": loop_record.get("candidate_count", 0),
             "loop_record_approved": loop_record.get("approved_count", 0),
@@ -16866,6 +16924,7 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
             "next_actions": loop_audit.get("next_actions") or [],
             "top_operator_actions": action_plan_actions[: min(limit, 8)],
             "receipt_failure_memory": receipt_failure_work_order,
+            "advance_loop": advance_loop_work_order,
             "commands": handoff_commands[:20],
             "token_omitted": True,
         },
@@ -18322,7 +18381,7 @@ class Handler(BaseHTTPRequestHandler):
                     requested_header_workspace = normalize_workspace_id(self.headers.get("X-AgentOps-Workspace-Id") or auth_ctx["workspace_id"])
                     if requested_header_workspace != auth_ctx["workspace_id"]:
                         return self.send_json({"error": "forbidden", "message": "Agent token cannot use another workspace header."}, 403)
-                task_id = path.split("/")[-1]
+                task_id = path_segment(path)
                 payload, status = agent_gateway_get_task(conn, task_id, self.headers, auth_ctx)
                 conn.commit()
                 return self.send_json(payload, status)
@@ -18350,7 +18409,7 @@ class Handler(BaseHTTPRequestHandler):
                     requested_header_workspace = normalize_workspace_id(self.headers.get("X-AgentOps-Workspace-Id") or auth_ctx["workspace_id"])
                     if requested_header_workspace != auth_ctx["workspace_id"]:
                         return self.send_json({"error": "forbidden", "message": "Agent token cannot use another workspace header."}, 403)
-                run_id = path.split("/")[-2]
+                run_id = path_segment(path, -2)
                 payload, status = agent_gateway_get_run_graph(conn, run_id, self.headers, auth_ctx)
                 conn.commit()
                 return self.send_json(payload, status)
@@ -18362,7 +18421,7 @@ class Handler(BaseHTTPRequestHandler):
                     requested_header_workspace = normalize_workspace_id(self.headers.get("X-AgentOps-Workspace-Id") or auth_ctx["workspace_id"])
                     if requested_header_workspace != auth_ctx["workspace_id"]:
                         return self.send_json({"error": "forbidden", "message": "Agent token cannot use another workspace header."}, 403)
-                run_id = path.split("/")[-1]
+                run_id = path_segment(path)
                 payload, status = agent_gateway_get_run(conn, run_id, self.headers, auth_ctx)
                 conn.commit()
                 return self.send_json(payload, status)
@@ -18419,10 +18478,10 @@ class Handler(BaseHTTPRequestHandler):
                 if auth_error:
                     return self.send_json(auth_error, agent_gateway_error_status(auth_error))
                 if path.endswith("/verify"):
-                    plan_id = path.split("/")[-2]
+                    plan_id = path_segment(path, -2)
                     payload, status = verify_agent_plan(conn, plan_id, self.headers, auth_ctx)
                 else:
-                    plan_id = path.split("/")[-1]
+                    plan_id = path_segment(path)
                     payload, status = get_agent_plan(conn, plan_id, self.headers, auth_ctx)
                 conn.commit()
                 return self.send_json(payload, status)
@@ -18447,10 +18506,10 @@ class Handler(BaseHTTPRequestHandler):
                 if auth_error:
                     return self.send_json(auth_error, agent_gateway_error_status(auth_error))
                 if path.endswith("/verify"):
-                    manifest_id = path.split("/")[-2]
+                    manifest_id = path_segment(path, -2)
                     payload, status = verify_plan_evidence_manifest(conn, manifest_id, self.headers, auth_ctx)
                 else:
-                    manifest_id = path.split("/")[-1]
+                    manifest_id = path_segment(path)
                     payload, status = get_plan_evidence_manifest(conn, manifest_id, self.headers, auth_ctx)
                 conn.commit()
                 return self.send_json(payload, status)
@@ -18474,7 +18533,7 @@ class Handler(BaseHTTPRequestHandler):
                 auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
                 if auth_error:
                     return self.send_json(auth_error, agent_gateway_error_status(auth_error))
-                approval_id = path.split("/")[-1]
+                approval_id = path_segment(path)
                 payload, status = agent_gateway_get_approval(conn, approval_id, self.headers, auth_ctx)
                 conn.rollback()
                 return self.send_json(payload, status)
@@ -18482,7 +18541,7 @@ class Handler(BaseHTTPRequestHandler):
                 auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
                 if auth_error:
                     return self.send_json(auth_error, agent_gateway_error_status(auth_error))
-                action_id = path.split("/")[-1]
+                action_id = path_segment(path)
                 payload, status = agent_gateway_get_prepared_action(conn, action_id, self.headers, auth_ctx)
                 conn.rollback()
                 return self.send_json(payload, status)
@@ -18816,12 +18875,12 @@ class Handler(BaseHTTPRequestHandler):
                     body["source"] = "agent-gateway"
                     payload, status = create_task_api(conn, body)
                 elif path.startswith("/api/agent-gateway/tasks/") and path.endswith("/claim"):
-                    task_id = path.split("/")[-2]
+                    task_id = path_segment(path, -2)
                     payload, status = agent_gateway_claim_task(conn, task_id, body)
                 elif path == "/api/agent-gateway/runs/start":
                     payload, status = agent_gateway_start_run(conn, body)
                 elif path.startswith("/api/agent-gateway/runs/") and path.endswith("/heartbeat"):
-                    run_id = path.split("/")[-2]
+                    run_id = path_segment(path, -2)
                     payload, status = agent_gateway_run_heartbeat(conn, run_id, body)
                 elif path == "/api/agent-gateway/tool-calls":
                     payload, status = agent_gateway_record_tool_call(conn, body)
@@ -18841,7 +18900,7 @@ class Handler(BaseHTTPRequestHandler):
                 elif path == "/api/agent-gateway/prepared-actions":
                     payload, status = agent_gateway_prepare_action(conn, body)
                 elif path.startswith("/api/agent-gateway/prepared-actions/") and path.endswith("/resume"):
-                    action_id = path.split("/")[-2]
+                    action_id = path_segment(path, -2)
                     payload, status = agent_gateway_resume_prepared_action(conn, action_id, body)
                 elif path == "/api/agent-gateway/memories/propose":
                     payload, status = agent_gateway_memory_propose(conn, body)

@@ -196,7 +196,7 @@ python3 scripts/worker_adapter_retry_smoke.py
 - [ ] Task, run, artifact, approval, memory and review queue use the same scope service.
 - [x] Knowledge search applies its intended workspace/access policy.
 - [x] Add similar-ID regression with `scripts/collaborator_exact_scope_smoke.py`.
-- [ ] Add special-character-ID regression.
+- [x] Add special-character-ID regression with `scripts/agent_gateway_special_char_scope_smoke.py`.
 - [x] Scoped review queue applies scope before limit.
 - [x] Scoped totals are not distorted by global truncation.
 
@@ -209,9 +209,17 @@ with the same task/run visibility helper before the combined queue is sorted.
 `scripts/agent_gateway_review_queue_smoke.py` creates 60 hidden candidates in a
 different workspace and requires the visible scoped item plus scoped totals to
 survive `limit=1`.
+`scripts/agent_gateway_special_char_scope_smoke.py` runs against an isolated
+SQLite database and verifies URL-encoded task/run/approval path ids plus
+workspace, agent, and task ids containing spaces, `+`, `%`, quotes, commas, and
+an encoded slash. It requires exact collaborator visibility, workspace-spoof
+rejection, scoped ledger list isolation, scoped review queue visibility, and no
+token-like leakage.
 
 ```bash
 python3 scripts/workspace_isolation_smoke.py
+python3 scripts/collaborator_exact_scope_smoke.py
+python3 scripts/agent_gateway_special_char_scope_smoke.py
 python3 scripts/agent_gateway_scope_matrix_smoke.py
 python3 scripts/agent_gateway_scoped_read_smoke.py
 python3 scripts/agent_gateway_reviewable_lists_smoke.py
@@ -292,8 +300,9 @@ Current automation:
 backend-deterministic: py_compile, diff-check, redaction, SQLite pragmas,
 startup security, production readiness, Agent Plan integrity, run-start plan
 gate, exact collaborator scoping, operator task intake, operator action plan,
-Gateway scope matrix, scoped reads, task-claim conflict, workspace isolation,
-and v1.5 local product acceptance against a temporary SQLite DB.
+Gateway scope matrix, special-character scoped IDs, scoped reads,
+task-claim conflict, workspace isolation, bounded operator loop advance, and
+v1.5 local product acceptance against a temporary SQLite DB.
 
 ui-build: npm ci + npm run build under ui/start-building-app.
 ```
@@ -329,12 +338,14 @@ python3 scripts/agentops_pip_install_smoke.py
 python3 scripts/agentops_status_smoke.py
 python3 scripts/agentops_doctor_smoke.py
 python3 scripts/agent_gateway_scope_matrix_smoke.py
+python3 scripts/agent_gateway_special_char_scope_smoke.py
 python3 scripts/agent_gateway_session_smoke.py
 python3 scripts/workspace_isolation_smoke.py
 python3 scripts/task_claim_conflict_smoke.py
 python3 scripts/agent_gateway_scoped_read_smoke.py
 python3 scripts/agent_gateway_reviewable_lists_smoke.py
 python3 scripts/agent_gateway_review_queue_smoke.py
+python3 scripts/operator_advance_loop_smoke.py
 python3 scripts/redaction_policy_smoke.py
 python3 scripts/security_production_readiness_smoke.py
 python3 scripts/worker_adapter_retry_smoke.py

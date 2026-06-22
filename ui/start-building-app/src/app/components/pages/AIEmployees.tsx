@@ -1,6 +1,6 @@
 import { Link } from "react-router";
 import { useEffect, useState } from "react";
-import { AlertTriangle, Bot, CheckCircle2, Play, RefreshCw, Activity, Power, Square, KeyRound, ShieldCheck, Trash2, RotateCw, Inbox, GripVertical, XCircle, Copy } from "lucide-react";
+import { AlertTriangle, Bot, CheckCircle2, Play, RefreshCw, Activity, Power, Square, KeyRound, ShieldCheck, Trash2, RotateCw, Inbox, GripVertical, XCircle, Copy, Terminal } from "lucide-react";
 import { StatusBadge } from "../shared/StatusBadge";
 import {
   createAgentGatewayEnrollment,
@@ -378,6 +378,11 @@ export function AIEmployees() {
       operatorHandoffTitle: "Operator handoff",
       operatorHandoffSummary: "Read-only handoff package for Hermes, OpenClaw, Codex, or a human operator: loop work order, receipts, review state, and source proof.",
       handoffCommands: "Handoff commands",
+      advanceLoopTitle: "Bounded advance",
+      advanceLoopSummary: "Copy the local CLI runner that advances one allowlisted loop action, verifies it, and records a receipt.",
+      previewAdvanceLoop: "Preview advance",
+      confirmAdvanceLoop: "Confirm CLI",
+      advanceLoopPolicy: "Local CLI only; no approvals, live runs, workflow dispatch, or server shell execution.",
       handoffSources: "Sources",
       authBoundary: "Auth boundary",
       loopHealth: "Loop health",
@@ -786,6 +791,11 @@ export function AIEmployees() {
       operatorHandoffTitle: "Operator 交接包",
       operatorHandoffSummary: "给 Hermes、OpenClaw、Codex 或人工 operator 的只读交接包：Loop 执行包、收据、评审状态和来源证明。",
       handoffCommands: "交接命令",
+      advanceLoopTitle: "受限推进",
+      advanceLoopSummary: "复制本地 CLI runner：只推进一个 allowlist loop 动作、验收并记录收据。",
+      previewAdvanceLoop: "预览推进",
+      confirmAdvanceLoop: "确认 CLI",
+      advanceLoopPolicy: "仅本地 CLI；不审批、不 live run、不调度 workflow、不让服务端执行 shell。",
       handoffSources: "来源",
       authBoundary: "认证边界",
       loopHealth: "Loop 健康",
@@ -1233,6 +1243,19 @@ export function AIEmployees() {
   const loopActionPackageItems = loopActionPackage?.items || [];
   const operatorHandoffSummary = operatorHandoff?.summary;
   const operatorHandoffCommands = operatorHandoff?.work_order?.commands || [];
+  const advanceLoopRaw = (
+    operatorHandoff?.work_order?.advance_loop &&
+    typeof operatorHandoff.work_order.advance_loop === "object"
+      ? operatorHandoff.work_order.advance_loop as Record<string, unknown>
+      : {}
+  );
+  const advanceLoopSummaryRaw = typeof advanceLoopRaw.summary === "object" && advanceLoopRaw.summary !== null ? advanceLoopRaw.summary as Record<string, unknown> : {};
+  const advanceLoopPolicyRaw = typeof advanceLoopRaw.policy === "object" && advanceLoopRaw.policy !== null ? advanceLoopRaw.policy as Record<string, unknown> : {};
+  const advanceLoopPreviewCommand = String(advanceLoopRaw.preview_command || "agentops operator advance-loop --limit 12");
+  const advanceLoopConfirmCommand = String(advanceLoopRaw.confirm_command || `${advanceLoopPreviewCommand} --confirm-advance`);
+  const advanceLoopSelectedGate = String(advanceLoopSummaryRaw.selected_gate || "—");
+  const advanceLoopSelectedStatus = String(advanceLoopSummaryRaw.selected_status || advanceLoopRaw.status || "unknown");
+  const advanceLoopServerShell = Boolean(advanceLoopPolicyRaw.server_executes_shell);
   const operatorHandoffSources = operatorHandoff?.sources || {};
   const operatorHandoffJson = operatorHandoff ? JSON.stringify({
     summary: operatorHandoff.summary,
@@ -3181,7 +3204,7 @@ export function AIEmployees() {
                   </div>
                 ))}
               </div>
-              <div className="grid grid-cols-1 xl:grid-cols-4 gap-2 mt-2">
+              <div className="grid grid-cols-1 xl:grid-cols-5 gap-2 mt-2">
                 <div className="rounded px-2 py-1.5" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
                   <div className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.loopHealth}</div>
                   <div className="text-[9px] mt-1" style={{ color: "var(--mis-muted)" }}>
@@ -3198,6 +3221,38 @@ export function AIEmployees() {
                   </div>
                   <div className="text-[9px] mt-0.5" style={{ color: "var(--mis-dim)" }}>
                     {copy.actionReceipts}: {operatorHandoff.receipt_state.summary.receipts ?? operatorHandoff.receipt_state.recent.length}/{operatorHandoff.receipt_state.summary.verified ?? 0}
+                  </div>
+                </div>
+                <div className="rounded px-2 py-1.5" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-[10px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{copy.advanceLoopTitle}</div>
+                    <StatusBadge status={advanceLoopRaw.status ? String(advanceLoopRaw.status) : "empty"} />
+                  </div>
+                  <div className="text-[9px] mt-1 truncate" style={{ color: "var(--mis-muted)" }}>
+                    {copy.nextGateAction}: {advanceLoopSelectedGate} · {advanceLoopSelectedStatus}
+                  </div>
+                  <div className="text-[9px] mt-0.5 truncate" style={{ color: advanceLoopServerShell ? "#F87171" : "var(--mis-dim)" }}>
+                    {copy.advanceLoopPolicy}
+                  </div>
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    <button
+                      onClick={() => void copyIntakeCommand(advanceLoopPreviewCommand)}
+                      className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded max-w-full"
+                      style={{ color: "var(--mis-cyan)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}
+                      title={copy.advanceLoopSummary}
+                    >
+                      <Copy size={9} />
+                      <span className="truncate max-w-[130px]">{copiedIntakeCommand === advanceLoopPreviewCommand ? copy.copiedCommand : copy.previewAdvanceLoop}</span>
+                    </button>
+                    <button
+                      onClick={() => void copyIntakeCommand(advanceLoopConfirmCommand)}
+                      className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded max-w-full"
+                      style={{ color: "var(--mis-success)", background: "rgba(45,212,191,0.08)", border: "1px solid rgba(45,212,191,0.18)" }}
+                      title={advanceLoopConfirmCommand}
+                    >
+                      <Terminal size={9} />
+                      <span className="truncate max-w-[120px]">{copiedIntakeCommand === advanceLoopConfirmCommand ? copy.copiedCommand : copy.confirmAdvanceLoop}</span>
+                    </button>
                   </div>
                 </div>
                 <div className="rounded px-2 py-1.5" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>

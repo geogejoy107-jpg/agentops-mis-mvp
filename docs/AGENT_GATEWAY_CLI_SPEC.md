@@ -1465,6 +1465,24 @@ binding, and review queue drain. It does not create plans, run workers, approve
 gates, create memories, or mutate ledgers.
 
 ```bash
+agentops operator advance-loop --loop-id loop_123 --limit 10
+agentops operator advance-loop --loop-id loop_123 --limit 10 --confirm-advance
+```
+
+Reads `GET /api/operator/handoff` and selects the first non-passing loop action
+whose `agentops ...` command is allowed by the local bounded-runner policy.
+Without `--confirm-advance` it is preview-only. With confirmation it executes
+exactly one local allowlisted action, runs the paired verify command, and records
+an Action Queue receipt as `verified` or `failed`. The first policy scope allows
+safe local actions such as `knowledge index` and `memory propose --type
+loop_record`; it refuses memory approval/rejection, approval decisions, worker
+lifecycle, workflow dispatch, live/confirm flags, external uploads, and other
+commands that require an explicit human or dedicated confirmation path.
+`operator handoff` exposes the same `work_order.advance_loop` preview/confirm
+commands, and `/workspace/agents` renders copy buttons for those local CLI
+commands without letting the browser or server execute shell.
+
+```bash
 agentops operator remediate-evidence-gap --run-id run_123
 agentops operator remediate-evidence-gap --run-id run_123 --confirm-create
 ```
@@ -1844,6 +1862,7 @@ python3 scripts/agentops_status_smoke.py
 python3 scripts/enrollment_launch_steps_smoke.py
 python3 scripts/remote_launch_packet_worker_smoke.py
 python3 scripts/agent_gateway_scope_matrix_smoke.py
+python3 scripts/agent_gateway_special_char_scope_smoke.py
 python3 scripts/agent_gateway_session_smoke.py
 python3 scripts/enrollment_approval_workflow_smoke.py
 python3 scripts/task_claim_conflict_smoke.py
@@ -1873,6 +1892,7 @@ The CLI inspect helper verifies `agentops task get/list`, `agentops run get/list
 The launch-steps helper verifies create/rotate responses include safe remote-worker commands, a short-lived session command, `--use-session`, and do not embed the raw token in those commands.
 The remote launch-packet helper uses the returned environment shape to run a real worker through `--use-session` and verify run/tool/evaluation ledger evidence.
 The scope-matrix helper verifies an observer token can heartbeat/pull/audit but receives `403 forbidden` for claim/run/tool/artifact writes.
+The special-character scope helper runs against an isolated SQLite database and verifies scoped access for workspace, agent, and task ids containing spaces, `+`, `%`, quotes, commas, and URL-encoded slashes. It covers URL-decoded task/run/approval path ids, exact collaborator matching, workspace-header spoof rejection, scoped ledger list isolation, scoped review queue visibility, and token omission.
 The session helper verifies an enrollment token can mint a narrowed short-lived session, sessions can be listed without hash leakage, one session can be revoked directly, a non-expired session can status/heartbeat/pull tasks, cannot mint another session, a separate one-second session expires closed, and parent enrollment revocation cascades to active child sessions.
 The enrollment-approval helper verifies request-before-token behavior: request returns no token, premature issue is rejected, approval unlocks token issue, and the issued token can heartbeat.
 The task-claim helper verifies two agents can initially see the same public pool task, the first claim wins, same-agent repeat claim is idempotent, and a second worker cannot claim or start the already claimed task.
