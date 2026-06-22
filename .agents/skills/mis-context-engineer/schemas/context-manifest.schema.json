@@ -1,547 +1,162 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://agentops-mis.local/schemas/context-manifest.v0.1.schema.json",
-  "title": "AgentOps MIS Context Manifest v0.1",
+  "$id": "https://agentops-mis.local/schemas/context-manifest.v0.2.schema.json",
+  "title": "AgentOps MIS Context Manifest v0.2",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "schema_version",
     "manifest_id",
-    "created_at",
     "objective",
-    "mode",
     "project_context",
-    "policy",
+    "harness",
+    "loop",
     "included_items",
+    "reused_items",
     "excluded_items",
-    "conflicts",
     "unresolved_questions",
     "budget",
+    "cache",
+    "performance",
+    "iterations",
+    "evaluation",
     "safety",
     "evidence_refs",
     "output_hash"
   ],
   "properties": {
-    "schema_version": {
-      "const": "0.1"
-    },
-    "manifest_id": {
-      "type": "string",
-      "pattern": "^ctx_[A-Za-z0-9._:-]+$"
-    },
-    "created_at": {
-      "type": "string",
-      "format": "date-time"
-    },
-    "objective": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 4000
-    },
-    "mode": {
-      "enum": [
-        "read_only",
-        "candidate_writeback"
-      ]
-    },
+    "schema_version": {"const": "0.2"},
+    "manifest_id": {"type": "string", "pattern": "^ctx_[A-Za-z0-9._:-]+$"},
+    "objective": {"type": "string", "minLength": 1},
     "project_context": {
       "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "repository",
-        "branch",
-        "commit",
-        "workspace_id",
-        "project_id",
-        "task_id",
-        "agent_id"
-      ],
+      "required": ["repository", "branch", "commit", "workspace_id"],
       "properties": {
-        "repository": {
-          "type": "string",
-          "pattern": "^[^/\\s]+/[^/\\s]+$"
-        },
-        "branch": {
-          "type": "string",
-          "minLength": 1
-        },
-        "commit": {
-          "type": "string",
-          "pattern": "^(Unknown|[a-f0-9]{40})$"
-        },
-        "workspace_id": {
-          "type": "string",
-          "minLength": 1
-        },
-        "project_id": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "task_id": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "agent_id": {
-          "type": [
-            "string",
-            "null"
-          ]
-        }
+        "repository": {"type": "string"},
+        "branch": {"type": "string"},
+        "commit": {"type": "string"},
+        "workspace_id": {"type": "string"},
+        "project_id": {"type": ["string", "null"]},
+        "task_id": {"type": ["string", "null"]},
+        "agent_id": {"type": ["string", "null"]}
       }
     },
-    "policy": {
+    "harness": {"$ref": "#/$defs/versionedContract"},
+    "loop": {
       "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "authority_order",
-        "token_budget",
-        "writeback_mode",
-        "semantic_retrieval",
-        "historical_as_of"
-      ],
+      "required": ["name", "hash", "max_iterations"],
       "properties": {
-        "authority_order": {
-          "type": "array",
-          "minItems": 1,
-          "uniqueItems": true,
-          "items": {
-            "$ref": "#/$defs/authorityClass"
-          }
-        },
-        "token_budget": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "writeback_mode": {
-          "enum": [
-            "none",
-            "candidate_only"
-          ]
-        },
-        "semantic_retrieval": {
-          "type": "boolean"
-        },
-        "historical_as_of": {
-          "oneOf": [
-            {
-              "type": "string",
-              "format": "date-time"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        }
+        "name": {"type": "string"},
+        "hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "max_iterations": {"type": "integer", "minimum": 1}
       }
     },
-    "included_items": {
-      "type": "array",
-      "items": {
-        "$ref": "#/$defs/includedItem"
-      }
-    },
-    "excluded_items": {
-      "type": "array",
-      "items": {
-        "$ref": "#/$defs/excludedItem"
-      }
-    },
-    "conflicts": {
-      "type": "array",
-      "items": {
-        "$ref": "#/$defs/conflict"
-      }
-    },
-    "unresolved_questions": {
-      "type": "array",
-      "items": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 2000
-      }
-    },
+    "included_items": {"type": "array", "items": {"$ref": "#/$defs/contextItem"}},
+    "reused_items": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+    "excluded_items": {"type": "array", "items": {"$ref": "#/$defs/excludedItem"}},
+    "unresolved_questions": {"type": "array", "items": {"type": "string"}},
     "budget": {
       "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "limit",
-        "reserved",
-        "used",
-        "overflow"
-      ],
+      "required": ["limit", "reserved_output", "available_input", "stable_prefix_tokens", "full_context_tokens", "delta_context_tokens", "overflow"],
       "properties": {
-        "limit": {
-          "type": "integer",
-          "minimum": 1
-        },
-        "reserved": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "used": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "overflow": {
-          "type": "boolean"
-        }
+        "limit": {"type": "integer", "minimum": 1},
+        "reserved_output": {"type": "integer", "minimum": 0},
+        "available_input": {"type": "integer", "minimum": 0},
+        "stable_prefix_tokens": {"type": "integer", "minimum": 0},
+        "full_context_tokens": {"type": "integer", "minimum": 0},
+        "delta_context_tokens": {"type": "integer", "minimum": 0},
+        "overflow": {"type": "boolean"}
+      }
+    },
+    "cache": {
+      "type": "object",
+      "required": ["stable_prefix_hash", "eligible_items", "hit_items", "hit_rate"],
+      "properties": {
+        "stable_prefix_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "eligible_items": {"type": "integer", "minimum": 0},
+        "hit_items": {"type": "integer", "minimum": 0},
+        "hit_rate": {"type": "number", "minimum": 0, "maximum": 1}
+      }
+    },
+    "performance": {
+      "type": "object",
+      "required": ["wall_time_ms", "candidate_count", "gated_count", "included_count", "token_utilization", "token_efficiency"],
+      "properties": {
+        "wall_time_ms": {"type": "number", "minimum": 0},
+        "candidate_count": {"type": "integer", "minimum": 0},
+        "gated_count": {"type": "integer", "minimum": 0},
+        "included_count": {"type": "integer", "minimum": 0},
+        "token_utilization": {"type": "number", "minimum": 0},
+        "token_efficiency": {"type": "number", "minimum": 0}
+      }
+    },
+    "iterations": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/iteration"}},
+    "evaluation": {
+      "type": "object",
+      "required": ["pass", "coverage", "authority_precision", "scope_violations", "stop_reason"],
+      "properties": {
+        "pass": {"type": "boolean"},
+        "coverage": {"type": "number", "minimum": 0, "maximum": 1},
+        "authority_precision": {"type": "number", "minimum": 0, "maximum": 1},
+        "scope_violations": {"type": "integer", "minimum": 0},
+        "stop_reason": {"type": "string"}
       }
     },
     "safety": {
       "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "scope_gate_applied",
-        "redaction_applied",
-        "raw_prompts_omitted",
-        "raw_responses_omitted",
-        "secrets_omitted",
-        "chain_of_thought_omitted"
-      ],
+      "required": ["scope_gate_applied", "candidate_writeback_only"],
       "properties": {
-        "scope_gate_applied": {
-          "const": true
-        },
-        "redaction_applied": {
-          "const": true
-        },
-        "raw_prompts_omitted": {
-          "const": true
-        },
-        "raw_responses_omitted": {
-          "const": true
-        },
-        "secrets_omitted": {
-          "const": true
-        },
-        "chain_of_thought_omitted": {
-          "const": true
-        }
+        "scope_gate_applied": {"const": true},
+        "candidate_writeback_only": {"const": true}
       }
     },
-    "evidence_refs": {
-      "type": "array",
-      "uniqueItems": true,
-      "items": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 2000
-      }
-    },
-    "output_hash": {
-      "type": "string",
-      "pattern": "^[a-f0-9]{64}$"
-    }
+    "evidence_refs": {"type": "array", "items": {"type": "string"}},
+    "output_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
   },
   "$defs": {
-    "authorityClass": {
-      "enum": [
-        "git_fact",
-        "mis_execution_fact",
-        "approved_project_state",
-        "approved_memory",
-        "candidate_memory",
-        "external_research",
-        "chat_source"
-      ]
-    },
-    "scope": {
+    "versionedContract": {
       "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "workspace_id",
-        "project_id",
-        "task_id",
-        "access_tags",
-        "visibility_proof"
-      ],
+      "required": ["name", "version", "hash"],
       "properties": {
-        "workspace_id": {
-          "type": "string",
-          "minLength": 1
-        },
-        "project_id": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "task_id": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "access_tags": {
-          "type": "array",
-          "uniqueItems": true,
-          "items": {
-            "type": "string",
-            "minLength": 1
-          }
-        },
-        "visibility_proof": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 2000
-        }
+        "name": {"type": "string"},
+        "version": {"type": "string"},
+        "hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
       }
     },
-    "scores": {
+    "contextItem": {
       "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "task_relevance",
-        "lexical",
-        "semantic",
-        "entity_or_graph",
-        "authority",
-        "freshness",
-        "evidence_quality",
-        "combined"
-      ],
+      "required": ["source_ref", "source_version", "authority_class", "summary", "content_hash", "token_estimate", "score"],
       "properties": {
-        "task_relevance": {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 1
-        },
-        "lexical": {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 1
-        },
-        "semantic": {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 1
-        },
-        "entity_or_graph": {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 1
-        },
-        "authority": {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 1
-        },
-        "freshness": {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 1
-        },
-        "evidence_quality": {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 1
-        },
-        "combined": {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 1
-        }
-      }
-    },
-    "includedItem": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "item_id",
-        "source_ref",
-        "source_version",
-        "source_type",
-        "authority_class",
-        "relationship",
-        "summary",
-        "scope",
-        "observed_at",
-        "valid_from",
-        "valid_to",
-        "scores",
-        "inclusion_reason",
-        "token_estimate"
-      ],
-      "properties": {
-        "item_id": {
-          "type": "string",
-          "minLength": 1
-        },
-        "source_ref": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 2000
-        },
-        "source_version": {
-          "type": "string",
-          "minLength": 1
-        },
-        "source_type": {
-          "enum": [
-            "github",
-            "mis_ledger",
-            "project_doc",
-            "approved_memory",
-            "candidate_memory",
-            "external_research",
-            "chat"
-          ]
-        },
-        "authority_class": {
-          "$ref": "#/$defs/authorityClass"
-        },
-        "relationship": {
-          "enum": [
-            "new",
-            "duplicate_of",
-            "updates",
-            "supersedes",
-            "conflicts_with",
-            "derived_from"
-          ]
-        },
-        "summary": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 4000
-        },
-        "scope": {
-          "$ref": "#/$defs/scope"
-        },
-        "observed_at": {
-          "type": "string",
-          "format": "date-time"
-        },
-        "valid_from": {
-          "oneOf": [
-            {
-              "type": "string",
-              "format": "date-time"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "valid_to": {
-          "oneOf": [
-            {
-              "type": "string",
-              "format": "date-time"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "scores": {
-          "$ref": "#/$defs/scores"
-        },
-        "inclusion_reason": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 2000
-        },
-        "token_estimate": {
-          "type": "integer",
-          "minimum": 0
-        }
+        "source_ref": {"type": "string"},
+        "source_version": {"type": "string"},
+        "authority_class": {"type": "string"},
+        "summary": {"type": "string"},
+        "content_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "token_estimate": {"type": "integer", "minimum": 0},
+        "score": {"type": "number", "minimum": 0}
       }
     },
     "excludedItem": {
       "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "source_ref",
-        "source_version",
-        "reason_code",
-        "reason"
-      ],
+      "required": ["source_ref", "reason_code", "reason"],
       "properties": {
-        "source_ref": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 2000
-        },
-        "source_version": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "reason_code": {
-          "enum": [
-            "scope_denied",
-            "missing_source",
-            "untrusted",
-            "candidate_not_authority",
-            "stale",
-            "duplicate",
-            "superseded",
-            "conflict_unresolved",
-            "historical_mismatch",
-            "token_budget",
-            "redacted",
-            "insufficient_budget",
-            "other"
-          ]
-        },
-        "reason": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 2000
-        }
+        "source_ref": {"type": "string"},
+        "reason_code": {"type": "string"},
+        "reason": {"type": "string"}
       }
     },
-    "conflict": {
+    "iteration": {
       "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "conflict_id",
-        "relation",
-        "source_refs",
-        "summary",
-        "status",
-        "resolution_ref"
-      ],
+      "required": ["iteration", "retrieval_mode", "coverage", "authority_precision", "marginal_gain", "latency_ms", "checkpoint_hash", "decision"],
       "properties": {
-        "conflict_id": {
-          "type": "string",
-          "minLength": 1
-        },
-        "relation": {
-          "const": "conflicts_with"
-        },
-        "source_refs": {
-          "type": "array",
-          "minItems": 2,
-          "uniqueItems": true,
-          "items": {
-            "type": "string",
-            "minLength": 1
-          }
-        },
-        "summary": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 4000
-        },
-        "status": {
-          "enum": [
-            "unresolved",
-            "resolved"
-          ]
-        },
-        "resolution_ref": {
-          "type": [
-            "string",
-            "null"
-          ]
-        }
+        "iteration": {"type": "integer", "minimum": 1},
+        "retrieval_mode": {"type": "string"},
+        "coverage": {"type": "number"},
+        "authority_precision": {"type": "number"},
+        "marginal_gain": {"type": "number"},
+        "latency_ms": {"type": "number", "minimum": 0},
+        "checkpoint_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "decision": {"type": "string"}
       }
     }
   }
