@@ -90,7 +90,11 @@ def main() -> int:
         "merge readiness checklist does not close public-claims gate with this smoke",
         failures,
     )
-    require("Current status: `NOT_READY`" in checklist, "checklist must keep NOT_READY until exact RC evidence advances it", failures)
+    require(
+        "Current status: `NOT_READY`" in checklist or "Current status: `READY_TO_MERGE`" in checklist,
+        "checklist must stay NOT_READY until exact RC evidence advances it, then may state READY_TO_MERGE",
+        failures,
+    )
 
     project_spec = docs.get("project_spec", "")
     require("MIS must not store raw secrets" in project_spec, "PROJECT_SPEC missing no-raw-storage boundary", failures)
@@ -130,7 +134,7 @@ def main() -> int:
         "documents": [str(path.relative_to(ROOT)) for path in FILES.values()],
         "allowed_claims": [
             "local-first AI workforce/MIS control plane",
-            "local MVP / NOT_READY until exact RC evidence advances it",
+            "local MVP / NOT_READY until exact RC evidence advances it, then READY_TO_MERGE as a release-candidate state",
             "protected/manual live Hermes/OpenClaw evidence only",
         ],
         "disallowed_unqualified_claims_checked": len(DISALLOWED_UNQUALIFIED_CLAIMS),

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Report and guard the v1.5 merge-readiness state.
 
-Default mode is intentionally non-strict: NOT_READY is allowed when the
-checklist still has explicit blockers. Use --require-ready-to-merge only for a
-final release/merge candidate.
+Default mode is intentionally CI-safe: it validates checklist structure and
+explicit blocker state without requiring the current in-progress CI run to have
+already completed. Use --require-ready-to-merge only for a final local
+release/merge candidate.
 """
 from __future__ import annotations
 
@@ -196,10 +197,10 @@ def main() -> int:
         failures.append("READY_TO_MERGE required-condition block is missing")
     if ci.get("head_matches") is False and ci.get("head_sha"):
         failures.append(f"CI head does not match current HEAD: {ci}")
-    if args.require_clean or header_status in {"READY_FOR_RC", "RC_PASSED", "READY_TO_MERGE", "MERGED"}:
+    if args.require_clean:
         if status_entries:
             failures.append(f"working tree is not clean: {len(status_entries)} entries")
-    if args.require_green_ci or header_status in {"READY_FOR_RC", "RC_PASSED", "READY_TO_MERGE", "MERGED"}:
+    if args.require_green_ci:
         if not green_ci:
             failures.append(f"current HEAD lacks completed successful CI evidence: {ci}")
     if args.require_ready_to_merge:

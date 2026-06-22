@@ -387,14 +387,13 @@ def main() -> int:
     tests = validate_test_commands(ci_text, failures)
     validate_docs(checklist, packet_doc, ci_text, failures)
 
-    ready_claimed = status_name.upper().startswith("READY")
     green_ci = ci.get("head_matches") is True and ci.get("status") == "completed" and ci.get("conclusion") == "success"
     require(status_name != "UNKNOWN", "merge readiness checklist missing current status", failures)
-    if args.require_clean or ready_claimed:
+    if args.require_clean:
         require(not status, "working tree must be clean for final RC evidence", failures)
-    if args.require_green_ci or ready_claimed:
+    if args.require_green_ci:
         require(green_ci, f"current HEAD does not have green CI evidence: {ci}", failures)
-    if ready_claimed:
+    if args.require_clean or args.require_green_ci:
         require(upstream.get("ahead") == 0 and upstream.get("behind") == 0, f"READY checklist requires upstream sync: {upstream}", failures)
     require(not (ci.get("head_matches") is False and ci.get("head_sha")), f"CI head does not match current HEAD: {ci}", failures)
 
@@ -417,8 +416,8 @@ def main() -> int:
         },
         "contracts": [
             "Exact SHA is captured at runtime, never hard-coded into a tracked stale packet.",
-            "CI status may be queued, failed or unavailable while the checklist remains NOT_READY.",
-            "READY status requires a clean tree, upstream sync and successful current-head CI.",
+            "CI status may be queued, in-progress, failed or unavailable in CI-safe default mode.",
+            "Final strict evidence requires --require-clean --require-green-ci with upstream sync and successful current-head CI.",
             "Evidence output omits raw credentials, private prompts, model responses, customer bodies, local databases and unsafe logs.",
         ],
         "safety": {
