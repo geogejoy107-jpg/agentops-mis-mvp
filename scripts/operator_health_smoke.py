@@ -109,6 +109,13 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
     for required_id in ["loop_health", "local_readiness", "security_readiness", "worker_fleet", "review_queue", "operator_action_plan"]:
         require(required_id in component_ids, f"{label} missing component {required_id}: {component_ids}", failures)
     require(isinstance(payload.get("risks") or [], list), f"{label} risks missing: {payload}", failures)
+    for risk in payload.get("risks") or []:
+        require(risk.get("action_command"), f"{label} risk action command missing: {risk}", failures)
+        require(risk.get("verify_command") == "agentops operator health --limit 20" or str(risk.get("verify_command") or "").startswith("agentops operator health --loop-id "), f"{label} risk verify command wrong: {risk}", failures)
+        require(risk.get("receipt_record_command"), f"{label} risk receipt record command missing: {risk}", failures)
+        require(risk.get("receipt_verify_record_command"), f"{label} risk verify receipt command missing: {risk}", failures)
+        require(risk.get("action_signature"), f"{label} risk signature missing: {risk}", failures)
+        require(risk.get("receipt_required") is True, f"{label} risk receipt flag missing: {risk}", failures)
     require(isinstance(payload.get("next_actions") or [], list), f"{label} next actions missing: {payload}", failures)
     sources = payload.get("sources") or {}
     for key in ["handoff", "local_readiness", "security_readiness", "worker_status", "review_queue"]:

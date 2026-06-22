@@ -1240,8 +1240,9 @@ export function AIEmployees() {
     candidate.receiptRequired === false ? true :
     typeof candidate.receiptVerified === "boolean" ? candidate.receiptVerified : latestReceiptForAction(candidate.action, candidate.actionSignature)?.status === "verified"
   );
-  const actionQueueCandidateScore = (candidate: { id: string; action: string; actionSignature?: string | null; receiptRequired?: boolean; receiptVerified?: boolean; isReceiptCoverageRecovery?: boolean }) => (
+  const actionQueueCandidateScore = (candidate: { id: string; action: string; actionSignature?: string | null; receiptRequired?: boolean; receiptVerified?: boolean; isReceiptCoverageRecovery?: boolean; isOperatorHealthRisk?: boolean }) => (
     isCloseEvidenceGapCommand(candidate.action) ? 120 :
+    candidate.isOperatorHealthRisk ? 118 :
     candidate.isReceiptCoverageRecovery ? 115 :
     candidate.id.startsWith("loop-first-issue:") ? 110 :
     !candidateReceiptVerified(candidate) ? 80 :
@@ -1255,6 +1256,18 @@ export function AIEmployees() {
       status: firstLoopIssueStep.status,
       verifyAction: loopAuditNextAction,
     }] : []),
+    ...(operatorHealth?.risks || []).map((risk) => ({
+      id: `operator-health:${risk.id}:${risk.action_signature || risk.action_command || risk.next_action || risk.id}`,
+      action: risk.action_command || risk.next_action || "agentops operator health --limit 20",
+      source: `${copy.operatorHealthTitle} · ${risk.id}`,
+      status: risk.severity || operatorHealth?.status || "attention",
+      verifyAction: risk.verify_command || "agentops operator health --limit 20",
+      actionSignature: risk.action_signature,
+      receiptRequired: risk.receipt_required,
+      receiptRecordCommand: risk.receipt_record_command,
+      receiptVerifyRecordCommand: risk.receipt_verify_record_command,
+      isOperatorHealthRisk: true,
+    })),
     ...operatorPlanActions.map((item) => ({
       id: `operator:${item.action_id}`,
       action: item.command,

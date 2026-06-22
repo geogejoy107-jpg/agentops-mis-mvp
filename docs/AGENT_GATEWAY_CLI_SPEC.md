@@ -397,9 +397,12 @@ Maps to `GET /api/operator/health`. This is read-only and aggregates operator
 handoff, local readiness, security readiness, worker fleet health, review queue
 pressure, and the action-plan summary. It returns a 0..100 score, component
 statuses, risks, next actions, source summaries, `auth` boundary proof, and
-safety flags. Like handoff, local no-token demo reads are allowed only when the
-server has no configured API key; supplied Agent Gateway tokens/sessions must be
-valid, carry `tasks:read`, and remain bound to their workspace.
+safety flags. Each risk includes an explicit action command, verify command,
+action signature, and receipt helper commands so the same health issue can be
+copied into the Operator Action Queue and closed with an audited receipt. Like
+handoff, local no-token demo reads are allowed only when the server has no
+configured API key; supplied Agent Gateway tokens/sessions must be valid, carry
+`tasks:read`, and remain bound to their workspace.
 
 ### `agentops approval prepared-action`
 

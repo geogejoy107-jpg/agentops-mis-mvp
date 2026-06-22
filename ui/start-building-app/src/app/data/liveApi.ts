@@ -1548,7 +1548,20 @@ export interface OperatorHealthPayload {
     local_readiness_status?: string;
   };
   components: OperatorHealthComponent[];
-  risks: { id: string; severity: string; summary?: string; next_action?: string }[];
+  risks: {
+    id: string;
+    severity: string;
+    summary?: string;
+    next_action?: string;
+    action_id?: string;
+    action_signature?: string;
+    action_command?: string;
+    verify_command?: string;
+    receipt_record_command?: string;
+    receipt_verify_record_command?: string;
+    receipt_required?: boolean;
+    token_omitted?: boolean;
+  }[];
   next_actions: string[];
   sources?: Record<string, unknown>;
   auth?: OperatorHandoffPayload["auth"];
@@ -4526,6 +4539,14 @@ export async function loadOperatorHealth(limit = 12, loopId = ""): Promise<Opera
       severity: String(item.severity || "attention"),
       summary: item.summary ? String(item.summary) : undefined,
       next_action: item.next_action ? String(item.next_action) : undefined,
+      action_id: item.action_id ? String(item.action_id) : undefined,
+      action_signature: item.action_signature ? String(item.action_signature) : undefined,
+      action_command: item.action_command ? String(item.action_command) : undefined,
+      verify_command: item.verify_command ? String(item.verify_command) : undefined,
+      receipt_record_command: item.receipt_record_command ? String(item.receipt_record_command) : undefined,
+      receipt_verify_record_command: item.receipt_verify_record_command ? String(item.receipt_verify_record_command) : undefined,
+      receipt_required: item.receipt_required === undefined ? undefined : boolValue(item.receipt_required),
+      token_omitted: item.token_omitted === undefined ? undefined : boolValue(item.token_omitted),
     })).filter((item) => item.id),
     next_actions: asArray<unknown>(raw.next_actions).map(String).filter(Boolean),
     sources: typeof raw.sources === "object" && raw.sources !== null ? raw.sources as Record<string, unknown> : undefined,

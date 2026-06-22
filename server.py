@@ -15949,16 +15949,49 @@ def operator_health(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) -
     blocked = [item for item in components if item.get("status") == "blocked"]
     attention = [item for item in components if item.get("status") == "attention"]
     status = "blocked" if blocked else "attention" if attention or total_score < 90 else "ready"
-    risks = [
-        {
-            "id": item["id"],
-            "severity": item["status"],
-            "summary": item["summary"],
-            "next_action": item["next_action"],
+    verify_health_command = (
+        f"agentops operator health --loop-id {shlex.quote(loop_id)} --limit 20"
+        if loop_id
+        else "agentops operator health --limit 20"
+    )
+
+    def operator_health_risk(item: dict) -> dict:
+        action_command = str(item.get("next_action") or "agentops operator health --limit 20").strip()
+        action_id = stable_id("operator_health_action", handoff.get("loop_id") or "global", item.get("id"), action_command)[-18:]
+        action_signature = stable_id("operator_health_action_sig", handoff.get("loop_id") or "global", item.get("id"), item.get("status"), action_command)[-18:]
+
+        def receipt_command(receipt_status: str, *, confirm: bool = False, summary_text: str = "") -> str:
+            parts = [
+                "agentops", "operator", "record-action-receipt",
+                "--action-command", action_command,
+                "--verify-command", verify_health_command,
+                "--action-id", action_id,
+                "--action-signature", action_signature,
+                "--source", f"operator_health:{item.get('id') or 'risk'}",
+                "--status", receipt_status,
+            ]
+            if summary_text:
+                parts.extend(["--result-summary", summary_text])
+            if confirm:
+                parts.append("--confirm-record")
+            return " ".join(shlex.quote(str(part)) for part in parts if part is not None)
+
+        return {
+            "id": str(item["id"]),
+            "severity": str(item["status"]),
+            "summary": str(item.get("summary") or ""),
+            "next_action": action_command,
+            "action_id": action_id,
+            "action_signature": action_signature,
+            "action_command": redact_text(action_command, 500),
+            "verify_command": redact_text(verify_health_command, 500),
+            "receipt_record_command": redact_text(receipt_command("recorded"), 900),
+            "receipt_verify_record_command": redact_text(receipt_command("verified", confirm=True, summary_text=f"Operator health risk {item.get('id')} recovered and verified."), 900),
+            "receipt_required": True,
+            "token_omitted": True,
         }
-        for item in components
-        if item.get("status") != "ready"
-    ]
+
+    risks = [operator_health_risk(item) for item in components if item.get("status") != "ready"]
     next_actions = []
     for item in components:
         if item.get("status") != "ready" and item.get("next_action") and item["next_action"] not in next_actions:
