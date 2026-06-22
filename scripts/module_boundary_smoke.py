@@ -96,7 +96,13 @@ from agentops_mis_core.worker_fleet import (
     build_worker_status_payload,
     worker_fleet_health,
 )
-from agentops_mis_core.workflow_jobs import workflow_job_parse_iso_datetime, workflow_job_public, workflow_job_stuck_projection
+from agentops_mis_core.workflow_jobs import (
+    workflow_job_mark_failed_response,
+    workflow_job_not_active_response,
+    workflow_job_parse_iso_datetime,
+    workflow_job_public,
+    workflow_job_stuck_projection,
+)
 from agentops_mis_runtime.capabilities import (
     SCHEMA_VERSION,
     runtime_connector_capability_manifest,
@@ -192,11 +198,15 @@ SERVER_WORKER_FLEET_IMPORTS = {
     "build_worker_status_payload",
 }
 EXTRACTED_WORKFLOW_JOB_HELPERS = {
+    "workflow_job_mark_failed_response",
+    "workflow_job_not_active_response",
     "workflow_job_parse_iso_datetime",
     "workflow_job_public",
     "workflow_job_stuck_projection",
 }
 SERVER_WORKFLOW_JOB_IMPORTS = {
+    "workflow_job_mark_failed_response",
+    "workflow_job_not_active_response",
     "workflow_job_public",
     "workflow_job_stuck_projection",
 }
@@ -1271,12 +1281,26 @@ def main() -> int:
         "result_json": "{}",
         "updated_at": "2026-06-22T00:18:00+00:00",
     }, now_dt=workflow_now, threshold_sec=900)
+    workflow_not_active_response = workflow_job_not_active_response({
+        "job_id": "wfjob_done_projection_smoke",
+        "status": "completed",
+        "result_json": "{}",
+    })
+    workflow_mark_failed_response = workflow_job_mark_failed_response({
+        "job_id": "wfjob_marked_projection_smoke",
+        "status": "failed",
+        "result_json": "{}",
+        "error_message": "operator recovery smoke",
+    }, "wfjob_marked_projection_smoke")
     require(workflow_job_projection and workflow_job_projection.get("result", {}).get("ok") is True, "workflow job public projection result parse failed", failures)
     require(workflow_job_projection.get("raw_request_omitted") is True and workflow_job_projection.get("token_omitted") is True, "workflow job public projection omission proof missing", failures)
     require(workflow_job_bad_result_projection and workflow_job_bad_result_projection.get("result") == {}, "workflow job public projection bad JSON fallback failed", failures)
     require(workflow_stuck_projection and workflow_stuck_projection.get("age_sec") == 1200 and workflow_stuck_projection.get("stuck_reason") == "workflow_job_exceeded_threshold", "workflow job stuck projection failed", failures)
     require(workflow_stuck_projection.get("token_omitted") is True and workflow_stuck_projection.get("raw_request_omitted") is True, "workflow job stuck projection omission proof missing", failures)
     require(workflow_fresh_projection is None, "workflow job fresh projection should not be marked stuck", failures)
+    require(workflow_not_active_response.get("reason") == "workflow_job_not_active" and workflow_not_active_response.get("token_omitted") is True, "workflow job not-active response failed", failures)
+    require(workflow_mark_failed_response.get("marked_failed") is True and workflow_mark_failed_response.get("provider") == "agentops-workflow-job", "workflow job mark-failed response failed", failures)
+    require((workflow_mark_failed_response.get("job") or {}).get("status") == "failed", "workflow job mark-failed response job projection failed", failures)
     planned_task = {"task_id": "tsk_cmd_smoke_strategy", "status": "planned"}
     completed_task = {"task_id": "tsk_cmd_smoke_qa", "status": "completed"}
     require(commander_work_package_status(planned_task, None, {}) == "planned", "commander planned package status failed", failures)

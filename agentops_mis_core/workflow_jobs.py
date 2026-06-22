@@ -72,3 +72,23 @@ def workflow_job_stuck_projection(
     data["threshold_sec"] = threshold_sec
     data["stuck_reason"] = "workflow_job_exceeded_threshold"
     return data
+
+
+def workflow_job_not_active_response(row: Any | None) -> dict:
+    return {
+        "ok": False,
+        "reason": "workflow_job_not_active",
+        "job": workflow_job_public(row),
+        "token_omitted": True,
+    }
+
+
+def workflow_job_mark_failed_response(row: Any | None, job_id: str) -> dict:
+    return {
+        "ok": True,
+        "provider": "agentops-workflow-job",
+        "job": workflow_job_public(row),
+        "job_id": job_id,
+        "marked_failed": True,
+        "token_omitted": True,
+    }

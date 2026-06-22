@@ -1013,6 +1013,36 @@ python3 scripts/workflow_job_stuck_recovery_smoke.py
 python3 scripts/workflow_jobs_list_poll_smoke.py
 ```
 
+### Slice 34: Workflow Job Recovery Responses
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/workflow_jobs.py`
+
+Moved out of `server.py`:
+
+- non-active workflow-job recovery response projection
+- successful mark-failed recovery response projection
+- provider/marked-failed/token-omission proof for recovery responses
+
+Still owned by `server.py`:
+
+- HTTP routes
+- SQLite workflow-job reads and writes
+- workflow-job status validation
+- mark-failed mutation
+- runtime events, audit logs and commits
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/workflow_job_stuck_recovery_smoke.py
+python3 scripts/workflow_jobs_list_poll_smoke.py
+```
+
 ## Next Candidate Slices
 
 - Continue P1-05 with small smoke-backed strangler slices only; prefer pure

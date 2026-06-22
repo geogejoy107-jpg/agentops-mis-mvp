@@ -112,7 +112,12 @@ from agentops_mis_core.worker_fleet import (
     build_worker_fleet_view,
     build_worker_status_payload,
 )
-from agentops_mis_core.workflow_jobs import workflow_job_public, workflow_job_stuck_projection
+from agentops_mis_core.workflow_jobs import (
+    workflow_job_mark_failed_response,
+    workflow_job_not_active_response,
+    workflow_job_public,
+    workflow_job_stuck_projection,
+)
 from agentops_mis_cli.advance_loop_policy import advance_loop_command_policy, advance_loop_policy_summary
 from agentops_mis_cli.redaction import redact_full_text as shared_redact_full_text
 from agentops_mis_cli.redaction import redact_text as shared_redact_text
@@ -10676,12 +10681,7 @@ def mark_workflow_job_failed(conn, job_id: str, body: dict) -> tuple[dict, int]:
     if not before:
         return {"error": "not found", "job_id": job_id}, 404
     if before["status"] not in {"queued", "running"}:
-        return {
-            "ok": False,
-            "reason": "workflow_job_not_active",
-            "job": workflow_job_public(before),
-            "token_omitted": True,
-        }, 409
+        return workflow_job_not_active_response(before), 409
     reason = redact_text(body.get("reason") or "Operator marked stale workflow job as failed.", 300)
     now = now_iso()
     conn.execute(
@@ -10694,14 +10694,7 @@ def mark_workflow_job_failed(conn, job_id: str, body: dict) -> tuple[dict, int]:
     after = conn.execute("SELECT * FROM workflow_jobs WHERE job_id=?", (job_id,)).fetchone()
     audit(conn, "user", body.get("actor_id") or "usr_operator", "workflow.job.mark_failed", "workflow_jobs", job_id, dict(before), dict(after) if after else {"status": "failed"}, {"raw_request_omitted": True, "reason": reason})
     conn.commit()
-    return {
-        "ok": True,
-        "provider": "agentops-workflow-job",
-        "job": workflow_job_public(after),
-        "job_id": job_id,
-        "marked_failed": True,
-        "token_omitted": True,
-    }, 200
+    return workflow_job_mark_failed_response(after, job_id), 200
 
 
 def run_workflow_job_background(job_id: str, body: dict) -> None:
