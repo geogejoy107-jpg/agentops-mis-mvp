@@ -23,7 +23,10 @@ a temporary psycopg installation outside the Free Local dependency set.
 standard Free Local installs keep working. The fifth layer is the shared
 boundary fixture contract, `postgres_boundary_fixture_parity_v1`, which runs
 the same Python fixture through SQLite and the optional Postgres adapter, then
-compares normalized snapshots.
+compares normalized snapshots. The sixth layer is the route read-model
+contract, `postgres_route_read_model_parity_v1`, which projects the same
+fixture into selected current HTTP response shapes and compares SQLite and
+Postgres hashes before a Postgres-backed server route can be accepted.
 
 All layers are intentionally derived from `server.SCHEMA_SQL`, because
 `server.py` is still the executable schema authority for the dependency-free
@@ -74,6 +77,7 @@ python3 scripts/storage_postgres_container_smoke.py
 python3 scripts/storage_postgres_adapter_contract_smoke.py
 python3 scripts/storage_postgres_optional_adapter_smoke.py
 python3 scripts/storage_postgres_boundary_parity_smoke.py
+python3 scripts/storage_postgres_route_read_model_smoke.py
 python3 scripts/storage_boundary_sqlite_smoke.py
 ```
 
@@ -88,8 +92,11 @@ fourth command uses the optional psycopg-backed adapter module to execute schema
 and representative helper SQL against a real Postgres container while keeping
 driver installation in a temporary target. The fifth command proves the current
 SQLite helper behavior can be replayed through the same shared fixture against
-SQLite and Postgres with identical snapshots. The final command proves the
-broader current SQLite helper behavior that Postgres must match.
+SQLite and Postgres with identical snapshots. The sixth command verifies
+selected current route read models, including task/run details, run graph,
+tool-call, approval, memory, evaluation, artifact, audit, and workflow job
+payloads, produce identical SQLite/Postgres hashes. The final command proves
+the broader current SQLite helper behavior that Postgres must match.
 
 When Docker is unavailable on a local machine, use the non-authoritative
 diagnostic mode only to keep wider readiness checks moving:
@@ -99,6 +106,7 @@ python3 scripts/storage_postgres_container_smoke.py --skip-if-unavailable
 python3 scripts/storage_postgres_adapter_contract_smoke.py --skip-if-unavailable
 python3 scripts/storage_postgres_optional_adapter_smoke.py --skip-if-unavailable
 python3 scripts/storage_postgres_boundary_parity_smoke.py --skip-if-unavailable
+python3 scripts/storage_postgres_route_read_model_smoke.py --skip-if-unavailable
 ```
 
 This mode reports `skipped: true`; it is not final BYOC/Postgres evidence.
@@ -118,6 +126,11 @@ Current local evidence on `codex/commercial-migration-closed-loop`:
   and Postgres snapshot hash
   `7dcff5f12e7ec4e9fccae0fa92d941c78e95ac1e98e2a14d6f1a7f0de493dd1f`,
   `free_local_dependencies=[]`, and zero cross-workspace leakage.
+- `postgres_route_read_model_parity_v1` passed against `postgres:16-alpine`
+  across 14 selected route-shaped read models with identical SQLite and
+  Postgres read-model hash
+  `e6a562071962c4e2ff99236e39cfa2ee3b53f36b46c3b0d268507a5ced08f843`,
+  `free_local_dependencies=[]`, and token omission proof.
 - Source install packaging includes `agentops_mis_storage.postgres`; importing
   the module and translating SQL does not require psycopg.
 
@@ -126,7 +139,8 @@ Current local evidence on `codex/commercial-migration-closed-loop`:
 Postgres parity is not complete until the adapter boundary:
 
 - routes more `repo_*` helper flows through the same shared fixture pattern;
-- proves route-level response-shape parity for selected HTTP/CLI surfaces;
+- runs selected HTTP/CLI requests against a Postgres-backed server adapter once
+  the server can switch storage backends;
 - keeps qmark/named placeholder translation and literal `?` behavior locked;
 - keeps psycopg optional and outside Free Local dependencies;
 - verifies no raw prompts, raw responses, secrets, generated caches, local DBs,

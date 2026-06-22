@@ -40,6 +40,7 @@ human/admin APIs:
 | Postgres adapter SQL contract | SQLite helper qmark/named placeholder translation plus representative helper insert/update/select execution in a temporary Postgres container | optional psycopg adapter path without changing Free Local dependencies | `python3 scripts/storage_postgres_adapter_contract_smoke.py` |
 | Optional psycopg adapter contract | `agentops_mis_storage.postgres` adapter executes generated schema plus representative helper SQL through psycopg in a temporary Postgres container | first reusable Python Postgres adapter primitive while keeping Free Local dependency-free | `python3 scripts/storage_postgres_optional_adapter_smoke.py` |
 | Postgres boundary fixture parity | `agentops_mis_storage.parity_fixture` runs the same operations and queries through SQLite and the optional Postgres adapter, then compares normalized snapshots | storage adapter acceptance before route-level BYOC Postgres parity | `python3 scripts/storage_postgres_boundary_parity_smoke.py` |
+| Postgres route read-model parity | Selected current API response shapes projected from the shared fixture compare identical on SQLite and Postgres | pre-HTTP route parity before a Postgres-backed server adapter can replace SQLite reads | `python3 scripts/storage_postgres_route_read_model_smoke.py` |
 
 The helpers deliberately keep the existing SQLite row shape and ordering. They
 only centralize workspace filters and detail assembly so a future adapter can
@@ -85,3 +86,8 @@ The shared boundary fixture parity smoke must pass before claiming a helper set
 has identical SQLite and Postgres outcomes:
 
 - `python3 scripts/storage_postgres_boundary_parity_smoke.py`
+
+The route read-model parity smoke must pass before claiming selected current
+HTTP response shapes are Postgres-ready:
+
+- `python3 scripts/storage_postgres_route_read_model_smoke.py`
