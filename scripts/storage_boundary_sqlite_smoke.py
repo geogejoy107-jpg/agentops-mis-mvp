@@ -42,6 +42,9 @@ def main() -> int:
     task_b = "tsk_storage_b"
     write_task = "tsk_storage_write"
     write_run = "run_storage_write"
+    write_tool_call = "tc_storage_write"
+    write_runtime_event = "rte_storage_write"
+    write_audit = "aud_storage_write"
     write_approval = "ap_storage_write"
     write_eval = "eval_storage_write"
     write_artifact = "art_storage_write"
@@ -309,6 +312,72 @@ def main() -> int:
             require(before_run and run_outcome == "updated", f"run write helper update failed: {run_outcome}")
             require(server.repo_get_workspace_run(conn, workspace_a, write_run)["status"] == "completed", "run write helper did not persist update")
 
+            write_tool_call_row = {
+                "tool_call_id": write_tool_call,
+                "run_id": write_run,
+                "agent_id": agent_a,
+                "tool_name": "storage.boundary",
+                "tool_version": "v1",
+                "tool_category": "custom",
+                "normalized_args_json": json.dumps({"raw_omitted": True}, ensure_ascii=False),
+                "target_resource": "local://storage-boundary",
+                "risk_level": "low",
+                "status": "completed",
+                "result_summary": "Storage write boundary tool call.",
+                "side_effect_id": None,
+                "started_at": write_now,
+                "ended_at": write_now,
+                "created_at": write_now,
+            }
+            before_tool, tool_outcome = server.repo_upsert_tool_call(conn, dict(write_tool_call_row))
+            require(before_tool is None and tool_outcome == "created", f"tool call write helper create failed: {tool_outcome}")
+            write_tool_call_row["result_summary"] = "Storage write boundary tool call updated."
+            before_tool, tool_outcome = server.repo_upsert_tool_call(conn, dict(write_tool_call_row))
+            require(before_tool and tool_outcome == "updated", f"tool call write helper update failed: {tool_outcome}")
+            write_run_detail = server.repo_run_detail(conn, server.repo_get_workspace_run(conn, workspace_a, write_run))
+            require(
+                any(row["tool_call_id"] == write_tool_call and row["result_summary"].endswith("updated.") for row in write_run_detail["tool_calls"]),
+                "tool call write helper row not visible in run detail",
+            )
+
+            runtime_event_row = {
+                "runtime_event_id": write_runtime_event,
+                "runtime_connector_id": "rtc_agent_gateway_local",
+                "event_type": "storage.boundary",
+                "status": "completed",
+                "run_id": write_run,
+                "task_id": write_task,
+                "agent_id": agent_a,
+                "model_name": "storage-boundary",
+                "latency_ms": 1,
+                "prompt_hash": "prompt_hash_storage_boundary",
+                "input_summary": "Storage boundary runtime event.",
+                "output_summary": "Storage boundary runtime event stored.",
+                "error_message": None,
+                "raw_payload_hash": "payload_hash_storage_boundary",
+                "created_at": write_now,
+            }
+            server.repo_insert_runtime_event(conn, dict(runtime_event_row))
+            runtime_event_count = conn.execute(
+                "SELECT COUNT(*) c FROM runtime_events WHERE runtime_event_id=? AND run_id=? AND task_id=?",
+                (write_runtime_event, write_run, write_task),
+            ).fetchone()["c"]
+            require(runtime_event_count == 1, "runtime event write helper did not persist row")
+
+            server.repo_insert_audit_log(conn, {
+                "audit_id": write_audit,
+                "actor_type": "system",
+                "actor_id": "storage-boundary-smoke",
+                "action": "storage_boundary.audit_append",
+                "entity_type": "tasks",
+                "entity_id": write_task,
+                "before_hash": None,
+                "after_hash": server.stable_hash({"task_id": write_task, "status": "completed"}),
+                "created_at": write_now,
+            }, {"workspace_id": workspace_a, "raw_omitted": True})
+            write_audit_row = conn.execute("SELECT * FROM audit_logs WHERE audit_id=?", (write_audit,)).fetchone()
+            require(write_audit_row and write_audit_row["tamper_chain_hash"], "audit write helper did not persist tamper-chain row")
+
             write_approval_row = {
                 "approval_id": write_approval,
                 "task_id": write_task,
@@ -432,6 +501,7 @@ def main() -> int:
             audit_rows = server.repo_list_workspace_audit(conn, workspace_a)
             audit_text = json.dumps([dict(row) for row in audit_rows], ensure_ascii=False, sort_keys=True)
             require(task_a in audit_text or run_a in audit_text, "audit helper missed workspace A task/run evidence")
+            require(write_audit in audit_text, "audit helper missed direct repo_insert_audit_log evidence")
             require(artifact_id_a in audit_text, "audit helper missed workspace A metadata evidence")
             require(task_b not in audit_text and run_b not in audit_text and artifact_id_b not in audit_text, "audit helper leaked workspace B evidence")
 
@@ -492,6 +562,9 @@ def main() -> int:
                 "repo_list_agent_gateway_memories",
                 "repo_upsert_task",
                 "repo_upsert_run",
+                "repo_upsert_tool_call",
+                "repo_insert_runtime_event",
+                "repo_insert_audit_log",
                 "repo_upsert_approval",
                 "repo_upsert_evaluation",
                 "repo_upsert_artifact",
@@ -505,6 +578,9 @@ def main() -> int:
             "workflow_job_b": job_b,
             "write_task": write_task,
             "write_run": write_run,
+            "write_tool_call": write_tool_call,
+            "write_runtime_event": write_runtime_event,
+            "write_audit": write_audit,
             "write_approval": write_approval,
             "write_evaluation": write_eval,
             "write_artifact": write_artifact,

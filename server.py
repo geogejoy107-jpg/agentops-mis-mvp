@@ -980,10 +980,39 @@ CREATE INDEX IF NOT EXISTS idx_knowledge_documents_category ON knowledge_documen
 """
 
 
-def audit(conn: sqlite3.Connection, actor_type: str, actor_id: str | None, action: str, entity_type: str, entity_id: str, before=None, after=None, metadata=None):
+def repo_insert_audit_log(conn: sqlite3.Connection, row: dict, metadata: dict | None = None) -> dict:
     previous = conn.execute("SELECT tamper_chain_hash FROM audit_logs ORDER BY created_at DESC LIMIT 1").fetchone()
     previous_hash = previous[0] if previous else "genesis"
     payload = {
+        "actor_type": row["actor_type"],
+        "actor_id": row.get("actor_id"),
+        "action": row["action"],
+        "entity_type": row["entity_type"],
+        "entity_id": row["entity_id"],
+        "before_hash": row.get("before_hash"),
+        "after_hash": row.get("after_hash"),
+        "metadata_json": metadata or {},
+        "previous": previous_hash,
+    }
+    row = {
+        **row,
+        "audit_id": row.get("audit_id") or new_id("aud"),
+        "metadata_json": json.dumps(metadata or {}, ensure_ascii=False),
+        "tamper_chain_hash": stable_hash(payload),
+        "created_at": row.get("created_at") or now_iso(),
+    }
+    conn.execute(
+        """
+        INSERT INTO audit_logs(audit_id, actor_type, actor_id, action, entity_type, entity_id, before_hash, after_hash, metadata_json, tamper_chain_hash, created_at)
+        VALUES(:audit_id,:actor_type,:actor_id,:action,:entity_type,:entity_id,:before_hash,:after_hash,:metadata_json,:tamper_chain_hash,:created_at)
+        """,
+        row,
+    )
+    return row
+
+
+def audit(conn: sqlite3.Connection, actor_type: str, actor_id: str | None, action: str, entity_type: str, entity_id: str, before=None, after=None, metadata=None):
+    repo_insert_audit_log(conn, {
         "actor_type": actor_type,
         "actor_id": actor_id,
         "action": action,
@@ -991,20 +1020,7 @@ def audit(conn: sqlite3.Connection, actor_type: str, actor_id: str | None, actio
         "entity_id": entity_id,
         "before_hash": stable_hash(before) if before is not None else None,
         "after_hash": stable_hash(after) if after is not None else None,
-        "metadata_json": metadata or {},
-        "previous": previous_hash,
-    }
-    chain = stable_hash(payload)
-    conn.execute(
-        """
-        INSERT INTO audit_logs(audit_id, actor_type, actor_id, action, entity_type, entity_id, before_hash, after_hash, metadata_json, tamper_chain_hash, created_at)
-        VALUES(?,?,?,?,?,?,?,?,?,?,?)
-        """,
-        (
-            new_id("aud"), actor_type, actor_id, action, entity_type, entity_id,
-            payload["before_hash"], payload["after_hash"], json.dumps(metadata or {}, ensure_ascii=False), chain, now_iso()
-        ),
-    )
+    }, metadata or {})
 
 
 def init_schema():
@@ -1314,6 +1330,15 @@ def update_runtime_connector_trust(conn, connector_id: str, body: dict) -> tuple
     return {"connector": dict(after), "token_omitted": True}, 200
 
 
+def repo_insert_runtime_event(conn: sqlite3.Connection, row: dict) -> dict:
+    conn.execute(
+        """INSERT INTO runtime_events(runtime_event_id,runtime_connector_id,event_type,status,run_id,task_id,agent_id,model_name,latency_ms,prompt_hash,input_summary,output_summary,error_message,raw_payload_hash,created_at)
+        VALUES(:runtime_event_id,:runtime_connector_id,:event_type,:status,:run_id,:task_id,:agent_id,:model_name,:latency_ms,:prompt_hash,:input_summary,:output_summary,:error_message,:raw_payload_hash,:created_at)""",
+        row,
+    )
+    return row
+
+
 def runtime_event(conn, connector_id, event_type, status, **kwargs):
     row = {
         "runtime_event_id": new_id("rte"),
@@ -1332,12 +1357,7 @@ def runtime_event(conn, connector_id, event_type, status, **kwargs):
         "raw_payload_hash": kwargs.get("raw_payload_hash"),
         "created_at": now_iso(),
     }
-    conn.execute(
-        """INSERT INTO runtime_events(runtime_event_id,runtime_connector_id,event_type,status,run_id,task_id,agent_id,model_name,latency_ms,prompt_hash,input_summary,output_summary,error_message,raw_payload_hash,created_at)
-        VALUES(:runtime_event_id,:runtime_connector_id,:event_type,:status,:run_id,:task_id,:agent_id,:model_name,:latency_ms,:prompt_hash,:input_summary,:output_summary,:error_message,:raw_payload_hash,:created_at)""",
-        row,
-    )
-    return row
+    return repo_insert_runtime_event(conn, row)
 
 
 def default_template_packages() -> list[dict]:
@@ -1792,6 +1812,27 @@ def repo_upsert_run(conn: sqlite3.Connection, row: dict, allow_update: bool = Tr
         return before, "created"
 
 
+def repo_upsert_tool_call(conn: sqlite3.Connection, row: dict, allow_update: bool = True) -> tuple[sqlite3.Row | None, str]:
+    before = conn.execute("SELECT * FROM tool_calls WHERE tool_call_id=?", (row["tool_call_id"],)).fetchone()
+    if before:
+        if not allow_update or row_unchanged(before, row, {"created_at"}):
+            return before, "unchanged"
+        conn.execute(
+            """UPDATE tool_calls SET run_id=:run_id, agent_id=:agent_id, tool_name=:tool_name, tool_version=:tool_version,
+            tool_category=:tool_category, normalized_args_json=:normalized_args_json, target_resource=:target_resource,
+            risk_level=:risk_level, status=:status, result_summary=:result_summary, side_effect_id=:side_effect_id,
+            started_at=:started_at, ended_at=:ended_at WHERE tool_call_id=:tool_call_id""",
+            row,
+        )
+        return before, "updated"
+    conn.execute(
+        """INSERT INTO tool_calls(tool_call_id,run_id,agent_id,tool_name,tool_version,tool_category,normalized_args_json,target_resource,risk_level,status,result_summary,side_effect_id,started_at,ended_at,created_at)
+        VALUES(:tool_call_id,:run_id,:agent_id,:tool_name,:tool_version,:tool_category,:normalized_args_json,:target_resource,:risk_level,:status,:result_summary,:side_effect_id,:started_at,:ended_at,:created_at)""",
+        row,
+    )
+    return before, "created"
+
+
 def repo_upsert_approval(conn: sqlite3.Connection, row: dict, allow_update: bool = True) -> tuple[sqlite3.Row | None, str]:
     ensure_default_user(conn, row.get("approver_user_id"))
     before = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (row["approval_id"],)).fetchone()
@@ -1893,29 +1934,12 @@ def upsert_run(conn, row: dict, actor_id="adapter-import", audit_metadata=None) 
 
 
 def upsert_tool_call(conn, row: dict, actor_id="adapter-import", audit_metadata=None) -> str:
-    before = conn.execute("SELECT * FROM tool_calls WHERE tool_call_id=?", (row["tool_call_id"],)).fetchone()
-    if before:
-        if actor_id == "openclaw-import":
-            return "unchanged"
-        if row_unchanged(before, row, {"created_at"}):
-            return "unchanged"
-        conn.execute(
-            """UPDATE tool_calls SET run_id=:run_id, agent_id=:agent_id, tool_name=:tool_name, tool_version=:tool_version,
-            tool_category=:tool_category, normalized_args_json=:normalized_args_json, target_resource=:target_resource,
-            risk_level=:risk_level, status=:status, result_summary=:result_summary, side_effect_id=:side_effect_id,
-            started_at=:started_at, ended_at=:ended_at WHERE tool_call_id=:tool_call_id""",
-            row,
-        )
-        action = "tool_call.update"
-    else:
-        conn.execute(
-            """INSERT INTO tool_calls(tool_call_id,run_id,agent_id,tool_name,tool_version,tool_category,normalized_args_json,target_resource,risk_level,status,result_summary,side_effect_id,started_at,ended_at,created_at)
-            VALUES(:tool_call_id,:run_id,:agent_id,:tool_name,:tool_version,:tool_category,:normalized_args_json,:target_resource,:risk_level,:status,:result_summary,:side_effect_id,:started_at,:ended_at,:created_at)""",
-            row,
-        )
-        action = "tool_call.create"
+    before, outcome = repo_upsert_tool_call(conn, row, allow_update=actor_id != "openclaw-import")
+    if outcome == "unchanged":
+        return outcome
+    action = "tool_call.update" if before else "tool_call.create"
     audit(conn, "system", actor_id, action, "tool_calls", row["tool_call_id"], dict(before) if before else None, row, audit_metadata or {})
-    return "updated" if before else "created"
+    return outcome
 
 
 def upsert_evaluation(conn, row: dict, actor_id="adapter-import") -> str:

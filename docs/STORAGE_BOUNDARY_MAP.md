@@ -24,6 +24,7 @@ human/admin APIs:
 | Agent Gateway artifact/approval/memory reads | `repo_list_agent_gateway_artifacts`, `repo_list_agent_gateway_approvals`, `repo_list_agent_gateway_memories` | `GET /api/agent-gateway/artifacts`, `GET /api/agent-gateway/approvals`, `GET /api/agent-gateway/memories` | `python3 scripts/storage_boundary_sqlite_smoke.py` |
 | Task/run write upsert | `repo_upsert_task`, `repo_upsert_run` | task create/import paths, Agent Gateway run start, mock/workflow run creation | `python3 scripts/storage_boundary_sqlite_smoke.py` |
 | Evidence write upsert | `repo_upsert_approval`, `repo_upsert_evaluation`, `repo_upsert_artifact`, `repo_upsert_memory_candidate` | Agent Gateway approval/evaluation/artifact/memory writes, mock runtime artifact/evaluation/memory writes, adapter eval/memory imports | `python3 scripts/storage_boundary_sqlite_smoke.py` |
+| Tool/runtime/audit write append | `repo_upsert_tool_call`, `repo_insert_runtime_event`, `repo_insert_audit_log` | Tool-call adapter imports, Agent Gateway tool call writes, runtime connector events, audit tamper-chain append | `python3 scripts/storage_boundary_sqlite_smoke.py` |
 
 The helpers deliberately keep the existing SQLite row shape and ordering. They
 only centralize workspace filters and detail assembly so a future adapter can
@@ -33,7 +34,7 @@ match behavior before Postgres is introduced.
 
 | Candidate | Why next | Required proof before Postgres |
 | --- | --- | --- |
-| Remaining runtime/audit write repositories | Postgres parity still needs runtime events, tool calls, audit logs, workflow jobs and review decisions centralized | Existing workflow smokes plus isolated write helper smoke |
+| Remaining workflow/review write repositories | Postgres parity still needs workflow jobs, Agent Plans, prepared actions and review decisions centralized | Existing workflow smokes plus isolated write helper smoke |
 | Postgres adapter contract | SQLite helpers now cover core ledger and evidence writes; next step is a second adapter exercising the same helper contract | SQLite smoke parity plus Postgres container smoke with identical fixtures |
 
 ## Postgres Parity Rule
