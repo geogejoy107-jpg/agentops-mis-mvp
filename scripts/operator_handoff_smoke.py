@@ -185,6 +185,10 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
     require(chain_safety.get("explicit_mutating_commands_are_not_auto_run") is True, f"{label} remediation chain mutating boundary missing: {chain_safety}", failures)
     for item in remediation_chain.get("items") or []:
         require(item.get("operation") == "evidence_remediation_work_item", f"{label} remediation item operation wrong: {item}", failures)
+        require(str(item.get("action_id") or "").startswith("evidence_remediation:"), f"{label} remediation action_id missing: {item}", failures)
+        require(isinstance(item.get("action_signature"), str), f"{label} remediation action_signature missing: {item}", failures)
+        require(item.get("receipt_source") == "handoff.evidence_remediation", f"{label} remediation receipt source missing: {item}", failures)
+        require((item.get("receipt_state") or {}).get("action_signature") == item.get("action_signature"), f"{label} remediation receipt signature mismatch: {item}", failures)
         require(str(item.get("preview_command") or "").startswith("agentops operator remediate-evidence-gap --run-id "), f"{label} remediation preview command missing: {item}", failures)
         require(str(item.get("verify_command") or "").startswith("agentops operator evidence-report --run-id "), f"{label} remediation verify command missing: {item}", failures)
         require(str(item.get("receipt_record_command") or "").startswith("agentops operator record-action-receipt "), f"{label} remediation receipt command missing: {item}", failures)
