@@ -1,0 +1,75 @@
+schema_version: '1.1'
+canonical: false
+repository: geogejoy107-jpg/agentops-mis-mvp
+base_branch: codex/agent-gateway-kb-demo
+frozen_product_commit: 4a4a96dc079d7d178894902626728648e73441b2
+research_branch: research-osbi-v1-1-final
+verified_at: '2026-06-22'
+fields_note: Detailed category, adoption mode, phase and license are in OPEN_SOURCE_BASE_INDEX_V1_1.md.
+bases:
+  - {id: "github_spec_kit", decision: "REFERENCE", status: "NOT_INTEGRATED", source: "https://github.com/github/spec-kit"}
+  - {id: "openai_agents_sdk", decision: "PILOT", status: "NOT_INTEGRATED", source: "https://github.com/openai/openai-agents-python"}
+  - {id: "pydantic_ai", decision: "PILOT", status: "NOT_INTEGRATED", source: "https://github.com/pydantic/pydantic-ai"}
+  - {id: "langgraph", decision: "REFERENCE", status: "NOT_INTEGRATED", source: "https://github.com/langchain-ai/langgraph"}
+  - {id: "crewai", decision: "REFERENCE", status: "NOT_INTEGRATED", source: "https://github.com/crewAIInc/crewAI"}
+  - {id: "autogen", decision: "REFERENCE", status: "NOT_INTEGRATED", source: "https://github.com/microsoft/autogen"}
+  - {id: "jiuwenswarm", decision: "PILOT", status: "NOT_INTEGRATED", source: "https://github.com/openJiuwen-ai/jiuwenswarm"}
+  - {id: "swe_agent", decision: "REFERENCE", status: "NOT_INTEGRATED", source: "https://github.com/SWE-agent/SWE-agent"}
+  - {id: "openhands", decision: "PILOT", status: "NOT_INTEGRATED", source: "https://github.com/All-Hands-AI/OpenHands"}
+  - {id: "smolagents", decision: "REFERENCE", status: "NOT_INTEGRATED", source: "https://github.com/huggingface/smolagents"}
+  - {id: "git_worktree", decision: "ADOPT_NOW", status: "IMPLEMENTED", source: "https://git-scm.com/docs/git-worktree"}
+  - {id: "agent_skills", decision: "ADOPT_NOW", status: "PARTIAL", source: "https://agentskills.io/specification"}
+  - {id: "mcp", decision: "ADOPT_NOW", status: "PROPOSED", source: "https://modelcontextprotocol.io/specification"}
+  - {id: "a2a", decision: "PILOT", status: "NOT_INTEGRATED", source: "https://a2a-protocol.org/latest/specification/"}
+  - {id: "acp", decision: "REJECT", status: "SUPERSEDED", source: "https://github.com/i-am-bee/acp"}
+  - {id: "openapi", decision: "ADOPT_NOW", status: "PARTIAL", source: "https://github.com/OAI/OpenAPI-Specification"}
+  - {id: "asyncapi", decision: "REFERENCE", status: "NOT_INTEGRATED", source: "https://github.com/asyncapi/spec"}
+  - {id: "cloudevents", decision: "REFERENCE", status: "NOT_INTEGRATED", source: "https://github.com/cloudevents/spec"}
+  - {id: "sqlite_fts5", decision: "ADOPT_NOW", status: "IMPLEMENTED", source: "https://sqlite.org/fts5.html"}
+  - {id: "aider_repo_map", decision: "REFERENCE", status: "IMPLEMENTED", source: "https://aider.chat/docs/repomap.html"}
+  - {id: "anthropic_contextual_retrieval", decision: "REFERENCE", status: "NOT_INTEGRATED", source: "https://www.anthropic.com/engineering/contextual-retrieval"}
+  - {id: "pgvector", decision: "WATCH", status: "NOT_INTEGRATED", source: "https://github.com/pgvector/pgvector"}
+  - {id: "qdrant", decision: "WATCH", status: "NOT_INTEGRATED", source: "https://github.com/qdrant/qdrant"}
+  - {id: "graphrag", decision: "WATCH", status: "NOT_INTEGRATED", source: "https://github.com/microsoft/graphrag"}
+  - {id: "graphiti", decision: "PILOT", status: "NOT_INTEGRATED", source: "https://github.com/getzep/graphiti"}
+  - {id: "mem0", decision: "REFERENCE", status: "NOT_INTEGRATED", source: "https://github.com/mem0ai/mem0"}
+  - {id: "letta", decision: "REFERENCE", status: "NOT_INTEGRATED", source: "https://github.com/letta-ai/letta"}
+  - {id: "tantivy", decision: "WATCH", status: "NOT_INTEGRATED", source: "https://github.com/quickwit-oss/tantivy"}
+  - {id: "opa", decision: "REFERENCE", status: "NOT_INTEGRATED", source: "https://www.openpolicyagent.org/docs"}
+  - {id: "cedar", decision: "REFERENCE", status: "NOT_INTEGRATED", source: "https://docs.cedarpolicy.com/"}
+  - {id: "openfga", decision: "WATCH", status: "NOT_INTEGRATED", source: "https://github.com/openfga/openfga"}
+  - {id: "gvisor", decision: "PILOT", status: "NOT_INTEGRATED", source: "https://gvisor.dev/docs/"}
+  - {id: "firecracker", decision: "WATCH", status: "NOT_INTEGRATED", source: "https://github.com/firecracker-microvm/firecracker"}
+  - {id: "sops", decision: "PILOT", status: "NOT_INTEGRATED", source: "https://github.com/getsops/sops"}
+  - {id: "gitleaks", decision: "ADOPT_NOW", status: "NOT_INTEGRATED", source: "https://github.com/gitleaks/gitleaks"}
+  - {id: "trivy", decision: "ADOPT_NOW", status: "NOT_INTEGRATED", source: "https://github.com/aquasecurity/trivy"}
+  - {id: "syft", decision: "ADOPT_NOW", status: "NOT_INTEGRATED", source: "https://github.com/anchore/syft"}
+  - {id: "cosign", decision: "WATCH", status: "NOT_INTEGRATED", source: "https://github.com/sigstore/cosign"}
+  - {id: "opentelemetry", decision: "ADOPT_NOW", status: "PARTIAL", source: "https://opentelemetry.io/docs/"}
+  - {id: "openinference", decision: "PILOT", status: "NOT_INTEGRATED", source: "https://github.com/Arize-ai/openinference"}
+  - {id: "langfuse", decision: "PILOT", status: "NOT_INTEGRATED", source: "https://github.com/langfuse/langfuse"}
+  - {id: "promptfoo", decision: "ADOPT_NOW", status: "NOT_INTEGRATED", source: "https://github.com/promptfoo/promptfoo"}
+  - {id: "inspect_ai", decision: "PILOT", status: "NOT_INTEGRATED", source: "https://github.com/UKGovernmentBEIS/inspect_ai"}
+  - {id: "ragas", decision: "REFERENCE", status: "NOT_INTEGRATED", source: "https://github.com/explodinggradients/ragas"}
+  - {id: "deepeval", decision: "REFERENCE", status: "NOT_INTEGRATED", source: "https://github.com/confident-ai/deepeval"}
+  - {id: "phoenix", decision: "WATCH", status: "NOT_INTEGRATED", source: "https://github.com/Arize-ai/phoenix"}
+  - {id: "tanstack_query", decision: "REFERENCE", status: "NOT_INTEGRATED", source: "https://github.com/TanStack/query"}
+  - {id: "tanstack_virtual", decision: "REFERENCE", status: "NOT_INTEGRATED", source: "https://github.com/TanStack/virtual"}
+  - {id: "vite", decision: "ADOPT_NOW", status: "IMPLEMENTED", source: "https://github.com/vitejs/vite"}
+  - {id: "sqlite_wal", decision: "ADOPT_NOW", status: "IMPLEMENTED", source: "https://sqlite.org/wal.html"}
+  - {id: "http_sse", decision: "REFERENCE", status: "NOT_INTEGRATED", source: "https://html.spec.whatwg.org/multipage/server-sent-events.html"}
+  - {id: "prometheus", decision: "PILOT", status: "NOT_INTEGRATED", source: "https://github.com/prometheus/prometheus"}
+  - {id: "mlflow", decision: "PILOT", status: "NOT_INTEGRATED", source: "https://github.com/mlflow/mlflow"}
+  - {id: "dvc", decision: "PILOT", status: "NOT_INTEGRATED", source: "https://github.com/treeverse/dvc"}
+  - {id: "ray", decision: "PILOT", status: "NOT_INTEGRATED", source: "https://github.com/ray-project/ray"}
+  - {id: "skypilot", decision: "PILOT", status: "NOT_INTEGRATED", source: "https://github.com/skypilot-org/skypilot"}
+  - {id: "slurm", decision: "REFERENCE", status: "NOT_INTEGRATED", source: "https://slurm.schedmd.com/overview.html"}
+  - {id: "dcgm_exporter", decision: "ADOPT_NOW", status: "NOT_INTEGRATED", source: "https://github.com/NVIDIA/dcgm-exporter"}
+  - {id: "optuna", decision: "REFERENCE", status: "NOT_INTEGRATED", source: "https://github.com/optuna/optuna"}
+  - {id: "hydra", decision: "REFERENCE", status: "NOT_INTEGRATED", source: "https://github.com/facebookresearch/hydra"}
+  - {id: "jupyterhub", decision: "REFERENCE", status: "NOT_INTEGRATED", source: "https://github.com/jupyterhub/jupyterhub"}
+  - {id: "openlineage", decision: "WATCH", status: "NOT_INTEGRATED", source: "https://github.com/OpenLineage/OpenLineage"}
+  - {id: "spdx", decision: "ADOPT_NOW", status: "PARTIAL", source: "https://spdx.dev/"}
+  - {id: "cyclonedx", decision: "REFERENCE", status: "NOT_INTEGRATED", source: "https://cyclonedx.org/"}
+  - {id: "openssf_scorecard", decision: "PILOT", status: "NOT_INTEGRATED", source: "https://github.com/ossf/scorecard"}
+  - {id: "slsa", decision: "REFERENCE", status: "NOT_INTEGRATED", source: "https://slsa.dev/spec/v1.2/"}
