@@ -198,6 +198,15 @@ def main() -> int:
             "workspace-scoped helpers, isolated SQLite smoke, Postgres container parity, adapter SQL contract, optional psycopg adapter, shared boundary fixture parity, route read-model parity, fail-closed backend selection, and read-only Postgres HTTP parity are present",
         ),
         check(
+            "postgres_cli_read_parity_surface_exists",
+            file_contains("docs/POSTGRES_PARITY_CONTRACT.md", "postgres_cli_read_parity_v1")
+            and file_contains("docs/STORAGE_BOUNDARY_MAP.md", "storage_postgres_cli_read_parity_smoke.py")
+            and file_contains("docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md", "storage_postgres_cli_read_parity_smoke.py")
+            and file_contains("docs/AGENT_GATEWAY_CLI_SPEC.md", "storage_postgres_cli_read_parity_smoke.py")
+            and (ROOT / "scripts" / "storage_postgres_cli_read_parity_smoke.py").exists(),
+            "read-only Postgres CLI/API parity smoke and docs are present",
+        ),
+        check(
             "blocked_generated_or_runtime_artifacts_absent",
             not blocked_paths,
             "blocked_paths=" + json.dumps(blocked_paths, ensure_ascii=False),
@@ -245,6 +254,7 @@ def main() -> int:
                 "python3 scripts/storage_postgres_route_read_model_smoke.py",
                 "python3 scripts/storage_backend_selection_smoke.py",
                 "python3 scripts/storage_postgres_http_read_parity_smoke.py",
+                "python3 scripts/storage_postgres_cli_read_parity_smoke.py",
             ],
         },
         {

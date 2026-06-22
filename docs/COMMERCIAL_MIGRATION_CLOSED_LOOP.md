@@ -129,6 +129,9 @@ Must be true:
 - A Postgres-backed server can start only in explicit read-only HTTP mode at
   this gate: selected GET routes must match the locked read-model hash, while
   POST/PATCH writes fail closed until the write adapter is proven.
+- The Postgres-backed read-only server must preserve the machine-facing
+  Agent Gateway CLI/API read contract for selected `agentops` commands, not
+  only browser/human API reads.
 - Verification includes local acceptance against a temporary SQLite database
   before any Postgres work starts:
 
@@ -138,6 +141,7 @@ python3 scripts/storage_postgres_boundary_parity_smoke.py
 python3 scripts/storage_postgres_route_read_model_smoke.py
 python3 scripts/storage_backend_selection_smoke.py
 python3 scripts/storage_postgres_http_read_parity_smoke.py
+python3 scripts/storage_postgres_cli_read_parity_smoke.py
 ```
 
 ### Gate 4: UI/API Parity Before Next.js

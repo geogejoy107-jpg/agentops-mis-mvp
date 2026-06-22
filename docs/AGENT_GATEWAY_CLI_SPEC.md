@@ -1327,6 +1327,7 @@ python3 scripts/agentops_customer_worker_cli_smoke.py
 python3 scripts/agentops_task_create_cli_smoke.py
 python3 scripts/agent_gateway_task_create_scope_smoke.py
 python3 scripts/agentops_cli_inspect_smoke.py
+python3 scripts/storage_postgres_cli_read_parity_smoke.py
 ```
 
 This helper creates a scoped token, creates a normal MIS task for that agent, runs `scripts/agent_worker.py --once` with the token, verifies run/tool/eval evidence, and revokes the token by default. It does not print the raw token.
@@ -1336,6 +1337,7 @@ The CLI status helper verifies `agentops status` reports safe token-bound metada
 The CLI doctor helper verifies `agentops doctor` works in local no-token mode and scoped env-token mode, checks Gateway/worker status, and confirms the raw token is omitted from output.
 The CLI worker-status helper verifies `agentops worker status` returns the worker fleet/daemon summary without token leakage.
 The CLI worker-preflight helper verifies `agentops worker preflight` returns read-only Gateway/adapter readiness JSON with `live_execution_performed=false`.
+The Postgres CLI read parity helper verifies selected `agentops` task/run/artifact/approval/memory/workflow job read commands can read a Postgres-backed read-only server, checks write attempts fail closed as `postgres_read_only_backend`, and confirms no token-like values or SQLite fallback are used.
 The CLI worker-daemon helper verifies `agentops worker start/status/logs/stop` can manage a mock daemon without leaking secrets.
 The live-confirm-gate helper verifies `agentops worker start --adapter hermes|openclaw` fails closed without `--confirm-run`.
 The customer-worker CLI helper verifies `agentops workflow customer-worker-task` creates a real mock worker run with run/tool/evaluation/audit/artifact evidence and keeps Hermes live execution gated by confirmation.

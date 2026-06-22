@@ -35,7 +35,11 @@ adapter support are all proven. The eighth layer is the server HTTP read
 contract, `postgres_http_read_parity_v1`, which starts the Python server against
 a temporary Postgres database, verifies selected current GET route payloads
 against the route read-model contract, and proves writes fail closed while the
-Postgres server adapter is still read-only.
+Postgres server adapter is still read-only. The ninth layer is the CLI read
+contract, `postgres_cli_read_parity_v1`, which drives selected `agentops` CLI
+read commands against that same Postgres-backed read-only server so the
+machine-facing Agent Gateway CLI/API contract remains valid beyond the default
+SQLite backend.
 
 All layers are intentionally derived from `server.SCHEMA_SQL`, because
 `server.py` is still the executable schema authority for the dependency-free
@@ -89,6 +93,7 @@ python3 scripts/storage_postgres_boundary_parity_smoke.py
 python3 scripts/storage_postgres_route_read_model_smoke.py
 python3 scripts/storage_backend_selection_smoke.py
 python3 scripts/storage_postgres_http_read_parity_smoke.py
+python3 scripts/storage_postgres_cli_read_parity_smoke.py
 python3 scripts/storage_boundary_sqlite_smoke.py
 ```
 
@@ -112,8 +117,10 @@ server backend selection is explicit: default SQLite is active through
 instead of silently falling back. The eighth command starts the actual server
 in `AGENTOPS_STORAGE_BACKEND=postgres` read-only HTTP mode, confirms 14
 selected GET routes match the locked read-model hash, and confirms POST writes
-return `postgres_read_only_backend` without creating rows. The final command
-proves the broader current SQLite helper behavior that Postgres must match.
+return `postgres_read_only_backend` without creating rows. The ninth command
+runs selected `agentops` CLI reads against the same Postgres-backed server and
+checks a CLI write command is blocked. The final command proves the broader
+current SQLite helper behavior that Postgres must match.
 
 When Docker is unavailable on a local machine, use the non-authoritative
 diagnostic mode only to keep wider readiness checks moving:
@@ -125,6 +132,7 @@ python3 scripts/storage_postgres_optional_adapter_smoke.py --skip-if-unavailable
 python3 scripts/storage_postgres_boundary_parity_smoke.py --skip-if-unavailable
 python3 scripts/storage_postgres_route_read_model_smoke.py --skip-if-unavailable
 python3 scripts/storage_postgres_http_read_parity_smoke.py --skip-if-unavailable
+python3 scripts/storage_postgres_cli_read_parity_smoke.py --skip-if-unavailable
 ```
 
 This mode reports `skipped: true`; it is not final BYOC/Postgres evidence.
@@ -160,6 +168,13 @@ Current local evidence on `codex/commercial-migration-closed-loop`:
   `e6a562071962c4e2ff99236e39cfa2ee3b53f36b46c3b0d268507a5ced08f843`,
   POST writes returned `503 postgres_read_only_backend`,
   `free_local_dependencies=[]`, and no fallback to SQLite occurred.
+- `postgres_cli_read_parity_v1` passed against `postgres:16-alpine` with a
+  temporary psycopg target: 10 selected `agentops` CLI read commands for
+  task/run/artifact/approval/memory/workflow-job readback succeeded against the
+  Postgres-backed `read_only_http` server, CLI write guard was checked,
+  `postgres_cli_read_snapshot_hash=89fe042b8d052123c533715e63626aeb847120be7fbeab904febc6deef728d15`,
+  runtime-only `age_sec` is omitted from the contract hash,
+  `free_local_dependencies=[]`, and no fallback to SQLite occurred.
 - Source install packaging includes `agentops_mis_storage.postgres`; importing
   the module and translating SQL does not require psycopg.
 
@@ -168,7 +183,8 @@ Current local evidence on `codex/commercial-migration-closed-loop`:
 Postgres parity is not complete until the adapter boundary:
 
 - routes more `repo_*` helper flows through the same shared fixture pattern;
-- widens selected HTTP/CLI requests against the Postgres-backed server adapter;
+- widens selected HTTP/CLI requests against the Postgres-backed server adapter,
+  especially Agent Plan and plan-evidence reads;
 - keeps backend selection fail-closed so Postgres configuration cannot silently
   run against SQLite;
 - keeps qmark/named placeholder translation and literal `?` behavior locked;
