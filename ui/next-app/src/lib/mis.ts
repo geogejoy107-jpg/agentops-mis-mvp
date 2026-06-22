@@ -173,6 +173,32 @@ export type WorkerAdapterReadinessSummary = {
   token_omitted?: boolean;
 };
 
+export type AgentGatewaySessionSummary = {
+  session_id?: string;
+  session_ref?: string;
+  session_id_omitted?: boolean;
+  parent_token_id?: string;
+  parent_token_ref?: string;
+  workspace_id?: string;
+  agent_id?: string;
+  status?: string;
+  session_state?: string;
+  scopes?: string[];
+  scope_count?: number;
+  created_at?: string;
+  expires_at?: string;
+  revoked_at?: string | null;
+  last_used_at?: string | null;
+};
+
+export type AgentGatewaySessionsPayload = {
+  sessions?: AgentGatewaySessionSummary[];
+  workspace_id?: string | null;
+  valid_scopes?: string[];
+  token_omitted?: boolean;
+  error?: string;
+};
+
 export type CustomerProjectSummary = {
   project_id: string;
   title: string;

@@ -85,6 +85,9 @@ Must be true:
   from production/shared deployment.
 - Admin/API auth, scoped agent sessions, workspace isolation, approval policy,
   and audit evidence have smoke coverage.
+- The Next.js governance parity page renders production readiness,
+  workspace/RBAC entitlement state, short-lived session governance, and audit
+  evidence through read-only MIS proxy loaders without exposing raw session IDs.
 - Live Hermes/OpenClaw execution still requires readiness and explicit
   confirmation.
 - Production mode disables local-dev Agent Gateway fallback: without
@@ -148,8 +151,8 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   snapshots, approves one pending approval through the Next.js approvals page,
   approves one candidate memory through the Next.js memory page, verifies both
   state changes through `/api/mis/*`, renders a fixture-backed customer project
-  report, opens the commercial entitlement parity page, archives that report to
-  the MIS ledger through a Next.js form fallback,
+  report, opens the commercial entitlement parity page and the governance
+  parity page, archives that report to the MIS ledger through a Next.js form fallback,
   verifies `report_artifact_id`, clicks a customer template dispatch action,
   verifies the Free Local `report_templates` entitlement block, confirms no
   customer project was created by the blocked action, flips an isolated temporary
@@ -164,6 +167,7 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   - `ui/next-app/app/workspace/page.tsx`
   - `ui/next-app/app/workspace/agents/page.tsx`
   - `ui/next-app/app/workspace/commercial/page.tsx`
+  - `ui/next-app/app/workspace/governance/page.tsx`
   - `ui/next-app/app/workspace/dispatch/page.tsx`
   - `ui/next-app/app/workspace/dispatch/template-run/route.ts`
   - `ui/next-app/app/workspace/evidence/[manifestId]/page.tsx`
@@ -182,6 +186,7 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   - `ui/next-app/app/api/mis/[...path]/route.ts`
   - `ui/next-app/src/lib/misServer.ts`
   - `ui/next-app/src/components/CommercialPage.tsx`
+  - `ui/next-app/src/components/GovernancePage.tsx`
   - `ui/next-app/src/components/DispatchPage.tsx`
   - `ui/next-app/src/components/DeliveryPages.tsx`
   - `scripts/nextjs_parity_smoke.py`

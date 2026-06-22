@@ -1,5 +1,6 @@
 import type {
   ApprovalSummary,
+  AgentGatewaySessionsPayload,
   CommercialEntitlementStatus,
   CustomerDeliveryBoardPayload,
   CustomerProjectIndexPayload,
@@ -12,7 +13,10 @@ import type {
   RunGraphPayload,
   RunDetailPayload,
   RunDetailSnapshot,
+  SecurityReadinessSummary,
   TaskDetailPayload,
+  WorkerStatusSummary,
+  AuditSummary,
 } from "./mis";
 
 const TARGET_BASE = process.env.AGENTOPS_API_BASE || "http://127.0.0.1:8765/api";
@@ -77,6 +81,38 @@ export async function loadServerCommercialEntitlements(): Promise<ServerLoadResu
     return { data: await serverMisJson<CommercialEntitlementStatus>("/commercial/entitlements"), error: null };
   } catch (err) {
     return { data: {}, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export async function loadServerSecurityProductionReadiness(): Promise<ServerLoadResult<SecurityReadinessSummary>> {
+  try {
+    return { data: await serverMisJson<SecurityReadinessSummary>("/security/production-readiness"), error: null };
+  } catch (err) {
+    return { data: {}, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export async function loadServerWorkerStatus(): Promise<ServerLoadResult<WorkerStatusSummary>> {
+  try {
+    return { data: await serverMisJson<WorkerStatusSummary>("/workers/status"), error: null };
+  } catch (err) {
+    return { data: {}, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export async function loadServerGatewaySessions(): Promise<ServerLoadResult<AgentGatewaySessionsPayload>> {
+  try {
+    return { data: await serverMisJson<AgentGatewaySessionsPayload>("/agent-gateway/sessions"), error: null };
+  } catch (err) {
+    return { data: { sessions: [] }, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export async function loadServerAudit(limit = 80): Promise<ServerLoadResult<AuditSummary[]>> {
+  try {
+    return { data: await serverMisJson<AuditSummary[]>(`/audit?limit=${encodeURIComponent(String(limit))}`), error: null };
+  } catch (err) {
+    return { data: [], error: err instanceof Error ? err.message : String(err) };
   }
 }
 

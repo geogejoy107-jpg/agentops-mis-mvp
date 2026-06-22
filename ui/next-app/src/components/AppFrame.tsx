@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Activity, BarChart3, Bot, Brain, ClipboardList, Database, History, LockKeyhole, Send, ShieldCheck, Workflow } from "lucide-react";
+import { Activity, BarChart3, Bot, Brain, ClipboardList, Database, History, KeyRound, LockKeyhole, Send, ShieldCheck, Workflow } from "lucide-react";
 
 const navItems = [
   { href: "/workspace", label: "Workspace", icon: Activity },
   { href: "/workspace/agents", label: "Agents", icon: Bot },
   { href: "/workspace/commercial", label: "Commercial", icon: LockKeyhole },
+  { href: "/workspace/governance", label: "Governance", icon: KeyRound },
   { href: "/workspace/dispatch", label: "Dispatch", icon: Send },
   { href: "/workspace/tasks", label: "Tasks", icon: ClipboardList },
   { href: "/workspace/runs", label: "Runs", icon: Workflow },
