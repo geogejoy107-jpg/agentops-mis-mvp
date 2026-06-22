@@ -284,7 +284,7 @@ python3 scripts/sqlite_reliability_smoke.py
 - [x] Operator Action Queue recovery items can record action receipts and show VERIFY commands in action-plan / loop-audit readback.
 - [ ] Paginate large run, tool and audit lists.
 - [ ] Briefly cache expensive aggregate read models.
-- [ ] One optional endpoint failure must not block the whole page.
+- [x] One optional endpoint failure must not block the whole page: UI optional loaders return explicit `unavailable` fallback payloads, and AI Employees renders the operator evidence matrix without blocking the rest of the console.
 
 Initial budgets:
 
@@ -317,6 +317,7 @@ operator evidence report, and v1.5 local product acceptance against a temporary
 SQLite DB.
 
 ui-build: npm ci + npm run build under ui/start-building-app.
+AI Employees optional endpoint fallback: `cd ui/start-building-app && npm run build`.
 ```
 
 The workflow intentionally keeps Hermes/OpenClaw live runtime work out of CI.

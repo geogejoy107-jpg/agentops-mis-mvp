@@ -26,6 +26,7 @@ import {
   loadLocalReadiness,
   loadOperatorActionReceipts,
   loadOperatorActionPlan,
+  loadOperatorEvidenceReport,
   loadOperatorHandoff,
   loadOperatorHealth,
   loadOperatorLoopAudit,
@@ -71,6 +72,7 @@ import {
   type HermesOpenClawLoopWorkflowResult,
   type OperatorActionPlanPayload,
   type OperatorActionReceiptsPayload,
+  type OperatorEvidenceReportPayload,
   type OperatorHandoffPayload,
   type OperatorHealthPayload,
   type OperatorLoopAuditPayload,
@@ -223,7 +225,7 @@ export function AIEmployees() {
     scopes: DEFAULT_GATEWAY_SCOPES.join(", "),
   });
   const { data, loading, error, refresh } = useLiveData(async () => {
-    const [metrics, demoReadiness, workerStatus, workerFleet, workerHygiene, adapterReadiness, localReadiness, operatorActionPlan, operatorActionReceipts, securityReadiness, integrationInbox, commanderWorkPackages, reviewQueue, customerDeliveryBoard, loopLaneReadback, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs] = await Promise.all([
+    const [metrics, demoReadiness, workerStatus, workerFleet, workerHygiene, adapterReadiness, localReadiness, operatorActionPlan, operatorActionReceipts, operatorEvidenceReport, securityReadiness, integrationInbox, commanderWorkPackages, reviewQueue, customerDeliveryBoard, loopLaneReadback, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs] = await Promise.all([
       loadDashboard(),
       loadDemoReadiness(),
       loadWorkerStatus(),
@@ -233,6 +235,7 @@ export function AIEmployees() {
       loadLocalReadiness(),
       loadOperatorActionPlan(12),
       loadOperatorActionReceipts(8),
+      loadOperatorEvidenceReport(8),
       loadSecurityProductionReadiness(),
       loadIntegrationInbox({ bucket: integrationInboxBucket, limit: 20 }),
       loadCommanderWorkPackages({ limit: 8 }),
@@ -255,7 +258,7 @@ export function AIEmployees() {
       loadOperatorLoopSelfCheck(12, scopedLoopId),
     ]);
     const agents = await loadAgents(metrics);
-    return { agents, demoReadiness, workerStatus, workerFleet, workerHygiene, adapterReadiness, localReadiness, operatorActionPlan, operatorActionReceipts, operatorLoopAudit, operatorHandoff, operatorHealth, operatorLoopSelfCheck, securityReadiness, integrationInbox, commanderWorkPackages, reviewQueue, customerDeliveryBoard, loopLaneReadback, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs };
+    return { agents, demoReadiness, workerStatus, workerFleet, workerHygiene, adapterReadiness, localReadiness, operatorActionPlan, operatorActionReceipts, operatorEvidenceReport, operatorLoopAudit, operatorHandoff, operatorHealth, operatorLoopSelfCheck, securityReadiness, integrationInbox, commanderWorkPackages, reviewQueue, customerDeliveryBoard, loopLaneReadback, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs };
   }, [integrationInboxBucket]);
   const agents = data?.agents || [];
   const demoReadiness = data?.demoReadiness;
@@ -267,6 +270,7 @@ export function AIEmployees() {
   const localReadiness = data?.localReadiness;
   const operatorActionPlan = data?.operatorActionPlan as OperatorActionPlanPayload | undefined;
   const operatorActionReceipts = data?.operatorActionReceipts as OperatorActionReceiptsPayload | undefined;
+  const operatorEvidenceReport = data?.operatorEvidenceReport as OperatorEvidenceReportPayload | undefined;
   const operatorLoopAudit = data?.operatorLoopAudit as OperatorLoopAuditPayload | undefined;
   const operatorHandoff = data?.operatorHandoff as OperatorHandoffPayload | undefined;
   const operatorHealth = data?.operatorHealth as OperatorHealthPayload | undefined;
@@ -275,6 +279,13 @@ export function AIEmployees() {
   const operatorPlanSummary = operatorActionPlan?.summary;
   const operatorReceiptCoverage = operatorActionPlan?.receipt_coverage;
   const operatorEvidenceGaps = operatorActionPlan?.execution_evidence?.gaps || [];
+  const operatorEvidenceSummary = operatorEvidenceReport?.summary;
+  const operatorEvidenceRuns = operatorEvidenceReport?.runs || [];
+  const operatorEvidenceCommands = operatorEvidenceReport?.recommended_commands || [];
+  const operatorEvidenceTopRuns = operatorEvidenceRuns
+    .filter(item => item.status !== "ready")
+    .concat(operatorEvidenceRuns.filter(item => item.status === "ready"))
+    .slice(0, 3);
   const taskIntakeChecklist = operatorActionPlan?.task_intake;
   const taskIntakeSummary = taskIntakeChecklist?.summary;
   const taskIntakeItems = taskIntakeChecklist?.items || [];
@@ -366,6 +377,12 @@ export function AIEmployees() {
       operatorHealthSummary: "Aggregate read-only health across loop handoff, local readiness, security, worker fleet, review queue, and action plan.",
       healthScore: "Health score",
       healthRisks: "Health risks",
+      evidenceReportTitle: "Evidence report",
+      evidenceReportSummary: "Run-level delivery evidence matrix across Agent Plan, approval, plan_evidence_manifest, ledger counts, pending approvals, and action receipts.",
+      evidenceReportReady: "Ready runs",
+      evidenceReportBlocked: "Blocked runs",
+      missingManifests: "Missing manifests",
+      verifiedReceipts: "Verified receipts",
       demoReadinessTitle: "Demo readiness",
       demoReadinessSummary: "Canonical v1.5 recording path: readiness, security boundary, fleet lanes, async inbox, customer task loop, and run ledger evidence.",
       demoReady: "Demo ready",
@@ -789,6 +806,12 @@ export function AIEmployees() {
       operatorHealthSummary: "聚合 Loop 交接、本地就绪、安全边界、Worker Fleet、评审队列和动作计划的只读健康快照。",
       healthScore: "健康分",
       healthRisks: "健康风险",
+      evidenceReportTitle: "证据报告",
+      evidenceReportSummary: "按 run 聚合 Agent Plan、审批、plan_evidence_manifest、账本计数、待审批和动作收据的交付证据矩阵。",
+      evidenceReportReady: "就绪 Run",
+      evidenceReportBlocked: "阻塞 Run",
+      missingManifests: "缺失清单",
+      verifiedReceipts: "已验收收据",
       demoReadinessTitle: "Demo 就绪",
       demoReadinessSummary: "v1.5 录屏主路径：本地就绪、安全边界、Fleet 队伍、异步 Inbox、客户任务闭环、Run 账本证据。",
       demoReady: "可录 Demo",
@@ -2938,6 +2961,112 @@ export function AIEmployees() {
               </div>
             </div>
           ))}
+        </div>
+
+        <div className="rounded-lg p-3 mt-4" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+          <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <ShieldCheck size={13} style={{ color: operatorEvidenceReport?.status === "blocked" ? "var(--mis-warning)" : "var(--mis-success)" }} />
+                <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.evidenceReportTitle}</div>
+                <StatusBadge status={operatorEvidenceReport?.status || "unknown"} />
+                <StatusBadge status={operatorEvidenceReport?.safety?.read_only && !operatorEvidenceReport?.safety?.ledger_mutated ? "pass" : "attention"} label={operatorEvidenceReport?.safety?.read_only ? copy.readOnlyProof : copy.statusAttention} />
+              </div>
+              <p className="text-[10px] mt-1 max-w-4xl" style={{ color: "var(--mis-dim)" }}>{copy.evidenceReportSummary}</p>
+              {operatorEvidenceReport?.contract && (
+                <p className="text-[10px] mt-1 max-w-4xl truncate" style={{ color: "var(--mis-muted)" }}>{copy.contract}: {operatorEvidenceReport.contract}</p>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-1.5 shrink-0">
+              {(operatorEvidenceCommands.slice(0, 2).length ? operatorEvidenceCommands.slice(0, 2) : ["agentops operator evidence-report --limit 8"]).map((command) => (
+                <button
+                  key={command}
+                  onClick={() => void copyIntakeCommand(command)}
+                  className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded"
+                  style={{ color: "var(--mis-cyan)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}
+                  title={command}
+                >
+                  <Copy size={11} />
+                  {copiedIntakeCommand === command ? copy.copiedCommand : copy.copyCommand}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-2 mt-3">
+            {[
+              { label: copy.evidenceReportReady, value: `${operatorEvidenceSummary?.ready ?? 0}/${operatorEvidenceSummary?.runs ?? 0}`, status: (operatorEvidenceSummary?.ready || 0) > 0 ? "pass" : "attention" },
+              { label: copy.evidenceReportBlocked, value: operatorEvidenceSummary?.blocked ?? 0, status: (operatorEvidenceSummary?.blocked || 0) > 0 ? "blocked" : "pass" },
+              { label: copy.planEvidence, value: operatorEvidenceSummary?.verified_plan_evidence_manifests ?? 0, status: (operatorEvidenceSummary?.verified_plan_evidence_manifests || 0) > 0 ? "pass" : "attention" },
+              { label: copy.missingManifests, value: operatorEvidenceSummary?.missing_plan_evidence_manifests ?? 0, status: (operatorEvidenceSummary?.missing_plan_evidence_manifests || 0) > 0 ? "blocked" : "pass" },
+              { label: copy.pendingApprovals, value: operatorEvidenceSummary?.pending_approvals ?? 0, status: (operatorEvidenceSummary?.pending_approvals || 0) > 0 ? "attention" : "pass" },
+              { label: copy.verifiedReceipts, value: `${operatorEvidenceSummary?.verified_action_receipts ?? 0}/${operatorEvidenceSummary?.action_receipts ?? 0}`, status: (operatorEvidenceSummary?.verified_action_receipts || 0) > 0 ? "pass" : "planned" },
+            ].map((item) => (
+              <div key={item.label} className="rounded px-2 py-1" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                <div className="text-[9px]" style={{ color: "var(--mis-muted)" }}>{item.label}</div>
+                <div className="flex items-center justify-between gap-2 mt-0.5">
+                  <div className="text-[10px] font-semibold truncate" style={{ color: item.status === "blocked" ? "#F87171" : "var(--mis-text)" }}>{item.value}</div>
+                  <StatusBadge status={item.status} />
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-2 mt-3">
+            {operatorEvidenceTopRuns.length === 0 && (
+              <div className="text-[10px] rounded px-3 py-2" style={{ color: "var(--mis-muted)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                {copy.noRecommendedActions}
+              </div>
+            )}
+            {operatorEvidenceTopRuns.map((run) => {
+              const counts = run.evidence_counts || {};
+              const firstCommand = run.recommended_commands?.[0] || "";
+              return (
+                <div key={run.run_id} className="rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="text-[10px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{run.run_id}</div>
+                      <div className="text-[9px] mt-0.5 truncate" style={{ color: "var(--mis-muted)" }}>
+                        {copy.agentPlan}: {run.agent_plan?.verification_pass ? "pass" : run.agent_plan?.status || "—"} · {copy.planEvidence}: {run.plan_evidence_manifest?.verification_pass ? "pass" : run.plan_evidence_manifest?.status || "—"}
+                      </div>
+                    </div>
+                    <StatusBadge status={run.status} />
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 mt-2">
+                    {["tool_calls", "evaluations", "artifacts", "audit_logs"].map((key) => (
+                      <span key={key} className="text-[9px] px-1.5 py-0.5 rounded" style={{ color: "var(--mis-muted)", background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                        {key}: {counts[key] ?? 0}
+                      </span>
+                    ))}
+                    {(run.approvals?.pending || 0) > 0 && (
+                      <span className="text-[9px] px-1.5 py-0.5 rounded" style={{ color: "var(--mis-warning)", background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.22)" }}>
+                        {copy.pendingApprovals}: {run.approvals?.pending}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center justify-between gap-2 mt-2">
+                    <div className="text-[9px] truncate" style={{ color: run.failed_check_ids.length ? "var(--mis-warning)" : "var(--mis-muted)" }}>
+                      {run.failed_check_ids.length ? `${copy.gateEvidenceGaps}: ${run.failed_check_ids.join(", ")}` : copy.allGatesPassing}
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <Link to={`/admin/runs/${run.run_id}`} className="text-[9px] px-1.5 py-0.5 rounded" style={{ background: "rgba(45,212,191,0.10)", color: "var(--mis-success)", border: "1px solid rgba(45,212,191,0.18)" }}>
+                        {copy.openRun}
+                      </Link>
+                      {firstCommand && (
+                        <button
+                          onClick={() => void copyIntakeCommand(firstCommand)}
+                          className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded"
+                          style={{ color: "var(--mis-cyan)", background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}
+                          title={firstCommand}
+                        >
+                          <Copy size={9} />
+                          {copiedIntakeCommand === firstCommand ? copy.copiedCommand : copy.copyCommand}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
 
         <div className="rounded-lg p-3 mt-4" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>

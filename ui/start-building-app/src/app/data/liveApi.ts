@@ -1301,6 +1301,76 @@ export interface OperatorActionReceiptsPayload {
   token_omitted?: boolean;
 }
 
+export interface OperatorEvidenceReportRun {
+  run_id: string;
+  task_id?: string | null;
+  agent_id?: string | null;
+  run_status?: string | null;
+  status: string;
+  failed_check_ids: string[];
+  checks: { id: string; ok: boolean; message?: string }[];
+  evidence_counts: Record<string, number>;
+  agent_plan?: {
+    plan_id?: string | null;
+    status?: string | null;
+    risk_level?: string | null;
+    approval_required?: boolean;
+    approval_id?: string | null;
+    approval_decision?: string | null;
+    verification_pass?: boolean;
+    plan_hash?: string | null;
+  };
+  plan_evidence_manifest?: {
+    manifest_id?: string | null;
+    status?: string | null;
+    verification_pass?: boolean;
+    failed_check_ids?: string[];
+  };
+  approvals?: {
+    count?: number;
+    pending?: number;
+    approved?: number;
+    rejected?: number;
+    items?: Record<string, unknown>[];
+  };
+  gap_decision?: Record<string, unknown> | null;
+  recommended_commands: string[];
+  token_omitted?: boolean;
+}
+
+export interface OperatorEvidenceReportPayload {
+  provider: string;
+  operation: string;
+  status: string;
+  workspace_id: string;
+  summary: {
+    runs: number;
+    ready: number;
+    attention: number;
+    blocked: number;
+    verified_plan_evidence_manifests: number;
+    missing_plan_evidence_manifests: number;
+    pending_approvals: number;
+    approval_required_plans: number;
+    approved_required_plans: number;
+    action_receipts: number;
+    verified_action_receipts: number;
+    evaluated_action_receipts: number;
+  };
+  runs: OperatorEvidenceReportRun[];
+  recommended_commands: string[];
+  contract?: string;
+  safety: {
+    read_only: boolean;
+    ledger_mutated: boolean;
+    live_execution_performed: boolean;
+    raw_prompt_omitted: boolean;
+    raw_response_omitted: boolean;
+    token_omitted: boolean;
+  };
+  token_omitted?: boolean;
+}
+
 export interface OperatorActionReceiptResult {
   provider?: string;
   operation?: string;
@@ -2173,16 +2243,20 @@ export async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 async function optionalApiJson<T>(path: string, fallback: T): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, {
-    headers: { "Content-Type": "application/json" },
-  });
-  if (res.status === 404) {
+  try {
+    const res = await fetch(`${API_BASE}${path}`, {
+      headers: { "Content-Type": "application/json" },
+    });
+    if (!res.ok) {
+      return fallback;
+    }
+    return res.json() as Promise<T>;
+  } catch (error) {
+    if (import.meta.env.DEV) {
+      console.warn(`Optional AgentOps endpoint unavailable: ${path}`, error);
+    }
     return fallback;
   }
-  if (!res.ok) {
-    throw new Error(`${res.status} ${res.statusText}: ${await res.text()}`);
-  }
-  return res.json() as Promise<T>;
 }
 
 async function apiJsonWithStatuses<T>(path: string, init: RequestInit | undefined, acceptedStatuses: number[]): Promise<T> {
@@ -2819,11 +2893,19 @@ export async function submitCustomerTaskTemplateJob(input: {
 }
 
 export async function loadWorkflowJobs(limit = 8): Promise<WorkflowJobListPayload> {
-  return apiJson<WorkflowJobListPayload>(`/workflows/jobs?limit=${encodeURIComponent(String(limit))}`);
+  return optionalApiJson<WorkflowJobListPayload>(`/workflows/jobs?limit=${encodeURIComponent(String(limit))}`, {
+    jobs: [],
+    token_omitted: true,
+  });
 }
 
 export async function loadStuckWorkflowJobs(thresholdSec = 900, limit = 25): Promise<WorkflowJobStuckPayload> {
-  return apiJson<WorkflowJobStuckPayload>(`/workflows/jobs/stuck?threshold_sec=${encodeURIComponent(String(thresholdSec))}&limit=${encodeURIComponent(String(limit))}`);
+  return optionalApiJson<WorkflowJobStuckPayload>(`/workflows/jobs/stuck?threshold_sec=${encodeURIComponent(String(thresholdSec))}&limit=${encodeURIComponent(String(limit))}`, {
+    provider: "agentops-mis",
+    threshold_sec: thresholdSec,
+    stuck_jobs: [],
+    token_omitted: true,
+  });
 }
 
 export async function loadWorkflowJob(jobId: string): Promise<{ job: WorkflowJob; token_omitted?: boolean }> {
@@ -2853,14 +2935,53 @@ export async function loadCustomerProjects(limit = 25): Promise<CustomerProjectI
 }
 
 export async function loadCustomerDeliveryBoard(limit = 12): Promise<CustomerDeliveryBoardPayload> {
-  return apiJson<CustomerDeliveryBoardPayload>(`/workflows/customer-delivery-board?limit=${encodeURIComponent(String(limit))}`);
+  return optionalApiJson<CustomerDeliveryBoardPayload>(`/workflows/customer-delivery-board?limit=${encodeURIComponent(String(limit))}`, {
+    provider: "agentops-mis",
+    operation: "customer_delivery_board",
+    status: "unavailable",
+    summary: {
+      deliveries: 0,
+      ready: 0,
+      waiting_approval: 0,
+      in_progress: 0,
+      needs_attention: 0,
+      pending_approvals: 0,
+      artifacts: 0,
+      verified_plan_evidence_manifests: 0,
+      missing_plan_evidence_manifests: 0,
+    },
+    deliveries: [],
+    gates: [],
+    next_actions: [],
+    safety: {
+      read_only: true,
+      ledger_mutated: false,
+      live_execution_performed: false,
+      raw_prompt_omitted: true,
+      raw_response_omitted: true,
+      token_omitted: true,
+    },
+    token_omitted: true,
+  });
 }
 
 export async function loadHermesOpenClawLoopReadback(loopId = "", limit = 10): Promise<HermesOpenClawLoopReadbackPayload> {
   const params = new URLSearchParams();
   if (loopId) params.set("loop_id", loopId);
   params.set("limit", String(limit));
-  return apiJson<HermesOpenClawLoopReadbackPayload>(`/workflows/hermes-openclaw-loop?${params.toString()}`);
+  return optionalApiJson<HermesOpenClawLoopReadbackPayload>(`/workflows/hermes-openclaw-loop?${params.toString()}`, {
+    provider: "agentops-mis",
+    operation: "hermes_openclaw_loop_readback",
+    status: "unavailable",
+    runs: [],
+    tasks: [],
+    artifacts: [],
+    agent_plans: [],
+    plan_evidence_manifests: [],
+    audit_logs: [],
+    summary: {},
+    token_omitted: true,
+  });
 }
 
 export async function runHermesOpenClawLoopWorkflow(input: {
@@ -3979,6 +4100,110 @@ export async function loadOperatorActionReceipts(limit = 8): Promise<OperatorAct
   };
 }
 
+export async function loadOperatorEvidenceReport(limit = 8): Promise<OperatorEvidenceReportPayload> {
+  const raw = await optionalApiJson<Record<string, unknown>>(`/operator/evidence-report?limit=${encodeURIComponent(String(limit))}`, {
+    provider: "agentops-operator",
+    operation: "operator_evidence_report",
+    status: "unavailable",
+    workspace_id: "local-demo",
+    summary: {},
+    runs: [],
+    recommended_commands: ["agentops operator evidence-report --limit 8"],
+    contract: "read-only execution evidence report; does not mutate the ledger",
+    safety: {
+      read_only: true,
+      ledger_mutated: false,
+      live_execution_performed: false,
+      raw_prompt_omitted: true,
+      raw_response_omitted: true,
+      token_omitted: true,
+    },
+    token_omitted: true,
+  });
+  const summaryRaw = typeof raw.summary === "object" && raw.summary !== null ? raw.summary as Record<string, unknown> : {};
+  const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
+  const normalizeReportRun = (item: Record<string, unknown>): OperatorEvidenceReportRun => {
+    const agentPlanRaw = typeof item.agent_plan === "object" && item.agent_plan !== null ? item.agent_plan as Record<string, unknown> : {};
+    const manifestRaw = typeof item.plan_evidence_manifest === "object" && item.plan_evidence_manifest !== null ? item.plan_evidence_manifest as Record<string, unknown> : {};
+    const approvalsRaw = typeof item.approvals === "object" && item.approvals !== null ? item.approvals as Record<string, unknown> : {};
+    return {
+      run_id: String(item.run_id || ""),
+      task_id: item.task_id ? String(item.task_id) : null,
+      agent_id: item.agent_id ? String(item.agent_id) : null,
+      run_status: item.run_status ? String(item.run_status) : null,
+      status: String(item.status || "unknown"),
+      failed_check_ids: asArray<unknown>(item.failed_check_ids).map(String).filter(Boolean),
+      checks: asArray<Record<string, unknown>>(item.checks).map(check => ({
+        id: String(check.id || ""),
+        ok: boolValue(check.ok),
+        message: check.message ? String(check.message) : undefined,
+      })).filter(check => check.id),
+      evidence_counts: Object.fromEntries(
+        Object.entries(typeof item.evidence_counts === "object" && item.evidence_counts !== null ? item.evidence_counts as Record<string, unknown> : {})
+          .map(([key, value]) => [key, numberValue(value, 0)]),
+      ),
+      agent_plan: {
+        plan_id: agentPlanRaw.plan_id ? String(agentPlanRaw.plan_id) : null,
+        status: agentPlanRaw.status ? String(agentPlanRaw.status) : null,
+        risk_level: agentPlanRaw.risk_level ? String(agentPlanRaw.risk_level) : null,
+        approval_required: boolValue(agentPlanRaw.approval_required),
+        approval_id: agentPlanRaw.approval_id ? String(agentPlanRaw.approval_id) : null,
+        approval_decision: agentPlanRaw.approval_decision ? String(agentPlanRaw.approval_decision) : null,
+        verification_pass: boolValue(agentPlanRaw.verification_pass),
+        plan_hash: agentPlanRaw.plan_hash ? String(agentPlanRaw.plan_hash) : null,
+      },
+      plan_evidence_manifest: {
+        manifest_id: manifestRaw.manifest_id ? String(manifestRaw.manifest_id) : null,
+        status: manifestRaw.status ? String(manifestRaw.status) : null,
+        verification_pass: boolValue(manifestRaw.verification_pass),
+        failed_check_ids: asArray<unknown>(manifestRaw.failed_check_ids).map(String).filter(Boolean),
+      },
+      approvals: {
+        count: numberValue(approvalsRaw.count, 0),
+        pending: numberValue(approvalsRaw.pending, 0),
+        approved: numberValue(approvalsRaw.approved, 0),
+        rejected: numberValue(approvalsRaw.rejected, 0),
+        items: asArray<Record<string, unknown>>(approvalsRaw.items),
+      },
+      gap_decision: typeof item.gap_decision === "object" && item.gap_decision !== null ? item.gap_decision as Record<string, unknown> : null,
+      recommended_commands: asArray<unknown>(item.recommended_commands).map(String).filter(Boolean),
+      token_omitted: item.token_omitted === undefined ? undefined : boolValue(item.token_omitted),
+    };
+  };
+  return {
+    provider: String(raw.provider || "agentops-operator"),
+    operation: String(raw.operation || "operator_evidence_report"),
+    status: String(raw.status || "unknown"),
+    workspace_id: String(raw.workspace_id || "local-demo"),
+    summary: {
+      runs: numberValue(summaryRaw.runs, 0),
+      ready: numberValue(summaryRaw.ready, 0),
+      attention: numberValue(summaryRaw.attention, 0),
+      blocked: numberValue(summaryRaw.blocked, 0),
+      verified_plan_evidence_manifests: numberValue(summaryRaw.verified_plan_evidence_manifests, 0),
+      missing_plan_evidence_manifests: numberValue(summaryRaw.missing_plan_evidence_manifests, 0),
+      pending_approvals: numberValue(summaryRaw.pending_approvals, 0),
+      approval_required_plans: numberValue(summaryRaw.approval_required_plans, 0),
+      approved_required_plans: numberValue(summaryRaw.approved_required_plans, 0),
+      action_receipts: numberValue(summaryRaw.action_receipts, 0),
+      verified_action_receipts: numberValue(summaryRaw.verified_action_receipts, 0),
+      evaluated_action_receipts: numberValue(summaryRaw.evaluated_action_receipts, 0),
+    },
+    runs: asArray<Record<string, unknown>>(raw.runs).map(normalizeReportRun).filter(item => item.run_id),
+    recommended_commands: asArray<unknown>(raw.recommended_commands).map(String).filter(Boolean),
+    contract: raw.contract ? String(raw.contract) : undefined,
+    safety: {
+      read_only: boolValue(safetyRaw.read_only),
+      ledger_mutated: boolValue(safetyRaw.ledger_mutated),
+      live_execution_performed: boolValue(safetyRaw.live_execution_performed),
+      raw_prompt_omitted: boolValue(safetyRaw.raw_prompt_omitted),
+      raw_response_omitted: boolValue(safetyRaw.raw_response_omitted),
+      token_omitted: boolValue(safetyRaw.token_omitted),
+    },
+    token_omitted: raw.token_omitted === undefined ? undefined : boolValue(raw.token_omitted),
+  };
+}
+
 export async function recordOperatorActionReceipt(input: {
   action_command: string;
   verify_command?: string;
@@ -4999,7 +5224,15 @@ export async function restartLocalWorkerDaemon(input: {
 }
 
 export async function loadWorkerDaemonLogs(adapter: "mock" | "hermes" | "openclaw"): Promise<WorkerDaemonLogPayload> {
-  const raw = await apiJson<Record<string, unknown>>(`/workers/local/logs?adapter=${encodeURIComponent(adapter)}`);
+  const raw = await optionalApiJson<Record<string, unknown>>(`/workers/local/logs?adapter=${encodeURIComponent(adapter)}`, {
+    provider: "agentops-worker",
+    daemon: {
+      adapter,
+      status: "unavailable",
+      running: false,
+      log_tail: [],
+    },
+  });
   return {
     provider: String(raw.provider || "agentops-worker"),
     daemon: normalizeWorkerDaemon((raw.daemon || {}) as Record<string, unknown>),
