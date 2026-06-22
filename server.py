@@ -49,9 +49,12 @@ OPENCLAW_BIN = Path(os.environ.get("OPENCLAW_BIN") or "/opt/homebrew/bin/opencla
 DEFAULT_ENTITLEMENTS_PATH = ROOT / "config" / "entitlements.local.json"
 STORAGE_BACKEND = os.environ.get("AGENTOPS_STORAGE_BACKEND", "sqlite").strip().lower() or "sqlite"
 POSTGRES_HTTP_WRITE_ALLOWED_ROUTES = {
+    ("POST", "/api/agent-gateway/artifacts"),
+    ("POST", "/api/agent-gateway/evaluations/submit"),
     ("POST", "/api/agent-gateway/runs/start"),
     ("POST", "/api/agent-gateway/tasks"),
     ("POST", "/api/agent-gateway/tasks/:task_id/claim"),
+    ("POST", "/api/agent-gateway/tool-calls"),
     ("POST", "/api/tasks"),
 }
 
@@ -350,6 +353,7 @@ def storage_backend_status(headers=None) -> dict:
                 "postgres_http_write_task_parity_v1",
                 "postgres_http_gateway_task_write_parity_v1",
                 "postgres_http_gateway_execution_start_write_v1",
+                "postgres_http_gateway_evidence_write_v1",
             ] if write_http else ["postgres_http_read_parity_v1"],
         }
     return {
@@ -395,6 +399,7 @@ def postgres_read_only_write_block(method: str, path: str) -> dict:
             "postgres_http_write_task_parity_v1",
             "postgres_http_gateway_task_write_parity_v1",
             "postgres_http_gateway_execution_start_write_v1",
+            "postgres_http_gateway_evidence_write_v1",
         ],
     }
 

@@ -44,15 +44,20 @@ GATEWAY_OTHER_AGENT_ID = "agt_pg_gateway_other"
 GATEWAY_INTRUDER_AGENT_ID = "agt_pg_gateway_intruder"
 GATEWAY_TASK_ID = "tsk_pg_gateway_write_task"
 GATEWAY_RUN_ID = "run_pg_gateway_write_start"
+GATEWAY_TOOL_CALL_ID = "tc_pg_gateway_write_evidence"
+GATEWAY_EVALUATION_ID = "eval_pg_gateway_write_evidence"
+GATEWAY_ARTIFACT_ID = "art_pg_gateway_write_evidence"
 GATEWAY_READ_ONLY_TASK_ID = "tsk_pg_gateway_read_only_blocked"
 GATEWAY_READ_ONLY_CLAIM_TASK_ID = "tsk_pg_gateway_read_only_claim_blocked"
 GATEWAY_READ_ONLY_RUN_ID = "run_pg_gateway_read_only_blocked"
+GATEWAY_READ_ONLY_TOOL_CALL_ID = "tc_pg_gateway_read_only_blocked"
+GATEWAY_READ_ONLY_ARTIFACT_ID = "art_pg_gateway_read_only_blocked"
 GATEWAY_MISSING_SCOPE_TASK_ID = "tsk_pg_gateway_missing_scope"
 GATEWAY_CROSS_WORKSPACE_TASK_ID = "tsk_pg_gateway_cross_workspace"
 GATEWAY_HEADER_WORKSPACE_TASK_ID = "tsk_pg_gateway_header_workspace"
 GATEWAY_OTHER_AGENT_TASK_ID = "tsk_pg_gateway_other_agent"
 GATEWAY_NO_TOKEN_TASK_ID = "tsk_pg_gateway_no_token"
-GATEWAY_BLOCKED_TOOL_CALL_ID = "tc_pg_gateway_should_block"
+GATEWAY_BLOCKED_APPROVAL_ID = "ap_pg_gateway_should_block"
 SMOKE_API_KEY = "postgres_write_smoke_required_api_key"
 
 
@@ -330,7 +335,7 @@ def main() -> int:
                 raw_token=gateway_token,
                 agent_id=GATEWAY_AGENT_ID,
                 workspace_id=GATEWAY_WORKSPACE_ID,
-                scopes=["tasks:create", "tasks:read", "tasks:claim", "runs:write"],
+                scopes=["tasks:create", "tasks:read", "tasks:claim", "runs:write", "toolcalls:write", "artifacts:write", "evaluations:submit"],
             )
             seed_gateway_token(
                 adapter,
@@ -346,7 +351,7 @@ def main() -> int:
                 raw_token=gateway_intruder_token,
                 agent_id=GATEWAY_INTRUDER_AGENT_ID,
                 workspace_id=GATEWAY_WORKSPACE_ID,
-                scopes=["tasks:read", "tasks:claim", "runs:write"],
+                scopes=["tasks:read", "tasks:claim", "runs:write", "toolcalls:write", "artifacts:write", "evaluations:submit"],
             )
             adapter.close()
             adapter = None
@@ -373,6 +378,37 @@ def main() -> int:
                     "run_id": GATEWAY_READ_ONLY_RUN_ID,
                     "task_id": GATEWAY_READ_ONLY_CLAIM_TASK_ID,
                     "runtime_type": "mock",
+                },
+            )
+            gateway_tool_blocked_status, gateway_tool_blocked_payload = request_json_with_token(
+                f"{read_only_base}/api/agent-gateway/tool-calls",
+                token=gateway_token,
+                body={
+                    "tool_call_id": GATEWAY_READ_ONLY_TOOL_CALL_ID,
+                    "run_id": GATEWAY_READ_ONLY_RUN_ID,
+                    "tool_name": "postgres.read_only_blocked_tool",
+                    "tool_category": "custom",
+                    "status": "completed",
+                },
+            )
+            gateway_eval_blocked_status, gateway_eval_blocked_payload = request_json_with_token(
+                f"{read_only_base}/api/agent-gateway/evaluations/submit",
+                token=gateway_token,
+                body={
+                    "evaluation_id": f"{GATEWAY_EVALUATION_ID}_read_only",
+                    "run_id": GATEWAY_READ_ONLY_RUN_ID,
+                    "score": 1.0,
+                    "pass_fail": "pass",
+                },
+            )
+            gateway_artifact_blocked_status, gateway_artifact_blocked_payload = request_json_with_token(
+                f"{read_only_base}/api/agent-gateway/artifacts",
+                token=gateway_token,
+                body={
+                    "artifact_id": GATEWAY_READ_ONLY_ARTIFACT_ID,
+                    "run_id": GATEWAY_READ_ONLY_RUN_ID,
+                    "title": "Read-only blocked artifact",
+                    "summary": "This artifact must not persist in read-only Postgres mode.",
                 },
             )
             stop_server(proc)
@@ -458,6 +494,109 @@ def main() -> int:
                     "runtime_type": "mock",
                 },
             )
+            gateway_missing_tool_scope_status, gateway_missing_tool_scope_payload = request_json_with_token(
+                f"{write_base}/api/agent-gateway/tool-calls",
+                token=gateway_observer_token,
+                body={
+                    "tool_call_id": f"{GATEWAY_TOOL_CALL_ID}_missing_scope",
+                    "run_id": GATEWAY_RUN_ID,
+                    "tool_name": "postgres.gateway_missing_tool_scope",
+                    "tool_category": "custom",
+                    "status": "completed",
+                },
+            )
+            gateway_tool_write_status, gateway_tool_write_payload = request_json_with_token(
+                f"{write_base}/api/agent-gateway/tool-calls",
+                token=gateway_token,
+                body={
+                    "tool_call_id": GATEWAY_TOOL_CALL_ID,
+                    "run_id": GATEWAY_RUN_ID,
+                    "tool_name": "postgres.gateway_evidence_tool",
+                    "tool_category": "custom",
+                    "risk_level": "low",
+                    "status": "completed",
+                    "args": {"raw_omitted": True, "contract": "postgres_http_gateway_evidence_write_v1"},
+                    "result_summary": "Postgres Gateway tool-call evidence write proof.",
+                },
+            )
+            gateway_missing_eval_scope_status, gateway_missing_eval_scope_payload = request_json_with_token(
+                f"{write_base}/api/agent-gateway/evaluations/submit",
+                token=gateway_observer_token,
+                body={
+                    "evaluation_id": f"{GATEWAY_EVALUATION_ID}_missing_scope",
+                    "run_id": GATEWAY_RUN_ID,
+                    "score": 1.0,
+                    "pass_fail": "pass",
+                },
+            )
+            gateway_eval_write_status, gateway_eval_write_payload = request_json_with_token(
+                f"{write_base}/api/agent-gateway/evaluations/submit",
+                token=gateway_token,
+                body={
+                    "evaluation_id": GATEWAY_EVALUATION_ID,
+                    "run_id": GATEWAY_RUN_ID,
+                    "task_id": GATEWAY_TASK_ID,
+                    "evaluator_type": "rule",
+                    "score": 1.0,
+                    "pass_fail": "pass",
+                    "rubric": {"gate": "postgres_gateway_evidence_write"},
+                    "notes": "Postgres Gateway evaluation evidence write proof.",
+                },
+            )
+            gateway_missing_artifact_scope_status, gateway_missing_artifact_scope_payload = request_json_with_token(
+                f"{write_base}/api/agent-gateway/artifacts",
+                token=gateway_observer_token,
+                body={
+                    "artifact_id": f"{GATEWAY_ARTIFACT_ID}_missing_scope",
+                    "run_id": GATEWAY_RUN_ID,
+                    "title": "Missing artifact scope",
+                    "summary": "This artifact must not persist without artifacts:write.",
+                },
+            )
+            gateway_artifact_write_status, gateway_artifact_write_payload = request_json_with_token(
+                f"{write_base}/api/agent-gateway/artifacts",
+                token=gateway_token,
+                body={
+                    "artifact_id": GATEWAY_ARTIFACT_ID,
+                    "run_id": GATEWAY_RUN_ID,
+                    "artifact_type": "postgres_gateway_evidence",
+                    "title": "Postgres Gateway evidence artifact",
+                    "uri": f"run://{GATEWAY_RUN_ID}",
+                    "summary": "Postgres Gateway artifact evidence write proof.",
+                    "content_hash": "pg_gateway_evidence_hash",
+                },
+            )
+            gateway_intruder_tool_status, gateway_intruder_tool_payload = request_json_with_token(
+                f"{write_base}/api/agent-gateway/tool-calls",
+                token=gateway_intruder_token,
+                body={
+                    "tool_call_id": f"{GATEWAY_TOOL_CALL_ID}_intruder",
+                    "run_id": GATEWAY_RUN_ID,
+                    "tool_name": "postgres.gateway_intruder_tool",
+                    "tool_category": "custom",
+                    "status": "completed",
+                },
+            )
+            gateway_intruder_eval_status, gateway_intruder_eval_payload = request_json_with_token(
+                f"{write_base}/api/agent-gateway/evaluations/submit",
+                token=gateway_intruder_token,
+                body={
+                    "evaluation_id": f"{GATEWAY_EVALUATION_ID}_intruder",
+                    "run_id": GATEWAY_RUN_ID,
+                    "score": 1.0,
+                    "pass_fail": "pass",
+                },
+            )
+            gateway_intruder_artifact_status, gateway_intruder_artifact_payload = request_json_with_token(
+                f"{write_base}/api/agent-gateway/artifacts",
+                token=gateway_intruder_token,
+                body={
+                    "artifact_id": f"{GATEWAY_ARTIFACT_ID}_intruder",
+                    "run_id": GATEWAY_RUN_ID,
+                    "title": "Intruder artifact",
+                    "summary": "This artifact must not persist for another agent's run.",
+                },
+            )
             gateway_readback_status, gateway_readback_payload = request_json(f"{write_base}/api/tasks/{GATEWAY_TASK_ID}?workspace_id={GATEWAY_WORKSPACE_ID}")
             gateway_run_readback_status, gateway_run_readback_payload = request_json(f"{write_base}/api/runs/{GATEWAY_RUN_ID}?workspace_id={GATEWAY_WORKSPACE_ID}")
             agent_block_status, agent_block_payload = request_json(
@@ -465,15 +604,13 @@ def main() -> int:
                 method="POST",
                 body={"agent_id": BLOCKED_AGENT_ID, "name": "Should stay blocked"},
             )
-            gateway_toolcall_block_status, gateway_toolcall_block_payload = request_json_with_token(
-                f"{write_base}/api/agent-gateway/tool-calls",
+            gateway_approval_block_status, gateway_approval_block_payload = request_json_with_token(
+                f"{write_base}/api/agent-gateway/approvals/request",
                 token=gateway_token,
                 body={
-                    "tool_call_id": GATEWAY_BLOCKED_TOOL_CALL_ID,
+                    "approval_id": GATEWAY_BLOCKED_APPROVAL_ID,
                     "run_id": GATEWAY_RUN_ID,
-                    "tool_name": "postgres.gateway_non_allowlisted_tool",
-                    "tool_category": "custom",
-                    "status": "completed",
+                    "reason": "Approval writes remain outside this Postgres allowlist slice.",
                 },
             )
             stop_server(proc)
@@ -486,6 +623,9 @@ def main() -> int:
             gateway_read_only_task_row = adapter.fetchone("SELECT * FROM tasks WHERE task_id=?", [GATEWAY_READ_ONLY_TASK_ID])
             gateway_read_only_claim_task_row = adapter.fetchone("SELECT * FROM tasks WHERE task_id=?", [GATEWAY_READ_ONLY_CLAIM_TASK_ID])
             gateway_read_only_run_row = adapter.fetchone("SELECT * FROM runs WHERE run_id=?", [GATEWAY_READ_ONLY_RUN_ID])
+            gateway_read_only_tool_row = adapter.fetchone("SELECT * FROM tool_calls WHERE tool_call_id=?", [GATEWAY_READ_ONLY_TOOL_CALL_ID])
+            gateway_read_only_eval_row = adapter.fetchone("SELECT * FROM evaluations WHERE evaluation_id=?", [f"{GATEWAY_EVALUATION_ID}_read_only"])
+            gateway_read_only_artifact_row = adapter.fetchone("SELECT * FROM artifacts WHERE artifact_id=?", [GATEWAY_READ_ONLY_ARTIFACT_ID])
             gateway_missing_scope_task_row = adapter.fetchone("SELECT * FROM tasks WHERE task_id=?", [GATEWAY_MISSING_SCOPE_TASK_ID])
             gateway_cross_workspace_task_row = adapter.fetchone("SELECT * FROM tasks WHERE task_id=?", [GATEWAY_CROSS_WORKSPACE_TASK_ID])
             gateway_header_workspace_task_row = adapter.fetchone("SELECT * FROM tasks WHERE task_id=?", [GATEWAY_HEADER_WORKSPACE_TASK_ID])
@@ -495,13 +635,26 @@ def main() -> int:
             gateway_run_row = adapter.fetchone("SELECT * FROM runs WHERE run_id=?", [GATEWAY_RUN_ID])
             gateway_missing_run_scope_row = adapter.fetchone("SELECT * FROM runs WHERE run_id=?", [f"{GATEWAY_RUN_ID}_missing_scope"])
             gateway_intruder_run_row = adapter.fetchone("SELECT * FROM runs WHERE run_id=?", [f"{GATEWAY_RUN_ID}_intruder"])
-            gateway_blocked_tool_call_row = adapter.fetchone("SELECT * FROM tool_calls WHERE tool_call_id=?", [GATEWAY_BLOCKED_TOOL_CALL_ID])
+            gateway_tool_row = adapter.fetchone("SELECT * FROM tool_calls WHERE tool_call_id=?", [GATEWAY_TOOL_CALL_ID])
+            gateway_eval_row = adapter.fetchone("SELECT * FROM evaluations WHERE evaluation_id=?", [GATEWAY_EVALUATION_ID])
+            gateway_artifact_row = adapter.fetchone("SELECT * FROM artifacts WHERE artifact_id=?", [GATEWAY_ARTIFACT_ID])
+            gateway_missing_tool_row = adapter.fetchone("SELECT * FROM tool_calls WHERE tool_call_id=?", [f"{GATEWAY_TOOL_CALL_ID}_missing_scope"])
+            gateway_missing_eval_row = adapter.fetchone("SELECT * FROM evaluations WHERE evaluation_id=?", [f"{GATEWAY_EVALUATION_ID}_missing_scope"])
+            gateway_missing_artifact_row = adapter.fetchone("SELECT * FROM artifacts WHERE artifact_id=?", [f"{GATEWAY_ARTIFACT_ID}_missing_scope"])
+            gateway_intruder_tool_row = adapter.fetchone("SELECT * FROM tool_calls WHERE tool_call_id=?", [f"{GATEWAY_TOOL_CALL_ID}_intruder"])
+            gateway_intruder_eval_row = adapter.fetchone("SELECT * FROM evaluations WHERE evaluation_id=?", [f"{GATEWAY_EVALUATION_ID}_intruder"])
+            gateway_intruder_artifact_row = adapter.fetchone("SELECT * FROM artifacts WHERE artifact_id=?", [f"{GATEWAY_ARTIFACT_ID}_intruder"])
+            gateway_blocked_approval_row = adapter.fetchone("SELECT * FROM approvals WHERE approval_id=?", [GATEWAY_BLOCKED_APPROVAL_ID])
             runtime_event_count = adapter.fetchone("SELECT COUNT(*) AS c FROM runtime_events WHERE task_id=?", [TASK_ID])["c"]
             audit_count = adapter.fetchone("SELECT COUNT(*) AS c FROM audit_logs WHERE entity_type=? AND entity_id=?", ["tasks", TASK_ID])["c"]
             gateway_runtime_event_count = adapter.fetchone("SELECT COUNT(*) AS c FROM runtime_events WHERE task_id=?", [GATEWAY_TASK_ID])["c"]
             gateway_audit_count = adapter.fetchone("SELECT COUNT(*) AS c FROM audit_logs WHERE entity_type=? AND entity_id=?", ["tasks", GATEWAY_TASK_ID])["c"]
             gateway_run_runtime_event_count = adapter.fetchone("SELECT COUNT(*) AS c FROM runtime_events WHERE run_id=?", [GATEWAY_RUN_ID])["c"]
             gateway_run_audit_count = adapter.fetchone("SELECT COUNT(*) AS c FROM audit_logs WHERE entity_type=? AND entity_id=?", ["runs", GATEWAY_RUN_ID])["c"]
+            gateway_tool_runtime_event_count = adapter.fetchone("SELECT COUNT(*) AS c FROM runtime_events WHERE run_id=? AND event_type=?", [GATEWAY_RUN_ID, "tool_call.record"])["c"]
+            gateway_eval_runtime_event_count = adapter.fetchone("SELECT COUNT(*) AS c FROM runtime_events WHERE run_id=? AND event_type=?", [GATEWAY_RUN_ID, "evaluation.submit"])["c"]
+            gateway_artifact_runtime_event_count = adapter.fetchone("SELECT COUNT(*) AS c FROM runtime_events WHERE run_id=? AND event_type=?", [GATEWAY_RUN_ID, "artifact.record"])["c"]
+            gateway_artifact_audit_count = adapter.fetchone("SELECT COUNT(*) AS c FROM audit_logs WHERE entity_type=? AND entity_id=?", ["artifacts", GATEWAY_ARTIFACT_ID])["c"]
             gateway_token_last_used = adapter.fetchone("SELECT last_used_at FROM agent_gateway_tokens WHERE token_id=?", ["agtok_pg_gateway_write"])
 
             failures: list[str] = []
@@ -515,6 +668,12 @@ def main() -> int:
                 failures.append(f"gateway_read_only_claim_block_mismatch:{gateway_claim_blocked_status}:{gateway_claim_blocked_payload}")
             if gateway_run_start_blocked_status != 503 or gateway_run_start_blocked_payload.get("error") != "postgres_read_only_backend":
                 failures.append(f"gateway_read_only_run_start_block_mismatch:{gateway_run_start_blocked_status}:{gateway_run_start_blocked_payload}")
+            if gateway_tool_blocked_status != 503 or gateway_tool_blocked_payload.get("error") != "postgres_read_only_backend":
+                failures.append(f"gateway_read_only_tool_block_mismatch:{gateway_tool_blocked_status}:{gateway_tool_blocked_payload}")
+            if gateway_eval_blocked_status != 503 or gateway_eval_blocked_payload.get("error") != "postgres_read_only_backend":
+                failures.append(f"gateway_read_only_eval_block_mismatch:{gateway_eval_blocked_status}:{gateway_eval_blocked_payload}")
+            if gateway_artifact_blocked_status != 503 or gateway_artifact_blocked_payload.get("error") != "postgres_read_only_backend":
+                failures.append(f"gateway_read_only_artifact_block_mismatch:{gateway_artifact_blocked_status}:{gateway_artifact_blocked_payload}")
             if blocked_task_row:
                 failures.append("read_only_post_created_blocked_task")
             if gateway_read_only_task_row:
@@ -523,6 +682,8 @@ def main() -> int:
                 failures.append("read_only_claim_created_or_mutated_gateway_task")
             if gateway_read_only_run_row:
                 failures.append("read_only_run_start_created_gateway_run")
+            if gateway_read_only_tool_row or gateway_read_only_eval_row or gateway_read_only_artifact_row:
+                failures.append("read_only_evidence_write_created_row")
             if write_status_code != 200 or write_backend.get("mode") != "experimental_write_http" or write_backend.get("writes_allowed") is not True:
                 failures.append(f"write_backend_mismatch:{write_backend}")
             if create_status != 201 or create_payload.get("task_id") != TASK_ID or create_payload.get("token_omitted") is not True:
@@ -557,18 +718,36 @@ def main() -> int:
                 failures.append(f"gateway_intruder_claim_mismatch:{gateway_intruder_claim_status}:{gateway_intruder_claim_payload}")
             if gateway_intruder_run_status != 403 or "another agent" not in json.dumps(gateway_intruder_run_payload, ensure_ascii=False).lower():
                 failures.append(f"gateway_intruder_run_mismatch:{gateway_intruder_run_status}:{gateway_intruder_run_payload}")
+            if gateway_missing_tool_scope_status != 403 or "toolcalls:write" not in json.dumps(gateway_missing_tool_scope_payload, ensure_ascii=False):
+                failures.append(f"gateway_missing_tool_scope_mismatch:{gateway_missing_tool_scope_status}:{gateway_missing_tool_scope_payload}")
+            if gateway_tool_write_status != 201 or (gateway_tool_write_payload.get("tool_call") or {}).get("tool_call_id") != GATEWAY_TOOL_CALL_ID:
+                failures.append(f"gateway_tool_write_mismatch:{gateway_tool_write_status}:{gateway_tool_write_payload}")
+            if gateway_missing_eval_scope_status != 403 or "evaluations:submit" not in json.dumps(gateway_missing_eval_scope_payload, ensure_ascii=False):
+                failures.append(f"gateway_missing_eval_scope_mismatch:{gateway_missing_eval_scope_status}:{gateway_missing_eval_scope_payload}")
+            if gateway_eval_write_status != 201 or (gateway_eval_write_payload.get("evaluation") or {}).get("evaluation_id") != GATEWAY_EVALUATION_ID:
+                failures.append(f"gateway_eval_write_mismatch:{gateway_eval_write_status}:{gateway_eval_write_payload}")
+            if gateway_missing_artifact_scope_status != 403 or "artifacts:write" not in json.dumps(gateway_missing_artifact_scope_payload, ensure_ascii=False):
+                failures.append(f"gateway_missing_artifact_scope_mismatch:{gateway_missing_artifact_scope_status}:{gateway_missing_artifact_scope_payload}")
+            if gateway_artifact_write_status != 201 or (gateway_artifact_write_payload.get("artifact") or {}).get("artifact_id") != GATEWAY_ARTIFACT_ID:
+                failures.append(f"gateway_artifact_write_mismatch:{gateway_artifact_write_status}:{gateway_artifact_write_payload}")
+            if gateway_intruder_tool_status != 403 or "another agent" not in json.dumps(gateway_intruder_tool_payload, ensure_ascii=False).lower():
+                failures.append(f"gateway_intruder_tool_mismatch:{gateway_intruder_tool_status}:{gateway_intruder_tool_payload}")
+            if gateway_intruder_eval_status != 403 or "another agent" not in json.dumps(gateway_intruder_eval_payload, ensure_ascii=False).lower():
+                failures.append(f"gateway_intruder_eval_mismatch:{gateway_intruder_eval_status}:{gateway_intruder_eval_payload}")
+            if gateway_intruder_artifact_status != 403 or "another agent" not in json.dumps(gateway_intruder_artifact_payload, ensure_ascii=False).lower():
+                failures.append(f"gateway_intruder_artifact_mismatch:{gateway_intruder_artifact_status}:{gateway_intruder_artifact_payload}")
             if gateway_readback_status != 200 or gateway_readback_payload.get("task", {}).get("task_id") != GATEWAY_TASK_ID:
                 failures.append(f"gateway_task_readback_mismatch:{gateway_readback_status}:{gateway_readback_payload}")
             if gateway_run_readback_status != 200 or gateway_run_readback_payload.get("run", {}).get("run_id") != GATEWAY_RUN_ID:
                 failures.append(f"gateway_run_readback_mismatch:{gateway_run_readback_status}:{gateway_run_readback_payload}")
             if agent_block_status != 503 or agent_block_payload.get("error") != "postgres_read_only_backend":
                 failures.append(f"non_allowlisted_write_not_blocked:{agent_block_status}:{agent_block_payload}")
-            if gateway_toolcall_block_status != 503 or gateway_toolcall_block_payload.get("error") != "postgres_read_only_backend":
-                failures.append(f"gateway_non_allowlisted_write_not_blocked:{gateway_toolcall_block_status}:{gateway_toolcall_block_payload}")
+            if gateway_approval_block_status != 503 or gateway_approval_block_payload.get("error") != "postgres_read_only_backend":
+                failures.append(f"gateway_non_allowlisted_write_not_blocked:{gateway_approval_block_status}:{gateway_approval_block_payload}")
             if blocked_agent_row:
                 failures.append("non_allowlisted_agent_write_created_row")
-            if gateway_blocked_tool_call_row:
-                failures.append("non_allowlisted_gateway_tool_call_created_row")
+            if gateway_blocked_approval_row:
+                failures.append("non_allowlisted_gateway_approval_created_row")
             if not task_row or task_row.get("workspace_id") != WORKSPACE_ID or task_row.get("owner_agent_id") != AGENT_ID:
                 failures.append(f"postgres_task_row_mismatch:{task_row}")
             if int(runtime_event_count or 0) < 1:
@@ -583,8 +762,18 @@ def main() -> int:
                 failures.append("postgres_gateway_missing_scope_run_created_row")
             if gateway_intruder_run_row:
                 failures.append("postgres_gateway_intruder_run_created_row")
+            if gateway_missing_tool_row or gateway_missing_eval_row or gateway_missing_artifact_row:
+                failures.append("postgres_gateway_missing_scope_evidence_created_row")
+            if gateway_intruder_tool_row or gateway_intruder_eval_row or gateway_intruder_artifact_row:
+                failures.append("postgres_gateway_intruder_evidence_created_row")
             if not gateway_run_row or gateway_run_row.get("workspace_id") != GATEWAY_WORKSPACE_ID or gateway_run_row.get("task_id") != GATEWAY_TASK_ID or gateway_run_row.get("agent_id") != GATEWAY_AGENT_ID:
                 failures.append(f"postgres_gateway_run_row_mismatch:{gateway_run_row}")
+            if not gateway_tool_row or gateway_tool_row.get("run_id") != GATEWAY_RUN_ID or gateway_tool_row.get("agent_id") != GATEWAY_AGENT_ID:
+                failures.append(f"postgres_gateway_tool_row_mismatch:{gateway_tool_row}")
+            if not gateway_eval_row or gateway_eval_row.get("run_id") != GATEWAY_RUN_ID or gateway_eval_row.get("task_id") != GATEWAY_TASK_ID:
+                failures.append(f"postgres_gateway_eval_row_mismatch:{gateway_eval_row}")
+            if not gateway_artifact_row or gateway_artifact_row.get("run_id") != GATEWAY_RUN_ID or gateway_artifact_row.get("task_id") != GATEWAY_TASK_ID:
+                failures.append(f"postgres_gateway_artifact_row_mismatch:{gateway_artifact_row}")
             if not gateway_task_row or gateway_task_row.get("status") != "running":
                 failures.append(f"postgres_gateway_claim_did_not_mark_task_running:{gateway_task_row}")
             if int(gateway_runtime_event_count or 0) < 1:
@@ -595,6 +784,14 @@ def main() -> int:
                 failures.append("postgres_gateway_run_runtime_event_missing")
             if int(gateway_run_audit_count or 0) < 1:
                 failures.append("postgres_gateway_run_audit_missing")
+            if int(gateway_tool_runtime_event_count or 0) < 1:
+                failures.append("postgres_gateway_tool_runtime_event_missing")
+            if int(gateway_eval_runtime_event_count or 0) < 1:
+                failures.append("postgres_gateway_eval_runtime_event_missing")
+            if int(gateway_artifact_runtime_event_count or 0) < 1:
+                failures.append("postgres_gateway_artifact_runtime_event_missing")
+            if int(gateway_artifact_audit_count or 0) < 1:
+                failures.append("postgres_gateway_artifact_audit_missing")
             if not (gateway_token_last_used or {}).get("last_used_at"):
                 failures.append("postgres_gateway_token_last_used_not_updated")
             transcript = json.dumps(
@@ -606,6 +803,9 @@ def main() -> int:
                     gateway_missing_scope_payload,
                     gateway_missing_claim_scope_payload,
                     gateway_missing_run_scope_payload,
+                    gateway_tool_blocked_payload,
+                    gateway_eval_blocked_payload,
+                    gateway_artifact_blocked_payload,
                     gateway_cross_workspace_payload,
                     gateway_header_workspace_payload,
                     gateway_other_agent_payload,
@@ -613,10 +813,19 @@ def main() -> int:
                     gateway_create_payload,
                     gateway_claim_payload,
                     gateway_run_start_payload,
+                    gateway_missing_tool_scope_payload,
+                    gateway_tool_write_payload,
+                    gateway_missing_eval_scope_payload,
+                    gateway_eval_write_payload,
+                    gateway_missing_artifact_scope_payload,
+                    gateway_artifact_write_payload,
                     gateway_intruder_claim_payload,
                     gateway_intruder_run_payload,
+                    gateway_intruder_tool_payload,
+                    gateway_intruder_eval_payload,
+                    gateway_intruder_artifact_payload,
                     agent_block_payload,
-                    gateway_toolcall_block_payload,
+                    gateway_approval_block_payload,
                 ],
                 ensure_ascii=False,
                 sort_keys=True,
@@ -632,6 +841,7 @@ def main() -> int:
                     CONTRACT_ID,
                     "postgres_http_gateway_task_write_parity_v1",
                     "postgres_http_gateway_execution_start_write_v1",
+                    "postgres_http_gateway_evidence_write_v1",
                 ],
                 "image": args.image,
                 "driver_status": driver_status,
@@ -644,9 +854,15 @@ def main() -> int:
                 "gateway_read_only_write_block_status": gateway_blocked_status,
                 "gateway_read_only_claim_block_status": gateway_claim_blocked_status,
                 "gateway_read_only_run_start_block_status": gateway_run_start_blocked_status,
+                "gateway_read_only_tool_block_status": gateway_tool_blocked_status,
+                "gateway_read_only_eval_block_status": gateway_eval_blocked_status,
+                "gateway_read_only_artifact_block_status": gateway_artifact_blocked_status,
                 "gateway_missing_scope_status": gateway_missing_scope_status,
                 "gateway_missing_claim_scope_status": gateway_missing_claim_scope_status,
                 "gateway_missing_run_scope_status": gateway_missing_run_scope_status,
+                "gateway_missing_tool_scope_status": gateway_missing_tool_scope_status,
+                "gateway_missing_eval_scope_status": gateway_missing_eval_scope_status,
+                "gateway_missing_artifact_scope_status": gateway_missing_artifact_scope_status,
                 "gateway_cross_workspace_status": gateway_cross_workspace_status,
                 "gateway_header_workspace_status": gateway_header_workspace_status,
                 "gateway_other_agent_status": gateway_other_agent_status,
@@ -654,15 +870,24 @@ def main() -> int:
                 "gateway_task_create_status": gateway_create_status,
                 "gateway_claim_status": gateway_claim_status,
                 "gateway_run_start_status": gateway_run_start_status,
+                "gateway_tool_write_status": gateway_tool_write_status,
+                "gateway_eval_write_status": gateway_eval_write_status,
+                "gateway_artifact_write_status": gateway_artifact_write_status,
                 "gateway_intruder_claim_status": gateway_intruder_claim_status,
                 "gateway_intruder_run_status": gateway_intruder_run_status,
+                "gateway_intruder_tool_status": gateway_intruder_tool_status,
+                "gateway_intruder_eval_status": gateway_intruder_eval_status,
+                "gateway_intruder_artifact_status": gateway_intruder_artifact_status,
                 "gateway_task_readback_status": gateway_readback_status,
                 "gateway_run_readback_status": gateway_run_readback_status,
                 "non_allowlisted_write_status": agent_block_status,
-                "gateway_non_allowlisted_write_status": gateway_toolcall_block_status,
+                "gateway_non_allowlisted_write_status": gateway_approval_block_status,
                 "task_id": TASK_ID,
                 "gateway_task_id": GATEWAY_TASK_ID,
                 "gateway_run_id": GATEWAY_RUN_ID,
+                "gateway_tool_call_id": GATEWAY_TOOL_CALL_ID,
+                "gateway_evaluation_id": GATEWAY_EVALUATION_ID,
+                "gateway_artifact_id": GATEWAY_ARTIFACT_ID,
                 "workspace_id": WORKSPACE_ID,
                 "gateway_workspace_id": GATEWAY_WORKSPACE_ID,
                 "runtime_event_count": int(runtime_event_count or 0),
@@ -671,6 +896,10 @@ def main() -> int:
                 "gateway_audit_count": int(gateway_audit_count or 0),
                 "gateway_run_runtime_event_count": int(gateway_run_runtime_event_count or 0),
                 "gateway_run_audit_count": int(gateway_run_audit_count or 0),
+                "gateway_tool_runtime_event_count": int(gateway_tool_runtime_event_count or 0),
+                "gateway_eval_runtime_event_count": int(gateway_eval_runtime_event_count or 0),
+                "gateway_artifact_runtime_event_count": int(gateway_artifact_runtime_event_count or 0),
+                "gateway_artifact_audit_count": int(gateway_artifact_audit_count or 0),
                 "gateway_token_last_used": bool((gateway_token_last_used or {}).get("last_used_at")),
                 "free_local_dependencies": [],
                 "fallback_performed": False,

@@ -216,20 +216,26 @@ Current local evidence on `codex/commercial-migration-closed-loop`:
   verified, `postgres_write_helper_hash=bb601af77f646cd06e885254818dac5a63f3b4f596475be872efe0f7ff560c0b`,
   `free_local_dependencies=[]`, no fallback to SQLite occurred, and HTTP/CLI
   writes remain disabled at this gate.
-- `postgres_http_write_task_parity_v1` passed against `postgres:16-alpine`
+- `postgres_http_write_task_parity_v1`,
+  `postgres_http_gateway_execution_start_write_v1`, and
+  `postgres_http_gateway_evidence_write_v1` passed against
+  `postgres:16-alpine`
   with a temporary psycopg target: read-only mode still returned
   `503 postgres_read_only_backend` for `POST /api/tasks` and
-  scoped Agent Gateway task create/claim/run-start routes; explicit
-  `AGENTOPS_POSTGRES_WRITE_HTTP=1` mode allowed only those task and
-  execution-start routes, created
+  scoped Agent Gateway task create/claim/run-start/tool/evaluation/artifact
+  routes; explicit `AGENTOPS_POSTGRES_WRITE_HTTP=1` mode allowed only those
+  task, execution-start, and execution-evidence routes, created
   `tsk_pg_http_write_task` and scoped Gateway task `tsk_pg_gateway_write_task`,
-  claimed the Gateway task, started `run_pg_gateway_write_start`, read both
-  task and run back through HTTP, persisted runtime/audit rows in Postgres,
-  rejected absent Gateway token at `401`, rejected missing `tasks:create`,
-  missing `tasks:claim`, missing `runs:write`, body/header cross-workspace,
+  claimed the Gateway task, started `run_pg_gateway_write_start`, wrote
+  `tc_pg_gateway_write_evidence`, `eval_pg_gateway_write_evidence`, and
+  `art_pg_gateway_write_evidence`, read task and run back through HTTP,
+  persisted runtime/audit rows in Postgres, rejected absent Gateway token at
+  `401`, rejected missing `tasks:create`, missing `tasks:claim`, missing
+  `runs:write`, missing `toolcalls:write`, missing `evaluations:submit`, and
+  missing `artifacts:write` at `403`, rejected body/header cross-workspace,
   cross-agent, and same-workspace intruder Gateway requests at `403`, kept
-  `POST /api/agent-gateway/tool-calls` and `POST /api/agents` blocked at `503`,
-  kept `free_local_dependencies=[]`, and did not fall back to SQLite.
+  `POST /api/agent-gateway/approvals/request` and `POST /api/agents` blocked at
+  `503`, kept `free_local_dependencies=[]`, and did not fall back to SQLite.
 - Source install packaging includes `agentops_mis_storage.postgres`; importing
   the module and translating SQL does not require psycopg.
 
@@ -239,7 +245,7 @@ Postgres parity is not complete until the adapter boundary:
 
 - routes more `repo_*` helper flows through the same shared fixture pattern;
 - proves Postgres write helpers before widening any routed Postgres write
-  routes beyond the explicit task/execution-start write allowlist;
+  routes beyond the explicit task/execution/evidence write allowlist;
 - keeps write routes disabled until an explicit routed write-adapter smoke
   proves the small route surface that will be enabled;
 - keeps backend selection fail-closed so Postgres configuration cannot silently
