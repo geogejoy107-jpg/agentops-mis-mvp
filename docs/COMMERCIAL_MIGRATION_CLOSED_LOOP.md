@@ -135,18 +135,22 @@ Must be true:
   list/get/verify readback before Postgres writes are enabled.
 - Postgres write helpers must match SQLite outcomes and snapshots before any
   routed HTTP/CLI write surface is enabled.
-- The first routed Postgres HTTP writes are explicit task, execution-start, and
-  execution-evidence allowlist routes behind `AGENTOPS_POSTGRES_WRITE_HTTP=1`:
+- The first routed Postgres HTTP writes are explicit task, execution-start,
+  execution-evidence, and plan-evidence allowlist routes behind
+  `AGENTOPS_POSTGRES_WRITE_HTTP=1`:
   `POST /api/tasks`, scoped `POST /api/agent-gateway/tasks`, scoped
   `POST /api/agent-gateway/tasks/:task_id/claim`, scoped
   `POST /api/agent-gateway/runs/start`, scoped
   `POST /api/agent-gateway/tool-calls`, scoped
   `POST /api/agent-gateway/artifacts`, and scoped
-  `POST /api/agent-gateway/evaluations/submit`; read-only mode must still block
-  all of them, the allowlisted writes must persist task/run/tool/evaluation/
-  artifact/runtime/audit evidence in Postgres, scoped Gateway writes must reject
-  absent tokens, missing scopes, body/header cross-workspace, cross-agent, and
-  same-workspace intruder attempts, and broader mutation routes such as Gateway
+  `POST /api/agent-gateway/evaluations/submit`, scoped
+  `POST /api/agent-gateway/agent-plans`, and scoped
+  `POST /api/agent-gateway/plan-evidence-manifests`; read-only mode must still
+  block all of them, the allowlisted writes must persist task/run/tool/
+  evaluation/artifact/Agent Plan/plan-evidence/runtime/audit evidence in
+  Postgres, scoped Gateway writes must reject absent tokens, missing scopes,
+  body/header cross-workspace, cross-agent, same-workspace intruder attempts,
+  and manifest binding mismatches, and broader mutation routes such as Gateway
   approval requests, memories, audit writes, live-runtime heartbeat/daemon
   control, and admin mutations must remain blocked until each has a dedicated
   smoke.
