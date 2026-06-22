@@ -232,6 +232,14 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
             require(isinstance(step.get("mutating"), bool), f"{label} remediation step mutating flag missing: {step}", failures)
             require(isinstance(step.get("confirm_required"), bool), f"{label} remediation step confirm flag missing: {step}", failures)
             require(isinstance(step.get("auto_advance_allowed"), bool), f"{label} remediation step auto-advance flag missing: {step}", failures)
+            if step.get("status") == "ready":
+                require(isinstance(step.get("ready_reason"), str) and step.get("ready_reason"), f"{label} remediation ready step reason missing: {step}", failures)
+                require(step.get("next_safe_command_kind") == "action", f"{label} remediation ready step next command kind wrong: {step}", failures)
+                require(isinstance(step.get("next_safe_command"), str) and step.get("next_safe_command"), f"{label} remediation ready step next command missing: {step}", failures)
+            if step.get("status") == "blocked":
+                require(isinstance(step.get("blocked_reason"), str) and step.get("blocked_reason"), f"{label} remediation blocked step reason missing: {step}", failures)
+                if step.get("id") != "preview":
+                    require(isinstance(step.get("prerequisite_step"), str) and step.get("prerequisite_step"), f"{label} remediation blocked step prerequisite missing: {step}", failures)
             if step.get("command"):
                 receipt_state = step.get("receipt_state") or {}
                 require(str(step.get("action_id") or "").startswith("evidence_remediation:"), f"{label} remediation step action_id missing: {step}", failures)
@@ -240,6 +248,7 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
                 require(receipt_state.get("action_signature") == step.get("action_signature"), f"{label} remediation step receipt signature mismatch: {step}", failures)
                 require(str(step.get("receipt_record_command") or "").startswith("agentops operator record-action-receipt "), f"{label} remediation step receipt record command missing: {step}", failures)
                 require(str(step.get("receipt_verify_record_command") or "").endswith("--status verified --confirm-record"), f"{label} remediation step verify receipt command missing: {step}", failures)
+                require(str(step.get("receipt_next_command") or "").startswith("agentops operator record-action-receipt "), f"{label} remediation step receipt next command missing: {step}", failures)
             if step.get("id") == "preview":
                 require(step.get("auto_advance_allowed") is True, f"{label} remediation preview should be auto-advanceable: {step}", failures)
                 require(step.get("mutating") is False, f"{label} remediation preview must be read-only: {step}", failures)

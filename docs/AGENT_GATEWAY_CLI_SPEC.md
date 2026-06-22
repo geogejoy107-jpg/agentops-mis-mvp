@@ -1542,6 +1542,13 @@ steps. Each command-bearing stage also carries an independent `action_id`,
 `action_signature`, `receipt_state`, `receipt_record_command`, and
 `receipt_verify_record_command`; the handoff `loop_health` gate reports
 workflow ready/blocked steps plus required/verified/missing workflow receipts.
+Stage rows also expose `blocked_reason`, `ready_reason`, `prerequisite_step`,
+`next_safe_command`, `next_safe_command_kind`, and `receipt_next_command` so
+Hermes/OpenClaw/Codex can tell whether the next move is read-only, verification,
+or explicit mutating work that only gets copied into the local operator path.
+`operator loop-self-check` mirrors the same `evidence_remediation_workflow`
+gate before bounded advance, and `/workspace/agents` renders the first few
+remediation workflow rows without executing commands.
 After promotion, action-plan recommends an explicit operator closure:
 
 ```bash

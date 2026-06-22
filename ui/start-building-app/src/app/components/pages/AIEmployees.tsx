@@ -444,6 +444,11 @@ export function AIEmployees() {
       firstGateIssue: "First issue",
       allGatesPassing: "All gates passing",
       verifyAfterAction: "Verify",
+      remediationWorkflow: "Remediation workflow",
+      blockedReason: "Blocked reason",
+      readyReason: "Ready reason",
+      nextSafeCommand: "Next safe command",
+      prerequisiteStep: "Prerequisite",
       noLoopRecordItems: "No loop-specific review rows. Follow the next gate command to create a loop_record memory.",
       approveCommand: "Approve command",
       rejectCommand: "Reject command",
@@ -877,6 +882,11 @@ export function AIEmployees() {
       firstGateIssue: "首个异常",
       allGatesPassing: "全部 Gate 通过",
       verifyAfterAction: "验收",
+      remediationWorkflow: "修复工作流",
+      blockedReason: "阻塞原因",
+      readyReason: "就绪原因",
+      nextSafeCommand: "下一条安全命令",
+      prerequisiteStep: "前置步骤",
       noLoopRecordItems: "暂无 loop 专属评审行；请按下一步 Gate 命令创建 loop_record 记忆。",
       approveCommand: "批准命令",
       rejectCommand: "拒绝命令",
@@ -1323,6 +1333,35 @@ export function AIEmployees() {
   const handoffEvidenceWorkOrder = operatorHandoff?.work_order?.evidence_report;
   const handoffEvidenceReceiptState = handoffEvidenceWorkOrder?.receipt_state;
   const handoffEvidenceRemediationSummary = handoffEvidenceWorkOrder?.remediation_chain?.summary || {};
+  const handoffEvidenceRemediationItems = Array.isArray(handoffEvidenceWorkOrder?.remediation_chain?.items)
+    ? handoffEvidenceWorkOrder.remediation_chain.items
+    : [];
+  const remediationWorkflowRows = handoffEvidenceRemediationItems.slice(0, 5).map((item, index) => {
+    const row = item as Record<string, unknown>;
+    const nextStep = typeof row.next_workflow_step === "object" && row.next_workflow_step !== null
+      ? row.next_workflow_step as Record<string, unknown>
+      : {};
+    const receiptState = typeof nextStep.receipt_state === "object" && nextStep.receipt_state !== null
+      ? nextStep.receipt_state as Record<string, unknown>
+      : {};
+    return {
+      key: `${String(row.run_id || "run")}-${String(nextStep.id || index)}`,
+      runId: String(row.run_id || "—"),
+      status: String(nextStep.status || row.status || "unknown"),
+      severity: String(row.severity || row.status || "attention"),
+      stepId: String(nextStep.id || "—"),
+      label: String(nextStep.label || row.next_action || "—"),
+      reason: String(nextStep.blocked_reason || nextStep.ready_reason || row.next_action || "—"),
+      prerequisite: String(nextStep.prerequisite_step || "—"),
+      nextSafeCommand: String(nextStep.next_safe_command || nextStep.command || ""),
+      nextSafeCommandKind: String(nextStep.next_safe_command_kind || "—"),
+      verifyCommand: String(nextStep.verify_command || row.verify_command || ""),
+      receiptNextCommand: String(nextStep.receipt_next_command || nextStep.receipt_verify_record_command || nextStep.receipt_record_command || ""),
+      receiptStatus: String(receiptState.status || "missing"),
+      mutating: Boolean(nextStep.mutating),
+      confirmRequired: Boolean(nextStep.confirm_required),
+    };
+  });
   const loopSelfCheckCommand = operatorHandoff?.loop_id
     ? `agentops operator loop-self-check --loop-id ${operatorHandoff.loop_id} --limit 12`
     : "agentops operator loop-self-check --limit 12";
@@ -1330,6 +1369,7 @@ export function AIEmployees() {
   const loopSelfCheckGateStatus = (gateId: string) => String((loopSelfCheckGates[gateId] || {}).status || "unknown");
   const policyContractGate = loopSelfCheckGates.policy_contract || {};
   const receiptEvaluationGate = loopSelfCheckGates.receipt_evaluations || {};
+  const remediationWorkflowSelfCheckGate = loopSelfCheckGates.evidence_remediation_workflow || {};
   const auditLedgerGate = loopSelfCheckGates.audit_ledger || {};
   const localWriteGuardSelfCheckGate = loopSelfCheckGates.local_ui_write_guard || {};
   const loopSelfCheckGateSummaries = [
@@ -1344,6 +1384,12 @@ export function AIEmployees() {
       label: copy.receiptEvaluations,
       status: loopSelfCheckGateStatus("receipt_evaluations"),
       detail: `${Number(receiptEvaluationGate.evaluated ?? 0)}/${Number(receiptEvaluationGate.required ?? 0)} · fail ${Number(receiptEvaluationGate.failed ?? 0)}`,
+    },
+    {
+      id: "evidence_remediation_workflow",
+      label: copy.remediationState,
+      status: loopSelfCheckGateStatus("evidence_remediation_workflow"),
+      detail: `${Number(remediationWorkflowSelfCheckGate.ready_steps ?? 0)}/${Number(remediationWorkflowSelfCheckGate.blocked_steps ?? 0)} · receipt ${Number(remediationWorkflowSelfCheckGate.receipt_missing ?? 0)}`,
     },
     {
       id: "audit_ledger",
@@ -3433,6 +3479,70 @@ export function AIEmployees() {
                   </div>
                 ))}
               </div>
+              {remediationWorkflowRows.length > 0 && (
+                <div className="mt-2 rounded px-2 py-1.5" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.remediationWorkflow}</div>
+                    <StatusBadge status={(handoffEvidenceRemediationSummary.workflow_blocked_steps || 0) > 0 ? "blocked" : "attention"} label={`${handoffEvidenceRemediationSummary.workflow_ready_steps ?? 0}/${handoffEvidenceRemediationSummary.workflow_blocked_steps ?? 0}`} />
+                  </div>
+                  <div className="space-y-1 mt-1">
+                    {remediationWorkflowRows.map((row) => (
+                      <div key={row.key} className="rounded px-2 py-1" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                        <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-1">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1 min-w-0">
+                              <Link to={`/admin/runs/${row.runId}`} className="text-[9px] font-semibold truncate" style={{ color: "var(--mis-cyan)" }}>{row.runId}</Link>
+                              <StatusBadge status={row.status} />
+                              {(row.mutating || row.confirmRequired) && <StatusBadge status="attention" label={row.confirmRequired ? "confirm" : "write"} />}
+                            </div>
+                            <div className="text-[9px] mt-0.5 truncate" style={{ color: "var(--mis-muted)" }}>
+                              {row.stepId}: {row.label} · {row.nextSafeCommandKind} · receipt {row.receiptStatus}
+                            </div>
+                            <div className="text-[9px] mt-0.5 truncate" style={{ color: row.status === "blocked" ? "var(--mis-warning)" : "var(--mis-dim)" }}>
+                              {row.status === "blocked" ? copy.blockedReason : copy.readyReason}: {row.reason} · {copy.prerequisiteStep}: {row.prerequisite}
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap gap-1 shrink-0">
+                            {row.nextSafeCommand && (
+                              <button
+                                onClick={() => void copyIntakeCommand(row.nextSafeCommand)}
+                                className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded max-w-full"
+                                style={{ color: row.mutating || row.confirmRequired ? "var(--mis-warning)" : "var(--mis-cyan)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}
+                                title={row.nextSafeCommand}
+                              >
+                                <Copy size={9} />
+                                <span className="truncate max-w-[120px]">{copiedIntakeCommand === row.nextSafeCommand ? copy.copiedCommand : copy.nextSafeCommand}</span>
+                              </button>
+                            )}
+                            {row.verifyCommand && (
+                              <button
+                                onClick={() => void copyIntakeCommand(row.verifyCommand)}
+                                className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded max-w-full"
+                                style={{ color: "var(--mis-success)", background: "rgba(45,212,191,0.08)", border: "1px solid rgba(45,212,191,0.18)" }}
+                                title={row.verifyCommand}
+                              >
+                                <Copy size={9} />
+                                <span className="truncate max-w-[110px]">{copiedIntakeCommand === row.verifyCommand ? copy.copiedCommand : copy.verifyAfterAction}</span>
+                              </button>
+                            )}
+                            {row.receiptNextCommand && (
+                              <button
+                                onClick={() => void copyIntakeCommand(row.receiptNextCommand)}
+                                className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded max-w-full"
+                                style={{ color: "var(--mis-warning)", background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.18)" }}
+                                title={row.receiptNextCommand}
+                              >
+                                <Copy size={9} />
+                                <span className="truncate max-w-[120px]">{copiedIntakeCommand === row.receiptNextCommand ? copy.copiedCommand : copy.copyReceiptCommand}</span>
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-6 gap-2 mt-2">
                 <div className="rounded px-2 py-1.5" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
                   <div className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.loopHealth}</div>

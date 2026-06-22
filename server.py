@@ -49,6 +49,10 @@ KNOWLEDGE_DIR = ROOT / "knowledge"
 OPENCLAW_HOME = Path.home() / ".openclaw"
 HERMES_HOME = Path.home() / ".hermes"
 OPENCLAW_BIN = Path("/opt/homebrew/bin/openclaw")
+READ_MODEL_CACHE_TTL_SEC = float(os.environ.get("AGENTOPS_READ_MODEL_CACHE_TTL_SEC", "2"))
+READ_MODEL_CACHE_MAX_ITEMS = int(os.environ.get("AGENTOPS_READ_MODEL_CACHE_MAX_ITEMS", "96"))
+READ_MODEL_CACHE: dict[str, dict] = {}
+READ_MODEL_CACHE_LOCK = threading.Lock()
 
 RISKY_TOOLS = {
     "shell.exec",
@@ -205,6 +209,89 @@ def qs_int(qs: dict, name: str, default: int, minimum: int, maximum: int) -> int
 def qs_bool(qs: dict, name: str, default: bool = False) -> bool:
     value = (qs.get(name) or [str(default).lower()])[0]
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def jsonable_clone(value):
+    return json.loads(json.dumps(value, ensure_ascii=False, default=str))
+
+
+def read_model_cache_key(name: str, qs: dict, headers, auth_ctx: dict | None = None) -> str:
+    cache_qs = {
+        str(key): [str(item) for item in values]
+        for key, values in sorted((qs or {}).items())
+        if str(key) not in {"_", "bypass_cache", "refresh_cache"}
+    }
+    header_workspace = normalize_workspace_id(headers.get("X-AgentOps-Workspace-Id") or "local-demo")
+    auth_profile = {
+        "mode": (auth_ctx or {}).get("mode") or "local_dev_no_token",
+        "workspace_id": normalize_workspace_id((auth_ctx or {}).get("workspace_id") or header_workspace),
+        "agent_id": str((auth_ctx or {}).get("agent_id") or headers.get("X-AgentOps-Agent-Id") or ""),
+        "scopes": sorted(str(scope) for scope in ((auth_ctx or {}).get("scopes") or [])),
+        "bound": agent_gateway_is_bound_auth(auth_ctx),
+    }
+    token_ref = (auth_ctx or {}).get("session_id") or (auth_ctx or {}).get("token_id")
+    if token_ref:
+        auth_profile["credential_ref_hash"] = stable_hash(str(token_ref))[:16]
+    return stable_hash({"name": name, "qs": cache_qs, "auth": auth_profile})
+
+
+def prune_read_model_cache(now: float) -> None:
+    expired = [key for key, entry in READ_MODEL_CACHE.items() if float(entry.get("expires_at") or 0) <= now]
+    for key in expired:
+        READ_MODEL_CACHE.pop(key, None)
+    while len(READ_MODEL_CACHE) > READ_MODEL_CACHE_MAX_ITEMS:
+        oldest = min(READ_MODEL_CACHE.items(), key=lambda item: float(item[1].get("created_at") or 0))[0]
+        READ_MODEL_CACHE.pop(oldest, None)
+
+
+def clear_read_model_cache() -> None:
+    with READ_MODEL_CACHE_LOCK:
+        READ_MODEL_CACHE.clear()
+
+
+def cached_read_model(name: str, qs: dict, headers, producer, auth_ctx: dict | None = None) -> dict:
+    ttl = max(0.0, READ_MODEL_CACHE_TTL_SEC)
+    bypass = ttl <= 0 or qs_bool(qs, "bypass_cache", False) or qs_bool(qs, "refresh_cache", False)
+    key = read_model_cache_key(name, qs, headers, auth_ctx)
+    now = time.time()
+    if not bypass:
+        with READ_MODEL_CACHE_LOCK:
+            entry = READ_MODEL_CACHE.get(key)
+            if entry and float(entry.get("expires_at") or 0) > now:
+                payload = jsonable_clone(entry["payload"])
+                age_ms = int((now - float(entry.get("created_at") or now)) * 1000)
+                payload["read_model_cache"] = {
+                    "name": name,
+                    "status": "hit",
+                    "ttl_ms": int(ttl * 1000),
+                    "age_ms": max(0, age_ms),
+                    "expires_in_ms": max(0, int((float(entry["expires_at"]) - now) * 1000)),
+                    "key_hash": key[:16],
+                    "token_omitted": True,
+                }
+                return payload
+
+    payload = jsonable_clone(producer())
+    status = "bypass" if bypass else "miss"
+    if not bypass:
+        with READ_MODEL_CACHE_LOCK:
+            prune_read_model_cache(now)
+            READ_MODEL_CACHE[key] = {
+                "payload": jsonable_clone(payload),
+                "created_at": now,
+                "expires_at": now + ttl,
+                "name": name,
+            }
+    payload["read_model_cache"] = {
+        "name": name,
+        "status": status,
+        "ttl_ms": int(ttl * 1000),
+        "age_ms": 0,
+        "expires_in_ms": 0 if bypass else int(ttl * 1000),
+        "key_hash": key[:16],
+        "token_omitted": True,
+    }
+    return payload
 
 
 def ledger_page_response(conn: sqlite3.Connection, *, operation: str, item_key: str, table: str, order_by: str, qs: dict, where: str = "", params: list | None = None, default_limit: int | None = None, max_limit: int = 500):
@@ -17790,14 +17877,39 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
             confirm_required: bool = False,
             auto_advance_allowed: bool = False,
             evidence: dict | None = None,
+            blocked_reason: str | None = None,
+            ready_reason: str | None = None,
+            prerequisite_step: str | None = None,
         ) -> dict:
             receipt = stage_receipt(step_id, command, verify)
+            status = str(status or "pending")
+            command = str(command or "").strip() or None
+            verify = str(verify or "").strip() or None
+            next_safe_command = None
+            next_safe_command_kind = None
+            if status == "ready" and command:
+                next_safe_command = command
+                next_safe_command_kind = "action"
+            elif status == "completed" and verify:
+                next_safe_command = verify
+                next_safe_command_kind = "verify"
+            elif status in {"blocked", "attention"} and prerequisite_step:
+                next_safe_command_kind = "prerequisite"
+            elif status == "pending" and verify:
+                next_safe_command = verify
+                next_safe_command_kind = "inspect"
+            receipt_next_command = receipt.get("verify_record_command") or receipt.get("record_command")
             return {
                 "id": step_id,
                 "label": label,
                 "status": status,
                 "command": redact_text(command, 900) if command else None,
                 "verify_command": redact_text(verify, 900) if verify else None,
+                "next_safe_command": redact_text(next_safe_command, 900) if next_safe_command else None,
+                "next_safe_command_kind": next_safe_command_kind,
+                "blocked_reason": redact_text(blocked_reason, 500) if status == "blocked" and blocked_reason else None,
+                "ready_reason": redact_text(ready_reason, 500) if status == "ready" and ready_reason else None,
+                "prerequisite_step": prerequisite_step,
                 "action_id": receipt.get("action_id"),
                 "action_signature": receipt.get("action_signature"),
                 "mutating": bool(mutating),
@@ -17807,6 +17919,7 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
                 "receipt_state": receipt,
                 "receipt_record_command": receipt.get("record_command"),
                 "receipt_verify_record_command": receipt.get("verify_record_command"),
+                "receipt_next_command": redact_text(receipt_next_command, 900) if receipt_next_command else None,
                 "evidence": evidence or {},
                 "token_omitted": True,
             }
@@ -17842,6 +17955,7 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
                 verify=verify_command,
                 auto_advance_allowed=True,
                 evidence={"receipt_verified": receipt_verified, "receipt_status": receipt_state.get("status")},
+                ready_reason="Preview is read-only and allowed before creating remediation work.",
             ),
             step(
                 "create_task",
@@ -17852,6 +17966,9 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
                 mutating=True,
                 confirm_required=True,
                 evidence={"task_id": remediation_task_id or None, "preview_receipt_verified": receipt_verified},
+                blocked_reason="Record a verified preview receipt before creating the remediation package.",
+                ready_reason="Preview receipt is verified; explicit --confirm-create is now allowed.",
+                prerequisite_step="preview",
             ),
             step(
                 "dispatch_package",
@@ -17862,6 +17979,9 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
                 mutating=True,
                 confirm_required=False,
                 evidence={"task_id": remediation_task_id or None, "remediation_status": remediation_status or None},
+                blocked_reason="Create the remediation task before dispatching the package.",
+                ready_reason="Remediation task exists and can be dispatched through Commander.",
+                prerequisite_step="create_task",
             ),
             step(
                 "plan_evidence",
@@ -17872,6 +17992,9 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
                 mutating=bool(plan_evidence_create_command),
                 confirm_required=False,
                 evidence={"plan_id": plan_id or None, "manifest_id": manifest_id or None},
+                blocked_reason="Verify the preview receipt before writing or verifying plan evidence.",
+                ready_reason="Plan evidence can be created or verified for this run.",
+                prerequisite_step="preview",
             ),
             step(
                 "synthesize",
@@ -17882,6 +18005,9 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
                 mutating=bool(synthesis_command and "--confirm-create" in synthesis_command),
                 confirm_required=bool(synthesis_command and "--confirm-create" in synthesis_command),
                 evidence={"project_id": project_id or None, "synthesis_status": synthesis_status or None},
+                blocked_reason="Dispatch and verify the remediation package before synthesis.",
+                ready_reason="Remediation package is ready for synthesis or approval inspection.",
+                prerequisite_step="dispatch_package",
             ),
             step(
                 "close_gap",
@@ -17892,6 +18018,9 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
                 mutating=bool(close_confirm_command),
                 confirm_required=bool(close_confirm_command),
                 evidence={"gap_decision_status": gap_decision_status or None},
+                blocked_reason="Promote the remediation synthesis before closing the source evidence gap.",
+                ready_reason="Synthesis has been promoted; explicit gap closure can be confirmed.",
+                prerequisite_step="synthesize",
             ),
         ]
         next_step = next((item for item in steps if item.get("status") in {"ready", "blocked", "attention"}), None)
@@ -18599,6 +18728,7 @@ def operator_loop_self_check(conn: sqlite3.Connection, headers, qs=None, auth_ct
     )
     receipt_gate = health_gates.get("receipts") or {}
     receipt_eval_gate = health_gates.get("receipt_evaluations") or {}
+    remediation_workflow_gate = health_gates.get("evidence_remediation_workflow") or {}
     receipt_ok = receipt_gate.get("status") == "pass"
     receipt_eval_ok = receipt_eval_gate.get("status") == "pass"
     audit_ok = tamper_chain_present and evaluation_audit_ok
@@ -18628,6 +18758,10 @@ def operator_loop_self_check(conn: sqlite3.Connection, headers, qs=None, auth_ct
         "receipt_evaluations": {
             **receipt_eval_gate,
             "status": receipt_eval_gate.get("status") or "pass",
+        },
+        "evidence_remediation_workflow": {
+            **remediation_workflow_gate,
+            "status": remediation_workflow_gate.get("status") or "pass",
         },
         "audit_ledger": {
             "status": "pass" if audit_ok else "attention",
@@ -18684,6 +18818,10 @@ def operator_loop_self_check(conn: sqlite3.Connection, headers, qs=None, auth_ct
             "receipt_evaluation_fail": receipt_coverage.get("evaluation_fail", 0),
             "receipt_audit_rows": receipt_audit_count,
             "evaluation_audit_rows": evaluation_audit_count,
+            "evidence_remediation_workflow_status": remediation_workflow_gate.get("status") or "pass",
+            "evidence_remediation_workflow_ready_steps": int(remediation_workflow_gate.get("ready_steps") or 0),
+            "evidence_remediation_workflow_blocked_steps": int(remediation_workflow_gate.get("blocked_steps") or 0),
+            "evidence_remediation_workflow_receipt_missing": int(remediation_workflow_gate.get("receipt_missing") or 0),
             "policy_id": policy.get("policy_id"),
             "policy_version": policy.get("policy_version"),
             "local_ui_write_guard_status": local_write_guard_status,
@@ -19985,7 +20123,12 @@ class Handler(BaseHTTPRequestHandler):
                 conn.commit()
                 return self.send_json(payload)
             if path == "/api/operator/action-plan":
-                payload = operator_action_plan(conn, self.headers, qs)
+                payload = cached_read_model(
+                    "operator_action_plan",
+                    qs,
+                    self.headers,
+                    lambda: operator_action_plan(conn, self.headers, qs),
+                )
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/operator/loop-audit":
@@ -19993,7 +20136,12 @@ class Handler(BaseHTTPRequestHandler):
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/operator/evidence-report":
-                payload = operator_evidence_report(conn, self.headers, qs)
+                payload = cached_read_model(
+                    "operator_evidence_report",
+                    qs,
+                    self.headers,
+                    lambda: operator_evidence_report(conn, self.headers, qs),
+                )
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/operator/health":
@@ -20006,7 +20154,13 @@ class Handler(BaseHTTPRequestHandler):
                     if requested_header_workspace != auth_ctx["workspace_id"]:
                         conn.rollback()
                         return self.send_json({"error": "forbidden", "message": "Agent token cannot use another workspace header."}, 403)
-                payload = operator_health(conn, self.headers, qs, auth_ctx)
+                payload = cached_read_model(
+                    "operator_health",
+                    qs,
+                    self.headers,
+                    lambda: operator_health(conn, self.headers, qs, auth_ctx),
+                    auth_ctx,
+                )
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/operator/handoff":
@@ -20019,7 +20173,13 @@ class Handler(BaseHTTPRequestHandler):
                     if requested_header_workspace != auth_ctx["workspace_id"]:
                         conn.rollback()
                         return self.send_json({"error": "forbidden", "message": "Agent token cannot use another workspace header."}, 403)
-                payload = operator_handoff(conn, self.headers, qs, auth_ctx)
+                payload = cached_read_model(
+                    "operator_handoff",
+                    qs,
+                    self.headers,
+                    lambda: operator_handoff(conn, self.headers, qs, auth_ctx),
+                    auth_ctx,
+                )
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/operator/loop-self-check":
@@ -20032,7 +20192,13 @@ class Handler(BaseHTTPRequestHandler):
                     if requested_header_workspace != auth_ctx["workspace_id"]:
                         conn.rollback()
                         return self.send_json({"error": "forbidden", "message": "Agent token cannot use another workspace header."}, 403)
-                payload = operator_loop_self_check(conn, self.headers, qs, auth_ctx)
+                payload = cached_read_model(
+                    "operator_loop_self_check",
+                    qs,
+                    self.headers,
+                    lambda: operator_loop_self_check(conn, self.headers, qs, auth_ctx),
+                    auth_ctx,
+                )
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/operator/action-receipts":
@@ -20460,7 +20626,12 @@ class Handler(BaseHTTPRequestHandler):
                 limit = int((qs.get("limit") or ["20"])[0])
                 return self.send_json(human_review_queue(conn, limit))
             if path == "/api/dashboard/metrics":
-                return self.send_json(dashboard_metrics(conn))
+                return self.send_json(cached_read_model(
+                    "dashboard_metrics",
+                    qs,
+                    self.headers,
+                    lambda: dashboard_metrics(conn),
+                ))
             if path == "/api/runtime-connectors":
                 refresh_runtime_connectors(conn)
                 conn.commit()
@@ -20752,14 +20923,17 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/operator/action-receipts":
                 payload, status = record_operator_action_receipt(conn, body, self.headers)
                 conn.commit()
+                clear_read_model_cache()
                 return self.send_json(payload, status)
             if path == "/api/operator/receipt-failure-memories/propose":
                 payload, status = operator_receipt_failure_memory_candidate(conn, body, self.headers)
                 conn.commit()
+                clear_read_model_cache()
                 return self.send_json(payload, status)
             if path == "/api/operator/action-receipts/failure-memory":
                 payload, status = operator_receipt_failure_memory_candidate(conn, body, self.headers)
                 conn.commit()
+                clear_read_model_cache()
                 return self.send_json(payload, status)
             if path == "/api/agents":
                 agent_id = body.get("agent_id") or new_id("agt")

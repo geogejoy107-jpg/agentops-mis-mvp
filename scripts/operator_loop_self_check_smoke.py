@@ -141,7 +141,7 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
     require(safety.get("live_execution_performed") is False, f"{label} live execution flag wrong: {safety}", failures)
     require(safety.get("server_shell_execution") is False, f"{label} server shell flag wrong: {safety}", failures)
     gates = payload.get("gates") or {}
-    for gate_id in ["policy_contract", "advance_boundary", "receipt_coverage", "receipt_evaluations", "audit_ledger", "local_ui_write_guard", "handoff_health"]:
+    for gate_id in ["policy_contract", "advance_boundary", "receipt_coverage", "receipt_evaluations", "evidence_remediation_workflow", "audit_ledger", "local_ui_write_guard", "handoff_health"]:
         require(gate_id in gates, f"{label} missing gate {gate_id}: {gates}", failures)
     policy_gate = gates.get("policy_contract") or {}
     require(policy_gate.get("status") == "pass", f"{label} policy gate should pass: {policy_gate}", failures)
@@ -158,8 +158,13 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
     require(write_guard.get("status") in {"pass", "attention", "blocked"}, f"{label} write guard status wrong: {write_guard}", failures)
     require(write_guard.get("gate_status") in {"pass", "warn", "fail", "unknown"}, f"{label} write guard gate status wrong: {write_guard}", failures)
     require(write_guard.get("next_action"), f"{label} write guard next action missing: {write_guard}", failures)
+    remediation_workflow = gates.get("evidence_remediation_workflow") or {}
+    require(remediation_workflow.get("status") in {"pass", "attention", "blocked"}, f"{label} remediation workflow status wrong: {remediation_workflow}", failures)
+    for key in ["items", "steps", "ready_steps", "blocked_steps", "receipt_required", "receipt_verified", "receipt_missing"]:
+        require(isinstance(remediation_workflow.get(key), int), f"{label} remediation workflow {key} missing: {remediation_workflow}", failures)
     summary = payload.get("summary") or {}
     require(summary.get("local_ui_write_guard_status") == write_guard.get("gate_status"), f"{label} write guard summary mismatch: {summary} {write_guard}", failures)
+    require(summary.get("evidence_remediation_workflow_status") == remediation_workflow.get("status"), f"{label} remediation workflow summary mismatch: {summary} {remediation_workflow}", failures)
     decisions = payload.get("policy_decisions") or []
     denied = next((item for item in decisions if item.get("id") == "deny_memory_approval"), {})
     require(((denied.get("decision") or {}).get("allowed") is False), f"{label} denied decision missing: {decisions}", failures)
