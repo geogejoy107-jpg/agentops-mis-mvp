@@ -177,6 +177,7 @@ Choose one v1.5 contract.
 ```bash
 python3 scripts/approval_decision_side_effect_smoke.py
 python3 scripts/enrollment_approval_workflow_smoke.py
+python3 scripts/enrollment_credential_ui_smoke.py
 python3 scripts/review_queue_smoke.py
 python3 scripts/agent_gateway_review_queue_smoke.py
 ```
@@ -450,7 +451,7 @@ live runtime suite
 - [x] Review decisions refresh only needed data: Approvals Inbox, Workspace Home, Evaluation Room, AI Employees review queue, loop record review, and enrollment approval decisions use local state updates or targeted panel refreshes instead of whole-page `refresh()`; guarded by `scripts/review_decision_local_refresh_smoke.py`.
 - [x] Real-runtime controls show explicit confirmation: AI Employees and Pixel Office customer dispatch show an explicit live Hermes/OpenClaw confirmation latch; live worker, daemon, async job, Commander package and customer real-run controls are disabled until confirmed, while mock remains the safe default. Guarded by `scripts/real_runtime_ui_confirm_smoke.py`.
 - [ ] Production-security warnings are prominent.
-- [ ] Issued credentials cannot be re-read.
+- [x] Issued credentials cannot be re-read: Agent Gateway enrollment list payloads expose `token_omitted:true` and never include raw token/hash fields; `/workspace/agents` displays a fresh create/issue/rotate token only inside a one-time credential card, clears the raw token after copy, clears the card on ordinary refresh/panel refresh/revoke/session actions, and provides explicit copy/clear controls. Guarded by `scripts/enrollment_credential_ui_smoke.py`.
 - [ ] Pixel Office remains a visualizer.
 - [ ] Customer delivery is separated from internal evidence.
 

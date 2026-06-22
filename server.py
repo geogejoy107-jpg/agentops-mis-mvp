@@ -20458,7 +20458,7 @@ class Handler(BaseHTTPRequestHandler):
                 auth_error = agent_gateway_admin_auth_error(self.headers)
                 if auth_error:
                     return self.send_json(auth_error, 401)
-                return self.send_json({"enrollments": agent_gateway_enrollment_rows(conn), "valid_scopes": sorted(VALID_AGENT_GATEWAY_SCOPES)})
+                return self.send_json({"enrollments": agent_gateway_enrollment_rows(conn), "valid_scopes": sorted(VALID_AGENT_GATEWAY_SCOPES), "token_omitted": True})
             if path == "/api/agent-gateway/sessions":
                 auth_error = agent_gateway_admin_auth_error(self.headers)
                 if auth_error:

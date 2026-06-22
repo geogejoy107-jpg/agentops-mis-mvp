@@ -2013,6 +2013,7 @@ export interface AgentGatewayEnrollment {
 export interface AgentGatewayEnrollmentListPayload {
   enrollments: AgentGatewayEnrollment[];
   valid_scopes: string[];
+  token_omitted: boolean;
 }
 
 export interface AgentGatewaySession {
@@ -5311,6 +5312,7 @@ export async function loadAgentGatewayEnrollments(): Promise<AgentGatewayEnrollm
   return {
     enrollments: asArray<Record<string, unknown>>(raw.enrollments).map(normalizeAgentGatewayEnrollment),
     valid_scopes: asArray(raw.valid_scopes).map(String),
+    token_omitted: boolValue(raw.token_omitted),
   };
 }
 

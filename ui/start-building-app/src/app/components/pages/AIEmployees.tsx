@@ -317,6 +317,7 @@ export function AIEmployees() {
   const [enrollmentAction, setEnrollmentAction] = useState<string | null>(null);
   const [enrollmentResult, setEnrollmentResult] = useState<string | null>(null);
   const [createdToken, setCreatedToken] = useState<AgentGatewayEnrollmentCreateResult | null>(null);
+  const [issuedCredentialCopied, setIssuedCredentialCopied] = useState(false);
   const [createdRequest, setCreatedRequest] = useState<AgentGatewayEnrollmentRequestResult | null>(null);
   const [enrollmentPolicy, setEnrollmentPolicy] = useState<AgentGatewayEnrollmentPolicyPreview | null>(null);
   const [enrollmentPolicyError, setEnrollmentPolicyError] = useState<string | null>(null);
@@ -336,7 +337,14 @@ export function AIEmployees() {
   const [deferredLoading, setDeferredLoading] = useState(false);
   const [deferredError, setDeferredError] = useState<string | null>(null);
   const [localPanelRefreshing, setLocalPanelRefreshing] = useState<string | null>(null);
-  const refresh = useCallback(async () => {
+  const clearIssuedCredential = useCallback(() => {
+    setCreatedToken(null);
+    setIssuedCredentialCopied(false);
+  }, []);
+  const refresh = useCallback(async (options?: { preserveIssuedCredential?: boolean }) => {
+    if (!options?.preserveIssuedCredential) {
+      clearIssuedCredential();
+    }
     setLoading(true);
     setError(null);
     setDeferredError(null);
@@ -392,11 +400,12 @@ export function AIEmployees() {
       setLoading(false);
       setDeferredLoading(false);
     }
-  }, [integrationInboxBucket]);
+  }, [clearIssuedCredential, integrationInboxBucket]);
   useEffect(() => {
     void refresh();
   }, [refresh]);
   const refreshPanel = useCallback(async (panelId: string) => {
+    clearIssuedCredential();
     const loader = panelId === "operator_health"
       ? { id: "operator_health", load: async () => ({ operatorHealth: await loadOperatorHealth(12, "") }) }
       : panelId === "agents"
@@ -445,7 +454,7 @@ export function AIEmployees() {
     } finally {
       setLocalPanelRefreshing((current) => current === panelId ? null : current);
     }
-  }, [data, integrationInboxBucket]);
+  }, [clearIssuedCredential, data, integrationInboxBucket]);
   const loadSelectedDaemonLog = async (adapter = selectedLogAdapter) => {
     setDaemonLogsLoading(true);
     setDaemonLogsError(null);
@@ -970,7 +979,12 @@ export function AIEmployees() {
       ttlDays: "TTL days",
       heartbeat: "Heartbeat timeout",
       scopes: "Scopes",
+      oneTimeCredentialTitle: "One-time issued credential",
       tokenShownOnce: "Copy this token now. It will not be shown again.",
+      credentialCannotBeReadAgain: "After you clear this card or refresh the page, MIS can show only the token id and hash-backed audit trail.",
+      copyIssuedCredential: "Copy token",
+      copiedIssuedCredential: "Copied",
+      clearIssuedCredential: "Clear secret",
       launchPacket: "Remote launch packet",
       envSetup: "Environment",
       installCommand: "Install",
@@ -1424,7 +1438,12 @@ export function AIEmployees() {
       ttlDays: "有效天数",
       heartbeat: "心跳超时",
       scopes: "权限范围",
+      oneTimeCredentialTitle: "一次性发放凭证",
       tokenShownOnce: "请现在复制 token。页面不会再次显示原始 token。",
+      credentialCannotBeReadAgain: "清除此卡片或刷新页面后，MIS 只能显示 token id 和 hash 证据链，不能再次读取原始 token。",
+      copyIssuedCredential: "复制 token",
+      copiedIssuedCredential: "已复制",
+      clearIssuedCredential: "清除密钥",
       launchPacket: "远程启动指引",
       envSetup: "环境变量",
       installCommand: "安装",
@@ -1486,6 +1505,16 @@ export function AIEmployees() {
       window.setTimeout(() => setCopiedIntakeCommand(current => current === command ? null : current), 1800);
     } catch {
       setCopiedIntakeCommand(null);
+    }
+  };
+  const copyIssuedCredential = async () => {
+    if (!createdToken?.token) return;
+    try {
+      await navigator.clipboard?.writeText(createdToken.token);
+      setIssuedCredentialCopied(true);
+      setCreatedToken(current => current ? { ...current, token: "" } : current);
+    } catch {
+      setIssuedCredentialCopied(false);
     }
   };
   const panelLoadState = data?.panelLoadState || {};
@@ -2631,7 +2660,7 @@ export function AIEmployees() {
   const createEnrollment = async () => {
     setEnrollmentAction("create");
     setEnrollmentResult(null);
-    setCreatedToken(null);
+    clearIssuedCredential();
     try {
       const result = await createAgentGatewayEnrollment({
         agent_id: enrollmentForm.agent_id.trim(),
@@ -2645,7 +2674,7 @@ export function AIEmployees() {
       });
       setCreatedToken(result);
       setEnrollmentResult(`${result.agent_id}: ${result.token_id}`);
-      await refresh();
+      await refresh({ preserveIssuedCredential: true });
     } catch (err) {
       setEnrollmentResult(err instanceof Error ? err.message : String(err));
     } finally {
@@ -2656,7 +2685,7 @@ export function AIEmployees() {
   const requestEnrollment = async () => {
     setEnrollmentAction("request");
     setEnrollmentResult(null);
-    setCreatedToken(null);
+    clearIssuedCredential();
     setCreatedRequest(null);
     try {
       const result = await requestAgentGatewayEnrollment({
@@ -2686,7 +2715,7 @@ export function AIEmployees() {
   const issueApprovedEnrollment = async (approvalId = issueApprovalId) => {
     setEnrollmentAction(`issue-${approvalId || "manual"}`);
     setEnrollmentResult(null);
-    setCreatedToken(null);
+    clearIssuedCredential();
     try {
       const result = await issueApprovedAgentGatewayEnrollment({
         approval_id: approvalId.trim(),
@@ -2696,7 +2725,7 @@ export function AIEmployees() {
       });
       setCreatedToken(result);
       setEnrollmentResult(`${result.agent_id}: ${result.token_id}`);
-      await refresh();
+      await refresh({ preserveIssuedCredential: true });
     } catch (err) {
       setEnrollmentResult(err instanceof Error ? err.message : String(err));
     } finally {
@@ -2722,6 +2751,7 @@ export function AIEmployees() {
   const revokeEnrollment = async (tokenId: string) => {
     setEnrollmentAction(`revoke-${tokenId}`);
     setEnrollmentResult(null);
+    clearIssuedCredential();
     try {
       const result = await revokeAgentGatewayEnrollment({ token_id: tokenId });
       const sessionNote = result.sessions_revoked ? ` · sessions ${result.sessions_revoked}` : "";
@@ -2737,6 +2767,7 @@ export function AIEmployees() {
   const revokeSession = async (sessionId: string) => {
     setEnrollmentAction(`revoke-session-${sessionId}`);
     setEnrollmentResult(null);
+    clearIssuedCredential();
     try {
       const result = await revokeAgentGatewaySession({ session_id: sessionId });
       setEnrollmentResult(`session revoked: ${result.sessions.join(", ") || result.revoked}`);
@@ -2751,7 +2782,7 @@ export function AIEmployees() {
   const rotateEnrollment = async (tokenId: string) => {
     setEnrollmentAction(`rotate-${tokenId}`);
     setEnrollmentResult(null);
-    setCreatedToken(null);
+    clearIssuedCredential();
     try {
       const result = await rotateAgentGatewayEnrollment({
         token_id: tokenId,
@@ -2760,7 +2791,7 @@ export function AIEmployees() {
       });
       setCreatedToken(result);
       setEnrollmentResult(`${result.agent_id}: ${result.rotated_from_token_id} -> ${result.token_id}`);
-      await refresh();
+      await refresh({ preserveIssuedCredential: true });
     } catch (err) {
       setEnrollmentResult(err instanceof Error ? err.message : String(err));
     } finally {
@@ -2797,7 +2828,7 @@ export function AIEmployees() {
         {!loading && deferredLoading && <p className="text-xs mt-2" style={{ color: "var(--mis-muted)" }}>{copy.deferredLoading}</p>}
         {error && <p className="text-xs mt-2" style={{ color: "#F87171" }}>{copy.backendUnavailable}: {error}</p>}
         {deferredError && <p className="text-xs mt-2" style={{ color: "var(--mis-warning)" }}>{copy.deferredUnavailable}: {deferredError}</p>}
-        <button onClick={refresh} className="mt-3 text-[11px] px-3 py-1.5 rounded" style={{ background: "rgba(34,211,238,0.12)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.2)" }}>
+        <button onClick={() => void refresh()} className="mt-3 text-[11px] px-3 py-1.5 rounded" style={{ background: "rgba(34,211,238,0.12)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.2)" }}>
           {copy.refresh}
         </button>
       </div>
@@ -5261,7 +5292,7 @@ export function AIEmployees() {
               )}
             </div>
             <button
-              onClick={refresh}
+              onClick={() => void refresh()}
               className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded"
               style={{ background: "rgba(34,211,238,0.12)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.2)" }}
             >
@@ -6211,9 +6242,36 @@ export function AIEmployees() {
         </div>
 
         {createdToken && (
-          <div className="rounded-lg p-3 mt-4" style={{ background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.28)" }}>
-            <div className="text-[11px] font-semibold" style={{ color: "var(--mis-warning)" }}>{copy.tokenShownOnce}</div>
-            <div className="mt-2 text-[11px] font-mono break-all" style={{ color: "var(--mis-text)" }}>{createdToken.token}</div>
+          <div data-testid="one-time-issued-credential" className="rounded-lg p-3 mt-4" style={{ background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.28)" }}>
+            <div className="flex flex-col md:flex-row md:items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-[11px] font-semibold" style={{ color: "var(--mis-warning)" }}>{copy.oneTimeCredentialTitle}</div>
+                <div className="text-[10px] mt-1" style={{ color: "var(--mis-muted)" }}>{copy.tokenShownOnce}</div>
+                <div className="text-[10px] mt-1" style={{ color: "var(--mis-dim)" }}>{copy.credentialCannotBeReadAgain}</div>
+              </div>
+              <div className="flex flex-wrap gap-1.5 shrink-0">
+                <button
+                  onClick={() => void copyIssuedCredential()}
+                  disabled={!createdToken.token}
+                  className="flex items-center gap-1 text-[11px] px-2.5 py-1.5 rounded"
+                  style={{ background: "rgba(251,191,36,0.12)", color: "var(--mis-warning)", border: "1px solid rgba(251,191,36,0.24)", opacity: createdToken.token ? 1 : 0.72 }}
+                >
+                  <Copy size={12} />
+                  {issuedCredentialCopied ? copy.copiedIssuedCredential : copy.copyIssuedCredential}
+                </button>
+                <button
+                  onClick={clearIssuedCredential}
+                  className="flex items-center gap-1 text-[11px] px-2.5 py-1.5 rounded"
+                  style={{ background: "rgba(248,113,113,0.1)", color: "#F87171", border: "1px solid rgba(248,113,113,0.22)" }}
+                >
+                  <Trash2 size={12} />
+                  {copy.clearIssuedCredential}
+                </button>
+              </div>
+            </div>
+            {createdToken.token && !issuedCredentialCopied && (
+              <div data-testid="issued-credential-secret" className="mt-2 text-[11px] font-mono break-all" style={{ color: "var(--mis-text)" }}>{createdToken.token}</div>
+            )}
             <div className="mt-2 text-[10px]" style={{ color: "var(--mis-dim)" }}>
               {createdToken.agent_id} · {createdToken.token_id} · {copy.expires}: {createdToken.expires_at}
             </div>
