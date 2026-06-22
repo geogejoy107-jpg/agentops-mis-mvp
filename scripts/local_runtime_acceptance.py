@@ -50,17 +50,21 @@ def request_json(method: str, base_url: str, path: str, payload=None, query=None
 
 
 def run_prepared_hermes_task(base_url: str) -> dict:
-    prepare = request_json("POST", base_url, "/api/integrations/hermes/run-task", {"confirm_run": True})
+    return run_prepared_runtime_probe(base_url, "/api/integrations/hermes/run-task")
+
+
+def run_prepared_runtime_probe(base_url: str, path: str) -> dict:
+    prepare = request_json("POST", base_url, path, {"confirm_run": True})
     prepared_action_id = prepare.get("prepared_action_id")
     approval_id = prepare.get("approval_id")
     if not prepared_action_id:
         return prepare
     if not approval_id:
-        raise RuntimeError(f"Hermes prepared run-task missing approval_id: {prepare}")
+        raise RuntimeError(f"Prepared runtime probe missing approval_id: {prepare}")
     approval = request_json("POST", base_url, f"/api/approvals/{approval_id}/approve", {})
     if approval.get("decision") != "approved":
-        raise RuntimeError(f"Hermes prepared run-task approval failed: {approval}")
-    resume = request_json("POST", base_url, "/api/integrations/hermes/run-task", {
+        raise RuntimeError(f"Prepared runtime probe approval failed: {approval}")
+    resume = request_json("POST", base_url, path, {
         "confirm_run": True,
         "prepared_action_id": prepared_action_id,
         "prompt_hash": prepare.get("prompt_hash"),
@@ -210,9 +214,9 @@ def main() -> int:
     if args.live_hermes:
         capture("POST /api/integrations/hermes/run-task live", lambda: run_prepared_hermes_task(args.base_url))
     if args.live_agnesfallback:
-        capture("POST /api/integrations/hermes/cli-probe live", lambda: request_json("POST", args.base_url, "/api/integrations/hermes/cli-probe", {"confirm_run": True}))
+        capture("POST /api/integrations/hermes/cli-probe live", lambda: run_prepared_runtime_probe(args.base_url, "/api/integrations/hermes/cli-probe"))
     if args.live_agnesfallback_api:
-        capture("POST /api/integrations/hermes/chat-completion-probe live", lambda: request_json("POST", args.base_url, "/api/integrations/hermes/chat-completion-probe", {"confirm_run": True}))
+        capture("POST /api/integrations/hermes/chat-completion-probe live", lambda: run_prepared_runtime_probe(args.base_url, "/api/integrations/hermes/chat-completion-probe"))
 
     if args.live_openclaw:
         probe = evidence.get("POST /api/integrations/openclaw/probe live", {})

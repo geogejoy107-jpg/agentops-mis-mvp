@@ -6416,7 +6416,9 @@ def dify_create_document_by_text(conn, body: dict) -> tuple[dict, int]:
     return dify_prepare_upload_text(conn, body, cfg, dataset_id, document_name, text, text_hash)
 
 
-def ensure_agnesfallback_agent_task(conn, mode: str):
+def ensure_agnesfallback_agent_task(conn, mode: str, body: dict | None = None, task_status: str = "planned"):
+    body = body or {}
+    now = now_iso()
     agent_id = "agt_agnesfallback_runtime"
     upsert_agent(conn, {
         "agent_id": agent_id,
@@ -6431,177 +6433,360 @@ def ensure_agnesfallback_agent_task(conn, mode: str):
         "allowed_tools": json.dumps(["agnesfallback.cli", "openai_compatible.chat", "runtime.probe"], ensure_ascii=False),
         "budget_limit_usd": 10.0,
         "owner_user_id": "usr_founder",
-        "created_at": now_iso(),
-        "updated_at": now_iso(),
+        "created_at": now,
+        "updated_at": now,
     }, "runtime-connector")
-    task_id = f"tsk_agnesfallback_{mode}_probe"
+    task_id = body.get("task_id") or f"tsk_agnesfallback_{mode}_probe"
     upsert_task(conn, {
         "task_id": task_id,
+        "workspace_id": normalize_workspace_id(body.get("workspace_id") or "local-demo"),
         "title": f"Agnesfallback {mode} probe",
         "description": "Fixed low-risk runtime connector probe. Full prompt and raw response are not stored.",
-        "requester_id": "usr_founder",
+        "requester_id": body.get("requester_id") or "usr_founder",
         "owner_agent_id": agent_id,
         "collaborator_agent_ids": json.dumps([], ensure_ascii=False),
-        "status": "planned",
+        "status": task_status,
         "priority": "high",
         "due_date": None,
         "acceptance_criteria": "Connector returns the fixed health marker and writes run/evaluation/audit.",
         "risk_level": "low",
         "budget_limit_usd": 1.0,
-        "created_at": now_iso(),
-        "updated_at": now_iso(),
+        "created_at": now,
+        "updated_at": now,
     }, "runtime-connector")
     return agent_id, task_id
 
 
-def agnesfallback_cli_probe(conn, body: dict) -> dict:
-    cfg = hermes_runtime_config()
-    agnes = agnesfallback_config()
-    prompt = "请只回复 AGNESFALLBACK_OK，不要解释。"
-    connector_id = "rtc_agnesfallback_cli"
-    confirm = bool(body.get("confirm_run"))
-    plan = {
-        "provider": "agnesfallback",
-        "mode": "cli_probe",
-        "dry_run": True,
-        "would_run": agnesfallback_cli_command(agnes, "[FIXED_SAFE_PROMPT]"),
-        "prompt_hash": stable_hash(prompt),
-        "requires": {"HERMES_ALLOW_REAL_RUN": True, "confirm_run": True},
-        "note": "Extra CLI args are empty by default. Use AGNESFALLBACK_CLI_EXTRA_ARGS only for explicit local recording mode.",
+def agnesfallback_probe_prompt(mode: str) -> str:
+    if mode == "api":
+        return "请只回复 HERMES_AGNES_API_OK，不要解释。"
+    return "请只回复 AGNESFALLBACK_OK，不要解释。"
+
+
+def agnesfallback_probe_expected(mode: str) -> str:
+    return "HERMES_AGNES_API_OK" if mode == "api" else "AGNESFALLBACK_OK"
+
+
+def agnesfallback_probe_connector_id(mode: str) -> str:
+    return "rtc_agnesfallback_openai_api" if mode == "api" else "rtc_agnesfallback_cli"
+
+
+def agnesfallback_probe_args(mode: str, agnes: dict, prompt_hash: str) -> dict:
+    if mode == "api":
+        return {
+            "mode": "api",
+            "endpoint": agnes["gateway_url"].rstrip("/") + "/v1/chat/completions",
+            "model": "agnesfallback",
+            "prompt_hash": prompt_hash,
+            "raw_prompt_omitted": True,
+        }
+    return {
+        "mode": "cli",
+        "binary_path": agnes["binary_path"],
+        "profile": agnes["profile"],
+        "extra_args": agnes.get("extra_args") or [],
+        "prompt_hash": prompt_hash,
+        "raw_prompt_omitted": True,
     }
-    refresh_runtime_connectors(conn)
-    if not (cfg["allow_real_run"] and confirm):
-        runtime_event(conn, connector_id, "cli_probe_dry_run", "planned", prompt_hash=stable_hash(prompt), input_summary="Agnesfallback CLI fixed probe dry-run.")
-        audit(conn, "system", "agnesfallback-cli", "runtime.cli_probe.dry_run", "runtime_connectors", connector_id, None, plan, {"confirm_run": confirm})
-        conn.commit()
-        return plan
-    agent_id, task_id = ensure_agnesfallback_agent_task(conn, "cli")
-    started_iso = now_iso()
-    started = dt.datetime.now(dt.timezone.utc)
-    ok = False
-    visible = None
-    error = None
-    try:
-        proc = subprocess.run(agnesfallback_cli_command(agnes, prompt), capture_output=True, text=True, timeout=180, check=False)
-        visible = redact_text((proc.stdout or "").strip(), 200)
-        ok = proc.returncode == 0 and visible == "AGNESFALLBACK_OK"
-        if not ok:
-            error = redact_text(proc.stderr or visible or f"exit={proc.returncode}", 240)
-    except Exception as exc:
-        error = redact_text(str(exc), 240)
-    duration = int((dt.datetime.now(dt.timezone.utc) - started).total_seconds() * 1000)
-    run_id = stable_id("run_agnes_cli_probe", dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d%H%M%S"))
-    row = {
+
+
+def agnesfallback_prepare_probe(conn, body: dict, mode: str, agnes: dict, prompt_hash: str) -> tuple[dict, int]:
+    agent_id, task_id = ensure_agnesfallback_agent_task(conn, mode, body, "waiting_approval")
+    now = now_iso()
+    run_id = body.get("run_id") or stable_id(f"run_agnes_{mode}_probe", prompt_hash[:16], now)
+    tool_call_id = body.get("tool_call_id") or stable_id(f"tc_agnes_{mode}_probe", run_id)
+    approval_id = body.get("approval_id") or stable_id(f"ap_agnes_{mode}_probe", run_id)
+    prepared_action_id = body.get("prepared_action_id") or stable_id(f"pact_agnes_{mode}_probe", run_id, prompt_hash[:16])
+    args = agnesfallback_probe_args(mode, agnes, prompt_hash)
+    connector_id = agnesfallback_probe_connector_id(mode)
+    repo_upsert_run(conn, {
         "run_id": run_id,
+        "workspace_id": normalize_workspace_id(body.get("workspace_id") or "local-demo"),
         "task_id": task_id,
         "agent_id": agent_id,
         "runtime_type": "hermes",
-        "status": "completed" if ok else "failed",
-        "started_at": started_iso,
-        "ended_at": now_iso(),
-        "duration_ms": duration,
-        "input_summary": f"Agnesfallback CLI fixed probe prompt_hash={stable_hash(prompt)[:16]}",
-        "output_summary": "Agnesfallback CLI returned AGNESFALLBACK_OK." if ok else "Agnesfallback CLI probe failed.",
+        "status": "waiting_approval",
+        "started_at": now,
+        "ended_at": None,
+        "duration_ms": None,
+        "input_summary": f"Prepare Agnesfallback {mode} fixed probe prompt_hash={prompt_hash[:16]}",
+        "output_summary": None,
         "model_provider": "agnesfallback",
         "model_name": "agnesfallback",
         "input_tokens": 0,
         "output_tokens": 0,
         "reasoning_tokens": 0,
         "cost_usd": 0.0,
-        "error_type": None if ok else "AgnesfallbackCliProbeFailed",
-        "error_message": error,
+        "error_type": None,
+        "error_message": None,
         "trace_id": None,
-        "parent_run_id": None,
-        "delegation_id": "agnesfallback:cli",
-        "approval_required": 0,
-        "created_at": started_iso,
-    }
-    upsert_run(conn, row, "agnesfallback-cli", {"prompt_hash": stable_hash(prompt)})
-    upsert_evaluation(conn, quality_gate_for_run(row), "agnesfallback-cli")
-    runtime_event(conn, connector_id, "cli_probe", "completed" if ok else "failed", run_id=run_id, task_id=task_id, agent_id=agent_id, model_name="agnesfallback", latency_ms=duration, prompt_hash=stable_hash(prompt), output_summary=visible, error_message=error, raw_payload_hash=stable_hash({"visible": visible, "error": error}))
-    audit(conn, "system", "agnesfallback-cli", "runtime.cli_probe", "runs", run_id, None, {"status": row["status"]}, {"prompt_hash": stable_hash(prompt), "confirmed": True})
-    conn.commit()
-    return {"provider": "agnesfallback", "mode": "cli_probe", "dry_run": False, "ok": ok, "run_id": run_id, "duration_ms": duration, "output_summary": row["output_summary"], "error": error}
-
-
-def agnesfallback_chat_completion_probe(conn, body: dict) -> dict:
-    cfg = hermes_runtime_config()
-    agnes = agnesfallback_config()
-    prompt = "请只回复 HERMES_AGNES_API_OK，不要解释。"
-    connector_id = "rtc_agnesfallback_openai_api"
-    confirm = bool(body.get("confirm_run"))
-    plan = {
+        "parent_run_id": body.get("parent_run_id"),
+        "delegation_id": f"agnesfallback:{mode}",
+        "approval_required": 1,
+        "created_at": now,
+    })
+    repo_upsert_tool_call(conn, {
+        "tool_call_id": tool_call_id,
+        "run_id": run_id,
+        "agent_id": agent_id,
+        "tool_name": f"agnesfallback.{mode}.fixed_probe",
+        "tool_version": "v1",
+        "tool_category": "custom",
+        "normalized_args_json": json.dumps(args, ensure_ascii=False, sort_keys=True),
+        "target_resource": f"agnesfallback://{mode}/fixed-probe",
+        "risk_level": "high",
+        "status": "waiting_approval",
+        "result_summary": f"Prepared Agnesfallback {mode} probe is waiting for explicit approval.",
+        "side_effect_id": None,
+        "started_at": now,
+        "ended_at": None,
+        "created_at": now,
+    })
+    repo_upsert_approval(conn, {
+        "approval_id": approval_id,
+        "task_id": task_id,
+        "run_id": run_id,
+        "tool_call_id": tool_call_id,
+        "requested_by_agent_id": agent_id,
+        "approver_user_id": body.get("approver_user_id") or "usr_founder",
+        "decision": "pending",
+        "reason": f"Approve exact-resume Agnesfallback {mode} fixed probe prompt_hash={prompt_hash[:16]}.",
+        "expires_at": (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=1)).isoformat(),
+        "created_at": now,
+        "decided_at": None,
+    })
+    repo_upsert_prepared_action(conn, {
+        "prepared_action_id": prepared_action_id,
+        "workspace_id": normalize_workspace_id(body.get("workspace_id") or "local-demo"),
+        "task_id": task_id,
+        "run_id": run_id,
+        "tool_call_id": tool_call_id,
+        "approval_id": approval_id,
+        "requested_by_agent_id": agent_id,
+        "action_type": f"runtime.agnesfallback_{mode}_probe",
         "provider": "agnesfallback",
-        "mode": "openai_compatible",
-        "dry_run": True,
-        "would_post": agnes["gateway_url"].rstrip("/") + "/v1/chat/completions",
-        "prompt_hash": stable_hash(prompt),
-        "requires": {"HERMES_ALLOW_REAL_RUN": True, "confirm_run": True},
-    }
-    refresh_runtime_connectors(conn)
-    if not (cfg["allow_real_run"] and confirm):
-        runtime_event(conn, connector_id, "chat_completion_probe_dry_run", "planned", prompt_hash=stable_hash(prompt), input_summary="Agnesfallback API fixed probe dry-run.")
-        audit(conn, "system", "agnesfallback-api", "runtime.chat_completion_probe.dry_run", "runtime_connectors", connector_id, None, plan, {"confirm_run": confirm})
-        conn.commit()
-        return plan
-    agent_id, task_id = ensure_agnesfallback_agent_task(conn, "api")
+        "target_resource": f"agnesfallback://{mode}/fixed-probe",
+        "normalized_args_json": json.dumps(args, ensure_ascii=False, sort_keys=True),
+        "args_hash": None,
+        "snapshot_ref": f"fixed-prompt://agnesfallback-{mode}-probe",
+        "snapshot_hash": prompt_hash,
+        "status": "waiting_approval",
+        "result_json": "{}",
+        "created_at": now,
+        "updated_at": now,
+        "approved_at": None,
+        "consumed_at": None,
+    })
+    runtime_event(conn, connector_id, f"{mode}_probe.prepared", "waiting_approval", run_id=run_id, task_id=task_id, agent_id=agent_id, input_summary=f"Agnesfallback {mode} probe prepared prompt_hash={prompt_hash[:16]}", raw_payload_hash=prompt_hash)
+    audit(conn, "system", f"agnesfallback-{mode}", f"runtime.agnesfallback_{mode}_probe.prepared_action_created", "prepared_actions", prepared_action_id, None, {"status": "waiting_approval"}, {"approval_id": approval_id, "prompt_hash": prompt_hash, "provider_call_performed": False, "raw_prompt_omitted": True})
+    conn.commit()
+    return {
+        "provider": "agnesfallback",
+        "mode": "openai_compatible" if mode == "api" else "cli_probe",
+        "dry_run": False,
+        "ok": False,
+        "requires_approval": True,
+        "provider_call_performed": False,
+        "prepared_action_id": prepared_action_id,
+        "approval_id": approval_id,
+        "task_id": task_id,
+        "run_id": run_id,
+        "tool_call_id": tool_call_id,
+        "prompt_hash": prompt_hash,
+        "token_omitted": True,
+        "raw_prompt_omitted": True,
+    }, 202
+
+
+def agnesfallback_resume_probe(conn, body: dict, mode: str, cfg: dict, prompt: str, prompt_hash: str) -> tuple[dict, int]:
+    prepared_action_id = body.get("prepared_action_id")
+    action = conn.execute("SELECT * FROM prepared_actions WHERE prepared_action_id=?", (prepared_action_id,)).fetchone()
+    if not action or action["provider"] != "agnesfallback" or action["action_type"] != f"runtime.agnesfallback_{mode}_probe":
+        return {"provider": "agnesfallback", "created": False, "error": "prepared_action_not_found", "prepared_action_id": prepared_action_id, "token_omitted": True}, 404
+    if action["status"] == "consumed":
+        return {"provider": "agnesfallback", "created": False, "error": "prepared_action_already_consumed", "prepared_action_id": prepared_action_id, "token_omitted": True}, 409
+    if action["status"] in {"rejected", "expired", "canceled"}:
+        return {"provider": "agnesfallback", "created": False, "error": f"prepared_action_{action['status']}", "prepared_action_id": prepared_action_id, "token_omitted": True}, 409
+    if not approval_is_approved(conn, action["approval_id"]):
+        return {"provider": "agnesfallback", "created": False, "error": "approval_required", "prepared_action_id": prepared_action_id, "approval_id": action["approval_id"], "token_omitted": True}, 428
+    supplied_prompt_hash = body.get("prompt_hash")
+    if action["snapshot_hash"] != prompt_hash or (supplied_prompt_hash and supplied_prompt_hash != action["snapshot_hash"]):
+        return {
+            "provider": "agnesfallback",
+            "created": False,
+            "error": "prepared_action_prompt_hash_mismatch",
+            "prepared_action_id": prepared_action_id,
+            "expected_prompt_hash": action["snapshot_hash"],
+            "current_prompt_hash": supplied_prompt_hash or prompt_hash,
+            "token_omitted": True,
+            "raw_prompt_omitted": True,
+        }, 409
+    try:
+        stored_args = json.loads(action["normalized_args_json"] or "{}")
+    except json.JSONDecodeError:
+        stored_args = {}
+    if prepared_action_args_hash(json.dumps(stored_args, ensure_ascii=False, sort_keys=True)) != action["args_hash"]:
+        return {"provider": "agnesfallback", "created": False, "error": "prepared_action_args_mismatch", "prepared_action_id": prepared_action_id, "token_omitted": True}, 409
+    if not cfg["allow_real_run"]:
+        return {
+            "provider": "agnesfallback",
+            "created": False,
+            "error": "agnesfallback_live_run_not_configured",
+            "prepared_action_id": prepared_action_id,
+            "requires": {"HERMES_ALLOW_REAL_RUN": True},
+            "token_omitted": True,
+            "raw_prompt_omitted": True,
+        }, 409
+    if action["status"] != "approved":
+        _before_action, action, _outcome = repo_update_prepared_action_status(conn, prepared_action_id, "approved")
     started_iso = now_iso()
     started = dt.datetime.now(dt.timezone.utc)
-    payload = {"model": "agnesfallback", "messages": [{"role": "user", "content": prompt}], "temperature": 0}
     ok = False
     visible = None
     error = None
     response_hash = None
+    expected = agnesfallback_probe_expected(mode)
     try:
-        req = Request(
-            agnes["gateway_url"].rstrip("/") + "/v1/chat/completions",
-            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-            method="POST",
-            headers={"Content-Type": "application/json"},
-        )
-        with urlopen(req, timeout=180) as res:
-            response = json.loads(res.read().decode("utf-8"))
-        response_hash = stable_hash(response)
-        visible = (((response.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
-        visible = redact_text(visible, 200)
-        ok = visible == "HERMES_AGNES_API_OK"
-        if not ok:
+        if mode == "api":
+            payload = {"model": stored_args.get("model") or "agnesfallback", "messages": [{"role": "user", "content": prompt}], "temperature": 0}
+            req = Request(
+                stored_args.get("endpoint"),
+                data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                method="POST",
+                headers={"Content-Type": "application/json"},
+            )
+            with urlopen(req, timeout=180) as res:
+                response = json.loads(res.read().decode("utf-8"))
+            response_hash = stable_hash(response)
+            visible = (((response.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
+        else:
+            cmd = [
+                stored_args.get("binary_path") or agnesfallback_config()["binary_path"],
+                "agent",
+                "--profile",
+                stored_args.get("profile") or "agnesfallback",
+                "-m",
+                prompt,
+                *(stored_args.get("extra_args") or []),
+            ]
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=180, check=False)
+            visible = (proc.stdout or "").strip()
+            response_hash = stable_hash({"stdout": visible, "stderr": proc.stderr, "returncode": proc.returncode})
+            if proc.returncode != 0:
+                error = redact_text(proc.stderr or visible or f"exit={proc.returncode}", 240)
+        visible = redact_text(visible or "", 200)
+        ok = visible == expected
+        if not ok and not error:
             error = redact_text(visible or "unexpected response", 240)
     except Exception as exc:
         error = redact_text(str(exc), 240)
     duration = int((dt.datetime.now(dt.timezone.utc) - started).total_seconds() * 1000)
-    run_id = stable_id("run_agnes_api_probe", dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d%H%M%S"))
     row = {
-        "run_id": run_id,
-        "task_id": task_id,
-        "agent_id": agent_id,
+        "run_id": action["run_id"],
+        "workspace_id": action["workspace_id"],
+        "task_id": action["task_id"],
+        "agent_id": action["requested_by_agent_id"],
         "runtime_type": "hermes",
         "status": "completed" if ok else "failed",
         "started_at": started_iso,
         "ended_at": now_iso(),
         "duration_ms": duration,
-        "input_summary": f"Agnesfallback OpenAI-compatible fixed probe prompt_hash={stable_hash(prompt)[:16]}",
-        "output_summary": "Agnesfallback API returned HERMES_AGNES_API_OK." if ok else "Agnesfallback API probe failed.",
+        "input_summary": f"Agnesfallback {mode} fixed probe prompt_hash={prompt_hash[:16]}",
+        "output_summary": f"Agnesfallback {mode} probe returned {expected}." if ok else f"Agnesfallback {mode} probe failed.",
         "model_provider": "agnesfallback",
         "model_name": "agnesfallback",
         "input_tokens": 0,
         "output_tokens": 0,
         "reasoning_tokens": 0,
         "cost_usd": 0.0,
-        "error_type": None if ok else "AgnesfallbackApiProbeFailed",
+        "error_type": None if ok else ("AgnesfallbackApiProbeFailed" if mode == "api" else "AgnesfallbackCliProbeFailed"),
         "error_message": error,
         "trace_id": None,
-        "parent_run_id": None,
-        "delegation_id": "agnesfallback:openai-compatible",
-        "approval_required": 0,
+        "parent_run_id": body.get("parent_run_id"),
+        "delegation_id": f"agnesfallback:{'openai-compatible' if mode == 'api' else 'cli'}",
+        "approval_required": 0 if ok else 1,
         "created_at": started_iso,
     }
-    upsert_run(conn, row, "agnesfallback-api", {"prompt_hash": stable_hash(prompt), "raw_payload_hash": response_hash})
-    upsert_evaluation(conn, quality_gate_for_run(row), "agnesfallback-api")
-    runtime_event(conn, connector_id, "chat_completion_probe", "completed" if ok else "failed", run_id=run_id, task_id=task_id, agent_id=agent_id, model_name="agnesfallback", latency_ms=duration, prompt_hash=stable_hash(prompt), output_summary=visible, error_message=error, raw_payload_hash=response_hash)
-    audit(conn, "system", "agnesfallback-api", "runtime.chat_completion_probe", "runs", run_id, None, {"status": row["status"]}, {"prompt_hash": stable_hash(prompt), "confirmed": True})
+    repo_upsert_run(conn, row)
+    repo_update_tool_call_status(conn, action["tool_call_id"], "completed" if ok else "failed")
+    conn.execute(
+        "UPDATE tool_calls SET result_summary=?, side_effect_id=?, ended_at=? WHERE tool_call_id=?",
+        (row["output_summary"], f"agnesfallback-response-hash:{response_hash[:16]}" if response_hash else None, row["ended_at"], action["tool_call_id"]),
+    )
+    conn.execute("UPDATE tasks SET status=?, updated_at=? WHERE task_id=?", ("completed" if ok else "failed", now_iso(), action["task_id"]))
+    if ok:
+        _before_action, after_action, _action_outcome = repo_update_prepared_action_status(conn, prepared_action_id, "consumed", result_json={"response_hash": response_hash, "raw_response_omitted": True})
+    else:
+        after_action = action
+    upsert_evaluation(conn, quality_gate_for_run(row), f"agnesfallback-{mode}")
+    connector_id = agnesfallback_probe_connector_id(mode)
+    runtime_event(conn, connector_id, f"{mode}_probe.resume", "completed" if ok else "failed", run_id=action["run_id"], task_id=action["task_id"], agent_id=action["requested_by_agent_id"], model_name="agnesfallback", latency_ms=duration, prompt_hash=prompt_hash, output_summary=visible, error_message=error, raw_payload_hash=response_hash or prompt_hash)
+    audit(conn, "system", f"agnesfallback-{mode}", f"runtime.agnesfallback_{mode}_probe.resume", "runs", action["run_id"], None, {"status": row["status"]}, {"prompt_hash": prompt_hash, "prepared_action_id": prepared_action_id, "provider_call_performed": True, "raw_prompt_omitted": True, "raw_response_omitted": True})
     conn.commit()
-    return {"provider": "agnesfallback", "mode": "openai_compatible", "dry_run": False, "ok": ok, "run_id": run_id, "duration_ms": duration, "output_summary": row["output_summary"], "error": error}
+    return {
+        "provider": "agnesfallback",
+        "mode": "openai_compatible" if mode == "api" else "cli_probe",
+        "dry_run": False,
+        "ok": ok,
+        "created": ok,
+        "prepared_action_id": prepared_action_id,
+        "prepared_action_status": after_action["status"] if after_action else action["status"],
+        "run_id": action["run_id"],
+        "task_id": action["task_id"],
+        "tool_call_id": action["tool_call_id"],
+        "duration_ms": duration,
+        "prompt_hash": prompt_hash,
+        "output_summary": row["output_summary"],
+        "error": error,
+        "provider_call_performed": True,
+        "token_omitted": True,
+        "raw_prompt_omitted": True,
+        "raw_response_omitted": True,
+    }, 201 if ok else 200
+
+
+def agnesfallback_probe(conn, body: dict, mode: str) -> tuple[dict, int]:
+    cfg = hermes_runtime_config()
+    agnes = agnesfallback_config()
+    prompt = agnesfallback_probe_prompt(mode)
+    prompt_hash = stable_hash(prompt)
+    connector_id = agnesfallback_probe_connector_id(mode)
+    confirm = bool(body.get("confirm_run"))
+    plan = {
+        "provider": "agnesfallback",
+        "mode": "openai_compatible" if mode == "api" else "cli_probe",
+        "dry_run": True,
+        "prompt_hash": prompt_hash,
+        "requires": {"HERMES_ALLOW_REAL_RUN": True, "confirm_run": True},
+    }
+    if mode == "api":
+        plan["would_post"] = agnes["gateway_url"].rstrip("/") + "/v1/chat/completions"
+    else:
+        plan["would_run"] = agnesfallback_cli_command(agnes, "[FIXED_SAFE_PROMPT]")
+        plan["note"] = "Extra CLI args are empty by default. Use AGNESFALLBACK_CLI_EXTRA_ARGS only for explicit local recording mode."
+    refresh_runtime_connectors(conn)
+    if body.get("prepared_action_id"):
+        return agnesfallback_resume_probe(conn, body, mode, cfg, prompt, prompt_hash)
+    can_prepare = bool(cfg["allow_real_run"] and confirm)
+    if mode == "api":
+        can_prepare = can_prepare and url_listening(agnes["gateway_url"])
+    else:
+        can_prepare = can_prepare and Path(agnes["binary_path"]).exists()
+    if not can_prepare:
+        event_type = "chat_completion_probe_dry_run" if mode == "api" else "cli_probe_dry_run"
+        runtime_event(conn, connector_id, event_type, "planned", prompt_hash=prompt_hash, input_summary=f"Agnesfallback {mode} fixed probe dry-run.")
+        audit(conn, "system", f"agnesfallback-{mode}", f"runtime.agnesfallback_{mode}_probe.dry_run", "runtime_connectors", connector_id, None, plan, {"confirm_run": confirm})
+        conn.commit()
+        return plan, 201
+    return agnesfallback_prepare_probe(conn, body, mode, agnes, prompt_hash)
+
+
+def agnesfallback_cli_probe(conn, body: dict) -> tuple[dict, int]:
+    return agnesfallback_probe(conn, body, "cli")
+
+
+def agnesfallback_chat_completion_probe(conn, body: dict) -> tuple[dict, int]:
+    return agnesfallback_probe(conn, body, "api")
 
 
 def ensure_local_ai_brief_agent_task(conn):
@@ -12788,9 +12973,11 @@ class Handler(BaseHTTPRequestHandler):
                 conn.commit()
                 return self.send_json(result, 201)
             if path == "/api/integrations/hermes/cli-probe":
-                return self.send_json(agnesfallback_cli_probe(conn, body), 201)
+                payload, status = agnesfallback_cli_probe(conn, body)
+                return self.send_json(payload, status)
             if path == "/api/integrations/hermes/chat-completion-probe":
-                return self.send_json(agnesfallback_chat_completion_probe(conn, body), 201)
+                payload, status = agnesfallback_chat_completion_probe(conn, body)
+                return self.send_json(payload, status)
             if path == "/api/integrations/hermes/run-task":
                 payload, status = hermes_run_task(conn, body)
                 return self.send_json(payload, status)
