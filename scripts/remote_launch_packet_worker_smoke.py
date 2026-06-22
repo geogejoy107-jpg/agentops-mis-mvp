@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def now_stamp() -> str:
-    return dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d%H%M%S")
+    return dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d%H%M%S%f")
 
 
 def http_json(method: str, base_url: str, path: str, payload: dict | None = None, token: str | None = None) -> tuple[int, dict]:
@@ -129,6 +129,9 @@ def smoke(base_url: str, stamp: str) -> dict:
             "--once",
             "--adapter",
             steps.get("adapter") or "mock",
+            "--task-id",
+            task_id,
+            "--no-enforce-intake",
             "--use-session",
             "--session-ttl-sec",
             "900",

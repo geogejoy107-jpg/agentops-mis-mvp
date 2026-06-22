@@ -1550,11 +1550,22 @@ python3 scripts/v1_5_local_product_acceptance.py --base-url http://127.0.0.1:878
 
 Observed evidence:
 
+- direct remote token worker path passed with mock run `run_gw_c65670dafaf8`,
+  `worker_processed=1`, verified plan evidence, and revoked one-time token;
 - launch-packet worker session path passed with mock run evidence and
   `token_omitted:true`;
+- launch-packet worker session path revalidated with run `run_gw_860a79aee458`;
 - session refresh processed two tasks and refreshed short-lived sessions;
 - approval-gated enrollment still blocks premature token issue and then issues a
   usable scoped token after approval;
 - local product acceptance remains non-live. If the long-running demo server has
   active workers, ledger count drift is now reported as concurrent environment
   activity instead of mislabeling the read-only acceptance runner as mutating.
+
+Remote worker first-run acceptance now pins the exact smoke task with
+`--task-id` and uses `--no-enforce-intake` only for the initial self-planning
+worker execution. This does not bypass the execution authority chain: the worker
+still creates and verifies an Agent Plan before `run_start`, then writes a
+verified plan-evidence manifest after tool/evaluation/artifact evidence. The
+strict intake-enforced daemon path remains available for pre-planned operator
+queues.

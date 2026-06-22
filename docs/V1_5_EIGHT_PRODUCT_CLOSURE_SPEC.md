@@ -401,6 +401,16 @@ Acceptance evidence:
 - `python3 scripts/remote_launch_packet_worker_smoke.py` verified the returned launch packet environment can run a scoped worker through a short-lived session and write run/tool/evaluation ledger evidence:
   - run `run_gw_eed70c81def8`
   - session `[AGENT_GATEWAY_SESSION_REDACTED]`
+- 2026-06-22 revalidation of the remote worker product path passed
+  `python3 scripts/remote_worker_product_acceptance.py`:
+  - direct remote token worker run `run_gw_c65670dafaf8`
+  - launch-packet short-lived-session run `run_gw_860a79aee458`
+  - both stayed on the mock adapter, performed no live runtime execution, and
+    omitted token/session secrets.
+  - the smoke pins its just-created task with `--task-id` and uses
+    `--no-enforce-intake` for the first self-planning worker execution; the
+    worker still creates/verifies an Agent Plan before `run_start` and then
+    writes a verified plan-evidence manifest after execution evidence.
 - `python3 scripts/enrollment_rotation_smoke.py` verified API and CLI rotation with redacted one-time token output.
 - `python3 scripts/enrollment_health_state_smoke.py` verified the remote enrollment lifecycle `never_seen -> fresh -> stale -> revoked`.
 - `python3 scripts/workspace_isolation_smoke.py` verified:

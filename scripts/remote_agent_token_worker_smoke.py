@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def now_stamp() -> str:
-    return dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d%H%M%S")
+    return dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d%H%M%S%f")
 
 
 def http_json(method: str, base_url: str, path: str, payload: dict | None = None, token: str | None = None, timeout: int = 60):
@@ -72,7 +72,9 @@ def main() -> int:
         scopes = [
             "agents:write",
             "agents:heartbeat",
+            "agent_plans:read",
             "agent_plans:write",
+            "plan_evidence:read",
             "plan_evidence:write",
             "tasks:read",
             "tasks:claim",
@@ -120,6 +122,9 @@ def main() -> int:
             args.adapter,
             "--agent-id",
             agent_id,
+            "--task-id",
+            task_id,
+            "--no-enforce-intake",
             "--base-url",
             args.base_url,
             "--api-key",
