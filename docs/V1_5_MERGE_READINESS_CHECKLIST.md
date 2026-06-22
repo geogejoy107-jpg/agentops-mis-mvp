@@ -253,9 +253,10 @@ coverage for every external side-effect path.
   `agentops_mis_runtime/trust.py`; read-model cache behavior now lives in
   `agentops_mis_core/read_model_cache.py`; Approval Wall prepared-action
   hash, public projection, gate, readback, resume-gate mismatch, waiting-response,
-  route blocked/error, route access/error, prepare-response, prepared-action decision projection, resume-success, provider-result reconciliation and
+  route blocked/error, route access/error, prepare-response, prepared-action decision projection, high-risk tool-call required response, resume-success, provider-result reconciliation and
   next-action helpers now live in
-  `agentops_mis_core/approval_wall.py`; worker status/fleet lane/health
+  `agentops_mis_core/approval_wall.py`; Agent Plan approval-decision response
+  projection now lives in `agentops_mis_core/agent_plans.py`; worker status/fleet lane/health
   aggregation now lives in `agentops_mis_core/worker_fleet.py`; Commander
   work-package status/action/readback summary and project-board gate aggregation
   now live in `agentops_mis_core/commander_work_packages.py`; Operator
@@ -265,7 +266,8 @@ coverage for every external side-effect path.
   events, audit writes, endpoint auth checks, read-model producers,
   repo-local daemon/process reads, provider calls and side-effect id
   construction, Approval Wall exact-once resume invocation/writes,
-  route-level hash-mismatch audit writes and
+  route-level hash-mismatch audit writes, Agent Plan verification/status
+  transitions and
   Commander write workflows.
   Guarded by
   `scripts/module_boundary_smoke.py`, `docs/MODULE_BOUNDARY_PLAN.md`, and the

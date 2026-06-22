@@ -14,6 +14,7 @@ if str(ROOT) not in sys.path:
 
 from agentops_mis_core.approval_wall import (
     approval_wall_recommended_actions,
+    build_high_risk_toolcall_prepared_action_required_response,
     build_prepared_action_approval_decision_response,
     build_prepared_action_blocked_response,
     build_prepared_action_agent_forbidden_response,
@@ -38,6 +39,9 @@ from agentops_mis_core.approval_wall import (
     prepared_action_waiting_next_action,
     runtime_probe_blocked_payload,
     runtime_probe_prepared_action_required_payload,
+)
+from agentops_mis_core.agent_plans import (
+    build_agent_plan_approval_decision_response,
 )
 from agentops_mis_core.read_model_cache import ReadModelCache
 from agentops_mis_core.commander_work_packages import (
@@ -83,6 +87,7 @@ CONNECTORS = ROOT / "agentops_mis_runtime" / "connectors.py"
 TRUST = ROOT / "agentops_mis_runtime" / "trust.py"
 READ_MODEL_CACHE = ROOT / "agentops_mis_core" / "read_model_cache.py"
 APPROVAL_WALL = ROOT / "agentops_mis_core" / "approval_wall.py"
+AGENT_PLANS = ROOT / "agentops_mis_core" / "agent_plans.py"
 COMMANDER_WORK_PACKAGES = ROOT / "agentops_mis_core" / "commander_work_packages.py"
 OPERATOR_COMMAND_CENTER = ROOT / "agentops_mis_core" / "operator_command_center.py"
 WORKER_FLEET = ROOT / "agentops_mis_core" / "worker_fleet.py"
@@ -180,6 +185,7 @@ SERVER_OPERATOR_COMMAND_CENTER_IMPORTS = {
 }
 EXTRACTED_APPROVAL_WALL_HELPERS = {
     "approval_wall_recommended_actions",
+    "build_high_risk_toolcall_prepared_action_required_response",
     "build_prepared_action_approval_decision_response",
     "build_prepared_action_agent_forbidden_response",
     "build_prepared_action_blocked_response",
@@ -207,6 +213,7 @@ EXTRACTED_APPROVAL_WALL_HELPERS = {
 }
 SERVER_APPROVAL_WALL_IMPORTS = {
     "approval_wall_recommended_actions",
+    "build_high_risk_toolcall_prepared_action_required_response",
     "build_prepared_action_approval_decision_response",
     "build_prepared_action_blocked_response",
     "build_prepared_action_get_response",
@@ -227,6 +234,12 @@ SERVER_APPROVAL_WALL_IMPORTS = {
     "prepared_action_stored_args",
     "runtime_probe_blocked_payload",
     "runtime_probe_prepared_action_required_payload",
+}
+EXTRACTED_AGENT_PLAN_HELPERS = {
+    "build_agent_plan_approval_decision_response",
+}
+SERVER_AGENT_PLAN_IMPORTS = {
+    "build_agent_plan_approval_decision_response",
 }
 
 
@@ -276,10 +289,12 @@ def main() -> int:
     require(TRUST.exists(), "runtime connector trust module missing", failures)
     require(READ_MODEL_CACHE.exists(), "read model cache core module missing", failures)
     require(APPROVAL_WALL.exists(), "approval wall core module missing", failures)
+    require(AGENT_PLANS.exists(), "agent plans core module missing", failures)
     require(COMMANDER_WORK_PACKAGES.exists(), "commander work packages core module missing", failures)
     require(OPERATOR_COMMAND_CENTER.exists(), "operator command center core module missing", failures)
     require(WORKER_FLEET.exists(), "worker fleet core module missing", failures)
     require("from agentops_mis_core.approval_wall import" in server_text, "server.py must import approval wall core module", failures)
+    require("from agentops_mis_core.agent_plans import" in server_text, "server.py must import agent plans core module", failures)
     require("from agentops_mis_core.read_model_cache import ReadModelCache" in server_text, "server.py must import read model cache core module", failures)
     require("from agentops_mis_core.commander_work_packages import" in server_text, "server.py must import commander work packages core module", failures)
     require("from agentops_mis_core.operator_command_center import" in server_text, "server.py must import operator command center core module", failures)
@@ -289,6 +304,7 @@ def main() -> int:
     require("from agentops_mis_runtime.trust import" in server_text, "server.py must import runtime connector trust module", failures)
     server_functions = function_names(SERVER)
     approval_wall_functions = function_names(APPROVAL_WALL) if APPROVAL_WALL.exists() else set()
+    agent_plan_functions = function_names(AGENT_PLANS) if AGENT_PLANS.exists() else set()
     commander_work_package_functions = function_names(COMMANDER_WORK_PACKAGES) if COMMANDER_WORK_PACKAGES.exists() else set()
     operator_command_center_functions = function_names(OPERATOR_COMMAND_CENTER) if OPERATOR_COMMAND_CENTER.exists() else set()
     worker_fleet_functions = function_names(WORKER_FLEET) if WORKER_FLEET.exists() else set()
@@ -310,6 +326,9 @@ def main() -> int:
     for helper in sorted(EXTRACTED_APPROVAL_WALL_HELPERS):
         require(helper not in server_functions, f"server.py still defines {helper}", failures)
         require(helper in approval_wall_functions, f"approval wall module missing {helper}", failures)
+    for helper in sorted(EXTRACTED_AGENT_PLAN_HELPERS):
+        require(helper not in server_functions, f"server.py still defines {helper}", failures)
+        require(helper in agent_plan_functions, f"agent plans module missing {helper}", failures)
     require("worker_adapter_readiness" in server_functions, "worker_adapter_readiness must remain server-owned for runtime probing", failures)
     require("worker_adapter_readiness" not in worker_fleet_functions, "worker fleet module must not own runtime adapter probing", failures)
     for helper, sources in imported_symbol_sources(SERVER, SERVER_CAPABILITY_IMPORTS).items():
@@ -326,12 +345,15 @@ def main() -> int:
         require(sources == {"agentops_mis_core.operator_command_center"}, f"{helper} imported from wrong or multiple modules: {sorted(sources)}", failures)
     for helper, sources in imported_symbol_sources(SERVER, SERVER_APPROVAL_WALL_IMPORTS).items():
         require(sources == {"agentops_mis_core.approval_wall"}, f"{helper} imported from wrong or multiple modules: {sorted(sources)}", failures)
+    for helper, sources in imported_symbol_sources(SERVER, SERVER_AGENT_PLAN_IMPORTS).items():
+        require(sources == {"agentops_mis_core.agent_plans"}, f"{helper} imported from wrong or multiple modules: {sorted(sources)}", failures)
 
     imports = imported_modules(CAPABILITIES)
     connector_imports = imported_modules(CONNECTORS) if CONNECTORS.exists() else set()
     trust_imports = imported_modules(TRUST) if TRUST.exists() else set()
     read_model_cache_imports = imported_modules(READ_MODEL_CACHE) if READ_MODEL_CACHE.exists() else set()
     approval_wall_imports = imported_modules(APPROVAL_WALL) if APPROVAL_WALL.exists() else set()
+    agent_plan_imports = imported_modules(AGENT_PLANS) if AGENT_PLANS.exists() else set()
     commander_work_package_imports = imported_modules(COMMANDER_WORK_PACKAGES) if COMMANDER_WORK_PACKAGES.exists() else set()
     operator_command_center_imports = imported_modules(OPERATOR_COMMAND_CENTER) if OPERATOR_COMMAND_CENTER.exists() else set()
     worker_fleet_imports = imported_modules(WORKER_FLEET) if WORKER_FLEET.exists() else set()
@@ -350,6 +372,9 @@ def main() -> int:
     approval_wall_forbidden = sorted(module for module in approval_wall_imports if module in {"sqlite3", "subprocess", "http.server", "urllib.request"})
     require(not approval_wall_forbidden, f"approval wall module imports forbidden app/runtime dependencies: {approval_wall_forbidden}", failures)
     require("server" not in approval_wall_imports, "approval wall module must not import server module", failures)
+    agent_plan_forbidden = sorted(module for module in agent_plan_imports if module in {"sqlite3", "subprocess", "http.server", "urllib.request"})
+    require(not agent_plan_forbidden, f"agent plans module imports forbidden app/runtime dependencies: {agent_plan_forbidden}", failures)
+    require("server" not in agent_plan_imports, "agent plans module must not import server module", failures)
     commander_work_package_forbidden = sorted(module for module in commander_work_package_imports if module in {"sqlite3", "subprocess", "http.server", "urllib.request"})
     require(not commander_work_package_forbidden, f"commander work packages module imports forbidden app/runtime dependencies: {commander_work_package_forbidden}", failures)
     require("server" not in commander_work_package_imports, "commander work packages module must not import server module", failures)
@@ -640,6 +665,22 @@ def main() -> int:
         prepared_action={**prepared_row, "status": "approved"},
         decision="approved",
     )
+    agent_plan_approval_decision_response = build_agent_plan_approval_decision_response(
+        approval={"approval_id": "ap_plan_smoke", "decision": "approved"},
+        agent_plan_decision={
+            "agent_plan": {"plan_id": "plan_smoke", "status": "approved"},
+            "verification": {"pass": True},
+            "verification_result_hash": "hash_plan_verification_smoke",
+        },
+    )
+    high_risk_required_response = build_high_risk_toolcall_prepared_action_required_response(
+        tool_name="openai.file_search.upload",
+        risk_level="critical",
+        requested_status="completed",
+        external_side_effect_intent=True,
+        run_id="run_high_risk_smoke",
+        task_id="tsk_high_risk_smoke",
+    )
     require(missing_gate and missing_gate.get("error") == "external_publish_prepared_action_required", "resume gate missing-id error failed", failures)
     require(pending_gate and pending_gate.get("error") == "approval_required", "resume gate approval-required error failed", failures)
     require(mismatch_gate and mismatch_gate.get("error") == "prepared_action_request_mismatch" and "operation" in mismatch_gate.get("mismatched_fields", []), "resume gate mismatch error failed", failures)
@@ -666,6 +707,13 @@ def main() -> int:
     require(approval_decision_response.get("resume_required") is True, "approval decision response resume-required flag failed", failures)
     require((approval_decision_response.get("prepared_action") or {}).get("status") == "approved", "approval decision response prepared action failed", failures)
     require(approval_decision_response.get("token_omitted") is True, "approval decision response omission proof missing", failures)
+    require((agent_plan_approval_decision_response.get("agent_plan") or {}).get("status") == "approved", "agent plan approval decision response plan failed", failures)
+    require(agent_plan_approval_decision_response.get("verification_result_hash") == "hash_plan_verification_smoke", "agent plan approval decision response hash failed", failures)
+    require(agent_plan_approval_decision_response.get("token_omitted") is True, "agent plan approval decision response omission proof missing", failures)
+    require(high_risk_required_response.get("error") == "high_risk_prepared_action_required", "high-risk prepared-action required response error failed", failures)
+    require(high_risk_required_response.get("external_side_effect_intent") is True, "high-risk prepared-action required response intent failed", failures)
+    require("prepare_action=true" in high_risk_required_response.get("message", ""), "high-risk prepared-action guidance failed", failures)
+    require(high_risk_required_response.get("token_omitted") is True, "high-risk prepared-action omission proof missing", failures)
     runtime_waiting_payload = runtime_probe_prepared_action_required_payload(
         prepared={
             "run_id": "run_runtime_probe_smoke",
@@ -901,6 +949,7 @@ def main() -> int:
     require("agentops_mis_runtime/trust.py" in plan_text, "module boundary plan missing runtime trust module", failures)
     require("agentops_mis_core/read_model_cache.py" in plan_text, "module boundary plan missing read model cache module", failures)
     require("agentops_mis_core/approval_wall.py" in plan_text, "module boundary plan missing approval wall module", failures)
+    require("agentops_mis_core/agent_plans.py" in plan_text, "module boundary plan missing agent plans module", failures)
     require("agentops_mis_core/commander_work_packages.py" in plan_text, "module boundary plan missing commander work packages module", failures)
     require("agentops_mis_core/operator_command_center.py" in plan_text, "module boundary plan missing operator command center module", failures)
     require("agentops_mis_core/worker_fleet.py" in plan_text, "module boundary plan missing worker fleet module", failures)
@@ -908,7 +957,7 @@ def main() -> int:
     output = {
         "ok": not failures,
         "operation": "module_boundary_smoke",
-        "boundary": "agentops_mis_runtime.capabilities+connectors+trust + agentops_mis_core.read_model_cache+approval_wall+commander_work_packages+operator_command_center+worker_fleet",
+        "boundary": "agentops_mis_runtime.capabilities+connectors+trust + agentops_mis_core.read_model_cache+approval_wall+agent_plans+commander_work_packages+operator_command_center+worker_fleet",
         "server_line_count": len(server_text.splitlines()),
         "module_imports": {
             "capabilities": sorted(imports),
@@ -916,6 +965,7 @@ def main() -> int:
             "trust": sorted(trust_imports),
             "read_model_cache": sorted(read_model_cache_imports),
             "approval_wall": sorted(approval_wall_imports),
+            "agent_plans": sorted(agent_plan_imports),
             "commander_work_packages": sorted(commander_work_package_imports),
             "operator_command_center": sorted(operator_command_center_imports),
             "worker_fleet": sorted(worker_fleet_imports),

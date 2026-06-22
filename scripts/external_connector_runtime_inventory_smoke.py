@@ -22,6 +22,7 @@ OBJECTIVE = ROOT / "docs" / "V1_5_AGENT_GATEWAY_HARDENING_OBJECTIVE.md"
 
 SOURCE_FILES = {
     "server.py": ROOT / "server.py",
+    "agentops_mis_core/approval_wall.py": ROOT / "agentops_mis_core" / "approval_wall.py",
     "agentops_mis_cli/worker.py": ROOT / "agentops_mis_cli" / "worker.py",
 }
 
@@ -45,8 +46,11 @@ INVENTORY: list[dict[str, Any]] = [
         "source_markers": {
             "server.py": [
                 "tool_call.prepared_action_required",
-                "high_risk_prepared_action_required",
+                "build_high_risk_toolcall_prepared_action_required_response",
                 "openai.file_search.upload",
+            ],
+            "agentops_mis_core/approval_wall.py": [
+                "high_risk_prepared_action_required",
             ],
         },
     },

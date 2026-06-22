@@ -476,6 +476,65 @@ python3 scripts/prepared_action_approval_wall_smoke.py --base-url http://127.0.0
 python3 scripts/approval_decision_side_effect_smoke.py --base-url http://127.0.0.1:8787
 ```
 
+### Slice 17: High-Risk Tool-Call Required Response Helper
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/approval_wall.py`
+
+Moved out of `server.py`:
+
+- high-risk external side-effect tool-call 428 response projection
+- `prepare_action=true` remediation guidance
+- token-omission proof on the blocked response
+
+Still owned by `server.py`:
+
+- HTTP routes
+- run access checks
+- tool-call validation and risk classification
+- external side-effect intent detection
+- runtime events, audit logs and commits
+- prepared-action creation orchestration when `prepare_action=true`
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/high_risk_toolcall_prepared_action_gate_smoke.py --base-url http://127.0.0.1:8787
+```
+
+### Slice 18: Agent Plan Approval Decision Response Helper
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/agent_plans.py`
+
+Moved out of `server.py`:
+
+- Agent Plan approval decision response projection
+- Agent Plan verification result hash exposure on approval responses
+- token-omission proof on Agent Plan approval decision responses
+
+Still owned by `server.py`:
+
+- HTTP routes
+- approval decision state transitions
+- Agent Plan verification and status transitions
+- approval audit writes and commits
+- task/run execution gates that consume Agent Plan approval state
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/agent_plan_integrity_smoke.py --base-url http://127.0.0.1:8787
+```
+
 ## Next Candidate Slices
 
 - Continue P1-05 with small smoke-backed strangler slices only; prefer pure

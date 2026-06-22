@@ -36,6 +36,7 @@ from urllib.error import HTTPError, URLError
 
 from agentops_mis_core.approval_wall import (
     approval_wall_recommended_actions,
+    build_high_risk_toolcall_prepared_action_required_response,
     build_prepared_action_approval_decision_response,
     build_prepared_action_blocked_response,
     build_prepared_action_get_response,
@@ -56,6 +57,9 @@ from agentops_mis_core.approval_wall import (
     prepared_action_stored_args,
     runtime_probe_blocked_payload,
     runtime_probe_prepared_action_required_payload,
+)
+from agentops_mis_core.agent_plans import (
+    build_agent_plan_approval_decision_response,
 )
 from agentops_mis_core.commander_work_packages import (
     build_commander_work_packages_readback,
@@ -7793,18 +7797,14 @@ def agent_gateway_record_tool_call(conn, body) -> tuple[dict, int]:
             "raw_omitted": True,
             "token_omitted": True,
         })
-        return {
-            "error": "high_risk_prepared_action_required",
-            "message": "High-risk or critical external side-effect tool calls must use prepare_action=true and resume the prepared action after approval.",
-            "tool_name": tool_name,
-            "risk_level": risk,
-            "requested_status": status,
-            "external_side_effect_intent": external_side_effect_intent,
-            "run_id": run_id,
-            "task_id": run["task_id"],
-            "next_action": "Record again with prepare_action=true, inspect/approve the generated approval, then resume the prepared action exactly once with provider_side_effect_id.",
-            "token_omitted": True,
-        }, 428
+        return build_high_risk_toolcall_prepared_action_required_response(
+            tool_name=tool_name,
+            risk_level=risk,
+            requested_status=status,
+            external_side_effect_intent=external_side_effect_intent,
+            run_id=run_id,
+            task_id=run["task_id"],
+        ), 428
     row = {
         "tool_call_id": body.get("tool_call_id") or new_id("tc_gw"),
         "run_id": run_id,
@@ -24265,13 +24265,10 @@ class Handler(BaseHTTPRequestHandler):
             after = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (approval_id,)).fetchone()
             audit(conn, "user", "usr_founder", f"approval.{decision}", "approvals", approval_id, dict(before), dict(after), {"agent_plan_id": agent_plan_decision["agent_plan"]["plan_id"], "token_omitted": True})
             conn.commit()
-            return self.send_json({
-                "approval": dict(after),
-                "agent_plan": agent_plan_decision["agent_plan"],
-                "verification": agent_plan_decision["verification"],
-                "verification_result_hash": agent_plan_decision["verification_result_hash"],
-                "token_omitted": True,
-            })
+            return self.send_json(build_agent_plan_approval_decision_response(
+                approval=after,
+                agent_plan_decision=agent_plan_decision,
+            ))
         conn.execute("UPDATE approvals SET decision=?, decided_at=? WHERE approval_id=?", (decision, now_iso(), approval_id))
         if before["tool_call_id"]:
             tool_before = conn.execute("SELECT * FROM tool_calls WHERE tool_call_id=?", (before["tool_call_id"],)).fetchone()

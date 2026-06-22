@@ -297,6 +297,29 @@ def build_prepared_action_approval_decision_response(
     }
 
 
+def build_high_risk_toolcall_prepared_action_required_response(
+    *,
+    tool_name: Any,
+    risk_level: Any,
+    requested_status: Any,
+    external_side_effect_intent: Any,
+    run_id: Any,
+    task_id: Any,
+) -> dict[str, Any]:
+    return {
+        "error": "high_risk_prepared_action_required",
+        "message": "High-risk or critical external side-effect tool calls must use prepare_action=true and resume the prepared action after approval.",
+        "tool_name": tool_name,
+        "risk_level": risk_level,
+        "requested_status": requested_status,
+        "external_side_effect_intent": bool(external_side_effect_intent),
+        "run_id": run_id,
+        "task_id": task_id,
+        "next_action": "Record again with prepare_action=true, inspect/approve the generated approval, then resume the prepared action exactly once with provider_side_effect_id.",
+        "token_omitted": True,
+    }
+
+
 def build_prepared_action_blocked_response(
     *,
     base: dict[str, Any],
