@@ -1,6 +1,12 @@
 import type { PixelLocale, PixelTone } from "./pixelModel";
+import { harvestCommons, orbitalDeck } from "./pixelOfficeThemePacks";
 
-export type PixelOfficeThemeId = "night-shift" | "cozy-studio" | "blueprint";
+export type PixelOfficeThemeId =
+  | "night-shift"
+  | "cozy-studio"
+  | "blueprint"
+  | "harvest-commons"
+  | "orbital-deck";
 
 export type PixelMaterial =
   | "outline"
@@ -317,6 +323,8 @@ export const PIXEL_OFFICE_THEMES: Record<PixelOfficeThemeId, PixelOfficeTheme> =
   "night-shift": nightShift,
   "cozy-studio": cozyStudio,
   blueprint,
+  "harvest-commons": harvestCommons,
+  "orbital-deck": orbitalDeck,
 };
 
 export const PIXEL_OFFICE_THEME_LIST = Object.values(PIXEL_OFFICE_THEMES);
