@@ -2797,6 +2797,28 @@ def agent_gateway_error_status(error: dict | None) -> int:
     return 403 if error and error.get("error") == "forbidden" else 401
 
 
+def local_ui_write_auth_error(headers) -> tuple[dict, int] | None:
+    if not production_security_requested():
+        return None
+    expected = os.environ.get("AGENTOPS_ADMIN_KEY", "").strip()
+    if not expected:
+        return {
+            "error": "shared_mode_admin_key_required",
+            "message": "Shared/production local UI write APIs require AGENTOPS_ADMIN_KEY.",
+            "deployment_mode": deployment_mode(),
+            "token_omitted": True,
+        }, 503
+    auth_error = agent_gateway_admin_auth_error(headers)
+    if auth_error:
+        return {
+            "error": "local_ui_write_admin_auth_required",
+            "message": "Shared/production local UI write APIs require X-AgentOps-Admin-Key or an admin authorization credential.",
+            "deployment_mode": deployment_mode(),
+            "token_omitted": True,
+        }, 401
+    return None
+
+
 def agent_gateway_identity(headers, body=None, qs=None, auth_ctx=None) -> dict:
     body = body or {}
     qs = qs or {}
@@ -19112,6 +19134,11 @@ class Handler(BaseHTTPRequestHandler):
                     return self.send_json({"error": "unknown agent gateway endpoint"}, 404)
                 conn.commit()
                 return self.send_json(payload, status)
+            local_write_auth_error = local_ui_write_auth_error(self.headers)
+            if local_write_auth_error:
+                payload, status = local_write_auth_error
+                conn.rollback()
+                return self.send_json(payload, status)
             if path == "/api/knowledge/index":
                 payload = sync_knowledge_index(conn, rebuild=bool(body.get("rebuild")))
                 conn.commit()
@@ -19364,6 +19391,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def handle_patch_api(self, path, body):
         with db() as conn:
+            local_write_auth_error = local_ui_write_auth_error(self.headers)
+            if local_write_auth_error:
+                payload, status = local_write_auth_error
+                conn.rollback()
+                return self.send_json(payload, status)
             if path.startswith("/api/tasks/") and path.endswith("/status"):
                 task_id = path.split("/")[-2]
                 before = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()

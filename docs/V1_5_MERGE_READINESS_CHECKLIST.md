@@ -116,7 +116,7 @@ python3 scripts/security_production_readiness_smoke.py
 - [x] Non-loopback binding requires Agent Gateway authentication.
 - [x] Non-loopback binding requires admin authentication.
 - [x] Production/shared mode rejects `local_dev_no_token`.
-- [ ] Browser/local write APIs are protected in shared mode.
+- [x] Browser/local write APIs are protected in shared mode.
 - [x] `agentops doctor` blocks unsafe shared deployment.
 - [x] README and runbook state the same rule.
 
@@ -125,6 +125,9 @@ Current v1.5 status: `startup_security_assessment` and
 production/shared mode without explicit opt-in plus Gateway/admin keys.
 `agentops doctor` now returns exit code `2` for unsafe shared/production targets
 without a Gateway token while still printing redacted JSON diagnostics.
+`scripts/shared_mode_local_write_guard_smoke.py` verifies that shared/production
+local UI POST/PATCH write APIs reject unauthenticated writes, accept admin-key
+writes, and keep scoped Agent Gateway writes working.
 
 Expected matrix:
 
