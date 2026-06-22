@@ -37,7 +37,7 @@ jobs:
         run: |
           nohup python3 server.py > "${RUNNER_TEMP}/ui-v2-server.log" 2>&1 &
           for attempt in $(seq 1 60); do
-            curl -fsS http://127.0.0.1:8787/api/health >/dev/null && exit 0
+            curl -fsS http://127.0.0.1:8787/api/agent-gateway/status >/dev/null && exit 0
             sleep 0.5
           done
           cat "${RUNNER_TEMP}/ui-v2-server.log"
@@ -50,7 +50,7 @@ jobs:
       - name: Install Chromium
         working-directory: ui/start-building-app
         run: |
-          npm install --no-save playwright@1.53.1
+          npm install --no-save --package-lock=false playwright@1.53.1
           npx playwright install --with-deps chromium
       - name: Start Vite
         working-directory: ui/start-building-app
