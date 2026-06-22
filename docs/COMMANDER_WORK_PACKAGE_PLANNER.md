@@ -22,6 +22,29 @@ It is the product version of the current development workflow: a commander decom
 
 ## API
 
+Read the local coding project template before turning a coding goal into
+work packages:
+
+```bash
+curl -s "http://127.0.0.1:8787/api/commander/coding-project-template?q=P1-02+local+coding+project+template" | jq .
+```
+
+The template is read-only. It links the Commander WorkPackage contract,
+`commander_repo_map_localization`, branch/worktree naming, patch capture,
+verifier commands, required artifacts, plan-evidence manifest and the strict
+merge-readiness gate. It does not create a worktree, write a patch or mutate
+the ledger.
+
+Create local coding project work packages through the workflow template:
+
+```bash
+agentops workflow run-template --template-id tpl_local_coding_project
+```
+
+This creates Commander work packages and task-bound repo-map localization
+artifacts, but still only plans the branch/worktree, patch, verifier and merge
+gate. It does not run Hermes/OpenClaw live, merge, push, or store raw source.
+
 Preview:
 
 ```bash
@@ -349,6 +372,7 @@ Open `/workspace/agents` and use **Commander Work Package Planner**.
 
 The panel supports:
 
+- reading the local coding project template through `agentops commander coding-template`
 - previewing the work-package split
 - confirming task creation
 - opening created task detail pages
@@ -362,8 +386,10 @@ The panel supports:
 ## Verification
 
 ```bash
+python3 scripts/commander_coding_project_template_smoke.py
 python3 scripts/commander_work_package_plan_smoke.py
 python3 scripts/commander_work_package_dispatch_smoke.py
+python3 scripts/local_coding_project_template_smoke.py
 python3 scripts/commander_work_package_batch_dispatch_smoke.py
 python3 scripts/commander_work_package_synthesis_smoke.py
 python3 -m py_compile server.py scripts/*.py agentops_mis_cli/*.py

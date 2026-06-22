@@ -11231,7 +11231,139 @@ def customer_task_templates() -> list[dict]:
             },
             "entrypoint": "POST /api/workflows/customer-task-templates/run",
         },
+        {
+            "template_id": "tpl_local_coding_project",
+            "name": "本地代码项目 / 并行开发",
+            "name_en": "Local Coding Project / Parallel Development",
+            "workflow": "local_coding_project",
+            "scenario": "internal_product_development",
+            "status": "commander_plan",
+            "risk_level": "medium",
+            "priority": "high",
+            "description": "把一个本地代码改动拆成 Commander work packages，绑定 repo-map 定位、分支/worktree 约束、测试、patch/verifier 与 merge evidence。",
+            "default_title": "用 AgentOps MIS 管一个本地代码项目",
+            "default_description": "开发任务：把一个本地代码改动拆成可并行执行的 work packages。每个包必须先读项目规则、用 repo-map 定位文件、声明 branch/worktree 范围、返回 patch/test/verifier/merge evidence，不默认执行 live runtime 或外部推送。",
+            "default_acceptance": "MIS 必须创建 Commander work packages、task-bound repo-map localization artifacts、验证命令、branch/worktree 工作区约束、patch/test/verifier/merge gate 证据要求；不能保存原始源码正文、凭证、完整 prompt、完整 response 或私聊 transcript。",
+            "agent_roles": ["Commander", "Implementer", "Verifier", "Release Operator"],
+            "required_approvals": ["live_runtime_execution", "merge_or_external_push"],
+            "commander_lanes": [
+                {
+                    "lane_id": "scope",
+                    "title": "Define code scope and branch workspace",
+                    "owner_agent_id": "agt_cos",
+                    "priority": "high",
+                    "risk_level": "medium",
+                    "scope": "project rules, target files, branch/worktree naming, ownership boundaries, safe rollback",
+                    "avoid_scope": "do not modify files before Agent Plan and repo-map localization are verified",
+                    "verification": ["agentops operator loop-launch-packet --limit 5", "agentops commander repo-map --query \"local coding project\" --limit 8"],
+                },
+                {
+                    "lane_id": "patch",
+                    "title": "Prepare minimal patch with evidence",
+                    "owner_agent_id": "agt_builder",
+                    "priority": "high",
+                    "risk_level": "medium",
+                    "scope": "implementation patch, touched-file manifest, raw-source omission proof, rollback notes",
+                    "avoid_scope": "do not execute external writes, merge, push, or store raw source bodies in MIS",
+                    "verification": ["git diff --check", "python3 -m py_compile server.py agentops_mis_cli/*.py scripts/*.py"],
+                },
+                {
+                    "lane_id": "verify",
+                    "title": "Run focused verifier and evidence gates",
+                    "owner_agent_id": "agt_qa",
+                    "priority": "medium",
+                    "risk_level": "medium",
+                    "scope": "targeted smoke tests, plan-evidence manifests, artifact/audit counts, regression notes",
+                    "avoid_scope": "do not approve delivery if tool/eval/artifact/audit evidence is incomplete",
+                    "verification": ["python3 scripts/release_evidence_packet_smoke.py", "python3 scripts/merge_readiness_status_smoke.py"],
+                },
+                {
+                    "lane_id": "merge",
+                    "title": "Prepare merge handoff and release evidence",
+                    "owner_agent_id": "agt_ops",
+                    "priority": "medium",
+                    "risk_level": "medium",
+                    "scope": "release evidence packet, clean status, CI links, merge notes, human approval boundary",
+                    "avoid_scope": "do not merge, push tags, or publish externally without human approval",
+                    "verification": ["python3 scripts/release_evidence_packet_smoke.py --require-clean --require-green-ci", "python3 scripts/release_freeze_protocol_smoke.py --require-clean --require-green-ci --require-remote-checks"],
+                },
+            ],
+            "safe_defaults": {
+                "external_upload_performed": False,
+                "credentials_stored": False,
+                "raw_documents_stored": False,
+                "raw_source_stored": False,
+                "live_execution_performed": False,
+                "summary_hash_only": True,
+            },
+            "entrypoint": "POST /api/workflows/customer-task-templates/run",
+        },
     ]
+
+
+def run_local_coding_project_template_workflow(conn, body: dict, template: dict) -> dict:
+    workspace_id = normalize_workspace_id(body.get("workspace_id") or "local-demo")
+    now_stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d%H%M%S%f")
+    title = redact_text(body.get("title") or template["default_title"], 180)
+    description = redact_text(body.get("description") or template["default_description"], 700)
+    project_id = commander_safe_text(body.get("project_id") or f"proj_local_code_{now_stamp}", 100)
+    plan_id = commander_safe_text(body.get("plan_id") or f"cmdplan_local_code_{now_stamp}", 100)
+    lanes = body.get("lanes") if isinstance(body.get("lanes"), list) else template.get("commander_lanes")
+    confirm_create = not bool(body.get("preview_only"))
+    payload, status = commander_plan_work_packages(conn, {
+        "workspace_id": workspace_id,
+        "project_id": project_id,
+        "plan_id": plan_id,
+        "goal": f"{title}: {description}",
+        "max_packages": min(max(int(body.get("max_packages") or len(lanes or []) or 4), 1), 8),
+        "lanes": lanes,
+        "confirm_create": confirm_create,
+        "budget_limit_usd": body.get("budget_limit_usd") or 3.0,
+    }, {})
+    result = {
+        **payload,
+        "provider": "agentops-commander",
+        "workflow": "local_coding_project",
+        "ok": bool(payload.get("ok")) and status < 400,
+        "dry_run": not confirm_create,
+        "status_code": status,
+        "project_id": payload.get("project_id") or project_id,
+        "plan_id": payload.get("plan_id") or plan_id,
+        "template_execution": {
+            "mode": "commander_work_packages",
+            "confirm_create": confirm_create,
+            "live_execution_performed": False,
+            "worktree_branch_workspace": {
+                "status": "planned",
+                "branch_prefix": "codex/",
+                "worktree_required_before_merge": True,
+                "raw_source_stored": False,
+            },
+            "merge_gate": {
+                "status": "planned",
+                "requires_clean_tree": True,
+                "requires_green_ci": True,
+                "requires_human_approval_before_merge": True,
+                "commands": [
+                    "python3 scripts/release_evidence_packet_smoke.py --require-clean --require-green-ci",
+                    "python3 scripts/release_freeze_protocol_smoke.py --require-clean --require-green-ci --require-remote-checks",
+                ],
+            },
+            "patch_test_verifier_required": True,
+            "repo_map_localization_required": True,
+        },
+        "safe_defaults": {
+            **(template.get("safe_defaults") or {}),
+            "raw_source_stored": False,
+            "live_execution_performed": False,
+        },
+    }
+    result["next_actions"] = [
+        f"agentops commander packages --project-id {shlex.quote(str(result.get('project_id') or project_id))} --limit 8",
+        f"agentops commander dispatch-package --task-id {payload.get('created_task_ids', ['<task_id>'])[0] if payload.get('created_task_ids') else '<task_id>'} --adapter mock",
+        "agentops operator loop-audit --limit 20",
+    ]
+    return result
 
 
 def run_customer_task_template_workflow(conn, body: dict) -> tuple[dict, int]:
@@ -11266,6 +11398,8 @@ def run_customer_task_template_workflow(conn, body: dict) -> tuple[dict, int]:
             "adapter": adapter,
             "confirm_run": bool(body.get("confirm_run")),
         }
+    elif template["workflow"] == "local_coding_project":
+        result = run_local_coding_project_template_workflow(conn, {**body, "template_id": template_id}, template)
     elif template["workflow"] == "formal_ai_knowledge_base_qa_bot":
         result = run_kb_bot_project_workflow(conn, {**body, "template_id": template_id})
     else:
@@ -14899,6 +15033,204 @@ COMMANDER_DEFAULT_WORK_PACKAGE_LANES = [
 ]
 
 COMMANDER_LOCALIZATION_ARTIFACT_TYPE = "commander_repo_map_localization"
+COMMANDER_CODING_TEMPLATE_ID = "tpl_local_coding_project_v1"
+
+
+def commander_coding_project_template(qs=None, headers=None) -> dict:
+    qs = qs or {}
+    headers = headers or {}
+
+    def bounded_int(name: str, default: int, low: int, high: int) -> int:
+        try:
+            value = int((qs.get(name) or [str(default)])[0])
+        except (TypeError, ValueError):
+            value = default
+        return min(max(value, low), high)
+
+    workspace_id = normalize_workspace_id((qs.get("workspace_id") or [headers.get("X-AgentOps-Workspace-Id") or "local-demo"])[0])
+    project_id = commander_safe_text((qs.get("project_id") or ["proj_local_coding"])[0], 80)
+    task_id = commander_safe_text((qs.get("task_id") or ["<task_id>"])[0], 80)
+    query = commander_safe_text((qs.get("q") or qs.get("query") or [""])[0], 260)
+    if not query:
+        query = "Local coding project template WorkPackage worktree branch patch tests verifier merge gate"
+    limit = bounded_int("limit", 8, 1, 12)
+    char_budget = bounded_int("char_budget", 4800, 1200, 12000)
+    repo_map_payload = commander_repo_map({
+        "q": [query],
+        "limit": [str(limit)],
+        "char_budget": [str(char_budget)],
+        "candidate_limit": ["360"],
+    })
+    safe_files = [
+        {
+            "path": item.get("path"),
+            "score": item.get("score"),
+            "matched_fields": item.get("matched_fields") or [],
+            "symbols": item.get("symbols") or [],
+            "content_hash": item.get("content_hash"),
+            "rank_reason": item.get("rank_reason"),
+            "snippets_omitted": True,
+            "raw_content_omitted": True,
+            "token_omitted": True,
+        }
+        for item in (repo_map_payload.get("files") or [])[:limit]
+    ]
+    task_ref = task_id if task_id != "<task_id>" else "tsk_local_coding_<id>"
+    branch_name = f"codex/{task_ref}"
+    worktree_path = f"../agentops-worktrees/{task_ref}"
+    patch_path = f"patches/{task_ref}.patch"
+    quoted_query = shlex.quote(query)
+    quoted_project = shlex.quote(project_id)
+    quoted_task = shlex.quote(task_ref)
+    merge_verify_command = "python3 scripts/merge_readiness_status_smoke.py --require-ready-to-merge"
+    template = {
+        "template_id": COMMANDER_CODING_TEMPLATE_ID,
+        "name": "Local Coding Project Template",
+        "scenario": "local_coding_project",
+        "status": "ready_for_commander_planning",
+        "description": "A local-first coding loop template for Codex, Hermes, OpenClaw or remote agents that binds WorkPackage, repo-map localization, worktree, patch, tests, verifier and merge gate evidence.",
+        "authority_objects": [
+            "tasks",
+            "agent_plans",
+            COMMANDER_LOCALIZATION_ARTIFACT_TYPE,
+            "runs",
+            "tool_calls",
+            "evaluations",
+            "artifacts",
+            "plan_evidence_manifests",
+            "audit_logs",
+        ],
+        "loop_protocol": ["READ", "PLAN", "RETRIEVE", "COMPARE", "EXECUTE", "VERIFY", "RECORD"],
+    }
+    work_package_contract = {
+        "plan_command": f"agentops commander plan --project-id {quoted_project} --goal {quoted_query} --max-packages 3 --confirm-create",
+        "readback_command": f"agentops commander packages --project-id {quoted_project} --limit 10",
+        "dispatch_command": f"agentops commander dispatch-package --task-id {quoted_task} --adapter mock",
+        "synthesis_command": f"agentops commander synthesize --project-id {quoted_project} --status ready_for_review --confirm-create",
+        "required_description_fields": ["Commander project", "Plan", "Goal", "Lane", "Scope", "Avoid scope", "Dependencies", "Verification commands"],
+        "localization_artifact_type": COMMANDER_LOCALIZATION_ARTIFACT_TYPE,
+    }
+    workspace_contract = {
+        "branch_prefix": "codex/",
+        "branch_name": branch_name,
+        "worktree_path_pattern": "../agentops-worktrees/<task_id>",
+        "worktree_path": worktree_path,
+        "repo_root_omitted": True,
+        "commands": {
+            "preflight": "git status --short --branch",
+            "create_worktree": f"git worktree add -b {shlex.quote(branch_name)} {shlex.quote(worktree_path)} HEAD",
+            "show_scope": f"git -C {shlex.quote(worktree_path)} status --short --branch",
+            "capture_patch": f"git -C {shlex.quote(worktree_path)} diff --binary > {shlex.quote(patch_path)}",
+            "cleanup_after_merge": f"git worktree remove {shlex.quote(worktree_path)}",
+        },
+    }
+    evidence_gates = [
+        {
+            "id": "clean_start",
+            "required": True,
+            "authority": "git_status",
+            "command": "git status --short --branch",
+            "pass_condition": "no unexpected dirty tracked files before claiming the package",
+        },
+        {
+            "id": "repo_map_localization",
+            "required": True,
+            "authority": COMMANDER_LOCALIZATION_ARTIFACT_TYPE,
+            "command": f"agentops commander repo-map --query {quoted_query} --limit {limit} --char-budget {char_budget}",
+            "pass_condition": "selected_count > 0 and raw_content_omitted=true",
+        },
+        {
+            "id": "verified_agent_plan",
+            "required": True,
+            "authority": "agent_plans",
+            "command": "agentops agent-plan verify --plan-id <plan_id>",
+            "pass_condition": "verification_pass=true before run start",
+        },
+        {
+            "id": "scoped_patch_artifact",
+            "required": True,
+            "authority": "artifacts",
+            "command": workspace_contract["commands"]["capture_patch"],
+            "pass_condition": "patch path is repo-relative and matches the declared work package scope",
+        },
+        {
+            "id": "tests_pass",
+            "required": True,
+            "authority": "evaluations",
+            "command": "python3 -m py_compile server.py agentops_mis_cli/*.py scripts/*.py && git diff --check",
+            "pass_condition": "verifier records passing syntax and diff hygiene evidence",
+        },
+        {
+            "id": "plan_evidence_manifest_verified",
+            "required": True,
+            "authority": "plan_evidence_manifests",
+            "command": "agentops operator evidence-report --task-id <task_id>",
+            "pass_condition": "run evidence binds to the immutable verified agent plan",
+        },
+        {
+            "id": "merge_gate",
+            "required": True,
+            "authority": "release_evidence",
+            "command": merge_verify_command,
+            "pass_condition": "exact current head is clean, synced and green before merge/promotion",
+        },
+    ]
+    return {
+        "provider": "agentops-commander",
+        "operation": "coding_project_template",
+        "status": "ready" if safe_files else "attention",
+        "workspace_id": workspace_id,
+        "project_id": project_id,
+        "task_id": task_id,
+        "query": query,
+        "template": template,
+        "work_package_contract": work_package_contract,
+        "workspace_contract": workspace_contract,
+        "required_artifacts": [
+            COMMANDER_LOCALIZATION_ARTIFACT_TYPE,
+            "agent_plan",
+            "patch",
+            "test_log",
+            "verifier_report",
+            "plan_evidence_manifest",
+            "merge_gate_receipt",
+        ],
+        "evidence_gates": evidence_gates,
+        "repo_map_localization": {
+            "operation": repo_map_payload.get("operation"),
+            "status": repo_map_payload.get("status"),
+            "query": repo_map_payload.get("query"),
+            "selected_count": repo_map_payload.get("selected_count"),
+            "candidate_count": repo_map_payload.get("candidate_count"),
+            "files": safe_files,
+            "manifest_hash": stable_hash({"template_id": COMMANDER_CODING_TEMPLATE_ID, "query": query, "files": safe_files}),
+            "safety": repo_map_payload.get("safety") or {},
+            "snippets_omitted": True,
+            "raw_content_omitted": True,
+            "token_omitted": True,
+        },
+        "recommended_next_actions": [
+            work_package_contract["plan_command"],
+            work_package_contract["readback_command"],
+            work_package_contract["dispatch_command"],
+            merge_verify_command,
+        ],
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "task_created": False,
+            "run_created": False,
+            "worktree_created": False,
+            "patch_created": False,
+            "live_execution_performed": False,
+            "raw_file_bodies_returned": False,
+            "repo_root_omitted": True,
+            "token_omitted": True,
+            "raw_prompt_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
 
 
 def commander_normalize_lane(raw_lane: dict, index: int) -> dict:
@@ -22868,6 +23200,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(payload)
             if path == "/api/commander/repo-map":
                 payload = commander_repo_map(qs, self.headers)
+                conn.rollback()
+                return self.send_json(payload)
+            if path == "/api/commander/coding-project-template":
+                payload = commander_coding_project_template(qs, self.headers)
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/commander/work-packages":

@@ -577,6 +577,11 @@ Current v1.5 implementation:
 - Pixel Office can start the same six-step customer project through `POST /api/workflows/kb-bot-project`, so the classroom/customer flow no longer requires manually running the script.
 - Customer task templates are available through `GET /api/workflows/customer-task-templates`.
 - A selected template can be launched through `POST /api/workflows/customer-task-templates/run`.
+- `tpl_local_coding_project` launches a local coding-project workflow that
+  creates Commander work packages with task-bound repo-map localization,
+  branch/worktree constraints, patch/test/verifier requirements and merge-gate
+  commands, without creating a worktree, storing raw source, merging, pushing,
+  or running live Hermes/OpenClaw by default.
 - External agents and operators can list and launch those templates through
   `agentops workflow templates` and `agentops workflow run-template`, which
   keeps machine-facing dispatch on CLI/API instead of browser UI clicks.

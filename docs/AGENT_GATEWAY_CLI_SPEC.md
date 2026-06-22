@@ -783,6 +783,16 @@ agentops workflow run-template \
   --description "Clean source docs, prepare the KB workflow, run test questions, and submit a delivery report."
 ```
 
+For a local coding project, the default template path creates Commander work
+packages and coding evidence requirements without running live runtimes:
+
+```bash
+agentops workflow run-template \
+  --template-id tpl_local_coding_project \
+  --title "Implement one AgentOps MIS improvement" \
+  --description "Split the coding task, localize files, define worktree/patch/test gates, and prepare merge evidence."
+```
+
 Maps to `POST /api/workflows/customer-task-templates/run` and returns
 `project_id`, `task_id`, `run_id`, `artifact_id`, pending approval ids, and a
 customer report URL when available. The command stores only safe summaries,
@@ -1487,6 +1497,25 @@ agent so the work package includes scoped file candidates instead of vague
 repo-wide instructions. It is not an approval, merge gate, runtime adapter, or
 substitute for tests; any actual code change still has to pass the Agent Plan,
 Approval Wall where relevant, verification, and release gates.
+
+### `agentops commander coding-template`
+
+Returns the local coding project template contract without creating tasks,
+worktrees, patches, runs or live-runtime calls.
+
+```bash
+agentops commander coding-template \
+  --query "P1-02 local coding project template" \
+  --project-id proj_local_coding \
+  --task-id tsk_local_coding_example
+```
+
+Maps to `GET /api/commander/coding-project-template`. The response links the
+Commander WorkPackage contract, repo-map localization, branch/worktree naming,
+patch capture, verifier commands, required artifacts, plan-evidence manifest
+and strict merge-readiness gate. It reports `read_only:true`,
+`ledger_mutated:false`, `worktree_created:false`, `patch_created:false`,
+`repo_root_omitted:true`, and `token_omitted:true`.
 
 ```bash
 agentops operator action-receipts --limit 12

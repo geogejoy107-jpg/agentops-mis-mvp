@@ -868,6 +868,17 @@ def cmd_commander_repo_map(args, client: AgentOpsClient) -> dict:
     })
 
 
+def cmd_commander_coding_template(args, client: AgentOpsClient) -> dict:
+    query = args.query_flag if getattr(args, "query_flag", None) is not None else args.query
+    return client.get("/api/commander/coding-project-template", query={
+        "q": query,
+        "project_id": args.project_id,
+        "task_id": args.task_id,
+        "limit": args.limit,
+        "char_budget": args.char_budget,
+    })
+
+
 def cmd_commander_inbox(args, client: AgentOpsClient) -> dict:
     query = {}
     if getattr(args, "bucket", None):
@@ -2289,6 +2300,14 @@ def build_parser() -> argparse.ArgumentParser:
     commander_repo_map.add_argument("--limit", type=int, default=12)
     commander_repo_map.add_argument("--char-budget", type=int, default=8000)
     commander_repo_map.set_defaults(handler="commander_repo_map")
+    commander_coding_template = commander_sub.add_parser("coding-template", help="Read the local coding project template with worktree, patch, verifier and merge-gate evidence.")
+    commander_coding_template.add_argument("query", nargs="?", default="", help="Coding goal or work-package query to localize.")
+    commander_coding_template.add_argument("--query", "-q", dest="query_flag", default=None, help="Coding goal or work-package query to localize.")
+    commander_coding_template.add_argument("--project-id", default="proj_local_coding")
+    commander_coding_template.add_argument("--task-id", default="<task_id>")
+    commander_coding_template.add_argument("--limit", type=int, default=8)
+    commander_coding_template.add_argument("--char-budget", type=int, default=4800)
+    commander_coding_template.set_defaults(handler="commander_coding_template")
     commander_inbox = commander_sub.add_parser("inbox", help="Read the Commander integration inbox.")
     commander_inbox.add_argument("--bucket", choices=["all", "ready_for_review", "still_running", "blocked", "late_or_stale", "needs_memory_review"], default="all")
     commander_inbox.add_argument("--limit", type=int, default=20)
@@ -3071,6 +3090,7 @@ HANDLERS = {
     "operator_close_evidence_gap": cmd_operator_close_evidence_gap,
     "commander_board": cmd_commander_board,
     "commander_repo_map": cmd_commander_repo_map,
+    "commander_coding_template": cmd_commander_coding_template,
     "commander_inbox": cmd_commander_inbox,
     "commander_plan": cmd_commander_plan,
     "commander_packages": cmd_commander_packages,

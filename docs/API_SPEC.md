@@ -224,9 +224,18 @@ agent needs to localize likely files without loading the whole repository into
 context. It does not create tasks, approve plans, execute shell commands, call
 Hermes/OpenClaw, or bypass Agent Plan, Approval Wall, test, or merge gates.
 
+`GET /api/commander/coding-project-template` returns the local coding project
+template for Codex, Hermes, OpenClaw or remote workers. The response is
+read-only and links the WorkPackage contract, repo-map localization, worktree
+and branch convention, patch artifact capture, verifier commands, required
+artifacts, plan-evidence manifest and merge-readiness gate. It intentionally
+does not create a worktree, write a patch, mutate the ledger, execute shell
+commands, or expose the absolute repo root.
+
 ## Commander Work Packages
 
 ```http
+GET  /api/commander/coding-project-template?q=local+coding+goal
 POST /api/commander/work-packages/plan
 GET  /api/commander/work-packages?project_id=proj_x&limit=25
 POST /api/commander/work-packages/:task_id/dispatch
@@ -551,6 +560,7 @@ POST /api/workflows/customer-worker-task
 POST /api/workflows/customer-worker-task/submit
 POST /api/workflows/hermes-openclaw-loop
 GET  /api/workflows/hermes-openclaw-loop?loop_id=loop_123
+GET  /api/workflows/customer-task-templates
 POST /api/workflows/customer-task-templates/run
 POST /api/workflows/customer-task-templates/submit
 GET  /api/workflows/jobs
@@ -571,6 +581,14 @@ prompts, raw responses, credentials, tokens, or private transcripts.
 `GET /api/workflows/jobs` is a read-only queue view with optional `status` and
 `workflow_type` filters. It returns the current job rows, status/type summaries,
 active/stuck counts, and copyable `agentops workflow ...` next actions.
+
+`tpl_local_coding_project` is the local coding project template exposed through
+`GET /api/workflows/customer-task-templates` and executable through
+`POST /api/workflows/customer-task-templates/run`. It creates Commander work
+packages by default, records task-bound repo-map localization artifacts, and
+returns branch/worktree, patch/test/verifier and merge-gate evidence
+requirements without running live Hermes/OpenClaw, creating a worktree, storing
+raw source, merging or pushing.
 
 For confirmed Hermes/OpenClaw tasks that declare `external_write_intent:true`
 or match obvious publish/upload/deploy/webhook/external-write wording,
