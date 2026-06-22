@@ -34,7 +34,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
-from agentops_mis_cli.advance_loop_policy import advance_loop_policy_summary
+from agentops_mis_cli.advance_loop_policy import advance_loop_command_policy, advance_loop_policy_summary
 from agentops_mis_cli.redaction import redact_full_text as shared_redact_full_text
 from agentops_mis_cli.redaction import redact_text as shared_redact_text
 
@@ -15117,12 +15117,13 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
     retrieve_command = f"agentops knowledge search {shlex.quote(query)} --limit {min(limit, 10)}"
     compare_command = "agentops operator intake-checklist --limit 20"
     execute_command = f"agentops task pull --agent-id {shlex.quote(agent_id)} --status planned --limit 5 --enforce-intake"
+    self_check_command = "agentops operator loop-self-check --limit 12"
     verify_command = "agentops operator loop-audit --limit 20"
     record_command = "agentops review queue --limit 20"
     launch_sequence = [
         {
             "phase": "READ",
-            "commands": ["git status --short --branch", "git rev-parse --short HEAD", "agentops operator handoff --limit 12"],
+            "commands": ["git status --short --branch", "git rev-parse --short HEAD", "agentops operator handoff --limit 12", self_check_command],
             "evidence": referenced_specs,
         },
         {
@@ -15170,7 +15171,7 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
     ]
     handoff_commands = ((handoff.get("work_order") or {}).get("commands") or [])[:8]
     commands = []
-    for item in [retrieve_command, plan_create_command, plan_verify_command, compare_command, execute_command, verify_command, plan_evidence_command, record_command, *handoff_commands]:
+    for item in [self_check_command, retrieve_command, plan_create_command, plan_verify_command, compare_command, execute_command, verify_command, plan_evidence_command, record_command, *handoff_commands]:
         if item and item not in commands:
             commands.append(item)
     return {
@@ -16995,6 +16996,195 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
     }
 
 
+def operator_loop_self_check(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) -> dict:
+    qs = qs or {}
+    limit = bounded_int((qs.get("limit") or ["12"])[0], 12, 1, 30)
+    loop_id = redact_text((qs.get("loop_id") or [""])[0], 120)
+    effective_headers = headers
+    if agent_gateway_is_bound_auth(auth_ctx):
+        effective_headers = dict(headers)
+        effective_headers["X-AgentOps-Workspace-Id"] = auth_ctx.get("workspace_id") or "local-demo"
+        effective_headers["X-AgentOps-Agent-Id"] = auth_ctx.get("agent_id") or ""
+    handoff = operator_handoff(conn, effective_headers, {"limit": [str(limit)], "loop_id": [loop_id]} if loop_id else {"limit": [str(limit)]}, auth_ctx)
+    work_order = handoff.get("work_order") or {}
+    advance_loop = work_order.get("advance_loop") or {}
+    selected_item = advance_loop.get("selected_item") or {}
+    selected_action = str(selected_item.get("action_command") or "").strip()
+    policy = advance_loop.get("policy") or advance_loop_policy_summary()
+    loop_health = handoff.get("loop_health") or {}
+    health_gates = loop_health.get("gates") or {}
+    receipt_state = handoff.get("receipt_state") or {}
+    receipt_coverage = receipt_state.get("coverage") or {}
+    workspace_id = normalize_workspace_id(handoff.get("workspace_id") or effective_headers.get("X-AgentOps-Workspace-Id") or "local-demo")
+
+    receipt_audit_rows = operator_action_receipt_rows(conn, workspace_id, max(limit, 12))
+    receipt_ids = [str(item.get("receipt_id")) for item in receipt_audit_rows if item.get("receipt_id")]
+    evaluation_audit_count = 0
+    if receipt_ids:
+        receipt_filters = " OR ".join("metadata_json LIKE ?" for _ in receipt_ids)
+        evaluation_audit_count = scalar_count(
+            conn,
+            f"""SELECT COUNT(*)
+                FROM audit_logs
+                WHERE action='operator.action_queue_evaluation'
+                  AND entity_type='operator_action_evaluations'
+                  AND metadata_json LIKE ?
+                  AND ({receipt_filters})""",
+            (f'%"workspace_id": "{workspace_id}"%', *[f'%"{receipt_id}"%' for receipt_id in receipt_ids]),
+        )
+    receipt_audit_count = len(receipt_audit_rows)
+    tamper_chain_present = all(bool(item.get("tamper_chain_hash")) for item in receipt_audit_rows) if receipt_audit_rows else True
+    evaluated_receipts = int(receipt_coverage.get("evaluated") or 0)
+    evaluation_audit_ok = evaluated_receipts == 0 or evaluation_audit_count >= min(evaluated_receipts, len(receipt_ids))
+
+    sample_commands = [
+        ("deny_memory_approval", "agentops memory approve --memory-id mem_example", "action"),
+        ("verify_loop_audit", "agentops operator loop-audit --limit 10", "verify"),
+        ("read_handoff", "agentops operator handoff --limit 10", "verify"),
+    ]
+    if selected_action:
+        sample_commands.insert(0, ("selected_action", selected_action, "action"))
+    policy_decisions = [
+        {
+            "id": decision_id,
+            "command": redact_text(command, 500),
+            "phase": phase,
+            "decision": advance_loop_command_policy(command, phase=phase),
+            "token_omitted": True,
+        }
+        for decision_id, command, phase in sample_commands
+    ]
+    denied_memory = next((item for item in policy_decisions if item["id"] == "deny_memory_approval"), {})
+    denied_memory_ok = (denied_memory.get("decision") or {}).get("allowed") is False
+    selected_policy = next((item for item in policy_decisions if item["id"] == "selected_action"), None)
+    selected_policy_ok = selected_policy is None or (selected_policy.get("decision") or {}).get("allowed") is True
+    policy_ok = (
+        policy.get("policy_id") == "advance_loop_local_bounded_v1"
+        and policy.get("server_executes_shell") is False
+        and denied_memory_ok
+        and selected_policy_ok
+    )
+    advance_safety = advance_loop.get("safety") or {}
+    handoff_safety = handoff.get("safety") or {}
+    safety_ok = (
+        handoff_safety.get("read_only") is True
+        and handoff_safety.get("ledger_mutated") is False
+        and handoff_safety.get("live_execution_performed") is False
+        and advance_safety.get("server_shell_execution") is False
+    )
+    receipt_gate = health_gates.get("receipts") or {}
+    receipt_eval_gate = health_gates.get("receipt_evaluations") or {}
+    receipt_ok = receipt_gate.get("status") == "pass"
+    receipt_eval_ok = receipt_eval_gate.get("status") == "pass"
+    audit_ok = tamper_chain_present and evaluation_audit_ok
+
+    gate_checks = {
+        "policy_contract": {
+            "status": "pass" if policy_ok else "blocked",
+            "policy_id": policy.get("policy_id"),
+            "policy_version": policy.get("policy_version"),
+            "server_executes_shell": policy.get("server_executes_shell"),
+            "denied_memory_approval": denied_memory_ok,
+            "selected_action_allowlisted": selected_policy_ok,
+        },
+        "advance_boundary": {
+            "status": "pass" if safety_ok else "blocked",
+            "work_order_status": advance_loop.get("status") or "empty",
+            "preview_command": advance_loop.get("preview_command"),
+            "confirm_required": advance_safety.get("confirm_required") is True,
+            "server_shell_execution": advance_safety.get("server_shell_execution") is True,
+            "local_cli_only": advance_safety.get("server_shell_execution") is False,
+        },
+        "receipt_coverage": {
+            **receipt_gate,
+            "status": receipt_gate.get("status") or "pass",
+            "coverage_percent": receipt_coverage.get("coverage_percent", 100),
+        },
+        "receipt_evaluations": {
+            **receipt_eval_gate,
+            "status": receipt_eval_gate.get("status") or "pass",
+        },
+        "audit_ledger": {
+            "status": "pass" if audit_ok else "attention",
+            "receipt_audit_rows": receipt_audit_count,
+            "evaluation_audit_rows": evaluation_audit_count,
+            "tamper_chain_present": tamper_chain_present,
+            "evaluated_receipts": evaluated_receipts,
+        },
+        "handoff_health": {
+            "status": loop_health.get("status") or "unknown",
+            "score": int(loop_health.get("score") or 0),
+            "risks": len(loop_health.get("risks") or []),
+            "auth_mode": ((handoff.get("auth") or {}).get("mode") or "unknown"),
+        },
+    }
+    blocked = [gate_id for gate_id, gate in gate_checks.items() if gate.get("status") == "blocked"]
+    attention = [gate_id for gate_id, gate in gate_checks.items() if gate.get("status") == "attention"]
+    status = "blocked" if blocked else "attention" if attention or loop_health.get("status") == "attention" else "ready"
+    loop_arg = f" --loop-id {shlex.quote(loop_id)}" if loop_id else ""
+    next_actions = [
+        f"agentops operator loop-self-check{loop_arg} --limit {limit}",
+        f"agentops operator handoff{loop_arg} --limit {limit}",
+        f"agentops operator loop-audit{loop_arg} --limit {limit}",
+        "agentops operator advance-loop-policy",
+    ]
+    if loop_health.get("next_action"):
+        next_actions.append(str(loop_health.get("next_action")))
+    return {
+        "provider": "agentops-operator",
+        "operation": "operator_loop_self_check",
+        "status": status,
+        "workspace_id": workspace_id,
+        "loop_id": handoff.get("loop_id") or loop_id or None,
+        "summary": {
+            "gates": len(gate_checks),
+            "blocked": len(blocked),
+            "attention": len(attention),
+            "ready": len([gate for gate in gate_checks.values() if gate.get("status") == "pass"]),
+            "loop_health_status": loop_health.get("status"),
+            "loop_health_score": int(loop_health.get("score") or 0),
+            "receipt_required": receipt_coverage.get("required", 0),
+            "receipt_verified": receipt_coverage.get("verified", 0),
+            "receipt_evaluated": receipt_coverage.get("evaluated", 0),
+            "receipt_evaluation_fail": receipt_coverage.get("evaluation_fail", 0),
+            "receipt_audit_rows": receipt_audit_count,
+            "evaluation_audit_rows": evaluation_audit_count,
+            "policy_id": policy.get("policy_id"),
+            "policy_version": policy.get("policy_version"),
+        },
+        "gates": gate_checks,
+        "policy_decisions": policy_decisions,
+        "handoff_snapshot": {
+            "operation": handoff.get("operation"),
+            "status": handoff.get("status"),
+            "loop_health": loop_health,
+            "advance_loop": advance_loop,
+            "receipt_coverage": receipt_coverage,
+            "token_omitted": True,
+        },
+        "audit": {
+            "recent_receipts": receipt_audit_rows[: min(limit, 8)],
+            "receipt_audit_rows": receipt_audit_count,
+            "evaluation_audit_rows": evaluation_audit_count,
+            "tamper_chain_present": tamper_chain_present,
+            "token_omitted": True,
+        },
+        "next_actions": list(dict.fromkeys(next_actions))[:8],
+        "contract": "read-only loop self-check; aggregates bounded policy, handoff health, receipt coverage, receipt evaluations, and audit evidence without executing shell commands or mutating ledgers",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_shell_execution": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+
+
 def operator_health(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) -> dict:
     qs = qs or {}
     limit = bounded_int((qs.get("limit") or ["12"])[0], 12, 1, 30)
@@ -18269,6 +18459,19 @@ class Handler(BaseHTTPRequestHandler):
                         conn.rollback()
                         return self.send_json({"error": "forbidden", "message": "Agent token cannot use another workspace header."}, 403)
                 payload = operator_handoff(conn, self.headers, qs, auth_ctx)
+                conn.rollback()
+                return self.send_json(payload)
+            if path == "/api/operator/loop-self-check":
+                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                if auth_error:
+                    conn.rollback()
+                    return self.send_json(auth_error, agent_gateway_error_status(auth_error))
+                if agent_gateway_is_bound_auth(auth_ctx):
+                    requested_header_workspace = normalize_workspace_id(self.headers.get("X-AgentOps-Workspace-Id") or auth_ctx["workspace_id"])
+                    if requested_header_workspace != auth_ctx["workspace_id"]:
+                        conn.rollback()
+                        return self.send_json({"error": "forbidden", "message": "Agent token cannot use another workspace header."}, 403)
+                payload = operator_loop_self_check(conn, self.headers, qs, auth_ctx)
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/operator/action-receipts":

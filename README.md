@@ -205,6 +205,9 @@ agentops status
 
 This install path is intended for local/remote agent machines that already have a Python environment. It keeps the same JSON output contract and still reads auth from env/config; it does not create tokens by itself.
 The package uses a tiny offline build backend, so `python3 -m pip install .` does not need to download setuptools or wheel during local source installs.
+`agentops doctor` is a deployment gate as well as a diagnostic: local loopback
+demo mode returns exit code 0, but unsafe shared/production targets without a
+Gateway token return a non-zero exit code while still printing redacted JSON.
 
 已支持：
 

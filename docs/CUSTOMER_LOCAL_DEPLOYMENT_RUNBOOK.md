@@ -43,6 +43,11 @@ agentops worker status
 agentops security production-readiness
 ```
 
+`agentops doctor` is fail-closed for unsafe shared/production targets: it exits
+with code `2` when `AGENTOPS_DEPLOYMENT_MODE=production|shared|hosted` or the
+target is non-loopback and no Gateway token is configured. It still prints
+redacted JSON so the operator can see the missing setup step.
+
 ## Security Baseline
 
 For local demos, `local_dev_no_token` is allowed only while the service remains
@@ -54,6 +59,7 @@ Before shared or hosted deployment:
 export AGENTOPS_API_KEY="<local gateway key>"
 export AGENTOPS_ADMIN_KEY="<admin enrollment key>"
 export AGENTOPS_DEPLOYMENT_MODE=production
+agentops doctor
 agentops security production-readiness
 ```
 

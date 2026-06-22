@@ -111,14 +111,20 @@ python3 scripts/security_production_readiness_smoke.py
 
 ## 5. Authentication and deployment boundary
 
-- [ ] Loopback anonymous mode is explicitly local-development only.
-- [ ] Non-loopback binding requires explicit opt-in.
-- [ ] Non-loopback binding requires Agent Gateway authentication.
-- [ ] Non-loopback binding requires admin authentication.
-- [ ] Production/shared mode rejects `local_dev_no_token`.
+- [x] Loopback anonymous mode is explicitly local-development only.
+- [x] Non-loopback binding requires explicit opt-in.
+- [x] Non-loopback binding requires Agent Gateway authentication.
+- [x] Non-loopback binding requires admin authentication.
+- [x] Production/shared mode rejects `local_dev_no_token`.
 - [ ] Browser/local write APIs are protected in shared mode.
-- [ ] `agentops doctor` blocks unsafe shared deployment.
-- [ ] README and runbook state the same rule.
+- [x] `agentops doctor` blocks unsafe shared deployment.
+- [x] README and runbook state the same rule.
+
+Current v1.5 status: `startup_security_assessment` and
+`scripts/startup_security_guard_smoke.py` fail closed for non-loopback or
+production/shared mode without explicit opt-in plus Gateway/admin keys.
+`agentops doctor` now returns exit code `2` for unsafe shared/production targets
+without a Gateway token while still printing redacted JSON diagnostics.
 
 Expected matrix:
 

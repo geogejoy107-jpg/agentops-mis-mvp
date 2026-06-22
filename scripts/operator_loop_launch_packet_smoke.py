@@ -161,6 +161,7 @@ def validate_packet(payload: dict, label: str, task_id: str, agent_id: str, fail
     require("agentops agent-plan create" in joined, f"{label} missing agent-plan create command: {commands}", failures)
     require("agentops agent-plan verify" in joined, f"{label} missing plan verify command: {commands}", failures)
     require("agentops knowledge search" in joined, f"{label} missing knowledge search command: {commands}", failures)
+    require("agentops operator loop-self-check" in joined, f"{label} missing loop self-check command: {commands}", failures)
     require("agentops plan-evidence create" in joined, f"{label} missing plan evidence command: {commands}", failures)
     sources = payload.get("sources") or {}
     require((sources.get("intake") or {}).get("operation") == "task_intake_checklist", f"{label} missing intake source: {sources}", failures)

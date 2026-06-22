@@ -219,10 +219,11 @@ def cmd_doctor(args, client: AgentOpsClient) -> dict:
     non_loopback_target = not cli_host_is_loopback(client.base_url)
     has_token = bool(client.api_key)
 
+    deployment_guard_ok = not ((non_loopback_target or production_requested) and not has_token)
     checks.append({
         "name": "shared_deployment_auth_guard",
-        "ok": not ((non_loopback_target or production_requested) and not has_token),
-        "status": "blocked" if (non_loopback_target or production_requested) and not has_token else "ready",
+        "ok": deployment_guard_ok,
+        "status": "blocked" if not deployment_guard_ok else "ready",
         "deployment_mode": mode,
         "non_loopback_target": non_loopback_target,
         "has_api_key": has_token,
@@ -274,8 +275,18 @@ def cmd_doctor(args, client: AgentOpsClient) -> dict:
     if workers and workers.get("stuck_worker_tasks", 0):
         setup_hints.append("Stuck worker tasks detected. Run agentops worker stuck and agentops worker release after review.")
 
+    deployment_safety = {
+        "deployment_mode": mode,
+        "production_requested": production_requested,
+        "non_loopback_target": non_loopback_target,
+        "ok": deployment_guard_ok,
+        "strict_exit_code": 0 if deployment_guard_ok else 2,
+        "blocks_unsafe_shared_deployment": not deployment_guard_ok,
+        "token_omitted": True,
+    }
     return {
         "ok": all(item.get("ok") for item in checks),
+        "_exit_code": deployment_safety["strict_exit_code"],
         "command": "agentops doctor",
         "base_url": client.base_url,
         "workspace_id": client.workspace_id,
@@ -290,13 +301,7 @@ def cmd_doctor(args, client: AgentOpsClient) -> dict:
             "agent_id_source": sources["agent_id"],
             "token_omitted": True,
         },
-        "deployment_safety": {
-            "deployment_mode": mode,
-            "production_requested": production_requested,
-            "non_loopback_target": non_loopback_target,
-            "ok": not ((non_loopback_target or production_requested) and not has_token),
-            "token_omitted": True,
-        },
+        "deployment_safety": deployment_safety,
         "checks": checks,
         "gateway": gateway,
         "worker_summary": {
@@ -438,6 +443,10 @@ def cmd_operator_loop_audit(args, client: AgentOpsClient) -> dict:
 
 def cmd_operator_handoff(args, client: AgentOpsClient) -> dict:
     return client.get("/api/operator/handoff", query={"limit": args.limit, "loop_id": args.loop_id or None})
+
+
+def cmd_operator_loop_self_check(args, client: AgentOpsClient) -> dict:
+    return client.get("/api/operator/loop-self-check", query={"limit": args.limit, "loop_id": args.loop_id or None})
 
 
 def cmd_operator_health(args, client: AgentOpsClient) -> dict:
@@ -2009,6 +2018,10 @@ def build_parser() -> argparse.ArgumentParser:
     operator_handoff.add_argument("--loop-id", default=None)
     operator_handoff.add_argument("--limit", type=int, default=12)
     operator_handoff.set_defaults(handler="operator_handoff")
+    operator_loop_self_check = operator_sub.add_parser("loop-self-check", help="Read a loop self-check across policy, receipts, evaluations, audit, and handoff health.")
+    operator_loop_self_check.add_argument("--loop-id", default=None)
+    operator_loop_self_check.add_argument("--limit", type=int, default=12)
+    operator_loop_self_check.set_defaults(handler="operator_loop_self_check")
     operator_advance = operator_sub.add_parser("advance-loop", help="Preview or execute one bounded allowlisted loop action, verify it, and record a receipt.")
     operator_advance.add_argument("--loop-id", default=None)
     operator_advance.add_argument("--limit", type=int, default=12)
@@ -2793,6 +2806,7 @@ HANDLERS = {
     "operator_propose_receipt_failure_memory": cmd_operator_propose_receipt_failure_memory,
     "operator_loop_audit": cmd_operator_loop_audit,
     "operator_handoff": cmd_operator_handoff,
+    "operator_loop_self_check": cmd_operator_loop_self_check,
     "operator_advance_loop": cmd_operator_advance_loop,
     "operator_advance_loop_policy": cmd_operator_advance_loop_policy,
     "operator_health": cmd_operator_health,
@@ -2902,8 +2916,9 @@ def main(argv=None) -> int:
     except RuntimeError as exc:
         eprint(redact_text(str(exc), 1200))
         return 1
+    exit_code = int(result.pop("_exit_code", 0) or 0) if isinstance(result, dict) else 0
     emit(result)
-    return 0
+    return exit_code
 
 
 if __name__ == "__main__":

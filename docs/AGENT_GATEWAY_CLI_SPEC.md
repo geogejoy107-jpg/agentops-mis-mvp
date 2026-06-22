@@ -116,6 +116,11 @@ agentops doctor
 AGENTOPS_API_KEY=agtok_... AGENTOPS_AGENT_ID=agt_remote_builder agentops doctor
 ```
 
+`agentops doctor` is also a deployment gate. Local loopback demo diagnostics
+return exit code `0`; unsafe shared/production or non-loopback targets without a
+Gateway token return exit code `2` while still printing redacted JSON with
+`deployment_safety.blocks_unsafe_shared_deployment=true`.
+
 ### `agentops local readiness`
 
 Returns the single-workspace local closure check. It is read-only and does not
@@ -394,6 +399,21 @@ Repeated failed receipt evaluations create an attention risk until the
 valid and carry `tasks:read`. Invalid or out-of-range `limit` values are safely
 bounded to the supported 1..30 range instead of turning the handoff endpoint
 into a 500.
+
+### `agentops operator loop-self-check`
+
+```bash
+agentops operator loop-self-check --limit 12
+agentops operator loop-self-check --loop-id loop_smoke_api_123 --limit 10
+```
+
+Maps to `GET /api/operator/loop-self-check`. This is the pre-advance read-only
+check for Hermes, OpenClaw, Codex, or a remote Agent. It reuses the handoff
+snapshot and reports gates for the bounded runner policy, local CLI/server-shell
+boundary, receipt coverage, receipt evaluations, audit ledger proof, and handoff
+health. It returns policy decisions such as "memory approve is denied" and the
+selected loop action's allowlist decision, but it never executes commands,
+starts workers, approves memory, or mutates ledgers.
 
 ### `agentops operator health`
 
@@ -1459,7 +1479,7 @@ Method launch packet for Hermes, OpenClaw, Codex, or a remote Agent. It combines
 the intake checklist, safe knowledge-search metadata, operator handoff state,
 and a complete agent-plan draft into one machine-readable
 `READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD` sequence.
-It emits commands for knowledge search, plan creation/verification,
+It emits commands for loop self-check, knowledge search, plan creation/verification,
 intake comparison, enforced task pull, loop verification, plan-evidence
 binding, and review queue drain. It does not create plans, run workers, approve
 gates, create memories, or mutate ledgers.
@@ -1884,7 +1904,7 @@ This helper creates a scoped token, creates a normal MIS task for that agent, ru
 The workspace isolation helper creates workspace A/B tasks and a workspace B run, verifies that the workspace A token cannot pull, claim, start, heartbeat, record tool calls, request approvals, submit evaluations, emit run-scoped audit, or write artifacts against workspace B work, and verifies that normal workspace A execution still succeeds.
 The enrollment health helper verifies `never_seen -> fresh -> stale -> revoked` without printing the raw token.
 The CLI status helper verifies `agentops status` reports safe token-bound metadata, updates to `fresh` after heartbeat, and rejects revoked tokens without leaking the raw token.
-The CLI doctor helper verifies `agentops doctor` works in local no-token mode and scoped env-token mode, checks Gateway/worker status, and confirms the raw token is omitted from output.
+The CLI doctor helper verifies `agentops doctor` works in local no-token mode and scoped env-token mode, checks Gateway/worker status, confirms unsafe shared/production no-token mode exits `2`, and confirms the raw token is omitted from output.
 The CLI worker-status helper verifies `agentops worker status` returns the worker fleet/daemon summary without token leakage.
 The CLI worker-preflight helper verifies `agentops worker preflight` returns read-only Gateway/adapter readiness JSON with `live_execution_performed=false`.
 The CLI worker-daemon helper verifies `agentops worker start/status/logs/stop` can manage a mock daemon without leaking secrets.

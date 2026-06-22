@@ -14,9 +14,10 @@ READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD
 - API: `GET /api/knowledge/search`, `POST /api/knowledge/index`
 - Agent Gateway API: `GET /api/agent-gateway/knowledge/search`, `POST /api/agent-gateway/agent-plans`, `GET /api/agent-gateway/agent-plans/:id/verify`, `POST /api/agent-gateway/plan-evidence-manifests`, `GET /api/agent-gateway/plan-evidence-manifests/:id/verify`
 - Operator launch packet: `GET /api/operator/loop-launch-packet` and `agentops operator loop-launch-packet`
+- Operator loop self-check: `GET /api/operator/loop-self-check` and `agentops operator loop-self-check`
 - Bounded runner: `agentops operator advance-loop`
 - Bounded runner policy: `agentops operator advance-loop-policy`
-- CLI: `agentops knowledge search`, `agentops knowledge index`, `agentops agent-plan create/list/get/verify`, `agentops plan-evidence create/list/get/verify`, `agentops operator loop-launch-packet`, `agentops operator advance-loop`, `agentops operator advance-loop-policy`
+- CLI: `agentops knowledge search`, `agentops knowledge index`, `agentops agent-plan create/list/get/verify`, `agentops plan-evidence create/list/get/verify`, `agentops operator loop-launch-packet`, `agentops operator loop-self-check`, `agentops operator advance-loop`, `agentops operator advance-loop-policy`
 
 ## Why This Shape
 
@@ -62,6 +63,7 @@ Use Markdown plus SQLite first:
 - RECORD: artifacts, audit logs, and memory candidates close the loop.
 - EVIDENCE BINDING: `plan_evidence_manifests` links a verified `agent_plan` to the exact run, tool calls, evaluations, artifacts, and audit evidence before a delivery can be treated as closed.
 - LAUNCH PACKET: `agentops operator loop-launch-packet` produces the next agent's machine-readable READ/PLAN/RETRIEVE/COMPARE/EXECUTE/VERIFY/RECORD packet from intake, safe knowledge metadata, handoff, and an agent-plan draft; it omits snippets and raw content to avoid leaking secret-like strings.
+- LOOP SELF-CHECK: `agentops operator loop-self-check` is the pre-advance read-only check for Hermes/OpenClaw/Codex. It aggregates bounded policy decisions, handoff loop health, receipt coverage, receipt evaluations, audit ledger proof, and server-shell safety without executing commands or mutating ledgers.
 - BOUNDED ADVANCE: `agentops operator advance-loop --confirm-advance` consumes the handoff action package, runs at most one allowlisted local command, executes the verify command, and records a `verified` or `failed` Action Queue receipt. It refuses approval decisions, memory approval, worker lifecycle, workflow dispatch, live/confirm flags, and external-write paths.
 - BOUNDED POLICY: `agentops operator advance-loop-policy` exposes the shared local-runner policy id/version, allowlists, denylists, and sample decisions; CLI execution, backend handoff, UI display, and smoke tests must reference this same policy contract.
 - DELIVERY GATE: customer delivery approvals fail closed until the linked run has a verified `plan_evidence_manifest`; the customer delivery board surfaces the manifest gate status for human review.

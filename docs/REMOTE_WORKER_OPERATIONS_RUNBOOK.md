@@ -444,6 +444,9 @@ recording and local self-use, but it is not production-ready. Shared or hosted
 deployment must configure authenticated Agent Gateway access and an admin key
 for enrollment management. The check is read-only: it does not start workers,
 create tokens, call Hermes/OpenClaw, or write ledger rows.
+`agentops doctor` is the CLI deployment gate for workers and operators: unsafe
+shared/production targets without a Gateway token return exit code `2`, while
+still printing redacted JSON diagnostics.
 
 Server startup also enforces this boundary. Binding to `0.0.0.0`, `::`, or any
 non-loopback address requires explicit non-loopback opt-in plus Gateway and

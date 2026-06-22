@@ -84,9 +84,11 @@ def main() -> int:
             and local_payload.get("ok") is True
             and local_payload.get("auth", {}).get("api_key_source") == "missing"
             and local_payload.get("auth", {}).get("token_omitted") is True
-            and production_doctor.returncode == 0
+            and production_doctor.returncode == 2
             and production_payload.get("ok") is False
             and (production_payload.get("deployment_safety") or {}).get("ok") is False
+            and (production_payload.get("deployment_safety") or {}).get("strict_exit_code") == 2
+            and (production_payload.get("deployment_safety") or {}).get("blocks_unsafe_shared_deployment") is True
             and (production_payload.get("deployment_safety") or {}).get("production_requested") is True
             and create.returncode == 0
             and bool(token)
