@@ -11748,10 +11748,45 @@ def customer_delivery_board(conn, limit: int = 12) -> dict:
             if run_id in seen_worker_run_ids:
                 continue
             seen_worker_run_ids.add(run_id)
+        project_id = None
+        match = re.match(r"^art_kb_bot_delivery_(.+)$", artifact_id or "")
+        if match:
+            project_id = match.group(1)
+        if not project_id and task_id:
+            task_match = re.match(r"^tsk_kb_bot_(.+)_\d{2}$", task_id)
+            if task_match:
+                project_id = task_match.group(1)
+        project_task_ids: list[str] = []
+        project_run_ids: list[str] = []
+        if project_id:
+            project_task_ids = [
+                row["task_id"] for row in conn.execute(
+                    "SELECT task_id FROM tasks WHERE task_id LIKE ? ORDER BY task_id",
+                    (f"tsk_kb_bot_{project_id}_%",),
+                ).fetchall()
+            ]
+            if project_task_ids:
+                placeholders = ",".join("?" for _ in project_task_ids)
+                project_run_ids = [
+                    row["run_id"] for row in conn.execute(
+                        f"SELECT run_id FROM runs WHERE task_id IN ({placeholders}) ORDER BY created_at DESC",
+                        project_task_ids,
+                    ).fetchall()
+                ]
+        approval_task_ids = sorted({item for item in [task_id, *project_task_ids] if item})
+        approval_run_ids = sorted({item for item in [run_id, *project_run_ids] if item})
+        approval_clauses: list[str] = []
+        approval_params: list[str] = []
+        if approval_task_ids:
+            approval_clauses.append("task_id IN (" + ",".join("?" for _ in approval_task_ids) + ")")
+            approval_params.extend(approval_task_ids)
+        if approval_run_ids:
+            approval_clauses.append("run_id IN (" + ",".join("?" for _ in approval_run_ids) + ")")
+            approval_params.extend(approval_run_ids)
         approvals = rows_to_dicts(conn.execute(
-            "SELECT approval_id, decision, reason, created_at, decided_at FROM approvals WHERE task_id=? OR run_id=? ORDER BY created_at DESC LIMIT 8",
-            (task_id or "", run_id or ""),
-        ).fetchall()) if task_id or run_id else []
+            "SELECT approval_id, decision, reason, created_at, decided_at FROM approvals WHERE " + " OR ".join(approval_clauses) + " ORDER BY created_at DESC LIMIT 12",
+            approval_params,
+        ).fetchall()) if approval_clauses else []
         evaluations = rows_to_dicts(conn.execute(
             "SELECT evaluation_id, score, pass_fail, evaluator_type, created_at FROM evaluations WHERE task_id=? OR run_id=? ORDER BY created_at DESC LIMIT 8",
             (task_id or "", run_id or ""),
@@ -11831,14 +11866,6 @@ def customer_delivery_board(conn, limit: int = 12) -> dict:
         totals["pending_approvals"] += len(pending_approvals)
         totals["artifacts"] += 1
         title = artifact.get("task_title") or artifact.get("title") or "Customer delivery"
-        project_id = None
-        match = re.match(r"^art_kb_bot_delivery_(.+)$", artifact_id or "")
-        if match:
-            project_id = match.group(1)
-        if not project_id and task_id:
-            task_match = re.match(r"^tsk_kb_bot_(.+)_\d{2}$", task_id)
-            if task_match:
-                project_id = task_match.group(1)
         deliveries.append({
             "delivery_id": artifact_id,
             "status": status,

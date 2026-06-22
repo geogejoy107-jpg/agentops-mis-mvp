@@ -44,6 +44,13 @@ def main() -> int:
     args = parser.parse_args()
     failures: list[str] = []
 
+    status, project = http_json("POST", args.base_url, "/api/workflows/customer-task-templates/run", {
+        "template_id": "tpl_customer_kb_qa_bot",
+    })
+    require(status == 201 and project.get("ok") is True, f"template fixture failed: {status} {project}", failures)
+    fixture_artifact_id = project.get("artifact_id")
+    require(bool(fixture_artifact_id), f"template fixture missing artifact id: {project}", failures)
+
     status, board = http_json("GET", args.base_url, "/api/workflows/customer-delivery-board?limit=10")
     require(status == 200, f"board status mismatch: {status} {board}", failures)
     require(board.get("provider") == "agentops-customer", f"wrong provider: {board}", failures)
@@ -60,6 +67,22 @@ def main() -> int:
         require(bool(delivery.get("delivery_id")), f"delivery id missing: {delivery}", failures)
         require(delivery.get("status") in {"ready", "waiting_approval", "in_progress", "needs_attention"}, f"bad delivery status: {delivery}", failures)
         require(isinstance(delivery.get("evidence"), dict), f"delivery evidence missing: {delivery}", failures)
+    fixture_delivery = next((item for item in board.get("deliveries") or [] if item.get("artifact_id") == fixture_artifact_id), None)
+    require(fixture_delivery is not None, f"fixture delivery artifact missing from board: {fixture_artifact_id}", failures)
+    if fixture_delivery:
+        evidence = fixture_delivery.get("evidence") or {}
+        evaluation_summary = fixture_delivery.get("evaluation_summary") or {}
+        require(bool(fixture_delivery.get("task_id")), f"fixture delivery missing task link: {fixture_delivery}", failures)
+        require(bool(fixture_delivery.get("run_id")), f"fixture delivery missing run link: {fixture_delivery}", failures)
+        require(fixture_delivery.get("artifact_id") == fixture_artifact_id, f"fixture delivery artifact mismatch: {fixture_delivery}", failures)
+        require(bool(fixture_delivery.get("task_url") and fixture_delivery.get("run_url")), f"fixture delivery missing UI/API links: {fixture_delivery}", failures)
+        require(len(fixture_delivery.get("approval_ids") or []) >= 1, f"fixture delivery missing approval link: {fixture_delivery}", failures)
+        require(int(evaluation_summary.get("count") or 0) >= 1, f"fixture delivery missing evaluation summary: {fixture_delivery}", failures)
+        require(int(evidence.get("tool_calls") or 0) >= 1, f"fixture delivery missing tool-call evidence: {fixture_delivery}", failures)
+        require(int(evidence.get("evaluations") or 0) >= 1, f"fixture delivery missing evaluation evidence: {fixture_delivery}", failures)
+        require(int(evidence.get("artifacts") or 0) >= 1, f"fixture delivery missing artifact evidence: {fixture_delivery}", failures)
+        require(int(evidence.get("audit_logs") or 0) >= 1, f"fixture delivery missing audit evidence: {fixture_delivery}", failures)
+        require("delivery_approval_gate" in fixture_delivery, f"fixture delivery missing approval gate: {fixture_delivery}", failures)
 
     cli_stdout = ""
     cli_stderr = ""
@@ -91,6 +114,7 @@ def main() -> int:
         "status": board.get("status"),
         "summary": board.get("summary"),
         "delivery_count": len(board.get("deliveries") or []),
+        "fixture_artifact_id": fixture_artifact_id,
         "cli_checked": not args.skip_cli,
         "failures": failures,
     }, ensure_ascii=False, indent=2, sort_keys=True))
