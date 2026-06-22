@@ -72,6 +72,7 @@ jobs:
       - name: Server-backed smoke suite
         run: |
           set -euo pipefail
+          python3 scripts/ui_v2_agent_plan_smoke.py
           python3 scripts/security_production_readiness_smoke.py --base-url "$AGENTOPS_BASE_URL"
           python3 scripts/agentops_doctor_smoke.py
           python3 scripts/agent_plan_integrity_smoke.py --base-url "$AGENTOPS_BASE_URL"
