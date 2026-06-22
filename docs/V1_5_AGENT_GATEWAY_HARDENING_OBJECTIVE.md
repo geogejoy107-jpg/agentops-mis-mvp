@@ -190,8 +190,9 @@ Primary evidence:
 Required behavior:
 
 - CI runs without external runtime/provider credentials. The only credential
-  allowed in deterministic CI is GitHub's short-lived token for read-only branch
-  protection and current-run evidence checks.
+  allowed in deterministic CI is GitHub's short-lived token for normal workflow
+  metadata/current-run evidence. Branch-protection readback is a strict final RC
+  check that requires a local or administrator GitHub token.
 - Live Hermes/OpenClaw/Dify/Notion work remains manual/protected and out of CI.
 - Release evidence names exact branch, exact commit, CI links/status, test
   commands, license/provenance, and public-claim boundaries.

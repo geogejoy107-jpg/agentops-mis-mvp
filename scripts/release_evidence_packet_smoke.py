@@ -59,12 +59,6 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
-        "id": "github_required_checks",
-        "command": "python3 scripts/github_required_checks_smoke.py",
-        "summary": "GitHub main branch protection requires backend and UI checks before merge.",
-        "ci_step": "Offline safety smokes",
-    },
-    {
         "id": "external_connector_runtime_inventory",
         "command": "python3 scripts/external_connector_runtime_inventory_smoke.py",
         "summary": "High-risk external connector/runtime prepared-action inventory and guard coverage.",

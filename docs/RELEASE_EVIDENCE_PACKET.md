@@ -11,6 +11,7 @@ python3 scripts/release_evidence_packet_smoke.py
 For a final RC candidate, run the stricter form:
 
 ```bash
+python3 scripts/github_required_checks_smoke.py
 python3 scripts/release_evidence_packet_smoke.py --require-clean --require-green-ci
 python3 scripts/release_freeze_protocol_smoke.py --require-clean --require-green-ci --require-remote-checks
 python3 scripts/merge_readiness_status_smoke.py --require-ready-to-merge
@@ -46,6 +47,9 @@ python3 scripts/merge_readiness_status_smoke.py --require-ready-to-merge
   `python3 scripts/release_freeze_protocol_smoke.py --require-clean --require-green-ci --require-remote-checks`.
 - Required checks before merge are verified by
   `python3 scripts/github_required_checks_smoke.py`.
+- In GitHub Actions, this smoke may report `ci_permission_limited` if the
+  short-lived workflow token cannot read branch protection; final local review
+  must use an authenticated `gh` session that can read the live protection rule.
 
 ### Merge Readiness State
 
@@ -70,7 +74,6 @@ The packet includes the canonical command manifest used for release review:
 - `python3 scripts/release_freeze_protocol_smoke.py`
 - `python3 scripts/release_evidence_packet_smoke.py`
 - `python3 scripts/merge_readiness_status_smoke.py`
-- `python3 scripts/github_required_checks_smoke.py`
 - `python3 scripts/external_connector_runtime_inventory_smoke.py`
 - `python3 scripts/sqlite_concurrency_smoke.py`
 - `python3 scripts/secret_scan_smoke.py`

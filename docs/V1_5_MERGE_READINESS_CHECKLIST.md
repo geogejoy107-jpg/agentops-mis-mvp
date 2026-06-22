@@ -377,9 +377,9 @@ useful command-center summary       <1 s
 ## 10. Automated CI
 
 - [x] Add GitHub Actions.
-- [x] Require checks before merge. `main` is protected with strict required status checks for `Backend deterministic smokes` and `UI build`; guarded by `scripts/github_required_checks_smoke.py`.
+- [x] Require checks before merge. `main` is protected with strict required status checks for `Backend deterministic smokes` and `UI build`; guarded by `scripts/github_required_checks_smoke.py`. CI may report `ci_permission_limited` when the workflow token cannot read branch protection, while final local review must read the live rule with authenticated `gh`.
 - [x] Use clean temporary database/runtime directories.
-- [x] Keep deterministic CI free of external runtime/provider credentials. The only allowed credential is GitHub's short-lived token for read-only branch protection and current-run evidence checks; no Hermes/OpenClaw/Dify/Notion/customer secrets are present.
+- [x] Keep deterministic CI free of external runtime/provider credentials. GitHub's short-lived workflow token may be used only for normal workflow metadata/current-run evidence; branch-protection readback stays in the strict final RC command path with local/admin GitHub credentials. No Hermes/OpenClaw/Dify/Notion/customer secrets are present.
 - [x] Keep live Hermes/OpenClaw as protected local/manual jobs.
 
 Current automation:

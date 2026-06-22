@@ -47,7 +47,6 @@ REQUIRED_CI_COMMANDS = [
     "python3 scripts/release_freeze_protocol_smoke.py",
     "python3 scripts/release_evidence_packet_smoke.py",
     "python3 scripts/merge_readiness_status_smoke.py",
-    "python3 scripts/github_required_checks_smoke.py",
     "python3 scripts/secret_scan_smoke.py",
     "python3 scripts/public_claims_release_gate_smoke.py",
     "python3 scripts/license_provenance_smoke.py",
