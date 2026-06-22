@@ -28,7 +28,12 @@ def main() -> int:
     required_files = [
         NEXT_APP / "app" / "layout.tsx",
         NEXT_APP / "app" / "workspace" / "page.tsx",
+        NEXT_APP / "app" / "workspace" / "tasks" / "page.tsx",
+        NEXT_APP / "app" / "workspace" / "runs" / "page.tsx",
+        NEXT_APP / "app" / "workspace" / "approvals" / "page.tsx",
         NEXT_APP / "app" / "api" / "mis" / "[...path]" / "route.ts",
+        NEXT_APP / "src" / "components" / "AppFrame.tsx",
+        NEXT_APP / "src" / "components" / "LedgerPages.tsx",
         NEXT_APP / "src" / "components" / "WorkspaceDashboard.tsx",
         NEXT_APP / "src" / "lib" / "mis.ts",
         NEXT_APP / "src" / "styles" / "globals.css",
@@ -38,6 +43,8 @@ def main() -> int:
         require(path.exists(), f"missing Next.js parity file: {path.relative_to(ROOT)}")
 
     route_text = read_text(NEXT_APP / "app" / "api" / "mis" / "[...path]" / "route.ts")
+    app_frame_text = read_text(NEXT_APP / "src" / "components" / "AppFrame.tsx")
+    ledger_pages_text = read_text(NEXT_APP / "src" / "components" / "LedgerPages.tsx")
     dashboard_text = read_text(NEXT_APP / "src" / "components" / "WorkspaceDashboard.tsx")
     lib_text = read_text(NEXT_APP / "src" / "lib" / "mis.ts")
 
@@ -47,12 +54,16 @@ def main() -> int:
     require("AGENTOPS_API_BASE" in route_text, "API proxy must be configurable with AGENTOPS_API_BASE")
     require("/dashboard/metrics" in lib_text, "workspace parity data must include dashboard metrics")
     require("/tasks" in lib_text and "/runs" in lib_text and "/approvals" in lib_text, "workspace parity data misses core ledgers")
+    require("/approvals/${encodeURIComponent(id)}/${decision}" in lib_text, "approval decision parity action is missing")
+    require("/workspace/tasks" in app_frame_text and "/workspace/runs" in app_frame_text, "Next.js nav must expose task and run parity routes")
+    require("TasksParityPage" in ledger_pages_text and "RunsParityPage" in ledger_pages_text, "ledger parity pages are missing")
+    require("ApprovalsParityPage" in ledger_pages_text and "decideApproval" in ledger_pages_text, "approval parity page must expose decision action")
     require("loadWorkspaceSnapshot" in dashboard_text, "workspace page must consume the shared Next.js MIS data contract")
 
     print(json.dumps({
         "ok": True,
         "next_app": str(NEXT_APP.relative_to(ROOT)),
-        "routes": ["/workspace", "/api/mis/[...path]"],
+        "routes": ["/workspace", "/workspace/tasks", "/workspace/runs", "/workspace/approvals", "/api/mis/[...path]"],
         "stack": {
             "next": dependencies.get("next"),
             "react": dependencies.get("react"),

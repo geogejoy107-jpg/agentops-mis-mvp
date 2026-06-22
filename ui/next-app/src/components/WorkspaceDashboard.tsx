@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Activity, Bot, CheckCircle2, Database, RefreshCw, ShieldCheck, Workflow } from "lucide-react";
+import { Activity, Bot, CheckCircle2, RefreshCw, ShieldCheck } from "lucide-react";
 import { loadWorkspaceSnapshot, type WorkspaceSnapshot } from "@/lib/mis";
+import { AppFrame } from "./AppFrame";
 
 function formatNumber(value: unknown) {
   const num = Number(value || 0);
@@ -44,25 +45,7 @@ export function WorkspaceDashboard() {
   const recentRuns = snapshot?.runs || snapshot?.metrics.recent_runs || [];
 
   return (
-    <main className="shell">
-      <aside className="sidebar">
-        <div className="brand">
-          <span className="brandMark">A</span>
-          <div>
-            <strong>AgentOps MIS</strong>
-            <span>Next.js parity track</span>
-          </div>
-        </div>
-        <nav className="nav">
-          <a className="navItem active" href="/workspace"><Activity size={16} />Workspace</a>
-          <a className="navItem" href="/workspace"><Workflow size={16} />Runs</a>
-          <a className="navItem" href="/workspace"><Bot size={16} />Workers</a>
-          <a className="navItem" href="/workspace"><Database size={16} />Ledger</a>
-          <a className="navItem" href="/workspace"><ShieldCheck size={16} />Governance</a>
-        </nav>
-      </aside>
-
-      <section className="content">
+    <AppFrame>
         <header className="topbar">
           <div>
             <p className="eyebrow">Commercial migration</p>
@@ -146,7 +129,6 @@ export function WorkspaceDashboard() {
             )) : <p className="empty">Approval queue is empty or not loaded.</p>}
           </div>
         </section>
-      </section>
-    </main>
+    </AppFrame>
   );
 }

@@ -14,10 +14,15 @@ export type DashboardMetrics = {
 export type TaskSummary = {
   task_id: string;
   title: string;
+  description?: string;
   status: string;
   priority?: string;
   risk_level?: string;
   owner_agent_id?: string | null;
+  acceptance_criteria?: string;
+  budget_limit_usd?: number;
+  created_at?: string;
+  updated_at?: string;
 };
 
 export type RunSummary = {
@@ -26,8 +31,13 @@ export type RunSummary = {
   agent_id?: string;
   runtime_type?: string;
   status: string;
+  duration_ms?: number | null;
+  input_summary?: string | null;
+  output_summary?: string | null;
+  error_message?: string | null;
   cost_usd?: number;
   started_at?: string;
+  created_at?: string;
 };
 
 export type ApprovalSummary = {
@@ -35,7 +45,11 @@ export type ApprovalSummary = {
   decision: string;
   task_id?: string;
   run_id?: string;
+  tool_call_id?: string;
+  requested_by_agent_id?: string;
   reason?: string;
+  expires_at?: string;
+  decided_at?: string | null;
 };
 
 export type WorkspaceSnapshot = {
@@ -45,10 +59,11 @@ export type WorkspaceSnapshot = {
   approvals: ApprovalSummary[];
 };
 
-async function misJson<T>(path: string): Promise<T> {
+async function misJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api/mis${path}`, {
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
     cache: "no-store",
+    ...init,
   });
   if (!response.ok) {
     throw new Error(`${response.status} ${response.statusText}: ${await response.text()}`);
@@ -59,9 +74,9 @@ async function misJson<T>(path: string): Promise<T> {
 export async function loadWorkspaceSnapshot(): Promise<WorkspaceSnapshot> {
   const [metrics, tasks, runs, approvals] = await Promise.all([
     misJson<DashboardMetrics>("/dashboard/metrics"),
-    misJson<TaskSummary[]>("/tasks"),
-    misJson<RunSummary[]>("/runs"),
-    misJson<ApprovalSummary[]>("/approvals"),
+    loadTasks(),
+    loadRuns(),
+    loadApprovals(),
   ]);
   return {
     metrics,
@@ -69,4 +84,23 @@ export async function loadWorkspaceSnapshot(): Promise<WorkspaceSnapshot> {
     runs: runs.slice(0, 8),
     approvals: approvals.filter((approval) => approval.decision === "pending").slice(0, 6),
   };
+}
+
+export async function loadTasks(): Promise<TaskSummary[]> {
+  return misJson<TaskSummary[]>("/tasks");
+}
+
+export async function loadRuns(): Promise<RunSummary[]> {
+  return misJson<RunSummary[]>("/runs");
+}
+
+export async function loadApprovals(): Promise<ApprovalSummary[]> {
+  return misJson<ApprovalSummary[]>("/approvals");
+}
+
+export async function decideApproval(id: string, decision: "approve" | "reject"): Promise<ApprovalSummary> {
+  return misJson<ApprovalSummary>(`/approvals/${encodeURIComponent(id)}/${decision}`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
 }

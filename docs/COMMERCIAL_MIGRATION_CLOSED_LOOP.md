@@ -140,6 +140,9 @@ Must be true:
   Next.js route is accepted.
 - First migration artifact:
   - `ui/next-app/app/workspace/page.tsx`
+  - `ui/next-app/app/workspace/tasks/page.tsx`
+  - `ui/next-app/app/workspace/runs/page.tsx`
+  - `ui/next-app/app/workspace/approvals/page.tsx`
   - `ui/next-app/app/api/mis/[...path]/route.ts`
   - `scripts/nextjs_parity_smoke.py`
 

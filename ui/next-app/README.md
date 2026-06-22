@@ -15,12 +15,19 @@ AGENTOPS_API_BASE=http://127.0.0.1:8765/api npm run dev
 The Next.js API route `/api/mis/*` proxies to the current MIS API provider. The
 default provider is `http://127.0.0.1:8765/api`.
 
-## First Parity Slice
+## Parity Slices
 
 - App Router route: `/workspace`
+- App Router route: `/workspace/tasks`
+- App Router route: `/workspace/runs`
+- App Router route: `/workspace/approvals`
 - Runtime API proxy: `/api/mis/[...path]`
 - Live data contract: dashboard metrics, tasks, runs, approvals
-- Canonical predecessor: `ui/start-building-app/src/app/components/pages/WorkspaceHome.tsx`
+- Canonical predecessors:
+  - `ui/start-building-app/src/app/components/pages/WorkspaceHome.tsx`
+  - `ui/start-building-app/src/app/components/pages/MyTasks.tsx`
+  - `ui/start-building-app/src/app/components/pages/RunLedger.tsx`
+  - `ui/start-building-app/src/app/components/pages/ApprovalsInbox.tsx`
 
 Do not remove the Vite app until this lane passes route, API, and visual parity
 for each commercial workflow.

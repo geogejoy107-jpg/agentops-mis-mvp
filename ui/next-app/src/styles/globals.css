@@ -288,6 +288,173 @@ h2 {
   font-size: 13px;
 }
 
+.subtle,
+.row p,
+.approval p {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.subtle {
+  margin: 6px 0 0;
+}
+
+.panelHeader {
+  min-height: 24px;
+}
+
+.panelHeader h2 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.row p {
+  margin: 6px 0 0;
+  max-width: 58vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row.tall {
+  align-items: flex-start;
+  min-height: 74px;
+}
+
+.rowActions,
+.approvalActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.metaPill {
+  padding: 5px 7px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.filterBar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 16px;
+}
+
+.filterChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 31px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
+}
+
+.filterChip.active,
+.filterChip:hover {
+  border-color: rgba(34, 211, 238, 0.35);
+  color: var(--cyan);
+}
+
+.filterChip span {
+  color: inherit;
+  opacity: 0.7;
+  font-size: 11px;
+}
+
+.emptyState {
+  display: grid;
+  place-items: center;
+  gap: 8px;
+  min-height: 180px;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.tableWrap {
+  margin-top: 16px;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.dataTable {
+  width: 100%;
+  min-width: 860px;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.dataTable th,
+.dataTable td {
+  padding: 11px 12px;
+  text-align: left;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.dataTable th {
+  color: var(--muted);
+  background: var(--panel-strong);
+  font-weight: 600;
+}
+
+.dataTable td {
+  color: var(--text);
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+}
+
+.tableEmpty {
+  padding: 20px;
+}
+
+.approval.pending {
+  border-color: rgba(251, 191, 36, 0.28);
+}
+
+.approval p {
+  margin: 7px 0 0;
+}
+
+.approvalGrid.single {
+  grid-template-columns: 1fr;
+}
+
+.miniButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 30px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  font-size: 11px;
+}
+
+.miniButton.good {
+  border-color: rgba(52, 211, 153, 0.35);
+  color: var(--green);
+}
+
+.miniButton.bad {
+  border-color: rgba(251, 113, 133, 0.35);
+  color: var(--red);
+}
+
+.miniButton:disabled {
+  opacity: 0.55;
+}
+
 @media (max-width: 920px) {
   .shell {
     grid-template-columns: 1fr;
