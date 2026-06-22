@@ -3,7 +3,14 @@ import { Link, useNavigate } from "react-router";
 import { ArrowRight, ExternalLink, Map, MonitorCog, ShieldCheck, Sparkles } from "lucide-react";
 import { OperationsBar } from "../pixel/OperationsBar";
 import { CustomerDispatchPanel } from "../pixel/CustomerDispatchPanel";
+import { PixelOfficeThemeSelector } from "../pixel/PixelOfficeThemeSelector";
 import { PixelOperatingMap } from "../pixel/PixelOperatingMap";
+import {
+  DEFAULT_PIXEL_OFFICE_THEME_ID,
+  PIXEL_OFFICE_THEME_STORAGE_KEY,
+  isPixelOfficeThemeId,
+  type PixelOfficeThemeId,
+} from "../pixel/pixelOfficeTheme";
 import {
   derivePixelAgents,
   derivePixelMetrics,
@@ -49,6 +56,12 @@ interface PixelOfficeSnapshot {
   runs: Run[];
   memories: Memory[];
   audit: AuditLog[];
+}
+
+function readInitialTheme(): PixelOfficeThemeId {
+  if (typeof window === "undefined") return DEFAULT_PIXEL_OFFICE_THEME_ID;
+  const storedTheme = window.localStorage.getItem(PIXEL_OFFICE_THEME_STORAGE_KEY);
+  return isPixelOfficeThemeId(storedTheme) ? storedTheme : DEFAULT_PIXEL_OFFICE_THEME_ID;
 }
 
 function buildFallbackMetrics(): DashboardMetrics {
@@ -120,6 +133,7 @@ export function PixelOffice() {
   const navigate = useNavigate();
   const { locale } = usePreferences();
   const [snapshot, setSnapshot] = useState<PixelOfficeSnapshot>(fallbackSnapshot);
+  const [themeId, setThemeId] = useState<PixelOfficeThemeId>(readInitialTheme);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const copy = pick(locale, {
@@ -139,7 +153,7 @@ export function PixelOffice() {
       agentsPlaced: "Agents placed",
       taskCards: "Task cards",
       boundaryTitle: "Asset and authority boundary",
-      boundaryBody: "This v1.3 map uses original React/CSS geometry only. No Star-Office, paid tileset or third-party sprite assets are copied into the product UI.",
+      boundaryBody: "The office uses original React/CSS geometry and replaceable semantic art templates. No Star-Office, paid tileset or third-party sprite assets are copied into the product UI.",
       authority: "AgentOps MIS remains the authority system for state, permissions, evaluations and audit.",
       zones: "Mapped rooms",
     },
@@ -159,7 +173,7 @@ export function PixelOffice() {
       agentsPlaced: "已放置代理",
       taskCards: "任务卡片",
       boundaryTitle: "资产与权威边界",
-      boundaryBody: "v1.3 地图只使用原创 React/CSS 几何结构，不把 Star-Office、付费 tileset 或第三方 sprite 资产复制进产品 UI。",
+      boundaryBody: "办公室使用原创 React/CSS 几何结构与可替换的语义化美术模板，不把 Star-Office、付费 tileset 或第三方 sprite 资产复制进产品 UI。",
       authority: "AgentOps MIS 仍然是状态、权限、评估和审计的权威系统。",
       zones: "已映射房间",
     },
@@ -199,6 +213,21 @@ export function PixelOffice() {
   useEffect(() => {
     void refresh();
   }, []);
+
+  useEffect(() => {
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === PIXEL_OFFICE_THEME_STORAGE_KEY && isPixelOfficeThemeId(event.newValue)) {
+        setThemeId(event.newValue);
+      }
+    };
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, []);
+
+  const updateTheme = (nextThemeId: PixelOfficeThemeId) => {
+    setThemeId(nextThemeId);
+    window.localStorage.setItem(PIXEL_OFFICE_THEME_STORAGE_KEY, nextThemeId);
+  };
 
   const pixelMetrics: PixelMetrics = useMemo(
     () =>
@@ -301,7 +330,16 @@ export function PixelOffice() {
 
       <OperationsBar metrics={pixelMetrics} loading={loading} error={error} onRefresh={refresh} locale={locale} />
 
-      <PixelOperatingMap agents={pixelAgents} taskCards={taskCards} metrics={pixelMetrics} onOpenRoute={openRoute} locale={locale} />
+      <PixelOfficeThemeSelector themeId={themeId} onChange={updateTheme} locale={locale} />
+
+      <PixelOperatingMap
+        agents={pixelAgents}
+        taskCards={taskCards}
+        metrics={pixelMetrics}
+        onOpenRoute={openRoute}
+        locale={locale}
+        themeId={themeId}
+      />
 
       <section className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="rounded-lg p-4" style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}>
