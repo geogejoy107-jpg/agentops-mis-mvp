@@ -1498,11 +1498,13 @@ Reads `GET /api/operator/handoff` and selects the first non-passing loop action
 whose `agentops ...` command is allowed by the local bounded-runner policy.
 Without `--confirm-advance` it is preview-only. With confirmation it executes
 exactly one local allowlisted action, runs the paired verify command, and records
-an Action Queue receipt as `verified` or `failed`. The first policy scope allows
-safe local actions such as `knowledge index` and `memory propose --type
-loop_record`; it refuses memory approval/rejection, approval decisions, worker
-lifecycle, workflow dispatch, live/confirm flags, external uploads, and other
-commands that require an explicit human or dedicated confirmation path.
+an Action Queue receipt as `verified` or `failed`. The policy scope allows safe
+local actions such as `knowledge index`, `memory propose --type loop_record`,
+and read-only `operator remediate-evidence-gap --run-id ...` previews after the
+run-level evidence-report work order is receipted. It refuses memory
+approval/rejection, approval decisions, worker lifecycle, workflow dispatch,
+live/confirm flags, remediation `--confirm-create`, close-gap, external uploads,
+and other commands that require an explicit human or dedicated confirmation path.
 `advance-loop-policy` is read-only and returns the current policy id/version,
 allowlisted commands, denied namespaces/actions/flags, and sample decisions so
 operators and UI can show exactly why a command can or cannot be auto-advanced.
