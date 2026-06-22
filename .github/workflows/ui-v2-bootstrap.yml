@@ -1,0 +1,33 @@
+name: UI v2 Bootstrap
+
+on:
+  pull_request:
+    branches:
+      - codex/agent-gateway-kb-demo
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-plan:
+    runs-on: ubuntu-latest
+    env:
+      AGENTOPS_DB_PATH: ${{ runner.temp }}/ui-v2-plan.db
+      AGENTOPS_BASE_URL: http://127.0.0.1:8787
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          show-progress: false
+      - run: python3 -m py_compile server.py agentops_mis_cli/*.py scripts/ui_v2_agent_plan_smoke.py
+      - name: Start isolated MIS
+        run: |
+          nohup python3 server.py > /tmp/ui-v2-plan-server.log 2>&1 &
+          for attempt in $(seq 1 50); do
+            curl -fsS http://127.0.0.1:8787/api/health >/dev/null && exit 0
+            sleep 0.2
+          done
+          cat /tmp/ui-v2-plan-server.log
+          exit 1
+      - name: Verify Agent Plan
+        run: python3 scripts/ui_v2_agent_plan_smoke.py
