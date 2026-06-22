@@ -1443,6 +1443,28 @@ Hermes live execution also exposed a fixed 180s HTTP timeout. The worker now
 supports `--hermes-timeout` / `HERMES_TIMEOUT`, and the customer worker workflow
 passes a 300s Hermes timeout for live dogfood runs.
 
+Hermes transient disconnect handling is now covered at the customer-worker
+workflow boundary. The worker already had retry support; the customer-worker
+sync path now forwards `adapter_max_attempts` and `adapter_retry_delay_sec` to
+the repo-local worker process, and the CLI exposes the same knobs as
+`agentops workflow customer-worker-task --adapter-max-attempts ...`.
+
+Deterministic retry smoke:
+
+```text
+script: python3 scripts/customer_worker_hermes_retry_gateway_smoke.py
+evidence_class: deterministic_loopback_hermes_adapter_retry
+product_readiness_proof: false
+fake gateway behavior: first /v1/chat/completions disconnects, second succeeds
+observed request count: 2
+run: run_gw_3ba5637ddb55
+tool args: attempt_count=2, max_attempts=2, retry_history recorded
+```
+
+This is CI regression evidence for the real Hermes adapter path, not a
+replacement for `customer_worker_real_runtime_acceptance.py --confirm-live`
+against the local Hermes/OpenClaw runtimes.
+
 ## What This Proves
 
 The v1.5 worker loop can process normal MIS tasks, not just connector probes:

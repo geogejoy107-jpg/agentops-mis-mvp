@@ -78,6 +78,7 @@ The packet includes the canonical command manifest used for release review:
 - `python3 scripts/v1_5_product_closure_evidence_smoke.py`
 - Manual product-readiness gate, intentionally not CI-backed:
   `python3 scripts/customer_worker_real_runtime_acceptance.py --confirm-live --adapter hermes --adapter openclaw`
+- `python3 scripts/customer_worker_hermes_retry_gateway_smoke.py`
 - `python3 scripts/module_boundary_smoke.py`
 - `python3 scripts/read_model_cache_smoke.py`
 - `python3 scripts/open_source_adoption_boundary_smoke.py`
@@ -107,9 +108,12 @@ The packet includes the canonical command manifest used for release review:
 - `cd ui/start-building-app && npm ci && npm run build`
 
 The smoke verifies each CI command is backed by `.github/workflows/ci.yml` and
-that referenced script files exist. Manual-live commands are tracked in the
-packet but intentionally excluded from CI because they call real local
-Hermes/OpenClaw runtimes and require explicit operator confirmation.
+that referenced script files exist. `customer_worker_hermes_retry_gateway_smoke`
+uses a deterministic loopback OpenAI-compatible gateway to prove retry metadata
+is wired through the real customer-worker Hermes adapter path; it is still not
+live product-readiness proof. Manual-live commands are tracked in the packet but
+intentionally excluded from CI because they call real local Hermes/OpenClaw
+runtimes and require explicit operator confirmation.
 
 ### Manual Live Product Evidence
 

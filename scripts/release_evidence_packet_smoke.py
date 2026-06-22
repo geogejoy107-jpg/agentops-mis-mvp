@@ -78,6 +78,12 @@ TEST_COMMANDS = [
         "manual_only": True,
     },
     {
+        "id": "customer_worker_hermes_retry_gateway",
+        "command": "python3 scripts/customer_worker_hermes_retry_gateway_smoke.py",
+        "summary": "Deterministic loopback Hermes-compatible gateway smoke proving customer-worker retry metadata is wired through the real adapter path; not live product-readiness proof.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "module_boundary",
         "command": "python3 scripts/module_boundary_smoke.py",
         "summary": "P1-05 strangler boundary gate for extracted runtime capability, connector registry/refresh projection, trust state, read-model cache, Approval Wall resume/waiting/route blocked/access/prepare-response/prepared-action-decision/high-risk-toolcall-required/risky-tool-registry/external-side-effect-intent/resume-success/provider-result gates, Agent Plan approval-decision/create-status/bound-approval/transition-error/run-start gate/rebind/success response projections, run-start binding comparison plus contract/hash/path-scope/verification-result/pending-approval/approval-run helpers, Agent Gateway run-heartbeat update projection, worker fleet, workflow-job public/stuck/recovery response projections, Commander and Operator command-center aggregation helpers.",

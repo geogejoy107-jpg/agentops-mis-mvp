@@ -21489,6 +21489,12 @@ def dispatch_local_worker_once(conn, body: dict) -> dict:
             "--hermes-timeout",
             str(hermes_timeout),
         ])
+    adapter_max_attempts = body.get("adapter_max_attempts") or os.environ.get("AGENTOPS_ADAPTER_MAX_ATTEMPTS")
+    if adapter_max_attempts is not None:
+        cmd.extend(["--adapter-max-attempts", str(adapter_max_attempts)])
+    adapter_retry_delay = body.get("adapter_retry_delay_sec") or os.environ.get("AGENTOPS_ADAPTER_RETRY_DELAY_SEC")
+    if adapter_retry_delay is not None:
+        cmd.extend(["--adapter-retry-delay-sec", str(adapter_retry_delay)])
     if adapter == "openclaw":
         cmd.extend(["--openclaw-bin", str(OPENCLAW_BIN), "--openclaw-timeout", "180"])
 
@@ -21871,6 +21877,8 @@ def run_customer_worker_task_workflow(conn, body: dict) -> tuple[dict, int]:
         "requester_id": body.get("requester_id", "usr_customer_demo"),
         "agent_id": worker_agent_id,
         "hermes_timeout": body.get("hermes_timeout") or 300,
+        "adapter_max_attempts": body.get("adapter_max_attempts"),
+        "adapter_retry_delay_sec": body.get("adapter_retry_delay_sec"),
         "base_url": body.get("base_url") or body.get("_base_url"),
         "_base_url": body.get("_base_url"),
     })

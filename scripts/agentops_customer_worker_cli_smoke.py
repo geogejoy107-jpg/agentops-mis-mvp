@@ -67,6 +67,24 @@ def stamp() -> str:
 
 
 def main() -> int:
+    cli_agent_id = f"agt_customer_worker_cli_{stamp()}"
+    os.environ["AGENTOPS_AGENT_ID"] = cli_agent_id
+    registered = run([
+        "agent",
+        "register",
+        "--id",
+        cli_agent_id,
+        "--name",
+        "Customer Worker CLI Smoke Agent",
+        "--role",
+        "CLI Smoke Owner",
+        "--runtime",
+        "mock",
+    ])
+    registered_payload = load_json(registered)
+    require(registered.returncode == 0, f"agent register failed: {registered.stderr or registered.stdout}")
+    require((registered_payload.get("agent") or {}).get("agent_id") == cli_agent_id, f"agent register id mismatch: {registered_payload}")
+
     case_task_id = f"tsk_customer_worker_case_{stamp()}"
     case_id = f"evalcase_customer_worker_{stamp()}"
     created_task = run([
@@ -185,6 +203,8 @@ def main() -> int:
     require(hermes_payload.get("reason") == "confirm_run_required_for_live_adapter", f"wrong Hermes gate reason: {hermes_payload}")
 
     combined = "\n".join([
+        registered.stdout,
+        registered.stderr,
         created_task.stdout,
         created_task.stderr,
         proposed_case.stdout,
@@ -201,6 +221,7 @@ def main() -> int:
     require(not secret_leaked(combined), "CLI workflow output leaked a secret-like token")
     print(json.dumps({
         "ok": True,
+        "cli_agent_id": cli_agent_id,
         "auto_case_id": case_id,
         "auto_case_task_id": case_task_id,
         "auto_case_run_id": auto_payload.get("run_id"),

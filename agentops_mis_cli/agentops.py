@@ -1692,6 +1692,8 @@ def cmd_workflow_customer_worker_task(args, client: AgentOpsClient) -> dict:
         "selected_agent_ids": args.selected_agent_id or [],
         "worker_agent_id": args.worker_agent_id,
         "hermes_timeout": args.hermes_timeout,
+        "adapter_max_attempts": args.adapter_max_attempts,
+        "adapter_retry_delay_sec": args.adapter_retry_delay_sec,
         "external_write_intent": bool(args.external_write_intent),
         "target_resource": args.target_resource,
         "external_action_type": args.external_action_type,
@@ -3003,6 +3005,8 @@ def build_parser() -> argparse.ArgumentParser:
     customer_worker.add_argument("--selected-agent-id", action="append", default=None, help="Optional business agent id to record as selected context. Repeatable.")
     customer_worker.add_argument("--worker-agent-id", default=None, help="Optional exact worker agent id. Defaults to a unique id per dispatch.")
     customer_worker.add_argument("--hermes-timeout", type=int, default=300)
+    customer_worker.add_argument("--adapter-max-attempts", type=int, default=None, help="Maximum live adapter attempts for retryable failures.")
+    customer_worker.add_argument("--adapter-retry-delay-sec", type=float, default=None, help="Delay between retryable live adapter attempts.")
     customer_worker.add_argument("--external-write-intent", action="store_true", help="Declare that the live runtime task intends to publish/upload/write to an external target; opaque runtimes will create a prepared action instead of running immediately.")
     customer_worker.add_argument("--target-resource", default=None, help="External write target resource used in the prepared action contract.")
     customer_worker.add_argument("--external-action-type", default=None, help="Prepared action type for external write governance.")
