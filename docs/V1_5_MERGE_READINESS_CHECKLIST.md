@@ -194,11 +194,21 @@ python3 scripts/worker_adapter_retry_smoke.py
 - [x] Replace JSON-text `LIKE` collaborator authorization for Agent Gateway task/run/artifact/approval/memory list paths.
 - [x] Use exact JSON-array comparison via `agentops_json_array_contains`; normalized collaborator rows remain a later storage refactor.
 - [ ] Task, run, artifact, approval, memory and review queue use the same scope service.
-- [ ] Knowledge search applies its intended workspace/access policy.
+- [x] Knowledge search applies its intended workspace/access policy.
 - [x] Add similar-ID regression with `scripts/collaborator_exact_scope_smoke.py`.
 - [ ] Add special-character-ID regression.
-- [ ] Scoped review queue applies scope before limit.
-- [ ] Scoped totals are not distorted by global truncation.
+- [x] Scoped review queue applies scope before limit.
+- [x] Scoped totals are not distorted by global truncation.
+
+Current v1.5 hardening status: `agent_gateway_review_queue` now calls
+`human_review_queue` with the bound Agent Gateway identity, so pending
+approvals, memory candidates, evaluation-case candidates, and failed
+evaluation-case runs apply workspace/agent visibility in SQL before the
+requested `limit`. Delivery and Commander synthesis lanes are safety-filtered
+with the same task/run visibility helper before the combined queue is sorted.
+`scripts/agent_gateway_review_queue_smoke.py` creates 60 hidden candidates in a
+different workspace and requires the visible scoped item plus scoped totals to
+survive `limit=1`.
 
 ```bash
 python3 scripts/workspace_isolation_smoke.py

@@ -13,7 +13,8 @@ READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD
 - SQLite ledger: `agent_plans`, `plan_evidence_manifests`, `knowledge_documents`, `knowledge_fts`
 - API: `GET /api/knowledge/search`, `POST /api/knowledge/index`
 - Agent Gateway API: `GET /api/agent-gateway/knowledge/search`, `POST /api/agent-gateway/agent-plans`, `GET /api/agent-gateway/agent-plans/:id/verify`, `POST /api/agent-gateway/plan-evidence-manifests`, `GET /api/agent-gateway/plan-evidence-manifests/:id/verify`
-- CLI: `agentops knowledge search`, `agentops knowledge index`, `agentops agent-plan create/list/get/verify`, `agentops plan-evidence create/list/get/verify`
+- Operator launch packet: `GET /api/operator/loop-launch-packet` and `agentops operator loop-launch-packet`
+- CLI: `agentops knowledge search`, `agentops knowledge index`, `agentops agent-plan create/list/get/verify`, `agentops plan-evidence create/list/get/verify`, `agentops operator loop-launch-packet`
 
 ## Why This Shape
 
@@ -41,6 +42,7 @@ Use Markdown plus SQLite first:
 
 - A new agent can discover specs and base notes through `agentops knowledge search`.
 - A new agent can submit an `agent_plan` before execution.
+- A new agent can request a read-only launch packet that packages the method phases, plan draft, retrieval metadata, intake comparison, verification, and record commands without mutating ledgers.
 - The plan records specs, memories, bases, target files, risk, approvals, steps, verification, and rollback.
 - Search and plans are available through Agent Gateway, not only browser UI.
 - No secret values are written to the repo or ledger.
@@ -56,6 +58,7 @@ Use Markdown plus SQLite first:
 - VERIFY: evaluations record rule, smoke, human, or mock-LLM gates.
 - RECORD: artifacts, audit logs, and memory candidates close the loop.
 - EVIDENCE BINDING: `plan_evidence_manifests` links a verified `agent_plan` to the exact run, tool calls, evaluations, artifacts, and audit evidence before a delivery can be treated as closed.
+- LAUNCH PACKET: `agentops operator loop-launch-packet` produces the next agent's machine-readable READ/PLAN/RETRIEVE/COMPARE/EXECUTE/VERIFY/RECORD packet from intake, safe knowledge metadata, handoff, and an agent-plan draft; it omits snippets and raw content to avoid leaking secret-like strings.
 - DELIVERY GATE: customer delivery approvals fail closed until the linked run has a verified `plan_evidence_manifest`; the customer delivery board surfaces the manifest gate status for human review.
 - AUTOMATIC WORKER PATH: normal AgentOps worker pulls create an `agent_plan`, write tool/evaluation/artifact/audit evidence, and persist a verified or blocked `plan_evidence_manifest` before returning the worker result.
 - CUSTOMER WORKER PATH: `POST /api/workflows/customer-worker-task` now reuses a verified worker manifest or creates one before generating the customer delivery approval; if verification fails, no delivery approval is created.

@@ -6673,11 +6673,12 @@ def resolve_agent_plan_for_run(conn: sqlite3.Connection, body: dict, task: sqlit
 def agent_gateway_review_queue(conn: sqlite3.Connection, qs: dict, headers, auth_ctx=None) -> tuple[dict, int]:
     ident = agent_gateway_identity(headers, qs=qs, auth_ctx=auth_ctx)
     limit = min(max(int((qs.get("limit") or ["20"])[0]), 1), 100)
-    fetch_limit = min(max(limit * 5, 50), 100) if agent_gateway_is_bound_auth(auth_ctx) else limit
-    payload = human_review_queue(conn, fetch_limit)
+    bound_auth = agent_gateway_is_bound_auth(auth_ctx)
+    payload = human_review_queue(conn, limit, ident=ident if bound_auth else None, auth_ctx=auth_ctx if bound_auth else None)
+    scoped_summary = payload.get("summary") or {}
 
     def visible(row: dict) -> bool:
-        if not agent_gateway_is_bound_auth(auth_ctx):
+        if not bound_auth:
             return True
         task_id = row.get("task_id")
         run_id = row.get("run_id")
@@ -6710,10 +6711,10 @@ def agent_gateway_review_queue(conn: sqlite3.Connection, qs: dict, headers, auth
         "commander_synthesis": commander_synthesis[:limit],
     }
     payload["summary"] = {
-        "pending_approvals": len(pending_approvals),
-        "memory_candidates": len(memory_candidates),
-        "evaluation_case_candidates": len(evaluation_case_candidates),
-        "failed_evaluation_case_runs": len(failed_evaluation_case_runs),
+        "pending_approvals": int(scoped_summary.get("pending_approvals", len(pending_approvals))),
+        "memory_candidates": int(scoped_summary.get("memory_candidates", len(memory_candidates))),
+        "evaluation_case_candidates": int(scoped_summary.get("evaluation_case_candidates", len(evaluation_case_candidates))),
+        "failed_evaluation_case_runs": int(scoped_summary.get("failed_evaluation_case_runs", len(failed_evaluation_case_runs))),
         "ready_deliveries": len([item for item in customer_deliveries if item.get("status") == "ready"]),
         "waiting_deliveries": len([item for item in customer_deliveries if item.get("status") == "waiting_approval"]),
         "needs_attention_deliveries": len([item for item in customer_deliveries if item.get("status") == "needs_attention"]),
@@ -6722,6 +6723,8 @@ def agent_gateway_review_queue(conn: sqlite3.Connection, qs: dict, headers, auth
         "commander_synthesis_memory_reviews": len([item for item in commander_synthesis if item.get("status") == "memory_pending_review"]),
         "review_items_total": len(visible_review_items),
         "returned_items": len(review_items),
+        "scope_before_limit": bound_auth,
+        "scoped_totals_before_limit": bound_auth,
         "retrieved_pending_approvals": len(pending_approvals[:limit]),
         "retrieved_memory_candidates": len(memory_candidates[:limit]),
         "retrieved_evaluation_case_candidates": len(evaluation_case_candidates[:limit]),
@@ -6747,7 +6750,10 @@ def agent_gateway_review_queue(conn: sqlite3.Connection, qs: dict, headers, auth
         "workspace_id": ident["workspace_id"],
         "agent_id": ident["agent_id"],
         "auth_mode": (auth_ctx or {}).get("mode") or "unknown",
-        "bound_visibility_enforced": agent_gateway_is_bound_auth(auth_ctx),
+        "bound_visibility_enforced": bound_auth,
+        "scope_before_limit": bound_auth,
+        "scoped_totals_before_limit": bound_auth,
+        "post_filter_safety_check": bound_auth,
         "token_omitted": True,
     }
     payload["token_omitted"] = True
@@ -10587,55 +10593,152 @@ def run_hermes_openclaw_loop_workflow(body: dict, host_header: str | None = None
     return payload, 201 if proc.returncode == 0 else 409
 
 
-def human_review_queue(conn, limit: int = 20) -> dict:
+def human_review_queue(conn, limit: int = 20, *, ident: dict | None = None, auth_ctx: dict | None = None) -> dict:
     limit = max(1, min(int(limit or 20), 100))
     per_lane_limit = max(limit, 10)
-    approval_total = conn.execute("SELECT COUNT(*) c FROM approvals WHERE decision='pending'").fetchone()["c"]
-    memory_total = conn.execute("SELECT COUNT(*) c FROM memories WHERE review_status='candidate'").fetchone()["c"]
-    eval_case_total = conn.execute("SELECT COUNT(*) c FROM evaluation_case_candidates WHERE review_status='candidate'").fetchone()["c"]
-    failed_eval_case_run_total = conn.execute("SELECT COUNT(*) c FROM evaluation_case_runs WHERE pass_fail='fail' AND review_status IN ('open','investigating')").fetchone()["c"]
+    scoped = agent_gateway_is_bound_auth(auth_ctx)
+    ident = ident or {}
+    workspace_id = normalize_workspace_id(ident.get("workspace_id") or "local-demo")
+    agent_id = str(ident.get("agent_id") or "")
+    approval_where = ["ap.decision='pending'"]
+    approval_params: list = []
+    memory_where = ["m.review_status='candidate'"]
+    memory_params: list = []
+    eval_case_where = ["c.review_status='candidate'"]
+    eval_case_params: list = []
+    failed_eval_where = ["ecr.pass_fail='fail'", "ecr.review_status IN ('open','investigating')"]
+    failed_eval_params: list = []
+    if scoped:
+        approval_where.extend([
+            "COALESCE(t.workspace_id,r.workspace_id,'local-demo')=?",
+            """(
+                t.owner_agent_id=?
+                OR agentops_json_array_contains(t.collaborator_agent_ids, ?)
+                OR t.owner_agent_id IS NULL
+                OR t.owner_agent_id=''
+                OR r.agent_id=?
+                OR ap.requested_by_agent_id=?
+            )""",
+        ])
+        approval_params.extend([workspace_id, agent_id, agent_id, agent_id, agent_id])
+        memory_where.extend([
+            "COALESCE(t.workspace_id,'local-demo')=?",
+            """(
+                (m.task_id IS NOT NULL AND (
+                    t.owner_agent_id=?
+                    OR agentops_json_array_contains(t.collaborator_agent_ids, ?)
+                    OR t.owner_agent_id IS NULL
+                    OR t.owner_agent_id=''
+                ))
+                OR (m.task_id IS NULL AND m.agent_id=?)
+                OR m.agent_id=?
+            )""",
+        ])
+        memory_params.extend([workspace_id, agent_id, agent_id, agent_id, agent_id])
+        eval_case_where.extend([
+            "COALESCE(c.workspace_id,t.workspace_id,'local-demo')=?",
+            """(
+                c.task_id IS NULL
+                OR t.owner_agent_id=?
+                OR agentops_json_array_contains(t.collaborator_agent_ids, ?)
+                OR t.owner_agent_id IS NULL
+                OR t.owner_agent_id=''
+                OR c.agent_id=?
+                OR c.created_by_agent_id=?
+            )""",
+        ])
+        eval_case_params.extend([workspace_id, agent_id, agent_id, agent_id, agent_id])
+        failed_eval_where.extend([
+            "COALESCE(ecr.workspace_id,c.workspace_id,t.workspace_id,'local-demo')=?",
+            """(
+                c.task_id IS NULL
+                OR t.owner_agent_id=?
+                OR agentops_json_array_contains(t.collaborator_agent_ids, ?)
+                OR t.owner_agent_id IS NULL
+                OR t.owner_agent_id=''
+                OR c.agent_id=?
+                OR c.created_by_agent_id=?
+                OR ecr.created_by_agent_id=?
+            )""",
+        ])
+        failed_eval_params.extend([workspace_id, agent_id, agent_id, agent_id, agent_id, agent_id])
+    approval_where_sql = " AND ".join(approval_where)
+    memory_where_sql = " AND ".join(memory_where)
+    eval_case_where_sql = " AND ".join(eval_case_where)
+    failed_eval_where_sql = " AND ".join(failed_eval_where)
+    approval_total = conn.execute(
+        f"""SELECT COUNT(*) c FROM approvals ap
+            LEFT JOIN tasks t ON t.task_id=ap.task_id
+            LEFT JOIN runs r ON r.run_id=ap.run_id
+            WHERE {approval_where_sql}""",
+        approval_params,
+    ).fetchone()["c"]
+    memory_total = conn.execute(
+        f"""SELECT COUNT(*) c FROM memories m
+            LEFT JOIN tasks t ON t.task_id=m.task_id
+            WHERE {memory_where_sql}""",
+        memory_params,
+    ).fetchone()["c"]
+    eval_case_total = conn.execute(
+        f"""SELECT COUNT(*) c FROM evaluation_case_candidates c
+            LEFT JOIN tasks t ON t.task_id=c.task_id
+            WHERE {eval_case_where_sql}""",
+        eval_case_params,
+    ).fetchone()["c"]
+    failed_eval_case_run_total = conn.execute(
+        f"""SELECT COUNT(*) c FROM evaluation_case_runs ecr
+            JOIN evaluation_case_candidates c ON c.case_id=ecr.case_id
+            LEFT JOIN tasks t ON t.task_id=c.task_id
+            WHERE {failed_eval_where_sql}""",
+        failed_eval_params,
+    ).fetchone()["c"]
     approvals = rows_to_dicts(conn.execute(
-        """SELECT approval_id, task_id, run_id, tool_call_id, requested_by_agent_id,
-                  approver_user_id, decision, reason, expires_at, created_at, decided_at
-           FROM approvals
-           WHERE decision='pending'
-           ORDER BY created_at DESC
+        f"""SELECT ap.approval_id, ap.task_id, ap.run_id, ap.tool_call_id, ap.requested_by_agent_id,
+                  ap.approver_user_id, ap.decision, ap.reason, ap.expires_at, ap.created_at, ap.decided_at
+           FROM approvals ap
+           LEFT JOIN tasks t ON t.task_id=ap.task_id
+           LEFT JOIN runs r ON r.run_id=ap.run_id
+           WHERE {approval_where_sql}
+           ORDER BY ap.created_at DESC
            LIMIT ?""",
-        (per_lane_limit,),
+        [*approval_params, per_lane_limit],
     ).fetchall())
     memories = rows_to_dicts(conn.execute(
-        """SELECT memory_id, scope, memory_type, canonical_text, source_type, source_ref,
-                  project_id, task_id, agent_id, confidence, review_status, access_tags,
-                  created_at, updated_at
-           FROM memories
-           WHERE review_status='candidate'
-           ORDER BY updated_at DESC
+        f"""SELECT m.memory_id, m.scope, m.memory_type, m.canonical_text, m.source_type, m.source_ref,
+                  m.project_id, m.task_id, m.agent_id, m.confidence, m.review_status, m.access_tags,
+                  m.created_at, m.updated_at
+           FROM memories m
+           LEFT JOIN tasks t ON t.task_id=m.task_id
+           WHERE {memory_where_sql}
+           ORDER BY m.updated_at DESC
            LIMIT ?""",
-        (per_lane_limit,),
+        [*memory_params, per_lane_limit],
     ).fetchall())
     eval_cases = rows_to_dicts(conn.execute(
-        """SELECT case_id, workspace_id, source_type, source_ref, task_id, run_id, artifact_id,
-                  evaluation_id, agent_id, case_type, title, input_summary, expected_output_summary,
-                  failure_mode, confidence, review_status, created_by_agent_id, owner_user_id,
-                  created_at, updated_at
-           FROM evaluation_case_candidates
-           WHERE review_status='candidate'
-           ORDER BY updated_at DESC
+        f"""SELECT c.case_id, c.workspace_id, c.source_type, c.source_ref, c.task_id, c.run_id, c.artifact_id,
+                  c.evaluation_id, c.agent_id, c.case_type, c.title, c.input_summary, c.expected_output_summary,
+                  c.failure_mode, c.confidence, c.review_status, c.created_by_agent_id, c.owner_user_id,
+                  c.created_at, c.updated_at
+           FROM evaluation_case_candidates c
+           LEFT JOIN tasks t ON t.task_id=c.task_id
+           WHERE {eval_case_where_sql}
+           ORDER BY c.updated_at DESC
            LIMIT ?""",
-        (per_lane_limit,),
+        [*eval_case_params, per_lane_limit],
     ).fetchall())
     failed_eval_case_runs = rows_to_dicts(conn.execute(
-        """SELECT ecr.case_run_id, ecr.case_id, ecr.workspace_id, ecr.run_id, ecr.evaluation_id,
+        f"""SELECT ecr.case_run_id, ecr.case_id, ecr.workspace_id, ecr.run_id, ecr.evaluation_id,
                   ecr.artifact_id, ecr.runner_type, ecr.status, ecr.score, ecr.pass_fail,
                   ecr.checks_json, ecr.review_status, ecr.reviewed_by_user_id,
                   ecr.review_note, ecr.reviewed_at, ecr.created_by_agent_id, ecr.created_at,
                   c.title AS case_title, c.case_type, c.task_id, c.agent_id, c.source_type, c.source_ref
            FROM evaluation_case_runs ecr
            JOIN evaluation_case_candidates c ON c.case_id=ecr.case_id
-           WHERE ecr.pass_fail='fail' AND ecr.review_status IN ('open','investigating')
+           LEFT JOIN tasks t ON t.task_id=c.task_id
+           WHERE {failed_eval_where_sql}
            ORDER BY ecr.created_at DESC
            LIMIT ?""",
-        (per_lane_limit,),
+        [*failed_eval_params, per_lane_limit],
     ).fetchall())
     delivery_board = customer_delivery_board(conn, min(per_lane_limit, 50))
     delivery_focus = [
@@ -10648,6 +10751,22 @@ def human_review_queue(conn, limit: int = 20) -> dict:
         row for row in synthesis_recent
         if row.get("status") in {"approved_not_promoted", "memory_pending_review", "needs_review_gate"}
     ][:per_lane_limit]
+    if scoped:
+        def review_row_visible(row: dict) -> bool:
+            task_id = row.get("task_id")
+            run_id = row.get("run_id")
+            if task_id:
+                _task, access_error = agent_gateway_task_read_access(conn, str(task_id), {"workspace_id": workspace_id, "agent_id": agent_id}, auth_ctx)
+                return access_error is None
+            if run_id:
+                _run, access_error = agent_gateway_run_read_access(conn, str(run_id), {"workspace_id": workspace_id, "agent_id": agent_id}, auth_ctx)
+                return access_error is None
+            row_agent_id = row.get("agent_id") or row.get("owner_agent_id") or row.get("created_by_agent_id") or row.get("requested_by_agent_id")
+            return bool(row_agent_id and row_agent_id == agent_id)
+
+        delivery_focus = [row for row in delivery_focus if review_row_visible(row)]
+        synthesis_recent = [row for row in synthesis_recent if review_row_visible(row)]
+        synthesis_action_focus = [row for row in synthesis_action_focus if review_row_visible(row)]
 
     items: list[dict] = []
     for row in approvals:
@@ -14894,6 +15013,213 @@ def operator_task_intake_checklist(conn: sqlite3.Connection, workspace_id: str, 
     }
 
 
+def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) -> dict:
+    qs = qs or {}
+    workspace_id = normalize_workspace_id(
+        (auth_ctx or {}).get("workspace_id")
+        or headers.get("X-AgentOps-Workspace-Id")
+        or (qs.get("workspace_id") or ["local-demo"])[0]
+    )
+    limit = bounded_int((qs.get("limit") or ["8"])[0], 8, 1, 20)
+    task_id = redact_text((qs.get("task_id") or [""])[0], 160)
+    requested_agent_id = redact_text(
+        (qs.get("agent_id") or [""])[0]
+        or (auth_ctx or {}).get("agent_id")
+        or headers.get("X-AgentOps-Agent-Id")
+        or "",
+        120,
+    )
+    query = redact_text((qs.get("q") or qs.get("query") or ["READ PLAN RETRIEVE COMPARE VERIFY RECORD"])[0], 240)
+    intake = operator_task_intake_checklist(conn, workspace_id, limit=limit)
+    selected_task = None
+    if task_id:
+        task = conn.execute(
+            "SELECT * FROM tasks WHERE task_id=? AND COALESCE(workspace_id,'local-demo')=?",
+            (task_id, workspace_id),
+        ).fetchone()
+        if task:
+            selected_task = task_intake_item_for_row(conn, task)
+    if not selected_task:
+        selected_task = next((item for item in intake.get("items") or [] if item.get("severity") != "ready"), None)
+    if not selected_task:
+        selected_task = next(iter(intake.get("items") or []), None)
+    knowledge_payload, _knowledge_status = knowledge_search(
+        conn,
+        {"q": [query], "limit": [str(min(limit, 10))]},
+        headers,
+        auth_ctx={} if auth_ctx is None else auth_ctx,
+    )
+    safe_knowledge_results = [
+        {
+            "doc_id": row.get("doc_id"),
+            "path": row.get("path"),
+            "title": row.get("title"),
+            "category": row.get("category"),
+            "scope": row.get("scope"),
+            "retrieval_id": row.get("retrieval_id"),
+            "raw_content_omitted": True,
+            "snippet_omitted": True,
+            "token_omitted": True,
+        }
+        for row in (knowledge_payload.get("results") or [])
+    ]
+    handoff = operator_handoff(conn, headers, {"limit": [str(limit)]}, auth_ctx=auth_ctx)
+    selected_task_id = (selected_task or {}).get("task_id") or task_id or "<task_id>"
+    selected_title = (selected_task or {}).get("title") or selected_task_id
+    assigned_agent_ids = (selected_task or {}).get("assigned_agent_ids") or []
+    agent_id = requested_agent_id or (assigned_agent_ids[0] if assigned_agent_ids else "<agent_id>")
+    risk_level = (selected_task or {}).get("risk_level") or "medium"
+    approval_required = risk_level in {"high", "critical"}
+    knowledge_paths = [row.get("path") for row in safe_knowledge_results if row.get("path")]
+    referenced_specs = ["PROJECT_SPEC.md", "AGENT_WORKFLOW.md", "BASE_INDEX.md"]
+    referenced_memories = []
+    for path in knowledge_paths:
+        if path and path not in referenced_specs and path not in referenced_memories:
+            referenced_memories.append(path)
+        if len(referenced_memories) >= 5:
+            break
+    if not referenced_memories:
+        referenced_memories = ["knowledge/shared/common_failures.md"]
+    referenced_bases = ["base_local_tasks", "base_local_memory", "agentops_mis.db"]
+    proposed_files = ["<declare_before_execution>"]
+    execution_steps = ["READ", "PLAN", "RETRIEVE", "COMPARE", "EXECUTE", "VERIFY", "RECORD"]
+    def csv_arg(values: list[str]) -> str:
+        return ",".join(str(value) for value in values if value)
+
+    task_understanding = f"Follow Agent Work Method Block for {selected_title}: read specs, retrieve knowledge, compare bases, execute only after plan verification, verify evidence, then record a delta."
+    verification_plan = "Run the targeted smoke/build checks named by the task and record pass/fail evidence."
+    rollback_plan = "Stop before external writes; revert only this task's scoped changes or open a remediation task if verification fails."
+    plan_command_parts = [
+        "agentops", "agent-plan", "create",
+        "--agent-id", agent_id,
+        "--task-id", selected_task_id,
+        "--understanding", task_understanding,
+        "--referenced-specs", csv_arg(referenced_specs),
+        "--referenced-memories", csv_arg(referenced_memories),
+        "--referenced-bases", csv_arg(referenced_bases),
+        "--proposed-files-to-change", csv_arg(proposed_files),
+        "--risk", risk_level,
+        "--execution-steps", csv_arg(execution_steps),
+        "--verification-plan", verification_plan,
+        "--rollback-plan", rollback_plan,
+    ]
+    if approval_required:
+        plan_command_parts.append("--approval-required")
+    plan_create_command = " ".join(shlex.quote(str(part)) for part in plan_command_parts)
+    plan_verify_command = "agentops agent-plan verify --plan-id <plan_id>"
+    plan_evidence_command = "agentops plan-evidence create --plan-id <plan_id> --run-id <run_id> --mismatch-policy block"
+    retrieve_command = f"agentops knowledge search {shlex.quote(query)} --limit {min(limit, 10)}"
+    compare_command = "agentops operator intake-checklist --limit 20"
+    execute_command = f"agentops task pull --agent-id {shlex.quote(agent_id)} --status planned --limit 5 --enforce-intake"
+    verify_command = "agentops operator loop-audit --limit 20"
+    record_command = "agentops review queue --limit 20"
+    launch_sequence = [
+        {
+            "phase": "READ",
+            "commands": ["git status --short --branch", "git rev-parse --short HEAD", "agentops operator handoff --limit 12"],
+            "evidence": referenced_specs,
+        },
+        {
+            "phase": "PLAN",
+            "commands": [plan_create_command, plan_verify_command],
+            "draft": {
+                "task_understanding": task_understanding,
+                "referenced_specs": referenced_specs,
+                "referenced_memories": referenced_memories,
+                "referenced_bases": referenced_bases,
+                "proposed_files_to_change": proposed_files,
+                "risk_level": risk_level,
+                "approval_required": approval_required,
+                "execution_steps": execution_steps,
+                "verification_plan": verification_plan,
+                "rollback_plan": rollback_plan,
+            },
+        },
+        {
+            "phase": "RETRIEVE",
+            "commands": [retrieve_command],
+            "knowledge_results": safe_knowledge_results,
+        },
+        {
+            "phase": "COMPARE",
+            "commands": [compare_command],
+            "base_references": referenced_bases,
+            "intake_item": selected_task,
+        },
+        {
+            "phase": "EXECUTE",
+            "commands": [execute_command],
+            "contract": "execute only after the Agent Plan verifies and intake gates are not blocked",
+        },
+        {
+            "phase": "VERIFY",
+            "commands": [verify_command],
+            "contract": "run targeted checks and keep failed evidence visible",
+        },
+        {
+            "phase": "RECORD",
+            "commands": [plan_evidence_command, record_command],
+            "contract": "bind run evidence to the plan, then review approvals and memory candidates",
+        },
+    ]
+    handoff_commands = ((handoff.get("work_order") or {}).get("commands") or [])[:8]
+    commands = []
+    for item in [retrieve_command, plan_create_command, plan_verify_command, compare_command, execute_command, verify_command, plan_evidence_command, record_command, *handoff_commands]:
+        if item and item not in commands:
+            commands.append(item)
+    return {
+        "provider": "agentops-operator",
+        "operation": "operator_loop_launch_packet",
+        "status": "blocked" if selected_task and selected_task.get("severity") == "blocked" else "ready" if selected_task else "attention",
+        "workspace_id": workspace_id,
+        "task_id": selected_task_id if selected_task_id != "<task_id>" else None,
+        "agent_id": agent_id if agent_id != "<agent_id>" else None,
+        "method": "READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD",
+        "summary": {
+            "selected_task": bool(selected_task),
+            "intake_status": intake.get("status"),
+            "selected_task_severity": (selected_task or {}).get("severity"),
+            "knowledge_results": knowledge_payload.get("count", 0),
+            "handoff_status": handoff.get("status"),
+            "commands": len(commands),
+            "approval_required": approval_required,
+        },
+        "launch_sequence": launch_sequence,
+        "agent_plan_draft": launch_sequence[1]["draft"],
+        "commands": commands[:24],
+        "sources": {
+            "intake": intake,
+            "knowledge_search": {
+                "operation": knowledge_payload.get("operation"),
+                "query": knowledge_payload.get("query"),
+                "count": knowledge_payload.get("count"),
+                "results": safe_knowledge_results,
+                "index": knowledge_payload.get("index") or {},
+                "token_omitted": True,
+            },
+            "handoff": {
+                "operation": handoff.get("operation"),
+                "status": handoff.get("status"),
+                "summary": handoff.get("summary") or {},
+                "loop_health": handoff.get("loop_health") or {},
+                "work_order": handoff.get("work_order") or {},
+                "token_omitted": True,
+            },
+        },
+        "contract": "read-only loop launch packet for agents; it drafts commands and evidence requirements but does not create plans, run workers, approve gates, create memories, or mutate ledgers",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+
+
 def operator_dispatch_evidence_lane(conn: sqlite3.Connection, workspace_id: str, limit: int = 8) -> dict:
     limit = max(1, min(int(limit or 8), 25))
     rows = conn.execute(
@@ -16331,6 +16657,71 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
     receipt_failure_memory_candidates = int(receipt_failure_memory_summary.get("candidates") or 0)
     receipt_failure_memory_failed_receipts = int(receipt_failure_memory_summary.get("failed_receipts") or 0)
     receipt_failure_memory_existing_candidates = int(receipt_failure_memory_summary.get("existing_memory_candidates") or 0)
+    receipt_failure_work_order_items: list[dict] = []
+    for candidate in (receipt_failure_memory.get("candidates") or [])[: min(limit, 8)]:
+        action_hash = str(candidate.get("action_hash") or "").strip()
+        if not action_hash:
+            continue
+        quoted_action_hash = shlex.quote(action_hash)
+        preview_command = f"agentops operator propose-receipt-failure-memory --action-hash {quoted_action_hash} --min-failures 2"
+        create_command = f"{preview_command} --confirm-create"
+        review_command = "agentops review queue --limit 20"
+        existing_memory_id = str(candidate.get("existing_memory_id") or "").strip()
+        approve_command = f"agentops memory approve --memory-id {shlex.quote(existing_memory_id)}" if existing_memory_id else None
+        reject_command = f"agentops memory reject --memory-id {shlex.quote(existing_memory_id)}" if existing_memory_id else None
+        receipt_failure_work_order_items.append({
+            "operation": "receipt_failure_memory_item",
+            "action_hash": action_hash,
+            "action_hash_short": candidate.get("action_hash_short") or action_hash[:16],
+            "memory_id": candidate.get("memory_id"),
+            "existing_memory_id": existing_memory_id or None,
+            "existing_review_status": candidate.get("existing_review_status"),
+            "failures": int(candidate.get("failures") or 0),
+            "failed_receipt_ids": candidate.get("receipt_ids") or [],
+            "evaluation_ids": candidate.get("evaluation_ids") or [],
+            "latest_receipt_id": candidate.get("latest_receipt_id"),
+            "latest_evaluation_id": candidate.get("latest_evaluation_id"),
+            "preview_command": redact_text(preview_command, 900),
+            "create_command": redact_text(create_command, 900),
+            "review_command": review_command,
+            "approve_command": redact_text(approve_command, 900) if approve_command else None,
+            "reject_command": redact_text(reject_command, 900) if reject_command else None,
+            "ui_route": candidate.get("ui_route") or "/workspace/agents",
+            "contract": "preview is read-only; create requires explicit --confirm-create and produces a reviewable memory candidate; approve/reject stays explicit",
+            "safety": {
+                "preview_read_only": True,
+                "create_requires_confirm": True,
+                "review_required": True,
+                "live_execution_performed": False,
+                "token_omitted": True,
+            },
+            "token_omitted": True,
+        })
+    receipt_failure_work_order = {
+        "operation": "receipt_failure_memory_work_order",
+        "status": "attention" if receipt_failure_work_order_items else "empty",
+        "summary": {
+            "items": len(receipt_failure_work_order_items),
+            "candidates": receipt_failure_memory_candidates,
+            "failed_receipts": receipt_failure_memory_failed_receipts,
+            "existing_memory_candidates": receipt_failure_memory_existing_candidates,
+        },
+        "items": receipt_failure_work_order_items,
+        "next_actions": (
+            [item["preview_command"] for item in receipt_failure_work_order_items[:3]]
+            or ["agentops operator receipt-failure-memories --min-failures 2 --limit 8"]
+        ),
+        "contract": "read-only handoff work order; commands are explicit operator/agent steps and are never auto-executed by handoff",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "create_requires_confirm": True,
+            "review_required": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
     loop_record_status = str(loop_record.get("status") or "unknown")
     loop_health_risks: list[dict] = []
     if loop_blocked:
@@ -16346,7 +16737,7 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
     elif receipt_evaluation_missing:
         loop_health_risks.append({"id": "receipt_evaluation_missing", "severity": "attention", "count": receipt_evaluation_missing, "next_action": "agentops operator action-receipts --limit 20 --plan-limit 20"})
     if receipt_failure_memory_candidates:
-        next_action = (receipt_failure_memory.get("next_actions") or ["agentops operator receipt-failure-memories --min-failures 2 --limit 8"])[0]
+        next_action = (receipt_failure_work_order.get("next_actions") or receipt_failure_memory.get("next_actions") or ["agentops operator receipt-failure-memories --min-failures 2 --limit 8"])[0]
         loop_health_risks.append({"id": "receipt_failure_memory_review", "severity": "attention", "count": receipt_failure_memory_candidates, "next_action": next_action})
     if loop_record_status not in {"ready", "pass", "closed"}:
         loop_health_risks.append({"id": "loop_record_not_closed", "severity": "attention", "count": int(loop_record.get("candidate_count") or 0) + int(loop_record.get("pending_approval_count") or 0), "next_action": loop_record.get("next_action") or "agentops review queue --limit 20"})
@@ -16356,6 +16747,15 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
         loop_health_risks.append({"id": "auth_boundary_unknown", "severity": "blocked", "count": 1, "next_action": "agentops status"})
     safety_ready = True
     handoff_commands: list[str] = []
+    for item in receipt_failure_work_order_items:
+        for key in ["preview_command", "create_command", "review_command"]:
+            command = str(item.get(key) or "").strip()
+            if command and command not in handoff_commands:
+                handoff_commands.append(command)
+            if len(handoff_commands) >= 20:
+                break
+        if len(handoff_commands) >= 20:
+            break
     for item in action_package_items:
         for key in ["action_command", "verify_command", "receipt_record_command", "receipt_verify_record_command"]:
             command = str(item.get(key) or "").strip()
@@ -16398,7 +16798,8 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
             "candidates": receipt_failure_memory_candidates,
             "failed_receipts": receipt_failure_memory_failed_receipts,
             "existing_candidates": receipt_failure_memory_existing_candidates,
-            "next_action": (receipt_failure_memory.get("next_actions") or ["agentops operator receipt-failure-memories --min-failures 2 --limit 8"])[0],
+            "work_items": len(receipt_failure_work_order_items),
+            "next_action": (receipt_failure_work_order.get("next_actions") or receipt_failure_memory.get("next_actions") or ["agentops operator receipt-failure-memories --min-failures 2 --limit 8"])[0],
         },
         "record": {
             "status": loop_record_status,
@@ -16453,6 +16854,7 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
             "receipt_failure_memory_candidates": receipt_failure_memory_candidates,
             "receipt_failure_memory_failed_receipts": receipt_failure_memory_failed_receipts,
             "receipt_failure_memory_existing_candidates": receipt_failure_memory_existing_candidates,
+            "receipt_failure_memory_work_items": len(receipt_failure_work_order_items),
             "loop_record_status": loop_record.get("status"),
             "loop_record_candidates": loop_record.get("candidate_count", 0),
             "loop_record_approved": loop_record.get("approved_count", 0),
@@ -16463,6 +16865,7 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
             "action_package": action_package,
             "next_actions": loop_audit.get("next_actions") or [],
             "top_operator_actions": action_plan_actions[: min(limit, 8)],
+            "receipt_failure_memory": receipt_failure_work_order,
             "commands": handoff_commands[:20],
             "token_omitted": True,
         },
@@ -16475,6 +16878,7 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
                 "summary": receipt_failure_memory_summary,
                 "candidates": receipt_failure_memory.get("candidates") or [],
                 "next_actions": receipt_failure_memory.get("next_actions") or [],
+                "work_order": receipt_failure_work_order,
                 "token_omitted": True,
             },
             "token_omitted": True,
@@ -17833,6 +18237,10 @@ class Handler(BaseHTTPRequestHandler):
                 workspace_id = normalize_workspace_id(self.headers.get("X-AgentOps-Workspace-Id") or "local-demo")
                 limit = min(max(int((qs.get("limit") or ["12"])[0]), 1), 30)
                 payload = operator_task_intake_checklist(conn, workspace_id, limit=limit)
+                conn.rollback()
+                return self.send_json(payload)
+            if path == "/api/operator/loop-launch-packet":
+                payload = operator_loop_launch_packet(conn, self.headers, dict(qs))
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/security/production-readiness":

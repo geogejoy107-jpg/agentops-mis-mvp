@@ -446,6 +446,18 @@ def cmd_operator_intake_checklist(args, client: AgentOpsClient) -> dict:
     return client.get("/api/operator/intake-checklist", query={"limit": args.limit})
 
 
+def cmd_operator_loop_launch_packet(args, client: AgentOpsClient) -> dict:
+    return client.get(
+        "/api/operator/loop-launch-packet",
+        query={
+            "limit": args.limit,
+            "task_id": args.task_id,
+            "agent_id": args.agent_id,
+            "q": args.query,
+        },
+    )
+
+
 def cmd_operator_remediate_evidence_gap(args, client: AgentOpsClient) -> dict:
     return client.post("/api/operator/execution-evidence/remediation-task", {
         "workspace_id": client.workspace_id,
@@ -1790,6 +1802,12 @@ def build_parser() -> argparse.ArgumentParser:
     operator_intake = operator_sub.add_parser("intake-checklist", help="Show read-only pre-intake gates for planned/backlog tasks.")
     operator_intake.add_argument("--limit", type=int, default=12)
     operator_intake.set_defaults(handler="operator_intake_checklist")
+    operator_launch = operator_sub.add_parser("loop-launch-packet", help="Build a read-only Agent Work Method launch packet for the next agent loop.")
+    operator_launch.add_argument("--limit", type=int, default=8)
+    operator_launch.add_argument("--task-id", default=None)
+    operator_launch.add_argument("--agent-id", default=None)
+    operator_launch.add_argument("--query", default="READ PLAN RETRIEVE COMPARE VERIFY RECORD")
+    operator_launch.set_defaults(handler="operator_loop_launch_packet")
     evidence_gap = operator_sub.add_parser("remediate-evidence-gap", help="Preview or create a Commander package for a run execution-evidence gap.")
     evidence_gap.add_argument("--run-id", required=True)
     evidence_gap.add_argument("--task-id", default=None)
@@ -2049,7 +2067,7 @@ def build_parser() -> argparse.ArgumentParser:
     agent_plan_create.add_argument("--agent-id", default=None)
     agent_plan_create.add_argument("--task-id", default=None)
     agent_plan_create.add_argument("--run-id", default=None)
-    agent_plan_create.add_argument("--task-understanding", required=True)
+    agent_plan_create.add_argument("--task-understanding", "--understanding", dest="task_understanding", required=True)
     agent_plan_create.add_argument("--referenced-specs", default="")
     agent_plan_create.add_argument("--referenced-memories", default="")
     agent_plan_create.add_argument("--referenced-bases", default="")
@@ -2554,6 +2572,7 @@ HANDLERS = {
     "operator_handoff": cmd_operator_handoff,
     "operator_health": cmd_operator_health,
     "operator_intake_checklist": cmd_operator_intake_checklist,
+    "operator_loop_launch_packet": cmd_operator_loop_launch_packet,
     "operator_remediate_evidence_gap": cmd_operator_remediate_evidence_gap,
     "operator_close_evidence_gap": cmd_operator_close_evidence_gap,
     "commander_board": cmd_commander_board,

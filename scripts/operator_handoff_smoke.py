@@ -140,6 +140,7 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
         "receipt_failure_memory_candidates",
         "receipt_failure_memory_failed_receipts",
         "receipt_failure_memory_existing_candidates",
+        "receipt_failure_memory_work_items",
     ]:
         require(isinstance(summary.get(key), int), f"{label} summary.{key} missing: {summary}", failures)
     loop_health_gates = loop_health.get("gates") or {}
@@ -149,7 +150,7 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
         require(isinstance(receipt_eval_gate.get(key), int), f"{label} receipt evaluation gate {key} missing: {receipt_eval_gate}", failures)
     receipt_failure_gate = loop_health_gates.get("receipt_failure_memory") or {}
     require(receipt_failure_gate.get("status") in {"pass", "attention"}, f"{label} receipt failure memory gate missing: {receipt_failure_gate}", failures)
-    for key in ["candidates", "failed_receipts", "existing_candidates"]:
+    for key in ["candidates", "failed_receipts", "existing_candidates", "work_items"]:
         require(isinstance(receipt_failure_gate.get(key), int), f"{label} receipt failure memory gate {key} missing: {receipt_failure_gate}", failures)
     score_parts = loop_health.get("score_parts") or {}
     require(isinstance(score_parts.get("receipt_evaluations"), int), f"{label} receipt evaluation score part missing: {score_parts}", failures)
@@ -158,14 +159,84 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
     require(isinstance(work_order.get("commands") or [], list), f"{label} commands missing: {work_order}", failures)
     action_package = work_order.get("action_package") or {}
     require(action_package.get("operation") == "loop_action_package", f"{label} action_package missing: {action_package}", failures)
+    receipt_failure_work_order = work_order.get("receipt_failure_memory") or {}
+    require(receipt_failure_work_order.get("operation") == "receipt_failure_memory_work_order", f"{label} receipt failure memory work order missing: {receipt_failure_work_order}", failures)
+    require(receipt_failure_work_order.get("status") in {"attention", "empty"}, f"{label} receipt failure memory work order status wrong: {receipt_failure_work_order}", failures)
+    require(isinstance((receipt_failure_work_order.get("summary") or {}).get("items"), int), f"{label} receipt failure memory work order summary missing: {receipt_failure_work_order}", failures)
+    require(isinstance(receipt_failure_work_order.get("items") or [], list), f"{label} receipt failure memory work order items missing: {receipt_failure_work_order}", failures)
+    require(isinstance(receipt_failure_work_order.get("next_actions") or [], list), f"{label} receipt failure memory work order next_actions missing: {receipt_failure_work_order}", failures)
+    receipt_failure_work_safety = receipt_failure_work_order.get("safety") or {}
+    require(receipt_failure_work_safety.get("read_only") is True, f"{label} receipt failure memory work order should be read-only: {receipt_failure_work_safety}", failures)
+    require(receipt_failure_work_safety.get("ledger_mutated") is False, f"{label} receipt failure memory work order should not mutate ledger: {receipt_failure_work_safety}", failures)
+    require(receipt_failure_work_safety.get("create_requires_confirm") is True, f"{label} receipt failure memory work order confirm gate missing: {receipt_failure_work_safety}", failures)
+    require(receipt_failure_work_order.get("token_omitted") is True, f"{label} receipt failure memory work order token omission missing: {receipt_failure_work_order}", failures)
+    for item in receipt_failure_work_order.get("items") or []:
+        require(item.get("operation") == "receipt_failure_memory_item", f"{label} receipt failure memory item operation wrong: {item}", failures)
+        require("propose-receipt-failure-memory" in str(item.get("preview_command") or ""), f"{label} receipt failure memory preview command missing: {item}", failures)
+        require("--confirm-create" in str(item.get("create_command") or ""), f"{label} receipt failure memory create command missing confirm: {item}", failures)
+        require(str(item.get("review_command") or "").startswith("agentops review queue"), f"{label} receipt failure memory review command missing: {item}", failures)
+        require((item.get("safety") or {}).get("preview_read_only") is True, f"{label} receipt failure memory item preview safety missing: {item}", failures)
+        require((item.get("safety") or {}).get("create_requires_confirm") is True, f"{label} receipt failure memory item confirm safety missing: {item}", failures)
+        require(item.get("token_omitted") is True, f"{label} receipt failure memory item token omission missing: {item}", failures)
     receipt_state = payload.get("receipt_state") or {}
     require(isinstance((receipt_state.get("coverage") or {}).get("required"), int), f"{label} receipt coverage missing: {receipt_state}", failures)
     require(isinstance(receipt_state.get("recent") or [], list), f"{label} recent receipts missing: {receipt_state}", failures)
+    failure_memory_state = receipt_state.get("failure_memory") or {}
+    require((failure_memory_state.get("work_order") or {}).get("operation") == "receipt_failure_memory_work_order", f"{label} receipt_state failure memory work order missing: {failure_memory_state}", failures)
     review_state = payload.get("review_state") or {}
     require(isinstance(review_state.get("loop_record") or {}, dict), f"{label} review loop_record missing: {review_state}", failures)
     sources = payload.get("sources") or {}
     require("loop_audit" in sources and "action_plan" in sources, f"{label} sources missing: {sources}", failures)
     require("read-only" in (payload.get("contract") or ""), f"{label} contract missing: {payload}", failures)
+
+
+def seed_repeated_failed_receipts(base_url: str, outputs: list[str], failures: list[str]) -> str:
+    status, action_plan = http_json(base_url, "/api/operator/action-plan?limit=30")
+    outputs.append(json.dumps(action_plan, ensure_ascii=False))
+    require(status == 200, f"seed action-plan status mismatch: {status} {action_plan}", failures)
+    seed_action = next((
+        item for item in action_plan.get("actions") or []
+        if item.get("command") and item.get("action_signature") and item.get("receipt_required") is True
+    ), {})
+    require(bool(seed_action), f"seed action for failed receipts missing: {action_plan.get('actions')}", failures)
+    if not seed_action:
+        return ""
+    payload = {
+        "action_command": str(seed_action.get("command") or "agentops worker status"),
+        "verify_command": str(seed_action.get("verify_command") or "agentops operator action-plan --limit 20"),
+        "action_id": str(seed_action.get("action_id") or "smoke:handoff-failed-action"),
+        "action_signature": str(seed_action.get("action_signature") or ""),
+        "source": "smoke.operator_handoff.failed",
+        "status": "failed",
+        "result_summary": "Smoke failed receipt should appear as a handoff memory work item.",
+    }
+    action_hash = ""
+    for index in range(2):
+        repeated_payload = dict(payload)
+        repeated_payload["source"] = f"smoke.operator_handoff.failed.{index}"
+        status, receipt = http_json(base_url, "/api/operator/action-receipts", method="POST", payload=repeated_payload)
+        outputs.append(json.dumps(receipt, ensure_ascii=False))
+        require(status == 201, f"failed receipt POST status mismatch: {status} {receipt}", failures)
+        item = receipt.get("receipt") or {}
+        evaluation = receipt.get("evaluation") or {}
+        action_hash = action_hash or str(item.get("action_hash") or "")
+        require(evaluation.get("pass_fail") == "fail", f"seed failed receipt should fail evaluation: {evaluation}", failures)
+    return action_hash
+
+
+def validate_receipt_failure_work_item(payload: dict, expected_action_hash: str, label: str, failures: list[str]) -> None:
+    work_order = ((payload.get("work_order") or {}).get("receipt_failure_memory") or {})
+    items = work_order.get("items") or []
+    item = next((row for row in items if row.get("action_hash") == expected_action_hash), {})
+    require(bool(item), f"{label} expected receipt failure work item missing for {expected_action_hash}: {work_order}", failures)
+    if not item:
+        return
+    require(int(item.get("failures") or 0) >= 2, f"{label} receipt failure work item count wrong: {item}", failures)
+    require("propose-receipt-failure-memory" in str(item.get("preview_command") or ""), f"{label} preview command wrong: {item}", failures)
+    require("--confirm-create" in str(item.get("create_command") or ""), f"{label} create command lacks confirm: {item}", failures)
+    require(str(item.get("review_command") or "").startswith("agentops review queue"), f"{label} review command wrong: {item}", failures)
+    commands = (payload.get("work_order") or {}).get("commands") or []
+    require(item.get("preview_command") in commands, f"{label} preview command not promoted to handoff commands: {commands}", failures)
 
 
 def create_enrollment(base_url: str, workspace_id: str, agent_id: str, scopes: list[str]) -> tuple[str, str]:
@@ -211,15 +282,18 @@ def main() -> int:
         )
         try:
             wait_ready(base_url, proc)
+            failed_action_hash = seed_repeated_failed_receipts(base_url, outputs, failures)
             before = db_fingerprint(db_path)
             status, api_payload = http_json(base_url, "/api/operator/handoff?limit=8")
             outputs.append(json.dumps(api_payload, ensure_ascii=False))
             require(status == 200, f"API status mismatch: {status} {api_payload}", failures)
             validate_payload(api_payload, "api", failures)
+            validate_receipt_failure_work_item(api_payload, failed_action_hash, "api", failures)
             invalid_limit_status, invalid_limit_payload = http_json(base_url, "/api/operator/handoff?limit=not-an-int")
             outputs.append(json.dumps(invalid_limit_payload, ensure_ascii=False))
             require(invalid_limit_status == 200, f"invalid limit should not 500: {invalid_limit_status} {invalid_limit_payload}", failures)
             validate_payload(invalid_limit_payload, "invalid_limit_api", failures)
+            validate_receipt_failure_work_item(invalid_limit_payload, failed_action_hash, "invalid_limit_api", failures)
             invalid_token_status, invalid_token_payload = http_json(
                 base_url,
                 "/api/operator/handoff?limit=8",
@@ -279,6 +353,7 @@ def main() -> int:
             cli_payload = load_json(cli_proc.stdout)
             require(cli_proc.returncode == 0, f"CLI failed: {cli_proc.returncode} {cli_proc.stderr}", failures)
             validate_payload(cli_payload, "cli", failures)
+            validate_receipt_failure_work_item(cli_payload, failed_action_hash, "cli", failures)
             scoped_env = env.copy()
             scoped_env["AGENTOPS_API_KEY"] = token
             scoped_env["AGENTOPS_WORKSPACE_ID"] = workspace_a

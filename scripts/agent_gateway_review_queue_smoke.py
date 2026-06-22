@@ -149,6 +149,7 @@ def main() -> int:
     task_b = f"tsk_review_b_{stamp}"
     text_a = f"Scoped review queue visible candidate A {stamp}."
     text_b = f"Scoped review queue hidden candidate B {stamp}."
+    hidden_noise_count = 60
     admin_key = args.admin_key or None
     token_ids: list[str] = []
     outputs: list[str] = []
@@ -166,6 +167,17 @@ def main() -> int:
         outputs.append(raw)
         memory_b, raw = propose_memory(args.base_url, token_b, workspace_b, agent_b, task_b, text_b)
         outputs.append(raw)
+        for index in range(hidden_noise_count):
+            _memory_noise, raw = propose_memory(
+                args.base_url,
+                token_b,
+                workspace_b,
+                agent_b,
+                task_b,
+                f"Scoped review queue hidden noise {index:02d} {stamp}.",
+            )
+            if index in {0, hidden_noise_count - 1}:
+                outputs.append(raw)
 
         status, queue, raw = http_json(
             "GET",
@@ -173,7 +185,7 @@ def main() -> int:
             "/api/agent-gateway/review/queue",
             token=token_a,
             workspace_header=workspace_a,
-            query={"limit": 25},
+            query={"limit": 1},
         )
         outputs.append(raw)
         require(status == 200, f"scoped review queue failed: {status} {queue}")
@@ -182,6 +194,8 @@ def main() -> int:
         gateway_scope = queue.get("gateway_scope") or {}
         require(gateway_scope.get("required_scope") == "tasks:read", f"scope mismatch: {gateway_scope}")
         require(gateway_scope.get("bound_visibility_enforced") is True, f"bound visibility missing: {gateway_scope}")
+        require(gateway_scope.get("scope_before_limit") is True, f"scope-before-limit proof missing: {gateway_scope}")
+        require(gateway_scope.get("scoped_totals_before_limit") is True, f"scoped totals proof missing: {gateway_scope}")
         require(gateway_scope.get("workspace_id") == workspace_a, f"workspace mismatch: {gateway_scope}")
         require(gateway_scope.get("agent_id") == agent_a, f"agent mismatch: {gateway_scope}")
         require(queue.get("token_omitted") is True, "token omission missing")
@@ -189,7 +203,11 @@ def main() -> int:
         serialized_queue = json.dumps(queue, ensure_ascii=False)
         require(memory_a in serialized_queue and text_a in serialized_queue, "workspace A memory candidate missing from scoped queue")
         require(memory_b not in serialized_queue and text_b not in serialized_queue and task_b not in serialized_queue, "workspace B review item leaked into scoped queue")
-        require(len(queue.get("review_items") or []) <= 25, "review queue ignored limit")
+        require(len(queue.get("review_items") or []) <= 1, "review queue ignored limit")
+        summary = queue.get("summary") or {}
+        require(summary.get("scope_before_limit") is True, f"summary scope-before-limit proof missing: {summary}")
+        require(int(summary.get("memory_candidates") or 0) == 1, f"scoped memory total distorted by hidden global noise: {summary}")
+        require(int(summary.get("returned_items") or 0) == 1, f"scoped returned item count wrong: {summary}")
 
         status, forbidden, raw = http_json(
             "GET",
@@ -210,6 +228,7 @@ def main() -> int:
             "workspace_b": workspace_b,
             "visible_memory_id": memory_a,
             "hidden_memory_id": memory_b,
+            "hidden_noise_count": hidden_noise_count,
             "limited_token_forbidden": True,
             "gateway_scope": gateway_scope,
             "secret_leaked": False,

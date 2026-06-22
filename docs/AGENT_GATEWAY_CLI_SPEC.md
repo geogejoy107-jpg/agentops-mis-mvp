@@ -378,7 +378,11 @@ loop-audit `action_package`, action-plan receipt coverage, recent receipts, and
 loop review state into a single handoff payload. It returns `work_order`,
 `receipt_state`, `review_state`, source summaries, `loop_health`, an `auth`
 boundary (`mode`, scoped flag, required `tasks:read` scope), and safety flags
-without executing commands or mutating audit/runtime ledgers. `loop_health` is
+without executing commands or mutating audit/runtime ledgers. `work_order` also
+contains `receipt_failure_memory`, a machine-readable preview/create/review
+work order for repeated failed receipt evaluations: preview is read-only, create
+requires explicit `--confirm-create`, and approval/rejection remains a separate
+review-queue step. `loop_health` is
 a read-only score/status snapshot derived from method gates, receipt coverage,
 receipt evaluation coverage, receipt-failure memory learning, loop RECORD
 state, auth, and safety; it carries gate summaries, risks, and the next
@@ -545,6 +549,10 @@ agentops agent-plan create \
 
 agentops agent-plan verify --plan-id plan_123
 ```
+
+`--understanding` is accepted as a shorter alias for
+`--task-understanding`; launch packets use the alias so token scanners do not
+misread the longer flag as a secret-like `sk-...` string.
 
 `agentops agent-plan verify` is read-only. `agentops run start` requires a
 submitted/verified plan for the same workspace, task, and agent. Pass the plan
@@ -1287,9 +1295,15 @@ agentops review queue --limit 12
 
 Maps to `GET /api/agent-gateway/review/queue`. Scoped tokens require
 `tasks:read`; results are constrained by the token's bound workspace and agent
-visibility rules. The local browser UI can still use `GET /api/review/queue`,
-but remote workers and machine-facing CLI flows should use the Agent Gateway
-path and must omit raw token/session values.
+visibility rules before the requested `limit` is applied, so unrelated global
+review pressure cannot push a remote worker's own visible item out of the
+queue. The payload exposes `gateway_scope.scope_before_limit:true` and
+`summary.scoped_totals_before_limit:true` for bound tokens; this is covered by
+`scripts/agent_gateway_review_queue_smoke.py`, which creates hidden noise in a
+different workspace and still requires the scoped item to survive `limit=1`.
+The local browser UI can still use `GET /api/review/queue`, but remote workers
+and machine-facing CLI flows should use the Agent Gateway path and must omit raw
+token/session values.
 
 Failed benchmark runs are read-only risk items, not approval objects. Operators
 should inspect the linked run/task, preview a remediation task, and only then
@@ -1435,6 +1449,20 @@ Maps to `GET /api/operator/intake-checklist`. This is read-only and reports
 `missing_base_reference` without starting workers or writing ledger rows. Ready
 rows point to `agentops task pull --enforce-intake` so worker execution uses the
 same gate decision as the operator console.
+
+```bash
+agentops operator loop-launch-packet --task-id tsk_123 --agent-id agt_worker --limit 8
+```
+
+Maps to `GET /api/operator/loop-launch-packet`. This is a read-only Agent Work
+Method launch packet for Hermes, OpenClaw, Codex, or a remote Agent. It combines
+the intake checklist, safe knowledge-search metadata, operator handoff state,
+and a complete agent-plan draft into one machine-readable
+`READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD` sequence.
+It emits commands for knowledge search, plan creation/verification,
+intake comparison, enforced task pull, loop verification, plan-evidence
+binding, and review queue drain. It does not create plans, run workers, approve
+gates, create memories, or mutate ledgers.
 
 ```bash
 agentops operator remediate-evidence-gap --run-id run_123
