@@ -16,7 +16,6 @@ import hashlib
 import io
 import json
 import os
-import shlex
 import stat
 import subprocess
 import sys
@@ -27,6 +26,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 
+from agentops_mis_cli.advance_loop_policy import advance_loop_command_policy, advance_loop_policy_summary
 from agentops_mis_cli.redaction import redact_text
 
 
@@ -479,72 +479,6 @@ def agentops_cli_command(argv: list[str], client: AgentOpsClient) -> tuple[list[
     return [executable, "--base-url", client.base_url, *argv[1:]], env
 
 
-def advance_loop_command_policy(command: str, *, phase: str) -> dict:
-    try:
-        argv = shlex.split(command)
-    except ValueError as exc:
-        return {"allowed": False, "reason": f"invalid shell syntax: {exc}", "argv": [], "token_omitted": True}
-    if not argv or argv[0] != "agentops":
-        return {"allowed": False, "reason": "command must start with agentops", "argv": argv, "token_omitted": True}
-    joined = " ".join(argv)
-    denied_flags = {
-        "--confirm-run",
-        "--confirm-live",
-        "--confirm-create",
-        "--confirm-upload",
-        "--confirm-delete",
-        "--live",
-        "--async-job",
-    }
-    if any(flag in argv for flag in denied_flags):
-        return {"allowed": False, "reason": "command contains a confirmation/live/external-write flag", "argv": argv[:4], "token_omitted": True}
-    if len(argv) < 3:
-        return {"allowed": False, "reason": "command is too short for bounded runner policy", "argv": argv, "token_omitted": True}
-    namespace = argv[1]
-    action = argv[2]
-    if namespace in {"approval", "session", "enrollment"}:
-        return {"allowed": False, "reason": f"{namespace} commands require explicit human/session handling", "argv": argv[:4], "token_omitted": True}
-    if namespace == "memory" and action in {"approve", "reject"}:
-        return {"allowed": False, "reason": "memory approval/rejection remains human-review only", "argv": argv[:4], "token_omitted": True}
-    if namespace == "worker" and action in {"start", "stop", "restart", "release-stuck"}:
-        return {"allowed": False, "reason": "worker lifecycle commands are outside bounded loop advance", "argv": argv[:4], "token_omitted": True}
-    if namespace == "workflow":
-        return {"allowed": False, "reason": "workflow commands can dispatch substantial work and are not auto-run here", "argv": argv[:4], "token_omitted": True}
-    if namespace == "task" and action in {"pull", "claim", "create"}:
-        return {"allowed": False, "reason": "task queue mutation is not part of this bounded operator runner", "argv": argv[:4], "token_omitted": True}
-    if namespace == "operator" and action in {"remediate-evidence-gap", "close-evidence-gap", "propose-receipt-failure-memory"}:
-        return {"allowed": False, "reason": f"operator {action} requires a dedicated explicit confirmation path", "argv": argv[:4], "token_omitted": True}
-    allowed_read_commands = {
-        ("operator", "loop-audit"),
-        ("operator", "action-plan"),
-        ("operator", "handoff"),
-        ("operator", "health"),
-        ("operator", "intake-checklist"),
-        ("operator", "receipt-failure-memories"),
-        ("knowledge", "search"),
-        ("review", "queue"),
-        ("security", "production-readiness"),
-        ("worker", "status"),
-        ("worker", "readiness"),
-        ("status", ""),
-        ("doctor", ""),
-    }
-    allowed_mutating_commands = {
-        ("knowledge", "index"),
-        ("memory", "propose"),
-    }
-    key = (namespace, action)
-    if phase == "verify":
-        if key in allowed_read_commands or namespace in {"status", "doctor"}:
-            return {"allowed": True, "reason": "read-only verify command is allowlisted", "argv": argv, "token_omitted": True}
-        return {"allowed": False, "reason": f"verify command {namespace} {action} is not allowlisted", "argv": argv[:4], "token_omitted": True}
-    if key == ("memory", "propose") and ("--type" not in argv or "loop_record" not in argv):
-        return {"allowed": False, "reason": "bounded runner can only auto-propose loop_record memory candidates", "argv": argv[:6], "token_omitted": True}
-    if key in allowed_mutating_commands or key in allowed_read_commands:
-        return {"allowed": True, "reason": f"{namespace} {action} is allowlisted for bounded loop advance", "argv": argv, "token_omitted": True}
-    return {"allowed": False, "reason": f"command {namespace} {action} is not allowlisted", "argv": argv[:4], "token_omitted": True}
-
-
 def run_bounded_agentops_command(command: str, client: AgentOpsClient, *, timeout: int) -> dict:
     policy = advance_loop_command_policy(command, phase="action")
     if not policy.get("allowed"):
@@ -597,6 +531,7 @@ def cmd_operator_advance_loop(args, client: AgentOpsClient) -> dict:
             "advanced": False,
             "message": "No allowlisted non-passing loop action is available in the handoff action package.",
             "handoff_status": handoff.get("status"),
+            "policy": advance_loop_policy_summary(),
             "safety": {
                 "read_only": True,
                 "ledger_mutated": False,
@@ -627,6 +562,7 @@ def cmd_operator_advance_loop(args, client: AgentOpsClient) -> dict:
             "status": "preview",
             "advanced": False,
             "preview": preview,
+            "policy": advance_loop_policy_summary(),
             "next_actions": ["rerun with --confirm-advance to execute exactly one allowlisted loop action"],
             "contract": "preview-only; does not execute commands and does not mutate ledgers without --confirm-advance",
             "safety": {
@@ -644,6 +580,7 @@ def cmd_operator_advance_loop(args, client: AgentOpsClient) -> dict:
             "status": "blocked",
             "advanced": False,
             "preview": preview,
+            "policy": advance_loop_policy_summary(),
             "message": "Verify command failed bounded-runner policy.",
             "safety": {
                 "read_only": True,
@@ -691,6 +628,7 @@ def cmd_operator_advance_loop(args, client: AgentOpsClient) -> dict:
         "advanced": True,
         "confirm_advance": True,
         "preview": preview,
+        "policy": advance_loop_policy_summary(),
         "action_result": action_result,
         "verify_result": verify_result,
         "receipt": receipt,
