@@ -157,7 +157,7 @@ def main() -> int:
             require(status == 409, f"approval should block without manifest: {status} {blocked}", failures)
             require(blocked.get("error") == "verified_plan_evidence_manifest_required", f"wrong block payload: {blocked}", failures)
 
-            tool = run_cli(["toolcall", "record", "--run-id", str(run_id), "--agent-id", agent_id, "--tool", "delivery_gate.fixture", "--category", "custom", "--risk", "low", "--status", "completed", "--summary", "Fixture tool call completed."], base_url, agent_id, workspace_id, outputs)
+            tool = run_cli(["toolcall", "record", "--run-id", str(run_id), "--agent-id", agent_id, "--tool", "ledger_evidence.fixture", "--category", "custom", "--risk", "low", "--status", "completed", "--summary", "Fixture ledger evidence completed."], base_url, agent_id, workspace_id, outputs)
             tool_id = (load_json(tool).get("tool_call") or {}).get("tool_call_id")
             evaluation = run_cli(["eval", "submit", "--run-id", str(run_id), "--task-id", task_id, "--agent-id", agent_id, "--gate", "delivery_manifest_gate", "--score", "1", "--pass", "--notes", "Delivery gate fixture passed."], base_url, agent_id, workspace_id, outputs)
             evaluation_id = (load_json(evaluation).get("evaluation") or {}).get("evaluation_id")

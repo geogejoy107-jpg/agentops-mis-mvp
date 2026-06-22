@@ -540,7 +540,7 @@ Optional live runtime checks occur only after preflight and explicit human confi
 - [x] Migration and rollback result. Guarded by `scripts/migration_rollback_smoke.py`, which writes an isolated `/api/migration/preview` row with rollback steps and audit evidence, then verifies local backup, hash/integrity check, dry-run restore confirmation gate, confirmed restore, and restored migration/audit counts.
 - [x] Security readiness and secret scan. Guarded by `scripts/security_production_readiness_smoke.py` plus `scripts/secret_scan_smoke.py`, which scans tracked files for token-like credentials while allowing only narrow fake-token smoke fixtures.
 - [x] License/provenance/SBOM. Guarded by `scripts/license_provenance_smoke.py` and `scripts/pixel_office_visualizer_boundary_smoke.py`; evidence files are `LICENSE`, `docs/THIRD_PARTY_NOTICES.md`, `docs/RELEASE_PROVENANCE.md`, `docs/SBOM_MINIMAL.md`, `docs/PIXEL_OFFICE_REFERENCE_AUDIT.md`, and `docs/PIXEL_OFFICE_ASSET_REPLACEMENT_PLAN.md`.
-- [ ] Plan, task, run, artifact and review IDs for safe closure.
+- [x] Plan, task, run, artifact and review IDs for safe closure. Guarded by `scripts/safe_closure_evidence_packet_smoke.py`, which builds an isolated high-risk safe-closure packet and verifies the task, run, Agent Plan, plan hash, tool call, evaluation, artifact, plan-evidence manifest, plan approval, delivery review approval, review-queue observation, audit counts and operator evidence-report readiness without raw prompts, credentials or model output.
 - [ ] Optional protected live-runtime IDs.
 - [ ] Known limitations and public-claims checklist.
 
