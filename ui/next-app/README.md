@@ -21,6 +21,7 @@ default provider is `http://127.0.0.1:8765/api`.
 python3 scripts/nextjs_parity_smoke.py
 cd ui/next-app && npm run build
 python3 scripts/nextjs_agent_gateway_task_proxy_smoke.py
+python3 scripts/nextjs_agent_gateway_cli_worker_dogfood_smoke.py
 python3 scripts/nextjs_worker_dispatch_once_smoke.py
 python3 scripts/nextjs_worker_stuck_release_smoke.py
 python3 scripts/nextjs_enrollment_request_smoke.py
@@ -59,6 +60,10 @@ memory review actions through the Next.js UI, verifies the state change through
 - Agent Gateway task proxy contract: scoped `POST /api/mis/agent-gateway/tasks`
   preserves no-token, missing-scope, workspace, and agent-binding failures
   before allowing task creation through the configured MIS provider
+- Agent Gateway CLI worker dogfood contract: a scoped task created through
+  Next `/api/mis/agent-gateway/tasks` is claimed and completed by the worker
+  CLI entrypoint, then run/tool/evaluation/plan-evidence proof is read back
+  through the Next proxy without leaking the raw Gateway token.
 - Worker dispatch contract: the Next worker console can run one safe mock
   `POST /api/mis/workers/local/dispatch-once` through the MIS proxy and the
   `/workspace/agents/dispatch-once` form fallback; the proxy and fallback

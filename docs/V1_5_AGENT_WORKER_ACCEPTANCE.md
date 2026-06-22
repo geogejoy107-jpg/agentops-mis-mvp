@@ -1549,3 +1549,30 @@ Observed evidence:
 - local product acceptance remains non-live. If the long-running demo server has
   active workers, ledger count drift is now reported as concurrent environment
   activity instead of mislabeling the read-only acceptance runner as mutating.
+
+## 2026-06-23 Next-Created CLI Worker Dogfood
+
+The Next.js parity track now has a CLI/API-first worker dogfood proof instead
+of only browser or direct backend dispatch evidence:
+
+```text
+python3 scripts/nextjs_agent_gateway_cli_worker_dogfood_smoke.py
+```
+
+The smoke starts isolated MIS API and Next.js servers, creates a scoped Agent
+Gateway task through `POST /api/mis/agent-gateway/tasks`, executes one worker
+iteration through `scripts/agent_worker.py --once --adapter mock` with the same
+scoped token and workspace, then reads the completed task, run/tool/evaluation
+evidence, and verified plan-evidence manifest back through the Next
+`/api/mis/*` proxy. Token material remains omitted from output.
+
+Observed evidence from the latest run:
+
+- contract: `nextjs_agent_gateway_cli_worker_dogfood_v1`;
+- worker entrypoint: `scripts/agent_worker.py --once --adapter mock`;
+- task status: `completed`;
+- run status: `completed`;
+- tool calls: `1`;
+- evaluations: `1`;
+- plan evidence: `pass=true`;
+- `secret_leaked=false`, `token_omitted=true`.

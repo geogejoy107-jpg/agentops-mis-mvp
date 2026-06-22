@@ -135,6 +135,7 @@ python3 scripts/nextjs_parity_smoke.py
 cd ui/start-building-app && npm run build
 cd ui/next-app && npm run build
 python3 scripts/nextjs_agent_gateway_task_proxy_smoke.py
+python3 scripts/nextjs_agent_gateway_cli_worker_dogfood_smoke.py
 python3 scripts/nextjs_worker_dispatch_once_smoke.py
 python3 scripts/nextjs_worker_stuck_release_smoke.py
 python3 scripts/nextjs_enrollment_request_smoke.py
@@ -153,6 +154,14 @@ task-create contract: no token stays `401`, missing `tasks:create` stays `403`,
 workspace/agent impersonation stays blocked, valid scoped tokens create and
 read back a task through the Next proxy, and direct MIS readback matches the
 Next proxy response without token leakage.
+
+`python3 scripts/nextjs_agent_gateway_cli_worker_dogfood_smoke.py`
+(`nextjs_agent_gateway_cli_worker_dogfood_v1`) starts isolated MIS API and
+Next.js servers, creates a scoped Agent Gateway task through
+`POST /api/mis/agent-gateway/tasks`, runs the worker CLI entrypoint once with
+the scoped token, then reads the completed task, run/tool/evaluation evidence,
+and verified plan-evidence manifest back through the Next proxy without raw
+token leakage.
 
 `python3 scripts/nextjs_worker_dispatch_once_smoke.py`
 (`nextjs_worker_dispatch_once_v1`) starts isolated MIS API and Next.js servers,

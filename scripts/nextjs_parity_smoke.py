@@ -87,6 +87,7 @@ def main() -> int:
         ROOT / "scripts" / "ui_navigation_inventory_smoke.py",
         ROOT / "scripts" / "ui_route_retirement_packet_smoke.py",
         ROOT / "scripts" / "nextjs_agent_gateway_task_proxy_smoke.py",
+        ROOT / "scripts" / "nextjs_agent_gateway_cli_worker_dogfood_smoke.py",
         ROOT / "scripts" / "nextjs_worker_dispatch_once_smoke.py",
         ROOT / "scripts" / "nextjs_worker_stuck_release_smoke.py",
         ROOT / "scripts" / "nextjs_enrollment_request_smoke.py",
@@ -134,6 +135,7 @@ def main() -> int:
     server_lib_text = read_text(NEXT_APP / "src" / "lib" / "misServer.ts")
     playwright_smoke_text = read_text(ROOT / "scripts" / "nextjs_playwright_snapshot_smoke.py")
     gateway_task_proxy_smoke_text = read_text(ROOT / "scripts" / "nextjs_agent_gateway_task_proxy_smoke.py")
+    gateway_cli_worker_dogfood_smoke_text = read_text(ROOT / "scripts" / "nextjs_agent_gateway_cli_worker_dogfood_smoke.py")
     worker_dispatch_smoke_text = read_text(ROOT / "scripts" / "nextjs_worker_dispatch_once_smoke.py")
     worker_release_smoke_text = read_text(ROOT / "scripts" / "nextjs_worker_stuck_release_smoke.py")
     enrollment_request_smoke_text = read_text(ROOT / "scripts" / "nextjs_enrollment_request_smoke.py")
@@ -159,6 +161,10 @@ def main() -> int:
     require("/api/mis/agent-gateway/tasks" in gateway_task_proxy_smoke_text, "Next Gateway task proxy smoke must exercise the Next /api/mis route")
     require("AGENTOPS_API_KEY" in gateway_task_proxy_smoke_text and "no_token_status == 401" in gateway_task_proxy_smoke_text, "Next Gateway task proxy smoke must disable local no-token fallback")
     require("direct_api_matches_next_proxy" in gateway_task_proxy_smoke_text, "Next Gateway task proxy smoke must compare direct MIS and Next proxy readback")
+    require("nextjs_agent_gateway_cli_worker_dogfood_v1" in gateway_cli_worker_dogfood_smoke_text, "Next CLI worker dogfood smoke contract is missing")
+    require("/api/mis/agent-gateway/tasks" in gateway_cli_worker_dogfood_smoke_text, "Next CLI worker dogfood must create the task through the Next proxy")
+    require("scripts/agent_worker.py --once --adapter mock" in gateway_cli_worker_dogfood_smoke_text, "Next CLI worker dogfood must execute through the worker CLI entrypoint")
+    require("/api/mis/runs/:run_id" in gateway_cli_worker_dogfood_smoke_text and "plan-evidence-manifests/:id/verify" in gateway_cli_worker_dogfood_smoke_text, "Next CLI worker dogfood must read evidence back through the Next proxy")
     require("nextjs_worker_dispatch_once_v1" in worker_dispatch_smoke_text, "Next worker dispatch once smoke contract is missing")
     require("/api/mis/workers/local/dispatch-once" in worker_dispatch_smoke_text, "Next worker dispatch smoke must exercise the /api/mis proxy route")
     require("/workspace/agents/dispatch-once" in worker_dispatch_smoke_text, "Next worker dispatch smoke must exercise the form fallback route")
@@ -345,6 +351,7 @@ def main() -> int:
         ],
         "contracts": [
             "nextjs_agent_gateway_task_proxy_v1",
+            "nextjs_agent_gateway_cli_worker_dogfood_v1",
             "nextjs_worker_dispatch_once_v1",
             "nextjs_worker_stuck_release_v1",
             "nextjs_enrollment_request_v1",

@@ -189,6 +189,7 @@ python3 scripts/ui_legacy_route_alias_smoke.py
 python3 scripts/ui_navigation_inventory_smoke.py
 python3 scripts/ui_route_retirement_packet_smoke.py
 python3 scripts/nextjs_agent_gateway_task_proxy_smoke.py
+python3 scripts/nextjs_agent_gateway_cli_worker_dogfood_smoke.py
 python3 scripts/nextjs_worker_dispatch_once_smoke.py
 python3 scripts/nextjs_worker_stuck_release_smoke.py
 python3 scripts/nextjs_enrollment_request_smoke.py
@@ -271,6 +272,15 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   no token is `401`, missing `tasks:create`, workspace, and agent impersonation
   are `403`, valid scoped tokens create and read back the task through the Next
   proxy, and direct MIS readback matches without token leakage.
+
+  The Next Agent Gateway CLI worker dogfood smoke starts isolated MIS API and
+  Next.js servers, creates a scoped task through the Next
+  `/api/mis/agent-gateway/tasks` proxy, runs the repo worker CLI entrypoint once
+  with the scoped token, and reads the completed task, run/tool/evaluation
+  evidence, and verified plan-evidence manifest back through the Next proxy.
+  This binds the Next migration track to the real agent-facing CLI/API
+  execution contract while keeping live Hermes/OpenClaw execution behind the
+  explicit confirm-run gate.
 
   The Next worker dispatch smoke starts isolated MIS API and Next.js servers,
   sets `AGENTOPS_BASE_URL` so the worker subprocess writes into that isolated
