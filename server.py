@@ -12921,6 +12921,15 @@ def worker_stale_never_seen_enrollments(conn, enrollment_age_sec: int = 900, lim
     return stale
 
 
+def public_worker_stale_enrollment(enrollment: dict) -> dict:
+    token_id = enrollment.get("token_id") or ""
+    public = dict(enrollment)
+    public.pop("token_id", None)
+    public["token_ref"] = stable_id("token_ref", token_id)[-12:] if token_id else ""
+    public["token_id_omitted"] = True
+    return public
+
+
 def worker_fleet_hygiene(conn, body: dict | None = None, *, apply: bool = False) -> tuple[dict, int]:
     body = body or {}
     threshold_raw = body.get("threshold_sec")
@@ -12931,6 +12940,7 @@ def worker_fleet_hygiene(conn, body: dict | None = None, *, apply: bool = False)
     limit = min(max(int(limit_raw if limit_raw is not None else 25), 1), 100)
     stuck_tasks = worker_stuck_tasks(conn, threshold_sec, limit)
     stale_enrollments = worker_stale_never_seen_enrollments(conn, enrollment_age_sec, limit)
+    public_stale_enrollments = [public_worker_stale_enrollment(enrollment) for enrollment in stale_enrollments]
     plan = {
         "provider": "agentops-worker",
         "operation": "fleet_hygiene",
@@ -12943,7 +12953,7 @@ def worker_fleet_hygiene(conn, body: dict | None = None, *, apply: bool = False)
             "actions_available": len(stuck_tasks) + len(stale_enrollments),
         },
         "stuck_tasks": stuck_tasks,
-        "stale_never_seen_enrollments": stale_enrollments,
+        "stale_never_seen_enrollments": public_stale_enrollments,
         "recommended_actions": [
             "agentops worker hygiene --apply --confirm-cleanup",
         ] if stuck_tasks or stale_enrollments else ["agentops worker status"],
@@ -12977,14 +12987,16 @@ def worker_fleet_hygiene(conn, body: dict | None = None, *, apply: bool = False)
             errors.append({"kind": "task_release", "task_id": task.get("task_id"), "status": status, "error": payload})
     for enrollment in stale_enrollments:
         payload, status = agent_gateway_revoke_enrollment(conn, {"token_id": enrollment["token_id"]})
+        token_ref = stable_id("token_ref", enrollment.get("token_id") or "")[-12:]
         if status == 200:
             revoked.append({
-                "token_id": enrollment["token_id"],
+                "token_ref": token_ref,
+                "token_id_omitted": True,
                 "agent_id": enrollment.get("agent_id"),
                 "sessions_revoked": payload.get("sessions_revoked", 0),
             })
         else:
-            errors.append({"kind": "enrollment_revoke", "token_id": enrollment.get("token_id"), "status": status, "error": payload})
+            errors.append({"kind": "enrollment_revoke", "token_ref": token_ref, "token_id_omitted": True, "status": status, "error": payload})
 
     applied = {
         **plan,
@@ -21480,19 +21492,28 @@ def dispatch_local_worker_once(conn, body: dict) -> dict:
     if confirm_run:
         cmd.append("--confirm-run")
     worker_timeout = 260
+    adapter_max_attempts = body.get("adapter_max_attempts") or os.environ.get("AGENTOPS_ADAPTER_MAX_ATTEMPTS")
+    try:
+        adapter_max_attempts_int = min(max(int(adapter_max_attempts or 1), 1), 5)
+    except Exception:
+        adapter_max_attempts_int = 1
+    adapter_retry_delay = body.get("adapter_retry_delay_sec") or os.environ.get("AGENTOPS_ADAPTER_RETRY_DELAY_SEC")
+    try:
+        adapter_retry_delay_float = max(float(adapter_retry_delay or 0), 0.0)
+    except Exception:
+        adapter_retry_delay_float = 0.0
     if adapter == "hermes":
         hermes_timeout = int(body.get("hermes_timeout") or os.environ.get("HERMES_TIMEOUT", "300"))
-        worker_timeout = max(hermes_timeout + 80, worker_timeout)
+        retry_budget = int((adapter_max_attempts_int * hermes_timeout) + (max(adapter_max_attempts_int - 1, 0) * adapter_retry_delay_float) + 80)
+        worker_timeout = max(retry_budget, worker_timeout)
         cmd.extend([
             "--hermes-gateway-url",
             os.environ.get("HERMES_GATEWAY_URL", "http://127.0.0.1:8642"),
             "--hermes-timeout",
             str(hermes_timeout),
         ])
-    adapter_max_attempts = body.get("adapter_max_attempts") or os.environ.get("AGENTOPS_ADAPTER_MAX_ATTEMPTS")
     if adapter_max_attempts is not None:
         cmd.extend(["--adapter-max-attempts", str(adapter_max_attempts)])
-    adapter_retry_delay = body.get("adapter_retry_delay_sec") or os.environ.get("AGENTOPS_ADAPTER_RETRY_DELAY_SEC")
     if adapter_retry_delay is not None:
         cmd.extend(["--adapter-retry-delay-sec", str(adapter_retry_delay)])
     if adapter == "openclaw":

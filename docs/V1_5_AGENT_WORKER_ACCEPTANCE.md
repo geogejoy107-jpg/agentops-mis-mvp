@@ -1448,6 +1448,9 @@ workflow boundary. The worker already had retry support; the customer-worker
 sync path now forwards `adapter_max_attempts` and `adapter_retry_delay_sec` to
 the repo-local worker process, and the CLI exposes the same knobs as
 `agentops workflow customer-worker-task --adapter-max-attempts ...`.
+The server-side subprocess timeout budget now scales with
+`adapter_max_attempts * hermes_timeout + retry_delay`, so a retry-capable Hermes
+worker is not killed after only the first long request window.
 
 Deterministic retry smoke:
 
@@ -1526,6 +1529,9 @@ The default path is read-only and reports:
   threshold;
 - safe recommended actions, with `token_omitted:true` and
   `live_execution_performed:false`.
+- stale enrollment rows expose only `token_ref` plus `token_id_omitted:true`;
+  raw `agtok_...` token ids must not appear in read-only or confirmed cleanup
+  responses.
 
 The confirmed apply path releases stale running tasks back to `planned`, blocks
 linked running runs, revokes never-seen enrollments, cascades child sessions, and
@@ -1544,6 +1550,24 @@ The hygiene run cleared historical stuck worker tasks and never-seen demo
 enrollments so `agentops worker status` reports `fleet_health.overall=ready`.
 `worker status` also redacts historical token/session-like ids in recent runtime
 events before returning them to CLI/UI clients.
+
+Follow-up hardening found that the read-only hygiene response could still expose
+raw enrollment `token_id` values. The public response now uses `token_ref` and
+`token_id_omitted:true` for plan, rejected-apply, and confirmed-apply payloads;
+`worker_fleet_hygiene_smoke.py` fails if `agtok_...` appears in any hygiene
+response.
+
+Latest isolated real OpenClaw customer-worker acceptance:
+
+```text
+script: python3 scripts/customer_worker_real_runtime_acceptance.py --base-url http://127.0.0.1:18891 --confirm-live --adapter openclaw
+OpenClaw run: run_gw_336f0c2e3244
+OpenClaw task: tsk_worker_ui_openclaw_20260622181338_cabe96c5
+OpenClaw artifact: art_customer_worker_task_run_gw_336f0c2e3244
+OpenClaw plan: plan_182f0e9028306fe0
+OpenClaw manifest: pem_35d37a327c3115e5
+OpenClaw evidence: tool_calls 1, evaluations 1, runtime_events 14, audit_logs 12, artifacts 2, memories 2, approvals 1
+```
 
 ## 2026-06-22 Remote Worker Scope Baseline
 

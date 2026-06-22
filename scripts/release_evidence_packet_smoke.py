@@ -222,6 +222,12 @@ TEST_COMMANDS = [
         "ci_step": "Server-backed smoke suite",
     },
     {
+        "id": "worker_fleet_hygiene",
+        "command": "python3 scripts/worker_fleet_hygiene_smoke.py --base-url \"$AGENTOPS_BASE_URL\"",
+        "summary": "Worker fleet hygiene can plan/apply stuck-task release and stale-enrollment revocation without leaking token IDs.",
+        "ci_step": "Server-backed smoke suite",
+    },
+    {
         "id": "agent_gateway_knowledge_scope",
         "command": "python3 scripts/agent_gateway_knowledge_scope_smoke.py",
         "summary": "Agent Gateway scoped knowledge visibility, provenance and spoof-resistance gate.",

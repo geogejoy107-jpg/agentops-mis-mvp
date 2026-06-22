@@ -6,6 +6,7 @@ import argparse
 import datetime as dt
 import json
 import os
+import re
 import sqlite3
 import sys
 import urllib.error
@@ -50,6 +51,10 @@ def http_json(method: str, base_url: str, path: str, payload: dict | None = None
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise AssertionError(message)
+
+
+def token_like_leaked(payload: object) -> bool:
+    return bool(re.search(r"(Authorization:|Bearer |agtok_[A-Za-z0-9_-]{16,}|agtsess_[A-Za-z0-9_-]{16,}|sk-[A-Za-z0-9_-]{16,}|ntn_[A-Za-z0-9_-]{16,})", json.dumps(payload, ensure_ascii=False)))
 
 
 def make_stale(task_id: str, run_id: str, token_id: str) -> None:
@@ -131,17 +136,25 @@ def smoke(base_url: str, stamp: str) -> dict:
         require(status == 200, f"hygiene plan failed: {status} {plan}")
         require(plan.get("safety", {}).get("read_only") is True, f"plan should be read-only: {plan}")
         require(task_id in {item.get("task_id") for item in plan.get("stuck_tasks", [])}, f"stuck task missing from hygiene plan: {plan}")
-        require(token_id in {item.get("token_id") for item in plan.get("stale_never_seen_enrollments", [])}, f"stale enrollment missing from hygiene plan: {plan}")
+        stale_public = plan.get("stale_never_seen_enrollments", [])
+        token_refs = {item.get("token_ref") for item in stale_public}
+        require(any(item.get("token_id_omitted") is True for item in stale_public), f"stale enrollment did not omit token id: {plan}")
+        require(not any(item.get("token_id") for item in stale_public), f"stale enrollment leaked token id: {plan}")
+        require(bool(token_refs), f"stale enrollment missing token refs: {plan}")
+        require(not token_like_leaked(plan), f"hygiene plan leaked token-like material: {plan}")
 
         status, rejected = http_json("POST", base_url, "/api/workers/fleet/hygiene", {**query, "apply": True})
         require(status == 409 and rejected.get("error") == "confirm_cleanup_required", f"cleanup should require confirmation: {status} {rejected}")
+        require(not token_like_leaked(rejected), f"rejected cleanup leaked token-like material: {rejected}")
 
         status, applied = http_json("POST", base_url, "/api/workers/fleet/hygiene", {**query, "apply": True, "confirm_cleanup": True})
         require(status in {200, 207}, f"hygiene apply failed: {status} {applied}")
         released_ids = {item.get("task_id") for item in applied.get("released_tasks", [])}
-        revoked_ids = {item.get("token_id") for item in applied.get("revoked_enrollments", [])}
+        revoked_refs = {item.get("token_ref") for item in applied.get("revoked_enrollments", [])}
         require(task_id in released_ids, f"task was not released by hygiene: {applied}")
-        require(token_id in revoked_ids, f"enrollment was not revoked by hygiene: {applied}")
+        require(token_refs & revoked_refs, f"enrollment was not revoked by hygiene: {applied}")
+        require(not any(item.get("token_id") for item in applied.get("revoked_enrollments", [])), f"applied cleanup leaked token id: {applied}")
+        require(not token_like_leaked(applied), f"applied cleanup leaked token-like material: {applied}")
 
         status, detail = http_json("GET", base_url, f"/api/tasks/{task_id}")
         require(status == 200, f"task detail failed: {status} {detail}")
@@ -155,7 +168,8 @@ def smoke(base_url: str, stamp: str) -> dict:
             "agent_id": agent_id,
             "task_id": task_id,
             "run_id": run_id,
-            "token_id": token_id,
+            "token_ref": next(iter(token_refs)) if token_refs else "",
+            "token_id_omitted": True,
             "planned_stuck_tasks": plan.get("summary", {}).get("stuck_tasks"),
             "planned_stale_enrollments": plan.get("summary", {}).get("stale_never_seen_enrollments"),
             "released_tasks": len(applied.get("released_tasks", [])),
