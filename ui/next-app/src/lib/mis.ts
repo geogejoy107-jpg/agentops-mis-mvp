@@ -71,6 +71,31 @@ export type EvaluationSummary = {
   created_at?: string;
 };
 
+export type RuntimeConnectorSummary = {
+  runtime_connector_id?: string;
+  connector_id?: string;
+  provider?: string;
+  connector_type?: string;
+  profile_name?: string;
+  base_url?: string;
+  binary_path?: string;
+  status?: string;
+  allow_real_run?: number | boolean;
+  require_confirm_run?: number | boolean;
+  trust_status?: string;
+  trust_note?: string | null;
+  trust_updated_at?: string | null;
+  last_health_at?: string | null;
+  last_error?: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type RuntimeConnectorTrustResponse = {
+  connector?: RuntimeConnectorSummary;
+  token_omitted?: boolean;
+};
+
 export type ApprovalSummary = {
   approval_id: string;
   decision: string;
@@ -639,6 +664,24 @@ export async function loadToolCalls(): Promise<ToolCallSummary[]> {
 
 export async function loadEvaluations(): Promise<EvaluationSummary[]> {
   return misJson<EvaluationSummary[]>("/evaluations");
+}
+
+export async function loadRuntimeConnectors(): Promise<RuntimeConnectorSummary[]> {
+  return misJson<RuntimeConnectorSummary[]>("/runtime-connectors");
+}
+
+export async function updateRuntimeConnectorTrust(
+  connectorId: string,
+  trustStatus: "trusted" | "review_required" | "blocked",
+  trustNote?: string,
+): Promise<RuntimeConnectorTrustResponse> {
+  return misJson<RuntimeConnectorTrustResponse>(`/runtime-connectors/${encodeURIComponent(connectorId)}/trust`, {
+    method: "POST",
+    body: JSON.stringify({
+      trust_status: trustStatus,
+      trust_note: trustNote || `Next operator marked ${connectorId} as ${trustStatus}.`,
+    }),
+  });
 }
 
 export async function loadApprovals(): Promise<ApprovalSummary[]> {

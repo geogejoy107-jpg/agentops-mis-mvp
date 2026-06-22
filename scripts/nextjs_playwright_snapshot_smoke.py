@@ -19,6 +19,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.parse
 import urllib.request
 import uuid
 from pathlib import Path
@@ -39,6 +40,7 @@ ROUTES = [
     ("/workspace/runs", ["Run Ledger", "Run", "Status"]),
     ("/workspace/tool-calls", ["Tool Call Ledger", "high-risk", "Run"]),
     ("/workspace/evaluations", ["Evaluation Room", "failed gates", "average score"]),
+    ("/workspace/connectors", ["Runtime Connectors", "Runtime Trust Registry", "blocked"]),
     ("/workspace/approvals", ["Approvals", "Pending approval", "Decision history"]),
     ("/workspace/memory", ["Memory", "candidate", "approved"]),
     ("/workspace/audit", ["Audit", "audit events", "Actor"]),
@@ -92,6 +94,24 @@ def wait_http(url: str, timeout_sec: int = 45) -> None:
 def http_json(url: str) -> object:
     with urllib.request.urlopen(url, timeout=10) as response:
         return json.loads(response.read().decode("utf-8"))
+
+
+def http_form(url: str, payload: dict[str, str]) -> int:
+    class NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            return None
+
+    data = urllib.parse.urlencode(payload).encode("utf-8")
+    request = urllib.request.Request(url, data=data, method="POST")
+    request.add_header("Content-Type", "application/x-www-form-urlencoded")
+    opener = urllib.request.build_opener(NoRedirect)
+    try:
+        with opener.open(request, timeout=10) as response:
+            return int(response.status)
+    except urllib.error.HTTPError as exc:
+        if exc.code in {302, 303, 307, 308}:
+            return int(exc.code)
+        raise
 
 
 def seed_customer_project_fixture(db_path: str) -> str:
@@ -472,6 +492,63 @@ def archive_customer_project_report(next_base: str, project_id: str, env: dict[s
     }
 
 
+def review_first_runtime_connector(next_base: str, env: dict[str, str]) -> dict:
+    connectors_url = f"{next_base}/api/mis/runtime-connectors"
+    connectors = http_json(connectors_url)
+    require(isinstance(connectors, list), "Runtime connectors API did not return a list")
+    candidates = [
+        row for row in connectors
+        if isinstance(row, dict)
+        and str(row.get("runtime_connector_id") or row.get("connector_id") or "")
+        and row.get("trust_status") != "review_required"
+    ]
+    require(bool(candidates), "No runtime connector available for trust review smoke")
+    candidate_ids = {str(row.get("runtime_connector_id") or row.get("connector_id")) for row in candidates}
+
+    target = next_base.rstrip("/") + "/workspace/connectors"
+    goto = playwright(env, "goto", target)
+    require(goto.returncode == 0, f"Playwright goto failed for connectors interaction: {goto.stderr or goto.stdout}")
+    wait_for_snapshot_text(
+        env,
+        "/workspace/connectors",
+        lambda text: "Runtime Trust Registry" in text and "blocked" in text,
+        "connectors page to render trust registry controls",
+    )
+    preferred_ids = [item for item in sorted(candidate_ids) if "agnesfallback" in item]
+    selected_id = preferred_ids[0] if preferred_ids else sorted(candidate_ids)[-1]
+    status = http_form(
+        next_base.rstrip("/") + "/workspace/connectors/trust",
+        {"connector_id": selected_id, "trust_status": "review_required"},
+    )
+    require(status < 500, f"Next connector trust fallback returned {status}")
+
+    def reviewed(payload: object) -> bool:
+        require(isinstance(payload, list), "Runtime connectors API did not return a list after trust update")
+        return any(
+            isinstance(row, dict)
+            and str(row.get("runtime_connector_id") or row.get("connector_id")) in candidate_ids
+            and row.get("trust_status") == "review_required"
+            for row in payload
+        )
+
+    after_payload = wait_for_json(connectors_url, reviewed, "a runtime connector to become review_required")
+    time.sleep(0.8)
+    after = snapshot_text(env, "/workspace/connectors")
+    require("review_required" in after, "Connectors page did not show review_required trust status after click")
+    reviewed_row = next(
+        row for row in after_payload
+        if isinstance(row, dict)
+        and str(row.get("runtime_connector_id") or row.get("connector_id")) in candidate_ids
+        and row.get("trust_status") == "review_required"
+    )
+    connector_id = str(reviewed_row.get("runtime_connector_id") or reviewed_row.get("connector_id"))
+    return {
+        "connector_id": connector_id,
+        "form_fallback_status": status,
+        "trust_status": reviewed_row.get("trust_status"),
+    }
+
+
 def verify_dispatch_entitlement_block(next_base: str, env: dict[str, str]) -> dict:
     projects_url = f"{next_base}/api/mis/workflows/customer-projects?limit=25"
     before_projects = http_json(projects_url)
@@ -686,6 +763,7 @@ def main() -> int:
             interactions = {
                 "approval_review": approve_first_pending_approval(next_base, pw_env),
                 "memory_review": approve_first_candidate_memory(next_base, pw_env),
+                "runtime_connector_trust_review": review_first_runtime_connector(next_base, pw_env),
                 "customer_report_archive": archive_customer_project_report(next_base, project_id, pw_env),
                 "dispatch_entitlement_block": verify_dispatch_entitlement_block(next_base, pw_env),
                 "dispatch_template_run_success": verify_dispatch_template_run_success(next_base, entitlement_path, pw_env),
@@ -699,6 +777,7 @@ def main() -> int:
                 "governance_sessions_token_omitted": http_json(f"{next_base}/api/mis/agent-gateway/sessions").get("token_omitted"),
                 "deployment_local_token_omitted": http_json(f"{next_base}/api/mis/local/readiness").get("token_omitted"),
                 "customer_projects": len(http_json(f"{next_base}/api/mis/workflows/customer-projects?limit=25").get("projects", [])),
+                "runtime_connectors": len(http_json(f"{next_base}/api/mis/runtime-connectors")),
                 "security_status": http_json(f"{next_base}/api/mis/security/production-readiness").get("status"),
                 "worker_status": http_json(f"{next_base}/api/mis/workers/status").get("status"),
             }

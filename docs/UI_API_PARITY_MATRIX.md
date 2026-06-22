@@ -46,6 +46,7 @@ route retirement:
 | Task and run ledgers | `task_list`, `task_detail`, `run_ledger`, `run_detail` | `covered` | Not allowed |
 | Tool call ledger | `tool_calls` | `covered` | Not allowed |
 | Evaluation room | `evaluation_room` | `covered` | Not allowed |
+| Runtime connectors | `runtime_connectors` | `covered` | Not allowed |
 
 ## Current Important Gaps
 
@@ -57,10 +58,10 @@ route retirement:
   production safety and readiness; Vite remains canonical for local worker
   start/stop/restart, task release, remote enrollment mutation, and detailed
   operator controls.
-- Admin-only Vite routes for connectors, external bases, per-agent performance,
-  and the full template/base-switching console are deferred. Tool calls and the
-  evaluation room now have read-only Next parity at `/workspace/tool-calls` and
-  `/workspace/evaluations`.
+- Admin-only Vite routes for external bases, per-agent performance, and the
+  full template/base-switching console are deferred. Tool calls, evaluation
+  room, and runtime connectors now have Next parity at `/workspace/tool-calls`,
+  `/workspace/evaluations`, and `/workspace/connectors`.
 - Several `covered` routes still need a route-level Vite/Next data-shape diff
   before a retirement decision. Browser snapshot evidence is necessary but not
   sufficient.
@@ -74,6 +75,12 @@ route retirement:
   rows to `/workspace/runs/:runId` and `/workspace/tasks/:taskId`, and keeps
   `/admin/evaluations` canonical until evaluation-case actions and route
   retirement are explicit.
+- Runtime Connectors now have a Next parity route at `/workspace/connectors`.
+  It reads `GET /runtime-connectors`, exposes status, trust, allow-real-run,
+  require-confirm, endpoint, health, and connector-audit evidence, and writes
+  trust changes through the Next `/workspace/connectors/trust` fallback to
+  `POST /runtime-connectors/:id/trust`. `/admin/connectors` remains canonical
+  until browser evidence and route retirement are explicit.
 - Task and run list/detail now have first route-level evidence:
   `python3 scripts/ui_task_run_route_parity_smoke.py`
   (`ui_task_run_route_parity_v1`) checks Next list links to detail routes and

@@ -567,12 +567,15 @@
     {
       "id": "runtime_connectors",
       "capability": "Runtime connector status and trust updates.",
-      "status": "deferred",
-      "gate4_required": false,
+      "status": "covered",
+      "gate4_required": true,
       "vite_routes": [
         "/admin/connectors"
       ],
-      "next_routes": [],
+      "next_routes": [
+        "/workspace/connectors",
+        "/workspace/connectors/trust"
+      ],
       "api_contracts": [
         "GET /runtime-connectors",
         "POST /runtime-connectors/:id/trust"
@@ -581,12 +584,19 @@
         "ui/start-building-app/src/app/components/pages/RuntimeConnectors.tsx",
         "ui/start-building-app/src/app/data/liveApi.ts"
       ],
-      "next_files": [],
+      "next_files": [
+        "ui/next-app/app/workspace/connectors/page.tsx",
+        "ui/next-app/app/workspace/connectors/trust/route.ts",
+        "ui/next-app/src/components/ConnectorPages.tsx",
+        "ui/next-app/src/lib/mis.ts"
+      ],
       "evidence_commands": [
-        "python3 scripts/ui_api_parity_matrix_smoke.py"
+        "python3 scripts/ui_api_parity_matrix_smoke.py",
+        "python3 scripts/nextjs_parity_smoke.py",
+        "python3 scripts/nextjs_playwright_snapshot_smoke.py"
       ],
       "retirement_allowed": false,
-      "retirement_gate": "Deferred because connector trust mutation is not part of the first Next route set."
+      "retirement_gate": "Next runtime connectors parity covers live connector status, allow-real-run and confirm gates, trust mutation fallback, and connector audit evidence; Vite remains canonical until browser evidence and route retirement are explicit."
     },
     {
       "id": "external_bases_notion",

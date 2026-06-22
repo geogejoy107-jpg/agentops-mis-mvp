@@ -41,6 +41,8 @@ def main() -> int:
         NEXT_APP / "app" / "workspace" / "runs" / "[runId]" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "tool-calls" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "evaluations" / "page.tsx",
+        NEXT_APP / "app" / "workspace" / "connectors" / "page.tsx",
+        NEXT_APP / "app" / "workspace" / "connectors" / "trust" / "route.ts",
         NEXT_APP / "app" / "admin" / "tasks" / "[taskId]" / "page.tsx",
         NEXT_APP / "app" / "admin" / "runs" / "page.tsx",
         NEXT_APP / "app" / "admin" / "runs" / "[runId]" / "page.tsx",
@@ -65,6 +67,7 @@ def main() -> int:
         NEXT_APP / "src" / "components" / "LedgerPages.tsx",
         NEXT_APP / "src" / "components" / "ToolCallPages.tsx",
         NEXT_APP / "src" / "components" / "EvaluationPages.tsx",
+        NEXT_APP / "src" / "components" / "ConnectorPages.tsx",
         NEXT_APP / "src" / "components" / "GovernancePages.tsx",
         NEXT_APP / "src" / "components" / "WorkspaceDashboard.tsx",
         NEXT_APP / "src" / "lib" / "mis.ts",
@@ -86,6 +89,7 @@ def main() -> int:
     memory_review_route_text = read_text(NEXT_APP / "app" / "workspace" / "memory" / "review" / "route.ts")
     report_archive_route_text = read_text(NEXT_APP / "app" / "workspace" / "customer-projects" / "[projectId]" / "report" / "archive" / "route.ts")
     dispatch_route_text = read_text(NEXT_APP / "app" / "workspace" / "dispatch" / "template-run" / "route.ts")
+    connector_trust_route_text = read_text(NEXT_APP / "app" / "workspace" / "connectors" / "trust" / "route.ts")
     admin_task_alias_text = read_text(NEXT_APP / "app" / "admin" / "tasks" / "[taskId]" / "page.tsx")
     admin_runs_alias_text = read_text(NEXT_APP / "app" / "admin" / "runs" / "page.tsx")
     admin_run_alias_text = read_text(NEXT_APP / "app" / "admin" / "runs" / "[runId]" / "page.tsx")
@@ -101,6 +105,7 @@ def main() -> int:
     ledger_pages_text = read_text(NEXT_APP / "src" / "components" / "LedgerPages.tsx")
     tool_call_pages_text = read_text(NEXT_APP / "src" / "components" / "ToolCallPages.tsx")
     evaluation_pages_text = read_text(NEXT_APP / "src" / "components" / "EvaluationPages.tsx")
+    connector_pages_text = read_text(NEXT_APP / "src" / "components" / "ConnectorPages.tsx")
     governance_pages_text = read_text(NEXT_APP / "src" / "components" / "GovernancePages.tsx")
     dashboard_text = read_text(NEXT_APP / "src" / "components" / "WorkspaceDashboard.tsx")
     globals_text = read_text(NEXT_APP / "src" / "styles" / "globals.css")
@@ -123,6 +128,8 @@ def main() -> int:
     require("/tasks" in lib_text and "/runs" in lib_text and "/approvals" in lib_text, "workspace parity data misses core ledgers")
     require("/tool-calls" in lib_text and "loadToolCalls" in lib_text, "tool call ledger parity data is missing")
     require("/evaluations" in lib_text and "loadEvaluations" in lib_text, "evaluation ledger parity data is missing")
+    require("/runtime-connectors" in lib_text and "loadRuntimeConnectors" in lib_text, "runtime connector parity data is missing")
+    require("updateRuntimeConnectorTrust" in lib_text, "runtime connector trust parity action is missing")
     require("/memories" in lib_text and "/audit?limit=120" in lib_text, "governance parity data misses memory or audit ledgers")
     require("/workers/status" in lib_text and "/workers/adapter-readiness" in lib_text, "agent-control parity data misses worker readiness")
     require("/security/production-readiness" in lib_text, "agent-control parity data misses production readiness")
@@ -140,9 +147,11 @@ def main() -> int:
     require("/memories/${encodeURIComponent(memoryId)}/${action}" in memory_review_route_text, "memory review form fallback must write through MIS API")
     require("/workflows/customer-projects/${encodeURIComponent(projectId)}/report-artifact" in report_archive_route_text, "customer report archive fallback must write through MIS API")
     require("/workflows/customer-task-templates/run" in dispatch_route_text and "entitlement_required" in dispatch_route_text, "dispatch template fallback must preserve entitlement blocking")
+    require("/runtime-connectors/${encodeURIComponent(connectorId)}/trust" in connector_trust_route_text, "connector trust form fallback must write through MIS API")
     require("/workspace/tasks" in app_frame_text and "/workspace/runs" in app_frame_text, "Next.js nav must expose task and run parity routes")
     require("/workspace/tool-calls" in app_frame_text, "Next.js nav must expose tool call ledger parity route")
     require("/workspace/evaluations" in app_frame_text, "Next.js nav must expose evaluation ledger parity route")
+    require("/workspace/connectors" in app_frame_text, "Next.js nav must expose runtime connector parity route")
     require("/workspace/memory" in app_frame_text and "/workspace/audit" in app_frame_text, "Next.js nav must expose governance parity routes")
     require("/workspace/reports" in app_frame_text, "Next.js nav must expose reports parity route")
     require("/workspace/commercial" in app_frame_text, "Next.js nav must expose commercial parity route")
@@ -181,6 +190,10 @@ def main() -> int:
     require("/workspace/runs/${encodeURIComponent(evaluation.run_id)}" in evaluation_pages_text, "evaluation parity page must link evaluations to workspace run detail")
     require("/workspace/tasks/${encodeURIComponent(evaluation.task_id)}" in evaluation_pages_text, "evaluation parity page must link evaluations to workspace task detail")
     require("average score" in evaluation_pages_text and "failed gates" in evaluation_pages_text, "evaluation parity page must expose score and failed gate summaries")
+    require("RuntimeConnectorsParityPage" in connector_pages_text and "loadRuntimeConnectors" in connector_pages_text, "runtime connector parity page must load live connectors")
+    require("Runtime Trust Registry" in connector_pages_text and "allow real run" in connector_pages_text and "require confirm" in connector_pages_text, "runtime connector parity page must expose trust and confirmation gates")
+    require('action="/workspace/connectors/trust"' in connector_pages_text, "runtime connector parity page must keep the Next form fallback")
+    require("updateRuntimeConnectorTrust" in connector_pages_text and 'trustStatus === "blocked" ? "Block"' in connector_pages_text, "runtime connector parity page must expose trust update controls")
     require("/workspace/tasks/${encodeURIComponent(taskId)}" in admin_task_alias_text and "redirect(" in admin_task_alias_text, "legacy admin task detail must redirect to workspace task detail")
     require('redirect("/workspace/runs")' in admin_runs_alias_text, "legacy admin run ledger must redirect to workspace runs")
     require("/workspace/runs/${encodeURIComponent(runId)}" in admin_run_alias_text and "redirect(" in admin_run_alias_text, "legacy admin run detail must redirect to workspace run detail")
@@ -220,6 +233,7 @@ def main() -> int:
             "/workspace/runs/[runId]",
             "/workspace/tool-calls",
             "/workspace/evaluations",
+            "/workspace/connectors",
             "/admin/tasks/[taskId]",
             "/admin/runs",
             "/admin/runs/[runId]",
