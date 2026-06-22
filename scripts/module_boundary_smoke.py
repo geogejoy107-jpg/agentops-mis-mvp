@@ -15,6 +15,9 @@ if str(ROOT) not in sys.path:
 from agentops_mis_core.read_model_cache import ReadModelCache
 from agentops_mis_core.commander_work_packages import (
     build_commander_work_packages_readback,
+    build_commander_project_board_gates,
+    commander_project_board_next_actions,
+    commander_project_board_status,
     commander_work_package_next_action,
     commander_work_package_status,
 )
@@ -114,11 +117,17 @@ SERVER_WORKER_FLEET_IMPORTS = {
 }
 EXTRACTED_COMMANDER_WORK_PACKAGE_HELPERS = {
     "build_commander_work_packages_readback",
+    "build_commander_project_board_gates",
+    "commander_project_board_next_actions",
+    "commander_project_board_status",
     "commander_work_package_next_action",
     "commander_work_package_status",
 }
 SERVER_COMMANDER_WORK_PACKAGE_IMPORTS = {
     "build_commander_work_packages_readback",
+    "build_commander_project_board_gates",
+    "commander_project_board_next_actions",
+    "commander_project_board_status",
     "commander_work_package_next_action",
     "commander_work_package_status",
 }
@@ -430,6 +439,22 @@ def main() -> int:
     require((commander_readback.get("summary", {}).get("coding_evidence") or {}).get("partial") == 1, "commander coding evidence summary failed", failures)
     require(commander_readback.get("safety", {}).get("read_only") is True, "commander readback must stay read-only", failures)
     require(commander_readback.get("recommended_next_actions"), "commander readback missing next actions", failures)
+    commander_gates = build_commander_project_board_gates(
+        closed_loop_runs=0,
+        worker_status={"status": "ready", "running_workers": 0, "stuck_worker_tasks": 0},
+        worker_fleet={"overall": "attention", "recommended_actions": ["agentops worker status"]},
+        pending_approval_count=1,
+        memory_candidate_count=0,
+        approved_memory_count=2,
+        synthesis_lifecycle={"status": "promotion_available", "summary": {"synthesis_artifacts": 1, "pending_reviews": 0, "promoted_delivery_artifacts": 0}, "next_actions": ["agentops commander promote-synthesis --artifact-id art_smoke"]},
+        adapter_status="ready",
+        adapter_summary={"recommended_adapter": "mock", "ready_adapters": ["mock"]},
+    )
+    commander_gate_ids = {gate.get("id") for gate in commander_gates}
+    require({"evidence_chain", "worker_fleet_health", "approvals_pending", "memory_review", "synthesis_lifecycle", "adapter_readiness"}.issubset(commander_gate_ids), "commander project-board gates missing expected IDs", failures)
+    require(commander_project_board_status(commander_gates) == "attention", "commander project-board status aggregation failed", failures)
+    commander_board_actions = commander_project_board_next_actions(commander_gates, ["agentops local readiness"])
+    require("agentops local readiness" in commander_board_actions, "commander project-board readiness next action merge failed", failures)
 
     command = "python3 scripts/module_boundary_smoke.py"
     require(command in ci_text, "module boundary smoke missing from CI", failures)

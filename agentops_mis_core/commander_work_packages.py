@@ -150,3 +150,94 @@ def build_commander_work_packages_readback(
         "token_omitted": True,
         "live_execution_performed": False,
     }
+
+
+def build_commander_project_board_gates(
+    *,
+    closed_loop_runs: int,
+    worker_status: dict[str, Any],
+    worker_fleet: dict[str, Any],
+    pending_approval_count: int,
+    memory_candidate_count: int,
+    approved_memory_count: int,
+    synthesis_lifecycle: dict[str, Any],
+    adapter_status: str,
+    adapter_summary: dict[str, Any],
+) -> list[dict[str, Any]]:
+    synthesis_summary = synthesis_lifecycle.get("summary") or {}
+    return [
+        {
+            "id": "evidence_chain",
+            "status": "pass" if closed_loop_runs else "warn",
+            "summary": f"{closed_loop_runs} closed-loop run(s) with task/run/tool/eval/audit/artifact evidence",
+            "next_action": "Run a mock customer-worker task to create fresh evidence." if not closed_loop_runs else "Review recent run graph before delivery.",
+        },
+        {
+            "id": "worker_fleet_health",
+            "status": "pass" if worker_fleet.get("overall") == "ready" else "fail" if worker_fleet.get("overall") == "blocked" else "warn",
+            "summary": f"fleet={worker_fleet.get('overall') or worker_status.get('status') or 'unknown'}; running_workers={worker_status.get('running_workers', 0)}; stuck_tasks={worker_status.get('stuck_worker_tasks', 0)}",
+            "next_action": (worker_fleet.get("recommended_actions") or ["agentops worker status"])[0],
+        },
+        {
+            "id": "approvals_pending",
+            "status": "warn" if pending_approval_count else "pass",
+            "summary": f"{pending_approval_count} pending approval(s)",
+            "next_action": "Open /workspace/approvals and approve or reject pending gates." if pending_approval_count else "No approval action needed.",
+        },
+        {
+            "id": "memory_review",
+            "status": "warn" if memory_candidate_count else "pass" if approved_memory_count else "warn",
+            "summary": f"{memory_candidate_count} candidate memory item(s), {approved_memory_count} approved",
+            "next_action": "Review candidate memories before using them as project context." if memory_candidate_count else "Capture durable project lessons after the next delivery.",
+        },
+        {
+            "id": "synthesis_lifecycle",
+            "status": (
+                "warn" if synthesis_summary.get("pending_reviews")
+                else "warn" if synthesis_lifecycle.get("status") == "promotion_available"
+                else "pass" if synthesis_summary.get("promoted_delivery_artifacts")
+                else "warn"
+            ),
+            "summary": (
+                f"{synthesis_summary.get('synthesis_artifacts', 0)} synthesis report(s), "
+                f"{synthesis_summary.get('pending_reviews', 0)} pending review(s), "
+                f"{synthesis_summary.get('promoted_delivery_artifacts', 0)} promoted delivery artifact(s)"
+            ),
+            "next_action": (synthesis_lifecycle.get("next_actions") or ["agentops commander synthesize --status ready_for_review --confirm-create"])[0],
+        },
+        {
+            "id": "adapter_readiness",
+            "status": "pass" if adapter_status == "ready" else "warn" if adapter_status == "degraded" else "fail",
+            "summary": f"recommended_adapter={adapter_summary.get('recommended_adapter') or 'unknown'}; ready={','.join(adapter_summary.get('ready_adapters') or []) or 'none'}",
+            "next_action": "agentops worker readiness",
+        },
+    ]
+
+
+def commander_project_board_status(integration_gates: list[dict[str, Any]]) -> str:
+    if any(gate.get("status") == "fail" for gate in integration_gates):
+        return "blocked"
+    if any(gate.get("status") == "warn" for gate in integration_gates):
+        return "attention"
+    return "ready"
+
+
+def commander_project_board_next_actions(
+    integration_gates: list[dict[str, Any]],
+    readiness_next_actions: list[str] | None = None,
+) -> list[str]:
+    recommended_next_actions: list[str] = []
+    for gate in integration_gates:
+        action = gate.get("next_action")
+        if gate.get("status") in {"fail", "warn"} and action and action not in recommended_next_actions:
+            recommended_next_actions.append(action)
+    for action in readiness_next_actions or []:
+        if action not in recommended_next_actions:
+            recommended_next_actions.append(action)
+    if not recommended_next_actions:
+        recommended_next_actions = [
+            "Select the highest-priority planned task and dispatch a mock worker.",
+            "Review recent artifacts and approve customer-facing delivery evidence.",
+            "Run agentops worker readiness before using live Hermes/OpenClaw adapters.",
+        ]
+    return recommended_next_actions[:8]

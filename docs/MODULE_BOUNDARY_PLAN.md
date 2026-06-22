@@ -156,6 +156,27 @@ Still owned by `server.py`:
 - task description parsing and safe text redaction
 - work-package planning, dispatch, coding workspace, evidence recording and synthesis writes
 
+### Slice 7: Commander Project-Board Gate Aggregation
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/commander_work_packages.py`
+
+Moved out of `server.py`:
+
+- Commander project-board integration gate construction
+- board status aggregation from pass/warn/fail gates
+- recommended next-action merging from integration gates and local readiness
+
+Still owned by `server.py`:
+
+- HTTP routes
+- local readiness, worker, adapter, synthesis and SQLite count producers
+- recent artifact/task/run queries
+- final project-board payload assembly
+
 Verification:
 
 ```bash
@@ -173,6 +194,6 @@ python3 scripts/commander_work_package_dispatch_smoke.py
 ## Next Candidate Slices
 
 - Approval Wall prepared-action helpers.
-- Commander project-board integration gate aggregation.
+- Operator command-center read-model aggregation.
 
 Each candidate must be extracted in a separate, smoke-backed slice.

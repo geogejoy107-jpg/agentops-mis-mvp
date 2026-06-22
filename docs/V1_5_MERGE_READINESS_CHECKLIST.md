@@ -253,8 +253,8 @@ coverage for every external side-effect path.
   `agentops_mis_runtime/trust.py`; read-model cache behavior now lives in
   `agentops_mis_core/read_model_cache.py`; worker status/fleet lane/health
   aggregation now lives in `agentops_mis_core/worker_fleet.py`; Commander
-  work-package status/action/readback summary aggregation now lives in
-  `agentops_mis_core/commander_work_packages.py`; `server.py`
+  work-package status/action/readback summary and project-board gate aggregation
+  now live in `agentops_mis_core/commander_work_packages.py`; `server.py`
   keeps HTTP routes, health probing, refresh orchestration, trust-route runtime
   events, audit writes, endpoint auth checks, read-model producers,
   repo-local daemon/process reads and Commander write workflows.

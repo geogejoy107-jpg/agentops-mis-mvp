@@ -36,6 +36,9 @@ from urllib.error import HTTPError, URLError
 
 from agentops_mis_core.commander_work_packages import (
     build_commander_work_packages_readback,
+    build_commander_project_board_gates,
+    commander_project_board_next_actions,
+    commander_project_board_status,
     commander_work_package_next_action,
     commander_work_package_status,
 )
@@ -13651,7 +13654,7 @@ def worker_adapter_readiness(conn, refresh: bool = True) -> dict:
     }
 
 
-def worker_status(conn) -> dict:
+def worker_status(conn, refresh_runtime: bool = True) -> dict:
     worker_agents = rows_to_dicts(conn.execute(
         """SELECT * FROM agents
         WHERE agent_id LIKE 'agt_worker_%' OR allowed_tools LIKE '%agent_worker%'
@@ -13680,7 +13683,7 @@ def worker_status(conn) -> dict:
     stuck_tasks = worker_stuck_tasks(conn)
     remote_fleet = worker_remote_fleet_summary(conn)
     stuck_workflow_jobs = workflow_stuck_jobs(conn, threshold_sec=900, limit=5)
-    adapter_readiness = worker_adapter_readiness(conn)
+    adapter_readiness = worker_adapter_readiness(conn, refresh=refresh_runtime)
     return build_worker_status_payload(
         worker_agents=worker_agents,
         worker_runs=worker_runs,
@@ -13855,13 +13858,13 @@ def safe_commander_readiness_snapshot(conn: sqlite3.Connection, headers) -> tupl
     readiness: dict = {}
     worker: dict = {}
     try:
-        readiness = local_readiness(conn, headers)
+        readiness = local_readiness(conn, headers, refresh_runtime=False)
     except Exception as exc:
         readiness = {"status": "unknown", "error": redact_text(str(exc), 160)}
     finally:
         conn.rollback()
     try:
-        worker = worker_status(conn)
+        worker = worker_status(conn, refresh_runtime=False)
     except Exception as exc:
         worker = {"status": "unknown", "error": redact_text(str(exc), 160)}
     finally:
@@ -14195,69 +14198,19 @@ def commander_project_board(conn: sqlite3.Connection, headers) -> dict:
     closed_loop_runs = int(((readiness.get("evidence") or {}).get("closed_loop_runs") or 0))
     approved_memory = int(memory_review_counts.get("approved") or 0)
 
-    integration_gates = [
-        {
-            "id": "evidence_chain",
-            "status": "pass" if closed_loop_runs else "warn",
-            "summary": f"{closed_loop_runs} closed-loop run(s) with task/run/tool/eval/audit/artifact evidence",
-            "next_action": "Run a mock customer-worker task to create fresh evidence." if not closed_loop_runs else "Review recent run graph before delivery.",
-        },
-        {
-            "id": "worker_fleet_health",
-            "status": "pass" if worker_fleet.get("overall") == "ready" else "fail" if worker_fleet.get("overall") == "blocked" else "warn",
-            "summary": f"fleet={worker_fleet.get('overall') or worker.get('status') or 'unknown'}; running_workers={worker.get('running_workers', 0)}; stuck_tasks={worker.get('stuck_worker_tasks', 0)}",
-            "next_action": (worker_fleet.get("recommended_actions") or ["agentops worker status"])[0],
-        },
-        {
-            "id": "approvals_pending",
-            "status": "warn" if pending_approval_count else "pass",
-            "summary": f"{pending_approval_count} pending approval(s)",
-            "next_action": "Open /workspace/approvals and approve or reject pending gates." if pending_approval_count else "No approval action needed.",
-        },
-        {
-            "id": "memory_review",
-            "status": "warn" if memory_candidate_count else "pass" if approved_memory else "warn",
-            "summary": f"{memory_candidate_count} candidate memory item(s), {approved_memory} approved",
-            "next_action": "Review candidate memories before using them as project context." if memory_candidate_count else "Capture durable project lessons after the next delivery.",
-        },
-        {
-            "id": "synthesis_lifecycle",
-            "status": (
-                "warn" if synthesis_summary.get("pending_reviews")
-                else "warn" if synthesis_lifecycle.get("status") == "promotion_available"
-                else "pass" if synthesis_summary.get("promoted_delivery_artifacts")
-                else "warn"
-            ),
-            "summary": (
-                f"{synthesis_summary.get('synthesis_artifacts', 0)} synthesis report(s), "
-                f"{synthesis_summary.get('pending_reviews', 0)} pending review(s), "
-                f"{synthesis_summary.get('promoted_delivery_artifacts', 0)} promoted delivery artifact(s)"
-            ),
-            "next_action": (synthesis_lifecycle.get("next_actions") or ["agentops commander synthesize --status ready_for_review --confirm-create"])[0],
-        },
-        {
-            "id": "adapter_readiness",
-            "status": "pass" if adapter_payload.get("status") == "ready" else "warn" if adapter_payload.get("status") == "degraded" else "fail",
-            "summary": f"recommended_adapter={adapter_summary.get('recommended_adapter') or 'unknown'}; ready={','.join(adapter_summary.get('ready_adapters') or []) or 'none'}",
-            "next_action": "agentops worker readiness",
-        },
-    ]
-
-    recommended_next_actions = []
-    for gate in integration_gates:
-        if gate["status"] in {"fail", "warn"} and gate.get("next_action") not in recommended_next_actions:
-            recommended_next_actions.append(gate["next_action"])
-    for action in readiness.get("next_actions") or []:
-        if action not in recommended_next_actions:
-            recommended_next_actions.append(action)
-    if not recommended_next_actions:
-        recommended_next_actions = [
-            "Select the highest-priority planned task and dispatch a mock worker.",
-            "Review recent artifacts and approve customer-facing delivery evidence.",
-            "Run agentops worker readiness before using live Hermes/OpenClaw adapters.",
-        ]
-
-    board_status = "blocked" if any(gate["status"] == "fail" for gate in integration_gates) else "attention" if any(gate["status"] == "warn" for gate in integration_gates) else "ready"
+    integration_gates = build_commander_project_board_gates(
+        closed_loop_runs=closed_loop_runs,
+        worker_status=worker,
+        worker_fleet=worker_fleet,
+        pending_approval_count=pending_approval_count,
+        memory_candidate_count=memory_candidate_count,
+        approved_memory_count=approved_memory,
+        synthesis_lifecycle=synthesis_lifecycle,
+        adapter_status=adapter_payload.get("status") or "unknown",
+        adapter_summary=adapter_summary,
+    )
+    recommended_next_actions = commander_project_board_next_actions(integration_gates, readiness.get("next_actions") or [])
+    board_status = commander_project_board_status(integration_gates)
     return {
         "provider": "agentops-commander",
         "operation": "project_board",
@@ -17225,12 +17178,12 @@ def recent_closed_loop_run_count(conn: sqlite3.Connection, limit: int = 250) -> 
     return count
 
 
-def local_readiness(conn: sqlite3.Connection, headers) -> dict:
+def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = True) -> dict:
     gateway, gateway_status_code = agent_gateway_status(conn, headers)
     security = security_production_readiness(conn, headers)
-    worker = worker_status(conn)
+    worker = worker_status(conn, refresh_runtime=refresh_runtime)
     adapter_summary = worker.get("adapter_readiness") or {}
-    adapter_payload = worker_adapter_readiness(conn)
+    adapter_payload = worker_adapter_readiness(conn, refresh=refresh_runtime)
     synthesis_lifecycle = commander_synthesis_lifecycle(conn, limit=3)
     synthesis_summary = synthesis_lifecycle.get("summary") or {}
     docs = [
@@ -21373,7 +21326,7 @@ def operator_health(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) -
     security = security_production_readiness(conn, effective_headers)
     security_gates = security.get("gates") or []
     local_write_guard_gate = next((gate for gate in security_gates if gate.get("id") == "local_ui_write_guard"), {})
-    worker = worker_status(conn)
+    worker = worker_status(conn, refresh_runtime=refresh_runtime)
     review = human_review_queue(conn, limit)
     action_plan_source = ((handoff.get("sources") or {}).get("action_plan") or {})
     action_plan_summary = action_plan_source.get("summary") or {}
