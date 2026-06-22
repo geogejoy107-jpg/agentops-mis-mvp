@@ -10,7 +10,7 @@ const targets = [
   { name: "pixel-office-1440x900", width: 1440, height: 900, theme: "ops", locale: "zh", path: "/pixel-office" },
 ];
 
-for (const target of targets) {
+async function openTarget(target) {
   const page = await browser.newPage({ viewport: { width: target.width, height: target.height } });
   await page.addInitScript(({ theme, locale }) => {
     localStorage.setItem("agentops-mis-theme", theme);
@@ -18,8 +18,29 @@ for (const target of targets) {
   }, { theme: target.theme, locale: target.locale });
   await page.goto("http://127.0.0.1:5173" + target.path, { waitUntil: "networkidle" });
   await page.locator("main").waitFor({ state: "visible" });
+  return page;
+}
+
+for (const target of targets) {
+  const page = await openTarget(target);
   await page.screenshot({ path: `visual-artifacts/${target.name}.png`, animations: "disabled" });
   await page.close();
 }
+
+const missionPreview = await openTarget({ width: 1440, height: 900, theme: "ops", locale: "zh", path: "/workspace" });
+const missionMapMarker = missionPreview.getByText("原生 React / CSS 工作台", { exact: true }).last();
+await missionMapMarker.waitFor({ state: "visible", timeout: 15000 });
+await missionMapMarker.scrollIntoViewIfNeeded();
+await missionPreview.waitForTimeout(250);
+await missionPreview.screenshot({ path: "visual-artifacts/mission-control-pixel-preview-1440x900.png", animations: "disabled" });
+await missionPreview.close();
+
+const pixelMap = await openTarget({ width: 1440, height: 900, theme: "ops", locale: "zh", path: "/pixel-office" });
+const pixelMapMarker = pixelMap.getByText("原生 React / CSS 工作台", { exact: true }).last();
+await pixelMapMarker.waitFor({ state: "visible", timeout: 15000 });
+await pixelMapMarker.scrollIntoViewIfNeeded();
+await pixelMap.waitForTimeout(250);
+await pixelMap.screenshot({ path: "visual-artifacts/pixel-office-map-1440x900.png", animations: "disabled" });
+await pixelMap.close();
 
 await browser.close();
