@@ -441,6 +441,14 @@ def cmd_operator_loop_audit(args, client: AgentOpsClient) -> dict:
     return client.get("/api/operator/loop-audit", query={"limit": args.limit, "loop_id": args.loop_id or None})
 
 
+def cmd_operator_evidence_report(args, client: AgentOpsClient) -> dict:
+    return client.get("/api/operator/evidence-report", query={
+        "limit": args.limit,
+        "run_id": args.run_id,
+        "task_id": args.task_id,
+    })
+
+
 def cmd_operator_handoff(args, client: AgentOpsClient) -> dict:
     return client.get("/api/operator/handoff", query={"limit": args.limit, "loop_id": args.loop_id or None})
 
@@ -2032,6 +2040,11 @@ def build_parser() -> argparse.ArgumentParser:
     operator_loop.add_argument("--loop-id", default=None)
     operator_loop.add_argument("--limit", type=int, default=12)
     operator_loop.set_defaults(handler="operator_loop_audit")
+    operator_evidence = operator_sub.add_parser("evidence-report", help="Read a run-by-run evidence report across Agent Plans, approvals, manifests, and ledger rows.")
+    operator_evidence.add_argument("--run-id", default=None)
+    operator_evidence.add_argument("--task-id", default=None)
+    operator_evidence.add_argument("--limit", type=int, default=12)
+    operator_evidence.set_defaults(handler="operator_evidence_report")
     operator_handoff = operator_sub.add_parser("handoff", help="Read a loop/operator handoff package with work-order, receipt, review, and safety state.")
     operator_handoff.add_argument("--loop-id", default=None)
     operator_handoff.add_argument("--limit", type=int, default=12)
@@ -2835,6 +2848,7 @@ HANDLERS = {
     "operator_receipt_failure_memories": cmd_operator_receipt_failure_memories,
     "operator_propose_receipt_failure_memory": cmd_operator_propose_receipt_failure_memory,
     "operator_loop_audit": cmd_operator_loop_audit,
+    "operator_evidence_report": cmd_operator_evidence_report,
     "operator_handoff": cmd_operator_handoff,
     "operator_loop_self_check": cmd_operator_loop_self_check,
     "operator_advance_loop": cmd_operator_advance_loop,

@@ -15846,6 +15846,151 @@ def operator_dispatch_evidence_lane(conn: sqlite3.Connection, workspace_id: str,
     }
 
 
+def operator_run_evidence_item(conn: sqlite3.Connection, run: sqlite3.Row) -> dict:
+    run_id = run["run_id"]
+    task_id = run["task_id"]
+    plan = conn.execute("SELECT * FROM agent_plans WHERE plan_id=?", (run["agent_plan_id"] or "",)).fetchone() if run["agent_plan_id"] else latest_agent_plan_for_run(conn, run)
+    plan_verification = verify_agent_plan_row(plan, conn) if plan else None
+    plan_approval = None
+    if plan and plan["approval_id"]:
+        approval = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (plan["approval_id"],)).fetchone()
+        plan_approval = dict(approval) if approval else None
+    manifest = latest_plan_evidence_manifest_for_run(conn, run_id)
+    manifest_verification = verify_plan_evidence_manifest_row(conn, manifest) if manifest else None
+    counts = commander_evidence_counts(conn, task_id=task_id, run_id=run_id)
+    approvals = rows_to_dicts(conn.execute(
+        "SELECT approval_id,decision,tool_call_id,reason,created_at,decided_at FROM approvals WHERE run_id=? ORDER BY created_at DESC",
+        (run_id,),
+    ).fetchall())
+    gap_decision = latest_execution_evidence_gap_decision(conn, run_id)
+    checks = [
+        {"id": "agent_plan_bound", "ok": bool(run["agent_plan_id"] and run["plan_hash"]), "message": "Run is bound to an Agent Plan and plan_hash."},
+        {"id": "agent_plan_verifies", "ok": bool(plan_verification and plan_verification.get("pass")), "message": "Agent Plan passes method-block verification."},
+        {
+            "id": "plan_approval_resolved",
+            "ok": bool(not plan or not plan["approval_required"] or (plan_approval and plan_approval.get("decision") == "approved")),
+            "message": "Approval-required Agent Plan has an approved ledger decision.",
+        },
+        {"id": "plan_evidence_manifest_verified", "ok": bool(manifest_verification and manifest_verification.get("pass")), "message": "Latest plan_evidence_manifest verifies the run evidence chain."},
+        {"id": "tool_evidence", "ok": int(counts.get("tool_calls") or 0) > 0, "message": "Run has tool_call evidence."},
+        {"id": "evaluation_evidence", "ok": int(counts.get("evaluations") or 0) > 0, "message": "Run has evaluation evidence."},
+        {"id": "artifact_evidence", "ok": int(counts.get("artifacts") or 0) > 0, "message": "Run or task has artifact evidence."},
+        {"id": "audit_evidence", "ok": int(counts.get("audit_logs") or 0) > 0, "message": "Run/task chain has audit evidence."},
+        {"id": "approval_queue_clear", "ok": not any(item.get("decision") == "pending" for item in approvals), "message": "Run has no pending approval rows."},
+    ]
+    failed = [check for check in checks if not check["ok"]]
+    blocking_ids = {"agent_plan_bound", "agent_plan_verifies", "plan_approval_resolved", "plan_evidence_manifest_verified"}
+    status = "blocked" if any(check["id"] in blocking_ids for check in failed) else "attention" if failed else "ready"
+    commands = [
+        f"agentops run get --run-id {run_id}",
+    ]
+    if plan:
+        commands.append(f"agentops agent-plan verify --plan-id {plan['plan_id']}")
+    if not manifest:
+        commands.append(f"agentops plan-evidence create --plan-id {plan['plan_id'] if plan else '<plan_id>'} --run-id {run_id} --mismatch-policy block")
+    elif manifest_verification and not manifest_verification.get("pass"):
+        commands.append(f"agentops plan-evidence verify --manifest-id {manifest['manifest_id']}")
+    if any(item.get("decision") == "pending" for item in approvals):
+        pending_id = next((item.get("approval_id") for item in approvals if item.get("decision") == "pending"), None)
+        if pending_id:
+            commands.append(f"agentops approval inspect --approval-id {pending_id}")
+    if status != "ready" and not gap_decision:
+        commands.append(f"agentops operator remediate-evidence-gap --run-id {run_id} --confirm-create")
+    return {
+        "run_id": run_id,
+        "task_id": task_id,
+        "agent_id": run["agent_id"],
+        "run_status": run["status"],
+        "status": status,
+        "checks": checks,
+        "failed_check_ids": [check["id"] for check in failed],
+        "evidence_counts": counts,
+        "agent_plan": {
+            "plan_id": plan["plan_id"] if plan else None,
+            "status": plan["status"] if plan else None,
+            "risk_level": plan["risk_level"] if plan else None,
+            "approval_required": bool(plan["approval_required"]) if plan else False,
+            "approval_id": plan["approval_id"] if plan else None,
+            "approval_decision": (plan_approval or {}).get("decision"),
+            "verification_pass": bool(plan_verification and plan_verification.get("pass")),
+            "plan_hash": plan["plan_hash"] if plan else None,
+        },
+        "plan_evidence_manifest": {
+            "manifest_id": manifest["manifest_id"] if manifest else None,
+            "status": manifest["status"] if manifest else None,
+            "verification_pass": bool(manifest_verification and manifest_verification.get("pass")),
+            "failed_check_ids": [check.get("id") for check in (manifest_verification or {}).get("failed_checks") or []],
+        },
+        "approvals": {
+            "count": len(approvals),
+            "pending": sum(1 for item in approvals if item.get("decision") == "pending"),
+            "approved": sum(1 for item in approvals if item.get("decision") == "approved"),
+            "rejected": sum(1 for item in approvals if item.get("decision") == "rejected"),
+            "items": approvals[:5],
+        },
+        "gap_decision": gap_decision,
+        "recommended_commands": [redact_text(command, 900) for command in commands],
+        "token_omitted": True,
+    }
+
+
+def operator_evidence_report(conn: sqlite3.Connection, headers, qs=None) -> dict:
+    qs = qs or {}
+    workspace_id = normalize_workspace_id(headers.get("X-AgentOps-Workspace-Id") or (qs.get("workspace_id") or ["local-demo"])[0])
+    limit = min(max(int((qs.get("limit") or ["12"])[0]), 1), 50)
+    run_id = (qs.get("run_id") or [None])[0]
+    task_id = (qs.get("task_id") or [None])[0]
+    params: list = [workspace_id]
+    where = ["COALESCE(r.workspace_id,'local-demo')=?"]
+    if run_id:
+        where.append("r.run_id=?")
+        params.append(run_id)
+    if task_id:
+        where.append("r.task_id=?")
+        params.append(task_id)
+    rows = conn.execute(
+        """SELECT r.* FROM runs r
+        WHERE """ + " AND ".join(where) + " ORDER BY COALESCE(r.ended_at,r.started_at,r.created_at) DESC LIMIT ?",
+        [*params, limit],
+    ).fetchall()
+    items = [operator_run_evidence_item(conn, row) for row in rows]
+    receipt_summary = (list_operator_action_receipts(conn, {"workspace_id": [workspace_id], "limit": [str(min(max(limit, 8), 25))]}, headers).get("summary") or {})
+    summary = {
+        "runs": len(items),
+        "ready": sum(1 for item in items if item.get("status") == "ready"),
+        "attention": sum(1 for item in items if item.get("status") == "attention"),
+        "blocked": sum(1 for item in items if item.get("status") == "blocked"),
+        "verified_plan_evidence_manifests": sum(1 for item in items if (item.get("plan_evidence_manifest") or {}).get("verification_pass")),
+        "missing_plan_evidence_manifests": sum(1 for item in items if not (item.get("plan_evidence_manifest") or {}).get("manifest_id")),
+        "pending_approvals": sum(int((item.get("approvals") or {}).get("pending") or 0) for item in items),
+        "approval_required_plans": sum(1 for item in items if (item.get("agent_plan") or {}).get("approval_required")),
+        "approved_required_plans": sum(1 for item in items if (item.get("agent_plan") or {}).get("approval_required") and (item.get("agent_plan") or {}).get("approval_decision") == "approved"),
+        "action_receipts": int(receipt_summary.get("receipts") or 0),
+        "verified_action_receipts": int(receipt_summary.get("verified") or 0),
+        "evaluated_action_receipts": int(receipt_summary.get("evaluated") or 0),
+    }
+    status = "blocked" if summary["blocked"] else "attention" if summary["attention"] or summary["pending_approvals"] else "ready"
+    return {
+        "provider": "agentops-operator",
+        "operation": "operator_evidence_report",
+        "status": status,
+        "workspace_id": workspace_id,
+        "summary": summary,
+        "runs": items,
+        "recommended_commands": [command for item in items[:5] for command in (item.get("recommended_commands") or [])[:2]][:8],
+        "contract": "read-only execution evidence report; does not create plans, manifests, approvals, receipts, or memories",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
+
+
 def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
     qs = qs or {}
     limit = min(max(int((qs.get("limit") or ["12"])[0]), 1), 30)
@@ -18999,6 +19144,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(payload)
             if path == "/api/operator/loop-audit":
                 payload = operator_loop_audit(conn, self.headers, qs)
+                conn.rollback()
+                return self.send_json(payload)
+            if path == "/api/operator/evidence-report":
+                payload = operator_evidence_report(conn, self.headers, qs)
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/operator/health":

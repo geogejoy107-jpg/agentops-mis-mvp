@@ -33,13 +33,14 @@ git diff --check main...codex/agent-gateway-kb-demo
 - [x] Real run links an `agent_plan_id`.
 - [x] Run Agent/task/workspace match the plan.
 - [x] Superseded, changed, or alternate plans cannot authorize/rebind execution.
-- [ ] Delivery gate compares execution evidence with the declared plan.
+- [x] Delivery gate compares execution evidence with the declared plan: `operator evidence-report` checks run `agent_plan_id`/`plan_hash`, plan verification, plan approval, verified `plan_evidence_manifest`, tool/evaluation/artifact/audit evidence, pending approvals, and read-only DB fingerprint stability.
 
 Required checks:
 
 ```bash
 python3 scripts/agent_plan_integrity_smoke.py --base-url http://127.0.0.1:8787
 python3 scripts/run_start_plan_gate_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/operator_evidence_report_smoke.py
 ```
 
 Add new negative tests:
@@ -279,7 +280,7 @@ python3 scripts/sqlite_reliability_smoke.py
 - [ ] Measure time to first useful panel.
 - [ ] Do not fetch daemon logs before the panel is opened.
 - [ ] Make panels independently loadable.
-- [ ] Add a lightweight command-center read model or equivalent aggregation.
+- [x] Add a lightweight command-center read model or equivalent aggregation: `operator evidence-report` aggregates Agent Plan, approval, plan_evidence_manifest and ledger evidence by run.
 - [x] Operator Action Queue recovery items can record action receipts and show VERIFY commands in action-plan / loop-audit readback.
 - [ ] Paginate large run, tool and audit lists.
 - [ ] Briefly cache expensive aggregate read models.
@@ -312,7 +313,8 @@ startup security, production readiness, Agent Plan integrity, run-start plan
 gate, exact collaborator scoping, operator task intake, operator action plan,
 Gateway scope matrix, special-character scoped IDs, scoped reads,
 task-claim conflict, workspace isolation, bounded operator loop advance, and
-v1.5 local product acceptance against a temporary SQLite DB.
+operator evidence report, and v1.5 local product acceptance against a temporary
+SQLite DB.
 
 ui-build: npm ci + npm run build under ui/start-building-app.
 ```
