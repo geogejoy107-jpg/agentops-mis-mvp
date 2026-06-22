@@ -220,6 +220,11 @@ has since closed or partially closed several items on the development branch:
 - Shared redaction is centralized in `agentops_mis_cli/redaction.py`; current
   hardening adds `scripts/redaction_fuzz_smoke.py` for common provider token,
   JSON, env, URL, stdout/stderr-like and truncation-before-redaction cases.
+- Worker credential handling now exposes the explicit
+  `trusted_worker_client_v1` boundary: credentials stay in the trusted worker
+  client transport, model prompts use redacted task summaries, and
+  `scripts/worker_secret_boundary_smoke.py` verifies fake task/env/URL secrets
+  plus the Gateway token do not appear in worker output or ledger readback.
 - Non-local/shared deployment, collaborator exact matching, knowledge scope
   policy/redaction, SQLite WAL/busy-timeout pragmas, deterministic CI, and
   customer delivery-board evidence links now have targeted checks in the merge
