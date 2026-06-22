@@ -120,6 +120,7 @@ python3 scripts/redaction_policy_smoke.py
 python3 scripts/security_production_readiness_smoke.py
 python3 scripts/production_security_warning_ui_smoke.py
 python3 scripts/pixel_office_visualizer_boundary_smoke.py
+python3 scripts/customer_delivery_boundary_smoke.py
 ```
 
 ## 5. Authentication and deployment boundary
@@ -444,7 +445,7 @@ live runtime suite
 - [ ] Jobs can be listed and polled.
 - [ ] Stuck jobs can be recovered.
 - [ ] Delivery board links task/run/artifact/approval/evaluation/audit.
-- [ ] Customer report excludes internal prompts and private transcripts.
+- [x] Customer report excludes internal prompts and private transcripts. Customer-facing markdown now shows only delivery summary, safety boundary and progress, while run/tool/approval/audit IDs stay in a separate internal evidence payload. Guarded by `scripts/customer_delivery_boundary_smoke.py` and `scripts/customer_project_report_smoke.py`.
 - [ ] Delivery approval is not confused with tool-action execution approval.
 
 ### UI
@@ -455,7 +456,7 @@ live runtime suite
 - [x] Production-security warnings are prominent: `/workspace/agents` renders a top-level Production Security Boundary strip before operator controls, showing readiness, local write guard, deployment mode, startup security and the copyable next check command. Guarded by `scripts/production_security_warning_ui_smoke.py`, `scripts/security_production_readiness_smoke.py`, and `scripts/operator_action_queue_ui_smoke.py`.
 - [x] Issued credentials cannot be re-read: Agent Gateway enrollment list payloads expose `token_omitted:true` and never include raw token/hash fields; `/workspace/agents` displays a fresh create/issue/rotate token only inside a one-time credential card, clears the raw token after copy, clears the card on ordinary refresh/panel refresh/revoke/session actions, and provides explicit copy/clear controls. Guarded by `scripts/enrollment_credential_ui_smoke.py`.
 - [x] Pixel Office remains a visualizer: `/workspace/pixel-office` is a native React/CSS MIS operating map, Star-Office stays optional legacy link only, no third-party pixel assets are imported, and customer dispatch routes through MIS workflow APIs with ledger/approval/evidence readback. Guarded by `scripts/pixel_office_visualizer_boundary_smoke.py`.
-- [ ] Customer delivery is separated from internal evidence.
+- [x] Customer delivery is separated from internal evidence: customer report UI separates delivery artifact from report artifact, safety defaults show no raw document/credential storage, delivery board exposes only read-only counts/gates/links, and delivery approval consumes verified plan-evidence gates instead of raw internal transcripts. Guarded by `scripts/customer_delivery_boundary_smoke.py`, `scripts/customer_project_report_artifact_smoke.py`, and `scripts/delivery_approval_manifest_gate_smoke.py`.
 
 ## 12. License and provenance
 

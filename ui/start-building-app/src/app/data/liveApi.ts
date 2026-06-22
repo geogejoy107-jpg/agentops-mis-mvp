@@ -219,6 +219,29 @@ export interface CustomerProjectReportPayload {
   artifact_id?: string | null;
   report_artifact_id?: string | null;
   approval_ids?: string[];
+  internal_evidence?: {
+    visibility?: string;
+    not_customer_report?: boolean;
+    task_ids?: string[];
+    run_ids?: string[];
+    artifact_ids?: string[];
+    delivery_artifact_id?: string | null;
+    report_artifact_id?: string | null;
+    approval_ids?: string[];
+    counts?: Record<string, number>;
+    operator_routes?: Record<string, string>;
+  };
+  report_boundary?: {
+    customer_markdown_excludes_internal_evidence?: boolean;
+    internal_evidence_separated?: boolean;
+    raw_prompts_omitted?: boolean;
+    raw_model_responses_omitted?: boolean;
+    private_transcripts_omitted?: boolean;
+    credentials_omitted?: boolean;
+    raw_documents_omitted?: boolean;
+    customer_visible_sections?: string[];
+    internal_only_sections?: string[];
+  };
   safe_defaults?: Record<string, unknown>;
   error?: string | null;
 }
