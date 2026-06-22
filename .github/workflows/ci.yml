@@ -85,6 +85,7 @@ jobs:
           python3 scripts/run_start_plan_gate_smoke.py --base-url "$AGENTOPS_BASE_URL"
           python3 scripts/operator_evidence_report_smoke.py
           python3 scripts/safe_closure_evidence_packet_smoke.py
+          python3 scripts/protected_live_runtime_ids_smoke.py
           python3 scripts/collaborator_exact_scope_smoke.py "$AGENTOPS_BASE_URL"
           python3 scripts/operator_task_intake_smoke.py
           python3 scripts/operator_action_plan_smoke.py --base-url "$AGENTOPS_BASE_URL"
