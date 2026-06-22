@@ -29,6 +29,7 @@ GATE4_REQUIRED_IDS = {
     "tool_calls",
     "evaluation_room",
     "runtime_connectors",
+    "external_bases_notion",
     "next_mis_proxy",
 }
 
@@ -230,6 +231,10 @@ def main() -> int:
     connector_evidence = entries_by_id.get("runtime_connectors", {}).get("evidence_commands") or []
     require("python3 scripts/nextjs_parity_smoke.py" in connector_evidence, "runtime_connectors must include Next static parity evidence")
     require("python3 scripts/nextjs_playwright_snapshot_smoke.py" in connector_evidence, "runtime_connectors must include Next browser evidence")
+    assert_entry_routes(entries_by_id.get("external_bases_notion"), "external_bases_notion", ["/admin/bases/notion"], ["/workspace/external-bases/notion", "/workspace/external-bases/notion/export"])
+    notion_evidence = entries_by_id.get("external_bases_notion", {}).get("evidence_commands") or []
+    require("python3 scripts/nextjs_parity_smoke.py" in notion_evidence, "external_bases_notion must include Next static parity evidence")
+    require("python3 scripts/nextjs_playwright_snapshot_smoke.py" in notion_evidence, "external_bases_notion must include Next browser evidence")
 
     vite_routes = actual_vite_routes()
     next_routes = actual_next_routes()

@@ -47,6 +47,7 @@ route retirement:
 | Tool call ledger | `tool_calls` | `covered` | Not allowed |
 | Evaluation room | `evaluation_room` | `covered` | Not allowed |
 | Runtime connectors | `runtime_connectors` | `covered` | Not allowed |
+| Notion external base | `external_bases_notion` | `covered` | Not allowed |
 
 ## Current Important Gaps
 
@@ -58,10 +59,11 @@ route retirement:
   production safety and readiness; Vite remains canonical for local worker
   start/stop/restart, task release, remote enrollment mutation, and detailed
   operator controls.
-- Admin-only Vite routes for external bases, per-agent performance, and the
-  full template/base-switching console are deferred. Tool calls, evaluation
-  room, and runtime connectors now have Next parity at `/workspace/tool-calls`,
-  `/workspace/evaluations`, and `/workspace/connectors`.
+- Admin-only Vite routes for per-agent performance and the full
+  template/base-switching console are deferred. Tool calls, evaluation room,
+  runtime connectors, and Notion external base now have Next parity at
+  `/workspace/tool-calls`, `/workspace/evaluations`, `/workspace/connectors`,
+  and `/workspace/external-bases/notion`.
 - Several `covered` routes still need a route-level Vite/Next data-shape diff
   before a retirement decision. Browser snapshot evidence is necessary but not
   sufficient.
@@ -81,6 +83,14 @@ route retirement:
   trust changes through the Next `/workspace/connectors/trust` fallback to
   `POST /runtime-connectors/:id/trust`. `/admin/connectors` remains canonical
   until browser evidence and route retirement are explicit.
+- Notion External Base now has a Next parity route at
+  `/workspace/external-bases/notion`. It reads live Notion status and preview
+  data through `/api/mis/integrations/notion/*`, exposes dry-run default,
+  writeback blocking, connector state, preview-only report evidence, and token
+  omission copy, runs dry-run export safely, and verifies Free Local blocks
+  confirmed export for `notion_confirmed_export`. `/admin/bases/notion`
+  remains canonical until prepared-action resume UX and route retirement are
+  explicit.
 - Task and run list/detail now have first route-level evidence:
   `python3 scripts/ui_task_run_route_parity_smoke.py`
   (`ui_task_run_route_parity_v1`) checks Next list links to detail routes and

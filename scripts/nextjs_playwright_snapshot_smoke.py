@@ -41,6 +41,7 @@ ROUTES = [
     ("/workspace/tool-calls", ["Tool Call Ledger", "high-risk", "Run"]),
     ("/workspace/evaluations", ["Evaluation Room", "failed gates", "average score"]),
     ("/workspace/connectors", ["Runtime Connectors", "Runtime Trust Registry", "blocked"]),
+    ("/workspace/external-bases/notion", ["Notion External Base", "dry-run default", "notion_confirmed_export"]),
     ("/workspace/approvals", ["Approvals", "Pending approval", "Decision history"]),
     ("/workspace/memory", ["Memory", "candidate", "approved"]),
     ("/workspace/audit", ["Audit", "audit events", "Actor"]),
@@ -94,6 +95,21 @@ def wait_http(url: str, timeout_sec: int = 45) -> None:
 def http_json(url: str) -> object:
     with urllib.request.urlopen(url, timeout=10) as response:
         return json.loads(response.read().decode("utf-8"))
+
+
+def http_json_status(method: str, url: str, payload: dict | None = None) -> tuple[int, object]:
+    data = json.dumps(payload or {}, ensure_ascii=False).encode("utf-8") if payload is not None else None
+    request = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"}, method=method)
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            raw = response.read().decode("utf-8")
+            return int(response.status), json.loads(raw) if raw else {}
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        try:
+            return int(exc.code), json.loads(raw) if raw else {}
+        except json.JSONDecodeError:
+            return int(exc.code), {"raw": raw}
 
 
 def http_form(url: str, payload: dict[str, str]) -> int:
@@ -549,6 +565,50 @@ def review_first_runtime_connector(next_base: str, env: dict[str, str]) -> dict:
     }
 
 
+def verify_notion_external_base_gate(next_base: str, env: dict[str, str]) -> dict:
+    target = next_base.rstrip("/") + "/workspace/external-bases/notion"
+    goto = playwright(env, "goto", target)
+    require(goto.returncode == 0, f"Playwright goto failed for Notion external base: {goto.stderr or goto.stdout}")
+    wait_for_snapshot_text(
+        env,
+        "/workspace/external-bases/notion",
+        lambda text: "Run dry-run export" in text and "Confirm export" in text,
+        "Notion external base page to render export controls",
+    )
+
+    dry_status, dry_payload = http_json_status("POST", f"{next_base}/api/mis/integrations/notion/dry-run-export", {})
+    require(dry_status == 201, f"Notion dry-run export should be accepted through Next proxy: {dry_status} {dry_payload}")
+    require(isinstance(dry_payload, dict) and dry_payload.get("dry_run") is True and dry_payload.get("created") is False, f"Notion dry-run should not create external page: {dry_payload}")
+    require(bool(dry_payload.get("sync_event_id")), f"Notion dry-run did not create sync event evidence: {dry_payload}")
+    require(not leaked_secret(json.dumps(dry_payload, ensure_ascii=False)), "Notion dry-run response leaked token-like material")
+
+    fallback_status = http_form(
+        next_base.rstrip("/") + "/workspace/external-bases/notion/export",
+        {"mode": "confirmed"},
+    )
+    require(fallback_status == 303, f"Notion confirmed export form fallback should redirect after handling: {fallback_status}")
+    blocked_status, blocked_payload = http_json_status(
+        "POST",
+        f"{next_base}/api/mis/integrations/notion/export-confirmed",
+        {"confirm_export": True, "title": "Next Notion entitlement smoke"},
+    )
+    require(blocked_status == 403, f"Notion confirmed export should be entitlement-blocked in Free Local: {blocked_status} {blocked_payload}")
+    require(isinstance(blocked_payload, dict), f"Notion entitlement block did not return an object: {blocked_payload}")
+    require(blocked_payload.get("error") == "entitlement_required", f"Notion entitlement block missing error: {blocked_payload}")
+    require(blocked_payload.get("capability") == "notion_confirmed_export", f"Notion entitlement block wrong capability: {blocked_payload}")
+    require(blocked_payload.get("billing_call_performed") is False, f"Notion entitlement block should not call billing: {blocked_payload}")
+    require(blocked_payload.get("live_execution_performed") is False, f"Notion entitlement block should not perform live work: {blocked_payload}")
+    require(blocked_payload.get("token_omitted") is True, f"Notion entitlement block should omit token: {blocked_payload}")
+    require(not leaked_secret(json.dumps(blocked_payload, ensure_ascii=False)), "Notion entitlement block leaked token-like material")
+    return {
+        "dry_run_status": dry_status,
+        "dry_run_sync_event_id": dry_payload.get("sync_event_id"),
+        "confirmed_form_fallback_status": fallback_status,
+        "blocked_capability": blocked_payload.get("capability"),
+        "required_edition": blocked_payload.get("required_edition"),
+    }
+
+
 def verify_dispatch_entitlement_block(next_base: str, env: dict[str, str]) -> dict:
     projects_url = f"{next_base}/api/mis/workflows/customer-projects?limit=25"
     before_projects = http_json(projects_url)
@@ -764,6 +824,7 @@ def main() -> int:
                 "approval_review": approve_first_pending_approval(next_base, pw_env),
                 "memory_review": approve_first_candidate_memory(next_base, pw_env),
                 "runtime_connector_trust_review": review_first_runtime_connector(next_base, pw_env),
+                "notion_external_base_gate": verify_notion_external_base_gate(next_base, pw_env),
                 "customer_report_archive": archive_customer_project_report(next_base, project_id, pw_env),
                 "dispatch_entitlement_block": verify_dispatch_entitlement_block(next_base, pw_env),
                 "dispatch_template_run_success": verify_dispatch_template_run_success(next_base, entitlement_path, pw_env),
@@ -778,6 +839,8 @@ def main() -> int:
                 "deployment_local_token_omitted": http_json(f"{next_base}/api/mis/local/readiness").get("token_omitted"),
                 "customer_projects": len(http_json(f"{next_base}/api/mis/workflows/customer-projects?limit=25").get("projects", [])),
                 "runtime_connectors": len(http_json(f"{next_base}/api/mis/runtime-connectors")),
+                "notion_writeback_allowed": http_json(f"{next_base}/api/mis/integrations/notion/status").get("writeback_allowed"),
+                "notion_dry_run_default": http_json(f"{next_base}/api/mis/integrations/notion/status").get("dry_run_default"),
                 "security_status": http_json(f"{next_base}/api/mis/security/production-readiness").get("status"),
                 "worker_status": http_json(f"{next_base}/api/mis/workers/status").get("status"),
             }

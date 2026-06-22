@@ -96,6 +96,67 @@ export type RuntimeConnectorTrustResponse = {
   token_omitted?: boolean;
 };
 
+export type NotionConnectorSummary = {
+  connector_id?: string;
+  base_id?: string;
+  provider?: string;
+  auth_type?: string;
+  status?: string;
+  last_checked_at?: string | null;
+  last_error?: string | null;
+  dry_run_default?: number | boolean;
+  writeback_allowed?: number | boolean;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type NotionStatus = {
+  provider?: string;
+  configured?: boolean;
+  has_token?: boolean;
+  has_parent_page_id?: boolean;
+  has_database_id?: boolean;
+  workspace_private_export?: boolean;
+  export_mode?: string;
+  dry_run_default?: boolean;
+  writeback_allowed?: boolean;
+  last_sync?: string | null;
+  last_error?: string | null;
+  notion_version?: string;
+  connectors?: NotionConnectorSummary[];
+};
+
+export type NotionPreview = {
+  provider?: string;
+  status?: NotionStatus;
+  report?: {
+    title?: string;
+    markdown?: string;
+    block_count?: number;
+  };
+  tasks?: TaskSummary[];
+  memory_candidates?: MemorySummary[];
+  write_behavior?: string;
+};
+
+export type NotionExportResult = {
+  provider?: string;
+  dry_run?: boolean;
+  created?: boolean;
+  configured?: boolean;
+  requires_confirm_export?: boolean;
+  sync_event_id?: string;
+  markdown?: string;
+  block_count?: number;
+  error?: string;
+  capability?: string;
+  required_edition?: string;
+  current_edition?: string;
+  billing_call_performed?: boolean;
+  live_execution_performed?: boolean;
+  token_omitted?: boolean;
+};
+
 export type ApprovalSummary = {
   approval_id: string;
   decision: string;
@@ -681,6 +742,31 @@ export async function updateRuntimeConnectorTrust(
       trust_status: trustStatus,
       trust_note: trustNote || `Next operator marked ${connectorId} as ${trustStatus}.`,
     }),
+  });
+}
+
+export async function loadNotionStatus(): Promise<NotionStatus> {
+  return misJson<NotionStatus>("/integrations/notion/status");
+}
+
+export async function loadNotionPreview(): Promise<NotionPreview> {
+  return misJson<NotionPreview>("/integrations/notion/preview", {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
+export async function runNotionDryRunExport(): Promise<NotionExportResult> {
+  return misJson<NotionExportResult>("/integrations/notion/dry-run-export", {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
+export async function runNotionConfirmedExport(): Promise<NotionExportResult> {
+  return misJson<NotionExportResult>("/integrations/notion/export-confirmed", {
+    method: "POST",
+    body: JSON.stringify({ confirm_export: true, title: "AgentOps MIS Next parity export" }),
   });
 }
 

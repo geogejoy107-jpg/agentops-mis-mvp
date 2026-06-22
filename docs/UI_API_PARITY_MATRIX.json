@@ -601,12 +601,15 @@
     {
       "id": "external_bases_notion",
       "capability": "External base and Notion sync controls.",
-      "status": "deferred",
-      "gate4_required": false,
+      "status": "covered",
+      "gate4_required": true,
       "vite_routes": [
         "/admin/bases/notion"
       ],
-      "next_routes": [],
+      "next_routes": [
+        "/workspace/external-bases/notion",
+        "/workspace/external-bases/notion/export"
+      ],
       "api_contracts": [
         "GET /integrations/notion/*",
         "POST /integrations/notion/*"
@@ -614,12 +617,19 @@
       "vite_files": [
         "ui/start-building-app/src/app/components/pages/NotionBase.tsx"
       ],
-      "next_files": [],
+      "next_files": [
+        "ui/next-app/app/workspace/external-bases/notion/page.tsx",
+        "ui/next-app/app/workspace/external-bases/notion/export/route.ts",
+        "ui/next-app/src/components/NotionBasePage.tsx",
+        "ui/next-app/src/lib/mis.ts"
+      ],
       "evidence_commands": [
-        "python3 scripts/ui_api_parity_matrix_smoke.py"
+        "python3 scripts/ui_api_parity_matrix_smoke.py",
+        "python3 scripts/nextjs_parity_smoke.py",
+        "python3 scripts/nextjs_playwright_snapshot_smoke.py"
       ],
       "retirement_allowed": false,
-      "retirement_gate": "Deferred until external-write approval and entitlement gates are mapped into Next."
+      "retirement_gate": "Next Notion External Base parity covers live status, preview-only report evidence, dry-run export, Free Local confirmed-export entitlement blocking, and Next export fallback; Vite remains canonical until prepared-action resume UX and route retirement are explicit."
     },
     {
       "id": "template_switching",

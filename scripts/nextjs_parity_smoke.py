@@ -43,6 +43,8 @@ def main() -> int:
         NEXT_APP / "app" / "workspace" / "evaluations" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "connectors" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "connectors" / "trust" / "route.ts",
+        NEXT_APP / "app" / "workspace" / "external-bases" / "notion" / "page.tsx",
+        NEXT_APP / "app" / "workspace" / "external-bases" / "notion" / "export" / "route.ts",
         NEXT_APP / "app" / "admin" / "tasks" / "[taskId]" / "page.tsx",
         NEXT_APP / "app" / "admin" / "runs" / "page.tsx",
         NEXT_APP / "app" / "admin" / "runs" / "[runId]" / "page.tsx",
@@ -68,6 +70,7 @@ def main() -> int:
         NEXT_APP / "src" / "components" / "ToolCallPages.tsx",
         NEXT_APP / "src" / "components" / "EvaluationPages.tsx",
         NEXT_APP / "src" / "components" / "ConnectorPages.tsx",
+        NEXT_APP / "src" / "components" / "NotionBasePage.tsx",
         NEXT_APP / "src" / "components" / "GovernancePages.tsx",
         NEXT_APP / "src" / "components" / "WorkspaceDashboard.tsx",
         NEXT_APP / "src" / "lib" / "mis.ts",
@@ -90,6 +93,7 @@ def main() -> int:
     report_archive_route_text = read_text(NEXT_APP / "app" / "workspace" / "customer-projects" / "[projectId]" / "report" / "archive" / "route.ts")
     dispatch_route_text = read_text(NEXT_APP / "app" / "workspace" / "dispatch" / "template-run" / "route.ts")
     connector_trust_route_text = read_text(NEXT_APP / "app" / "workspace" / "connectors" / "trust" / "route.ts")
+    notion_export_route_text = read_text(NEXT_APP / "app" / "workspace" / "external-bases" / "notion" / "export" / "route.ts")
     admin_task_alias_text = read_text(NEXT_APP / "app" / "admin" / "tasks" / "[taskId]" / "page.tsx")
     admin_runs_alias_text = read_text(NEXT_APP / "app" / "admin" / "runs" / "page.tsx")
     admin_run_alias_text = read_text(NEXT_APP / "app" / "admin" / "runs" / "[runId]" / "page.tsx")
@@ -106,6 +110,7 @@ def main() -> int:
     tool_call_pages_text = read_text(NEXT_APP / "src" / "components" / "ToolCallPages.tsx")
     evaluation_pages_text = read_text(NEXT_APP / "src" / "components" / "EvaluationPages.tsx")
     connector_pages_text = read_text(NEXT_APP / "src" / "components" / "ConnectorPages.tsx")
+    notion_base_page_text = read_text(NEXT_APP / "src" / "components" / "NotionBasePage.tsx")
     governance_pages_text = read_text(NEXT_APP / "src" / "components" / "GovernancePages.tsx")
     dashboard_text = read_text(NEXT_APP / "src" / "components" / "WorkspaceDashboard.tsx")
     globals_text = read_text(NEXT_APP / "src" / "styles" / "globals.css")
@@ -130,6 +135,8 @@ def main() -> int:
     require("/evaluations" in lib_text and "loadEvaluations" in lib_text, "evaluation ledger parity data is missing")
     require("/runtime-connectors" in lib_text and "loadRuntimeConnectors" in lib_text, "runtime connector parity data is missing")
     require("updateRuntimeConnectorTrust" in lib_text, "runtime connector trust parity action is missing")
+    require("/integrations/notion/status" in lib_text and "loadNotionPreview" in lib_text, "Notion external base parity data is missing")
+    require("/integrations/notion/dry-run-export" in lib_text and "/integrations/notion/export-confirmed" in lib_text, "Notion external base export actions are missing")
     require("/memories" in lib_text and "/audit?limit=120" in lib_text, "governance parity data misses memory or audit ledgers")
     require("/workers/status" in lib_text and "/workers/adapter-readiness" in lib_text, "agent-control parity data misses worker readiness")
     require("/security/production-readiness" in lib_text, "agent-control parity data misses production readiness")
@@ -148,10 +155,12 @@ def main() -> int:
     require("/workflows/customer-projects/${encodeURIComponent(projectId)}/report-artifact" in report_archive_route_text, "customer report archive fallback must write through MIS API")
     require("/workflows/customer-task-templates/run" in dispatch_route_text and "entitlement_required" in dispatch_route_text, "dispatch template fallback must preserve entitlement blocking")
     require("/runtime-connectors/${encodeURIComponent(connectorId)}/trust" in connector_trust_route_text, "connector trust form fallback must write through MIS API")
+    require("/integrations/notion/export-confirmed" in notion_export_route_text and "/integrations/notion/dry-run-export" in notion_export_route_text, "Notion export form fallback must write through MIS API")
     require("/workspace/tasks" in app_frame_text and "/workspace/runs" in app_frame_text, "Next.js nav must expose task and run parity routes")
     require("/workspace/tool-calls" in app_frame_text, "Next.js nav must expose tool call ledger parity route")
     require("/workspace/evaluations" in app_frame_text, "Next.js nav must expose evaluation ledger parity route")
     require("/workspace/connectors" in app_frame_text, "Next.js nav must expose runtime connector parity route")
+    require("/workspace/external-bases/notion" in app_frame_text, "Next.js nav must expose Notion external base parity route")
     require("/workspace/memory" in app_frame_text and "/workspace/audit" in app_frame_text, "Next.js nav must expose governance parity routes")
     require("/workspace/reports" in app_frame_text, "Next.js nav must expose reports parity route")
     require("/workspace/commercial" in app_frame_text, "Next.js nav must expose commercial parity route")
@@ -194,6 +203,10 @@ def main() -> int:
     require("Runtime Trust Registry" in connector_pages_text and "allow real run" in connector_pages_text and "require confirm" in connector_pages_text, "runtime connector parity page must expose trust and confirmation gates")
     require('action="/workspace/connectors/trust"' in connector_pages_text, "runtime connector parity page must keep the Next form fallback")
     require("updateRuntimeConnectorTrust" in connector_pages_text and 'trustStatus === "blocked" ? "Block"' in connector_pages_text, "runtime connector parity page must expose trust update controls")
+    require("NotionExternalBaseParityPage" in notion_base_page_text and "loadNotionPreview" in notion_base_page_text, "Notion external base page must load live preview data")
+    require("notion_confirmed_export" in notion_base_page_text and "billing call false" in notion_base_page_text, "Notion external base page must expose fail-closed entitlement proof")
+    require('action="/workspace/external-bases/notion/export"' in notion_base_page_text, "Notion external base page must keep the Next export form fallback")
+    require("runNotionDryRunExport" in notion_base_page_text and "runNotionConfirmedExport" in notion_base_page_text, "Notion external base page must expose dry-run and confirmed export actions")
     require("/workspace/tasks/${encodeURIComponent(taskId)}" in admin_task_alias_text and "redirect(" in admin_task_alias_text, "legacy admin task detail must redirect to workspace task detail")
     require('redirect("/workspace/runs")' in admin_runs_alias_text, "legacy admin run ledger must redirect to workspace runs")
     require("/workspace/runs/${encodeURIComponent(runId)}" in admin_run_alias_text and "redirect(" in admin_run_alias_text, "legacy admin run detail must redirect to workspace run detail")
@@ -234,6 +247,7 @@ def main() -> int:
             "/workspace/tool-calls",
             "/workspace/evaluations",
             "/workspace/connectors",
+            "/workspace/external-bases/notion",
             "/admin/tasks/[taskId]",
             "/admin/runs",
             "/admin/runs/[runId]",
