@@ -336,6 +336,7 @@ AI Employees optional endpoint fallback: `cd ui/start-building-app && npm run bu
 AI Employees lazy daemon logs: `python3 scripts/operator_action_queue_ui_smoke.py`.
 AI Employees responsiveness baseline: `python3 scripts/ai_employees_responsiveness_smoke.py`.
 Review decision local refresh: `python3 scripts/review_decision_local_refresh_smoke.py`.
+Real-runtime UI confirmation: `python3 scripts/real_runtime_ui_confirm_smoke.py`.
 ```
 
 The workflow intentionally keeps Hermes/OpenClaw live runtime work out of CI.
@@ -447,7 +448,7 @@ live runtime suite
 
 - [x] AI Employees remains useful under partial endpoint failure: optional loaders, panel `ready/running/unavailable` states, local panel refresh, and `Promise.allSettled` contracts are guarded by `scripts/operator_action_queue_ui_smoke.py` and `scripts/ai_employees_responsiveness_smoke.py`.
 - [x] Review decisions refresh only needed data: Approvals Inbox, Workspace Home, Evaluation Room, AI Employees review queue, loop record review, and enrollment approval decisions use local state updates or targeted panel refreshes instead of whole-page `refresh()`; guarded by `scripts/review_decision_local_refresh_smoke.py`.
-- [ ] Real-runtime controls show explicit confirmation.
+- [x] Real-runtime controls show explicit confirmation: AI Employees and Pixel Office customer dispatch show an explicit live Hermes/OpenClaw confirmation latch; live worker, daemon, async job, Commander package and customer real-run controls are disabled until confirmed, while mock remains the safe default. Guarded by `scripts/real_runtime_ui_confirm_smoke.py`.
 - [ ] Production-security warnings are prominent.
 - [ ] Issued credentials cannot be re-read.
 - [ ] Pixel Office remains a visualizer.

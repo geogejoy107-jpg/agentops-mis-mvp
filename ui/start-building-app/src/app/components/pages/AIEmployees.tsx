@@ -307,6 +307,7 @@ export function AIEmployees() {
       ? "请 AI 团队从客户视角审视 Pixel Office：让像素风更精致，流程更清楚，同时保持 MIS 账本、审批和运行证据可见。"
       : "Ask the AI team to review Pixel Office from a customer perspective: improve the pixel style, clarify the flow, and keep MIS ledger, approvals, and run evidence visible.",
   });
+  const [liveRuntimeConfirmed, setLiveRuntimeConfirmed] = useState(false);
   const [selectedLogAdapter, setSelectedLogAdapter] = useState<(typeof WORKER_ADAPTERS)[number]>("mock");
   const [daemonLogsOpen, setDaemonLogsOpen] = useState(false);
   const [daemonLogsByAdapter, setDaemonLogsByAdapter] = useState<Partial<Record<(typeof WORKER_ADAPTERS)[number], WorkerDaemonLogPayload>>>({});
@@ -562,7 +563,10 @@ export function AIEmployees() {
   const localRecommendedAdapter = localReadiness?.adapter_readiness?.recommended_adapter || recommendedAdapter;
   const selectedAdapterRoute = adapterReadiness?.adapters?.[customerTaskForm.adapter];
   const selectedAdapterLiveBlocked = customerTaskForm.adapter !== "mock" && ["unavailable", "blocked"].includes(selectedAdapterRoute?.readiness || "");
+  const selectedAdapterNeedsLiveConfirm = customerTaskForm.adapter !== "mock";
+  const selectedAdapterLiveConfirmMissing = selectedAdapterNeedsLiveConfirm && !liveRuntimeConfirmed;
   const selectedAdapterIsReady = customerTaskForm.adapter === "mock" || selectedAdapterRoute?.readiness === "ready" || selectedAdapterRoute?.readiness === "review_required";
+  const liveAdapterConfirmMissing = (adapter: (typeof WORKER_ADAPTERS)[number]) => adapter !== "mock" && !liveRuntimeConfirmed;
   const gatewayReady = Boolean(gatewayStatus?.auth.authenticated || ["ready", "ok", "authenticated"].includes(gatewayStatus?.status || ""));
   const copy = pick(locale, {
     en: {
@@ -851,6 +855,9 @@ export function AIEmployees() {
       submitAsyncTask: "Submit async job",
       customerTaskRunning: "Running task...",
       confirmLiveHint: "Hermes/OpenClaw require explicit confirmation before live execution. Mock is the safe default.",
+      liveRuntimeConfirmLabel: "I understand this will run a real local Hermes/OpenClaw adapter and write ledger evidence.",
+      liveRuntimeConfirmRequired: "Live adapter confirmation required",
+      liveRuntimeConfirmed: "Live adapter confirmed",
       asyncTaskHint: "Use async jobs for long Hermes/OpenClaw work; the ledger records job status, run, artifact, eval and audit evidence.",
       selectedAdapterReady: "Selected route is ready for this dispatch.",
       selectedAdapterBlocked: "Selected live route is not ready. Use the next action before confirming a real run.",
@@ -1302,6 +1309,9 @@ export function AIEmployees() {
       submitAsyncTask: "异步提交 Job",
       customerTaskRunning: "任务运行中...",
       confirmLiveHint: "Hermes/OpenClaw 真实执行前必须显式确认。mock 是安全默认。",
+      liveRuntimeConfirmLabel: "我确认这会运行真实本地 Hermes/OpenClaw adapter，并写入账本证据。",
+      liveRuntimeConfirmRequired: "需要确认真实 adapter",
+      liveRuntimeConfirmed: "真实 adapter 已确认",
       asyncTaskHint: "长时间 Hermes/OpenClaw 工作建议用异步 Job；账本会记录 job 状态、run、artifact、评估和审计证据。",
       selectedAdapterReady: "当前选中的路由可以用于这次派发。",
       selectedAdapterBlocked: "当前真实运行路由未就绪。请先执行下一步动作，再确认真跑。",
@@ -2973,7 +2983,7 @@ export function AIEmployees() {
                         <button
                           key={action.adapter}
                           onClick={() => void dispatchCommanderPackage(pkg.task_id, action.adapter, action.confirm)}
-                          disabled={Boolean(dispatching)}
+                          disabled={Boolean(dispatching) || (action.confirm && liveAdapterConfirmMissing(action.adapter))}
                           className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded disabled:opacity-50"
                           style={{ background: "rgba(129,140,248,0.10)", color: "var(--mis-purple)", border: "1px solid rgba(129,140,248,0.18)" }}
                         >
@@ -5010,6 +5020,15 @@ export function AIEmployees() {
             </div>
             <p className="text-[11px] mt-1 max-w-3xl" style={{ color: "var(--mis-dim)" }}>{copy.customerTaskSummary}</p>
             <p className="text-[10px] mt-1 max-w-3xl" style={{ color: "var(--mis-muted)" }}>{copy.confirmLiveHint}</p>
+            <label className="inline-flex items-center gap-2 mt-2 text-[10px] rounded px-2 py-1" style={{ color: liveRuntimeConfirmed ? "var(--mis-success)" : "var(--mis-warning)", background: liveRuntimeConfirmed ? "rgba(45,212,191,0.10)" : "rgba(251,191,36,0.10)", border: liveRuntimeConfirmed ? "1px solid rgba(45,212,191,0.20)" : "1px solid rgba(251,191,36,0.24)" }}>
+              <input
+                type="checkbox"
+                checked={liveRuntimeConfirmed}
+                onChange={(event) => setLiveRuntimeConfirmed(event.target.checked)}
+              />
+              {copy.liveRuntimeConfirmLabel}
+              <StatusBadge status={liveRuntimeConfirmed ? "pass" : "attention"} label={liveRuntimeConfirmed ? copy.liveRuntimeConfirmed : copy.liveRuntimeConfirmRequired} />
+            </label>
           </div>
           <div className="flex gap-2 shrink-0 flex-wrap justify-start lg:justify-end">
             <button
@@ -5023,7 +5042,7 @@ export function AIEmployees() {
             </button>
             <button
               onClick={() => runCustomerTask(true)}
-              disabled={customerTaskBusy || selectedAdapterLiveBlocked}
+              disabled={customerTaskBusy || selectedAdapterLiveBlocked || selectedAdapterLiveConfirmMissing}
               className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded disabled:opacity-50"
               style={{ background: "rgba(45,212,191,0.12)", color: "var(--mis-success)", border: "1px solid rgba(45,212,191,0.22)" }}
             >
@@ -5032,7 +5051,7 @@ export function AIEmployees() {
             </button>
             <button
               onClick={submitCustomerTaskAsync}
-              disabled={customerTaskBusy || selectedAdapterLiveBlocked}
+              disabled={customerTaskBusy || selectedAdapterLiveBlocked || selectedAdapterLiveConfirmMissing}
               className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded disabled:opacity-50"
               style={{ background: "rgba(251,191,36,0.12)", color: "var(--mis-warning)", border: "1px solid rgba(251,191,36,0.24)" }}
             >
@@ -5522,6 +5541,15 @@ export function AIEmployees() {
               <StatusBadge status={workerStatus?.status || "unknown"} />
             </div>
             <p className="text-[11px] mt-1 max-w-2xl" style={{ color: "var(--mis-dim)" }}>{copy.workerSummary}</p>
+            <label className="inline-flex items-center gap-2 mt-2 text-[10px] rounded px-2 py-1" style={{ color: liveRuntimeConfirmed ? "var(--mis-success)" : "var(--mis-warning)", background: liveRuntimeConfirmed ? "rgba(45,212,191,0.10)" : "rgba(251,191,36,0.10)", border: liveRuntimeConfirmed ? "1px solid rgba(45,212,191,0.20)" : "1px solid rgba(251,191,36,0.24)" }}>
+              <input
+                type="checkbox"
+                checked={liveRuntimeConfirmed}
+                onChange={(event) => setLiveRuntimeConfirmed(event.target.checked)}
+              />
+              {copy.liveRuntimeConfirmLabel}
+              <StatusBadge status={liveRuntimeConfirmed ? "pass" : "attention"} label={liveRuntimeConfirmed ? copy.liveRuntimeConfirmed : copy.liveRuntimeConfirmRequired} />
+            </label>
             {dispatchResult && (
               <div className="text-[11px] mt-2" style={{ color: dispatchResult.includes("failed") ? "#F87171" : "var(--mis-success)" }}>
                 {dispatchResult}
@@ -5537,7 +5565,7 @@ export function AIEmployees() {
               <button
                 key={item.adapter}
                 onClick={() => runWorkerOnce(item.adapter)}
-                disabled={Boolean(dispatching)}
+                disabled={Boolean(dispatching) || liveAdapterConfirmMissing(item.adapter)}
                 className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded disabled:opacity-50"
                 style={{ background: "rgba(34,211,238,0.12)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.2)" }}
               >
@@ -5590,7 +5618,7 @@ export function AIEmployees() {
             <button
               key={item.adapter}
               onClick={() => startDaemon(item.adapter)}
-              disabled={Boolean(dispatching) || workerStartBlocked}
+              disabled={Boolean(dispatching) || workerStartBlocked || liveAdapterConfirmMissing(item.adapter)}
               className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded disabled:opacity-50"
               style={{ background: "rgba(45,212,191,0.12)", color: "var(--mis-success)", border: "1px solid rgba(45,212,191,0.22)" }}
             >
@@ -5606,7 +5634,7 @@ export function AIEmployees() {
             <button
               key={`restart-${item.adapter}`}
               onClick={() => restartDaemon(item.adapter)}
-              disabled={Boolean(dispatching) || workerStartBlocked}
+              disabled={Boolean(dispatching) || workerStartBlocked || liveAdapterConfirmMissing(item.adapter)}
               className="flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded disabled:opacity-50"
               style={{ background: "rgba(122,90,248,0.1)", color: "#A78BFA", border: "1px solid rgba(122,90,248,0.2)" }}
             >

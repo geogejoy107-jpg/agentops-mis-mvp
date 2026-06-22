@@ -81,7 +81,9 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
   const [templates, setTemplates] = useState<CustomerTaskTemplate[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState("tpl_customer_kb_qa_bot");
   const [workerAdapter, setWorkerAdapter] = useState<(typeof workerAdapters)[number]>("hermes");
+  const [liveRuntimeConfirmed, setLiveRuntimeConfirmed] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const liveAdapterConfirmMissing = workerAdapter !== "mock" && !liveRuntimeConfirmed;
 
   useEffect(() => {
     const next = DEFAULT_COPY[locale];
@@ -502,6 +504,21 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
             </button>
           ))}
         </div>
+        <label
+          className="inline-flex items-center gap-2 rounded px-2 py-1 text-[10px]"
+          style={{
+            color: liveRuntimeConfirmed ? "var(--mis-success)" : "var(--mis-warning)",
+            background: liveRuntimeConfirmed ? "rgba(42,157,143,0.10)" : "rgba(251,191,36,0.10)",
+            border: liveRuntimeConfirmed ? "1px solid rgba(42,157,143,0.22)" : "1px solid rgba(251,191,36,0.25)",
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={liveRuntimeConfirmed}
+            onChange={(event) => setLiveRuntimeConfirmed(event.target.checked)}
+          />
+          {zh ? "我确认将运行真实 Hermes/OpenClaw adapter 并写入账本证据" : "I confirm this may run a real Hermes/OpenClaw adapter and write ledger evidence"}
+        </label>
         <button
           type="button"
           onClick={() => runWorkerTask(false)}
@@ -515,7 +532,7 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
         <button
           type="button"
           onClick={() => runWorkerTask(true)}
-          disabled={workerBusy || !title.trim()}
+          disabled={workerBusy || !title.trim() || liveAdapterConfirmMissing}
           className="inline-flex items-center gap-1.5 rounded px-3 py-2 text-xs disabled:opacity-50"
           style={{ background: "rgba(34,211,238,0.14)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.30)" }}
         >
@@ -545,7 +562,7 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
         <button
           type="button"
           onClick={submitAsyncWorkerJob}
-          disabled={jobBusy || !title.trim()}
+          disabled={jobBusy || !title.trim() || liveAdapterConfirmMissing}
           className="inline-flex items-center gap-1.5 rounded px-3 py-2 text-xs disabled:opacity-50"
           style={{ background: "rgba(168,85,247,0.14)", color: "var(--mis-purple)", border: "1px solid rgba(168,85,247,0.30)" }}
         >
@@ -555,7 +572,7 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
         <button
           type="button"
           onClick={submitAsyncTemplateJob}
-          disabled={templateJobBusy || !selectedTemplateId}
+          disabled={templateJobBusy || !selectedTemplateId || liveAdapterConfirmMissing}
           className="inline-flex items-center gap-1.5 rounded px-3 py-2 text-xs disabled:opacity-50"
           style={{ background: "rgba(42,157,143,0.12)", color: "var(--mis-success)", border: "1px solid rgba(42,157,143,0.26)" }}
         >
@@ -565,7 +582,7 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
         <button
           type="button"
           onClick={() => submit(true)}
-          disabled={busy || !title.trim()}
+          disabled={busy || !title.trim() || liveAdapterConfirmMissing}
           className="inline-flex items-center gap-1.5 rounded px-3 py-2 text-xs disabled:opacity-50"
           style={{ background: "rgba(34,211,238,0.14)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.30)" }}
         >
