@@ -124,6 +124,8 @@ Must be true:
   storage adapter is treated as BYOC-ready.
 - Route read-model parity compares selected current API response shapes before
   a Postgres-backed server route can replace SQLite reads.
+- Backend selection is explicit and fail-closed: Postgres cannot silently fall
+  back to SQLite when BYOC prerequisites are missing.
 - Verification includes local acceptance against a temporary SQLite database
   before any Postgres work starts:
 
@@ -131,6 +133,7 @@ Must be true:
 python3 scripts/storage_boundary_sqlite_smoke.py
 python3 scripts/storage_postgres_boundary_parity_smoke.py
 python3 scripts/storage_postgres_route_read_model_smoke.py
+python3 scripts/storage_backend_selection_smoke.py
 ```
 
 ### Gate 4: UI/API Parity Before Next.js

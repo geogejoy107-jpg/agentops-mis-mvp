@@ -26,7 +26,12 @@ the same Python fixture through SQLite and the optional Postgres adapter, then
 compares normalized snapshots. The sixth layer is the route read-model
 contract, `postgres_route_read_model_parity_v1`, which projects the same
 fixture into selected current HTTP response shapes and compares SQLite and
-Postgres hashes before a Postgres-backed server route can be accepted.
+Postgres hashes before a Postgres-backed server route can be accepted. The
+seventh layer is the backend selection contract,
+`storage_backend_selection_fail_closed_v1`, which keeps SQLite as the explicit
+Free Local backend and makes requested Postgres startup fail closed until
+enterprise entitlement, DSN, opt-in flag, optional driver, and routable server
+adapter support are all proven.
 
 All layers are intentionally derived from `server.SCHEMA_SQL`, because
 `server.py` is still the executable schema authority for the dependency-free
@@ -78,6 +83,7 @@ python3 scripts/storage_postgres_adapter_contract_smoke.py
 python3 scripts/storage_postgres_optional_adapter_smoke.py
 python3 scripts/storage_postgres_boundary_parity_smoke.py
 python3 scripts/storage_postgres_route_read_model_smoke.py
+python3 scripts/storage_backend_selection_smoke.py
 python3 scripts/storage_boundary_sqlite_smoke.py
 ```
 
@@ -95,8 +101,11 @@ SQLite helper behavior can be replayed through the same shared fixture against
 SQLite and Postgres with identical snapshots. The sixth command verifies
 selected current route read models, including task/run details, run graph,
 tool-call, approval, memory, evaluation, artifact, audit, and workflow job
-payloads, produce identical SQLite/Postgres hashes. The final command proves
-the broader current SQLite helper behavior that Postgres must match.
+payloads, produce identical SQLite/Postgres hashes. The seventh command proves
+server backend selection is explicit: default SQLite is active through
+`/api/storage/backend-status`, while requested Postgres startup fails closed
+instead of silently falling back. The final command proves the broader current
+SQLite helper behavior that Postgres must match.
 
 When Docker is unavailable on a local machine, use the non-authoritative
 diagnostic mode only to keep wider readiness checks moving:
@@ -131,6 +140,10 @@ Current local evidence on `codex/commercial-migration-closed-loop`:
   Postgres read-model hash
   `e6a562071962c4e2ff99236e39cfa2ee3b53f36b46c3b0d268507a5ced08f843`,
   `free_local_dependencies=[]`, and token omission proof.
+- `storage_backend_selection_fail_closed_v1` passed locally: default SQLite is
+  active through `/api/storage/backend-status`, and requested Postgres startup
+  exits before SQLite seed/reset when entitlement, DSN, or opt-in flag is
+  missing.
 - Source install packaging includes `agentops_mis_storage.postgres`; importing
   the module and translating SQL does not require psycopg.
 
@@ -141,6 +154,8 @@ Postgres parity is not complete until the adapter boundary:
 - routes more `repo_*` helper flows through the same shared fixture pattern;
 - runs selected HTTP/CLI requests against a Postgres-backed server adapter once
   the server can switch storage backends;
+- keeps backend selection fail-closed so Postgres configuration cannot silently
+  run against SQLite;
 - keeps qmark/named placeholder translation and literal `?` behavior locked;
 - keeps psycopg optional and outside Free Local dependencies;
 - verifies no raw prompts, raw responses, secrets, generated caches, local DBs,

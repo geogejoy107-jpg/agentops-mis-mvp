@@ -46,6 +46,7 @@ OPENCLAW_HOME = Path(os.environ.get("OPENCLAW_HOME") or (Path.home() / ".opencla
 HERMES_HOME = Path.home() / ".hermes"
 OPENCLAW_BIN = Path(os.environ.get("OPENCLAW_BIN") or "/opt/homebrew/bin/openclaw")
 DEFAULT_ENTITLEMENTS_PATH = ROOT / "config" / "entitlements.local.json"
+STORAGE_BACKEND = os.environ.get("AGENTOPS_STORAGE_BACKEND", "sqlite").strip().lower() or "sqlite"
 
 RISKY_TOOLS = {
     "shell.exec",
@@ -243,6 +244,89 @@ def entitlement_status(headers) -> dict:
 
 def commercial_capability_enabled(capability: str) -> bool:
     return bool(entitlement_status(None).get("capabilities", {}).get(capability))
+
+
+def storage_backend_status(headers=None) -> dict:
+    selected = STORAGE_BACKEND
+    if selected not in {"sqlite", "postgres"}:
+        return {
+            "provider": "agentops-storage",
+            "status": "blocked",
+            "selected_backend": selected,
+            "active_backend": "none",
+            "reason": "unsupported_storage_backend",
+            "supported_backends": ["sqlite", "postgres"],
+            "fallback_performed": False,
+            "token_omitted": True,
+        }
+    if selected == "sqlite":
+        return {
+            "provider": "agentops-storage",
+            "status": "active",
+            "selected_backend": "sqlite",
+            "active_backend": "sqlite",
+            "sqlite": {
+                "db_path": str(DB_PATH),
+                "dependency": "stdlib sqlite3",
+                "free_local_default": True,
+            },
+            "postgres": {
+                "available_as_runtime_dependency": False,
+                "dsn_configured": bool(os.environ.get("AGENTOPS_POSTGRES_DSN") or os.environ.get("DATABASE_URL")),
+                "required_edition": "enterprise_byoc",
+                "server_backend_routable": False,
+            },
+            "fallback_performed": False,
+            "token_omitted": True,
+        }
+
+    entitlement = entitlement_status(headers)
+    dsn = os.environ.get("AGENTOPS_POSTGRES_DSN") or os.environ.get("DATABASE_URL")
+    explicit_enable = os.environ.get("AGENTOPS_ENABLE_POSTGRES_STORAGE", "").strip().lower() in {"1", "true", "yes"}
+    checks = {
+        "enterprise_entitlement": bool(entitlement.get("capabilities", {}).get("postgres_adapter")),
+        "dsn_configured": bool(dsn),
+        "experimental_enable_flag": explicit_enable,
+        "driver_available": False,
+        "server_backend_routable": False,
+    }
+    try:
+        from agentops_mis_storage.postgres import load_psycopg  # noqa: PLC0415
+
+        load_psycopg()
+        checks["driver_available"] = True
+    except Exception:
+        checks["driver_available"] = False
+    if not checks["enterprise_entitlement"]:
+        reason = "entitlement_required"
+    elif not checks["dsn_configured"]:
+        reason = "missing_postgres_dsn"
+    elif not checks["experimental_enable_flag"]:
+        reason = "postgres_storage_flag_required"
+    elif not checks["driver_available"]:
+        reason = "optional_psycopg_unavailable"
+    else:
+        reason = "server_postgres_backend_not_routable"
+    return {
+        "provider": "agentops-storage",
+        "status": "blocked",
+        "selected_backend": "postgres",
+        "active_backend": "none",
+        "reason": reason,
+        "checks": checks,
+        "required_edition": "enterprise_byoc",
+        "required_env": ["AGENTOPS_STORAGE_BACKEND=postgres", "AGENTOPS_POSTGRES_DSN", "AGENTOPS_ENABLE_POSTGRES_STORAGE=1"],
+        "next_proof": "Wire server.db and schema initialization to PostgresAdapter, then run HTTP/CLI parity against a temporary Postgres backend.",
+        "fallback_performed": False,
+        "token_omitted": True,
+    }
+
+
+def enforce_storage_backend_startup() -> None:
+    status = storage_backend_status(None)
+    if status.get("status") != "active":
+        print(json.dumps(status, ensure_ascii=False, indent=2, sort_keys=True), file=sys.stderr)
+        raise SystemExit(2)
 
 
 def commercial_entitlement_block(conn, capability: str, operation: str, actor: str = "commercial-gate") -> dict:
@@ -12736,6 +12820,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_text(file_path.read_text(encoding="utf-8"), content_type=content_type)
 
     def handle_get_api(self, path, qs):
+        if path == "/api/storage/backend-status":
+            return self.send_json(storage_backend_status(self.headers))
         with db() as conn:
             if path == "/api/agent-gateway/status":
                 payload, status = agent_gateway_status(conn, self.headers)
@@ -13937,6 +14023,7 @@ def main():
     parser.add_argument("--reset", action="store_true", help="Reset SQLite database and seed data, then exit unless --serve is also set")
     parser.add_argument("--serve", action="store_true", help="Serve after reset")
     args = parser.parse_args()
+    enforce_storage_backend_startup()
     if args.reset:
         seed(reset=True)
         print(f"Reset and seeded {DB_PATH}")
