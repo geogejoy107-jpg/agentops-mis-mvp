@@ -783,6 +783,10 @@ def cmd_workflow_customer_worker_task(args, client: AgentOpsClient) -> dict:
         "worker_agent_id": args.worker_agent_id,
         "hermes_timeout": args.hermes_timeout,
     }
+    if args.prepared_action_id:
+        payload["prepared_action_id"] = args.prepared_action_id
+    if args.request_hash:
+        payload["request_hash"] = args.request_hash
     endpoint = "/api/workflows/customer-worker-task/submit" if args.async_job else "/api/workflows/customer-worker-task"
     return client.post(endpoint, payload)
 
@@ -1732,6 +1736,8 @@ def build_parser() -> argparse.ArgumentParser:
     customer_worker.add_argument("--selected-agent-id", action="append", default=None, help="Optional business agent id to record as selected context. Repeatable.")
     customer_worker.add_argument("--worker-agent-id", default=None, help="Optional exact worker agent id. Defaults to a unique id per dispatch.")
     customer_worker.add_argument("--hermes-timeout", type=int, default=300)
+    customer_worker.add_argument("--prepared-action-id", default=None, help="Resume an approved prepared customer-worker action.")
+    customer_worker.add_argument("--request-hash", default=None, help="Expected prepared customer-worker request hash for exact resume.")
     customer_worker.add_argument("--async-job", action="store_true", help="Submit the customer worker task as a workflow job and return immediately.")
     customer_worker.set_defaults(handler="workflow_customer_worker_task")
 

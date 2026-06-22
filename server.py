@@ -7888,11 +7888,277 @@ def submit_customer_task_template_job(conn, body: dict) -> tuple[dict, int]:
     }, 202
 
 
+def customer_worker_external_write_args(
+    body: dict,
+    adapter: str,
+    title: str,
+    description: str,
+    acceptance: str,
+    async_job: bool,
+) -> dict:
+    selected_agent_ids = [redact_text(item, 120) for item in safe_json_list(body.get("selected_agent_ids"))]
+    return {
+        "workflow_type": "customer_worker_task",
+        "adapter": adapter,
+        "async_job": bool(async_job),
+        "title_hash": stable_hash(title),
+        "description_hash": stable_hash(description),
+        "acceptance_hash": stable_hash(acceptance),
+        "selected_agent_ids_hash": stable_hash(selected_agent_ids),
+        "priority": coerce_choice(body.get("priority"), VALID_PRIORITIES, "high"),
+        "risk_level": coerce_choice(body.get("risk_level"), VALID_RISK_LEVELS, "medium"),
+        "worker_agent_id": redact_text(body.get("worker_agent_id") or "", 160),
+        "requester_id": redact_text(body.get("requester_id") or "usr_customer_demo", 120),
+        "hermes_timeout": int(body.get("hermes_timeout") or 300),
+        "raw_request_omitted": True,
+        "raw_prompt_omitted": True,
+    }
+
+
+def customer_worker_external_write_snapshot_hash(args: dict) -> str:
+    return stable_hash({
+        "workflow_type": args.get("workflow_type"),
+        "adapter": args.get("adapter"),
+        "async_job": bool(args.get("async_job")),
+        "title_hash": args.get("title_hash"),
+        "description_hash": args.get("description_hash"),
+        "acceptance_hash": args.get("acceptance_hash"),
+        "selected_agent_ids_hash": args.get("selected_agent_ids_hash"),
+        "priority": args.get("priority"),
+        "risk_level": args.get("risk_level"),
+        "worker_agent_id": args.get("worker_agent_id"),
+        "requester_id": args.get("requester_id"),
+        "hermes_timeout": args.get("hermes_timeout"),
+    })
+
+
+def prepare_customer_worker_external_write(
+    conn,
+    body: dict,
+    adapter: str,
+    title: str,
+    description: str,
+    acceptance: str,
+    worker_agent_id: str,
+    async_job: bool = False,
+) -> tuple[dict, int]:
+    now = now_iso()
+    workspace_id = normalize_workspace_id(body.get("workspace_id") or "local-demo")
+    connector_id = runtime_connector_for_adapter(adapter)
+    args = customer_worker_external_write_args(body, adapter, title, description, acceptance, async_job)
+    snapshot_hash = customer_worker_external_write_snapshot_hash(args)
+    task_id = body.get("task_id") or stable_id("tsk_customer_worker_prepared", adapter, snapshot_hash[:16], now)
+    run_id = body.get("run_id") or stable_id("run_customer_worker_prepared", adapter, task_id, snapshot_hash[:16])
+    tool_call_id = body.get("tool_call_id") or stable_id("tc_customer_worker_prepared", run_id)
+    approval_id = body.get("approval_id") or stable_id("ap_customer_worker_prepared", run_id)
+    prepared_action_id = body.get("prepared_action_id") or stable_id("pact_customer_worker", run_id, snapshot_hash[:16])
+    ensure_gateway_agent(conn, worker_agent_id, name=f"Customer {adapter} Worker", role="Customer Task Worker", runtime_type=adapter)
+    repo_upsert_task(conn, {
+        "task_id": task_id,
+        "workspace_id": workspace_id,
+        "title": f"Prepared customer worker task ({adapter})",
+        "description": f"Approval-gated customer worker external write. request_hash={snapshot_hash[:16]}",
+        "requester_id": body.get("requester_id") or "usr_customer_demo",
+        "owner_agent_id": worker_agent_id,
+        "collaborator_agent_ids": json.dumps(safe_json_list(body.get("selected_agent_ids")), ensure_ascii=False),
+        "status": "waiting_approval",
+        "priority": args["priority"],
+        "due_date": body.get("due_date"),
+        "acceptance_criteria": f"Resume only after exact prepared-action approval. request_hash={snapshot_hash[:16]}",
+        "risk_level": args["risk_level"],
+        "budget_limit_usd": float(body.get("budget_limit_usd") or 1.0),
+        "created_at": now,
+        "updated_at": now,
+    })
+    repo_upsert_run(conn, {
+        "run_id": run_id,
+        "workspace_id": workspace_id,
+        "task_id": task_id,
+        "agent_id": worker_agent_id,
+        "runtime_type": adapter,
+        "status": "waiting_approval",
+        "started_at": now,
+        "ended_at": None,
+        "duration_ms": None,
+        "input_summary": f"Prepare customer worker external write request_hash={snapshot_hash[:16]}",
+        "output_summary": None,
+        "model_provider": adapter,
+        "model_name": adapter,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "reasoning_tokens": 0,
+        "cost_usd": 0.0,
+        "error_type": None,
+        "error_message": None,
+        "trace_id": None,
+        "parent_run_id": body.get("parent_run_id"),
+        "delegation_id": f"customer-worker:{adapter}",
+        "approval_required": 1,
+        "created_at": now,
+    })
+    repo_upsert_tool_call(conn, {
+        "tool_call_id": tool_call_id,
+        "run_id": run_id,
+        "agent_id": worker_agent_id,
+        "tool_name": "agentops.customer_worker.external_write",
+        "tool_version": "v1",
+        "tool_category": "custom",
+        "normalized_args_json": json.dumps(args, ensure_ascii=False, sort_keys=True),
+        "target_resource": f"agentops://workflow/customer-worker-task/{'submit' if async_job else 'run'}",
+        "risk_level": "high",
+        "status": "waiting_approval",
+        "result_summary": "Prepared customer worker external write is waiting for explicit approval.",
+        "side_effect_id": None,
+        "started_at": now,
+        "ended_at": None,
+        "created_at": now,
+    })
+    repo_upsert_approval(conn, {
+        "approval_id": approval_id,
+        "task_id": task_id,
+        "run_id": run_id,
+        "tool_call_id": tool_call_id,
+        "requested_by_agent_id": worker_agent_id,
+        "approver_user_id": body.get("approver_user_id") or "usr_founder",
+        "decision": "pending",
+        "reason": f"Approve exact-resume customer worker {adapter} external write request_hash={snapshot_hash[:16]}.",
+        "expires_at": (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=1)).isoformat(),
+        "created_at": now,
+        "decided_at": None,
+    })
+    repo_upsert_prepared_action(conn, {
+        "prepared_action_id": prepared_action_id,
+        "workspace_id": workspace_id,
+        "task_id": task_id,
+        "run_id": run_id,
+        "tool_call_id": tool_call_id,
+        "approval_id": approval_id,
+        "requested_by_agent_id": worker_agent_id,
+        "action_type": "workflow.customer_worker_task_external_write",
+        "provider": "agentops-worker",
+        "target_resource": f"agentops://workflow/customer-worker-task/{'submit' if async_job else 'run'}",
+        "normalized_args_json": json.dumps(args, ensure_ascii=False, sort_keys=True),
+        "args_hash": None,
+        "snapshot_ref": "request-hash://customer-worker-task",
+        "snapshot_hash": snapshot_hash,
+        "status": "waiting_approval",
+        "result_json": "{}",
+        "created_at": now,
+        "updated_at": now,
+        "approved_at": None,
+        "consumed_at": None,
+    })
+    runtime_event(conn, connector_id, "customer_worker_task.external_write.prepared", "waiting_approval", run_id=run_id, task_id=task_id, agent_id=worker_agent_id, input_summary=f"Customer worker external write prepared request_hash={snapshot_hash[:16]}", raw_payload_hash=snapshot_hash)
+    audit(conn, "system", "customer-worker-task", "workflow.customer_worker_task.prepared_action_created", "prepared_actions", prepared_action_id, None, {"status": "waiting_approval"}, {"approval_id": approval_id, "adapter": adapter, "async_job": async_job, "request_hash": snapshot_hash, "provider_call_performed": False, "raw_request_omitted": True})
+    conn.commit()
+    return {
+        "provider": "agentops-worker",
+        "workflow": "customer_worker_task",
+        "dry_run": False,
+        "ok": False,
+        "adapter": adapter,
+        "async_job": bool(async_job),
+        "requires_approval": True,
+        "provider_call_performed": False,
+        "prepared_action_id": prepared_action_id,
+        "approval_id": approval_id,
+        "task_id": task_id,
+        "run_id": run_id,
+        "tool_call_id": tool_call_id,
+        "request_hash": snapshot_hash,
+        "token_omitted": True,
+        "raw_request_omitted": True,
+        "raw_prompt_omitted": True,
+    }, 202
+
+
+def resume_customer_worker_external_write(
+    conn,
+    body: dict,
+    adapter: str,
+    title: str,
+    description: str,
+    acceptance: str,
+    async_job: bool = False,
+) -> tuple[dict, int]:
+    prepared_action_id = body.get("prepared_action_id")
+    action = conn.execute("SELECT * FROM prepared_actions WHERE prepared_action_id=?", (prepared_action_id,)).fetchone()
+    if not action or action["provider"] != "agentops-worker" or action["action_type"] != "workflow.customer_worker_task_external_write":
+        return {"provider": "agentops-worker", "workflow": "customer_worker_task", "ok": False, "error": "prepared_action_not_found", "prepared_action_id": prepared_action_id, "token_omitted": True}, 404
+    if action["status"] == "consumed":
+        return {"provider": "agentops-worker", "workflow": "customer_worker_task", "ok": False, "error": "prepared_action_already_consumed", "prepared_action_id": prepared_action_id, "token_omitted": True}, 409
+    if action["status"] in {"rejected", "expired", "canceled"}:
+        return {"provider": "agentops-worker", "workflow": "customer_worker_task", "ok": False, "error": f"prepared_action_{action['status']}", "prepared_action_id": prepared_action_id, "token_omitted": True}, 409
+    if not approval_is_approved(conn, action["approval_id"]):
+        return {"provider": "agentops-worker", "workflow": "customer_worker_task", "ok": False, "error": "approval_required", "prepared_action_id": prepared_action_id, "approval_id": action["approval_id"], "token_omitted": True}, 428
+    args = customer_worker_external_write_args(body, adapter, title, description, acceptance, async_job)
+    snapshot_hash = customer_worker_external_write_snapshot_hash(args)
+    supplied_hash = body.get("request_hash")
+    if action["snapshot_hash"] != snapshot_hash or (supplied_hash and supplied_hash != action["snapshot_hash"]):
+        return {
+            "provider": "agentops-worker",
+            "workflow": "customer_worker_task",
+            "ok": False,
+            "error": "prepared_action_request_hash_mismatch",
+            "prepared_action_id": prepared_action_id,
+            "expected_request_hash": action["snapshot_hash"],
+            "current_request_hash": supplied_hash or snapshot_hash,
+            "token_omitted": True,
+            "raw_request_omitted": True,
+        }, 409
+    try:
+        stored_args = json.loads(action["normalized_args_json"] or "{}")
+    except json.JSONDecodeError:
+        stored_args = {}
+    if prepared_action_args_hash(json.dumps(stored_args, ensure_ascii=False, sort_keys=True)) != action["args_hash"]:
+        return {"provider": "agentops-worker", "workflow": "customer_worker_task", "ok": False, "error": "prepared_action_args_mismatch", "prepared_action_id": prepared_action_id, "token_omitted": True}, 409
+    if prepared_action_args_hash(json.dumps(args, ensure_ascii=False, sort_keys=True)) != action["args_hash"]:
+        return {"provider": "agentops-worker", "workflow": "customer_worker_task", "ok": False, "error": "prepared_action_args_mismatch", "prepared_action_id": prepared_action_id, "token_omitted": True}, 409
+    if action["status"] != "approved":
+        _before_action, action, _outcome = repo_update_prepared_action_status(conn, prepared_action_id, "approved")
+    resume_body = {**body, "confirm_run": True, "prepared_action_resume": True}
+    if async_job:
+        payload, status = submit_customer_worker_task_job(conn, resume_body)
+    else:
+        payload, status = run_customer_worker_task_workflow(conn, resume_body)
+    result_hash = stable_hash(payload)
+    _before_action, after_action, _action_outcome = repo_update_prepared_action_status(conn, prepared_action_id, "consumed", result_json={
+        "result_hash": result_hash,
+        "result_status": status,
+        "result_task_id": payload.get("task_id") or ((payload.get("job") or {}).get("result_task_id")),
+        "result_run_id": payload.get("run_id") or ((payload.get("job") or {}).get("result_run_id")),
+        "result_artifact_id": payload.get("artifact_id") or ((payload.get("job") or {}).get("result_artifact_id")),
+        "raw_result_omitted": True,
+    })
+    conn.execute("UPDATE tool_calls SET status=?, result_summary=?, side_effect_id=?, ended_at=? WHERE tool_call_id=?", (
+        "completed" if payload.get("ok", status < 400) else "failed",
+        "Customer worker external write resumed from prepared action.",
+        f"customer-worker-result-hash:{result_hash[:16]}",
+        now_iso(),
+        action["tool_call_id"],
+    ))
+    runtime_event(conn, runtime_connector_for_adapter(adapter), "customer_worker_task.external_write.resume", "completed" if status < 400 else "failed", run_id=payload.get("run_id") or action["run_id"], task_id=payload.get("task_id") or action["task_id"], agent_id=action["requested_by_agent_id"], output_summary="Customer worker external write resumed exactly once.", raw_payload_hash=result_hash)
+    audit(conn, "system", "customer-worker-task", "workflow.customer_worker_task.prepared_action_resumed", "prepared_actions", prepared_action_id, None, {"status": after_action["status"] if after_action else "consumed"}, {"adapter": adapter, "async_job": async_job, "request_hash": snapshot_hash, "result_hash": result_hash, "provider_call_performed": True, "raw_request_omitted": True, "raw_result_omitted": True})
+    conn.commit()
+    payload.update({
+        "prepared_action_id": prepared_action_id,
+        "prepared_action_status": after_action["status"] if after_action else "consumed",
+        "approval_id": action["approval_id"],
+        "request_hash": snapshot_hash,
+        "provider_call_performed": True,
+        "raw_request_omitted": True,
+        "raw_result_omitted": True,
+        "token_omitted": True,
+    })
+    return payload, status
+
+
 def submit_customer_worker_task_job(conn, body: dict) -> tuple[dict, int]:
     adapter = coerce_choice(body.get("adapter"), {"mock", "hermes", "openclaw"}, "mock")
     now = now_iso()
     title = redact_text(body.get("title") or "客户 Worker 任务", 180)
     input_summary = redact_text(body.get("description") or "Customer task should be processed by an AgentOps worker.", 300)
+    acceptance = redact_text(body.get("acceptance_criteria") or "Worker must write run, tool, evaluation and audit evidence.", 500)
     confirm_run = bool(body.get("confirm_run"))
     if adapter in {"hermes", "openclaw"} and confirm_run:
         connector_id = runtime_connector_for_adapter(adapter)
@@ -7959,6 +8225,10 @@ def submit_customer_worker_task_job(conn, body: dict) -> tuple[dict, int]:
                 "raw_request_omitted": True,
                 "token_omitted": True,
             }, 409
+        if not body.get("prepared_action_resume"):
+            if body.get("prepared_action_id"):
+                return resume_customer_worker_external_write(conn, body, adapter, title, input_summary, acceptance, async_job=True)
+            return prepare_customer_worker_external_write(conn, body, adapter, title, input_summary, acceptance, body.get("worker_agent_id") or stable_id("agt_customer_worker", adapter, stable_hash(input_summary)[:16]), async_job=True)
     job_id = new_id("wfjob")
     row = {
         "job_id": job_id,
@@ -11706,6 +11976,10 @@ def run_customer_worker_task_workflow(conn, body: dict) -> tuple[dict, int]:
             "note": reason,
             "token_omitted": True,
         }, 409
+    if adapter in {"hermes", "openclaw"} and confirm_run and not body.get("prepared_action_resume"):
+        if body.get("prepared_action_id"):
+            return resume_customer_worker_external_write(conn, body, adapter, title, description, acceptance, async_job=False)
+        return prepare_customer_worker_external_write(conn, body, adapter, title, description, acceptance, worker_agent_id, async_job=False)
     if adapter in {"hermes", "openclaw"} and not confirm_run:
         task_id = body.get("task_id") or stable_id("tsk_customer_worker_plan", adapter, title, now_iso())
         agent_id = worker_agent_id

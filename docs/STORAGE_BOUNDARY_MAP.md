@@ -34,6 +34,7 @@ human/admin APIs:
 | Hermes run-task prepared-action integration | `hermes_prepare_run_task`, `hermes_resume_run_task`, `hermes_run_task_args` | `POST /api/integrations/hermes/run-task` when `confirm_run` is true | `python3 scripts/hermes_run_task_prepared_action_smoke.py` |
 | Agnesfallback fixed-probe prepared-action integration | `agnesfallback_prepare_probe`, `agnesfallback_resume_probe`, `agnesfallback_probe_args` | `POST /api/integrations/hermes/cli-probe`, `POST /api/integrations/hermes/chat-completion-probe` when `confirm_run` is true | `python3 scripts/agnesfallback_probe_prepared_action_smoke.py` |
 | OpenClaw fixed-probe prepared-action integration | `openclaw_prepare_probe`, `openclaw_resume_probe`, `openclaw_probe_args` | `POST /api/integrations/openclaw/probe` when `confirm_run` is true | `python3 scripts/openclaw_probe_prepared_action_smoke.py` |
+| Customer-worker external-write prepared-action integration | `prepare_customer_worker_external_write`, `resume_customer_worker_external_write`, `customer_worker_external_write_args` | `POST /api/workflows/customer-worker-task`, `POST /api/workflows/customer-worker-task/submit` when `adapter` is Hermes/OpenClaw and `confirm_run` is true | `python3 scripts/customer_worker_prepared_action_smoke.py` |
 
 The helpers deliberately keep the existing SQLite row shape and ordering. They
 only centralize workspace filters and detail assembly so a future adapter can
@@ -43,7 +44,7 @@ match behavior before Postgres is introduced.
 
 | Candidate | Why next | Required proof before Postgres |
 | --- | --- | --- |
-| Remaining prepared-action route integration | Notion export, Dify upload, Hermes default run-task, Agnesfallback fixed probes, and OpenClaw fixed probe are covered; external worker writes still need to create, approve, resume, and consume prepared actions | Connector/runtime smokes that prove no provider call before approval and exact one-shot resume after approval |
+| Prepared-action route integration audit | Notion export, Dify upload, Hermes default run-task, Agnesfallback fixed probes, OpenClaw fixed probe, and customer-worker external writes are covered; future external side-effect routes must be added here before Postgres parity claims | Connector/runtime smokes that prove no provider call before approval and exact one-shot resume after approval |
 | Postgres adapter contract | SQLite helpers now cover core ledger and evidence writes; next step is a second adapter exercising the same helper contract | SQLite smoke parity plus Postgres container smoke with identical fixtures |
 
 ## Postgres Parity Rule
