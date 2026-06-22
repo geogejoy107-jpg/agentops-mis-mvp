@@ -53,6 +53,7 @@ jobs:
           python3 scripts/redaction_policy_smoke.py
           python3 scripts/sqlite_pragmas_smoke.py
           python3 scripts/sqlite_reliability_smoke.py
+          python3 scripts/migration_rollback_smoke.py
           python3 scripts/secret_scan_smoke.py
           python3 scripts/license_provenance_smoke.py
           python3 scripts/knowledge_retrieval_quality_smoke.py
