@@ -239,14 +239,14 @@ def main() -> int:
         conn.close()
     cache = ReadModelCache(ttl_sec=10, max_items=2)
     headers = {"X-AgentOps-Workspace-Id": "ws_smoke"}
-    auth_ctx = {"mode": "agent_token", "workspace_id": "ws_smoke", "agent_id": "agt_smoke", "scopes": ["tasks:read"], "token_id": "agtok_fake_secret"}
+    auth_ctx = {"mode": "agent_token", "workspace_id": "ws_smoke", "agent_id": "agt_smoke", "scopes": ["tasks:read"], "token_id": "fixture_token_ref"}
     first = cache.cached("smoke", {"limit": ["1"]}, headers, lambda: {"value": "one"}, auth_ctx)
     second = cache.cached("smoke", {"limit": ["1"]}, headers, lambda: {"value": "two"}, auth_ctx)
     bypass = cache.cached("smoke", {"limit": ["1"], "refresh_cache": ["true"]}, headers, lambda: {"value": "fresh"}, auth_ctx)
     require(first.get("read_model_cache", {}).get("status") == "miss", "read model cache first read should miss", failures)
     require(second.get("read_model_cache", {}).get("status") == "hit" and second.get("value") == "one", "read model cache second read should hit original payload", failures)
     require(bypass.get("read_model_cache", {}).get("status") == "bypass" and bypass.get("value") == "fresh", "read model cache refresh should bypass", failures)
-    require("agtok_fake_secret" not in json.dumps([first, second, bypass], ensure_ascii=False), "read model cache leaked token-like auth ref", failures)
+    require("fixture_token_ref" not in json.dumps([first, second, bypass], ensure_ascii=False), "read model cache leaked token-like auth ref", failures)
 
     command = "python3 scripts/module_boundary_smoke.py"
     require(command in ci_text, "module boundary smoke missing from CI", failures)
