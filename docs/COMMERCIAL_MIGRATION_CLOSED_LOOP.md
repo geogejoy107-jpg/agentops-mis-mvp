@@ -230,8 +230,8 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   approves one candidate memory through the Next.js memory page, verifies both
   state changes through `/api/mis/*`, renders a fixture-backed customer project
   report, opens the commercial entitlement, governance, deployment, and tool
-  call ledger parity pages, archives that report to the MIS ledger through a
-  Next.js form fallback,
+  call ledger and evaluation room parity pages, archives that report to the MIS
+  ledger through a Next.js form fallback,
   verifies `report_artifact_id`, clicks a customer template dispatch action,
   verifies the Free Local `report_templates` entitlement block, confirms no
   customer project was created by the blocked action, flips an isolated temporary
@@ -256,6 +256,7 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   - `ui/next-app/app/workspace/runs/page.tsx`
   - `ui/next-app/app/workspace/runs/[runId]/page.tsx`
   - `ui/next-app/app/workspace/tool-calls/page.tsx`
+  - `ui/next-app/app/workspace/evaluations/page.tsx`
   - `ui/next-app/app/admin/tasks/[taskId]/page.tsx`
   - `ui/next-app/app/admin/runs/page.tsx`
   - `ui/next-app/app/admin/runs/[runId]/page.tsx`
@@ -273,6 +274,7 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   - `ui/next-app/src/components/LedgerPages.tsx`
   - `ui/next-app/src/components/LedgerDetailPages.tsx`
   - `ui/next-app/src/components/ToolCallPages.tsx`
+  - `ui/next-app/src/components/EvaluationPages.tsx`
   - `ui/next-app/src/components/CommercialPage.tsx`
   - `ui/next-app/src/components/GovernancePage.tsx`
   - `ui/next-app/src/components/DeploymentPage.tsx`

@@ -45,6 +45,7 @@ route retirement:
 | Customer report | `customer_project_report` | `covered` | Not allowed |
 | Task and run ledgers | `task_list`, `task_detail`, `run_ledger`, `run_detail` | `covered` | Not allowed |
 | Tool call ledger | `tool_calls` | `covered` | Not allowed |
+| Evaluation room | `evaluation_room` | `covered` | Not allowed |
 
 ## Current Important Gaps
 
@@ -56,9 +57,10 @@ route retirement:
   production safety and readiness; Vite remains canonical for local worker
   start/stop/restart, task release, remote enrollment mutation, and detailed
   operator controls.
-- Admin-only Vite routes for evaluations, connectors, external bases, per-agent
-  performance, and the full template/base-switching console are deferred. Tool
-  calls now have read-only Next parity at `/workspace/tool-calls`.
+- Admin-only Vite routes for connectors, external bases, per-agent performance,
+  and the full template/base-switching console are deferred. Tool calls and the
+  evaluation room now have read-only Next parity at `/workspace/tool-calls` and
+  `/workspace/evaluations`.
 - Several `covered` routes still need a route-level Vite/Next data-shape diff
   before a retirement decision. Browser snapshot evidence is necessary but not
   sufficient.
@@ -66,6 +68,12 @@ route retirement:
   It reads `GET /tool-calls`, exposes risk/status filtering, links each tool
   call to `/workspace/runs/:runId`, and keeps `/admin/toolcalls` canonical until
   browser evidence and route retirement are explicit.
+- Evaluation Room now has a Next read-only parity route at
+  `/workspace/evaluations`. It reads `GET /evaluations`, exposes score,
+  pass/fail, evaluator type, agent, run, task, and created-at evidence, links
+  rows to `/workspace/runs/:runId` and `/workspace/tasks/:taskId`, and keeps
+  `/admin/evaluations` canonical until evaluation-case actions and route
+  retirement are explicit.
 - Task and run list/detail now have first route-level evidence:
   `python3 scripts/ui_task_run_route_parity_smoke.py`
   (`ui_task_run_route_parity_v1`) checks Next list links to detail routes and

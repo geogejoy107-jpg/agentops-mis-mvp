@@ -38,6 +38,7 @@ ROUTES = [
     ("/workspace/tasks", ["Tasks", "running", "planned"]),
     ("/workspace/runs", ["Run Ledger", "Run", "Status"]),
     ("/workspace/tool-calls", ["Tool Call Ledger", "high-risk", "Run"]),
+    ("/workspace/evaluations", ["Evaluation Room", "failed gates", "average score"]),
     ("/workspace/approvals", ["Approvals", "Pending approval", "Decision history"]),
     ("/workspace/memory", ["Memory", "candidate", "approved"]),
     ("/workspace/audit", ["Audit", "audit events", "Actor"]),

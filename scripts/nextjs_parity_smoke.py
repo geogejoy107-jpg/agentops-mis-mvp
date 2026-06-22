@@ -40,6 +40,7 @@ def main() -> int:
         NEXT_APP / "app" / "workspace" / "runs" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "runs" / "[runId]" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "tool-calls" / "page.tsx",
+        NEXT_APP / "app" / "workspace" / "evaluations" / "page.tsx",
         NEXT_APP / "app" / "admin" / "tasks" / "[taskId]" / "page.tsx",
         NEXT_APP / "app" / "admin" / "runs" / "page.tsx",
         NEXT_APP / "app" / "admin" / "runs" / "[runId]" / "page.tsx",
@@ -63,6 +64,7 @@ def main() -> int:
         NEXT_APP / "src" / "components" / "DeliveryPages.tsx",
         NEXT_APP / "src" / "components" / "LedgerPages.tsx",
         NEXT_APP / "src" / "components" / "ToolCallPages.tsx",
+        NEXT_APP / "src" / "components" / "EvaluationPages.tsx",
         NEXT_APP / "src" / "components" / "GovernancePages.tsx",
         NEXT_APP / "src" / "components" / "WorkspaceDashboard.tsx",
         NEXT_APP / "src" / "lib" / "mis.ts",
@@ -98,6 +100,7 @@ def main() -> int:
     delivery_pages_text = read_text(NEXT_APP / "src" / "components" / "DeliveryPages.tsx")
     ledger_pages_text = read_text(NEXT_APP / "src" / "components" / "LedgerPages.tsx")
     tool_call_pages_text = read_text(NEXT_APP / "src" / "components" / "ToolCallPages.tsx")
+    evaluation_pages_text = read_text(NEXT_APP / "src" / "components" / "EvaluationPages.tsx")
     governance_pages_text = read_text(NEXT_APP / "src" / "components" / "GovernancePages.tsx")
     dashboard_text = read_text(NEXT_APP / "src" / "components" / "WorkspaceDashboard.tsx")
     globals_text = read_text(NEXT_APP / "src" / "styles" / "globals.css")
@@ -119,6 +122,7 @@ def main() -> int:
     require("/dashboard/metrics" in lib_text, "workspace parity data must include dashboard metrics")
     require("/tasks" in lib_text and "/runs" in lib_text and "/approvals" in lib_text, "workspace parity data misses core ledgers")
     require("/tool-calls" in lib_text and "loadToolCalls" in lib_text, "tool call ledger parity data is missing")
+    require("/evaluations" in lib_text and "loadEvaluations" in lib_text, "evaluation ledger parity data is missing")
     require("/memories" in lib_text and "/audit?limit=120" in lib_text, "governance parity data misses memory or audit ledgers")
     require("/workers/status" in lib_text and "/workers/adapter-readiness" in lib_text, "agent-control parity data misses worker readiness")
     require("/security/production-readiness" in lib_text, "agent-control parity data misses production readiness")
@@ -138,6 +142,7 @@ def main() -> int:
     require("/workflows/customer-task-templates/run" in dispatch_route_text and "entitlement_required" in dispatch_route_text, "dispatch template fallback must preserve entitlement blocking")
     require("/workspace/tasks" in app_frame_text and "/workspace/runs" in app_frame_text, "Next.js nav must expose task and run parity routes")
     require("/workspace/tool-calls" in app_frame_text, "Next.js nav must expose tool call ledger parity route")
+    require("/workspace/evaluations" in app_frame_text, "Next.js nav must expose evaluation ledger parity route")
     require("/workspace/memory" in app_frame_text and "/workspace/audit" in app_frame_text, "Next.js nav must expose governance parity routes")
     require("/workspace/reports" in app_frame_text, "Next.js nav must expose reports parity route")
     require("/workspace/commercial" in app_frame_text, "Next.js nav must expose commercial parity route")
@@ -172,6 +177,10 @@ def main() -> int:
     require("ToolCallsParityPage" in tool_call_pages_text and "loadToolCalls" in tool_call_pages_text, "tool call parity page must load the live tool-call ledger")
     require("/workspace/runs/${encodeURIComponent(toolCall.run_id)}" in tool_call_pages_text, "tool call parity page must link tool calls to workspace run detail")
     require("riskFilter" in tool_call_pages_text and "high-risk" in tool_call_pages_text, "tool call parity page must expose risk filtering and high-risk summary")
+    require("EvaluationsParityPage" in evaluation_pages_text and "loadEvaluations" in evaluation_pages_text, "evaluation parity page must load the live evaluation ledger")
+    require("/workspace/runs/${encodeURIComponent(evaluation.run_id)}" in evaluation_pages_text, "evaluation parity page must link evaluations to workspace run detail")
+    require("/workspace/tasks/${encodeURIComponent(evaluation.task_id)}" in evaluation_pages_text, "evaluation parity page must link evaluations to workspace task detail")
+    require("average score" in evaluation_pages_text and "failed gates" in evaluation_pages_text, "evaluation parity page must expose score and failed gate summaries")
     require("/workspace/tasks/${encodeURIComponent(taskId)}" in admin_task_alias_text and "redirect(" in admin_task_alias_text, "legacy admin task detail must redirect to workspace task detail")
     require('redirect("/workspace/runs")' in admin_runs_alias_text, "legacy admin run ledger must redirect to workspace runs")
     require("/workspace/runs/${encodeURIComponent(runId)}" in admin_run_alias_text and "redirect(" in admin_run_alias_text, "legacy admin run detail must redirect to workspace run detail")
@@ -210,6 +219,7 @@ def main() -> int:
             "/workspace/runs",
             "/workspace/runs/[runId]",
             "/workspace/tool-calls",
+            "/workspace/evaluations",
             "/admin/tasks/[taskId]",
             "/admin/runs",
             "/admin/runs/[runId]",

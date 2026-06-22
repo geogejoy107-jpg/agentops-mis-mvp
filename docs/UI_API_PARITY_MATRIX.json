@@ -502,24 +502,32 @@
     {
       "id": "evaluation_room",
       "capability": "Evaluation case and quality gate console.",
-      "status": "deferred",
-      "gate4_required": false,
+      "status": "covered",
+      "gate4_required": true,
       "vite_routes": [
         "/admin/evaluations"
       ],
-      "next_routes": [],
+      "next_routes": [
+        "/workspace/evaluations"
+      ],
       "api_contracts": [
         "GET /evaluations"
       ],
       "vite_files": [
         "ui/start-building-app/src/app/components/pages/EvaluationRoom.tsx"
       ],
-      "next_files": [],
+      "next_files": [
+        "ui/next-app/app/workspace/evaluations/page.tsx",
+        "ui/next-app/src/components/EvaluationPages.tsx",
+        "ui/next-app/src/lib/mis.ts"
+      ],
       "evidence_commands": [
-        "python3 scripts/ui_api_parity_matrix_smoke.py"
+        "python3 scripts/ui_api_parity_matrix_smoke.py",
+        "python3 scripts/nextjs_parity_smoke.py",
+        "python3 scripts/nextjs_playwright_snapshot_smoke.py"
       ],
       "retirement_allowed": false,
-      "retirement_gate": "Deferred until core customer dispatch, approvals, memory, reports, audit, and worker console parity are accepted."
+      "retirement_gate": "Next read-only evaluation ledger covers score/pass-fail/evaluator/run/task-link parity; Vite remains canonical until evaluation-case actions and route retirement decision are explicit."
     },
     {
       "id": "control_tower",

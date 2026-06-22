@@ -58,6 +58,19 @@ export type ToolCallSummary = {
   created_at?: string;
 };
 
+export type EvaluationSummary = {
+  evaluation_id: string;
+  task_id?: string;
+  run_id?: string;
+  agent_id?: string;
+  evaluator_type?: string;
+  score?: number;
+  pass_fail?: string;
+  rubric_json?: string;
+  notes?: string | null;
+  created_at?: string;
+};
+
 export type ApprovalSummary = {
   approval_id: string;
   decision: string;
@@ -622,6 +635,10 @@ export async function loadRuns(): Promise<RunSummary[]> {
 
 export async function loadToolCalls(): Promise<ToolCallSummary[]> {
   return misJson<ToolCallSummary[]>("/tool-calls");
+}
+
+export async function loadEvaluations(): Promise<EvaluationSummary[]> {
+  return misJson<EvaluationSummary[]>("/evaluations");
 }
 
 export async function loadApprovals(): Promise<ApprovalSummary[]> {
