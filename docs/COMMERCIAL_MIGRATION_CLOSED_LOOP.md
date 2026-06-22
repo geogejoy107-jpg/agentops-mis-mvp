@@ -138,6 +138,12 @@ Must be true:
   deferred.
 - Verification includes current Vite build and Playwright snapshots before a
   Next.js route is accepted.
+- Browser snapshot verification is automated by:
+
+```bash
+python3 scripts/nextjs_playwright_snapshot_smoke.py
+```
+
 - First migration artifact:
   - `ui/next-app/app/workspace/page.tsx`
   - `ui/next-app/app/workspace/agents/page.tsx`
@@ -148,6 +154,7 @@ Must be true:
   - `ui/next-app/app/workspace/audit/page.tsx`
   - `ui/next-app/app/api/mis/[...path]/route.ts`
   - `scripts/nextjs_parity_smoke.py`
+  - `scripts/nextjs_playwright_snapshot_smoke.py`
 
 ### Gate 5: BYOC / Enterprise Deployment
 

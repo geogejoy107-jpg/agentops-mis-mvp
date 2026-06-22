@@ -163,8 +163,9 @@ def main() -> int:
             file_contains("ui/next-app/package.json", '"next": "16.2.9"')
             and file_contains("ui/next-app/app/api/mis/[...path]/route.ts", "AGENTOPS_API_BASE")
             and file_contains("ui/next-app/src/lib/mis.ts", "/dashboard/metrics")
-            and (ROOT / "scripts" / "nextjs_parity_smoke.py").exists(),
-            "parallel Next.js App Router track has API proxy and workspace data contract",
+            and (ROOT / "scripts" / "nextjs_parity_smoke.py").exists()
+            and (ROOT / "scripts" / "nextjs_playwright_snapshot_smoke.py").exists(),
+            "parallel Next.js App Router track has API proxy, workspace data contract, and browser snapshot smoke",
         ),
         check(
             "postgres_is_gated_not_immediate",
@@ -226,7 +227,7 @@ def main() -> int:
                 "python3 scripts/nextjs_parity_smoke.py",
                 "cd ui/start-building-app && npm run build",
                 "cd ui/next-app && npm run build",
-                "Playwright parity snapshot",
+                "python3 scripts/nextjs_playwright_snapshot_smoke.py",
             ],
         },
         {

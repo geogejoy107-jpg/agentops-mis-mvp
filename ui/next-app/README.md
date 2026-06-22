@@ -15,6 +15,18 @@ AGENTOPS_API_BASE=http://127.0.0.1:8765/api npm run dev
 The Next.js API route `/api/mis/*` proxies to the current MIS API provider. The
 default provider is `http://127.0.0.1:8765/api`.
 
+## Verify
+
+```bash
+python3 scripts/nextjs_parity_smoke.py
+cd ui/next-app && npm run build
+python3 scripts/nextjs_playwright_snapshot_smoke.py
+```
+
+The Playwright smoke starts an isolated MIS API provider and Next.js dev server,
+captures browser snapshots for the current parity routes, checks proxy data, and
+fails on token-like output.
+
 ## Parity Slices
 
 - App Router route: `/workspace`
