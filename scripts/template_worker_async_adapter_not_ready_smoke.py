@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -25,11 +27,21 @@ def leaked_secret(text: str) -> bool:
 
 def main() -> int:
     original_openclaw_bin = server.OPENCLAW_BIN
+    original_entitlements_path = os.environ.get("AGENTOPS_ENTITLEMENTS_PATH")
     missing_openclaw_bin = ROOT / ".agentops_runtime" / "smoke-missing-openclaw-bin"
     if missing_openclaw_bin.exists():
         missing_openclaw_bin.unlink()
+    entitlement_file = tempfile.NamedTemporaryFile(prefix="agentops-template-entitlements-", suffix=".json", delete=False)
+    entitlement_path = Path(entitlement_file.name)
+    entitlement_file.close()
     try:
+        entitlement_path.write_text(
+            json.dumps({"edition": "pro_workspace", "overrides": {}, "notes": "Temporary adapter-not-ready smoke fixture. No secrets."}, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        os.environ["AGENTOPS_ENTITLEMENTS_PATH"] = str(entitlement_path)
         server.OPENCLAW_BIN = missing_openclaw_bin
+        server.init_schema()
         with server.db() as conn:
             server.refresh_runtime_connectors(conn)
             conn.execute(
@@ -77,6 +89,14 @@ def main() -> int:
         return 1
     finally:
         server.OPENCLAW_BIN = original_openclaw_bin
+        if original_entitlements_path is None:
+            os.environ.pop("AGENTOPS_ENTITLEMENTS_PATH", None)
+        else:
+            os.environ["AGENTOPS_ENTITLEMENTS_PATH"] = original_entitlements_path
+        try:
+            entitlement_path.unlink()
+        except OSError:
+            pass
         try:
             with server.db() as conn:
                 server.refresh_runtime_connectors(conn)

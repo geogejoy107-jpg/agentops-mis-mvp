@@ -3124,6 +3124,44 @@ def repo_list_workspace_stuck_workflow_jobs(conn: sqlite3.Connection, workspace_
     return stuck
 
 
+def repo_upsert_workflow_job(conn: sqlite3.Connection, row: dict, allow_update: bool = True) -> tuple[sqlite3.Row | None, str]:
+    row["workspace_id"] = normalize_workspace_id(row.get("workspace_id") or "local-demo")
+    before = conn.execute("SELECT * FROM workflow_jobs WHERE job_id=?", (row["job_id"],)).fetchone()
+    if before:
+        if not allow_update or row_unchanged(before, row, {"created_at", "updated_at", "started_at", "completed_at"}):
+            return before, "unchanged"
+        conn.execute(
+            """UPDATE workflow_jobs
+            SET workspace_id=:workspace_id, workflow_type=:workflow_type, status=:status, template_id=:template_id,
+                adapter=:adapter, confirm_run=:confirm_run, title=:title, input_summary=:input_summary,
+                request_hash=:request_hash, result_json=:result_json, result_task_id=:result_task_id,
+                result_run_id=:result_run_id, result_artifact_id=:result_artifact_id, error_message=:error_message,
+                started_at=:started_at, completed_at=:completed_at, updated_at=:updated_at
+            WHERE job_id=:job_id""",
+            row,
+        )
+        return before, "updated"
+    conn.execute(
+        """INSERT INTO workflow_jobs(job_id,workspace_id,workflow_type,status,template_id,adapter,confirm_run,title,input_summary,request_hash,result_json,result_task_id,result_run_id,result_artifact_id,error_message,created_at,started_at,completed_at,updated_at)
+        VALUES(:job_id,:workspace_id,:workflow_type,:status,:template_id,:adapter,:confirm_run,:title,:input_summary,:request_hash,:result_json,:result_task_id,:result_run_id,:result_artifact_id,:error_message,:created_at,:started_at,:completed_at,:updated_at)""",
+        row,
+    )
+    return before, "created"
+
+
+def repo_update_workflow_job(conn: sqlite3.Connection, job_id: str, updates: dict) -> tuple[sqlite3.Row | None, sqlite3.Row | None, str]:
+    before = conn.execute("SELECT * FROM workflow_jobs WHERE job_id=?", (job_id,)).fetchone()
+    if not before:
+        return None, None, "missing"
+    row = dict(before)
+    row.update(updates)
+    row["job_id"] = job_id
+    row["workspace_id"] = normalize_workspace_id(row.get("workspace_id") or "local-demo")
+    _, outcome = repo_upsert_workflow_job(conn, row)
+    after = conn.execute("SELECT * FROM workflow_jobs WHERE job_id=?", (job_id,)).fetchone()
+    return before, after, outcome
+
+
 def repo_list_gateway_enrollments(conn: sqlite3.Connection, workspace_id: str | None = None, limit: int = 200):
     where = ""
     params: list = []
@@ -6811,15 +6849,14 @@ def mark_workflow_job_failed(conn, job_id: str, body: dict, workspace_id: str | 
         }, 409
     reason = redact_text(body.get("reason") or "Operator marked stale workflow job as failed.", 300)
     now = now_iso()
-    conn.execute(
-        """UPDATE workflow_jobs
-        SET status='failed', error_message=?, completed_at=?, updated_at=?
-        WHERE job_id=?""",
-        (reason, now, now, job_id),
-    )
+    before_update, after, _outcome = repo_update_workflow_job(conn, job_id, {
+        "status": "failed",
+        "error_message": reason,
+        "completed_at": now,
+        "updated_at": now,
+    })
     runtime_event(conn, "rtc_agent_gateway_local", "workflow_job.operator_failed", "failed", output_summary=f"Workflow job {job_id} marked failed.", error_message=reason)
-    after = conn.execute("SELECT * FROM workflow_jobs WHERE job_id=?", (job_id,)).fetchone()
-    audit(conn, "user", body.get("actor_id") or "usr_operator", "workflow.job.mark_failed", "workflow_jobs", job_id, dict(before), dict(after) if after else {"status": "failed"}, {"raw_request_omitted": True, "reason": reason})
+    audit(conn, "user", body.get("actor_id") or "usr_operator", "workflow.job.mark_failed", "workflow_jobs", job_id, dict(before_update or before), dict(after) if after else {"status": "failed"}, {"raw_request_omitted": True, "reason": reason})
     conn.commit()
     return {
         "ok": True,
@@ -6837,10 +6874,11 @@ def run_workflow_job_background(job_id: str, body: dict) -> None:
         with db() as conn:
             before = conn.execute("SELECT * FROM workflow_jobs WHERE job_id=?", (job_id,)).fetchone()
             workflow_type = dict(before).get("workflow_type") if before else "customer_task_template"
-            conn.execute(
-                "UPDATE workflow_jobs SET status='running', started_at=?, updated_at=? WHERE job_id=?",
-                (started, started, job_id),
-            )
+            before, _after, _outcome = repo_update_workflow_job(conn, job_id, {
+                "status": "running",
+                "started_at": started,
+                "updated_at": started,
+            })
             runtime_event(conn, "rtc_agent_gateway_local", "workflow_job.running", "running", input_summary=f"Workflow job {job_id} started.")
             audit(conn, "system", "workflow-job", "workflow.job.running", "workflow_jobs", job_id, dict(before) if before else None, {"status": "running"}, {"raw_request_omitted": True})
             conn.commit()
@@ -6851,41 +6889,30 @@ def run_workflow_job_background(job_id: str, body: dict) -> None:
             status = "completed" if result.get("ok", True) else "failed"
             completed = now_iso()
             safe_result = json.dumps(result, ensure_ascii=False)
-            before = conn.execute("SELECT * FROM workflow_jobs WHERE job_id=?", (job_id,)).fetchone()
-            conn.execute(
-                """UPDATE workflow_jobs
-                SET status=?, result_json=?, result_task_id=?, result_run_id=?, result_artifact_id=?,
-                    error_message=?, completed_at=?, updated_at=?
-                WHERE job_id=?""",
-                (
-                    status,
-                    safe_result,
-                    result.get("task_id"),
-                    result.get("run_id"),
-                    result.get("artifact_id"),
-                    redact_text(result.get("error"), 300) if result.get("error") else None,
-                    completed,
-                    completed,
-                    job_id,
-                ),
-            )
+            before, after, _outcome = repo_update_workflow_job(conn, job_id, {
+                "status": status,
+                "result_json": safe_result,
+                "result_task_id": result.get("task_id"),
+                "result_run_id": result.get("run_id"),
+                "result_artifact_id": result.get("artifact_id"),
+                "error_message": redact_text(result.get("error"), 300) if result.get("error") else None,
+                "completed_at": completed,
+                "updated_at": completed,
+            })
             runtime_event(conn, "rtc_agent_gateway_local", "workflow_job.completed" if status == "completed" else "workflow_job.failed", status, run_id=result.get("run_id"), task_id=result.get("task_id"), output_summary=f"Workflow job {job_id} {status}.", raw_payload_hash=stable_hash(result))
-            after = conn.execute("SELECT * FROM workflow_jobs WHERE job_id=?", (job_id,)).fetchone()
             audit(conn, "system", "workflow-job", f"workflow.job.{status}", "workflow_jobs", job_id, dict(before) if before else None, dict(after) if after else {"status": status}, {"raw_request_omitted": True, "raw_result_omitted": True, "safe_result_stored": True})
             conn.commit()
     except Exception as exc:
         error = redact_text(str(exc), 360)
         with db() as conn:
-            before = conn.execute("SELECT * FROM workflow_jobs WHERE job_id=?", (job_id,)).fetchone()
             now = now_iso()
-            conn.execute(
-                """UPDATE workflow_jobs
-                SET status='failed', error_message=?, completed_at=?, updated_at=?
-                WHERE job_id=?""",
-                (error, now, now, job_id),
-            )
+            before, after, _outcome = repo_update_workflow_job(conn, job_id, {
+                "status": "failed",
+                "error_message": error,
+                "completed_at": now,
+                "updated_at": now,
+            })
             runtime_event(conn, "rtc_agent_gateway_local", "workflow_job.failed", "failed", output_summary=f"Workflow job {job_id} failed.", error_message=error)
-            after = conn.execute("SELECT * FROM workflow_jobs WHERE job_id=?", (job_id,)).fetchone()
             audit(conn, "system", "workflow-job", "workflow.job.failed", "workflow_jobs", job_id, dict(before) if before else None, dict(after) if after else {"status": "failed"}, {"raw_request_omitted": True})
             conn.commit()
 
@@ -6943,11 +6970,7 @@ def submit_customer_task_template_job(conn, body: dict) -> tuple[dict, int]:
                 "completed_at": now,
                 "updated_at": now,
             }
-            conn.execute(
-                """INSERT INTO workflow_jobs(job_id,workspace_id,workflow_type,status,template_id,adapter,confirm_run,title,input_summary,request_hash,result_json,result_task_id,result_run_id,result_artifact_id,error_message,created_at,started_at,completed_at,updated_at)
-                VALUES(:job_id,:workspace_id,:workflow_type,:status,:template_id,:adapter,:confirm_run,:title,:input_summary,:request_hash,:result_json,:result_task_id,:result_run_id,:result_artifact_id,:error_message,:created_at,:started_at,:completed_at,:updated_at)""",
-                row,
-            )
+            repo_upsert_workflow_job(conn, row)
             runtime_event(conn, "rtc_agent_gateway_local", "workflow_job.rejected", "failed", task_id=result.get("task_id"), input_summary=f"Template job {job_id} rejected before async execution.", output_summary=row["error_message"], raw_payload_hash=row["request_hash"])
             audit(conn, "system", "worker-adapter-readiness", "workflow.job.rejected", "workflow_jobs", job_id, None, row, {
                 "template_id": template_id,
@@ -7000,11 +7023,7 @@ def submit_customer_task_template_job(conn, body: dict) -> tuple[dict, int]:
         "completed_at": None,
         "updated_at": now,
     }
-    conn.execute(
-        """INSERT INTO workflow_jobs(job_id,workspace_id,workflow_type,status,template_id,adapter,confirm_run,title,input_summary,request_hash,result_json,result_task_id,result_run_id,result_artifact_id,error_message,created_at,started_at,completed_at,updated_at)
-        VALUES(:job_id,:workspace_id,:workflow_type,:status,:template_id,:adapter,:confirm_run,:title,:input_summary,:request_hash,:result_json,:result_task_id,:result_run_id,:result_artifact_id,:error_message,:created_at,:started_at,:completed_at,:updated_at)""",
-        row,
-    )
+    repo_upsert_workflow_job(conn, row)
     runtime_event(conn, "rtc_agent_gateway_local", "workflow_job.submitted", "queued", input_summary=f"Template job {template_id} submitted.", raw_payload_hash=row["request_hash"])
     audit(conn, "user", "usr_customer_demo", "workflow.job.submitted", "workflow_jobs", job_id, None, row, {"template_id": template_id, "adapter": adapter, "raw_request_omitted": True})
     conn.commit()
@@ -7067,11 +7086,7 @@ def submit_customer_worker_task_job(conn, body: dict) -> tuple[dict, int]:
                 "completed_at": now,
                 "updated_at": now,
             }
-            conn.execute(
-                """INSERT INTO workflow_jobs(job_id,workspace_id,workflow_type,status,template_id,adapter,confirm_run,title,input_summary,request_hash,result_json,result_task_id,result_run_id,result_artifact_id,error_message,created_at,started_at,completed_at,updated_at)
-                VALUES(:job_id,:workspace_id,:workflow_type,:status,:template_id,:adapter,:confirm_run,:title,:input_summary,:request_hash,:result_json,:result_task_id,:result_run_id,:result_artifact_id,:error_message,:created_at,:started_at,:completed_at,:updated_at)""",
-                row,
-            )
+            repo_upsert_workflow_job(conn, row)
             runtime_event(conn, "rtc_agent_gateway_local", "workflow_job.rejected", "failed", task_id=result.get("task_id"), input_summary=f"Customer worker job {job_id} rejected before async execution.", output_summary=row["error_message"], raw_payload_hash=row["request_hash"])
             audit(conn, "system", "worker-adapter-readiness", "workflow.job.rejected", "workflow_jobs", job_id, None, row, {
                 "adapter": adapter,
@@ -7124,11 +7139,7 @@ def submit_customer_worker_task_job(conn, body: dict) -> tuple[dict, int]:
         "completed_at": None,
         "updated_at": now,
     }
-    conn.execute(
-        """INSERT INTO workflow_jobs(job_id,workspace_id,workflow_type,status,template_id,adapter,confirm_run,title,input_summary,request_hash,result_json,result_task_id,result_run_id,result_artifact_id,error_message,created_at,started_at,completed_at,updated_at)
-        VALUES(:job_id,:workspace_id,:workflow_type,:status,:template_id,:adapter,:confirm_run,:title,:input_summary,:request_hash,:result_json,:result_task_id,:result_run_id,:result_artifact_id,:error_message,:created_at,:started_at,:completed_at,:updated_at)""",
-        row,
-    )
+    repo_upsert_workflow_job(conn, row)
     runtime_event(conn, "rtc_agent_gateway_local", "workflow_job.submitted", "queued", input_summary=f"Customer worker job {job_id} submitted.", raw_payload_hash=row["request_hash"])
     audit(conn, "user", "usr_customer_demo", "workflow.job.submitted", "workflow_jobs", job_id, None, row, {"workflow_type": "customer_worker_task", "adapter": adapter, "raw_request_omitted": True})
     conn.commit()

@@ -30,6 +30,7 @@ def main() -> int:
         missing_openclaw_bin.unlink()
     try:
         server.OPENCLAW_BIN = missing_openclaw_bin
+        server.init_schema()
         with server.db() as conn:
             server.refresh_runtime_connectors(conn)
             conn.execute(

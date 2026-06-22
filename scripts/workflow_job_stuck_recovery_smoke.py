@@ -6,14 +6,15 @@ import datetime as dt
 import json
 import os
 import re
-import sqlite3
 import subprocess
+import sys
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 CLI = ROOT / "scripts" / "agentops"
-DB_PATH = ROOT / "agentops_mis.db"
+DB_PATH = Path(os.environ.get("AGENTOPS_DB_PATH", ROOT / "agentops_mis.db"))
 
 
 def stamp() -> str:
@@ -24,7 +25,7 @@ def run_cli(args: list[str], timeout: int = 60) -> subprocess.CompletedProcess[s
     env = os.environ.copy()
     env.pop("AGENTOPS_API_KEY", None)
     env.pop("AGENTOPS_AGENT_ID", None)
-    env["AGENTOPS_BASE_URL"] = "http://127.0.0.1:8787"
+    env["AGENTOPS_BASE_URL"] = os.environ.get("AGENTOPS_BASE_URL", "http://127.0.0.1:8787")
     env["AGENTOPS_WORKSPACE_ID"] = "local-demo"
     return subprocess.run(
         [str(CLI), *args],
@@ -54,6 +55,9 @@ def secret_leaked(text: str) -> bool:
 
 
 def insert_stale_job(job_id: str) -> None:
+    os.environ.setdefault("AGENTOPS_DB_PATH", str(DB_PATH))
+    import server  # noqa: PLC0415
+
     stale_at = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=2)).isoformat()
     row = {
         "job_id": job_id,
@@ -76,12 +80,9 @@ def insert_stale_job(job_id: str) -> None:
         "completed_at": None,
         "updated_at": stale_at,
     }
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.execute(
-            """INSERT OR REPLACE INTO workflow_jobs(job_id,workspace_id,workflow_type,status,template_id,adapter,confirm_run,title,input_summary,request_hash,result_json,result_task_id,result_run_id,result_artifact_id,error_message,created_at,started_at,completed_at,updated_at)
-            VALUES(:job_id,:workspace_id,:workflow_type,:status,:template_id,:adapter,:confirm_run,:title,:input_summary,:request_hash,:result_json,:result_task_id,:result_run_id,:result_artifact_id,:error_message,:created_at,:started_at,:completed_at,:updated_at)""",
-            row,
-        )
+    server.init_schema()
+    with server.db() as conn:
+        server.repo_upsert_workflow_job(conn, row)
         conn.commit()
 
 

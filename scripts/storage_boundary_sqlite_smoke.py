@@ -198,31 +198,28 @@ def main() -> int:
                 (workspace_a, agent_a, task_a, run_a, artifact_a["artifact"]["artifact_id"], job_a),
                 (workspace_b, agent_b, task_b, run_b, artifact_b["artifact"]["artifact_id"], job_b),
             ]:
-                conn.execute(
-                    """INSERT INTO workflow_jobs(job_id,workspace_id,workflow_type,status,template_id,adapter,confirm_run,title,input_summary,request_hash,result_json,result_task_id,result_run_id,result_artifact_id,error_message,created_at,started_at,completed_at,updated_at)
-                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                    (
-                        job_id,
-                        workspace_id,
-                        "customer_worker_task",
-                        "queued",
-                        None,
-                        "mock",
-                        0,
-                        f"Storage boundary workflow job {workspace_id}",
-                        "Synthetic workflow job for storage-boundary smoke. Raw prompt omitted.",
-                        f"hash_{job_id}",
-                        "{}",
-                        task_id,
-                        run_id,
-                        artifact_id,
-                        None,
-                        old,
-                        None,
-                        None,
-                        old,
-                    ),
-                )
+                before_job, job_outcome = server.repo_upsert_workflow_job(conn, {
+                    "job_id": job_id,
+                    "workspace_id": workspace_id,
+                    "workflow_type": "customer_worker_task",
+                    "status": "queued",
+                    "template_id": None,
+                    "adapter": "mock",
+                    "confirm_run": 0,
+                    "title": f"Storage boundary workflow job {workspace_id}",
+                    "input_summary": "Synthetic workflow job for storage-boundary smoke. Raw prompt omitted.",
+                    "request_hash": f"hash_{job_id}",
+                    "result_json": "{}",
+                    "result_task_id": task_id,
+                    "result_run_id": run_id,
+                    "result_artifact_id": artifact_id,
+                    "error_message": None,
+                    "created_at": old,
+                    "started_at": None,
+                    "completed_at": None,
+                    "updated_at": old,
+                })
+                require(before_job is None and job_outcome == "created", f"workflow job write helper create failed: {job_id} {job_outcome}")
             conn.commit()
 
             task_ids = ids(server.repo_list_workspace_tasks(conn, workspace_a), "task_id")
@@ -550,6 +547,8 @@ def main() -> int:
                 "repo_list_workspace_workflow_jobs",
                 "repo_get_workspace_workflow_job",
                 "repo_list_workspace_stuck_workflow_jobs",
+                "repo_upsert_workflow_job",
+                "repo_update_workflow_job",
                 "repo_list_gateway_enrollments",
                 "repo_list_gateway_sessions",
                 "repo_pull_agent_gateway_tasks",
