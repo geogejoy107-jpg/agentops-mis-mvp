@@ -6,17 +6,18 @@
 ## 1. Branch control
 
 - [x] Open-source adoption boundary is captured as a project rule. `PROJECT_SPEC.md`, `AGENT_WORKFLOW.md`, and `docs/V1_5_EIGHT_PRODUCT_CLOSURE_SPEC.md` point to `docs/OPEN_SOURCE_ADOPTION_BOUNDARY_SPEC.md`, which separates direct tool adoption, reference-only method adaptation, and first-party MIS authority modules.
-- [ ] Confirm the intended development branch HEAD.
+- [x] Confirm the intended development branch HEAD. Guarded by `scripts/release_branch_control_smoke.py`, which reports the current branch, exact `HEAD` SHA, upstream sync state and `origin/main` history.
 - [ ] Freeze a release-candidate SHA.
 - [ ] Pause unrelated feature work during hardening.
-- [ ] Confirm no databases, runtime state, credentials, generated service files or logs are tracked.
-- [ ] Preserve reviewable functional history; do not turn all 109 commits into one opaque change.
+- [x] Confirm no databases, runtime state, credentials, generated service files or logs are tracked. Guarded by `scripts/release_branch_control_smoke.py`; `.env.example` is the only allowed env-like tracked file and secret-like content remains covered by `scripts/secret_scan_smoke.py`.
+- [x] Preserve reviewable functional history; do not turn all commits into one opaque change. Guarded by `scripts/release_branch_control_smoke.py`, which requires a merge-base and more than one reviewable commit ahead of `origin/main` when that ref is available.
 
 ```bash
 git fetch origin
 git rev-parse codex/agent-gateway-kb-demo
 git status --short
 git diff --check main...codex/agent-gateway-kb-demo
+python3 scripts/release_branch_control_smoke.py --expected-branch codex/agent-gateway-kb-demo --require-upstream-synced
 ```
 
 ## 2. Agent Plan integrity
