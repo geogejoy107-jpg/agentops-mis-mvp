@@ -21326,7 +21326,7 @@ def operator_health(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) -
     security = security_production_readiness(conn, effective_headers)
     security_gates = security.get("gates") or []
     local_write_guard_gate = next((gate for gate in security_gates if gate.get("id") == "local_ui_write_guard"), {})
-    worker = worker_status(conn, refresh_runtime=refresh_runtime)
+    worker = worker_status(conn)
     review = human_review_queue(conn, limit)
     action_plan_source = ((handoff.get("sources") or {}).get("action_plan") or {})
     action_plan_summary = action_plan_source.get("summary") or {}
