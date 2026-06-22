@@ -2327,7 +2327,7 @@ export function useLiveData<T>(loader: () => Promise<T>, deps: unknown[] = []) {
     refresh();
   }, [refresh]);
 
-  return { data, loading, error, refresh };
+  return { data, setData, loading, error, refresh };
 }
 
 export function normalizeAgent(row: Record<string, unknown>, perf?: DashboardMetrics["agent_performance_summary"][number]): Agent {
@@ -2830,7 +2830,8 @@ export async function decideApproval(id: string, decision: "approve" | "reject")
     method: "POST",
     body: JSON.stringify({}),
   });
-  return normalizeApproval(raw);
+  const approvalRaw = typeof raw.approval === "object" && raw.approval !== null ? raw.approval as Record<string, unknown> : raw;
+  return normalizeApproval(approvalRaw);
 }
 
 export async function decideMemory(id: string, decision: "approve" | "reject"): Promise<Memory> {
@@ -2841,11 +2842,12 @@ export async function decideMemory(id: string, decision: "approve" | "reject"): 
   return normalizeMemory(raw);
 }
 
-export async function decideEvaluationCase(id: string, decision: "approve" | "reject"): Promise<Record<string, unknown>> {
-  return apiJson<Record<string, unknown>>(`/evaluation-cases/${encodeURIComponent(id)}/${decision}`, {
+export async function decideEvaluationCase(id: string, decision: "approve" | "reject"): Promise<EvaluationCaseCandidate> {
+  const raw = await apiJson<Record<string, unknown>>(`/evaluation-cases/${encodeURIComponent(id)}/${decision}`, {
     method: "POST",
     body: JSON.stringify({}),
   });
+  return normalizeEvaluationCaseCandidate(raw);
 }
 
 export async function runLocalBrief(confirmRun = false): Promise<LocalBriefResult> {

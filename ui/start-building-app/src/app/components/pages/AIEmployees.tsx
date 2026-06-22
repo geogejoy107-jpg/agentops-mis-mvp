@@ -2448,7 +2448,10 @@ export function AIEmployees() {
         return;
       }
       setReviewResult(`${copy.reviewActionResult}: ${item.item_type} ${item.item_id} -> ${decision}`);
-      await refresh();
+      await refreshPanel("review_queue");
+      if (item.item_type === "approval") {
+        await refreshPanel("approvals");
+      }
     } catch (err) {
       setReviewResult(err instanceof Error ? err.message : String(err));
     } finally {
@@ -2495,7 +2498,11 @@ export function AIEmployees() {
         const result = await decideApproval(id, decision);
         setLoopRecordResult(`${copy.loopApprovalReview}: ${result.approval_id} -> ${result.decision}`);
       }
-      await refresh();
+      await refreshPanel("operator_loop_audit");
+      await refreshPanel("operator_handoff");
+      if (kind === "approval") {
+        await refreshPanel("approvals");
+      }
     } catch (err) {
       setLoopRecordResult(err instanceof Error ? err.message : String(err));
     } finally {
@@ -2631,7 +2638,7 @@ export function AIEmployees() {
       const result = await decideApproval(approvalId, decision);
       setIssueApprovalId(approvalId);
       setEnrollmentResult(`${approvalId}: ${result.decision}`);
-      await refresh();
+      await refreshPanel("approvals");
     } catch (err) {
       setEnrollmentResult(err instanceof Error ? err.message : String(err));
     } finally {

@@ -40,7 +40,7 @@ function formatRuntime(value: unknown) {
 export function WorkspaceHome() {
   const [briefResult, setBriefResult] = useState<LocalBriefResult | null>(null);
   const [actionBusy, setActionBusy] = useState<string | null>(null);
-  const { data, loading, error, refresh } = useLiveData(async () => {
+  const { data, setData, loading, error, refresh } = useLiveData(async () => {
     const [metrics, tasks, approvals, runs, memories] = await Promise.all([
       loadDashboard(),
       loadTasks(),
@@ -78,8 +78,11 @@ export function WorkspaceHome() {
   const handleApproval = async (id: string, decision: "approve" | "reject") => {
     setActionBusy(`${decision}:${id}`);
     try {
-      await decideApproval(id, decision);
-      await refresh();
+      const updatedApproval = await decideApproval(id, decision);
+      setData((current) => current ? {
+        ...current,
+        approvals: current.approvals.map((approval) => approval.approval_id === updatedApproval.approval_id ? updatedApproval : approval),
+      } : current);
     } finally {
       setActionBusy(null);
     }

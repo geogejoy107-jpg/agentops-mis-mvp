@@ -9,7 +9,7 @@ import { pick, usePreferences } from "../../context/PreferencesContext";
 export function ApprovalsInbox() {
   const { locale } = usePreferences();
   const [busyId, setBusyId] = useState<string | null>(null);
-  const { data, loading, error, refresh } = useLiveData(async () => {
+  const { data, setData, loading, error, refresh } = useLiveData(async () => {
     const metrics = await loadDashboard();
     const [approvals, tasks, agents, toolCalls] = await Promise.all([
       loadApprovals(),
@@ -66,8 +66,11 @@ export function ApprovalsInbox() {
   const handleDecision = async (approvalId: string, decision: "approve" | "reject") => {
     setBusyId(approvalId);
     try {
-      await decideApproval(approvalId, decision);
-      await refresh();
+      const updatedApproval = await decideApproval(approvalId, decision);
+      setData((current) => current ? {
+        ...current,
+        approvals: current.approvals.map((approval) => approval.approval_id === updatedApproval.approval_id ? updatedApproval : approval),
+      } : current);
     } finally {
       setBusyId(null);
     }

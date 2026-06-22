@@ -21,7 +21,7 @@ export function EvaluationRoom() {
   const [caseAction, setCaseAction] = useState<string | null>(null);
   const [caseActionResult, setCaseActionResult] = useState<string | null>(null);
   const [caseRunPreview, setCaseRunPreview] = useState<EvaluationCaseRunPayload | null>(null);
-  const { data, loading, error, refresh } = useLiveData(async () => {
+  const { data, setData, loading, error, refresh } = useLiveData(async () => {
     const [agents, tasks, runs, evaluations, candidateCases, approvedCases, caseRuns] = await Promise.all([
       loadAgents(),
       loadTasks(),
@@ -139,10 +139,33 @@ export function EvaluationRoom() {
     setCaseAction(action);
     setCaseActionResult(null);
     try {
-      await decideEvaluationCase(caseId, decision);
+      const updatedCase = await decideEvaluationCase(caseId, decision);
       setCaseActionResult(`${caseId} -> ${decision}`);
       setCaseRunPreview(null);
-      await refresh();
+      setData((current) => {
+        if (!current) return current;
+        const removeCase = (items: typeof current.candidateCases.cases) => items.filter((item) => item.case_id !== updatedCase.case_id);
+        const upsertCase = (items: typeof current.approvedCases.cases) => [
+          updatedCase,
+          ...items.filter((item) => item.case_id !== updatedCase.case_id),
+        ].slice(0, 8);
+        return {
+          ...current,
+          candidateCases: {
+            ...current.candidateCases,
+            cases: removeCase(current.candidateCases.cases),
+            summary: {
+              ...current.candidateCases.summary,
+              candidate: Math.max(0, current.candidateCases.summary.candidate - (updatedCase.review_status === "candidate" ? 0 : 1)),
+              approved: updatedCase.review_status === "approved" ? current.candidateCases.summary.approved + 1 : current.candidateCases.summary.approved,
+              rejected: updatedCase.review_status === "rejected" ? current.candidateCases.summary.rejected + 1 : current.candidateCases.summary.rejected,
+            },
+          },
+          approvedCases: updatedCase.review_status === "approved"
+            ? { ...current.approvedCases, cases: upsertCase(current.approvedCases.cases) }
+            : current.approvedCases,
+        };
+      });
     } catch (err) {
       setCaseActionResult(err instanceof Error ? err.message : String(err));
     } finally {
