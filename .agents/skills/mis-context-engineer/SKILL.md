@@ -1,326 +1,193 @@
 ---
 name: mis-context-engineer
-description: Build an auditable, authority-aware, scope-safe context manifest and candidate-only memory writeback proposals for AgentOps MIS.
-version: 0.1.0
+description: Build an auditable, authority-aware and token-efficient project Context Manifest with a versioned Harness and bounded Loop.
+version: 0.2.0
 status: prototype
 ---
 
-# MIS Context Engineer Skill
+# MIS Context Engineer
 
-Use this skill when an Agent must assemble trustworthy project context, reconcile competing memories, localize repository evidence, or propose durable lessons without silently changing canonical project state.
+This read-only Skill assembles trustworthy project context for AgentOps MIS. It records sources, scope checks, inclusions, exclusions, conflicts, iteration results, token estimates and latency estimates. Memory output remains a candidate for human review.
 
-This skill exposes a **decision trace**—sources consulted, gates applied, inclusions, exclusions, conflicts, and writeback proposals. It must not expose or persist private chain-of-thought, raw prompts, raw model responses, secrets, or private transcripts.
+## Operating model
 
-## Goals
+```text
+MIS authority + HarnessProfile + LoopPolicy
+-> gated retrieval
+-> bounded evaluation and refinement
+-> Context Manifest
+-> candidate memory proposal
+-> human review
+```
 
-- give multiple Agent conversations the same verifiable project context;
-- distinguish authority from relevance;
-- enforce workspace, project, task, and access boundaries before ranking;
-- preserve source, version/hash, time, and relationship provenance;
-- fit the smallest sufficient context inside a token budget;
-- make every inclusion, exclusion, conflict, and candidate writeback reviewable;
-- keep all automatically generated memory candidate-only until human review.
+- **Harness Engineering** defines the reproducible context environment: authority order, source scope, retrievers, stable prefix, cache policy, token budgets, metrics and validation.
+- **Loop Engineering** defines bounded iteration: phases, checkpoints, evaluation, refinement, budgets and stop reasons.
+- **AgentOps MIS** remains authoritative for project state, execution evidence, review and audit.
 
-## Non-goals
+## Authority order
 
-- replacing GitHub, AgentOps MIS SQLite/API, or the Notion Project Ledger as authority;
-- automatically approving or promoting memory;
-- storing complete conversations or hidden reasoning;
-- requiring embeddings, a vector database, or a graph database in v0;
-- changing runtime, database, or project-governance state by itself.
+1. GitHub exact repository, branch, commit, PR, diff and test evidence for code facts.
+2. AgentOps MIS SQLite/API for run, artifact, evaluation, memory-review and audit facts.
+3. Notion Project Ledger plus `docs/project/` for reviewed decisions, risks, backlog and handoff.
+4. Approved MIS memory.
+5. Candidate memory, external research and chat history as non-authoritative support.
 
-## Authority Order
+Lower-authority material cannot silently replace higher-authority evidence.
 
-Use the repository's accepted authority split:
-
-1. GitHub repository, exact branch/commit, PR, diff, and test evidence for code facts.
-2. AgentOps MIS SQLite/API for runs, tool calls, approvals, artifacts, evaluations, memory review, and audit facts.
-3. Notion MIS Project Ledger plus `docs/project/` for reviewed decisions, requirements, risks, backlog, and handoff.
-4. Approved MIS memory for reusable reviewed lessons.
-5. Candidate memory, external research, and chat history only as source material.
-
-A lower authority source may improve recall but must not silently override a higher authority source.
-
-## Required Inputs
+## Inputs
 
 ```yaml
 objective: string
-repository: owner/repo
-branch: exact branch or Unknown
-commit: exact SHA or Unknown
-workspace_id: string
-project_id: string | null
-task_id: string | null
-agent_id: string | null
-token_budget: integer
-allowed_sources:
-  - github
-  - mis_ledger
-  - project_docs
-  - approved_memory
-  - candidate_memory
-  - external_research
-writeback_mode: none | candidate_only
-semantic_retrieval: false
-historical_as_of: ISO-8601 timestamp | null
+project_context:
+  repository: owner/repo
+  branch: exact branch or Unknown
+  commit: exact SHA or Unknown
+  workspace_id: string
+  project_id: string | null
+  task_id: string | null
+  agent_id: string | null
+harness_profile: object | path
+loop_policy: object | path
+candidates: list
+previous_manifest: object | path | null
+historical_as_of: timestamp | null
 ```
 
-Defaults:
+## HarnessProfile
+
+The HarnessProfile is versioned and content-addressed. It defines:
+
+```text
+authority and source order
+workspace / project / task scope
+retriever order and escalation
+stable-prefix and cache policy
+total and tier token budgets
+observability and validation
+candidate-only memory policy
+```
+
+Harness invariants:
+
+- scope and source checks run before ranking;
+- repository facts require an exact commit;
+- a short stable prefix points to deeper project knowledge;
+- task-specific context follows the stable prefix;
+- local lexical retrieval runs before optional retrieval;
+- source, policy, Harness and cache hashes are deterministic;
+- optional retrieval failure falls back to the local lexical path;
+- candidate memory cannot act as canonical authority;
+- every result contains bounded summaries and evidence references.
+
+Conform to `schemas/harness-profile.schema.json`.
+
+## LoopPolicy
+
+```text
+PREPARE -> RETRIEVE -> ASSESS -> PACK -> EVALUATE -> REFINE or STOP
+```
+
+Every iteration records:
 
 ```yaml
-writeback_mode: candidate_only
-semantic_retrieval: false
-token_budget: 8000
+iteration:
+retrieval_mode:
+candidates_considered:
+included_count:
+excluded_count:
+full_tokens:
+delta_tokens:
+coverage:
+authority_precision:
+scope_violations:
+marginal_gain:
+latency_ms:
+checkpoint_hash:
+decision:
 ```
 
-## TRACE Workflow
+Stop with a block when exact Git context is missing for a code claim, visibility cannot be proven, an authority conflict blocks the objective or mandatory context cannot fit.
+
+Stop successfully when mandatory authority and acceptance evidence are included, coverage passes, scope/authority checks pass and the manifest validates.
+
+Stop economically when marginal gain is below threshold, token/latency budget is exhausted, maximum iterations are reached or no useful source remains.
+
+Optional retrieval may be used only when the Harness allows it and the current evaluation has a named coverage gap.
+
+Conform to `schemas/loop-policy.schema.json`.
+
+## TRACE workflow
 
 ### T — Truth and Scope
 
-1. Read in order:
-   - `docs/project/PROJECT_STATE.md`
-   - `docs/project/DECISIONS.md`
-   - `docs/project/BACKLOG.md`
-   - `docs/project/HANDOFF.md`
-   - `AGENTS.md`
-   - `PROJECT_SPEC.md`
-   - `AGENT_WORKFLOW.md`
-   - `BASE_INDEX.md`
-   - task-specific specs, code, tests, PRs, and audit evidence.
-2. Verify exact repository, branch, and commit.
-3. Establish `workspace_id`, `project_id`, `task_id`, identity, and allowed sources.
-4. Apply visibility and redaction policy **before** retrieval scoring.
-5. If branch or commit is `Unknown`, block code-state claims and emit an unresolved question.
-
-Required preflight output:
-
-```text
-Repository:
-Branch:
-Commit:
-Current milestone:
-Objective:
-Relevant approved decisions:
-Open P0/P1 items:
-Workspace / project scope:
-Risks / unknowns:
-```
+Read `PROJECT_STATE`, `DECISIONS`, `BACKLOG`, `HANDOFF`, `AGENTS.md`, `PROJECT_SPEC.md`, `AGENT_WORKFLOW.md`, `BASE_INDEX.md`, then task-specific specs, code and tests. Verify repository, branch, commit and workspace/project/task scope.
 
 ### R — Retrieve
 
-Retrieve in two passes.
+Use progressive disclosure:
 
-**Pass 1: mandatory authority context**
-
-- current Project State;
-- relevant approved decisions;
-- active backlog and handoff;
-- exact task/spec acceptance criteria;
-- exact Git branch/commit and touched implementation evidence.
-
-**Pass 2: supporting context**
-
-- SQLite FTS5/BM25 results from visible knowledge documents;
-- approved project memory;
-- task/run/artifact/evaluation/audit summaries;
-- repository symbols and tests selected by a Repo Map backend;
-- optional semantic, entity, or graph results when configured;
-- candidate memory and external research, clearly marked non-authoritative.
-
-Every retrieved candidate must retain:
-
-```yaml
-source_ref:
-source_hash_or_commit:
-source_type:
-authority_class:
-workspace_id:
-project_id:
-task_id:
-access_tags:
-observed_at:
-valid_from:
-valid_to:
+```text
+Tier 0: stable map and rules
+Tier 1: mandatory project/task authority
+Tier 2: implementation, tests and evidence
+Tier 3: approved reusable memory
+Tier 4: candidate memory and external research
 ```
 
-Do not retain raw secret-bearing payloads merely because a retriever returned them.
+Start with mandatory plus lexical retrieval. Escalate only when evaluation requires it.
 
 ### A — Assess
 
-Apply hard gates before soft ranking.
+Apply hard gates before soft ranking. Exclude missing sources, invisible scope, candidate-as-authority, stale or superseded facts, unresolved authority conflicts and historical mismatches.
 
-#### Hard gates
-
-Reject or quarantine an item when:
-
-- the source does not exist or its version/hash cannot be verified;
-- workspace/project/access scope is not visible to the requesting identity;
-- the item contains unredacted secrets or prohibited private content;
-- a candidate memory is being used as canonical authority;
-- a newer item supersedes it for a current-state question;
-- a conflict with an equal or higher authority source is unresolved;
-- the requested historical time does not overlap the item's validity window.
-
-#### Relationship classification
-
-For each durable claim, classify exactly one primary relationship:
+Classify relationships as:
 
 ```text
 new | duplicate_of | updates | supersedes | conflicts_with | derived_from
 ```
 
-Do not create a new memory proposal when `duplicate_of` is sufficient. Do not silently resolve `conflicts_with` without an approved decision or evidence.
-
-#### Soft ranking
-
-After hard gates, a backend may compute:
-
-```text
-score =
-    0.30 * task_relevance
-  + 0.20 * lexical_score
-  + 0.10 * semantic_score
-  + 0.10 * entity_or_graph_score
-  + 0.15 * authority_score
-  + 0.10 * freshness_score
-  + 0.05 * evidence_quality
-```
-
-These are v0 starting weights, not canonical constants. Tune them only through named evaluation cases. Permission, authority eligibility, and explicit conflict are gates—not weights that similarity may overcome.
-
 ### C — Compose
 
-Construct the smallest sufficient context in this order:
+Reserve capacity for output and mandatory authority, add the stable prefix, exact acceptance and implementation evidence, then diverse supporting items by marginal utility per token. Record every budget exclusion.
 
-1. reserve budget for objective, acceptance criteria, current branch/commit, and safety rules;
-2. include mandatory authority context;
-3. include implementation evidence needed to answer or act;
-4. add diverse supporting items by marginal task utility per token;
-5. avoid near-duplicates and repeated summaries;
-6. retain unresolved conflicts and questions explicitly;
-7. stop before the token limit and record every budget exclusion.
-
-The packer should optimize for:
+Optimize:
 
 ```text
-coverage + authority + evidence diversity + task utility - redundancy - staleness
+coverage + authority + evidence diversity + task utility
+- redundancy - staleness - token cost - latency cost
 ```
 
-For repository work, prefer symbols, signatures, relevant tests, and dependency edges over dumping complete files. For ordinary documents, prefer contextual chunks that retain their document and section provenance.
+For repository work, prefer symbols, signatures and relevant tests over complete-file inclusion.
 
 ### E — Explain and Emit
 
-Emit three bounded artifacts.
+Emit:
 
-#### 1. Context Manifest
+1. Context Manifest conforming to `schemas/context-manifest.schema.json`;
+2. candidate Memory Write Proposal conforming to `schemas/memory-write-proposal.schema.json`;
+3. evaluation metrics for coverage, authority precision, scope, conflicts, full/delta tokens, cache reuse, token efficiency, latency, iterations and stop reason.
 
-Must include:
+## Speed and token controls
 
-- exact input scope and Git context;
-- policy and token budget;
-- included items with reasons and token estimates;
-- excluded items with reason codes;
-- conflicts and unresolved questions;
-- budget usage and a deterministic output hash.
+1. gate invalid candidates before expensive work;
+2. keep an exact stable prefix and append task context;
+3. reuse items only when source, scope and policy hashes match;
+4. pass project/task/evidence deltas instead of full conversation history;
+5. use tier budgets so optional context cannot replace mandatory context;
+6. use lexical-first adaptive retrieval;
+7. exit early when coverage passes or marginal utility reaches zero;
+8. use deterministic code for scope, hashing, dedupe and budgeting;
+9. parallelize only independent reads and evaluation dimensions;
+10. report estimated and provider-reported metrics separately.
 
-Conform to `schemas/context-manifest.schema.json`.
+See `references/LOOP_HARNESS_ENGINEERING.md` and `references/PERFORMANCE_TOKEN_EFFICIENCY.md`.
 
-#### 2. Memory Write Proposals
+## Verification
 
-May contain only candidate records. Each proposal must include source references, relationship classification, confidence, access tags, review requirement, and redaction proof.
-
-Conform to `schemas/memory-write-proposal.schema.json`.
-
-#### 3. Evaluation Summary
-
-Report at least:
-
-```yaml
-authority_precision:
-retrieval_coverage:
-scope_violations:
-stale_memory_selected:
-conflicts_detected:
-duplicate_proposals:
-token_budget_used:
-manifest_valid:
+```bash
+python3 scripts/mis_context_engineer_smoke.py
+python3 scripts/mis_context_engineer_cli.py validate --manifest .agents/skills/mis-context-engineer/examples/sample-manifest.json
+python3 scripts/mis_context_engineer_cli.py benchmark --cases .agents/skills/mis-context-engineer/evals/performance_cases.json
 ```
 
-## Memory Lifecycle
-
-```text
-Observed source
--> extracted candidate
--> scope/redaction/provenance checks
--> duplicate/conflict analysis
--> Memory Write Proposal
--> human review
--> approved / rejected / superseded
--> later TTL or evidence review
-```
-
-This skill may create `candidate` proposals. It must never set `Approved`, `Implemented`, or canonical project state on its own.
-
-## Failure Behavior
-
-- Missing repository/branch/commit for code work: stop code-state assumptions.
-- Missing visibility proof: exclude the item and record `scope_denied`.
-- Missing source/version: exclude the item and record `missing_source`.
-- Conflicting canonical sources: emit `conflict_unresolved`; do not choose silently.
-- Token budget too small for mandatory context: emit `insufficient_budget`; do not truncate safety rules.
-- Optional retriever unavailable: continue with FTS5/lexical retrieval and record the degraded mode.
-- Validation failure: do not publish the manifest as verified.
-
-## Safety
-
-Never emit or persist:
-
-- credentials, tokens, private keys, passwords, or connection strings;
-- raw customer/private transcripts;
-- arbitrary raw prompts or model responses;
-- hidden chain-of-thought;
-- cross-workspace content without visibility proof;
-- unsupported claims phrased as current facts.
-
-Prefer stable IDs, hashes, bounded summaries, redaction markers, and evidence links.
-
-## Minimum Evaluation Set
-
-Before runtime integration, pass the named cases in `evals/cases.yaml`, including:
-
-- candidate memory contradicting an approved decision;
-- cross-workspace retrieval leakage;
-- stale and superseded memory;
-- unresolved equal-authority conflict;
-- missing Git commit;
-- strict token budget;
-- duplicate memory proposal;
-- historical `as_of` retrieval;
-- repository localization with relevant tests;
-- secret-bearing source redaction.
-
-## Example Invocation
-
-```yaml
-objective: Design the first async Codex worktree slice without contradicting the current release milestone.
-repository: geogejoy107-jpg/agentops-mis-mvp
-branch: codex/agent-gateway-kb-demo
-commit: 4dd4d1a49e499675fe13ec72b915553669f12d3c
-workspace_id: local-demo
-project_id: agentops-mis
-task_id: null
-agent_id: codex-context-worker
-token_budget: 6000
-allowed_sources: [github, project_docs, approved_memory, candidate_memory, external_research]
-writeback_mode: candidate_only
-semantic_retrieval: false
-historical_as_of: null
-```
-
-Expected behavior:
-
-- current milestone and accepted decisions are mandatory;
-- candidate research may support but not override them;
-- code claims are pinned to the named commit;
-- all inclusions and exclusions are visible in a Context Manifest;
-- any durable lesson is proposed for review, never auto-promoted.
+The suite covers authority conflicts, cross-workspace isolation, history, missing Git context, strict budgets, deduplication, repository localization, stable cache keys, delta reuse, early exit and bounded iterations.
