@@ -504,6 +504,9 @@ export function AIEmployees() {
   const securityGates = securityReadiness?.gates || [];
   const localWriteGuardGate = securityGates.find(gate => gate.id === "local_ui_write_guard");
   const visibleSecurityGates = securityGates.filter(gate => gate.id !== "local_ui_write_guard").slice(0, 4);
+  const productionSecurityStatus = securityReadiness?.status || "unknown";
+  const productionSecurityNextAction = localWriteGuardGate?.next_action || securityReadiness?.next_actions?.[0] || "agentops security production-readiness";
+  const productionSecurityNeedsAttention = productionSecurityStatus !== "ready" || !securityReadiness?.production_ready || localWriteGuardGate?.status !== "pass";
   const integrationInbox = data?.integrationInbox;
   const commanderWorkPackages = data?.commanderWorkPackages;
   const commanderPackageRows = commanderWorkPackages?.work_packages || [];
@@ -835,11 +838,15 @@ export function AIEmployees() {
       authMode: "Auth mode",
       authenticated: "Authenticated",
       productionSecurity: "Production security",
+      productionSecurityWarning: "Production security boundary",
+      productionSecurityWarningSummary: "Shared/production use must pass admin write guard, scoped Agent Gateway auth, and startup security before live operators rely on this panel.",
       productionReady: "Production ready",
       localDevOnly: "Local demo only",
       securityGate: "Security gate",
       localWriteGuard: "Local write guard",
       localWriteGuardSummary: "Browser/local POST and PATCH writes must use the admin key before shared deployment.",
+      deploymentMode: "Deployment mode",
+      startupSecurity: "Startup security",
       gatewayWorkspace: "Workspace",
       gatewayScopes: "Allowed scopes",
       activeEnrollments: "Active enrollments",
@@ -1294,11 +1301,15 @@ export function AIEmployees() {
       authMode: "认证模式",
       authenticated: "已认证",
       productionSecurity: "生产安全",
+      productionSecurityWarning: "生产安全边界",
+      productionSecurityWarningSummary: "共享/生产使用前，Admin 写保护、Agent Gateway 范围认证和启动安全必须通过，操作员才能依赖此面板。",
       productionReady: "生产就绪",
       localDevOnly: "仅本地演示",
       securityGate: "安全 Gate",
       localWriteGuard: "本地写保护",
       localWriteGuardSummary: "共享部署前，浏览器/本地 POST 与 PATCH 写入必须使用 Admin Key。",
+      deploymentMode: "部署模式",
+      startupSecurity: "启动安全",
       gatewayWorkspace: "工作区",
       gatewayScopes: "权限数量",
       activeEnrollments: "有效接入",
@@ -2831,6 +2842,54 @@ export function AIEmployees() {
         <button onClick={() => void refresh()} className="mt-3 text-[11px] px-3 py-1.5 rounded" style={{ background: "rgba(34,211,238,0.12)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.2)" }}>
           {copy.refresh}
         </button>
+      </div>
+
+      <div
+        data-testid="production-security-warning-strip"
+        className="rounded-xl p-4"
+        style={{
+          background: productionSecurityNeedsAttention ? "rgba(251,191,36,0.08)" : "rgba(45,212,191,0.08)",
+          border: productionSecurityNeedsAttention ? "1px solid rgba(251,191,36,0.28)" : "1px solid rgba(45,212,191,0.24)",
+        }}
+      >
+        <div className="flex flex-col xl:flex-row xl:items-start justify-between gap-4">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              {productionSecurityNeedsAttention ? <AlertTriangle size={15} style={{ color: "var(--mis-warning)" }} /> : <ShieldCheck size={15} style={{ color: "var(--mis-success)" }} />}
+              <div className="text-sm font-semibold" style={{ color: "var(--mis-text)" }}>{copy.productionSecurityWarning}</div>
+              <StatusBadge status={productionSecurityStatus} label={securityReadiness?.production_ready ? copy.productionReady : copy.localDevOnly} />
+              <StatusBadge status={localWriteGuardGate?.status || "unknown"} label={copy.localWriteGuard} />
+            </div>
+            <p className="text-[11px] mt-1 max-w-4xl" style={{ color: "var(--mis-dim)" }}>{copy.productionSecurityWarningSummary}</p>
+            <p className="text-[10px] mt-1 max-w-4xl line-clamp-2" style={{ color: "var(--mis-muted)" }}>
+              {localWriteGuardGate?.detail || securityReadiness?.contract || copy.localWriteGuardSummary}
+            </p>
+          </div>
+          <div className="grid grid-cols-2 gap-2 min-w-[260px]">
+            {[
+              { label: copy.deploymentMode, value: securityReadiness?.auth_mode || (securityReadiness?.production_requested ? "shared" : "local") },
+              { label: copy.startupSecurity, value: securityReadiness?.startup_security?.status || "unknown" },
+            ].map((item) => (
+              <div key={item.label} className="rounded px-2 py-1" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                <div className="text-[9px]" style={{ color: "var(--mis-muted)" }}>{item.label}</div>
+                <div className="text-[10px] font-semibold truncate mt-0.5" style={{ color: "var(--mis-text)" }}>{item.value}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="mt-3 flex flex-col md:flex-row md:items-center justify-between gap-2 rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+          <div className="min-w-0 text-[10px] truncate" style={{ color: "var(--mis-dim)" }}>
+            {copy.nextAction}: <span className="font-mono" style={{ color: "var(--mis-cyan)" }}>{productionSecurityNextAction}</span>
+          </div>
+          <button
+            onClick={() => void copyIntakeCommand(productionSecurityNextAction)}
+            className="inline-flex items-center justify-center gap-1 text-[11px] px-2.5 py-1.5 rounded shrink-0"
+            style={{ background: "rgba(34,211,238,0.12)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.22)" }}
+          >
+            <Copy size={12} />
+            {copiedIntakeCommand === productionSecurityNextAction ? copy.copiedCommand : copy.copyCommand}
+          </button>
+        </div>
       </div>
 
       <div
