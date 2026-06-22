@@ -189,17 +189,22 @@ Primary evidence:
 
 Required behavior:
 
-- CI runs credential-free deterministic backend smokes and UI build.
+- CI runs without external runtime/provider credentials. The only credential
+  allowed in deterministic CI is GitHub's short-lived token for read-only branch
+  protection and current-run evidence checks.
 - Live Hermes/OpenClaw/Dify/Notion work remains manual/protected and out of CI.
 - Release evidence names exact branch, exact commit, CI links/status, test
   commands, license/provenance, and public-claim boundaries.
 - A branch is not READY_FOR_RC until CI is green on the exact candidate.
+- The protected merge target requires the backend deterministic and UI build
+  checks before merge.
 
 Primary evidence:
 
 - `.github/workflows/ci.yml`
 - `scripts/public_claims_release_gate_smoke.py`
 - `scripts/release_branch_control_smoke.py`
+- `scripts/github_required_checks_smoke.py`
 - `scripts/license_provenance_smoke.py`
 - `docs/V1_5_MERGE_READINESS_CHECKLIST.md`
 

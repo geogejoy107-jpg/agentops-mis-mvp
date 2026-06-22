@@ -12,8 +12,8 @@ findings before marking this branch release-candidate ready.
 
 - [x] Open-source adoption boundary is captured as a project rule. `PROJECT_SPEC.md`, `AGENT_WORKFLOW.md`, and `docs/V1_5_EIGHT_PRODUCT_CLOSURE_SPEC.md` point to `docs/OPEN_SOURCE_ADOPTION_BOUNDARY_SPEC.md`, which separates direct tool adoption, reference-only method adaptation, and first-party MIS authority modules.
 - [x] Confirm the intended development branch HEAD. Guarded by `scripts/release_branch_control_smoke.py`, which reports the current branch, exact `HEAD` SHA, upstream sync state and `origin/main` history.
-- [ ] Freeze a release-candidate SHA.
-- [ ] Pause unrelated feature work during hardening.
+- [x] Freeze a release-candidate SHA through the release evidence runtime source and hardening freeze protocol. `docs/RELEASE_FREEZE_PROTOCOL.md` records the freeze start baseline, while `scripts/release_evidence_packet_smoke.py` emits the exact current `git rev-parse HEAD` and `scripts/release_freeze_protocol_smoke.py` keeps the freeze protocol auditable without storing stale release packets.
+- [x] Pause unrelated feature work during hardening. `docs/RELEASE_FREEZE_PROTOCOL.md` now limits this branch to security, correctness, release-readiness, evidence-gate, CI, rollback, recovery and claim-narrowing changes until final RC/merge review; guarded by `scripts/release_freeze_protocol_smoke.py`.
 - [x] Confirm no databases, runtime state, credentials, generated service files or logs are tracked. Guarded by `scripts/release_branch_control_smoke.py`; `.env.example` is the only allowed env-like tracked file and secret-like content remains covered by `scripts/secret_scan_smoke.py`.
 - [x] Preserve reviewable functional history; do not turn all commits into one opaque change. Guarded by `scripts/release_branch_control_smoke.py`, which requires a merge-base and more than one reviewable commit ahead of `origin/main` when that ref is available.
 
@@ -23,6 +23,7 @@ git rev-parse codex/agent-gateway-kb-demo
 git status --short
 git diff --check main...codex/agent-gateway-kb-demo
 python3 scripts/release_branch_control_smoke.py --expected-branch codex/agent-gateway-kb-demo --require-upstream-synced
+python3 scripts/release_freeze_protocol_smoke.py
 ```
 
 ## 2. Agent Plan integrity
@@ -376,9 +377,9 @@ useful command-center summary       <1 s
 ## 10. Automated CI
 
 - [x] Add GitHub Actions.
-- [ ] Require checks before merge.
+- [x] Require checks before merge. `main` is protected with strict required status checks for `Backend deterministic smokes` and `UI build`; guarded by `scripts/github_required_checks_smoke.py`.
 - [x] Use clean temporary database/runtime directories.
-- [x] Keep deterministic CI credential-free.
+- [x] Keep deterministic CI free of external runtime/provider credentials. The only allowed credential is GitHub's short-lived token for read-only branch protection and current-run evidence checks; no Hermes/OpenClaw/Dify/Notion/customer secrets are present.
 - [x] Keep live Hermes/OpenClaw as protected local/manual jobs.
 
 Current automation:
@@ -409,6 +410,7 @@ Merge readiness state itself is also machine-checked:
 
 ```bash
 python3 scripts/merge_readiness_status_smoke.py
+python3 scripts/github_required_checks_smoke.py
 python3 scripts/merge_readiness_status_smoke.py --require-ready-to-merge
 ```
 
@@ -558,6 +560,7 @@ Optional live runtime checks occur only after preflight and explicit human confi
 ## 14. Release evidence packet
 
 - [x] Exact RC SHA. Guarded by `scripts/release_evidence_packet_smoke.py`, which emits the current `git rev-parse HEAD` value at runtime with branch, upstream sync and working-tree summary instead of storing a stale tracked SHA.
+- [x] Hardening freeze protocol. Guarded by `scripts/release_freeze_protocol_smoke.py` and `docs/RELEASE_FREEZE_PROTOCOL.md`; default mode proves the freeze protocol and CI-backed release chain, while strict mode requires clean tree, green current-head CI and remote required-check enforcement.
 - [x] CI links and status. Guarded by `scripts/release_evidence_packet_smoke.py` and `docs/RELEASE_EVIDENCE_PACKET.md`; CI run URL/status is derived from GitHub Actions env or `gh run list`, and missing/non-green current-head CI keeps the release in `NOT_READY` unless the stricter RC flags pass.
 - [x] Test command list and summary. Guarded by `scripts/release_evidence_packet_smoke.py`, which verifies the canonical release command manifest is backed by `.github/workflows/ci.yml` and that referenced script files exist.
 - [x] Performance and retrieval baseline. Guarded by `scripts/ai_employees_responsiveness_smoke.py` and `scripts/knowledge_retrieval_quality_smoke.py`; current local evidence stayed within the `/workspace/agents` API fan-out/latency budgets and achieved Recall@5/MRR 1.0 on the bilingual retrieval baseline.

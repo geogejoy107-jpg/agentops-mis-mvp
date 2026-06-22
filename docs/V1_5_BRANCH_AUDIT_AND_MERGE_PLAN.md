@@ -354,8 +354,10 @@ This is acceptable for one local repository and one trusted project. It is not a
 **Severity: Merge Blocker**
 
 The original audited commit had no status checks. The branch now includes a
-first deterministic GitHub Actions workflow at `.github/workflows/ci.yml`, but
-repository branch protection still needs to require those checks before merge.
+first deterministic GitHub Actions workflow at `.github/workflows/ci.yml`.
+Follow-up hardening now protects `main` with strict required checks for
+`Backend deterministic smokes` and `UI build`; verify with
+`python3 scripts/github_required_checks_smoke.py`.
 
 Minimum CI:
 

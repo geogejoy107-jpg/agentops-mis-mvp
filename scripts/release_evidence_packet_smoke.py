@@ -41,6 +41,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "release_freeze_protocol",
+        "command": "python3 scripts/release_freeze_protocol_smoke.py",
+        "summary": "Hardening freeze protocol, CI-backed release gates and remote required-check evidence.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "release_evidence_packet",
         "command": "python3 scripts/release_evidence_packet_smoke.py",
         "summary": "Runtime RC SHA, CI link/status, canonical test list and release-packet boundaries.",
@@ -50,6 +56,12 @@ TEST_COMMANDS = [
         "id": "merge_readiness_status",
         "command": "python3 scripts/merge_readiness_status_smoke.py",
         "summary": "Checklist state consistency, explicit blockers and strict READY_TO_MERGE guard.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
+        "id": "github_required_checks",
+        "command": "python3 scripts/github_required_checks_smoke.py",
+        "summary": "GitHub main branch protection requires backend and UI checks before merge.",
         "ci_step": "Offline safety smokes",
     },
     {
