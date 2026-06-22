@@ -112,6 +112,7 @@ from agentops_mis_core.worker_fleet import (
     build_worker_fleet_view,
     build_worker_status_payload,
 )
+from agentops_mis_core.workflow_jobs import workflow_job_public
 from agentops_mis_cli.advance_loop_policy import advance_loop_command_policy, advance_loop_policy_summary
 from agentops_mis_cli.redaction import redact_full_text as shared_redact_full_text
 from agentops_mis_cli.redaction import redact_text as shared_redact_text
@@ -10650,40 +10651,6 @@ def run_customer_task_template_workflow(conn, body: dict) -> tuple[dict, int]:
     audit(conn, "user", "usr_customer_demo", "workflow.customer_template.run", "template_packages", template_id, None, {"status": "completed" if result.get("ok", True) else "failed", "workflow": template["workflow"]}, {"template_id": template_id, "dry_run": result.get("dry_run"), "adapter": adapter if use_worker_adapter else None, "raw_documents_stored": False, "credentials_stored": False})
     conn.commit()
     return result, 201
-
-
-def workflow_job_public(row: sqlite3.Row | dict | None) -> dict | None:
-    if not row:
-        return None
-    data = dict(row)
-    result = {}
-    try:
-        result = json.loads(data.get("result_json") or "{}")
-    except Exception:
-        result = {}
-    return {
-        "job_id": data.get("job_id"),
-        "workspace_id": data.get("workspace_id"),
-        "workflow_type": data.get("workflow_type"),
-        "status": data.get("status"),
-        "template_id": data.get("template_id"),
-        "adapter": data.get("adapter"),
-        "confirm_run": bool(data.get("confirm_run")),
-        "title": data.get("title"),
-        "input_summary": data.get("input_summary"),
-        "request_hash": data.get("request_hash"),
-        "result_task_id": data.get("result_task_id"),
-        "result_run_id": data.get("result_run_id"),
-        "result_artifact_id": data.get("result_artifact_id"),
-        "error_message": data.get("error_message"),
-        "created_at": data.get("created_at"),
-        "started_at": data.get("started_at"),
-        "completed_at": data.get("completed_at"),
-        "updated_at": data.get("updated_at"),
-        "result": result,
-        "raw_request_omitted": True,
-        "token_omitted": True,
-    }
 
 
 def _parse_iso_datetime(value: str | None) -> dt.datetime | None:

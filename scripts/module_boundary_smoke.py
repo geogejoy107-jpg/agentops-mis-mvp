@@ -96,6 +96,7 @@ from agentops_mis_core.worker_fleet import (
     build_worker_status_payload,
     worker_fleet_health,
 )
+from agentops_mis_core.workflow_jobs import workflow_job_public
 from agentops_mis_runtime.capabilities import (
     SCHEMA_VERSION,
     runtime_connector_capability_manifest,
@@ -125,6 +126,7 @@ GATEWAY_RUNS = ROOT / "agentops_mis_core" / "gateway_runs.py"
 COMMANDER_WORK_PACKAGES = ROOT / "agentops_mis_core" / "commander_work_packages.py"
 OPERATOR_COMMAND_CENTER = ROOT / "agentops_mis_core" / "operator_command_center.py"
 WORKER_FLEET = ROOT / "agentops_mis_core" / "worker_fleet.py"
+WORKFLOW_JOBS = ROOT / "agentops_mis_core" / "workflow_jobs.py"
 BACKLOG = ROOT / "docs" / "project" / "BACKLOG.md"
 PLAN = ROOT / "docs" / "MODULE_BOUNDARY_PLAN.md"
 CI = ROOT / ".github" / "workflows" / "ci.yml"
@@ -188,6 +190,12 @@ EXTRACTED_WORKER_FLEET_HELPERS = {
 SERVER_WORKER_FLEET_IMPORTS = {
     "build_worker_fleet_view",
     "build_worker_status_payload",
+}
+EXTRACTED_WORKFLOW_JOB_HELPERS = {
+    "workflow_job_public",
+}
+SERVER_WORKFLOW_JOB_IMPORTS = {
+    "workflow_job_public",
 }
 EXTRACTED_COMMANDER_WORK_PACKAGE_HELPERS = {
     "build_commander_work_packages_readback",
@@ -393,6 +401,7 @@ def main() -> int:
     require(COMMANDER_WORK_PACKAGES.exists(), "commander work packages core module missing", failures)
     require(OPERATOR_COMMAND_CENTER.exists(), "operator command center core module missing", failures)
     require(WORKER_FLEET.exists(), "worker fleet core module missing", failures)
+    require(WORKFLOW_JOBS.exists(), "workflow jobs core module missing", failures)
     require("from agentops_mis_core.approval_wall import" in server_text, "server.py must import approval wall core module", failures)
     require("from agentops_mis_core.agent_plans import" in server_text, "server.py must import agent plans core module", failures)
     require("from agentops_mis_core.gateway_runs import" in server_text, "server.py must import gateway runs core module", failures)
@@ -400,6 +409,7 @@ def main() -> int:
     require("from agentops_mis_core.commander_work_packages import" in server_text, "server.py must import commander work packages core module", failures)
     require("from agentops_mis_core.operator_command_center import" in server_text, "server.py must import operator command center core module", failures)
     require("from agentops_mis_core.worker_fleet import" in server_text, "server.py must import worker fleet core module", failures)
+    require("from agentops_mis_core.workflow_jobs import" in server_text, "server.py must import workflow jobs core module", failures)
     require("from agentops_mis_runtime.capabilities import" in server_text, "server.py must import runtime capability module", failures)
     require("from agentops_mis_runtime.connectors import" in server_text, "server.py must import runtime connector registry module", failures)
     require("from agentops_mis_runtime.trust import" in server_text, "server.py must import runtime connector trust module", failures)
@@ -410,6 +420,7 @@ def main() -> int:
     commander_work_package_functions = function_names(COMMANDER_WORK_PACKAGES) if COMMANDER_WORK_PACKAGES.exists() else set()
     operator_command_center_functions = function_names(OPERATOR_COMMAND_CENTER) if OPERATOR_COMMAND_CENTER.exists() else set()
     worker_fleet_functions = function_names(WORKER_FLEET) if WORKER_FLEET.exists() else set()
+    workflow_job_functions = function_names(WORKFLOW_JOBS) if WORKFLOW_JOBS.exists() else set()
     for helper in sorted(EXTRACTED_HELPERS):
         require(helper not in server_functions, f"server.py still defines {helper}", failures)
     for helper in sorted(EXTRACTED_CONNECTOR_HELPERS):
@@ -419,6 +430,9 @@ def main() -> int:
     for helper in sorted(EXTRACTED_WORKER_FLEET_HELPERS):
         require(helper not in server_functions, f"server.py still defines {helper}", failures)
         require(helper in worker_fleet_functions, f"worker fleet module missing {helper}", failures)
+    for helper in sorted(EXTRACTED_WORKFLOW_JOB_HELPERS):
+        require(helper not in server_functions, f"server.py still defines {helper}", failures)
+        require(helper in workflow_job_functions, f"workflow jobs module missing {helper}", failures)
     for helper in sorted(EXTRACTED_COMMANDER_WORK_PACKAGE_HELPERS):
         require(helper not in server_functions, f"server.py still defines {helper}", failures)
         require(helper in commander_work_package_functions, f"commander work packages module missing {helper}", failures)
@@ -446,6 +460,8 @@ def main() -> int:
         require(sources == {"agentops_mis_runtime.trust"}, f"{helper} imported from wrong or multiple modules: {sorted(sources)}", failures)
     for helper, sources in imported_symbol_sources(SERVER, SERVER_WORKER_FLEET_IMPORTS).items():
         require(sources == {"agentops_mis_core.worker_fleet"}, f"{helper} imported from wrong or multiple modules: {sorted(sources)}", failures)
+    for helper, sources in imported_symbol_sources(SERVER, SERVER_WORKFLOW_JOB_IMPORTS).items():
+        require(sources == {"agentops_mis_core.workflow_jobs"}, f"{helper} imported from wrong or multiple modules: {sorted(sources)}", failures)
     for helper, sources in imported_symbol_sources(SERVER, SERVER_COMMANDER_WORK_PACKAGE_IMPORTS).items():
         require(sources == {"agentops_mis_core.commander_work_packages"}, f"{helper} imported from wrong or multiple modules: {sorted(sources)}", failures)
     for helper, sources in imported_symbol_sources(SERVER, SERVER_OPERATOR_COMMAND_CENTER_IMPORTS).items():
@@ -467,6 +483,7 @@ def main() -> int:
     commander_work_package_imports = imported_modules(COMMANDER_WORK_PACKAGES) if COMMANDER_WORK_PACKAGES.exists() else set()
     operator_command_center_imports = imported_modules(OPERATOR_COMMAND_CENTER) if OPERATOR_COMMAND_CENTER.exists() else set()
     worker_fleet_imports = imported_modules(WORKER_FLEET) if WORKER_FLEET.exists() else set()
+    workflow_job_imports = imported_modules(WORKFLOW_JOBS) if WORKFLOW_JOBS.exists() else set()
     forbidden = sorted(module for module in imports if module in FORBIDDEN_RUNTIME_MODULE_IMPORTS)
     require(not forbidden, f"runtime capability module imports forbidden app/runtime dependencies: {forbidden}", failures)
     require("server" not in imports, "runtime capability module must not import server module", failures)
@@ -497,6 +514,9 @@ def main() -> int:
     worker_fleet_forbidden = sorted(module for module in worker_fleet_imports if module in {"sqlite3", "subprocess", "http.server", "urllib.request"})
     require(not worker_fleet_forbidden, f"worker fleet module imports forbidden app/runtime dependencies: {worker_fleet_forbidden}", failures)
     require("server" not in worker_fleet_imports, "worker fleet module must not import server module", failures)
+    workflow_job_forbidden = sorted(module for module in workflow_job_imports if module in {"sqlite3", "subprocess", "http.server", "urllib.request"})
+    require(not workflow_job_forbidden, f"workflow jobs module imports forbidden app/runtime dependencies: {workflow_job_forbidden}", failures)
+    require("server" not in workflow_job_imports, "workflow jobs module must not import server module", failures)
     require('"rtc_hermes_default_gateway"' not in server_text[server_text.find("def refresh_runtime_connectors"):server_text.find("def run_hermes_probe")], "server.py refresh_runtime_connectors still owns connector-specific refresh policy", failures)
     for marker in sorted(READ_MODEL_CACHE_FORBIDDEN_SERVER_MARKERS):
         require(marker not in server_text, f"server.py still contains read-model cache implementation marker: {marker}", failures)
@@ -1208,6 +1228,34 @@ def main() -> int:
     require(fleet_view.get("safety", {}).get("read_only") is True, "worker fleet view must remain read-only", failures)
     require(all(lane.get("token_omitted") is True and lane.get("session_id_omitted") is True for lane in fleet_view.get("lanes", [])), "worker fleet lanes missing omission proof", failures)
     require(health.get("recommended_actions"), "worker fleet health missing recommended actions", failures)
+    workflow_job_projection = workflow_job_public({
+        "job_id": "wfjob_projection_smoke",
+        "workspace_id": "local-demo",
+        "workflow_type": "customer_worker",
+        "status": "running",
+        "template_id": "tpl_smoke",
+        "adapter": "mock",
+        "confirm_run": 0,
+        "title": "Projection smoke",
+        "input_summary": "Safe summary only.",
+        "request_hash": "hash_projection_smoke",
+        "result_json": '{"ok": true, "task_id": "tsk_projection_smoke"}',
+        "result_task_id": "tsk_projection_smoke",
+        "result_run_id": "run_projection_smoke",
+        "result_artifact_id": None,
+        "error_message": None,
+        "created_at": "2026-06-22T00:00:00+00:00",
+        "started_at": "2026-06-22T00:00:01+00:00",
+        "completed_at": None,
+        "updated_at": "2026-06-22T00:00:02+00:00",
+    })
+    workflow_job_bad_result_projection = workflow_job_public({
+        "job_id": "wfjob_bad_json_smoke",
+        "result_json": "{not-json",
+    })
+    require(workflow_job_projection and workflow_job_projection.get("result", {}).get("ok") is True, "workflow job public projection result parse failed", failures)
+    require(workflow_job_projection.get("raw_request_omitted") is True and workflow_job_projection.get("token_omitted") is True, "workflow job public projection omission proof missing", failures)
+    require(workflow_job_bad_result_projection and workflow_job_bad_result_projection.get("result") == {}, "workflow job public projection bad JSON fallback failed", failures)
     planned_task = {"task_id": "tsk_cmd_smoke_strategy", "status": "planned"}
     completed_task = {"task_id": "tsk_cmd_smoke_qa", "status": "completed"}
     require(commander_work_package_status(planned_task, None, {}) == "planned", "commander planned package status failed", failures)
@@ -1301,11 +1349,12 @@ def main() -> int:
     require("agentops_mis_core/commander_work_packages.py" in plan_text, "module boundary plan missing commander work packages module", failures)
     require("agentops_mis_core/operator_command_center.py" in plan_text, "module boundary plan missing operator command center module", failures)
     require("agentops_mis_core/worker_fleet.py" in plan_text, "module boundary plan missing worker fleet module", failures)
+    require("agentops_mis_core/workflow_jobs.py" in plan_text, "module boundary plan missing workflow jobs module", failures)
 
     output = {
         "ok": not failures,
         "operation": "module_boundary_smoke",
-        "boundary": "agentops_mis_runtime.capabilities+connectors+trust + agentops_mis_core.read_model_cache+approval_wall+agent_plans+gateway_runs+commander_work_packages+operator_command_center+worker_fleet",
+        "boundary": "agentops_mis_runtime.capabilities+connectors+trust + agentops_mis_core.read_model_cache+approval_wall+agent_plans+gateway_runs+commander_work_packages+operator_command_center+worker_fleet+workflow_jobs",
         "server_line_count": len(server_text.splitlines()),
         "module_imports": {
             "capabilities": sorted(imports),
@@ -1318,6 +1367,7 @@ def main() -> int:
             "commander_work_packages": sorted(commander_work_package_imports),
             "operator_command_center": sorted(operator_command_center_imports),
             "worker_fleet": sorted(worker_fleet_imports),
+            "workflow_jobs": sorted(workflow_job_imports),
         },
         "live_execution_performed": False,
         "ledger_mutated": False,

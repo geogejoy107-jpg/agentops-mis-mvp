@@ -951,6 +951,36 @@ python3 scripts/generic_external_side_effect_gate_smoke.py
 python3 scripts/external_connector_runtime_inventory_smoke.py
 ```
 
+### Slice 32: Workflow Job Public Projection
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/workflow_jobs.py`
+
+Moved out of `server.py`:
+
+- async workflow-job public response projection
+- `result_json` safe parse/fallback behavior
+- raw-request and token omission proof for workflow-job readback
+
+Still owned by `server.py`:
+
+- HTTP routes
+- SQLite workflow-job reads and writes
+- async job submission and status transitions
+- stuck-job age calculation and recovery routing
+- runtime events, audit logs and commits
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/workflow_jobs_list_poll_smoke.py
+python3 scripts/workflow_job_stuck_recovery_smoke.py
+```
+
 ## Next Candidate Slices
 
 - Continue P1-05 with small smoke-backed strangler slices only; prefer pure
