@@ -197,14 +197,30 @@ export type AgentSummary = {
   agent_id: string;
   name: string;
   role?: string;
+  description?: string;
   runtime_type?: string;
   model_provider?: string;
   model_name?: string;
   status?: string;
   permission_level?: string;
+  allowed_tools?: string[] | string;
   budget_limit_usd?: number;
+  owner_user_id?: string;
   created_at?: string;
   updated_at?: string;
+};
+
+export type AgentPerformancePayload = {
+  agent: AgentSummary;
+  total_runs?: number;
+  completed_runs?: number;
+  failures?: number;
+  success_rate?: number;
+  avg_duration_ms?: number;
+  total_cost_usd?: number;
+  approval_required_count?: number;
+  recent_error_types?: { error_type?: string; count?: number }[];
+  recent_runs?: RunSummary[];
 };
 
 export type ReadinessGate = {
@@ -798,6 +814,10 @@ export async function loadAudit(): Promise<AuditSummary[]> {
 
 export async function loadAgents(): Promise<AgentSummary[]> {
   return misJson<AgentSummary[]>("/agents");
+}
+
+export async function loadAgentPerformance(agentId: string): Promise<AgentPerformancePayload> {
+  return misJson<AgentPerformancePayload>(`/agents/${encodeURIComponent(agentId)}/performance`);
 }
 
 export async function loadSecurityProductionReadiness(): Promise<SecurityReadinessSummary> {

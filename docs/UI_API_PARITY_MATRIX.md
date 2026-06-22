@@ -38,6 +38,7 @@ route retirement:
 | --- | --- | --- | --- |
 | Customer dispatch / Pixel Office | `pixel_office_and_dispatch` | `partial` | Not allowed |
 | Worker console | `worker_console` | `partial` | Not allowed |
+| Agent detail | `agent_detail` | `covered` | Not allowed |
 | Reports and delivery board | `reports` | `covered` | Not allowed |
 | Approvals | `approvals` | `covered` | Not allowed |
 | Memory review | `memory` | `covered` | Not allowed |
@@ -59,11 +60,11 @@ route retirement:
   production safety and readiness; Vite remains canonical for local worker
   start/stop/restart, task release, remote enrollment mutation, and detailed
   operator controls.
-- Admin-only Vite routes for per-agent performance and the full
-  template/base-switching console are deferred. Tool calls, evaluation room,
-  runtime connectors, and Notion external base now have Next parity at
-  `/workspace/tool-calls`, `/workspace/evaluations`, `/workspace/connectors`,
-  and `/workspace/external-bases/notion`.
+- Admin-only Vite routes for the full template/base-switching console are
+  deferred. Tool calls, evaluation room, runtime connectors, Notion external
+  base, and agent detail now have Next parity at `/workspace/tool-calls`,
+  `/workspace/evaluations`, `/workspace/connectors`,
+  `/workspace/external-bases/notion`, and `/workspace/agents/:agentId`.
 - Several `covered` routes still need a route-level Vite/Next data-shape diff
   before a retirement decision. Browser snapshot evidence is necessary but not
   sufficient.
@@ -91,6 +92,11 @@ route retirement:
   confirmed export for `notion_confirmed_export`. `/admin/bases/notion`
   remains canonical until prepared-action resume UX and route retirement are
   explicit.
+- Agent Detail now has a Next parity route at `/workspace/agents/:agentId`.
+  It reads `GET /agents/:id/performance`, exposes the agent profile, success
+  rate, failures, approval count, budget usage, allowed tools, recent error
+  groups, and recent run/task links. `/admin/agents/:id` remains canonical until
+  worker console mutations and route retirement are explicit.
 - Task and run list/detail now have first route-level evidence:
   `python3 scripts/ui_task_run_route_parity_smoke.py`
   (`ui_task_run_route_parity_v1`) checks Next list links to detail routes and

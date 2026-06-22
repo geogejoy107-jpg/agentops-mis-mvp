@@ -232,12 +232,14 @@
     {
       "id": "agent_detail",
       "capability": "Per-agent performance detail.",
-      "status": "deferred",
-      "gate4_required": false,
+      "status": "covered",
+      "gate4_required": true,
       "vite_routes": [
         "/admin/agents/:id"
       ],
-      "next_routes": [],
+      "next_routes": [
+        "/workspace/agents/:agentId"
+      ],
       "api_contracts": [
         "GET /agents/:id/performance"
       ],
@@ -245,12 +247,19 @@
         "ui/start-building-app/src/app/components/pages/AgentDetail.tsx",
         "ui/start-building-app/src/app/data/liveApi.ts"
       ],
-      "next_files": [],
+      "next_files": [
+        "ui/next-app/app/workspace/agents/[agentId]/page.tsx",
+        "ui/next-app/src/components/AgentDetailPage.tsx",
+        "ui/next-app/src/components/AgentsParityPage.tsx",
+        "ui/next-app/src/lib/mis.ts"
+      ],
       "evidence_commands": [
-        "python3 scripts/ui_api_parity_matrix_smoke.py"
+        "python3 scripts/ui_api_parity_matrix_smoke.py",
+        "python3 scripts/nextjs_parity_smoke.py",
+        "python3 scripts/nextjs_playwright_snapshot_smoke.py"
       ],
       "retirement_allowed": false,
-      "retirement_gate": "Deferred until worker console read-model parity is complete."
+      "retirement_gate": "Next agent detail covers live per-agent performance, budget, allowed tools, recent runs, run/task links, and error groups; Vite remains canonical until worker console mutations and route retirement are explicit."
     },
     {
       "id": "approvals",

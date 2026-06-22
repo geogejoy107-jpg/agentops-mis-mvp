@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { Activity, Bot, KeyRound, RefreshCw, ShieldCheck, TerminalSquare } from "lucide-react";
 import { AppFrame } from "./AppFrame";
@@ -160,13 +161,13 @@ export function AgentsParityPage() {
         </div>
         <div className="list compact">
           {agents.slice(0, 12).map((agent) => (
-            <article className="row" key={agent.agent_id}>
+            <Link className="row linkRow" href={`/workspace/agents/${encodeURIComponent(agent.agent_id)}`} key={agent.agent_id}>
               <div>
                 <strong>{agent.name || agent.agent_id}</strong>
                 <span>{agent.agent_id} · {agent.role || "agent"} · {agent.runtime_type || "runtime"}</span>
               </div>
               <span className={statusClass(agent.status)}>{agent.status || "unknown"}</span>
-            </article>
+            </Link>
           ))}
         </div>
       </section>

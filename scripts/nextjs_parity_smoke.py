@@ -29,6 +29,7 @@ def main() -> int:
         NEXT_APP / "app" / "layout.tsx",
         NEXT_APP / "app" / "workspace" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "agents" / "page.tsx",
+        NEXT_APP / "app" / "workspace" / "agents" / "[agentId]" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "commercial" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "governance" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "deployment" / "page.tsx",
@@ -59,6 +60,7 @@ def main() -> int:
         NEXT_APP / "app" / "api" / "mis" / "[...path]" / "route.ts",
         NEXT_APP / "src" / "components" / "AppFrame.tsx",
         NEXT_APP / "src" / "components" / "AgentsParityPage.tsx",
+        NEXT_APP / "src" / "components" / "AgentDetailPage.tsx",
         NEXT_APP / "src" / "components" / "CommercialPage.tsx",
         NEXT_APP / "src" / "components" / "GovernancePage.tsx",
         NEXT_APP / "src" / "components" / "DeploymentPage.tsx",
@@ -99,6 +101,7 @@ def main() -> int:
     admin_run_alias_text = read_text(NEXT_APP / "app" / "admin" / "runs" / "[runId]" / "page.tsx")
     app_frame_text = read_text(NEXT_APP / "src" / "components" / "AppFrame.tsx")
     agents_page_text = read_text(NEXT_APP / "src" / "components" / "AgentsParityPage.tsx")
+    agent_detail_page_text = read_text(NEXT_APP / "src" / "components" / "AgentDetailPage.tsx")
     commercial_page_text = read_text(NEXT_APP / "src" / "components" / "CommercialPage.tsx")
     governance_page_text = read_text(NEXT_APP / "src" / "components" / "GovernancePage.tsx")
     deployment_page_text = read_text(NEXT_APP / "src" / "components" / "DeploymentPage.tsx")
@@ -139,6 +142,7 @@ def main() -> int:
     require("/integrations/notion/dry-run-export" in lib_text and "/integrations/notion/export-confirmed" in lib_text, "Notion external base export actions are missing")
     require("/memories" in lib_text and "/audit?limit=120" in lib_text, "governance parity data misses memory or audit ledgers")
     require("/workers/status" in lib_text and "/workers/adapter-readiness" in lib_text, "agent-control parity data misses worker readiness")
+    require("/agents/${encodeURIComponent(agentId)}/performance" in lib_text and "loadAgentPerformance" in lib_text, "agent detail performance parity data is missing")
     require("/security/production-readiness" in lib_text, "agent-control parity data misses production readiness")
     require("/local/readiness" in server_lib_text, "deployment parity data misses local readiness")
     require("/agent-gateway/sessions" in server_lib_text, "governance parity data misses session readback")
@@ -169,6 +173,11 @@ def main() -> int:
     require("/workspace/dispatch" in app_frame_text, "Next.js nav must expose dispatch parity route")
     require("/workspace/agents" in app_frame_text, "Next.js nav must expose agents parity route")
     require("loadAgentControlSnapshot" in agents_page_text and "Production security" in agents_page_text, "agents parity page must expose safety/readiness control plane")
+    require("/workspace/agents/${encodeURIComponent(agent.agent_id)}" in agents_page_text, "agents parity page must link rows to agent detail")
+    require("AgentDetailParityPage" in agent_detail_page_text and "loadAgentPerformance" in agent_detail_page_text, "agent detail page must load live performance data")
+    require("Per-agent performance" in agent_detail_page_text and "Recent Runs" in agent_detail_page_text, "agent detail page must expose performance and recent run evidence")
+    require("/workspace/runs/${encodeURIComponent(run.run_id)}" in agent_detail_page_text, "agent detail page must link recent runs to run detail")
+    require("/workspace/tasks/${encodeURIComponent(run.task_id)}" in agent_detail_page_text, "agent detail page must link recent runs to task detail")
     require("CommercialParityPage" in commercial_page_text and "Capability matrix" in commercial_page_text and "Fail-closed gates" in commercial_page_text, "commercial parity page must expose capability gates")
     require("billing call" in commercial_page_text and "token omitted" in commercial_page_text, "commercial parity page must expose safety proof")
     require("loadServerCommercialEntitlements" in server_lib_text, "commercial parity page must load server entitlement state")
@@ -235,6 +244,7 @@ def main() -> int:
         "routes": [
             "/workspace",
             "/workspace/agents",
+            "/workspace/agents/[agentId]",
             "/workspace/commercial",
             "/workspace/governance",
             "/workspace/deployment",

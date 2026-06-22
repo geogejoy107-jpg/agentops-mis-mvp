@@ -33,6 +33,7 @@ NEXT_ENV = NEXT_APP / "next-env.d.ts"
 ROUTES = [
     ("/workspace", ["Workspace control plane", "Active tasks", "Pending approval queue"]),
     ("/workspace/agents", ["Agents", "Production security", "Adapter readiness"]),
+    ("/workspace/agents/agt_cos", ["Agent Detail", "Per-agent performance", "Recent Runs"]),
     ("/workspace/commercial", ["Commercial", "Capability matrix", "Fail-closed gates"]),
     ("/workspace/governance", ["Governance", "Production readiness", "Session governance"]),
     ("/workspace/deployment", ["Deployment", "Storage backend migration gate", "Storage and retention"]),

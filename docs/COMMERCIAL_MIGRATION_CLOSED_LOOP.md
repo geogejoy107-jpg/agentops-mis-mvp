@@ -230,11 +230,11 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   approves one candidate memory through the Next.js memory page, verifies both
   state changes through `/api/mis/*`, renders a fixture-backed customer project
   report, opens the commercial entitlement, governance, deployment, and tool
-  call ledger, evaluation room, runtime connector, and Notion external-base
-  parity pages, updates one runtime connector trust policy through the Next.js
-  form fallback, verifies Notion dry-run export and Free Local confirmed-export
-  entitlement blocking, archives that report to the MIS ledger through a Next.js
-  form fallback,
+  call ledger, evaluation room, runtime connector, Notion external-base, and
+  agent detail parity pages, updates one runtime connector trust policy through
+  the Next.js form fallback, verifies Notion dry-run export and Free Local
+  confirmed-export entitlement blocking, archives that report to the MIS ledger
+  through a Next.js form fallback,
   verifies `report_artifact_id`, clicks a customer template dispatch action,
   verifies the Free Local `report_templates` entitlement block, confirms no
   customer project was created by the blocked action, flips an isolated temporary
@@ -248,6 +248,7 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
 - First migration artifact:
   - `ui/next-app/app/workspace/page.tsx`
   - `ui/next-app/app/workspace/agents/page.tsx`
+  - `ui/next-app/app/workspace/agents/[agentId]/page.tsx`
   - `ui/next-app/app/workspace/commercial/page.tsx`
   - `ui/next-app/app/workspace/governance/page.tsx`
   - `ui/next-app/app/workspace/deployment/page.tsx`
@@ -278,6 +279,7 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   - `ui/next-app/app/api/mis/[...path]/route.ts`
   - `ui/next-app/src/lib/mis.ts`
   - `ui/next-app/src/lib/misServer.ts`
+  - `ui/next-app/src/components/AgentDetailPage.tsx`
   - `ui/next-app/src/components/LedgerPages.tsx`
   - `ui/next-app/src/components/LedgerDetailPages.tsx`
   - `ui/next-app/src/components/ToolCallPages.tsx`
