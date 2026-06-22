@@ -25,6 +25,7 @@ import {
   loadIntegrationInbox,
   loadLocalReadiness,
   loadOperatorActionReceipts,
+  loadOperatorCommandCenter,
   loadOperatorActionPlan,
   loadOperatorEvidenceReport,
   loadOperatorHandoff,
@@ -72,6 +73,7 @@ import {
   type HermesOpenClawLoopWorkflowResult,
   type OperatorActionPlanPayload,
   type OperatorActionReceiptsPayload,
+  type OperatorCommandCenterPayload,
   type OperatorEvidenceReportPayload,
   type OperatorHandoffPayload,
   type OperatorHealthPayload,
@@ -146,6 +148,7 @@ type AIEmployeesPanelLoadState = {
 
 type AIEmployeesLiveData = {
   [key: string]: unknown;
+  operatorCommandCenter?: OperatorCommandCenterPayload;
   panelLoadState?: Record<string, AIEmployeesPanelLoadState>;
 };
 
@@ -178,6 +181,7 @@ const AI_EMPLOYEES_PANEL_LOADERS: AIEmployeesPanelLoader[] = [
   { id: "worker_hygiene", load: async () => ({ workerHygiene: await loadWorkerFleetHygiene({ limit: 5 }) }) },
   { id: "adapter_readiness", load: async () => ({ adapterReadiness: await loadWorkerAdapterReadiness() }) },
   { id: "local_readiness", load: async () => ({ localReadiness: await loadLocalReadiness() }) },
+  { id: "operator_command_center", load: async () => ({ operatorCommandCenter: await loadOperatorCommandCenter(12) }) },
   { id: "operator_action_plan", load: async () => ({ operatorActionPlan: await loadOperatorActionPlan(12) }) },
   { id: "operator_action_receipts", load: async () => ({ operatorActionReceipts: await loadOperatorActionReceipts(8) }) },
   { id: "operator_evidence_report", load: async () => ({ operatorEvidenceReport: await loadOperatorEvidenceReport(8) }) },
@@ -201,6 +205,7 @@ const AI_EMPLOYEES_CORE_PANEL_IDS = new Set([
   "worker_status",
   "worker_fleet",
   "local_readiness",
+  "operator_command_center",
   "operator_action_plan",
   "operator_evidence_report",
   "agent_gateway_status",
@@ -482,6 +487,7 @@ export function AIEmployees() {
   const activeHygiene = hygieneResult || workerHygiene;
   const adapterReadiness = data?.adapterReadiness;
   const localReadiness = data?.localReadiness;
+  const operatorCommandCenter = data?.operatorCommandCenter as OperatorCommandCenterPayload | undefined;
   const operatorActionPlan = data?.operatorActionPlan as OperatorActionPlanPayload | undefined;
   const operatorActionReceipts = data?.operatorActionReceipts as OperatorActionReceiptsPayload | undefined;
   const operatorEvidenceReport = data?.operatorEvidenceReport as OperatorEvidenceReportPayload | undefined;
@@ -490,6 +496,13 @@ export function AIEmployees() {
   const operatorHandoff = data?.operatorHandoff as OperatorHandoffPayload | undefined;
   const operatorHealth = data?.operatorHealth as OperatorHealthPayload | undefined;
   const operatorLoopSelfCheck = data?.operatorLoopSelfCheck as OperatorLoopSelfCheckPayload | undefined;
+  const operatorCommandCenterSummary = operatorCommandCenter?.summary;
+  const operatorCommandCenterActions = operatorCommandCenter?.next_actions || [];
+  const operatorCommandCenterCommanderSummary = operatorCommandCenter?.commander?.summary || {};
+  const operatorCommandCenterCodingEvidence = typeof operatorCommandCenterCommanderSummary.coding_evidence === "object" && operatorCommandCenterCommanderSummary.coding_evidence !== null
+    ? operatorCommandCenterCommanderSummary.coding_evidence as Record<string, unknown>
+    : {};
+  const operatorCommandCenterCodingGapCount = Number(operatorCommandCenterCodingEvidence.missing ?? operatorCommandCenterSummary?.commander_coding_evidence_missing ?? 0) + Number(operatorCommandCenterCodingEvidence.partial ?? operatorCommandCenterSummary?.commander_coding_evidence_partial ?? 0);
   const operatorPlanActions = operatorActionPlan?.actions || [];
   const operatorPlanSummary = operatorActionPlan?.summary;
   const operatorReceiptCoverage = operatorActionPlan?.receipt_coverage;
@@ -638,6 +651,12 @@ export function AIEmployees() {
       refresh: "Refresh live agents",
       commandCenterTitle: "Worker Fleet Console",
       commandCenterSummary: "Adapter readiness, daemon capacity, remote heartbeat/session health, stuck recovery, and the next safe CLI/API action.",
+      operatorCommandCenterTitle: "Operator command center",
+      operatorCommandCenterSummary: "Unified supervisor read model for projects, blocked runs, approvals, deliveries, stale workers, coding evidence gates, and next actions.",
+      commandCenterActions: "BFF actions",
+      commandCenterProjects: "Projects",
+      commandCenterCodingGaps: "Coding gaps",
+      blockedRuns: "Blocked runs",
       operatorHealthTitle: "Operator health",
       operatorHealthSummary: "Aggregate read-only health across loop handoff, local readiness, security, worker fleet, review queue, and action plan.",
       healthScore: "Health score",
@@ -1126,6 +1145,12 @@ export function AIEmployees() {
       refresh: "刷新实时代理",
       commandCenterTitle: "Worker Fleet 控制台",
       commandCenterSummary: "集中查看 adapter 就绪、daemon 容量、远程心跳/session、卡住恢复和下一步安全 CLI/API 动作。",
+      operatorCommandCenterTitle: "Operator 指挥中心",
+      operatorCommandCenterSummary: "统一汇总项目、阻塞 run、审批、交付、过期 worker、编码证据 Gate 和下一步动作的只读监督视图。",
+      commandCenterActions: "BFF 动作",
+      commandCenterProjects: "项目",
+      commandCenterCodingGaps: "编码缺口",
+      blockedRuns: "阻塞 Run",
       operatorHealthTitle: "Operator 健康",
       operatorHealthSummary: "聚合 Loop 交接、本地就绪、安全边界、Worker Fleet、评审队列和动作计划的只读健康快照。",
       healthScore: "健康分",
@@ -1979,8 +2004,9 @@ export function AIEmployees() {
     candidate.receiptRequired === false ? true :
     typeof candidate.receiptVerified === "boolean" ? candidate.receiptVerified : latestReceiptForAction(candidate.action, candidate.actionSignature)?.status === "verified"
   );
-  const actionQueueCandidateScore = (candidate: { id: string; action: string; actionSignature?: string | null; receiptRequired?: boolean; receiptVerified?: boolean; isReceiptCoverageRecovery?: boolean; isReceiptEvaluationRecovery?: boolean; isReceiptFailureMemoryRecovery?: boolean; isOperatorHealthRisk?: boolean; isEvidenceRemediation?: boolean }) => (
+  const actionQueueCandidateScore = (candidate: { id: string; action: string; actionSignature?: string | null; receiptRequired?: boolean; receiptVerified?: boolean; isOperatorCommandCenterAction?: boolean; isReceiptCoverageRecovery?: boolean; isReceiptEvaluationRecovery?: boolean; isReceiptFailureMemoryRecovery?: boolean; isOperatorHealthRisk?: boolean; isEvidenceRemediation?: boolean }) => (
     isCloseEvidenceGapCommand(candidate.action) ? 120 :
+    candidate.isOperatorCommandCenterAction ? 119 :
     candidate.isOperatorHealthRisk ? 118 :
     candidate.isReceiptEvaluationRecovery ? 116 :
     candidate.isReceiptCoverageRecovery ? 115 :
@@ -1998,6 +2024,16 @@ export function AIEmployees() {
       status: firstLoopIssueStep.status,
       verifyAction: loopAuditNextAction,
     }] : []),
+    ...operatorCommandCenterActions.map((item, index) => ({
+      id: `command-center:${item.action_id || index}:${item.command}`,
+      action: item.command,
+      source: `${copy.operatorCommandCenterTitle} · ${item.source || "next_action"}`,
+      status: operatorCommandCenter?.status || "attention",
+      verifyAction: item.verify_command || "agentops operator command-center --limit 12",
+      actionSignature: item.action_id || null,
+      receiptRequired: item.receipt_required !== false,
+      isOperatorCommandCenterAction: true,
+    })),
     ...operatorPlanActions.map((item) => {
       const evidence = (item.evidence || {}) as Record<string, unknown>;
       const workflowStepId = String(evidence.workflow_step_id || "");
@@ -3569,13 +3605,23 @@ export function AIEmployees() {
             <div className="flex items-center gap-2">
               <Activity size={14} style={{ color: "var(--mis-cyan)" }} />
               <h2 className="text-sm font-semibold" style={{ color: "var(--mis-text)" }}>{copy.commandCenterTitle}</h2>
-              <StatusBadge status={operatorHealth?.status || fleetHealth?.overall || workerStatus?.status || "unknown"} />
+              <StatusBadge status={operatorCommandCenter?.status || operatorHealth?.status || fleetHealth?.overall || workerStatus?.status || "unknown"} />
+              {panelStatusBadge("operator_command_center")}
+              {panelRefreshButton("operator_command_center")}
+              {panelDiagnosticsButton("operator_command_center")}
+              {panelReceiptButton("operator_command_center")}
               {panelStatusBadge("worker_status")}
               {panelRefreshButton("worker_status")}
               {panelDiagnosticsButton("worker_status")}
               {panelReceiptButton("worker_status")}
             </div>
             <p className="text-[11px] mt-1 max-w-3xl" style={{ color: "var(--mis-dim)" }}>{copy.commandCenterSummary}</p>
+            {operatorCommandCenter && (
+              <p className="text-[10px] mt-1 max-w-3xl" style={{ color: "var(--mis-muted)" }}>
+                {copy.operatorCommandCenterSummary} · {copy.commandCenterActions}: {operatorCommandCenterSummary?.next_actions ?? operatorCommandCenterActions.length} · {copy.blockedRuns}: {operatorCommandCenterSummary?.blocked_runs ?? 0} · {copy.pendingApprovals}: {operatorCommandCenterSummary?.pending_approvals ?? 0}
+              </p>
+            )}
+            {panelEvidenceLine("operator_command_center")}
             {panelEvidenceLine("worker_status")}
             {operatorHealth && (
               <p className="text-[10px] mt-1 max-w-3xl" style={{ color: "var(--mis-muted)" }}>
@@ -3605,9 +3651,11 @@ export function AIEmployees() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-7 gap-3 mt-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-9 gap-3 mt-4">
           {[
+            { label: copy.operatorCommandCenterTitle, value: operatorCommandCenterSummary?.next_actions ?? operatorCommandCenterActions.length, status: operatorCommandCenter?.status || "unknown" },
             { label: copy.operatorHealthTitle, value: `${operatorHealth?.score ?? 0}/100`, status: operatorHealth?.status || "unknown" },
+            { label: copy.commandCenterCodingGaps, value: operatorCommandCenterCodingGapCount, status: operatorCommandCenterCodingGapCount > 0 ? "attention" : "pass" },
             { label: copy.loopControlTitle, value: loopControlSelectedGate, status: loopControlGateStatus },
             { label: copy.overallFleetHealth, value: fleetHealth?.overall || workerStatus?.status || "—", status: fleetHealth?.overall || workerStatus?.status || "unknown" },
             { label: copy.daemonStatus, value: `${runningDaemons}/${workerStatus?.daemons?.length ?? 0}`, status: runningDaemons > 0 ? "running" : "ready" },

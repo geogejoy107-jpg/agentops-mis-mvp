@@ -1202,6 +1202,80 @@ export interface TaskIntakeChecklistPayload {
   token_omitted?: boolean;
 }
 
+export interface OperatorCommandCenterNextAction {
+  action_id: string;
+  source: string;
+  title: string;
+  priority: number;
+  command: string;
+  verify_command?: string | null;
+  evidence?: Record<string, unknown>;
+  receipt_required?: boolean;
+  token_omitted?: boolean;
+}
+
+export interface OperatorCommandCenterPayload {
+  provider: string;
+  operation: string;
+  status: string;
+  workspace_id: string;
+  summary: Record<string, number>;
+  projects: Record<string, unknown>[];
+  commander: {
+    summary?: Record<string, unknown>;
+    packages?: Record<string, unknown>[];
+    coding_evidence_gaps?: Record<string, unknown>[];
+    recommended_next_actions?: unknown[];
+    raw_source_omitted?: boolean;
+    raw_patch_omitted?: boolean;
+    token_omitted?: boolean;
+  };
+  blocked_runs: Record<string, unknown>[];
+  approvals: {
+    summary?: Record<string, unknown>;
+    pending?: Record<string, unknown>[];
+    next_actions?: unknown[];
+  };
+  deliveries: {
+    summary?: Record<string, unknown>;
+    items?: Record<string, unknown>[];
+    next_actions?: unknown[];
+  };
+  workers: {
+    status?: string;
+    fleet_health?: Record<string, unknown>;
+    running_workers?: number;
+    stuck_worker_tasks?: number;
+    stuck_workflow_jobs?: number;
+    stale_refs?: Record<string, unknown>[];
+    next_actions?: string[];
+  };
+  operator_action_plan?: {
+    status?: string;
+    summary?: Record<string, unknown>;
+    actions?: OperatorActionPlanItem[];
+    receipt_coverage?: Record<string, unknown>;
+  };
+  next_actions: OperatorCommandCenterNextAction[];
+  contract?: string;
+  safety: {
+    read_only: boolean;
+    ledger_mutated: boolean;
+    task_created?: boolean;
+    run_created?: boolean;
+    worktree_created?: boolean;
+    live_execution_performed: boolean;
+    server_shell_execution?: boolean;
+    raw_prompt_omitted?: boolean;
+    raw_response_omitted?: boolean;
+    raw_source_omitted?: boolean;
+    raw_patch_omitted?: boolean;
+    token_omitted: boolean;
+  };
+  token_omitted?: boolean;
+  live_execution_performed?: boolean;
+}
+
 export interface OperatorActionPlanPayload {
   provider: string;
   operation: string;
@@ -4542,6 +4616,131 @@ export async function proposeReceiptFailureMemory(input: {
       canonical_text: input.canonical_text || undefined,
     }),
   }, [200, 201, 400]);
+}
+
+export async function loadOperatorCommandCenter(limit = 12, projectId = ""): Promise<OperatorCommandCenterPayload> {
+  const query = new URLSearchParams({ limit: String(limit) });
+  if (projectId) {
+    query.set("project_id", projectId);
+  }
+  const raw = await optionalApiJson<Record<string, unknown>>(`/operator/command-center?${query.toString()}`, {
+    provider: "agentops-operator",
+    operation: "operator_command_center",
+    status: "unavailable",
+    workspace_id: "local-demo",
+    summary: {},
+    projects: [],
+    commander: {
+      summary: {},
+      packages: [],
+      coding_evidence_gaps: [],
+      recommended_next_actions: [],
+      raw_source_omitted: true,
+      raw_patch_omitted: true,
+      token_omitted: true,
+    },
+    blocked_runs: [],
+    approvals: { summary: {}, pending: [], next_actions: [] },
+    deliveries: { summary: {}, items: [], next_actions: [] },
+    workers: { stale_refs: [], next_actions: [] },
+    operator_action_plan: { status: "unavailable", summary: {}, actions: [] },
+    next_actions: [],
+    contract: "read-only command-center BFF unavailable fallback",
+    safety: {
+      read_only: true,
+      ledger_mutated: false,
+      task_created: false,
+      run_created: false,
+      worktree_created: false,
+      live_execution_performed: false,
+      server_shell_execution: false,
+      raw_prompt_omitted: true,
+      raw_response_omitted: true,
+      raw_source_omitted: true,
+      raw_patch_omitted: true,
+      token_omitted: true,
+    },
+    token_omitted: true,
+    live_execution_performed: false,
+  });
+  const summaryRaw = typeof raw.summary === "object" && raw.summary !== null ? raw.summary as Record<string, unknown> : {};
+  const commanderRaw = typeof raw.commander === "object" && raw.commander !== null ? raw.commander as Record<string, unknown> : {};
+  const approvalsRaw = typeof raw.approvals === "object" && raw.approvals !== null ? raw.approvals as Record<string, unknown> : {};
+  const deliveriesRaw = typeof raw.deliveries === "object" && raw.deliveries !== null ? raw.deliveries as Record<string, unknown> : {};
+  const workersRaw = typeof raw.workers === "object" && raw.workers !== null ? raw.workers as Record<string, unknown> : {};
+  const operatorPlanRaw = typeof raw.operator_action_plan === "object" && raw.operator_action_plan !== null ? raw.operator_action_plan as Record<string, unknown> : {};
+  const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
+  return {
+    provider: String(raw.provider || "agentops-operator"),
+    operation: String(raw.operation || "operator_command_center"),
+    status: String(raw.status || "unknown"),
+    workspace_id: String(raw.workspace_id || "local-demo"),
+    summary: Object.fromEntries(Object.entries(summaryRaw).map(([key, value]) => [key, numberValue(value, 0)])),
+    projects: asArray<Record<string, unknown>>(raw.projects),
+    commander: {
+      summary: typeof commanderRaw.summary === "object" && commanderRaw.summary !== null ? commanderRaw.summary as Record<string, unknown> : {},
+      packages: asArray<Record<string, unknown>>(commanderRaw.packages),
+      coding_evidence_gaps: asArray<Record<string, unknown>>(commanderRaw.coding_evidence_gaps),
+      recommended_next_actions: asArray<unknown>(commanderRaw.recommended_next_actions),
+      raw_source_omitted: boolValue(commanderRaw.raw_source_omitted),
+      raw_patch_omitted: boolValue(commanderRaw.raw_patch_omitted),
+      token_omitted: boolValue(commanderRaw.token_omitted),
+    },
+    blocked_runs: asArray<Record<string, unknown>>(raw.blocked_runs),
+    approvals: {
+      summary: typeof approvalsRaw.summary === "object" && approvalsRaw.summary !== null ? approvalsRaw.summary as Record<string, unknown> : {},
+      pending: asArray<Record<string, unknown>>(approvalsRaw.pending),
+      next_actions: asArray<unknown>(approvalsRaw.next_actions),
+    },
+    deliveries: {
+      summary: typeof deliveriesRaw.summary === "object" && deliveriesRaw.summary !== null ? deliveriesRaw.summary as Record<string, unknown> : {},
+      items: asArray<Record<string, unknown>>(deliveriesRaw.items),
+      next_actions: asArray<unknown>(deliveriesRaw.next_actions),
+    },
+    workers: {
+      status: workersRaw.status ? String(workersRaw.status) : undefined,
+      fleet_health: typeof workersRaw.fleet_health === "object" && workersRaw.fleet_health !== null ? workersRaw.fleet_health as Record<string, unknown> : {},
+      running_workers: numberValue(workersRaw.running_workers, 0),
+      stuck_worker_tasks: numberValue(workersRaw.stuck_worker_tasks, 0),
+      stuck_workflow_jobs: numberValue(workersRaw.stuck_workflow_jobs, 0),
+      stale_refs: asArray<Record<string, unknown>>(workersRaw.stale_refs),
+      next_actions: asArray<unknown>(workersRaw.next_actions).map(String).filter(Boolean),
+    },
+    operator_action_plan: {
+      status: operatorPlanRaw.status ? String(operatorPlanRaw.status) : undefined,
+      summary: typeof operatorPlanRaw.summary === "object" && operatorPlanRaw.summary !== null ? operatorPlanRaw.summary as Record<string, unknown> : {},
+      actions: asArray<OperatorActionPlanItem>(operatorPlanRaw.actions),
+      receipt_coverage: typeof operatorPlanRaw.receipt_coverage === "object" && operatorPlanRaw.receipt_coverage !== null ? operatorPlanRaw.receipt_coverage as Record<string, unknown> : undefined,
+    },
+    next_actions: asArray<Record<string, unknown>>(raw.next_actions).map((item) => ({
+      action_id: String(item.action_id || item.command || ""),
+      source: String(item.source || "operator_command_center"),
+      title: String(item.title || item.source || "Command center action"),
+      priority: numberValue(item.priority, 0),
+      command: String(item.command || ""),
+      verify_command: item.verify_command ? String(item.verify_command) : null,
+      evidence: typeof item.evidence === "object" && item.evidence !== null ? item.evidence as Record<string, unknown> : undefined,
+      receipt_required: item.receipt_required === undefined ? true : boolValue(item.receipt_required),
+      token_omitted: item.token_omitted === undefined ? true : boolValue(item.token_omitted),
+    })).filter((item) => item.command),
+    contract: raw.contract ? String(raw.contract) : undefined,
+    safety: {
+      read_only: boolValue(safetyRaw.read_only),
+      ledger_mutated: boolValue(safetyRaw.ledger_mutated),
+      task_created: boolValue(safetyRaw.task_created),
+      run_created: boolValue(safetyRaw.run_created),
+      worktree_created: boolValue(safetyRaw.worktree_created),
+      live_execution_performed: boolValue(safetyRaw.live_execution_performed),
+      server_shell_execution: boolValue(safetyRaw.server_shell_execution),
+      raw_prompt_omitted: boolValue(safetyRaw.raw_prompt_omitted),
+      raw_response_omitted: boolValue(safetyRaw.raw_response_omitted),
+      raw_source_omitted: boolValue(safetyRaw.raw_source_omitted),
+      raw_patch_omitted: boolValue(safetyRaw.raw_patch_omitted),
+      token_omitted: boolValue(safetyRaw.token_omitted),
+    },
+    token_omitted: raw.token_omitted === undefined ? undefined : boolValue(raw.token_omitted),
+    live_execution_performed: raw.live_execution_performed === undefined ? undefined : boolValue(raw.live_execution_performed),
+  };
 }
 
 export async function loadOperatorActionPlan(limit = 12): Promise<OperatorActionPlanPayload> {

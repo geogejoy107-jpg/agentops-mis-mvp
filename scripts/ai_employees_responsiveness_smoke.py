@@ -25,6 +25,7 @@ CORE_ENDPOINTS = [
     ("/api/workers/status", "worker_status"),
     ("/api/workers/fleet", "worker_fleet"),
     ("/api/local/readiness", "local_readiness"),
+    ("/api/operator/command-center?limit=12", "operator_command_center"),
     ("/api/operator/action-plan?limit=12", "operator_action_plan"),
     ("/api/operator/evidence-report?limit=8", "operator_evidence_report"),
     ("/api/agent-gateway/status", "agent_gateway_status"),
@@ -57,7 +58,7 @@ AGENT_ENDPOINTS = [
     ("/api/agents", "agents"),
 ]
 ALL_ENDPOINTS = CORE_ENDPOINTS + DEFERRED_ENDPOINTS + SCOPED_DEFERRED_ENDPOINTS + AGENT_ENDPOINTS
-CRITICAL_COMMAND_CENTER_LABELS = {"dashboard", "worker_status", "worker_fleet", "operator_health"}
+CRITICAL_COMMAND_CENTER_LABELS = {"dashboard", "worker_status", "worker_fleet", "operator_command_center", "operator_health"}
 SECRET_PATTERNS = [
     re.compile(r"Authorization:", re.IGNORECASE),
     re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+"),
@@ -162,6 +163,14 @@ def static_contract() -> dict:
         "has_panel_local_refresh": "const refreshPanel = useCallback" in text and "panelRefreshButton" in text and "localPanelRefreshing" in text,
         "has_panel_retry_evidence": all(marker in text for marker in ["attempts", "updated_at", "last_error", "panelDiagnosticJson", "panel_diagnostics_json", "token_omitted"]),
         "has_panel_diagnostic_receipts": all(marker in text for marker in ["recordPanelDiagnosticReceipt", "ui.panel_diagnostics", "ui_panel_diagnostics:${panelId}", "operator_action_receipts"]),
+        "has_operator_command_center_core": all(marker in text for marker in [
+            "loadOperatorCommandCenter",
+            'id: "operator_command_center", load: async () => ({ operatorCommandCenter: await loadOperatorCommandCenter(12) })',
+            '"operator_command_center"',
+            "operatorCommandCenterActions",
+            "isOperatorCommandCenterAction ? 119",
+            'panelStatusBadge("operator_command_center")',
+        ]),
         "has_use_live_data_loader": "useLiveData(" in text,
         "has_monolithic_initial_loader": "const [metrics, demoReadiness, workerStatus" in text,
         "has_monolithic_scoped_loader": "const [operatorLoopAudit, operatorHandoff, operatorHealth, operatorLoopSelfCheck]" in text,
@@ -281,6 +290,8 @@ def main() -> int:
         failures.append(f"AI Employees panel refreshes do not expose retry/error diagnostics: {contract}")
     if not contract["has_panel_diagnostic_receipts"]:
         failures.append(f"AI Employees panel diagnostics are not connected to Action Queue receipts: {contract}")
+    if not contract["has_operator_command_center_core"]:
+        failures.append(f"AI Employees does not expose operator command-center as a core queue source: {contract}")
     if contract["has_use_live_data_loader"]:
         failures.append(f"AI Employees still uses one page-level useLiveData loader: {contract}")
     if contract["has_monolithic_initial_loader"] or contract["has_monolithic_scoped_loader"]:
