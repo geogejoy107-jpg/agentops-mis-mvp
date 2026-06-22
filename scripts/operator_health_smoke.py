@@ -106,8 +106,24 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
     require(0 <= int(payload.get("score") or 0) <= 100, f"{label} score out of range: {payload}", failures)
     require(isinstance(payload.get("components") or [], list), f"{label} components missing: {payload}", failures)
     component_ids = {item.get("id") for item in payload.get("components") or []}
-    for required_id in ["loop_health", "local_readiness", "security_readiness", "local_ui_write_guard", "worker_fleet", "review_queue", "operator_action_plan"]:
+    for required_id in ["loop_health", "local_readiness", "security_readiness", "local_ui_write_guard", "worker_fleet", "review_queue", "operator_action_plan", "loop_control"]:
         require(required_id in component_ids, f"{label} missing component {required_id}: {component_ids}", failures)
+    control_summary = payload.get("control_summary") or {}
+    loop_control = payload.get("loop_control") or {}
+    require(control_summary.get("operation") == "operator_loop_control_summary", f"{label} control_summary missing: {control_summary}", failures)
+    require(control_summary.get("status") in {"ready", "attention", "blocked"}, f"{label} control status wrong: {control_summary}", failures)
+    require(control_summary.get("copy_only") is True, f"{label} control copy-only proof missing: {control_summary}", failures)
+    require(control_summary.get("server_executes_shell") is False, f"{label} control shell boundary missing: {control_summary}", failures)
+    require(loop_control.get("status") in {"pass", "attention", "blocked"}, f"{label} loop_control gate missing: {loop_control}", failures)
+    require(loop_control.get("next_action") == control_summary.get("next_command"), f"{label} loop_control next action mismatch: {loop_control} {control_summary}", failures)
+    require(loop_control.get("control_readback_source") == "agentops operator advance-loop --confirm-advance", f"{label} loop_control readback source missing: {loop_control}", failures)
+    require(loop_control.get("refresh_cache_required_after_receipt") in {True, False}, f"{label} loop_control refresh flag missing: {loop_control}", failures)
+    require(loop_control.get("copy_only") is True, f"{label} loop_control copy-only proof missing: {loop_control}", failures)
+    require(loop_control.get("server_executes_shell") is False, f"{label} loop_control shell boundary missing: {loop_control}", failures)
+    require(loop_control.get("token_omitted") is True, f"{label} loop_control token omission missing: {loop_control}", failures)
+    summary = payload.get("summary") or {}
+    require(summary.get("control_status") == control_summary.get("status"), f"{label} summary control status mismatch: {summary} {control_summary}", failures)
+    require(summary.get("control_mode") == control_summary.get("mode"), f"{label} summary control mode mismatch: {summary} {control_summary}", failures)
     require(isinstance(payload.get("risks") or [], list), f"{label} risks missing: {payload}", failures)
     for risk in payload.get("risks") or []:
         require(risk.get("action_command"), f"{label} risk action command missing: {risk}", failures)
@@ -120,6 +136,8 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
     sources = payload.get("sources") or {}
     for key in ["handoff", "local_readiness", "security_readiness", "local_ui_write_guard", "worker_status", "review_queue"]:
         require(key in sources, f"{label} source {key} missing: {sources}", failures)
+    handoff_source = sources.get("handoff") or {}
+    require((handoff_source.get("control_summary") or {}).get("operation") == "operator_loop_control_summary", f"{label} handoff control source missing: {handoff_source}", failures)
     write_guard = sources.get("local_ui_write_guard") or {}
     require(write_guard.get("status") in {"pass", "warn", "fail", "unknown"}, f"{label} write guard source status wrong: {write_guard}", failures)
     require(isinstance(write_guard.get("ok"), bool), f"{label} write guard source ok missing: {write_guard}", failures)

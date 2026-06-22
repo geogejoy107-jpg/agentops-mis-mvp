@@ -277,6 +277,7 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
     require(advance_loop.get("token_omitted") is True, f"{label} advance loop token omission missing: {advance_loop}", failures)
     control_summary = payload.get("control_summary") or {}
     control_step = control_summary.get("recommended_step") or {}
+    loop_control_gate = loop_health_gates.get("loop_control") or {}
     require(control_summary.get("operation") == "operator_loop_control_summary", f"{label} loop control summary missing: {control_summary}", failures)
     require(control_summary.get("status") in {"ready", "attention", "blocked"}, f"{label} loop control status wrong: {control_summary}", failures)
     require(control_summary.get("copy_only") is True, f"{label} loop control copy-only proof missing: {control_summary}", failures)
@@ -285,6 +286,13 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
     require(str(control_summary.get("next_command") or "").startswith("agentops operator advance-loop"), f"{label} loop control next command missing: {control_summary}", failures)
     require((control_step.get("control_mode") or control_summary.get("mode")) in {"read_only_copy", "human_confirm_required"}, f"{label} loop control mode wrong: {control_summary}", failures)
     require(control_summary.get("token_omitted") is True and control_step.get("token_omitted") is True, f"{label} loop control token omission missing: {control_summary}", failures)
+    require(loop_control_gate.get("status") in {"pass", "attention", "blocked"}, f"{label} loop health control gate missing: {loop_control_gate}", failures)
+    require(loop_control_gate.get("mode") == control_summary.get("mode"), f"{label} loop control gate mode mismatch: {loop_control_gate} {control_summary}", failures)
+    require(loop_control_gate.get("next_action") == control_summary.get("next_command"), f"{label} loop control gate next action mismatch: {loop_control_gate} {control_summary}", failures)
+    require(loop_control_gate.get("control_readback_source") == "agentops operator advance-loop --confirm-advance", f"{label} loop control readback source missing: {loop_control_gate}", failures)
+    require(loop_control_gate.get("copy_only") is True, f"{label} loop control gate copy-only proof missing: {loop_control_gate}", failures)
+    require(loop_control_gate.get("server_executes_shell") is False, f"{label} loop control gate shell boundary missing: {loop_control_gate}", failures)
+    require(loop_control_gate.get("token_omitted") is True, f"{label} loop control gate token omission missing: {loop_control_gate}", failures)
     receipt_failure_work_order = work_order.get("receipt_failure_memory") or {}
     require(receipt_failure_work_order.get("operation") == "receipt_failure_memory_work_order", f"{label} receipt failure memory work order missing: {receipt_failure_work_order}", failures)
     require(receipt_failure_work_order.get("status") in {"attention", "empty"}, f"{label} receipt failure memory work order status wrong: {receipt_failure_work_order}", failures)

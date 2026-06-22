@@ -391,7 +391,10 @@ review-queue step. The payload also includes `control_summary`, the same
 copy-only loop control view consumed by the command center: recommended handoff
 step, next command, verify command, receipt command, control mode,
 human/receipt requirements, selected gate, policy id, and server-shell omission
-proof. `loop_health` is a read-only score/status snapshot derived from method gates, receipt coverage,
+proof. The same control view is also summarized in
+`loop_health.gates.loop_control`, including the control readback source
+(`agentops operator advance-loop --confirm-advance`) and whether a post-receipt
+cache refresh is required. `loop_health` is a read-only score/status snapshot derived from method gates, receipt coverage,
 receipt evaluation coverage, receipt-failure memory learning, loop RECORD
 state, auth, and safety; it carries gate summaries, risks, and the next
 recommended action. Failed receipt evaluations block loop health because they
@@ -432,7 +435,8 @@ agentops operator health --loop-id loop_smoke_api_123 --limit 10
 
 Maps to `GET /api/operator/health`. This is read-only and aggregates operator
 handoff, local readiness, security readiness, worker fleet health, review queue
-pressure, and the action-plan summary. It returns a 0..100 score, component
+pressure, the action-plan summary, and the current loop-control recommendation.
+It returns a 0..100 score, component
 statuses, risks, next actions, source summaries, `auth` boundary proof, and
 safety flags. Each risk includes an explicit action command, verify command,
 action signature, and receipt helper commands so the same health issue can be
@@ -442,7 +446,10 @@ frontend-only health actions. When `receipt_failure_memory_candidates` is
 non-zero, the action-plan component moves to attention and recommends
 `agentops operator receipt-failure-memories --min-failures 2 --limit 8` so the
 operator can promote or review the repeated failure before retrying the same
-recovery path. Like
+recovery path. The health payload exposes `control_summary`,
+`loop_control`, and matching summary fields so the operator health view can
+show the same copy-only/human-confirm/receipt-required boundary that handoff
+and self-check use. Like
 handoff, local no-token demo reads are allowed only when the server has no
 configured API key; supplied Agent Gateway tokens/sessions must be valid, carry
 `tasks:read`, and remain bound to their workspace.

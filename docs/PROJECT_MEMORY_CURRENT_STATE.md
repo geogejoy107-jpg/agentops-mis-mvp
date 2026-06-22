@@ -301,3 +301,19 @@ liveApi.ts                        > 2.2k lines
 8. 不提交数据库、credential、原始 prompt/response、私聊和客户原文；
 9. 不以状态改成 completed 代替真实执行证据；
 10. 不以文档中的历史通过记录代替当前 HEAD 的 CI。
+
+## 13. Loop Control 最新契约
+
+- `agentops operator advance-loop --confirm-advance` 的 `control_readback`
+  仍是一次推进的前后读回执；确认路径必须请求
+  `refresh_cache=true`，并返回 handoff/self-check 两份后置控制摘要。
+- `agentops operator handoff` 的 `loop_health.gates.loop_control` 是当前
+  推荐控制面的机器可读审计入口，字段包含 mode、selected gate、next
+  action、verify command、receipt command、copy-only、server-shell boundary、
+  `control_readback_source` 和 post-receipt cache refresh 需求。
+- `agentops operator health` 必须暴露同一份 `control_summary`/`loop_control`
+  并把它作为健康组件；否则总览看不到 Hermes/OpenClaw/Codex 下一步应当
+  复制、确认、验收还是等待回执。
+- `agentops operator loop-audit` 的 RECORD evidence 必须包含 handoff、
+  self-check、advance preview 和 `advance-loop --confirm-advance` readback
+  来源，避免控制推荐只存在于 CLI 输出而不进入审计视图。

@@ -206,6 +206,16 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
         "receipt_failure_memory_existing_candidates",
     ]:
         require(isinstance(record_evidence.get(key), int), f"{label} RECORD evidence {key} missing: {record_evidence}", failures)
+    loop_control = record_evidence.get("loop_control") or {}
+    require(loop_control.get("status") in {"ready", "attention"}, f"{label} RECORD loop_control status missing: {loop_control}", failures)
+    require(str(loop_control.get("handoff_command") or "").startswith("agentops operator handoff"), f"{label} RECORD handoff command missing: {loop_control}", failures)
+    require(str(loop_control.get("self_check_command") or "").startswith("agentops operator loop-self-check"), f"{label} RECORD self-check command missing: {loop_control}", failures)
+    require(str(loop_control.get("advance_preview_command") or "").startswith("agentops operator advance-loop"), f"{label} RECORD advance preview missing: {loop_control}", failures)
+    require(loop_control.get("control_readback_source") == "agentops operator advance-loop --confirm-advance", f"{label} RECORD control readback source missing: {loop_control}", failures)
+    require(loop_control.get("refresh_cache_required_after_receipt") is True, f"{label} RECORD refresh proof missing: {loop_control}", failures)
+    require(loop_control.get("copy_only") is True, f"{label} RECORD copy-only proof missing: {loop_control}", failures)
+    require(loop_control.get("server_executes_shell") is False, f"{label} RECORD shell boundary missing: {loop_control}", failures)
+    require(loop_control.get("token_omitted") is True, f"{label} RECORD loop_control token omission missing: {loop_control}", failures)
     receipt_failure_memory = sources.get("receipt_failure_memory") or {}
     receipt_failure_summary = receipt_failure_memory.get("summary") or {}
     for key in ["candidates", "failed_receipts", "existing_memory_candidates"]:
