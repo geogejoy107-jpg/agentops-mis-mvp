@@ -36,8 +36,12 @@ EXPECTED_MARKERS = {
     "loop_action_package_verify_copy": "copyIntakeCommand(item.verify_command)",
     "loop_action_package_receipt_copy": "copyIntakeCommand(item.receipt_record_command)",
     "loop_action_package_verify_receipt_copy": "copyIntakeCommand(item.receipt_verify_record_command)",
-    "operator_handoff_loader": "loadOperatorHandoff(12, scopedLoopId)",
-    "operator_health_loader": "loadOperatorHealth(12, scopedLoopId)",
+    "panel_loader_manifest": "AI_EMPLOYEES_PANEL_LOADERS",
+    "panel_loader_scoped_manifest": "AI_EMPLOYEES_SCOPED_PANEL_LOADERS",
+    "panel_loader_all_settled": "Promise.allSettled(loaders.map",
+    "panel_loader_state": "panelLoadState",
+    "operator_handoff_loader": 'id: "operator_handoff", load: async (context) => ({ operatorHandoff: await loadOperatorHandoff(12, String(context.scopedLoopId || "")) })',
+    "operator_health_loader": 'id: "operator_health", load: async (context) => ({ operatorHealth: await loadOperatorHealth(12, String(context.scopedLoopId || "")) })',
     "operator_health_data": "operatorHealth",
     "operator_health_label_en": 'operatorHealthTitle: "Operator health"',
     "operator_health_label_zh": 'operatorHealthTitle: "Operator 健康"',
@@ -254,6 +258,8 @@ EXPECTED_MARKERS = {
 FORBIDDEN_MARKERS = {
     "initial_daemon_log_prefetch": "Promise.all(WORKER_ADAPTERS.map(adapter => loadWorkerDaemonLogs(adapter)))",
     "data_daemon_logs_readback": "data?.daemonLogs",
+    "monolithic_initial_loader": "const [metrics, demoReadiness, workerStatus",
+    "monolithic_scoped_loader": "const [operatorLoopAudit, operatorHandoff, operatorHealth, operatorLoopSelfCheck]",
 }
 
 

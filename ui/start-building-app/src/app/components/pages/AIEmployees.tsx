@@ -59,7 +59,6 @@ import {
   stopLocalWorkerDaemon,
   submitCustomerWorkerTaskJob,
   synthesizeCommanderWorkPackages,
-  useLiveData,
   type AgentGatewayEnrollmentCreateResult,
   type AgentGatewayEnrollmentPolicyPreview,
   type AgentGatewayEnrollmentRequestResult,
@@ -132,6 +131,90 @@ const GATEWAY_SCOPE_PRESETS = [
 ];
 
 const WORKER_ADAPTERS = ["mock", "hermes", "openclaw"] as const;
+
+type AIEmployeesPanelLoadState = {
+  id: string;
+  status: "ready" | "unavailable";
+  error?: string;
+};
+
+type AIEmployeesLiveData = {
+  [key: string]: unknown;
+  panelLoadState?: Record<string, AIEmployeesPanelLoadState>;
+};
+
+type AIEmployeesPanelLoader = {
+  id: string;
+  load: (context: AIEmployeesLiveData) => Promise<Partial<AIEmployeesLiveData>>;
+};
+
+const AI_EMPLOYEES_PANEL_LOADERS: AIEmployeesPanelLoader[] = [
+  { id: "dashboard", load: async () => ({ metrics: await loadDashboard() }) },
+  { id: "demo_readiness", load: async () => ({ demoReadiness: await loadDemoReadiness() }) },
+  { id: "worker_status", load: async () => ({ workerStatus: await loadWorkerStatus() }) },
+  { id: "worker_fleet", load: async () => ({ workerFleet: await loadWorkerFleet() }) },
+  { id: "worker_hygiene", load: async () => ({ workerHygiene: await loadWorkerFleetHygiene({ limit: 5 }) }) },
+  { id: "adapter_readiness", load: async () => ({ adapterReadiness: await loadWorkerAdapterReadiness() }) },
+  { id: "local_readiness", load: async () => ({ localReadiness: await loadLocalReadiness() }) },
+  { id: "operator_action_plan", load: async () => ({ operatorActionPlan: await loadOperatorActionPlan(12) }) },
+  { id: "operator_action_receipts", load: async () => ({ operatorActionReceipts: await loadOperatorActionReceipts(8) }) },
+  { id: "operator_evidence_report", load: async () => ({ operatorEvidenceReport: await loadOperatorEvidenceReport(8) }) },
+  { id: "security_readiness", load: async () => ({ securityReadiness: await loadSecurityProductionReadiness() }) },
+  { id: "integration_inbox", load: async (context) => ({ integrationInbox: await loadIntegrationInbox({ bucket: String(context.integrationInboxBucket || "all"), limit: 20 }) }) },
+  { id: "commander_work_packages", load: async () => ({ commanderWorkPackages: await loadCommanderWorkPackages({ limit: 8 }) }) },
+  { id: "review_queue", load: async () => ({ reviewQueue: await loadReviewQueue(12) }) },
+  { id: "customer_delivery_board", load: async () => ({ customerDeliveryBoard: await loadCustomerDeliveryBoard(8) }) },
+  { id: "loop_lane_readback", load: async () => ({ loopLaneReadback: await loadHermesOpenClawLoopReadback("", 6) }) },
+  { id: "agent_gateway_enrollments", load: async () => ({ enrollmentPayload: await loadAgentGatewayEnrollments() }) },
+  { id: "agent_gateway_sessions", load: async () => ({ sessionPayload: await loadAgentGatewaySessions() }) },
+  { id: "agent_gateway_status", load: async () => ({ gatewayStatus: await loadAgentGatewayStatus() }) },
+  { id: "approvals", load: async () => ({ approvals: await loadApprovals() }) },
+  { id: "workflow_jobs", load: async () => ({ workflowJobs: await loadWorkflowJobs(8) }) },
+  { id: "stuck_workflow_jobs", load: async () => ({ stuckWorkflowJobs: await loadStuckWorkflowJobs(30, 8) }) },
+];
+
+const AI_EMPLOYEES_CORE_PANEL_IDS = new Set([
+  "dashboard",
+  "worker_status",
+  "worker_fleet",
+  "local_readiness",
+  "operator_action_plan",
+  "operator_evidence_report",
+  "agent_gateway_status",
+]);
+
+const AI_EMPLOYEES_CORE_PANEL_LOADERS = AI_EMPLOYEES_PANEL_LOADERS.filter((loader) => AI_EMPLOYEES_CORE_PANEL_IDS.has(loader.id));
+const AI_EMPLOYEES_DEFERRED_PANEL_LOADERS = AI_EMPLOYEES_PANEL_LOADERS.filter((loader) => !AI_EMPLOYEES_CORE_PANEL_IDS.has(loader.id));
+
+const AI_EMPLOYEES_SCOPED_PANEL_LOADERS: AIEmployeesPanelLoader[] = [
+  { id: "operator_loop_audit", load: async (context) => ({ operatorLoopAudit: await loadOperatorLoopAudit(12, String(context.scopedLoopId || "")) }) },
+  { id: "operator_handoff", load: async (context) => ({ operatorHandoff: await loadOperatorHandoff(12, String(context.scopedLoopId || "")) }) },
+  { id: "operator_health", load: async (context) => ({ operatorHealth: await loadOperatorHealth(12, String(context.scopedLoopId || "")) }) },
+  { id: "operator_loop_self_check", load: async (context) => ({ operatorLoopSelfCheck: await loadOperatorLoopSelfCheck(12, String(context.scopedLoopId || "")) }) },
+];
+
+async function loadAIEmployeesPanelSet(loaders: AIEmployeesPanelLoader[], context: AIEmployeesLiveData = {}): Promise<AIEmployeesLiveData> {
+  const settled = await Promise.allSettled(loaders.map(async (loader) => ({
+    id: loader.id,
+    payload: await loader.load(context),
+  })));
+  const data: AIEmployeesLiveData = {};
+  const panelLoadState: Record<string, AIEmployeesPanelLoadState> = {};
+  settled.forEach((result, index) => {
+    const id = loaders[index]?.id || `panel_${index}`;
+    if (result.status === "fulfilled") {
+      Object.assign(data, result.value.payload);
+      panelLoadState[result.value.id] = { id: result.value.id, status: "ready" };
+    } else {
+      panelLoadState[id] = {
+        id,
+        status: "unavailable",
+        error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+      };
+    }
+  });
+  return { ...data, panelLoadState };
+}
 
 function loopIdFromUri(uri: unknown): string | null {
   const value = String(uri || "");
@@ -230,39 +313,23 @@ export function AIEmployees() {
     scopes: DEFAULT_GATEWAY_SCOPES.join(", "),
   });
   const { data, loading, error, refresh } = useLiveData(async () => {
-    const [metrics, demoReadiness, workerStatus, workerFleet, workerHygiene, adapterReadiness, localReadiness, operatorActionPlan, operatorActionReceipts, operatorEvidenceReport, securityReadiness, integrationInbox, commanderWorkPackages, reviewQueue, customerDeliveryBoard, loopLaneReadback, enrollmentPayload, sessionPayload, gatewayStatus, approvals, workflowJobs, stuckWorkflowJobs] = await Promise.all([
-      loadDashboard(),
-      loadDemoReadiness(),
-      loadWorkerStatus(),
-      loadWorkerFleet(),
-      loadWorkerFleetHygiene({ limit: 5 }),
-      loadWorkerAdapterReadiness(),
-      loadLocalReadiness(),
-      loadOperatorActionPlan(12),
-      loadOperatorActionReceipts(8),
-      loadOperatorEvidenceReport(8),
-      loadSecurityProductionReadiness(),
-      loadIntegrationInbox({ bucket: integrationInboxBucket, limit: 20 }),
-      loadCommanderWorkPackages({ limit: 8 }),
-      loadReviewQueue(12),
-      loadCustomerDeliveryBoard(8),
-      loadHermesOpenClawLoopReadback("", 6),
-      loadAgentGatewayEnrollments(),
-      loadAgentGatewaySessions(),
-      loadAgentGatewayStatus(),
-      loadApprovals(),
-      loadWorkflowJobs(8),
-      loadStuckWorkflowJobs(30, 8),
-    ]);
-    const scopedLoopId = latestLoopIdFromReadback(loopLaneReadback);
-    const [operatorLoopAudit, operatorHandoff, operatorHealth, operatorLoopSelfCheck] = await Promise.all([
-      loadOperatorLoopAudit(12, scopedLoopId),
-      loadOperatorHandoff(12, scopedLoopId),
-      loadOperatorHealth(12, scopedLoopId),
-      loadOperatorLoopSelfCheck(12, scopedLoopId),
-    ]);
-    const agents = await loadAgents(metrics);
-    return { agents, demoReadiness, workerStatus, workerFleet, workerHygiene, adapterReadiness, localReadiness, operatorActionPlan, operatorActionReceipts, operatorEvidenceReport, operatorLoopAudit, operatorHandoff, operatorHealth, operatorLoopSelfCheck, securityReadiness, integrationInbox, commanderWorkPackages, reviewQueue, customerDeliveryBoard, loopLaneReadback, enrollmentPayload, sessionPayload, gatewayStatus, approvals, workflowJobs, stuckWorkflowJobs };
+    const baseContext = await loadAIEmployeesPanelSet(AI_EMPLOYEES_PANEL_LOADERS, { integrationInboxBucket });
+    const scopedLoopId = latestLoopIdFromReadback(baseContext.loopLaneReadback as HermesOpenClawLoopReadbackPayload | undefined);
+    const scopedContext = await loadAIEmployeesPanelSet(AI_EMPLOYEES_SCOPED_PANEL_LOADERS, { ...baseContext, scopedLoopId });
+    const agentContext = await loadAIEmployeesPanelSet([{
+      id: "agents",
+      load: async (context) => ({ agents: await loadAgents(context.metrics as Parameters<typeof loadAgents>[0]) }),
+    }], baseContext);
+    return {
+      ...baseContext,
+      ...scopedContext,
+      ...agentContext,
+      panelLoadState: {
+        ...(baseContext.panelLoadState || {}),
+        ...(scopedContext.panelLoadState || {}),
+        ...(agentContext.panelLoadState || {}),
+      },
+    };
   }, [integrationInboxBucket]);
   const loadSelectedDaemonLog = async (adapter = selectedLogAdapter) => {
     setDaemonLogsLoading(true);
