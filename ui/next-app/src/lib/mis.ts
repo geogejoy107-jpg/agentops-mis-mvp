@@ -305,7 +305,7 @@ export type WorkerStatusSummary = {
     recommended_actions?: string[];
     token_omitted?: boolean;
   };
-  daemons?: { adapter?: string; running?: boolean; status?: string; worker_status?: string }[];
+  daemons?: WorkerDaemonStatusSummary[];
   adapter_readiness?: {
     recommended_adapter?: string;
     ready_adapters?: string[];
@@ -313,6 +313,23 @@ export type WorkerStatusSummary = {
     unavailable_adapters?: string[];
     blocked_adapters?: string[];
   };
+};
+
+export type WorkerDaemonStatusSummary = {
+  adapter?: string;
+  agent_id?: string;
+  running?: boolean;
+  status?: string;
+  worker_status?: string;
+  pid?: number | null;
+  started_at?: string | null;
+  stopped_at?: string | null;
+  poll_interval?: number;
+  max_tasks?: number;
+  processed?: number;
+  iteration?: number;
+  error_count?: number;
+  last_exit_note?: string;
 };
 
 export type WorkerStuckTask = TaskSummary & {
@@ -382,6 +399,19 @@ export type WorkerTaskReleaseResult = {
   token_omitted?: boolean;
   error?: string | null;
   message?: string | null;
+};
+
+export type WorkerDaemonResult = {
+  provider?: string;
+  ok?: boolean;
+  already_running?: boolean;
+  adapter?: string;
+  daemon?: WorkerDaemonStatusSummary;
+  daemons?: WorkerDaemonStatusSummary[];
+  previous?: WorkerDaemonStatusSummary;
+  stopped?: { provider?: string; ok?: boolean; daemons?: WorkerDaemonStatusSummary[] };
+  error?: string | null;
+  token_omitted?: boolean;
 };
 
 export type AgentGatewaySessionSummary = {
@@ -984,6 +1014,47 @@ export async function requestAgentGatewayEnrollment(input: AgentGatewayEnrollmen
   return misJson<AgentGatewayEnrollmentRequestResult>("/agent-gateway/enrollment/request", {
     method: "POST",
     body: JSON.stringify(input),
+  });
+}
+
+export async function startMockWorkerDaemon(input?: {
+  poll_interval?: number;
+  max_tasks?: number;
+}): Promise<WorkerDaemonResult> {
+  return misJson<WorkerDaemonResult>("/workers/local/start", {
+    method: "POST",
+    body: JSON.stringify({
+      adapter: "mock",
+      confirm_run: false,
+      poll_interval: input?.poll_interval ?? 2,
+      max_tasks: input?.max_tasks ?? 0,
+      max_errors: 5,
+      status: ["planned"],
+    }),
+  });
+}
+
+export async function stopMockWorkerDaemon(): Promise<WorkerDaemonResult> {
+  return misJson<WorkerDaemonResult>("/workers/local/stop", {
+    method: "POST",
+    body: JSON.stringify({ adapter: "mock" }),
+  });
+}
+
+export async function restartMockWorkerDaemon(input?: {
+  poll_interval?: number;
+  max_tasks?: number;
+}): Promise<WorkerDaemonResult> {
+  return misJson<WorkerDaemonResult>("/workers/local/restart", {
+    method: "POST",
+    body: JSON.stringify({
+      adapter: "mock",
+      confirm_run: false,
+      poll_interval: input?.poll_interval ?? 2,
+      max_tasks: input?.max_tasks ?? 0,
+      max_errors: 5,
+      status: ["planned"],
+    }),
   });
 }
 

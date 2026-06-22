@@ -14,7 +14,8 @@
         "nextjs_agent_gateway_task_proxy_v1",
         "nextjs_worker_dispatch_once_v1",
         "nextjs_worker_stuck_release_v1",
-        "nextjs_enrollment_request_v1"
+        "nextjs_enrollment_request_v1",
+        "nextjs_worker_daemon_control_v1"
       ],
     "retirement_rule": "A Vite route can be retired only after the matrix marks its capability covered, Vite and Next browser evidence both pass, API contracts match, and the route has an explicit retirement decision."
   },
@@ -202,7 +203,8 @@
         "/workspace/agents",
         "/workspace/agents/dispatch-once",
         "/workspace/agents/release-task",
-        "/workspace/agents/enrollment-request"
+        "/workspace/agents/enrollment-request",
+        "/workspace/agents/daemon-control"
       ],
       "api_contracts": [
         "GET /agents",
@@ -229,6 +231,7 @@
         "ui/next-app/app/workspace/agents/dispatch-once/route.ts",
         "ui/next-app/app/workspace/agents/release-task/route.ts",
         "ui/next-app/app/workspace/agents/enrollment-request/route.ts",
+        "ui/next-app/app/workspace/agents/daemon-control/route.ts",
         "ui/next-app/src/components/AgentsParityPage.tsx",
         "ui/next-app/src/lib/mis.ts"
       ],
@@ -237,12 +240,13 @@
         "python3 scripts/nextjs_worker_dispatch_once_smoke.py",
         "python3 scripts/nextjs_worker_stuck_release_smoke.py",
         "python3 scripts/nextjs_enrollment_request_smoke.py",
+        "python3 scripts/nextjs_worker_daemon_control_smoke.py",
         "python3 scripts/vite_playwright_snapshot_smoke.py",
         "python3 scripts/nextjs_playwright_snapshot_smoke.py",
         "python3 scripts/nextjs_parity_smoke.py"
       ],
       "retirement_allowed": false,
-      "retirement_gate": "Next now proves safe mock worker dispatch, stuck-task release, and approval-gated enrollment request. It rejects non-mock proxy/form dispatch with mock_only_next_parity, rejects force release with force_release_not_allowed_next_parity, and blocks raw enrollment token issue routes with enrollment_token_issue_not_allowed_next_parity, but Vite worker start/stop/restart, token issuance, rotate/revoke/session controls, live dispatch controls, and route retirement remain canonical."
+      "retirement_gate": "Next now proves safe mock worker dispatch, mock daemon start/restart/stop, stuck-task release, and approval-gated enrollment request. It rejects non-mock proxy/form dispatch with mock_only_next_parity, rejects non-mock/live daemon controls with mock_daemon_only_next_parity and live_worker_daemon_not_allowed_next_parity, rejects force release with force_release_not_allowed_next_parity, and blocks raw enrollment token issue routes with enrollment_token_issue_not_allowed_next_parity, but Vite live daemon controls, token issuance, rotate/revoke/session controls, live dispatch controls, and route retirement remain canonical."
     },
     {
       "id": "agent_detail",

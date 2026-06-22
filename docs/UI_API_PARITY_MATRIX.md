@@ -138,6 +138,7 @@ python3 scripts/nextjs_agent_gateway_task_proxy_smoke.py
 python3 scripts/nextjs_worker_dispatch_once_smoke.py
 python3 scripts/nextjs_worker_stuck_release_smoke.py
 python3 scripts/nextjs_enrollment_request_smoke.py
+python3 scripts/nextjs_worker_daemon_control_smoke.py
 python3 scripts/vite_playwright_snapshot_smoke.py
 python3 scripts/nextjs_playwright_snapshot_smoke.py
 ```
@@ -170,6 +171,14 @@ can read them, proves Next `/api/mis/workers/tasks/release` returns one task to
 `/workspace/agents/release-task` form fallback performs the same recovery, and
 proves `force:true` is rejected at the Next proxy with
 `force_release_not_allowed_next_parity`.
+
+`python3 scripts/nextjs_worker_daemon_control_smoke.py`
+(`nextjs_worker_daemon_control_v1`) starts isolated MIS API and Next.js
+servers, proves Next `/api/mis/workers/local/start|restart|stop` can control
+the safe `mock` daemon, proves `/workspace/agents/daemon-control` form fallback
+can start/restart/stop the same daemon, and proves non-mock or confirm/live
+daemon attempts fail closed with `mock_daemon_only_next_parity` and
+`live_worker_daemon_not_allowed_next_parity`.
 
 `python3 scripts/nextjs_enrollment_request_smoke.py`
 (`nextjs_enrollment_request_v1`) starts isolated MIS API and Next.js servers,

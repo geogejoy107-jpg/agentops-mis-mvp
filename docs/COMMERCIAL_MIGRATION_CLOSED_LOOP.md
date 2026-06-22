@@ -192,6 +192,7 @@ python3 scripts/nextjs_agent_gateway_task_proxy_smoke.py
 python3 scripts/nextjs_worker_dispatch_once_smoke.py
 python3 scripts/nextjs_worker_stuck_release_smoke.py
 python3 scripts/nextjs_enrollment_request_smoke.py
+python3 scripts/nextjs_worker_daemon_control_smoke.py
 python3 scripts/vite_playwright_snapshot_smoke.py
 python3 scripts/nextjs_playwright_snapshot_smoke.py
 ```
@@ -289,12 +290,20 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   and proves `force:true` is rejected at the Next proxy with
   `force_release_not_allowed_next_parity`.
 
+  The Next worker daemon control smoke starts isolated MIS API and Next.js
+  servers with a temporary runtime directory, proves the Next
+  `/api/mis/workers/local/start|restart|stop` proxy and
+  `/workspace/agents/daemon-control` form fallback can control only the safe
+  `mock` daemon, and proves non-mock/live daemon controls fail closed before
+  upstream execution.
+
 - First migration artifact:
   - `ui/next-app/app/workspace/page.tsx`
   - `ui/next-app/app/workspace/agents/page.tsx`
   - `ui/next-app/app/workspace/agents/[agentId]/page.tsx`
   - `ui/next-app/app/workspace/agents/dispatch-once/route.ts`
   - `ui/next-app/app/workspace/agents/release-task/route.ts`
+  - `ui/next-app/app/workspace/agents/daemon-control/route.ts`
   - `ui/next-app/app/workspace/commercial/page.tsx`
   - `ui/next-app/app/workspace/governance/page.tsx`
   - `ui/next-app/app/workspace/deployment/page.tsx`
@@ -343,6 +352,7 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   - `scripts/nextjs_agent_gateway_task_proxy_smoke.py`
   - `scripts/nextjs_worker_dispatch_once_smoke.py`
   - `scripts/nextjs_worker_stuck_release_smoke.py`
+  - `scripts/nextjs_worker_daemon_control_smoke.py`
   - `scripts/nextjs_enrollment_request_smoke.py`
   - `scripts/nextjs_playwright_snapshot_smoke.py`
   - `scripts/vite_playwright_snapshot_smoke.py`

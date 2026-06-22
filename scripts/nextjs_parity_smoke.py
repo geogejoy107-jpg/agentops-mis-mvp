@@ -33,6 +33,7 @@ def main() -> int:
         NEXT_APP / "app" / "workspace" / "agents" / "dispatch-once" / "route.ts",
         NEXT_APP / "app" / "workspace" / "agents" / "release-task" / "route.ts",
         NEXT_APP / "app" / "workspace" / "agents" / "enrollment-request" / "route.ts",
+        NEXT_APP / "app" / "workspace" / "agents" / "daemon-control" / "route.ts",
         NEXT_APP / "app" / "workspace" / "commercial" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "governance" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "deployment" / "page.tsx",
@@ -89,6 +90,7 @@ def main() -> int:
         ROOT / "scripts" / "nextjs_worker_dispatch_once_smoke.py",
         ROOT / "scripts" / "nextjs_worker_stuck_release_smoke.py",
         ROOT / "scripts" / "nextjs_enrollment_request_smoke.py",
+        ROOT / "scripts" / "nextjs_worker_daemon_control_smoke.py",
         ROOT / "docs" / "UI_NAVIGATION_INVENTORY.json",
         ROOT / "docs" / "UI_ROUTE_RETIREMENT_PACKET.json",
     ]
@@ -106,6 +108,7 @@ def main() -> int:
     agents_dispatch_route_text = read_text(NEXT_APP / "app" / "workspace" / "agents" / "dispatch-once" / "route.ts")
     agents_release_route_text = read_text(NEXT_APP / "app" / "workspace" / "agents" / "release-task" / "route.ts")
     agents_enrollment_route_text = read_text(NEXT_APP / "app" / "workspace" / "agents" / "enrollment-request" / "route.ts")
+    agents_daemon_route_text = read_text(NEXT_APP / "app" / "workspace" / "agents" / "daemon-control" / "route.ts")
     admin_task_alias_text = read_text(NEXT_APP / "app" / "admin" / "tasks" / "[taskId]" / "page.tsx")
     admin_runs_alias_text = read_text(NEXT_APP / "app" / "admin" / "runs" / "page.tsx")
     admin_run_alias_text = read_text(NEXT_APP / "app" / "admin" / "runs" / "[runId]" / "page.tsx")
@@ -134,6 +137,7 @@ def main() -> int:
     worker_dispatch_smoke_text = read_text(ROOT / "scripts" / "nextjs_worker_dispatch_once_smoke.py")
     worker_release_smoke_text = read_text(ROOT / "scripts" / "nextjs_worker_stuck_release_smoke.py")
     enrollment_request_smoke_text = read_text(ROOT / "scripts" / "nextjs_enrollment_request_smoke.py")
+    worker_daemon_smoke_text = read_text(ROOT / "scripts" / "nextjs_worker_daemon_control_smoke.py")
     route_parity_smoke_text = read_text(ROOT / "scripts" / "ui_task_run_route_parity_smoke.py")
     route_alias_smoke_text = read_text(ROOT / "scripts" / "ui_legacy_route_alias_smoke.py")
     navigation_inventory_smoke_text = read_text(ROOT / "scripts" / "ui_navigation_inventory_smoke.py")
@@ -147,6 +151,8 @@ def main() -> int:
     require("AGENTOPS_API_BASE" in route_text, "API proxy must be configurable with AGENTOPS_API_BASE")
     require("mock_only_next_parity" in route_text and "isWorkerDispatchPath" in route_text, "API proxy must fail closed for non-mock worker dispatch")
     require("force_release_not_allowed_next_parity" in route_text and "isWorkerReleasePath" in route_text, "API proxy must fail closed for force worker task release")
+    require("mock_daemon_only_next_parity" in route_text and "isWorkerDaemonPath" in route_text, "API proxy must fail closed for non-mock worker daemon controls")
+    require("live_worker_daemon_not_allowed_next_parity" in route_text, "API proxy must fail closed for confirm/live worker daemon controls")
     require("enrollment_token_issue_not_allowed_next_parity" in route_text and "isEnrollmentTokenIssuePath" in route_text, "API proxy must fail closed for raw enrollment token issue routes")
     require("enrollmentRequestGuard" in route_text and "invalid_scopes" in route_text, "API proxy must validate enrollment request scopes before forwarding")
     require("nextjs_agent_gateway_task_proxy_v1" in gateway_task_proxy_smoke_text, "Next Agent Gateway task proxy smoke contract is missing")
@@ -168,6 +174,10 @@ def main() -> int:
     require("/workspace/agents/enrollment-request" in enrollment_request_smoke_text, "Next enrollment smoke must exercise the form fallback")
     require("enrollment_token_issue_not_allowed_next_parity" in enrollment_request_smoke_text, "Next enrollment smoke must prove raw token issue routes fail closed")
     require("invalid_scopes" in enrollment_request_smoke_text, "Next enrollment smoke must prove invalid scopes fail closed before backend filtering")
+    require("nextjs_worker_daemon_control_v1" in worker_daemon_smoke_text, "Next worker daemon control smoke contract is missing")
+    require("/api/mis/workers/local/start" in worker_daemon_smoke_text and "/api/mis/workers/local/restart" in worker_daemon_smoke_text and "/api/mis/workers/local/stop" in worker_daemon_smoke_text, "Next worker daemon smoke must exercise start/restart/stop proxy routes")
+    require("/workspace/agents/daemon-control" in worker_daemon_smoke_text, "Next worker daemon smoke must exercise the form fallback route")
+    require("mock_daemon_only_next_parity" in worker_daemon_smoke_text and "live_worker_daemon_not_allowed_next_parity" in worker_daemon_smoke_text, "Next worker daemon smoke must prove live daemon controls fail closed")
     require("AGENTOPS_API_BASE" in server_lib_text and "loadServerApprovals" in server_lib_text, "server-side first paint loaders are missing")
     require("/dashboard/metrics" in lib_text, "workspace parity data must include dashboard metrics")
     require("/tasks" in lib_text and "/runs" in lib_text and "/approvals" in lib_text, "workspace parity data misses core ledgers")
@@ -184,6 +194,9 @@ def main() -> int:
     require("/agent-gateway/enrollment/request" in lib_text and "requestAgentGatewayEnrollment" in lib_text, "agent-control parity data misses approval-gated enrollment request")
     require("/workers/local/dispatch-once" in lib_text and "dispatchLocalWorkerOnce" in lib_text, "agent-control parity data misses worker dispatch mutation")
     require("/workers/tasks/release" in lib_text and "releaseWorkerTask" in lib_text, "agent-control parity data misses worker stuck release mutation")
+    require("/workers/local/start" in lib_text and "startMockWorkerDaemon" in lib_text, "agent-control parity data misses mock worker daemon start")
+    require("/workers/local/stop" in lib_text and "stopMockWorkerDaemon" in lib_text, "agent-control parity data misses mock worker daemon stop")
+    require("/workers/local/restart" in lib_text and "restartMockWorkerDaemon" in lib_text, "agent-control parity data misses mock worker daemon restart")
     require("mock_only_next_parity" in lib_text, "agent-control parity mutation helper must fail closed outside mock")
     require("/agents/${encodeURIComponent(agentId)}/performance" in lib_text and "loadAgentPerformance" in lib_text, "agent detail performance parity data is missing")
     require("/security/production-readiness" in lib_text, "agent-control parity data misses production readiness")
@@ -222,6 +235,11 @@ def main() -> int:
     require("releaseWorkerTask" in agents_page_text and "release-stuck-worker-task" in agents_page_text, "agents parity page must expose guarded stuck-task release")
     require('action="/workspace/agents/release-task"' in agents_page_text, "agents parity page must keep the Next worker release form fallback")
     require("/workers/tasks/release" in agents_release_route_text and "task_id_required" in agents_release_route_text, "worker release form fallback must write through MIS API with task id guard")
+    require("startMockWorkerDaemon" in agents_page_text and "restartMockWorkerDaemon" in agents_page_text and "stopMockWorkerDaemon" in agents_page_text, "agents parity page must expose mock worker daemon controls")
+    require('action="/workspace/agents/daemon-control"' in agents_page_text, "agents parity page must keep the Next worker daemon form fallback")
+    require("mock-daemon-restart-form" in agents_page_text and "mock-daemon-stop-form" in agents_page_text, "agents parity page must keep restart/stop daemon form fallbacks")
+    require("live daemon blocked" in agents_page_text and "mock-daemon-status" in agents_page_text, "agents parity page must show mock daemon status and live-daemon blocking")
+    require("/workers/local/${action}" in agents_daemon_route_text and "mock_daemon_only_next_parity" in agents_daemon_route_text, "worker daemon form fallback must write through MIS API with mock-only guard")
     require("previewAgentGatewayEnrollmentPolicy" in agents_page_text and "requestAgentGatewayEnrollment" in agents_page_text, "agents parity page must expose approval-gated enrollment request")
     require('action="/workspace/agents/enrollment-request"' in agents_page_text, "agents parity page must keep the Next enrollment request form fallback")
     require("direct token issue blocked" in agents_page_text and "token omitted" in agents_page_text, "agents parity page must show enrollment token-safety state")
@@ -301,6 +319,7 @@ def main() -> int:
             "/workspace/agents/dispatch-once",
             "/workspace/agents/release-task",
             "/workspace/agents/enrollment-request",
+            "/workspace/agents/daemon-control",
             "/workspace/commercial",
             "/workspace/governance",
             "/workspace/deployment",
@@ -329,6 +348,7 @@ def main() -> int:
             "nextjs_worker_dispatch_once_v1",
             "nextjs_worker_stuck_release_v1",
             "nextjs_enrollment_request_v1",
+            "nextjs_worker_daemon_control_v1",
         ],
         "stack": {
             "next": dependencies.get("next"),

@@ -8,8 +8,11 @@ import {
   dispatchLocalWorkerOnce,
   loadAgentControlSnapshot,
   previewAgentGatewayEnrollmentPolicy,
+  restartMockWorkerDaemon,
   releaseWorkerTask,
   requestAgentGatewayEnrollment,
+  startMockWorkerDaemon,
+  stopMockWorkerDaemon,
   type AgentControlSnapshot,
   type AgentGatewayEnrollmentPolicyPreview,
   type AgentGatewayEnrollmentRequestResult,
@@ -88,6 +91,7 @@ export function AgentsParityPage() {
   const [releasingTaskId, setReleasingTaskId] = useState<string | null>(null);
   const [dispatchMessage, setDispatchMessage] = useState<string | null>(null);
   const [dispatchStatus, setDispatchStatus] = useState<"success" | "error" | null>(null);
+  const [daemonBusy, setDaemonBusy] = useState<"start" | "stop" | "restart" | null>(null);
   const [enrollmentForm, setEnrollmentForm] = useState(DEFAULT_ENROLLMENT_FORM);
   const [enrollmentPolicy, setEnrollmentPolicy] = useState<AgentGatewayEnrollmentPolicyPreview | null>(null);
   const [enrollmentRequest, setEnrollmentRequest] = useState<AgentGatewayEnrollmentRequestResult | null>(null);
@@ -127,6 +131,14 @@ export function AgentsParityPage() {
       const error = params.get("error");
       setDispatchStatus(enrollmentStatus === "requested" ? "success" : "error");
       setDispatchMessage(enrollmentStatus === "requested" ? `enrollment approval requested ${requestId || approvalId || ""}`.trim() : `enrollment request failed ${error || ""}`.trim());
+    }
+    const daemonStatus = params.get("daemon_status");
+    if (daemonStatus) {
+      const action = params.get("action");
+      const pid = params.get("pid");
+      const error = params.get("error");
+      setDispatchStatus(["started", "stopped", "restarted"].includes(daemonStatus) ? "success" : "error");
+      setDispatchMessage(["started", "stopped", "restarted"].includes(daemonStatus) ? `mock daemon ${daemonStatus} ${pid || ""}`.trim() : `mock daemon ${action || ""} failed ${error || ""}`.trim());
     }
     void refresh();
   }, []);
@@ -208,6 +220,28 @@ export function AgentsParityPage() {
     }
   };
 
+  const controlMockDaemon = async (action: "start" | "stop" | "restart") => {
+    setDaemonBusy(action);
+    setDispatchStatus(null);
+    setDispatchMessage(null);
+    try {
+      const result = action === "start"
+        ? await startMockWorkerDaemon({ poll_interval: 2, max_tasks: 0 })
+        : action === "restart"
+          ? await restartMockWorkerDaemon({ poll_interval: 2, max_tasks: 0 })
+          : await stopMockWorkerDaemon();
+      const daemon = result.daemon || result.daemons?.[0];
+      setDispatchStatus(result.ok ? "success" : "error");
+      setDispatchMessage(`mock daemon ${action} ${result.ok ? "ok" : "failed"} ${daemon?.pid ? `pid ${daemon.pid}` : ""}`.trim());
+      await refresh();
+    } catch (err) {
+      setDispatchStatus("error");
+      setDispatchMessage(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDaemonBusy(null);
+    }
+  };
+
   const releaseStuckTask = async (taskId: string) => {
     setReleasingTaskId(taskId);
     setDispatchStatus(null);
@@ -235,6 +269,7 @@ export function AgentsParityPage() {
   const adapter = state.data?.adapterReadiness;
   const enrollments = state.data?.enrollments?.enrollments || [];
   const runningDaemons = (worker?.daemons || []).filter((daemon) => daemon.running).length;
+  const mockDaemon = (worker?.daemons || []).find((daemon) => daemon.adapter === "mock");
   const adapterRows = useMemo(() => Object.values(adapter?.adapters || {}), [adapter?.adapters]);
 
   return (
@@ -309,6 +344,54 @@ export function AgentsParityPage() {
               </button>
             </form>
           </div>
+          <div className="proofStrip" data-smoke="mock-daemon-controls">
+            <button className="miniButton good" type="button" onClick={() => controlMockDaemon("start")} disabled={Boolean(daemonBusy)} data-smoke="start-mock-daemon">
+              <Play size={13} /> {daemonBusy === "start" ? "Starting" : "Start mock"}
+            </button>
+            <button className="miniButton" type="button" onClick={() => controlMockDaemon("restart")} disabled={Boolean(daemonBusy)} data-smoke="restart-mock-daemon">
+              <RefreshCw size={13} /> {daemonBusy === "restart" ? "Restarting" : "Restart mock"}
+            </button>
+            <button className="miniButton bad" type="button" onClick={() => controlMockDaemon("stop")} disabled={Boolean(daemonBusy)} data-smoke="stop-mock-daemon">
+              <Undo2 size={13} /> {daemonBusy === "stop" ? "Stopping" : "Stop mock"}
+            </button>
+            <form className="inlineForm" method="post" action="/workspace/agents/daemon-control" data-smoke="mock-daemon-form-fallback">
+              <input type="hidden" name="action" value="start" />
+              <input type="hidden" name="adapter" value="mock" />
+              <input type="hidden" name="poll_interval" value="2" />
+              <input type="hidden" name="max_tasks" value="0" />
+              <button className="miniButton" type="submit" disabled={Boolean(daemonBusy)}>
+                <Play size={13} /> Start form
+              </button>
+            </form>
+            <form className="inlineForm" method="post" action="/workspace/agents/daemon-control" data-smoke="mock-daemon-restart-form">
+              <input type="hidden" name="action" value="restart" />
+              <input type="hidden" name="adapter" value="mock" />
+              <input type="hidden" name="poll_interval" value="2" />
+              <input type="hidden" name="max_tasks" value="0" />
+              <button className="miniButton" type="submit" disabled={Boolean(daemonBusy)}>
+                <RefreshCw size={13} /> Restart form
+              </button>
+            </form>
+            <form className="inlineForm" method="post" action="/workspace/agents/daemon-control" data-smoke="mock-daemon-stop-form">
+              <input type="hidden" name="action" value="stop" />
+              <input type="hidden" name="adapter" value="mock" />
+              <button className="miniButton bad" type="submit" disabled={Boolean(daemonBusy)}>
+                <Undo2 size={13} /> Stop form
+              </button>
+            </form>
+            <span className={statusClass("blocked")}>live daemon blocked</span>
+          </div>
+          {mockDaemon ? (
+            <div className="list compact">
+              <article className="row" data-smoke="mock-daemon-status">
+                <div>
+                  <strong>Mock daemon</strong>
+                  <span>{mockDaemon.agent_id || "agt_worker_daemon_mock"} · pid {mockDaemon.pid || "none"} · processed {numberValue(mockDaemon.processed)} · iteration {numberValue(mockDaemon.iteration)}</span>
+                </div>
+                <span className={statusClass(mockDaemon.running ? "running" : mockDaemon.status)}>{mockDaemon.running ? "running" : mockDaemon.status || "stopped"}</span>
+              </article>
+            </div>
+          ) : null}
           <div className="list compact">
             {stuckTasks.length === 0 ? (
               <article className="row">

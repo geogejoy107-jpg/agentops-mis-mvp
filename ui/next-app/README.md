@@ -24,6 +24,7 @@ python3 scripts/nextjs_agent_gateway_task_proxy_smoke.py
 python3 scripts/nextjs_worker_dispatch_once_smoke.py
 python3 scripts/nextjs_worker_stuck_release_smoke.py
 python3 scripts/nextjs_enrollment_request_smoke.py
+python3 scripts/nextjs_worker_daemon_control_smoke.py
 python3 scripts/nextjs_playwright_snapshot_smoke.py
 ```
 
@@ -38,6 +39,7 @@ memory review actions through the Next.js UI, verifies the state change through
 - App Router route: `/workspace/agents`
 - App Router route: `/workspace/agents/dispatch-once`
 - App Router route: `/workspace/agents/release-task`
+- App Router route: `/workspace/agents/daemon-control`
 - App Router route: `/workspace/agents/enrollment-request`
 - App Router route: `/workspace/commercial`
 - App Router route: `/workspace/governance`
@@ -66,6 +68,11 @@ memory review actions through the Next.js UI, verifies the state change through
   release one stale running task through `POST /api/mis/workers/tasks/release`
   plus the `/workspace/agents/release-task` form fallback; the proxy rejects
   `force:true` with `force_release_not_allowed_next_parity`.
+- Worker daemon contract: the Next worker console can start/restart/stop only
+  the safe `mock` daemon through `POST /api/mis/workers/local/start|restart|stop`
+  plus the `/workspace/agents/daemon-control` form fallback; non-mock or
+  confirm/live daemon attempts are rejected before upstream execution with
+  `mock_daemon_only_next_parity` and `live_worker_daemon_not_allowed_next_parity`.
 - Enrollment request contract: the Next worker console can preview Agent
   Gateway enrollment policy and create approval-gated enrollment requests
   through `POST /api/mis/agent-gateway/enrollment/request` plus the

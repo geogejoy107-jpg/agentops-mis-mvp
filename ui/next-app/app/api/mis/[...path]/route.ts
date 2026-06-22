@@ -61,6 +61,14 @@ function isWorkerReleasePath(path: string[]) {
   return path.join("/") === "workers/tasks/release";
 }
 
+function isWorkerDaemonPath(path: string[]) {
+  return [
+    "workers/local/start",
+    "workers/local/stop",
+    "workers/local/restart",
+  ].includes(path.join("/"));
+}
+
 function isEnrollmentRequestPath(path: string[]) {
   return path.join("/") === "agent-gateway/enrollment/request";
 }
@@ -111,6 +119,51 @@ function workerReleaseGuard(body: Buffer | undefined) {
     }
     if (input.force) {
       return { ok: false, status: 403, error: "force_release_not_allowed_next_parity" };
+    }
+    return { ok: true, status: 200, error: "" };
+  } catch {
+    return { ok: false, status: 400, error: "invalid_json" };
+  }
+}
+
+function workerDaemonGuard(path: string[], body: Buffer | undefined) {
+  try {
+    const parsed = parseJsonBody(body);
+    if (!parsed || typeof parsed !== "object") {
+      return { ok: false, status: 400, error: "invalid_json" };
+    }
+    const input = parsed as {
+      adapter?: unknown;
+      confirm_run?: unknown;
+      poll_interval?: unknown;
+      max_tasks?: unknown;
+      max_errors?: unknown;
+      status?: unknown;
+    };
+    const action = path[path.length - 1] || "";
+    const adapter = String(input.adapter || "mock");
+    if (adapter !== "mock") {
+      return { ok: false, status: 403, error: "mock_daemon_only_next_parity" };
+    }
+    if (input.confirm_run) {
+      return { ok: false, status: 403, error: "live_worker_daemon_not_allowed_next_parity" };
+    }
+    if (input.status !== undefined && (!Array.isArray(input.status) || input.status.some((item) => item !== "planned"))) {
+      return { ok: false, status: 400, error: "status_filter_invalid" };
+    }
+    if (action === "start" || action === "restart") {
+      const pollInterval = Number(input.poll_interval ?? 2);
+      const maxTasks = Number(input.max_tasks ?? 0);
+      const maxErrors = Number(input.max_errors ?? 5);
+      if (!Number.isFinite(pollInterval) || pollInterval < 1 || pollInterval > 60) {
+        return { ok: false, status: 400, error: "poll_interval_invalid" };
+      }
+      if (!Number.isFinite(maxTasks) || maxTasks < 0 || maxTasks > 50) {
+        return { ok: false, status: 400, error: "max_tasks_invalid" };
+      }
+      if (!Number.isFinite(maxErrors) || maxErrors < 1 || maxErrors > 20) {
+        return { ok: false, status: 400, error: "max_errors_invalid" };
+      }
     }
     return { ok: true, status: 200, error: "" };
   } catch {
@@ -296,6 +349,18 @@ async function proxy(request: NextRequest, context: RouteContext) {
     const guard = workerReleaseGuard(body);
     if (!guard.ok) {
       return NextResponse.json({ released: false, error: guard.error }, { status: guard.status });
+    }
+  }
+  if (request.method === "POST" && isWorkerDaemonPath(path)) {
+    const guard = workerDaemonGuard(path, body);
+    if (!guard.ok) {
+      return NextResponse.json({
+        ok: false,
+        error: guard.error,
+        adapter: "mock",
+        live_execution_performed: false,
+        token_omitted: true,
+      }, { status: guard.status });
     }
   }
   if (request.method === "POST" && isEnrollmentTokenIssuePath(path)) {
