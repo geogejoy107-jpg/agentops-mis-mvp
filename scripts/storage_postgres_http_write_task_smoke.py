@@ -9,6 +9,8 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -19,7 +21,13 @@ import server  # noqa: E402
 import storage_postgres_container_smoke as container_smoke  # noqa: E402
 import storage_postgres_contract_smoke as contract  # noqa: E402
 from agentops_mis_storage.postgres import PostgresAdapter, PostgresAdapterUnavailable  # noqa: E402
-from storage_postgres_http_read_parity_smoke import free_port, request_json, start_server, wait_json  # noqa: E402
+from storage_postgres_http_read_parity_smoke import (  # noqa: E402
+    connect_postgres_when_ready,
+    free_port,
+    request_json,
+    start_server,
+    wait_json,
+)
 from storage_postgres_optional_adapter_smoke import BUNDLED_PYTHON, ensure_psycopg, mapped_port  # noqa: E402
 
 
@@ -29,6 +37,19 @@ AGENT_ID = "agt_pg_http_write"
 TASK_ID = "tsk_pg_http_write_task"
 BLOCKED_TASK_ID = "tsk_pg_http_write_blocked"
 BLOCKED_AGENT_ID = "agt_pg_http_write_blocked"
+GATEWAY_WORKSPACE_ID = "ws_pg_gateway_write"
+GATEWAY_AGENT_ID = "agt_pg_gateway_write"
+GATEWAY_OBSERVER_AGENT_ID = "agt_pg_gateway_observer"
+GATEWAY_OTHER_AGENT_ID = "agt_pg_gateway_other"
+GATEWAY_TASK_ID = "tsk_pg_gateway_write_task"
+GATEWAY_READ_ONLY_TASK_ID = "tsk_pg_gateway_read_only_blocked"
+GATEWAY_MISSING_SCOPE_TASK_ID = "tsk_pg_gateway_missing_scope"
+GATEWAY_CROSS_WORKSPACE_TASK_ID = "tsk_pg_gateway_cross_workspace"
+GATEWAY_HEADER_WORKSPACE_TASK_ID = "tsk_pg_gateway_header_workspace"
+GATEWAY_OTHER_AGENT_TASK_ID = "tsk_pg_gateway_other_agent"
+GATEWAY_NO_TOKEN_TASK_ID = "tsk_pg_gateway_no_token"
+GATEWAY_BLOCKED_RUN_ID = "run_pg_gateway_should_block"
+SMOKE_API_KEY = "postgres_write_smoke_required_api_key"
 
 
 def reexec_self_with_bundled_python_if_needed() -> None:
@@ -72,26 +93,32 @@ def seed_reference_rows(adapter: PostgresAdapter) -> None:
         "INSERT INTO users(user_id,name,email,role,created_at) VALUES(?,?,?,?,?)",
         ("usr_customer_demo", "Customer Demo", "customer@example.local", "customer", now),
     )
-    adapter.execute(
-        """INSERT INTO agents(agent_id,name,role,description,runtime_type,model_provider,model_name,status,permission_level,allowed_tools,budget_limit_usd,owner_user_id,created_at,updated_at)
-        VALUES(:agent_id,:name,:role,:description,:runtime_type,:model_provider,:model_name,:status,:permission_level,:allowed_tools,:budget_limit_usd,:owner_user_id,:created_at,:updated_at)""",
-        {
-            "agent_id": AGENT_ID,
-            "name": "Postgres HTTP Writer",
-            "role": "operator",
-            "description": "Seed agent for routed Postgres HTTP task write smoke.",
-            "runtime_type": "mock",
-            "model_provider": "mock",
-            "model_name": "mock-model",
-            "status": "idle",
-            "permission_level": "standard",
-            "allowed_tools": "[]",
-            "budget_limit_usd": 0,
-            "owner_user_id": "usr_founder",
-            "created_at": now,
-            "updated_at": now,
-        },
-    )
+    for agent_id, name in [
+        (AGENT_ID, "Postgres HTTP Writer"),
+        (GATEWAY_AGENT_ID, "Postgres Gateway Writer"),
+        (GATEWAY_OBSERVER_AGENT_ID, "Postgres Gateway Observer"),
+        (GATEWAY_OTHER_AGENT_ID, "Postgres Gateway Other Agent"),
+    ]:
+        adapter.execute(
+            """INSERT INTO agents(agent_id,name,role,description,runtime_type,model_provider,model_name,status,permission_level,allowed_tools,budget_limit_usd,owner_user_id,created_at,updated_at)
+            VALUES(:agent_id,:name,:role,:description,:runtime_type,:model_provider,:model_name,:status,:permission_level,:allowed_tools,:budget_limit_usd,:owner_user_id,:created_at,:updated_at)""",
+            {
+                "agent_id": agent_id,
+                "name": name,
+                "role": "operator",
+                "description": "Seed agent for routed Postgres HTTP task write smoke.",
+                "runtime_type": "mock",
+                "model_provider": "mock",
+                "model_name": "mock-model",
+                "status": "idle",
+                "permission_level": "standard",
+                "allowed_tools": "[]",
+                "budget_limit_usd": 0,
+                "owner_user_id": "usr_founder",
+                "created_at": now,
+                "updated_at": now,
+            },
+        )
     adapter.execute(
         """INSERT INTO runtime_connectors(runtime_connector_id,provider,connector_type,profile_name,base_url,binary_path,status,allow_real_run,require_confirm_run,trust_status,trust_note,trust_updated_at,last_health_at,last_error,created_at,updated_at)
         VALUES(:runtime_connector_id,:provider,:connector_type,:profile_name,:base_url,:binary_path,:status,:allow_real_run,:require_confirm_run,:trust_status,:trust_note,:trust_updated_at,:last_health_at,:last_error,:created_at,:updated_at)""",
@@ -117,6 +144,30 @@ def seed_reference_rows(adapter: PostgresAdapter) -> None:
     adapter.commit()
 
 
+def seed_gateway_token(adapter: PostgresAdapter, *, token_id: str, raw_token: str, agent_id: str, workspace_id: str, scopes: list[str]) -> None:
+    now = "2026-06-22T05:01:00+00:00"
+    adapter.execute(
+        """INSERT INTO agent_gateway_tokens(token_id,token_hash,workspace_id,agent_id,scopes_json,status,label,heartbeat_timeout_sec,created_at,expires_at,revoked_at,last_used_at,last_heartbeat_at)
+        VALUES(:token_id,:token_hash,:workspace_id,:agent_id,:scopes_json,:status,:label,:heartbeat_timeout_sec,:created_at,:expires_at,:revoked_at,:last_used_at,:last_heartbeat_at)""",
+        {
+            "token_id": token_id,
+            "token_hash": server.token_hash(raw_token),
+            "workspace_id": workspace_id,
+            "agent_id": agent_id,
+            "scopes_json": json.dumps(scopes, ensure_ascii=False),
+            "status": "active",
+            "label": "Postgres HTTP Gateway write smoke",
+            "heartbeat_timeout_sec": 60,
+            "created_at": now,
+            "expires_at": "2026-06-23T05:01:00+00:00",
+            "revoked_at": None,
+            "last_used_at": None,
+            "last_heartbeat_at": None,
+        },
+    )
+    adapter.commit()
+
+
 def server_env(dsn: str, pythonpath: str, *, write_enabled: bool) -> dict[str, str]:
     env = os.environ.copy()
     env.update(
@@ -126,6 +177,7 @@ def server_env(dsn: str, pythonpath: str, *, write_enabled: bool) -> dict[str, s
             "AGENTOPS_POSTGRES_DSN": dsn,
             "AGENTOPS_ENABLE_POSTGRES_STORAGE": "1",
             "AGENTOPS_POSTGRES_READ_ONLY_HTTP": "1",
+            "AGENTOPS_API_KEY": SMOKE_API_KEY,
             "PYTHONPATH": pythonpath,
             "PYTHONDONTWRITEBYTECODE": "1",
         }
@@ -163,6 +215,39 @@ def task_body(task_id: str) -> dict:
         "acceptance_criteria": "Task, runtime event, and audit rows persist in Postgres.",
         "budget_limit_usd": 1.5,
     }
+
+
+def gateway_task_body(task_id: str, *, workspace_id: str | None = None, owner_agent_id: str | None = None) -> dict:
+    body = {
+        "task_id": task_id,
+        "title": "Postgres routed Agent Gateway task write",
+        "description": "Created through scoped Agent Gateway token on Postgres.",
+        "status": "planned",
+        "priority": "high",
+        "risk_level": "low",
+        "acceptance_criteria": "Gateway task, runtime event, and audit rows persist in Postgres.",
+        "budget_limit_usd": 2.0,
+    }
+    if workspace_id is not None:
+        body["workspace_id"] = workspace_id
+    if owner_agent_id is not None:
+        body["owner_agent_id"] = owner_agent_id
+    return body
+
+
+def request_json_with_token(url: str, *, token: str, method: str = "POST", body: dict | None = None, extra_headers: dict | None = None) -> tuple[int, dict]:
+    data = None
+    headers = {"Authorization": f"Bearer {token}"}
+    headers.update(extra_headers or {})
+    if body is not None:
+        data = json.dumps(body, ensure_ascii=False).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    req = Request(url, data=data, method=method, headers=headers)
+    try:
+        with urlopen(req, timeout=5) as res:
+            return int(res.status), json.loads(res.read().decode("utf-8"))
+    except HTTPError as exc:
+        return int(exc.code), json.loads(exc.read().decode("utf-8"))
 
 
 def main() -> int:
@@ -228,9 +313,27 @@ def main() -> int:
                 return unavailable("Postgres container did not become ready before timeout.", skip=args.skip_if_unavailable)
             port = mapped_port(container)
             dsn = f"postgresql://agentops:{pg_auth}@127.0.0.1:{port}/agentops"
-            adapter = PostgresAdapter.connect(dsn)
+            adapter = connect_postgres_when_ready(dsn, secret=pg_auth)
             adapter.executescript(contract.postgres_ddl_from_sqlite(server.SCHEMA_SQL))
             seed_reference_rows(adapter)
+            gateway_token = "agtok_pg_" + container_smoke.secrets.token_urlsafe(24)
+            gateway_observer_token = "agtok_pg_observer_" + container_smoke.secrets.token_urlsafe(18)
+            seed_gateway_token(
+                adapter,
+                token_id="agtok_pg_gateway_write",
+                raw_token=gateway_token,
+                agent_id=GATEWAY_AGENT_ID,
+                workspace_id=GATEWAY_WORKSPACE_ID,
+                scopes=["tasks:create", "tasks:read"],
+            )
+            seed_gateway_token(
+                adapter,
+                token_id="agtok_pg_gateway_observer",
+                raw_token=gateway_observer_token,
+                agent_id=GATEWAY_OBSERVER_AGENT_ID,
+                workspace_id=GATEWAY_WORKSPACE_ID,
+                scopes=["tasks:read"],
+            )
             adapter.close()
             adapter = None
 
@@ -239,6 +342,11 @@ def main() -> int:
             read_only_base = f"http://127.0.0.1:{read_only_port}"
             read_only_status_code, read_only_backend = wait_json(f"{read_only_base}/api/storage/backend-status", proc, secret=pg_auth)
             blocked_status, blocked_payload = request_json(f"{read_only_base}/api/tasks", method="POST", body=task_body(BLOCKED_TASK_ID))
+            gateway_blocked_status, gateway_blocked_payload = request_json_with_token(
+                f"{read_only_base}/api/agent-gateway/tasks",
+                token=gateway_token,
+                body=gateway_task_body(GATEWAY_READ_ONLY_TASK_ID, owner_agent_id=GATEWAY_AGENT_ID),
+            )
             stop_server(proc)
             proc = None
 
@@ -248,49 +356,156 @@ def main() -> int:
             write_status_code, write_backend = wait_json(f"{write_base}/api/storage/backend-status", proc, secret=pg_auth)
             create_status, create_payload = request_json(f"{write_base}/api/tasks", method="POST", body=task_body(TASK_ID))
             readback_status, readback_payload = request_json(f"{write_base}/api/tasks/{TASK_ID}?workspace_id={WORKSPACE_ID}")
+            gateway_missing_scope_status, gateway_missing_scope_payload = request_json_with_token(
+                f"{write_base}/api/agent-gateway/tasks",
+                token=gateway_observer_token,
+                body=gateway_task_body(GATEWAY_MISSING_SCOPE_TASK_ID, owner_agent_id=GATEWAY_OBSERVER_AGENT_ID),
+            )
+            gateway_cross_workspace_status, gateway_cross_workspace_payload = request_json_with_token(
+                f"{write_base}/api/agent-gateway/tasks",
+                token=gateway_token,
+                body=gateway_task_body(GATEWAY_CROSS_WORKSPACE_TASK_ID, workspace_id="other-workspace", owner_agent_id=GATEWAY_AGENT_ID),
+            )
+            gateway_header_workspace_status, gateway_header_workspace_payload = request_json_with_token(
+                f"{write_base}/api/agent-gateway/tasks",
+                token=gateway_token,
+                body=gateway_task_body(GATEWAY_HEADER_WORKSPACE_TASK_ID, owner_agent_id=GATEWAY_AGENT_ID),
+                extra_headers={"X-AgentOps-Workspace-Id": "other-workspace"},
+            )
+            gateway_other_agent_status, gateway_other_agent_payload = request_json_with_token(
+                f"{write_base}/api/agent-gateway/tasks",
+                token=gateway_token,
+                body=gateway_task_body(GATEWAY_OTHER_AGENT_TASK_ID, owner_agent_id=GATEWAY_OTHER_AGENT_ID),
+            )
+            gateway_no_token_status, gateway_no_token_payload = request_json(
+                f"{write_base}/api/agent-gateway/tasks",
+                method="POST",
+                body=gateway_task_body(GATEWAY_NO_TOKEN_TASK_ID, owner_agent_id=GATEWAY_AGENT_ID),
+            )
+            gateway_create_status, gateway_create_payload = request_json_with_token(
+                f"{write_base}/api/agent-gateway/tasks",
+                token=gateway_token,
+                body=gateway_task_body(GATEWAY_TASK_ID, owner_agent_id=GATEWAY_AGENT_ID),
+            )
+            gateway_readback_status, gateway_readback_payload = request_json(f"{write_base}/api/tasks/{GATEWAY_TASK_ID}?workspace_id={GATEWAY_WORKSPACE_ID}")
             agent_block_status, agent_block_payload = request_json(
                 f"{write_base}/api/agents",
                 method="POST",
                 body={"agent_id": BLOCKED_AGENT_ID, "name": "Should stay blocked"},
             )
+            gateway_run_block_status, gateway_run_block_payload = request_json_with_token(
+                f"{write_base}/api/agent-gateway/runs/start",
+                token=gateway_token,
+                body={
+                    "run_id": GATEWAY_BLOCKED_RUN_ID,
+                    "task_id": GATEWAY_TASK_ID,
+                    "agent_id": GATEWAY_AGENT_ID,
+                    "runtime_type": "mock",
+                },
+            )
             stop_server(proc)
             proc = None
 
-            adapter = PostgresAdapter.connect(dsn)
+            adapter = connect_postgres_when_ready(dsn, secret=pg_auth)
             task_row = adapter.fetchone("SELECT * FROM tasks WHERE task_id=?", [TASK_ID])
             blocked_task_row = adapter.fetchone("SELECT * FROM tasks WHERE task_id=?", [BLOCKED_TASK_ID])
+            gateway_task_row = adapter.fetchone("SELECT * FROM tasks WHERE task_id=?", [GATEWAY_TASK_ID])
+            gateway_read_only_task_row = adapter.fetchone("SELECT * FROM tasks WHERE task_id=?", [GATEWAY_READ_ONLY_TASK_ID])
+            gateway_missing_scope_task_row = adapter.fetchone("SELECT * FROM tasks WHERE task_id=?", [GATEWAY_MISSING_SCOPE_TASK_ID])
+            gateway_cross_workspace_task_row = adapter.fetchone("SELECT * FROM tasks WHERE task_id=?", [GATEWAY_CROSS_WORKSPACE_TASK_ID])
+            gateway_header_workspace_task_row = adapter.fetchone("SELECT * FROM tasks WHERE task_id=?", [GATEWAY_HEADER_WORKSPACE_TASK_ID])
+            gateway_other_agent_task_row = adapter.fetchone("SELECT * FROM tasks WHERE task_id=?", [GATEWAY_OTHER_AGENT_TASK_ID])
+            gateway_no_token_task_row = adapter.fetchone("SELECT * FROM tasks WHERE task_id=?", [GATEWAY_NO_TOKEN_TASK_ID])
             blocked_agent_row = adapter.fetchone("SELECT * FROM agents WHERE agent_id=?", [BLOCKED_AGENT_ID])
+            gateway_blocked_run_row = adapter.fetchone("SELECT * FROM runs WHERE run_id=?", [GATEWAY_BLOCKED_RUN_ID])
             runtime_event_count = adapter.fetchone("SELECT COUNT(*) AS c FROM runtime_events WHERE task_id=?", [TASK_ID])["c"]
             audit_count = adapter.fetchone("SELECT COUNT(*) AS c FROM audit_logs WHERE entity_type=? AND entity_id=?", ["tasks", TASK_ID])["c"]
+            gateway_runtime_event_count = adapter.fetchone("SELECT COUNT(*) AS c FROM runtime_events WHERE task_id=?", [GATEWAY_TASK_ID])["c"]
+            gateway_audit_count = adapter.fetchone("SELECT COUNT(*) AS c FROM audit_logs WHERE entity_type=? AND entity_id=?", ["tasks", GATEWAY_TASK_ID])["c"]
+            gateway_token_last_used = adapter.fetchone("SELECT last_used_at FROM agent_gateway_tokens WHERE token_id=?", ["agtok_pg_gateway_write"])
 
             failures: list[str] = []
             if read_only_status_code != 200 or read_only_backend.get("mode") != "read_only_http" or read_only_backend.get("writes_allowed") is not False:
                 failures.append(f"read_only_backend_mismatch:{read_only_backend}")
             if blocked_status != 503 or blocked_payload.get("error") != "postgres_read_only_backend":
                 failures.append(f"read_only_write_block_mismatch:{blocked_status}:{blocked_payload}")
+            if gateway_blocked_status != 503 or gateway_blocked_payload.get("error") != "postgres_read_only_backend":
+                failures.append(f"gateway_read_only_write_block_mismatch:{gateway_blocked_status}:{gateway_blocked_payload}")
             if blocked_task_row:
                 failures.append("read_only_post_created_blocked_task")
+            if gateway_read_only_task_row:
+                failures.append("read_only_post_created_blocked_gateway_task")
             if write_status_code != 200 or write_backend.get("mode") != "experimental_write_http" or write_backend.get("writes_allowed") is not True:
                 failures.append(f"write_backend_mismatch:{write_backend}")
             if create_status != 201 or create_payload.get("task_id") != TASK_ID or create_payload.get("token_omitted") is not True:
                 failures.append(f"task_create_payload_mismatch:{create_status}:{create_payload}")
             if readback_status != 200 or readback_payload.get("task", {}).get("task_id") != TASK_ID:
                 failures.append(f"task_readback_mismatch:{readback_status}:{readback_payload}")
+            if gateway_missing_scope_status != 403 or "tasks:create" not in json.dumps(gateway_missing_scope_payload, ensure_ascii=False):
+                failures.append(f"gateway_missing_scope_mismatch:{gateway_missing_scope_status}:{gateway_missing_scope_payload}")
+            if gateway_cross_workspace_status != 403 or "workspace" not in json.dumps(gateway_cross_workspace_payload, ensure_ascii=False).lower():
+                failures.append(f"gateway_cross_workspace_mismatch:{gateway_cross_workspace_status}:{gateway_cross_workspace_payload}")
+            if gateway_header_workspace_status != 403 or "workspace" not in json.dumps(gateway_header_workspace_payload, ensure_ascii=False).lower():
+                failures.append(f"gateway_header_workspace_mismatch:{gateway_header_workspace_status}:{gateway_header_workspace_payload}")
+            if gateway_other_agent_status != 403 or "another agent" not in json.dumps(gateway_other_agent_payload, ensure_ascii=False).lower():
+                failures.append(f"gateway_other_agent_mismatch:{gateway_other_agent_status}:{gateway_other_agent_payload}")
+            if gateway_no_token_status != 401 or "token" not in json.dumps(gateway_no_token_payload, ensure_ascii=False).lower():
+                failures.append(f"gateway_no_token_mismatch:{gateway_no_token_status}:{gateway_no_token_payload}")
+            if gateway_create_status != 201 or gateway_create_payload.get("task_id") != GATEWAY_TASK_ID or gateway_create_payload.get("token_omitted") is not True:
+                failures.append(f"gateway_task_create_payload_mismatch:{gateway_create_status}:{gateway_create_payload}")
+            gateway_task = gateway_create_payload.get("task") or {}
+            if gateway_task.get("workspace_id") != GATEWAY_WORKSPACE_ID or gateway_task.get("owner_agent_id") != GATEWAY_AGENT_ID:
+                failures.append(f"gateway_task_binding_mismatch:{gateway_task}")
+            if gateway_readback_status != 200 or gateway_readback_payload.get("task", {}).get("task_id") != GATEWAY_TASK_ID:
+                failures.append(f"gateway_task_readback_mismatch:{gateway_readback_status}:{gateway_readback_payload}")
             if agent_block_status != 503 or agent_block_payload.get("error") != "postgres_read_only_backend":
                 failures.append(f"non_allowlisted_write_not_blocked:{agent_block_status}:{agent_block_payload}")
+            if gateway_run_block_status != 503 or gateway_run_block_payload.get("error") != "postgres_read_only_backend":
+                failures.append(f"gateway_non_allowlisted_write_not_blocked:{gateway_run_block_status}:{gateway_run_block_payload}")
             if blocked_agent_row:
                 failures.append("non_allowlisted_agent_write_created_row")
+            if gateway_blocked_run_row:
+                failures.append("non_allowlisted_gateway_run_created_row")
             if not task_row or task_row.get("workspace_id") != WORKSPACE_ID or task_row.get("owner_agent_id") != AGENT_ID:
                 failures.append(f"postgres_task_row_mismatch:{task_row}")
             if int(runtime_event_count or 0) < 1:
                 failures.append("postgres_runtime_event_missing")
             if int(audit_count or 0) < 1:
                 failures.append("postgres_audit_missing")
+            if not gateway_task_row or gateway_task_row.get("workspace_id") != GATEWAY_WORKSPACE_ID or gateway_task_row.get("owner_agent_id") != GATEWAY_AGENT_ID:
+                failures.append(f"postgres_gateway_task_row_mismatch:{gateway_task_row}")
+            if gateway_missing_scope_task_row or gateway_cross_workspace_task_row or gateway_header_workspace_task_row or gateway_other_agent_task_row or gateway_no_token_task_row:
+                failures.append("postgres_gateway_rejected_task_created_row")
+            if int(gateway_runtime_event_count or 0) < 1:
+                failures.append("postgres_gateway_runtime_event_missing")
+            if int(gateway_audit_count or 0) < 1:
+                failures.append("postgres_gateway_audit_missing")
+            if not (gateway_token_last_used or {}).get("last_used_at"):
+                failures.append("postgres_gateway_token_last_used_not_updated")
+            transcript = json.dumps(
+                [
+                    blocked_payload,
+                    gateway_blocked_payload,
+                    gateway_missing_scope_payload,
+                    gateway_cross_workspace_payload,
+                    gateway_header_workspace_payload,
+                    gateway_other_agent_payload,
+                    gateway_no_token_payload,
+                    gateway_create_payload,
+                    agent_block_payload,
+                    gateway_run_block_payload,
+                ],
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+            if gateway_token in transcript or gateway_observer_token in transcript:
+                failures.append("postgres_gateway_raw_token_leaked")
 
             output = {
                 "ok": not failures,
                 "skipped": False,
                 "contract": CONTRACT_ID,
+                "contracts": [CONTRACT_ID, "postgres_http_gateway_task_write_parity_v1"],
                 "image": args.image,
                 "driver_status": driver_status,
                 "read_only_backend_mode": read_only_backend.get("mode"),
@@ -299,11 +514,25 @@ def main() -> int:
                 "write_allowlist": write_backend.get("write_allowlist"),
                 "task_create_status": create_status,
                 "task_readback_status": readback_status,
+                "gateway_read_only_write_block_status": gateway_blocked_status,
+                "gateway_missing_scope_status": gateway_missing_scope_status,
+                "gateway_cross_workspace_status": gateway_cross_workspace_status,
+                "gateway_header_workspace_status": gateway_header_workspace_status,
+                "gateway_other_agent_status": gateway_other_agent_status,
+                "gateway_no_token_status": gateway_no_token_status,
+                "gateway_task_create_status": gateway_create_status,
+                "gateway_task_readback_status": gateway_readback_status,
                 "non_allowlisted_write_status": agent_block_status,
+                "gateway_non_allowlisted_write_status": gateway_run_block_status,
                 "task_id": TASK_ID,
+                "gateway_task_id": GATEWAY_TASK_ID,
                 "workspace_id": WORKSPACE_ID,
+                "gateway_workspace_id": GATEWAY_WORKSPACE_ID,
                 "runtime_event_count": int(runtime_event_count or 0),
                 "audit_count": int(audit_count or 0),
+                "gateway_runtime_event_count": int(gateway_runtime_event_count or 0),
+                "gateway_audit_count": int(gateway_audit_count or 0),
+                "gateway_token_last_used": bool((gateway_token_last_used or {}).get("last_used_at")),
                 "free_local_dependencies": [],
                 "fallback_performed": False,
                 "token_omitted": True,

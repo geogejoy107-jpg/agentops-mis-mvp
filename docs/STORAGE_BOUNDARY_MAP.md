@@ -45,7 +45,7 @@ human/admin APIs:
 | Postgres HTTP read parity | `AGENTOPS_STORAGE_BACKEND=postgres` plus `AGENTOPS_POSTGRES_READ_ONLY_HTTP=1` starts the server on a temporary Postgres database, routes selected GET APIs through `PostgresAdapter`, and blocks POST/PATCH writes | first real server-backed Postgres route proof before widening read coverage or enabling writes | `python3 scripts/storage_postgres_http_read_parity_smoke.py` |
 | Postgres CLI/API read parity | `AGENTOPS_BASE_URL` plus a temporary `AGENTOPS_CONFIG` drives selected `agentops` task/run/artifact/approval/memory/workflow-job and Agent Plan / plan-evidence list/get/verify commands against the Postgres read-only server while CLI write attempts fail closed | proves machine-facing Agent Gateway CLI/API reads are Postgres-backed without relying on browser APIs or local SQLite | `python3 scripts/storage_postgres_cli_read_parity_smoke.py` |
 | Postgres write-helper parity | Selected `server.repo_*` task/run/tool/approval/prepared-action/evaluation/artifact/memory/workflow-job/Agent Plan/plan-evidence/audit/runtime-event write helpers run against temporary SQLite and Postgres with matching outcomes and snapshots while HTTP/CLI writes remain disabled | proves the helper layer can write BYOC Postgres before any routed write surface is allowed | `python3 scripts/storage_postgres_write_helper_parity_smoke.py` |
-| Postgres routed task write | `AGENTOPS_STORAGE_BACKEND=postgres`, `AGENTOPS_POSTGRES_READ_ONLY_HTTP=1`, and explicit `AGENTOPS_POSTGRES_WRITE_HTTP=1` allow only `POST /api/tasks` to write through `PostgresAdapter`; all other writes remain blocked | first real HTTP write proof through the Postgres adapter without opening worker/live/runtime or broad admin mutations | `python3 scripts/storage_postgres_http_write_task_smoke.py` |
+| Postgres routed task write | `AGENTOPS_STORAGE_BACKEND=postgres`, `AGENTOPS_POSTGRES_READ_ONLY_HTTP=1`, and explicit `AGENTOPS_POSTGRES_WRITE_HTTP=1` allow only `POST /api/tasks` and scoped `POST /api/agent-gateway/tasks` to write through `PostgresAdapter`; absent tokens, missing scope, body/header cross-workspace, cross-agent, and all other writes remain blocked | first real human/API plus Agent Gateway task-create proof through the Postgres adapter without opening worker/live/runtime or broad admin mutations | `python3 scripts/storage_postgres_http_write_task_smoke.py` |
 
 The helpers deliberately keep the existing SQLite row shape and ordering. They
 only centralize workspace filters and detail assembly so a future adapter can
@@ -114,7 +114,8 @@ CLI/API reads are actually Postgres-backed:
 
 The Postgres write-helper parity smoke must pass before enabling any
 Postgres-backed write route. Routed write support starts with an explicit
-task-create allowlist; broader HTTP/CLI writes need their own smoke first:
+human/API plus Agent Gateway task-create allowlist; broader HTTP/CLI writes
+need their own smoke first:
 
 - `python3 scripts/storage_postgres_write_helper_parity_smoke.py`
 - `python3 scripts/storage_postgres_http_write_task_smoke.py`

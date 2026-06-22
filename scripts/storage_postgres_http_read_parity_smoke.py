@@ -96,6 +96,18 @@ def redact(value: str, secret: str) -> str:
     return value.replace(secret, "[REDACTED]")
 
 
+def connect_postgres_when_ready(dsn: str, *, secret: str, timeout_sec: int = 30) -> PostgresAdapter:
+    deadline = time.time() + timeout_sec
+    last_error = ""
+    while time.time() < deadline:
+        try:
+            return PostgresAdapter.connect(dsn)
+        except Exception as exc:
+            last_error = str(exc)
+            time.sleep(0.25)
+    raise RuntimeError(redact(f"postgres host connection did not become ready before timeout: {last_error}", secret))
+
+
 def wait_json(url: str, proc: subprocess.Popen[str], *, secret: str, timeout_sec: int = 30) -> tuple[int, dict]:
     deadline = time.time() + timeout_sec
     last_error = ""
@@ -219,7 +231,7 @@ def main() -> int:
                 return unavailable("Postgres container did not become ready before timeout.", skip=args.skip_if_unavailable)
             port = mapped_port(container)
             dsn = f"postgresql://agentops:{pg_auth}@127.0.0.1:{port}/agentops"
-            adapter = PostgresAdapter.connect(dsn)
+            adapter = connect_postgres_when_ready(dsn, secret=pg_auth)
             adapter.executescript(contract.postgres_ddl_from_sqlite(server.SCHEMA_SQL))
             for operation in fixture_operations():
                 adapter.execute(operation.sql, operation.params)
@@ -275,7 +287,7 @@ def main() -> int:
             if post_payload.get("error") != "postgres_read_only_backend" or post_payload.get("writes_allowed") is not False:
                 failures.append(f"postgres_write_block_payload_mismatch:{post_payload}")
 
-            adapter = PostgresAdapter.connect(dsn)
+            adapter = connect_postgres_when_ready(dsn, secret=pg_auth)
             leaked_write = adapter.fetchone("SELECT task_id FROM tasks WHERE task_id=?", ["tsk_postgres_write_should_block"])
             if leaked_write:
                 failures.append("postgres_read_only_post_created_task")

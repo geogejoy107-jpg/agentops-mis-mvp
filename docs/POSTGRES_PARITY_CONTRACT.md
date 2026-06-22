@@ -46,10 +46,11 @@ helpers against both temporary SQLite and temporary Postgres, compares outcomes
 and snapshots, and keeps HTTP/CLI writes fail-closed until a routed write
 adapter is explicitly proven. The eleventh layer is the first routed write
 contract, `postgres_http_write_task_parity_v1`, which keeps Postgres HTTP
-writes blocked by default, then enables only the explicit `POST /api/tasks`
-allowlist under `AGENTOPS_POSTGRES_WRITE_HTTP=1` and proves task, runtime event,
-and audit rows persist in Postgres while non-allowlisted writes still fail
-closed.
+writes blocked by default, then enables only explicit task-create allowlist
+routes under `AGENTOPS_POSTGRES_WRITE_HTTP=1`: `POST /api/tasks` and scoped
+`POST /api/agent-gateway/tasks`. It proves task, runtime event, and audit rows
+persist in Postgres while missing scope, cross-workspace, cross-agent, and
+non-allowlisted writes still fail closed.
 
 All layers are intentionally derived from `server.SCHEMA_SQL`, because
 `server.py` is still the executable schema authority for the dependency-free
@@ -139,10 +140,13 @@ helpers on SQLite and Postgres, compares helper outcomes and persisted
 snapshots, proves chained audit-row dict compatibility and transaction rollback
 control, and still does not enable any HTTP/CLI writes. The eleventh command
 starts the actual Postgres-backed server twice: first to confirm read-only
-HTTP still blocks `POST /api/tasks`, then with
-`AGENTOPS_POSTGRES_WRITE_HTTP=1` to create one task through the explicit
-allowlist, read it back, prove runtime/audit evidence persisted, and prove
-other writes remain blocked. The final command
+HTTP still blocks `POST /api/tasks` and `POST /api/agent-gateway/tasks`, then
+with `AGENTOPS_POSTGRES_WRITE_HTTP=1` to create one human/API task and one
+scoped Agent Gateway task through the explicit allowlist, read them back, prove
+runtime/audit evidence persisted, reject missing/absent Gateway tokens, reject
+missing `tasks:create`, reject body/header cross-workspace and cross-agent
+requests, and prove other Gateway writes such as
+`POST /api/agent-gateway/runs/start` remain blocked. The final command
 proves the broader current SQLite helper behavior that Postgres must match.
 
 When Docker is unavailable on a local machine, use the non-authoritative
@@ -209,12 +213,15 @@ Current local evidence on `codex/commercial-migration-closed-loop`:
   writes remain disabled at this gate.
 - `postgres_http_write_task_parity_v1` passed against `postgres:16-alpine`
   with a temporary psycopg target: read-only mode still returned
-  `503 postgres_read_only_backend` for `POST /api/tasks`, explicit
-  `AGENTOPS_POSTGRES_WRITE_HTTP=1` mode allowed only `POST /api/tasks`, created
-  task `tsk_pg_http_write_task`, read it back through HTTP, persisted one
-  runtime event and two audit rows in Postgres, kept `POST /api/agents`
-  blocked at `503`, kept `free_local_dependencies=[]`, and did not fall back to
-  SQLite.
+  `503 postgres_read_only_backend` for `POST /api/tasks` and
+  `POST /api/agent-gateway/tasks`; explicit `AGENTOPS_POSTGRES_WRITE_HTTP=1`
+  mode allowed only those task-create routes, created
+  `tsk_pg_http_write_task` and scoped Gateway task `tsk_pg_gateway_write_task`,
+  read both back through HTTP, persisted runtime/audit rows in Postgres,
+  rejected absent Gateway token at `401`, rejected missing `tasks:create`,
+  body/header cross-workspace, and cross-agent Gateway requests at `403`, kept
+  `POST /api/agent-gateway/runs/start` and `POST /api/agents` blocked at `503`,
+  kept `free_local_dependencies=[]`, and did not fall back to SQLite.
 - Source install packaging includes `agentops_mis_storage.postgres`; importing
   the module and translating SQL does not require psycopg.
 

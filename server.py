@@ -48,7 +48,7 @@ HERMES_HOME = Path.home() / ".hermes"
 OPENCLAW_BIN = Path(os.environ.get("OPENCLAW_BIN") or "/opt/homebrew/bin/openclaw")
 DEFAULT_ENTITLEMENTS_PATH = ROOT / "config" / "entitlements.local.json"
 STORAGE_BACKEND = os.environ.get("AGENTOPS_STORAGE_BACKEND", "sqlite").strip().lower() or "sqlite"
-POSTGRES_HTTP_WRITE_ALLOWED_ROUTES = {("POST", "/api/tasks")}
+POSTGRES_HTTP_WRITE_ALLOWED_ROUTES = {("POST", "/api/agent-gateway/tasks"), ("POST", "/api/tasks")}
 
 RISKY_TOOLS = {
     "shell.exec",
@@ -340,7 +340,11 @@ def storage_backend_status(headers=None) -> dict:
             "fallback_performed": False,
             "token_omitted": True,
             "contract": "postgres_http_write_task_parity_v1" if write_http else "postgres_http_read_parity_v1",
-            "contracts": ["postgres_http_read_parity_v1", "postgres_http_write_task_parity_v1"] if write_http else ["postgres_http_read_parity_v1"],
+            "contracts": [
+                "postgres_http_read_parity_v1",
+                "postgres_http_write_task_parity_v1",
+                "postgres_http_gateway_task_write_parity_v1",
+            ] if write_http else ["postgres_http_read_parity_v1"],
         }
     return {
         "provider": "agentops-storage",
