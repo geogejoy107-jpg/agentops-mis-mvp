@@ -661,6 +661,36 @@ python3 scripts/agent_plan_integrity_smoke.py --base-url http://127.0.0.1:8787
 python3 scripts/run_start_plan_gate_smoke.py --base-url http://127.0.0.1:8787
 ```
 
+### Slice 23: Agent Plan Pending Approval Projection
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/agent_plans.py`
+
+Moved out of `server.py`:
+
+- Agent Plan pending approval row projection
+- Approval reason text derived from plan id, risk and plan hash prefix
+- Pending decision defaults and timestamp field layout
+
+Still owned by `server.py`:
+
+- HTTP routes
+- stable approval id generation
+- created/expires timestamp generation
+- governance anchor run creation
+- approval row insertion
+- runtime events, audit logs and commits
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/agent_plan_integrity_smoke.py --base-url http://127.0.0.1:8787
+```
+
 ## Next Candidate Slices
 
 - Continue P1-05 with small smoke-backed strangler slices only; prefer pure

@@ -64,6 +64,7 @@ from agentops_mis_core.agent_plans import (
     build_agent_plan_approval_anchor_required_response,
     build_agent_plan_approval_decision_response,
     build_agent_plan_bound_approval_forbidden_response,
+    build_agent_plan_pending_approval,
     build_agent_plan_status_transition_required_response,
     build_agent_plan_verification,
     compute_agent_plan_hash,
@@ -5024,26 +5025,6 @@ def verify_agent_plan_row(row: sqlite3.Row | dict, conn: sqlite3.Connection | No
     )
 
 
-def build_agent_plan_pending_approval(row: sqlite3.Row | dict) -> dict:
-    plan_id = row_field(row, "plan_id")
-    return {
-        "approval_id": row_field(row, "approval_id") or stable_id("ap_plan", plan_id),
-        "task_id": row_field(row, "task_id"),
-        "run_id": row_field(row, "run_id"),
-        "tool_call_id": None,
-        "requested_by_agent_id": row_field(row, "agent_id"),
-        "approver_user_id": "usr_founder",
-        "decision": "pending",
-        "reason": redact_text(
-            f"Agent Plan approval required before execution: {plan_id} risk={row_field(row, 'risk_level')} hash={(row_field(row, 'plan_hash') or '')[:12]}",
-            500,
-        ),
-        "expires_at": (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=7)).isoformat(),
-        "created_at": now_iso(),
-        "decided_at": None,
-    }
-
-
 def insert_or_keep_agent_plan_approval(conn: sqlite3.Connection, approval_row: dict) -> dict:
     existing = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (approval_row["approval_id"],)).fetchone()
     if existing:
@@ -5193,7 +5174,12 @@ def agent_gateway_create_agent_plan(conn: sqlite3.Connection, body) -> tuple[dic
     row["plan_hash"] = compute_agent_plan_hash(row)
     approval_row = None
     if row["approval_required"] and row["status"] == "submitted":
-        approval_row = build_agent_plan_pending_approval(row)
+        approval_row = build_agent_plan_pending_approval(
+            row,
+            approval_id=row_field(row, "approval_id") or stable_id("ap_plan", row["plan_id"]),
+            created_at=now_iso(),
+            expires_at=(dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=7)).isoformat(),
+        )
         row["approval_id"] = approval_row["approval_id"]
     conn.execute(
         """INSERT INTO agent_plans(plan_id,workspace_id,task_id,run_id,agent_id,task_understanding,referenced_specs_json,

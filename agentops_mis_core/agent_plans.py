@@ -194,6 +194,34 @@ def build_agent_plan_verification(
     }
 
 
+def build_agent_plan_pending_approval(
+    row: Any,
+    *,
+    approval_id: Any,
+    created_at: str,
+    expires_at: str,
+    approver_user_id: str = "usr_founder",
+) -> dict[str, Any]:
+    plan_id = row_field(row, "plan_id")
+    reason = (
+        f"Agent Plan approval required before execution: {plan_id} "
+        f"risk={row_field(row, 'risk_level')} hash={(row_field(row, 'plan_hash') or '')[:12]}"
+    )
+    return {
+        "approval_id": approval_id,
+        "task_id": row_field(row, "task_id"),
+        "run_id": row_field(row, "run_id"),
+        "tool_call_id": None,
+        "requested_by_agent_id": row_field(row, "agent_id"),
+        "approver_user_id": approver_user_id,
+        "decision": "pending",
+        "reason": reason[:500],
+        "expires_at": expires_at,
+        "created_at": created_at,
+        "decided_at": None,
+    }
+
+
 def build_agent_plan_approval_anchor_required_response(*, plan_id: Any = None) -> dict[str, Any]:
     payload = {
         "error": "agent_plan_approval_anchor_required",

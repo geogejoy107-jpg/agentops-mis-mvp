@@ -46,6 +46,7 @@ from agentops_mis_core.agent_plans import (
     build_agent_plan_approval_anchor_required_response,
     build_agent_plan_approval_decision_response,
     build_agent_plan_bound_approval_forbidden_response,
+    build_agent_plan_pending_approval,
     build_agent_plan_status_transition_required_response,
     build_agent_plan_verification,
     compute_agent_plan_hash,
@@ -254,6 +255,7 @@ EXTRACTED_AGENT_PLAN_HELPERS = {
     "build_agent_plan_approval_anchor_required_response",
     "build_agent_plan_approval_decision_response",
     "build_agent_plan_bound_approval_forbidden_response",
+    "build_agent_plan_pending_approval",
     "build_agent_plan_status_transition_required_response",
     "build_agent_plan_verification",
     "compute_agent_plan_hash",
@@ -270,6 +272,7 @@ SERVER_AGENT_PLAN_IMPORTS = {
     "build_agent_plan_approval_anchor_required_response",
     "build_agent_plan_approval_decision_response",
     "build_agent_plan_bound_approval_forbidden_response",
+    "build_agent_plan_pending_approval",
     "build_agent_plan_status_transition_required_response",
     "build_agent_plan_verification",
     "compute_agent_plan_hash",
@@ -749,6 +752,12 @@ def main() -> int:
         base_authority={"ok": False, "table_bases": [], "file_bases": [], "virtual_bases": [], "missing": ["missing_base"]},
         file_scope=unsafe_file_scope,
     )
+    agent_plan_pending_approval = build_agent_plan_pending_approval(
+        {**agent_plan_row, "plan_id": "plan_pending_smoke", "plan_hash": agent_plan_hash, "risk_level": "high"},
+        approval_id="ap_plan_pending_smoke",
+        created_at="2026-06-22T00:00:00+00:00",
+        expires_at="2026-06-29T00:00:00+00:00",
+    )
     agent_plan_approval_decision_response = build_agent_plan_approval_decision_response(
         approval={"approval_id": "ap_plan_smoke", "decision": "approved"},
         agent_plan_decision={
@@ -819,6 +828,10 @@ def main() -> int:
     require(agent_plan_verification.get("summary", {}).get("resolved_base_refs") == 1, "agent plan verification summary failed", failures)
     require(agent_plan_bad_verification.get("pass") is False, "agent plan verification builder failed negative plan", failures)
     require({"read_specs", "memory_authority", "compare_bases", "execution_steps", "verification_plan", "rollback_plan", "risk_gate", "file_scope"}.issubset({check.get("id") for check in agent_plan_bad_verification.get("failed_checks") or []}), "agent plan verification failed-check coverage missing", failures)
+    require(agent_plan_pending_approval.get("approval_id") == "ap_plan_pending_smoke", "agent plan pending approval id failed", failures)
+    require(agent_plan_pending_approval.get("decision") == "pending" and agent_plan_pending_approval.get("decided_at") is None, "agent plan pending approval decision fields failed", failures)
+    require(agent_plan_pending_approval.get("created_at") == "2026-06-22T00:00:00+00:00" and agent_plan_pending_approval.get("expires_at") == "2026-06-29T00:00:00+00:00", "agent plan pending approval timestamps failed", failures)
+    require("plan_pending_smoke" in agent_plan_pending_approval.get("reason", "") and agent_plan_hash[:12] in agent_plan_pending_approval.get("reason", ""), "agent plan pending approval reason failed", failures)
     require((agent_plan_approval_decision_response.get("agent_plan") or {}).get("status") == "approved", "agent plan approval decision response plan failed", failures)
     require(agent_plan_approval_decision_response.get("verification_result_hash") == "hash_plan_verification_smoke", "agent plan approval decision response hash failed", failures)
     require(agent_plan_approval_decision_response.get("token_omitted") is True, "agent plan approval decision response omission proof missing", failures)

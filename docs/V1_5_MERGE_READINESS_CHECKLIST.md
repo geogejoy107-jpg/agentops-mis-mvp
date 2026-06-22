@@ -257,7 +257,7 @@ coverage for every external side-effect path.
   next-action helpers now live in
   `agentops_mis_core/approval_wall.py`; Agent Plan approval-decision,
   create-status, bound-approval-forbidden, contract, hash, path-scope and
-  verification-result helpers now live in
+  verification-result and pending-approval helpers now live in
   `agentops_mis_core/agent_plans.py`; worker status/fleet lane/health
   aggregation now lives in `agentops_mis_core/worker_fleet.py`; Commander
   work-package status/action/readback summary and project-board gate aggregation
