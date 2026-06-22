@@ -35,6 +35,10 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
 from agentops_mis_core.read_model_cache import ReadModelCache
+from agentops_mis_core.worker_fleet import (
+    build_worker_fleet_view,
+    build_worker_status_payload,
+)
 from agentops_mis_cli.advance_loop_policy import advance_loop_command_policy, advance_loop_policy_summary
 from agentops_mis_cli.redaction import redact_full_text as shared_redact_full_text
 from agentops_mis_cli.redaction import redact_text as shared_redact_text
@@ -13506,158 +13510,6 @@ def worker_fleet_hygiene(conn, body: dict | None = None, *, apply: bool = False)
     return applied, 200 if not errors else 207
 
 
-def worker_fleet_health(payload: dict) -> dict:
-    remote = payload.get("remote_worker_health") or {}
-    daemons = payload.get("daemons") or []
-    active_daemons = [daemon for daemon in daemons if daemon.get("running")]
-    running_workers = int(payload.get("running_workers") or 0)
-    pending_tasks = int(payload.get("pending_worker_tasks") or 0)
-    stuck_tasks = int(payload.get("stuck_worker_tasks") or 0)
-    workflow_stuck_jobs = int(payload.get("stuck_workflow_jobs") or 0)
-    active_remote = int(payload.get("active_remote_enrollments") or 0)
-    fresh_remote = int(payload.get("fresh_remote_enrollments") or 0)
-    stale_remote = int(payload.get("stale_remote_enrollments") or 0)
-    never_seen_remote = int(payload.get("never_seen_remote_enrollments") or 0)
-    active_sessions = int(payload.get("active_remote_sessions") or 0)
-
-    gates = []
-
-    def add_gate(gate_id: str, status: str, summary: str, action: str = "") -> None:
-        gates.append({
-            "id": gate_id,
-            "status": status,
-            "summary": summary,
-            "action": action,
-        })
-
-    if stuck_tasks:
-        add_gate(
-            "worker_task_recovery",
-            "fail",
-            f"{stuck_tasks} running worker task(s) exceeded the recovery threshold.",
-            "agentops worker stuck && agentops worker release --task-id <task_id>",
-        )
-    else:
-        add_gate("worker_task_recovery", "pass", "No stale running worker tasks detected.", "agentops worker stuck")
-
-    if workflow_stuck_jobs:
-        add_gate(
-            "workflow_job_recovery",
-            "fail",
-            f"{workflow_stuck_jobs} async workflow job(s) appear stuck.",
-            "agentops workflow stuck-jobs",
-        )
-    else:
-        add_gate("workflow_job_recovery", "pass", "No stuck async workflow jobs detected.", "agentops workflow stuck-jobs")
-
-    if running_workers:
-        add_gate(
-            "execution_capacity",
-            "pass",
-            f"{running_workers} worker execution path(s) are currently available.",
-            "agentops worker status",
-        )
-    elif pending_tasks:
-        add_gate(
-            "execution_capacity",
-            "warn",
-            f"{pending_tasks} worker task(s) are waiting but no active worker is visible.",
-            "agentops worker start --adapter mock",
-        )
-    else:
-        add_gate(
-            "execution_capacity",
-            "warn",
-            "No active worker daemon or running worker agent is visible.",
-            "agentops worker preflight --adapter mock",
-        )
-
-    if active_remote and stale_remote:
-        add_gate(
-            "remote_heartbeats",
-            "warn",
-            f"{stale_remote} remote enrollment(s) have stale heartbeats.",
-            "agentops enrollment list && agentops doctor",
-        )
-    elif active_remote and fresh_remote:
-        add_gate(
-            "remote_heartbeats",
-            "pass",
-            f"{fresh_remote} remote enrollment(s) have fresh heartbeats.",
-            "agentops agent heartbeat",
-        )
-    elif active_remote and never_seen_remote:
-        add_gate(
-            "remote_heartbeats",
-            "warn",
-            f"{never_seen_remote} active enrollment(s) have not heartbeated yet.",
-            "agentops agent heartbeat",
-        )
-    else:
-        add_gate(
-            "remote_heartbeats",
-            "info",
-            "No remote agent enrollments are active; local-only operation is allowed.",
-            "agentops enrollment create --agent-id <agent_id>",
-        )
-
-    if active_remote and active_sessions:
-        add_gate(
-            "session_hygiene",
-            "pass",
-            f"{active_sessions} short-lived remote session(s) are active.",
-            "agentops session list",
-        )
-    elif active_remote:
-        add_gate(
-            "session_hygiene",
-            "warn",
-            "Remote enrollments exist but no short-lived worker session is active.",
-            "agentops session create",
-        )
-    else:
-        add_gate("session_hygiene", "info", "No remote sessions are required for local-only mode.", "agentops session list")
-
-    if active_daemons:
-        daemon_summaries = [
-            f"{daemon.get('adapter')} pid={daemon.get('pid')}"
-            for daemon in active_daemons
-            if daemon.get("adapter")
-        ]
-        add_gate(
-            "local_daemons",
-            "pass",
-            "Local worker daemon(s) running: " + ", ".join(daemon_summaries[:3]),
-            "agentops worker logs --adapter mock",
-        )
-    else:
-        add_gate(
-            "local_daemons",
-            "info",
-            "No repo-local daemon is running; one-shot or remote workers can still execute tasks.",
-            "agentops worker start --adapter mock",
-        )
-
-    statuses = {gate["status"] for gate in gates}
-    overall = "blocked" if "fail" in statuses else "attention" if "warn" in statuses else "ready"
-    actions = []
-    for gate in gates:
-        action = gate.get("action")
-        if action and action not in actions and gate.get("status") in {"fail", "warn"}:
-            actions.append(action)
-    if not actions:
-        actions = ["agentops worker status", "agentops workflow run-task --help"]
-
-    return {
-        "overall": overall,
-        "contract": "agents execute through Agent Gateway CLI/API; browser UI is an operator console only",
-        "gates": gates,
-        "recommended_actions": actions[:6],
-        "remote_status": remote.get("status"),
-        "token_omitted": True,
-    }
-
-
 def worker_adapter_readiness(conn, refresh: bool = True) -> dict:
     if refresh:
         refresh_runtime_connectors(conn)
@@ -13831,45 +13683,21 @@ def worker_status(conn) -> dict:
             if event.get(key):
                 event[key] = redact_full_text(event[key])
     daemons = worker_daemon_status(include_log=False)
-    active_daemons = [daemon for daemon in daemons if daemon["running"]]
     stuck_tasks = worker_stuck_tasks(conn)
     remote_fleet = worker_remote_fleet_summary(conn)
     stuck_workflow_jobs = workflow_stuck_jobs(conn, threshold_sec=900, limit=5)
     adapter_readiness = worker_adapter_readiness(conn)
-    payload = {
-        "provider": "agentops-worker",
-        "status": "attention" if remote_fleet.get("stale_enrollments") else "running" if active_daemons else "ready",
-        "worker_count": len(worker_agents),
-        "running_workers": len([agent for agent in worker_agents if agent.get("status") == "running"]) + len(active_daemons),
-        "recent_completed_runs": len([run for run in worker_runs if run.get("status") == "completed"]),
-        "pending_worker_tasks": len([task for task in worker_tasks if task.get("status") in ("planned", "backlog")]),
-        "stuck_worker_tasks": len(stuck_tasks),
-        "stuck_workflow_jobs": len(stuck_workflow_jobs),
-        "remote_worker_count": remote_fleet.get("remote_worker_count", 0),
-        "total_remote_enrollments": remote_fleet.get("total_remote_enrollments", 0),
-        "active_remote_enrollments": remote_fleet.get("active_enrollments", 0),
-        "fresh_remote_enrollments": remote_fleet.get("fresh_enrollments", 0),
-        "stale_remote_enrollments": remote_fleet.get("stale_enrollments", 0),
-        "never_seen_remote_enrollments": remote_fleet.get("never_seen_enrollments", 0),
-        "active_remote_sessions": remote_fleet.get("active_sessions", 0),
-        "remote_worker_health": remote_fleet,
-        "adapter_readiness": adapter_readiness.get("summary"),
-        "daemons": daemons,
-        "workers": worker_agents,
-        "recent_runs": worker_runs,
-        "recent_tasks": worker_tasks,
-        "stuck_tasks": stuck_tasks,
-        "stuck_workflow_job_refs": [{
-            "job_id": job.get("job_id"),
-            "workflow_type": job.get("workflow_type"),
-            "status": job.get("status"),
-            "age_sec": job.get("age_sec"),
-            "stuck_reason": job.get("stuck_reason"),
-        } for job in stuck_workflow_jobs],
-        "recent_events": worker_events,
-    }
-    payload["fleet_health"] = worker_fleet_health(payload)
-    return payload
+    return build_worker_status_payload(
+        worker_agents=worker_agents,
+        worker_runs=worker_runs,
+        worker_tasks=worker_tasks,
+        worker_events=worker_events,
+        daemons=daemons,
+        stuck_tasks=stuck_tasks,
+        remote_fleet=remote_fleet,
+        stuck_workflow_jobs=stuck_workflow_jobs,
+        adapter_readiness=adapter_readiness,
+    )
 
 
 def worker_fleet_view(conn) -> dict:
@@ -13884,157 +13712,14 @@ def worker_fleet_view(conn) -> dict:
         WHERE agent_id LIKE 'agt_worker_%' OR allowed_tools LIKE '%agent_worker%'
         ORDER BY updated_at DESC LIMIT 50"""
     ).fetchall())
-    lanes: list[dict] = []
-    seen_agents: set[str] = set()
-
-    def add_lane(lane: dict) -> None:
-        lane["token_omitted"] = True
-        lane["session_id_omitted"] = True
-        lanes.append(lane)
-        if lane.get("agent_id"):
-            seen_agents.add(lane["agent_id"])
-
-    for daemon in daemons:
-        running = bool(daemon.get("running"))
-        status = daemon.get("worker_status") or daemon.get("status") or "unknown"
-        health = "pass" if running else "info"
-        if running and int(daemon.get("consecutive_errors") or 0) > 0:
-            health = "warn"
-        add_lane({
-            "lane_id": f"local_daemon:{daemon.get('adapter')}",
-            "lane_type": "local_daemon",
-            "adapter": daemon.get("adapter"),
-            "agent_id": daemon.get("agent_id"),
-            "workspace_id": "local-demo",
-            "runtime_type": daemon.get("adapter") or "mock",
-            "status": status,
-            "health": health,
-            "heartbeat_state": "local_process" if running else "not_running",
-            "session_state": "not_required",
-            "active_session_count": 0,
-            "last_seen_at": daemon.get("state_updated_at") or daemon.get("started_at") or daemon.get("stopped_at"),
-            "workload": {
-                "processed": int(daemon.get("processed") or 0),
-                "iterations": int(daemon.get("iterations") or 0),
-                "consecutive_errors": int(daemon.get("consecutive_errors") or 0),
-                "total_errors": int(daemon.get("total_errors") or 0),
-            },
-            "next_action": "agentops worker logs --adapter " + str(daemon.get("adapter") or "mock") if running else "agentops worker start --adapter " + str(daemon.get("adapter") or "mock"),
-            "safe_ref": stable_id("fleet_lane", "local_daemon", daemon.get("adapter") or "mock")[-12:],
-        })
-
-    for worker in (remote_fleet.get("remote_workers") or []):
-        token_status = worker.get("token_status") or "unknown"
-        heartbeat_state = worker.get("heartbeat_state") or "unknown"
-        active_sessions = int(worker.get("active_session_count") or 0)
-        if token_status != "active":
-            health = "info"
-            next_action = "agentops enrollment create --agent-id <agent_id>"
-        elif heartbeat_state == "stale":
-            health = "warn"
-            next_action = "agentops doctor && agentops agent heartbeat"
-        elif heartbeat_state == "never_seen":
-            health = "warn"
-            next_action = "agentops agent heartbeat"
-        elif active_sessions <= 0:
-            health = "warn"
-            next_action = "agentops session create --ttl-sec 900 --save-session"
-        else:
-            health = "pass"
-            next_action = "agentops-worker --once --adapter mock --use-session"
-        add_lane({
-            "lane_id": f"remote_worker:{worker.get('agent_id')}:{worker.get('token_ref')}",
-            "lane_type": "remote_worker",
-            "adapter": worker.get("runtime_type") or "external",
-            "agent_id": worker.get("agent_id"),
-            "agent_name": worker.get("agent_name"),
-            "workspace_id": worker.get("workspace_id"),
-            "runtime_type": worker.get("runtime_type") or "external",
-            "status": token_status,
-            "health": health,
-            "heartbeat_state": heartbeat_state,
-            "session_state": "active" if active_sessions else "missing",
-            "active_session_count": active_sessions,
-            "last_seen_at": worker.get("last_heartbeat_at") or worker.get("last_used_at"),
-            "expires_at": worker.get("expires_at"),
-            "scope_count": int(worker.get("scope_count") or 0),
-            "next_action": next_action,
-            "safe_ref": worker.get("token_ref"),
-            "token_id_omitted": True,
-        })
-
-    for agent in worker_agents:
-        if agent.get("agent_id") in seen_agents:
-            continue
-        status = agent.get("status") or "unknown"
-        add_lane({
-            "lane_id": f"registered_worker:{agent.get('agent_id')}",
-            "lane_type": "registered_worker",
-            "adapter": agent.get("runtime_type") or "mock",
-            "agent_id": agent.get("agent_id"),
-            "agent_name": agent.get("name"),
-            "workspace_id": "local-demo",
-            "runtime_type": agent.get("runtime_type") or "mock",
-            "status": status,
-            "health": "pass" if status == "running" else "info",
-            "heartbeat_state": "registered",
-            "session_state": "unknown",
-            "active_session_count": 0,
-            "last_seen_at": agent.get("updated_at"),
-            "next_action": "agentops worker status",
-            "safe_ref": stable_id("fleet_lane", "registered_worker", agent.get("agent_id") or "")[-12:],
-        })
-
-    lane_counts: dict[str, int] = {}
-    health_counts: dict[str, int] = {}
-    for lane in lanes:
-        lane_counts[lane["lane_type"]] = lane_counts.get(lane["lane_type"], 0) + 1
-        health_counts[lane["health"]] = health_counts.get(lane["health"], 0) + 1
-    overall = "blocked" if health_counts.get("fail") else "attention" if health_counts.get("warn") else "ready"
-    next_actions = []
-    for lane in lanes:
-        action = lane.get("next_action")
-        if action and lane.get("health") in {"fail", "warn"} and action not in next_actions:
-            next_actions.append(action)
-    if stuck_tasks and "agentops worker stuck" not in next_actions:
-        next_actions.append("agentops worker stuck")
-    if stuck_workflow_jobs and "agentops workflow stuck-jobs" not in next_actions:
-        next_actions.append("agentops workflow stuck-jobs")
-    if not next_actions:
-        next_actions = ["agentops worker status", "agentops commander inbox --bucket ready_for_review"]
-
-    return {
-        "provider": "agentops-worker",
-        "operation": "fleet_view",
-        "status": overall,
-        "summary": {
-            "lane_count": len(lanes),
-            "lane_counts": lane_counts,
-            "health_counts": health_counts,
-            "local_daemon_count": len(daemons),
-            "running_local_daemons": len([daemon for daemon in daemons if daemon.get("running")]),
-            "remote_worker_count": remote_fleet.get("remote_worker_count", 0),
-            "fresh_remote_enrollments": remote_fleet.get("fresh_enrollments", 0),
-            "stale_remote_enrollments": remote_fleet.get("stale_enrollments", 0),
-            "never_seen_remote_enrollments": remote_fleet.get("never_seen_enrollments", 0),
-            "active_remote_sessions": remote_fleet.get("active_sessions", 0),
-            "stuck_worker_tasks": len(stuck_tasks),
-            "stuck_workflow_jobs": len(stuck_workflow_jobs),
-            "recommended_adapter": adapter_readiness.get("recommended_adapter"),
-        },
-        "lanes": lanes[:80],
-        "next_actions": next_actions[:8],
-        "contract": "read-only fleet management view; agents execute through Agent Gateway CLI/API and live adapters require explicit confirmation",
-        "safety": {
-            "read_only": True,
-            "live_execution_performed": False,
-            "token_omitted": True,
-            "session_id_omitted": True,
-            "raw_prompt_omitted": True,
-        },
-        "token_omitted": True,
-        "live_execution_performed": False,
-    }
+    return build_worker_fleet_view(
+        daemons=daemons,
+        remote_fleet=remote_fleet,
+        adapter_readiness=adapter_readiness,
+        stuck_tasks=stuck_tasks,
+        stuck_workflow_jobs=stuck_workflow_jobs,
+        worker_agents=worker_agents,
+    )
 
 
 def demo_readiness(conn: sqlite3.Connection, headers) -> dict:

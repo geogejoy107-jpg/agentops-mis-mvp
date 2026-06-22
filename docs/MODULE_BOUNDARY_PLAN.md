@@ -87,6 +87,30 @@ Still owned by `server.py`:
 - write-route cache invalidation points
 - read-model producers backed by SQLite queries
 
+### Slice 4: Worker Fleet Read Models
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/worker_fleet.py`
+
+Moved out of `server.py`:
+
+- worker fleet health gate aggregation
+- `/api/workers/status` payload shaping after server-owned row collection
+- `/api/workers/fleet` lane construction, counts, safety metadata and next-action hints
+- token/session omission proof for normalized local daemon, remote worker and registered worker lanes
+
+Still owned by `server.py`:
+
+- HTTP routes
+- SQLite reads for agents, tasks, runs, runtime events, enrollments and sessions
+- local worker daemon process/status discovery
+- stuck task and workflow job lookup
+- runtime adapter readiness and Hermes/OpenClaw/OpenClaw-bin probing
+- fleet hygiene mutations, task release, enrollment revoke, runtime events and audit writes
+
 Verification:
 
 ```bash
@@ -95,12 +119,14 @@ python3 scripts/read_model_cache_smoke.py
 python3 scripts/runtime_capability_manifest_smoke.py --base-url http://127.0.0.1:8787
 python3 scripts/worker_adapter_readiness_smoke.py --base-url http://127.0.0.1:8787
 python3 scripts/runtime_connector_trust_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/agentops_worker_status_smoke.py
+python3 scripts/agentops_worker_fleet_smoke.py --base-url http://127.0.0.1:8787
 ```
 
 ## Next Candidate Slices
 
-- Worker fleet status/readiness aggregation.
 - Commander work-package read models.
 - Approval Wall prepared-action helpers.
+- Runtime connector refresh orchestration.
 
 Each candidate must be extracted in a separate, smoke-backed slice.

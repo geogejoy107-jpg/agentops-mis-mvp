@@ -13,6 +13,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from agentops_mis_core.read_model_cache import ReadModelCache
+from agentops_mis_core.worker_fleet import (
+    build_worker_fleet_view,
+    build_worker_status_payload,
+    worker_fleet_health,
+)
 from agentops_mis_runtime.capabilities import (
     SCHEMA_VERSION,
     runtime_connector_capability_manifest,
@@ -35,6 +40,7 @@ CAPABILITIES = ROOT / "agentops_mis_runtime" / "capabilities.py"
 CONNECTORS = ROOT / "agentops_mis_runtime" / "connectors.py"
 TRUST = ROOT / "agentops_mis_runtime" / "trust.py"
 READ_MODEL_CACHE = ROOT / "agentops_mis_core" / "read_model_cache.py"
+WORKER_FLEET = ROOT / "agentops_mis_core" / "worker_fleet.py"
 BACKLOG = ROOT / "docs" / "project" / "BACKLOG.md"
 PLAN = ROOT / "docs" / "MODULE_BOUNDARY_PLAN.md"
 CI = ROOT / ".github" / "workflows" / "ci.yml"
@@ -89,6 +95,15 @@ READ_MODEL_CACHE_FORBIDDEN_SERVER_MARKERS = {
     "READ_MODEL_CACHE[key]",
     '"status": "hit"',
 }
+EXTRACTED_WORKER_FLEET_HELPERS = {
+    "build_worker_fleet_view",
+    "build_worker_status_payload",
+    "worker_fleet_health",
+}
+SERVER_WORKER_FLEET_IMPORTS = {
+    "build_worker_fleet_view",
+    "build_worker_status_payload",
+}
 
 
 def require(condition: bool, message: str, failures: list[str]) -> None:
@@ -136,28 +151,39 @@ def main() -> int:
     require(CONNECTORS.exists(), "runtime connector registry module missing", failures)
     require(TRUST.exists(), "runtime connector trust module missing", failures)
     require(READ_MODEL_CACHE.exists(), "read model cache core module missing", failures)
+    require(WORKER_FLEET.exists(), "worker fleet core module missing", failures)
     require("from agentops_mis_core.read_model_cache import ReadModelCache" in server_text, "server.py must import read model cache core module", failures)
+    require("from agentops_mis_core.worker_fleet import" in server_text, "server.py must import worker fleet core module", failures)
     require("from agentops_mis_runtime.capabilities import" in server_text, "server.py must import runtime capability module", failures)
     require("from agentops_mis_runtime.connectors import" in server_text, "server.py must import runtime connector registry module", failures)
     require("from agentops_mis_runtime.trust import" in server_text, "server.py must import runtime connector trust module", failures)
     server_functions = function_names(SERVER)
+    worker_fleet_functions = function_names(WORKER_FLEET) if WORKER_FLEET.exists() else set()
     for helper in sorted(EXTRACTED_HELPERS):
         require(helper not in server_functions, f"server.py still defines {helper}", failures)
     for helper in sorted(EXTRACTED_CONNECTOR_HELPERS):
         require(helper not in server_functions, f"server.py still defines {helper}", failures)
     for helper in sorted(EXTRACTED_TRUST_HELPERS):
         require(helper not in server_functions, f"server.py still defines {helper}", failures)
+    for helper in sorted(EXTRACTED_WORKER_FLEET_HELPERS):
+        require(helper not in server_functions, f"server.py still defines {helper}", failures)
+        require(helper in worker_fleet_functions, f"worker fleet module missing {helper}", failures)
+    require("worker_adapter_readiness" in server_functions, "worker_adapter_readiness must remain server-owned for runtime probing", failures)
+    require("worker_adapter_readiness" not in worker_fleet_functions, "worker fleet module must not own runtime adapter probing", failures)
     for helper, sources in imported_symbol_sources(SERVER, SERVER_CAPABILITY_IMPORTS).items():
         require(sources == {"agentops_mis_runtime.capabilities"}, f"{helper} imported from wrong or multiple modules: {sorted(sources)}", failures)
     for helper, sources in imported_symbol_sources(SERVER, EXTRACTED_CONNECTOR_HELPERS).items():
         require(sources == {"agentops_mis_runtime.connectors"}, f"{helper} imported from wrong or multiple modules: {sorted(sources)}", failures)
     for helper, sources in imported_symbol_sources(SERVER, SERVER_TRUST_IMPORTS).items():
         require(sources == {"agentops_mis_runtime.trust"}, f"{helper} imported from wrong or multiple modules: {sorted(sources)}", failures)
+    for helper, sources in imported_symbol_sources(SERVER, SERVER_WORKER_FLEET_IMPORTS).items():
+        require(sources == {"agentops_mis_core.worker_fleet"}, f"{helper} imported from wrong or multiple modules: {sorted(sources)}", failures)
 
     imports = imported_modules(CAPABILITIES)
     connector_imports = imported_modules(CONNECTORS) if CONNECTORS.exists() else set()
     trust_imports = imported_modules(TRUST) if TRUST.exists() else set()
     read_model_cache_imports = imported_modules(READ_MODEL_CACHE) if READ_MODEL_CACHE.exists() else set()
+    worker_fleet_imports = imported_modules(WORKER_FLEET) if WORKER_FLEET.exists() else set()
     forbidden = sorted(module for module in imports if module in FORBIDDEN_RUNTIME_MODULE_IMPORTS)
     require(not forbidden, f"runtime capability module imports forbidden app/runtime dependencies: {forbidden}", failures)
     require("server" not in imports, "runtime capability module must not import server module", failures)
@@ -170,6 +196,9 @@ def main() -> int:
     cache_forbidden = sorted(module for module in read_model_cache_imports if module in {"sqlite3", "subprocess", "http.server", "urllib.request"})
     require(not cache_forbidden, f"read model cache module imports forbidden app/runtime dependencies: {cache_forbidden}", failures)
     require("server" not in read_model_cache_imports, "read model cache module must not import server module", failures)
+    worker_fleet_forbidden = sorted(module for module in worker_fleet_imports if module in {"sqlite3", "subprocess", "http.server", "urllib.request"})
+    require(not worker_fleet_forbidden, f"worker fleet module imports forbidden app/runtime dependencies: {worker_fleet_forbidden}", failures)
+    require("server" not in worker_fleet_imports, "worker fleet module must not import server module", failures)
     for marker in sorted(READ_MODEL_CACHE_FORBIDDEN_SERVER_MARKERS):
         require(marker not in server_text, f"server.py still contains read-model cache implementation marker: {marker}", failures)
     require('"status": "hit"' in read_model_cache_text, "read model cache module missing hit metadata", failures)
@@ -247,6 +276,85 @@ def main() -> int:
     require(second.get("read_model_cache", {}).get("status") == "hit" and second.get("value") == "one", "read model cache second read should hit original payload", failures)
     require(bypass.get("read_model_cache", {}).get("status") == "bypass" and bypass.get("value") == "fresh", "read model cache refresh should bypass", failures)
     require("fixture_token_ref" not in json.dumps([first, second, bypass], ensure_ascii=False), "read model cache leaked token-like auth ref", failures)
+    daemons = [{
+        "adapter": "mock",
+        "agent_id": "agt_worker_local_smoke",
+        "running": True,
+        "worker_status": "running",
+        "pid": 4242,
+        "processed": 3,
+        "iterations": 4,
+        "consecutive_errors": 0,
+        "total_errors": 0,
+        "state_updated_at": "2026-06-22T00:00:00+00:00",
+    }]
+    remote_fleet = {
+        "status": "attention",
+        "remote_worker_count": 1,
+        "total_remote_enrollments": 1,
+        "active_enrollments": 1,
+        "fresh_enrollments": 0,
+        "stale_enrollments": 1,
+        "never_seen_enrollments": 0,
+        "active_sessions": 0,
+        "remote_workers": [{
+            "agent_id": "agt_worker_remote_smoke",
+            "agent_name": "Remote Smoke Worker",
+            "workspace_id": "local-demo",
+            "runtime_type": "mock",
+            "token_status": "active",
+            "heartbeat_state": "stale",
+            "active_session_count": 0,
+            "last_heartbeat_at": "2026-06-22T00:00:00+00:00",
+            "scope_count": 3,
+            "token_ref": "safe_ref_remote",
+        }],
+    }
+    worker_agents = [{
+        "agent_id": "agt_worker_local_smoke",
+        "name": "Local Smoke Worker",
+        "runtime_type": "mock",
+        "status": "running",
+        "updated_at": "2026-06-22T00:00:00+00:00",
+    }, {
+        "agent_id": "agt_worker_registered_smoke",
+        "name": "Registered Smoke Worker",
+        "runtime_type": "mock",
+        "status": "idle",
+        "updated_at": "2026-06-22T00:00:00+00:00",
+    }]
+    stuck_tasks = [{"task_id": "tsk_worker_stuck_smoke"}]
+    stuck_jobs = [{"job_id": "job_worker_stuck_smoke", "workflow_type": "customer_worker", "status": "running", "age_sec": 901, "stuck_reason": "threshold"}]
+    adapter_readiness = {"summary": {"recommended_adapter": "mock"}}
+    status_payload = build_worker_status_payload(
+        worker_agents=worker_agents,
+        worker_runs=[{"run_id": "run_worker_smoke", "status": "completed"}],
+        worker_tasks=[{"task_id": "tsk_worker_pending_smoke", "status": "planned"}],
+        worker_events=[{"event_id": "evt_worker_smoke", "event_type": "task.pull"}],
+        daemons=daemons,
+        stuck_tasks=stuck_tasks,
+        remote_fleet=remote_fleet,
+        stuck_workflow_jobs=stuck_jobs,
+        adapter_readiness=adapter_readiness,
+    )
+    fleet_view = build_worker_fleet_view(
+        daemons=daemons,
+        remote_fleet=remote_fleet,
+        adapter_readiness=adapter_readiness["summary"],
+        stuck_tasks=stuck_tasks,
+        stuck_workflow_jobs=stuck_jobs,
+        worker_agents=worker_agents,
+    )
+    health = worker_fleet_health(status_payload)
+    require(status_payload.get("status") == "attention", "worker status payload did not reflect stale remote attention", failures)
+    require(status_payload.get("fleet_health", {}).get("overall") == "blocked", "worker status payload missing blocked fleet health", failures)
+    require(fleet_view.get("summary", {}).get("lane_count") == 3, "worker fleet view did not build expected lanes", failures)
+    require(fleet_view.get("summary", {}).get("lane_counts", {}).get("local_daemon") == 1, "worker fleet view missing local daemon lane", failures)
+    require(fleet_view.get("summary", {}).get("lane_counts", {}).get("remote_worker") == 1, "worker fleet view missing remote worker lane", failures)
+    require(fleet_view.get("summary", {}).get("lane_counts", {}).get("registered_worker") == 1, "worker fleet view missing registered worker lane", failures)
+    require(fleet_view.get("safety", {}).get("read_only") is True, "worker fleet view must remain read-only", failures)
+    require(all(lane.get("token_omitted") is True and lane.get("session_id_omitted") is True for lane in fleet_view.get("lanes", [])), "worker fleet lanes missing omission proof", failures)
+    require(health.get("recommended_actions"), "worker fleet health missing recommended actions", failures)
 
     command = "python3 scripts/module_boundary_smoke.py"
     require(command in ci_text, "module boundary smoke missing from CI", failures)
@@ -256,17 +364,19 @@ def main() -> int:
     require("agentops_mis_runtime/connectors.py" in plan_text, "module boundary plan missing runtime connector module", failures)
     require("agentops_mis_runtime/trust.py" in plan_text, "module boundary plan missing runtime trust module", failures)
     require("agentops_mis_core/read_model_cache.py" in plan_text, "module boundary plan missing read model cache module", failures)
+    require("agentops_mis_core/worker_fleet.py" in plan_text, "module boundary plan missing worker fleet module", failures)
 
     output = {
         "ok": not failures,
         "operation": "module_boundary_smoke",
-        "boundary": "agentops_mis_runtime.capabilities+connectors+trust + agentops_mis_core.read_model_cache",
+        "boundary": "agentops_mis_runtime.capabilities+connectors+trust + agentops_mis_core.read_model_cache+worker_fleet",
         "server_line_count": len(server_text.splitlines()),
         "module_imports": {
             "capabilities": sorted(imports),
             "connectors": sorted(connector_imports),
             "trust": sorted(trust_imports),
             "read_model_cache": sorted(read_model_cache_imports),
+            "worker_fleet": sorted(worker_fleet_imports),
         },
         "live_execution_performed": False,
         "ledger_mutated": False,
