@@ -64,9 +64,12 @@ from agentops_mis_core.agent_plans import (
     build_agent_plan_approval_anchor_required_response,
     build_agent_plan_approval_decision_response,
     build_agent_plan_bound_approval_forbidden_response,
+    build_agent_plan_not_approvable_response,
+    build_agent_plan_not_transitionable_response,
     build_agent_plan_pending_approval,
     build_agent_plan_status_transition_required_response,
     build_agent_plan_verification,
+    build_agent_plan_verification_failed_response,
     compute_agent_plan_hash,
     load_json_list_field,
     plan_ref_path,
@@ -5245,13 +5248,25 @@ def transition_agent_plan(conn: sqlite3.Connection, plan_id: str, decision: str,
         return workspace_forbidden("agent_plan", plan_id, actor["workspace_id"], plan["workspace_id"])
     before = dict(plan)
     if before["status"] in {"superseded"}:
-        return {"error": "agent_plan_not_transitionable", "message": "Superseded plans cannot be approved or rejected.", "plan_id": plan_id, "status": before["status"], "token_omitted": True}, 409
+        return build_agent_plan_not_transitionable_response(
+            plan_id=plan_id,
+            status=before["status"],
+            message="Superseded plans cannot be approved or rejected.",
+        ), 409
     if decision == "approved":
         if before["status"] != "submitted":
-            return {"error": "agent_plan_not_approvable", "message": "Only submitted plans can be approved.", "plan_id": plan_id, "status": before["status"], "token_omitted": True}, 409
+            return build_agent_plan_not_approvable_response(
+                plan_id=plan_id,
+                status=before["status"],
+                message="Only submitted plans can be approved.",
+            ), 409
         verification = verify_agent_plan_row(plan, conn)
         if not verification.get("pass"):
-            return {"error": "agent_plan_verification_failed", "message": "Agent Plan must pass verification before approval.", "plan_id": plan_id, "failed_checks": verification.get("failed_checks") or [], "token_omitted": True}, 428
+            return build_agent_plan_verification_failed_response(
+                plan_id=plan_id,
+                failed_checks=verification.get("failed_checks") or [],
+                message="Agent Plan must pass verification before approval.",
+            ), 428
         plan, verification_hash = persist_agent_plan_verification(conn, plan_id, verification)
     else:
         verification = verify_agent_plan_row(plan, conn)
@@ -5346,32 +5361,26 @@ def apply_agent_plan_approval_decision(conn: sqlite3.Connection, approval: sqlit
         return None, None
     before = dict(plan)
     if before["status"] == "superseded":
-        return None, ({
-            "error": "agent_plan_not_transitionable",
-            "message": "Superseded plans cannot be approved or rejected.",
-            "plan_id": before["plan_id"],
-            "status": before["status"],
-            "token_omitted": True,
-        }, 409)
+        return None, (build_agent_plan_not_transitionable_response(
+            plan_id=before["plan_id"],
+            status=before["status"],
+            message="Superseded plans cannot be approved or rejected.",
+        ), 409)
     verification = verify_agent_plan_row(plan, conn)
     verification_hash = agent_plan_verification_hash(before["plan_id"], verification)
     if decision == "approved":
         if before["status"] not in {"submitted", "approved"}:
-            return None, ({
-                "error": "agent_plan_not_approvable",
-                "message": "Only submitted Agent Plans can be approved.",
-                "plan_id": before["plan_id"],
-                "status": before["status"],
-                "token_omitted": True,
-            }, 409)
+            return None, (build_agent_plan_not_approvable_response(
+                plan_id=before["plan_id"],
+                status=before["status"],
+                message="Only submitted Agent Plans can be approved.",
+            ), 409)
         if not verification.get("pass"):
-            return None, ({
-                "error": "agent_plan_verification_failed",
-                "message": "Agent Plan must pass method-block verification before approval.",
-                "plan_id": before["plan_id"],
-                "failed_checks": verification.get("failed_checks") or [],
-                "token_omitted": True,
-            }, 428)
+            return None, (build_agent_plan_verification_failed_response(
+                plan_id=before["plan_id"],
+                failed_checks=verification.get("failed_checks") or [],
+                message="Agent Plan must pass method-block verification before approval.",
+            ), 428)
         _persisted, verification_hash = persist_agent_plan_verification(conn, before["plan_id"], verification)
         conn.execute(
             """UPDATE agent_plans

@@ -46,9 +46,12 @@ from agentops_mis_core.agent_plans import (
     build_agent_plan_approval_anchor_required_response,
     build_agent_plan_approval_decision_response,
     build_agent_plan_bound_approval_forbidden_response,
+    build_agent_plan_not_approvable_response,
+    build_agent_plan_not_transitionable_response,
     build_agent_plan_pending_approval,
     build_agent_plan_status_transition_required_response,
     build_agent_plan_verification,
+    build_agent_plan_verification_failed_response,
     compute_agent_plan_hash,
     load_json_list_field,
     plan_ref_is_safe_relative_path,
@@ -255,9 +258,12 @@ EXTRACTED_AGENT_PLAN_HELPERS = {
     "build_agent_plan_approval_anchor_required_response",
     "build_agent_plan_approval_decision_response",
     "build_agent_plan_bound_approval_forbidden_response",
+    "build_agent_plan_not_approvable_response",
+    "build_agent_plan_not_transitionable_response",
     "build_agent_plan_pending_approval",
     "build_agent_plan_status_transition_required_response",
     "build_agent_plan_verification",
+    "build_agent_plan_verification_failed_response",
     "compute_agent_plan_hash",
     "load_json_list_field",
     "plan_ref_is_safe_relative_path",
@@ -272,9 +278,12 @@ SERVER_AGENT_PLAN_IMPORTS = {
     "build_agent_plan_approval_anchor_required_response",
     "build_agent_plan_approval_decision_response",
     "build_agent_plan_bound_approval_forbidden_response",
+    "build_agent_plan_not_approvable_response",
+    "build_agent_plan_not_transitionable_response",
     "build_agent_plan_pending_approval",
     "build_agent_plan_status_transition_required_response",
     "build_agent_plan_verification",
+    "build_agent_plan_verification_failed_response",
     "compute_agent_plan_hash",
     "load_json_list_field",
     "plan_ref_path",
@@ -758,6 +767,21 @@ def main() -> int:
         created_at="2026-06-22T00:00:00+00:00",
         expires_at="2026-06-29T00:00:00+00:00",
     )
+    agent_plan_not_transitionable_response = build_agent_plan_not_transitionable_response(
+        plan_id="plan_superseded_smoke",
+        status="superseded",
+        message="Superseded plans cannot be approved or rejected.",
+    )
+    agent_plan_not_approvable_response = build_agent_plan_not_approvable_response(
+        plan_id="plan_draft_smoke",
+        status="draft",
+        message="Only submitted plans can be approved.",
+    )
+    agent_plan_verification_failed_response = build_agent_plan_verification_failed_response(
+        plan_id="plan_failed_smoke",
+        failed_checks=[{"id": "read_specs"}],
+        message="Agent Plan must pass verification before approval.",
+    )
     agent_plan_approval_decision_response = build_agent_plan_approval_decision_response(
         approval={"approval_id": "ap_plan_smoke", "decision": "approved"},
         agent_plan_decision={
@@ -832,6 +856,10 @@ def main() -> int:
     require(agent_plan_pending_approval.get("decision") == "pending" and agent_plan_pending_approval.get("decided_at") is None, "agent plan pending approval decision fields failed", failures)
     require(agent_plan_pending_approval.get("created_at") == "2026-06-22T00:00:00+00:00" and agent_plan_pending_approval.get("expires_at") == "2026-06-29T00:00:00+00:00", "agent plan pending approval timestamps failed", failures)
     require("plan_pending_smoke" in agent_plan_pending_approval.get("reason", "") and agent_plan_hash[:12] in agent_plan_pending_approval.get("reason", ""), "agent plan pending approval reason failed", failures)
+    require(agent_plan_not_transitionable_response.get("error") == "agent_plan_not_transitionable" and agent_plan_not_transitionable_response.get("status") == "superseded", "agent plan not-transitionable response failed", failures)
+    require(agent_plan_not_approvable_response.get("error") == "agent_plan_not_approvable" and agent_plan_not_approvable_response.get("status") == "draft", "agent plan not-approvable response failed", failures)
+    require(agent_plan_verification_failed_response.get("error") == "agent_plan_verification_failed" and agent_plan_verification_failed_response.get("failed_checks") == [{"id": "read_specs"}], "agent plan verification-failed response failed", failures)
+    require(all(payload.get("token_omitted") is True for payload in [agent_plan_not_transitionable_response, agent_plan_not_approvable_response, agent_plan_verification_failed_response]), "agent plan transition error omission proof missing", failures)
     require((agent_plan_approval_decision_response.get("agent_plan") or {}).get("status") == "approved", "agent plan approval decision response plan failed", failures)
     require(agent_plan_approval_decision_response.get("verification_result_hash") == "hash_plan_verification_smoke", "agent plan approval decision response hash failed", failures)
     require(agent_plan_approval_decision_response.get("token_omitted") is True, "agent plan approval decision response omission proof missing", failures)

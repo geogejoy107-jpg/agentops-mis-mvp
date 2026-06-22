@@ -222,6 +222,36 @@ def build_agent_plan_pending_approval(
     }
 
 
+def build_agent_plan_not_transitionable_response(*, plan_id: Any, status: Any, message: str) -> dict[str, Any]:
+    return {
+        "error": "agent_plan_not_transitionable",
+        "message": message,
+        "plan_id": plan_id,
+        "status": status,
+        "token_omitted": True,
+    }
+
+
+def build_agent_plan_not_approvable_response(*, plan_id: Any, status: Any, message: str) -> dict[str, Any]:
+    return {
+        "error": "agent_plan_not_approvable",
+        "message": message,
+        "plan_id": plan_id,
+        "status": status,
+        "token_omitted": True,
+    }
+
+
+def build_agent_plan_verification_failed_response(*, plan_id: Any, failed_checks: list, message: str) -> dict[str, Any]:
+    return {
+        "error": "agent_plan_verification_failed",
+        "message": message,
+        "plan_id": plan_id,
+        "failed_checks": failed_checks or [],
+        "token_omitted": True,
+    }
+
+
 def build_agent_plan_approval_anchor_required_response(*, plan_id: Any = None) -> dict[str, Any]:
     payload = {
         "error": "agent_plan_approval_anchor_required",

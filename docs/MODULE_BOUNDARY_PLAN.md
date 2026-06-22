@@ -691,6 +691,38 @@ python3 scripts/module_boundary_smoke.py
 python3 scripts/agent_plan_integrity_smoke.py --base-url http://127.0.0.1:8787
 ```
 
+### Slice 24: Agent Plan Transition Error Projections
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/agent_plans.py`
+
+Moved out of `server.py`:
+
+- Agent Plan not-transitionable response projection
+- Agent Plan not-approvable response projection
+- Agent Plan verification-failed response projection
+- Token-omission proof for those transition errors
+
+Still owned by `server.py`:
+
+- HTTP routes
+- transition actor resolution
+- workspace authorization
+- SQLite reads and writes
+- verification persistence
+- approval row updates
+- runtime events, audit logs and commits
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/agent_plan_integrity_smoke.py --base-url http://127.0.0.1:8787
+```
+
 ## Next Candidate Slices
 
 - Continue P1-05 with small smoke-backed strangler slices only; prefer pure
