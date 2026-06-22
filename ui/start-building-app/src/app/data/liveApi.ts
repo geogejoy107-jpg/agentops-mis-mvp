@@ -2572,8 +2572,14 @@ export async function loadTasks(): Promise<Task[]> {
   return (await apiJson<Record<string, unknown>[]>("/tasks")).map(normalizeTask);
 }
 
+function ledgerListPath(base: string, query = "", defaultLimit = 100): string {
+  const params = new URLSearchParams(query.startsWith("?") ? query.slice(1) : query);
+  if (!params.has("limit")) params.set("limit", String(defaultLimit));
+  return `${base}?${params.toString()}`;
+}
+
 export async function loadRuns(query = ""): Promise<Run[]> {
-  return (await apiJson<Record<string, unknown>[]>(`/runs${query}`)).map(normalizeRun);
+  return (await apiJson<Record<string, unknown>[]>(ledgerListPath("/runs", query, 100))).map(normalizeRun);
 }
 
 export async function loadEvaluations(): Promise<Evaluation[]> {
@@ -2745,7 +2751,7 @@ export async function loadApprovals(): Promise<Approval[]> {
 }
 
 export async function loadToolCalls(): Promise<ToolCall[]> {
-  return (await apiJson<Record<string, unknown>[]>("/tool-calls")).map(normalizeToolCall);
+  return (await apiJson<Record<string, unknown>[]>(ledgerListPath("/tool-calls", "", 150))).map(normalizeToolCall);
 }
 
 export async function loadMemories(): Promise<Memory[]> {
@@ -2764,7 +2770,7 @@ export async function updateRuntimeConnectorTrust(connectorId: string, input: { 
 }
 
 export async function loadAudit(): Promise<AuditLog[]> {
-  return (await apiJson<Record<string, unknown>[]>("/audit")).map(normalizeAudit);
+  return (await apiJson<Record<string, unknown>[]>(ledgerListPath("/audit", "", 150))).map(normalizeAudit);
 }
 
 export async function loadRunDetail(id: string): Promise<RunDetailPayload> {

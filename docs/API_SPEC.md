@@ -67,7 +67,16 @@ GET /api/runs/export
 ```text
 /api/runs?task_id=tsk_competitor
 /api/runs?agent_id=agt_research
+/api/runs?limit=100&offset=0
+/api/runs?limit=100&offset=0&include_page=true
 ```
+
+For compatibility, `/api/runs`, `/api/tool-calls`, and `/api/audit` still return
+legacy arrays by default. When `include_page=true` is supplied, they return a
+read-only envelope containing `items`, the named list (`runs`, `tool_calls`, or
+`audit_logs`), and `page.{limit,offset,returned,total,has_more}`. The UI uses
+bounded `limit` parameters for these large ledger lists so demo and dogfood
+workspaces do not fetch unbounded history on first paint.
 
 ## Agent Gateway Scoped Readback
 
@@ -378,6 +387,10 @@ GET /api/tool-calls
 POST /api/tool-calls/:id/request-approval
 ```
 
+Supports `limit`, `offset`, `include_page`, `run_id`, and `agent_id` query
+parameters. With `include_page=true`, the response envelope uses
+`tool_calls`/`items` plus `page` metadata.
+
 ## Approvals
 
 ```http
@@ -465,6 +478,10 @@ agent_plans, manifests, audit rows and summary counts for a loop id.
 ```http
 GET /api/audit
 ```
+
+Supports `limit`, `offset`, and `include_page` query parameters. The legacy
+array response keeps the existing default cap of 200 audit rows; the paginated
+envelope uses `audit_logs`/`items` plus `page` metadata.
 
 ## Integrations / OpenClaw
 

@@ -194,6 +194,58 @@ def path_segment(path: str, index: int = -1) -> str:
     return unquote(path.split("/")[index])
 
 
+def qs_int(qs: dict, name: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int((qs.get(name) or [str(default)])[0])
+    except (TypeError, ValueError):
+        value = default
+    return min(max(value, minimum), maximum)
+
+
+def qs_bool(qs: dict, name: str, default: bool = False) -> bool:
+    value = (qs.get(name) or [str(default).lower()])[0]
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def ledger_page_response(conn: sqlite3.Connection, *, operation: str, item_key: str, table: str, order_by: str, qs: dict, where: str = "", params: list | None = None, default_limit: int | None = None, max_limit: int = 500):
+    params = list(params or [])
+    limit_requested = "limit" in qs
+    offset_requested = "offset" in qs
+    include_page = qs_bool(qs, "include_page", False)
+    limit = qs_int(qs, "limit", default_limit or max_limit, 1, max_limit)
+    offset = qs_int(qs, "offset", 0, 0, 1_000_000)
+    base_sql = f"FROM {table}" + (f" WHERE {where}" if where else "")
+    sql = f"SELECT * {base_sql} ORDER BY {order_by}"
+    if limit_requested or offset_requested or default_limit is not None or include_page:
+        sql += " LIMIT ? OFFSET ?"
+        rows = rows_to_dicts(conn.execute(sql, [*params, limit, offset]).fetchall())
+    else:
+        rows = rows_to_dicts(conn.execute(sql, params).fetchall())
+    if not include_page:
+        return rows
+    total = int(conn.execute(f"SELECT COUNT(*) AS c {base_sql}", params).fetchone()[0])
+    return {
+        "provider": "agentops-ledger",
+        "operation": operation,
+        item_key: rows,
+        "items": rows,
+        "page": {
+            "limit": limit,
+            "offset": offset,
+            "returned": len(rows),
+            "total": total,
+            "has_more": offset + len(rows) < total,
+        },
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
+
+
 def row_unchanged(before, row: dict, ignore=None) -> bool:
     ignore = set(ignore or [])
     before_dict = dict(before)
@@ -17644,6 +17696,207 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
         if command and command not in evidence_report_next_actions:
             evidence_report_next_actions.append(command)
     remediation_items: list[dict] = []
+
+    def remediation_workflow_steps(
+        *,
+        run_id: str,
+        task_id: str | None,
+        project_id: str | None,
+        plan_id: str | None,
+        manifest_id: str | None,
+        gap: dict,
+        receipt_state: dict,
+        preview_command: str,
+        create_command: str,
+        dispatch_command: str | None,
+        plan_evidence_create_command: str | None,
+        plan_evidence_verify_command: str | None,
+        synthesis_command: str | None,
+        close_preview_command: str | None,
+        close_confirm_command: str | None,
+        verify_command: str,
+    ) -> tuple[list[dict], dict | None]:
+        remediation_task_id = str(gap.get("remediation_task_id") or task_id or "").strip()
+        remediation_status = str(gap.get("remediation_status") or gap.get("remediation_package_status") or "").strip()
+        synthesis_status = str(gap.get("remediation_synthesis_status") or "").strip()
+        gap_decision_status = str(gap.get("gap_decision_status") or "").strip()
+        receipt_verified = bool(receipt_state.get("verified"))
+        package_ready = remediation_status in {"verified", "ready_for_review"}
+        synthesis_promoted = synthesis_status in {"promoted", "memory_pending_review"}
+        gap_closed = gap_decision_status == "closed"
+
+        def stage_receipt(step_id: str, command: str | None, verify: str | None) -> dict:
+            command = str(command or "").strip()
+            verify = str(verify or "").strip()
+            if not command:
+                return {
+                    "required": False,
+                    "status": "not_applicable",
+                    "verified": False,
+                    "token_omitted": True,
+                }
+            if step_id == "preview":
+                action_id = f"evidence_remediation:{run_id}"
+                action_signature = str(receipt_state.get("action_signature") or stable_id("op_action_sig", "evidence_remediation", workspace_id, run_id, command)[-18:])
+                source = "handoff.evidence_remediation"
+            else:
+                action_id = f"evidence_remediation:{run_id}:{step_id}"
+                action_signature = stable_id("op_action_sig", "evidence_remediation_step", workspace_id, run_id, step_id, command)[-18:]
+                source = f"handoff.evidence_remediation.{step_id}"
+            current_action_hash = stable_hash(command)
+            receipt = next((
+                item for item in receipt_rows
+                if str(item.get("action_signature") or "").strip() == action_signature
+                or str(item.get("action_id") or "").strip() == action_id
+                or str(item.get("action_command") or "").strip() == command
+                or str(item.get("action_hash") or "").strip() == current_action_hash
+            ), None)
+            receipt_args = [
+                "agentops", "operator", "record-action-receipt",
+                "--action-command", command,
+                "--action-id", action_id,
+                "--action-signature", action_signature,
+                "--source", source,
+                "--result-summary", f"Evidence remediation {step_id} completed for run {run_id}.",
+            ]
+            if verify:
+                receipt_args.extend(["--verify-command", verify])
+            record_command = " ".join(shlex.quote(str(part)) for part in receipt_args)
+            return {
+                "required": True,
+                "status": (receipt or {}).get("status") or "missing",
+                "receipt_id": (receipt or {}).get("receipt_id"),
+                "receipt_hash": (receipt or {}).get("tamper_chain_hash"),
+                "evaluation_pass_fail": (receipt or {}).get("evaluation_pass_fail"),
+                "evaluation_score": (receipt or {}).get("evaluation_score"),
+                "current": bool(receipt),
+                "verified": bool(receipt and receipt.get("status") == "verified"),
+                "action_id": action_id,
+                "action_signature": action_signature,
+                "source": source,
+                "record_command": record_command,
+                "verify_record_command": f"{record_command} --status verified --confirm-record",
+                "token_omitted": True,
+            }
+
+        def step(
+            step_id: str,
+            label: str,
+            status: str,
+            command: str | None,
+            *,
+            verify: str | None = None,
+            mutating: bool = False,
+            confirm_required: bool = False,
+            auto_advance_allowed: bool = False,
+            evidence: dict | None = None,
+        ) -> dict:
+            receipt = stage_receipt(step_id, command, verify)
+            return {
+                "id": step_id,
+                "label": label,
+                "status": status,
+                "command": redact_text(command, 900) if command else None,
+                "verify_command": redact_text(verify, 900) if verify else None,
+                "action_id": receipt.get("action_id"),
+                "action_signature": receipt.get("action_signature"),
+                "mutating": bool(mutating),
+                "confirm_required": bool(confirm_required),
+                "auto_advance_allowed": bool(auto_advance_allowed),
+                "receipt_required_before_mutation": bool(mutating),
+                "receipt_state": receipt,
+                "receipt_record_command": receipt.get("record_command"),
+                "receipt_verify_record_command": receipt.get("verify_record_command"),
+                "evidence": evidence or {},
+                "token_omitted": True,
+            }
+
+        create_ready = receipt_verified and not remediation_task_id
+        dispatch_ready = bool(remediation_task_id) and not package_ready
+        plan_evidence_status = (
+            "ready" if plan_evidence_create_command or plan_evidence_verify_command
+            else "completed" if manifest_id
+            else "not_applicable"
+        )
+        if plan_evidence_status == "ready" and not receipt_verified:
+            plan_evidence_status = "blocked"
+        synthesis_status_step = (
+            "completed" if synthesis_promoted
+            else "ready" if synthesis_command and package_ready
+            else "blocked" if synthesis_command
+            else "pending"
+        )
+        close_status = (
+            "completed" if gap_closed
+            else "ready" if close_confirm_command and synthesis_promoted
+            else "blocked" if close_confirm_command
+            else "pending"
+        )
+
+        steps = [
+            step(
+                "preview",
+                "Preview remediation package",
+                "completed" if receipt_verified else "ready",
+                preview_command,
+                verify=verify_command,
+                auto_advance_allowed=True,
+                evidence={"receipt_verified": receipt_verified, "receipt_status": receipt_state.get("status")},
+            ),
+            step(
+                "create_task",
+                "Create remediation work package",
+                "completed" if remediation_task_id else "ready" if create_ready else "blocked",
+                create_command,
+                verify=f"agentops operator evidence-report --run-id {shlex.quote(run_id)} --limit 1",
+                mutating=True,
+                confirm_required=True,
+                evidence={"task_id": remediation_task_id or None, "preview_receipt_verified": receipt_verified},
+            ),
+            step(
+                "dispatch_package",
+                "Dispatch remediation package",
+                "completed" if package_ready else "ready" if dispatch_ready else "blocked",
+                dispatch_command,
+                verify=f"agentops commander packages --project-id {shlex.quote(project_id or '')} --limit 5" if project_id else None,
+                mutating=True,
+                confirm_required=False,
+                evidence={"task_id": remediation_task_id or None, "remediation_status": remediation_status or None},
+            ),
+            step(
+                "plan_evidence",
+                "Create or verify plan evidence",
+                plan_evidence_status,
+                plan_evidence_create_command or plan_evidence_verify_command,
+                verify=f"agentops operator evidence-report --run-id {shlex.quote(run_id)} --limit 1",
+                mutating=bool(plan_evidence_create_command),
+                confirm_required=False,
+                evidence={"plan_id": plan_id or None, "manifest_id": manifest_id or None},
+            ),
+            step(
+                "synthesize",
+                "Synthesize remediation evidence",
+                synthesis_status_step,
+                synthesis_command,
+                verify="agentops operator action-plan --limit 20",
+                mutating=bool(synthesis_command and "--confirm-create" in synthesis_command),
+                confirm_required=bool(synthesis_command and "--confirm-create" in synthesis_command),
+                evidence={"project_id": project_id or None, "synthesis_status": synthesis_status or None},
+            ),
+            step(
+                "close_gap",
+                "Close source evidence gap",
+                close_status,
+                close_confirm_command or close_preview_command,
+                verify=verify_command,
+                mutating=bool(close_confirm_command),
+                confirm_required=bool(close_confirm_command),
+                evidence={"gap_decision_status": gap_decision_status or None},
+            ),
+        ]
+        next_step = next((item for item in steps if item.get("status") in {"ready", "blocked", "attention"}), None)
+        return steps, next_step
+
     for report_run in evidence_report_runs[: min(limit, 8)]:
         run_id = str(report_run.get("run_id") or "").strip()
         if not run_id or report_run.get("status") == "ready":
@@ -17661,6 +17914,14 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
         manifest_id = str(manifest.get("manifest_id") or gap.get("manifest_id") or "").strip()
         plan_evidence_create_command = f"agentops plan-evidence create --plan-id {shlex.quote(plan_id)} --run-id {shlex.quote(run_id)} --mismatch-policy block" if plan_id and not manifest_id else None
         plan_evidence_verify_command = f"agentops plan-evidence verify --manifest-id {shlex.quote(manifest_id)}" if manifest_id else None
+        task_id_for_command = str(gap.get("remediation_task_id") or stable_id("tsk_exec_evidence_fix", workspace_id, run_id))
+        project_id_for_command = str(stable_id("proj_execution_evidence", workspace_id, run_id))
+        dispatch_command = f"agentops commander dispatch-package --task-id {shlex.quote(task_id_for_command)} --adapter mock"
+        synthesis_command = gap_command if (
+            gap_command.startswith("agentops commander synthesize --project-id ")
+            or gap_command.startswith("agentops approval inspect --approval-id ")
+            or gap_command.startswith("agentops commander promote-synthesis --artifact-id ")
+        ) else None
         action_signature = stable_id("op_action_sig", "evidence_remediation", workspace_id, run_id, preview_command)[-18:]
         receipt = next((
             item for item in receipt_rows
@@ -17691,9 +17952,29 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
         receipt_verify_record_command = f"{receipt_record_command} --status verified --confirm-record"
         explicit_commands = [command for command in [
             create_command,
+            dispatch_command,
             plan_evidence_create_command,
+            synthesis_command,
             close_confirm_command,
-        ] if command]
+        ] if command and ("--confirm" in command or command.startswith("agentops commander dispatch-package"))]
+        workflow_steps, next_workflow_step = remediation_workflow_steps(
+            run_id=run_id,
+            task_id=task_id_for_command,
+            project_id=project_id_for_command,
+            plan_id=plan_id,
+            manifest_id=manifest_id,
+            gap=gap,
+            receipt_state=receipt_state,
+            preview_command=preview_command,
+            create_command=create_command,
+            dispatch_command=dispatch_command,
+            plan_evidence_create_command=plan_evidence_create_command,
+            plan_evidence_verify_command=plan_evidence_verify_command,
+            synthesis_command=synthesis_command,
+            close_preview_command=close_preview_command,
+            close_confirm_command=close_confirm_command,
+            verify_command=verify_command,
+        )
         remediation_items.append({
             "operation": "evidence_remediation_work_item",
             "package_id": f"evidence_remediation:{run_id}",
@@ -17708,8 +17989,10 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
             "missing_evidence": gap.get("missing_evidence") or [],
             "preview_command": preview_command,
             "create_command": create_command,
+            "dispatch_command": dispatch_command,
             "plan_evidence_create_command": plan_evidence_create_command,
             "plan_evidence_verify_command": plan_evidence_verify_command,
+            "synthesis_command": synthesis_command,
             "close_preview_command": close_preview_command,
             "close_confirm_command": close_confirm_command,
             "verify_command": verify_command,
@@ -17717,15 +18000,18 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
             "receipt_verify_record_command": receipt_verify_record_command,
             "receipt_source": "handoff.evidence_remediation",
             "receipt_state": receipt_state,
+            "workflow_steps": workflow_steps,
+            "next_workflow_step": next_workflow_step,
             "explicit_mutating_commands": explicit_commands,
             "next_action": gap.get("next_action") or "Preview the remediation package before creating or closing evidence.",
             "ui_route": f"/admin/runs/{run_id}",
-            "contract": "preview/read commands are safe; create, plan-evidence create, and close commands are explicit operator steps and are never auto-executed by handoff or advance-loop",
+            "contract": "preview/read commands are safe; create, dispatch, plan-evidence create, synthesis, and close commands are explicit operator steps and mutating commands are never auto-executed by handoff or advance-loop",
             "safety": {
                 "preview_read_only": True,
                 "verify_read_only": True,
                 "has_explicit_mutating_commands": bool(explicit_commands),
                 "confirm_required_for_create": True,
+                "mutating_steps_are_explicit": True,
                 "server_executes_shell": False,
                 "live_execution_performed": False,
                 "token_omitted": True,
@@ -17741,6 +18027,12 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
             "attention": sum(1 for item in remediation_items if item.get("status") == "attention" or item.get("severity") == "attention"),
             "receipt_verified": sum(1 for item in remediation_items if (item.get("receipt_state") or {}).get("verified")),
             "explicit_mutating_commands": sum(len(item.get("explicit_mutating_commands") or []) for item in remediation_items),
+            "workflow_steps": sum(len(item.get("workflow_steps") or []) for item in remediation_items),
+            "workflow_ready_steps": sum(1 for item in remediation_items for step in (item.get("workflow_steps") or []) if step.get("status") == "ready"),
+            "workflow_blocked_steps": sum(1 for item in remediation_items for step in (item.get("workflow_steps") or []) if step.get("status") == "blocked"),
+            "workflow_receipt_required": sum(1 for item in remediation_items for step in (item.get("workflow_steps") or []) if (step.get("receipt_state") or {}).get("required")),
+            "workflow_receipt_verified": sum(1 for item in remediation_items for step in (item.get("workflow_steps") or []) if (step.get("receipt_state") or {}).get("verified")),
+            "workflow_receipt_missing": sum(1 for item in remediation_items for step in (item.get("workflow_steps") or []) if (step.get("receipt_state") or {}).get("required") and not (step.get("receipt_state") or {}).get("verified")),
         },
         "items": remediation_items,
         "next_actions": [item["preview_command"] for item in remediation_items[:3]] or [evidence_report_read_command],
@@ -17948,6 +18240,12 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
         "token_omitted": True,
     }
     loop_record_status = str(loop_record.get("status") or "unknown")
+    remediation_summary = remediation_chain.get("summary") or {}
+    remediation_workflow_ready = int(remediation_summary.get("workflow_ready_steps") or 0)
+    remediation_workflow_blocked = int(remediation_summary.get("workflow_blocked_steps") or 0)
+    remediation_workflow_receipt_required = int(remediation_summary.get("workflow_receipt_required") or 0)
+    remediation_workflow_receipt_verified = int(remediation_summary.get("workflow_receipt_verified") or 0)
+    remediation_workflow_receipt_missing = int(remediation_summary.get("workflow_receipt_missing") or 0)
     loop_health_risks: list[dict] = []
     if loop_blocked:
         loop_health_risks.append({"id": "blocked_method_gate", "severity": "blocked", "count": loop_blocked, "next_action": (loop_audit.get("next_actions") or ["agentops operator loop-audit --limit 20"])[0]})
@@ -17968,6 +18266,10 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
         loop_health_risks.append({"id": "run_evidence_blocked", "severity": "blocked", "count": evidence_report_blocked, "next_action": (evidence_report_work_order.get("next_actions") or ["agentops operator evidence-report --limit 8"])[0]})
     elif evidence_report_attention or evidence_report_missing_manifests or evidence_report_pending_approvals:
         loop_health_risks.append({"id": "run_evidence_attention", "severity": "attention", "count": evidence_report_attention + evidence_report_missing_manifests + evidence_report_pending_approvals, "next_action": (evidence_report_work_order.get("next_actions") or ["agentops operator evidence-report --limit 8"])[0]})
+    if remediation_workflow_blocked:
+        loop_health_risks.append({"id": "evidence_remediation_workflow_blocked", "severity": "blocked", "count": remediation_workflow_blocked, "next_action": (remediation_chain.get("next_actions") or ["agentops operator handoff --limit 12"])[0]})
+    elif remediation_workflow_ready or remediation_workflow_receipt_missing:
+        loop_health_risks.append({"id": "evidence_remediation_workflow_attention", "severity": "attention", "count": remediation_workflow_ready + remediation_workflow_receipt_missing, "next_action": (remediation_chain.get("next_actions") or ["agentops operator handoff --limit 12"])[0]})
     if loop_record_status not in {"ready", "pass", "closed"}:
         loop_health_risks.append({"id": "loop_record_not_closed", "severity": "attention", "count": int(loop_record.get("candidate_count") or 0) + int(loop_record.get("pending_approval_count") or 0), "next_action": loop_record.get("next_action") or "agentops review queue --limit 20"})
     auth_mode = (auth_ctx or {}).get("mode") or "unknown"
@@ -18049,6 +18351,17 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
             "pending_approvals": evidence_report_pending_approvals,
             "next_action": (evidence_report_work_order.get("next_actions") or ["agentops operator evidence-report --limit 8"])[0],
         },
+        "evidence_remediation_workflow": {
+            "status": "blocked" if remediation_workflow_blocked else "attention" if remediation_workflow_ready or remediation_workflow_receipt_missing else "pass",
+            "items": int(remediation_summary.get("items") or 0),
+            "steps": int(remediation_summary.get("workflow_steps") or 0),
+            "ready_steps": remediation_workflow_ready,
+            "blocked_steps": remediation_workflow_blocked,
+            "receipt_required": remediation_workflow_receipt_required,
+            "receipt_verified": remediation_workflow_receipt_verified,
+            "receipt_missing": remediation_workflow_receipt_missing,
+            "next_action": (remediation_chain.get("next_actions") or ["agentops operator handoff --limit 12"])[0],
+        },
         "record": {
             "status": loop_record_status,
             "candidates": int(loop_record.get("candidate_count") or 0),
@@ -18079,7 +18392,7 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
         10 if safety_ready else 0,
     ]
     loop_health_score = min(max(sum(score_parts), 0), 100)
-    loop_health_status = "blocked" if loop_blocked or receipt_evaluation_fail or evidence_report_blocked or not auth_ready or not safety_ready else "attention" if loop_health_risks or loop_health_score < 90 else "ready"
+    loop_health_status = "blocked" if loop_blocked or receipt_evaluation_fail or evidence_report_blocked or remediation_workflow_blocked or not auth_ready or not safety_ready else "attention" if loop_health_risks or loop_health_score < 90 else "ready"
     return {
         "provider": "agentops-operator",
         "operation": "operator_handoff",
@@ -20061,8 +20374,16 @@ class Handler(BaseHTTPRequestHandler):
                     where.append("task_id=?"); params.append(qs["task_id"][0])
                 if "agent_id" in qs:
                     where.append("agent_id=?"); params.append(qs["agent_id"][0])
-                sql = "SELECT * FROM runs" + (" WHERE " + " AND ".join(where) if where else "") + " ORDER BY created_at DESC"
-                return self.send_json(rows_to_dicts(conn.execute(sql, params).fetchall()))
+                return self.send_json(ledger_page_response(
+                    conn,
+                    operation="runs_list",
+                    item_key="runs",
+                    table="runs",
+                    order_by="created_at DESC",
+                    qs=qs,
+                    where=" AND ".join(where),
+                    params=params,
+                ))
             if path == "/api/runs/export":
                 return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM runs ORDER BY created_at DESC").fetchall()))
             if path.startswith("/api/runs/") and path.endswith("/graph"):
@@ -20085,7 +20406,21 @@ class Handler(BaseHTTPRequestHandler):
                     "evaluation_case_runs": evaluation_case_runs_for_run(conn, run),
                 })
             if path == "/api/tool-calls":
-                return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM tool_calls ORDER BY created_at DESC").fetchall()))
+                where, params = [], []
+                if "run_id" in qs:
+                    where.append("run_id=?"); params.append(qs["run_id"][0])
+                if "agent_id" in qs:
+                    where.append("agent_id=?"); params.append(qs["agent_id"][0])
+                return self.send_json(ledger_page_response(
+                    conn,
+                    operation="tool_calls_list",
+                    item_key="tool_calls",
+                    table="tool_calls",
+                    order_by="created_at DESC",
+                    qs=qs,
+                    where=" AND ".join(where),
+                    params=params,
+                ))
             if path == "/api/knowledge/search":
                 payload, status = knowledge_search(conn, dict(qs), self.headers)
                 conn.commit()
@@ -20111,7 +20446,16 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/artifacts":
                 return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM artifacts ORDER BY created_at DESC").fetchall()))
             if path == "/api/audit":
-                return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT 200").fetchall()))
+                return self.send_json(ledger_page_response(
+                    conn,
+                    operation="audit_logs_list",
+                    item_key="audit_logs",
+                    table="audit_logs",
+                    order_by="created_at DESC",
+                    qs=qs,
+                    default_limit=200,
+                    max_limit=500,
+                ))
             if path == "/api/review/queue":
                 limit = int((qs.get("limit") or ["20"])[0])
                 return self.send_json(human_review_queue(conn, limit))

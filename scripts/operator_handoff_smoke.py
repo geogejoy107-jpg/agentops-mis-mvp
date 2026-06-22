@@ -153,6 +153,26 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
     require(receipt_failure_gate.get("status") in {"pass", "attention"}, f"{label} receipt failure memory gate missing: {receipt_failure_gate}", failures)
     for key in ["candidates", "failed_receipts", "existing_candidates", "work_items"]:
         require(isinstance(receipt_failure_gate.get(key), int), f"{label} receipt failure memory gate {key} missing: {receipt_failure_gate}", failures)
+    remediation_workflow_gate = loop_health_gates.get("evidence_remediation_workflow") or {}
+    require(
+        remediation_workflow_gate.get("status") in {"pass", "attention", "blocked"},
+        f"{label} evidence remediation workflow gate missing: {remediation_workflow_gate}",
+        failures,
+    )
+    for key in [
+        "items",
+        "steps",
+        "ready_steps",
+        "blocked_steps",
+        "receipt_required",
+        "receipt_verified",
+        "receipt_missing",
+    ]:
+        require(
+            isinstance(remediation_workflow_gate.get(key), int),
+            f"{label} evidence remediation workflow gate {key} missing: {remediation_workflow_gate}",
+            failures,
+        )
     score_parts = loop_health.get("score_parts") or {}
     require(isinstance(score_parts.get("receipt_evaluations"), int), f"{label} receipt evaluation score part missing: {score_parts}", failures)
     work_order = payload.get("work_order") or {}
@@ -178,6 +198,12 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
     require(remediation_chain.get("operation") == "evidence_remediation_chain", f"{label} evidence remediation chain missing: {remediation_chain}", failures)
     require(remediation_chain.get("status") in {"attention", "empty"}, f"{label} evidence remediation chain status wrong: {remediation_chain}", failures)
     require(isinstance((remediation_chain.get("summary") or {}).get("items"), int), f"{label} evidence remediation chain summary missing: {remediation_chain}", failures)
+    require(isinstance((remediation_chain.get("summary") or {}).get("workflow_steps"), int), f"{label} evidence remediation workflow summary missing: {remediation_chain}", failures)
+    require(isinstance((remediation_chain.get("summary") or {}).get("workflow_ready_steps"), int), f"{label} evidence remediation ready step summary missing: {remediation_chain}", failures)
+    require(isinstance((remediation_chain.get("summary") or {}).get("workflow_blocked_steps"), int), f"{label} evidence remediation blocked step summary missing: {remediation_chain}", failures)
+    require(isinstance((remediation_chain.get("summary") or {}).get("workflow_receipt_required"), int), f"{label} evidence remediation receipt-required summary missing: {remediation_chain}", failures)
+    require(isinstance((remediation_chain.get("summary") or {}).get("workflow_receipt_verified"), int), f"{label} evidence remediation receipt-verified summary missing: {remediation_chain}", failures)
+    require(isinstance((remediation_chain.get("summary") or {}).get("workflow_receipt_missing"), int), f"{label} evidence remediation receipt-missing summary missing: {remediation_chain}", failures)
     require(isinstance(remediation_chain.get("items") or [], list), f"{label} evidence remediation chain items missing: {remediation_chain}", failures)
     require(isinstance(remediation_chain.get("next_actions") or [], list), f"{label} evidence remediation chain next_actions missing: {remediation_chain}", failures)
     chain_safety = remediation_chain.get("safety") or {}
@@ -190,10 +216,39 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
         require(item.get("receipt_source") == "handoff.evidence_remediation", f"{label} remediation receipt source missing: {item}", failures)
         require((item.get("receipt_state") or {}).get("action_signature") == item.get("action_signature"), f"{label} remediation receipt signature mismatch: {item}", failures)
         require(str(item.get("preview_command") or "").startswith("agentops operator remediate-evidence-gap --run-id "), f"{label} remediation preview command missing: {item}", failures)
+        require(str(item.get("dispatch_command") or "").startswith("agentops commander dispatch-package --task-id "), f"{label} remediation dispatch command missing: {item}", failures)
         require(str(item.get("verify_command") or "").startswith("agentops operator evidence-report --run-id "), f"{label} remediation verify command missing: {item}", failures)
         require(str(item.get("receipt_record_command") or "").startswith("agentops operator record-action-receipt "), f"{label} remediation receipt command missing: {item}", failures)
         require(str(item.get("receipt_verify_record_command") or "").endswith("--status verified --confirm-record"), f"{label} remediation verify receipt command missing: {item}", failures)
+        workflow_steps = item.get("workflow_steps") or []
+        require(isinstance(workflow_steps, list) and len(workflow_steps) >= 6, f"{label} remediation workflow steps missing: {item}", failures)
+        step_ids = {str(step.get("id") or "") for step in workflow_steps}
+        for step_id in ["preview", "create_task", "dispatch_package", "plan_evidence", "synthesize", "close_gap"]:
+            require(step_id in step_ids, f"{label} remediation workflow step {step_id} missing: {workflow_steps}", failures)
+        next_step = item.get("next_workflow_step") or {}
+        require(not next_step or next_step.get("id") in step_ids, f"{label} remediation next workflow step invalid: {item}", failures)
+        for step in workflow_steps:
+            require(step.get("status") in {"ready", "blocked", "attention", "pending", "completed", "not_applicable"}, f"{label} remediation step status wrong: {step}", failures)
+            require(isinstance(step.get("mutating"), bool), f"{label} remediation step mutating flag missing: {step}", failures)
+            require(isinstance(step.get("confirm_required"), bool), f"{label} remediation step confirm flag missing: {step}", failures)
+            require(isinstance(step.get("auto_advance_allowed"), bool), f"{label} remediation step auto-advance flag missing: {step}", failures)
+            if step.get("command"):
+                receipt_state = step.get("receipt_state") or {}
+                require(str(step.get("action_id") or "").startswith("evidence_remediation:"), f"{label} remediation step action_id missing: {step}", failures)
+                require(isinstance(step.get("action_signature"), str), f"{label} remediation step action_signature missing: {step}", failures)
+                require(receipt_state.get("required") is True, f"{label} remediation step receipt required missing: {step}", failures)
+                require(receipt_state.get("action_signature") == step.get("action_signature"), f"{label} remediation step receipt signature mismatch: {step}", failures)
+                require(str(step.get("receipt_record_command") or "").startswith("agentops operator record-action-receipt "), f"{label} remediation step receipt record command missing: {step}", failures)
+                require(str(step.get("receipt_verify_record_command") or "").endswith("--status verified --confirm-record"), f"{label} remediation step verify receipt command missing: {step}", failures)
+            if step.get("id") == "preview":
+                require(step.get("auto_advance_allowed") is True, f"{label} remediation preview should be auto-advanceable: {step}", failures)
+                require(step.get("mutating") is False, f"{label} remediation preview must be read-only: {step}", failures)
+                require((step.get("receipt_state") or {}).get("source") == "handoff.evidence_remediation", f"{label} remediation preview receipt source mismatch: {step}", failures)
+            if step.get("mutating"):
+                require(step.get("auto_advance_allowed") is False, f"{label} mutating remediation step must not auto-advance: {step}", failures)
+                require(step.get("receipt_required_before_mutation") is True, f"{label} mutating remediation step should require prior receipt: {step}", failures)
         require((item.get("safety") or {}).get("preview_read_only") is True, f"{label} remediation preview safety missing: {item}", failures)
+        require((item.get("safety") or {}).get("mutating_steps_are_explicit") is True, f"{label} remediation mutating step boundary missing: {item}", failures)
         require((item.get("safety") or {}).get("server_executes_shell") is False, f"{label} remediation server shell boundary missing: {item}", failures)
     advance_loop = work_order.get("advance_loop") or {}
     require(advance_loop.get("operation") == "advance_loop_work_order", f"{label} advance loop work order missing: {advance_loop}", failures)

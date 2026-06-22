@@ -1530,6 +1530,15 @@ stable `commander synthesize`, `approval inspect`, and
 `commander promote-synthesis --mode both --confirm-promote`. The action-plan
 summary reports that chain with `evidence_synthesis_ready_runs`,
 `evidence_synthesis_pending_runs`, and `evidence_synthesis_promoted_runs`.
+
+`operator handoff` also emits a stage-level remediation work order for each
+non-ready evidence run. `work_order.evidence_report.remediation_chain.items[]`
+contains `workflow_steps` for `preview`, `create_task`, `dispatch_package`,
+`plan_evidence`, `synthesize`, and `close_gap`, plus `next_workflow_step`.
+Only `preview` is marked `auto_advance_allowed=true`; mutating stages are
+explicit, receipt-gated, and carry their command plus confirmation boundary so
+agents can hand off the chain without silently running create/dispatch/close
+steps.
 After promotion, action-plan recommends an explicit operator closure:
 
 ```bash

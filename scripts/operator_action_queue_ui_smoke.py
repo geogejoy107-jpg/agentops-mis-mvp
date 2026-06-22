@@ -163,6 +163,8 @@ EXPECTED_MARKERS = {
     "operator_handoff_evidence_receipt_hash": "handoffEvidenceReceiptState.receipt_hash",
     "operator_handoff_evidence_remediation_summary": "handoffEvidenceRemediationSummary",
     "operator_handoff_evidence_remediation_items": "handoffEvidenceRemediationSummary.items",
+    "operator_handoff_evidence_remediation_workflow_ready": "handoffEvidenceRemediationSummary.workflow_ready_steps",
+    "operator_handoff_evidence_remediation_workflow_blocked": "handoffEvidenceRemediationSummary.workflow_blocked_steps",
     "operator_handoff_receipt_state": "operatorHandoff.receipt_state.coverage",
     "operator_handoff_review_state": "operatorHandoff.review_state.loop_record",
     "operator_handoff_loop_health_json": "loop_health: operatorHandoff.loop_health",
