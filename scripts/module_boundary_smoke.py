@@ -17,6 +17,8 @@ from agentops_mis_core.approval_wall import (
     build_prepared_action_blocked_response,
     build_prepared_action_get_response,
     build_prepared_action_hash_mismatch_response,
+    build_prepared_action_provider_result_fields,
+    build_prepared_action_provider_resume_request,
     build_prepared_action_resume_blocked_response,
     build_prepared_action_resume_success_response,
     build_prepared_action_waiting_response,
@@ -176,6 +178,8 @@ EXTRACTED_APPROVAL_WALL_HELPERS = {
     "build_prepared_action_blocked_response",
     "build_prepared_action_get_response",
     "build_prepared_action_hash_mismatch_response",
+    "build_prepared_action_provider_result_fields",
+    "build_prepared_action_provider_resume_request",
     "build_prepared_action_resume_blocked_response",
     "build_prepared_action_resume_success_response",
     "build_prepared_action_waiting_response",
@@ -196,6 +200,8 @@ SERVER_APPROVAL_WALL_IMPORTS = {
     "build_prepared_action_blocked_response",
     "build_prepared_action_get_response",
     "build_prepared_action_hash_mismatch_response",
+    "build_prepared_action_provider_result_fields",
+    "build_prepared_action_provider_resume_request",
     "build_prepared_action_resume_blocked_response",
     "build_prepared_action_resume_success_response",
     "build_prepared_action_waiting_response",
@@ -553,6 +559,16 @@ def main() -> int:
             "match": True,
         },
     )
+    provider_resume_request = build_prepared_action_provider_resume_request(
+        prepared_row,
+        provider_side_effect_id="provider_side_effect_smoke",
+        result_summary="Provider created external object after approval.",
+    )
+    provider_result_fields = build_prepared_action_provider_result_fields(
+        prepared_row,
+        {"prepared_action": prepared_action_public(consumed_row)},
+        200,
+    )
     require(missing_gate and missing_gate.get("error") == "external_publish_prepared_action_required", "resume gate missing-id error failed", failures)
     require(pending_gate and pending_gate.get("error") == "approval_required", "resume gate approval-required error failed", failures)
     require(mismatch_gate and mismatch_gate.get("error") == "prepared_action_request_mismatch" and "operation" in mismatch_gate.get("mismatched_fields", []), "resume gate mismatch error failed", failures)
@@ -566,6 +582,13 @@ def main() -> int:
     require(resume_hash_mismatch_response and resume_hash_mismatch_response[0].get("error") == "action_hash_mismatch" and resume_hash_mismatch_response[1] == 409, "resume route hash mismatch response failed", failures)
     require(success_resume_response.get("status") == "completed" and success_resume_response.get("execute_once") is True, "resume success response failed", failures)
     require((success_resume_response.get("hash_verification") or {}).get("match") is True, "resume success hash verification failed", failures)
+    require(provider_resume_request.get("workspace_id") == "local-demo", "provider resume request workspace failed", failures)
+    require(provider_resume_request.get("provider_side_effect_id") == "provider_side_effect_smoke", "provider resume request side-effect failed", failures)
+    require(provider_resume_request.get("result_summary") == "Provider created external object after approval.", "provider resume request summary failed", failures)
+    require(provider_result_fields.get("approval_id") == "ap_pa_smoke", "provider result approval id failed", failures)
+    require(provider_result_fields.get("prepared_action_resume_status") == 200, "provider result resume status failed", failures)
+    require((provider_result_fields.get("prepared_action") or {}).get("status") == "consumed", "provider result prepared action failed", failures)
+    require(provider_result_fields.get("token_omitted") is True, "provider result omission proof missing", failures)
     runtime_waiting_payload = runtime_probe_prepared_action_required_payload(
         prepared={
             "run_id": "run_runtime_probe_smoke",

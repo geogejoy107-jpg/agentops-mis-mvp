@@ -39,6 +39,8 @@ from agentops_mis_core.approval_wall import (
     build_prepared_action_blocked_response,
     build_prepared_action_get_response,
     build_prepared_action_hash_mismatch_response,
+    build_prepared_action_provider_result_fields,
+    build_prepared_action_provider_resume_request,
     build_prepared_action_resume_blocked_response,
     build_prepared_action_resume_success_response,
     build_prepared_action_waiting_response,
@@ -9452,13 +9454,13 @@ def run_openclaw_probe(conn, body: dict | None = None) -> dict:
     upsert_run(conn, row, "openclaw-probe", {"manual_probe": True})
     upsert_evaluation(conn, quality_gate_for_run(row), "openclaw-probe")
     runtime_event(conn, "rtc_openclaw_local", "agent_probe", "completed" if probe["ok"] else "failed", run_id=run_id, task_id=task_id, agent_id=agent_id, model_name=row["model_name"], latency_ms=row["duration_ms"], output_summary=probe.get("visible"), error_message=probe.get("error"), raw_payload_hash=stable_hash({"trace_id": probe.get("run_id"), "visible": probe.get("visible"), "error": probe.get("error")}))
-    resume_payload, resume_status = agent_gateway_resume_prepared_action(conn, prepared_row["action_id"], {
-        "workspace_id": prepared_row["workspace_id"],
-        "provider_side_effect_id": probe.get("run_id") or stable_id("openclaw_probe", run_id),
-        "result_summary": row["output_summary"],
-    })
+    resume_payload, resume_status = agent_gateway_resume_prepared_action(conn, prepared_row["action_id"], build_prepared_action_provider_resume_request(
+        prepared_row,
+        provider_side_effect_id=probe.get("run_id") or stable_id("openclaw_probe", run_id),
+        result_summary=row["output_summary"],
+    ))
     audit(conn, "system", "openclaw-probe", "runtime.openclaw_probe", "runs", run_id, None, {"status": row["status"]}, {"manual_probe": True, "trace_id": probe.get("run_id"), "prepared_action_id": prepared_row["action_id"], "approval_id": prepared_row["approval_id"], "token_omitted": True})
-    return {"provider": "openclaw", "probe": probe, "run_id": run_id, "dry_run": False, "live_probe_performed": True, "approval_id": prepared_row["approval_id"], "prepared_action": resume_payload.get("prepared_action") if isinstance(resume_payload, dict) else prepared_action_public(prepared_row), "prepared_action_resume_status": resume_status, "token_omitted": True}
+    return {"provider": "openclaw", "probe": probe, "run_id": run_id, "dry_run": False, "live_probe_performed": True, **build_prepared_action_provider_result_fields(prepared_row, resume_payload, resume_status)}
 
 
 def hermes_status() -> dict:
@@ -9984,11 +9986,11 @@ def dify_create_document_by_text(conn, body: dict) -> dict:
     upsert_evaluation(conn, quality_gate_for_run(row), "dify-connector")
     runtime_event(conn, "rtc_agent_gateway_local", "dify.upload_text", "completed" if ok else "failed", run_id=run_id, task_id=task_id, agent_id=agent_id, latency_ms=duration, input_summary=f"Dify text upload text_hash={text_hash[:16]}", output_summary=row["output_summary"], error_message=error, raw_payload_hash=response_hash or text_hash)
     if ok and prepared_row:
-        resume_payload, resume_status = agent_gateway_resume_prepared_action(conn, prepared_row["action_id"], {
-            "workspace_id": prepared_row["workspace_id"],
-            "provider_side_effect_id": document_id or stable_id("dify_document", run_id, text_hash),
-            "result_summary": row["output_summary"],
-        })
+        resume_payload, resume_status = agent_gateway_resume_prepared_action(conn, prepared_row["action_id"], build_prepared_action_provider_resume_request(
+            prepared_row,
+            provider_side_effect_id=document_id or stable_id("dify_document", run_id, text_hash),
+            result_summary=row["output_summary"],
+        ))
     else:
         resume_payload, resume_status = None, None
     audit(conn, "agent", agent_id, "dify.upload_text", "runs", run_id, None, {"status": row["status"], "document_id": document_id}, {"text_hash": text_hash, "dataset_id": redact_text(dataset_id, 80), "approval_id": prepared_row["approval_id"] if prepared_row else body.get("approval_id"), "prepared_action_id": prepared_row["action_id"] if prepared_row else body.get("prepared_action_id"), "trust_mode": cfg["trust_mode"], "token_omitted": True})
@@ -10008,10 +10010,7 @@ def dify_create_document_by_text(conn, body: dict) -> dict:
         "text_hash": text_hash,
         "output_summary": row["output_summary"],
         "error": error,
-        "prepared_action": resume_payload.get("prepared_action") if isinstance(resume_payload, dict) else prepared_action_public(prepared_row),
-        "approval_id": prepared_row["approval_id"] if prepared_row else body.get("approval_id"),
-        "prepared_action_resume_status": resume_status,
-        "token_omitted": True,
+        **build_prepared_action_provider_result_fields(prepared_row, resume_payload, resume_status),
     }
 
 
@@ -10127,14 +10126,14 @@ def agnesfallback_cli_probe(conn, body: dict) -> dict:
     upsert_run(conn, row, "agnesfallback-cli", {"prompt_hash": stable_hash(prompt)})
     upsert_evaluation(conn, quality_gate_for_run(row), "agnesfallback-cli")
     runtime_event(conn, connector_id, "cli_probe", "completed" if ok else "failed", run_id=run_id, task_id=task_id, agent_id=agent_id, model_name="agnesfallback", latency_ms=duration, prompt_hash=stable_hash(prompt), output_summary=visible, error_message=error, raw_payload_hash=stable_hash({"visible": visible, "error": error}))
-    resume_payload, resume_status = agent_gateway_resume_prepared_action(conn, prepared_row["action_id"], {
-        "workspace_id": prepared_row["workspace_id"],
-        "provider_side_effect_id": stable_id("agnesfallback_cli_probe", run_id, stable_hash(visible or error or "")),
-        "result_summary": row["output_summary"],
-    })
+    resume_payload, resume_status = agent_gateway_resume_prepared_action(conn, prepared_row["action_id"], build_prepared_action_provider_resume_request(
+        prepared_row,
+        provider_side_effect_id=stable_id("agnesfallback_cli_probe", run_id, stable_hash(visible or error or "")),
+        result_summary=row["output_summary"],
+    ))
     audit(conn, "system", "agnesfallback-cli", "runtime.cli_probe", "runs", run_id, None, {"status": row["status"]}, {"prompt_hash": stable_hash(prompt), "confirmed": True, "prepared_action_id": prepared_row["action_id"], "approval_id": prepared_row["approval_id"], "token_omitted": True})
     conn.commit()
-    return {"provider": "agnesfallback", "mode": "cli_probe", "dry_run": False, "live_probe_performed": True, "ok": ok, "run_id": run_id, "duration_ms": duration, "output_summary": row["output_summary"], "error": error, "approval_id": prepared_row["approval_id"], "prepared_action": resume_payload.get("prepared_action") if isinstance(resume_payload, dict) else prepared_action_public(prepared_row), "prepared_action_resume_status": resume_status, "token_omitted": True}
+    return {"provider": "agnesfallback", "mode": "cli_probe", "dry_run": False, "live_probe_performed": True, "ok": ok, "run_id": run_id, "duration_ms": duration, "output_summary": row["output_summary"], "error": error, **build_prepared_action_provider_result_fields(prepared_row, resume_payload, resume_status)}
 
 
 def agnesfallback_chat_completion_probe(conn, body: dict) -> dict:
@@ -10222,14 +10221,14 @@ def agnesfallback_chat_completion_probe(conn, body: dict) -> dict:
     upsert_run(conn, row, "agnesfallback-api", {"prompt_hash": stable_hash(prompt), "raw_payload_hash": response_hash})
     upsert_evaluation(conn, quality_gate_for_run(row), "agnesfallback-api")
     runtime_event(conn, connector_id, "chat_completion_probe", "completed" if ok else "failed", run_id=run_id, task_id=task_id, agent_id=agent_id, model_name="agnesfallback", latency_ms=duration, prompt_hash=stable_hash(prompt), output_summary=visible, error_message=error, raw_payload_hash=response_hash)
-    resume_payload, resume_status = agent_gateway_resume_prepared_action(conn, prepared_row["action_id"], {
-        "workspace_id": prepared_row["workspace_id"],
-        "provider_side_effect_id": stable_id("agnesfallback_api_probe", run_id, response_hash or stable_hash(visible or error or "")),
-        "result_summary": row["output_summary"],
-    })
+    resume_payload, resume_status = agent_gateway_resume_prepared_action(conn, prepared_row["action_id"], build_prepared_action_provider_resume_request(
+        prepared_row,
+        provider_side_effect_id=stable_id("agnesfallback_api_probe", run_id, response_hash or stable_hash(visible or error or "")),
+        result_summary=row["output_summary"],
+    ))
     audit(conn, "system", "agnesfallback-api", "runtime.chat_completion_probe", "runs", run_id, None, {"status": row["status"]}, {"prompt_hash": stable_hash(prompt), "confirmed": True, "prepared_action_id": prepared_row["action_id"], "approval_id": prepared_row["approval_id"], "token_omitted": True})
     conn.commit()
-    return {"provider": "agnesfallback", "mode": "openai_compatible", "dry_run": False, "live_probe_performed": True, "ok": ok, "run_id": run_id, "duration_ms": duration, "output_summary": row["output_summary"], "error": error, "approval_id": prepared_row["approval_id"], "prepared_action": resume_payload.get("prepared_action") if isinstance(resume_payload, dict) else prepared_action_public(prepared_row), "prepared_action_resume_status": resume_status, "token_omitted": True}
+    return {"provider": "agnesfallback", "mode": "openai_compatible", "dry_run": False, "live_probe_performed": True, "ok": ok, "run_id": run_id, "duration_ms": duration, "output_summary": row["output_summary"], "error": error, **build_prepared_action_provider_result_fields(prepared_row, resume_payload, resume_status)}
 
 
 def ensure_local_ai_brief_agent_task(conn):
@@ -12784,14 +12783,14 @@ def hermes_run_task(conn, body: dict) -> dict:
     upsert_run(conn, row, "hermes-run-task", {"prompt_hash": prompt_hash, "raw_payload_hash": response_hash})
     upsert_evaluation(conn, quality_gate_for_run(row), "hermes-run-task")
     runtime_event(conn, "rtc_hermes_default_gateway", "run_task", "completed" if ok else "failed", run_id=run_id, task_id=task_id, agent_id=agent_id, model_name="hermes-agent", latency_ms=duration, prompt_hash=prompt_hash, output_summary=visible, error_message=error, raw_payload_hash=response_hash)
-    resume_payload, resume_status = agent_gateway_resume_prepared_action(conn, prepared_row["action_id"], {
-        "workspace_id": prepared_row["workspace_id"],
-        "provider_side_effect_id": stable_id("hermes_default_probe", run_id, response_hash or stable_hash(visible or error or "")),
-        "result_summary": row["output_summary"],
-    })
+    resume_payload, resume_status = agent_gateway_resume_prepared_action(conn, prepared_row["action_id"], build_prepared_action_provider_resume_request(
+        prepared_row,
+        provider_side_effect_id=stable_id("hermes_default_probe", run_id, response_hash or stable_hash(visible or error or "")),
+        result_summary=row["output_summary"],
+    ))
     audit(conn, "system", "hermes-run-task", "runtime.run_task", "runs", run_id, None, {"status": row["status"]}, {"prompt_hash": prompt_hash, "confirmed": True, "prepared_action_id": prepared_row["action_id"], "approval_id": prepared_row["approval_id"], "token_omitted": True})
     conn.commit()
-    return {"created": True, "dry_run": False, "live_probe_performed": True, "provider": "hermes", "mode": "default_gateway_fixed_probe", "ok": ok, "run_id": run_id, "task_id": task_id, "duration_ms": duration, "output_summary": row["output_summary"], "error": error, "approval_id": prepared_row["approval_id"], "prepared_action": resume_payload.get("prepared_action") if isinstance(resume_payload, dict) else prepared_action_public(prepared_row), "prepared_action_resume_status": resume_status, "token_omitted": True}
+    return {"created": True, "dry_run": False, "live_probe_performed": True, "provider": "hermes", "mode": "default_gateway_fixed_probe", "ok": ok, "run_id": run_id, "task_id": task_id, "duration_ms": duration, "output_summary": row["output_summary"], "error": error, **build_prepared_action_provider_result_fields(prepared_row, resume_payload, resume_status)}
 
 
 def worker_runtime_path(adapter: str, suffix: str) -> Path:
@@ -22786,14 +22785,14 @@ def notion_export_live_or_gate(conn, body: dict, markdown: str, title: str, acto
                 "INSERT INTO external_object_links(link_id,internal_object_type,internal_object_id,external_provider,external_object_type,external_object_id,external_url,sync_direction,sync_status,last_synced_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                 (stable_id("lnk", "report", event["sync_event_id"]), "report", "agentops_mis_project_report", "notion", "page", result.get("notion_page_id"), result.get("url"), "outbound", "created", now_iso(), now_iso()),
             )
-        resume_payload, resume_status = agent_gateway_resume_prepared_action(conn, prepared_row["action_id"], {
-            "workspace_id": prepared_row["workspace_id"],
-            "provider_side_effect_id": result.get("notion_page_id") or stable_id("notion_page", event["sync_event_id"]),
-            "result_summary": f"Notion page created: {result.get('notion_page_id') or 'unknown'}",
-        })
+        resume_payload, resume_status = agent_gateway_resume_prepared_action(conn, prepared_row["action_id"], build_prepared_action_provider_resume_request(
+            prepared_row,
+            provider_side_effect_id=result.get("notion_page_id") or stable_id("notion_page", event["sync_event_id"]),
+            result_summary=f"Notion page created: {result.get('notion_page_id') or 'unknown'}",
+        ))
         audit(conn, "user", "usr_founder", "notion.export_confirmed", "integrations", "notion", None, result, {"sync_event_id": event["sync_event_id"], "prepared_action_id": prepared_row["action_id"], "approval_id": prepared_row["approval_id"], "token_omitted": True})
         conn.commit()
-        return {**result, "dry_run": False, "live_export_performed": True, "sync_event_id": event["sync_event_id"], "approval_id": prepared_row["approval_id"], "prepared_action": resume_payload.get("prepared_action") if isinstance(resume_payload, dict) else prepared_action_public(prepared_row), "prepared_action_resume_status": resume_status, "token_omitted": True}
+        return {**result, "dry_run": False, "live_export_performed": True, "sync_event_id": event["sync_event_id"], **build_prepared_action_provider_result_fields(prepared_row, resume_payload, resume_status)}
     except Exception as exc:
         err = redact_text(str(exc), 300)
         event = create_sync_event(conn, "conn_notion_templates", "outbound", "report", "failed", {"export_mode": cfg["export_mode"]}, error_message=err)

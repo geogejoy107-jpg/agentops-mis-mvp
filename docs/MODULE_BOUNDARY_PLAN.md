@@ -345,8 +345,42 @@ python3 scripts/dify_upload_prepared_action_gate_smoke.py --base-url http://127.
 python3 scripts/notion_export_prepared_action_gate_smoke.py --base-url http://127.0.0.1:8787
 ```
 
+### Slice 13: Prepared-Action Provider Result Reconciliation Helpers
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/approval_wall.py`
+
+Moved out of `server.py`:
+
+- shared provider-side prepared-action resume request shaping
+- shared provider result fields for `approval_id`, public prepared action,
+  resume status and token-omission proof
+- OpenClaw, Agnesfallback CLI/API, Hermes default run-task, Dify upload and
+  Notion export provider completion responses now use the shared helper
+
+Still owned by `server.py`:
+
+- provider execution and network/process calls
+- provider-specific side-effect id derivation
+- runtime events, audit logs, evaluations and commits
+- exact-once prepared-action resume invocation
+- provider-specific response base fields and delivery/sync evidence
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/runtime_probe_prepared_action_gate_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/dify_upload_prepared_action_gate_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/notion_export_prepared_action_gate_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/prepared_action_approval_wall_smoke.py --base-url http://127.0.0.1:8787
+```
+
 ## Next Candidate Slices
 
-- Prepared-action provider result reconciliation helpers.
+- Approval Wall route access/error helper extraction.
 
 Each candidate must be extracted in a separate, smoke-backed slice.

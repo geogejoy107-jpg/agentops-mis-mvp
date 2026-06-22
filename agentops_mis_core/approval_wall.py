@@ -358,6 +358,35 @@ def build_prepared_action_resume_success_response(
     }
 
 
+def build_prepared_action_provider_resume_request(
+    prepared_action: Any,
+    *,
+    provider_side_effect_id: str,
+    result_summary: str,
+) -> dict[str, Any]:
+    data = dict(prepared_action) if prepared_action is not None else {}
+    return {
+        "workspace_id": data.get("workspace_id"),
+        "provider_side_effect_id": provider_side_effect_id,
+        "result_summary": result_summary,
+    }
+
+
+def build_prepared_action_provider_result_fields(
+    prepared_action: Any,
+    resume_payload: Any,
+    resume_status: int | None,
+) -> dict[str, Any]:
+    data = dict(prepared_action) if prepared_action is not None else {}
+    payload = resume_payload if isinstance(resume_payload, dict) else {}
+    return {
+        "approval_id": data.get("approval_id"),
+        "prepared_action": payload.get("prepared_action") or prepared_action_public(data),
+        "prepared_action_resume_status": resume_status,
+        "token_omitted": True,
+    }
+
+
 def runtime_probe_prepared_action_required_payload(
     *,
     prepared: dict[str, Any],
