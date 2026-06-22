@@ -42,6 +42,7 @@ human/admin APIs:
 | Postgres boundary fixture parity | `agentops_mis_storage.parity_fixture` runs the same operations and queries through SQLite and the optional Postgres adapter, then compares normalized snapshots | storage adapter acceptance before route-level BYOC Postgres parity | `python3 scripts/storage_postgres_boundary_parity_smoke.py` |
 | Postgres route read-model parity | Selected current API response shapes projected from the shared fixture compare identical on SQLite and Postgres | pre-HTTP route parity before a Postgres-backed server adapter can replace SQLite reads | `python3 scripts/storage_postgres_route_read_model_smoke.py` |
 | Storage backend selection | `AGENTOPS_STORAGE_BACKEND` and `/api/storage/backend-status` expose the selected backend and fail closed for Postgres until all prerequisites are proven | prevents Enterprise/BYOC misconfiguration from silently using SQLite | `python3 scripts/storage_backend_selection_smoke.py` |
+| Postgres HTTP read parity | `AGENTOPS_STORAGE_BACKEND=postgres` plus `AGENTOPS_POSTGRES_READ_ONLY_HTTP=1` starts the server on a temporary Postgres database, routes selected GET APIs through `PostgresAdapter`, and blocks POST/PATCH writes | first real server-backed Postgres route proof before widening read coverage or enabling writes | `python3 scripts/storage_postgres_http_read_parity_smoke.py` |
 
 The helpers deliberately keep the existing SQLite row shape and ordering. They
 only centralize workspace filters and detail assembly so a future adapter can
@@ -97,3 +98,8 @@ The backend selection smoke must pass before exposing Postgres as a deployable
 server storage backend:
 
 - `python3 scripts/storage_backend_selection_smoke.py`
+
+The Postgres HTTP read parity smoke must pass before claiming any server route
+is actually Postgres-backed:
+
+- `python3 scripts/storage_postgres_http_read_parity_smoke.py`

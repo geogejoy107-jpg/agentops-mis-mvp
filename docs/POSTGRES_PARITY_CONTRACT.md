@@ -31,7 +31,11 @@ seventh layer is the backend selection contract,
 `storage_backend_selection_fail_closed_v1`, which keeps SQLite as the explicit
 Free Local backend and makes requested Postgres startup fail closed until
 enterprise entitlement, DSN, opt-in flag, optional driver, and routable server
-adapter support are all proven.
+adapter support are all proven. The eighth layer is the server HTTP read
+contract, `postgres_http_read_parity_v1`, which starts the Python server against
+a temporary Postgres database, verifies selected current GET route payloads
+against the route read-model contract, and proves writes fail closed while the
+Postgres server adapter is still read-only.
 
 All layers are intentionally derived from `server.SCHEMA_SQL`, because
 `server.py` is still the executable schema authority for the dependency-free
@@ -84,6 +88,7 @@ python3 scripts/storage_postgres_optional_adapter_smoke.py
 python3 scripts/storage_postgres_boundary_parity_smoke.py
 python3 scripts/storage_postgres_route_read_model_smoke.py
 python3 scripts/storage_backend_selection_smoke.py
+python3 scripts/storage_postgres_http_read_parity_smoke.py
 python3 scripts/storage_boundary_sqlite_smoke.py
 ```
 
@@ -104,8 +109,11 @@ tool-call, approval, memory, evaluation, artifact, audit, and workflow job
 payloads, produce identical SQLite/Postgres hashes. The seventh command proves
 server backend selection is explicit: default SQLite is active through
 `/api/storage/backend-status`, while requested Postgres startup fails closed
-instead of silently falling back. The final command proves the broader current
-SQLite helper behavior that Postgres must match.
+instead of silently falling back. The eighth command starts the actual server
+in `AGENTOPS_STORAGE_BACKEND=postgres` read-only HTTP mode, confirms 14
+selected GET routes match the locked read-model hash, and confirms POST writes
+return `postgres_read_only_backend` without creating rows. The final command
+proves the broader current SQLite helper behavior that Postgres must match.
 
 When Docker is unavailable on a local machine, use the non-authoritative
 diagnostic mode only to keep wider readiness checks moving:
@@ -116,6 +124,7 @@ python3 scripts/storage_postgres_adapter_contract_smoke.py --skip-if-unavailable
 python3 scripts/storage_postgres_optional_adapter_smoke.py --skip-if-unavailable
 python3 scripts/storage_postgres_boundary_parity_smoke.py --skip-if-unavailable
 python3 scripts/storage_postgres_route_read_model_smoke.py --skip-if-unavailable
+python3 scripts/storage_postgres_http_read_parity_smoke.py --skip-if-unavailable
 ```
 
 This mode reports `skipped: true`; it is not final BYOC/Postgres evidence.
@@ -143,7 +152,14 @@ Current local evidence on `codex/commercial-migration-closed-loop`:
 - `storage_backend_selection_fail_closed_v1` passed locally: default SQLite is
   active through `/api/storage/backend-status`, and requested Postgres startup
   exits before SQLite seed/reset when entitlement, DSN, or opt-in flag is
-  missing.
+  missing; Postgres server reads also require
+  `AGENTOPS_POSTGRES_READ_ONLY_HTTP=1`.
+- `postgres_http_read_parity_v1` passed against `postgres:16-alpine` with a
+  temporary psycopg target: server backend mode was `read_only_http`, 14
+  selected GET routes matched read-model hash
+  `e6a562071962c4e2ff99236e39cfa2ee3b53f36b46c3b0d268507a5ced08f843`,
+  POST writes returned `503 postgres_read_only_backend`,
+  `free_local_dependencies=[]`, and no fallback to SQLite occurred.
 - Source install packaging includes `agentops_mis_storage.postgres`; importing
   the module and translating SQL does not require psycopg.
 
@@ -152,8 +168,7 @@ Current local evidence on `codex/commercial-migration-closed-loop`:
 Postgres parity is not complete until the adapter boundary:
 
 - routes more `repo_*` helper flows through the same shared fixture pattern;
-- runs selected HTTP/CLI requests against a Postgres-backed server adapter once
-  the server can switch storage backends;
+- widens selected HTTP/CLI requests against the Postgres-backed server adapter;
 - keeps backend selection fail-closed so Postgres configuration cannot silently
   run against SQLite;
 - keeps qmark/named placeholder translation and literal `?` behavior locked;

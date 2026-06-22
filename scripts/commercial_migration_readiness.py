@@ -183,15 +183,19 @@ def main() -> int:
             and file_contains("docs/POSTGRES_PARITY_CONTRACT.md", "postgres_boundary_fixture_parity_v1")
             and file_contains("docs/POSTGRES_PARITY_CONTRACT.md", "postgres_route_read_model_parity_v1")
             and file_contains("docs/POSTGRES_PARITY_CONTRACT.md", "storage_backend_selection_fail_closed_v1")
+            and file_contains("docs/POSTGRES_PARITY_CONTRACT.md", "postgres_http_read_parity_v1")
+            and file_contains("docs/STORAGE_BOUNDARY_MAP.md", "storage_postgres_http_read_parity_smoke.py")
             and file_contains("server.py", "repo_list_workspace_tasks")
             and file_contains("server.py", "storage_backend_status")
+            and file_contains("server.py", "postgres_read_only_backend")
             and (ROOT / "agentops_mis_storage" / "postgres.py").exists()
             and (ROOT / "agentops_mis_storage" / "parity_fixture.py").exists()
             and (ROOT / "scripts" / "storage_boundary_sqlite_smoke.py").exists()
             and (ROOT / "scripts" / "storage_postgres_boundary_parity_smoke.py").exists()
             and (ROOT / "scripts" / "storage_postgres_route_read_model_smoke.py").exists()
+            and (ROOT / "scripts" / "storage_postgres_http_read_parity_smoke.py").exists()
             and (ROOT / "scripts" / "storage_backend_selection_smoke.py").exists(),
-            "workspace-scoped helpers, isolated SQLite smoke, Postgres container parity, adapter SQL contract, optional psycopg adapter, shared boundary fixture parity, route read-model parity, and fail-closed backend selection are present",
+            "workspace-scoped helpers, isolated SQLite smoke, Postgres container parity, adapter SQL contract, optional psycopg adapter, shared boundary fixture parity, route read-model parity, fail-closed backend selection, and read-only Postgres HTTP parity are present",
         ),
         check(
             "blocked_generated_or_runtime_artifacts_absent",
@@ -240,6 +244,7 @@ def main() -> int:
                 "python3 scripts/storage_postgres_boundary_parity_smoke.py",
                 "python3 scripts/storage_postgres_route_read_model_smoke.py",
                 "python3 scripts/storage_backend_selection_smoke.py",
+                "python3 scripts/storage_postgres_http_read_parity_smoke.py",
             ],
         },
         {

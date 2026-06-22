@@ -156,6 +156,17 @@ class PostgresAdapter:
     def __init__(self, connection):
         self.connection = connection
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        if exc_type is None:
+            self.commit()
+        else:
+            self.rollback()
+        self.close()
+        return False
+
     @classmethod
     def connect(cls, dsn: str):
         psycopg = load_psycopg()

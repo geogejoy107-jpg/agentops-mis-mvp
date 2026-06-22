@@ -126,6 +126,9 @@ Must be true:
   a Postgres-backed server route can replace SQLite reads.
 - Backend selection is explicit and fail-closed: Postgres cannot silently fall
   back to SQLite when BYOC prerequisites are missing.
+- A Postgres-backed server can start only in explicit read-only HTTP mode at
+  this gate: selected GET routes must match the locked read-model hash, while
+  POST/PATCH writes fail closed until the write adapter is proven.
 - Verification includes local acceptance against a temporary SQLite database
   before any Postgres work starts:
 
@@ -134,6 +137,7 @@ python3 scripts/storage_boundary_sqlite_smoke.py
 python3 scripts/storage_postgres_boundary_parity_smoke.py
 python3 scripts/storage_postgres_route_read_model_smoke.py
 python3 scripts/storage_backend_selection_smoke.py
+python3 scripts/storage_postgres_http_read_parity_smoke.py
 ```
 
 ### Gate 4: UI/API Parity Before Next.js

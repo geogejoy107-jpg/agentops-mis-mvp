@@ -28,6 +28,7 @@ import sys
 import threading
 import time
 import uuid
+from decimal import Decimal
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -275,6 +276,7 @@ def storage_backend_status(headers=None) -> dict:
                 "dsn_configured": bool(os.environ.get("AGENTOPS_POSTGRES_DSN") or os.environ.get("DATABASE_URL")),
                 "required_edition": "enterprise_byoc",
                 "server_backend_routable": False,
+                "read_only_http_routable": False,
             },
             "fallback_performed": False,
             "token_omitted": True,
@@ -283,10 +285,12 @@ def storage_backend_status(headers=None) -> dict:
     entitlement = entitlement_status(headers)
     dsn = os.environ.get("AGENTOPS_POSTGRES_DSN") or os.environ.get("DATABASE_URL")
     explicit_enable = os.environ.get("AGENTOPS_ENABLE_POSTGRES_STORAGE", "").strip().lower() in {"1", "true", "yes"}
+    read_only_http = os.environ.get("AGENTOPS_POSTGRES_READ_ONLY_HTTP", "").strip().lower() in {"1", "true", "yes", "on"}
     checks = {
         "enterprise_entitlement": bool(entitlement.get("capabilities", {}).get("postgres_adapter")),
         "dsn_configured": bool(dsn),
         "experimental_enable_flag": explicit_enable,
+        "read_only_http_flag": read_only_http,
         "driver_available": False,
         "server_backend_routable": False,
     }
@@ -297,16 +301,38 @@ def storage_backend_status(headers=None) -> dict:
         checks["driver_available"] = True
     except Exception:
         checks["driver_available"] = False
+    checks["server_backend_routable"] = bool(read_only_http and checks["driver_available"])
     if not checks["enterprise_entitlement"]:
         reason = "entitlement_required"
     elif not checks["dsn_configured"]:
         reason = "missing_postgres_dsn"
     elif not checks["experimental_enable_flag"]:
         reason = "postgres_storage_flag_required"
+    elif not checks["read_only_http_flag"]:
+        reason = "postgres_read_only_http_flag_required"
     elif not checks["driver_available"]:
         reason = "optional_psycopg_unavailable"
     else:
-        reason = "server_postgres_backend_not_routable"
+        return {
+            "provider": "agentops-storage",
+            "status": "active",
+            "selected_backend": "postgres",
+            "active_backend": "postgres",
+            "mode": "read_only_http",
+            "writes_allowed": False,
+            "checks": checks,
+            "required_edition": "enterprise_byoc",
+            "postgres": {
+                "dsn_configured": True,
+                "required_edition": "enterprise_byoc",
+                "server_backend_routable": True,
+                "read_only_http_routable": True,
+                "free_local_dependency": False,
+            },
+            "fallback_performed": False,
+            "token_omitted": True,
+            "contract": "postgres_http_read_parity_v1",
+        }
     return {
         "provider": "agentops-storage",
         "status": "blocked",
@@ -315,8 +341,13 @@ def storage_backend_status(headers=None) -> dict:
         "reason": reason,
         "checks": checks,
         "required_edition": "enterprise_byoc",
-        "required_env": ["AGENTOPS_STORAGE_BACKEND=postgres", "AGENTOPS_POSTGRES_DSN", "AGENTOPS_ENABLE_POSTGRES_STORAGE=1"],
-        "next_proof": "Wire server.db and schema initialization to PostgresAdapter, then run HTTP/CLI parity against a temporary Postgres backend.",
+        "required_env": [
+            "AGENTOPS_STORAGE_BACKEND=postgres",
+            "AGENTOPS_POSTGRES_DSN",
+            "AGENTOPS_ENABLE_POSTGRES_STORAGE=1",
+            "AGENTOPS_POSTGRES_READ_ONLY_HTTP=1",
+        ],
+        "next_proof": "Run selected HTTP/CLI requests against a temporary Postgres-backed server adapter, then widen the routed helper set.",
         "fallback_performed": False,
         "token_omitted": True,
     }
@@ -327,6 +358,20 @@ def enforce_storage_backend_startup() -> None:
     if status.get("status") != "active":
         print(json.dumps(status, ensure_ascii=False, indent=2, sort_keys=True), file=sys.stderr)
         raise SystemExit(2)
+
+
+def postgres_read_only_write_block(method: str, path: str) -> dict:
+    return {
+        "error": "postgres_read_only_backend",
+        "provider": "agentops-storage",
+        "method": method,
+        "path": path,
+        "message": "Postgres backend is currently enabled only for verified read-only HTTP routes.",
+        "writes_allowed": False,
+        "fallback_performed": False,
+        "token_omitted": True,
+        "contract": "postgres_http_read_parity_v1",
+    }
 
 
 def commercial_entitlement_block(conn, capability: str, operation: str, actor: str = "commercial-gate") -> dict:
@@ -426,15 +471,43 @@ def url_listening(url: str, timeout=0.5) -> bool:
     return socket_listening(parsed.hostname, port, timeout)
 
 
-def db() -> sqlite3.Connection:
+def db():
+    if STORAGE_BACKEND == "postgres":
+        status = storage_backend_status(None)
+        if status.get("status") != "active":
+            raise RuntimeError(f"Postgres storage backend is not active: {status.get('reason') or status.get('status')}")
+        from agentops_mis_storage.postgres import PostgresAdapter, connection_config_from_env  # noqa: PLC0415
+
+        config = connection_config_from_env()
+        if not config:
+            raise RuntimeError("Postgres storage backend is active but AGENTOPS_POSTGRES_DSN is missing.")
+        return PostgresAdapter.connect(config.dsn)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
 
+def json_safe(value):
+    if isinstance(value, Decimal):
+        if value == value.to_integral_value():
+            return int(value)
+        return float(value)
+    if isinstance(value, dict):
+        return {key: json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [json_safe(item) for item in value]
+    if isinstance(value, tuple):
+        return [json_safe(item) for item in value]
+    return value
+
+
+def row_to_dict(row):
+    return json_safe(dict(row))
+
+
 def rows_to_dicts(rows):
-    return [dict(r) for r in rows]
+    return [row_to_dict(r) for r in rows]
 
 
 def row_unchanged(before, row: dict, ignore=None) -> bool:
@@ -3051,7 +3124,7 @@ def repo_get_workspace_task(conn: sqlite3.Connection, workspace_id: str, task_id
 
 def repo_task_detail(conn: sqlite3.Connection, task) -> dict:
     task_id = task["task_id"]
-    data = {"task": dict(task)}
+    data = {"task": row_to_dict(task)}
     for table in ["runs", "approvals", "evaluations", "memories", "artifacts"]:
         data[table] = rows_to_dicts(conn.execute(f"SELECT * FROM {table} WHERE task_id=? ORDER BY created_at DESC", (task_id,)).fetchall())
     return data
@@ -3287,7 +3360,7 @@ def repo_list_agent_gateway_memories(
 def repo_run_detail(conn: sqlite3.Connection, run) -> dict:
     run_id = run["run_id"]
     return {
-        "run": dict(run),
+        "run": row_to_dict(run),
         "tool_calls": rows_to_dicts(conn.execute("SELECT * FROM tool_calls WHERE run_id=? ORDER BY created_at", (run_id,)).fetchall()),
         "approvals": rows_to_dicts(conn.execute("SELECT * FROM approvals WHERE run_id=? ORDER BY created_at", (run_id,)).fetchall()),
         "evaluations": rows_to_dicts(conn.execute("SELECT * FROM evaluations WHERE run_id=? ORDER BY created_at", (run_id,)).fetchall()),
@@ -12291,7 +12364,7 @@ def run_graph(conn, run_id: str) -> dict | None:
     parent = conn.execute("SELECT * FROM runs WHERE run_id=?", (run["parent_run_id"],)).fetchone() if run["parent_run_id"] else None
     children = rows_to_dicts(conn.execute("SELECT * FROM runs WHERE parent_run_id=? ORDER BY created_at", (run_id,)).fetchall())
     siblings = rows_to_dicts(conn.execute("SELECT * FROM runs WHERE delegation_id=? AND run_id<>? ORDER BY created_at", (run["delegation_id"], run_id)).fetchall()) if run["delegation_id"] else []
-    return {"run": dict(run), "parent": dict(parent) if parent else None, "children": children, "siblings_by_delegation": siblings}
+    return {"run": row_to_dict(run), "parent": row_to_dict(parent) if parent else None, "children": children, "siblings_by_delegation": siblings}
 
 
 def agent_performance(conn, agent_id: str) -> dict | None:
@@ -12758,7 +12831,7 @@ class Handler(BaseHTTPRequestHandler):
         sys.stderr.write("[%s] %s\n" % (self.log_date_time_string(), fmt % args))
 
     def send_json(self, data, status=200):
-        payload = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
+        payload = json.dumps(json_safe(data), ensure_ascii=False, indent=2).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
@@ -12787,6 +12860,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         parsed = urlparse(self.path)
+        if STORAGE_BACKEND == "postgres":
+            return self.send_json(postgres_read_only_write_block("POST", parsed.path), status=503)
         body = parse_json_body(self)
         try:
             return self.handle_post_api(parsed.path, body)
@@ -12795,6 +12870,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_PATCH(self):
         parsed = urlparse(self.path)
+        if STORAGE_BACKEND == "postgres":
+            return self.send_json(postgres_read_only_write_block("PATCH", parsed.path), status=503)
         body = parse_json_body(self)
         try:
             return self.handle_patch_api(parsed.path, body)
@@ -14024,7 +14101,21 @@ def main():
     parser.add_argument("--serve", action="store_true", help="Serve after reset")
     args = parser.parse_args()
     enforce_storage_backend_startup()
-    if args.reset:
+    if STORAGE_BACKEND == "postgres":
+        if args.reset:
+            print(json.dumps({
+                "provider": "agentops-storage",
+                "status": "blocked",
+                "selected_backend": "postgres",
+                "active_backend": "postgres",
+                "reason": "postgres_reset_not_supported",
+                "message": "Postgres read-only HTTP mode expects schema and fixtures to be prepared before server start.",
+                "fallback_performed": False,
+                "token_omitted": True,
+                "contract": "postgres_http_read_parity_v1",
+            }, ensure_ascii=False, indent=2, sort_keys=True), file=sys.stderr)
+            raise SystemExit(2)
+    elif args.reset:
         seed(reset=True)
         print(f"Reset and seeded {DB_PATH}")
         if not args.serve:

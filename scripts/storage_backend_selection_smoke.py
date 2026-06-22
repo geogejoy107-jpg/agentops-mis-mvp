@@ -145,6 +145,15 @@ def main() -> int:
         if db_path.exists():
             failures.append("blocked_postgres_selection_created_sqlite_db")
 
+        env["AGENTOPS_ENABLE_POSTGRES_STORAGE"] = "1"
+        no_read_only_http = run_server_reset(env)
+        if no_read_only_http.returncode != 2:
+            failures.append(f"postgres_without_read_only_http_flag_returncode={no_read_only_http.returncode}")
+        if "postgres_read_only_http_flag_required" not in no_read_only_http.stderr:
+            failures.append("postgres_without_read_only_http_flag_missing_reason")
+        if db_path.exists():
+            failures.append("blocked_postgres_read_only_selection_created_sqlite_db")
+
         sqlite_env = os.environ.copy()
         sqlite_env["AGENTOPS_DB_PATH"] = str(Path(temp_dir) / "sqlite-active.db")
         sqlite_env.pop("AGENTOPS_STORAGE_BACKEND", None)
@@ -173,7 +182,7 @@ def main() -> int:
         "fallback_performed": False,
         "token_omitted": True,
         "failures": failures,
-        "next_proof": "Wire server.db/schema initialization to PostgresAdapter and run HTTP parity against a temporary Postgres backend.",
+        "next_proof": "Run selected HTTP/CLI requests against a temporary Postgres backend, then widen routed helper coverage.",
     }
     print(json.dumps(output, ensure_ascii=False, indent=2, sort_keys=True))
     return 0 if not failures else 1
