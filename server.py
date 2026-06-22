@@ -7882,11 +7882,13 @@ def agent_gateway_record_tool_call(conn, body) -> tuple[dict, int]:
         agent_id = run["agent_id"]
     ensure_gateway_agent(conn, agent_id, runtime_type=body.get("runtime_type"))
     tool_name = redact_text(body.get("tool_name") or "agent_gateway.note", 120)
-    risk = coerce_choice(body.get("risk_level") or ("high" if tool_name in RISKY_TOOLS else "low"), VALID_RISK_LEVELS, "low")
     category = coerce_choice(body.get("tool_category"), VALID_TOOL_CATEGORIES, "custom")
-    status = coerce_choice(body.get("status"), {"planned", "running", "completed", "failed", "blocked", "waiting_approval"}, "completed" if risk in {"low", "medium"} else "waiting_approval")
     args = safe_json_metadata(body.get("normalized_args_json") or body.get("args") or {"summary": body.get("args_summary") or "redacted"})
+    risk = coerce_choice(body.get("risk_level") or ("high" if tool_name in RISKY_TOOLS else "low"), VALID_RISK_LEVELS, "low")
     external_side_effect_intent = tool_call_has_external_side_effect_intent(tool_name, category, body.get("target_resource"), args)
+    if external_side_effect_intent and risk in {"low", "medium"}:
+        risk = "high"
+    status = coerce_choice(body.get("status"), {"planned", "running", "completed", "failed", "blocked", "waiting_approval"}, "completed" if risk in {"low", "medium"} else "waiting_approval")
     high_risk_side_effect = risk in {"high", "critical"} and (
         status == "completed"
         or bool(body.get("side_effect_id"))
