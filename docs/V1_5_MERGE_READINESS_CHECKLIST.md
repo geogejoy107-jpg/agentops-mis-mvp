@@ -118,6 +118,7 @@ python3 scripts/knowledge_retrieval_quality_smoke.py
 ```bash
 python3 scripts/redaction_policy_smoke.py
 python3 scripts/security_production_readiness_smoke.py
+python3 scripts/production_security_warning_ui_smoke.py
 ```
 
 ## 5. Authentication and deployment boundary
