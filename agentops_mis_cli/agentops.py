@@ -633,8 +633,31 @@ def select_advance_loop_item(handoff: dict) -> dict:
     return {}
 
 
+def compact_loop_control(payload: dict) -> dict:
+    control = payload.get("control_summary") or {}
+    step = control.get("recommended_step") or {}
+    return {
+        "operation": control.get("operation"),
+        "status": control.get("status"),
+        "mode": control.get("mode"),
+        "selected_gate": control.get("selected_gate") or step.get("selected_gate"),
+        "selected_status": control.get("selected_status"),
+        "next_command": control.get("next_command") or step.get("command"),
+        "verify_command": control.get("verify_command") or step.get("verify_command"),
+        "receipt_command": control.get("receipt_command") or step.get("receipt_command"),
+        "requires_human": control.get("requires_human"),
+        "requires_receipt": control.get("requires_receipt"),
+        "server_executes_shell": control.get("server_executes_shell"),
+        "copy_only": control.get("copy_only"),
+        "policy_id": control.get("policy_id") or step.get("policy_id"),
+        "read_model_cache": payload.get("read_model_cache") or {},
+        "token_omitted": True,
+    }
+
+
 def cmd_operator_advance_loop(args, client: AgentOpsClient) -> dict:
     handoff = client.get("/api/operator/handoff", query={"limit": args.limit, "loop_id": args.loop_id or None})
+    before_control = compact_loop_control(handoff)
     selected = select_advance_loop_item(handoff)
     policy_summary = advance_loop_policy_summary()
     if not selected:
@@ -645,6 +668,11 @@ def cmd_operator_advance_loop(args, client: AgentOpsClient) -> dict:
             "advanced": False,
             "message": "No allowlisted non-passing loop action is available in the handoff action package.",
             "handoff_status": handoff.get("status"),
+            "control_readback": {
+                "before": before_control,
+                "after": None,
+                "token_omitted": True,
+            },
             "policy": policy_summary,
             "safety": {
                 "read_only": True,
@@ -678,6 +706,11 @@ def cmd_operator_advance_loop(args, client: AgentOpsClient) -> dict:
             "status": "preview",
             "advanced": False,
             "preview": preview,
+            "control_readback": {
+                "before": before_control,
+                "after": None,
+                "token_omitted": True,
+            },
             "policy": policy_summary,
             "next_actions": ["rerun with --confirm-advance to execute exactly one allowlisted loop action"],
             "contract": "preview-only; does not execute commands and does not mutate ledgers without --confirm-advance",
@@ -698,6 +731,11 @@ def cmd_operator_advance_loop(args, client: AgentOpsClient) -> dict:
             "preview": preview,
             "policy": policy_summary,
             "message": "Verify command failed bounded-runner policy.",
+            "control_readback": {
+                "before": before_control,
+                "after": None,
+                "token_omitted": True,
+            },
             "safety": {
                 "read_only": True,
                 "ledger_mutated": False,
@@ -737,6 +775,9 @@ def cmd_operator_advance_loop(args, client: AgentOpsClient) -> dict:
         ),
     }
     receipt = client.post("/api/operator/action-receipts", receipt_payload)
+    refresh_query = {"limit": args.limit, "loop_id": args.loop_id or None, "refresh_cache": "true"}
+    after_handoff = client.get("/api/operator/handoff", query=refresh_query)
+    after_self_check = client.get("/api/operator/loop-self-check", query=refresh_query)
     return {
         "provider": "agentops-operator",
         "operation": "operator_advance_loop",
@@ -748,6 +789,17 @@ def cmd_operator_advance_loop(args, client: AgentOpsClient) -> dict:
         "action_result": action_result,
         "verify_result": verify_result,
         "receipt": receipt,
+        "control_readback": {
+            "before": before_control,
+            "after": compact_loop_control(after_handoff),
+            "after_self_check": compact_loop_control(after_self_check),
+            "refresh_cache_requested": True,
+            "cache_bypassed": (
+                ((after_handoff.get("read_model_cache") or {}).get("status") == "bypass")
+                and ((after_self_check.get("read_model_cache") or {}).get("status") == "bypass")
+            ),
+            "token_omitted": True,
+        },
         "contract": "bounded CLI runner; executes at most one allowlisted local agentops action, verifies it, and records an append-only receipt; never approves memory or runs live/workflow commands",
         "safety": {
             "read_only": False,
