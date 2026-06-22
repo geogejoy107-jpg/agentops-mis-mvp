@@ -80,7 +80,18 @@ def db_fingerprint(db_path: Path) -> dict:
     conn = sqlite3.connect(db_path)
     try:
         result = {}
-        for table in ["audit_logs", "runtime_events", "tasks", "runs", "memories", "approvals", "agent_plans", "plan_evidence_manifests"]:
+        for table in [
+            "runtime_connectors",
+            "connectors",
+            "audit_logs",
+            "runtime_events",
+            "tasks",
+            "runs",
+            "memories",
+            "approvals",
+            "agent_plans",
+            "plan_evidence_manifests",
+        ]:
             exists = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
             if exists:
                 result[table] = int(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] or 0)

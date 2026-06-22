@@ -464,16 +464,18 @@ agentops operator runtime-doctor --limit 8
 agentops operator runtime-doctor --runtime-base-url http://127.0.0.1:8787 --limit 8
 ```
 
-Maps to `GET /api/operator/runtime-doctor`. This is read-only and aggregates
-`operator health`, `worker readiness`, `worker fleet`, and `operator handoff`.
-It returns gates for local MIS API health, Hermes/OpenClaw availability,
+Maps to `GET /api/operator/runtime-doctor`. This is a lightweight read-only
+first-check, not the heavier full `operator health` aggregate. It samples
+adapter readiness, worker fleet state, and ledger evidence counts, then returns
+gates for local MIS API reachability, Hermes/OpenClaw availability,
 `--confirm-run`, prepared actions for external writes, remote worker freshness,
 launch-packet availability, handoff/evidence-chain status, Codex supervision,
-and token/raw-content redaction. The payload includes copyable commands for
-runtime preflight, launch packet, handoff, loop audit, evidence report, guarded
-Hermes/OpenClaw execution, and Action Queue receipt recording. It never starts
-runtimes, executes tasks, mutates ledgers, or exposes tokens. Supplied Agent
-Gateway tokens/sessions must carry `tasks:read` and remain workspace-bound.
+and token/raw-content redaction. The payload includes copyable commands for the
+full operator health and handoff checks, runtime preflight, launch packet, loop
+audit, evidence report, guarded Hermes/OpenClaw execution, and Action Queue
+receipt recording. It never starts runtimes, executes tasks, mutates ledgers or
+connector rows, or exposes tokens. Supplied Agent Gateway tokens/sessions must
+carry `tasks:read` and remain workspace-bound.
 
 ### `agentops approval prepared-action`
 

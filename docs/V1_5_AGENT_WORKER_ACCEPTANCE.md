@@ -43,11 +43,13 @@ runner. The supported management primitives are:
   customer delivery gates, worker fleet recovery, adapter readiness, and
   commander inbox state into a prioritized read-only next-action queue.
 - Operator runtime doctor: `GET /api/operator/runtime-doctor` and
-  `agentops operator runtime-doctor` aggregate local MIS API health,
-  Hermes/OpenClaw adapter readiness, remote Agent fleet state, launch packet,
-  handoff/evidence-chain status, `--confirm-run`, prepared-action walls and
-  Codex supervision commands before live runtime dispatch. It is read-only,
-  copy-command only, and does not start runtimes or mutate ledgers.
+  `agentops operator runtime-doctor` provide a lightweight first-check of local
+  MIS API reachability, Hermes/OpenClaw adapter readiness, remote Agent fleet
+  state, launch packet availability, handoff/evidence counts, `--confirm-run`,
+  prepared-action walls and Codex supervision commands before live runtime
+  dispatch. It is read-only, copy-command only, returns deeper
+  `operator health` / `operator handoff` commands, and does not start runtimes
+  or mutate ledgers/connectors.
 - Failed benchmark run handling: `agentops eval review-case-run` can mark a
   failed `evaluation_case_runs` row as `investigating`, `acknowledged`,
   `waived`, or `open`; acknowledged/waived rows stay in the ledger but stop

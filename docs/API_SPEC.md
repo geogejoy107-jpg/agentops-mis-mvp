@@ -420,17 +420,18 @@ uses those repo-map paths as initial `proposed_files_to_change` candidates
 when localization succeeds. The packet does not create plans, run workers,
 approve gates, create memories, mutate ledgers, or return raw file bodies.
 
-`GET /api/operator/runtime-doctor` is the read-only local runtime doctor for
-Hermes, OpenClaw, Codex supervision, and remote Agents. It aggregates operator
-health, worker adapter readiness, worker fleet status, and operator handoff
-into gates for local MIS API health, runtime availability, `--confirm-run`,
-prepared actions for external writes, remote worker freshness, launch-packet
+`GET /api/operator/runtime-doctor` is the lightweight, read-only local runtime
+doctor for Hermes, OpenClaw, Codex supervision, and remote Agents. It samples
+adapter readiness, worker fleet state, and ledger evidence counts into gates for
+local MIS API reachability, runtime availability, `--confirm-run`, prepared
+actions for external writes, remote worker freshness, launch-packet
 availability, handoff/evidence-chain status, Codex supervision, and redaction.
-It returns copyable commands for preflight, launch packet, handoff, loop audit,
-evidence report, guarded live execution, and Action Queue receipts. It requires
-`tasks:read` for supplied Agent Gateway tokens/sessions and never starts
-runtimes, executes tasks, mutates ledgers, or exposes tokens/raw prompts/raw
-responses.
+It deliberately does not run the heavier `operator health` or `operator
+handoff` aggregators inline; instead it returns copyable commands for those
+checks plus preflight, launch packet, loop audit, evidence report, guarded live
+execution, and Action Queue receipts. It requires `tasks:read` for supplied
+Agent Gateway tokens/sessions and never starts runtimes, executes tasks, mutates
+ledgers/connectors, or exposes tokens/raw prompts/raw responses.
 
 `GET /api/operator/loop-audit` is the read-only Agent Work Method Block audit.
 It turns `READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD`

@@ -21032,7 +21032,7 @@ def operator_runtime_doctor(conn: sqlite3.Connection, headers, qs=None, auth_ctx
         or effective_headers.get("X-AgentOps-Workspace-Id")
         or "local-demo"
     )
-    readiness = worker_adapter_readiness(conn, refresh=True)
+    readiness = worker_adapter_readiness(conn, refresh=False)
     fleet = worker_fleet_view(conn)
     readiness_summary = readiness.get("summary") or {}
     adapters = readiness.get("adapters") or {}
