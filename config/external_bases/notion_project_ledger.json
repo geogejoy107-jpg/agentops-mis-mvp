@@ -1,0 +1,122 @@
+{
+  "schema_version": "agentops.external_base.v0",
+  "base_id": "base_notion_project_ledger",
+  "provider": "notion",
+  "display_name": "MIS Project Ledger",
+  "project": {
+    "workspace_id": "local-demo",
+    "project_id": "agentops-mis",
+    "repository": "geogejoy107-jpg/agentops-mis-mvp",
+    "branch": "codex/agent-gateway-kb-demo"
+  },
+  "resource": {
+    "control_center_page_id": "3866adfd-d920-8160-96a0-ef9bd4a58801",
+    "database_id": "24467ea0-d176-4e40-957c-dcc1ca55db53",
+    "data_source_id": "collection://7ba689c1-61ea-4641-8a88-9ac20ce4efed",
+    "registry_database_id": "3d61d50f-f460-4068-9e78-fd7c5b584799",
+    "registry_data_source_id": "collection://2214cd16-5549-4fc6-b5b8-36797d51e3f8"
+  },
+  "authority_roles": [
+    "candidate_inbox",
+    "reviewed_project_state",
+    "presentation"
+  ],
+  "capabilities": {
+    "read": true,
+    "search": true,
+    "write": true,
+    "sync": false,
+    "webhook": false
+  },
+  "approval_policy": {
+    "read": "auto",
+    "write": "confirm",
+    "external_side_effect": "prepared_action",
+    "destructive": "blocked"
+  },
+  "governance": {
+    "classification": "internal",
+    "data_domains": [
+      "project_state",
+      "decision",
+      "backlog",
+      "handoff",
+      "knowledge",
+      "integration"
+    ],
+    "canonical_statuses": [
+      "Approved",
+      "Implemented"
+    ],
+    "candidate_statuses": [
+      "Inbox",
+      "Proposed"
+    ],
+    "quality_dimensions": [
+      "completeness",
+      "consistency",
+      "accuracy",
+      "timeliness",
+      "traceability",
+      "uniqueness"
+    ],
+    "redaction_required": true,
+    "raw_prompts_allowed": false,
+    "raw_transcripts_allowed": false,
+    "credentials_allowed": false,
+    "last_verified_at": "2026-06-22"
+  },
+  "field_map": {
+    "title": "Title",
+    "record_id": "Ledger ID",
+    "record_type": "Type",
+    "status": "Status",
+    "priority": "Priority",
+    "module": "Module",
+    "canonical": "Canonical",
+    "summary": "Summary",
+    "repository": "Repository",
+    "branch": "Branch",
+    "commit": "Commit",
+    "source_url": "Source",
+    "next_action": "Next Action",
+    "owner": "Owner",
+    "duplicate_of": "Duplicate Of",
+    "supersedes": "Supersedes",
+    "conflicts_with": "Conflicts With",
+    "authority_class": "Authority Class",
+    "source_system": "Source System",
+    "data_domain": "Data Domain",
+    "classification": "Data Classification",
+    "lifecycle": "Lifecycle",
+    "verification_state": "Verification State",
+    "data_steward": "Data Steward",
+    "external_base_id": "External Base ID",
+    "last_verified_at": "Last Verified At",
+    "evidence_hash": "Evidence Hash"
+  },
+  "ingestion": {
+    "phase": "v0_manifest_only",
+    "target": "knowledge_documents",
+    "allowed_statuses": [
+      "Approved",
+      "Implemented"
+    ],
+    "requires_workspace_acl": true,
+    "requires_provenance": true,
+    "candidate_records_are_authority": false
+  },
+  "export": {
+    "target": "notion_project_ledger",
+    "mode": "approval_gated",
+    "idempotency_key": "base_id+source_record_id+content_hash",
+    "canonical_promotion": "human_review_only"
+  },
+  "implementation": {
+    "registry": "notion",
+    "manifest": "config/external_bases/notion_project_ledger.json",
+    "knowledge_entry": "knowledge/bases/notion_project_ledger.md",
+    "validator": "scripts/external_base_manifest_smoke.py",
+    "live_sync_enabled": false
+  }
+}
