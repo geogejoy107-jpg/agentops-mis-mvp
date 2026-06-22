@@ -389,6 +389,7 @@ def notion_config() -> dict:
     database_id = os.environ.get("NOTION_DATABASE_ID", "").strip()
     workspace_private_export = os.environ.get("NOTION_WORKSPACE_PRIVATE_EXPORT", "").strip().lower() in ("1", "true", "yes")
     export_mode = "page_parent" if parent_page_id else "database_parent" if database_id else "workspace_private" if workspace_private_export else "dry_run_only"
+    api_base_url = os.environ.get("NOTION_API_BASE_URL", "https://api.notion.com/v1").strip().rstrip("/") or "https://api.notion.com/v1"
     return {
         "configured": bool(token and export_mode != "dry_run_only"),
         "has_token": bool(token),
@@ -396,6 +397,7 @@ def notion_config() -> dict:
         "database_id": database_id,
         "workspace_private_export": workspace_private_export,
         "export_mode": export_mode,
+        "api_base_url": api_base_url,
         "notion_version": os.environ.get("NOTION_VERSION", "2022-06-28"),
     }
 
@@ -8063,11 +8065,14 @@ def agent_gateway_prepare_action(conn, body) -> tuple[dict, int]:
             return {"error": "forbidden", "message": "Prepared action tool_call_id must belong to the target run.", "token_omitted": True}, 403
     action_type = redact_text(body.get("action_type") or (tool_call["tool_name"] if tool_call else "external.action"), 120)
     normalized_args = safe_json_metadata(body.get("normalized_args_json") or body.get("args") or {})
-    checkpoint = safe_json_metadata(body.get("checkpoint") or body.get("checkpoint_json") or {
-        "run_id": run_id,
-        "tool_call_id": tool_call_id,
-        "prepared_at": now_iso(),
-    })
+    if body.get("checkpoint_raw_json") is not None:
+        checkpoint = jsonable_clone(body.get("checkpoint_raw_json"))
+    else:
+        checkpoint = safe_json_metadata(body.get("checkpoint") or body.get("checkpoint_json") or {
+            "run_id": run_id,
+            "tool_call_id": tool_call_id,
+            "prepared_at": now_iso(),
+        })
     risk = coerce_choice(body.get("risk_level") or (tool_call["risk_level"] if tool_call else "high"), VALID_RISK_LEVELS, "high")
     policy_version = redact_text(body.get("policy_version") or "approval-wall-v1", 80)
     idempotency_key = redact_text(body.get("idempotency_key") or stable_hash({
@@ -20490,6 +20495,247 @@ def notion_dry_run_export(conn, actor="notion-dry-run") -> dict:
     return {"provider": "notion", "dry_run": True, "created": False, "sync_event_id": event["sync_event_id"], "preview": preview}
 
 
+def notion_export_action_args(markdown: str, title: str, cfg: dict) -> dict:
+    return {
+        "provider": "notion",
+        "operation": "report.export_page",
+        "title": redact_text(title, 160),
+        "markdown_hash": stable_hash(markdown),
+        "block_count": len(text_blocks(markdown)),
+        "export_mode": cfg["export_mode"],
+        "target_parent": "page" if cfg["parent_page_id"] else "database" if cfg["database_id"] else "workspace_private",
+        "raw_report_stored_in_notion": True,
+        "raw_credentials_stored_in_mis": False,
+        "requires_prepared_action_for_external_write": True,
+    }
+
+
+def ensure_notion_export_agent_task(conn, body: dict, title: str):
+    now = now_iso()
+    agent_id = body.get("agent_id") or "agt_notion_exporter"
+    ensure_gateway_agent(conn, agent_id, name="Notion Export Agent", role="External Report Exporter", runtime_type="mock")
+    task_id = body.get("task_id") or stable_id("tsk_notion_export", title, body.get("idempotency_key") or "project-report")
+    if not conn.execute("SELECT 1 FROM tasks WHERE task_id=?", (task_id,)).fetchone():
+        upsert_task(conn, {
+            "task_id": task_id,
+            "title": "Notion report export",
+            "description": "Export the safe AgentOps MIS report summary to Notion after exact prepared-action approval.",
+            "requester_id": body.get("requester_id") or "usr_founder",
+            "owner_agent_id": agent_id,
+            "collaborator_agent_ids": json.dumps([], ensure_ascii=False),
+            "status": "planned",
+            "priority": coerce_choice(body.get("priority"), VALID_PRIORITIES, "high"),
+            "due_date": None,
+            "acceptance_criteria": "Notion receives only safe report summary content after approval, and MIS records hashes, page id, sync event and audit evidence.",
+            "risk_level": coerce_choice(body.get("risk_level"), VALID_RISK_LEVELS, "high"),
+            "budget_limit_usd": float(body.get("budget_limit_usd") or 1.0),
+            "created_at": now,
+            "updated_at": now,
+        }, "notion-export")
+    return agent_id, task_id
+
+
+def create_notion_export_prepared_action(conn, body: dict, markdown: str, title: str, cfg: dict, actor: str) -> dict:
+    now = now_iso()
+    agent_id, task_id = ensure_notion_export_agent_task(conn, body, title)
+    run_id = body.get("run_id") or stable_id("run_notion_export_prepare", title, stable_hash(markdown))
+    tool_call_id = body.get("tool_call_id") or stable_id("tc_notion_export_prepare", run_id)
+    action_args = notion_export_action_args(markdown, title, cfg)
+    run_row = {
+        "run_id": run_id,
+        "task_id": task_id,
+        "agent_id": agent_id,
+        "runtime_type": "mock",
+        "status": "waiting_approval",
+        "started_at": now,
+        "ended_at": None,
+        "duration_ms": None,
+        "input_summary": f"Notion export prepared action markdown_hash={action_args['markdown_hash'][:16]}",
+        "output_summary": "Notion live export paused before provider call; exact prepared action approval is required.",
+        "model_provider": "notion",
+        "model_name": "pages-api",
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "reasoning_tokens": 0,
+        "cost_usd": 0.0,
+        "error_type": None,
+        "error_message": None,
+        "trace_id": body.get("trace_id"),
+        "parent_run_id": body.get("parent_run_id"),
+        "delegation_id": body.get("delegation_id") or "notion:report-export",
+        "approval_required": 1,
+        "created_at": now,
+    }
+    target_resource = f"notion://{action_args['target_parent']}/report"
+    tool_row = {
+        "tool_call_id": tool_call_id,
+        "run_id": run_id,
+        "agent_id": agent_id,
+        "tool_name": "notion.report.export",
+        "tool_version": "v1",
+        "tool_category": "notion",
+        "normalized_args_json": json.dumps(action_args, ensure_ascii=False, sort_keys=True),
+        "target_resource": target_resource,
+        "risk_level": "high",
+        "status": "waiting_approval",
+        "result_summary": "Prepared Notion report export only; no provider side effect has occurred.",
+        "side_effect_id": None,
+        "started_at": now,
+        "ended_at": None,
+        "created_at": now,
+    }
+    upsert_run(conn, run_row, "notion-export", {"markdown_hash": action_args["markdown_hash"], "raw_report_omitted_from_mis": True, "prepared_action_required": True})
+    upsert_tool_call(conn, tool_row, "notion-export", {"markdown_hash": action_args["markdown_hash"], "prepared_action_required": True, "token_omitted": True})
+    approval_wall, approval_status = agent_gateway_prepare_action(conn, {
+        "workspace_id": body.get("workspace_id") or "local-demo",
+        "agent_id": agent_id,
+        "requested_by_agent_id": agent_id,
+        "run_id": run_id,
+        "tool_call_id": tool_call_id,
+        "action_type": "notion.report.export",
+        "args": action_args,
+        "target_resource": target_resource,
+        "risk_level": "high",
+        "policy_version": "approval-wall-v1",
+        "checkpoint_raw_json": {
+            "run_id": run_id,
+            "tool_call_id": tool_call_id,
+            "connector_id": "conn_notion_templates",
+            "checkpoint": "before_notion_pages_create",
+            "markdown_hash": action_args["markdown_hash"],
+            "markdown_snapshot": markdown,
+            "snapshot_safety": "safe_report_summary_only_no_credentials_no_private_transcripts",
+        },
+        "idempotency_key": body.get("idempotency_key") or stable_hash({
+            "connector": "notion",
+            "title": title,
+            "markdown_hash": action_args["markdown_hash"],
+            "export_mode": cfg["export_mode"],
+        })[:32],
+        "reason": body.get("approval_reason") or "Notion report export is an external write and requires exact prepared-action approval before provider execution.",
+    })
+    runtime_event(conn, "rtc_agent_gateway_local", "notion.export.prepared_action_required", "waiting_approval", run_id=run_id, task_id=task_id, agent_id=agent_id, input_summary=f"Notion export paused markdown_hash={action_args['markdown_hash'][:16]}", output_summary="Prepared action created; live Notion export not executed.", raw_payload_hash=action_args["markdown_hash"])
+    audit(conn, "system", actor, "notion.export.prepared_action_required", "runs", run_id, None, {"status": "waiting_approval"}, {"approval_status": approval_status, "approval_id": (approval_wall.get("approval") or {}).get("approval_id"), "prepared_action_id": (approval_wall.get("prepared_action") or {}).get("action_id"), "markdown_hash": action_args["markdown_hash"], "token_omitted": True})
+    return {"run_id": run_id, "tool_call_id": tool_call_id, "task_id": task_id, "agent_id": agent_id, "action_args": action_args, "approval_wall": approval_wall}
+
+
+def notion_export_prepared_action_resume_gate(conn, body: dict, expected_args: dict) -> tuple[sqlite3.Row | None, dict | None]:
+    action_id = body.get("prepared_action_id") or body.get("action_id")
+    if not action_id:
+        return None, {"error": "notion_prepared_action_required", "message": "Notion live export requires a prepared_action_id created by the Approval Wall.", "token_omitted": True}
+    row = conn.execute("SELECT * FROM prepared_actions WHERE action_id=?", (action_id,)).fetchone()
+    if not row:
+        return None, {"error": "prepared_action_not_found", "prepared_action_id": action_id, "token_omitted": True}
+    approval = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (row["approval_id"],)).fetchone()
+    if not approval or approval["decision"] != "approved":
+        return None, {
+            "error": "approval_required",
+            "message": "Notion export can execute only after the linked prepared action approval is approved.",
+            "approval_id": row["approval_id"],
+            "prepared_action_id": action_id,
+            "decision": approval["decision"] if approval else None,
+            "token_omitted": True,
+        }
+    if row["consumed_at"] or row["status"] == "consumed":
+        return None, {"error": "prepared_action_already_consumed", "prepared_action": prepared_action_public(row), "token_omitted": True}
+    current_hash = prepared_action_hash(dict(row))
+    if current_hash != row["action_hash"]:
+        return None, {"error": "action_hash_mismatch", "stored_action_hash": row["action_hash"], "current_action_hash": current_hash, "token_omitted": True}
+    try:
+        stored_args = json.loads(row["normalized_args_json"] or "{}")
+    except Exception:
+        stored_args = {}
+    mismatched = [
+        key for key in ("provider", "operation", "title", "export_mode", "target_parent")
+        if stored_args.get(key) != expected_args.get(key)
+    ]
+    try:
+        checkpoint = json.loads(row["checkpoint_json"] or "{}")
+    except Exception:
+        checkpoint = {}
+    snapshot = str(checkpoint.get("markdown_snapshot") or "")
+    if not snapshot or stable_hash(snapshot) != stored_args.get("markdown_hash"):
+        mismatched.append("markdown_snapshot")
+    if row["action_type"] != "notion.report.export" or mismatched:
+        return None, {"error": "prepared_action_request_mismatch", "prepared_action_id": action_id, "mismatched_fields": mismatched or ["action_type"], "token_omitted": True}
+    return row, None
+
+
+def notion_export_live_or_gate(conn, body: dict, markdown: str, title: str, actor: str) -> dict:
+    cfg = notion_config()
+    action_args = notion_export_action_args(markdown, title, cfg)
+    prepared_row, gate_error = notion_export_prepared_action_resume_gate(conn, body, action_args)
+    if gate_error:
+        if gate_error.get("error") == "notion_prepared_action_required":
+            prepared = create_notion_export_prepared_action(conn, body, markdown, title, cfg, actor)
+            wall = prepared["approval_wall"]
+            approval = wall.get("approval") or {}
+            prepared_action = wall.get("prepared_action") or {}
+            conn.commit()
+            return {
+                "provider": "notion",
+                "dry_run": True,
+                "created": False,
+                "live_export_performed": False,
+                "status": "waiting_approval",
+                "reason": "notion_external_write_prepared_action_required",
+                "configured": cfg["configured"],
+                "export_mode": cfg["export_mode"],
+                "run_id": prepared["run_id"],
+                "task_id": prepared["task_id"],
+                "tool_call_id": prepared["tool_call_id"],
+                "approval_wall": wall,
+                "approval_id": approval.get("approval_id"),
+                "prepared_action_id": prepared_action.get("action_id"),
+                "prepared_action_hash": prepared_action.get("action_hash"),
+                "markdown_hash": action_args["markdown_hash"],
+                "block_count": action_args["block_count"],
+                "next_action": (
+                    f"agentops approval inspect --approval-id {approval.get('approval_id')} && "
+                    f"agentops approval approve --approval-id {approval.get('approval_id')} && "
+                    f"POST /api/integrations/notion/export-report with prepared_action_id={prepared_action.get('action_id')}"
+                ),
+                "token_omitted": True,
+            }
+        runtime_event(conn, "rtc_agent_gateway_local", "notion.export.prepared_action_blocked", "blocked", input_summary=f"Notion export blocked markdown_hash={action_args['markdown_hash'][:16]}", output_summary=gate_error.get("error"), raw_payload_hash=action_args["markdown_hash"])
+        audit(conn, "system", actor, "notion.export.prepared_action_blocked", "integrations", "notion", None, gate_error, {"markdown_hash": action_args["markdown_hash"], "token_omitted": True})
+        conn.commit()
+        return {"provider": "notion", "dry_run": True, "created": False, "live_export_performed": False, "configured": cfg["configured"], "export_mode": cfg["export_mode"], **gate_error, "reason": gate_error.get("error")}
+
+    try:
+        try:
+            stored_args = json.loads(prepared_row["normalized_args_json"] or "{}")
+        except Exception:
+            stored_args = {}
+        try:
+            checkpoint = json.loads(prepared_row["checkpoint_json"] or "{}")
+        except Exception:
+            checkpoint = {}
+        export_markdown = str(checkpoint.get("markdown_snapshot") or markdown)
+        export_title = str(stored_args.get("title") or title)
+        result = post_notion_page(export_markdown, export_title)
+        event = create_sync_event(conn, "conn_notion_templates", "outbound", "report", "created", result, external_object_id=result.get("notion_page_id"))
+        if result.get("notion_page_id"):
+            conn.execute(
+                "INSERT INTO external_object_links(link_id,internal_object_type,internal_object_id,external_provider,external_object_type,external_object_id,external_url,sync_direction,sync_status,last_synced_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                (stable_id("lnk", "report", event["sync_event_id"]), "report", "agentops_mis_project_report", "notion", "page", result.get("notion_page_id"), result.get("url"), "outbound", "created", now_iso(), now_iso()),
+            )
+        resume_payload, resume_status = agent_gateway_resume_prepared_action(conn, prepared_row["action_id"], {
+            "workspace_id": prepared_row["workspace_id"],
+            "provider_side_effect_id": result.get("notion_page_id") or stable_id("notion_page", event["sync_event_id"]),
+            "result_summary": f"Notion page created: {result.get('notion_page_id') or 'unknown'}",
+        })
+        audit(conn, "user", "usr_founder", "notion.export_confirmed", "integrations", "notion", None, result, {"sync_event_id": event["sync_event_id"], "prepared_action_id": prepared_row["action_id"], "approval_id": prepared_row["approval_id"], "token_omitted": True})
+        conn.commit()
+        return {**result, "dry_run": False, "live_export_performed": True, "sync_event_id": event["sync_event_id"], "approval_id": prepared_row["approval_id"], "prepared_action": resume_payload.get("prepared_action") if isinstance(resume_payload, dict) else prepared_action_public(prepared_row), "prepared_action_resume_status": resume_status, "token_omitted": True}
+    except Exception as exc:
+        err = redact_text(str(exc), 300)
+        event = create_sync_event(conn, "conn_notion_templates", "outbound", "report", "failed", {"export_mode": cfg["export_mode"]}, error_message=err)
+        audit(conn, "system", actor, "notion.export_failed", "integrations", "notion", None, {"created": False}, {"error": err, "sync_event_id": event["sync_event_id"], "prepared_action_id": prepared_row["action_id"], "token_omitted": True})
+        conn.commit()
+        return {"provider": "notion", "created": False, "dry_run": False, "live_export_performed": False, "configured": cfg["configured"], "export_mode": cfg["export_mode"], "error": err, "sync_event_id": event["sync_event_id"], "approval_id": prepared_row["approval_id"], "prepared_action": prepared_action_public(prepared_row), "token_omitted": True}
+
+
 def notion_export_confirmed(conn, body: dict) -> dict:
     confirm = bool(body.get("confirm_export"))
     cfg = notion_config()
@@ -20499,23 +20745,8 @@ def notion_export_confirmed(conn, body: dict) -> dict:
         audit(conn, "system", "notion-export", "notion.export.skipped", "sync_events", event["sync_event_id"], None, {"dry_run": True}, {"confirm_export": confirm, "configured": cfg["configured"]})
         conn.commit()
         return {"provider": "notion", "dry_run": True, "created": False, "requires_confirm_export": not confirm, "configured": cfg["configured"], "sync_event_id": event["sync_event_id"], "markdown": markdown, "block_count": len(text_blocks(markdown))}
-    try:
-        result = post_notion_page(markdown, body.get("title", "AgentOps MIS 项目汇报工作台"))
-        event = create_sync_event(conn, "conn_notion_templates", "outbound", "report", "created", result, external_object_id=result.get("notion_page_id"))
-        if result.get("notion_page_id"):
-            conn.execute(
-                "INSERT INTO external_object_links(link_id,internal_object_type,internal_object_id,external_provider,external_object_type,external_object_id,external_url,sync_direction,sync_status,last_synced_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                (stable_id("lnk", "report", event["sync_event_id"]), "report", "agentops_mis_project_report", "notion", "page", result.get("notion_page_id"), result.get("url"), "outbound", "created", now_iso(), now_iso()),
-            )
-        audit(conn, "user", "usr_founder", "notion.export_confirmed", "integrations", "notion", None, result, {"sync_event_id": event["sync_event_id"]})
-        conn.commit()
-        return {**result, "sync_event_id": event["sync_event_id"]}
-    except Exception as exc:
-        err = redact_text(str(exc), 300)
-        event = create_sync_event(conn, "conn_notion_templates", "outbound", "report", "failed", {"export_mode": cfg["export_mode"]}, error_message=err)
-        audit(conn, "system", "notion-export", "notion.export_failed", "integrations", "notion", None, {"created": False}, {"error": err, "sync_event_id": event["sync_event_id"]})
-        conn.commit()
-        return {"provider": "notion", "created": False, "configured": cfg["configured"], "export_mode": cfg["export_mode"], "error": err, "sync_event_id": event["sync_event_id"]}
+    return notion_export_live_or_gate(conn, body, markdown, body.get("title", "AgentOps MIS 项目汇报工作台"), "notion-export")
+
 
 
 def notion_import_preview(conn, body: dict) -> dict:
@@ -21465,7 +21696,9 @@ class Handler(BaseHTTPRequestHandler):
                 elif path == "/api/agent-gateway/approvals/request":
                     payload, status = agent_gateway_request_approval(conn, body)
                 elif path == "/api/agent-gateway/prepared-actions":
-                    payload, status = agent_gateway_prepare_action(conn, body)
+                    public_body = dict(body)
+                    public_body.pop("checkpoint_raw_json", None)
+                    payload, status = agent_gateway_prepare_action(conn, public_body)
                 elif path.startswith("/api/agent-gateway/prepared-actions/") and path.endswith("/resume"):
                     action_id = path_segment(path, -2)
                     payload, status = agent_gateway_resume_prepared_action(conn, action_id, body)
@@ -21744,9 +21977,7 @@ class Handler(BaseHTTPRequestHandler):
                         "markdown": markdown,
                         "block_count": len(text_blocks(markdown)),
                     })
-                result = post_notion_page(markdown, body.get("title", "AgentOps MIS 项目汇报工作台"))
-                audit(conn, "user", "usr_founder", "notion.export", "integrations", "notion", None, result, {"dry_run": False})
-                conn.commit()
+                result = notion_export_live_or_gate(conn, body, markdown, body.get("title", "AgentOps MIS 项目汇报工作台"), "notion-export-report")
                 return self.send_json(result, 201)
         return self.send_json({"error": "unknown endpoint"}, 404)
 
@@ -22209,7 +22440,7 @@ def post_notion_page(markdown: str, title: str = "AgentOps MIS 项目汇报工�
     }
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     req = Request(
-        "https://api.notion.com/v1/pages",
+        cfg["api_base_url"].rstrip("/") + "/pages",
         data=body,
         method="POST",
         headers={

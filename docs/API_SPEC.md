@@ -271,6 +271,19 @@ arguments before sending text to Dify, then consumes the prepared action with
 the returned document id. The API stores hashes, ids, summaries, and audit
 evidence only; it does not persist the full document text or API key.
 
+`POST /api/integrations/notion/export-report` and
+`POST /api/integrations/notion/export-confirmed` follow the same exact-resume
+contract for live Notion writes. Dry-run remains the default. When Notion is
+configured and `dry_run:false` plus `confirm_export:true` are supplied without
+an approved `prepared_action_id`, MIS creates a waiting-approval run, tool call,
+prepared action, and approval, then returns
+`notion_external_write_prepared_action_required` without calling Notion. After
+approval, repeat the export request with `prepared_action_id`; MIS verifies the
+prepared action hash and stored report snapshot hash before creating the Notion
+page, then consumes the prepared action with the Notion page id. The snapshot is
+the safe report summary only; credentials, private transcripts, and raw command
+bodies are not exported or stored.
+
 `GET /api/operator/action-plan` includes a read-only `execution_evidence`
 source. It audits recent completed or failed runs for missing plan bindings,
 missing/unverified plan-evidence manifests, and missing tool, evaluation,
@@ -603,6 +616,7 @@ POST /api/integrations/notion/sync-tasks
 NOTION_TOKEN=
 NOTION_PARENT_PAGE_ID=
 NOTION_DATABASE_ID=
+NOTION_API_BASE_URL=https://api.notion.com/v1
 NOTION_VERSION=2022-06-28
 NOTION_WORKSPACE_PRIVATE_EXPORT=false
 ```
@@ -631,6 +645,10 @@ POST body：
   "confirm_export": true
 }
 ```
+
+`confirm_export:true` 只会进入 Approval Wall；批准后必须用返回的
+`prepared_action_id` 再次调用导出接口，MIS 才会按已批准的报告快照创建
+Notion 页面。
 
 隐私边界：Notion 导出只包含项目汇报摘要和结构化指标，不导出 credentials、私聊正文、完整 session transcript 或原始命令体。
 

@@ -81,6 +81,7 @@ def run_worker(base_url: str, agent_id: str, token: str) -> dict:
         "2",
         "--session-refresh-margin-sec",
         "3600",
+        "--no-enforce-intake",
     ]
     proc = subprocess.run(cmd, cwd=ROOT, env=env, capture_output=True, text=True, timeout=180, check=False)
     require(proc.returncode == 0, f"worker failed: {proc.stderr or proc.stdout}")

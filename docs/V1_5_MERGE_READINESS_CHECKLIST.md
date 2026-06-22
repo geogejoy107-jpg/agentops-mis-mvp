@@ -67,7 +67,8 @@ execution touches undeclared file/tool      readiness gate fails
 - [x] Agent Gateway high-risk external side-effect tool calls cannot be recorded as completed or with `side_effect_id` unless they create a prepared action; the KB bot external upload plan now uses the Approval Wall path. Guarded by `scripts/high_risk_toolcall_prepared_action_gate_smoke.py`.
 - [x] Direct live worker and local dispatch external-write tasks pause before Hermes/OpenClaw execution and create a prepared action plus approval. Guarded by `scripts/worker_external_write_preflight_gate_smoke.py`.
 - [x] Dify connector live text upload cannot call the provider with only `confirm_upload` or a generic approval id; it creates a prepared action first, waits for approval, verifies the exact upload args on resume, and consumes the prepared action with the Dify document id. Guarded by `scripts/dify_upload_prepared_action_gate_smoke.py`.
-- [ ] All high-risk external connector/runtime tool paths use prepared actions before shared/commercial deployment. Agent Gateway high/critical external side-effect tool calls, KB bot external upload, customer-worker external-write intent, direct worker/dispatch external-write intent, and Dify live upload now use prepared actions; remaining Notion export and fixed live runtime paths still need final coverage before shared/commercial deployment.
+- [x] Notion live report export cannot call the provider with only `confirm_export`; it creates a prepared action first, waits for approval, verifies the exact report snapshot hash on resume, and consumes the prepared action with the Notion page id. Guarded by `scripts/notion_export_prepared_action_gate_smoke.py`.
+- [ ] All high-risk external connector/runtime tool paths use prepared actions before shared/commercial deployment. Agent Gateway high/critical external side-effect tool calls, KB bot external upload, customer-worker external-write intent, direct worker/dispatch external-write intent, Dify live upload, and Notion live export now use prepared actions; fixed live runtime probe paths still need final coverage before shared/commercial deployment.
 
 Required check:
 
@@ -77,6 +78,7 @@ python3 scripts/customer_worker_external_write_gate_smoke.py
 python3 scripts/high_risk_toolcall_prepared_action_gate_smoke.py --base-url http://127.0.0.1:8787
 python3 scripts/worker_external_write_preflight_gate_smoke.py
 python3 scripts/dify_upload_prepared_action_gate_smoke.py
+python3 scripts/notion_export_prepared_action_gate_smoke.py
 ```
 
 ## 3. Knowledge safety and quality
@@ -439,28 +441,28 @@ live runtime suite
 
 ### Agent Gateway
 
-- [ ] Enrollment request/approval/issuance works.
-- [ ] Raw credential is shown once.
-- [ ] Database stores hashes only.
-- [ ] Rotation invalidates old credential.
-- [ ] Revocation cascades sessions.
-- [ ] Expired credentials are rejected.
-- [ ] Missing scope returns 403.
-- [ ] Workspace/header/query spoofing returns 403.
-- [ ] Task claim is atomic.
-- [ ] Scoped lists and review queue are exact.
+- [x] Enrollment request/approval/issuance works. Guarded by `scripts/enrollment_approval_workflow_smoke.py`.
+- [x] Raw credential is shown once. Guarded by `scripts/enrollment_credential_ui_smoke.py`.
+- [x] Database stores hashes only. Guarded by `scripts/enrollment_credential_ui_smoke.py`, `scripts/enrollment_rotation_smoke.py`, and `scripts/agent_gateway_session_smoke.py`.
+- [x] Rotation invalidates old credential. Guarded by `scripts/enrollment_rotation_smoke.py`.
+- [x] Revocation cascades sessions. Guarded by `scripts/agent_gateway_session_smoke.py`.
+- [x] Expired credentials are rejected. Guarded by `scripts/agent_gateway_session_smoke.py`.
+- [x] Missing scope returns 403. Guarded by `scripts/agent_gateway_task_create_scope_smoke.py` and `scripts/agent_gateway_scope_matrix_smoke.py`.
+- [x] Workspace/header/query spoofing returns 403. Guarded by `scripts/agent_gateway_task_create_scope_smoke.py`, `scripts/agent_gateway_scoped_read_smoke.py`, and `scripts/agent_gateway_special_char_scope_smoke.py`.
+- [x] Task claim is atomic. Guarded by `scripts/task_claim_conflict_smoke.py`.
+- [x] Scoped lists and review queue are exact. Guarded by `scripts/collaborator_exact_scope_smoke.py`, `scripts/agent_gateway_review_queue_smoke.py`, and `scripts/agent_gateway_scoped_read_smoke.py`.
 
 ### Worker
 
-- [ ] Mock one-shot and daemon pass.
-- [ ] Retry/backoff pass.
-- [ ] Session refresh passes.
-- [ ] Stuck recovery passes.
-- [ ] Adapter preflight is read-only.
-- [ ] Hermes/OpenClaw require explicit confirmation.
-- [ ] Blocked trust prevents live execution.
-- [ ] Failure writes run/evaluation/audit evidence.
-- [ ] Generic success produces a deliverable Artifact or explicitly declares none required.
+- [x] Mock one-shot and daemon pass. Guarded by `scripts/agentops_customer_worker_cli_smoke.py` and `scripts/agentops_worker_daemon_cli_smoke.py`.
+- [x] Retry/backoff pass. Guarded by `scripts/worker_adapter_retry_smoke.py`.
+- [x] Session refresh passes. Guarded by `scripts/worker_session_refresh_smoke.py` against an isolated server with `--no-enforce-intake` for the session-specific contract.
+- [x] Stuck recovery passes. Guarded by `scripts/worker_stuck_recovery_smoke.py`.
+- [x] Adapter preflight is read-only. Guarded by `scripts/agentops_worker_preflight_smoke.py`.
+- [x] Hermes/OpenClaw require explicit confirmation. Guarded by `scripts/worker_live_confirm_gate_smoke.py`.
+- [x] Blocked trust prevents live execution. Guarded by `scripts/runtime_connector_trust_smoke.py`.
+- [x] Failure writes run/evaluation/audit evidence. Guarded by `scripts/worker_adapter_retry_smoke.py` and `scripts/worker_external_write_preflight_gate_smoke.py`.
+- [x] Generic success produces a deliverable Artifact or explicitly declares none required. Guarded by `scripts/agentops_customer_worker_cli_smoke.py`.
 
 ### Method and knowledge
 

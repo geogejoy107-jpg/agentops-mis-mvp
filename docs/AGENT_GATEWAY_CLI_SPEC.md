@@ -503,6 +503,12 @@ upload request with the returned `prepared_action_id`; MIS verifies the stored
 upload hash/args before calling Dify and consumes the action with the Dify
 document id.
 
+Notion report export follows the same rule. `dry_run:false` plus
+`confirm_export:true` only prepares the exact report export action; MIS does not
+call Notion until the linked approval is approved and the export endpoint is
+called again with the returned `prepared_action_id`. The prepared action binds
+the safe report snapshot hash and consumes exactly once with the Notion page id.
+
 ### `agentops task claim`
 
 Claims a task for an agent.

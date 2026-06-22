@@ -144,6 +144,34 @@ def main() -> int:
     require(approval.get("decision") == "pending", f"approval not pending: {approval}", failures)
     require("approval prepared-action resume" in (tool_payload.get("next_action") or ""), f"toolcall did not return prepared-action next action: {tool_payload}", failures)
 
+    public_raw_marker = "sk-public-raw-checkpoint-leak"
+    public_status, public_payload = http_json(args.base_url, "/api/agent-gateway/prepared-actions", {
+        "workspace_id": "local-demo",
+        "run_id": run_id,
+        "tool_call_id": tool_call_id,
+        "agent_id": agent_id,
+        "requested_by_agent_id": agent_id,
+        "action_type": "external.public_raw_checkpoint_probe",
+        "args": {"operation": "public_raw_checkpoint_probe"},
+        "target_resource": "mock://customer/public-raw-checkpoint-probe",
+        "risk_level": "high",
+        "checkpoint_raw_json": {"secret_probe": public_raw_marker, "should_be_stripped": True},
+        "idempotency_key": f"public-raw-checkpoint-strip-{stamp}",
+        "reason": "Public Agent Gateway endpoint must not accept raw checkpoint snapshots.",
+    })
+    public_raw = json.dumps(public_payload, ensure_ascii=False)
+    outputs.append(public_raw)
+    public_action_id = (public_payload.get("prepared_action") or {}).get("action_id")
+    require(public_status in {200, 201}, f"public prepared action checkpoint strip probe failed: {public_status} {public_payload}", failures)
+    require(bool(public_action_id), f"public prepared action id missing: {public_payload}", failures)
+    require(public_raw_marker not in public_raw, f"public prepared action response leaked checkpoint_raw_json: {public_payload}", failures)
+    if public_action_id:
+        public_get_status, public_get = http_json(args.base_url, f"/api/agent-gateway/prepared-actions/{public_action_id}")
+        public_get_raw = json.dumps(public_get, ensure_ascii=False)
+        outputs.append(public_get_raw)
+        require(public_get_status == 200, f"public prepared action get failed: {public_get_status} {public_get}", failures)
+        require(public_raw_marker not in public_get_raw, f"public prepared action ledger leaked checkpoint_raw_json: {public_get}", failures)
+
     returncode, inspect_payload, raw = run_cli(args.base_url, ["approval", "inspect", "--approval-id", approval_id])
     outputs.append(raw)
     require(returncode == 0, f"approval inspect failed: {raw}", failures)
