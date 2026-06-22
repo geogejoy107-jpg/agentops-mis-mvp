@@ -198,7 +198,7 @@ def main() -> int:
             "test_summary": "Smoke verification: syntax and diff hygiene commands passed.",
             "verifier_summary": "Smoke independent verifier accepted the evidence packet.",
             "changed_files": ["server.py", "agentops_mis_cli/agentops.py"],
-            "verification_commands": ["python3 -m py_compile server.py agentops_mis_cli/*.py scripts/*.py", "git diff --check"],
+            "verification_commands": ["python3 -m py_compile server.py agentops_mis_cli/*.py agentops_mis_runtime/*.py scripts/*.py", "git diff --check"],
         }, timeout=120)
         transcripts.append(json.dumps(preview_payload, ensure_ascii=False))
         require(preview_status == 200 and preview_payload.get("dry_run") is True, f"coding evidence preview should be dry-run: {preview_status} {preview_payload}")
@@ -212,7 +212,7 @@ def main() -> int:
             "verifier_summary": "Smoke independent verifier accepted the evidence packet.",
             "merge_summary": "Merge remains gated by human approval plus strict release checks.",
             "changed_files": ["server.py", "agentops_mis_cli/agentops.py", "scripts/local_coding_project_template_smoke.py"],
-            "verification_commands": ["python3 -m py_compile server.py agentops_mis_cli/*.py scripts/*.py", "git diff --check"],
+            "verification_commands": ["python3 -m py_compile server.py agentops_mis_cli/*.py agentops_mis_runtime/*.py scripts/*.py", "git diff --check"],
         }, timeout=120)
         transcripts.append(json.dumps(evidence_payload, ensure_ascii=False))
         require(evidence_status == 201, f"coding evidence record failed: {evidence_status} {evidence_payload}")
@@ -273,7 +273,7 @@ def main() -> int:
             "--verification-command",
             "git diff --check",
             "--verification-command",
-            "python3 -m py_compile server.py agentops_mis_cli/*.py scripts/*.py",
+            "python3 -m py_compile server.py agentops_mis_cli/*.py agentops_mis_runtime/*.py scripts/*.py",
             "--confirm-record",
         ], timeout=120)
         transcripts.extend([cli_evidence.stdout, cli_evidence.stderr])

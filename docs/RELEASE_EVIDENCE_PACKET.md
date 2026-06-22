@@ -69,13 +69,14 @@ Checklist phrase: Test command list and summary.
 
 The packet includes the canonical command manifest used for release review:
 
-- `python3 -m py_compile server.py agentops_mis_cli/*.py scripts/*.py && git diff --check`
+- `python3 -m py_compile server.py agentops_mis_cli/*.py agentops_mis_runtime/*.py scripts/*.py && git diff --check`
 - `python3 scripts/release_branch_control_smoke.py`
 - `python3 scripts/release_freeze_protocol_smoke.py`
 - `python3 scripts/clean_machine_rc_smoke.py`
 - `python3 scripts/release_evidence_packet_smoke.py`
 - `python3 scripts/merge_readiness_status_smoke.py`
 - `python3 scripts/v1_5_product_closure_evidence_smoke.py`
+- `python3 scripts/module_boundary_smoke.py`
 - `python3 scripts/open_source_adoption_boundary_smoke.py`
 - `python3 scripts/external_connector_runtime_inventory_smoke.py`
 - `python3 scripts/sqlite_concurrency_smoke.py`

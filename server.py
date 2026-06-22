@@ -37,6 +37,17 @@ from urllib.error import HTTPError, URLError
 from agentops_mis_cli.advance_loop_policy import advance_loop_command_policy, advance_loop_policy_summary
 from agentops_mis_cli.redaction import redact_full_text as shared_redact_full_text
 from agentops_mis_cli.redaction import redact_text as shared_redact_text
+from agentops_mis_runtime.capabilities import (
+    runtime_connector_for_adapter,
+    runtime_connector_public_row,
+)
+from agentops_mis_runtime.connectors import (
+    agnesfallback_cli_command,
+    agnesfallback_config,
+    hermes_runtime_config,
+    runtime_connector_rows,
+    upsert_runtime_connector,
+)
 
 ROOT = Path(__file__).resolve().parent
 DB_PATH = Path(os.environ.get("AGENTOPS_DB_PATH") or (ROOT / "agentops_mis.db"))
@@ -1447,349 +1458,6 @@ def ensure_v121_reference_data(conn: sqlite3.Connection):
                 "INSERT OR IGNORE INTO template_bindings(binding_id,template_id,base_id,workspace_id,status,mapping_json,created_at) VALUES(?,?,?,?,?,?,?)",
                 (stable_id("bind", template["template_id"], base_id), template["template_id"], base_id, "local-demo", "active", json.dumps({"mode": "canonical"}, ensure_ascii=False), now),
             )
-
-
-def hermes_runtime_config() -> dict:
-    return {
-        "gateway_url": os.environ.get("HERMES_GATEWAY_URL", "http://127.0.0.1:8642").strip(),
-        "profile": os.environ.get("HERMES_PROFILE", "default").strip() or "default",
-        "runtime_mode": os.environ.get("HERMES_RUNTIME_MODE", "health_only").strip() or "health_only",
-        "allow_real_run": os.environ.get("HERMES_ALLOW_REAL_RUN", "").strip().lower() in ("1", "true", "yes"),
-        "require_confirm_run": os.environ.get("HERMES_REQUIRE_CONFIRM_RUN", "true").strip().lower() not in ("0", "false", "no"),
-    }
-
-
-def agnesfallback_config() -> dict:
-    extra_args = shlex.split(os.environ.get("AGNESFALLBACK_CLI_EXTRA_ARGS", "").strip())
-    return {
-        "binary_path": os.path.expanduser(os.environ.get("AGNESFALLBACK_BIN", "~/.local/bin/agnesfallback").strip()),
-        "gateway_url": os.environ.get("AGNESFALLBACK_GATEWAY_URL", "http://127.0.0.1:8643").strip(),
-        "profile": os.environ.get("AGNESFALLBACK_PROFILE", "agnesfallback").strip() or "agnesfallback",
-        "extra_args": extra_args,
-    }
-
-
-def agnesfallback_cli_command(agnes: dict, prompt: str) -> list[str]:
-    return [agnes["binary_path"], "-z", prompt, *agnes.get("extra_args", [])]
-
-
-def runtime_connector_capability_manifest(connector_id: str, provider: str, connector_type: str) -> dict:
-    adapter = "mock"
-    if connector_id == "rtc_agent_gateway_local" or provider == "agent-gateway":
-        adapter = "agent_gateway"
-    elif connector_id == "rtc_hermes_default_gateway" or provider == "hermes":
-        adapter = "hermes"
-    elif connector_id == "rtc_openclaw_local" or provider == "openclaw":
-        adapter = "openclaw"
-    elif provider == "agnesfallback":
-        adapter = "agnesfallback"
-
-    base = {
-        "schema_version": "runtime-capability-manifest-v1",
-        "connector_id": connector_id,
-        "provider": provider,
-        "connector_type": connector_type,
-        "adapter": adapter,
-        "token_omitted": True,
-        "raw_prompt_omitted": True,
-        "raw_response_omitted": True,
-    }
-    manifests = {
-        "agent_gateway": {
-            "observation_level": "structured_ledger",
-            "risk_floor": "low",
-            "commercial_readiness": "local_demo_ready",
-            "capabilities": {
-                "filesystem": "none",
-                "shell": "repo_local_cli_wrapper",
-                "network": "loopback_http_api",
-                "git": "none",
-                "external_write": "none_without_worker_or_prepared_action",
-                "confirmation": "not_required_for_read_only_gateway_calls",
-                "trust_policy": "runtime_connector_trust_registry",
-                "secrets": "scoped_tokens_env_or_config_not_ledger",
-                "tool_event_ingestion": "structured",
-            },
-            "boundaries": {
-                "workdir": "local://agentops-mis",
-                "network": "127.0.0.1 agent-gateway API",
-                "external_side_effects": "disabled_without_explicit_worker_or_prepared_action",
-            },
-            "governance": {
-                "requires_confirm_run": False,
-                "requires_prepared_action_for_external_write": True,
-                "trust_status_source": "runtime_connectors.trust_status",
-                "live_execution_blocked_when_trust_status_blocked": True,
-                "shared_commercial_policy": "scoped_token_required_outside_loopback_local_dev",
-            },
-        },
-        "mock": {
-            "observation_level": "structured_ledger",
-            "risk_floor": "low",
-            "commercial_readiness": "local_demo_ready",
-            "capabilities": {
-                "filesystem": "none",
-                "shell": "none",
-                "network": "none",
-                "git": "none",
-                "external_write": "none",
-                "confirmation": "not_required_for_mock_execution",
-                "trust_policy": "runtime_connector_trust_registry",
-                "secrets": "none",
-                "tool_event_ingestion": "structured",
-            },
-            "boundaries": {
-                "workdir": "local://agentops/mock-worker",
-                "network": "disabled",
-                "external_side_effects": "disabled",
-            },
-            "governance": {
-                "requires_confirm_run": False,
-                "requires_prepared_action_for_external_write": False,
-                "trust_status_source": "runtime_connectors.trust_status",
-                "live_execution_blocked_when_trust_status_blocked": True,
-                "shared_commercial_policy": "allowed_for_tests_only",
-            },
-        },
-        "hermes": {
-            "observation_level": "ledger_summary_only",
-            "risk_floor": "medium",
-            "commercial_readiness": "restricted_until_runtime_tool_events",
-            "capabilities": {
-                "filesystem": "runtime_internal_opaque",
-                "shell": "runtime_internal_opaque",
-                "network": "runtime_internal_opaque",
-                "git": "runtime_internal_opaque",
-                "external_write": "must_route_through_mis_guarded_tools",
-                "confirmation": "confirm_run_required_for_live_execution",
-                "trust_policy": "runtime_connector_trust_registry",
-                "secrets": "runtime_env_only_not_ledger",
-                "tool_event_ingestion": "summary_hash_only",
-            },
-            "boundaries": {
-                "workdir": "runtime_owned",
-                "network": "runtime_policy_required",
-                "external_side_effects": "prepared_action_required",
-            },
-            "governance": {
-                "requires_confirm_run": True,
-                "requires_prepared_action_for_external_write": True,
-                "trust_status_source": "runtime_connectors.trust_status",
-                "live_execution_blocked_when_trust_status_blocked": True,
-                "shared_commercial_policy": "restricted_when_tool_events_unavailable",
-            },
-        },
-        "openclaw": {
-            "observation_level": "ledger_summary_only",
-            "risk_floor": "medium",
-            "commercial_readiness": "restricted_until_runtime_tool_events",
-            "capabilities": {
-                "filesystem": "runtime_internal_opaque",
-                "shell": "runtime_internal_opaque",
-                "network": "runtime_internal_opaque",
-                "git": "runtime_internal_opaque",
-                "external_write": "must_route_through_mis_guarded_tools",
-                "confirmation": "confirm_run_required_for_live_execution",
-                "trust_policy": "runtime_connector_trust_registry",
-                "secrets": "runtime_env_only_not_ledger",
-                "tool_event_ingestion": "summary_hash_only",
-            },
-            "boundaries": {
-                "workdir": str(ROOT),
-                "config": "~/.openclaw",
-                "network": "runtime_policy_required",
-                "external_side_effects": "prepared_action_required",
-            },
-            "governance": {
-                "requires_confirm_run": True,
-                "requires_prepared_action_for_external_write": True,
-                "trust_status_source": "runtime_connectors.trust_status",
-                "live_execution_blocked_when_trust_status_blocked": True,
-                "shared_commercial_policy": "restricted_when_tool_events_unavailable",
-            },
-        },
-        "agnesfallback": {
-            "observation_level": "fixed_probe_summary_only",
-            "risk_floor": "low",
-            "commercial_readiness": "local_recording_only",
-            "capabilities": {
-                "filesystem": "none_declared",
-                "shell": "cli_or_openai_compatible_gateway",
-                "network": "local_loopback_gateway_optional",
-                "git": "none_declared",
-                "external_write": "none_for_fixed_probe",
-                "confirmation": "confirm_run_required_for_fixed_probe",
-                "trust_policy": "runtime_connector_trust_registry",
-                "secrets": "runtime_env_only_not_ledger",
-                "tool_event_ingestion": "summary_hash_only",
-            },
-            "boundaries": {
-                "workdir": "runtime_owned",
-                "network": "127.0.0.1 only for gateway profile",
-                "external_side_effects": "disabled_for_fixed_probe",
-            },
-            "governance": {
-                "requires_confirm_run": True,
-                "requires_prepared_action_for_external_write": True,
-                "trust_status_source": "runtime_connectors.trust_status",
-                "live_execution_blocked_when_trust_status_blocked": True,
-                "shared_commercial_policy": "not_a_general_worker_adapter",
-            },
-        },
-    }
-    manifest = {**base, **manifests.get(adapter, manifests["mock"])}
-    manifest["manifest_hash"] = stable_hash({k: v for k, v in manifest.items() if k != "manifest_hash"})
-    return manifest
-
-
-def runtime_connector_rows() -> list[dict]:
-    now = now_iso()
-    hermes = hermes_runtime_config()
-    agnes = agnesfallback_config()
-    rows = [
-        {
-            "runtime_connector_id": "rtc_agent_gateway_local",
-            "provider": "agent-gateway",
-            "connector_type": "local_cli_api_mcp",
-            "profile_name": "local-demo",
-            "base_url": "http://127.0.0.1:8787/api/agent-gateway",
-            "binary_path": None,
-            "status": "available",
-            "allow_real_run": 1,
-            "require_confirm_run": 0,
-            "trust_status": "trusted",
-            "trust_note": None,
-            "trust_updated_at": now,
-            "last_health_at": now,
-            "last_error": None,
-            "created_at": now,
-            "updated_at": now,
-        },
-        {
-            "runtime_connector_id": "rtc_openclaw_local",
-            "provider": "openclaw",
-            "connector_type": "local_cli",
-            "profile_name": "main",
-            "base_url": None,
-            "binary_path": str(OPENCLAW_BIN),
-            "status": "available" if OPENCLAW_BIN.exists() else "unavailable",
-            "allow_real_run": 1,
-            "require_confirm_run": 1,
-            "trust_status": "trusted",
-            "trust_note": None,
-            "trust_updated_at": now,
-            "last_health_at": now,
-            "last_error": None if OPENCLAW_BIN.exists() else f"missing {OPENCLAW_BIN}",
-            "created_at": now,
-            "updated_at": now,
-        },
-        {
-            "runtime_connector_id": "rtc_hermes_default_gateway",
-            "provider": "hermes",
-            "connector_type": "health_probe",
-            "profile_name": hermes["profile"],
-            "base_url": hermes["gateway_url"],
-            "binary_path": None,
-            "status": "unknown",
-            "allow_real_run": 1 if hermes["allow_real_run"] else 0,
-            "require_confirm_run": 1 if hermes["require_confirm_run"] else 0,
-            "trust_status": "trusted",
-            "trust_note": None,
-            "trust_updated_at": now,
-            "last_health_at": None,
-            "last_error": None,
-            "created_at": now,
-            "updated_at": now,
-        },
-        {
-            "runtime_connector_id": "rtc_agnesfallback_cli",
-            "provider": "agnesfallback",
-            "connector_type": "cli_probe",
-            "profile_name": agnes["profile"],
-            "base_url": None,
-            "binary_path": agnes["binary_path"],
-            "status": "available" if Path(agnes["binary_path"]).exists() else "unavailable",
-            "allow_real_run": 1 if hermes["allow_real_run"] else 0,
-            "require_confirm_run": 1 if hermes["require_confirm_run"] else 0,
-            "trust_status": "trusted",
-            "trust_note": None,
-            "trust_updated_at": now,
-            "last_health_at": None,
-            "last_error": None if Path(agnes["binary_path"]).exists() else "AGNESFALLBACK_BIN not found.",
-            "created_at": now,
-            "updated_at": now,
-        },
-        {
-            "runtime_connector_id": "rtc_agnesfallback_openai_api",
-            "provider": "agnesfallback",
-            "connector_type": "openai_compatible",
-            "profile_name": agnes["profile"],
-            "base_url": agnes["gateway_url"],
-            "binary_path": None,
-            "status": "unknown",
-            "allow_real_run": 1 if hermes["allow_real_run"] else 0,
-            "require_confirm_run": 1 if hermes["require_confirm_run"] else 0,
-            "trust_status": "trusted",
-            "trust_note": None,
-            "trust_updated_at": now,
-            "last_health_at": None,
-            "last_error": None,
-            "created_at": now,
-            "updated_at": now,
-        },
-    ]
-    for row in rows:
-        manifest = runtime_connector_capability_manifest(row["runtime_connector_id"], row["provider"], row["connector_type"])
-        row["observation_level"] = manifest["observation_level"]
-        row["capability_manifest_json"] = json.dumps(manifest, ensure_ascii=False, sort_keys=True)
-        row["capability_policy_hash"] = manifest["manifest_hash"]
-    return rows
-
-
-def upsert_runtime_connector(conn, row: dict):
-    before = conn.execute("SELECT * FROM runtime_connectors WHERE runtime_connector_id=?", (row["runtime_connector_id"],)).fetchone()
-    if before:
-        conn.execute(
-            """UPDATE runtime_connectors SET provider=:provider, connector_type=:connector_type, profile_name=:profile_name,
-            base_url=:base_url, binary_path=:binary_path, status=:status, allow_real_run=:allow_real_run,
-            require_confirm_run=:require_confirm_run, observation_level=:observation_level,
-            capability_manifest_json=:capability_manifest_json, capability_policy_hash=:capability_policy_hash,
-            last_health_at=:last_health_at, last_error=:last_error,
-            updated_at=:updated_at WHERE runtime_connector_id=:runtime_connector_id""",
-            row,
-        )
-    else:
-        conn.execute(
-            """INSERT INTO runtime_connectors(runtime_connector_id,provider,connector_type,profile_name,base_url,binary_path,status,allow_real_run,require_confirm_run,observation_level,capability_manifest_json,capability_policy_hash,last_health_at,last_error,created_at,updated_at)
-            VALUES(:runtime_connector_id,:provider,:connector_type,:profile_name,:base_url,:binary_path,:status,:allow_real_run,:require_confirm_run,:observation_level,:capability_manifest_json,:capability_policy_hash,:last_health_at,:last_error,:created_at,:updated_at)""",
-            row,
-        )
-
-
-def runtime_connector_for_adapter(adapter: str) -> str | None:
-    if adapter == "hermes":
-        return "rtc_hermes_default_gateway"
-    if adapter == "openclaw":
-        return "rtc_openclaw_local"
-    if adapter == "mock":
-        return "rtc_agent_gateway_local"
-    return None
-
-
-def runtime_connector_public_row(row) -> dict:
-    item = dict(row)
-    manifest = {}
-    if item.get("capability_manifest_json"):
-        try:
-            manifest = json.loads(item.get("capability_manifest_json") or "{}")
-        except Exception:
-            manifest = {}
-    item["capability_manifest"] = manifest
-    item["capability_policy_hash"] = item.get("capability_policy_hash") or manifest.get("manifest_hash")
-    item["token_omitted"] = True
-    item["raw_prompt_omitted"] = True
-    item["raw_response_omitted"] = True
-    return item
 
 
 def runtime_connector_trust(conn, connector_id: str | None, refresh: bool = True) -> dict | None:
@@ -11327,7 +10995,7 @@ def customer_task_templates() -> list[dict]:
                     "risk_level": "medium",
                     "scope": "implementation patch, touched-file manifest, raw-source omission proof, rollback notes",
                     "avoid_scope": "do not execute external writes, merge, push, or store raw source bodies in MIS",
-                    "verification": ["git diff --check", "python3 -m py_compile server.py agentops_mis_cli/*.py scripts/*.py"],
+                    "verification": ["git diff --check", "python3 -m py_compile server.py agentops_mis_cli/*.py agentops_mis_runtime/*.py scripts/*.py"],
                 },
                 {
                     "lane_id": "verify",
@@ -15080,7 +14748,7 @@ COMMANDER_DEFAULT_WORK_PACKAGE_LANES = [
         "risk_level": "medium",
         "scope": "bounded code/docs changes required by the accepted work package",
         "avoid_scope": "do not touch unrelated UI/backend surfaces or local databases",
-        "verification": ["python3 -m py_compile server.py scripts/*.py agentops_mis_cli/*.py", "git diff --check"],
+        "verification": ["python3 -m py_compile server.py agentops_mis_cli/*.py agentops_mis_runtime/*.py scripts/*.py", "git diff --check"],
     },
     {
         "lane_id": "qa",
@@ -15236,7 +14904,7 @@ def commander_coding_project_template(qs=None, headers=None) -> dict:
             "id": "tests_pass",
             "required": True,
             "authority": "evaluations",
-            "command": "python3 -m py_compile server.py agentops_mis_cli/*.py scripts/*.py && git diff --check",
+            "command": "python3 -m py_compile server.py agentops_mis_cli/*.py agentops_mis_runtime/*.py scripts/*.py && git diff --check",
             "pass_condition": "verifier records passing syntax and diff hygiene evidence",
         },
         {
@@ -16169,6 +15837,7 @@ def commander_run_git(args: list[str], cwd: Path, timeout: int = 60) -> dict:
 def commander_run_py_compile(cwd: Path, timeout: int = 120) -> dict:
     files = [Path("server.py")]
     files.extend(sorted(path.relative_to(cwd) for path in (cwd / "agentops_mis_cli").glob("*.py")))
+    files.extend(sorted(path.relative_to(cwd) for path in (cwd / "agentops_mis_runtime").glob("*.py")))
     files.extend(sorted(path.relative_to(cwd) for path in (cwd / "scripts").glob("*.py")))
     existing = [str(path) for path in files if (cwd / path).exists()]
     started = time.time()
@@ -16456,7 +16125,7 @@ def commander_record_coding_evidence(conn: sqlite3.Connection, task_id: str, bod
             "git status --short --branch",
             "git diff --name-only",
             "git diff --check",
-            "python3 -m py_compile server.py agentops_mis_cli/*.py scripts/*.py",
+            "python3 -m py_compile server.py agentops_mis_cli/*.py agentops_mis_runtime/*.py scripts/*.py",
             *verification_commands,
         ][:12]
         if not body.get("test_status"):

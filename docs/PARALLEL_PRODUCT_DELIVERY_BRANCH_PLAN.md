@@ -55,7 +55,7 @@ Every branch should run the checks that match its blast radius.
 Core backend or CLI changes:
 
 ```bash
-python3 -m py_compile server.py scripts/*.py agentops_mis_cli/*.py
+python3 -m py_compile server.py agentops_mis_cli/*.py agentops_mis_runtime/*.py scripts/*.py
 git diff --check
 python3 scripts/worker_adapter_readiness_smoke.py
 python3 scripts/agentops_worker_status_smoke.py

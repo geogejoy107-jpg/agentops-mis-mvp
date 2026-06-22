@@ -217,7 +217,7 @@ def main() -> int:
                 "verifier_summary": "Command-center smoke independent verifier accepted evidence.",
                 "merge_summary": "Merge remains gated by human approval and strict release checks.",
                 "changed_files": ["server.py", "agentops_mis_cli/agentops.py"],
-                "verification_commands": ["python3 -m py_compile server.py agentops_mis_cli/*.py scripts/*.py", "git diff --check"],
+                "verification_commands": ["python3 -m py_compile server.py agentops_mis_cli/*.py agentops_mis_runtime/*.py scripts/*.py", "git diff --check"],
             })
             transcripts.append(json.dumps(evidence, ensure_ascii=False))
             require(evidence_status == 201, f"coding evidence failed: {evidence_status} {evidence}", failures)

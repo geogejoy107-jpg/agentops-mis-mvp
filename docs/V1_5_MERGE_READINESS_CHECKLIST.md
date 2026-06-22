@@ -241,6 +241,17 @@ action/approval/audit evidence. This is a disclosed governance boundary and a
 first enforced entry gate, not full internal runtime tracing or complete
 coverage for every external side-effect path.
 
+### Module boundaries
+
+- [x] P1-05 has started as a strangler-style split, not a big-bang rewrite.
+  Runtime connector capability policy now lives in
+  `agentops_mis_runtime/capabilities.py`, and runtime connector config/registry
+  rows plus the upsert helper now live in `agentops_mis_runtime/connectors.py`;
+  `server.py` keeps HTTP routes, health probing, trust updates and
+  audit/runtime event writes. Guarded by
+  `scripts/module_boundary_smoke.py`, `docs/MODULE_BOUNDARY_PLAN.md`, and the
+  existing runtime capability/readiness smokes.
+
 Agent Gateway tool-call recording now also rejects high/critical external
 side-effect intents unless `prepare_action=true` is used. The KB bot demo's
 external OpenAI/Dify/AnythingLLM upload plan therefore creates a prepared action
@@ -443,7 +454,7 @@ diff-check
 Suggested deterministic suite:
 
 ```bash
-python3 -m py_compile server.py agentops_mis_cli/*.py scripts/*.py
+python3 -m py_compile server.py agentops_mis_cli/*.py agentops_mis_runtime/*.py scripts/*.py
 python3 scripts/demo_acceptance.py --start-server
 python3 scripts/local_readiness_smoke.py
 python3 scripts/secret_scan_smoke.py
