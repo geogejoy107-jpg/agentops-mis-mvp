@@ -1538,7 +1538,10 @@ contains `workflow_steps` for `preview`, `create_task`, `dispatch_package`,
 Only `preview` is marked `auto_advance_allowed=true`; mutating stages are
 explicit, receipt-gated, and carry their command plus confirmation boundary so
 agents can hand off the chain without silently running create/dispatch/close
-steps.
+steps. Each command-bearing stage also carries an independent `action_id`,
+`action_signature`, `receipt_state`, `receipt_record_command`, and
+`receipt_verify_record_command`; the handoff `loop_health` gate reports
+workflow ready/blocked steps plus required/verified/missing workflow receipts.
 After promotion, action-plan recommends an explicit operator closure:
 
 ```bash
