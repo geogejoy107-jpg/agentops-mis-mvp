@@ -33,6 +33,7 @@ import {
   loadOperatorLoopLaunchPacket,
   loadOperatorLoopAudit,
   loadOperatorLoopSelfCheck,
+  loadOperatorRuntimeDoctor,
   loadReviewQueue,
   loadSecurityProductionReadiness,
   loadStuckWorkflowJobs,
@@ -80,6 +81,7 @@ import {
   type OperatorLoopLaunchPacketPayload,
   type OperatorLoopAuditPayload,
   type OperatorLoopSelfCheckPayload,
+  type OperatorRuntimeDoctorPayload,
   type ReviewQueuePayload,
   type TaskIntakeChecklistItem,
   type WorkerAdapterName,
@@ -149,6 +151,7 @@ type AIEmployeesPanelLoadState = {
 type AIEmployeesLiveData = {
   [key: string]: unknown;
   operatorCommandCenter?: OperatorCommandCenterPayload;
+  operatorRuntimeDoctor?: OperatorRuntimeDoctorPayload;
   panelLoadState?: Record<string, AIEmployeesPanelLoadState>;
 };
 
@@ -181,6 +184,7 @@ const AI_EMPLOYEES_PANEL_LOADERS: AIEmployeesPanelLoader[] = [
   { id: "worker_hygiene", load: async () => ({ workerHygiene: await loadWorkerFleetHygiene({ limit: 5 }) }) },
   { id: "adapter_readiness", load: async () => ({ adapterReadiness: await loadWorkerAdapterReadiness() }) },
   { id: "local_readiness", load: async () => ({ localReadiness: await loadLocalReadiness() }) },
+  { id: "operator_runtime_doctor", load: async () => ({ operatorRuntimeDoctor: await loadOperatorRuntimeDoctor(8) }) },
   { id: "operator_command_center", load: async () => ({ operatorCommandCenter: await loadOperatorCommandCenter(12) }) },
   { id: "operator_action_plan", load: async () => ({ operatorActionPlan: await loadOperatorActionPlan(12) }) },
   { id: "operator_action_receipts", load: async () => ({ operatorActionReceipts: await loadOperatorActionReceipts(8) }) },
@@ -205,6 +209,7 @@ const AI_EMPLOYEES_CORE_PANEL_IDS = new Set([
   "worker_status",
   "worker_fleet",
   "local_readiness",
+  "operator_runtime_doctor",
   "operator_command_center",
   "operator_action_plan",
   "operator_evidence_report",
@@ -492,6 +497,7 @@ export function AIEmployees() {
   const operatorActionReceipts = data?.operatorActionReceipts as OperatorActionReceiptsPayload | undefined;
   const operatorEvidenceReport = data?.operatorEvidenceReport as OperatorEvidenceReportPayload | undefined;
   const operatorLoopLaunchPacket = data?.operatorLoopLaunchPacket as OperatorLoopLaunchPacketPayload | undefined;
+  const operatorRuntimeDoctor = data?.operatorRuntimeDoctor as OperatorRuntimeDoctorPayload | undefined;
   const operatorLoopAudit = data?.operatorLoopAudit as OperatorLoopAuditPayload | undefined;
   const operatorHandoff = data?.operatorHandoff as OperatorHandoffPayload | undefined;
   const operatorHealth = data?.operatorHealth as OperatorHealthPayload | undefined;
@@ -510,6 +516,16 @@ export function AIEmployees() {
   const operatorEvidenceSummary = operatorEvidenceReport?.summary;
   const operatorEvidenceRuns = operatorEvidenceReport?.runs || [];
   const operatorEvidenceCommands = operatorEvidenceReport?.recommended_commands || [];
+  const runtimeDoctorSummary = operatorRuntimeDoctor?.summary;
+  const runtimeDoctorBlockedGates = runtimeDoctorSummary?.blocked_gates || [];
+  const runtimeDoctorAttentionGates = runtimeDoctorSummary?.attention_gates || [];
+  const runtimeDoctorCommands = operatorRuntimeDoctor?.commands || {};
+  const runtimeDoctorPrimaryCommands = [
+    runtimeDoctorCommands.operator_runtime_doctor,
+    runtimeDoctorCommands.worker_readiness,
+    runtimeDoctorCommands.operator_health,
+  ].filter(Boolean).slice(0, 3);
+  const runtimeDoctorTopGates = operatorRuntimeDoctor?.gates.slice(0, 4) || [];
   const operatorEvidenceTopRuns = operatorEvidenceRuns
     .filter(item => item.status !== "ready")
     .concat(operatorEvidenceRuns.filter(item => item.status === "ready"))
@@ -657,6 +673,10 @@ export function AIEmployees() {
       commandCenterProjects: "Projects",
       commandCenterCodingGaps: "Coding gaps",
       blockedRuns: "Blocked runs",
+      runtimeDoctorTitle: "Runtime doctor",
+      runtimeDoctorSummary: "Lightweight first-check for MIS reachability, adapter readiness, worker freshness, confirmation walls, prepared-action walls, and redaction boundaries.",
+      runtimeDoctorGates: "Doctor gates",
+      runtimeDoctorCommands: "Doctor commands",
       operatorHealthTitle: "Operator health",
       operatorHealthSummary: "Aggregate read-only health across loop handoff, local readiness, security, worker fleet, review queue, and action plan.",
       healthScore: "Health score",
@@ -1151,6 +1171,10 @@ export function AIEmployees() {
       commandCenterProjects: "项目",
       commandCenterCodingGaps: "编码缺口",
       blockedRuns: "阻塞 Run",
+      runtimeDoctorTitle: "Runtime Doctor",
+      runtimeDoctorSummary: "轻量 first-check：检查 MIS 可达性、Adapter 就绪、远程 Worker 新鲜度、确认墙、Prepared Action 墙和脱敏边界。",
+      runtimeDoctorGates: "Doctor Gate",
+      runtimeDoctorCommands: "Doctor 命令",
       operatorHealthTitle: "Operator 健康",
       operatorHealthSummary: "聚合 Loop 交接、本地就绪、安全边界、Worker Fleet、评审队列和动作计划的只读健康快照。",
       healthScore: "健康分",
@@ -3606,6 +3630,11 @@ export function AIEmployees() {
               <Activity size={14} style={{ color: "var(--mis-cyan)" }} />
               <h2 className="text-sm font-semibold" style={{ color: "var(--mis-text)" }}>{copy.commandCenterTitle}</h2>
               <StatusBadge status={operatorCommandCenter?.status || operatorHealth?.status || fleetHealth?.overall || workerStatus?.status || "unknown"} />
+              <StatusBadge status={operatorRuntimeDoctor?.status || "unknown"} label={`${copy.runtimeDoctorTitle}: ${operatorRuntimeDoctor?.status || "unknown"}`} />
+              {panelStatusBadge("operator_runtime_doctor")}
+              {panelRefreshButton("operator_runtime_doctor")}
+              {panelDiagnosticsButton("operator_runtime_doctor")}
+              {panelReceiptButton("operator_runtime_doctor")}
               {panelStatusBadge("operator_command_center")}
               {panelRefreshButton("operator_command_center")}
               {panelDiagnosticsButton("operator_command_center")}
@@ -3622,7 +3651,13 @@ export function AIEmployees() {
               </p>
             )}
             {panelEvidenceLine("operator_command_center")}
+            {panelEvidenceLine("operator_runtime_doctor")}
             {panelEvidenceLine("worker_status")}
+            {operatorRuntimeDoctor && (
+              <p className="text-[10px] mt-1 max-w-3xl" style={{ color: "var(--mis-muted)" }}>
+                {copy.runtimeDoctorSummary} · {copy.recommendedAdapter}: {runtimeDoctorSummary?.recommended_adapter || "mock"} · {copy.runtimeDoctorGates}: {runtimeDoctorBlockedGates.length} blocked / {runtimeDoctorAttentionGates.length} attention
+              </p>
+            )}
             {operatorHealth && (
               <p className="text-[10px] mt-1 max-w-3xl" style={{ color: "var(--mis-muted)" }}>
                 {copy.operatorHealthSummary} · {copy.healthScore}: {operatorHealth.score}/100 · {copy.healthRisks}: {operatorHealth.risks.length}
@@ -3654,6 +3689,7 @@ export function AIEmployees() {
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-9 gap-3 mt-4">
           {[
             { label: copy.operatorCommandCenterTitle, value: operatorCommandCenterSummary?.next_actions ?? operatorCommandCenterActions.length, status: operatorCommandCenter?.status || "unknown" },
+            { label: copy.runtimeDoctorTitle, value: runtimeDoctorSummary?.evidence_chain_status || operatorRuntimeDoctor?.status || "—", status: operatorRuntimeDoctor?.status || "unknown" },
             { label: copy.operatorHealthTitle, value: `${operatorHealth?.score ?? 0}/100`, status: operatorHealth?.status || "unknown" },
             { label: copy.commandCenterCodingGaps, value: operatorCommandCenterCodingGapCount, status: operatorCommandCenterCodingGapCount > 0 ? "attention" : "pass" },
             { label: copy.loopControlTitle, value: loopControlSelectedGate, status: loopControlGateStatus },
@@ -3671,6 +3707,69 @@ export function AIEmployees() {
               </div>
             </div>
           ))}
+        </div>
+
+        <div className="rounded-lg p-3 mt-4" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+          <div className="flex flex-col xl:flex-row xl:items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <Terminal size={13} style={{ color: "var(--mis-cyan)" }} />
+                <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.runtimeDoctorTitle}</div>
+                <StatusBadge status={operatorRuntimeDoctor?.status || "unknown"} />
+                <StatusBadge status={operatorRuntimeDoctor?.safety?.read_only && !operatorRuntimeDoctor?.safety?.ledger_mutated ? "pass" : "attention"} label={operatorRuntimeDoctor?.safety?.read_only ? copy.readOnlyProof : copy.statusAttention} />
+                <StatusBadge status={operatorRuntimeDoctor?.safety?.server_executes_shell ? "blocked" : "pass"} label={operatorRuntimeDoctor?.safety?.server_executes_shell ? "server shell" : "copy-only"} />
+                {panelStatusBadge("operator_runtime_doctor")}
+                {panelRefreshButton("operator_runtime_doctor")}
+                {panelDiagnosticsButton("operator_runtime_doctor")}
+                {panelReceiptButton("operator_runtime_doctor")}
+              </div>
+              <p className="text-[10px] mt-1 max-w-4xl" style={{ color: "var(--mis-dim)" }}>{copy.runtimeDoctorSummary}</p>
+              {operatorRuntimeDoctor?.contract && (
+                <p className="text-[10px] mt-1 max-w-4xl truncate" style={{ color: "var(--mis-muted)" }}>{copy.contract}: {operatorRuntimeDoctor.contract}</p>
+              )}
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                {(runtimeDoctorSummary?.ready_adapters || []).map((adapter) => (
+                  <StatusBadge key={adapter} status="pass" label={`${adapter}: ${copy.liveReady}`} />
+                ))}
+                {(runtimeDoctorSummary?.requires_confirm_run || []).map((adapter) => (
+                  <StatusBadge key={`confirm-${adapter}`} status="attention" label={`${adapter}: ${copy.statusConfirm}`} />
+                ))}
+                {(runtimeDoctorSummary?.requires_prepared_action || []).map((adapter) => (
+                  <StatusBadge key={`prepared-${adapter}`} status="pass" label={`${adapter}: prepared action`} />
+                ))}
+              </div>
+            </div>
+            <div className="flex flex-wrap xl:justify-end gap-1.5 shrink-0">
+              {(runtimeDoctorPrimaryCommands.length ? runtimeDoctorPrimaryCommands : ["agentops operator runtime-doctor --limit 8"]).map((command) => (
+                <button
+                  key={command}
+                  onClick={() => void copyIntakeCommand(command)}
+                  className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded"
+                  style={{ color: "var(--mis-cyan)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}
+                  title={command}
+                >
+                  <Copy size={11} />
+                  {copiedIntakeCommand === command ? copy.copiedCommand : copy.copyCommand}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-2 mt-3">
+            {runtimeDoctorTopGates.map((gate) => (
+              <div key={gate.id} className="rounded px-2 py-1" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-[9px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{gate.label}</div>
+                  <StatusBadge status={gate.status} />
+                </div>
+                <div className="text-[9px] mt-1 line-clamp-2" style={{ color: "var(--mis-muted)" }}>{gate.detail || gate.next_action || "—"}</div>
+              </div>
+            ))}
+            {runtimeDoctorTopGates.length === 0 && (
+              <div className="text-[10px] rounded px-3 py-2" style={{ color: "var(--mis-muted)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                {copy.backendUnavailable}: agentops operator runtime-doctor --limit 8
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="rounded-lg p-3 mt-4" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>

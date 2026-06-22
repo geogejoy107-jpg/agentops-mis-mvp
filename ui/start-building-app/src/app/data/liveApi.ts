@@ -1954,6 +1954,55 @@ export interface OperatorHealthComponent {
   next_action?: string;
 }
 
+export interface OperatorRuntimeDoctorPayload {
+  provider: string;
+  operation: string;
+  status: string;
+  workspace_id: string;
+  base_url?: string;
+  summary: {
+    mis_status?: string;
+    operator_health_score?: number | null;
+    recommended_adapter?: string;
+    ready_adapters: string[];
+    live_ready_adapters: string[];
+    requires_confirm_run: string[];
+    requires_prepared_action: string[];
+    remote_worker_count: number;
+    stale_remote_enrollments: number;
+    never_seen_remote_enrollments: number;
+    control_status?: string;
+    control_mode?: string;
+    evidence_chain_status?: string;
+    blocked_gates: string[];
+    attention_gates: string[];
+  };
+  gates: {
+    id: string;
+    label: string;
+    status: string;
+    ok: boolean;
+    detail?: string;
+    next_action?: string | null;
+    token_omitted?: boolean;
+  }[];
+  commands: Record<string, string>;
+  sources?: Record<string, unknown>;
+  contract?: string;
+  auth?: OperatorHandoffPayload["auth"];
+  safety: {
+    read_only: boolean;
+    ledger_mutated: boolean;
+    live_execution_performed: boolean;
+    server_executes_shell?: boolean;
+    raw_prompt_omitted: boolean;
+    raw_response_omitted: boolean;
+    token_omitted: boolean;
+  };
+  token_omitted?: boolean;
+  live_execution_performed?: boolean;
+}
+
 export interface OperatorHealthPayload {
   provider: string;
   operation: string;
@@ -5551,6 +5600,114 @@ export async function loadOperatorLoopLaunchPacket(limit = 8, query = "Agent Wor
       read_only: boolValue(safetyRaw.read_only),
       ledger_mutated: boolValue(safetyRaw.ledger_mutated),
       live_execution_performed: boolValue(safetyRaw.live_execution_performed),
+      raw_prompt_omitted: boolValue(safetyRaw.raw_prompt_omitted),
+      raw_response_omitted: boolValue(safetyRaw.raw_response_omitted),
+      token_omitted: boolValue(safetyRaw.token_omitted),
+    },
+    token_omitted: raw.token_omitted === undefined ? undefined : boolValue(raw.token_omitted),
+    live_execution_performed: raw.live_execution_performed === undefined ? undefined : boolValue(raw.live_execution_performed),
+  };
+}
+
+export async function loadOperatorRuntimeDoctor(limit = 8): Promise<OperatorRuntimeDoctorPayload> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  const raw = await optionalApiJson<Record<string, unknown>>(`/operator/runtime-doctor?${params.toString()}`, {
+    provider: "agentops-operator",
+    operation: "operator_runtime_doctor",
+    status: "unavailable",
+    workspace_id: "local-demo",
+    summary: {
+      mis_status: "unavailable",
+      operator_health_score: null,
+      recommended_adapter: "mock",
+      ready_adapters: [],
+      live_ready_adapters: [],
+      requires_confirm_run: [],
+      requires_prepared_action: [],
+      remote_worker_count: 0,
+      stale_remote_enrollments: 0,
+      never_seen_remote_enrollments: 0,
+      control_status: "unknown",
+      control_mode: "copy_only",
+      evidence_chain_status: "unknown",
+      blocked_gates: [],
+      attention_gates: [],
+    },
+    gates: [],
+    commands: {
+      operator_runtime_doctor: "agentops operator runtime-doctor --limit 8",
+      operator_health: "agentops operator health --limit 20",
+      worker_readiness: "agentops worker readiness",
+    },
+    safety: {
+      read_only: true,
+      ledger_mutated: false,
+      live_execution_performed: false,
+      server_executes_shell: false,
+      raw_prompt_omitted: true,
+      raw_response_omitted: true,
+      token_omitted: true,
+    },
+    token_omitted: true,
+    live_execution_performed: false,
+  });
+  const summaryRaw = typeof raw.summary === "object" && raw.summary !== null ? raw.summary as Record<string, unknown> : {};
+  const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
+  const authRaw = typeof raw.auth === "object" && raw.auth !== null ? raw.auth as Record<string, unknown> : {};
+  const commandsRaw = typeof raw.commands === "object" && raw.commands !== null ? raw.commands as Record<string, unknown> : {};
+  const commands = Object.fromEntries(
+    Object.entries(commandsRaw)
+      .map(([key, value]) => [key, String(value || "")])
+      .filter(([, value]) => value),
+  );
+  return {
+    provider: String(raw.provider || "agentops-operator"),
+    operation: String(raw.operation || "operator_runtime_doctor"),
+    status: String(raw.status || "unknown"),
+    workspace_id: String(raw.workspace_id || "local-demo"),
+    base_url: raw.base_url ? String(raw.base_url) : undefined,
+    summary: {
+      mis_status: summaryRaw.mis_status ? String(summaryRaw.mis_status) : undefined,
+      operator_health_score: summaryRaw.operator_health_score === undefined || summaryRaw.operator_health_score === null ? null : numberValue(summaryRaw.operator_health_score, 0),
+      recommended_adapter: summaryRaw.recommended_adapter ? String(summaryRaw.recommended_adapter) : undefined,
+      ready_adapters: asArray<unknown>(summaryRaw.ready_adapters).map(String).filter(Boolean),
+      live_ready_adapters: asArray<unknown>(summaryRaw.live_ready_adapters).map(String).filter(Boolean),
+      requires_confirm_run: asArray<unknown>(summaryRaw.requires_confirm_run).map(String).filter(Boolean),
+      requires_prepared_action: asArray<unknown>(summaryRaw.requires_prepared_action).map(String).filter(Boolean),
+      remote_worker_count: numberValue(summaryRaw.remote_worker_count, 0),
+      stale_remote_enrollments: numberValue(summaryRaw.stale_remote_enrollments, 0),
+      never_seen_remote_enrollments: numberValue(summaryRaw.never_seen_remote_enrollments, 0),
+      control_status: summaryRaw.control_status ? String(summaryRaw.control_status) : undefined,
+      control_mode: summaryRaw.control_mode ? String(summaryRaw.control_mode) : undefined,
+      evidence_chain_status: summaryRaw.evidence_chain_status ? String(summaryRaw.evidence_chain_status) : undefined,
+      blocked_gates: asArray<unknown>(summaryRaw.blocked_gates).map(String).filter(Boolean),
+      attention_gates: asArray<unknown>(summaryRaw.attention_gates).map(String).filter(Boolean),
+    },
+    gates: asArray<Record<string, unknown>>(raw.gates).map((item) => ({
+      id: String(item.id || ""),
+      label: String(item.label || item.id || ""),
+      status: String(item.status || "unknown"),
+      ok: boolValue(item.ok),
+      detail: item.detail ? String(item.detail) : undefined,
+      next_action: item.next_action ? String(item.next_action) : null,
+      token_omitted: item.token_omitted === undefined ? undefined : boolValue(item.token_omitted),
+    })).filter((item) => item.id),
+    commands,
+    sources: typeof raw.sources === "object" && raw.sources !== null ? raw.sources as Record<string, unknown> : undefined,
+    contract: raw.contract ? String(raw.contract) : undefined,
+    auth: raw.auth ? {
+      mode: String(authRaw.mode || "unknown"),
+      scoped: boolValue(authRaw.scoped),
+      required_scope: String(authRaw.required_scope || "tasks:read"),
+      workspace_id: String(authRaw.workspace_id || "local-demo"),
+      agent_id: authRaw.agent_id ? String(authRaw.agent_id) : null,
+      token_omitted: authRaw.token_omitted === undefined ? undefined : boolValue(authRaw.token_omitted),
+    } : undefined,
+    safety: {
+      read_only: boolValue(safetyRaw.read_only),
+      ledger_mutated: boolValue(safetyRaw.ledger_mutated),
+      live_execution_performed: boolValue(safetyRaw.live_execution_performed),
+      server_executes_shell: safetyRaw.server_executes_shell === undefined ? undefined : boolValue(safetyRaw.server_executes_shell),
       raw_prompt_omitted: boolValue(safetyRaw.raw_prompt_omitted),
       raw_response_omitted: boolValue(safetyRaw.raw_response_omitted),
       token_omitted: boolValue(safetyRaw.token_omitted),
