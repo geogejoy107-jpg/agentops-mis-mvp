@@ -246,6 +246,11 @@ def main() -> int:
             and file_contains("ui/next-app/src/components/AppFrame.tsx", "/workspace/evaluations")
             and file_contains("ui/next-app/src/components/AppFrame.tsx", "/workspace/connectors")
             and file_contains("ui/next-app/src/components/AppFrame.tsx", "/workspace/external-bases/notion")
+            and file_contains("scripts/nextjs_agent_gateway_task_proxy_smoke.py", "nextjs_agent_gateway_task_proxy_v1")
+            and file_contains("scripts/nextjs_agent_gateway_task_proxy_smoke.py", "/api/mis/agent-gateway/tasks")
+            and file_contains("scripts/nextjs_agent_gateway_task_proxy_smoke.py", "no_token_status == 401")
+            and file_contains("scripts/nextjs_agent_gateway_task_proxy_smoke.py", "direct_api_matches_next_proxy")
+            and file_contains("docs/UI_API_PARITY_MATRIX.json", "nextjs_agent_gateway_task_proxy_v1")
             and (ROOT / "ui" / "next-app" / "app" / "workspace" / "tool-calls" / "page.tsx").exists()
             and (ROOT / "ui" / "next-app" / "app" / "workspace" / "agents" / "[agentId]" / "page.tsx").exists()
             and (ROOT / "ui" / "next-app" / "app" / "workspace" / "evaluations" / "page.tsx").exists()
@@ -254,8 +259,9 @@ def main() -> int:
             and (ROOT / "ui" / "next-app" / "app" / "workspace" / "external-bases" / "notion" / "page.tsx").exists()
             and (ROOT / "ui" / "next-app" / "app" / "workspace" / "external-bases" / "notion" / "export" / "route.ts").exists()
             and (ROOT / "scripts" / "nextjs_parity_smoke.py").exists()
+            and (ROOT / "scripts" / "nextjs_agent_gateway_task_proxy_smoke.py").exists()
             and (ROOT / "scripts" / "nextjs_playwright_snapshot_smoke.py").exists(),
-            "parallel Next.js App Router track has API proxy, workspace/storage/tool-call/evaluation/runtime-connector/Notion external-base/agent-detail data contracts, deployment storage gate, and browser snapshot smoke",
+            "parallel Next.js App Router track has API proxy, Gateway task-create proxy, workspace/storage/tool-call/evaluation/runtime-connector/Notion external-base/agent-detail data contracts, deployment storage gate, and browser snapshot smoke",
         ),
         check(
             "vite_browser_snapshot_surface_exists",
@@ -483,6 +489,7 @@ def main() -> int:
                 "python3 scripts/ui_legacy_route_alias_smoke.py",
                 "python3 scripts/ui_navigation_inventory_smoke.py",
                 "python3 scripts/ui_route_retirement_packet_smoke.py",
+                "python3 scripts/nextjs_agent_gateway_task_proxy_smoke.py",
                 "python3 scripts/vite_playwright_snapshot_smoke.py",
                 "python3 scripts/nextjs_playwright_snapshot_smoke.py",
             ],

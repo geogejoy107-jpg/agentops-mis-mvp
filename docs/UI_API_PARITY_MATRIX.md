@@ -134,9 +134,18 @@ python3 scripts/ui_route_retirement_packet_smoke.py
 python3 scripts/nextjs_parity_smoke.py
 cd ui/start-building-app && npm run build
 cd ui/next-app && npm run build
+python3 scripts/nextjs_agent_gateway_task_proxy_smoke.py
 python3 scripts/vite_playwright_snapshot_smoke.py
 python3 scripts/nextjs_playwright_snapshot_smoke.py
 ```
 
 The matrix smoke is static and fast. Browser smokes are still required for
 actual UI evidence.
+
+`python3 scripts/nextjs_agent_gateway_task_proxy_smoke.py`
+(`nextjs_agent_gateway_task_proxy_v1`) starts isolated MIS API and Next.js
+servers, then proves `POST /api/mis/agent-gateway/tasks` preserves the Gateway
+task-create contract: no token stays `401`, missing `tasks:create` stays `403`,
+workspace/agent impersonation stays blocked, valid scoped tokens create and
+read back a task through the Next proxy, and direct MIS readback matches the
+Next proxy response without token leakage.

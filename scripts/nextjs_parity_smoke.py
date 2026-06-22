@@ -82,6 +82,7 @@ def main() -> int:
         ROOT / "scripts" / "ui_legacy_route_alias_smoke.py",
         ROOT / "scripts" / "ui_navigation_inventory_smoke.py",
         ROOT / "scripts" / "ui_route_retirement_packet_smoke.py",
+        ROOT / "scripts" / "nextjs_agent_gateway_task_proxy_smoke.py",
         ROOT / "docs" / "UI_NAVIGATION_INVENTORY.json",
         ROOT / "docs" / "UI_ROUTE_RETIREMENT_PACKET.json",
     ]
@@ -120,6 +121,7 @@ def main() -> int:
     lib_text = read_text(NEXT_APP / "src" / "lib" / "mis.ts")
     server_lib_text = read_text(NEXT_APP / "src" / "lib" / "misServer.ts")
     playwright_smoke_text = read_text(ROOT / "scripts" / "nextjs_playwright_snapshot_smoke.py")
+    gateway_task_proxy_smoke_text = read_text(ROOT / "scripts" / "nextjs_agent_gateway_task_proxy_smoke.py")
     route_parity_smoke_text = read_text(ROOT / "scripts" / "ui_task_run_route_parity_smoke.py")
     route_alias_smoke_text = read_text(ROOT / "scripts" / "ui_legacy_route_alias_smoke.py")
     navigation_inventory_smoke_text = read_text(ROOT / "scripts" / "ui_navigation_inventory_smoke.py")
@@ -131,6 +133,10 @@ def main() -> int:
     require(dependencies.get("react") == "19.2.7", "React version is not pinned to the selected migration version")
     require("build" in scripts and "next build" in scripts["build"], "Next.js build script is missing")
     require("AGENTOPS_API_BASE" in route_text, "API proxy must be configurable with AGENTOPS_API_BASE")
+    require("nextjs_agent_gateway_task_proxy_v1" in gateway_task_proxy_smoke_text, "Next Agent Gateway task proxy smoke contract is missing")
+    require("/api/mis/agent-gateway/tasks" in gateway_task_proxy_smoke_text, "Next Gateway task proxy smoke must exercise the Next /api/mis route")
+    require("AGENTOPS_API_KEY" in gateway_task_proxy_smoke_text and "no_token_status == 401" in gateway_task_proxy_smoke_text, "Next Gateway task proxy smoke must disable local no-token fallback")
+    require("direct_api_matches_next_proxy" in gateway_task_proxy_smoke_text, "Next Gateway task proxy smoke must compare direct MIS and Next proxy readback")
     require("AGENTOPS_API_BASE" in server_lib_text and "loadServerApprovals" in server_lib_text, "server-side first paint loaders are missing")
     require("/dashboard/metrics" in lib_text, "workspace parity data must include dashboard metrics")
     require("/tasks" in lib_text and "/runs" in lib_text and "/approvals" in lib_text, "workspace parity data misses core ledgers")
@@ -267,6 +273,9 @@ def main() -> int:
             "/workspace/customer-projects/[projectId]/report",
             "/workspace/audit",
             "/api/mis/[...path]",
+        ],
+        "contracts": [
+            "nextjs_agent_gateway_task_proxy_v1",
         ],
         "stack": {
             "next": dependencies.get("next"),

@@ -20,6 +20,7 @@ default provider is `http://127.0.0.1:8765/api`.
 ```bash
 python3 scripts/nextjs_parity_smoke.py
 cd ui/next-app && npm run build
+python3 scripts/nextjs_agent_gateway_task_proxy_smoke.py
 python3 scripts/nextjs_playwright_snapshot_smoke.py
 ```
 
@@ -47,6 +48,9 @@ memory review actions through the Next.js UI, verifies the state change through
 - App Router route: `/workspace/reports`
 - App Router route: `/workspace/customer-projects/[projectId]/report`
 - Runtime API proxy: `/api/mis/[...path]`
+- Agent Gateway task proxy contract: scoped `POST /api/mis/agent-gateway/tasks`
+  preserves no-token, missing-scope, workspace, and agent-binding failures
+  before allowing task creation through the configured MIS provider
 - Live data contract: dashboard metrics, agents, production readiness, worker readiness, tasks, runs, approvals, memories, audit, customer projects, delivery board, customer project report
 - Commercial contract: edition, capability matrix, fail-closed gates, billing-call omission, and token omission load read-only through the MIS API proxy
 - Governance contract: production readiness, workspace/RBAC gate state, short-lived session governance, and audit evidence load read-only through the MIS API proxy without raw session IDs

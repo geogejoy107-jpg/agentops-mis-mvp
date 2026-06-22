@@ -188,6 +188,7 @@ python3 scripts/ui_route_naming_decision_smoke.py
 python3 scripts/ui_legacy_route_alias_smoke.py
 python3 scripts/ui_navigation_inventory_smoke.py
 python3 scripts/ui_route_retirement_packet_smoke.py
+python3 scripts/nextjs_agent_gateway_task_proxy_smoke.py
 python3 scripts/vite_playwright_snapshot_smoke.py
 python3 scripts/nextjs_playwright_snapshot_smoke.py
 ```
@@ -253,6 +254,13 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   verification/run-graph evidence, opens linked task and run detail pages, and
   checks for token-like leakage.
 
+  The Next Agent Gateway task proxy smoke starts isolated MIS API and Next.js
+  servers with local no-token fallback disabled, then proves
+  `POST /api/mis/agent-gateway/tasks` preserves the scoped Gateway contract:
+  no token is `401`, missing `tasks:create`, workspace, and agent impersonation
+  are `403`, valid scoped tokens create and read back the task through the Next
+  proxy, and direct MIS readback matches without token leakage.
+
 - First migration artifact:
   - `ui/next-app/app/workspace/page.tsx`
   - `ui/next-app/app/workspace/agents/page.tsx`
@@ -301,6 +309,7 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   - `ui/next-app/src/components/DeliveryPages.tsx`
   - `ui/next-app/src/styles/globals.css`
   - `scripts/nextjs_parity_smoke.py`
+  - `scripts/nextjs_agent_gateway_task_proxy_smoke.py`
   - `scripts/nextjs_playwright_snapshot_smoke.py`
   - `scripts/vite_playwright_snapshot_smoke.py`
   - `docs/UI_API_PARITY_MATRIX.md`

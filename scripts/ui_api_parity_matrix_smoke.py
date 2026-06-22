@@ -136,6 +136,7 @@ def main() -> int:
     require("ui_legacy_route_alias_v1" in route_contracts, "matrix policy must include the legacy route alias contract")
     require("ui_navigation_inventory_v1" in route_contracts, "matrix policy must include the navigation inventory contract")
     require("ui_route_retirement_packet_v1" in route_contracts, "matrix policy must include the route retirement packet contract")
+    require("nextjs_agent_gateway_task_proxy_v1" in route_contracts, "matrix policy must include the Next Gateway task proxy contract")
 
     entries = matrix.get("entries")
     require(isinstance(entries, list) and entries, "matrix entries must be a non-empty list")
@@ -240,6 +241,8 @@ def main() -> int:
     notion_evidence = entries_by_id.get("external_bases_notion", {}).get("evidence_commands") or []
     require("python3 scripts/nextjs_parity_smoke.py" in notion_evidence, "external_bases_notion must include Next static parity evidence")
     require("python3 scripts/nextjs_playwright_snapshot_smoke.py" in notion_evidence, "external_bases_notion must include Next browser evidence")
+    next_proxy_evidence = entries_by_id.get("next_mis_proxy", {}).get("evidence_commands") or []
+    require("python3 scripts/nextjs_agent_gateway_task_proxy_smoke.py" in next_proxy_evidence, "next_mis_proxy must include Next Gateway task proxy evidence")
 
     vite_routes = actual_vite_routes()
     next_routes = actual_next_routes()

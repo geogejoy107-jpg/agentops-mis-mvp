@@ -10,7 +10,8 @@
         "ui_route_naming_decision_v1",
         "ui_legacy_route_alias_v1",
         "ui_navigation_inventory_v1",
-        "ui_route_retirement_packet_v1"
+        "ui_route_retirement_packet_v1",
+        "nextjs_agent_gateway_task_proxy_v1"
       ],
     "retirement_rule": "A Vite route can be retired only after the matrix marks its capability covered, Vite and Next browser evidence both pass, API contracts match, and the route has an explicit retirement decision."
   },
@@ -829,7 +830,8 @@
         "/api/mis/:path*"
       ],
       "api_contracts": [
-        "ANY /api/mis/:path* -> AGENTOPS_API_BASE/:path*"
+        "ANY /api/mis/:path* -> AGENTOPS_API_BASE/:path*",
+        "POST /api/mis/agent-gateway/tasks -> AGENTOPS_API_BASE/agent-gateway/tasks"
       ],
       "vite_files": [],
       "next_files": [
@@ -838,6 +840,7 @@
         "ui/next-app/src/lib/misServer.ts"
       ],
       "evidence_commands": [
+        "python3 scripts/nextjs_agent_gateway_task_proxy_smoke.py",
         "python3 scripts/nextjs_playwright_snapshot_smoke.py",
         "python3 scripts/nextjs_parity_smoke.py"
       ],
