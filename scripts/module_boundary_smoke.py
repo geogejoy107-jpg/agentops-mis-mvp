@@ -12,6 +12,14 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from agentops_mis_core.approval_wall import (
+    approval_wall_recommended_actions,
+    build_prepared_action_get_response,
+    prepared_action_gate,
+    prepared_action_hash,
+    prepared_action_hash_payload,
+    prepared_action_public,
+)
 from agentops_mis_core.read_model_cache import ReadModelCache
 from agentops_mis_core.commander_work_packages import (
     build_commander_work_packages_readback,
@@ -20,6 +28,12 @@ from agentops_mis_core.commander_work_packages import (
     commander_project_board_status,
     commander_work_package_next_action,
     commander_work_package_status,
+)
+from agentops_mis_core.operator_command_center import (
+    build_command_center_commander_gaps,
+    build_command_center_project_rows,
+    build_command_center_stale_worker_refs,
+    command_center_status,
 )
 from agentops_mis_core.worker_fleet import (
     build_worker_fleet_view,
@@ -49,7 +63,9 @@ CAPABILITIES = ROOT / "agentops_mis_runtime" / "capabilities.py"
 CONNECTORS = ROOT / "agentops_mis_runtime" / "connectors.py"
 TRUST = ROOT / "agentops_mis_runtime" / "trust.py"
 READ_MODEL_CACHE = ROOT / "agentops_mis_core" / "read_model_cache.py"
+APPROVAL_WALL = ROOT / "agentops_mis_core" / "approval_wall.py"
 COMMANDER_WORK_PACKAGES = ROOT / "agentops_mis_core" / "commander_work_packages.py"
+OPERATOR_COMMAND_CENTER = ROOT / "agentops_mis_core" / "operator_command_center.py"
 WORKER_FLEET = ROOT / "agentops_mis_core" / "worker_fleet.py"
 BACKLOG = ROOT / "docs" / "project" / "BACKLOG.md"
 PLAN = ROOT / "docs" / "MODULE_BOUNDARY_PLAN.md"
@@ -131,6 +147,33 @@ SERVER_COMMANDER_WORK_PACKAGE_IMPORTS = {
     "commander_work_package_next_action",
     "commander_work_package_status",
 }
+EXTRACTED_OPERATOR_COMMAND_CENTER_HELPERS = {
+    "build_command_center_commander_gaps",
+    "build_command_center_project_rows",
+    "build_command_center_stale_worker_refs",
+    "command_center_status",
+}
+SERVER_OPERATOR_COMMAND_CENTER_IMPORTS = {
+    "build_command_center_commander_gaps",
+    "build_command_center_project_rows",
+    "build_command_center_stale_worker_refs",
+    "command_center_status",
+}
+EXTRACTED_APPROVAL_WALL_HELPERS = {
+    "approval_wall_recommended_actions",
+    "build_prepared_action_get_response",
+    "prepared_action_gate",
+    "prepared_action_hash",
+    "prepared_action_hash_payload",
+    "prepared_action_public",
+}
+SERVER_APPROVAL_WALL_IMPORTS = {
+    "approval_wall_recommended_actions",
+    "build_prepared_action_get_response",
+    "prepared_action_gate",
+    "prepared_action_hash",
+    "prepared_action_public",
+}
 
 
 def require(condition: bool, message: str, failures: list[str]) -> None:
@@ -178,16 +221,22 @@ def main() -> int:
     require(CONNECTORS.exists(), "runtime connector registry module missing", failures)
     require(TRUST.exists(), "runtime connector trust module missing", failures)
     require(READ_MODEL_CACHE.exists(), "read model cache core module missing", failures)
+    require(APPROVAL_WALL.exists(), "approval wall core module missing", failures)
     require(COMMANDER_WORK_PACKAGES.exists(), "commander work packages core module missing", failures)
+    require(OPERATOR_COMMAND_CENTER.exists(), "operator command center core module missing", failures)
     require(WORKER_FLEET.exists(), "worker fleet core module missing", failures)
+    require("from agentops_mis_core.approval_wall import" in server_text, "server.py must import approval wall core module", failures)
     require("from agentops_mis_core.read_model_cache import ReadModelCache" in server_text, "server.py must import read model cache core module", failures)
     require("from agentops_mis_core.commander_work_packages import" in server_text, "server.py must import commander work packages core module", failures)
+    require("from agentops_mis_core.operator_command_center import" in server_text, "server.py must import operator command center core module", failures)
     require("from agentops_mis_core.worker_fleet import" in server_text, "server.py must import worker fleet core module", failures)
     require("from agentops_mis_runtime.capabilities import" in server_text, "server.py must import runtime capability module", failures)
     require("from agentops_mis_runtime.connectors import" in server_text, "server.py must import runtime connector registry module", failures)
     require("from agentops_mis_runtime.trust import" in server_text, "server.py must import runtime connector trust module", failures)
     server_functions = function_names(SERVER)
+    approval_wall_functions = function_names(APPROVAL_WALL) if APPROVAL_WALL.exists() else set()
     commander_work_package_functions = function_names(COMMANDER_WORK_PACKAGES) if COMMANDER_WORK_PACKAGES.exists() else set()
+    operator_command_center_functions = function_names(OPERATOR_COMMAND_CENTER) if OPERATOR_COMMAND_CENTER.exists() else set()
     worker_fleet_functions = function_names(WORKER_FLEET) if WORKER_FLEET.exists() else set()
     for helper in sorted(EXTRACTED_HELPERS):
         require(helper not in server_functions, f"server.py still defines {helper}", failures)
@@ -201,6 +250,12 @@ def main() -> int:
     for helper in sorted(EXTRACTED_COMMANDER_WORK_PACKAGE_HELPERS):
         require(helper not in server_functions, f"server.py still defines {helper}", failures)
         require(helper in commander_work_package_functions, f"commander work packages module missing {helper}", failures)
+    for helper in sorted(EXTRACTED_OPERATOR_COMMAND_CENTER_HELPERS):
+        require(helper not in server_functions, f"server.py still defines {helper}", failures)
+        require(helper in operator_command_center_functions, f"operator command center module missing {helper}", failures)
+    for helper in sorted(EXTRACTED_APPROVAL_WALL_HELPERS):
+        require(helper not in server_functions, f"server.py still defines {helper}", failures)
+        require(helper in approval_wall_functions, f"approval wall module missing {helper}", failures)
     require("worker_adapter_readiness" in server_functions, "worker_adapter_readiness must remain server-owned for runtime probing", failures)
     require("worker_adapter_readiness" not in worker_fleet_functions, "worker fleet module must not own runtime adapter probing", failures)
     for helper, sources in imported_symbol_sources(SERVER, SERVER_CAPABILITY_IMPORTS).items():
@@ -213,12 +268,18 @@ def main() -> int:
         require(sources == {"agentops_mis_core.worker_fleet"}, f"{helper} imported from wrong or multiple modules: {sorted(sources)}", failures)
     for helper, sources in imported_symbol_sources(SERVER, SERVER_COMMANDER_WORK_PACKAGE_IMPORTS).items():
         require(sources == {"agentops_mis_core.commander_work_packages"}, f"{helper} imported from wrong or multiple modules: {sorted(sources)}", failures)
+    for helper, sources in imported_symbol_sources(SERVER, SERVER_OPERATOR_COMMAND_CENTER_IMPORTS).items():
+        require(sources == {"agentops_mis_core.operator_command_center"}, f"{helper} imported from wrong or multiple modules: {sorted(sources)}", failures)
+    for helper, sources in imported_symbol_sources(SERVER, SERVER_APPROVAL_WALL_IMPORTS).items():
+        require(sources == {"agentops_mis_core.approval_wall"}, f"{helper} imported from wrong or multiple modules: {sorted(sources)}", failures)
 
     imports = imported_modules(CAPABILITIES)
     connector_imports = imported_modules(CONNECTORS) if CONNECTORS.exists() else set()
     trust_imports = imported_modules(TRUST) if TRUST.exists() else set()
     read_model_cache_imports = imported_modules(READ_MODEL_CACHE) if READ_MODEL_CACHE.exists() else set()
+    approval_wall_imports = imported_modules(APPROVAL_WALL) if APPROVAL_WALL.exists() else set()
     commander_work_package_imports = imported_modules(COMMANDER_WORK_PACKAGES) if COMMANDER_WORK_PACKAGES.exists() else set()
+    operator_command_center_imports = imported_modules(OPERATOR_COMMAND_CENTER) if OPERATOR_COMMAND_CENTER.exists() else set()
     worker_fleet_imports = imported_modules(WORKER_FLEET) if WORKER_FLEET.exists() else set()
     forbidden = sorted(module for module in imports if module in FORBIDDEN_RUNTIME_MODULE_IMPORTS)
     require(not forbidden, f"runtime capability module imports forbidden app/runtime dependencies: {forbidden}", failures)
@@ -232,9 +293,15 @@ def main() -> int:
     cache_forbidden = sorted(module for module in read_model_cache_imports if module in {"sqlite3", "subprocess", "http.server", "urllib.request"})
     require(not cache_forbidden, f"read model cache module imports forbidden app/runtime dependencies: {cache_forbidden}", failures)
     require("server" not in read_model_cache_imports, "read model cache module must not import server module", failures)
+    approval_wall_forbidden = sorted(module for module in approval_wall_imports if module in {"sqlite3", "subprocess", "http.server", "urllib.request"})
+    require(not approval_wall_forbidden, f"approval wall module imports forbidden app/runtime dependencies: {approval_wall_forbidden}", failures)
+    require("server" not in approval_wall_imports, "approval wall module must not import server module", failures)
     commander_work_package_forbidden = sorted(module for module in commander_work_package_imports if module in {"sqlite3", "subprocess", "http.server", "urllib.request"})
     require(not commander_work_package_forbidden, f"commander work packages module imports forbidden app/runtime dependencies: {commander_work_package_forbidden}", failures)
     require("server" not in commander_work_package_imports, "commander work packages module must not import server module", failures)
+    operator_command_center_forbidden = sorted(module for module in operator_command_center_imports if module in {"sqlite3", "subprocess", "http.server", "urllib.request"})
+    require(not operator_command_center_forbidden, f"operator command center module imports forbidden app/runtime dependencies: {operator_command_center_forbidden}", failures)
+    require("server" not in operator_command_center_imports, "operator command center module must not import server module", failures)
     worker_fleet_forbidden = sorted(module for module in worker_fleet_imports if module in {"sqlite3", "subprocess", "http.server", "urllib.request"})
     require(not worker_fleet_forbidden, f"worker fleet module imports forbidden app/runtime dependencies: {worker_fleet_forbidden}", failures)
     require("server" not in worker_fleet_imports, "worker fleet module must not import server module", failures)
@@ -331,6 +398,41 @@ def main() -> int:
     require(second.get("read_model_cache", {}).get("status") == "hit" and second.get("value") == "one", "read model cache second read should hit original payload", failures)
     require(bypass.get("read_model_cache", {}).get("status") == "bypass" and bypass.get("value") == "fresh", "read model cache refresh should bypass", failures)
     require("fixture_token_ref" not in json.dumps([first, second, bypass], ensure_ascii=False), "read model cache leaked token-like auth ref", failures)
+    prepared_row = {
+        "action_id": "pa_smoke",
+        "workspace_id": "local-demo",
+        "task_id": "tsk_pa_smoke",
+        "run_id": "run_pa_smoke",
+        "tool_call_id": "tc_pa_smoke",
+        "approval_id": "ap_pa_smoke",
+        "requested_by_agent_id": "agt_research",
+        "action_type": "external.publish",
+        "normalized_args_json": json.dumps({"operation": "publish", "token": "api_key=fixture_secret_value"}, sort_keys=True),
+        "target_resource": "mock://customer/delivery",
+        "risk_level": "critical",
+        "policy_version": "approval-wall-v1",
+        "checkpoint_json": json.dumps({"checkpoint": "before_publish", "session": "password=fixture_session_value"}, sort_keys=True),
+        "action_hash": "",
+        "idempotency_key": "pa-smoke-idempotency",
+        "status": "prepared",
+        "provider_side_effect_id": None,
+        "result_summary": None,
+        "created_at": "2026-06-22T00:00:00+00:00",
+        "approved_at": None,
+        "consumed_at": None,
+        "expires_at": "2026-06-24T00:00:00+00:00",
+    }
+    require(prepared_action_hash_payload(prepared_row).get("policy_version") == "approval-wall-v1", "prepared action hash payload policy fallback failed", failures)
+    prepared_row["action_hash"] = prepared_action_hash(prepared_row)
+    prepared_public = prepared_action_public(prepared_row)
+    prepared_get = build_prepared_action_get_response(prepared_row, {"approval_id": "ap_pa_smoke", "decision": "pending"})
+    prepared_gate = prepared_action_gate(prepared_row)
+    prepared_actions = approval_wall_recommended_actions({"decision": "pending"}, prepared_row, "ap_pa_smoke")
+    prepared_serialized = json.dumps([prepared_public, prepared_get], ensure_ascii=False)
+    require(prepared_gate.get("hash_match") is True, "prepared action gate hash verification failed", failures)
+    require((prepared_get.get("hash_verification") or {}).get("match") is True, "prepared action get response hash verification failed", failures)
+    require("approval prepared-action resume" in " ".join(prepared_actions), "approval wall recommended actions missing prepared-action resume", failures)
+    require("fixture_secret_value" not in prepared_serialized and "fixture_session_value" not in prepared_serialized, "prepared action public projection leaked token-like metadata", failures)
     daemons = [{
         "adapter": "mock",
         "agent_id": "agt_worker_local_smoke",
@@ -455,6 +557,40 @@ def main() -> int:
     require(commander_project_board_status(commander_gates) == "attention", "commander project-board status aggregation failed", failures)
     commander_board_actions = commander_project_board_next_actions(commander_gates, ["agentops local readiness"])
     require("agentops local readiness" in commander_board_actions, "commander project-board readiness next action merge failed", failures)
+    command_center_package = {
+        "task_id": "tsk_cmd_center_smoke",
+        "project_id": "proj_cmd_center_smoke",
+        "plan_id": "cmdplan_center_smoke",
+        "lane_id": "implementation",
+        "title": "Command center smoke package",
+        "package_status": "planned",
+        "localization_gate": {"status": "recorded"},
+        "coding_evidence_gate": {"status": "missing", "artifact_types": ["commander_patch_manifest"]},
+        "latest_run": {"run_id": "run_cmd_center_smoke"},
+        "recommended_action": "agentops commander dispatch-package --task-id tsk_cmd_center_smoke --adapter mock",
+    }
+    command_center_gaps = build_command_center_commander_gaps([command_center_package])
+    require(command_center_gaps and command_center_gaps[0].get("gap_type") == "coding_evidence_required", "operator command center gap aggregation failed", failures)
+    require(command_center_gaps[0].get("raw_patch_omitted") is True, "operator command center gap omission proof missing", failures)
+    project_rows = build_command_center_project_rows(
+        commander_packages=[command_center_package],
+        deliveries=[{"project_id": "proj_cmd_center_smoke", "status": "waiting_approval", "next_action": "agentops workflow delivery-board"}],
+        limit=5,
+    )
+    require(project_rows and project_rows[0].get("pending_approvals") == 1, "operator command center project aggregation failed", failures)
+    stale_refs = build_command_center_stale_worker_refs({
+        "stuck_tasks": [{"task_id": "tsk_stuck_smoke", "title": "Stuck smoke", "owner_agent_id": "agt_worker_smoke", "status": "running"}],
+        "stuck_workflow_job_refs": [{"job_id": "wfjob_stuck_smoke", "workflow_type": "customer_worker", "status": "running", "age_sec": 901, "stuck_reason": "threshold"}],
+    }, 5)
+    require(len(stale_refs) == 2 and all(item.get("token_omitted") is True for item in stale_refs), "operator command center stale worker refs failed", failures)
+    require(command_center_status(
+        blocked_runs=[],
+        action_plan_summary={},
+        commander_gaps=command_center_gaps,
+        stale_worker_refs=[],
+        pending_approvals=[],
+        next_actions=[],
+    ) == "attention", "operator command center status aggregation failed", failures)
 
     command = "python3 scripts/module_boundary_smoke.py"
     require(command in ci_text, "module boundary smoke missing from CI", failures)
@@ -464,20 +600,24 @@ def main() -> int:
     require("agentops_mis_runtime/connectors.py" in plan_text, "module boundary plan missing runtime connector module", failures)
     require("agentops_mis_runtime/trust.py" in plan_text, "module boundary plan missing runtime trust module", failures)
     require("agentops_mis_core/read_model_cache.py" in plan_text, "module boundary plan missing read model cache module", failures)
+    require("agentops_mis_core/approval_wall.py" in plan_text, "module boundary plan missing approval wall module", failures)
     require("agentops_mis_core/commander_work_packages.py" in plan_text, "module boundary plan missing commander work packages module", failures)
+    require("agentops_mis_core/operator_command_center.py" in plan_text, "module boundary plan missing operator command center module", failures)
     require("agentops_mis_core/worker_fleet.py" in plan_text, "module boundary plan missing worker fleet module", failures)
 
     output = {
         "ok": not failures,
         "operation": "module_boundary_smoke",
-        "boundary": "agentops_mis_runtime.capabilities+connectors+trust + agentops_mis_core.read_model_cache+commander_work_packages+worker_fleet",
+        "boundary": "agentops_mis_runtime.capabilities+connectors+trust + agentops_mis_core.read_model_cache+approval_wall+commander_work_packages+operator_command_center+worker_fleet",
         "server_line_count": len(server_text.splitlines()),
         "module_imports": {
             "capabilities": sorted(imports),
             "connectors": sorted(connector_imports),
             "trust": sorted(trust_imports),
             "read_model_cache": sorted(read_model_cache_imports),
+            "approval_wall": sorted(approval_wall_imports),
             "commander_work_packages": sorted(commander_work_package_imports),
+            "operator_command_center": sorted(operator_command_center_imports),
             "worker_fleet": sorted(worker_fleet_imports),
         },
         "live_execution_performed": False,

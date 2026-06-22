@@ -34,6 +34,13 @@ from urllib.parse import parse_qs, unquote, urlparse
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
+from agentops_mis_core.approval_wall import (
+    approval_wall_recommended_actions,
+    build_prepared_action_get_response,
+    prepared_action_gate,
+    prepared_action_hash,
+    prepared_action_public,
+)
 from agentops_mis_core.commander_work_packages import (
     build_commander_work_packages_readback,
     build_commander_project_board_gates,
@@ -41,6 +48,12 @@ from agentops_mis_core.commander_work_packages import (
     commander_project_board_status,
     commander_work_package_next_action,
     commander_work_package_status,
+)
+from agentops_mis_core.operator_command_center import (
+    build_command_center_commander_gaps,
+    build_command_center_project_rows,
+    build_command_center_stale_worker_refs,
+    command_center_status,
 )
 from agentops_mis_core.read_model_cache import ReadModelCache
 from agentops_mis_core.worker_fleet import (
@@ -4137,9 +4150,8 @@ def agent_gateway_get_approval(conn: sqlite3.Connection, approval_id: str, heade
             return {"error": "forbidden", "message": "Agent token cannot inspect this approval.", "token_omitted": True}, 403
     tool_call = conn.execute("SELECT * FROM tool_calls WHERE tool_call_id=?", (approval.get("tool_call_id") or "",)).fetchone() if approval.get("tool_call_id") else None
     prepared_action = get_prepared_action_for_approval(conn, approval_id)
-    prepared_action_hash_match = None
-    if prepared_action:
-        prepared_action_hash_match = prepared_action_hash(dict(prepared_action)) == prepared_action["action_hash"]
+    prepared_action_gate_payload = prepared_action_gate(prepared_action)
+    prepared_action_hash_match = prepared_action_gate_payload.get("hash_match")
     run_id = approval.get("run_id")
     task_id = approval.get("task_id")
     evidence = {
@@ -4185,31 +4197,14 @@ def agent_gateway_get_approval(conn: sqlite3.Connection, approval_id: str, heade
         "approval": approval,
         "approval_kind": approval_kind,
         "prepared_action": prepared_action_public(prepared_action),
-        "prepared_action_gate": {
-            "required_for_exact_resume": bool(prepared_action),
-            "action_hash": prepared_action["action_hash"] if prepared_action else None,
-            "hash_match": prepared_action_hash_match,
-            "status": prepared_action["status"] if prepared_action else None,
-            "consumed_at": prepared_action["consumed_at"] if prepared_action else None,
-        },
+        "prepared_action_gate": prepared_action_gate_payload,
         "task": task,
         "run": run,
         "tool_call": dict(tool_call) if tool_call else None,
         "evidence": evidence,
         "delivery_approval_gate": delivery_gate,
         "risks": risks,
-        "recommended_actions": [
-            action for action in (
-                f"agentops approval prepared-action get --action-id {prepared_action['action_id']}" if prepared_action else f"agentops approval inspect --approval-id {approval_id}",
-                f"agentops approval approve --approval-id {approval_id}",
-                f"agentops approval reject --approval-id {approval_id}",
-                f"agentops approval prepared-action resume --action-id {prepared_action['action_id']} --provider-side-effect-id <id>" if prepared_action else "",
-            ) if action
-        ] if approval.get("decision") == "pending" else (
-            [f"agentops approval prepared-action resume --action-id {prepared_action['action_id']} --provider-side-effect-id <id>"]
-            if prepared_action and approval.get("decision") == "approved" and not prepared_action["consumed_at"]
-            else ["agentops approval list --decision pending"]
-        ),
+        "recommended_actions": approval_wall_recommended_actions(approval, prepared_action, approval_id),
         "safety": {
             "read_only": True,
             "ledger_mutated": False,
@@ -7863,47 +7858,6 @@ def agent_gateway_record_tool_call(conn, body) -> tuple[dict, int]:
     return response, 201 if outcome == "created" else 200
 
 
-def prepared_action_hash_payload(row: dict) -> dict:
-    return {
-        "workspace_id": normalize_workspace_id(row.get("workspace_id")),
-        "task_id": row.get("task_id"),
-        "run_id": row.get("run_id"),
-        "tool_call_id": row.get("tool_call_id"),
-        "requested_by_agent_id": row.get("requested_by_agent_id"),
-        "action_type": row.get("action_type"),
-        "normalized_args_json": row.get("normalized_args_json") or "{}",
-        "target_resource": row.get("target_resource"),
-        "risk_level": row.get("risk_level"),
-        "policy_version": row.get("policy_version") or "approval-wall-v1",
-        "checkpoint_json": row.get("checkpoint_json") or "{}",
-        "idempotency_key": row.get("idempotency_key"),
-    }
-
-
-def prepared_action_hash(row: dict) -> str:
-    return stable_hash(prepared_action_hash_payload(row))
-
-
-def prepared_action_public(row) -> dict | None:
-    if not row:
-        return None
-    data = dict(row)
-    try:
-        normalized_args = json.loads(data.get("normalized_args_json") or "{}")
-    except Exception:
-        normalized_args = data.get("normalized_args_json")
-    try:
-        checkpoint = json.loads(data.get("checkpoint_json") or "{}")
-    except Exception:
-        checkpoint = data.get("checkpoint_json")
-    data["normalized_args"] = safe_json_metadata(normalized_args)
-    data["checkpoint"] = safe_json_metadata(checkpoint)
-    data["raw_prompt_omitted"] = True
-    data["raw_response_omitted"] = True
-    data["token_omitted"] = True
-    return data
-
-
 def get_prepared_action_for_approval(conn: sqlite3.Connection, approval_id: str):
     return conn.execute("SELECT * FROM prepared_actions WHERE approval_id=? ORDER BY created_at DESC LIMIT 1", (approval_id,)).fetchone()
 
@@ -7918,28 +7872,7 @@ def agent_gateway_get_prepared_action(conn: sqlite3.Connection, action_id: str, 
     if agent_gateway_is_bound_auth(auth_ctx) and row["requested_by_agent_id"] != ident["agent_id"]:
         return {"error": "forbidden", "message": "Agent token cannot inspect another agent's prepared action.", "token_omitted": True}, 403
     approval = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (row["approval_id"],)).fetchone()
-    current_hash = prepared_action_hash(dict(row))
-    hash_match = current_hash == row["action_hash"]
-    return {
-        "provider": "agentops-approval-wall",
-        "operation": "prepared_action_get",
-        "status": "ready" if hash_match else "blocked",
-        "prepared_action": prepared_action_public(row),
-        "approval": dict(approval) if approval else None,
-        "hash_verification": {
-            "stored_action_hash": row["action_hash"],
-            "current_action_hash": current_hash,
-            "match": hash_match,
-        },
-        "safety": {
-            "read_only": True,
-            "ledger_mutated": False,
-            "raw_prompt_omitted": True,
-            "raw_response_omitted": True,
-            "token_omitted": True,
-        },
-        "token_omitted": True,
-    }, 200
+    return build_prepared_action_get_response(row, approval), 200
 
 
 def agent_gateway_prepare_action(conn, body) -> tuple[dict, int]:
@@ -21691,109 +21624,13 @@ def operator_command_center(conn: sqlite3.Connection, headers, qs=None, auth_ctx
         item for item in deliveries
         if item.get("status") in {"waiting_approval", "needs_attention", "in_progress", "ready"}
     ][:limit]
-    commander_gaps = []
-    for package in commander_packages:
-        coding_gate = package.get("coding_evidence_gate") or {}
-        localization_gate = package.get("localization_gate") or {}
-        latest_run = package.get("latest_run") or {}
-        gate_status = str(coding_gate.get("status") or "missing")
-        localization_status = str(localization_gate.get("status") or "missing")
-        if gate_status == "recorded" and localization_status == "recorded":
-            continue
-        if localization_status != "recorded":
-            next_action = f"agentops commander packages --project-id {shlex.quote(str(package.get('project_id') or ''))} --limit 8"
-            gap_type = "missing_localization"
-        elif not latest_run.get("run_id"):
-            next_action = f"agentops commander dispatch-package --task-id {shlex.quote(str(package.get('task_id') or ''))} --adapter mock"
-            gap_type = "run_required"
-        elif gate_status != "recorded":
-            next_action = f"agentops commander coding-evidence --task-id {shlex.quote(str(package.get('task_id') or ''))} --run-id {shlex.quote(str(latest_run.get('run_id') or ''))} --confirm-record"
-            gap_type = "coding_evidence_required"
-        else:
-            next_action = package.get("recommended_action") or "agentops commander packages --limit 8"
-            gap_type = "attention"
-        commander_gaps.append({
-            "task_id": package.get("task_id"),
-            "project_id": package.get("project_id"),
-            "plan_id": package.get("plan_id"),
-            "lane_id": package.get("lane_id"),
-            "title": package.get("title"),
-            "package_status": package.get("package_status"),
-            "gap_type": gap_type,
-            "localization_status": localization_status,
-            "coding_evidence_status": gate_status,
-            "recorded_coding_artifact_types": coding_gate.get("recorded_artifact_types") or [],
-            "required_coding_artifact_types": coding_gate.get("artifact_types") or [],
-            "latest_run_id": latest_run.get("run_id"),
-            "next_action": next_action,
-            "raw_source_omitted": True,
-            "raw_patch_omitted": True,
-            "token_omitted": True,
-        })
-
-    project_map: dict[str, dict] = {}
-
-    def project_entry(project_id: str, source: str) -> dict:
-        key = commander_safe_text(project_id or "unknown", 120)
-        entry = project_map.setdefault(key, {
-            "project_id": key,
-            "sources": [],
-            "commander_packages": 0,
-            "commander_ready": 0,
-            "commander_blocked": 0,
-            "coding_evidence_recorded": 0,
-            "coding_evidence_missing_or_partial": 0,
-            "deliveries": 0,
-            "pending_approvals": 0,
-            "next_action": None,
-            "token_omitted": True,
-        })
-        if source not in entry["sources"]:
-            entry["sources"].append(source)
-        return entry
-
-    for package in commander_packages:
-        entry = project_entry(str(package.get("project_id") or "unknown"), "commander")
-        entry["commander_packages"] += 1
-        if package.get("package_status") == "ready_for_review":
-            entry["commander_ready"] += 1
-        if package.get("package_status") == "blocked":
-            entry["commander_blocked"] += 1
-        if ((package.get("coding_evidence_gate") or {}).get("status") == "recorded"):
-            entry["coding_evidence_recorded"] += 1
-        else:
-            entry["coding_evidence_missing_or_partial"] += 1
-        entry["next_action"] = entry.get("next_action") or package.get("recommended_action")
-    for item in deliveries:
-        project_id = str(item.get("project_id") or "unknown")
-        entry = project_entry(project_id, "customer_delivery")
-        entry["deliveries"] += 1
-        if item.get("status") == "waiting_approval":
-            entry["pending_approvals"] += 1
-        entry["next_action"] = entry.get("next_action") or item.get("next_action")
-
-    stale_worker_refs = []
-    for row in (worker.get("stuck_tasks") or [])[:limit]:
-        stale_worker_refs.append({
-            "kind": "stuck_task",
-            "task_id": row.get("task_id"),
-            "owner_agent_id": row.get("owner_agent_id"),
-            "status": row.get("status"),
-            "title": commander_safe_text(row.get("title") or row.get("task_id"), 180),
-            "next_action": "agentops worker status",
-            "token_omitted": True,
-        })
-    for row in (worker.get("stuck_workflow_job_refs") or [])[:limit]:
-        stale_worker_refs.append({
-            "kind": "stuck_workflow_job",
-            "job_id": row.get("job_id"),
-            "workflow_type": row.get("workflow_type"),
-            "status": row.get("status"),
-            "age_sec": row.get("age_sec"),
-            "stuck_reason": row.get("stuck_reason"),
-            "next_action": f"agentops workflow jobs --limit {limit}",
-            "token_omitted": True,
-        })
+    commander_gaps = build_command_center_commander_gaps(commander_packages)
+    project_rows = build_command_center_project_rows(
+        commander_packages=commander_packages,
+        deliveries=deliveries,
+        limit=limit,
+    )
+    stale_worker_refs = build_command_center_stale_worker_refs(worker, limit)
 
     next_actions: list[dict] = []
 
@@ -21862,10 +21699,14 @@ def operator_command_center(conn: sqlite3.Connection, headers, qs=None, auth_ctx
         )
 
     next_actions = sorted(next_actions, key=lambda item: int(item.get("priority") or 0), reverse=True)[:limit]
-    blocked_count = len(blocked_runs) + int(action_plan_summary.get("blocked") or 0)
-    attention_count = len(commander_gaps) + len(stale_worker_refs) + len(pending_approvals)
-    status = "blocked" if blocked_count else "attention" if attention_count or next_actions else "ready"
-    project_rows = sorted(project_map.values(), key=lambda item: (item.get("coding_evidence_missing_or_partial", 0), item.get("commander_blocked", 0), item.get("pending_approvals", 0)), reverse=True)[:limit]
+    status = command_center_status(
+        blocked_runs=blocked_runs,
+        action_plan_summary=action_plan_summary,
+        commander_gaps=commander_gaps,
+        stale_worker_refs=stale_worker_refs,
+        pending_approvals=pending_approvals,
+        next_actions=next_actions,
+    )
     return {
         "provider": "agentops-operator",
         "operation": "operator_command_center",

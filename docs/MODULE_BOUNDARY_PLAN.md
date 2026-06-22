@@ -177,6 +177,53 @@ Still owned by `server.py`:
 - recent artifact/task/run queries
 - final project-board payload assembly
 
+### Slice 8: Approval Wall Prepared-Action Helpers
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/approval_wall.py`
+
+Moved out of `server.py`:
+
+- prepared-action hash payload construction
+- prepared-action action-hash verification
+- prepared-action public projection with raw prompt/response/token omission
+- prepared-action get response shaping
+- approval-wall recommended-action selection for inspect/readback
+
+Still owned by `server.py`:
+
+- HTTP routes
+- Agent Gateway identity, auth and workspace checks
+- SQLite reads and writes for approvals, prepared actions, runs, tasks and tool calls
+- exact-once prepared-action resume state transition
+- runtime events, audit logs and provider side-effect evidence recording
+
+### Slice 9: Operator Command-Center Read Model Aggregation
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/operator_command_center.py`
+
+Moved out of `server.py`:
+
+- command-center Commander coding-evidence gap aggregation
+- command-center project-row aggregation across Commander packages and customer deliveries
+- stale worker/task/job references for command-center readback
+- command-center status aggregation from blocked runs, action-plan summary, gaps, stale refs and pending approvals
+
+Still owned by `server.py`:
+
+- HTTP routes
+- Agent Gateway auth/workspace header adaptation
+- SQLite queries for runs, approvals, tasks, deliveries and Commander packages
+- stable action id generation and final next-action receipt metadata
+- final command-center payload assembly
+
 Verification:
 
 ```bash
@@ -187,13 +234,15 @@ python3 scripts/worker_adapter_readiness_smoke.py --base-url http://127.0.0.1:87
 python3 scripts/runtime_connector_trust_smoke.py --base-url http://127.0.0.1:8787
 python3 scripts/agentops_worker_status_smoke.py
 python3 scripts/agentops_worker_fleet_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/prepared_action_approval_wall_smoke.py --base-url http://127.0.0.1:8787
 python3 scripts/commander_work_package_plan_smoke.py
 python3 scripts/commander_work_package_dispatch_smoke.py
+python3 scripts/operator_command_center_smoke.py
 ```
 
 ## Next Candidate Slices
 
-- Approval Wall prepared-action helpers.
-- Operator command-center read-model aggregation.
+- Approval Wall resume-gate mismatch helpers.
+- Runtime prepared-action response helpers.
 
 Each candidate must be extracted in a separate, smoke-backed slice.
