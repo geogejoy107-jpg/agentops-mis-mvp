@@ -127,6 +127,15 @@ def db_counts(db_path: Path, loop_id: str) -> dict:
     }
 
 
+def advance_receipt_count(db_path: Path) -> int:
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS c FROM audit_logs WHERE action='operator.action_queue_receipt' AND metadata_json LIKE ?",
+            ("%advance_loop:%",),
+        ).fetchone()
+    return int(row[0] if row else 0)
+
+
 def main() -> int:
     failures: list[str] = []
     outputs: list[str] = []
@@ -146,6 +155,23 @@ def main() -> int:
             require(policy_payload.get("operation") == "operator_advance_loop_policy", f"advance policy operation mismatch: {policy_payload}", failures)
             require(policy_summary.get("policy_id") == "advance_loop_local_bounded_v1", f"advance policy id missing: {policy_payload}", failures)
             require((policy_payload.get("safety") or {}).get("read_only") is True, f"advance policy should be read-only: {policy_payload}", failures)
+
+            global_preview = run_cli(["operator", "advance-loop", "--limit", "10"], base_url, outputs)
+            global_preview_payload = load_json(global_preview.stdout)
+            require(global_preview.returncode == 0, f"global advance preview failed: {global_preview.stderr or global_preview.stdout}", failures)
+            require(global_preview_payload.get("status") == "preview", f"global advance should preview: {global_preview_payload}", failures)
+            require((global_preview_payload.get("preview") or {}).get("gate_id") == "evidence_report", f"global advance should prioritize evidence report: {global_preview_payload}", failures)
+            require(((global_preview_payload.get("preview") or {}).get("action_policy") or {}).get("policy_id") == "advance_loop_local_bounded_v1", f"global evidence preview policy missing: {global_preview_payload}", failures)
+            global_before_receipts = advance_receipt_count(db_path)
+            global_advanced = run_cli(["operator", "advance-loop", "--limit", "10", "--confirm-advance"], base_url, outputs)
+            global_advanced_payload = load_json(global_advanced.stdout)
+            global_after_receipts = advance_receipt_count(db_path)
+            require(global_advanced.returncode == 0, f"global advance confirm failed: {global_advanced.stderr or global_advanced.stdout}", failures)
+            require((global_advanced_payload.get("preview") or {}).get("gate_id") == "evidence_report", f"global advance confirmed wrong gate: {global_advanced_payload}", failures)
+            require(global_advanced_payload.get("advanced") is True, f"global advance should execute evidence report: {global_advanced_payload}", failures)
+            require((global_advanced_payload.get("action_result") or {}).get("ok") is True, f"global evidence action failed: {global_advanced_payload}", failures)
+            require((global_advanced_payload.get("verify_result") or {}).get("ok") is True, f"global evidence verify failed: {global_advanced_payload}", failures)
+            require(global_after_receipts >= global_before_receipts + 1, f"global evidence advance receipt missing: {global_before_receipts} -> {global_after_receipts}", failures)
 
             workflow = run_cli([
                 "workflow",
@@ -217,6 +243,21 @@ def main() -> int:
             outputs.extend([unsafe_policy.stdout, unsafe_policy.stderr])
             unsafe_payload = load_json(unsafe_policy.stdout)
             require(unsafe_payload.get("allowed") is False, f"unsafe memory approve should be rejected: {unsafe_payload}", failures)
+            evidence_policy = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    "from agentops_mis_cli.advance_loop_policy import advance_loop_command_policy; import json; print(json.dumps(advance_loop_command_policy('agentops operator evidence-report --limit 8', phase='action')))",
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+            outputs.extend([evidence_policy.stdout, evidence_policy.stderr])
+            evidence_policy_payload = load_json(evidence_policy.stdout)
+            require(evidence_policy_payload.get("allowed") is True, f"evidence report should be allowlisted as read-only action: {evidence_policy_payload}", failures)
         finally:
             stop_server(server)
     secret_leaked = leaked("\n".join(outputs))

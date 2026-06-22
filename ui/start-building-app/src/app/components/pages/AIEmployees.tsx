@@ -80,6 +80,7 @@ import {
   type ReviewQueuePayload,
   type TaskIntakeChecklistItem,
   type WorkerAdapterName,
+  type WorkerDaemonLogPayload,
   type WorkerDispatchResult,
   type WorkerFleetHygienePayload,
   type WorkflowJob,
@@ -207,6 +208,10 @@ export function AIEmployees() {
       : "Ask the AI team to review Pixel Office from a customer perspective: improve the pixel style, clarify the flow, and keep MIS ledger, approvals, and run evidence visible.",
   });
   const [selectedLogAdapter, setSelectedLogAdapter] = useState<(typeof WORKER_ADAPTERS)[number]>("mock");
+  const [daemonLogsOpen, setDaemonLogsOpen] = useState(false);
+  const [daemonLogsByAdapter, setDaemonLogsByAdapter] = useState<Partial<Record<(typeof WORKER_ADAPTERS)[number], WorkerDaemonLogPayload>>>({});
+  const [daemonLogsLoading, setDaemonLogsLoading] = useState(false);
+  const [daemonLogsError, setDaemonLogsError] = useState<string | null>(null);
   const [integrationInboxBucket, setIntegrationInboxBucket] = useState("all");
   const [enrollmentAction, setEnrollmentAction] = useState<string | null>(null);
   const [enrollmentResult, setEnrollmentResult] = useState<string | null>(null);
@@ -225,7 +230,7 @@ export function AIEmployees() {
     scopes: DEFAULT_GATEWAY_SCOPES.join(", "),
   });
   const { data, loading, error, refresh } = useLiveData(async () => {
-    const [metrics, demoReadiness, workerStatus, workerFleet, workerHygiene, adapterReadiness, localReadiness, operatorActionPlan, operatorActionReceipts, operatorEvidenceReport, securityReadiness, integrationInbox, commanderWorkPackages, reviewQueue, customerDeliveryBoard, loopLaneReadback, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs] = await Promise.all([
+    const [metrics, demoReadiness, workerStatus, workerFleet, workerHygiene, adapterReadiness, localReadiness, operatorActionPlan, operatorActionReceipts, operatorEvidenceReport, securityReadiness, integrationInbox, commanderWorkPackages, reviewQueue, customerDeliveryBoard, loopLaneReadback, enrollmentPayload, sessionPayload, gatewayStatus, approvals, workflowJobs, stuckWorkflowJobs] = await Promise.all([
       loadDashboard(),
       loadDemoReadiness(),
       loadWorkerStatus(),
@@ -246,7 +251,6 @@ export function AIEmployees() {
       loadAgentGatewaySessions(),
       loadAgentGatewayStatus(),
       loadApprovals(),
-      Promise.all(WORKER_ADAPTERS.map(adapter => loadWorkerDaemonLogs(adapter))),
       loadWorkflowJobs(8),
       loadStuckWorkflowJobs(30, 8),
     ]);
@@ -258,8 +262,24 @@ export function AIEmployees() {
       loadOperatorLoopSelfCheck(12, scopedLoopId),
     ]);
     const agents = await loadAgents(metrics);
-    return { agents, demoReadiness, workerStatus, workerFleet, workerHygiene, adapterReadiness, localReadiness, operatorActionPlan, operatorActionReceipts, operatorEvidenceReport, operatorLoopAudit, operatorHandoff, operatorHealth, operatorLoopSelfCheck, securityReadiness, integrationInbox, commanderWorkPackages, reviewQueue, customerDeliveryBoard, loopLaneReadback, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs };
+    return { agents, demoReadiness, workerStatus, workerFleet, workerHygiene, adapterReadiness, localReadiness, operatorActionPlan, operatorActionReceipts, operatorEvidenceReport, operatorLoopAudit, operatorHandoff, operatorHealth, operatorLoopSelfCheck, securityReadiness, integrationInbox, commanderWorkPackages, reviewQueue, customerDeliveryBoard, loopLaneReadback, enrollmentPayload, sessionPayload, gatewayStatus, approvals, workflowJobs, stuckWorkflowJobs };
   }, [integrationInboxBucket]);
+  const loadSelectedDaemonLog = async (adapter = selectedLogAdapter) => {
+    setDaemonLogsLoading(true);
+    setDaemonLogsError(null);
+    try {
+      const payload = await loadWorkerDaemonLogs(adapter);
+      setDaemonLogsByAdapter((current) => ({ ...current, [adapter]: payload }));
+    } catch (err) {
+      setDaemonLogsError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDaemonLogsLoading(false);
+    }
+  };
+  useEffect(() => {
+    if (!daemonLogsOpen) return;
+    void loadSelectedDaemonLog(selectedLogAdapter);
+  }, [daemonLogsOpen, selectedLogAdapter]);
   const agents = data?.agents || [];
   const demoReadiness = data?.demoReadiness;
   const workerStatus = data?.workerStatus;
@@ -333,8 +353,7 @@ export function AIEmployees() {
   const remoteHealth = workerStatus?.remote_worker_health;
   const remoteWorkers = remoteHealth?.remote_workers || [];
   const recentRemoteSessions = remoteHealth?.recent_sessions || [];
-  const daemonLogs = data?.daemonLogs || [];
-  const selectedDaemonLog = daemonLogs.find(item => item.daemon.adapter === selectedLogAdapter)?.daemon;
+  const selectedDaemonLog = daemonLogsByAdapter[selectedLogAdapter]?.daemon;
   const workflowJobs = data?.workflowJobs?.jobs || [];
   const stuckWorkflowJobs = data?.stuckWorkflowJobs?.stuck_jobs || [];
   const stuckWorkflowJobRefs = workerStatus?.stuck_workflow_job_refs || [];
@@ -695,6 +714,10 @@ export function AIEmployees() {
       laneNextAction: "Next action",
       noFleetLanes: "No worker fleet lanes yet.",
       daemonLogs: "Daemon logs",
+      openDaemonLogs: "Open logs",
+      refreshDaemonLogs: "Refresh logs",
+      daemonLogsLoading: "Loading logs...",
+      daemonLogsLazyHint: "Logs are loaded only when opened, so this page stays useful even if one daemon log endpoint is slow or unavailable.",
       recentEvents: "Recent gateway events",
       logPath: "Log path",
       noLogs: "No log lines yet.",
@@ -1124,6 +1147,10 @@ export function AIEmployees() {
       laneNextAction: "下一步动作",
       noFleetLanes: "暂无 worker fleet 队伍。",
       daemonLogs: "Daemon 日志",
+      openDaemonLogs: "打开日志",
+      refreshDaemonLogs: "刷新日志",
+      daemonLogsLoading: "日志加载中...",
+      daemonLogsLazyHint: "日志只在打开时加载；即使某个 daemon 日志端点慢或不可用，页面其他部分也能继续使用。",
       recentEvents: "最近网关事件",
       logPath: "日志路径",
       noLogs: "暂无日志行。",
@@ -3385,6 +3412,7 @@ export function AIEmployees() {
                 {[
                   { label: copy.loopAuditTitle, value: operatorHandoffSummary?.loop_status || "unknown", status: operatorHandoffSummary?.loop_status || operatorHandoff.status },
                   { label: copy.actionQueueTitle, value: operatorHandoffSummary?.action_plan_status || "unknown", status: operatorHandoffSummary?.action_plan_status || operatorHandoff.status },
+                  { label: copy.evidenceReportTitle, value: `${operatorHandoffSummary?.evidence_report_ready ?? 0}/${operatorHandoffSummary?.evidence_report_runs ?? 0}`, status: operatorHandoffSummary?.evidence_report_status || operatorHandoff.status },
                   { label: copy.loopHealth, value: `${operatorHandoff.loop_health?.score ?? 0}/100`, status: operatorHandoff.loop_health?.status || "unknown" },
                   { label: copy.handoffCommands, value: `${operatorHandoffCommands.length}/${operatorHandoffSummary?.loop_package_items ?? 0}`, status: operatorHandoffCommands.length > 0 ? "attention" : "pass" },
                 ].map((item) => (
@@ -3544,8 +3572,8 @@ export function AIEmployees() {
               </div>
               <div className="rounded px-2 py-1.5 mt-2" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
                 <div className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.handoffSources}</div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-1">
-                  {Object.entries(operatorHandoffSources).slice(0, 2).map(([sourceName, sourceValue]) => {
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mt-1">
+                  {Object.entries(operatorHandoffSources).slice(0, 3).map(([sourceName, sourceValue]) => {
                     const sourceRecord = sourceValue && typeof sourceValue === "object" ? sourceValue as Record<string, unknown> : {};
                     const sourceStatus = String(sourceRecord.status || "unknown");
                     const sourceStatusRaw = typeof sourceRecord.source_status === "object" && sourceRecord.source_status !== null ? sourceRecord.source_status as Record<string, unknown> : {};
@@ -5242,7 +5270,10 @@ export function AIEmployees() {
             {WORKER_ADAPTERS.map(adapter => (
               <button
                 key={adapter}
-                onClick={() => setSelectedLogAdapter(adapter)}
+                onClick={() => {
+                  setSelectedLogAdapter(adapter);
+                  setDaemonLogsOpen(true);
+                }}
                 className="text-[11px] px-3 py-1.5 rounded"
                 style={{
                   background: selectedLogAdapter === adapter ? "rgba(34,211,238,0.14)" : "var(--mis-surface2)",
@@ -5253,6 +5284,21 @@ export function AIEmployees() {
                 {adapter}
               </button>
             ))}
+            <button
+              onClick={() => {
+                if (!daemonLogsOpen) {
+                  setDaemonLogsOpen(true);
+                } else {
+                  void loadSelectedDaemonLog(selectedLogAdapter);
+                }
+              }}
+              disabled={daemonLogsLoading}
+              className="inline-flex items-center gap-1.5 text-[11px] px-3 py-1.5 rounded disabled:opacity-50"
+              style={{ color: "var(--mis-cyan)", background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}
+            >
+              {daemonLogsLoading ? <RefreshCw size={11} /> : <Activity size={11} />}
+              {daemonLogsLoading ? copy.daemonLogsLoading : daemonLogsOpen ? copy.refreshDaemonLogs : copy.openDaemonLogs}
+            </button>
           </div>
         </div>
 
@@ -5262,6 +5308,16 @@ export function AIEmployees() {
               <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.daemonLogs}</div>
               <StatusBadge status={selectedDaemonLog?.running ? "running" : selectedDaemonLog?.status || "unknown"} />
             </div>
+            {!daemonLogsOpen && (
+              <div className="text-[10px] mt-2 rounded px-2 py-1.5" style={{ color: "var(--mis-muted)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                {copy.daemonLogsLazyHint}
+              </div>
+            )}
+            {daemonLogsError && (
+              <div className="text-[10px] mt-2 rounded px-2 py-1.5" style={{ color: "#F87171", background: "rgba(248,113,113,0.08)", border: "1px solid rgba(248,113,113,0.18)" }}>
+                {copy.lastError}: {daemonLogsError}
+              </div>
+            )}
             <div className="text-[10px] mt-1 truncate" style={{ color: "var(--mis-muted)" }}>
               {copy.logPath}: {selectedDaemonLog?.log_path || "—"}
             </div>
@@ -5280,7 +5336,13 @@ export function AIEmployees() {
               className="mt-3 h-44 overflow-auto rounded p-3 text-[10px] leading-relaxed whitespace-pre-wrap"
               style={{ background: "var(--mis-bg)", color: "var(--mis-dim)", border: "1px solid var(--mis-border)" }}
             >
-              {(selectedDaemonLog?.log_tail || []).length > 0 ? selectedDaemonLog?.log_tail?.slice(-28).join("\n") : copy.noLogs}
+              {daemonLogsLoading
+                ? copy.daemonLogsLoading
+                : !daemonLogsOpen
+                  ? copy.daemonLogsLazyHint
+                  : (selectedDaemonLog?.log_tail || []).length > 0
+                    ? selectedDaemonLog?.log_tail?.slice(-28).join("\n")
+                    : copy.noLogs}
             </pre>
           </div>
 

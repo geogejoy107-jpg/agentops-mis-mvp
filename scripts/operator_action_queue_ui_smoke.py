@@ -71,6 +71,15 @@ EXPECTED_MARKERS = {
     "operator_evidence_report_missing_label_zh": 'missingManifests: "缺失清单"',
     "operator_evidence_report_receipt_label_en": 'verifiedReceipts: "Verified receipts"',
     "operator_evidence_report_receipt_label_zh": 'verifiedReceipts: "已验收收据"',
+    "daemon_logs_lazy_state": "daemonLogsOpen",
+    "daemon_logs_lazy_loader": "loadSelectedDaemonLog",
+    "daemon_logs_lazy_effect_guard": "if (!daemonLogsOpen) return;",
+    "daemon_logs_lazy_open_label_en": 'openDaemonLogs: "Open logs"',
+    "daemon_logs_lazy_open_label_zh": 'openDaemonLogs: "打开日志"',
+    "daemon_logs_lazy_hint_en": 'daemonLogsLazyHint: "Logs are loaded only when opened',
+    "daemon_logs_lazy_hint_zh": 'daemonLogsLazyHint: "日志只在打开时加载',
+    "daemon_logs_lazy_selected_adapter": "setDaemonLogsOpen(true);",
+    "daemon_logs_lazy_refresh": "void loadSelectedDaemonLog(selectedLogAdapter)",
     "security_readiness_local_write_guard_gate": "localWriteGuardGate",
     "security_readiness_visible_gates": "visibleSecurityGates",
     "security_readiness_local_write_guard_id": "local_ui_write_guard",
@@ -141,6 +150,10 @@ EXPECTED_MARKERS = {
     "operator_handoff_advance_loop_policy_id": "advanceLoopPolicyId",
     "operator_handoff_advance_loop_policy_version": "advanceLoopPolicyVersion",
     "operator_handoff_sources": "operatorHandoffSources",
+    "operator_handoff_evidence_report_summary": "operatorHandoffSummary?.evidence_report_ready",
+    "operator_handoff_evidence_report_status": "operatorHandoffSummary?.evidence_report_status",
+    "operator_handoff_sources_three": "Object.entries(operatorHandoffSources).slice(0, 3)",
+    "operator_handoff_evidence_report_label": "copy.evidenceReportTitle",
     "operator_handoff_receipt_state": "operatorHandoff.receipt_state.coverage",
     "operator_handoff_review_state": "operatorHandoff.review_state.loop_record",
     "operator_handoff_loop_health_json": "loop_health: operatorHandoff.loop_health",
@@ -216,6 +229,11 @@ EXPECTED_MARKERS = {
     "verified_receipt_status": 'recordActionQueueReceipt(item, "verified")',
 }
 
+FORBIDDEN_MARKERS = {
+    "initial_daemon_log_prefetch": "Promise.all(WORKER_ADAPTERS.map(adapter => loadWorkerDaemonLogs(adapter)))",
+    "data_daemon_logs_readback": "data?.daemonLogs",
+}
+
 
 def main() -> int:
     source = AI_EMPLOYEES.read_text(encoding="utf-8")
@@ -224,6 +242,9 @@ def main() -> int:
     for label, marker in EXPECTED_MARKERS.items():
         if marker not in source:
             failures.append(f"missing {label}: {marker}")
+    for label, marker in FORBIDDEN_MARKERS.items():
+        if marker in source:
+            failures.append(f"forbidden {label}: {marker}")
 
     queue_index = source.find("const actionQueueCandidates")
     verify_render_index = source.find("{copy.verifyAfterAction}: {item.verifyAction}")
@@ -242,7 +263,7 @@ def main() -> int:
         "ok": not failures,
         "operation": "operator_action_queue_ui_contract",
         "file": str(AI_EMPLOYEES.relative_to(ROOT)),
-        "markers_checked": len(EXPECTED_MARKERS),
+        "markers_checked": len(EXPECTED_MARKERS) + len(FORBIDDEN_MARKERS),
         "failures": failures,
         "safety": {
             "read_only": True,

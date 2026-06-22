@@ -551,7 +551,35 @@ def run_bounded_agentops_command(command: str, client: AgentOpsClient, *, timeou
 
 
 def select_advance_loop_item(handoff: dict) -> dict:
-    action_package = ((handoff.get("work_order") or {}).get("action_package") or {})
+    work_order = handoff.get("work_order") or {}
+    evidence_work_order = work_order.get("evidence_report") or {}
+    evidence_status = str(evidence_work_order.get("status") or "").lower()
+    if not handoff.get("loop_id") and evidence_status in {"blocked", "attention"}:
+        for command in evidence_work_order.get("next_actions") or []:
+            command = str(command or "").strip()
+            if not command:
+                continue
+            policy = advance_loop_command_policy(command, phase="action")
+            if not policy.get("allowed"):
+                continue
+            return {
+                "package_id": "operator_evidence_report_work_order",
+                "gate_id": "evidence_report",
+                "gate_label": "Run evidence report",
+                "gate_status": evidence_status,
+                "source": "operator_handoff.evidence_report",
+                "action_command": command,
+                "verify_command": "agentops operator handoff --limit 12",
+                "receipt_verify_record_command": None,
+                "evidence": {
+                    "summary": evidence_work_order.get("summary") or {},
+                    "runs": len(evidence_work_order.get("runs") or []),
+                    "operation": evidence_work_order.get("operation"),
+                },
+                "advance_policy": policy,
+                "token_omitted": True,
+            }
+    action_package = (work_order.get("action_package") or {})
     for item in action_package.get("items") or []:
         command = str(item.get("action_command") or "").strip()
         if not command:
@@ -591,9 +619,11 @@ def cmd_operator_advance_loop(args, client: AgentOpsClient) -> dict:
     preview = {
         "package_id": selected.get("package_id"),
         "gate_id": selected.get("gate_id"),
+        "source": selected.get("source"),
         "gate_status": selected.get("gate_status"),
         "action_command": redact_text(action_command, 500),
         "verify_command": redact_text(verify_command, 500) if verify_command else None,
+        "evidence": selected.get("evidence") or {},
         "action_policy": selected.get("advance_policy") or {},
         "verify_policy": verify_policy,
         "receipt_status_on_success": "verified",

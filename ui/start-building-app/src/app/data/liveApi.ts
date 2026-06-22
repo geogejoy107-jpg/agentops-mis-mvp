@@ -1559,6 +1559,13 @@ export interface OperatorHandoffPayload {
   summary: {
     loop_status?: string;
     action_plan_status?: string;
+    evidence_report_status?: string;
+    evidence_report_runs?: number;
+    evidence_report_ready?: number;
+    evidence_report_attention?: number;
+    evidence_report_blocked?: number;
+    evidence_report_missing_plan_evidence_manifests?: number;
+    evidence_report_pending_approvals?: number;
     loop_package_items: number;
     operator_actions: number;
     receipt_required: number;
@@ -1581,6 +1588,7 @@ export interface OperatorHandoffPayload {
   work_order: {
     method?: string;
     action_package?: OperatorLoopActionPackagePayload;
+    evidence_report?: Record<string, unknown>;
     next_actions: string[];
     top_operator_actions: OperatorActionPlanItem[];
     advance_loop?: Record<string, unknown>;
@@ -4627,6 +4635,7 @@ export async function loadOperatorHandoff(limit = 12, loopId = ""): Promise<Oper
     work_order: {
       method: "READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD",
       action_package: {},
+      evidence_report: {},
       next_actions: [],
       top_operator_actions: [],
       commands: [],
@@ -4690,6 +4699,13 @@ export async function loadOperatorHandoff(limit = 12, loopId = ""): Promise<Oper
     summary: {
       loop_status: summaryRaw.loop_status ? String(summaryRaw.loop_status) : undefined,
       action_plan_status: summaryRaw.action_plan_status ? String(summaryRaw.action_plan_status) : undefined,
+      evidence_report_status: summaryRaw.evidence_report_status ? String(summaryRaw.evidence_report_status) : undefined,
+      evidence_report_runs: numberValue(summaryRaw.evidence_report_runs, 0),
+      evidence_report_ready: numberValue(summaryRaw.evidence_report_ready, 0),
+      evidence_report_attention: numberValue(summaryRaw.evidence_report_attention, 0),
+      evidence_report_blocked: numberValue(summaryRaw.evidence_report_blocked, 0),
+      evidence_report_missing_plan_evidence_manifests: numberValue(summaryRaw.evidence_report_missing_plan_evidence_manifests, 0),
+      evidence_report_pending_approvals: numberValue(summaryRaw.evidence_report_pending_approvals, 0),
       loop_package_items: numberValue(summaryRaw.loop_package_items, 0),
       operator_actions: numberValue(summaryRaw.operator_actions, 0),
       receipt_required: numberValue(summaryRaw.receipt_required, 0),
@@ -4712,6 +4728,7 @@ export async function loadOperatorHandoff(limit = 12, loopId = ""): Promise<Oper
     work_order: {
       method: workOrderRaw.method ? String(workOrderRaw.method) : undefined,
       action_package: normalizeOperatorLoopActionPackage(workOrderRaw.action_package, loopId),
+      evidence_report: typeof workOrderRaw.evidence_report === "object" && workOrderRaw.evidence_report !== null ? workOrderRaw.evidence_report as Record<string, unknown> : undefined,
       next_actions: asArray<unknown>(workOrderRaw.next_actions).map(String).filter(Boolean),
       advance_loop: typeof workOrderRaw.advance_loop === "object" && workOrderRaw.advance_loop !== null ? workOrderRaw.advance_loop as Record<string, unknown> : undefined,
       top_operator_actions: asArray<Record<string, unknown>>(workOrderRaw.top_operator_actions).map((item) => ({

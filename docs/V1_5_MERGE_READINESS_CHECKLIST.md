@@ -278,9 +278,11 @@ python3 scripts/sqlite_reliability_smoke.py
 
 - [ ] Measure AI Employees initial request count.
 - [ ] Measure time to first useful panel.
-- [ ] Do not fetch daemon logs before the panel is opened.
+- [x] Do not fetch daemon logs before the panel is opened: AI Employees removes the initial `loadWorkerDaemonLogs` fan-out, loads only the selected adapter after the log panel is opened, and UI smoke forbids the old prefetch marker.
 - [ ] Make panels independently loadable.
 - [x] Add a lightweight command-center read model or equivalent aggregation: `operator evidence-report` aggregates Agent Plan, approval, plan_evidence_manifest and ledger evidence by run.
+- [x] Add run-level evidence to operator handoff: `operator handoff` now includes an `evidence_report` source and read-only work order so Hermes/OpenClaw/Codex can inherit delivery evidence gaps and commands.
+- [x] Bounded advance consumes handoff evidence work: unscoped `agentops operator advance-loop` prioritizes the read-only `evidence_report` work order for blocked/attention run evidence, verifies through handoff, and records action receipt/evaluation proof; scoped `--loop-id` still advances that loop's gate.
 - [x] Operator Action Queue recovery items can record action receipts and show VERIFY commands in action-plan / loop-audit readback.
 - [ ] Paginate large run, tool and audit lists.
 - [ ] Briefly cache expensive aggregate read models.
@@ -318,6 +320,7 @@ SQLite DB.
 
 ui-build: npm ci + npm run build under ui/start-building-app.
 AI Employees optional endpoint fallback: `cd ui/start-building-app && npm run build`.
+AI Employees lazy daemon logs: `python3 scripts/operator_action_queue_ui_smoke.py`.
 ```
 
 The workflow intentionally keeps Hermes/OpenClaw live runtime work out of CI.

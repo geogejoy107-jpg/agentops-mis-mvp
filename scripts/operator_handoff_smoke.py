@@ -160,6 +160,16 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
     require(isinstance(work_order.get("commands") or [], list), f"{label} commands missing: {work_order}", failures)
     action_package = work_order.get("action_package") or {}
     require(action_package.get("operation") == "loop_action_package", f"{label} action_package missing: {action_package}", failures)
+    evidence_work_order = work_order.get("evidence_report") or {}
+    require(evidence_work_order.get("operation") == "operator_evidence_report_work_order", f"{label} evidence report work order missing: {evidence_work_order}", failures)
+    require(evidence_work_order.get("status") in {"ready", "attention", "blocked", "unavailable", "unknown"}, f"{label} evidence report status wrong: {evidence_work_order}", failures)
+    require(isinstance((evidence_work_order.get("summary") or {}).get("runs"), int), f"{label} evidence report summary missing: {evidence_work_order}", failures)
+    require(isinstance(evidence_work_order.get("runs") or [], list), f"{label} evidence report runs missing: {evidence_work_order}", failures)
+    require(isinstance(evidence_work_order.get("next_actions") or [], list), f"{label} evidence report next_actions missing: {evidence_work_order}", failures)
+    evidence_safety = evidence_work_order.get("safety") or {}
+    require(evidence_safety.get("read_only") is True, f"{label} evidence report work order should be read-only: {evidence_safety}", failures)
+    require(evidence_safety.get("ledger_mutated") is False, f"{label} evidence report work order should not mutate ledger: {evidence_safety}", failures)
+    require(evidence_work_order.get("token_omitted") is True, f"{label} evidence report token omission missing: {evidence_work_order}", failures)
     advance_loop = work_order.get("advance_loop") or {}
     require(advance_loop.get("operation") == "advance_loop_work_order", f"{label} advance loop work order missing: {advance_loop}", failures)
     require(advance_loop.get("status") in {"attention", "empty"}, f"{label} advance loop status wrong: {advance_loop}", failures)
@@ -200,7 +210,9 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
     review_state = payload.get("review_state") or {}
     require(isinstance(review_state.get("loop_record") or {}, dict), f"{label} review loop_record missing: {review_state}", failures)
     sources = payload.get("sources") or {}
-    require("loop_audit" in sources and "action_plan" in sources, f"{label} sources missing: {sources}", failures)
+    require("loop_audit" in sources and "action_plan" in sources and "evidence_report" in sources, f"{label} sources missing: {sources}", failures)
+    evidence_source = sources.get("evidence_report") or {}
+    require(isinstance((evidence_source.get("summary") or {}).get("runs"), int), f"{label} evidence report source summary missing: {evidence_source}", failures)
     require("read-only" in (payload.get("contract") or ""), f"{label} contract missing: {payload}", failures)
 
 

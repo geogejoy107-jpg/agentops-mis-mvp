@@ -25,6 +25,7 @@ ALLOWED_READ_COMMANDS = {
     ("operator", "action-plan"),
     ("operator", "handoff"),
     ("operator", "health"),
+    ("operator", "evidence-report"),
     ("operator", "intake-checklist"),
     ("operator", "receipt-failure-memories"),
     ("knowledge", "search"),

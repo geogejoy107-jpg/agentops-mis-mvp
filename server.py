@@ -17314,9 +17314,13 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
         effective_headers["X-AgentOps-Agent-Id"] = auth_ctx.get("agent_id") or ""
     loop_audit = operator_loop_audit(conn, effective_headers, {"limit": [str(limit)], "loop_id": [loop_id]} if loop_id else {"limit": [str(limit)]})
     action_plan = operator_action_plan(conn, effective_headers, {"limit": [str(limit)]})
+    evidence_report = operator_evidence_report(conn, effective_headers, {"limit": [str(min(limit, 8))]})
     action_package = loop_audit.get("action_package") or {}
     action_package_items = action_package.get("items") or []
     action_plan_actions = action_plan.get("actions") or []
+    evidence_report_summary = evidence_report.get("summary") or {}
+    evidence_report_runs = evidence_report.get("runs") or []
+    evidence_report_commands = evidence_report.get("recommended_commands") or []
     receipt_coverage = action_plan.get("receipt_coverage") or {}
     loop_record = loop_audit.get("loop_record") or {}
     action_receipts = action_plan.get("action_receipts") or {}
@@ -17338,6 +17342,33 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
     receipt_failure_memory_candidates = int(receipt_failure_memory_summary.get("candidates") or 0)
     receipt_failure_memory_failed_receipts = int(receipt_failure_memory_summary.get("failed_receipts") or 0)
     receipt_failure_memory_existing_candidates = int(receipt_failure_memory_summary.get("existing_memory_candidates") or 0)
+    evidence_report_blocked = int(evidence_report_summary.get("blocked") or 0)
+    evidence_report_attention = int(evidence_report_summary.get("attention") or 0)
+    evidence_report_missing_manifests = int(evidence_report_summary.get("missing_plan_evidence_manifests") or 0)
+    evidence_report_pending_approvals = int(evidence_report_summary.get("pending_approvals") or 0)
+    evidence_report_read_command = f"agentops operator evidence-report --limit {min(limit, 8)}"
+    evidence_report_next_actions = [evidence_report_read_command]
+    for command in evidence_report_commands[:5]:
+        command = str(command or "").strip()
+        if command and command not in evidence_report_next_actions:
+            evidence_report_next_actions.append(command)
+    evidence_report_work_order = {
+        "operation": "operator_evidence_report_work_order",
+        "status": evidence_report.get("status") or "unknown",
+        "summary": evidence_report_summary,
+        "runs": evidence_report_runs[: min(limit, 8)],
+        "next_actions": evidence_report_next_actions[:6],
+        "contract": "read-only run evidence work order; commands inspect or remediate evidence gaps explicitly and are never auto-executed by handoff",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
     receipt_failure_work_order_items: list[dict] = []
     for candidate in (receipt_failure_memory.get("candidates") or [])[: min(limit, 8)]:
         action_hash = str(candidate.get("action_hash") or "").strip()
@@ -17409,16 +17440,32 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
         advance_loop_args.extend(["--loop-id", scoped_loop_id])
     advance_loop_preview_command = " ".join(shlex.quote(str(part)) for part in advance_loop_args)
     advance_loop_confirm_command = " ".join(shlex.quote(str(part)) for part in [*advance_loop_args, "--confirm-advance"])
-    advance_loop_selected_item = next((item for item in action_package_items if item.get("gate_status") != "pass" and item.get("action_command")), None)
+    loop_advance_selected_item = next((item for item in action_package_items if item.get("gate_status") != "pass" and item.get("action_command")), None)
+    evidence_advance_selected_item = None
+    if not scoped_loop_id and (evidence_report_work_order.get("status") in {"blocked", "attention"}):
+        evidence_action_command = next((str(command or "").strip() for command in (evidence_report_work_order.get("next_actions") or []) if str(command or "").strip()), "")
+        if evidence_action_command:
+            evidence_advance_selected_item = {
+                "package_id": "operator_evidence_report_work_order",
+                "gate_id": "evidence_report",
+                "gate_label": "Run evidence report",
+                "gate_status": evidence_report_work_order.get("status"),
+                "action_command": evidence_action_command,
+                "verify_command": f"agentops operator handoff --limit {limit}",
+                "receipt_verify_record_command": None,
+                "token_omitted": True,
+            }
+    advance_loop_selected_item = evidence_advance_selected_item or loop_advance_selected_item
     advance_loop_policy = advance_loop_policy_summary()
     advance_loop_work_order = {
         "operation": "advance_loop_work_order",
         "status": "attention" if advance_loop_selected_item else "empty",
         "summary": {
-            "items": len(action_package_items),
+            "items": len(action_package_items) + (1 if evidence_advance_selected_item else 0),
             "selected_gate": (advance_loop_selected_item or {}).get("gate_id"),
             "selected_status": (advance_loop_selected_item or {}).get("gate_status"),
             "loop_scoped": bool(scoped_loop_id),
+            "evidence_report_prioritized": bool(evidence_advance_selected_item),
             "policy_id": advance_loop_policy.get("policy_id"),
             "policy_version": advance_loop_policy.get("policy_version"),
         },
@@ -17464,6 +17511,10 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
     if receipt_failure_memory_candidates:
         next_action = (receipt_failure_work_order.get("next_actions") or receipt_failure_memory.get("next_actions") or ["agentops operator receipt-failure-memories --min-failures 2 --limit 8"])[0]
         loop_health_risks.append({"id": "receipt_failure_memory_review", "severity": "attention", "count": receipt_failure_memory_candidates, "next_action": next_action})
+    if evidence_report_blocked:
+        loop_health_risks.append({"id": "run_evidence_blocked", "severity": "blocked", "count": evidence_report_blocked, "next_action": (evidence_report_work_order.get("next_actions") or ["agentops operator evidence-report --limit 8"])[0]})
+    elif evidence_report_attention or evidence_report_missing_manifests or evidence_report_pending_approvals:
+        loop_health_risks.append({"id": "run_evidence_attention", "severity": "attention", "count": evidence_report_attention + evidence_report_missing_manifests + evidence_report_pending_approvals, "next_action": (evidence_report_work_order.get("next_actions") or ["agentops operator evidence-report --limit 8"])[0]})
     if loop_record_status not in {"ready", "pass", "closed"}:
         loop_health_risks.append({"id": "loop_record_not_closed", "severity": "attention", "count": int(loop_record.get("candidate_count") or 0) + int(loop_record.get("pending_approval_count") or 0), "next_action": loop_record.get("next_action") or "agentops review queue --limit 20"})
     auth_mode = (auth_ctx or {}).get("mode") or "unknown"
@@ -17472,6 +17523,10 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
         loop_health_risks.append({"id": "auth_boundary_unknown", "severity": "blocked", "count": 1, "next_action": "agentops status"})
     safety_ready = True
     handoff_commands: list[str] = []
+    for command in evidence_report_work_order.get("next_actions") or []:
+        command = str(command or "").strip()
+        if command and command not in handoff_commands:
+            handoff_commands.append(command)
     for command in advance_loop_work_order.get("next_actions") or []:
         command = str(command or "").strip()
         if command and command not in handoff_commands:
@@ -17530,6 +17585,17 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
             "work_items": len(receipt_failure_work_order_items),
             "next_action": (receipt_failure_work_order.get("next_actions") or receipt_failure_memory.get("next_actions") or ["agentops operator receipt-failure-memories --min-failures 2 --limit 8"])[0],
         },
+        "evidence_report": {
+            "status": "blocked" if evidence_report_blocked else "attention" if evidence_report_attention or evidence_report_missing_manifests or evidence_report_pending_approvals else "pass",
+            "runs": int(evidence_report_summary.get("runs") or 0),
+            "ready": int(evidence_report_summary.get("ready") or 0),
+            "attention": evidence_report_attention,
+            "blocked": evidence_report_blocked,
+            "verified_plan_evidence_manifests": int(evidence_report_summary.get("verified_plan_evidence_manifests") or 0),
+            "missing_plan_evidence_manifests": evidence_report_missing_manifests,
+            "pending_approvals": evidence_report_pending_approvals,
+            "next_action": (evidence_report_work_order.get("next_actions") or ["agentops operator evidence-report --limit 8"])[0],
+        },
         "record": {
             "status": loop_record_status,
             "candidates": int(loop_record.get("candidate_count") or 0),
@@ -17560,7 +17626,7 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
         10 if safety_ready else 0,
     ]
     loop_health_score = min(max(sum(score_parts), 0), 100)
-    loop_health_status = "blocked" if loop_blocked or receipt_evaluation_fail or not auth_ready or not safety_ready else "attention" if loop_health_risks or loop_health_score < 90 else "ready"
+    loop_health_status = "blocked" if loop_blocked or receipt_evaluation_fail or evidence_report_blocked or not auth_ready or not safety_ready else "attention" if loop_health_risks or loop_health_score < 90 else "ready"
     return {
         "provider": "agentops-operator",
         "operation": "operator_handoff",
@@ -17570,6 +17636,13 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
         "summary": {
             "loop_status": loop_audit.get("status"),
             "action_plan_status": action_plan.get("status"),
+            "evidence_report_status": evidence_report.get("status"),
+            "evidence_report_runs": int(evidence_report_summary.get("runs") or 0),
+            "evidence_report_ready": int(evidence_report_summary.get("ready") or 0),
+            "evidence_report_attention": evidence_report_attention,
+            "evidence_report_blocked": evidence_report_blocked,
+            "evidence_report_missing_plan_evidence_manifests": evidence_report_missing_manifests,
+            "evidence_report_pending_approvals": evidence_report_pending_approvals,
             "loop_package_items": len(action_package_items),
             "operator_actions": len(action_plan_actions),
             "receipt_required": receipt_coverage.get("required", 0),
@@ -17593,6 +17666,7 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
         "work_order": {
             "method": loop_audit.get("method"),
             "action_package": action_package,
+            "evidence_report": evidence_report_work_order,
             "next_actions": loop_audit.get("next_actions") or [],
             "top_operator_actions": action_plan_actions[: min(limit, 8)],
             "receipt_failure_memory": receipt_failure_work_order,
@@ -17629,6 +17703,12 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
                 "summary": action_plan.get("summary") or {},
                 "source_status": action_plan.get("source_status") or {},
             },
+            "evidence_report": {
+                "status": evidence_report.get("status"),
+                "summary": evidence_report_summary,
+                "safety": evidence_report.get("safety") or {},
+                "contract": evidence_report.get("contract"),
+            },
         },
         "loop_health": {
             "operation": "operator_loop_health",
@@ -17645,10 +17725,10 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
             "gates": gate_checks,
             "risks": loop_health_risks[:8],
             "next_action": (loop_health_risks[0]["next_action"] if loop_health_risks else (loop_audit.get("next_actions") or ["agentops operator loop-audit --limit 20"])[0]),
-            "contract": "read-only loop health snapshot derived from loop-audit, action-plan receipts, review state, auth, and safety; it never executes commands or writes ledger rows",
+            "contract": "read-only loop health snapshot derived from loop-audit, action-plan receipts, evidence report, review state, auth, and safety; it never executes commands or writes ledger rows",
             "token_omitted": True,
         },
-        "contract": "read-only operator handoff; combines loop work order, action queue receipts, and review state without executing commands or mutating ledgers",
+        "contract": "read-only operator handoff; combines loop work order, run evidence report, action queue receipts, and review state without executing commands or mutating ledgers",
         "auth": {
             "mode": (auth_ctx or {}).get("mode") or "unknown",
             "scoped": agent_gateway_is_bound_auth(auth_ctx),
