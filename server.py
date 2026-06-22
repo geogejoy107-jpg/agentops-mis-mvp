@@ -16869,6 +16869,129 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
     advance_selected = advance_loop.get("selected_item") or {}
     advance_preview_command = advance_loop.get("preview_command") or "agentops operator advance-loop --limit 12"
     advance_confirm_command = advance_loop.get("confirm_command") or f"{advance_preview_command} --confirm-advance"
+    receipt_lookup_rows = operator_action_receipt_rows(conn, workspace_id, min(max(limit * 40, 200), 1000))
+
+    def normalize_chain_status(value: str | None, fallback: str = "ready") -> str:
+        value = str(value or fallback)
+        if value in {"ready", "pass", "ok", "completed", "verified"}:
+            return "ready"
+        if value in {"blocked", "fail", "failed", "error"}:
+            return "blocked"
+        if value in {"attention", "warn", "warning", "pending", "planned", "unknown", "unavailable", "empty"}:
+            return "attention"
+        return fallback
+
+    def receipt_state_for_step(step: dict) -> dict:
+        command = str(step.get("command") or "").strip()
+        action_signature = str(step.get("action_signature") or "").strip()
+        receipt_required = bool(step.get("receipt_required"))
+        if not receipt_required:
+            return {
+                "required": False,
+                "status": "not_required",
+                "match": "not_required",
+                "current": True,
+                "verified": True,
+                "action_signature": action_signature or None,
+                "token_omitted": True,
+            }
+        command_hash = stable_hash(command) if command else ""
+        stale_candidate: dict | None = None
+        for receipt in receipt_lookup_rows:
+            receipt_command = str(receipt.get("action_command") or "").strip()
+            receipt_action_hash = str(receipt.get("action_hash") or "").strip()
+            if command and (receipt_command == command or receipt_action_hash == command_hash):
+                match = "current"
+                matched = receipt
+                break
+            receipt_signature = str(receipt.get("action_signature") or "").strip()
+            if action_signature and receipt_signature == action_signature:
+                stale_candidate = stale_candidate or receipt
+        else:
+            matched = stale_candidate
+            match = "stale" if stale_candidate else "missing"
+        underlying_status = str((matched or {}).get("status") or "missing")
+        status = "stale" if match == "stale" else underlying_status
+        receipt_hash = (
+            (matched or {}).get("tamper_chain_hash")
+            or (matched or {}).get("verify_hash")
+            or (matched or {}).get("action_hash")
+            or (matched or {}).get("audit_id")
+        )
+        evaluation = (matched or {}).get("evaluation") or {}
+        return {
+            "required": True,
+            "status": status,
+            "underlying_status": underlying_status,
+            "match": match,
+            "current": match == "current",
+            "verified": match == "current" and underlying_status == "verified",
+            "receipt_id": (matched or {}).get("receipt_id"),
+            "receipt_hash": receipt_hash,
+            "evaluation_id": (matched or {}).get("evaluation_id") or evaluation.get("evaluation_id"),
+            "evaluation_pass_fail": (matched or {}).get("evaluation_pass_fail") or evaluation.get("pass_fail"),
+            "evaluation_score": (matched or {}).get("evaluation_score") or evaluation.get("score"),
+            "action_signature": action_signature or (matched or {}).get("action_signature"),
+            "action_hash": (matched or {}).get("action_hash") or (command_hash if command else None),
+            "verify_hash": (matched or {}).get("verify_hash"),
+            "token_omitted": True,
+        }
+
+    def enrich_execution_step(step: dict) -> dict:
+        step = dict(step)
+        receipt_state = receipt_state_for_step(step)
+        step["receipt_state"] = receipt_state
+        step["next_safe_command"] = step.get("command") or step.get("verify_command")
+        step_id = str(step.get("step_id") or "")
+        status = "attention" if step.get("mutating") or step.get("confirm_required") else "ready"
+        reason = "copy and run this read-only command, then verify the next gate"
+        blocked_reason = None
+        if step_id == "pre_advance_self_check":
+            status = normalize_chain_status(loop_health.get("status") or handoff.get("status"), "ready")
+            reason = "handoff loop health feeds the self-check gate"
+        elif step_id == "bounded_advance_preview":
+            status = normalize_chain_status(advance_summary.get("selected_status") or advance_loop.get("status"), "attention")
+            reason = "preview is read-only and selects at most one allowlisted next action"
+            if not advance_selected:
+                status = "attention"
+                reason = "no bounded advance action is currently selected"
+        elif step_id == "bounded_advance_confirm":
+            if receipt_state.get("verified"):
+                status = "verified"
+                reason = "bounded advance receipt is current and verified"
+            else:
+                status = "attention"
+                blocked_reason = "requires explicit --confirm-advance plus a verified action receipt before continuing"
+        elif step_id == "verify_loop_evidence":
+            status = normalize_chain_status(evidence_work_order.get("status") or loop_health.get("status"), "attention")
+            reason = "loop-audit and evidence-report provide VERIFY readback"
+        elif step_id == "record_plan_evidence":
+            if receipt_state.get("verified"):
+                status = "verified"
+                reason = "plan evidence receipt is current and verified"
+            else:
+                status = "blocked"
+                blocked_reason = "requires concrete plan_id and run_id, then a verified receipt"
+        elif step_id == "record_review_queue":
+            status = normalize_chain_status(receipt_eval_gate.get("status") or loop_health.get("status"), "ready")
+            reason = "review queue and action receipt evaluation coverage feed RECORD readiness"
+        elif step_id == "loop_audit_final":
+            status = normalize_chain_status(loop_health.get("status") or handoff.get("status"), "ready")
+            reason = "final loop-audit must read back no loop-local blocked gates"
+        if receipt_state.get("required") and receipt_state.get("verified"):
+            status = "verified"
+            reason = "required receipt is current, verified, and evaluation-linked when available"
+            blocked_reason = None
+        elif receipt_state.get("required") and receipt_state.get("match") == "stale" and status != "blocked":
+            status = "attention"
+            blocked_reason = blocked_reason or "receipt exists but does not match the current command hash"
+        step["step_status"] = status
+        if blocked_reason:
+            step["blocked_reason"] = blocked_reason
+        else:
+            step["ready_reason"] = reason
+        return step
+
     execution_chain = [
         {
             "step_id": "pre_advance_self_check",
@@ -16978,6 +17101,7 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
             "token_omitted": True,
         },
     ]
+    execution_chain = [enrich_execution_step(step) for step in execution_chain]
     launch_sequence = [
         {
             "phase": "READ",

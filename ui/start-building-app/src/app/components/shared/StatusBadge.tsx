@@ -56,6 +56,7 @@ const statusConfig: Record<string, { label: { en: string; zh: string }; color: s
   pending_approval:  { label: { en: "Pending Approval", zh: "等待审批" },         color: "#FBBF24",            bg: "rgba(251,191,36,0.12)" },
   // pass/fail
   pass:              { label: { en: "Pass", zh: "通过" },                         color: "var(--mis-success)", bg: "rgba(42,157,143,0.15)" },
+  verified:          { label: { en: "Verified", zh: "已验收" },                    color: "var(--mis-success)", bg: "rgba(42,157,143,0.15)" },
   fail:              { label: { en: "Fail", zh: "未通过" },                       color: "#F87171",            bg: "rgba(248,113,113,0.15)" },
 };
 

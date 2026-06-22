@@ -3948,16 +3948,38 @@ export function AIEmployees() {
                   </div>
                   <div className="mt-2 overflow-x-auto">
                     <div className="flex items-stretch gap-1 min-w-max">
-                      {loopLaunchExecutionChain.slice(0, 7).map((step, index) => (
+                      {loopLaunchExecutionChain.slice(0, 7).map((step, index) => {
+                        const stepReceiptState = step.receipt_state || {};
+                        const fallbackReceipt = latestReceiptForAction(step.command, step.action_signature);
+                        const stepReceiptHash = String(
+                          stepReceiptState.receipt_hash ||
+                          stepReceiptState.verify_hash ||
+                          stepReceiptState.action_hash ||
+                          fallbackReceipt?.tamper_chain_hash ||
+                          fallbackReceipt?.verify_hash ||
+                          fallbackReceipt?.action_hash ||
+                          fallbackReceipt?.audit_id ||
+                          ""
+                        ).slice(0, 12);
+                        const stepReceiptStatus = String(stepReceiptState.status || fallbackReceipt?.status || (step.receipt_required ? copy.noReceiptProof : "not_required"));
+                        const stepReceiptVerified = stepReceiptState.verified === true || fallbackReceipt?.status === "verified";
+                        const stepStatus = step.step_status || (stepReceiptVerified ? "verified" : step.mutating ? "attention" : "pass");
+                        const stepReason = step.blocked_reason || step.ready_reason || "";
+                        return (
                         <div key={step.step_id || `${step.command}-${index}`} className="flex items-center gap-1">
-                          <div className="w-[150px] rounded px-2 py-1.5" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                          <div className="w-[168px] rounded px-2 py-1.5" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
                             <div className="flex items-center justify-between gap-1">
                               <span className="text-[9px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{step.label || step.step_id}</span>
-                              <StatusBadge status={step.mutating ? "attention" : "pass"} />
+                              <StatusBadge status={stepStatus} />
                             </div>
                             <div className="text-[8px] mt-0.5 truncate" style={{ color: "var(--mis-muted)" }}>
                               {step.phase} · {step.source || copy.actionSource}
                             </div>
+                            {stepReason && (
+                              <div className="text-[8px] mt-0.5 line-clamp-2" style={{ color: step.blocked_reason ? "var(--mis-warning)" : "var(--mis-dim)" }}>
+                                {step.blocked_reason ? copy.blockedReason : copy.readyReason}: {stepReason}
+                              </div>
+                            )}
                             <div className="flex flex-wrap gap-1 mt-1">
                               {step.command && (
                                 <button
@@ -3987,12 +4009,17 @@ export function AIEmployees() {
                                 {step.confirm_required ? copy.confirmRequired : copy.receiptProof} · {step.policy_id || step.selected_gate || "—"}
                               </div>
                             )}
+                            {step.receipt_state && (
+                              <div className="text-[8px] mt-0.5 truncate" style={{ color: stepReceiptVerified ? "var(--mis-success)" : step.receipt_required ? "var(--mis-warning)" : "var(--mis-muted)" }}>
+                                {copy.receiptProof}: {stepReceiptStatus}{stepReceiptHash ? ` · ${stepReceiptHash}` : ""}
+                              </div>
+                            )}
                           </div>
                           {index < Math.min(loopLaunchExecutionChain.length, 7) - 1 && (
                             <div className="text-[10px]" style={{ color: "var(--mis-dim)" }}>-&gt;</div>
                           )}
                         </div>
-                      ))}
+                      );})}
                     </div>
                   </div>
                 </div>

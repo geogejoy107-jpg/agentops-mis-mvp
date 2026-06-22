@@ -1778,6 +1778,11 @@ export interface OperatorLoopLaunchPacketPayload {
     action_signature?: string | null;
     policy_id?: string | null;
     next_on_pass?: string | null;
+    step_status?: string;
+    blocked_reason?: string;
+    ready_reason?: string;
+    next_safe_command?: string | null;
+    receipt_state?: Record<string, unknown>;
     token_omitted?: boolean;
   }[];
   agent_plan_draft: Record<string, unknown>;
@@ -5149,6 +5154,11 @@ export async function loadOperatorLoopLaunchPacket(limit = 8, query = "Agent Wor
       action_signature: item.action_signature ? String(item.action_signature) : null,
       policy_id: item.policy_id ? String(item.policy_id) : null,
       next_on_pass: item.next_on_pass ? String(item.next_on_pass) : null,
+      step_status: item.step_status ? String(item.step_status) : undefined,
+      blocked_reason: item.blocked_reason ? String(item.blocked_reason) : undefined,
+      ready_reason: item.ready_reason ? String(item.ready_reason) : undefined,
+      next_safe_command: item.next_safe_command ? String(item.next_safe_command) : null,
+      receipt_state: typeof item.receipt_state === "object" && item.receipt_state !== null ? item.receipt_state as Record<string, unknown> : undefined,
       token_omitted: item.token_omitted === undefined ? undefined : boolValue(item.token_omitted),
     })).filter((item) => item.step_id || item.command),
     agent_plan_draft: typeof raw.agent_plan_draft === "object" && raw.agent_plan_draft !== null ? raw.agent_plan_draft as Record<string, unknown> : {},
