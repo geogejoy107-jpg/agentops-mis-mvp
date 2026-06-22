@@ -289,7 +289,7 @@ python3 scripts/sqlite_reliability_smoke.py
 - [x] Measure AI Employees initial request count: `scripts/ai_employees_responsiveness_smoke.py` models the `/workspace/agents` initial loader and currently measures 28 API reads split into 8 core command-center reads, 15 deferred governance reads, 4 loop-scoped deferred reads, and 1 deferred `/api/agents` read; the budget is <=32 and daemon log prefetch stays absent.
 - [x] Measure time to first useful panel: `scripts/ai_employees_responsiveness_smoke.py` measures core command-center readiness as the first useful panel against a <1.5s budget, critical command-center endpoint latency against a <1s budget, and background panel completion against a <2s budget on an isolated local DB; recent runs stayed below budget, with no ledger mutation and no token leakage.
 - [x] Do not fetch daemon logs before the panel is opened: AI Employees removes the initial `loadWorkerDaemonLogs` fan-out, loads only the selected adapter after the log panel is opened, and UI smoke forbids the old prefetch marker.
-- [x] Make panels independently loadable: AI Employees now uses `AI_EMPLOYEES_CORE_PANEL_LOADERS`, `AI_EMPLOYEES_DEFERRED_PANEL_LOADERS`, and `AI_EMPLOYEES_SCOPED_PANEL_LOADERS` with `Promise.allSettled` plus `panelLoadState`; core command-center panels render first, deferred governance/scoped panels merge later, and one panel endpoint can become unavailable without failing the whole `/workspace/agents` page loader. Key panel headers render ready/unavailable/loading badges and local refresh controls for the affected read model, and `scripts/ai_employees_responsiveness_smoke.py` forbids the old page-level `useLiveData` and monolithic destructured loaders.
+- [x] Make panels independently loadable: AI Employees now uses `AI_EMPLOYEES_CORE_PANEL_LOADERS`, `AI_EMPLOYEES_DEFERRED_PANEL_LOADERS`, and `AI_EMPLOYEES_SCOPED_PANEL_LOADERS` with `Promise.allSettled` plus `panelLoadState`; core command-center panels render first, deferred governance/scoped panels merge later, and one panel endpoint can become unavailable without failing the whole `/workspace/agents` page loader. Key panel headers render ready/unavailable/loading badges, local refresh controls, retry/error evidence (`attempts`, `updated_at`, `last_error`), and copyable redacted panel diagnostics, while `scripts/ai_employees_responsiveness_smoke.py` forbids the old page-level `useLiveData` and monolithic destructured loaders.
 - [x] Add a lightweight command-center read model or equivalent aggregation: `operator evidence-report` aggregates Agent Plan, approval, plan_evidence_manifest and ledger evidence by run.
 - [x] Add run-level evidence to operator handoff: `operator handoff` now includes an `evidence_report` source and read-only work order so Hermes/OpenClaw/Codex can inherit delivery evidence gaps and commands.
 - [x] Bounded advance consumes handoff evidence work: unscoped `agentops operator advance-loop` prioritizes the read-only `evidence_report` work order for blocked/attention run evidence, verifies through handoff, records action receipt/evaluation proof, feeds that receipt back into handoff/UI, skips the same evidence work order after it is verified, and then continues into the first read-only `evidence_remediation` preview while preserving the `handoff.evidence_remediation` receipt source; scoped `--loop-id` still advances that loop's gate.
@@ -335,6 +335,7 @@ ui-build: npm ci + npm run build under ui/start-building-app.
 AI Employees optional endpoint fallback: `cd ui/start-building-app && npm run build`.
 AI Employees lazy daemon logs: `python3 scripts/operator_action_queue_ui_smoke.py`.
 AI Employees responsiveness baseline: `python3 scripts/ai_employees_responsiveness_smoke.py`.
+Review decision local refresh: `python3 scripts/review_decision_local_refresh_smoke.py`.
 ```
 
 The workflow intentionally keeps Hermes/OpenClaw live runtime work out of CI.
@@ -444,8 +445,8 @@ live runtime suite
 
 ### UI
 
-- [ ] AI Employees remains useful under partial endpoint failure.
-- [ ] Review decisions refresh only needed data.
+- [x] AI Employees remains useful under partial endpoint failure: optional loaders, panel `ready/running/unavailable` states, local panel refresh, and `Promise.allSettled` contracts are guarded by `scripts/operator_action_queue_ui_smoke.py` and `scripts/ai_employees_responsiveness_smoke.py`.
+- [x] Review decisions refresh only needed data: Approvals Inbox, Workspace Home, Evaluation Room, AI Employees review queue, loop record review, and enrollment approval decisions use local state updates or targeted panel refreshes instead of whole-page `refresh()`; guarded by `scripts/review_decision_local_refresh_smoke.py`.
 - [ ] Real-runtime controls show explicit confirmation.
 - [ ] Production-security warnings are prominent.
 - [ ] Issued credentials cannot be re-read.

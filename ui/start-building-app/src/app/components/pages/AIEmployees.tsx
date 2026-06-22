@@ -136,6 +136,10 @@ type AIEmployeesPanelLoadState = {
   id: string;
   status: "ready" | "unavailable" | "running";
   error?: string;
+  last_error?: string;
+  attempts?: number;
+  updated_at?: string;
+  last_action?: "initial_load" | "local_refresh";
 };
 
 type AIEmployeesLiveData = {
@@ -147,6 +151,22 @@ type AIEmployeesPanelLoader = {
   id: string;
   load: (context: AIEmployeesLiveData) => Promise<Partial<AIEmployeesLiveData>>;
 };
+
+const panelErrorMessage = (err: unknown) => err instanceof Error ? err.message : String(err);
+
+const panelLoadRecord = (
+  id: string,
+  status: AIEmployeesPanelLoadState["status"],
+  options: Partial<AIEmployeesPanelLoadState> = {},
+): AIEmployeesPanelLoadState => ({
+  id,
+  status,
+  attempts: options.attempts ?? 1,
+  updated_at: options.updated_at || new Date().toISOString(),
+  last_action: options.last_action || "initial_load",
+  ...(options.error ? { error: options.error, last_error: options.last_error || options.error } : {}),
+  ...(options.last_error && !options.error ? { last_error: options.last_error } : {}),
+});
 
 const AI_EMPLOYEES_PANEL_LOADERS: AIEmployeesPanelLoader[] = [
   { id: "dashboard", load: async () => ({ metrics: await loadDashboard() }) },
@@ -204,13 +224,9 @@ async function loadAIEmployeesPanelSet(loaders: AIEmployeesPanelLoader[], contex
     const id = loaders[index]?.id || `panel_${index}`;
     if (result.status === "fulfilled") {
       Object.assign(data, result.value.payload);
-      panelLoadState[result.value.id] = { id: result.value.id, status: "ready" };
+      panelLoadState[result.value.id] = panelLoadRecord(result.value.id, "ready");
     } else {
-      panelLoadState[id] = {
-        id,
-        status: "unavailable",
-        error: result.reason instanceof Error ? result.reason.message : String(result.reason),
-      };
+      panelLoadState[id] = panelLoadRecord(id, "unavailable", { error: panelErrorMessage(result.reason) });
     }
   });
   return { ...data, panelLoadState };
@@ -392,7 +408,11 @@ export function AIEmployees() {
       ...(current || {}),
       panelLoadState: {
         ...((current || {}).panelLoadState || {}),
-        [panelId]: { id: panelId, status: "running" },
+        [panelId]: panelLoadRecord(panelId, "running", {
+          attempts: Number((current || {}).panelLoadState?.[panelId]?.attempts || 0) + 1,
+          last_action: "local_refresh",
+          last_error: (current || {}).panelLoadState?.[panelId]?.last_error,
+        }),
       },
     }));
     try {
@@ -402,7 +422,10 @@ export function AIEmployees() {
         ...payload,
         panelLoadState: {
           ...((current || {}).panelLoadState || {}),
-          [panelId]: { id: panelId, status: "ready" },
+          [panelId]: panelLoadRecord(panelId, "ready", {
+            attempts: Number((current || {}).panelLoadState?.[panelId]?.attempts || 1),
+            last_action: "local_refresh",
+          }),
         },
       }));
     } catch (err) {
@@ -410,11 +433,11 @@ export function AIEmployees() {
         ...(current || {}),
         panelLoadState: {
           ...((current || {}).panelLoadState || {}),
-          [panelId]: {
-            id: panelId,
-            status: "unavailable",
-            error: err instanceof Error ? err.message : String(err),
-          },
+          [panelId]: panelLoadRecord(panelId, "unavailable", {
+            attempts: Number((current || {}).panelLoadState?.[panelId]?.attempts || 1),
+            last_action: "local_refresh",
+            error: panelErrorMessage(err),
+          }),
         },
       }));
     } finally {
@@ -553,6 +576,10 @@ export function AIEmployees() {
       panelLoadLoading: "panel loading",
       refreshPanel: "Refresh panel",
       panelRefreshRunning: "Refreshing panel...",
+      copyPanelDiagnostics: "Copy diagnostics",
+      panelAttempts: "attempts",
+      panelUpdated: "updated",
+      panelLastError: "last error",
       refresh: "Refresh live agents",
       commandCenterTitle: "Worker Fleet Console",
       commandCenterSummary: "Adapter readiness, daemon capacity, remote heartbeat/session health, stuck recovery, and the next safe CLI/API action.",
@@ -998,6 +1025,10 @@ export function AIEmployees() {
       panelLoadLoading: "面板加载中",
       refreshPanel: "刷新面板",
       panelRefreshRunning: "面板刷新中...",
+      copyPanelDiagnostics: "复制诊断",
+      panelAttempts: "尝试",
+      panelUpdated: "更新",
+      panelLastError: "最近错误",
       refresh: "刷新实时代理",
       commandCenterTitle: "Worker Fleet 控制台",
       commandCenterSummary: "集中查看 adapter 就绪、daemon 容量、远程心跳/session、卡住恢复和下一步安全 CLI/API 动作。",
@@ -1432,6 +1463,16 @@ export function AIEmployees() {
       statusSetup: "待配置",
     },
   });
+  const copyIntakeCommand = async (command: string) => {
+    if (!command) return;
+    try {
+      await navigator.clipboard?.writeText(command);
+      setCopiedIntakeCommand(command);
+      window.setTimeout(() => setCopiedIntakeCommand(current => current === command ? null : current), 1800);
+    } catch {
+      setCopiedIntakeCommand(null);
+    }
+  };
   const panelLoadState = data?.panelLoadState || {};
   const panelStatus = (panelId: string) => {
     if (panelLoadState[panelId]?.status === "unavailable") return "unavailable";
@@ -1448,6 +1489,48 @@ export function AIEmployees() {
   };
   const panelStatusBadge = (panelId: string) => (
     <StatusBadge status={panelStatus(panelId)} label={panelStatusLabel(panelId)} />
+  );
+  const panelDiagnosticJson = (panelId: string) => {
+    const state = panelLoadState[panelId] || { id: panelId, status: panelStatus(panelId) };
+    return JSON.stringify({
+      panel_diagnostics_json: true,
+      panel_id: panelId,
+      panel_status: state.status,
+      panel_attempts: state.attempts ?? 0,
+      panel_updated_at: state.updated_at || null,
+      panel_last_action: state.last_action || null,
+      panel_last_error: state.last_error || state.error || null,
+      token_omitted: true,
+    }, null, 2);
+  };
+  const panelEvidenceText = (panelId: string) => {
+    const state = panelLoadState[panelId];
+    if (!state) return "";
+    const updatedAt = state.updated_at ? new Date(state.updated_at) : null;
+    const updatedLabel = updatedAt && !Number.isNaN(updatedAt.getTime()) ? updatedAt.toLocaleTimeString() : state.updated_at;
+    const lastError = state.last_error || state.error;
+    const parts = [
+      `${copy.panelAttempts}: ${state.attempts ?? 0}`,
+      updatedLabel ? `${copy.panelUpdated}: ${updatedLabel}` : "",
+      lastError ? `${copy.panelLastError}: ${lastError.slice(0, 140)}` : "",
+    ].filter(Boolean);
+    return parts.join(" · ");
+  };
+  const panelEvidenceLine = (panelId: string) => {
+    const evidence = panelEvidenceText(panelId);
+    if (!evidence) return null;
+    return <p className="text-[9px] mt-0.5 max-w-4xl truncate" style={{ color: "var(--mis-muted)" }}>{evidence}</p>;
+  };
+  const panelDiagnosticsButton = (panelId: string) => (
+    <button
+      onClick={() => void copyIntakeCommand(panelDiagnosticJson(panelId))}
+      className="inline-flex items-center justify-center h-5 w-5 rounded"
+      style={{ color: "var(--mis-muted)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}
+      title={copy.copyPanelDiagnostics}
+      aria-label={copy.copyPanelDiagnostics}
+    >
+      <Copy size={9} />
+    </button>
   );
   const panelRefreshButton = (panelId: string) => (
     <button
@@ -1858,17 +1941,6 @@ export function AIEmployees() {
   const blockedIntakeRows = taskIntakeItems.filter(item => item.severity === "blocked");
   const primaryBlockedIntake = blockedIntakeRows[0];
   const workerStartBlocked = Boolean(primaryBlockedIntake);
-
-  const copyIntakeCommand = async (command: string) => {
-    if (!command) return;
-    try {
-      await navigator.clipboard?.writeText(command);
-      setCopiedIntakeCommand(command);
-      window.setTimeout(() => setCopiedIntakeCommand(current => current === command ? null : current), 1800);
-    } catch {
-      setCopiedIntakeCommand(null);
-    }
-  };
 
   const renderActiveIntakeGate = () => {
     if (!primaryBlockedIntake) return null;
@@ -3219,8 +3291,10 @@ export function AIEmployees() {
               <StatusBadge status={operatorHealth?.status || fleetHealth?.overall || workerStatus?.status || "unknown"} />
               {panelStatusBadge("worker_status")}
               {panelRefreshButton("worker_status")}
+              {panelDiagnosticsButton("worker_status")}
             </div>
             <p className="text-[11px] mt-1 max-w-3xl" style={{ color: "var(--mis-dim)" }}>{copy.commandCenterSummary}</p>
+            {panelEvidenceLine("worker_status")}
             {operatorHealth && (
               <p className="text-[10px] mt-1 max-w-3xl" style={{ color: "var(--mis-muted)" }}>
                 {copy.operatorHealthSummary} · {copy.healthScore}: {operatorHealth.score}/100 · {copy.healthRisks}: {operatorHealth.risks.length}
@@ -3266,9 +3340,11 @@ export function AIEmployees() {
                 <StatusBadge status={operatorEvidenceReport?.status || "unknown"} />
                 {panelStatusBadge("operator_evidence_report")}
                 {panelRefreshButton("operator_evidence_report")}
+                {panelDiagnosticsButton("operator_evidence_report")}
                 <StatusBadge status={operatorEvidenceReport?.safety?.read_only && !operatorEvidenceReport?.safety?.ledger_mutated ? "pass" : "attention"} label={operatorEvidenceReport?.safety?.read_only ? copy.readOnlyProof : copy.statusAttention} />
               </div>
               <p className="text-[10px] mt-1 max-w-4xl" style={{ color: "var(--mis-dim)" }}>{copy.evidenceReportSummary}</p>
+              {panelEvidenceLine("operator_evidence_report")}
               {operatorEvidenceReport?.contract && (
                 <p className="text-[10px] mt-1 max-w-4xl truncate" style={{ color: "var(--mis-muted)" }}>{copy.contract}: {operatorEvidenceReport.contract}</p>
               )}
@@ -3487,10 +3563,12 @@ export function AIEmployees() {
                 <StatusBadge status={operatorLoopAudit?.status || "unknown"} />
                 {panelStatusBadge("operator_loop_audit")}
                 {panelRefreshButton("operator_loop_audit")}
+                {panelDiagnosticsButton("operator_loop_audit")}
               </div>
               <p className="text-[10px] mt-1 max-w-4xl" style={{ color: "var(--mis-dim)" }}>
                 {copy.loopAuditSummary}
               </p>
+              {panelEvidenceLine("operator_loop_audit")}
               <div className="text-[10px] mt-1 truncate" style={{ color: "var(--mis-muted)" }}>
                 {copy.methodBlock}: {operatorLoopAudit?.method || "READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD"}
               </div>
@@ -3664,9 +3742,11 @@ export function AIEmployees() {
                     <StatusBadge status={operatorHandoff.status || "unknown"} />
                     {panelStatusBadge("operator_handoff")}
                     {panelRefreshButton("operator_handoff")}
+                    {panelDiagnosticsButton("operator_handoff")}
                     <StatusBadge status={operatorHandoff.safety.read_only && !operatorHandoff.safety.ledger_mutated && !operatorHandoff.safety.live_execution_performed ? "pass" : "attention"} label={operatorHandoff.safety.read_only ? copy.readOnlyProof : copy.statusAttention} />
                   </div>
                   <div className="text-[9px] mt-0.5 max-w-4xl" style={{ color: "var(--mis-muted)" }}>{copy.operatorHandoffSummary}</div>
+                  {panelEvidenceLine("operator_handoff")}
                   <div className="text-[9px] mt-0.5 truncate" style={{ color: "var(--mis-dim)" }}>
                     {copy.methodBlock}: {operatorHandoff.work_order.method || operatorLoopAudit?.method || "READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD"}
                   </div>
@@ -4162,6 +4242,7 @@ export function AIEmployees() {
                 <StatusBadge status={operatorActionPlan?.status || "unknown"} />
                 {panelStatusBadge("operator_action_plan")}
                 {panelRefreshButton("operator_action_plan")}
+                {panelDiagnosticsButton("operator_action_plan")}
               </div>
               <p className="text-[10px] mt-1" style={{ color: "var(--mis-muted)" }}>
                 {copy.actionQueueSummary}
@@ -4176,6 +4257,7 @@ export function AIEmployees() {
                 {operatorPlanSummary && ` · failure memory ${operatorPlanSummary.receipt_failure_memory_candidates}/${operatorPlanSummary.receipt_failure_memory_failed_receipts}/${operatorPlanSummary.receipt_failure_memory_existing_candidates}`}
                 {operatorActionReceipts?.summary && ` · ${copy.actionReceipts.toLowerCase()} ${operatorActionReceipts.summary.receipts}/${operatorActionReceipts.summary.verified}`}
               </p>
+              {panelEvidenceLine("operator_action_plan")}
             </div>
             <button
               onClick={() => setActionQueueOrder(actionQueueCandidates.map(item => item.id))}

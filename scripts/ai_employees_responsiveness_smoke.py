@@ -160,6 +160,7 @@ def static_contract() -> dict:
         "has_independent_panel_settling": "Promise.allSettled(loaders.map" in text and "panelLoadState" in text,
         "has_visible_panel_status": "panelStatusBadge" in text and "panelLoadReady" in text and "panelLoadUnavailable" in text,
         "has_panel_local_refresh": "const refreshPanel = useCallback" in text and "panelRefreshButton" in text and "localPanelRefreshing" in text,
+        "has_panel_retry_evidence": all(marker in text for marker in ["attempts", "updated_at", "last_error", "panelDiagnosticJson", "panel_diagnostics_json", "token_omitted"]),
         "has_use_live_data_loader": "useLiveData(" in text,
         "has_monolithic_initial_loader": "const [metrics, demoReadiness, workerStatus" in text,
         "has_monolithic_scoped_loader": "const [operatorLoopAudit, operatorHandoff, operatorHealth, operatorLoopSelfCheck]" in text,
@@ -275,6 +276,8 @@ def main() -> int:
         failures.append(f"AI Employees panel load state is not visible to operators: {contract}")
     if not contract["has_panel_local_refresh"]:
         failures.append(f"AI Employees key panels do not have local refresh controls: {contract}")
+    if not contract["has_panel_retry_evidence"]:
+        failures.append(f"AI Employees panel refreshes do not expose retry/error diagnostics: {contract}")
     if contract["has_use_live_data_loader"]:
         failures.append(f"AI Employees still uses one page-level useLiveData loader: {contract}")
     if contract["has_monolithic_initial_loader"] or contract["has_monolithic_scoped_loader"]:
