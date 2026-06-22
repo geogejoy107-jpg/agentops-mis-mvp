@@ -24,8 +24,9 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
 ```
 
 The Playwright smoke starts an isolated MIS API provider and Next.js dev server,
-captures browser snapshots for the current parity routes, checks proxy data, and
-fails on token-like output.
+captures browser snapshots for the current parity routes, exercises approval and
+memory review actions through the Next.js UI, verifies the state change through
+`/api/mis/*`, and fails on token-like output.
 
 ## Parity Slices
 
@@ -38,6 +39,8 @@ fails on token-like output.
 - App Router route: `/workspace/audit`
 - Runtime API proxy: `/api/mis/[...path]`
 - Live data contract: dashboard metrics, agents, production readiness, worker readiness, tasks, runs, approvals, memories, audit
+- First-paint contract: approval and memory review queues can load on the App Router server path from the configured MIS API
+- Interaction contract: approval review and memory review write through the Next.js UI, with client fetch plus Next form fallback routes, then refresh from the MIS API proxy
 - Canonical predecessors:
   - `ui/start-building-app/src/app/components/pages/WorkspaceHome.tsx`
   - `ui/start-building-app/src/app/components/pages/AIEmployees.tsx`

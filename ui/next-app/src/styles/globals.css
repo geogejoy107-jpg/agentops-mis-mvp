@@ -34,6 +34,10 @@ button {
   font: inherit;
 }
 
+.inlineForm {
+  display: contents;
+}
+
 .shell {
   display: grid;
   grid-template-columns: 248px minmax(0, 1fr);

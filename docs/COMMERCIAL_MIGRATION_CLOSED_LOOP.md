@@ -136,13 +136,18 @@ Must be true:
 - No route is retired until customer dispatch, worker console, reports,
   approvals, memory, and audit paths are verified in both UIs or explicitly
   deferred.
-- Verification includes current Vite build and Playwright snapshots before a
-  Next.js route is accepted.
-- Browser snapshot verification is automated by:
+- Verification includes current Vite build plus browser snapshots and critical
+  review interactions before a Next.js route is accepted.
+- Browser verification is automated by:
 
 ```bash
 python3 scripts/nextjs_playwright_snapshot_smoke.py
 ```
+
+  The smoke starts isolated MIS API and Next.js servers, captures route
+  snapshots, approves one pending approval through the Next.js approvals page,
+  approves one candidate memory through the Next.js memory page, verifies both
+  state changes through `/api/mis/*`, and checks for token-like leakage.
 
 - First migration artifact:
   - `ui/next-app/app/workspace/page.tsx`
@@ -150,9 +155,12 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   - `ui/next-app/app/workspace/tasks/page.tsx`
   - `ui/next-app/app/workspace/runs/page.tsx`
   - `ui/next-app/app/workspace/approvals/page.tsx`
+  - `ui/next-app/app/workspace/approvals/review/route.ts`
   - `ui/next-app/app/workspace/memory/page.tsx`
+  - `ui/next-app/app/workspace/memory/review/route.ts`
   - `ui/next-app/app/workspace/audit/page.tsx`
   - `ui/next-app/app/api/mis/[...path]/route.ts`
+  - `ui/next-app/src/lib/misServer.ts`
   - `scripts/nextjs_parity_smoke.py`
   - `scripts/nextjs_playwright_snapshot_smoke.py`
 

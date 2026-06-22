@@ -180,9 +180,17 @@ export function RunsParityPage() {
   );
 }
 
-export function ApprovalsParityPage() {
+export function ApprovalsParityPage({
+  initialApprovals = [],
+  initialError = null,
+  initialLoaded = false,
+}: Readonly<{ initialApprovals?: ApprovalSummary[]; initialError?: string | null; initialLoaded?: boolean }> = {}) {
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [state, setState] = useState<LoadState<ApprovalSummary[]>>({ data: [], error: null, loading: true });
+  const [state, setState] = useState<LoadState<ApprovalSummary[]>>({
+    data: initialApprovals,
+    error: initialError,
+    loading: !initialLoaded,
+  });
 
   const refresh = async () => {
     setState((current) => ({ ...current, error: null, loading: true }));
@@ -194,8 +202,8 @@ export function ApprovalsParityPage() {
   };
 
   useEffect(() => {
-    void refresh();
-  }, []);
+    if (!initialLoaded) void refresh();
+  }, [initialLoaded]);
 
   const pending = state.data.filter((approval) => approval.decision === "pending");
   const decided = state.data.filter((approval) => approval.decision !== "pending");
@@ -223,12 +231,36 @@ export function ApprovalsParityPage() {
           <span className={statusClass(approval.decision)}>{approval.decision}</span>
           {isPending ? (
             <>
-              <button className="miniButton good" disabled={busyId === approval.approval_id} onClick={() => void submitDecision(approval.approval_id, "approve")}>
-                <CheckCircle2 size={13} />Approve
-              </button>
-              <button className="miniButton bad" disabled={busyId === approval.approval_id} onClick={() => void submitDecision(approval.approval_id, "reject")}>
-                <XCircle size={13} />Reject
-              </button>
+              <form className="inlineForm" method="post" action="/workspace/approvals/review">
+                <input type="hidden" name="approval_id" value={approval.approval_id} />
+                <input type="hidden" name="decision" value="approve" />
+                <button
+                  className="miniButton good"
+                  disabled={busyId === approval.approval_id}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    void submitDecision(approval.approval_id, "approve");
+                  }}
+                  type="submit"
+                >
+                  <CheckCircle2 size={13} />Approve
+                </button>
+              </form>
+              <form className="inlineForm" method="post" action="/workspace/approvals/review">
+                <input type="hidden" name="approval_id" value={approval.approval_id} />
+                <input type="hidden" name="decision" value="reject" />
+                <button
+                  className="miniButton bad"
+                  disabled={busyId === approval.approval_id}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    void submitDecision(approval.approval_id, "reject");
+                  }}
+                  type="submit"
+                >
+                  <XCircle size={13} />Reject
+                </button>
+              </form>
             </>
           ) : null}
         </div>

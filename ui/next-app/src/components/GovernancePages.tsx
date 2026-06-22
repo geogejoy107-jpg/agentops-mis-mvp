@@ -50,11 +50,19 @@ function PageHeader({
   );
 }
 
-export function MemoryParityPage() {
+export function MemoryParityPage({
+  initialMemories = [],
+  initialError = null,
+  initialLoaded = false,
+}: Readonly<{ initialMemories?: MemorySummary[]; initialError?: string | null; initialLoaded?: boolean }> = {}) {
   const [scopeFilter, setScopeFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [state, setState] = useState<LoadState<MemorySummary[]>>({ data: [], error: null, loading: true });
+  const [state, setState] = useState<LoadState<MemorySummary[]>>({
+    data: initialMemories,
+    error: initialError,
+    loading: !initialLoaded,
+  });
 
   const refresh = async () => {
     setState((current) => ({ ...current, error: null, loading: true }));
@@ -66,8 +74,8 @@ export function MemoryParityPage() {
   };
 
   useEffect(() => {
-    void refresh();
-  }, []);
+    if (!initialLoaded) void refresh();
+  }, [initialLoaded]);
 
   const counts = useMemo(() => {
     const scopes = new Map<string, number>();
@@ -134,12 +142,36 @@ export function MemoryParityPage() {
               <span className={statusClass(memory.review_status)}>{memory.review_status}</span>
               {memory.review_status === "candidate" ? (
                 <>
-                  <button className="miniButton good" disabled={busyId === memory.memory_id} onClick={() => void submitDecision(memory.memory_id, "approve")}>
-                    <CheckCircle2 size={13} />Approve
-                  </button>
-                  <button className="miniButton bad" disabled={busyId === memory.memory_id} onClick={() => void submitDecision(memory.memory_id, "reject")}>
-                    <XCircle size={13} />Reject
-                  </button>
+                  <form className="inlineForm" method="post" action="/workspace/memory/review">
+                    <input type="hidden" name="memory_id" value={memory.memory_id} />
+                    <input type="hidden" name="decision" value="approve" />
+                    <button
+                      className="miniButton good"
+                      disabled={busyId === memory.memory_id}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        void submitDecision(memory.memory_id, "approve");
+                      }}
+                      type="submit"
+                    >
+                      <CheckCircle2 size={13} />Approve
+                    </button>
+                  </form>
+                  <form className="inlineForm" method="post" action="/workspace/memory/review">
+                    <input type="hidden" name="memory_id" value={memory.memory_id} />
+                    <input type="hidden" name="decision" value="reject" />
+                    <button
+                      className="miniButton bad"
+                      disabled={busyId === memory.memory_id}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        void submitDecision(memory.memory_id, "reject");
+                      }}
+                      type="submit"
+                    >
+                      <XCircle size={13} />Reject
+                    </button>
+                  </form>
                 </>
               ) : null}
             </div>

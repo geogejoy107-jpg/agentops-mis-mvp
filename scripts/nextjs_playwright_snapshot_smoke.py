@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-"""Browser snapshot smoke for the Next.js parity track.
+"""Browser snapshot and interaction smoke for the Next.js parity track.
 
 The script starts an isolated MIS API provider and Next.js dev server, then uses
 the Codex Playwright CLI wrapper to capture accessibility snapshots for the
-current parity routes. It intentionally performs read-only navigation and API
-proxy checks only.
+current parity routes. It also exercises the approval and memory review flows
+through the Next.js UI and verifies the resulting state through the API proxy.
 """
 from __future__ import annotations
 
 import argparse
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -86,6 +87,17 @@ def http_json(url: str) -> object:
         return json.loads(response.read().decode("utf-8"))
 
 
+def wait_for_json(url: str, predicate, description: str, timeout_sec: int = 10) -> object:
+    deadline = time.time() + timeout_sec
+    last_value: object | None = None
+    while time.time() < deadline:
+        last_value = http_json(url)
+        if predicate(last_value):
+            return last_value
+        time.sleep(0.4)
+    raise AssertionError(f"Timed out waiting for {description}: last value {last_value!r}")
+
+
 def restore_next_env() -> None:
     if not NEXT_ENV.exists():
         return
@@ -121,6 +133,141 @@ def snapshot_route(base_url: str, path: str, expected: list[str], env: dict[str,
     require(not missing, f"Snapshot for {path} missed expected text: {missing}")
     require(not leaked_secret(text), f"Snapshot for {path} leaked token-like material")
     return {"path": path, "expected": expected, "snapshot_chars": len(text)}
+
+
+def first_button_ref(snapshot_text: str, label: str) -> str:
+    for line in snapshot_text.splitlines():
+        if "button" not in line or label not in line:
+            continue
+        match = re.search(r"\[ref=(e\d+)\]", line)
+        if match:
+            return match.group(1)
+    raise AssertionError(f"Could not find Playwright ref for {label!r} button")
+
+
+def snapshot_text(env: dict[str, str], path: str) -> str:
+    snapshot = playwright(env, "snapshot")
+    require(snapshot.returncode == 0, f"Playwright snapshot failed for {path}: {snapshot.stderr or snapshot.stdout}")
+    text = snapshot.stdout + snapshot.stderr
+    require(not leaked_secret(text), f"Snapshot for {path} leaked token-like material")
+    return text
+
+
+def wait_for_snapshot_text(env: dict[str, str], path: str, predicate, description: str, timeout_sec: int = 12) -> str:
+    deadline = time.time() + timeout_sec
+    last_text = ""
+    while time.time() < deadline:
+        last_text = snapshot_text(env, path)
+        if predicate(last_text):
+            return last_text
+        time.sleep(0.5)
+    raise AssertionError(f"Timed out waiting for {description}; last snapshot had {len(last_text)} chars")
+
+
+def find_by_id(rows: object, key: str, value: str) -> dict:
+    require(isinstance(rows, list), f"Expected list payload while looking for {key}={value}")
+    for row in rows:
+        if isinstance(row, dict) and row.get(key) == value:
+            return row
+    raise AssertionError(f"Could not find {key}={value}")
+
+
+def approve_first_pending_approval(next_base: str, env: dict[str, str]) -> dict:
+    approvals_url = f"{next_base}/api/mis/approvals"
+    approvals = http_json(approvals_url)
+    require(isinstance(approvals, list), "Approvals API did not return a list")
+    pending = [row for row in approvals if isinstance(row, dict) and row.get("decision") == "pending"]
+    require(bool(pending), "No pending approval available for browser review smoke")
+    pending_ids = {str(row["approval_id"]) for row in pending}
+
+    target = next_base.rstrip("/") + "/workspace/approvals"
+    goto = playwright(env, "goto", target)
+    require(goto.returncode == 0, f"Playwright goto failed for approvals interaction: {goto.stderr or goto.stdout}")
+    before = wait_for_snapshot_text(
+        env,
+        "/workspace/approvals",
+        lambda text: "Approve" in text,
+        "approvals page to render an Approve button",
+    )
+    button_ref = first_button_ref(before, "Approve")
+    clicked = playwright(env, "click", button_ref)
+    require(clicked.returncode == 0, f"Playwright approval click failed: {clicked.stderr or clicked.stdout}")
+
+    def approved(payload: object) -> bool:
+        require(isinstance(payload, list), "Approvals API did not return a list after click")
+        return any(
+            isinstance(row, dict)
+            and str(row.get("approval_id")) in pending_ids
+            and row.get("decision") == "approved"
+            for row in payload
+        )
+
+    after_payload = wait_for_json(approvals_url, approved, "a visible approval to become approved")
+    changed = [
+        row
+        for row in after_payload
+        if isinstance(row, dict)
+        and str(row.get("approval_id")) in pending_ids
+        and row.get("decision") == "approved"
+    ]
+    approval_id = str(changed[0]["approval_id"])
+    time.sleep(0.8)
+    after = snapshot_text(env, "/workspace/approvals")
+    require("approved" in after, "Approvals page did not show approved decision after click")
+    return {
+        "approval_id": approval_id,
+        "button_ref": button_ref,
+        "decision": find_by_id(after_payload, "approval_id", approval_id).get("decision"),
+    }
+
+
+def approve_first_candidate_memory(next_base: str, env: dict[str, str]) -> dict:
+    memories_url = f"{next_base}/api/mis/memories"
+    memories = http_json(memories_url)
+    require(isinstance(memories, list), "Memories API did not return a list")
+    candidates = [row for row in memories if isinstance(row, dict) and row.get("review_status") == "candidate"]
+    require(bool(candidates), "No candidate memory available for browser review smoke")
+    candidate_ids = {str(row["memory_id"]) for row in candidates}
+
+    target = next_base.rstrip("/") + "/workspace/memory"
+    goto = playwright(env, "goto", target)
+    require(goto.returncode == 0, f"Playwright goto failed for memory interaction: {goto.stderr or goto.stdout}")
+    before = wait_for_snapshot_text(
+        env,
+        "/workspace/memory",
+        lambda text: "Approve" in text,
+        "memory page to render an Approve button",
+    )
+    button_ref = first_button_ref(before, "Approve")
+    clicked = playwright(env, "click", button_ref)
+    require(clicked.returncode == 0, f"Playwright memory click failed: {clicked.stderr or clicked.stdout}")
+
+    def approved(payload: object) -> bool:
+        require(isinstance(payload, list), "Memories API did not return a list after click")
+        return any(
+            isinstance(row, dict)
+            and str(row.get("memory_id")) in candidate_ids
+            and row.get("review_status") == "approved"
+            for row in payload
+        )
+
+    after_payload = wait_for_json(memories_url, approved, "a visible memory to become approved")
+    changed = [
+        row
+        for row in after_payload
+        if isinstance(row, dict)
+        and str(row.get("memory_id")) in candidate_ids
+        and row.get("review_status") == "approved"
+    ]
+    memory_id = str(changed[0]["memory_id"])
+    time.sleep(0.8)
+    after = snapshot_text(env, "/workspace/memory")
+    require("approved" in after, "Memory page did not show approved review status after click")
+    return {
+        "memory_id": memory_id,
+        "button_ref": button_ref,
+        "review_status": find_by_id(after_payload, "memory_id", memory_id).get("review_status"),
+    }
 
 
 def main() -> int:
@@ -171,6 +318,10 @@ def main() -> int:
             require(resized.returncode == 0, f"Playwright resize failed: {resized.stderr or resized.stdout}")
 
             snapshots = [snapshot_route(next_base, path, expected, pw_env) for path, expected in ROUTES]
+            interactions = {
+                "approval_review": approve_first_pending_approval(next_base, pw_env),
+                "memory_review": approve_first_candidate_memory(next_base, pw_env),
+            }
             proxy_checks = {
                 "agents": len(http_json(f"{next_base}/api/mis/agents")),
                 "tasks": len(http_json(f"{next_base}/api/mis/tasks")),
@@ -188,6 +339,7 @@ def main() -> int:
                 "api_base": api_base,
                 "next_base": next_base,
                 "routes": snapshots,
+                "interactions": interactions,
                 "proxy_checks": proxy_checks,
                 "secret_leaked": False,
             }
