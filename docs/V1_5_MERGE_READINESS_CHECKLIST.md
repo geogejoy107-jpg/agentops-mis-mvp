@@ -82,7 +82,7 @@ python3 scripts/customer_worker_external_write_gate_smoke.py
 - [x] Index excludes credentials, databases, runtime logs, caches and raw customer files.
 - [x] Redaction occurs before indexing.
 - [x] Search returns source path, hash, scope and retrieval ID.
-- [ ] Add heading-aware chunks rather than only full-document rows.
+- [x] Add heading-aware chunks rather than only full-document rows.
 - [x] Add a Chinese/English retrieval test set.
 - [x] Record Recall@5, MRR and p95.
 - [x] Reindex is incremental and no-op for unchanged documents.
@@ -91,8 +91,11 @@ python3 scripts/customer_worker_external_write_gate_smoke.py
 Current retrieval-quality baseline: `scripts/knowledge_retrieval_quality_smoke.py`
 starts an isolated SQLite-backed server, rebuilds the Markdown FTS index, runs a
 five-query Chinese/English top-5 test set, and records Recall@5, MRR and local
-p95 latency without printing snippets, tokens or raw content. Latest measured
-baseline: Recall@5 `1.0`, MRR `0.84`, p95 `8.65 ms` across 85 indexed documents.
+p95 latency without printing snippets, tokens or raw content. Search now uses
+heading-aware `knowledge_chunks` / `knowledge_chunk_fts` first, returns
+`retrieval_granularity=heading_chunk`, and falls back to document FTS for legacy
+or manually inserted private rows. Recent isolated local runs keep Recall@5
+`1.0`, MRR `1.0`, and p95 under `20 ms` across 85+ indexed documents.
 
 Required checks:
 

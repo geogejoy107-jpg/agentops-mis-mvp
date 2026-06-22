@@ -288,6 +288,8 @@ CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_logs(entity_type, entity_id
 | `agent_plans` | Agent 执行前的 READ/PLAN/RETRIEVE/COMPARE 计划账本。 |
 | `plan_evidence_manifests` | Agent 执行后的计划证据绑定：plan、run、tool call、evaluation、artifact、audit 证据与验证状态。 |
 | `knowledge_documents` | Markdown 知识文件的索引元数据、hash、分类和摘要。 |
-| `knowledge_fts` | SQLite FTS5 虚拟表，用于第一版 `/api/knowledge/search`。 |
+| `knowledge_chunks` | Markdown 知识文件按 heading 切分后的章节级检索元数据、hash、标题路径和短摘要。 |
+| `knowledge_fts` | SQLite FTS5 虚拟表，用于兼容旧的整篇文档检索和手动插入的私有知识行。 |
+| `knowledge_chunk_fts` | SQLite FTS5 虚拟表，用于优先返回 heading-aware chunk 检索结果。 |
 
 隐私边界保持不变：这些扩展表记录结构化状态、短摘要、hash、连接器状态和迁移预览，不存 credentials、私聊正文、完整 transcript 或真实 prompt 原文。

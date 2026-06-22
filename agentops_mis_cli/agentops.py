@@ -583,6 +583,43 @@ def select_advance_loop_item(handoff: dict) -> dict:
                 "advance_policy": policy,
                 "token_omitted": True,
             }
+    remediation_chain = evidence_work_order.get("remediation_chain") or {}
+    if not handoff.get("loop_id") and remediation_chain.get("status") == "attention":
+        for item in remediation_chain.get("items") or []:
+            receipt_state = item.get("receipt_state") or {}
+            if receipt_state.get("verified"):
+                continue
+            command = str(item.get("preview_command") or "").strip()
+            if not command:
+                continue
+            policy = advance_loop_command_policy(command, phase="action")
+            if not policy.get("allowed"):
+                continue
+            run_id = str(item.get("run_id") or "").strip()
+            return {
+                "package_id": str(item.get("package_id") or f"evidence_remediation:{run_id}" or "evidence_remediation"),
+                "action_id": str(item.get("action_id") or f"evidence_remediation:{run_id}" or "evidence_remediation"),
+                "action_signature": receipt_state.get("action_signature"),
+                "gate_id": "evidence_remediation",
+                "gate_label": "Evidence remediation preview",
+                "gate_status": item.get("severity") or item.get("status") or remediation_chain.get("status"),
+                "source": "operator_handoff.evidence_remediation",
+                "action_command": command,
+                "verify_command": item.get("verify_command") or (f"agentops operator evidence-report --run-id {run_id} --limit 1" if run_id else "agentops operator evidence-report --limit 8"),
+                "receipt_verify_record_command": item.get("receipt_verify_record_command"),
+                "receipt_source": "handoff.evidence_remediation",
+                "evidence": {
+                    "run_id": run_id,
+                    "task_id": item.get("task_id"),
+                    "failed_check_ids": item.get("failed_check_ids") or [],
+                    "gap_types": item.get("gap_types") or [],
+                    "missing_evidence": item.get("missing_evidence") or [],
+                    "receipt_state": receipt_state,
+                    "operation": item.get("operation"),
+                },
+                "advance_policy": policy,
+                "token_omitted": True,
+            }
     action_package = (work_order.get("action_package") or {})
     for item in action_package.get("items") or []:
         command = str(item.get("action_command") or "").strip()
@@ -692,7 +729,7 @@ def cmd_operator_advance_loop(args, client: AgentOpsClient) -> dict:
         "verify_command": verify_command,
         "action_id": selected.get("action_id"),
         "action_signature": selected.get("action_signature"),
-        "source": f"advance_loop:{selected.get('gate_id') or 'gate'}",
+        "source": selected.get("receipt_source") or f"advance_loop:{selected.get('gate_id') or 'gate'}",
         "status": "verified" if succeeded else "failed",
         "result_summary": (
             f"advance-loop {'verified' if succeeded else 'failed'} gate {selected.get('gate_id') or 'unknown'}; "

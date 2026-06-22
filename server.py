@@ -909,6 +909,25 @@ CREATE TABLE IF NOT EXISTS knowledge_documents (
     updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS knowledge_chunks (
+    chunk_id TEXT PRIMARY KEY,
+    doc_id TEXT NOT NULL,
+    workspace_id TEXT NOT NULL DEFAULT 'global',
+    project_id TEXT,
+    access_level TEXT NOT NULL DEFAULT 'internal',
+    path TEXT NOT NULL,
+    title TEXT NOT NULL,
+    heading TEXT NOT NULL,
+    heading_path TEXT NOT NULL,
+    heading_level INTEGER NOT NULL DEFAULT 0,
+    chunk_index INTEGER NOT NULL,
+    source_hash TEXT NOT NULL,
+    content_summary TEXT,
+    indexed_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY(doc_id) REFERENCES knowledge_documents(doc_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_owner ON tasks(owner_agent_id);
 CREATE INDEX IF NOT EXISTS idx_runs_task ON runs(task_id);
@@ -940,6 +959,8 @@ CREATE INDEX IF NOT EXISTS idx_plan_evidence_plan ON plan_evidence_manifests(pla
 CREATE INDEX IF NOT EXISTS idx_plan_evidence_run ON plan_evidence_manifests(run_id);
 CREATE INDEX IF NOT EXISTS idx_plan_evidence_agent ON plan_evidence_manifests(agent_id);
 CREATE INDEX IF NOT EXISTS idx_knowledge_documents_category ON knowledge_documents(category);
+CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_doc ON knowledge_chunks(doc_id);
+CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_workspace ON knowledge_chunks(workspace_id, access_level);
 """
 
 
@@ -1088,6 +1109,7 @@ def ensure_schema_migrations(conn: sqlite3.Connection):
     ensure_column(conn, "knowledge_documents", "workspace_id", "workspace_id TEXT NOT NULL DEFAULT 'global'")
     ensure_column(conn, "knowledge_documents", "project_id", "project_id TEXT")
     ensure_column(conn, "knowledge_documents", "access_level", "access_level TEXT NOT NULL DEFAULT 'internal'")
+    ensure_knowledge_chunks_table(conn)
     conn.execute(
         """CREATE TABLE IF NOT EXISTS prepared_actions (
             action_id TEXT PRIMARY KEY,
@@ -1132,7 +1154,10 @@ def ensure_schema_migrations(conn: sqlite3.Connection):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_status ON memories(review_status)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_documents_workspace ON knowledge_documents(workspace_id, access_level)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_doc ON knowledge_chunks(doc_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_workspace ON knowledge_chunks(workspace_id, access_level)")
     ensure_knowledge_fts(conn)
+    ensure_knowledge_chunk_fts(conn)
 
 
 def ensure_knowledge_fts(conn: sqlite3.Connection) -> bool:
@@ -1140,6 +1165,40 @@ def ensure_knowledge_fts(conn: sqlite3.Connection) -> bool:
         conn.execute(
             """CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts
             USING fts5(doc_id UNINDEXED, path UNINDEXED, title, content)"""
+        )
+        return True
+    except sqlite3.OperationalError:
+        return False
+
+
+def ensure_knowledge_chunks_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS knowledge_chunks (
+            chunk_id TEXT PRIMARY KEY,
+            doc_id TEXT NOT NULL,
+            workspace_id TEXT NOT NULL DEFAULT 'global',
+            project_id TEXT,
+            access_level TEXT NOT NULL DEFAULT 'internal',
+            path TEXT NOT NULL,
+            title TEXT NOT NULL,
+            heading TEXT NOT NULL,
+            heading_path TEXT NOT NULL,
+            heading_level INTEGER NOT NULL DEFAULT 0,
+            chunk_index INTEGER NOT NULL,
+            source_hash TEXT NOT NULL,
+            content_summary TEXT,
+            indexed_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY(doc_id) REFERENCES knowledge_documents(doc_id)
+        )"""
+    )
+
+
+def ensure_knowledge_chunk_fts(conn: sqlite3.Connection) -> bool:
+    try:
+        conn.execute(
+            """CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_chunk_fts
+            USING fts5(chunk_id UNINDEXED, doc_id UNINDEXED, path UNINDEXED, title, heading, content)"""
         )
         return True
     except sqlite3.OperationalError:
@@ -4498,16 +4557,81 @@ def iter_knowledge_markdown_files() -> list[Path]:
     return included
 
 
+def markdown_heading_chunks(content: str, doc_id: str, title: str) -> list[dict]:
+    heading_re = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
+    lines = content.splitlines()
+    chunks: list[dict] = []
+    heading_stack: list[str] = []
+    current_heading = title or "Document"
+    current_heading_path = current_heading
+    current_level = 0
+    buffer: list[str] = []
+
+    def clean_heading(raw: str) -> str:
+        value = re.sub(r"\s+", " ", raw or "").strip()
+        return value[:160] or "Document"
+
+    def emit() -> None:
+        body = "\n".join(buffer).strip()
+        if not body:
+            return
+        max_chars = 3600
+        parts = [body[index:index + max_chars] for index in range(0, len(body), max_chars)] or [body]
+        for part_index, part in enumerate(parts, start=1):
+            heading = current_heading if len(parts) == 1 else f"{current_heading} part {part_index}"
+            heading_path = current_heading_path if len(parts) == 1 else f"{current_heading_path} / part {part_index}"
+            chunks.append({
+                "chunk_id": stable_id("kchunk", doc_id, len(chunks) + 1, heading_path),
+                "heading": heading,
+                "heading_path": heading_path,
+                "heading_level": current_level,
+                "chunk_index": len(chunks) + 1,
+                "content": part.strip(),
+            })
+
+    for line in lines:
+        match = heading_re.match(line.strip())
+        if match:
+            emit()
+            buffer = [line]
+            current_level = len(match.group(1))
+            current_heading = clean_heading(match.group(2))
+            heading_stack = heading_stack[: max(current_level - 1, 0)]
+            heading_stack.append(current_heading)
+            current_heading_path = " > ".join(heading_stack) or current_heading
+            continue
+        buffer.append(line)
+    emit()
+    if not chunks and content.strip():
+        chunks.append({
+            "chunk_id": stable_id("kchunk", doc_id, 1, title),
+            "heading": title or "Document",
+            "heading_path": title or "Document",
+            "heading_level": 0,
+            "chunk_index": 1,
+            "content": content.strip()[:3600],
+        })
+    return chunks
+
+
 def sync_knowledge_index(conn: sqlite3.Connection, rebuild: bool = False) -> dict:
     fts_available = ensure_knowledge_fts(conn)
+    ensure_knowledge_chunks_table(conn)
+    chunk_fts_available = ensure_knowledge_chunk_fts(conn)
     if rebuild:
         conn.execute("DELETE FROM knowledge_documents")
+        conn.execute("DELETE FROM knowledge_chunks")
         if fts_available:
             conn.execute("DELETE FROM knowledge_fts")
+        if chunk_fts_available:
+            conn.execute("DELETE FROM knowledge_chunk_fts")
     indexed = 0
     changed = 0
+    chunks_indexed = 0
+    chunks_changed = 0
     deleted = 0
     seen_doc_ids = set()
+    seen_chunk_ids = set()
     knowledge_files, excluded_files = collect_knowledge_markdown_files()
     for path in knowledge_files:
         try:
@@ -4520,8 +4644,12 @@ def sync_knowledge_index(conn: sqlite3.Connection, rebuild: bool = False) -> dic
         source_hash = stable_hash({"path": rel, "content": content})
         indexed_content = redact_full_text(content)
         existing = conn.execute("SELECT source_hash FROM knowledge_documents WHERE doc_id=?", (doc_id,)).fetchone()
+        chunk_count = int(conn.execute("SELECT COUNT(*) FROM knowledge_chunks WHERE doc_id=?", (doc_id,)).fetchone()[0])
+        chunk_fts_count = int(conn.execute("SELECT COUNT(*) FROM knowledge_chunk_fts WHERE doc_id=?", (doc_id,)).fetchone()[0]) if chunk_fts_available else chunk_count
         indexed += 1
-        if existing and existing["source_hash"] == source_hash and not rebuild:
+        if existing and existing["source_hash"] == source_hash and chunk_count > 0 and chunk_fts_count > 0 and not rebuild:
+            seen_chunk_ids.update(row["chunk_id"] for row in conn.execute("SELECT chunk_id FROM knowledge_chunks WHERE doc_id=?", (doc_id,)).fetchall())
+            chunks_indexed += chunk_count
             continue
         title = markdown_title(content, path.stem.replace("_", " ").replace("-", " ").title())
         now = now_iso()
@@ -4554,21 +4682,67 @@ def sync_knowledge_index(conn: sqlite3.Connection, rebuild: bool = False) -> dic
                 "INSERT INTO knowledge_fts(doc_id,path,title,content) VALUES(?,?,?,?)",
                 (doc_id, rel, title, indexed_content),
             )
+        conn.execute("DELETE FROM knowledge_chunks WHERE doc_id=?", (doc_id,))
+        if chunk_fts_available:
+            conn.execute("DELETE FROM knowledge_chunk_fts WHERE doc_id=?", (doc_id,))
+        for chunk in markdown_heading_chunks(indexed_content, doc_id, title):
+            seen_chunk_ids.add(chunk["chunk_id"])
+            chunks_indexed += 1
+            chunks_changed += 1
+            chunk_row = {
+                "chunk_id": chunk["chunk_id"],
+                "doc_id": doc_id,
+                "workspace_id": row["workspace_id"],
+                "project_id": row["project_id"],
+                "access_level": row["access_level"],
+                "path": rel,
+                "title": title,
+                "heading": chunk["heading"],
+                "heading_path": chunk["heading_path"],
+                "heading_level": chunk["heading_level"],
+                "chunk_index": chunk["chunk_index"],
+                "source_hash": source_hash,
+                "content_summary": redact_text(chunk["content"], 360),
+                "indexed_at": now,
+                "updated_at": now,
+            }
+            conn.execute(
+                """INSERT INTO knowledge_chunks(chunk_id,doc_id,workspace_id,project_id,access_level,path,title,heading,heading_path,heading_level,chunk_index,source_hash,content_summary,indexed_at,updated_at)
+                VALUES(:chunk_id,:doc_id,:workspace_id,:project_id,:access_level,:path,:title,:heading,:heading_path,:heading_level,:chunk_index,:source_hash,:content_summary,:indexed_at,:updated_at)""",
+                chunk_row,
+            )
+            if chunk_fts_available:
+                conn.execute(
+                    "INSERT INTO knowledge_chunk_fts(chunk_id,doc_id,path,title,heading,content) VALUES(?,?,?,?,?,?)",
+                    (chunk["chunk_id"], doc_id, rel, title, chunk["heading_path"], chunk["content"]),
+                )
         changed += 1
     existing_ids = {row["doc_id"] for row in conn.execute("SELECT doc_id FROM knowledge_documents").fetchall()}
     for stale_id in sorted(existing_ids - seen_doc_ids):
         conn.execute("DELETE FROM knowledge_documents WHERE doc_id=?", (stale_id,))
+        conn.execute("DELETE FROM knowledge_chunks WHERE doc_id=?", (stale_id,))
         if fts_available:
             conn.execute("DELETE FROM knowledge_fts WHERE doc_id=?", (stale_id,))
+        if chunk_fts_available:
+            conn.execute("DELETE FROM knowledge_chunk_fts WHERE doc_id=?", (stale_id,))
         deleted += 1
+    existing_chunk_ids = {row["chunk_id"] for row in conn.execute("SELECT chunk_id FROM knowledge_chunks").fetchall()}
+    for stale_chunk_id in sorted(existing_chunk_ids - seen_chunk_ids):
+        conn.execute("DELETE FROM knowledge_chunks WHERE chunk_id=?", (stale_chunk_id,))
+        if chunk_fts_available:
+            conn.execute("DELETE FROM knowledge_chunk_fts WHERE chunk_id=?", (stale_chunk_id,))
     return {
         "indexed": indexed,
         "changed": changed,
+        "chunks_indexed": chunks_indexed,
+        "chunks_changed": chunks_changed,
         "deleted": deleted,
         "excluded": len(excluded_files),
         "excluded_reasons": sorted({item["reason"] for item in excluded_files}),
         "incremental_noop": changed == 0 and deleted == 0 and not rebuild,
         "fts_available": fts_available,
+        "heading_aware_chunks": True,
+        "chunk_fts_available": chunk_fts_available,
     }
 
 
@@ -4607,7 +4781,13 @@ def enrich_knowledge_results(rows: list[dict], query: str) -> list[dict]:
     enriched = []
     for index, row in enumerate(rows, start=1):
         item = dict(row)
-        item["retrieval_id"] = stable_id("kret", query or "recent", item.get("doc_id"), item.get("source_hash"), index)
+        item["retrieval_id"] = stable_id("kret", query or "recent", item.get("doc_id"), item.get("chunk_id"), item.get("source_hash"), index)
+        if item.get("chunk_id"):
+            item["retrieval_granularity"] = item.get("retrieval_granularity") or "heading_chunk"
+            item["chunk_heading"] = item.get("heading")
+            item["chunk_heading_path"] = item.get("heading_path")
+        else:
+            item["retrieval_granularity"] = item.get("retrieval_granularity") or "document"
         item["raw_content_omitted"] = True
         item["token_omitted"] = True
         enriched.append(item)
@@ -4647,30 +4827,98 @@ def knowledge_search(conn: sqlite3.Connection, qs: dict, headers=None, auth_ctx=
     visibility_sql, visibility_params, visibility = knowledge_visibility_filter(auth_ctx)
     if query:
         fts_available = ensure_knowledge_fts(conn)
-        search_mode = "fts5" if fts_available else "like"
+        ensure_knowledge_chunks_table(conn)
+        chunk_fts_available = ensure_knowledge_chunk_fts(conn)
+        chunk_indexed = bool(conn.execute("SELECT 1 FROM knowledge_chunks LIMIT 1").fetchone())
+        heading_chunk_search = bool(chunk_fts_available and chunk_indexed)
+        search_mode = "fts5" if (fts_available or heading_chunk_search) else "like"
         search_quality.update({
             "search_mode": search_mode,
             "fts_available": fts_available,
-            "searched_fields": ["knowledge_fts.content", "knowledge_fts.title", "knowledge_fts.path"] if fts_available else ["title", "path", "content_summary"],
-            "content_body_searched": bool(fts_available),
-            "result_quality": "full_text_fts5" if fts_available else "metadata_summary_like",
-            "warning": None if fts_available else "FTS5 is unavailable; fallback searches only title, path and redacted summaries.",
+            "chunk_fts_available": chunk_fts_available,
+            "heading_aware_chunks": heading_chunk_search,
+            "retrieval_granularity": "heading_chunk" if heading_chunk_search else "document",
+            "searched_fields": ["knowledge_chunk_fts.content", "knowledge_chunk_fts.heading", "knowledge_chunk_fts.title", "knowledge_chunk_fts.path"] if heading_chunk_search else (["knowledge_fts.content", "knowledge_fts.title", "knowledge_fts.path"] if fts_available else ["title", "path", "content_summary"]),
+            "content_body_searched": bool(fts_available or heading_chunk_search),
+            "result_quality": "heading_chunk_fts5" if heading_chunk_search else ("full_text_fts5" if fts_available else "metadata_summary_like"),
+            "warning": None if (fts_available or heading_chunk_search) else "FTS5 is unavailable; fallback searches only title, path and redacted summaries.",
         })
         fts_error = None
-        if fts_available:
+        if heading_chunk_search:
             try:
                 match = fts_query(query)
                 if not match:
                     raise sqlite3.OperationalError("empty_fts_query")
-                rows = rows_to_dicts(conn.execute(
+                chunk_candidates = rows_to_dicts(conn.execute(
+                    f"""SELECT kd.*, kc.chunk_id, kc.heading, kc.heading_path, kc.heading_level, kc.chunk_index,
+                        snippet(knowledge_chunk_fts, 5, '', '', ' ... ', 18) AS snippet,
+                        bm25(knowledge_chunk_fts) AS rank,
+                        'heading_chunk' AS retrieval_granularity
+                    FROM knowledge_chunk_fts
+                    JOIN knowledge_chunks kc ON kc.chunk_id=knowledge_chunk_fts.chunk_id
+                    JOIN knowledge_documents kd ON kd.doc_id=kc.doc_id
+                    WHERE knowledge_chunk_fts MATCH ?
+                    {visibility_sql}
+                    ORDER BY rank LIMIT ?""",
+                    [match, *visibility_params, max(limit * 6, limit)],
+                ).fetchall())
+                doc_candidates = []
+                if fts_available:
+                    doc_candidates = rows_to_dicts(conn.execute(
+                        f"""SELECT kd.*, snippet(knowledge_fts, 3, '', '', ' ... ', 18) AS snippet,
+                            bm25(knowledge_fts) AS rank,
+                            'document' AS retrieval_granularity
+                        FROM knowledge_fts
+                        JOIN knowledge_documents kd ON kd.doc_id=knowledge_fts.doc_id
+                        WHERE knowledge_fts MATCH ?
+                        {visibility_sql}
+                        ORDER BY rank LIMIT ?""",
+                        [match, *visibility_params, max(limit * 10, limit)],
+                    ).fetchall())
+                best_by_doc: dict[str, dict] = {}
+                for candidate in [*chunk_candidates, *doc_candidates]:
+                    doc_key = str(candidate.get("doc_id") or "")
+                    if not doc_key:
+                        continue
+                    existing = best_by_doc.get(doc_key)
+                    if existing is None or float(candidate.get("rank") or 0) < float(existing.get("rank") or 0):
+                        best_by_doc[doc_key] = candidate
+                chunk_doc_ids = {str(row.get("doc_id") or "") for row in chunk_candidates}
+                seen_chunk_doc_ids = set()
+                rows = []
+                for row in sorted(best_by_doc.values(), key=lambda item: float(item.get("rank") or 0)):
+                    doc_key = row.get("doc_id")
+                    if doc_key in seen_chunk_doc_ids:
+                        continue
+                    seen_chunk_doc_ids.add(doc_key)
+                    rows.append(row)
+                    if len(rows) >= limit:
+                        break
+                if chunk_candidates and not any(row.get("chunk_id") for row in rows):
+                    first_chunk = next((row for row in chunk_candidates if str(row.get("doc_id") or "") not in seen_chunk_doc_ids), None)
+                    if first_chunk and rows:
+                        rows[-1] = first_chunk
+                search_quality["chunk_candidate_docs"] = len(chunk_doc_ids)
+                search_quality["document_candidate_docs"] = len({str(row.get("doc_id") or "") for row in doc_candidates})
+            except sqlite3.OperationalError as exc:
+                fts_error = str(exc) or "chunk_fts_query_failed"
+        if fts_available and (not chunk_fts_available or len(rows) < limit) and not fts_error:
+            try:
+                match = fts_query(query)
+                if not match:
+                    raise sqlite3.OperationalError("empty_fts_query")
+                seen_doc_ids = {row.get("doc_id") for row in rows}
+                doc_limit = limit - len(rows)
+                doc_rows = rows_to_dicts(conn.execute(
                     f"""SELECT kd.*, snippet(knowledge_fts, 3, '', '', ' ... ', 18) AS snippet, bm25(knowledge_fts) AS rank
                     FROM knowledge_fts
                     JOIN knowledge_documents kd ON kd.doc_id=knowledge_fts.doc_id
                     WHERE knowledge_fts MATCH ?
                     {visibility_sql}
                     ORDER BY rank LIMIT ?""",
-                    [match, *visibility_params, limit],
+                    [match, *visibility_params, max(doc_limit, 0)],
                 ).fetchall())
+                rows.extend([row for row in doc_rows if row.get("doc_id") not in seen_doc_ids])
             except sqlite3.OperationalError as exc:
                 fts_error = str(exc) or "fts_query_failed"
         if not fts_available or fts_error:
@@ -4680,6 +4928,9 @@ def knowledge_search(conn: sqlite3.Connection, qs: dict, headers=None, auth_ctx=
             search_quality.update({
                 "search_mode": search_mode,
                 "fts_available": fts_available,
+                "chunk_fts_available": chunk_fts_available if "chunk_fts_available" in locals() else False,
+                "heading_aware_chunks": False,
+                "retrieval_granularity": "document",
                 "fallback_used": True,
                 "fallback_reason": fallback_reason,
                 "searched_fields": ["title", "path", "content_summary"],
@@ -16087,13 +16338,20 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
         summary: str = "",
         ui_route: str | None = None,
         evidence: dict | None = None,
+        verify_command_override: str | None = None,
+        action_signature_override: str | None = None,
+        action_id_override: str | None = None,
+        receipt_source: str | None = None,
+        receipt_result_summary: str | None = None,
     ) -> None:
         if not command:
             return
-        verify_command = inferred_verify_command(lane, command)
-        action_signature = stable_id("op_action_sig", lane, title, ui_route or "", source)[-18:]
-        action_id = stable_id("op_action", lane, title, command, ui_route or "")[-18:]
+        verify_command = verify_command_override if verify_command_override is not None else inferred_verify_command(lane, command)
+        action_signature = action_signature_override or stable_id("op_action_sig", lane, title, ui_route or "", source)[-18:]
+        action_id = action_id_override or stable_id("op_action", lane, title, command, ui_route or "")[-18:]
         receipt, receipt_match = latest_receipt_for_action(command, action_id, action_signature)
+        receipt_source_value = receipt_source or source or "operator_action_queue"
+        receipt_result_summary_value = receipt_result_summary or "Action and verification completed."
         def receipt_record_command(status: str, *, confirm: bool = False, summary: str = "") -> str:
             parts = [
                 "agentops", "operator", "record-action-receipt",
@@ -16101,6 +16359,7 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
                 "--action-id", action_id,
                 "--action-signature", action_signature,
                 "--status", status,
+                "--source", receipt_source_value,
             ]
             if verify_command:
                 parts.extend(["--verify-command", verify_command])
@@ -16134,7 +16393,7 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             "verify_command": redact_text(verify_command, 260) if verify_command else None,
             "receipt_record_command": redact_text(receipt_record_command("recorded"), 900),
             "receipt_record_confirm_command": redact_text(receipt_record_command("recorded", confirm=True), 900),
-            "receipt_verify_record_command": redact_text(receipt_record_command("verified", confirm=True, summary="Action and verification completed."), 900),
+            "receipt_verify_record_command": redact_text(receipt_record_command("verified", confirm=True, summary=receipt_result_summary_value), 900),
             "ui_route": ui_route,
             "source": source,
             "evidence": evidence or {},
@@ -16163,7 +16422,7 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
                 "priority_boost": receipt_priority_boost,
                 "record_command": redact_text(receipt_record_command("recorded"), 900),
                 "record_confirm_command": redact_text(receipt_record_command("recorded", confirm=True), 900),
-                "verify_record_command": redact_text(receipt_record_command("verified", confirm=True, summary="Action and verification completed."), 900),
+                "verify_record_command": redact_text(receipt_record_command("verified", confirm=True, summary=receipt_result_summary_value), 900),
             },
             "token_omitted": True,
         })
@@ -16392,10 +16651,18 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
         )
 
     for item in (evidence_gaps.get("gaps") or [])[:limit]:
+        run_id = str(item.get("run_id") or "").strip()
+        command = str(item.get("command") or "agentops run list --status completed --limit 10").strip()
+        is_remediation_preview = bool(run_id and command == f"agentops operator remediate-evidence-gap --run-id {run_id}")
+        remediation_verify_command = f"agentops operator evidence-report --run-id {shlex.quote(run_id)} --limit 1" if is_remediation_preview else None
+        remediation_action_signature = (
+            stable_id("op_action_sig", "evidence_remediation", workspace_id, run_id, command)[-18:]
+            if is_remediation_preview else None
+        )
         add_action(
             "execution_evidence",
             item.get("task_title") or item.get("run_id") or "Execution evidence gap",
-            item.get("command") or "agentops run list --status completed --limit 10",
+            command,
             priority=int(item.get("priority") or 84),
             severity=item.get("severity") or "attention",
             source="execution_evidence_gaps",
@@ -16420,7 +16687,14 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
                 "gap_types": item.get("gap_types") or [],
                 "missing_evidence": item.get("missing_evidence") or [],
                 "evidence_counts": item.get("evidence_counts") or {},
+                "handoff_remediation_chain": bool(is_remediation_preview),
+                "handoff_remediation_source": "handoff.evidence_remediation" if is_remediation_preview else None,
             },
+            verify_command_override=remediation_verify_command,
+            action_signature_override=remediation_action_signature,
+            action_id_override=f"evidence_remediation:{run_id}" if is_remediation_preview else None,
+            receipt_source="handoff.evidence_remediation" if is_remediation_preview else None,
+            receipt_result_summary=f"Evidence remediation preview reviewed for run {run_id}." if is_remediation_preview else None,
         )
 
     for item in (dispatch_evidence.get("items") or [])[:limit]:
@@ -17422,6 +17696,9 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
         ] if command]
         remediation_items.append({
             "operation": "evidence_remediation_work_item",
+            "package_id": f"evidence_remediation:{run_id}",
+            "action_id": f"evidence_remediation:{run_id}",
+            "action_signature": action_signature,
             "run_id": run_id,
             "task_id": report_run.get("task_id"),
             "status": report_run.get("status"),
@@ -17438,6 +17715,7 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
             "verify_command": verify_command,
             "receipt_record_command": receipt_record_command,
             "receipt_verify_record_command": receipt_verify_record_command,
+            "receipt_source": "handoff.evidence_remediation",
             "receipt_state": receipt_state,
             "explicit_mutating_commands": explicit_commands,
             "next_action": gap.get("next_action") or "Preview the remediation package before creating or closing evidence.",
@@ -17581,6 +17859,7 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
     advance_loop_confirm_command = " ".join(shlex.quote(str(part)) for part in [*advance_loop_args, "--confirm-advance"])
     loop_advance_selected_item = next((item for item in action_package_items if item.get("gate_status") != "pass" and item.get("action_command")), None)
     evidence_advance_selected_item = None
+    remediation_advance_selected_item = None
     if not scoped_loop_id and not evidence_report_receipt_verified and (evidence_report_work_order.get("status") in {"blocked", "attention"}):
         evidence_action_command = next((str(command or "").strip() for command in (evidence_report_work_order.get("next_actions") or []) if str(command or "").strip()), "")
         if evidence_action_command:
@@ -17596,17 +17875,45 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
                 "receipt_verify_record_command": None,
                 "token_omitted": True,
             }
-    advance_loop_selected_item = evidence_advance_selected_item or loop_advance_selected_item
+    if not scoped_loop_id and evidence_report_receipt_verified and remediation_chain.get("status") == "attention":
+        for item in remediation_items:
+            receipt_state = item.get("receipt_state") or {}
+            if receipt_state.get("verified"):
+                continue
+            action_command = str(item.get("preview_command") or "").strip()
+            if not action_command:
+                continue
+            policy = advance_loop_command_policy(action_command, phase="action")
+            if not policy.get("allowed"):
+                continue
+            remediation_advance_selected_item = {
+                "package_id": item.get("package_id"),
+                "action_id": item.get("action_id"),
+                "action_signature": item.get("action_signature") or receipt_state.get("action_signature"),
+                "gate_id": "evidence_remediation",
+                "gate_label": "Evidence remediation preview",
+                "gate_status": item.get("severity") or item.get("status") or "attention",
+                "source": "operator_handoff.evidence_remediation",
+                "action_command": action_command,
+                "verify_command": item.get("verify_command"),
+                "receipt_verify_record_command": item.get("receipt_verify_record_command"),
+                "receipt_source": "handoff.evidence_remediation",
+                "run_id": item.get("run_id"),
+                "token_omitted": True,
+            }
+            break
+    advance_loop_selected_item = evidence_advance_selected_item or remediation_advance_selected_item or loop_advance_selected_item
     advance_loop_policy = advance_loop_policy_summary()
     advance_loop_work_order = {
         "operation": "advance_loop_work_order",
         "status": "attention" if advance_loop_selected_item else "empty",
         "summary": {
-            "items": len(action_package_items) + (1 if evidence_advance_selected_item else 0),
+            "items": len(action_package_items) + (1 if evidence_advance_selected_item else 0) + (1 if remediation_advance_selected_item else 0),
             "selected_gate": (advance_loop_selected_item or {}).get("gate_id"),
             "selected_status": (advance_loop_selected_item or {}).get("gate_status"),
             "loop_scoped": bool(scoped_loop_id),
             "evidence_report_prioritized": bool(evidence_advance_selected_item),
+            "evidence_remediation_prioritized": bool(remediation_advance_selected_item),
             "evidence_report_receipt_verified": evidence_report_receipt_verified,
             "policy_id": advance_loop_policy.get("policy_id"),
             "policy_version": advance_loop_policy.get("policy_version"),
@@ -17621,6 +17928,8 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
             "action_command": (advance_loop_selected_item or {}).get("action_command"),
             "verify_command": (advance_loop_selected_item or {}).get("verify_command"),
             "receipt_verify_record_command": (advance_loop_selected_item or {}).get("receipt_verify_record_command"),
+            "receipt_source": (advance_loop_selected_item or {}).get("receipt_source"),
+            "run_id": (advance_loop_selected_item or {}).get("run_id"),
             "token_omitted": True,
         } if advance_loop_selected_item else None,
         "preview_command": advance_loop_preview_command,

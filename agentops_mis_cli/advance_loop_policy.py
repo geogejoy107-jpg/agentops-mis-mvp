@@ -19,7 +19,7 @@ DENIED_FLAGS = {
 DENIED_NAMESPACES = {"approval", "session", "enrollment"}
 DENIED_MEMORY_ACTIONS = {"approve", "reject"}
 DENIED_WORKER_ACTIONS = {"start", "stop", "restart", "release-stuck"}
-DENIED_OPERATOR_ACTIONS = {"remediate-evidence-gap", "close-evidence-gap", "propose-receipt-failure-memory"}
+DENIED_OPERATOR_ACTIONS = {"close-evidence-gap", "propose-receipt-failure-memory"}
 ALLOWED_READ_COMMANDS = {
     ("operator", "loop-audit"),
     ("operator", "action-plan"),
@@ -27,6 +27,7 @@ ALLOWED_READ_COMMANDS = {
     ("operator", "health"),
     ("operator", "evidence-report"),
     ("operator", "intake-checklist"),
+    ("operator", "remediate-evidence-gap"),
     ("operator", "receipt-failure-memories"),
     ("knowledge", "search"),
     ("review", "queue"),
@@ -52,6 +53,7 @@ def advance_loop_policy_summary() -> dict:
         "allowed_mutating_commands": sorted([" ".join(item).strip() for item in ALLOWED_MUTATING_COMMANDS]),
         "special_rules": [
             "memory propose is allowed only when --type loop_record is present",
+            "operator remediate-evidence-gap is allowed only as read-only preview; --confirm-create is denied",
             "verify phase accepts read-only allowlisted commands only",
         ],
         "denied_flags": sorted(DENIED_FLAGS),

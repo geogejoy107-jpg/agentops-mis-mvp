@@ -1426,12 +1426,13 @@ export function AIEmployees() {
     candidate.receiptRequired === false ? true :
     typeof candidate.receiptVerified === "boolean" ? candidate.receiptVerified : latestReceiptForAction(candidate.action, candidate.actionSignature)?.status === "verified"
   );
-  const actionQueueCandidateScore = (candidate: { id: string; action: string; actionSignature?: string | null; receiptRequired?: boolean; receiptVerified?: boolean; isReceiptCoverageRecovery?: boolean; isReceiptEvaluationRecovery?: boolean; isReceiptFailureMemoryRecovery?: boolean; isOperatorHealthRisk?: boolean }) => (
+  const actionQueueCandidateScore = (candidate: { id: string; action: string; actionSignature?: string | null; receiptRequired?: boolean; receiptVerified?: boolean; isReceiptCoverageRecovery?: boolean; isReceiptEvaluationRecovery?: boolean; isReceiptFailureMemoryRecovery?: boolean; isOperatorHealthRisk?: boolean; isEvidenceRemediation?: boolean }) => (
     isCloseEvidenceGapCommand(candidate.action) ? 120 :
     candidate.isOperatorHealthRisk ? 118 :
     candidate.isReceiptEvaluationRecovery ? 116 :
     candidate.isReceiptCoverageRecovery ? 115 :
     candidate.isReceiptFailureMemoryRecovery ? 114 :
+    candidate.isEvidenceRemediation ? 112 :
     candidate.id.startsWith("loop-first-issue:") ? 110 :
     !candidateReceiptVerified(candidate) ? 80 :
     0
@@ -1447,7 +1448,7 @@ export function AIEmployees() {
     ...operatorPlanActions.map((item) => ({
       id: `operator:${item.action_id}`,
       action: item.command,
-      source: `${item.lane === "operator_health" ? copy.operatorHealthTitle : copy.operatorTitle} · ${item.lane}`,
+      source: `${item.lane === "operator_health" ? copy.operatorHealthTitle : copy.operatorTitle} · ${((item.evidence || {}) as Record<string, unknown>).handoff_remediation_chain ? "evidence remediation" : item.lane}`,
       status: item.severity || operatorActionPlan?.status || "attention",
       operatorAction: item,
       verifyAction: item.verify_command || (isCloseEvidenceGapCommand(item.command) ? "agentops operator action-plan --limit 20" : undefined),
@@ -1465,6 +1466,7 @@ export function AIEmployees() {
       isReceiptEvaluationRecovery: item.source === "receipt_evaluation",
       isReceiptFailureMemoryRecovery: item.source === "receipt_failure_memory",
       isOperatorHealthRisk: item.lane === "operator_health" || item.source.startsWith("operator_health:"),
+      isEvidenceRemediation: Boolean(((item.evidence || {}) as Record<string, unknown>).handoff_remediation_chain),
     })),
     ...recommendedActions.map((action, index) => ({
       id: `fleet:${index}:${action}`,

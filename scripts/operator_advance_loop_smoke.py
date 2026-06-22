@@ -176,11 +176,26 @@ def main() -> int:
             global_second_payload = load_json(global_second_preview.stdout)
             require(global_second_preview.returncode == 0, f"global second preview failed: {global_second_preview.stderr or global_second_preview.stdout}", failures)
             require((global_second_payload.get("preview") or {}).get("gate_id") != "evidence_report", f"verified evidence work order should not be selected again: {global_second_payload}", failures)
+            require((global_second_payload.get("preview") or {}).get("gate_id") == "evidence_remediation", f"global second preview should continue with evidence remediation: {global_second_payload}", failures)
+            require(str((global_second_payload.get("preview") or {}).get("action_command") or "").startswith("agentops operator remediate-evidence-gap --run-id "), f"remediation preview command missing: {global_second_payload}", failures)
+            require(((global_second_payload.get("preview") or {}).get("action_policy") or {}).get("allowed") is True, f"remediation preview should be allowlisted: {global_second_payload}", failures)
+            remediation_before_receipts = advance_receipt_count(db_path)
+            remediation_advanced = run_cli(["operator", "advance-loop", "--limit", "10", "--confirm-advance"], base_url, outputs)
+            remediation_advanced_payload = load_json(remediation_advanced.stdout)
+            remediation_after_receipts = advance_receipt_count(db_path)
+            require(remediation_advanced.returncode == 0, f"remediation advance confirm failed: {remediation_advanced.stderr or remediation_advanced.stdout}", failures)
+            require((remediation_advanced_payload.get("preview") or {}).get("gate_id") == "evidence_remediation", f"remediation advance confirmed wrong gate: {remediation_advanced_payload}", failures)
+            require((remediation_advanced_payload.get("action_result") or {}).get("ok") is True, f"remediation preview action failed: {remediation_advanced_payload}", failures)
+            require((remediation_advanced_payload.get("verify_result") or {}).get("ok") is True, f"remediation preview verify failed: {remediation_advanced_payload}", failures)
+            require(((remediation_advanced_payload.get("receipt") or {}).get("receipt") or {}).get("source") == "handoff.evidence_remediation", f"remediation receipt should preserve handoff source: {remediation_advanced_payload}", failures)
+            require(remediation_after_receipts >= remediation_before_receipts + 1, f"remediation advance receipt missing: {remediation_before_receipts} -> {remediation_after_receipts}", failures)
             handoff_after_global = run_cli(["operator", "handoff", "--limit", "10"], base_url, outputs)
             handoff_after_payload = load_json(handoff_after_global.stdout)
             evidence_work_order = ((handoff_after_payload.get("work_order") or {}).get("evidence_report") or {})
             evidence_receipt_state = evidence_work_order.get("receipt_state") or {}
             require(evidence_receipt_state.get("verified") is True, f"handoff should expose verified evidence receipt state: {handoff_after_payload}", failures)
+            remediation_items = (((evidence_work_order.get("remediation_chain") or {}).get("items")) or [])
+            require(any((item.get("receipt_state") or {}).get("verified") is True for item in remediation_items), f"handoff should expose verified remediation receipt state: {handoff_after_payload}", failures)
 
             workflow = run_cli([
                 "workflow",
@@ -267,6 +282,36 @@ def main() -> int:
             outputs.extend([evidence_policy.stdout, evidence_policy.stderr])
             evidence_policy_payload = load_json(evidence_policy.stdout)
             require(evidence_policy_payload.get("allowed") is True, f"evidence report should be allowlisted as read-only action: {evidence_policy_payload}", failures)
+            remediation_policy = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    "from agentops_mis_cli.advance_loop_policy import advance_loop_command_policy; import json; print(json.dumps(advance_loop_command_policy('agentops operator remediate-evidence-gap --run-id run_seed_28', phase='action')))",
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+            outputs.extend([remediation_policy.stdout, remediation_policy.stderr])
+            remediation_policy_payload = load_json(remediation_policy.stdout)
+            require(remediation_policy_payload.get("allowed") is True, f"remediation preview should be allowlisted as read-only action: {remediation_policy_payload}", failures)
+            remediation_confirm_policy = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    "from agentops_mis_cli.advance_loop_policy import advance_loop_command_policy; import json; print(json.dumps(advance_loop_command_policy('agentops operator remediate-evidence-gap --run-id run_seed_28 --confirm-create', phase='action')))",
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+            outputs.extend([remediation_confirm_policy.stdout, remediation_confirm_policy.stderr])
+            remediation_confirm_payload = load_json(remediation_confirm_policy.stdout)
+            require(remediation_confirm_payload.get("allowed") is False, f"remediation confirm-create must stay denied: {remediation_confirm_payload}", failures)
         finally:
             stop_server(server)
     secret_leaked = leaked("\n".join(outputs))

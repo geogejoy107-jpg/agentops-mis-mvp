@@ -336,6 +336,17 @@ def validate_plan(payload: dict, label: str, failures: list[str], limit: int) ->
                 f"{label} execution evidence action should preview remediation package: {action}",
                 failures,
             )
+            if command.startswith("agentops operator remediate-evidence-gap --run-id "):
+                evidence = action.get("evidence") or {}
+                run_id = str(evidence.get("run_id") or "").strip()
+                require(bool(run_id), f"{label} remediation action run_id missing: {action}", failures)
+                require(action.get("action_id") == f"evidence_remediation:{run_id}", f"{label} remediation action_id should match handoff chain: {action}", failures)
+                require((action.get("verify_command") or "") == f"agentops operator evidence-report --run-id {run_id} --limit 1", f"{label} remediation verify command should read evidence report: {action}", failures)
+                require((action.get("evidence") or {}).get("handoff_remediation_chain") is True, f"{label} remediation chain evidence marker missing: {action}", failures)
+                require((action.get("evidence") or {}).get("handoff_remediation_source") == "handoff.evidence_remediation", f"{label} remediation source marker missing: {action}", failures)
+                require("--source handoff.evidence_remediation" in (action.get("receipt_record_command") or ""), f"{label} remediation receipt source missing: {action}", failures)
+                require("--source handoff.evidence_remediation" in (action.get("receipt_verify_record_command") or ""), f"{label} remediation verify receipt source missing: {action}", failures)
+                require("Evidence remediation preview reviewed for run" in (action.get("receipt_verify_record_command") or ""), f"{label} remediation receipt summary missing: {action}", failures)
         if action.get("source") == "task_intake_checklist":
             command = str(action.get("command") or "")
             require(

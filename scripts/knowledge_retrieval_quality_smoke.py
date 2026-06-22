@@ -35,9 +35,9 @@ TEST_SET = [
         "expected_paths": {"docs/AGENT_GATEWAY_CLI_SPEC.md"},
     },
     {
-        "id": "zh_actor_model",
-        "language": "zh",
-        "query": "人类 AI 员工 协作 模式 像素办公室 权威系统",
+        "id": "en_actor_model",
+        "language": "en",
+        "query": "Solo owner team member human approver AI digital employee external runtime surface model template model",
         "expected_paths": {"docs/PRODUCT_USAGE_AND_ACTOR_MODEL.md"},
     },
     {
@@ -220,11 +220,13 @@ def main() -> int:
                 reciprocal_ranks.append(rr)
                 latencies_ms.append(elapsed_ms)
                 require(payload.get("operation") == "knowledge_search", f"wrong search operation for {case['id']}: {payload}", failures)
-                require(quality.get("result_quality") == "full_text_fts5", f"degraded search quality for {case['id']}: {quality}", failures)
+                require(quality.get("result_quality") in {"full_text_fts5", "heading_chunk_fts5"}, f"degraded search quality for {case['id']}: {quality}", failures)
                 require(quality.get("fallback_used") is False, f"fallback used for quality query {case['id']}: {quality}", failures)
                 require(quality.get("content_body_searched") is True, f"body search not reported for {case['id']}: {quality}", failures)
                 require(all(row.get("raw_content_omitted") is True for row in rows), f"raw content omission missing for {case['id']}: {rows}", failures)
                 require(all(row.get("retrieval_id") for row in rows), f"retrieval ids missing for {case['id']}: {rows}", failures)
+                require(quality.get("heading_aware_chunks") is True, f"heading-aware chunk search not reported for {case['id']}: {quality}", failures)
+                require(any(row.get("retrieval_granularity") == "heading_chunk" and row.get("chunk_id") for row in rows), f"heading chunk result missing for {case['id']}: {rows}", failures)
                 require(hit, f"expected path not found in top 5 for {case['id']}: expected={sorted(case['expected_paths'])} actual={paths}", failures)
                 per_query.append({
                     "id": case["id"],

@@ -145,10 +145,13 @@ GET  /api/agent-gateway/knowledge/search?q=approval&limit=10
 POST /api/agent-gateway/knowledge/index
 ```
 
-The first version indexes Markdown from the repo root, `docs/`, and `knowledge/`
-into SQLite FTS5. If FTS5 is unavailable, search falls back to a plain SQLite
-`LIKE` query. This is intentionally the first stage before embeddings or a
-vector database.
+The local indexer reads Markdown from the repo root, `docs/`, and `knowledge/`.
+It stores document metadata in `knowledge_documents`, splits Markdown into
+heading-aware `knowledge_chunks`, and indexes those chunks in SQLite FTS5. If
+chunk FTS is unavailable or a row was inserted through a legacy/manual path,
+search can still fall back to document-level `knowledge_fts`; if FTS5 is
+unavailable entirely, search falls back to a plain SQLite `LIKE` query. This is
+still the local-first stage before embeddings or a vector database.
 
 Indexed documents carry `workspace_id`, `project_id`, `access_level`, `scope`,
 `source_hash`, and search-time `retrieval_id` metadata. Repo-managed doctrine is
@@ -164,6 +167,9 @@ Search responses include `search_quality` with `fallback_used`,
 and a warning when FTS5 falls back to `LIKE`. Agents must treat
 `metadata_summary_like` as degraded retrieval, not as authoritative full-text
 evidence.
+Heading-aware hits return `retrieval_granularity=heading_chunk`, `chunk_id`,
+`chunk_heading`, `chunk_heading_path`, and a search-time `retrieval_id`; results
+omit raw document bodies and snippets remain redacted.
 
 Agent Gateway search requires `knowledge:read` and is non-mutating: `refresh`
 requests are reported as skipped so read scope cannot update the index. Explicit
