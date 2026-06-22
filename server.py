@@ -34,6 +34,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
+from agentops_mis_cli.advance_loop_policy import advance_loop_policy_summary
 from agentops_mis_cli.redaction import redact_full_text as shared_redact_full_text
 from agentops_mis_cli.redaction import redact_text as shared_redact_text
 
@@ -16734,6 +16735,7 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
     advance_loop_preview_command = " ".join(shlex.quote(str(part)) for part in advance_loop_args)
     advance_loop_confirm_command = " ".join(shlex.quote(str(part)) for part in [*advance_loop_args, "--confirm-advance"])
     advance_loop_selected_item = next((item for item in action_package_items if item.get("gate_status") != "pass" and item.get("action_command")), None)
+    advance_loop_policy = advance_loop_policy_summary()
     advance_loop_work_order = {
         "operation": "advance_loop_work_order",
         "status": "attention" if advance_loop_selected_item else "empty",
@@ -16742,6 +16744,8 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
             "selected_gate": (advance_loop_selected_item or {}).get("gate_id"),
             "selected_status": (advance_loop_selected_item or {}).get("gate_status"),
             "loop_scoped": bool(scoped_loop_id),
+            "policy_id": advance_loop_policy.get("policy_id"),
+            "policy_version": advance_loop_policy.get("policy_version"),
         },
         "selected_item": {
             "package_id": (advance_loop_selected_item or {}).get("package_id"),
@@ -16756,14 +16760,7 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
         "preview_command": advance_loop_preview_command,
         "confirm_command": advance_loop_confirm_command,
         "next_actions": [advance_loop_preview_command, advance_loop_confirm_command] if advance_loop_selected_item else [advance_loop_preview_command],
-        "policy": {
-            "runner_location": "local_cli",
-            "max_actions": 1,
-            "allowlisted_examples": ["agentops knowledge index", "agentops memory propose --type loop_record"],
-            "refuses": ["approval decisions", "memory approval", "worker lifecycle", "workflow dispatch", "live/confirm flags", "external-write paths"],
-            "server_executes_shell": False,
-            "token_omitted": True,
-        },
+        "policy": advance_loop_policy,
         "contract": "handoff only exposes bounded runner commands; the server does not execute shell commands and confirmation must happen through the local CLI",
         "safety": {
             "read_only": True,

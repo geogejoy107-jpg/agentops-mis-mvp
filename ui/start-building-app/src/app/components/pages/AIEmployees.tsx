@@ -382,6 +382,7 @@ export function AIEmployees() {
       advanceLoopSummary: "Copy the local CLI runner that advances one allowlisted loop action, verifies it, and records a receipt.",
       previewAdvanceLoop: "Preview advance",
       confirmAdvanceLoop: "Confirm CLI",
+      advanceLoopPolicyLabel: "Policy",
       advanceLoopPolicy: "Local CLI only; no approvals, live runs, workflow dispatch, or server shell execution.",
       handoffSources: "Sources",
       authBoundary: "Auth boundary",
@@ -795,6 +796,7 @@ export function AIEmployees() {
       advanceLoopSummary: "复制本地 CLI runner：只推进一个 allowlist loop 动作、验收并记录收据。",
       previewAdvanceLoop: "预览推进",
       confirmAdvanceLoop: "确认 CLI",
+      advanceLoopPolicyLabel: "策略",
       advanceLoopPolicy: "仅本地 CLI；不审批、不 live run、不调度 workflow、不让服务端执行 shell。",
       handoffSources: "来源",
       authBoundary: "认证边界",
@@ -1256,6 +1258,8 @@ export function AIEmployees() {
   const advanceLoopSelectedGate = String(advanceLoopSummaryRaw.selected_gate || "—");
   const advanceLoopSelectedStatus = String(advanceLoopSummaryRaw.selected_status || advanceLoopRaw.status || "unknown");
   const advanceLoopServerShell = Boolean(advanceLoopPolicyRaw.server_executes_shell);
+  const advanceLoopPolicyId = String(advanceLoopPolicyRaw.policy_id || "advance_loop_local_bounded_v1");
+  const advanceLoopPolicyVersion = String(advanceLoopPolicyRaw.policy_version || "unknown");
   const operatorHandoffSources = operatorHandoff?.sources || {};
   const operatorHandoffJson = operatorHandoff ? JSON.stringify({
     summary: operatorHandoff.summary,
@@ -3233,6 +3237,9 @@ export function AIEmployees() {
                   </div>
                   <div className="text-[9px] mt-0.5 truncate" style={{ color: advanceLoopServerShell ? "#F87171" : "var(--mis-dim)" }}>
                     {copy.advanceLoopPolicy}
+                  </div>
+                  <div className="text-[9px] mt-0.5 truncate" style={{ color: "var(--mis-muted)" }}>
+                    {copy.advanceLoopPolicyLabel}: {advanceLoopPolicyId} · {advanceLoopPolicyVersion}
                   </div>
                   <div className="flex flex-wrap gap-1 mt-1">
                     <button

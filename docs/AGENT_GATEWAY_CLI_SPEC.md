@@ -1467,6 +1467,7 @@ gates, create memories, or mutate ledgers.
 ```bash
 agentops operator advance-loop --loop-id loop_123 --limit 10
 agentops operator advance-loop --loop-id loop_123 --limit 10 --confirm-advance
+agentops operator advance-loop-policy
 ```
 
 Reads `GET /api/operator/handoff` and selects the first non-passing loop action
@@ -1478,6 +1479,9 @@ safe local actions such as `knowledge index` and `memory propose --type
 loop_record`; it refuses memory approval/rejection, approval decisions, worker
 lifecycle, workflow dispatch, live/confirm flags, external uploads, and other
 commands that require an explicit human or dedicated confirmation path.
+`advance-loop-policy` is read-only and returns the current policy id/version,
+allowlisted commands, denied namespaces/actions/flags, and sample decisions so
+operators and UI can show exactly why a command can or cannot be auto-advanced.
 `operator handoff` exposes the same `work_order.advance_loop` preview/confirm
 commands, and `/workspace/agents` renders copy buttons for those local CLI
 commands without letting the browser or server execute shell.

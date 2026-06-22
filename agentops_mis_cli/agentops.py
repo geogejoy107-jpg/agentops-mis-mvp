@@ -460,6 +460,33 @@ def cmd_operator_loop_launch_packet(args, client: AgentOpsClient) -> dict:
     )
 
 
+def cmd_operator_advance_loop_policy(args, client: AgentOpsClient) -> dict:
+    sample_commands = [
+        "agentops memory propose --type loop_record --text example --agent-id agt_example",
+        "agentops memory approve --memory-id mem_example",
+        "agentops workflow hermes-openclaw-loop --loop-id loop_example",
+        "agentops operator loop-audit --limit 10",
+    ]
+    samples = [
+        {"command": command, "action_decision": advance_loop_command_policy(command, phase="action")}
+        for command in sample_commands
+    ]
+    return {
+        "provider": "agentops-operator",
+        "operation": "operator_advance_loop_policy",
+        "policy": advance_loop_policy_summary(),
+        "samples": samples,
+        "contract": "read-only bounded runner policy; does not execute commands or mutate ledgers",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
+
+
 def agentops_cli_command(argv: list[str], client: AgentOpsClient) -> tuple[list[str], dict]:
     repo_cli = Path(__file__).resolve().parents[1] / "scripts" / "agentops"
     cli_entry = Path(sys.argv[0])
@@ -523,6 +550,7 @@ def select_advance_loop_item(handoff: dict) -> dict:
 def cmd_operator_advance_loop(args, client: AgentOpsClient) -> dict:
     handoff = client.get("/api/operator/handoff", query={"limit": args.limit, "loop_id": args.loop_id or None})
     selected = select_advance_loop_item(handoff)
+    policy_summary = advance_loop_policy_summary()
     if not selected:
         return {
             "provider": "agentops-operator",
@@ -531,7 +559,7 @@ def cmd_operator_advance_loop(args, client: AgentOpsClient) -> dict:
             "advanced": False,
             "message": "No allowlisted non-passing loop action is available in the handoff action package.",
             "handoff_status": handoff.get("status"),
-            "policy": advance_loop_policy_summary(),
+            "policy": policy_summary,
             "safety": {
                 "read_only": True,
                 "ledger_mutated": False,
@@ -562,7 +590,7 @@ def cmd_operator_advance_loop(args, client: AgentOpsClient) -> dict:
             "status": "preview",
             "advanced": False,
             "preview": preview,
-            "policy": advance_loop_policy_summary(),
+            "policy": policy_summary,
             "next_actions": ["rerun with --confirm-advance to execute exactly one allowlisted loop action"],
             "contract": "preview-only; does not execute commands and does not mutate ledgers without --confirm-advance",
             "safety": {
@@ -580,7 +608,7 @@ def cmd_operator_advance_loop(args, client: AgentOpsClient) -> dict:
             "status": "blocked",
             "advanced": False,
             "preview": preview,
-            "policy": advance_loop_policy_summary(),
+            "policy": policy_summary,
             "message": "Verify command failed bounded-runner policy.",
             "safety": {
                 "read_only": True,
@@ -628,7 +656,7 @@ def cmd_operator_advance_loop(args, client: AgentOpsClient) -> dict:
         "advanced": True,
         "confirm_advance": True,
         "preview": preview,
-        "policy": advance_loop_policy_summary(),
+        "policy": policy_summary,
         "action_result": action_result,
         "verify_result": verify_result,
         "receipt": receipt,
@@ -1988,6 +2016,8 @@ def build_parser() -> argparse.ArgumentParser:
     operator_advance.add_argument("--actor-id", default="usr_founder")
     operator_advance.add_argument("--confirm-advance", action="store_true", help="Execute exactly one allowlisted local agentops action and record its receipt.")
     operator_advance.set_defaults(handler="operator_advance_loop")
+    operator_advance_policy = operator_sub.add_parser("advance-loop-policy", help="Read the bounded advance-loop policy.")
+    operator_advance_policy.set_defaults(handler="operator_advance_loop_policy")
     operator_health = operator_sub.add_parser("health", help="Read the aggregate operator health snapshot across loop, readiness, security, worker, review, and action queues.")
     operator_health.add_argument("--loop-id", default=None)
     operator_health.add_argument("--limit", type=int, default=12)
@@ -2764,6 +2794,7 @@ HANDLERS = {
     "operator_loop_audit": cmd_operator_loop_audit,
     "operator_handoff": cmd_operator_handoff,
     "operator_advance_loop": cmd_operator_advance_loop,
+    "operator_advance_loop_policy": cmd_operator_advance_loop_policy,
     "operator_health": cmd_operator_health,
     "operator_intake_checklist": cmd_operator_intake_checklist,
     "operator_loop_launch_packet": cmd_operator_loop_launch_packet,
