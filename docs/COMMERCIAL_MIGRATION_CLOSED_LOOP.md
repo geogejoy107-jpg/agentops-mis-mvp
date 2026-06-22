@@ -191,6 +191,7 @@ python3 scripts/ui_route_retirement_packet_smoke.py
 python3 scripts/nextjs_agent_gateway_task_proxy_smoke.py
 python3 scripts/nextjs_worker_dispatch_once_smoke.py
 python3 scripts/nextjs_worker_stuck_release_smoke.py
+python3 scripts/nextjs_enrollment_request_smoke.py
 python3 scripts/vite_playwright_snapshot_smoke.py
 python3 scripts/nextjs_playwright_snapshot_smoke.py
 ```
@@ -203,6 +204,13 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   verifies Next task/run list links to detail routes, compares direct MIS API
   task/run list/detail/graph read models with the Next `/api/mis/*` proxy, and
   checks for token-like leakage.
+
+  The Next enrollment request smoke starts isolated MIS API and Next.js
+  servers, proves the commercial App Router worker console can request remote
+  Agent Gateway enrollment through the approval path, rejects invalid scopes at
+  the Next guard, and keeps raw token mint routes blocked with
+  `enrollment_token_issue_not_allowed_next_parity`. Direct token issue,
+  rotation, and revocation remain outside the Next browser migration slice.
 
   The route naming decision smoke verifies the structured
   `ui_route_naming_decision_v1` contract: Next `/workspace` task/run routes are
@@ -303,6 +311,7 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   - `ui/next-app/app/workspace/connectors/trust/route.ts`
   - `ui/next-app/app/workspace/external-bases/notion/page.tsx`
   - `ui/next-app/app/workspace/external-bases/notion/export/route.ts`
+  - `ui/next-app/app/workspace/agents/enrollment-request/route.ts`
   - `ui/next-app/app/admin/tasks/[taskId]/page.tsx`
   - `ui/next-app/app/admin/runs/page.tsx`
   - `ui/next-app/app/admin/runs/[runId]/page.tsx`
@@ -334,6 +343,7 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   - `scripts/nextjs_agent_gateway_task_proxy_smoke.py`
   - `scripts/nextjs_worker_dispatch_once_smoke.py`
   - `scripts/nextjs_worker_stuck_release_smoke.py`
+  - `scripts/nextjs_enrollment_request_smoke.py`
   - `scripts/nextjs_playwright_snapshot_smoke.py`
   - `scripts/vite_playwright_snapshot_smoke.py`
   - `docs/UI_API_PARITY_MATRIX.md`

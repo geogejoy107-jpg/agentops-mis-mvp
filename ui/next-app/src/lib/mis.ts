@@ -410,6 +410,93 @@ export type AgentGatewaySessionsPayload = {
   error?: string;
 };
 
+export type AgentGatewayEnrollmentSummary = {
+  token_id?: string;
+  token_ref?: string;
+  workspace_id?: string;
+  agent_id?: string;
+  scopes?: string[];
+  scope_count?: number;
+  status?: string;
+  label?: string;
+  heartbeat_timeout_sec?: number;
+  created_at?: string;
+  expires_at?: string;
+  revoked_at?: string | null;
+  last_used_at?: string | null;
+  last_heartbeat_at?: string | null;
+  heartbeat_state?: string;
+};
+
+export type AgentGatewayEnrollmentListPayload = {
+  enrollments?: AgentGatewayEnrollmentSummary[];
+  workspace_id?: string | null;
+  valid_scopes?: string[];
+  token_omitted?: boolean;
+  error?: string;
+};
+
+export type AgentGatewayEnrollmentRequestInput = {
+  agent_id: string;
+  name: string;
+  role?: string;
+  runtime_type: string;
+  workspace_id?: string;
+  label?: string;
+  scopes: string[];
+  ttl_days?: number;
+  heartbeat_timeout_sec?: number;
+  reason?: string;
+};
+
+export type AgentGatewayEnrollmentPolicyPreview = {
+  provider?: string;
+  operation?: string;
+  status?: string;
+  workspace_id?: string;
+  runtime_type?: string;
+  policy?: string;
+  risk_level?: string;
+  approval_recommended?: boolean;
+  recommended_path?: string;
+  scope_count?: number;
+  scopes?: string[];
+  invalid_scopes?: string[];
+  privileged_scopes?: string[];
+  worker_write_scopes?: string[];
+  missing_worker_scopes?: string[];
+  gates?: ReadinessGate[];
+  next_actions?: string[];
+  safety?: {
+    read_only?: boolean;
+    ledger_mutated?: boolean;
+    live_execution_performed?: boolean;
+    token_omitted?: boolean;
+    raw_prompt_omitted?: boolean;
+  };
+  token_omitted?: boolean;
+  live_execution_performed?: boolean;
+};
+
+export type AgentGatewayEnrollmentRequestResult = {
+  request?: {
+    request_id?: string;
+    approval_id?: string;
+    task_id?: string;
+    run_id?: string;
+    workspace_id?: string;
+    agent_id?: string;
+    name?: string;
+    runtime_type?: string;
+    status?: string;
+    scopes?: string[];
+  };
+  approval?: ApprovalSummary;
+  token_issued?: boolean;
+  token_omitted?: boolean;
+  error?: string;
+};
+
 export type CustomerProjectSummary = {
   project_id: string;
   title: string;
@@ -736,6 +823,7 @@ export type AgentControlSnapshot = {
   security: SecurityReadinessSummary;
   workerStatus: WorkerStatusSummary;
   adapterReadiness: WorkerAdapterReadinessSummary;
+  enrollments: AgentGatewayEnrollmentListPayload;
 };
 
 export type WorkspaceSnapshot = {
@@ -877,6 +965,28 @@ export async function loadWorkerAdapterReadiness(): Promise<WorkerAdapterReadine
   return misJson<WorkerAdapterReadinessSummary>("/workers/adapter-readiness");
 }
 
+export async function loadAgentGatewayEnrollments(): Promise<AgentGatewayEnrollmentListPayload> {
+  return misJson<AgentGatewayEnrollmentListPayload>("/agent-gateway/enrollments");
+}
+
+export async function previewAgentGatewayEnrollmentPolicy(input: {
+  workspace_id?: string;
+  runtime_type?: string;
+  scopes: string[];
+}): Promise<AgentGatewayEnrollmentPolicyPreview> {
+  return misJson<AgentGatewayEnrollmentPolicyPreview>("/agent-gateway/enrollment/policy-preview", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function requestAgentGatewayEnrollment(input: AgentGatewayEnrollmentRequestInput): Promise<AgentGatewayEnrollmentRequestResult> {
+  return misJson<AgentGatewayEnrollmentRequestResult>("/agent-gateway/enrollment/request", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
 export async function dispatchLocalWorkerOnce(input: {
   adapter: "mock";
   title?: string;
@@ -927,11 +1037,12 @@ export async function loadCustomerTaskTemplates(): Promise<CustomerTaskTemplateL
 }
 
 export async function loadAgentControlSnapshot(): Promise<AgentControlSnapshot> {
-  const [agents, security, workerStatus, adapterReadiness] = await Promise.all([
+  const [agents, security, workerStatus, adapterReadiness, enrollments] = await Promise.all([
     loadAgents(),
     loadSecurityProductionReadiness(),
     loadWorkerStatus(),
     loadWorkerAdapterReadiness(),
+    loadAgentGatewayEnrollments(),
   ]);
-  return { agents, security, workerStatus, adapterReadiness };
+  return { agents, security, workerStatus, adapterReadiness, enrollments };
 }

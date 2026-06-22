@@ -137,6 +137,7 @@ cd ui/next-app && npm run build
 python3 scripts/nextjs_agent_gateway_task_proxy_smoke.py
 python3 scripts/nextjs_worker_dispatch_once_smoke.py
 python3 scripts/nextjs_worker_stuck_release_smoke.py
+python3 scripts/nextjs_enrollment_request_smoke.py
 python3 scripts/vite_playwright_snapshot_smoke.py
 python3 scripts/nextjs_playwright_snapshot_smoke.py
 ```
@@ -169,3 +170,13 @@ can read them, proves Next `/api/mis/workers/tasks/release` returns one task to
 `/workspace/agents/release-task` form fallback performs the same recovery, and
 proves `force:true` is rejected at the Next proxy with
 `force_release_not_allowed_next_parity`.
+
+`python3 scripts/nextjs_enrollment_request_smoke.py`
+(`nextjs_enrollment_request_v1`) starts isolated MIS API and Next.js servers,
+proves Next `/api/mis/agent-gateway/enrollment/policy-preview` is read-only,
+proves invalid scopes are rejected by the Next guard before backend filtering,
+proves direct raw-token mint routes such as enrollment `create` and
+`issue-approved` fail closed with `enrollment_token_issue_not_allowed_next_parity`,
+and proves `/api/mis/agent-gateway/enrollment/request` plus the
+`/workspace/agents/enrollment-request` form fallback create pending approval
+requests without minting or leaking an Agent Gateway token.

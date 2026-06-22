@@ -2,14 +2,46 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { Activity, Bot, KeyRound, Play, RefreshCw, ShieldCheck, TerminalSquare, Undo2 } from "lucide-react";
+import { Activity, Bot, FileSearch, KeyRound, Play, RefreshCw, Send, ShieldCheck, TerminalSquare, Undo2, UserPlus } from "lucide-react";
 import { AppFrame } from "./AppFrame";
-import { dispatchLocalWorkerOnce, loadAgentControlSnapshot, releaseWorkerTask, type AgentControlSnapshot, type ReadinessGate } from "@/lib/mis";
+import {
+  dispatchLocalWorkerOnce,
+  loadAgentControlSnapshot,
+  previewAgentGatewayEnrollmentPolicy,
+  releaseWorkerTask,
+  requestAgentGatewayEnrollment,
+  type AgentControlSnapshot,
+  type AgentGatewayEnrollmentPolicyPreview,
+  type AgentGatewayEnrollmentRequestResult,
+  type ReadinessGate,
+} from "@/lib/mis";
 
 type LoadState = {
   data: AgentControlSnapshot | null;
   error: string | null;
   loading: boolean;
+};
+
+const DEFAULT_ENROLLMENT_SCOPES = [
+  "agents:heartbeat",
+  "tasks:read",
+  "tasks:claim",
+  "runs:write",
+  "toolcalls:write",
+  "evaluations:submit",
+  "audit:write",
+];
+
+const DEFAULT_ENROLLMENT_FORM = {
+  agent_id: "agt_next_remote_worker",
+  name: "Next Remote Worker",
+  role: "Remote AI Digital Employee",
+  runtime_type: "mock",
+  workspace_id: "local-demo",
+  scopes: DEFAULT_ENROLLMENT_SCOPES.join(", "),
+  ttl_days: "30",
+  heartbeat_timeout_sec: "300",
+  reason: "Next worker console requested approval-gated remote agent enrollment.",
 };
 
 function statusClass(status?: string) {
@@ -26,6 +58,10 @@ function boolStatus(value?: boolean) {
 function numberValue(value: unknown) {
   const num = Number(value || 0);
   return Number.isFinite(num) ? num.toLocaleString() : "0";
+}
+
+function parseScopeInput(value: string) {
+  return value.split(/[\s,]+/).map((scope) => scope.trim()).filter(Boolean);
 }
 
 function GateList({ gates }: Readonly<{ gates?: ReadinessGate[] }>) {
@@ -52,6 +88,10 @@ export function AgentsParityPage() {
   const [releasingTaskId, setReleasingTaskId] = useState<string | null>(null);
   const [dispatchMessage, setDispatchMessage] = useState<string | null>(null);
   const [dispatchStatus, setDispatchStatus] = useState<"success" | "error" | null>(null);
+  const [enrollmentForm, setEnrollmentForm] = useState(DEFAULT_ENROLLMENT_FORM);
+  const [enrollmentPolicy, setEnrollmentPolicy] = useState<AgentGatewayEnrollmentPolicyPreview | null>(null);
+  const [enrollmentRequest, setEnrollmentRequest] = useState<AgentGatewayEnrollmentRequestResult | null>(null);
+  const [enrollmentBusy, setEnrollmentBusy] = useState<"preview" | "request" | null>(null);
 
   const refresh = async () => {
     setState((current) => ({ ...current, error: null, loading: true }));
@@ -80,8 +120,69 @@ export function AgentsParityPage() {
       setDispatchStatus(releaseStatus === "released" ? "success" : "error");
       setDispatchMessage(releaseStatus === "released" ? `stuck task released ${taskId || "task"} · runs ${runs || "0"}` : `stuck task release failed ${error || ""}`.trim());
     }
+    const enrollmentStatus = params.get("enrollment_status");
+    if (enrollmentStatus) {
+      const requestId = params.get("request_id");
+      const approvalId = params.get("approval_id");
+      const error = params.get("error");
+      setDispatchStatus(enrollmentStatus === "requested" ? "success" : "error");
+      setDispatchMessage(enrollmentStatus === "requested" ? `enrollment approval requested ${requestId || approvalId || ""}`.trim() : `enrollment request failed ${error || ""}`.trim());
+    }
     void refresh();
   }, []);
+
+  const enrollmentInput = () => ({
+    agent_id: enrollmentForm.agent_id.trim(),
+    name: enrollmentForm.name.trim(),
+    role: enrollmentForm.role.trim(),
+    runtime_type: enrollmentForm.runtime_type.trim() || "mock",
+    workspace_id: enrollmentForm.workspace_id.trim() || "local-demo",
+    label: `${enrollmentForm.name.trim() || "Remote worker"} enrollment request`,
+    scopes: parseScopeInput(enrollmentForm.scopes),
+    ttl_days: Number(enrollmentForm.ttl_days) || 30,
+    heartbeat_timeout_sec: Number(enrollmentForm.heartbeat_timeout_sec) || 300,
+    reason: enrollmentForm.reason.trim() || DEFAULT_ENROLLMENT_FORM.reason,
+  });
+
+  const previewEnrollment = async () => {
+    setEnrollmentBusy("preview");
+    setDispatchStatus(null);
+    setDispatchMessage(null);
+    try {
+      const input = enrollmentInput();
+      const result = await previewAgentGatewayEnrollmentPolicy({
+        workspace_id: input.workspace_id,
+        runtime_type: input.runtime_type,
+        scopes: input.scopes,
+      });
+      setEnrollmentPolicy(result);
+      setDispatchStatus(result.status === "blocked" ? "error" : "success");
+      setDispatchMessage(`enrollment policy ${result.recommended_path || result.status || "preview"}`);
+    } catch (err) {
+      setDispatchStatus("error");
+      setDispatchMessage(err instanceof Error ? err.message : String(err));
+    } finally {
+      setEnrollmentBusy(null);
+    }
+  };
+
+  const requestEnrollment = async () => {
+    setEnrollmentBusy("request");
+    setDispatchStatus(null);
+    setDispatchMessage(null);
+    try {
+      const result = await requestAgentGatewayEnrollment(enrollmentInput());
+      setEnrollmentRequest(result);
+      setDispatchStatus(result.token_issued ? "error" : "success");
+      setDispatchMessage(`enrollment approval requested ${result.request?.request_id || result.approval?.approval_id || ""}`.trim());
+      await refresh();
+    } catch (err) {
+      setDispatchStatus("error");
+      setDispatchMessage(err instanceof Error ? err.message : String(err));
+    } finally {
+      setEnrollmentBusy(null);
+    }
+  };
 
   const runMockWorkerOnce = async () => {
     setDispatching(true);
@@ -132,6 +233,7 @@ export function AgentsParityPage() {
   const worker = state.data?.workerStatus;
   const stuckTasks = worker?.stuck_tasks || [];
   const adapter = state.data?.adapterReadiness;
+  const enrollments = state.data?.enrollments?.enrollments || [];
   const runningDaemons = (worker?.daemons || []).filter((daemon) => daemon.running).length;
   const adapterRows = useMemo(() => Object.values(adapter?.adapters || {}), [adapter?.adapters]);
 
@@ -237,6 +339,127 @@ export function AgentsParityPage() {
               </article>
             ))}
           </div>
+        </div>
+      </section>
+
+      <section className="panel wide">
+        <div className="panelHeader">
+          <h2><UserPlus size={14} /> Remote enrollment request</h2>
+          <span>approval gated</span>
+        </div>
+        <div className="miniMetrics">
+          <span>active <strong>{numberValue(worker?.active_remote_enrollments)}</strong></span>
+          <span>fresh <strong>{numberValue(worker?.fresh_remote_enrollments)}</strong></span>
+          <span>stale <strong>{numberValue(worker?.stale_remote_enrollments)}</strong></span>
+          <span>visible tokens <strong>{numberValue(enrollments.length)}</strong></span>
+        </div>
+        <div className="formGrid" data-smoke="enrollment-request-panel">
+          <label className="field">
+            <span>Agent ID</span>
+            <input value={enrollmentForm.agent_id} onChange={(event) => setEnrollmentForm((current) => ({ ...current, agent_id: event.target.value }))} />
+          </label>
+          <label className="field">
+            <span>Name</span>
+            <input value={enrollmentForm.name} onChange={(event) => setEnrollmentForm((current) => ({ ...current, name: event.target.value }))} />
+          </label>
+          <label className="field">
+            <span>Runtime</span>
+            <select value={enrollmentForm.runtime_type} onChange={(event) => setEnrollmentForm((current) => ({ ...current, runtime_type: event.target.value }))}>
+              <option value="mock">mock</option>
+              <option value="hermes">hermes</option>
+              <option value="openclaw">openclaw</option>
+            </select>
+          </label>
+          <label className="field">
+            <span>Workspace</span>
+            <input value={enrollmentForm.workspace_id} onChange={(event) => setEnrollmentForm((current) => ({ ...current, workspace_id: event.target.value }))} />
+          </label>
+          <label className="field">
+            <span>TTL days</span>
+            <input inputMode="numeric" value={enrollmentForm.ttl_days} onChange={(event) => setEnrollmentForm((current) => ({ ...current, ttl_days: event.target.value }))} />
+          </label>
+          <label className="field">
+            <span>Heartbeat sec</span>
+            <input inputMode="numeric" value={enrollmentForm.heartbeat_timeout_sec} onChange={(event) => setEnrollmentForm((current) => ({ ...current, heartbeat_timeout_sec: event.target.value }))} />
+          </label>
+          <label className="field wideField">
+            <span>Scopes</span>
+            <input value={enrollmentForm.scopes} onChange={(event) => setEnrollmentForm((current) => ({ ...current, scopes: event.target.value }))} />
+          </label>
+          <label className="field wideField">
+            <span>Reason</span>
+            <input value={enrollmentForm.reason} onChange={(event) => setEnrollmentForm((current) => ({ ...current, reason: event.target.value }))} />
+          </label>
+        </div>
+        <div className="proofStrip">
+          <button className="miniButton" type="button" onClick={previewEnrollment} disabled={Boolean(enrollmentBusy)} data-smoke="preview-enrollment-policy">
+            <FileSearch size={13} /> {enrollmentBusy === "preview" ? "Previewing" : "Preview policy"}
+          </button>
+          <button className="miniButton good" type="button" onClick={requestEnrollment} disabled={Boolean(enrollmentBusy)} data-smoke="request-enrollment-approval">
+            <Send size={13} /> {enrollmentBusy === "request" ? "Requesting" : "Request approval"}
+          </button>
+          <form className="inlineForm" method="post" action="/workspace/agents/enrollment-request" data-smoke="enrollment-request-form-fallback">
+            {Object.entries(enrollmentForm).map(([name, value]) => (
+              <input key={name} type="hidden" name={name} value={value} />
+            ))}
+            <button className="miniButton" type="submit" disabled={Boolean(enrollmentBusy)}>
+              <Send size={13} /> Form fallback
+            </button>
+          </form>
+          <span className={statusClass("ready")}>token omitted</span>
+          <span className={statusClass("blocked")}>direct token issue blocked</span>
+        </div>
+        {enrollmentPolicy ? (
+          <>
+            <div className="adapterGrid" data-smoke="enrollment-policy-result">
+              <article className="adapterCard">
+                <div>
+                  <strong>{enrollmentPolicy.policy || "policy"}</strong>
+                  <span>{enrollmentPolicy.recommended_path || "recommended path pending"}</span>
+                </div>
+                <span className={statusClass(enrollmentPolicy.status)}>{enrollmentPolicy.status || "unknown"}</span>
+                <div className="proofStrip">
+                  <span className={statusClass(enrollmentPolicy.safety?.read_only ? "ready" : "attention")}>read only</span>
+                  <span className={statusClass(enrollmentPolicy.safety?.ledger_mutated === false ? "ready" : "attention")}>ledger unchanged</span>
+                  <span className={statusClass(enrollmentPolicy.token_omitted ? "ready" : "attention")}>token omitted</span>
+                </div>
+              </article>
+              <article className="adapterCard">
+                <div>
+                  <strong>{enrollmentPolicy.risk_level || "risk"}</strong>
+                  <span>{numberValue(enrollmentPolicy.scope_count)} scopes · {enrollmentPolicy.approval_recommended ? "approval recommended" : "direct local path"}</span>
+                </div>
+                <span className={statusClass(enrollmentPolicy.approval_recommended ? "attention" : "ready")}>{enrollmentPolicy.recommended_path || "policy"}</span>
+                <div className="proofStrip">
+                  <span>worker writes {numberValue(enrollmentPolicy.worker_write_scopes?.length)}</span>
+                  <span>invalid {numberValue(enrollmentPolicy.invalid_scopes?.length)}</span>
+                </div>
+              </article>
+            </div>
+            <GateList gates={enrollmentPolicy.gates} />
+          </>
+        ) : null}
+        {enrollmentRequest?.request ? (
+          <div className="list compact" data-smoke="enrollment-request-result">
+            <article className="row">
+              <div>
+                <strong>{enrollmentRequest.request.name || enrollmentRequest.request.agent_id}</strong>
+                <span>{enrollmentRequest.request.request_id} · approval {enrollmentRequest.request.approval_id} · task {enrollmentRequest.request.task_id}</span>
+              </div>
+              <span className={statusClass(enrollmentRequest.token_issued ? "blocked" : "attention")}>{enrollmentRequest.request.status || "pending"}</span>
+            </article>
+          </div>
+        ) : null}
+        <div className="list compact">
+          {enrollments.slice(0, 4).map((enrollment) => (
+            <article className="row" key={enrollment.token_id || enrollment.token_ref || enrollment.agent_id}>
+              <div>
+                <strong>{enrollment.label || enrollment.agent_id || "remote enrollment"}</strong>
+                <span>{enrollment.agent_id || "agent"} · {enrollment.workspace_id || "workspace"} · heartbeat {enrollment.heartbeat_state || "unknown"}</span>
+              </div>
+              <span className={statusClass(enrollment.status)}>{enrollment.status || "unknown"}</span>
+            </article>
+          ))}
         </div>
       </section>
 

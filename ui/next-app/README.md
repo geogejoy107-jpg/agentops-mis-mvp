@@ -23,6 +23,7 @@ cd ui/next-app && npm run build
 python3 scripts/nextjs_agent_gateway_task_proxy_smoke.py
 python3 scripts/nextjs_worker_dispatch_once_smoke.py
 python3 scripts/nextjs_worker_stuck_release_smoke.py
+python3 scripts/nextjs_enrollment_request_smoke.py
 python3 scripts/nextjs_playwright_snapshot_smoke.py
 ```
 
@@ -37,6 +38,7 @@ memory review actions through the Next.js UI, verifies the state change through
 - App Router route: `/workspace/agents`
 - App Router route: `/workspace/agents/dispatch-once`
 - App Router route: `/workspace/agents/release-task`
+- App Router route: `/workspace/agents/enrollment-request`
 - App Router route: `/workspace/commercial`
 - App Router route: `/workspace/governance`
 - App Router route: `/workspace/deployment`
@@ -64,6 +66,12 @@ memory review actions through the Next.js UI, verifies the state change through
   release one stale running task through `POST /api/mis/workers/tasks/release`
   plus the `/workspace/agents/release-task` form fallback; the proxy rejects
   `force:true` with `force_release_not_allowed_next_parity`.
+- Enrollment request contract: the Next worker console can preview Agent
+  Gateway enrollment policy and create approval-gated enrollment requests
+  through `POST /api/mis/agent-gateway/enrollment/request` plus the
+  `/workspace/agents/enrollment-request` form fallback. Raw token mint routes
+  such as `create`, `issue-approved`, and `rotate` are blocked in the Next
+  proxy with `enrollment_token_issue_not_allowed_next_parity`.
 - Live data contract: dashboard metrics, agents, production readiness, worker readiness, tasks, runs, approvals, memories, audit, customer projects, delivery board, customer project report
 - Commercial contract: edition, capability matrix, fail-closed gates, billing-call omission, and token omission load read-only through the MIS API proxy
 - Governance contract: production readiness, workspace/RBAC gate state, short-lived session governance, and audit evidence load read-only through the MIS API proxy without raw session IDs

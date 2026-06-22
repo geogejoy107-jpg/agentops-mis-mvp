@@ -32,6 +32,7 @@ def main() -> int:
         NEXT_APP / "app" / "workspace" / "agents" / "[agentId]" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "agents" / "dispatch-once" / "route.ts",
         NEXT_APP / "app" / "workspace" / "agents" / "release-task" / "route.ts",
+        NEXT_APP / "app" / "workspace" / "agents" / "enrollment-request" / "route.ts",
         NEXT_APP / "app" / "workspace" / "commercial" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "governance" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "deployment" / "page.tsx",
@@ -87,6 +88,7 @@ def main() -> int:
         ROOT / "scripts" / "nextjs_agent_gateway_task_proxy_smoke.py",
         ROOT / "scripts" / "nextjs_worker_dispatch_once_smoke.py",
         ROOT / "scripts" / "nextjs_worker_stuck_release_smoke.py",
+        ROOT / "scripts" / "nextjs_enrollment_request_smoke.py",
         ROOT / "docs" / "UI_NAVIGATION_INVENTORY.json",
         ROOT / "docs" / "UI_ROUTE_RETIREMENT_PACKET.json",
     ]
@@ -103,6 +105,7 @@ def main() -> int:
     notion_export_route_text = read_text(NEXT_APP / "app" / "workspace" / "external-bases" / "notion" / "export" / "route.ts")
     agents_dispatch_route_text = read_text(NEXT_APP / "app" / "workspace" / "agents" / "dispatch-once" / "route.ts")
     agents_release_route_text = read_text(NEXT_APP / "app" / "workspace" / "agents" / "release-task" / "route.ts")
+    agents_enrollment_route_text = read_text(NEXT_APP / "app" / "workspace" / "agents" / "enrollment-request" / "route.ts")
     admin_task_alias_text = read_text(NEXT_APP / "app" / "admin" / "tasks" / "[taskId]" / "page.tsx")
     admin_runs_alias_text = read_text(NEXT_APP / "app" / "admin" / "runs" / "page.tsx")
     admin_run_alias_text = read_text(NEXT_APP / "app" / "admin" / "runs" / "[runId]" / "page.tsx")
@@ -130,6 +133,7 @@ def main() -> int:
     gateway_task_proxy_smoke_text = read_text(ROOT / "scripts" / "nextjs_agent_gateway_task_proxy_smoke.py")
     worker_dispatch_smoke_text = read_text(ROOT / "scripts" / "nextjs_worker_dispatch_once_smoke.py")
     worker_release_smoke_text = read_text(ROOT / "scripts" / "nextjs_worker_stuck_release_smoke.py")
+    enrollment_request_smoke_text = read_text(ROOT / "scripts" / "nextjs_enrollment_request_smoke.py")
     route_parity_smoke_text = read_text(ROOT / "scripts" / "ui_task_run_route_parity_smoke.py")
     route_alias_smoke_text = read_text(ROOT / "scripts" / "ui_legacy_route_alias_smoke.py")
     navigation_inventory_smoke_text = read_text(ROOT / "scripts" / "ui_navigation_inventory_smoke.py")
@@ -143,6 +147,8 @@ def main() -> int:
     require("AGENTOPS_API_BASE" in route_text, "API proxy must be configurable with AGENTOPS_API_BASE")
     require("mock_only_next_parity" in route_text and "isWorkerDispatchPath" in route_text, "API proxy must fail closed for non-mock worker dispatch")
     require("force_release_not_allowed_next_parity" in route_text and "isWorkerReleasePath" in route_text, "API proxy must fail closed for force worker task release")
+    require("enrollment_token_issue_not_allowed_next_parity" in route_text and "isEnrollmentTokenIssuePath" in route_text, "API proxy must fail closed for raw enrollment token issue routes")
+    require("enrollmentRequestGuard" in route_text and "invalid_scopes" in route_text, "API proxy must validate enrollment request scopes before forwarding")
     require("nextjs_agent_gateway_task_proxy_v1" in gateway_task_proxy_smoke_text, "Next Agent Gateway task proxy smoke contract is missing")
     require("/api/mis/agent-gateway/tasks" in gateway_task_proxy_smoke_text, "Next Gateway task proxy smoke must exercise the Next /api/mis route")
     require("AGENTOPS_API_KEY" in gateway_task_proxy_smoke_text and "no_token_status == 401" in gateway_task_proxy_smoke_text, "Next Gateway task proxy smoke must disable local no-token fallback")
@@ -156,6 +162,12 @@ def main() -> int:
     require("/api/mis/workers/tasks/release" in worker_release_smoke_text, "Next worker stuck release smoke must exercise the /api/mis release route")
     require("/workspace/agents/release-task" in worker_release_smoke_text, "Next worker stuck release smoke must exercise the release form fallback")
     require("force_release_not_allowed_next_parity" in worker_release_smoke_text, "Next worker stuck release smoke must prove force release fails closed")
+    require("nextjs_enrollment_request_v1" in enrollment_request_smoke_text, "Next enrollment request smoke contract is missing")
+    require("/api/mis/agent-gateway/enrollment/policy-preview" in enrollment_request_smoke_text, "Next enrollment smoke must exercise policy preview through /api/mis")
+    require("/api/mis/agent-gateway/enrollment/request" in enrollment_request_smoke_text, "Next enrollment smoke must exercise approval-gated request through /api/mis")
+    require("/workspace/agents/enrollment-request" in enrollment_request_smoke_text, "Next enrollment smoke must exercise the form fallback")
+    require("enrollment_token_issue_not_allowed_next_parity" in enrollment_request_smoke_text, "Next enrollment smoke must prove raw token issue routes fail closed")
+    require("invalid_scopes" in enrollment_request_smoke_text, "Next enrollment smoke must prove invalid scopes fail closed before backend filtering")
     require("AGENTOPS_API_BASE" in server_lib_text and "loadServerApprovals" in server_lib_text, "server-side first paint loaders are missing")
     require("/dashboard/metrics" in lib_text, "workspace parity data must include dashboard metrics")
     require("/tasks" in lib_text and "/runs" in lib_text and "/approvals" in lib_text, "workspace parity data misses core ledgers")
@@ -167,6 +179,9 @@ def main() -> int:
     require("/integrations/notion/dry-run-export" in lib_text and "/integrations/notion/export-confirmed" in lib_text, "Notion external base export actions are missing")
     require("/memories" in lib_text and "/audit?limit=120" in lib_text, "governance parity data misses memory or audit ledgers")
     require("/workers/status" in lib_text and "/workers/adapter-readiness" in lib_text, "agent-control parity data misses worker readiness")
+    require("/agent-gateway/enrollments" in lib_text and "loadAgentGatewayEnrollments" in lib_text, "agent-control parity data misses enrollment readback")
+    require("/agent-gateway/enrollment/policy-preview" in lib_text and "previewAgentGatewayEnrollmentPolicy" in lib_text, "agent-control parity data misses enrollment policy preview")
+    require("/agent-gateway/enrollment/request" in lib_text and "requestAgentGatewayEnrollment" in lib_text, "agent-control parity data misses approval-gated enrollment request")
     require("/workers/local/dispatch-once" in lib_text and "dispatchLocalWorkerOnce" in lib_text, "agent-control parity data misses worker dispatch mutation")
     require("/workers/tasks/release" in lib_text and "releaseWorkerTask" in lib_text, "agent-control parity data misses worker stuck release mutation")
     require("mock_only_next_parity" in lib_text, "agent-control parity mutation helper must fail closed outside mock")
@@ -207,6 +222,10 @@ def main() -> int:
     require("releaseWorkerTask" in agents_page_text and "release-stuck-worker-task" in agents_page_text, "agents parity page must expose guarded stuck-task release")
     require('action="/workspace/agents/release-task"' in agents_page_text, "agents parity page must keep the Next worker release form fallback")
     require("/workers/tasks/release" in agents_release_route_text and "task_id_required" in agents_release_route_text, "worker release form fallback must write through MIS API with task id guard")
+    require("previewAgentGatewayEnrollmentPolicy" in agents_page_text and "requestAgentGatewayEnrollment" in agents_page_text, "agents parity page must expose approval-gated enrollment request")
+    require('action="/workspace/agents/enrollment-request"' in agents_page_text, "agents parity page must keep the Next enrollment request form fallback")
+    require("direct token issue blocked" in agents_page_text and "token omitted" in agents_page_text, "agents parity page must show enrollment token-safety state")
+    require("/agent-gateway/enrollment/request" in agents_enrollment_route_text and "invalid_scopes" in agents_enrollment_route_text, "enrollment request form fallback must validate scopes and write through approval-gated MIS API")
     require("/workspace/agents/${encodeURIComponent(agent.agent_id)}" in agents_page_text, "agents parity page must link rows to agent detail")
     require("AgentDetailParityPage" in agent_detail_page_text and "loadAgentPerformance" in agent_detail_page_text, "agent detail page must load live performance data")
     require("Per-agent performance" in agent_detail_page_text and "Recent Runs" in agent_detail_page_text, "agent detail page must expose performance and recent run evidence")
@@ -281,6 +300,7 @@ def main() -> int:
             "/workspace/agents/[agentId]",
             "/workspace/agents/dispatch-once",
             "/workspace/agents/release-task",
+            "/workspace/agents/enrollment-request",
             "/workspace/commercial",
             "/workspace/governance",
             "/workspace/deployment",
@@ -308,6 +328,7 @@ def main() -> int:
             "nextjs_agent_gateway_task_proxy_v1",
             "nextjs_worker_dispatch_once_v1",
             "nextjs_worker_stuck_release_v1",
+            "nextjs_enrollment_request_v1",
         ],
         "stack": {
             "next": dependencies.get("next"),

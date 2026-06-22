@@ -139,6 +139,7 @@ def main() -> int:
     require("nextjs_agent_gateway_task_proxy_v1" in route_contracts, "matrix policy must include the Next Gateway task proxy contract")
     require("nextjs_worker_dispatch_once_v1" in route_contracts, "matrix policy must include the Next worker dispatch contract")
     require("nextjs_worker_stuck_release_v1" in route_contracts, "matrix policy must include the Next worker stuck release contract")
+    require("nextjs_enrollment_request_v1" in route_contracts, "matrix policy must include the Next enrollment request contract")
 
     entries = matrix.get("entries")
     require(isinstance(entries, list) and entries, "matrix entries must be a non-empty list")
@@ -230,9 +231,11 @@ def main() -> int:
     worker_console_evidence = entries_by_id.get("worker_console", {}).get("evidence_commands") or []
     require("python3 scripts/nextjs_worker_dispatch_once_smoke.py" in worker_console_evidence, "worker_console must include Next worker dispatch mutation evidence")
     require("python3 scripts/nextjs_worker_stuck_release_smoke.py" in worker_console_evidence, "worker_console must include Next worker stuck release mutation evidence")
+    require("python3 scripts/nextjs_enrollment_request_smoke.py" in worker_console_evidence, "worker_console must include Next approval-gated enrollment request evidence")
     worker_console_gate = str(entries_by_id.get("worker_console", {}).get("retirement_gate") or "")
     require("mock_only_next_parity" in worker_console_gate, "worker_console retirement gate must record non-mock dispatch fail-closed evidence")
     require("force_release_not_allowed_next_parity" in worker_console_gate, "worker_console retirement gate must record force-release fail-closed evidence")
+    require("enrollment_token_issue_not_allowed_next_parity" in worker_console_gate, "worker_console retirement gate must record raw enrollment token issue fail-closed evidence")
     assert_entry_routes(entries_by_id.get("tool_calls"), "tool_calls", ["/admin/toolcalls"], ["/workspace/tool-calls"])
     tool_call_evidence = entries_by_id.get("tool_calls", {}).get("evidence_commands") or []
     require("python3 scripts/nextjs_parity_smoke.py" in tool_call_evidence, "tool_calls must include Next static parity evidence")
@@ -251,6 +254,7 @@ def main() -> int:
     require("python3 scripts/nextjs_playwright_snapshot_smoke.py" in notion_evidence, "external_bases_notion must include Next browser evidence")
     next_proxy_evidence = entries_by_id.get("next_mis_proxy", {}).get("evidence_commands") or []
     require("python3 scripts/nextjs_agent_gateway_task_proxy_smoke.py" in next_proxy_evidence, "next_mis_proxy must include Next Gateway task proxy evidence")
+    require("python3 scripts/nextjs_enrollment_request_smoke.py" in next_proxy_evidence, "next_mis_proxy must include Next enrollment proxy guard evidence")
 
     vite_routes = actual_vite_routes()
     next_routes = actual_next_routes()
