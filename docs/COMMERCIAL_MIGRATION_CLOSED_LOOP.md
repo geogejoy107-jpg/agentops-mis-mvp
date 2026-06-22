@@ -131,7 +131,8 @@ Must be true:
   POST/PATCH writes fail closed until the write adapter is proven.
 - The Postgres-backed read-only server must preserve the machine-facing
   Agent Gateway CLI/API read contract for selected `agentops` commands, not
-  only browser/human API reads.
+  only browser/human API reads; this includes Agent Plan and plan-evidence
+  list/get/verify readback before Postgres writes are enabled.
 - Verification includes local acceptance against a temporary SQLite database
   before any Postgres work starts:
 

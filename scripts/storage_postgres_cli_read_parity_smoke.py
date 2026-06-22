@@ -30,6 +30,13 @@ from storage_postgres_route_read_model_smoke import JOB_A, RUN_A, TASK_A, TASK_B
 
 CONTRACT_ID = "postgres_cli_read_parity_v1"
 VOLATILE_SNAPSHOT_KEYS = {"age_sec"}
+AGENT_A = "agt_parity_a"
+AGENT_B = "agt_parity_b"
+PLAN_A = "plan_cli_parity_a"
+PLAN_B = "plan_cli_parity_b"
+MANIFEST_A = "pem_cli_parity_a"
+MANIFEST_B = "pem_cli_parity_b"
+TOOL_CALL_A = "tc_cli_parity_plan_a"
 
 
 CLI_READS: list[tuple[str, list[str]]] = [
@@ -43,7 +50,17 @@ CLI_READS: list[tuple[str, list[str]]] = [
     ("memory_list", ["memory", "list", "--limit", "10"]),
     ("workflow_job_status", ["workflow", "job-status", "--job-id", JOB_A]),
     ("workflow_stuck_jobs", ["workflow", "stuck-jobs", "--threshold-sec", "1", "--limit", "10"]),
+    ("agent_plan_list", ["agent-plan", "list", "--task-id", TASK_A, "--limit", "10"]),
+    ("agent_plan_get", ["agent-plan", "get", "--plan-id", PLAN_A]),
+    ("agent_plan_verify", ["agent-plan", "verify", "--plan-id", PLAN_A]),
+    ("plan_evidence_list", ["plan-evidence", "list", "--run-id", RUN_A, "--limit", "10"]),
+    ("plan_evidence_get", ["plan-evidence", "get", "--manifest-id", MANIFEST_A]),
+    ("plan_evidence_verify", ["plan-evidence", "verify", "--manifest-id", MANIFEST_A]),
 ]
+
+
+def dumps(value) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True)
 
 
 def reexec_self_with_bundled_python_if_needed() -> None:
@@ -150,6 +167,86 @@ def run_cli(args: list[str], env: dict[str, str], *, secret: str, expect_ok: boo
     return result.returncode, payload, stderr
 
 
+def seed_cli_plan_evidence_rows(adapter: PostgresAdapter) -> None:
+    now = "2026-06-22T03:02:00+00:00"
+    later = "2026-06-22T03:03:00+00:00"
+    adapter.execute(
+        """INSERT INTO tool_calls(tool_call_id,run_id,agent_id,tool_name,tool_version,tool_category,normalized_args_json,target_resource,risk_level,status,result_summary,side_effect_id,started_at,ended_at,created_at)
+        VALUES(:tool_call_id,:run_id,:agent_id,:tool_name,:tool_version,:tool_category,:normalized_args_json,:target_resource,:risk_level,:status,:result_summary,:side_effect_id,:started_at,:ended_at,:created_at)""",
+        {
+            "tool_call_id": TOOL_CALL_A,
+            "run_id": RUN_A,
+            "agent_id": AGENT_A,
+            "tool_name": "cli_parity_plan_tool",
+            "tool_version": "v1",
+            "tool_category": "database",
+            "normalized_args_json": dumps({"workspace_id": WORKSPACE_A}),
+            "target_resource": "postgres://cli-parity",
+            "risk_level": "low",
+            "status": "completed",
+            "result_summary": "Completed tool evidence for CLI plan parity.",
+            "side_effect_id": None,
+            "started_at": now,
+            "ended_at": later,
+            "created_at": now,
+        },
+    )
+    for plan_id, workspace_id, task_id, run_id, agent_id in [
+        (PLAN_A, WORKSPACE_A, TASK_A, RUN_A, AGENT_A),
+        (PLAN_B, "ws_parity_b", TASK_B, "run_parity_b", AGENT_B),
+    ]:
+        adapter.execute(
+            """INSERT INTO agent_plans(plan_id,workspace_id,task_id,run_id,agent_id,task_understanding,referenced_specs_json,referenced_memories_json,referenced_bases_json,proposed_files_to_change_json,risk_level,approval_required,execution_steps_json,verification_plan,rollback_plan,status,created_at,updated_at)
+            VALUES(:plan_id,:workspace_id,:task_id,:run_id,:agent_id,:task_understanding,:referenced_specs_json,:referenced_memories_json,:referenced_bases_json,:proposed_files_to_change_json,:risk_level,:approval_required,:execution_steps_json,:verification_plan,:rollback_plan,:status,:created_at,:updated_at)""",
+            {
+                "plan_id": plan_id,
+                "workspace_id": workspace_id,
+                "task_id": task_id,
+                "run_id": run_id,
+                "agent_id": agent_id,
+                "task_understanding": "Prove Postgres-backed Agent Gateway CLI plan reads.",
+                "referenced_specs_json": dumps(["docs/AGENT_GATEWAY_CLI_SPEC.md", "docs/POSTGRES_PARITY_CONTRACT.md"]),
+                "referenced_memories_json": dumps(["mem_parity_a"]),
+                "referenced_bases_json": dumps(["base_local_tasks"]),
+                "proposed_files_to_change_json": dumps(["scripts/storage_postgres_cli_read_parity_smoke.py"]),
+                "risk_level": "low",
+                "approval_required": 0,
+                "execution_steps_json": dumps(["read", "verify", "record"]),
+                "verification_plan": "Run Postgres CLI read parity smoke.",
+                "rollback_plan": "Drop temporary Postgres container.",
+                "status": "submitted",
+                "created_at": now,
+                "updated_at": later,
+            },
+        )
+    for manifest_id, plan_id, workspace_id, task_id, run_id, agent_id, status in [
+        (MANIFEST_A, PLAN_A, WORKSPACE_A, TASK_A, RUN_A, AGENT_A, "verified"),
+        (MANIFEST_B, PLAN_B, "ws_parity_b", TASK_B, "run_parity_b", AGENT_B, "blocked"),
+    ]:
+        adapter.execute(
+            """INSERT INTO plan_evidence_manifests(manifest_id,workspace_id,plan_id,task_id,run_id,agent_id,mismatch_policy,expected_steps_json,tool_call_ids_json,evaluation_ids_json,artifact_ids_json,audit_ids_json,status,verification_json,created_at,updated_at)
+            VALUES(:manifest_id,:workspace_id,:plan_id,:task_id,:run_id,:agent_id,:mismatch_policy,:expected_steps_json,:tool_call_ids_json,:evaluation_ids_json,:artifact_ids_json,:audit_ids_json,:status,:verification_json,:created_at,:updated_at)""",
+            {
+                "manifest_id": manifest_id,
+                "workspace_id": workspace_id,
+                "plan_id": plan_id,
+                "task_id": task_id,
+                "run_id": run_id,
+                "agent_id": agent_id,
+                "mismatch_policy": "block",
+                "expected_steps_json": dumps(["read", "verify", "record"]),
+                "tool_call_ids_json": dumps([TOOL_CALL_A]) if manifest_id == MANIFEST_A else "[]",
+                "evaluation_ids_json": dumps(["eval_parity_a"]) if manifest_id == MANIFEST_A else "[]",
+                "artifact_ids_json": dumps(["art_parity_a"]) if manifest_id == MANIFEST_A else "[]",
+                "audit_ids_json": "[]",
+                "status": status,
+                "verification_json": dumps({"cli_parity": manifest_id == MANIFEST_A}),
+                "created_at": now,
+                "updated_at": later,
+            },
+        )
+
+
 def canonical_numeric_payload(value):
     if isinstance(value, float) and value.is_integer():
         return int(value)
@@ -196,8 +293,11 @@ def assert_cli_payloads(payloads: dict) -> list[str]:
     run_get = payloads["run_get"]
     if (run_get.get("run") or {}).get("run_id") != RUN_A:
         failures.append("run_get_run_id_mismatch")
-    if run_get.get("evidence", {}).get("tool_calls") != 1:
+    if run_get.get("evidence", {}).get("tool_calls") != 2:
         failures.append("run_get_tool_call_count_mismatch")
+    run_tool_calls = run_get.get("tool_calls") or []
+    if TOOL_CALL_A not in ids(run_tool_calls, "tool_call_id"):
+        failures.append("run_get_missing_cli_plan_tool_call")
     if (payloads["run_graph"].get("run") or {}).get("run_id") != RUN_A:
         failures.append("run_graph_run_id_mismatch")
 
@@ -217,6 +317,32 @@ def assert_cli_payloads(payloads: dict) -> list[str]:
     stuck_jobs = payloads["workflow_stuck_jobs"].get("stuck_jobs") or []
     if stuck_jobs and JOB_A not in ids(stuck_jobs, "job_id"):
         failures.append("workflow_stuck_jobs_unexpected_rows")
+
+    agent_plan_rows = payloads["agent_plan_list"].get("agent_plans") or []
+    if PLAN_A not in ids(agent_plan_rows, "plan_id"):
+        failures.append("agent_plan_list_missing_plan")
+    if PLAN_B in ids(agent_plan_rows, "plan_id"):
+        failures.append("agent_plan_list_leaked_other_workspace_plan")
+    agent_plan = payloads["agent_plan_get"].get("agent_plan") or {}
+    if agent_plan.get("plan_id") != PLAN_A or agent_plan.get("run_id") != RUN_A:
+        failures.append("agent_plan_get_plan_mismatch")
+    plan_verification = payloads["agent_plan_verify"].get("verification") or {}
+    if plan_verification.get("pass") is not True:
+        failures.append("agent_plan_verify_did_not_pass")
+
+    manifest_rows = payloads["plan_evidence_list"].get("manifests") or []
+    if MANIFEST_A not in ids(manifest_rows, "manifest_id"):
+        failures.append("plan_evidence_list_missing_manifest")
+    if MANIFEST_B in ids(manifest_rows, "manifest_id"):
+        failures.append("plan_evidence_list_leaked_other_workspace_manifest")
+    manifest = payloads["plan_evidence_get"].get("manifest") or {}
+    if manifest.get("manifest_id") != MANIFEST_A or manifest.get("plan_id") != PLAN_A:
+        failures.append("plan_evidence_get_manifest_mismatch")
+    evidence_verification = payloads["plan_evidence_verify"].get("verification") or {}
+    if evidence_verification.get("pass") is not True or evidence_verification.get("status") != "verified":
+        failures.append("plan_evidence_verify_did_not_pass")
+    if (evidence_verification.get("evidence_counts") or {}).get("tool_calls", 0) < 1:
+        failures.append("plan_evidence_verify_missing_tool_evidence")
 
     for name, payload in payloads.items():
         if isinstance(payload, dict) and payload.get("token_omitted") is False:
@@ -289,6 +415,7 @@ def main() -> int:
             adapter.executescript(contract.postgres_ddl_from_sqlite(server.SCHEMA_SQL))
             for operation in fixture_operations():
                 adapter.execute(operation.sql, operation.params)
+            seed_cli_plan_evidence_rows(adapter)
             adapter.commit()
             adapter.close()
             adapter = None
@@ -391,7 +518,7 @@ def main() -> int:
                 "free_local_dependencies": [],
                 "token_omitted": True,
                 "failures": failures,
-                "next_proof": "Widen CLI parity to Agent Plan and plan-evidence reads, then prove Postgres write helpers before enabling writes.",
+                "next_proof": "Prove Postgres write helpers before enabling write routes.",
             }
             if failures:
                 output["payloads"] = payloads

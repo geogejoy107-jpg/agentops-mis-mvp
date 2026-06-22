@@ -203,8 +203,10 @@ def main() -> int:
             and file_contains("docs/STORAGE_BOUNDARY_MAP.md", "storage_postgres_cli_read_parity_smoke.py")
             and file_contains("docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md", "storage_postgres_cli_read_parity_smoke.py")
             and file_contains("docs/AGENT_GATEWAY_CLI_SPEC.md", "storage_postgres_cli_read_parity_smoke.py")
+            and file_contains("scripts/storage_postgres_cli_read_parity_smoke.py", "agent_plan_verify")
+            and file_contains("scripts/storage_postgres_cli_read_parity_smoke.py", "plan_evidence_verify")
             and (ROOT / "scripts" / "storage_postgres_cli_read_parity_smoke.py").exists(),
-            "read-only Postgres CLI/API parity smoke and docs are present",
+            "read-only Postgres CLI/API parity smoke and docs include Agent Plan and plan-evidence reads",
         ),
         check(
             "blocked_generated_or_runtime_artifacts_absent",
