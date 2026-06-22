@@ -19,6 +19,7 @@ from agentops_mis_core.approval_wall import (
     build_prepared_action_get_response,
     build_prepared_action_get_not_found_response,
     build_prepared_action_hash_mismatch_response,
+    build_prepared_action_prepare_response_fields,
     build_prepared_action_provider_result_fields,
     build_prepared_action_provider_resume_request,
     build_prepared_action_resume_blocked_response,
@@ -183,6 +184,7 @@ EXTRACTED_APPROVAL_WALL_HELPERS = {
     "build_prepared_action_get_response",
     "build_prepared_action_get_not_found_response",
     "build_prepared_action_hash_mismatch_response",
+    "build_prepared_action_prepare_response_fields",
     "build_prepared_action_provider_result_fields",
     "build_prepared_action_provider_resume_request",
     "build_prepared_action_resume_blocked_response",
@@ -206,6 +208,7 @@ SERVER_APPROVAL_WALL_IMPORTS = {
     "build_prepared_action_blocked_response",
     "build_prepared_action_get_response",
     "build_prepared_action_hash_mismatch_response",
+    "build_prepared_action_prepare_response_fields",
     "build_prepared_action_provider_result_fields",
     "build_prepared_action_provider_resume_request",
     "build_prepared_action_resume_blocked_response",
@@ -622,6 +625,13 @@ def main() -> int:
         {"prepared_action": prepared_action_public(consumed_row)},
         200,
     )
+    prepare_response_fields = build_prepared_action_prepare_response_fields({
+        "prepared_action": prepared_action_public(prepared_row),
+        "approval": {"approval_id": "ap_pa_smoke", "decision": "pending"},
+        "resume_contract": "Approve then resume exactly once.",
+        "operation": "prepared_action_prepare",
+        "outcome": "created",
+    })
     require(missing_gate and missing_gate.get("error") == "external_publish_prepared_action_required", "resume gate missing-id error failed", failures)
     require(pending_gate and pending_gate.get("error") == "approval_required", "resume gate approval-required error failed", failures)
     require(mismatch_gate and mismatch_gate.get("error") == "prepared_action_request_mismatch" and "operation" in mismatch_gate.get("mismatched_fields", []), "resume gate mismatch error failed", failures)
@@ -642,6 +652,9 @@ def main() -> int:
     require(provider_result_fields.get("prepared_action_resume_status") == 200, "provider result resume status failed", failures)
     require((provider_result_fields.get("prepared_action") or {}).get("status") == "consumed", "provider result prepared action failed", failures)
     require(provider_result_fields.get("token_omitted") is True, "provider result omission proof missing", failures)
+    require((prepare_response_fields.get("approval_wall") or {}).get("outcome") == "created", "prepare response approval wall outcome failed", failures)
+    require((prepare_response_fields.get("approval_wall") or {}).get("token_omitted") is True, "prepare response omission proof missing", failures)
+    require("approval prepared-action resume --action-id pa_smoke" in prepare_response_fields.get("next_action", ""), "prepare response next action failed", failures)
     runtime_waiting_payload = runtime_probe_prepared_action_required_payload(
         prepared={
             "run_id": "run_runtime_probe_smoke",

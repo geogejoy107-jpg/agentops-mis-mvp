@@ -262,6 +262,27 @@ def build_prepared_action_waiting_response(
     return response
 
 
+def build_prepared_action_prepare_response_fields(prepared: Any) -> dict[str, Any]:
+    payload = prepared if isinstance(prepared, dict) else {}
+    approval = payload.get("approval") or {}
+    prepared_action = payload.get("prepared_action") or {}
+    return {
+        "approval_wall": {
+            "prepared_action": payload.get("prepared_action"),
+            "approval": payload.get("approval"),
+            "resume_contract": payload.get("resume_contract"),
+            "operation": payload.get("operation"),
+            "outcome": payload.get("outcome"),
+            "token_omitted": True,
+        },
+        "next_action": prepared_action_waiting_next_action(
+            approval_id=approval.get("approval_id"),
+            prepared_action_id=prepared_action.get("action_id"),
+            resume_instruction="agentops approval prepared-action resume --action-id {action_id} --provider-side-effect-id <id>",
+        ),
+    }
+
+
 def build_prepared_action_blocked_response(
     *,
     base: dict[str, Any],

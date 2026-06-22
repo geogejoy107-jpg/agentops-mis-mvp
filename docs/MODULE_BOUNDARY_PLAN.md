@@ -413,6 +413,37 @@ python3 scripts/module_boundary_smoke.py
 python3 scripts/prepared_action_approval_wall_smoke.py --base-url http://127.0.0.1:8787
 ```
 
+### Slice 15: Prepared-Action Prepare Response Helpers
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/approval_wall.py`
+
+Moved out of `server.py`:
+
+- tool-call `prepare_action=true` response `approval_wall` projection
+- prepared-action prepare `next_action` construction for inspect, approve and
+  exact resume
+- token-omission proof on the prepared-action prepare response fields
+
+Still owned by `server.py`:
+
+- HTTP routes
+- tool-call validation, risk classification and row writes
+- prepared-action creation orchestration
+- runtime events, audit logs and commits
+- exact-once prepared-action resume writes and provider side-effect evidence
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/prepared_action_approval_wall_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/high_risk_toolcall_prepared_action_gate_smoke.py --base-url http://127.0.0.1:8787
+```
+
 ## Next Candidate Slices
 
 - Continue P1-05 with small smoke-backed strangler slices only; prefer pure

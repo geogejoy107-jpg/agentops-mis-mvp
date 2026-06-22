@@ -39,6 +39,7 @@ from agentops_mis_core.approval_wall import (
     build_prepared_action_blocked_response,
     build_prepared_action_get_response,
     build_prepared_action_hash_mismatch_response,
+    build_prepared_action_prepare_response_fields,
     build_prepared_action_provider_result_fields,
     build_prepared_action_provider_resume_request,
     build_prepared_action_resume_blocked_response,
@@ -7856,19 +7857,7 @@ def agent_gateway_record_tool_call(conn, body) -> tuple[dict, int]:
         prepared_action_payload, _prepared_status = agent_gateway_prepare_action(conn, prepare_body)
     response = {"tool_call": row, "outcome": outcome}
     if prepared_action_payload:
-        response["approval_wall"] = {
-            "prepared_action": prepared_action_payload.get("prepared_action"),
-            "approval": prepared_action_payload.get("approval"),
-            "resume_contract": prepared_action_payload.get("resume_contract"),
-            "operation": prepared_action_payload.get("operation"),
-            "outcome": prepared_action_payload.get("outcome"),
-            "token_omitted": True,
-        }
-        response["next_action"] = (
-            f"agentops approval inspect --approval-id {prepared_action_payload.get('approval', {}).get('approval_id')} && "
-            f"agentops approval approve --approval-id {prepared_action_payload.get('approval', {}).get('approval_id')} && "
-            f"agentops approval prepared-action resume --action-id {prepared_action_payload.get('prepared_action', {}).get('action_id')} --provider-side-effect-id <id>"
-        )
+        response.update(build_prepared_action_prepare_response_fields(prepared_action_payload))
     return response, 201 if outcome == "created" else 200
 
 
