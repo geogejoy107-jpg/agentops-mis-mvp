@@ -404,6 +404,7 @@ export function AIEmployees() {
       closingEvidenceGap: "Closing...",
       recordActionReceipt: "Record",
       recordVerifyReceipt: "Verify receipt",
+      receiptEvaluation: "Receipt eval",
       copyReceiptCommand: "Copy receipt CLI",
       copyVerifyReceiptCommand: "Copy verify CLI",
       copyActionCommand: "Copy action",
@@ -801,6 +802,7 @@ export function AIEmployees() {
       closingEvidenceGap: "关闭中...",
       recordActionReceipt: "记账",
       recordVerifyReceipt: "验收记账",
+      receiptEvaluation: "收据评估",
       copyReceiptCommand: "复制记账 CLI",
       copyVerifyReceiptCommand: "复制验收 CLI",
       copyActionCommand: "复制动作",
@@ -1240,9 +1242,10 @@ export function AIEmployees() {
     candidate.receiptRequired === false ? true :
     typeof candidate.receiptVerified === "boolean" ? candidate.receiptVerified : latestReceiptForAction(candidate.action, candidate.actionSignature)?.status === "verified"
   );
-  const actionQueueCandidateScore = (candidate: { id: string; action: string; actionSignature?: string | null; receiptRequired?: boolean; receiptVerified?: boolean; isReceiptCoverageRecovery?: boolean; isOperatorHealthRisk?: boolean }) => (
+  const actionQueueCandidateScore = (candidate: { id: string; action: string; actionSignature?: string | null; receiptRequired?: boolean; receiptVerified?: boolean; isReceiptCoverageRecovery?: boolean; isReceiptEvaluationRecovery?: boolean; isOperatorHealthRisk?: boolean }) => (
     isCloseEvidenceGapCommand(candidate.action) ? 120 :
     candidate.isOperatorHealthRisk ? 118 :
+    candidate.isReceiptEvaluationRecovery ? 116 :
     candidate.isReceiptCoverageRecovery ? 115 :
     candidate.id.startsWith("loop-first-issue:") ? 110 :
     !candidateReceiptVerified(candidate) ? 80 :
@@ -1268,11 +1271,13 @@ export function AIEmployees() {
       receiptStatus: item.receipt_status,
       receiptVerified: item.receipt_verified,
       receiptHash: item.receipt_hash,
+      receiptEvaluation: item.receipt_evaluation,
       receiptId: item.receipt_id,
       receiptRecordCommand: item.receipt_record_command,
       receiptRecordConfirmCommand: item.receipt_record_confirm_command,
       receiptVerifyRecordCommand: item.receipt_verify_record_command,
       isReceiptCoverageRecovery: item.source === "receipt_coverage",
+      isReceiptEvaluationRecovery: item.source === "receipt_evaluation",
       isOperatorHealthRisk: item.lane === "operator_health" || item.source.startsWith("operator_health:"),
     })),
     ...recommendedActions.map((action, index) => ({
@@ -3398,6 +3403,7 @@ export function AIEmployees() {
                 {operatorPlanSummary && ` · close ${operatorPlanSummary.evidence_gap_closure_ready_runs}/${operatorPlanSummary.closed_evidence_gap_runs}/${operatorPlanSummary.waived_evidence_gap_runs}`}
                 {operatorPlanSummary && ` · intake ${operatorPlanSummary.task_intake_ready}/${operatorPlanSummary.task_intake_blocked}/${operatorPlanSummary.task_intake_attention}`}
                 {operatorReceiptCoverage && ` · receipt coverage ${operatorReceiptCoverage.verified}/${operatorReceiptCoverage.required} · stale ${operatorReceiptCoverage.stale} · missing ${operatorReceiptCoverage.missing} · ${operatorReceiptCoverage.coverage_percent}%`}
+                {operatorReceiptCoverage && ` · receipt eval ${operatorReceiptCoverage.evaluated ?? 0}/${operatorReceiptCoverage.evaluation_required ?? 0} · failed ${operatorReceiptCoverage.evaluation_fail ?? 0} · ${operatorReceiptCoverage.evaluation_coverage_percent ?? 100}%`}
                 {operatorActionReceipts?.summary && ` · ${copy.actionReceipts.toLowerCase()} ${operatorActionReceipts.summary.receipts}/${operatorActionReceipts.summary.verified}`}
               </p>
             </div>
@@ -3424,6 +3430,9 @@ export function AIEmployees() {
               const queueReceipt = latestReceiptForAction(item.action, "actionSignature" in item ? item.actionSignature : undefined);
               const backendReceiptStatus = "receiptStatus" in item ? item.receiptStatus : undefined;
               const backendReceiptHash = "receiptHash" in item ? item.receiptHash : undefined;
+              const backendReceiptEvaluation = "receiptEvaluation" in item ? item.receiptEvaluation : undefined;
+              const queueReceiptEvaluation = backendReceiptEvaluation || queueReceipt?.evaluation;
+              const queueReceiptEvaluationStatus = typeof queueReceiptEvaluation === "object" && queueReceiptEvaluation !== null ? String((queueReceiptEvaluation as Record<string, unknown>).pass_fail || "") : "";
               const queueReceiptStatus = backendReceiptStatus || queueReceipt?.status;
               const queueReceiptHash = receiptShortHash(queueReceipt) || String(backendReceiptHash || "").slice(0, 12);
               const queueNeedsReceipt = !candidateReceiptVerified(item);
@@ -3481,6 +3490,11 @@ export function AIEmployees() {
                     {queueReceiptStatus && queueReceiptStatus !== "missing" && (
                       <div className="text-[10px] mt-0.5 truncate" style={{ color: queueReceiptStatus === "verified" ? "var(--mis-success)" : "var(--mis-warning)" }}>
                         {copy.receiptProof}: {queueReceiptStatus} · {queueReceiptHash}
+                      </div>
+                    )}
+                    {queueReceiptEvaluationStatus && (
+                      <div className="text-[10px] mt-0.5 truncate" style={{ color: queueReceiptEvaluationStatus === "pass" ? "var(--mis-success)" : "#F87171" }}>
+                        {copy.receiptEvaluation}: {queueReceiptEvaluationStatus}
                       </div>
                     )}
                     {queueNeedsReceipt && (

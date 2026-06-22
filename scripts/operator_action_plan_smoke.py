@@ -160,11 +160,20 @@ def validate_plan(payload: dict, label: str, failures: list[str], limit: int) ->
         "action_receipts_recorded",
         "action_receipts_verified",
         "action_receipts_failed",
+        "action_receipts_evaluated",
+        "action_receipts_evaluation_pass",
+        "action_receipts_evaluation_fail",
         "receipt_required_actions",
         "receipt_verified_actions",
         "receipt_missing_actions",
         "receipt_missing_verified_actions",
         "receipt_stale_actions",
+        "receipt_evaluation_required_actions",
+        "receipt_evaluated_actions",
+        "receipt_evaluation_pass_actions",
+        "receipt_evaluation_fail_actions",
+        "receipt_evaluation_missing_actions",
+        "receipt_evaluation_coverage_percent",
         "receipt_coverage_percent",
         "receipt_lookup_window",
     ]:
@@ -176,6 +185,11 @@ def validate_plan(payload: dict, label: str, failures: list[str], limit: int) ->
     require(receipt_coverage.get("missing") == summary.get("receipt_missing_actions"), f"{label} receipt coverage missing mismatch: {receipt_coverage} {summary}", failures)
     require(receipt_coverage.get("coverage_percent") == summary.get("receipt_coverage_percent"), f"{label} receipt coverage percent mismatch: {receipt_coverage} {summary}", failures)
     require(receipt_coverage.get("status") in {"ready", "attention"}, f"{label} receipt coverage status wrong: {receipt_coverage}", failures)
+    require(receipt_coverage.get("evaluation_required") == summary.get("receipt_evaluation_required_actions"), f"{label} receipt eval required mismatch: {receipt_coverage} {summary}", failures)
+    require(receipt_coverage.get("evaluated") == summary.get("receipt_evaluated_actions"), f"{label} receipt eval evaluated mismatch: {receipt_coverage} {summary}", failures)
+    require(receipt_coverage.get("evaluation_fail") == summary.get("receipt_evaluation_fail_actions"), f"{label} receipt eval fail mismatch: {receipt_coverage} {summary}", failures)
+    require(receipt_coverage.get("evaluation_coverage_percent") == summary.get("receipt_evaluation_coverage_percent"), f"{label} receipt eval coverage mismatch: {receipt_coverage} {summary}", failures)
+    require(receipt_coverage.get("evaluation_status") in {"ready", "attention", "blocked"}, f"{label} receipt eval status wrong: {receipt_coverage}", failures)
     require(isinstance(summary.get("recommended_adapter"), str), f"{label} recommended_adapter missing: {summary}", failures)
     actions = payload.get("actions")
     require(isinstance(actions, list), f"{label} actions missing", failures)
@@ -204,7 +218,7 @@ def validate_plan(payload: dict, label: str, failures: list[str], limit: int) ->
     require(operator_health_safety.get("read_only") is True, f"{label} operator health read_only missing: {operator_health_safety}", failures)
     require(operator_health_safety.get("ledger_mutated") is False, f"{label} operator health must not mutate ledger: {operator_health_safety}", failures)
     receipt_summary = receipt_source.get("summary") or {}
-    for key in ["receipts", "recorded", "verified", "failed", "skipped"]:
+    for key in ["receipts", "recorded", "verified", "failed", "skipped", "evaluated", "evaluation_pass", "evaluation_fail"]:
         require(isinstance(receipt_summary.get(key), int), f"{label} action receipts summary.{key} missing: {receipt_summary}", failures)
     receipt_safety = receipt_source.get("safety") or {}
     require(receipt_safety.get("read_only") is True, f"{label} action receipts read_only missing: {receipt_safety}", failures)
@@ -257,10 +271,10 @@ def validate_plan(payload: dict, label: str, failures: list[str], limit: int) ->
         require(bool(action.get("command")), f"{label} command missing: {action}", failures)
         require(bool(action.get("action_signature")), f"{label} action_signature missing: {action}", failures)
         require(isinstance(action.get("receipt_required"), bool), f"{label} receipt_required missing: {action}", failures)
-        if action.get("source") == "receipt_coverage":
+        if action.get("source") in {"receipt_coverage", "receipt_evaluation"}:
             require(action.get("receipt_required") is False, f"{label} receipt coverage action should not require its own receipt: {action}", failures)
-            require(action.get("lane") == "receipt_coverage", f"{label} receipt coverage lane wrong: {action}", failures)
-            require(action.get("verify_command") == "agentops operator loop-audit --limit 20", f"{label} receipt coverage verify command wrong: {action}", failures)
+            require(action.get("lane") == action.get("source"), f"{label} receipt meta lane wrong: {action}", failures)
+            require(action.get("verify_command") == "agentops operator loop-audit --limit 20", f"{label} receipt meta verify command wrong: {action}", failures)
         else:
             require(action.get("receipt_required") is True, f"{label} ordinary action should require receipt: {action}", failures)
         require(action.get("receipt_status") in {"missing", "recorded", "verified", "failed", "skipped", "stale"}, f"{label} bad receipt_status: {action}", failures)

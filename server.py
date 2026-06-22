@@ -15253,6 +15253,33 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
     receipt_verified_count = len(receipt_verified_actions)
     receipt_stale_count = len(receipt_stale_actions)
     receipt_missing_count = len(receipt_missing_actions)
+    receipt_evaluation_required_actions = [
+        item for item in receipt_required_actions
+        if item.get("receipt_current") and item.get("receipt_status") in {"verified", "failed"}
+    ]
+    receipt_evaluated_actions = [
+        item for item in receipt_evaluation_required_actions
+        if item.get("receipt_evaluation")
+    ]
+    receipt_evaluation_pass_actions = [
+        item for item in receipt_evaluated_actions
+        if (item.get("receipt_evaluation") or {}).get("pass_fail") == "pass"
+    ]
+    receipt_evaluation_fail_actions = [
+        item for item in receipt_evaluated_actions
+        if (item.get("receipt_evaluation") or {}).get("pass_fail") == "fail" or item.get("receipt_status") == "failed"
+    ]
+    receipt_evaluation_missing_actions = [
+        item for item in receipt_evaluation_required_actions
+        if not item.get("receipt_evaluation")
+    ]
+    receipt_evaluation_required_count = len(receipt_evaluation_required_actions)
+    receipt_evaluated_count = len(receipt_evaluated_actions)
+    receipt_evaluation_pass_count = len(receipt_evaluation_pass_actions)
+    receipt_evaluation_fail_count = len(receipt_evaluation_fail_actions)
+    receipt_evaluation_missing_count = len(receipt_evaluation_missing_actions)
+    receipt_evaluation_coverage_percent = round((receipt_evaluated_count / receipt_evaluation_required_count) * 100) if receipt_evaluation_required_count else 100
+    receipt_evaluation_status = "blocked" if receipt_evaluation_fail_count else "attention" if receipt_evaluation_missing_count else "ready"
     receipt_coverage_percent = round((receipt_verified_count / receipt_required_count) * 100) if receipt_required_count else 100
     receipt_coverage_status = "ready" if receipt_missing_count == 0 and receipt_stale_count == 0 else "attention"
     receipt_coverage = {
@@ -15263,10 +15290,62 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
         "missing_verified": receipt_required_count - receipt_verified_count,
         "coverage_percent": receipt_coverage_percent,
         "status": receipt_coverage_status,
+        "evaluation_required": receipt_evaluation_required_count,
+        "evaluated": receipt_evaluated_count,
+        "evaluation_pass": receipt_evaluation_pass_count,
+        "evaluation_fail": receipt_evaluation_fail_count,
+        "evaluation_missing": receipt_evaluation_missing_count,
+        "evaluation_coverage_percent": receipt_evaluation_coverage_percent,
+        "evaluation_status": receipt_evaluation_status,
         "lookup_window": len(receipt_rows),
         "display_receipts": action_receipt_summary.get("receipts", 0),
         "token_omitted": True,
     }
+    if receipt_evaluation_fail_count:
+        failed_action = {
+            "action_id": stable_id("op_action", "receipt_evaluation", "failed_receipts", receipt_evaluation_fail_count)[-18:],
+            "action_signature": stable_id("op_action_sig", "receipt_evaluation", "failed_receipts")[-18:],
+            "lane": "receipt_evaluation",
+            "severity": "blocked",
+            "priority": 117,
+            "base_priority": 117,
+            "receipt_priority_boost": 0,
+            "title": "Recover failed Action Queue receipt evaluations",
+            "summary": (
+                f"{receipt_evaluation_fail_count} Action Queue receipt evaluation(s) failed. "
+                "Re-run or inspect the failed recovery action, then record a verified receipt."
+            ),
+            "command": "agentops operator action-receipts --limit 20 --plan-limit 20",
+            "verify_command": "agentops operator loop-audit --limit 20",
+            "ui_route": "/workspace/agents",
+            "source": "receipt_evaluation",
+            "evidence": receipt_coverage,
+            "receipt_required": False,
+            "receipt_status": "skipped",
+            "receipt_underlying_status": "skipped",
+            "receipt_match": "missing",
+            "receipt_current": False,
+            "receipt_verified": False,
+            "receipt_id": None,
+            "receipt_hash": None,
+            "receipt_evaluation": None,
+            "receipt_state": {
+                "required": False,
+                "status": "skipped",
+                "underlying_status": "skipped",
+                "match": "missing",
+                "current": False,
+                "verified": False,
+                "priority_boost": 0,
+            },
+            "token_omitted": True,
+        }
+        if not any(item.get("source") == "receipt_evaluation" for item in deduped):
+            deduped = [failed_action, *deduped]
+            if len(deduped) > limit:
+                deduped = deduped[:limit]
+            blocked = [item for item in deduped if item.get("severity") == "blocked"]
+            attention = [item for item in deduped if item.get("severity") == "attention"]
     if receipt_coverage_status != "ready":
         recovery_command = "agentops operator action-plan --limit 20"
         recovery_action_id = stable_id("op_action", "receipt_coverage", recovery_command, receipt_required_count, receipt_verified_count, receipt_stale_count, receipt_missing_count)[-18:]
@@ -15388,11 +15467,20 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             "action_receipts_recorded": action_receipt_summary.get("recorded", 0),
             "action_receipts_verified": action_receipt_summary.get("verified", 0),
             "action_receipts_failed": action_receipt_summary.get("failed", 0),
+            "action_receipts_evaluated": action_receipt_summary.get("evaluated", 0),
+            "action_receipts_evaluation_pass": action_receipt_summary.get("evaluation_pass", 0),
+            "action_receipts_evaluation_fail": action_receipt_summary.get("evaluation_fail", 0),
             "receipt_required_actions": receipt_required_count,
             "receipt_verified_actions": receipt_verified_count,
             "receipt_missing_actions": receipt_missing_count,
             "receipt_missing_verified_actions": receipt_required_count - receipt_verified_count,
             "receipt_stale_actions": receipt_stale_count,
+            "receipt_evaluation_required_actions": receipt_evaluation_required_count,
+            "receipt_evaluated_actions": receipt_evaluated_count,
+            "receipt_evaluation_pass_actions": receipt_evaluation_pass_count,
+            "receipt_evaluation_fail_actions": receipt_evaluation_fail_count,
+            "receipt_evaluation_missing_actions": receipt_evaluation_missing_count,
+            "receipt_evaluation_coverage_percent": receipt_evaluation_coverage_percent,
             "receipt_coverage_percent": receipt_coverage_percent,
             "receipt_lookup_window": len(receipt_rows),
         },
@@ -15411,6 +15499,7 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             "dispatch_evidence": dispatch_evidence.get("status"),
             "operator_health": operator_health_source.get("status"),
             "action_receipts": action_receipts.get("status"),
+            "receipt_evaluation": receipt_evaluation_status,
         },
         "remediation_loop": remediation_loop,
         "execution_evidence": evidence_gaps,
@@ -15681,10 +15770,20 @@ def operator_loop_audit(conn: sqlite3.Connection, headers, qs=None) -> dict:
             "action_receipts_recorded": action_receipt_summary.get("recorded", 0),
             "action_receipts_verified": action_receipt_summary.get("verified", 0),
             "action_receipts_failed": action_receipt_summary.get("failed", 0),
+            "action_receipts_evaluated": action_receipt_summary.get("evaluated", 0),
+            "action_receipts_evaluation_pass": action_receipt_summary.get("evaluation_pass", 0),
+            "action_receipts_evaluation_fail": action_receipt_summary.get("evaluation_fail", 0),
             "receipt_required_actions": summary.get("receipt_required_actions", 0),
             "receipt_verified_actions": summary.get("receipt_verified_actions", 0),
             "receipt_missing_actions": summary.get("receipt_missing_actions", 0),
             "receipt_stale_actions": summary.get("receipt_stale_actions", 0),
+            "receipt_evaluation_required_actions": summary.get("receipt_evaluation_required_actions", 0),
+            "receipt_evaluated_actions": summary.get("receipt_evaluated_actions", 0),
+            "receipt_evaluation_pass_actions": summary.get("receipt_evaluation_pass_actions", 0),
+            "receipt_evaluation_fail_actions": summary.get("receipt_evaluation_fail_actions", 0),
+            "receipt_evaluation_missing_actions": summary.get("receipt_evaluation_missing_actions", 0),
+            "receipt_evaluation_coverage_percent": summary.get("receipt_evaluation_coverage_percent", 0),
+            "receipt_evaluation_status": receipt_coverage.get("evaluation_status"),
             "receipt_coverage_percent": summary.get("receipt_coverage_percent", 0),
             "receipt_coverage_status": receipt_coverage.get("status"),
             "receipt_lookup_window": summary.get("receipt_lookup_window", 0),
@@ -15788,9 +15887,16 @@ def operator_loop_audit(conn: sqlite3.Connection, headers, qs=None) -> dict:
             "memory_candidates": memory_candidates,
             "action_receipts": action_receipt_summary.get("receipts", 0),
             "action_receipts_verified": action_receipt_summary.get("verified", 0),
+            "action_receipts_evaluated": action_receipt_summary.get("evaluated", 0),
+            "action_receipts_evaluation_fail": action_receipt_summary.get("evaluation_fail", 0),
             "receipt_verified_actions": summary.get("receipt_verified_actions", 0),
             "receipt_missing_actions": summary.get("receipt_missing_actions", 0),
             "receipt_stale_actions": summary.get("receipt_stale_actions", 0),
+            "receipt_evaluated_actions": summary.get("receipt_evaluated_actions", 0),
+            "receipt_evaluation_fail_actions": summary.get("receipt_evaluation_fail_actions", 0),
+            "receipt_evaluation_missing_actions": summary.get("receipt_evaluation_missing_actions", 0),
+            "receipt_evaluation_coverage_percent": summary.get("receipt_evaluation_coverage_percent", 0),
+            "receipt_evaluation_status": receipt_coverage.get("evaluation_status"),
             "receipt_coverage_percent": summary.get("receipt_coverage_percent", 0),
             "receipt_coverage_status": receipt_coverage.get("status"),
             "receipt_lookup_window": summary.get("receipt_lookup_window", 0),
@@ -15947,6 +16053,10 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
     receipt_verified = int(receipt_coverage.get("verified") or 0)
     receipt_missing = int(receipt_coverage.get("missing") or 0)
     receipt_stale = int(receipt_coverage.get("stale") or 0)
+    receipt_evaluation_required = int(receipt_coverage.get("evaluation_required") or 0)
+    receipt_evaluated = int(receipt_coverage.get("evaluated") or 0)
+    receipt_evaluation_fail = int(receipt_coverage.get("evaluation_fail") or 0)
+    receipt_evaluation_missing = int(receipt_coverage.get("evaluation_missing") or 0)
     loop_record_status = str(loop_record.get("status") or "unknown")
     loop_health_risks: list[dict] = []
     if loop_blocked:
@@ -15957,6 +16067,10 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
         loop_health_risks.append({"id": "receipt_coverage_gap", "severity": "attention", "count": receipt_required - receipt_verified, "next_action": "agentops operator action-receipts --limit 20 --plan-limit 20"})
     if receipt_missing or receipt_stale:
         loop_health_risks.append({"id": "receipt_missing_or_stale", "severity": "attention", "count": receipt_missing + receipt_stale, "next_action": "agentops operator action-plan --limit 20"})
+    if receipt_evaluation_fail:
+        loop_health_risks.append({"id": "receipt_evaluation_failed", "severity": "blocked", "count": receipt_evaluation_fail, "next_action": "agentops operator action-receipts --limit 20 --plan-limit 20"})
+    elif receipt_evaluation_missing:
+        loop_health_risks.append({"id": "receipt_evaluation_missing", "severity": "attention", "count": receipt_evaluation_missing, "next_action": "agentops operator action-receipts --limit 20 --plan-limit 20"})
     if loop_record_status not in {"ready", "pass", "closed"}:
         loop_health_risks.append({"id": "loop_record_not_closed", "severity": "attention", "count": int(loop_record.get("candidate_count") or 0) + int(loop_record.get("pending_approval_count") or 0), "next_action": loop_record.get("next_action") or "agentops review queue --limit 20"})
     auth_mode = (auth_ctx or {}).get("mode") or "unknown"
@@ -15994,6 +16108,14 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
             "missing": receipt_missing,
             "stale": receipt_stale,
         },
+        "receipt_evaluations": {
+            "status": "blocked" if receipt_evaluation_fail else "pass" if receipt_evaluation_required == 0 or receipt_evaluated >= receipt_evaluation_required else "attention",
+            "required": receipt_evaluation_required,
+            "evaluated": receipt_evaluated,
+            "failed": receipt_evaluation_fail,
+            "missing": receipt_evaluation_missing,
+            "coverage_percent": receipt_coverage.get("evaluation_coverage_percent", 100),
+        },
         "record": {
             "status": loop_record_status,
             "candidates": int(loop_record.get("candidate_count") or 0),
@@ -16017,13 +16139,14 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
     }
     score_parts = [
         int(round((loop_pass / max(loop_total, 1)) * 40)),
-        20 if receipt_required == 0 or receipt_verified >= receipt_required else int(round((receipt_verified / max(receipt_required, 1)) * 20)),
+        15 if receipt_required == 0 or receipt_verified >= receipt_required else int(round((receipt_verified / max(receipt_required, 1)) * 15)),
+        5 if receipt_evaluation_required == 0 or (receipt_evaluated >= receipt_evaluation_required and receipt_evaluation_fail == 0) else 0 if receipt_evaluation_fail else int(round((receipt_evaluated / max(receipt_evaluation_required, 1)) * 5)),
         15 if loop_record_status in {"ready", "pass", "closed"} else 5 if loop_record.get("approved_count") else 0,
         15 if auth_ready else 0,
         10 if safety_ready else 0,
     ]
     loop_health_score = min(max(sum(score_parts), 0), 100)
-    loop_health_status = "blocked" if loop_blocked or not auth_ready or not safety_ready else "attention" if loop_health_risks or loop_health_score < 90 else "ready"
+    loop_health_status = "blocked" if loop_blocked or receipt_evaluation_fail or not auth_ready or not safety_ready else "attention" if loop_health_risks or loop_health_score < 90 else "ready"
     return {
         "provider": "agentops-operator",
         "operation": "operator_handoff",
@@ -16039,6 +16162,10 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
             "receipt_verified": receipt_coverage.get("verified", 0),
             "receipt_missing": receipt_coverage.get("missing", 0),
             "receipt_stale": receipt_coverage.get("stale", 0),
+            "receipt_evaluation_required": receipt_coverage.get("evaluation_required", 0),
+            "receipt_evaluated": receipt_coverage.get("evaluated", 0),
+            "receipt_evaluation_fail": receipt_coverage.get("evaluation_fail", 0),
+            "receipt_evaluation_missing": receipt_coverage.get("evaluation_missing", 0),
             "loop_record_status": loop_record.get("status"),
             "loop_record_candidates": loop_record.get("candidate_count", 0),
             "loop_record_approved": loop_record.get("approved_count", 0),
@@ -16081,9 +16208,10 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
             "score_parts": {
                 "method_gates": score_parts[0],
                 "receipts": score_parts[1],
-                "record": score_parts[2],
-                "auth": score_parts[3],
-                "safety": score_parts[4],
+                "receipt_evaluations": score_parts[2],
+                "record": score_parts[3],
+                "auth": score_parts[4],
+                "safety": score_parts[5],
             },
             "gates": gate_checks,
             "risks": loop_health_risks[:8],
@@ -16154,6 +16282,14 @@ def operator_health(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) -
     review_summary = review.get("summary") or {}
     review_items_total = int(review_summary.get("review_items_total") or len(review.get("review_items") or []))
     review_status = "attention" if review_items_total else "ready"
+    action_plan_status = component_status(action_plan_source.get("status") or handoff.get("summary", {}).get("action_plan_status"))
+    if int(action_plan_summary.get("receipt_evaluation_fail_actions") or 0) > 0:
+        action_plan_status = "blocked"
+    action_plan_next_action = (
+        "agentops operator action-receipts --limit 20 --plan-limit 20"
+        if int(action_plan_summary.get("receipt_evaluation_fail_actions") or 0) > 0
+        else "agentops operator action-plan --limit 20"
+    )
     components = [
         {
             "id": "loop_health",
@@ -16203,11 +16339,14 @@ def operator_health(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) -
         {
             "id": "operator_action_plan",
             "label": "Operator action queue",
-            "status": component_status(action_plan_source.get("status") or handoff.get("summary", {}).get("action_plan_status")),
-            "score": score_for(action_plan_source.get("status") or handoff.get("summary", {}).get("action_plan_status"), 10, partial=5),
+            "status": action_plan_status,
+            "score": score_for(action_plan_status, 10, partial=5),
             "weight": 10,
-            "summary": f"actions={action_plan_summary.get('actions', 0)} blocked={action_plan_summary.get('blocked', 0)} attention={action_plan_summary.get('attention', 0)}",
-            "next_action": "agentops operator action-plan --limit 20",
+            "summary": (
+                f"actions={action_plan_summary.get('actions', 0)} blocked={action_plan_summary.get('blocked', 0)} "
+                f"attention={action_plan_summary.get('attention', 0)} receipt_eval_fail={action_plan_summary.get('receipt_evaluation_fail_actions', 0)}"
+            ),
+            "next_action": action_plan_next_action,
         },
     ]
     total_score = min(max(sum(int(item.get("score") or 0) for item in components), 0), 100)

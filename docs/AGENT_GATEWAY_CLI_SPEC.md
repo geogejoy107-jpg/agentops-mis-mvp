@@ -376,8 +376,10 @@ loop review state into a single handoff payload. It returns `work_order`,
 boundary (`mode`, scoped flag, required `tasks:read` scope), and safety flags
 without executing commands or mutating audit/runtime ledgers. `loop_health` is
 a read-only score/status snapshot derived from method gates, receipt coverage,
-loop RECORD state, auth, and safety; it carries gate summaries, risks, and the
-next recommended action. Local no-token demo reads remain supported when
+receipt evaluation coverage, loop RECORD state, auth, and safety; it carries
+gate summaries, risks, and the next recommended action. Failed receipt
+evaluations block loop health because they mean a recovery action was recorded
+but did not pass the operator-quality gate. Local no-token demo reads remain supported when
 `AGENTOPS_API_KEY` is unset; supplied Agent Gateway tokens/sessions must be
 valid and carry `tasks:read`. Invalid or out-of-range `limit` values are safely
 bounded to the supported 1..30 range instead of turning the handoff endpoint
@@ -1377,8 +1379,11 @@ commands, and does not mutate the ledger. With confirmation it appends
 `action_command` or `verify_command`. Confirmed `verified` and `failed`
 receipts also write an `operator_action_evaluations` rule score and an
 `operator.action_queue_evaluation` audit row, so recovery work has both RECORD
-and VERIFY-quality evidence. Valid receipt statuses are `recorded`, `verified`,
-`failed`, and `skipped`.
+and VERIFY-quality evidence. `operator action-plan`, `operator loop-audit`, and
+`operator health` consume this evaluation signal: failed receipt evaluations
+surface as a blocked `receipt_evaluation` recovery action, and coverage
+summaries include evaluated/pass/fail/missing counts. Valid receipt statuses
+are `recorded`, `verified`, `failed`, and `skipped`.
 
 ```bash
 agentops operator intake-checklist --limit 12

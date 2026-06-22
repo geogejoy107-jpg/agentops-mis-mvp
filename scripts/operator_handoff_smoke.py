@@ -126,8 +126,26 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
     require(safety.get("ledger_mutated") is False, f"{label} should not mutate ledger: {safety}", failures)
     require(safety.get("live_execution_performed") is False, f"{label} should not execute live work: {safety}", failures)
     summary = payload.get("summary") or {}
-    for key in ["loop_package_items", "operator_actions", "receipt_required", "receipt_verified", "receipt_missing", "receipt_stale"]:
+    for key in [
+        "loop_package_items",
+        "operator_actions",
+        "receipt_required",
+        "receipt_verified",
+        "receipt_missing",
+        "receipt_stale",
+        "receipt_evaluation_required",
+        "receipt_evaluated",
+        "receipt_evaluation_fail",
+        "receipt_evaluation_missing",
+    ]:
         require(isinstance(summary.get(key), int), f"{label} summary.{key} missing: {summary}", failures)
+    loop_health_gates = loop_health.get("gates") or {}
+    receipt_eval_gate = loop_health_gates.get("receipt_evaluations") or {}
+    require(receipt_eval_gate.get("status") in {"pass", "attention", "blocked"}, f"{label} receipt evaluation gate missing: {receipt_eval_gate}", failures)
+    for key in ["required", "evaluated", "failed", "missing", "coverage_percent"]:
+        require(isinstance(receipt_eval_gate.get(key), int), f"{label} receipt evaluation gate {key} missing: {receipt_eval_gate}", failures)
+    score_parts = loop_health.get("score_parts") or {}
+    require(isinstance(score_parts.get("receipt_evaluations"), int), f"{label} receipt evaluation score part missing: {score_parts}", failures)
     work_order = payload.get("work_order") or {}
     require(work_order.get("method") == "READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD", f"{label} method missing: {work_order}", failures)
     require(isinstance(work_order.get("commands") or [], list), f"{label} commands missing: {work_order}", failures)

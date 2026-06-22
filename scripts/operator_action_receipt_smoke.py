@@ -139,6 +139,13 @@ def main() -> int:
                 and item.get("receipt_required") is True
                 and item.get("command") != seed_action.get("command")
             ), {})
+            failed_seed_action = next((
+                item for item in seed_plan.get("actions") or []
+                if item.get("command")
+                and item.get("action_signature")
+                and item.get("receipt_required") is True
+                and item.get("command") not in {seed_action.get("command"), stale_seed_action.get("command")}
+            ), {})
             action_command = str(seed_action.get("command") or "agentops worker status")
             verify_command = str(seed_action.get("verify_command") or "agentops operator action-plan --limit 20")
             payload = {
@@ -261,6 +268,41 @@ def main() -> int:
                 require(int(stale_action.get("receipt_priority_boost") or 0) == 8, f"stale receipt should keep priority boost: {stale_action}", failures)
                 require(stale_action.get("receipt_id") == stale_item.get("receipt_id"), f"stale receipt id mismatch: {stale_action}", failures)
 
+            failed_payload = None
+            failed_item = None
+            if failed_seed_action:
+                failed_payload = {
+                    "action_command": str(failed_seed_action.get("command") or "agentops worker status"),
+                    "verify_command": str(failed_seed_action.get("verify_command") or "agentops operator action-plan --limit 20"),
+                    "action_id": str(failed_seed_action.get("action_id") or "smoke:failed-action"),
+                    "action_signature": str(failed_seed_action.get("action_signature") or ""),
+                    "source": "smoke.operator_action_queue.failed",
+                    "status": "failed",
+                    "result_summary": "Smoke failed receipt should project back into action-plan recovery.",
+                }
+                status, failed_receipt = http_json(base_url, "/api/operator/action-receipts", "POST", failed_payload)
+                outputs.append(json.dumps(failed_receipt, ensure_ascii=False))
+                require(status == 201, f"failed POST status mismatch: {status} {failed_receipt}", failures)
+                failed_item = failed_receipt.get("receipt") or {}
+                failed_evaluation = failed_receipt.get("evaluation") or {}
+                require(failed_evaluation.get("pass_fail") == "fail", f"failed receipt evaluation should fail: {failed_evaluation}", failures)
+                require(float(failed_evaluation.get("score") if failed_evaluation.get("score") is not None else 1) == 0.0, f"failed receipt evaluation score wrong: {failed_evaluation}", failures)
+
+                status, failed_plan = http_json(base_url, "/api/operator/action-plan?limit=30")
+                outputs.append(json.dumps(failed_plan, ensure_ascii=False))
+                require(status == 200, f"failed action-plan status mismatch: {status} {failed_plan}", failures)
+                failed_plan_summary = failed_plan.get("summary") or {}
+                failed_coverage = failed_plan.get("receipt_coverage") or {}
+                require(int(failed_plan_summary.get("receipt_evaluation_fail_actions") or 0) >= 1, f"failed receipt evaluation not counted: {failed_plan_summary}", failures)
+                require(failed_coverage.get("evaluation_status") == "blocked", f"failed receipt evaluation should block coverage: {failed_coverage}", failures)
+                recovery_action = next((row for row in failed_plan.get("actions") or [] if row.get("source") == "receipt_evaluation"), {})
+                require(bool(recovery_action), f"failed receipt recovery action missing: {failed_plan.get('actions')}", failures)
+                require(recovery_action.get("severity") == "blocked", f"failed receipt recovery action should be blocked: {recovery_action}", failures)
+                failed_matched_action = next((row for row in failed_plan.get("actions") or [] if row.get("command") == failed_payload["action_command"]), {})
+                require(failed_matched_action.get("receipt_status") == "failed", f"failed action receipt status missing: {failed_matched_action}", failures)
+                failed_matched_eval = failed_matched_action.get("receipt_evaluation") or (failed_matched_action.get("receipt_state") or {}).get("evaluation") or {}
+                require(failed_matched_eval.get("pass_fail") == "fail", f"failed action receipt evaluation missing: {failed_matched_action}", failures)
+
             status, loop_audit = http_json(base_url, "/api/operator/loop-audit?limit=30")
             outputs.append(json.dumps(loop_audit, ensure_ascii=False))
             require(status == 200, f"loop-audit status mismatch: {status} {loop_audit}", failures)
@@ -275,11 +317,13 @@ def main() -> int:
             record_evidence = record_step.get("evidence") or {}
             require(int(record_evidence.get("receipt_verified_actions") or 0) >= 1, f"RECORD evidence lacks verified action receipt: {record_evidence}", failures)
             require(int(record_evidence.get("receipt_lookup_window") or 0) >= int(record_evidence.get("action_receipts") or 0), f"RECORD evidence lacks deeper receipt lookup: {record_evidence}", failures)
+            if failed_payload:
+                require(int(record_evidence.get("receipt_evaluation_fail_actions") or 0) >= 1, f"RECORD evidence lacks failed receipt evaluation: {record_evidence}", failures)
 
             after = db_counts(db_path)
-            expected_writes = 1 + (1 if stale_payload else 0) + unrelated_writes
+            expected_writes = 1 + (1 if stale_payload else 0) + unrelated_writes + (1 if failed_payload else 0)
             require(after["audit_logs"] == before["audit_logs"] + expected_writes, f"audit count did not increase by {expected_writes}: {before} -> {after}", failures)
-            expected_evaluations = 1 + (1 if stale_payload else 0)
+            expected_evaluations = 1 + (1 if stale_payload else 0) + (1 if failed_payload else 0)
             require(after["operator_action_evaluations"] == before["operator_action_evaluations"] + expected_evaluations, f"operator action evaluation count wrong: {before} -> {after}", failures)
             require(after["evaluation_audit_logs"] == before["evaluation_audit_logs"] + expected_evaluations, f"operator action evaluation audit count wrong: {before} -> {after}", failures)
             require(after["runtime_events"] == before["runtime_events"] + expected_writes, f"runtime count did not increase by {expected_writes}: {before} -> {after}", failures)

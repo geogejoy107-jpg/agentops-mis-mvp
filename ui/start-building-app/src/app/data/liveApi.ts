@@ -1191,11 +1191,20 @@ export interface OperatorActionPlanPayload {
     action_receipts_recorded: number;
     action_receipts_verified: number;
     action_receipts_failed: number;
+    action_receipts_evaluated: number;
+    action_receipts_evaluation_pass: number;
+    action_receipts_evaluation_fail: number;
     receipt_required_actions: number;
     receipt_verified_actions: number;
     receipt_missing_actions: number;
     receipt_missing_verified_actions: number;
     receipt_stale_actions: number;
+    receipt_evaluation_required_actions: number;
+    receipt_evaluated_actions: number;
+    receipt_evaluation_pass_actions: number;
+    receipt_evaluation_fail_actions: number;
+    receipt_evaluation_missing_actions: number;
+    receipt_evaluation_coverage_percent: number;
     receipt_coverage_percent: number;
     receipt_lookup_window: number;
   };
@@ -1210,6 +1219,13 @@ export interface OperatorActionPlanPayload {
     missing_verified: number;
     coverage_percent: number;
     status: string;
+    evaluation_required?: number;
+    evaluated?: number;
+    evaluation_pass?: number;
+    evaluation_fail?: number;
+    evaluation_missing?: number;
+    evaluation_coverage_percent?: number;
+    evaluation_status?: string;
     lookup_window: number;
     display_receipts: number;
     token_omitted?: boolean;
@@ -4042,11 +4058,20 @@ export async function loadOperatorActionPlan(limit = 12): Promise<OperatorAction
       action_receipts_recorded: numberValue(summaryRaw.action_receipts_recorded, 0),
       action_receipts_verified: numberValue(summaryRaw.action_receipts_verified, 0),
       action_receipts_failed: numberValue(summaryRaw.action_receipts_failed, 0),
+      action_receipts_evaluated: numberValue(summaryRaw.action_receipts_evaluated, 0),
+      action_receipts_evaluation_pass: numberValue(summaryRaw.action_receipts_evaluation_pass, 0),
+      action_receipts_evaluation_fail: numberValue(summaryRaw.action_receipts_evaluation_fail, 0),
       receipt_required_actions: numberValue(summaryRaw.receipt_required_actions, 0),
       receipt_verified_actions: numberValue(summaryRaw.receipt_verified_actions, 0),
       receipt_missing_actions: numberValue(summaryRaw.receipt_missing_actions, 0),
       receipt_missing_verified_actions: numberValue(summaryRaw.receipt_missing_verified_actions, 0),
       receipt_stale_actions: numberValue(summaryRaw.receipt_stale_actions, 0),
+      receipt_evaluation_required_actions: numberValue(summaryRaw.receipt_evaluation_required_actions, 0),
+      receipt_evaluated_actions: numberValue(summaryRaw.receipt_evaluated_actions, 0),
+      receipt_evaluation_pass_actions: numberValue(summaryRaw.receipt_evaluation_pass_actions, 0),
+      receipt_evaluation_fail_actions: numberValue(summaryRaw.receipt_evaluation_fail_actions, 0),
+      receipt_evaluation_missing_actions: numberValue(summaryRaw.receipt_evaluation_missing_actions, 0),
+      receipt_evaluation_coverage_percent: numberValue(summaryRaw.receipt_evaluation_coverage_percent, 0),
       receipt_coverage_percent: numberValue(summaryRaw.receipt_coverage_percent, 0),
       receipt_lookup_window: numberValue(summaryRaw.receipt_lookup_window, 0),
     },
@@ -4089,6 +4114,13 @@ export async function loadOperatorActionPlan(limit = 12): Promise<OperatorAction
       missing_verified: numberValue((raw.receipt_coverage as Record<string, unknown>).missing_verified, 0),
       coverage_percent: numberValue((raw.receipt_coverage as Record<string, unknown>).coverage_percent, 0),
       status: String((raw.receipt_coverage as Record<string, unknown>).status || "unknown"),
+      evaluation_required: numberValue((raw.receipt_coverage as Record<string, unknown>).evaluation_required, 0),
+      evaluated: numberValue((raw.receipt_coverage as Record<string, unknown>).evaluated, 0),
+      evaluation_pass: numberValue((raw.receipt_coverage as Record<string, unknown>).evaluation_pass, 0),
+      evaluation_fail: numberValue((raw.receipt_coverage as Record<string, unknown>).evaluation_fail, 0),
+      evaluation_missing: numberValue((raw.receipt_coverage as Record<string, unknown>).evaluation_missing, 0),
+      evaluation_coverage_percent: numberValue((raw.receipt_coverage as Record<string, unknown>).evaluation_coverage_percent, 0),
+      evaluation_status: String((raw.receipt_coverage as Record<string, unknown>).evaluation_status || "ready"),
       lookup_window: numberValue((raw.receipt_coverage as Record<string, unknown>).lookup_window, 0),
       display_receipts: numberValue((raw.receipt_coverage as Record<string, unknown>).display_receipts, 0),
       token_omitted: boolValue((raw.receipt_coverage as Record<string, unknown>).token_omitted),
