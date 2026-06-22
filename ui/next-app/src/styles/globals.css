@@ -455,6 +455,31 @@ h2 {
   opacity: 0.55;
 }
 
+.memoryRow {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.memoryIcon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid rgba(34, 211, 238, 0.28);
+  color: var(--cyan);
+}
+
+.actorCell {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.actorCell em {
+  color: var(--muted);
+  font-style: normal;
+}
+
 @media (max-width: 920px) {
   .shell {
     grid-template-columns: 1fr;
@@ -474,5 +499,9 @@ h2 {
 
   .row strong {
     max-width: 62vw;
+  }
+
+  .memoryRow {
+    grid-template-columns: 1fr;
   }
 }

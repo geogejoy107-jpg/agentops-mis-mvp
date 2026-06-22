@@ -31,9 +31,12 @@ def main() -> int:
         NEXT_APP / "app" / "workspace" / "tasks" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "runs" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "approvals" / "page.tsx",
+        NEXT_APP / "app" / "workspace" / "memory" / "page.tsx",
+        NEXT_APP / "app" / "workspace" / "audit" / "page.tsx",
         NEXT_APP / "app" / "api" / "mis" / "[...path]" / "route.ts",
         NEXT_APP / "src" / "components" / "AppFrame.tsx",
         NEXT_APP / "src" / "components" / "LedgerPages.tsx",
+        NEXT_APP / "src" / "components" / "GovernancePages.tsx",
         NEXT_APP / "src" / "components" / "WorkspaceDashboard.tsx",
         NEXT_APP / "src" / "lib" / "mis.ts",
         NEXT_APP / "src" / "styles" / "globals.css",
@@ -45,6 +48,7 @@ def main() -> int:
     route_text = read_text(NEXT_APP / "app" / "api" / "mis" / "[...path]" / "route.ts")
     app_frame_text = read_text(NEXT_APP / "src" / "components" / "AppFrame.tsx")
     ledger_pages_text = read_text(NEXT_APP / "src" / "components" / "LedgerPages.tsx")
+    governance_pages_text = read_text(NEXT_APP / "src" / "components" / "GovernancePages.tsx")
     dashboard_text = read_text(NEXT_APP / "src" / "components" / "WorkspaceDashboard.tsx")
     lib_text = read_text(NEXT_APP / "src" / "lib" / "mis.ts")
 
@@ -54,16 +58,29 @@ def main() -> int:
     require("AGENTOPS_API_BASE" in route_text, "API proxy must be configurable with AGENTOPS_API_BASE")
     require("/dashboard/metrics" in lib_text, "workspace parity data must include dashboard metrics")
     require("/tasks" in lib_text and "/runs" in lib_text and "/approvals" in lib_text, "workspace parity data misses core ledgers")
+    require("/memories" in lib_text and "/audit?limit=120" in lib_text, "governance parity data misses memory or audit ledgers")
     require("/approvals/${encodeURIComponent(id)}/${decision}" in lib_text, "approval decision parity action is missing")
+    require("/memories/${encodeURIComponent(id)}/${decision}" in lib_text, "memory decision parity action is missing")
     require("/workspace/tasks" in app_frame_text and "/workspace/runs" in app_frame_text, "Next.js nav must expose task and run parity routes")
+    require("/workspace/memory" in app_frame_text and "/workspace/audit" in app_frame_text, "Next.js nav must expose governance parity routes")
     require("TasksParityPage" in ledger_pages_text and "RunsParityPage" in ledger_pages_text, "ledger parity pages are missing")
     require("ApprovalsParityPage" in ledger_pages_text and "decideApproval" in ledger_pages_text, "approval parity page must expose decision action")
+    require("MemoryParityPage" in governance_pages_text and "decideMemory" in governance_pages_text, "memory parity page must expose review action")
+    require("AuditParityPage" in governance_pages_text and "loadAudit" in governance_pages_text, "audit parity page must expose evidence readback")
     require("loadWorkspaceSnapshot" in dashboard_text, "workspace page must consume the shared Next.js MIS data contract")
 
     print(json.dumps({
         "ok": True,
         "next_app": str(NEXT_APP.relative_to(ROOT)),
-        "routes": ["/workspace", "/workspace/tasks", "/workspace/runs", "/workspace/approvals", "/api/mis/[...path]"],
+        "routes": [
+            "/workspace",
+            "/workspace/tasks",
+            "/workspace/runs",
+            "/workspace/approvals",
+            "/workspace/memory",
+            "/workspace/audit",
+            "/api/mis/[...path]",
+        ],
         "stack": {
             "next": dependencies.get("next"),
             "react": dependencies.get("react"),

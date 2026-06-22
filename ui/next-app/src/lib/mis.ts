@@ -52,6 +52,30 @@ export type ApprovalSummary = {
   decided_at?: string | null;
 };
 
+export type MemorySummary = {
+  memory_id: string;
+  scope: string;
+  memory_type: string;
+  canonical_text: string;
+  source_type?: string;
+  confidence?: number;
+  review_status: string;
+  task_id?: string | null;
+  agent_id?: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type AuditSummary = {
+  audit_id: string;
+  actor_type: string;
+  actor_id: string;
+  action: string;
+  entity_type: string;
+  entity_id: string;
+  created_at?: string;
+};
+
 export type WorkspaceSnapshot = {
   metrics: DashboardMetrics;
   tasks: TaskSummary[];
@@ -103,4 +127,19 @@ export async function decideApproval(id: string, decision: "approve" | "reject")
     method: "POST",
     body: JSON.stringify({}),
   });
+}
+
+export async function loadMemories(): Promise<MemorySummary[]> {
+  return misJson<MemorySummary[]>("/memories");
+}
+
+export async function decideMemory(id: string, decision: "approve" | "reject"): Promise<MemorySummary> {
+  return misJson<MemorySummary>(`/memories/${encodeURIComponent(id)}/${decision}`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
+export async function loadAudit(): Promise<AuditSummary[]> {
+  return misJson<AuditSummary[]>("/audit?limit=120");
 }

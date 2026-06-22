@@ -143,6 +143,8 @@ Must be true:
   - `ui/next-app/app/workspace/tasks/page.tsx`
   - `ui/next-app/app/workspace/runs/page.tsx`
   - `ui/next-app/app/workspace/approvals/page.tsx`
+  - `ui/next-app/app/workspace/memory/page.tsx`
+  - `ui/next-app/app/workspace/audit/page.tsx`
   - `ui/next-app/app/api/mis/[...path]/route.ts`
   - `scripts/nextjs_parity_smoke.py`
 
