@@ -565,6 +565,39 @@ python3 scripts/module_boundary_smoke.py
 python3 scripts/agent_plan_integrity_smoke.py --base-url http://127.0.0.1:8787
 ```
 
+### Slice 20: Agent Plan Contract And Hash Helpers
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/agent_plans.py`
+
+Moved out of `server.py`:
+
+- Agent Plan JSON-list row parsing helper
+- Agent Plan row-field fallback helper
+- immutable Agent Plan contract projection
+- Agent Plan contract hash
+- Agent Plan verification result hash
+
+Still owned by `server.py`:
+
+- HTTP routes
+- repository path/reference resolution
+- memory/base/spec authority checks
+- Agent Plan verification decisions and persistence
+- approval rows, runtime events, audit logs and commits
+- run-start task/agent/status execution gates
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/agent_plan_integrity_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/run_start_plan_gate_smoke.py --base-url http://127.0.0.1:8787
+```
+
 ## Next Candidate Slices
 
 - Continue P1-05 with small smoke-backed strangler slices only; prefer pure

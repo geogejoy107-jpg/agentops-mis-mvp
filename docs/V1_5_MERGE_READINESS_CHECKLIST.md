@@ -256,7 +256,7 @@ coverage for every external side-effect path.
   route blocked/error, route access/error, prepare-response, prepared-action decision projection, high-risk tool-call required response, resume-success, provider-result reconciliation and
   next-action helpers now live in
   `agentops_mis_core/approval_wall.py`; Agent Plan approval-decision,
-  create-status and bound-approval-forbidden response projections now live in
+  create-status, bound-approval-forbidden, contract and hash helpers now live in
   `agentops_mis_core/agent_plans.py`; worker status/fleet lane/health
   aggregation now lives in `agentops_mis_core/worker_fleet.py`; Commander
   work-package status/action/readback summary and project-board gate aggregation

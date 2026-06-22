@@ -41,10 +41,15 @@ from agentops_mis_core.approval_wall import (
     runtime_probe_prepared_action_required_payload,
 )
 from agentops_mis_core.agent_plans import (
+    agent_plan_contract,
+    agent_plan_verification_hash,
     build_agent_plan_approval_anchor_required_response,
     build_agent_plan_approval_decision_response,
     build_agent_plan_bound_approval_forbidden_response,
     build_agent_plan_status_transition_required_response,
+    compute_agent_plan_hash,
+    load_json_list_field,
+    row_field,
 )
 from agentops_mis_core.read_model_cache import ReadModelCache
 from agentops_mis_core.commander_work_packages import (
@@ -239,16 +244,26 @@ SERVER_APPROVAL_WALL_IMPORTS = {
     "runtime_probe_prepared_action_required_payload",
 }
 EXTRACTED_AGENT_PLAN_HELPERS = {
+    "agent_plan_contract",
+    "agent_plan_verification_hash",
     "build_agent_plan_approval_anchor_required_response",
     "build_agent_plan_approval_decision_response",
     "build_agent_plan_bound_approval_forbidden_response",
     "build_agent_plan_status_transition_required_response",
+    "compute_agent_plan_hash",
+    "load_json_list_field",
+    "row_field",
 }
 SERVER_AGENT_PLAN_IMPORTS = {
+    "agent_plan_contract",
+    "agent_plan_verification_hash",
     "build_agent_plan_approval_anchor_required_response",
     "build_agent_plan_approval_decision_response",
     "build_agent_plan_bound_approval_forbidden_response",
     "build_agent_plan_status_transition_required_response",
+    "compute_agent_plan_hash",
+    "load_json_list_field",
+    "row_field",
 }
 
 
@@ -674,6 +689,34 @@ def main() -> int:
         prepared_action={**prepared_row, "status": "approved"},
         decision="approved",
     )
+    agent_plan_row = {
+        "workspace_id": "local-demo",
+        "task_id": "tsk_plan_contract_smoke",
+        "run_id": None,
+        "agent_id": "agt_plan_contract_smoke",
+        "task_understanding": "Test Agent Plan contract hashing.",
+        "referenced_specs_json": '["PROJECT_SPEC.md"]',
+        "referenced_memories_json": '["knowledge/shared/common_failures.md"]',
+        "referenced_bases_json": '["agent_gateway_ledger"]',
+        "proposed_files_to_change_json": '["server.py"]',
+        "risk_level": "medium",
+        "approval_required": 1,
+        "execution_steps_json": '["read", "execute", "verify"]',
+        "verification_plan": "Run module boundary smoke.",
+        "rollback_plan": "Revert the helper extraction.",
+        "plan_version": 1,
+    }
+    agent_plan_contract_payload = agent_plan_contract(agent_plan_row)
+    agent_plan_hash = compute_agent_plan_hash(agent_plan_row)
+    agent_plan_verification_digest = agent_plan_verification_hash(
+        "plan_contract_smoke",
+        {
+            "plan_hash": agent_plan_hash,
+            "pass": False,
+            "failed_checks": [{"id": "read_specs"}],
+            "summary": {"execution_steps": 3},
+        },
+    )
     agent_plan_approval_decision_response = build_agent_plan_approval_decision_response(
         approval={"approval_id": "ap_plan_smoke", "decision": "approved"},
         agent_plan_decision={
@@ -725,6 +768,14 @@ def main() -> int:
     require(approval_decision_response.get("resume_required") is True, "approval decision response resume-required flag failed", failures)
     require((approval_decision_response.get("prepared_action") or {}).get("status") == "approved", "approval decision response prepared action failed", failures)
     require(approval_decision_response.get("token_omitted") is True, "approval decision response omission proof missing", failures)
+    require(load_json_list_field({"items": "[1, 2]"}, "items") == [1, 2], "agent plan json-list parser failed", failures)
+    require(load_json_list_field({"items": "{\"bad\": true}"}, "items") == [], "agent plan json-list parser accepted non-list", failures)
+    require(row_field(None, "missing", "fallback") == "fallback", "agent plan row field fallback failed", failures)
+    require(agent_plan_contract_payload.get("referenced_specs") == ["PROJECT_SPEC.md"], "agent plan contract specs failed", failures)
+    require(agent_plan_contract_payload.get("execution_steps") == ["read", "execute", "verify"], "agent plan contract steps failed", failures)
+    require(agent_plan_contract_payload.get("approval_required") is True, "agent plan contract approval flag failed", failures)
+    require(isinstance(agent_plan_hash, str) and len(agent_plan_hash) == 64 and agent_plan_hash == compute_agent_plan_hash(agent_plan_row), "agent plan hash stability failed", failures)
+    require(isinstance(agent_plan_verification_digest, str) and len(agent_plan_verification_digest) == 64, "agent plan verification hash failed", failures)
     require((agent_plan_approval_decision_response.get("agent_plan") or {}).get("status") == "approved", "agent plan approval decision response plan failed", failures)
     require(agent_plan_approval_decision_response.get("verification_result_hash") == "hash_plan_verification_smoke", "agent plan approval decision response hash failed", failures)
     require(agent_plan_approval_decision_response.get("token_omitted") is True, "agent plan approval decision response omission proof missing", failures)

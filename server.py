@@ -59,10 +59,15 @@ from agentops_mis_core.approval_wall import (
     runtime_probe_prepared_action_required_payload,
 )
 from agentops_mis_core.agent_plans import (
+    agent_plan_contract,
+    agent_plan_verification_hash,
     build_agent_plan_approval_anchor_required_response,
     build_agent_plan_approval_decision_response,
     build_agent_plan_bound_approval_forbidden_response,
     build_agent_plan_status_transition_required_response,
+    compute_agent_plan_hash,
+    load_json_list_field,
+    row_field,
 )
 from agentops_mis_core.commander_work_packages import (
     build_commander_work_packages_readback,
@@ -4904,27 +4909,6 @@ def get_agent_plan(conn: sqlite3.Connection, plan_id: str, headers=None, auth_ct
     return {"provider": "agentops-agent-plan", "operation": "agent_plan_get", "agent_plan": dict(row), "token_omitted": True}, 200
 
 
-def load_json_list_field(row: sqlite3.Row | dict, field: str) -> list:
-    try:
-        value = row[field]
-    except Exception:
-        value = "[]"
-    try:
-        parsed = json.loads(value or "[]")
-    except Exception:
-        parsed = []
-    return parsed if isinstance(parsed, list) else []
-
-
-def row_field(row: sqlite3.Row | dict | None, field: str, default=None):
-    if row is None:
-        return default
-    try:
-        return row[field]
-    except Exception:
-        return row.get(field, default) if hasattr(row, "get") else default
-
-
 def plan_ref_is_safe_relative_path(ref: str) -> bool:
     value = str(ref or "").strip()
     if not value or value.startswith(("http://", "https://", "file://", "~")):
@@ -5031,30 +5015,6 @@ def resolve_agent_plan_file_scope(refs: list) -> dict:
         "message": "Proposed file changes must stay inside the repository and use relative paths.",
         "token_omitted": True,
     }
-
-
-def agent_plan_contract(row: sqlite3.Row | dict) -> dict:
-    return {
-        "workspace_id": row_field(row, "workspace_id"),
-        "task_id": row_field(row, "task_id"),
-        "run_id": row_field(row, "run_id"),
-        "agent_id": row_field(row, "agent_id"),
-        "task_understanding": row_field(row, "task_understanding") or "",
-        "referenced_specs": load_json_list_field(row, "referenced_specs_json"),
-        "referenced_memories": load_json_list_field(row, "referenced_memories_json"),
-        "referenced_bases": load_json_list_field(row, "referenced_bases_json"),
-        "proposed_files_to_change": load_json_list_field(row, "proposed_files_to_change_json"),
-        "risk_level": row_field(row, "risk_level"),
-        "approval_required": bool(row_field(row, "approval_required")),
-        "execution_steps": load_json_list_field(row, "execution_steps_json"),
-        "verification_plan": row_field(row, "verification_plan") or "",
-        "rollback_plan": row_field(row, "rollback_plan") or "",
-        "plan_version": int(row_field(row, "plan_version", 1) or 1),
-    }
-
-
-def compute_agent_plan_hash(row: sqlite3.Row | dict) -> str:
-    return stable_hash(agent_plan_contract(row))
 
 
 def resolve_agent_plan_memory_authority(conn: sqlite3.Connection | None, row: sqlite3.Row | dict, refs: list) -> dict:
@@ -5236,16 +5196,6 @@ def ensure_agent_plan_approval_run(conn: sqlite3.Connection, row: sqlite3.Row | 
         "created_at": now,
     }, actor_id="agent-plan-approval-gate", audit_metadata={"plan_id": plan_id, "token_omitted": True})
     return run_id
-
-
-def agent_plan_verification_hash(plan_id: str, verification: dict) -> str:
-    return stable_hash({
-        "plan_id": plan_id,
-        "plan_hash": verification.get("plan_hash"),
-        "pass": verification.get("pass"),
-        "failed_checks": [check.get("id") for check in verification.get("failed_checks") or []],
-        "summary": verification.get("summary") or {},
-    })
 
 
 def persist_agent_plan_verification(conn: sqlite3.Connection, plan_id: str, verification: dict) -> tuple[dict, str]:
