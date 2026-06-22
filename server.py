@@ -21014,6 +21014,243 @@ def operator_health(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) -
     }
 
 
+def operator_runtime_doctor(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) -> dict:
+    qs = qs or {}
+    limit = bounded_int((qs.get("limit") or ["8"])[0], 8, 1, 20)
+    loop_id = redact_text((qs.get("loop_id") or [""])[0], 120)
+    scheme = str(headers.get("X-Forwarded-Proto") or "http").split(",", 1)[0].strip() or "http"
+    host = str(headers.get("Host") or "127.0.0.1:8787").strip() or "127.0.0.1:8787"
+    base_url = redact_text((qs.get("base_url") or [f"{scheme}://{host}"])[0], 240)
+    effective_headers = headers
+    if agent_gateway_is_bound_auth(auth_ctx):
+        effective_headers = dict(headers)
+        effective_headers["X-AgentOps-Workspace-Id"] = auth_ctx.get("workspace_id") or "local-demo"
+        effective_headers["X-AgentOps-Agent-Id"] = auth_ctx.get("agent_id") or ""
+
+    health = operator_health(conn, effective_headers, {"limit": [str(limit)], "loop_id": [loop_id]} if loop_id else {"limit": [str(limit)]}, auth_ctx)
+    readiness = worker_adapter_readiness(conn, refresh=False)
+    fleet = worker_fleet_view(conn)
+    handoff = operator_handoff(conn, effective_headers, {"limit": [str(limit)], "loop_id": [loop_id]} if loop_id else {"limit": [str(limit)]}, auth_ctx)
+    health_summary = health.get("summary") or {}
+    readiness_summary = readiness.get("summary") or {}
+    adapters = readiness.get("adapters") or {}
+    fleet_summary = fleet.get("summary") or {}
+    handoff_summary = handoff.get("summary") or {}
+    loop_health = handoff.get("loop_health") or {}
+
+    def component_status(value: str | None) -> str:
+        value = str(value or "unknown")
+        if value in {"ready", "pass", "running", "ok"}:
+            return "pass"
+        if value in {"blocked", "fail", "failed", "error"}:
+            return "blocked"
+        return "attention"
+
+    commands = {
+        "operator_runtime_doctor": f"AGENTOPS_BASE_URL={shlex.quote(base_url)} agentops operator runtime-doctor --limit {limit}",
+        "operator_health": f"AGENTOPS_BASE_URL={shlex.quote(base_url)} agentops operator health --limit 20",
+        "loop_launch_packet": f"AGENTOPS_BASE_URL={shlex.quote(base_url)} agentops operator loop-launch-packet --limit {limit}",
+        "handoff": f"AGENTOPS_BASE_URL={shlex.quote(base_url)} agentops operator handoff --limit {limit}",
+        "loop_self_check": f"AGENTOPS_BASE_URL={shlex.quote(base_url)} agentops operator loop-self-check --limit 12",
+        "loop_audit": "agentops operator loop-audit --limit 20",
+        "evidence_report": "agentops operator evidence-report --limit 12",
+        "worker_readiness": f"AGENTOPS_BASE_URL={shlex.quote(base_url)} agentops worker readiness",
+        "worker_fleet": f"AGENTOPS_BASE_URL={shlex.quote(base_url)} agentops worker fleet",
+        "hermes_preflight": f"AGENTOPS_BASE_URL={shlex.quote(base_url)} agentops worker preflight --adapter hermes",
+        "openclaw_preflight": f"AGENTOPS_BASE_URL={shlex.quote(base_url)} agentops worker preflight --adapter openclaw",
+        "run_hermes_guarded": "agentops workflow run-task --adapter hermes --confirm-run",
+        "run_openclaw_guarded": "agentops workflow run-task --adapter openclaw --confirm-run",
+        "prepared_action_review": "agentops approval list --decision pending --limit 20",
+        "record_action_receipt": "agentops operator record-action-receipt --action-command '<command>' --verify-command 'agentops operator runtime-doctor --limit 8' --confirm-record",
+        "codex_supervisor": "codex resume this workspace, read AGENTS.md, then run agentops operator runtime-doctor --limit 8 before dispatching work",
+    }
+
+    gates: list[dict] = []
+
+    def add_gate(gate_id: str, label: str, status: str, detail: str, command: str | None = None, **extra) -> None:
+        gates.append({
+            "id": gate_id,
+            "label": label,
+            "status": status,
+            "ok": status == "pass",
+            "detail": redact_text(detail, 360),
+            "next_action": command,
+            **extra,
+            "token_omitted": True,
+        })
+
+    add_gate(
+        "mis_api",
+        "Local MIS API",
+        component_status(health.get("status")),
+        f"operator_health={health.get('status')} score={health.get('score')}",
+        commands["operator_health"],
+    )
+    add_gate(
+        "adapter_readiness",
+        "Hermes/OpenClaw adapter readiness",
+        "pass" if readiness.get("status") == "ready" else component_status(readiness.get("status")),
+        f"ready={','.join(readiness_summary.get('ready_adapters') or [])}; live_ready={','.join(readiness_summary.get('live_ready_adapters') or [])}",
+        commands["worker_readiness"],
+    )
+    for adapter in ("hermes", "openclaw"):
+        item = adapters.get(adapter) or {}
+        add_gate(
+            f"{adapter}_runtime",
+            f"{adapter} local runtime",
+            "pass" if item.get("readiness") == "ready" else component_status(item.get("readiness")),
+            f"readiness={item.get('readiness') or 'unknown'} target={item.get('target_resource') or 'unknown'} observation={item.get('observation_level') or 'unknown'}",
+            commands[f"{adapter}_preflight"],
+            adapter=adapter,
+            target_resource=item.get("target_resource"),
+            observation_level=item.get("observation_level"),
+            capability_policy_hash=item.get("capability_policy_hash"),
+        )
+    live_adapters = [name for name in ("hermes", "openclaw") if name in (readiness_summary.get("ready_adapters") or [])]
+    confirm_ready = all((adapters.get(name) or {}).get("requires_confirm_run") is True for name in live_adapters)
+    add_gate(
+        "confirm_run_wall",
+        "Live execution confirmation wall",
+        "pass" if confirm_ready else "blocked",
+        f"live_adapters={','.join(live_adapters) or 'none'} require --confirm-run before Hermes/OpenClaw execution",
+        commands["worker_readiness"],
+        live_adapters=live_adapters,
+    )
+    prepared_ready = True
+    restricted = []
+    for adapter in ("hermes", "openclaw"):
+        manifest = (adapters.get(adapter) or {}).get("capability_manifest") or {}
+        governance = manifest.get("governance") or {}
+        if governance.get("requires_prepared_action_for_external_write") is not True:
+            prepared_ready = False
+        if (adapters.get(adapter) or {}).get("commercial_readiness") == "restricted_until_runtime_tool_events":
+            restricted.append(adapter)
+    add_gate(
+        "prepared_action_wall",
+        "External-write prepared action wall",
+        "pass" if prepared_ready else "blocked",
+        f"opaque_external_writes_route_to_prepared_actions; restricted_until_runtime_tool_events={','.join(restricted) or 'none'}",
+        commands["prepared_action_review"],
+        restricted_adapters=restricted,
+    )
+    remote_attention = int(fleet_summary.get("stale_remote_enrollments") or 0) + int(fleet_summary.get("never_seen_remote_enrollments") or 0)
+    add_gate(
+        "remote_worker_fleet",
+        "Remote Agent fleet",
+        "attention" if remote_attention else component_status(fleet.get("status")),
+        f"remote={fleet_summary.get('remote_worker_count', 0)} fresh={fleet_summary.get('fresh_remote_enrollments', 0)} stale={fleet_summary.get('stale_remote_enrollments', 0)} never_seen={fleet_summary.get('never_seen_remote_enrollments', 0)} active_sessions={fleet_summary.get('active_remote_sessions', 0)}",
+        commands["worker_fleet"],
+        remote_worker_count=fleet_summary.get("remote_worker_count", 0),
+        stale_remote_enrollments=fleet_summary.get("stale_remote_enrollments", 0),
+        never_seen_remote_enrollments=fleet_summary.get("never_seen_remote_enrollments", 0),
+    )
+    add_gate(
+        "loop_launch_packet",
+        "Agent Work Method launch packet",
+        "pass",
+        "READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD packet is available before dispatch",
+        commands["loop_launch_packet"],
+    )
+    add_gate(
+        "handoff_evidence_chain",
+        "Handoff and evidence chain",
+        component_status(loop_health.get("status") or handoff.get("status")),
+        f"handoff={handoff.get('status')} loop_health={loop_health.get('status')} evidence_report={handoff_summary.get('evidence_report_status')}",
+        commands["handoff"],
+        loop_health_score=loop_health.get("score"),
+    )
+    add_gate(
+        "codex_supervisor",
+        "Codex supervisor lane",
+        "pass",
+        "Codex coordinates local loop work through repo state, AGENTS.md, runtime doctor, and receipt-backed commands",
+        commands["codex_supervisor"],
+    )
+    add_gate(
+        "redaction_boundary",
+        "Token and raw-content redaction",
+        "pass",
+        "Doctor output exposes refs, hashes, summaries, and commands only; tokens, sessions, raw prompts, and raw responses remain omitted",
+        "agentops worker readiness && agentops operator runtime-doctor --limit 8",
+    )
+
+    blocked = [gate for gate in gates if gate.get("status") == "blocked"]
+    attention = [gate for gate in gates if gate.get("status") == "attention"]
+    status = "blocked" if blocked else "attention" if attention else "ready"
+    recommended_adapter = readiness_summary.get("recommended_adapter") or "mock"
+    return {
+        "provider": "agentops-operator",
+        "operation": "operator_runtime_doctor",
+        "status": status,
+        "workspace_id": health.get("workspace_id") or normalize_workspace_id(effective_headers.get("X-AgentOps-Workspace-Id") or "local-demo"),
+        "base_url": base_url,
+        "summary": {
+            "mis_status": health.get("status"),
+            "operator_health_score": health.get("score"),
+            "recommended_adapter": recommended_adapter,
+            "ready_adapters": readiness_summary.get("ready_adapters") or [],
+            "live_ready_adapters": readiness_summary.get("live_ready_adapters") or [],
+            "requires_confirm_run": [name for name in ("hermes", "openclaw") if (adapters.get(name) or {}).get("requires_confirm_run") is True],
+            "requires_prepared_action": [name for name in ("hermes", "openclaw") if (((adapters.get(name) or {}).get("capability_manifest") or {}).get("governance") or {}).get("requires_prepared_action_for_external_write") is True],
+            "remote_worker_count": fleet_summary.get("remote_worker_count", 0),
+            "stale_remote_enrollments": fleet_summary.get("stale_remote_enrollments", 0),
+            "never_seen_remote_enrollments": fleet_summary.get("never_seen_remote_enrollments", 0),
+            "control_status": health_summary.get("control_status"),
+            "control_mode": health_summary.get("control_mode"),
+            "blocked_gates": [gate["id"] for gate in blocked],
+            "attention_gates": [gate["id"] for gate in attention],
+        },
+        "gates": gates,
+        "commands": commands,
+        "sources": {
+            "operator_health": {
+                "status": health.get("status"),
+                "score": health.get("score"),
+                "summary": health_summary,
+                "token_omitted": True,
+            },
+            "adapter_readiness": {
+                "status": readiness.get("status"),
+                "summary": readiness_summary,
+                "token_omitted": True,
+            },
+            "worker_fleet": {
+                "status": fleet.get("status"),
+                "summary": fleet_summary,
+                "token_omitted": True,
+            },
+            "handoff": {
+                "status": handoff.get("status"),
+                "summary": handoff_summary,
+                "loop_health": {
+                    "status": loop_health.get("status"),
+                    "score": loop_health.get("score"),
+                    "next_action": loop_health.get("next_action"),
+                    "token_omitted": True,
+                },
+                "token_omitted": True,
+            },
+        },
+        "contract": "read-only runtime doctor for local MIS, Hermes, OpenClaw, Codex supervision, remote Agent fleet, launch packet, handoff, confirm-run walls, prepared-action walls, and evidence commands; it never starts runtimes, executes tasks, or mutates ledgers",
+        "auth": health.get("auth") or {
+            "mode": (auth_ctx or {}).get("mode") or "unknown",
+            "required_scope": "tasks:read",
+            "token_omitted": True,
+        },
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_executes_shell": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+
+
 def operator_command_center(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) -> dict:
     qs = qs or {}
     limit = bounded_int((qs.get("limit") or ["12"])[0], 12, 1, 30)
@@ -22619,6 +22856,25 @@ class Handler(BaseHTTPRequestHandler):
                     qs,
                     self.headers,
                     lambda: operator_health(conn, self.headers, qs, auth_ctx),
+                    auth_ctx,
+                )
+                conn.rollback()
+                return self.send_json(payload)
+            if path == "/api/operator/runtime-doctor":
+                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                if auth_error:
+                    conn.rollback()
+                    return self.send_json(auth_error, agent_gateway_error_status(auth_error))
+                if agent_gateway_is_bound_auth(auth_ctx):
+                    requested_header_workspace = normalize_workspace_id(self.headers.get("X-AgentOps-Workspace-Id") or auth_ctx["workspace_id"])
+                    if requested_header_workspace != auth_ctx["workspace_id"]:
+                        conn.rollback()
+                        return self.send_json({"error": "forbidden", "message": "Agent token cannot use another workspace header."}, 403)
+                payload = cached_read_model(
+                    "operator_runtime_doctor",
+                    qs,
+                    self.headers,
+                    lambda: operator_runtime_doctor(conn, self.headers, qs, auth_ctx),
                     auth_ctx,
                 )
                 conn.rollback()

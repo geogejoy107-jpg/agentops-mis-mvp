@@ -470,6 +470,17 @@ def cmd_operator_health(args, client: AgentOpsClient) -> dict:
     return client.get("/api/operator/health", query={"limit": args.limit, "loop_id": args.loop_id or None})
 
 
+def cmd_operator_runtime_doctor(args, client: AgentOpsClient) -> dict:
+    return client.get(
+        "/api/operator/runtime-doctor",
+        query={
+            "limit": args.limit,
+            "loop_id": args.loop_id or None,
+            "base_url": args.runtime_base_url or None,
+        },
+    )
+
+
 def cmd_operator_command_center(args, client: AgentOpsClient) -> dict:
     return client.get("/api/operator/command-center", query={"limit": args.limit, "project_id": args.project_id or None})
 
@@ -2339,6 +2350,11 @@ def build_parser() -> argparse.ArgumentParser:
     operator_health.add_argument("--loop-id", default=None)
     operator_health.add_argument("--limit", type=int, default=12)
     operator_health.set_defaults(handler="operator_health")
+    operator_runtime_doctor = operator_sub.add_parser("runtime-doctor", help="Read the local MIS/Hermes/OpenClaw/Codex runtime doctor with launch, safety, and evidence commands.")
+    operator_runtime_doctor.add_argument("--loop-id", default=None)
+    operator_runtime_doctor.add_argument("--limit", type=int, default=8)
+    operator_runtime_doctor.add_argument("--runtime-base-url", default=None, help="Base URL to embed in suggested runtime commands; defaults to the server host.")
+    operator_runtime_doctor.set_defaults(handler="operator_runtime_doctor")
     operator_command_center = operator_sub.add_parser("command-center", help="Read the unified operator command-center BFF for projects, blockers, approvals, deliveries, stale workers, and next actions.")
     operator_command_center.add_argument("--project-id", default=None)
     operator_command_center.add_argument("--limit", type=int, default=12)
@@ -3215,6 +3231,7 @@ HANDLERS = {
     "operator_advance_loop": cmd_operator_advance_loop,
     "operator_advance_loop_policy": cmd_operator_advance_loop_policy,
     "operator_health": cmd_operator_health,
+    "operator_runtime_doctor": cmd_operator_runtime_doctor,
     "operator_command_center": cmd_operator_command_center,
     "operator_intake_checklist": cmd_operator_intake_checklist,
     "operator_loop_launch_packet": cmd_operator_loop_launch_packet,

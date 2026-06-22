@@ -454,6 +454,27 @@ handoff, local no-token demo reads are allowed only when the server has no
 configured API key; supplied Agent Gateway tokens/sessions must be valid, carry
 `tasks:read`, and remain bound to their workspace.
 
+### `agentops operator runtime-doctor`
+
+Reads the local runtime launch and safety doctor for Hermes, OpenClaw, Codex,
+and remote Agents:
+
+```bash
+agentops operator runtime-doctor --limit 8
+agentops operator runtime-doctor --runtime-base-url http://127.0.0.1:8787 --limit 8
+```
+
+Maps to `GET /api/operator/runtime-doctor`. This is read-only and aggregates
+`operator health`, `worker readiness`, `worker fleet`, and `operator handoff`.
+It returns gates for local MIS API health, Hermes/OpenClaw availability,
+`--confirm-run`, prepared actions for external writes, remote worker freshness,
+launch-packet availability, handoff/evidence-chain status, Codex supervision,
+and token/raw-content redaction. The payload includes copyable commands for
+runtime preflight, launch packet, handoff, loop audit, evidence report, guarded
+Hermes/OpenClaw execution, and Action Queue receipt recording. It never starts
+runtimes, executes tasks, mutates ledgers, or exposes tokens. Supplied Agent
+Gateway tokens/sessions must carry `tasks:read` and remain workspace-bound.
+
 ### `agentops approval prepared-action`
 
 Creates and resumes the durable Approval Wall primitive for exact tool/action

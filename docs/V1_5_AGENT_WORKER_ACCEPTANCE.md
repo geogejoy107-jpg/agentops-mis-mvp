@@ -42,6 +42,12 @@ runner. The supported management primitives are:
   `agentops operator action-plan` merge review items, failed benchmark runs,
   customer delivery gates, worker fleet recovery, adapter readiness, and
   commander inbox state into a prioritized read-only next-action queue.
+- Operator runtime doctor: `GET /api/operator/runtime-doctor` and
+  `agentops operator runtime-doctor` aggregate local MIS API health,
+  Hermes/OpenClaw adapter readiness, remote Agent fleet state, launch packet,
+  handoff/evidence-chain status, `--confirm-run`, prepared-action walls and
+  Codex supervision commands before live runtime dispatch. It is read-only,
+  copy-command only, and does not start runtimes or mutate ledgers.
 - Failed benchmark run handling: `agentops eval review-case-run` can mark a
   failed `evaluation_case_runs` row as `investigating`, `acknowledged`,
   `waived`, or `open`; acknowledged/waived rows stay in the ledger but stop

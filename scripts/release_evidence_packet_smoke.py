@@ -216,6 +216,12 @@ TEST_COMMANDS = [
         "ci_step": "Server-backed smoke suite",
     },
     {
+        "id": "operator_runtime_doctor",
+        "command": "python3 scripts/operator_runtime_doctor_smoke.py",
+        "summary": "Server-backed local runtime doctor for MIS, Hermes, OpenClaw, Codex supervision, remote Agent fleet, confirm-run walls, prepared-action walls and copyable evidence commands without live execution or ledger mutation.",
+        "ci_step": "Server-backed smoke suite",
+    },
+    {
         "id": "runtime_capability_manifest",
         "command": "python3 scripts/runtime_capability_manifest_smoke.py --base-url \"$AGENTOPS_BASE_URL\"",
         "summary": "Runtime connector capability manifests cover Agent Gateway, OpenClaw, Hermes and Agnesfallback with confirmation/trust policy fields.",
