@@ -29,6 +29,7 @@ import {
   loadOperatorHandoff,
   loadOperatorHealth,
   loadOperatorLoopAudit,
+  loadOperatorLoopSelfCheck,
   loadReviewQueue,
   loadSecurityProductionReadiness,
   loadStuckWorkflowJobs,
@@ -73,6 +74,7 @@ import {
   type OperatorHandoffPayload,
   type OperatorHealthPayload,
   type OperatorLoopAuditPayload,
+  type OperatorLoopSelfCheckPayload,
   type ReviewQueuePayload,
   type TaskIntakeChecklistItem,
   type WorkerAdapterName,
@@ -246,13 +248,14 @@ export function AIEmployees() {
       loadStuckWorkflowJobs(30, 8),
     ]);
     const scopedLoopId = latestLoopIdFromReadback(loopLaneReadback);
-    const [operatorLoopAudit, operatorHandoff, operatorHealth] = await Promise.all([
+    const [operatorLoopAudit, operatorHandoff, operatorHealth, operatorLoopSelfCheck] = await Promise.all([
       loadOperatorLoopAudit(12, scopedLoopId),
       loadOperatorHandoff(12, scopedLoopId),
       loadOperatorHealth(12, scopedLoopId),
+      loadOperatorLoopSelfCheck(12, scopedLoopId),
     ]);
     const agents = await loadAgents(metrics);
-    return { agents, demoReadiness, workerStatus, workerFleet, workerHygiene, adapterReadiness, localReadiness, operatorActionPlan, operatorActionReceipts, operatorLoopAudit, operatorHandoff, operatorHealth, securityReadiness, integrationInbox, commanderWorkPackages, reviewQueue, customerDeliveryBoard, loopLaneReadback, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs };
+    return { agents, demoReadiness, workerStatus, workerFleet, workerHygiene, adapterReadiness, localReadiness, operatorActionPlan, operatorActionReceipts, operatorLoopAudit, operatorHandoff, operatorHealth, operatorLoopSelfCheck, securityReadiness, integrationInbox, commanderWorkPackages, reviewQueue, customerDeliveryBoard, loopLaneReadback, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs };
   }, [integrationInboxBucket]);
   const agents = data?.agents || [];
   const demoReadiness = data?.demoReadiness;
@@ -267,6 +270,7 @@ export function AIEmployees() {
   const operatorLoopAudit = data?.operatorLoopAudit as OperatorLoopAuditPayload | undefined;
   const operatorHandoff = data?.operatorHandoff as OperatorHandoffPayload | undefined;
   const operatorHealth = data?.operatorHealth as OperatorHealthPayload | undefined;
+  const operatorLoopSelfCheck = data?.operatorLoopSelfCheck as OperatorLoopSelfCheckPayload | undefined;
   const operatorPlanActions = operatorActionPlan?.actions || [];
   const operatorPlanSummary = operatorActionPlan?.summary;
   const operatorReceiptCoverage = operatorActionPlan?.receipt_coverage;
@@ -381,6 +385,10 @@ export function AIEmployees() {
       loopSelfCheckTitle: "Pre-advance check",
       loopSelfCheckSummary: "Copy the read-only self-check that verifies policy, receipts, evaluations, audit proof, and handoff health before advancing.",
       loopSelfCheckCopy: "Copy self-check",
+      loopSelfCheckGates: "Self-check gates",
+      policyContract: "Policy",
+      receiptEvaluations: "Receipt eval",
+      auditLedger: "Audit ledger",
       advanceLoopTitle: "Bounded advance",
       advanceLoopSummary: "Copy the local CLI runner that advances one allowlisted loop action, verifies it, and records a receipt.",
       previewAdvanceLoop: "Preview advance",
@@ -798,6 +806,10 @@ export function AIEmployees() {
       loopSelfCheckTitle: "推进前自检",
       loopSelfCheckSummary: "复制只读自检：推进前检查策略、收据、评估、审计证明和交接健康。",
       loopSelfCheckCopy: "复制自检",
+      loopSelfCheckGates: "自检 Gate",
+      policyContract: "策略",
+      receiptEvaluations: "收据评估",
+      auditLedger: "审计账本",
       advanceLoopTitle: "受限推进",
       advanceLoopSummary: "复制本地 CLI runner：只推进一个 allowlist loop 动作、验收并记录收据。",
       previewAdvanceLoop: "预览推进",
@@ -1254,6 +1266,31 @@ export function AIEmployees() {
   const loopSelfCheckCommand = operatorHandoff?.loop_id
     ? `agentops operator loop-self-check --loop-id ${operatorHandoff.loop_id} --limit 12`
     : "agentops operator loop-self-check --limit 12";
+  const loopSelfCheckGates = operatorLoopSelfCheck?.gates || {};
+  const loopSelfCheckGateStatus = (gateId: string) => String((loopSelfCheckGates[gateId] || {}).status || "unknown");
+  const policyContractGate = loopSelfCheckGates.policy_contract || {};
+  const receiptEvaluationGate = loopSelfCheckGates.receipt_evaluations || {};
+  const auditLedgerGate = loopSelfCheckGates.audit_ledger || {};
+  const loopSelfCheckGateSummaries = [
+    {
+      id: "policy_contract",
+      label: copy.policyContract,
+      status: loopSelfCheckGateStatus("policy_contract"),
+      detail: `${String(policyContractGate.policy_id || "advance_loop_local_bounded_v1")} · shell:${String(policyContractGate.server_executes_shell ?? false)}`,
+    },
+    {
+      id: "receipt_evaluations",
+      label: copy.receiptEvaluations,
+      status: loopSelfCheckGateStatus("receipt_evaluations"),
+      detail: `${Number(receiptEvaluationGate.evaluated ?? 0)}/${Number(receiptEvaluationGate.required ?? 0)} · fail ${Number(receiptEvaluationGate.failed ?? 0)}`,
+    },
+    {
+      id: "audit_ledger",
+      label: copy.auditLedger,
+      status: loopSelfCheckGateStatus("audit_ledger"),
+      detail: `${Number(auditLedgerGate.receipt_audit_rows ?? 0)} receipts · ${Number(auditLedgerGate.evaluation_audit_rows ?? 0)} evals`,
+    },
+  ];
   const advanceLoopRaw = (
     operatorHandoff?.work_order?.advance_loop &&
     typeof operatorHandoff.work_order.advance_loop === "object"
@@ -3237,6 +3274,15 @@ export function AIEmployees() {
                   </div>
                   <div className="text-[9px] mt-0.5 truncate" style={{ color: "var(--mis-dim)" }}>
                     {copy.advanceLoopPolicy}
+                  </div>
+                  <div className="text-[8px] mt-1 font-semibold" style={{ color: "var(--mis-muted)" }}>{copy.loopSelfCheckGates}</div>
+                  <div className="space-y-0.5 mt-0.5">
+                    {loopSelfCheckGateSummaries.map((gate) => (
+                      <div key={gate.id} className="flex items-center justify-between gap-1 min-w-0">
+                        <span className="text-[8px] truncate" style={{ color: "var(--mis-muted)" }}>{gate.label}: {gate.detail}</span>
+                        <StatusBadge status={gate.status} />
+                      </div>
+                    ))}
                   </div>
                   <button
                     onClick={() => void copyIntakeCommand(loopSelfCheckCommand)}

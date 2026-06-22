@@ -1561,6 +1561,30 @@ export interface OperatorHandoffPayload {
   live_execution_performed?: boolean;
 }
 
+export interface OperatorLoopSelfCheckPayload {
+  provider: string;
+  operation: string;
+  status: string;
+  workspace_id: string;
+  loop_id?: string | null;
+  summary: Record<string, number | string | boolean | null | undefined>;
+  gates: Record<string, Record<string, unknown>>;
+  policy_decisions: Record<string, unknown>[];
+  next_actions: string[];
+  contract?: string;
+  safety: {
+    read_only: boolean;
+    ledger_mutated: boolean;
+    live_execution_performed: boolean;
+    server_shell_execution: boolean;
+    raw_prompt_omitted: boolean;
+    raw_response_omitted: boolean;
+    token_omitted: boolean;
+  };
+  token_omitted?: boolean;
+  live_execution_performed?: boolean;
+}
+
 export interface OperatorHealthComponent {
   id: string;
   label: string;
@@ -4574,6 +4598,57 @@ export async function loadOperatorHandoff(limit = 12, loopId = ""): Promise<Oper
     },
     token_omitted: boolValue(raw.token_omitted),
     live_execution_performed: boolValue(raw.live_execution_performed),
+  };
+}
+
+export async function loadOperatorLoopSelfCheck(limit = 12, loopId = ""): Promise<OperatorLoopSelfCheckPayload> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (loopId) params.set("loop_id", loopId);
+  const raw = await optionalApiJson<Record<string, unknown>>(`/operator/loop-self-check?${params.toString()}`, {
+    provider: "agentops-operator",
+    operation: "operator_loop_self_check",
+    status: "unavailable",
+    workspace_id: "local-demo",
+    loop_id: loopId || null,
+    summary: {},
+    gates: {},
+    policy_decisions: [],
+    next_actions: [],
+    safety: {
+      read_only: true,
+      ledger_mutated: false,
+      live_execution_performed: false,
+      server_shell_execution: false,
+      raw_prompt_omitted: true,
+      raw_response_omitted: true,
+      token_omitted: true,
+    },
+    token_omitted: true,
+    live_execution_performed: false,
+  });
+  const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
+  return {
+    provider: String(raw.provider || "agentops-operator"),
+    operation: String(raw.operation || "operator_loop_self_check"),
+    status: String(raw.status || "unknown"),
+    workspace_id: String(raw.workspace_id || "local-demo"),
+    loop_id: raw.loop_id ? String(raw.loop_id) : null,
+    summary: typeof raw.summary === "object" && raw.summary !== null ? raw.summary as Record<string, number | string | boolean | null | undefined> : {},
+    gates: typeof raw.gates === "object" && raw.gates !== null ? raw.gates as Record<string, Record<string, unknown>> : {},
+    policy_decisions: asArray<Record<string, unknown>>(raw.policy_decisions),
+    next_actions: asArray<unknown>(raw.next_actions).map(String).filter(Boolean),
+    contract: raw.contract ? String(raw.contract) : undefined,
+    safety: {
+      read_only: boolValue(safetyRaw.read_only),
+      ledger_mutated: boolValue(safetyRaw.ledger_mutated),
+      live_execution_performed: boolValue(safetyRaw.live_execution_performed),
+      server_shell_execution: boolValue(safetyRaw.server_shell_execution),
+      raw_prompt_omitted: boolValue(safetyRaw.raw_prompt_omitted),
+      raw_response_omitted: boolValue(safetyRaw.raw_response_omitted),
+      token_omitted: boolValue(safetyRaw.token_omitted),
+    },
+    token_omitted: raw.token_omitted === undefined ? undefined : boolValue(raw.token_omitted),
+    live_execution_performed: raw.live_execution_performed === undefined ? undefined : boolValue(raw.live_execution_performed),
   };
 }
 
