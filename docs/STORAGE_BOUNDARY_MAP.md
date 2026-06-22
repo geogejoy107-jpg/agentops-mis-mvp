@@ -37,6 +37,7 @@ human/admin APIs:
 | Customer-worker external-write prepared-action integration | `prepare_customer_worker_external_write`, `resume_customer_worker_external_write`, `customer_worker_external_write_args` | `POST /api/workflows/customer-worker-task`, `POST /api/workflows/customer-worker-task/submit` when `adapter` is Hermes/OpenClaw and `confirm_run` is true | `python3 scripts/customer_worker_prepared_action_smoke.py` |
 | Postgres parity pre-container contract | generated Postgres-compatible DDL and placeholder translation contract from `server.SCHEMA_SQL` | future Postgres adapter using the same helper contract as SQLite | `python3 scripts/storage_postgres_contract_smoke.py` |
 | Postgres container parity contract | generated schema plus representative task/run/tool/approval/prepared-action/plan-evidence fixture in a temporary Postgres container | BYOC Postgres migration readiness before a Python Postgres adapter is accepted | `python3 scripts/storage_postgres_container_smoke.py` |
+| Postgres adapter SQL contract | SQLite helper qmark/named placeholder translation plus representative helper insert/update/select execution in a temporary Postgres container | optional psycopg adapter path without changing Free Local dependencies | `python3 scripts/storage_postgres_adapter_contract_smoke.py` |
 
 The helpers deliberately keep the existing SQLite row shape and ordering. They
 only centralize workspace filters and detail assembly so a future adapter can
@@ -47,7 +48,7 @@ match behavior before Postgres is introduced.
 | Candidate | Why next | Required proof before Postgres |
 | --- | --- | --- |
 | Prepared-action route integration audit | Notion export, Dify upload, Hermes default run-task, Agnesfallback fixed probes, OpenClaw fixed probe, and customer-worker external writes are covered; future external side-effect routes must be added here before Postgres parity claims | Connector/runtime smokes that prove no provider call before approval and exact one-shot resume after approval |
-| Postgres adapter contract | SQLite helpers now cover core ledger and evidence writes, and the schema/placeholder/container contracts are locked | Python Postgres adapter smoke with identical storage-boundary fixtures and response-shape comparison |
+| Postgres adapter contract | SQLite helpers now cover core ledger/evidence writes, schema/container parity passes, and representative helper SQL translation is locked | Python Postgres adapter smoke with identical storage-boundary fixtures and response-shape comparison |
 
 ## Postgres Parity Rule
 
@@ -67,3 +68,8 @@ The container parity contract must pass before Postgres adapter work can claim
 real BYOC evidence:
 
 - `python3 scripts/storage_postgres_container_smoke.py`
+
+The adapter SQL contract must pass before adding a Python Postgres execution
+adapter:
+
+- `python3 scripts/storage_postgres_adapter_contract_smoke.py`
