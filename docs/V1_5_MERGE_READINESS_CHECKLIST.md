@@ -121,6 +121,7 @@ python3 scripts/security_production_readiness_smoke.py
 python3 scripts/production_security_warning_ui_smoke.py
 python3 scripts/pixel_office_visualizer_boundary_smoke.py
 python3 scripts/customer_delivery_boundary_smoke.py
+python3 scripts/license_provenance_smoke.py
 ```
 
 ## 5. Authentication and deployment boundary
@@ -460,13 +461,13 @@ live runtime suite
 
 ## 12. License and provenance
 
-- [ ] Add root license.
-- [ ] Align package metadata.
-- [ ] Add third-party notices.
-- [ ] Record source repository/version/license/usage.
-- [ ] Record UI/icon/art provenance.
-- [ ] Exclude non-commercial Pixel Office assets from commercial build.
-- [ ] Generate minimal SBOM.
+- [x] Add root license: root `LICENSE` declares the proprietary local MVP boundary and preserves third-party license separation.
+- [x] Align package metadata: `pyproject.toml` keeps `Proprietary local MVP`; the private UI package and lockfile declare `UNLICENSED`.
+- [x] Add third-party notices: `docs/THIRD_PARTY_NOTICES.md` records first-party components, package-manager authority and reference-only project boundaries.
+- [x] Record source repository/version/license/usage: `docs/RELEASE_PROVENANCE.md`, `docs/THIRD_PARTY_NOTICES.md`, `docs/PIXEL_OFFICE_REFERENCE_AUDIT.md` and `docs/SBOM_MINIMAL.md` record the local MVP, direct package versions and reference-only OSS usage.
+- [x] Record UI/icon/art provenance: Pixel Office is documented as first-party React/CSS geometry with Lucide/package icons only; Star-Office stays optional `VITE_STAR_OFFICE_URL` legacy link.
+- [x] Exclude non-commercial Pixel Office assets from commercial build: product UI source contains no bitmap/sprite/tile assets and the release gate blocks Star-Office/LimeZu/paid/unclear-license art until an original `assets/pixel-office/` pack has its own license/provenance.
+- [x] Generate minimal SBOM: `docs/SBOM_MINIMAL.md` lists first-party components plus direct npm/Python package inventory; transitive npm versions remain pinned by `ui/start-building-app/package-lock.json`. Guarded by `scripts/license_provenance_smoke.py`.
 
 ## 13. Clean-machine RC
 
