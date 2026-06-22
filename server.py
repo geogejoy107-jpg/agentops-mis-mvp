@@ -117,6 +117,7 @@ from agentops_mis_core.worker_fleet import (
     public_worker_revoked_enrollment,
 )
 from agentops_mis_core.workflow_jobs import (
+    workflow_jobs_list_response,
     workflow_job_mark_failed_response,
     workflow_job_not_active_response,
     workflow_job_public,
@@ -23176,35 +23177,16 @@ class Handler(BaseHTTPRequestHandler):
                 workflow_type_rows = conn.execute("SELECT workflow_type, COUNT(*) c FROM workflow_jobs GROUP BY workflow_type").fetchall()
                 active_count = scalar_count(conn, "SELECT COUNT(*) FROM workflow_jobs WHERE status IN ('queued','running')")
                 stuck_count = len(workflow_stuck_jobs(conn, threshold_sec=900, limit=200))
-                return self.send_json({
-                    "provider": "agentops-workflow-job",
-                    "operation": "workflow_jobs_list",
-                    "jobs": [workflow_job_public(row) for row in rows],
-                    "count": len(rows),
-                    "limit": limit,
-                    "filters": {
-                        "status": sorted(statuses),
-                        "workflow_type": sorted(workflow_types),
-                    },
-                    "summary": {
-                        "by_status": {row["status"]: row["c"] for row in summary_rows},
-                        "by_workflow_type": {row["workflow_type"]: row["c"] for row in workflow_type_rows},
-                        "active_jobs": active_count,
-                        "stuck_jobs": stuck_count,
-                    },
-                    "next_actions": [
-                        "agentops workflow job-status --job-id <job_id> --wait",
-                        "agentops workflow stuck-jobs --threshold-sec 900 --limit 25",
-                        "agentops workflow job-mark-failed --job-id <job_id> --reason '<reason>'",
-                    ],
-                    "safety": {
-                        "read_only": True,
-                        "ledger_mutated": False,
-                        "live_execution_performed": False,
-                        "token_omitted": True,
-                    },
-                    "token_omitted": True,
-                })
+                return self.send_json(workflow_jobs_list_response(
+                    rows=rows,
+                    limit=limit,
+                    statuses=statuses,
+                    workflow_types=workflow_types,
+                    summary_rows=summary_rows,
+                    workflow_type_rows=workflow_type_rows,
+                    active_count=active_count,
+                    stuck_count=stuck_count,
+                ))
             if path == "/api/workflows/jobs/stuck":
                 threshold = int((qs.get("threshold_sec") or ["900"])[0])
                 limit = int((qs.get("limit") or ["25"])[0])

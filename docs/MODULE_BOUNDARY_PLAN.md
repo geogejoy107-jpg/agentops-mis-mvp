@@ -966,6 +966,7 @@ Moved out of `server.py`:
 - async workflow-job public response projection
 - `result_json` safe parse/fallback behavior
 - raw-request and token omission proof for workflow-job readback
+- workflow-job list response projection for read-only async queue summaries
 
 Still owned by `server.py`:
 
@@ -1106,6 +1107,38 @@ python3 scripts/module_boundary_smoke.py
 python3 scripts/worker_remote_fleet_status_smoke.py --base-url "$AGENTOPS_BASE_URL"
 python3 scripts/agentops_worker_fleet_smoke.py --base-url "$AGENTOPS_BASE_URL"
 python3 scripts/secret_scan_smoke.py
+```
+
+### Slice 37: Workflow Job List Response Projection
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/workflow_jobs.py`
+
+Moved out of `server.py`:
+
+- `/api/workflows/jobs` public response shape after server-owned row collection
+- status and workflow-type filter readback projection
+- by-status/by-workflow-type summary map shaping
+- read-only safety metadata and recovery next-action hints
+- token/raw-request omission proof for workflow-job list readback
+
+Still owned by `server.py`:
+
+- HTTP routes
+- query-parameter parsing and filter validation
+- SQLite workflow-job reads and count queries
+- active/stuck workflow-job count producers
+- workflow-job writes, async execution, status transitions, runtime events and audit writes
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/workflow_jobs_list_poll_smoke.py --base-url "$AGENTOPS_BASE_URL"
+python3 scripts/workflow_job_stuck_recovery_smoke.py --base-url "$AGENTOPS_BASE_URL"
 ```
 
 ## Next Candidate Slices

@@ -264,7 +264,7 @@ coverage for every external side-effect path.
   `agentops_mis_core/gateway_runs.py`; worker status/fleet lane/health,
   remote worker/session public readback, and hygiene token-omitting
   projections now live in `agentops_mis_core/worker_fleet.py`; workflow-job
-  public/stuck/recovery response projections now live in `agentops_mis_core/workflow_jobs.py`; Commander
+  public/list/stuck/recovery response projections now live in `agentops_mis_core/workflow_jobs.py`; Commander
   work-package status/action/readback summary and project-board gate aggregation
   now live in `agentops_mis_core/commander_work_packages.py`; Operator
   command-center gap/project/stale-ref/status aggregation now lives in
@@ -272,8 +272,8 @@ coverage for every external side-effect path.
   keeps HTTP routes, health probing, refresh orchestration, trust-route runtime
   events, audit writes, endpoint auth checks, read-model producers,
   Agent Gateway enrollment/session and remote-agent metadata reads,
-  repo-local daemon/process reads, workflow-job reads/writes/status
-  transitions/threshold-limit normalization/status validation/stuck-job recovery routing, tool-call row construction/upsert,
+  repo-local daemon/process reads, workflow-job reads/writes/list filters/count
+  producers/status transitions/threshold-limit normalization/status validation/stuck-job recovery routing, tool-call row construction/upsert,
   risk default application, provider calls and side-effect id construction,
   Approval Wall exact-once resume invocation/writes,
   route-level hash-mismatch audit writes, Agent Plan DB-backed memory/base

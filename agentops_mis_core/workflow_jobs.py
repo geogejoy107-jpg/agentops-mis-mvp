@@ -92,3 +92,56 @@ def workflow_job_mark_failed_response(row: Any | None, job_id: str) -> dict:
         "marked_failed": True,
         "token_omitted": True,
     }
+
+
+def _count_map(rows: list[Any], key: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for row in rows:
+        data = dict(row)
+        value = data.get(key)
+        if value is None:
+            continue
+        counts[str(value)] = int(data.get("c") or 0)
+    return counts
+
+
+def workflow_jobs_list_response(
+    *,
+    rows: list[Any],
+    limit: int,
+    statuses: set[str],
+    workflow_types: set[str],
+    summary_rows: list[Any],
+    workflow_type_rows: list[Any],
+    active_count: int,
+    stuck_count: int,
+) -> dict:
+    return {
+        "provider": "agentops-workflow-job",
+        "operation": "workflow_jobs_list",
+        "jobs": [workflow_job_public(row) for row in rows],
+        "count": len(rows),
+        "limit": limit,
+        "filters": {
+            "status": sorted(statuses),
+            "workflow_type": sorted(workflow_types),
+        },
+        "summary": {
+            "by_status": _count_map(summary_rows, "status"),
+            "by_workflow_type": _count_map(workflow_type_rows, "workflow_type"),
+            "active_jobs": int(active_count or 0),
+            "stuck_jobs": int(stuck_count or 0),
+        },
+        "next_actions": [
+            "agentops workflow job-status --job-id <job_id> --wait",
+            "agentops workflow stuck-jobs --threshold-sec 900 --limit 25",
+            "agentops workflow job-mark-failed --job-id <job_id> --reason '<reason>'",
+        ],
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }

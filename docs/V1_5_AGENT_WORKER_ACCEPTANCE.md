@@ -66,6 +66,9 @@ runner. The supported management primitives are:
   `GET /api/workflows/jobs`, `GET /api/workflows/jobs/:job_id`,
   `GET /api/workflows/jobs/stuck`, and
   `POST /api/workflows/jobs/:job_id/mark-failed`.
+  The public list response projection lives in
+  `agentops_mis_core/workflow_jobs.py`; `server.py` owns query parsing,
+  SQLite reads/count producers, async execution, recovery writes and audit.
 - Async integration inbox: `GET /api/commander/integration-inbox` provides a
   read-only commander queue for returned worker results, running lanes, blocked
   work, stale work and memory-review items.

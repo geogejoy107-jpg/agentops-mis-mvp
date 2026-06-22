@@ -104,6 +104,7 @@ from agentops_mis_core.worker_fleet import (
     worker_fleet_health,
 )
 from agentops_mis_core.workflow_jobs import (
+    workflow_jobs_list_response,
     workflow_job_mark_failed_response,
     workflow_job_not_active_response,
     workflow_job_parse_iso_datetime,
@@ -216,6 +217,7 @@ SERVER_WORKER_FLEET_IMPORTS = {
     "public_worker_revoked_enrollment",
 }
 EXTRACTED_WORKFLOW_JOB_HELPERS = {
+    "workflow_jobs_list_response",
     "workflow_job_mark_failed_response",
     "workflow_job_not_active_response",
     "workflow_job_parse_iso_datetime",
@@ -223,6 +225,7 @@ EXTRACTED_WORKFLOW_JOB_HELPERS = {
     "workflow_job_stuck_projection",
 }
 SERVER_WORKFLOW_JOB_IMPORTS = {
+    "workflow_jobs_list_response",
     "workflow_job_mark_failed_response",
     "workflow_job_not_active_response",
     "workflow_job_public",
@@ -1366,6 +1369,33 @@ def main() -> int:
         "result_json": "{}",
         "error_message": "operator recovery smoke",
     }, "wfjob_marked_projection_smoke")
+    workflow_list_response = workflow_jobs_list_response(
+        rows=[
+            {
+                "job_id": "wfjob_list_running_smoke",
+                "workflow_type": "customer_worker_task",
+                "status": "running",
+                "adapter": "mock",
+                "result_json": "{}",
+                "request_hash": "hash_list_running",
+            },
+            {
+                "job_id": "wfjob_list_completed_smoke",
+                "workflow_type": "customer_task_template",
+                "status": "completed",
+                "adapter": "mock",
+                "result_json": '{"ok": true}',
+                "request_hash": "hash_list_completed",
+            },
+        ],
+        limit=20,
+        statuses={"running", "completed"},
+        workflow_types={"customer_worker_task"},
+        summary_rows=[{"status": "running", "c": 1}, {"status": "completed", "c": 1}],
+        workflow_type_rows=[{"workflow_type": "customer_worker_task", "c": 1}, {"workflow_type": "customer_task_template", "c": 1}],
+        active_count=1,
+        stuck_count=0,
+    )
     require(workflow_job_projection and workflow_job_projection.get("result", {}).get("ok") is True, "workflow job public projection result parse failed", failures)
     require(workflow_job_projection.get("raw_request_omitted") is True and workflow_job_projection.get("token_omitted") is True, "workflow job public projection omission proof missing", failures)
     require(workflow_job_bad_result_projection and workflow_job_bad_result_projection.get("result") == {}, "workflow job public projection bad JSON fallback failed", failures)
@@ -1375,6 +1405,11 @@ def main() -> int:
     require(workflow_not_active_response.get("reason") == "workflow_job_not_active" and workflow_not_active_response.get("token_omitted") is True, "workflow job not-active response failed", failures)
     require(workflow_mark_failed_response.get("marked_failed") is True and workflow_mark_failed_response.get("provider") == "agentops-workflow-job", "workflow job mark-failed response failed", failures)
     require((workflow_mark_failed_response.get("job") or {}).get("status") == "failed", "workflow job mark-failed response job projection failed", failures)
+    require(workflow_list_response.get("operation") == "workflow_jobs_list" and workflow_list_response.get("count") == 2, "workflow jobs list response basic shape failed", failures)
+    require((workflow_list_response.get("summary") or {}).get("active_jobs") == 1 and (workflow_list_response.get("summary") or {}).get("by_status", {}).get("running") == 1, "workflow jobs list summary failed", failures)
+    require((workflow_list_response.get("filters") or {}).get("status") == ["completed", "running"], "workflow jobs list filters failed", failures)
+    require(workflow_list_response.get("safety", {}).get("read_only") is True and workflow_list_response.get("token_omitted") is True, "workflow jobs list safety/token proof failed", failures)
+    require("agentops workflow job-status --job-id <job_id> --wait" in (workflow_list_response.get("next_actions") or []), "workflow jobs list next action missing", failures)
     planned_task = {"task_id": "tsk_cmd_smoke_strategy", "status": "planned"}
     completed_task = {"task_id": "tsk_cmd_smoke_qa", "status": "completed"}
     require(commander_work_package_status(planned_task, None, {}) == "planned", "commander planned package status failed", failures)
