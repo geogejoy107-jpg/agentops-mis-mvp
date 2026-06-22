@@ -144,7 +144,6 @@ def main() -> int:
                 except subprocess.TimeoutExpired:
                     proc.kill()
         run(["bash", "-lc", f"lsof -tiTCP:{next_port} -sTCP:LISTEN | xargs -r kill"], timeout=10)
-        run(["rm", "-rf", str(NEXT_APP / ".next")], timeout=10)
         restore_next_env()
 
 

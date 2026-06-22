@@ -69,7 +69,9 @@ def main() -> int:
         ROOT / "scripts" / "ui_task_run_route_parity_smoke.py",
         ROOT / "scripts" / "ui_legacy_route_alias_smoke.py",
         ROOT / "scripts" / "ui_navigation_inventory_smoke.py",
+        ROOT / "scripts" / "ui_route_retirement_packet_smoke.py",
         ROOT / "docs" / "UI_NAVIGATION_INVENTORY.json",
+        ROOT / "docs" / "UI_ROUTE_RETIREMENT_PACKET.json",
     ]
 
     for path in required_files:
@@ -103,6 +105,8 @@ def main() -> int:
     route_alias_smoke_text = read_text(ROOT / "scripts" / "ui_legacy_route_alias_smoke.py")
     navigation_inventory_smoke_text = read_text(ROOT / "scripts" / "ui_navigation_inventory_smoke.py")
     navigation_inventory_text = read_text(ROOT / "docs" / "UI_NAVIGATION_INVENTORY.json")
+    retirement_packet_smoke_text = read_text(ROOT / "scripts" / "ui_route_retirement_packet_smoke.py")
+    retirement_packet_text = read_text(ROOT / "docs" / "UI_ROUTE_RETIREMENT_PACKET.json")
 
     require(dependencies.get("next") == "16.2.9", "Next.js version is not pinned to the selected migration version")
     require(dependencies.get("react") == "19.2.7", "React version is not pinned to the selected migration version")
@@ -166,6 +170,8 @@ def main() -> int:
     require("ui_legacy_route_alias_v1" in route_alias_smoke_text, "legacy route alias smoke contract is missing")
     require("ui_navigation_inventory_v1" in navigation_inventory_smoke_text, "navigation inventory smoke contract is missing")
     require("redirect_alias_only" in navigation_inventory_text, "navigation inventory must keep legacy admin routes as aliases only")
+    require("ui_route_retirement_packet_v1" in retirement_packet_smoke_text, "route retirement packet smoke contract is missing")
+    require('"retirement_action": "not_executed"' in retirement_packet_text, "route retirement packet must not execute retirement")
     require("next/link" in ledger_pages_text, "task/run list parity pages must use Next links")
     require("/workspace/tasks/${encodeURIComponent(task.task_id)}" in ledger_pages_text, "task list rows must link to task detail")
     require("/workspace/runs/${encodeURIComponent(run.run_id)}" in ledger_pages_text, "run list rows must link to run detail")

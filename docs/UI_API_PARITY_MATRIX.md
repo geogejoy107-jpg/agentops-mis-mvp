@@ -79,8 +79,10 @@ route retirement:
   routes. `python3 scripts/ui_navigation_inventory_smoke.py`
   (`ui_navigation_inventory_v1`) verifies Next primary task/run navigation uses
   `/workspace` and treats `/admin` task/run routes as redirect aliases only.
-  Retirement still needs an explicit route retirement commit for each route
-  pair.
+  `python3 scripts/ui_route_retirement_packet_smoke.py`
+  (`ui_route_retirement_packet_v1`) prepares the candidate retirement packet
+  while keeping `retirement_allowed: false`. Retirement still needs an explicit
+  route retirement commit for each route pair.
 
 ## Verification Stack
 
@@ -91,6 +93,8 @@ python3 scripts/ui_api_parity_matrix_smoke.py
 python3 scripts/ui_task_run_route_parity_smoke.py
 python3 scripts/ui_route_naming_decision_smoke.py
 python3 scripts/ui_legacy_route_alias_smoke.py
+python3 scripts/ui_navigation_inventory_smoke.py
+python3 scripts/ui_route_retirement_packet_smoke.py
 python3 scripts/nextjs_parity_smoke.py
 cd ui/start-building-app && npm run build
 cd ui/next-app && npm run build

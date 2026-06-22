@@ -179,6 +179,7 @@ python3 scripts/ui_task_run_route_parity_smoke.py
 python3 scripts/ui_route_naming_decision_smoke.py
 python3 scripts/ui_legacy_route_alias_smoke.py
 python3 scripts/ui_navigation_inventory_smoke.py
+python3 scripts/ui_route_retirement_packet_smoke.py
 python3 scripts/vite_playwright_snapshot_smoke.py
 python3 scripts/nextjs_playwright_snapshot_smoke.py
 ```
@@ -209,6 +210,12 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   are redirect aliases only, and the route naming decision now has canonical
   navigation evidence while still blocking route retirement until an explicit
   retirement commit.
+
+  The route retirement packet smoke verifies `ui_route_retirement_packet_v1`:
+  the task/run `/admin` routes have a candidate-only retirement packet with
+  exact commit evidence requirements, but `retirement_action` remains
+  `not_executed` and `retirement_allowed` remains false until a route-pair
+  retirement commit lands.
 
   The Vite smoke starts isolated MIS API and Vite dev servers, captures
   canonical Vite route snapshots for workspace, Pixel Office, tasks, agents,
@@ -278,11 +285,14 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   - `docs/UI_ROUTE_NAMING_DECISION.json`
   - `docs/UI_NAVIGATION_INVENTORY.md`
   - `docs/UI_NAVIGATION_INVENTORY.json`
+  - `docs/UI_ROUTE_RETIREMENT_PACKET.md`
+  - `docs/UI_ROUTE_RETIREMENT_PACKET.json`
   - `scripts/ui_api_parity_matrix_smoke.py`
   - `scripts/ui_task_run_route_parity_smoke.py`
   - `scripts/ui_route_naming_decision_smoke.py`
   - `scripts/ui_legacy_route_alias_smoke.py`
   - `scripts/ui_navigation_inventory_smoke.py`
+  - `scripts/ui_route_retirement_packet_smoke.py`
 
 ### Gate 5: BYOC / Enterprise Deployment
 

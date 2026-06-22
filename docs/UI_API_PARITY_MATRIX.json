@@ -9,7 +9,8 @@
         "ui_task_run_route_parity_v1",
         "ui_route_naming_decision_v1",
         "ui_legacy_route_alias_v1",
-        "ui_navigation_inventory_v1"
+        "ui_navigation_inventory_v1",
+        "ui_route_retirement_packet_v1"
       ],
     "retirement_rule": "A Vite route can be retired only after the matrix marks its capability covered, Vite and Next browser evidence both pass, API contracts match, and the route has an explicit retirement decision."
   },
@@ -177,12 +178,13 @@
         "python3 scripts/ui_route_naming_decision_smoke.py",
         "python3 scripts/ui_legacy_route_alias_smoke.py",
         "python3 scripts/ui_navigation_inventory_smoke.py",
+        "python3 scripts/ui_route_retirement_packet_smoke.py",
         "python3 scripts/vite_playwright_snapshot_smoke.py",
         "python3 scripts/nextjs_playwright_snapshot_smoke.py",
         "python3 scripts/nextjs_parity_smoke.py"
       ],
       "retirement_allowed": false,
-      "retirement_gate": "Route naming decision records /workspace/tasks/:taskId as the future canonical target while /admin/tasks/:id stays as a compatibility route; Next alias and navigation inventory evidence exist, but retirement still needs an explicit route retirement commit."
+      "retirement_gate": "Route naming decision records /workspace/tasks/:taskId as the future canonical target while /admin/tasks/:id stays as a compatibility route; Next alias, navigation inventory, and retirement packet evidence exist, but retirement still needs an explicit route retirement commit."
     },
     {
       "id": "worker_console",
@@ -420,12 +422,13 @@
         "python3 scripts/ui_route_naming_decision_smoke.py",
         "python3 scripts/ui_legacy_route_alias_smoke.py",
         "python3 scripts/ui_navigation_inventory_smoke.py",
+        "python3 scripts/ui_route_retirement_packet_smoke.py",
         "python3 scripts/vite_playwright_snapshot_smoke.py",
         "python3 scripts/nextjs_playwright_snapshot_smoke.py",
         "python3 scripts/nextjs_parity_smoke.py"
       ],
       "retirement_allowed": false,
-      "retirement_gate": "Route naming decision records /workspace/runs as the future canonical target while /admin/runs stays as a compatibility route; Next alias and navigation inventory evidence exist, but retirement still needs an explicit route retirement commit."
+      "retirement_gate": "Route naming decision records /workspace/runs as the future canonical target while /admin/runs stays as a compatibility route; Next alias, navigation inventory, and retirement packet evidence exist, but retirement still needs an explicit route retirement commit."
     },
     {
       "id": "run_detail",
@@ -457,12 +460,13 @@
         "python3 scripts/ui_route_naming_decision_smoke.py",
         "python3 scripts/ui_legacy_route_alias_smoke.py",
         "python3 scripts/ui_navigation_inventory_smoke.py",
+        "python3 scripts/ui_route_retirement_packet_smoke.py",
         "python3 scripts/vite_playwright_snapshot_smoke.py",
         "python3 scripts/nextjs_playwright_snapshot_smoke.py",
         "python3 scripts/nextjs_parity_smoke.py"
       ],
       "retirement_allowed": false,
-      "retirement_gate": "Route naming decision records /workspace/runs/:runId as the future canonical target while /admin/runs/:id stays as a compatibility route; Next alias and navigation inventory evidence exist, but retirement still needs an explicit route retirement commit."
+      "retirement_gate": "Route naming decision records /workspace/runs/:runId as the future canonical target while /admin/runs/:id stays as a compatibility route; Next alias, navigation inventory, and retirement packet evidence exist, but retirement still needs an explicit route retirement commit."
     },
     {
       "id": "tool_calls",

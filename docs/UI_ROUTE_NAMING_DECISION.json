@@ -11,6 +11,7 @@
     "decision": "Task and run operator routes use /workspace as the future commercial namespace. Existing Vite /admin task/run routes remain legacy compatibility routes until explicit retirement gates pass.",
     "alias_contract": "ui_legacy_route_alias_v1",
     "navigation_inventory_contract": "ui_navigation_inventory_v1",
+    "retirement_packet_contract": "ui_route_retirement_packet_v1",
     "retirement_allowed_by_default": false,
     "redirects_required_before_retirement": true,
     "no_breaking_deep_links": true
@@ -40,7 +41,8 @@
       "retirement_allowed": false,
       "cutover_evidence": [
         "backward_compatible_redirect_or_alias",
-        "canonical_navigation_inventory_verified"
+        "canonical_navigation_inventory_verified",
+        "retirement_packet_prepared"
       ],
       "remaining_cutover_requires": [
         "explicit_route_retirement_commit"
@@ -79,7 +81,8 @@
       "retirement_allowed": false,
       "cutover_evidence": [
         "backward_compatible_redirect_or_alias",
-        "canonical_navigation_inventory_verified"
+        "canonical_navigation_inventory_verified",
+        "retirement_packet_prepared"
       ],
       "remaining_cutover_requires": [
         "explicit_route_retirement_commit"
@@ -116,7 +119,8 @@
       "retirement_allowed": false,
       "cutover_evidence": [
         "backward_compatible_redirect_or_alias",
-        "canonical_navigation_inventory_verified"
+        "canonical_navigation_inventory_verified",
+        "retirement_packet_prepared"
       ],
       "remaining_cutover_requires": [
         "explicit_route_retirement_commit"

@@ -76,6 +76,8 @@ def route_naming_decision_semantics_ok() -> bool:
         return False
     if policy.get("navigation_inventory_contract") != "ui_navigation_inventory_v1":
         return False
+    if policy.get("retirement_packet_contract") != "ui_route_retirement_packet_v1":
+        return False
     if policy.get("retirement_allowed_by_default") is not False:
         return False
     if policy.get("redirects_required_before_retirement") is not True:
@@ -102,6 +104,8 @@ def route_naming_decision_semantics_ok() -> bool:
         if "backward_compatible_redirect_or_alias" not in set(pair.get("cutover_evidence") or []):
             return False
         if "canonical_navigation_inventory_verified" not in set(pair.get("cutover_evidence") or []):
+            return False
+        if "retirement_packet_prepared" not in set(pair.get("cutover_evidence") or []):
             return False
         if set(pair.get("remaining_cutover_requires") or []) != {"explicit_route_retirement_commit"}:
             return False
@@ -309,6 +313,19 @@ def main() -> int:
             "Gate 4 Next.js task/run primary navigation is inventoried under /workspace; /admin remains redirect-alias only",
         ),
         check(
+            "ui_route_retirement_packet_surface_exists",
+            file_contains("docs/UI_ROUTE_RETIREMENT_PACKET.json", "ui_route_retirement_packet_v1")
+            and file_contains("docs/UI_ROUTE_RETIREMENT_PACKET.md", "ui_route_retirement_packet_v1")
+            and file_contains("docs/UI_ROUTE_NAMING_DECISION.json", "retirement_packet_prepared")
+            and file_contains("docs/UI_API_PARITY_MATRIX.json", "ui_route_retirement_packet_v1")
+            and file_contains("docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md", "ui_route_retirement_packet_smoke.py")
+            and file_contains("scripts/ui_route_retirement_packet_smoke.py", "ui_route_retirement_packet_v1")
+            and file_contains("docs/UI_ROUTE_RETIREMENT_PACKET.json", "\"retirement_action\": \"not_executed\"")
+            and file_contains("docs/UI_ROUTE_RETIREMENT_PACKET.json", "\"retirement_allowed\": false")
+            and (ROOT / "scripts" / "ui_route_retirement_packet_smoke.py").exists(),
+            "Gate 4 task/run legacy route retirement packet is prepared but keeps route retirement fail-closed",
+        ),
+        check(
             "postgres_is_gated_not_immediate",
             file_contains("docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md", "Storage Boundary Before Postgres"),
             "Postgres migration is behind a storage-boundary gate",
@@ -423,6 +440,7 @@ def main() -> int:
                 "python3 scripts/ui_route_naming_decision_smoke.py",
                 "python3 scripts/ui_legacy_route_alias_smoke.py",
                 "python3 scripts/ui_navigation_inventory_smoke.py",
+                "python3 scripts/ui_route_retirement_packet_smoke.py",
                 "python3 scripts/vite_playwright_snapshot_smoke.py",
                 "python3 scripts/nextjs_playwright_snapshot_smoke.py",
             ],

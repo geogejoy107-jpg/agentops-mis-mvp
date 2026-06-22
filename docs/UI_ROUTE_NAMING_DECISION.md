@@ -17,7 +17,8 @@ itself. The current Next.js parity track now provides backward-compatible
 redirect aliases for the task/run legacy deep links. The navigation inventory is
 now verified by `ui_navigation_inventory_v1`: Next primary task/run navigation
 uses `/workspace`, and Next `/admin` task/run routes are redirect aliases only.
-Retirement remains blocked until an explicit route retirement commit on the
+The retirement packet is now prepared by `ui_route_retirement_packet_v1`, but
+retirement remains blocked until an explicit route retirement commit on the
 exact route pair being retired.
 
 ## Route Pairs
@@ -34,6 +35,7 @@ exact route pair being retired.
 python3 scripts/ui_route_naming_decision_smoke.py
 python3 scripts/ui_legacy_route_alias_smoke.py
 python3 scripts/ui_navigation_inventory_smoke.py
+python3 scripts/ui_route_retirement_packet_smoke.py
 python3 scripts/ui_api_parity_matrix_smoke.py
 python3 scripts/ui_task_run_route_parity_smoke.py
 python3 scripts/vite_playwright_snapshot_smoke.py

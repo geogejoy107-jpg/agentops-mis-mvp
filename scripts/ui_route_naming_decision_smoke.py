@@ -104,6 +104,7 @@ def main() -> int:
     require(policy.get("target_owner") == "nextjs_app_router", "target owner must be Next.js App Router")
     require(policy.get("alias_contract") == "ui_legacy_route_alias_v1", "route naming decision must bind the legacy alias contract")
     require(policy.get("navigation_inventory_contract") == "ui_navigation_inventory_v1", "route naming decision must bind the navigation inventory contract")
+    require(policy.get("retirement_packet_contract") == "ui_route_retirement_packet_v1", "route naming decision must bind the retirement packet contract")
     require(policy.get("retirement_allowed_by_default") is False, "route retirement must remain fail-closed by default")
     require(policy.get("redirects_required_before_retirement") is True, "route retirement must require redirects or aliases")
     require(policy.get("no_breaking_deep_links") is True, "route retirement must preserve deep links")
@@ -134,6 +135,7 @@ def main() -> int:
         evidence = set(pair.get("cutover_evidence") or [])
         require("backward_compatible_redirect_or_alias" in evidence, f"{pair_id} must record redirect or alias cutover evidence")
         require("canonical_navigation_inventory_verified" in evidence, f"{pair_id} must record canonical navigation inventory evidence")
+        require("retirement_packet_prepared" in evidence, f"{pair_id} must record retirement packet evidence")
         remaining = set(pair.get("remaining_cutover_requires") or [])
         require(remaining == {"explicit_route_retirement_commit"}, f"{pair_id} should only be waiting on explicit route retirement commit")
         cutover = set(pair.get("cutover_requires") or [])
@@ -158,6 +160,7 @@ def main() -> int:
         require("python3 scripts/ui_route_naming_decision_smoke.py" in matrix_evidence, f"{pair_id} matrix evidence must include route naming decision smoke")
         require("python3 scripts/ui_legacy_route_alias_smoke.py" in matrix_evidence, f"{pair_id} matrix evidence must include legacy route alias smoke")
         require("python3 scripts/ui_navigation_inventory_smoke.py" in matrix_evidence, f"{pair_id} matrix evidence must include navigation inventory smoke")
+        require("python3 scripts/ui_route_retirement_packet_smoke.py" in matrix_evidence, f"{pair_id} matrix evidence must include route retirement packet smoke")
 
     md_text = read_text(ROOT / "docs" / "UI_ROUTE_NAMING_DECISION.md")
     require(CONTRACT_ID in md_text, "human route naming doc must name the contract")
@@ -172,6 +175,7 @@ def main() -> int:
     require("scripts/ui_route_naming_decision_smoke.py" in closed_loop_text, "closed-loop doc must include route naming decision smoke")
     require("scripts/ui_legacy_route_alias_smoke.py" in closed_loop_text, "closed-loop doc must include legacy route alias smoke")
     require("scripts/ui_navigation_inventory_smoke.py" in closed_loop_text, "closed-loop doc must include navigation inventory smoke")
+    require("scripts/ui_route_retirement_packet_smoke.py" in closed_loop_text, "closed-loop doc must include route retirement packet smoke")
     require(CONTRACT_ID in readiness_text, "readiness checker must require the route naming decision contract")
 
     print(json.dumps({

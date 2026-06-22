@@ -130,6 +130,7 @@ def main() -> int:
     require("ui_route_naming_decision_v1" in route_contracts, "matrix policy must include the route naming decision contract")
     require("ui_legacy_route_alias_v1" in route_contracts, "matrix policy must include the legacy route alias contract")
     require("ui_navigation_inventory_v1" in route_contracts, "matrix policy must include the navigation inventory contract")
+    require("ui_route_retirement_packet_v1" in route_contracts, "matrix policy must include the route retirement packet contract")
 
     entries = matrix.get("entries")
     require(isinstance(entries, list) and entries, "matrix entries must be a non-empty list")
@@ -210,6 +211,7 @@ def main() -> int:
         require("python3 scripts/ui_route_naming_decision_smoke.py" in evidence, f"{route_id} must include route naming decision evidence")
         require("python3 scripts/ui_legacy_route_alias_smoke.py" in evidence, f"{route_id} must include legacy route alias evidence")
         require("python3 scripts/ui_navigation_inventory_smoke.py" in evidence, f"{route_id} must include navigation inventory evidence")
+        require("python3 scripts/ui_route_retirement_packet_smoke.py" in evidence, f"{route_id} must include route retirement packet evidence")
     assert_entry_routes(entries_by_id.get("task_detail"), "task_detail", ["/admin/tasks/:id"], ["/workspace/tasks/:taskId"])
     assert_entry_routes(entries_by_id.get("run_ledger"), "run_ledger", ["/admin/runs"], ["/workspace/runs"])
     assert_entry_routes(entries_by_id.get("run_detail"), "run_detail", ["/admin/runs/:id"], ["/workspace/runs/:runId"])

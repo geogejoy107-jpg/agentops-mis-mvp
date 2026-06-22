@@ -16,6 +16,9 @@ aliases only; they are not primary navigation targets.
 This inventory still does not retire the Vite routes. It proves the Next
 navigation surface has moved to `/workspace`, leaving only an explicit route
 retirement commit before any legacy task/run route can be removed.
+The explicit-commit evidence is prepared separately in
+`ui_route_retirement_packet_v1`; that packet is candidate-only and also keeps
+`retirement_allowed` false.
 
 ## Canonical Next Routes
 
@@ -38,6 +41,7 @@ retirement commit before any legacy task/run route can be removed.
 
 ```bash
 python3 scripts/ui_navigation_inventory_smoke.py
+python3 scripts/ui_route_retirement_packet_smoke.py
 python3 scripts/ui_route_naming_decision_smoke.py
 python3 scripts/ui_api_parity_matrix_smoke.py
 python3 scripts/nextjs_parity_smoke.py
