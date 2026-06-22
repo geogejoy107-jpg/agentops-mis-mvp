@@ -170,6 +170,7 @@ def main() -> int:
             "UI Operation Loop",
             docs=["docs/PIXEL_OPERATING_MAP_SPEC.md", "docs/DEMO_VIDEO_SCRIPT.md"],
             scripts=[
+                "scripts/operator_runtime_doctor_smoke.py",
                 "scripts/operator_action_queue_ui_smoke.py",
                 "scripts/operator_advance_loop_smoke.py",
                 "scripts/ai_employees_responsiveness_smoke.py",
@@ -177,6 +178,8 @@ def main() -> int:
                 "scripts/real_runtime_ui_confirm_smoke.py",
             ],
             source_markers={
+                "server.py": ["/api/operator/runtime-doctor", "operator_runtime_doctor"],
+                "agentops_mis_cli/agentops.py": ["operator_runtime_doctor", "runtime-doctor"],
                 "ui/start-building-app/src/app/components/pages/AIEmployees.tsx": ["operator_loop_launch_packet", "receipt_state", "Worker Fleet", "operatorHealthLoopControl"],
                 "ui/start-building-app/src/app/data/liveApi.ts": ["loadOperatorLoopLaunchPacket", "loadWorkerStatus", "loop_control"],
             },
@@ -245,6 +248,9 @@ def main() -> int:
     advance_loop_command = "python3 scripts/operator_advance_loop_smoke.py"
     require(advance_loop_command in release_text, "release evidence packet missing operator advance-loop smoke", failures)
     require(advance_loop_command in ci_text, "CI workflow missing operator advance-loop smoke", failures)
+    runtime_doctor_command = "python3 scripts/operator_runtime_doctor_smoke.py"
+    require(runtime_doctor_command in release_text, "release evidence packet missing operator runtime-doctor smoke", failures)
+    require(runtime_doctor_command in ci_text, "CI workflow missing operator runtime-doctor smoke", failures)
 
     output = json.dumps({"operation": "v1_5_product_closure_evidence", "ok": not failures, "evidence_class": "static_ci_matrix", "product_readiness_proof": False, "items": items, "failures": failures, "safety": {"read_only": True, "ledger_mutated": False, "live_execution_performed": False, "token_omitted": True}}, ensure_ascii=False, indent=2)
     require(not any(pattern.search(output) for pattern in SECRET_PATTERNS), "evidence output leaked token-like material", failures)

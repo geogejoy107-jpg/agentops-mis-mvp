@@ -51,6 +51,11 @@ product exposes:
 
 - Local readiness through `GET /api/local/readiness` and `agentops local
   readiness`.
+- Operator runtime doctor through `GET /api/operator/runtime-doctor` and
+  `agentops operator runtime-doctor`, so a human/Codex/Hermes/OpenClaw operator
+  can check MIS API health, adapter readiness, remote worker fleet state,
+  launch-packet availability, handoff evidence, `--confirm-run`, prepared
+  action walls, and redaction boundaries before dispatching live work.
 - A commander project board through `GET /api/commander/project-board` with
   readiness, worker health, recent work packages, pending approvals, artifacts,
   memory candidates, workflow jobs, integration gates, and recommended next
