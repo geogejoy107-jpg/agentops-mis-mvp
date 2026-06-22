@@ -268,6 +268,55 @@ export type CustomerProjectReportPayload = {
   error?: string | null;
 };
 
+export type CommercialEntitlementGate = {
+  capability?: string;
+  required_edition?: string;
+  enabled?: boolean;
+  status?: string;
+  enforcement?: string;
+};
+
+export type CommercialEntitlementStatus = {
+  provider?: string;
+  operation?: string;
+  status?: string;
+  edition?: string;
+  edition_label?: string;
+  edition_source?: string;
+  workspace_id?: string;
+  capabilities?: Record<string, boolean>;
+  gates?: CommercialEntitlementGate[];
+  safety?: {
+    read_only?: boolean;
+    billing_call_performed?: boolean;
+  };
+  token_omitted?: boolean;
+};
+
+export type CustomerTaskTemplate = {
+  template_id: string;
+  name?: string;
+  name_en?: string;
+  workflow?: string;
+  scenario?: string;
+  status?: string;
+  risk_level?: string;
+  priority?: string;
+  description?: string;
+  default_title?: string;
+  default_description?: string;
+  default_acceptance?: string;
+  agent_roles?: string[];
+  required_approvals?: string[];
+  safe_defaults?: Record<string, unknown>;
+  entrypoint?: string;
+};
+
+export type CustomerTaskTemplateListPayload = {
+  templates: CustomerTaskTemplate[];
+  safe_defaults?: Record<string, unknown>;
+};
+
 export type AgentControlSnapshot = {
   agents: AgentSummary[];
   security: SecurityReadinessSummary;
@@ -369,6 +418,14 @@ export async function loadCustomerDeliveryBoard(limit = 12): Promise<CustomerDel
 
 export async function loadCustomerProjectReport(projectId: string): Promise<CustomerProjectReportPayload> {
   return misJson<CustomerProjectReportPayload>(`/workflows/customer-projects/${encodeURIComponent(projectId)}/report`);
+}
+
+export async function loadCommercialEntitlements(): Promise<CommercialEntitlementStatus> {
+  return misJson<CommercialEntitlementStatus>("/commercial/entitlements");
+}
+
+export async function loadCustomerTaskTemplates(): Promise<CustomerTaskTemplateListPayload> {
+  return misJson<CustomerTaskTemplateListPayload>("/workflows/customer-task-templates");
 }
 
 export async function loadAgentControlSnapshot(): Promise<AgentControlSnapshot> {

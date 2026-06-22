@@ -32,6 +32,7 @@ memory review actions through the Next.js UI, verifies the state change through
 
 - App Router route: `/workspace`
 - App Router route: `/workspace/agents`
+- App Router route: `/workspace/dispatch`
 - App Router route: `/workspace/tasks`
 - App Router route: `/workspace/runs`
 - App Router route: `/workspace/approvals`
@@ -44,6 +45,7 @@ memory review actions through the Next.js UI, verifies the state change through
 - First-paint contract: approval and memory review queues can load on the App Router server path from the configured MIS API
 - Interaction contract: approval review and memory review write through the Next.js UI, with client fetch plus Next form fallback routes, then refresh from the MIS API proxy
 - Customer delivery contract: reports and customer project report pages load from the MIS API, and report archive writes through a Next form fallback route before refreshing the report artifact evidence
+- Dispatch contract: customer task templates and commercial entitlement gates load from the MIS API; template execution uses a Next form fallback and must surface Free Local `report_templates` blocking without creating a project
 - Canonical predecessors:
   - `ui/start-building-app/src/app/components/pages/WorkspaceHome.tsx`
   - `ui/start-building-app/src/app/components/pages/AIEmployees.tsx`
@@ -54,6 +56,7 @@ memory review actions through the Next.js UI, verifies the state change through
   - `ui/start-building-app/src/app/components/pages/AuditCenter.tsx`
   - `ui/start-building-app/src/app/components/pages/Reports.tsx`
   - `ui/start-building-app/src/app/components/pages/CustomerProjectReport.tsx`
+  - `ui/start-building-app/src/app/components/pixel/CustomerDispatchPanel.tsx`
 
 Do not remove the Vite app until this lane passes route, API, and visual parity
 for each commercial workflow.

@@ -1,8 +1,10 @@
 import type {
   ApprovalSummary,
+  CommercialEntitlementStatus,
   CustomerDeliveryBoardPayload,
   CustomerProjectIndexPayload,
   CustomerProjectReportPayload,
+  CustomerTaskTemplateListPayload,
   MemorySummary,
 } from "./mis";
 
@@ -60,5 +62,21 @@ export async function loadServerCustomerProjectReport(projectId: string): Promis
     return { data: await serverMisJson<CustomerProjectReportPayload>(`/workflows/customer-projects/${encodeURIComponent(projectId)}/report`), error: null };
   } catch (err) {
     return { data: null, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export async function loadServerCommercialEntitlements(): Promise<ServerLoadResult<CommercialEntitlementStatus>> {
+  try {
+    return { data: await serverMisJson<CommercialEntitlementStatus>("/commercial/entitlements"), error: null };
+  } catch (err) {
+    return { data: {}, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export async function loadServerCustomerTaskTemplates(): Promise<ServerLoadResult<CustomerTaskTemplateListPayload>> {
+  try {
+    return { data: await serverMisJson<CustomerTaskTemplateListPayload>("/workflows/customer-task-templates"), error: null };
+  } catch (err) {
+    return { data: { templates: [] }, error: err instanceof Error ? err.message : String(err) };
   }
 }

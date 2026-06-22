@@ -29,6 +29,8 @@ def main() -> int:
         NEXT_APP / "app" / "layout.tsx",
         NEXT_APP / "app" / "workspace" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "agents" / "page.tsx",
+        NEXT_APP / "app" / "workspace" / "dispatch" / "page.tsx",
+        NEXT_APP / "app" / "workspace" / "dispatch" / "template-run" / "route.ts",
         NEXT_APP / "app" / "workspace" / "tasks" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "runs" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "approvals" / "page.tsx",
@@ -42,6 +44,7 @@ def main() -> int:
         NEXT_APP / "app" / "api" / "mis" / "[...path]" / "route.ts",
         NEXT_APP / "src" / "components" / "AppFrame.tsx",
         NEXT_APP / "src" / "components" / "AgentsParityPage.tsx",
+        NEXT_APP / "src" / "components" / "DispatchPage.tsx",
         NEXT_APP / "src" / "components" / "DeliveryPages.tsx",
         NEXT_APP / "src" / "components" / "LedgerPages.tsx",
         NEXT_APP / "src" / "components" / "GovernancePages.tsx",
@@ -58,8 +61,10 @@ def main() -> int:
     approvals_review_route_text = read_text(NEXT_APP / "app" / "workspace" / "approvals" / "review" / "route.ts")
     memory_review_route_text = read_text(NEXT_APP / "app" / "workspace" / "memory" / "review" / "route.ts")
     report_archive_route_text = read_text(NEXT_APP / "app" / "workspace" / "customer-projects" / "[projectId]" / "report" / "archive" / "route.ts")
+    dispatch_route_text = read_text(NEXT_APP / "app" / "workspace" / "dispatch" / "template-run" / "route.ts")
     app_frame_text = read_text(NEXT_APP / "src" / "components" / "AppFrame.tsx")
     agents_page_text = read_text(NEXT_APP / "src" / "components" / "AgentsParityPage.tsx")
+    dispatch_page_text = read_text(NEXT_APP / "src" / "components" / "DispatchPage.tsx")
     delivery_pages_text = read_text(NEXT_APP / "src" / "components" / "DeliveryPages.tsx")
     ledger_pages_text = read_text(NEXT_APP / "src" / "components" / "LedgerPages.tsx")
     governance_pages_text = read_text(NEXT_APP / "src" / "components" / "GovernancePages.tsx")
@@ -80,16 +85,21 @@ def main() -> int:
     require("/workflows/customer-projects?limit=" in lib_text, "customer project index parity data is missing")
     require("/workflows/customer-delivery-board?limit=" in lib_text, "customer delivery board parity data is missing")
     require("/workflows/customer-projects/${encodeURIComponent(projectId)}/report" in lib_text, "customer project report parity data is missing")
+    require("/commercial/entitlements" in lib_text, "commercial entitlement parity data is missing")
+    require("/workflows/customer-task-templates" in lib_text, "customer task template parity data is missing")
     require("/approvals/${encodeURIComponent(id)}/${decision}" in lib_text, "approval decision parity action is missing")
     require("/memories/${encodeURIComponent(id)}/${decision}" in lib_text, "memory decision parity action is missing")
     require("/approvals/${encodeURIComponent(approvalId)}/${action}" in approvals_review_route_text, "approval review form fallback must write through MIS API")
     require("/memories/${encodeURIComponent(memoryId)}/${action}" in memory_review_route_text, "memory review form fallback must write through MIS API")
     require("/workflows/customer-projects/${encodeURIComponent(projectId)}/report-artifact" in report_archive_route_text, "customer report archive fallback must write through MIS API")
+    require("/workflows/customer-task-templates/run" in dispatch_route_text and "entitlement_required" in dispatch_route_text, "dispatch template fallback must preserve entitlement blocking")
     require("/workspace/tasks" in app_frame_text and "/workspace/runs" in app_frame_text, "Next.js nav must expose task and run parity routes")
     require("/workspace/memory" in app_frame_text and "/workspace/audit" in app_frame_text, "Next.js nav must expose governance parity routes")
     require("/workspace/reports" in app_frame_text, "Next.js nav must expose reports parity route")
+    require("/workspace/dispatch" in app_frame_text, "Next.js nav must expose dispatch parity route")
     require("/workspace/agents" in app_frame_text, "Next.js nav must expose agents parity route")
     require("loadAgentControlSnapshot" in agents_page_text and "Production security" in agents_page_text, "agents parity page must expose safety/readiness control plane")
+    require("DispatchParityPage" in dispatch_page_text and "Entitlement required" in dispatch_page_text, "dispatch parity page must expose fail-closed entitlement state")
     require("ReportsParityPage" in delivery_pages_text and "Customer delivery board" in delivery_pages_text, "reports parity page must expose delivery board")
     require("CustomerProjectReportParityPage" in delivery_pages_text and "Archive report" in delivery_pages_text, "customer report page must expose archive action")
     require("TasksParityPage" in ledger_pages_text and "RunsParityPage" in ledger_pages_text, "ledger parity pages are missing")
@@ -106,6 +116,7 @@ def main() -> int:
         "routes": [
             "/workspace",
             "/workspace/agents",
+            "/workspace/dispatch",
             "/workspace/tasks",
             "/workspace/runs",
             "/workspace/approvals",

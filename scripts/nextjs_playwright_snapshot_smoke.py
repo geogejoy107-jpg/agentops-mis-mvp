@@ -458,6 +458,43 @@ def archive_customer_project_report(next_base: str, project_id: str, env: dict[s
     }
 
 
+def verify_dispatch_entitlement_block(next_base: str, env: dict[str, str]) -> dict:
+    projects_url = f"{next_base}/api/mis/workflows/customer-projects?limit=25"
+    before_projects = http_json(projects_url)
+    require(isinstance(before_projects, dict), "Customer projects API did not return an object before dispatch")
+    before_count = len(before_projects.get("projects", []))
+
+    target = next_base.rstrip("/") + "/workspace/dispatch"
+    goto = playwright(env, "goto", target)
+    require(goto.returncode == 0, f"Playwright goto failed for dispatch interaction: {goto.stderr or goto.stdout}")
+    before = wait_for_snapshot_text(
+        env,
+        "/workspace/dispatch",
+        lambda text: "Start template" in text and "report_templates" in text,
+        "dispatch page to render template start controls and entitlement gate",
+    )
+    button_ref = first_button_ref(before, "Start template")
+    clicked = playwright(env, "click", button_ref)
+    require(clicked.returncode == 0, f"Playwright dispatch template click failed: {clicked.stderr or clicked.stdout}")
+    after = wait_for_snapshot_text(
+        env,
+        "/workspace/dispatch",
+        lambda text: "Entitlement required" in text and "report_templates" in text,
+        "dispatch page to show Free Local entitlement block",
+    )
+    require("pro_workspace" in after, "Dispatch entitlement block did not show required edition")
+    after_projects = http_json(projects_url)
+    require(isinstance(after_projects, dict), "Customer projects API did not return an object after dispatch")
+    after_count = len(after_projects.get("projects", []))
+    require(after_count == before_count, f"Blocked dispatch changed customer project count: {before_count} -> {after_count}")
+    return {
+        "button_ref": button_ref,
+        "blocked_capability": "report_templates",
+        "required_edition": "pro_workspace",
+        "project_count": after_count,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run Next.js Playwright snapshot smoke.")
     parser.add_argument("--api-port", type=int, default=0)
@@ -509,6 +546,7 @@ def main() -> int:
             routes = [
                 *ROUTES,
                 ("/workspace/reports", ["Reports", "Customer delivery board", "Customer project reports"]),
+                ("/workspace/dispatch", ["Dispatch", "Customer task templates", "report_templates"]),
                 (f"/workspace/customer-projects/{project_id}/report", ["Delivery Report", project_id, "Safety boundary"]),
             ]
             snapshots = [snapshot_route(next_base, path, expected, pw_env) for path, expected in routes]
@@ -516,6 +554,7 @@ def main() -> int:
                 "approval_review": approve_first_pending_approval(next_base, pw_env),
                 "memory_review": approve_first_candidate_memory(next_base, pw_env),
                 "customer_report_archive": archive_customer_project_report(next_base, project_id, pw_env),
+                "dispatch_entitlement_block": verify_dispatch_entitlement_block(next_base, pw_env),
             }
             proxy_checks = {
                 "agents": len(http_json(f"{next_base}/api/mis/agents")),
