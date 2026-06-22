@@ -163,13 +163,34 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
     evidence_work_order = work_order.get("evidence_report") or {}
     require(evidence_work_order.get("operation") == "operator_evidence_report_work_order", f"{label} evidence report work order missing: {evidence_work_order}", failures)
     require(evidence_work_order.get("status") in {"ready", "attention", "blocked", "unavailable", "unknown"}, f"{label} evidence report status wrong: {evidence_work_order}", failures)
+    require(isinstance(evidence_work_order.get("action_signature"), str), f"{label} evidence report action signature missing: {evidence_work_order}", failures)
     require(isinstance((evidence_work_order.get("summary") or {}).get("runs"), int), f"{label} evidence report summary missing: {evidence_work_order}", failures)
     require(isinstance(evidence_work_order.get("runs") or [], list), f"{label} evidence report runs missing: {evidence_work_order}", failures)
     require(isinstance(evidence_work_order.get("next_actions") or [], list), f"{label} evidence report next_actions missing: {evidence_work_order}", failures)
     evidence_safety = evidence_work_order.get("safety") or {}
+    evidence_receipt_state = evidence_work_order.get("receipt_state") or {}
+    require(evidence_receipt_state.get("status") in {"missing", "recorded", "verified", "failed", "skipped"}, f"{label} evidence report receipt state missing: {evidence_receipt_state}", failures)
+    require(evidence_receipt_state.get("action_signature") == evidence_work_order.get("action_signature"), f"{label} evidence report receipt signature mismatch: {evidence_receipt_state}", failures)
     require(evidence_safety.get("read_only") is True, f"{label} evidence report work order should be read-only: {evidence_safety}", failures)
     require(evidence_safety.get("ledger_mutated") is False, f"{label} evidence report work order should not mutate ledger: {evidence_safety}", failures)
     require(evidence_work_order.get("token_omitted") is True, f"{label} evidence report token omission missing: {evidence_work_order}", failures)
+    remediation_chain = evidence_work_order.get("remediation_chain") or {}
+    require(remediation_chain.get("operation") == "evidence_remediation_chain", f"{label} evidence remediation chain missing: {remediation_chain}", failures)
+    require(remediation_chain.get("status") in {"attention", "empty"}, f"{label} evidence remediation chain status wrong: {remediation_chain}", failures)
+    require(isinstance((remediation_chain.get("summary") or {}).get("items"), int), f"{label} evidence remediation chain summary missing: {remediation_chain}", failures)
+    require(isinstance(remediation_chain.get("items") or [], list), f"{label} evidence remediation chain items missing: {remediation_chain}", failures)
+    require(isinstance(remediation_chain.get("next_actions") or [], list), f"{label} evidence remediation chain next_actions missing: {remediation_chain}", failures)
+    chain_safety = remediation_chain.get("safety") or {}
+    require(chain_safety.get("read_only") is True, f"{label} evidence remediation chain should be read-only: {chain_safety}", failures)
+    require(chain_safety.get("explicit_mutating_commands_are_not_auto_run") is True, f"{label} remediation chain mutating boundary missing: {chain_safety}", failures)
+    for item in remediation_chain.get("items") or []:
+        require(item.get("operation") == "evidence_remediation_work_item", f"{label} remediation item operation wrong: {item}", failures)
+        require(str(item.get("preview_command") or "").startswith("agentops operator remediate-evidence-gap --run-id "), f"{label} remediation preview command missing: {item}", failures)
+        require(str(item.get("verify_command") or "").startswith("agentops operator evidence-report --run-id "), f"{label} remediation verify command missing: {item}", failures)
+        require(str(item.get("receipt_record_command") or "").startswith("agentops operator record-action-receipt "), f"{label} remediation receipt command missing: {item}", failures)
+        require(str(item.get("receipt_verify_record_command") or "").endswith("--status verified --confirm-record"), f"{label} remediation verify receipt command missing: {item}", failures)
+        require((item.get("safety") or {}).get("preview_read_only") is True, f"{label} remediation preview safety missing: {item}", failures)
+        require((item.get("safety") or {}).get("server_executes_shell") is False, f"{label} remediation server shell boundary missing: {item}", failures)
     advance_loop = work_order.get("advance_loop") or {}
     require(advance_loop.get("operation") == "advance_loop_work_order", f"{label} advance loop work order missing: {advance_loop}", failures)
     require(advance_loop.get("status") in {"attention", "empty"}, f"{label} advance loop status wrong: {advance_loop}", failures)
@@ -180,6 +201,9 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
     require(advance_policy.get("server_executes_shell") is False, f"{label} advance loop policy should keep shell local: {advance_policy}", failures)
     require((advance_loop.get("summary") or {}).get("policy_id") == "advance_loop_local_bounded_v1", f"{label} advance loop summary policy id missing: {advance_loop}", failures)
     advance_safety = advance_loop.get("safety") or {}
+    selected = advance_loop.get("selected_item") or {}
+    if selected.get("gate_id") == "evidence_report":
+        require(selected.get("action_signature") == evidence_work_order.get("action_signature"), f"{label} selected evidence action signature mismatch: {selected}", failures)
     require(advance_safety.get("read_only") is True, f"{label} advance loop handoff should be read-only: {advance_safety}", failures)
     require(advance_safety.get("server_shell_execution") is False, f"{label} advance loop should not execute shell from server: {advance_safety}", failures)
     require(advance_loop.get("token_omitted") is True, f"{label} advance loop token omission missing: {advance_loop}", failures)

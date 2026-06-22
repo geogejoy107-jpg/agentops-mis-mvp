@@ -1588,7 +1588,35 @@ export interface OperatorHandoffPayload {
   work_order: {
     method?: string;
     action_package?: OperatorLoopActionPackagePayload;
-    evidence_report?: Record<string, unknown>;
+    evidence_report?: {
+      operation?: string;
+      status?: string;
+      action_id?: string;
+      action_signature?: string;
+      summary?: Record<string, number>;
+      runs?: Record<string, unknown>[];
+      next_actions?: string[];
+      remediation_chain?: {
+        operation?: string;
+        status?: string;
+        summary?: Record<string, number>;
+        items?: Record<string, unknown>[];
+        next_actions?: string[];
+        token_omitted?: boolean;
+      };
+      receipt_state?: {
+        status?: string;
+        receipt_id?: string | null;
+        receipt_hash?: string | null;
+        evaluation_pass_fail?: string | null;
+        evaluation_score?: number | null;
+        current?: boolean;
+        verified?: boolean;
+        action_signature?: string;
+        token_omitted?: boolean;
+      };
+      token_omitted?: boolean;
+    };
     next_actions: string[];
     top_operator_actions: OperatorActionPlanItem[];
     advance_loop?: Record<string, unknown>;
@@ -4728,7 +4756,7 @@ export async function loadOperatorHandoff(limit = 12, loopId = ""): Promise<Oper
     work_order: {
       method: workOrderRaw.method ? String(workOrderRaw.method) : undefined,
       action_package: normalizeOperatorLoopActionPackage(workOrderRaw.action_package, loopId),
-      evidence_report: typeof workOrderRaw.evidence_report === "object" && workOrderRaw.evidence_report !== null ? workOrderRaw.evidence_report as Record<string, unknown> : undefined,
+      evidence_report: typeof workOrderRaw.evidence_report === "object" && workOrderRaw.evidence_report !== null ? workOrderRaw.evidence_report as OperatorHandoffPayload["work_order"]["evidence_report"] : undefined,
       next_actions: asArray<unknown>(workOrderRaw.next_actions).map(String).filter(Boolean),
       advance_loop: typeof workOrderRaw.advance_loop === "object" && workOrderRaw.advance_loop !== null ? workOrderRaw.advance_loop as Record<string, unknown> : undefined,
       top_operator_actions: asArray<Record<string, unknown>>(workOrderRaw.top_operator_actions).map((item) => ({

@@ -17315,6 +17315,7 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
     loop_audit = operator_loop_audit(conn, effective_headers, {"limit": [str(limit)], "loop_id": [loop_id]} if loop_id else {"limit": [str(limit)]})
     action_plan = operator_action_plan(conn, effective_headers, {"limit": [str(limit)]})
     evidence_report = operator_evidence_report(conn, effective_headers, {"limit": [str(min(limit, 8))]})
+    workspace_id = normalize_workspace_id(loop_audit.get("workspace_id") or action_plan.get("workspace_id") or headers.get("X-AgentOps-Workspace-Id") or "local-demo")
     action_package = loop_audit.get("action_package") or {}
     action_package_items = action_package.get("items") or []
     action_plan_actions = action_plan.get("actions") or []
@@ -17346,18 +17347,156 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
     evidence_report_attention = int(evidence_report_summary.get("attention") or 0)
     evidence_report_missing_manifests = int(evidence_report_summary.get("missing_plan_evidence_manifests") or 0)
     evidence_report_pending_approvals = int(evidence_report_summary.get("pending_approvals") or 0)
+    receipt_rows = operator_action_receipt_rows(conn, workspace_id, 200)
+    execution_evidence_gaps = ((action_plan.get("execution_evidence") or {}).get("gaps") or [])
+    execution_gap_by_run = {str(item.get("run_id")): item for item in execution_evidence_gaps if item.get("run_id")}
     evidence_report_read_command = f"agentops operator evidence-report --limit {min(limit, 8)}"
+    evidence_report_action_signature = stable_id("op_action_sig", "evidence_report", workspace_id, evidence_report_read_command)[-18:]
+    evidence_report_receipt = next((
+        receipt for receipt in receipt_rows
+        if (
+            str(receipt.get("action_signature") or "").strip() == evidence_report_action_signature
+            or str(receipt.get("action_command") or "").strip() == evidence_report_read_command
+        )
+    ), None)
+    evidence_report_receipt_current = bool(evidence_report_receipt and (
+        str(evidence_report_receipt.get("action_signature") or "").strip() == evidence_report_action_signature
+        or str(evidence_report_receipt.get("action_command") or "").strip() == evidence_report_read_command
+    ))
+    evidence_report_receipt_verified = bool(evidence_report_receipt_current and evidence_report_receipt and evidence_report_receipt.get("status") == "verified")
     evidence_report_next_actions = [evidence_report_read_command]
     for command in evidence_report_commands[:5]:
         command = str(command or "").strip()
         if command and command not in evidence_report_next_actions:
             evidence_report_next_actions.append(command)
+    remediation_items: list[dict] = []
+    for report_run in evidence_report_runs[: min(limit, 8)]:
+        run_id = str(report_run.get("run_id") or "").strip()
+        if not run_id or report_run.get("status") == "ready":
+            continue
+        agent_plan = report_run.get("agent_plan") or {}
+        manifest = report_run.get("plan_evidence_manifest") or {}
+        gap = execution_gap_by_run.get(run_id) or {}
+        preview_command = f"agentops operator remediate-evidence-gap --run-id {shlex.quote(run_id)}"
+        create_command = f"{preview_command} --confirm-create"
+        verify_command = f"agentops operator evidence-report --run-id {shlex.quote(run_id)} --limit 1"
+        gap_command = str(gap.get("command") or "").strip()
+        close_confirm_command = gap_command if gap_command.startswith("agentops operator close-evidence-gap --run-id ") and "--confirm-close" in gap_command else None
+        close_preview_command = close_confirm_command.replace(" --confirm-close", "") if close_confirm_command else None
+        plan_id = str(agent_plan.get("plan_id") or gap.get("plan_id") or "").strip()
+        manifest_id = str(manifest.get("manifest_id") or gap.get("manifest_id") or "").strip()
+        plan_evidence_create_command = f"agentops plan-evidence create --plan-id {shlex.quote(plan_id)} --run-id {shlex.quote(run_id)} --mismatch-policy block" if plan_id and not manifest_id else None
+        plan_evidence_verify_command = f"agentops plan-evidence verify --manifest-id {shlex.quote(manifest_id)}" if manifest_id else None
+        action_signature = stable_id("op_action_sig", "evidence_remediation", workspace_id, run_id, preview_command)[-18:]
+        receipt = next((
+            item for item in receipt_rows
+            if str(item.get("action_signature") or "").strip() == action_signature
+            or str(item.get("action_command") or "").strip() == preview_command
+        ), None)
+        receipt_state = {
+            "status": (receipt or {}).get("status") or "missing",
+            "receipt_id": (receipt or {}).get("receipt_id"),
+            "receipt_hash": (receipt or {}).get("tamper_chain_hash"),
+            "evaluation_pass_fail": (receipt or {}).get("evaluation_pass_fail"),
+            "evaluation_score": (receipt or {}).get("evaluation_score"),
+            "current": bool(receipt),
+            "verified": bool(receipt and receipt.get("status") == "verified"),
+            "action_signature": action_signature,
+            "token_omitted": True,
+        }
+        receipt_args = [
+            "agentops", "operator", "record-action-receipt",
+            "--action-command", preview_command,
+            "--verify-command", verify_command,
+            "--action-id", f"evidence_remediation:{run_id}",
+            "--action-signature", action_signature,
+            "--source", "handoff.evidence_remediation",
+            "--result-summary", f"Evidence remediation preview reviewed for run {run_id}.",
+        ]
+        receipt_record_command = " ".join(shlex.quote(str(part)) for part in receipt_args)
+        receipt_verify_record_command = f"{receipt_record_command} --status verified --confirm-record"
+        explicit_commands = [command for command in [
+            create_command,
+            plan_evidence_create_command,
+            close_confirm_command,
+        ] if command]
+        remediation_items.append({
+            "operation": "evidence_remediation_work_item",
+            "run_id": run_id,
+            "task_id": report_run.get("task_id"),
+            "status": report_run.get("status"),
+            "severity": gap.get("severity") or report_run.get("status"),
+            "failed_check_ids": report_run.get("failed_check_ids") or [],
+            "gap_types": gap.get("gap_types") or [],
+            "missing_evidence": gap.get("missing_evidence") or [],
+            "preview_command": preview_command,
+            "create_command": create_command,
+            "plan_evidence_create_command": plan_evidence_create_command,
+            "plan_evidence_verify_command": plan_evidence_verify_command,
+            "close_preview_command": close_preview_command,
+            "close_confirm_command": close_confirm_command,
+            "verify_command": verify_command,
+            "receipt_record_command": receipt_record_command,
+            "receipt_verify_record_command": receipt_verify_record_command,
+            "receipt_state": receipt_state,
+            "explicit_mutating_commands": explicit_commands,
+            "next_action": gap.get("next_action") or "Preview the remediation package before creating or closing evidence.",
+            "ui_route": f"/admin/runs/{run_id}",
+            "contract": "preview/read commands are safe; create, plan-evidence create, and close commands are explicit operator steps and are never auto-executed by handoff or advance-loop",
+            "safety": {
+                "preview_read_only": True,
+                "verify_read_only": True,
+                "has_explicit_mutating_commands": bool(explicit_commands),
+                "confirm_required_for_create": True,
+                "server_executes_shell": False,
+                "live_execution_performed": False,
+                "token_omitted": True,
+            },
+            "token_omitted": True,
+        })
+    remediation_chain = {
+        "operation": "evidence_remediation_chain",
+        "status": "attention" if remediation_items else "empty",
+        "summary": {
+            "items": len(remediation_items),
+            "blocked": sum(1 for item in remediation_items if item.get("status") == "blocked" or item.get("severity") == "blocked"),
+            "attention": sum(1 for item in remediation_items if item.get("status") == "attention" or item.get("severity") == "attention"),
+            "receipt_verified": sum(1 for item in remediation_items if (item.get("receipt_state") or {}).get("verified")),
+            "explicit_mutating_commands": sum(len(item.get("explicit_mutating_commands") or []) for item in remediation_items),
+        },
+        "items": remediation_items,
+        "next_actions": [item["preview_command"] for item in remediation_items[:3]] or [evidence_report_read_command],
+        "contract": "controlled remediation chain; preview/read commands are surfaced first, while mutating commands require explicit operator execution and receipt recording",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_executes_shell": False,
+            "explicit_mutating_commands_are_not_auto_run": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
     evidence_report_work_order = {
         "operation": "operator_evidence_report_work_order",
         "status": evidence_report.get("status") or "unknown",
+        "action_id": "operator_evidence_report_work_order",
+        "action_signature": evidence_report_action_signature,
         "summary": evidence_report_summary,
         "runs": evidence_report_runs[: min(limit, 8)],
         "next_actions": evidence_report_next_actions[:6],
+        "remediation_chain": remediation_chain,
+        "receipt_state": {
+            "status": (evidence_report_receipt or {}).get("status") or "missing",
+            "receipt_id": (evidence_report_receipt or {}).get("receipt_id"),
+            "receipt_hash": (evidence_report_receipt or {}).get("tamper_chain_hash"),
+            "evaluation_pass_fail": (evidence_report_receipt or {}).get("evaluation_pass_fail"),
+            "evaluation_score": (evidence_report_receipt or {}).get("evaluation_score"),
+            "current": evidence_report_receipt_current,
+            "verified": evidence_report_receipt_verified,
+            "action_signature": evidence_report_action_signature,
+            "token_omitted": True,
+        },
         "contract": "read-only run evidence work order; commands inspect or remediate evidence gaps explicitly and are never auto-executed by handoff",
         "safety": {
             "read_only": True,
@@ -17442,11 +17581,13 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
     advance_loop_confirm_command = " ".join(shlex.quote(str(part)) for part in [*advance_loop_args, "--confirm-advance"])
     loop_advance_selected_item = next((item for item in action_package_items if item.get("gate_status") != "pass" and item.get("action_command")), None)
     evidence_advance_selected_item = None
-    if not scoped_loop_id and (evidence_report_work_order.get("status") in {"blocked", "attention"}):
+    if not scoped_loop_id and not evidence_report_receipt_verified and (evidence_report_work_order.get("status") in {"blocked", "attention"}):
         evidence_action_command = next((str(command or "").strip() for command in (evidence_report_work_order.get("next_actions") or []) if str(command or "").strip()), "")
         if evidence_action_command:
             evidence_advance_selected_item = {
                 "package_id": "operator_evidence_report_work_order",
+                "action_id": "operator_evidence_report_work_order",
+                "action_signature": evidence_report_action_signature,
                 "gate_id": "evidence_report",
                 "gate_label": "Run evidence report",
                 "gate_status": evidence_report_work_order.get("status"),
@@ -17466,11 +17607,14 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
             "selected_status": (advance_loop_selected_item or {}).get("gate_status"),
             "loop_scoped": bool(scoped_loop_id),
             "evidence_report_prioritized": bool(evidence_advance_selected_item),
+            "evidence_report_receipt_verified": evidence_report_receipt_verified,
             "policy_id": advance_loop_policy.get("policy_id"),
             "policy_version": advance_loop_policy.get("policy_version"),
         },
         "selected_item": {
             "package_id": (advance_loop_selected_item or {}).get("package_id"),
+            "action_id": (advance_loop_selected_item or {}).get("action_id"),
+            "action_signature": (advance_loop_selected_item or {}).get("action_signature"),
             "gate_id": (advance_loop_selected_item or {}).get("gate_id"),
             "gate_label": (advance_loop_selected_item or {}).get("gate_label"),
             "gate_status": (advance_loop_selected_item or {}).get("gate_status"),

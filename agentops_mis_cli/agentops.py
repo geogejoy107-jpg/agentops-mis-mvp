@@ -554,7 +554,8 @@ def select_advance_loop_item(handoff: dict) -> dict:
     work_order = handoff.get("work_order") or {}
     evidence_work_order = work_order.get("evidence_report") or {}
     evidence_status = str(evidence_work_order.get("status") or "").lower()
-    if not handoff.get("loop_id") and evidence_status in {"blocked", "attention"}:
+    evidence_receipt_state = evidence_work_order.get("receipt_state") or {}
+    if not handoff.get("loop_id") and not evidence_receipt_state.get("verified") and evidence_status in {"blocked", "attention"}:
         for command in evidence_work_order.get("next_actions") or []:
             command = str(command or "").strip()
             if not command:
@@ -564,6 +565,8 @@ def select_advance_loop_item(handoff: dict) -> dict:
                 continue
             return {
                 "package_id": "operator_evidence_report_work_order",
+                "action_id": str(evidence_work_order.get("action_id") or "operator_evidence_report_work_order"),
+                "action_signature": evidence_work_order.get("action_signature"),
                 "gate_id": "evidence_report",
                 "gate_label": "Run evidence report",
                 "gate_status": evidence_status,
@@ -575,6 +578,7 @@ def select_advance_loop_item(handoff: dict) -> dict:
                     "summary": evidence_work_order.get("summary") or {},
                     "runs": len(evidence_work_order.get("runs") or []),
                     "operation": evidence_work_order.get("operation"),
+                    "receipt_state": evidence_receipt_state,
                 },
                 "advance_policy": policy,
                 "token_omitted": True,

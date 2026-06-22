@@ -83,16 +83,23 @@ python3 scripts/customer_worker_external_write_gate_smoke.py
 - [x] Redaction occurs before indexing.
 - [x] Search returns source path, hash, scope and retrieval ID.
 - [ ] Add heading-aware chunks rather than only full-document rows.
-- [ ] Add a Chinese/English retrieval test set.
-- [ ] Record Recall@5, MRR and p95.
+- [x] Add a Chinese/English retrieval test set.
+- [x] Record Recall@5, MRR and p95.
 - [x] Reindex is incremental and no-op for unchanged documents.
 - [x] Fallback search does not silently reduce to title/summary-only without reporting it.
+
+Current retrieval-quality baseline: `scripts/knowledge_retrieval_quality_smoke.py`
+starts an isolated SQLite-backed server, rebuilds the Markdown FTS index, runs a
+five-query Chinese/English top-5 test set, and records Recall@5, MRR and local
+p95 latency without printing snippets, tokens or raw content. Latest measured
+baseline: Recall@5 `1.0`, MRR `0.84`, p95 `8.65 ms` across 85 indexed documents.
 
 Required checks:
 
 ```bash
 python3 scripts/agent_work_method_block_smoke.py
 python3 scripts/agent_gateway_scoped_read_smoke.py
+python3 scripts/knowledge_retrieval_quality_smoke.py
 ```
 
 ## 4. Redaction and secret safety
@@ -282,7 +289,8 @@ python3 scripts/sqlite_reliability_smoke.py
 - [ ] Make panels independently loadable.
 - [x] Add a lightweight command-center read model or equivalent aggregation: `operator evidence-report` aggregates Agent Plan, approval, plan_evidence_manifest and ledger evidence by run.
 - [x] Add run-level evidence to operator handoff: `operator handoff` now includes an `evidence_report` source and read-only work order so Hermes/OpenClaw/Codex can inherit delivery evidence gaps and commands.
-- [x] Bounded advance consumes handoff evidence work: unscoped `agentops operator advance-loop` prioritizes the read-only `evidence_report` work order for blocked/attention run evidence, verifies through handoff, and records action receipt/evaluation proof; scoped `--loop-id` still advances that loop's gate.
+- [x] Bounded advance consumes handoff evidence work: unscoped `agentops operator advance-loop` prioritizes the read-only `evidence_report` work order for blocked/attention run evidence, verifies through handoff, records action receipt/evaluation proof, feeds that receipt back into handoff/UI, and skips the same evidence work order after it is verified; scoped `--loop-id` still advances that loop's gate.
+- [x] Evidence remediation chain is explicit in handoff: each non-ready evidence-report run has preview, create, plan-evidence, close-gap, verify, and receipt commands with mutating steps marked as explicit operator actions and never auto-run by handoff/advance-loop.
 - [x] Operator Action Queue recovery items can record action receipts and show VERIFY commands in action-plan / loop-audit readback.
 - [ ] Paginate large run, tool and audit lists.
 - [ ] Briefly cache expensive aggregate read models.

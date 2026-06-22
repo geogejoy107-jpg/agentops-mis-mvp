@@ -1320,6 +1320,9 @@ export function AIEmployees() {
   const loopActionPackageItems = loopActionPackage?.items || [];
   const operatorHandoffSummary = operatorHandoff?.summary;
   const operatorHandoffCommands = operatorHandoff?.work_order?.commands || [];
+  const handoffEvidenceWorkOrder = operatorHandoff?.work_order?.evidence_report;
+  const handoffEvidenceReceiptState = handoffEvidenceWorkOrder?.receipt_state;
+  const handoffEvidenceRemediationSummary = handoffEvidenceWorkOrder?.remediation_chain?.summary || {};
   const loopSelfCheckCommand = operatorHandoff?.loop_id
     ? `agentops operator loop-self-check --loop-id ${operatorHandoff.loop_id} --limit 12`
     : "agentops operator loop-self-check --limit 12";
@@ -3413,6 +3416,8 @@ export function AIEmployees() {
                   { label: copy.loopAuditTitle, value: operatorHandoffSummary?.loop_status || "unknown", status: operatorHandoffSummary?.loop_status || operatorHandoff.status },
                   { label: copy.actionQueueTitle, value: operatorHandoffSummary?.action_plan_status || "unknown", status: operatorHandoffSummary?.action_plan_status || operatorHandoff.status },
                   { label: copy.evidenceReportTitle, value: `${operatorHandoffSummary?.evidence_report_ready ?? 0}/${operatorHandoffSummary?.evidence_report_runs ?? 0}`, status: operatorHandoffSummary?.evidence_report_status || operatorHandoff.status },
+                  { label: copy.remediationState, value: `${handoffEvidenceRemediationSummary.receipt_verified ?? 0}/${handoffEvidenceRemediationSummary.items ?? 0}`, status: (handoffEvidenceRemediationSummary.items || 0) > 0 ? "attention" : "pass" },
+                  { label: copy.receiptProof, value: handoffEvidenceReceiptState?.verified ? `${copy.verifiedReceipts}: ${(handoffEvidenceReceiptState.receipt_hash || handoffEvidenceReceiptState.receipt_id || "").slice(0, 10)}` : handoffEvidenceReceiptState?.status || copy.noReceiptProof, status: handoffEvidenceReceiptState?.verified ? "pass" : handoffEvidenceReceiptState?.status || "attention" },
                   { label: copy.loopHealth, value: `${operatorHandoff.loop_health?.score ?? 0}/100`, status: operatorHandoff.loop_health?.status || "unknown" },
                   { label: copy.handoffCommands, value: `${operatorHandoffCommands.length}/${operatorHandoffSummary?.loop_package_items ?? 0}`, status: operatorHandoffCommands.length > 0 ? "attention" : "pass" },
                 ].map((item) => (

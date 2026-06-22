@@ -172,6 +172,15 @@ def main() -> int:
             require((global_advanced_payload.get("action_result") or {}).get("ok") is True, f"global evidence action failed: {global_advanced_payload}", failures)
             require((global_advanced_payload.get("verify_result") or {}).get("ok") is True, f"global evidence verify failed: {global_advanced_payload}", failures)
             require(global_after_receipts >= global_before_receipts + 1, f"global evidence advance receipt missing: {global_before_receipts} -> {global_after_receipts}", failures)
+            global_second_preview = run_cli(["operator", "advance-loop", "--limit", "10"], base_url, outputs)
+            global_second_payload = load_json(global_second_preview.stdout)
+            require(global_second_preview.returncode == 0, f"global second preview failed: {global_second_preview.stderr or global_second_preview.stdout}", failures)
+            require((global_second_payload.get("preview") or {}).get("gate_id") != "evidence_report", f"verified evidence work order should not be selected again: {global_second_payload}", failures)
+            handoff_after_global = run_cli(["operator", "handoff", "--limit", "10"], base_url, outputs)
+            handoff_after_payload = load_json(handoff_after_global.stdout)
+            evidence_work_order = ((handoff_after_payload.get("work_order") or {}).get("evidence_report") or {})
+            evidence_receipt_state = evidence_work_order.get("receipt_state") or {}
+            require(evidence_receipt_state.get("verified") is True, f"handoff should expose verified evidence receipt state: {handoff_after_payload}", failures)
 
             workflow = run_cli([
                 "workflow",
