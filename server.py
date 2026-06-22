@@ -6433,7 +6433,7 @@ def run_customer_task_workflow(conn, body: dict) -> dict:
 
 
 def run_kb_bot_project_workflow(conn, body: dict) -> dict:
-    base_url = str(body.get("base_url") or os.environ.get("AGENTOPS_BASE_URL") or "http://127.0.0.1:8787").rstrip("/")
+    base_url = str(body.get("base_url") or body.get("_base_url") or os.environ.get("AGENTOPS_BASE_URL") or "http://127.0.0.1:8787").rstrip("/")
     cmd = [
         sys.executable,
         str(ROOT / "scripts" / "run_kb_bot_demo.py"),
@@ -11695,8 +11695,10 @@ class Handler(BaseHTTPRequestHandler):
                 payload, status = run_hermes_openclaw_loop_workflow(body, self.headers.get("Host"))
                 return self.send_json(payload, status)
             if path == "/api/workflows/kb-bot-project":
+                body["_base_url"] = body.get("base_url") or f"http://{self.headers.get('Host')}"
                 return self.send_json(run_kb_bot_project_workflow(conn, body), 201)
             if path == "/api/workflows/customer-task-templates/run":
+                body["_base_url"] = body.get("base_url") or f"http://{self.headers.get('Host')}"
                 payload, status = run_customer_task_template_workflow(conn, body)
                 return self.send_json(payload, status)
             if path == "/api/workflows/customer-task-templates/submit":

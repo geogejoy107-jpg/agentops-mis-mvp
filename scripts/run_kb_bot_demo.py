@@ -138,12 +138,58 @@ def create_task(client: AgentOpsClient, project_id: str, index: int, task: dict)
     return client.post("/api/tasks", payload)
 
 
+def create_agent_plan(client: AgentOpsClient, workspace_id: str, task_id: str, task: dict, project_id: str) -> dict:
+    risk = task.get("risk", "medium")
+    return client.post("/api/agent-gateway/agent-plans", {
+        "workspace_id": workspace_id,
+        "task_id": task_id,
+        "agent_id": task["agent_id"],
+        "task_understanding": (
+            f"Execute KB bot project step for project {project_id}: {task['title']}. "
+            "Use summary/hash-only evidence and keep external writes behind approvals."
+        ),
+        "referenced_specs": [
+            "docs/AGENT_GATEWAY_CLI_SPEC.md",
+            "docs/API_SPEC.md",
+            "docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md",
+        ],
+        "referenced_memories": [
+            "kb_bot_demo_requires_summary_hash_only_evidence",
+            "external_knowledge_upload_requires_human_approval",
+        ],
+        "referenced_bases": [
+            "agent_gateway_cli_api_mcp_contract",
+            "local_first_customer_delivery_ledger",
+        ],
+        "proposed_files_to_change": [
+            "tasks",
+            "runs",
+            "tool_calls",
+            "evaluations",
+            "artifacts",
+            "audit_logs",
+        ],
+        "risk_level": risk,
+        "approval_required": risk in {"high", "critical"} or any(tool.get("requires_approval") for tool in task.get("tool_calls", [])),
+        "execution_steps": [
+            "Claim the customer project task through Agent Gateway.",
+            "Record summarized tool evidence without raw documents or credentials.",
+            "Submit evaluation, memory candidate, artifact and audit evidence for operator review.",
+        ],
+        "verification_plan": "Verify task/run/tool/evaluation/artifact/audit evidence through MIS ledger readback.",
+        "rollback_plan": "Leave the task blocked with audit evidence; do not perform external writes or store raw customer material.",
+        "status": "submitted",
+    })
+
+
 def run_task(client: AgentOpsClient, workspace_id: str, task_id: str, task: dict, project_id: str) -> dict:
     agent_id = task["agent_id"]
     client.post(f"/api/agent-gateway/tasks/{task_id}/claim", {
         "workspace_id": workspace_id,
         "agent_id": agent_id,
     })
+    plan = create_agent_plan(client, workspace_id, task_id, task, project_id)["agent_plan"]
+    plan_id = plan["plan_id"]
     run = client.post("/api/agent-gateway/runs/start", {
         "workspace_id": workspace_id,
         "task_id": task_id,
@@ -155,6 +201,7 @@ def run_task(client: AgentOpsClient, workspace_id: str, task_id: str, task: dict
     run_id = run["run_id"]
 
     approval_id = None
+    tool_call_ids = []
     for tool in task.get("tool_calls", []):
         tool_payload = {
             "workspace_id": workspace_id,
@@ -174,6 +221,7 @@ def run_task(client: AgentOpsClient, workspace_id: str, task_id: str, task: dict
             "result_summary": tool["summary"],
         }
         tool_result = client.post("/api/agent-gateway/tool-calls", tool_payload)["tool_call"]
+        tool_call_ids.append(tool_result["tool_call_id"])
         if tool.get("requires_approval"):
             approval = client.post("/api/agent-gateway/approvals/request", {
                 "workspace_id": workspace_id,
@@ -219,20 +267,30 @@ def run_task(client: AgentOpsClient, workspace_id: str, task_id: str, task: dict
     if task.get("artifact"):
         artifact = task["artifact"]
         summary = artifact["summary"].format(project_id=project_id)
-        content_hash = hashlib.sha256(summary.encode("utf-8")).hexdigest()
-        recorded = client.post("/api/agent-gateway/artifacts", {
-            "workspace_id": workspace_id,
-            "task_id": task_id,
-            "run_id": run_id,
-            "agent_id": agent_id,
-            "artifact_id": f"art_kb_bot_delivery_{project_id}",
-            "artifact_type": "customer_delivery_report",
-            "title": artifact["title"],
-            "uri": f"agentops://kb-bot-demo/{project_id}/delivery-summary",
-            "summary": summary,
-            "content_hash": content_hash,
-        })["artifact"]
-        artifact_id = recorded["artifact_id"]
+        artifact_type = "customer_delivery_report"
+        artifact_title = artifact["title"]
+        artifact_id = f"art_kb_bot_delivery_{project_id}"
+        artifact_uri = f"agentops://kb-bot-demo/{project_id}/delivery-summary"
+    else:
+        summary = task["output_summary"]
+        artifact_type = "workflow_step_summary"
+        artifact_title = f"KB bot step summary: {task['title']}"
+        artifact_id = f"art_kb_bot_step_{project_id}_{task_id.rsplit('_', 1)[-1]}"
+        artifact_uri = f"agentops://kb-bot-demo/{project_id}/steps/{task_id}"
+    content_hash = hashlib.sha256(summary.encode("utf-8")).hexdigest()
+    recorded = client.post("/api/agent-gateway/artifacts", {
+        "workspace_id": workspace_id,
+        "task_id": task_id,
+        "run_id": run_id,
+        "agent_id": agent_id,
+        "artifact_id": artifact_id,
+        "artifact_type": artifact_type,
+        "title": artifact_title,
+        "uri": artifact_uri,
+        "summary": summary,
+        "content_hash": content_hash,
+    })["artifact"]
+    artifact_id = recorded["artifact_id"]
     client.post("/api/agent-gateway/audit", {
         "workspace_id": workspace_id,
         "agent_id": agent_id,
@@ -245,13 +303,38 @@ def run_task(client: AgentOpsClient, workspace_id: str, task_id: str, task: dict
             "project_id": project_id,
             "approval_id": approval_id,
             "artifact_id": artifact_id,
+            "plan_id": plan_id,
             "summary": task["output_summary"],
         },
     })
+
+    manifest_id = None
+    manifest_status = None
+    manifest_pass = None
+    if all(tool.get("status", "completed") == "completed" for tool in task.get("tool_calls", [])):
+        manifest_payload = client.post("/api/agent-gateway/plan-evidence-manifests", {
+            "workspace_id": workspace_id,
+            "plan_id": plan_id,
+            "task_id": task_id,
+            "run_id": run_id,
+            "agent_id": agent_id,
+            "mismatch_policy": "block",
+            "tool_call_ids": tool_call_ids,
+            "evaluation_ids": [evaluation["evaluation_id"]],
+            "artifact_ids": [artifact_id],
+        })
+        manifest = manifest_payload["manifest"]
+        manifest_id = manifest["manifest_id"]
+        manifest_status = manifest.get("status")
+        manifest_pass = (manifest_payload.get("verification") or {}).get("pass")
     return {
         "task_id": task_id,
         "run_id": run_id,
         "agent_id": agent_id,
+        "plan_id": plan_id,
+        "plan_evidence_manifest_id": manifest_id,
+        "plan_evidence_status": manifest_status,
+        "plan_evidence_pass": manifest_pass,
         "approval_id": approval_id,
         "artifact_id": artifact_id,
         "evaluation_id": evaluation["evaluation_id"],

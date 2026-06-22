@@ -5,9 +5,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import socket
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -38,6 +40,49 @@ def http_json(base_url: str) -> tuple[int, dict]:
         except Exception:
             body = {"error": exc.reason}
         return exc.code, body
+
+
+def free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def run(cmd: list[str], *, env: dict[str, str], timeout: int = 45) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        cmd,
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=False,
+    )
+
+
+def start_server(port: int, env: dict[str, str]) -> subprocess.Popen[str]:
+    return subprocess.Popen(
+        [sys.executable, "server.py", "--host", "127.0.0.1", "--port", str(port)],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+
+
+def wait_for_api(base_url: str, timeout_sec: int = 30) -> None:
+    deadline = time.time() + timeout_sec
+    last_error = ""
+    while time.time() < deadline:
+        try:
+            status, _payload = http_json(base_url)
+            if status < 500:
+                return
+        except Exception as exc:
+            last_error = str(exc)
+        time.sleep(0.3)
+    raise RuntimeError(f"Timed out waiting for entitlement API at {base_url}: {last_error}")
 
 
 def post_json(base_url: str, path: str, payload: dict) -> tuple[int, dict]:
@@ -139,29 +184,50 @@ def validate_free_local_template_gates(base_url: str) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Verify commercial entitlement status API and CLI.")
-    parser.add_argument("--base-url", default=os.environ.get("AGENTOPS_BASE_URL", "http://127.0.0.1:8787"))
+    parser.add_argument("--base-url", default=os.environ.get("AGENTOPS_BASE_URL"))
     args = parser.parse_args()
     outputs: list[str] = []
+    processes: list[subprocess.Popen[str]] = []
     try:
-        status, payload = http_json(args.base_url)
-        raw = json.dumps(payload, ensure_ascii=False, sort_keys=True)
-        outputs.append(raw)
-        require(status == 200, f"entitlement API failed: {status} {payload}")
-        validate(payload, "api")
-        export_gate = validate_free_local_export_gate(args.base_url)
-        template_gates = validate_free_local_template_gates(args.base_url)
-        outputs.append(json.dumps(export_gate, ensure_ascii=False, sort_keys=True))
-        outputs.append(json.dumps(template_gates, ensure_ascii=False, sort_keys=True))
-
         with tempfile.TemporaryDirectory(prefix="agentops-commercial-entitlements-") as tmp:
+            tmp_path = Path(tmp)
+            base_url = args.base_url
+            server_env = os.environ.copy()
+            if not base_url:
+                port = free_port()
+                base_url = f"http://127.0.0.1:{port}"
+                entitlements_path = tmp_path / "entitlements.local.json"
+                entitlements_path.write_text(
+                    json.dumps({"edition": "free_local", "overrides": {}, "notes": "Temporary entitlement smoke fixture. No secrets."}, indent=2, sort_keys=True),
+                    encoding="utf-8",
+                )
+                server_env["AGENTOPS_DB_PATH"] = str(tmp_path / "agentops.db")
+                server_env["AGENTOPS_ENTITLEMENTS_PATH"] = str(entitlements_path)
+                server_env.pop("AGENTOPS_EDITION", None)
+                reset = run([sys.executable, "server.py", "--host", "127.0.0.1", "--port", str(port), "--reset"], env=server_env, timeout=30)
+                require(reset.returncode == 0, f"seed reset failed: {reset.stderr or reset.stdout}")
+                proc = start_server(port, server_env)
+                processes.append(proc)
+                wait_for_api(base_url)
+
+            status, payload = http_json(base_url)
+            raw = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+            outputs.append(raw)
+            require(status == 200, f"entitlement API failed: {status} {payload}")
+            validate(payload, "api")
+            export_gate = validate_free_local_export_gate(base_url)
+            template_gates = validate_free_local_template_gates(base_url)
+            outputs.append(json.dumps(export_gate, ensure_ascii=False, sort_keys=True))
+            outputs.append(json.dumps(template_gates, ensure_ascii=False, sort_keys=True))
+
             env = os.environ.copy()
-            env["AGENTOPS_CONFIG"] = str(Path(tmp) / "config.json")
+            env["AGENTOPS_CONFIG"] = str(tmp_path / "config.json")
             env.pop("AGENTOPS_API_KEY", None)
             env.pop("AGENTOPS_EDITION", None)
-            proc = run_cli(args.base_url, env)
-            outputs.extend([proc.stdout, proc.stderr])
-            require(proc.returncode == 0, f"entitlement CLI failed: {proc.stderr or proc.stdout}")
-            cli_payload = json.loads(proc.stdout)
+            cli = run_cli(base_url, env)
+            outputs.extend([cli.stdout, cli.stderr])
+            require(cli.returncode == 0, f"entitlement CLI failed: {cli.stderr or cli.stdout}")
+            cli_payload = json.loads(cli.stdout)
             validate(cli_payload, "cli")
 
         require(not leaked_secret("\n".join(outputs)), "entitlements leaked token-like material")
@@ -179,6 +245,14 @@ def main() -> int:
     except Exception as exc:
         print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True), file=sys.stderr)
         return 1
+    finally:
+        for proc in reversed(processes):
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
 
 
 if __name__ == "__main__":

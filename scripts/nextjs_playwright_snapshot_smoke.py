@@ -241,6 +241,15 @@ def seed_customer_project_fixture(db_path: str) -> str:
     return project_id
 
 
+def write_entitlement_fixture(path: Path, edition: str) -> None:
+    payload = {
+        "edition": edition,
+        "notes": "Temporary Next.js Playwright smoke fixture. No secrets.",
+        "overrides": {},
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+
+
 def wait_for_json(url: str, predicate, description: str, timeout_sec: int = 10) -> object:
     deadline = time.time() + timeout_sec
     last_value: object | None = None
@@ -495,6 +504,64 @@ def verify_dispatch_entitlement_block(next_base: str, env: dict[str, str]) -> di
     }
 
 
+def verify_dispatch_template_run_success(next_base: str, entitlement_path: Path, env: dict[str, str]) -> dict:
+    write_entitlement_fixture(entitlement_path, "pro_workspace")
+    projects_url = f"{next_base}/api/mis/workflows/customer-projects?limit=25"
+    before_projects = http_json(projects_url)
+    require(isinstance(before_projects, dict), "Customer projects API did not return an object before Pro dispatch")
+    before_rows = before_projects.get("projects") or []
+    require(isinstance(before_rows, list), "Customer projects payload did not include a project list before Pro dispatch")
+    before_ids = {str(row.get("project_id")) for row in before_rows if isinstance(row, dict) and row.get("project_id")}
+
+    target = next_base.rstrip("/") + "/workspace/dispatch"
+    goto = playwright(env, "goto", target)
+    require(goto.returncode == 0, f"Playwright goto failed for Pro dispatch interaction: {goto.stderr or goto.stdout}")
+    before = wait_for_snapshot_text(
+        env,
+        "/workspace/dispatch",
+        lambda text: "Start template" in text and "report_templates true" in text and "billing call false" in text,
+        "dispatch page to render Pro entitlement-enabled template controls",
+    )
+    button_ref = first_button_ref(before, "Start template")
+    clicked = playwright(env, "click", button_ref, timeout=75)
+    require(clicked.returncode == 0, f"Playwright Pro dispatch template click failed: {clicked.stderr or clicked.stdout}")
+    after = wait_for_snapshot_text(
+        env,
+        "/workspace/dispatch",
+        lambda text: "Customer project started" in text,
+        "dispatch page to show started customer project",
+        timeout_sec=25,
+    )
+    require("Entitlement required" not in after, "Pro dispatch still showed entitlement blocking")
+
+    after_projects = http_json(projects_url)
+    require(isinstance(after_projects, dict), "Customer projects API did not return an object after Pro dispatch")
+    after_rows = after_projects.get("projects") or []
+    require(isinstance(after_rows, list), "Customer projects payload did not include a project list after Pro dispatch")
+    after_ids = {str(row.get("project_id")) for row in after_rows if isinstance(row, dict) and row.get("project_id")}
+    created_ids = sorted(after_ids - before_ids)
+    require(created_ids, f"Pro dispatch did not create a customer project: before={len(before_ids)} after={len(after_ids)}")
+    project_id = created_ids[-1]
+
+    report = http_json(f"{next_base}/api/mis/workflows/customer-projects/{project_id}/report")
+    require(isinstance(report, dict), f"Created project report did not return an object: {report!r}")
+    require(report.get("project_id") == project_id, f"Created project report project mismatch: {report}")
+    counts = report.get("counts") or {}
+    require((counts.get("tasks") or 0) >= 1, f"Created project report has no task evidence: {counts}")
+    require(bool(report.get("artifact_id")), f"Created project report has no delivery artifact: {report}")
+    serialized = json.dumps(report, ensure_ascii=False)
+    require(not leaked_secret(serialized), "Created project report leaked token-like material")
+    return {
+        "button_ref": button_ref,
+        "created_project_id": project_id,
+        "project_count_before": len(before_ids),
+        "project_count_after": len(after_ids),
+        "artifact_id": report.get("artifact_id"),
+        "tasks": counts.get("tasks"),
+        "runs": counts.get("runs"),
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run Next.js Playwright snapshot smoke.")
     parser.add_argument("--api-port", type=int, default=0)
@@ -518,14 +585,18 @@ def main() -> int:
     try:
         with tempfile.TemporaryDirectory(prefix="agentops-next-pw-") as tmp:
             db_path = str(Path(tmp) / "agentops.db")
+            entitlement_path = Path(tmp) / "entitlements.local.json"
+            write_entitlement_fixture(entitlement_path, "free_local")
             reset_env = os.environ.copy()
             reset_env["AGENTOPS_DB_PATH"] = db_path
+            reset_env["AGENTOPS_ENTITLEMENTS_PATH"] = str(entitlement_path)
             reset = run(["python3", "server.py", "--host", "127.0.0.1", "--port", str(api_port), "--reset"], env=reset_env, timeout=30)
             require(reset.returncode == 0, f"seed reset failed: {reset.stderr or reset.stdout}")
             project_id = seed_customer_project_fixture(db_path)
 
             api_env = os.environ.copy()
             api_env["AGENTOPS_DB_PATH"] = db_path
+            api_env["AGENTOPS_ENTITLEMENTS_PATH"] = str(entitlement_path)
             api_proc = start_process(["python3", "server.py", "--host", "127.0.0.1", "--port", str(api_port)], cwd=ROOT, env=api_env)
             processes.append(api_proc)
             wait_http(f"{api_base}/api/dashboard/metrics")
@@ -555,6 +626,7 @@ def main() -> int:
                 "memory_review": approve_first_candidate_memory(next_base, pw_env),
                 "customer_report_archive": archive_customer_project_report(next_base, project_id, pw_env),
                 "dispatch_entitlement_block": verify_dispatch_entitlement_block(next_base, pw_env),
+                "dispatch_template_run_success": verify_dispatch_template_run_success(next_base, entitlement_path, pw_env),
             }
             proxy_checks = {
                 "agents": len(http_json(f"{next_base}/api/mis/agents")),

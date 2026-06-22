@@ -151,8 +151,10 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   report, archives that report to the MIS ledger through a Next.js form fallback,
   verifies `report_artifact_id`, clicks a customer template dispatch action,
   verifies the Free Local `report_templates` entitlement block, confirms no
-  customer project was created by the blocked action, and checks for token-like
-  leakage.
+  customer project was created by the blocked action, flips an isolated temporary
+  entitlement fixture to `pro_workspace`, clicks the same Next.js dispatch path
+  again, verifies a customer project and report artifact are created, and checks
+  for token-like leakage.
 
 - First migration artifact:
   - `ui/next-app/app/workspace/page.tsx`
@@ -268,6 +270,14 @@ Initial status:
   `POST /api/workflows/customer-task-templates/run` and
   `POST /api/workflows/customer-task-templates/submit` for capability
   `report_templates`.
+- Next.js parity evidence now covers both sides of that gate: Free Local blocks
+  `Start template` without creating a project, while an isolated
+  `pro_workspace` entitlement fixture allows the same Next.js form fallback to
+  create a ledger-backed customer project and report artifact.
+- The entitled template path preserves the Agent Gateway evidence contract:
+  `scripts/run_kb_bot_demo.py` creates Agent Plans before starting runs and
+  records plan-evidence manifests for the completed low-risk/customer-delivery
+  steps while keeping the external-upload step approval-gated.
 - Smoke: `python3 scripts/commercial_entitlements_smoke.py`
 
 ### WP2: Production Safety Contract
