@@ -472,8 +472,11 @@ effect. Resume checks that approval is approved, the hash still matches and the
 action has not been consumed, then records provider side-effect evidence exactly
 once. Replay returns `prepared_action_already_consumed`.
 
-For high-risk tool calls, agents should usually create the gate while recording
-the tool call:
+For high-risk external side-effect tool calls, agents must create the gate while
+recording the tool call. `completed` high/critical tool calls, high/critical
+tool calls with a `side_effect_id`, and high/critical tool calls with external
+upload/publish/write intent are rejected unless `--prepare-action` is used
+first:
 
 ```bash
 agentops toolcall record \

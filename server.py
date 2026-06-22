@@ -63,6 +63,30 @@ RISKY_TOOLS = {
     "dify.knowledge.upload",
     "openai.file_search.upload",
 }
+EXTERNAL_SIDE_EFFECT_KEYWORDS = {
+    "external",
+    "publish",
+    "upload",
+    "write",
+    "send",
+    "post",
+    "push",
+    "export",
+    "deliver",
+    "file_search",
+    "knowledge",
+}
+EXTERNAL_SIDE_EFFECT_SCHEMES = (
+    "http://",
+    "https://",
+    "openai://",
+    "dify://",
+    "notion://",
+    "github://",
+    "slack://",
+    "discord://",
+    "email://",
+)
 HIGH_RISK_CATEGORIES = {"shell", "email", "database"}
 VALID_TASK_STATUSES = {"backlog", "planned", "running", "waiting_approval", "blocked", "completed", "failed", "canceled"}
 VALID_RISK_LEVELS = {"low", "medium", "high", "critical"}
@@ -7803,6 +7827,23 @@ def agent_gateway_run_heartbeat(conn, run_id: str, body) -> tuple[dict, int]:
     return {"run": dict(after)}, 200
 
 
+def tool_call_has_external_side_effect_intent(tool_name: str, category: str, target_resource: str | None, args: dict) -> bool:
+    haystack = " ".join([
+        tool_name or "",
+        category or "",
+        target_resource or "",
+        json.dumps(args, ensure_ascii=False, sort_keys=True),
+    ]).lower()
+    target = (target_resource or "").strip().lower()
+    if target.startswith(EXTERNAL_SIDE_EFFECT_SCHEMES):
+        return True
+    if tool_name in RISKY_TOOLS:
+        return True
+    if category in {"email", "notion", "github", "discord", "mcp", "database"} and any(keyword in haystack for keyword in EXTERNAL_SIDE_EFFECT_KEYWORDS):
+        return True
+    return any(keyword in haystack for keyword in EXTERNAL_SIDE_EFFECT_KEYWORDS)
+
+
 def agent_gateway_record_tool_call(conn, body) -> tuple[dict, int]:
     run_id = body.get("run_id")
     ident = agent_gateway_identity({}, body)
@@ -7818,6 +7859,46 @@ def agent_gateway_record_tool_call(conn, body) -> tuple[dict, int]:
     category = coerce_choice(body.get("tool_category"), VALID_TOOL_CATEGORIES, "custom")
     status = coerce_choice(body.get("status"), {"planned", "running", "completed", "failed", "blocked", "waiting_approval"}, "completed" if risk in {"low", "medium"} else "waiting_approval")
     args = safe_json_metadata(body.get("normalized_args_json") or body.get("args") or {"summary": body.get("args_summary") or "redacted"})
+    external_side_effect_intent = tool_call_has_external_side_effect_intent(tool_name, category, body.get("target_resource"), args)
+    high_risk_side_effect = risk in {"high", "critical"} and (
+        status == "completed"
+        or bool(body.get("side_effect_id"))
+        or external_side_effect_intent
+    )
+    if high_risk_side_effect and not body.get("prepare_action"):
+        runtime_event(
+            conn,
+            "rtc_agent_gateway_local",
+            "tool_call.prepared_action_required",
+            "blocked",
+            run_id=run_id,
+            task_id=run["task_id"],
+            agent_id=agent_id,
+            input_summary=f"{tool_name} risk={risk}",
+            output_summary="High-risk side-effect tool calls must create a prepared action before execution evidence can be recorded.",
+            raw_payload_hash=stable_hash(args),
+        )
+        audit(conn, "agent", agent_id, "agent_gateway.tool_call_prepared_action_required", "runs", run_id, dict(run), dict(run), {
+            "tool_name": tool_name,
+            "risk_level": risk,
+            "requested_status": status,
+            "side_effect_id_provided": bool(body.get("side_effect_id")),
+            "external_side_effect_intent": external_side_effect_intent,
+            "raw_omitted": True,
+            "token_omitted": True,
+        })
+        return {
+            "error": "high_risk_prepared_action_required",
+            "message": "High-risk or critical external side-effect tool calls must use prepare_action=true and resume the prepared action after approval.",
+            "tool_name": tool_name,
+            "risk_level": risk,
+            "requested_status": status,
+            "external_side_effect_intent": external_side_effect_intent,
+            "run_id": run_id,
+            "task_id": run["task_id"],
+            "next_action": "Record again with prepare_action=true, inspect/approve the generated approval, then resume the prepared action exactly once with provider_side_effect_id.",
+            "token_omitted": True,
+        }, 428
     row = {
         "tool_call_id": body.get("tool_call_id") or new_id("tc_gw"),
         "run_id": run_id,
@@ -11057,9 +11138,10 @@ def customer_project_report(conn, project_id: str) -> tuple[dict, int]:
             "",
         ])
     markdown = "\n".join(lines)
+    report_status = "waiting_approval" if pending_approvals else "ready"
     return {
         "project_id": project_id,
-        "status": "ready",
+        "status": report_status,
         "markdown": markdown,
         "counts": {
             "tasks": len(tasks),

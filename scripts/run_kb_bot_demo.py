@@ -58,9 +58,9 @@ class AgentOpsClient:
         return self.request("POST", path, payload=payload)
 
 
-def count_rows(client: AgentOpsClient, db_path: Path) -> dict:
+def count_rows(client: AgentOpsClient, db_path: Path | None) -> dict:
     tables = ["agents", "tasks", "runs", "tool_calls", "approvals", "memories", "evaluations", "audit_logs", "runtime_events", "artifacts"]
-    if db_path.exists():
+    if db_path and str(db_path) not in {"", "."} and db_path.is_file():
         with sqlite3.connect(db_path) as conn:
             return {table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] for table in tables}
 
@@ -78,11 +78,13 @@ def count_rows(client: AgentOpsClient, db_path: Path) -> dict:
     }
     counts = {}
     for key, path in paths.items():
-        value = client.get(path)
+        query = {"include_page": "true", "limit": 1} if key in {"runs", "tool_calls", "audit_logs"} else None
+        value = client.get(path, query=query)
         if isinstance(value, list):
             counts[key] = len(value)
         elif isinstance(value, dict):
-            counts[key] = len(value.get(key, []))
+            page = value.get("page") if isinstance(value.get("page"), dict) else {}
+            counts[key] = int(page.get("total") or len(value.get(key, [])))
         else:
             counts[key] = 0
     return counts
@@ -183,6 +185,10 @@ def run_task(client: AgentOpsClient, workspace_id: str, task_id: str, task: dict
     run_id = run["run_id"]
 
     approval_id = None
+    prepared_action_id = None
+    prepared_action_hash = None
+    pending_prepared_action = False
+    tool_call_ids: list[str] = []
     for tool in task.get("tool_calls", []):
         tool_payload = {
             "workspace_id": workspace_id,
@@ -201,21 +207,44 @@ def run_task(client: AgentOpsClient, workspace_id: str, task_id: str, task: dict
             },
             "result_summary": tool["summary"],
         }
-        tool_result = client.post("/api/agent-gateway/tool-calls", tool_payload)["tool_call"]
+        if tool.get("requires_approval") and tool.get("risk") in {"high", "critical"}:
+            tool_payload.update({
+                "prepare_action": True,
+                "action_type": tool["name"],
+                "approval_reason": tool["approval_reason"],
+                "checkpoint": {
+                    "project_id": project_id,
+                    "run_id": run_id,
+                    "tool_name": tool["name"],
+                    "checkpoint": "after_connector_plan_before_external_upload",
+                },
+                "idempotency_key": f"kb-bot:{project_id}:{task_id}:{tool['name']}",
+            })
+        tool_response = client.post("/api/agent-gateway/tool-calls", tool_payload)
+        tool_result = tool_response["tool_call"]
+        tool_call_ids.append(tool_result["tool_call_id"])
         if tool.get("requires_approval"):
-            approval = client.post("/api/agent-gateway/approvals/request", {
-                "workspace_id": workspace_id,
-                "task_id": task_id,
-                "run_id": run_id,
-                "tool_call_id": tool_result["tool_call_id"],
-                "requested_by_agent_id": agent_id,
-                "reason": tool["approval_reason"],
-            })["approval"]
+            approval = ((tool_response.get("approval_wall") or {}).get("approval") or {})
+            prepared_action = ((tool_response.get("approval_wall") or {}).get("prepared_action") or {})
+            if prepared_action:
+                prepared_action_id = prepared_action.get("action_id")
+                prepared_action_hash = prepared_action.get("action_hash")
+                pending_prepared_action = prepared_action.get("status") in {"prepared", "approved"}
+            if not approval:
+                approval = client.post("/api/agent-gateway/approvals/request", {
+                    "workspace_id": workspace_id,
+                    "task_id": task_id,
+                    "run_id": run_id,
+                    "tool_call_id": tool_result["tool_call_id"],
+                    "requested_by_agent_id": agent_id,
+                    "reason": tool["approval_reason"],
+                })["approval"]
             approval_id = approval["approval_id"]
 
+    final_status = "waiting_approval" if pending_prepared_action else "completed"
     client.post(f"/api/agent-gateway/runs/{run_id}/heartbeat", {
         "workspace_id": workspace_id,
-        "status": "completed",
+        "status": final_status,
         "duration_ms": task.get("duration_ms", 42000),
         "output_summary": task["output_summary"],
         "output_tokens": task.get("output_tokens", 520),
@@ -281,6 +310,10 @@ def run_task(client: AgentOpsClient, workspace_id: str, task_id: str, task: dict
         "run_id": run_id,
         "agent_id": agent_id,
         "approval_id": approval_id,
+        "prepared_action_id": prepared_action_id,
+        "prepared_action_hash": prepared_action_hash,
+        "run_status": final_status,
+        "tool_call_ids": tool_call_ids,
         "artifact_id": artifact_id,
         "evaluation_id": evaluation["evaluation_id"],
         "memory_id": memory["memory_id"],
@@ -396,11 +429,11 @@ def main() -> int:
     parser.add_argument("--base-url", default=os.environ.get("AGENTOPS_BASE_URL", "http://127.0.0.1:8787"))
     parser.add_argument("--api-key", default=os.environ.get("AGENTOPS_API_KEY", ""))
     parser.add_argument("--workspace-id", default=os.environ.get("AGENTOPS_WORKSPACE_ID", "local-demo"))
-    parser.add_argument("--db-path", default=os.environ.get("AGENTOPS_DB_PATH", "agentops_mis.db"))
+    parser.add_argument("--db-path", default=os.environ.get("AGENTOPS_DB_PATH", ""))
     args = parser.parse_args()
 
     client = AgentOpsClient(args.base_url, args.api_key)
-    db_path = Path(args.db_path)
+    db_path = Path(args.db_path) if args.db_path else None
     project_id = now_stamp()
     before = count_rows(client, db_path)
     register_agents(client, args.workspace_id)

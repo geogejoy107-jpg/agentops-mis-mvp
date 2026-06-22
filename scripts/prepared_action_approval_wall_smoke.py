@@ -97,6 +97,22 @@ def main() -> int:
     run_id = run_payload.get("run", {}).get("run_id") or run_payload.get("run_id")
     require(bool(run_id), f"run_id missing: {run_payload}", failures)
 
+    blocked_status, blocked_payload = http_json(args.base_url, "/api/agent-gateway/tool-calls", {
+        "workspace_id": "local-demo",
+        "run_id": run_id,
+        "agent_id": agent_id,
+        "tool_name": "external.publish",
+        "tool_category": "custom",
+        "risk_level": "critical",
+        "status": "waiting_approval",
+        "target_resource": "mock://customer/delivery",
+        "args": {"operation": "publish", "target": "mock://customer/delivery", "raw_payload_stored": False},
+        "result_summary": "This high-risk publish should be blocked without prepare_action.",
+    })
+    outputs.append(json.dumps(blocked_payload, ensure_ascii=False))
+    require(blocked_status == 428, f"unprepared high-risk external tool should require prepared action: {blocked_status} {blocked_payload}", failures)
+    require(blocked_payload.get("error") == "high_risk_prepared_action_required", f"wrong unprepared tool error: {blocked_payload}", failures)
+
     returncode, tool_payload, raw = run_cli(args.base_url, [
         "toolcall", "record",
         "--run-id", run_id,

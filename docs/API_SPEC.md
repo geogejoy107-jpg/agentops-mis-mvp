@@ -242,6 +242,15 @@ the approval, and a `next_action` command chain for inspect, approve and exact
 resume. This is the preferred Agent Gateway path for high/critical external
 tool calls.
 
+High/critical tool calls with external side-effect intent are rejected with
+`428 high_risk_prepared_action_required` unless `prepare_action:true` is used.
+External side-effect intent includes risky upload/publish/write/send/export
+tool names, external target resource schemes, and connector/write keywords.
+Approving the linked approval does not complete the tool call; it only marks
+the prepared action approved. The caller must resume the prepared action exactly
+once with a provider side-effect id before completed side-effect evidence is
+recorded.
+
 `GET /api/agent-gateway/prepared-actions/:id` verifies that the current stored
 prepared action still hashes to the approved `action_hash`. `POST
 /api/agent-gateway/prepared-actions/:id/resume` resumes only after the linked

@@ -51,13 +51,19 @@ def verify_decision(base_url: str, decision: str, failures: list[str]) -> dict:
     tool = next((item for item in run_detail.get("tool_calls", []) if item.get("tool_call_id") == before["tool_call_id"]), {})
 
     expected_decision = "approved" if decision == "approve" else "rejected"
-    require(decided.get("decision") == expected_decision, f"{decision}: approval decision mismatch", failures)
-    require(decided.get("reason") == before.get("reason"), f"{decision}: approval reason was overwritten", failures)
+    decided_approval = decided.get("approval") if isinstance(decided.get("approval"), dict) else decided
+    prepared_action = decided.get("prepared_action") if isinstance(decided.get("prepared_action"), dict) else None
+    require(decided_approval.get("decision") == expected_decision, f"{decision}: approval decision mismatch", failures)
+    require(decided_approval.get("reason") == before.get("reason"), f"{decision}: approval reason was overwritten", failures)
     if decision == "approve":
-        require(tool.get("status") == "completed", "approve: tool call should be completed", failures)
-        require(run_detail["run"].get("approval_required") in (False, 0), "approve: run approval_required should be cleared", failures)
+        require(decided.get("resume_required") is True, f"approve: prepared action approval should require exact resume: {decided}", failures)
+        require(prepared_action and prepared_action.get("status") == "approved", f"approve: prepared action should be approved but not consumed: {decided}", failures)
+        require(tool.get("status") == "waiting_approval", "approve: tool call should stay waiting until prepared action resume", failures)
+        require(run_detail["run"].get("approval_required") in (True, 1), "approve: run approval_required should remain until exact resume", failures)
+        require(run_detail["run"].get("status") == "waiting_approval", "approve: run should stay waiting until exact resume", failures)
         require(run_detail["run"].get("output_summary") == run_before.get("output_summary"), "approve: completed run output summary should not be replaced by mock completion", failures)
     else:
+        require(prepared_action and prepared_action.get("status") == "rejected", f"reject: prepared action should be rejected: {decided}", failures)
         require(tool.get("status") == "blocked", "reject: tool call should be blocked", failures)
         require(run_detail["run"].get("status") == "blocked", "reject: run should be blocked", failures)
         require(task_detail["task"].get("status") == "blocked", "reject: task should be blocked", failures)
@@ -66,7 +72,9 @@ def verify_decision(base_url: str, decision: str, failures: list[str]) -> dict:
         "run_id": before["run_id"],
         "task_id": before["task_id"],
         "tool_call_id": before["tool_call_id"],
-        "decision": decided.get("decision"),
+        "decision": decided_approval.get("decision"),
+        "prepared_action_id": prepared_action.get("action_id") if prepared_action else None,
+        "resume_required": decided.get("resume_required"),
         "tool_status": tool.get("status"),
         "run_status": run_detail["run"].get("status"),
         "task_status": task_detail["task"].get("status"),

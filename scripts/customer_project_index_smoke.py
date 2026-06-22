@@ -54,7 +54,7 @@ def main() -> int:
     if row:
         require(row.get("task_count") == 6, f"task count mismatch: {row}", failures)
         require(row.get("run_count") == 6, f"run count mismatch: {row}", failures)
-        require(row.get("completed_runs") == 6, f"completed runs mismatch: {row}", failures)
+        require(row.get("completed_runs") == 5, f"completed runs should exclude the prepared external-upload run: {row}", failures)
         require(row.get("pending_approvals", 0) >= 1, f"pending approval missing: {row}", failures)
         require(row.get("delivery_artifact_id") == artifact_id, f"delivery artifact mismatch: {row}", failures)
         require(row.get("report_url") == f"/api/workflows/customer-projects/{project_id}/report", f"report url mismatch: {row}", failures)

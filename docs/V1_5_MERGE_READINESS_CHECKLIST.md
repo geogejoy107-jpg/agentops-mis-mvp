@@ -64,13 +64,15 @@ execution touches undeclared file/tool      readiness gate fails
 - [x] Replay after `consumed_at` is rejected.
 - [x] CLI supports create/get/resume.
 - [x] Customer-worker Hermes/OpenClaw external-write intent pauses before live runtime execution and creates a prepared action plus approval.
-- [ ] All high-risk external connector/runtime tool paths use prepared actions before shared/commercial deployment.
+- [x] Agent Gateway high-risk external side-effect tool calls cannot be recorded as completed or with `side_effect_id` unless they create a prepared action; the KB bot external upload plan now uses the Approval Wall path. Guarded by `scripts/high_risk_toolcall_prepared_action_gate_smoke.py`.
+- [ ] All high-risk external connector/runtime tool paths use prepared actions before shared/commercial deployment. Agent Gateway high/critical external side-effect tool calls and KB bot external upload now require `prepare_action=true`; remaining connector-specific live paths still need final coverage audit before shared/commercial deployment.
 
 Required check:
 
 ```bash
 python3 scripts/prepared_action_approval_wall_smoke.py --base-url http://127.0.0.1:8787
 python3 scripts/customer_worker_external_write_gate_smoke.py
+python3 scripts/high_risk_toolcall_prepared_action_gate_smoke.py --base-url http://127.0.0.1:8787
 ```
 
 ## 3. Knowledge safety and quality
@@ -162,14 +164,14 @@ Choose one v1.5 contract.
 
 #### Durable prepared-action contract
 
-- [ ] Prepared action exists before approval.
-- [ ] Approval binds normalized arguments, resource, policy version and action hash.
-- [ ] Checkpoint exists before pause.
-- [ ] Approve resumes the exact step rather than completing the run directly.
-- [ ] Approval is one-time and expires.
-- [ ] Duplicate decisions cannot duplicate side effects.
-- [ ] Reject blocks the step and writes audit evidence.
-- [ ] Non-idempotent providers use reconciliation or idempotency keys.
+- [x] Prepared action exists before approval.
+- [x] Approval binds normalized arguments, resource, policy version and action hash.
+- [x] Checkpoint exists before pause.
+- [x] Approve authorizes exact resume but does not complete the run/tool side effect directly.
+- [x] Approval is one-time and expires.
+- [x] Duplicate decisions cannot duplicate side effects.
+- [x] Reject blocks the step and writes audit evidence.
+- [x] Non-idempotent providers use idempotency keys; provider reconciliation remains connector-specific.
 
 #### Restricted ledger/delivery contract
 
@@ -184,6 +186,8 @@ python3 scripts/enrollment_approval_workflow_smoke.py
 python3 scripts/enrollment_credential_ui_smoke.py
 python3 scripts/review_queue_smoke.py
 python3 scripts/agent_gateway_review_queue_smoke.py
+python3 scripts/prepared_action_approval_wall_smoke.py
+python3 scripts/kb_bot_demo_smoke.py
 ```
 
 ### Runtime capabilities
@@ -207,6 +211,13 @@ intent now stop before runtime invocation and create task/run/tool/prepared
 action/approval/audit evidence. This is a disclosed governance boundary and a
 first enforced entry gate, not full internal runtime tracing or complete
 coverage for every external side-effect path.
+
+Agent Gateway tool-call recording now also rejects high/critical external
+side-effect intents unless `prepare_action=true` is used. The KB bot demo's
+external OpenAI/Dify/AnythingLLM upload plan therefore creates a prepared action
+plus pending approval and leaves that run/tool in `waiting_approval`; approving
+the approval requires an explicit prepared-action resume before any provider
+side-effect evidence can be recorded.
 
 ```bash
 python3 scripts/runtime_connector_trust_smoke.py
@@ -447,7 +458,7 @@ live runtime suite
 - [ ] Stuck jobs can be recovered.
 - [ ] Delivery board links task/run/artifact/approval/evaluation/audit.
 - [x] Customer report excludes internal prompts and private transcripts. Customer-facing markdown now shows only delivery summary, safety boundary and progress, while run/tool/approval/audit IDs stay in a separate internal evidence payload. Guarded by `scripts/customer_delivery_boundary_smoke.py` and `scripts/customer_project_report_smoke.py`.
-- [ ] Delivery approval is not confused with tool-action execution approval.
+- [x] Delivery approval is not confused with tool-action execution approval: KB bot external upload approval is an Approval Wall prepared-action gate; approval alone does not complete the tool/run, and delivery/report approval remains a separate plan-evidence/customer handoff gate. Guarded by `scripts/approval_decision_side_effect_smoke.py`, `scripts/prepared_action_approval_wall_smoke.py`, `scripts/kb_bot_demo_smoke.py`, and `scripts/delivery_approval_manifest_gate_smoke.py`.
 
 ### UI
 

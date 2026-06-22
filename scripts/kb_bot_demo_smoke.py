@@ -55,8 +55,10 @@ def main() -> int:
 
     require(len(results) == 6, "expected six customer-demo tasks", failures)
     approval_ids = [item.get("approval_id") for item in results if item.get("approval_id")]
+    prepared_action_ids = [item.get("prepared_action_id") for item in results if item.get("prepared_action_id")]
     artifact_ids = [item.get("artifact_id") for item in results if item.get("artifact_id")]
     require(bool(approval_ids), "expected pending approval for external knowledge-base upload", failures)
+    require(bool(prepared_action_ids), "expected prepared action for external knowledge-base upload", failures)
     require(bool(artifact_ids), "expected customer delivery artifact", failures)
     require(payload.get("safe_defaults", {}).get("external_upload_performed") is False, "external upload should remain false", failures)
     require(payload.get("safe_defaults", {}).get("credentials_stored") is False, "credentials should not be stored", failures)
@@ -66,6 +68,14 @@ def main() -> int:
         approvals = http_json(args.base_url, "/api/approvals")
         matching = [item for item in approvals if item.get("approval_id") in approval_ids]
         require(any(item.get("decision") == "pending" for item in matching), "external upload approval should be pending", failures)
+
+    for action_id in prepared_action_ids:
+        prepared = http_json(args.base_url, f"/api/agent-gateway/prepared-actions/{action_id}")
+        prepared_action = prepared.get("prepared_action") or {}
+        require(prepared_action.get("status") == "prepared", f"prepared action should be prepared and unconsumed: {prepared}", failures)
+        require((prepared.get("hash_verification") or {}).get("match") is True, f"prepared action hash mismatch: {prepared}", failures)
+        require(bool(prepared_action.get("action_hash")), f"prepared action hash missing: {prepared}", failures)
+        require(prepared_action.get("consumed_at") is None, f"prepared action should not be consumed by demo: {prepared}", failures)
 
     if artifact_ids:
         artifacts = http_json(args.base_url, "/api/artifacts")
@@ -78,6 +88,7 @@ def main() -> int:
         "project_id": project_id,
         "created_or_updated": created,
         "approval_ids": approval_ids,
+        "prepared_action_ids": prepared_action_ids,
         "artifact_ids": artifact_ids,
         "open_pages": payload.get("open_pages"),
         "failures": failures,
