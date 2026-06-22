@@ -17716,7 +17716,7 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
         close_confirm_command: str | None,
         verify_command: str,
     ) -> tuple[list[dict], dict | None]:
-        remediation_task_id = str(gap.get("remediation_task_id") or task_id or "").strip()
+        remediation_task_id = str(gap.get("remediation_task_id") or "").strip()
         remediation_status = str(gap.get("remediation_status") or gap.get("remediation_package_status") or "").strip()
         synthesis_status = str(gap.get("remediation_synthesis_status") or "").strip()
         gap_decision_status = str(gap.get("gap_decision_status") or "").strip()
