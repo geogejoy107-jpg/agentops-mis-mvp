@@ -14397,11 +14397,266 @@ def safe_commander_readiness_snapshot(conn: sqlite3.Connection, headers) -> tupl
     return readiness, worker
 
 
+REPO_MAP_EXCLUDED_DIRS = {
+    ".git",
+    ".venv",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    "node_modules",
+    "dist",
+    "build",
+    ".next",
+    ".agentops_runtime",
+}
+
+REPO_MAP_EXCLUDED_SUFFIXES = {
+    ".db",
+    ".sqlite",
+    ".sqlite3",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".webp",
+    ".ico",
+    ".pdf",
+    ".zip",
+    ".tar",
+    ".gz",
+    ".mp4",
+    ".mov",
+    ".lock",
+    ".log",
+}
+
+REPO_MAP_INCLUDED_SUFFIXES = {
+    ".py",
+    ".ts",
+    ".tsx",
+    ".js",
+    ".jsx",
+    ".json",
+    ".md",
+    ".yml",
+    ".yaml",
+    ".toml",
+    ".txt",
+    ".css",
+    ".html",
+    ".sh",
+}
+
+
 def commander_safe_text(value, limit=180) -> str:
     redacted = redact_text(value, limit)
     redacted = re.sub(r"(?i)bearer\s+\[REDACTED\]", "[SECRET_REDACTED]", redacted)
     redacted = re.sub(r"(?i)\b(?:agtok|agtsess)_[a-z0-9._\-]+\b", "[SECRET_REDACTED]", redacted)
     return redacted[:limit]
+
+
+def repo_map_query_tokens(query: str) -> list[str]:
+    tokens = []
+    for token in re.findall(r"[A-Za-z0-9_./:-]+", query.lower()):
+        token = token.strip("./:-_")
+        if len(token) >= 2 and token not in {"the", "and", "for", "with", "into", "from", "this", "that"}:
+            tokens.append(token)
+    deduped = []
+    for token in tokens:
+        if token not in deduped:
+            deduped.append(token)
+    return deduped[:24]
+
+
+def repo_map_file_allowed(path: Path) -> bool:
+    rel = path.relative_to(ROOT)
+    parts = set(rel.parts)
+    if parts & REPO_MAP_EXCLUDED_DIRS:
+        return False
+    if path.name.startswith(".env"):
+        return False
+    if any(part.startswith(".agentops") for part in rel.parts):
+        return False
+    if path.suffix.lower() in REPO_MAP_EXCLUDED_SUFFIXES:
+        return False
+    if path.suffix.lower() not in REPO_MAP_INCLUDED_SUFFIXES:
+        return False
+    try:
+        if path.stat().st_size > 240_000:
+            return False
+    except OSError:
+        return False
+    return True
+
+
+def iter_repo_map_candidate_files(candidate_limit: int):
+    yielded = 0
+    for root, dirnames, filenames in os.walk(ROOT):
+        dirnames[:] = sorted(
+            dirname for dirname in dirnames
+            if dirname not in REPO_MAP_EXCLUDED_DIRS and not dirname.startswith(".agentops")
+        )
+        for filename in sorted(filenames):
+            path = Path(root) / filename
+            if not repo_map_file_allowed(path):
+                continue
+            yield path
+            yielded += 1
+            if yielded >= candidate_limit:
+                return
+
+
+def repo_map_symbol_lines(text: str) -> list[dict]:
+    symbols = []
+    pattern = re.compile(r"^\s*(?:def|class|async\s+def|function|export\s+function|const|let|var)\s+([A-Za-z_][A-Za-z0-9_]*)", re.MULTILINE)
+    for match in pattern.finditer(text[:120_000]):
+        line_no = text.count("\n", 0, match.start()) + 1
+        symbols.append({"name": commander_safe_text(match.group(1), 120), "line": line_no})
+        if len(symbols) >= 12:
+            break
+    return symbols
+
+
+def repo_map_snippets(lines: list[str], query_tokens: list[str], max_snippets: int = 3) -> list[dict]:
+    snippets = []
+    lower_tokens = [token.lower() for token in query_tokens]
+    for idx, line in enumerate(lines, start=1):
+        hay = line.lower()
+        if lower_tokens and not any(token in hay for token in lower_tokens):
+            continue
+        if len(line.strip()) < 2:
+            continue
+        snippets.append({
+            "line": idx,
+            "text": commander_safe_text(line.strip(), 220),
+        })
+        if len(snippets) >= max_snippets:
+            break
+    return snippets
+
+
+def commander_repo_map(qs=None, headers=None) -> dict:
+    qs = qs or {}
+    query = commander_safe_text((qs.get("q") or qs.get("query") or [""])[0], 240)
+    query_tokens = repo_map_query_tokens(query)
+    limit = qs_int(qs, "limit", 12, 1, 40)
+    char_budget = qs_int(qs, "char_budget", 8000, 1200, 24000)
+    if "budget" in qs and "char_budget" not in qs:
+        char_budget = qs_int(qs, "budget", 8000, 1200, 24000)
+    candidate_limit = qs_int(qs, "candidate_limit", 360, 40, 1200)
+    files = []
+    skipped = {"excluded": 0, "too_large_or_binary": 0, "unmatched": 0}
+    for path in iter_repo_map_candidate_files(candidate_limit):
+        rel = path.relative_to(ROOT).as_posix()
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            skipped["too_large_or_binary"] += 1
+            continue
+        except OSError:
+            skipped["excluded"] += 1
+            continue
+        lowered_path = rel.lower()
+        lowered = raw.lower()
+        title = path.stem.replace("_", " ").replace("-", " ")
+        score = 0
+        matched_fields = []
+        for token in query_tokens:
+            path_hits = lowered_path.count(token)
+            content_hits = min(lowered.count(token), 20)
+            if path_hits:
+                score += path_hits * 24
+                if "path" not in matched_fields:
+                    matched_fields.append("path")
+            if token in title.lower():
+                score += 16
+                if "title" not in matched_fields:
+                    matched_fields.append("title")
+            if content_hits:
+                score += content_hits * 2
+                if "content" not in matched_fields:
+                    matched_fields.append("content")
+        if not query_tokens:
+            score = 1 if rel in {"PROJECT_SPEC.md", "AGENT_WORKFLOW.md", "BASE_INDEX.md"} or rel.startswith("docs/project/") else 0
+            if score:
+                matched_fields.append("baseline")
+        if score <= 0:
+            skipped["unmatched"] += 1
+            continue
+        lines = raw.splitlines()
+        symbols = repo_map_symbol_lines(raw)
+        symbol_hits = [
+            item for item in symbols
+            if any(token in str(item.get("name") or "").lower() for token in query_tokens)
+        ]
+        if symbol_hits:
+            score += len(symbol_hits) * 18
+            if "symbol" not in matched_fields:
+                matched_fields.append("symbol")
+        snippets = repo_map_snippets(lines, query_tokens)
+        files.append({
+            "path": rel,
+            "score": score,
+            "matched_fields": matched_fields,
+            "symbols": symbol_hits[:6] or symbols[:4],
+            "snippets": snippets,
+            "line_count": len(lines),
+            "content_hash": stable_hash(raw),
+            "source_provenance": {
+                "source": "repo_file",
+                "root": "repository",
+                "path": rel,
+                "ranking_inputs": ["query_tokens", "path", "title", "symbols", "redacted_content"],
+                "raw_content_returned": False,
+                "token_omitted": True,
+            },
+            "rank_reason": commander_safe_text(
+                f"score={score}; matched={','.join(matched_fields) or 'none'}; tokens={','.join(query_tokens[:6]) or 'baseline'}",
+                240,
+            ),
+            "token_omitted": True,
+        })
+    ranked = sorted(files, key=lambda item: (-int(item["score"]), item["path"]))
+    selected = []
+    used_chars = 0
+    for item in ranked:
+        estimate = len(item["path"]) + sum(len(snippet.get("text") or "") for snippet in item.get("snippets") or []) + 160
+        if selected and used_chars + estimate > char_budget:
+            continue
+        selected.append(item)
+        used_chars += estimate
+        if len(selected) >= limit:
+            break
+    return {
+        "provider": "agentops-commander",
+        "operation": "repo_map",
+        "status": "ready" if selected else "empty",
+        "query": query,
+        "query_tokens": query_tokens,
+        "limit": limit,
+        "char_budget": char_budget,
+        "used_chars_estimate": used_chars,
+        "candidate_count": len(ranked),
+        "selected_count": len(selected),
+        "files": selected,
+        "skipped": skipped,
+        "ranking": {
+            "deterministic": True,
+            "sort": "score desc, path asc",
+            "score_version": "repo-map-localizer-v1",
+            "token_omitted": True,
+        },
+        "contract": "read-only repo localization for coding work packages; scans tracked-style repo text paths, returns redacted snippets plus hashes, and does not mutate ledger or execute commands",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "raw_file_bodies_returned": False,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
 
 
 def commander_project_board(conn: sqlite3.Connection, headers) -> dict:
@@ -22281,6 +22536,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(payload)
             if path == "/api/commander/project-board":
                 payload = commander_project_board(conn, self.headers)
+                conn.rollback()
+                return self.send_json(payload)
+            if path == "/api/commander/repo-map":
+                payload = commander_repo_map(qs, self.headers)
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/commander/work-packages":

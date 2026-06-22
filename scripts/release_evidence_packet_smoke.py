@@ -119,6 +119,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "commander_repo_map",
+        "command": "python3 scripts/commander_repo_map_smoke.py",
+        "summary": "Commander repo-map localization returns deterministic file/symbol candidates with provenance and redacted snippets.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "responsiveness",
         "command": "python3 scripts/ai_employees_responsiveness_smoke.py",
         "summary": "Agent command-center API latency and fan-out budget.",

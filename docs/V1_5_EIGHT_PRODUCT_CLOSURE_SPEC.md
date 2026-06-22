@@ -63,6 +63,12 @@ product exposes:
   `GET /api/commander/work-packages` and `agentops commander packages`, so a
   customer can refresh the app and still see lane status, latest run, evidence
   counts, dependencies, verification commands, and next actions.
+- Read-only coding-task localization through `GET /api/commander/repo-map` and
+  `agentops commander repo-map`, so an agent or operator can identify relevant
+  repo files, symbols, redacted snippets, content hashes, and source
+  provenance within a token budget before changing code. This is a planning and
+  retrieval aid only; it does not mutate the ledger or replace Agent Plan,
+  Approval Wall, test, or merge gates.
 - Async workflow job submission, polling, listing, stuck-job detection, and
   operator mark-failed recovery for customer worker and template jobs.
 - An async integration inbox at `GET /api/commander/integration-inbox` for
@@ -748,6 +754,7 @@ python3 scripts/worker_adapter_retry_smoke.py
 python3 scripts/customer_task_template_smoke.py
 python3 scripts/agentops_workflow_template_cli_smoke.py
 python3 scripts/agentops_workflow_async_job_smoke.py
+python3 scripts/commander_repo_map_smoke.py
 python3 scripts/operator_action_queue_ui_smoke.py
 python3 scripts/operator_advance_loop_smoke.py
 cd ui/start-building-app && npm run build

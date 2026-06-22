@@ -202,6 +202,28 @@ index refresh uses `POST /api/agent-gateway/knowledge/index` and requires
 plus documents whose `workspace_id` matches the token workspace; workspace header
 or query spoofing returns `403`.
 
+## Commander Repo Map
+
+```http
+GET /api/commander/repo-map?q=agent%20plan&limit=8&char_budget=4800
+```
+
+`GET /api/commander/repo-map` is a read-only localization endpoint for coding
+work packages. It scans allowed source/documentation files under the repository
+root, excludes generated output, local databases, env files, caches, binaries,
+archives, logs, and dependency directories, and returns deterministic ranked
+file candidates. Each candidate includes a relative path, score, matched
+fields, extracted symbols, short redacted snippets, line count, content hash,
+rank reason, and source provenance. The response records `used_chars_estimate`,
+`char_budget`, `read_only:true`, `ledger_mutated:false`,
+`live_execution_performed:false`, `raw_file_bodies_returned:false`, and
+`token_omitted:true`.
+
+Use this endpoint before creating or executing coding work packages when an
+agent needs to localize likely files without loading the whole repository into
+context. It does not create tasks, approve plans, execute shell commands, call
+Hermes/OpenClaw, or bypass Agent Plan, Approval Wall, test, or merge gates.
+
 ## Agent Plans
 
 ```http

@@ -1464,6 +1464,30 @@ and `receipt_verify_record_command` (append a verified action/VERIFY receipt)
 so a human, Hermes, OpenClaw, or Codex operator can close the RECORD gate
 through the same audited CLI path.
 
+### `agentops commander repo-map`
+
+Returns deterministic file/symbol candidates for a coding work package without
+mutating the ledger or executing local commands.
+
+```bash
+agentops commander repo-map "Agent Plan approval gate" --limit 8 --char-budget 4800
+agentops commander repo-map --query "prepared action runtime probe" --limit 6
+```
+
+Maps to `GET /api/commander/repo-map`. The command returns ranked relative
+paths, extracted symbols, short redacted snippets, content hashes, source
+provenance, rank reasons, and token-budget proof. It excludes local databases,
+env/key files, generated outputs, dependency folders, archives, binaries, logs,
+and caches, and reports `read_only:true`, `ledger_mutated:false`,
+`live_execution_performed:false`, `raw_file_bodies_returned:false`, and
+`token_omitted:true`.
+
+Use this before drafting an Agent Plan or handing a coding task to another
+agent so the work package includes scoped file candidates instead of vague
+repo-wide instructions. It is not an approval, merge gate, runtime adapter, or
+substitute for tests; any actual code change still has to pass the Agent Plan,
+Approval Wall where relevant, verification, and release gates.
+
 ```bash
 agentops operator action-receipts --limit 12
 agentops operator action-receipts --limit 8 --plan-limit 20

@@ -859,6 +859,15 @@ def cmd_commander_board(args, client: AgentOpsClient) -> dict:
     return client.get("/api/commander/project-board")
 
 
+def cmd_commander_repo_map(args, client: AgentOpsClient) -> dict:
+    query = args.query_flag if getattr(args, "query_flag", None) is not None else args.query
+    return client.get("/api/commander/repo-map", query={
+        "q": query,
+        "limit": args.limit,
+        "char_budget": args.char_budget,
+    })
+
+
 def cmd_commander_inbox(args, client: AgentOpsClient) -> dict:
     query = {}
     if getattr(args, "bucket", None):
@@ -2274,6 +2283,12 @@ def build_parser() -> argparse.ArgumentParser:
     commander_sub = commander.add_subparsers(dest="action", required=True)
     commander_board = commander_sub.add_parser("board", help="Read the Commander project board.")
     commander_board.set_defaults(handler="commander_board")
+    commander_repo_map = commander_sub.add_parser("repo-map", help="Localize relevant repo files for a coding work package.")
+    commander_repo_map.add_argument("query", nargs="?", default="", help="Task or feature query to localize.")
+    commander_repo_map.add_argument("--query", "-q", dest="query_flag", default=None, help="Task or feature query to localize.")
+    commander_repo_map.add_argument("--limit", type=int, default=12)
+    commander_repo_map.add_argument("--char-budget", type=int, default=8000)
+    commander_repo_map.set_defaults(handler="commander_repo_map")
     commander_inbox = commander_sub.add_parser("inbox", help="Read the Commander integration inbox.")
     commander_inbox.add_argument("--bucket", choices=["all", "ready_for_review", "still_running", "blocked", "late_or_stale", "needs_memory_review"], default="all")
     commander_inbox.add_argument("--limit", type=int, default=20)
@@ -3055,6 +3070,7 @@ HANDLERS = {
     "operator_remediate_evidence_gap": cmd_operator_remediate_evidence_gap,
     "operator_close_evidence_gap": cmd_operator_close_evidence_gap,
     "commander_board": cmd_commander_board,
+    "commander_repo_map": cmd_commander_repo_map,
     "commander_inbox": cmd_commander_inbox,
     "commander_plan": cmd_commander_plan,
     "commander_packages": cmd_commander_packages,
