@@ -208,7 +208,7 @@ python3 scripts/kb_bot_demo_smoke.py
 - [x] Work directory and write boundaries are explicit in the manifest/readiness payload.
 - [x] Runtime tool events are ingested when available through the scoped `POST /api/agent-gateway/runtime-events` and `agentops runtime-event record` contract. Guarded by `scripts/agent_gateway_runtime_event_smoke.py`, which records a hash-only runtime-internal event with a scoped token and verifies run readback, audit evidence and redaction.
 - [x] Shared/commercial mode is restricted when detailed tool events are unavailable.
-- [ ] Secrets are consumed inside trusted tools rather than returned to model output.
+- [x] Secrets are consumed inside trusted tools rather than returned to model output. Guarded by `scripts/worker_secret_boundary_smoke.py`, which injects fake task/env/URL secrets, verifies the worker prompt/output/run/tool/evaluation/audit surfaces omit raw values, and requires `secret_boundary=trusted_worker_client_v1` evidence.
 
 Current v1.5 hardening status: `GET /api/workers/adapter-readiness` and
 `agentops worker readiness` expose `runtime-capability-manifest-v1` for mock,

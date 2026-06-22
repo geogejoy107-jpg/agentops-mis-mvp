@@ -24,6 +24,7 @@ jobs:
       AGENTOPS_HOST: 127.0.0.1
       AGENTOPS_PORT: "8787"
       AGENTOPS_BASE_URL: http://127.0.0.1:8787
+      AGENTOPS_SKIP_SEED_EXPORTS: "1"
       AGENTOPS_DEPLOYMENT_MODE: local
       HERMES_ALLOW_REAL_RUN: "false"
       HERMES_REQUIRE_CONFIRM_RUN: "true"
@@ -85,6 +86,7 @@ jobs:
           python3 scripts/operator_action_receipt_cli_record_smoke.py
           python3 scripts/operator_handoff_smoke.py
           python3 scripts/operator_health_smoke.py
+          python3 scripts/worker_secret_boundary_smoke.py --base-url "$AGENTOPS_BASE_URL"
           python3 scripts/prepared_action_approval_wall_smoke.py --base-url "$AGENTOPS_BASE_URL"
           python3 scripts/agent_gateway_scope_matrix_smoke.py --base-url "$AGENTOPS_BASE_URL"
           python3 scripts/agent_gateway_scoped_read_smoke.py

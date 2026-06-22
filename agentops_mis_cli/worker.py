@@ -42,6 +42,7 @@ DEFAULT_AGENT_ID = "agt_worker_local"
 DEFAULT_HERMES_GATEWAY_URL = "http://127.0.0.1:8642"
 DEFAULT_HERMES_MODEL = "hermes-agent"
 DEFAULT_OPENCLAW_BIN = "/opt/homebrew/bin/openclaw"
+WORKER_SECRET_BOUNDARY_VERSION = "trusted_worker_client_v1"
 
 
 def default_runtime_dir() -> Path:
@@ -313,6 +314,19 @@ def build_task_prompt(task: dict) -> str:
     )
 
 
+def worker_secret_boundary_metadata() -> dict:
+    return {
+        "secret_boundary": WORKER_SECRET_BOUNDARY_VERSION,
+        "credential_transport": "trusted_worker_client_only",
+        "model_visible_credentials": False,
+        "secrets_in_prompt": False,
+        "secrets_in_output": False,
+        "raw_prompt_omitted": True,
+        "raw_response_omitted": True,
+        "token_omitted": True,
+    }
+
+
 def execute_mock(task: dict, attempt: int = 1, fail_before_success: int = 0) -> AdapterResult:
     prompt = build_task_prompt(task)
     if fail_before_success and attempt <= fail_before_success:
@@ -577,8 +591,7 @@ def create_worker_external_write_gate(client: AgentOpsClient, task: dict, args, 
         "observation_level": capability.get("observation_level"),
         "commercial_readiness": capability.get("commercial_readiness"),
         "requires_prepared_action_for_external_write": True,
-        "raw_prompt_omitted": True,
-        "raw_response_omitted": True,
+        **worker_secret_boundary_metadata(),
     }
     tool_payload = client.post("/api/agent-gateway/tool-calls", {
         "workspace_id": client.workspace_id,
@@ -627,7 +640,7 @@ def create_worker_external_write_gate(client: AgentOpsClient, task: dict, args, 
             "approval_id": approval.get("approval_id"),
             "prepared_action_id": prepared_action.get("action_id"),
             "live_execution_performed": False,
-            "token_omitted": True,
+            **worker_secret_boundary_metadata(),
         },
     })
     return {
@@ -645,6 +658,7 @@ def create_worker_external_write_gate(client: AgentOpsClient, task: dict, args, 
         "prepared_action_hash": prepared_action.get("action_hash"),
         "next_action": tool_payload.get("next_action"),
         "output_summary": "Worker paused before live runtime execution because the task appears to request an external write.",
+        "secret_boundary": worker_secret_boundary_metadata(),
         "token_omitted": True,
     }
 
@@ -795,6 +809,7 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
     run_id = run["run_id"]
 
     capability = adapter_capability_profile(args.adapter)
+    secret_boundary = worker_secret_boundary_metadata()
     if worker_external_write_intent(task, args, capability):
         return create_worker_external_write_gate(client, task, args, plan_id, run_id, capability)
 
@@ -824,6 +839,7 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
             "commercial_readiness": capability.get("commercial_readiness"),
             "requires_prepared_action_for_external_write": capability.get("requires_prepared_action_for_external_write"),
             "raw_omitted": True,
+            **secret_boundary,
         },
         "result_summary": result.output_summary,
     })
@@ -859,6 +875,7 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
             "effective_risk_level": tool_risk,
             "commercial_readiness": capability.get("commercial_readiness"),
             "requires_prepared_action_for_external_write": capability.get("requires_prepared_action_for_external_write"),
+            **secret_boundary,
         },
         "notes": "Worker adapter loop completed." if result.ok else f"Worker adapter loop failed: {result.error_type}",
     })
@@ -915,6 +932,7 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
             "effective_risk_level": tool_risk,
             "commercial_readiness": capability.get("commercial_readiness"),
             "requires_prepared_action_for_external_write": capability.get("requires_prepared_action_for_external_write"),
+            **secret_boundary,
         },
     })
     manifest_payload = create_worker_plan_manifest(client, plan_id, run_id, tool_call_id, evaluation_id, artifact_id)
@@ -940,6 +958,7 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
         "attempt_count": result.attempt_count,
         "output_summary": result.output_summary,
         "error_type": result.error_type,
+        "secret_boundary": secret_boundary,
     }
 
 
