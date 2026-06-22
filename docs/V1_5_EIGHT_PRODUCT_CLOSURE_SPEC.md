@@ -754,6 +754,7 @@ python3 scripts/template_worker_live_dogfood.py --adapter openclaw
 python3 scripts/template_worker_live_dogfood.py --adapter hermes
 python3 scripts/customer_project_report_smoke.py
 python3 scripts/customer_project_report_artifact_smoke.py
+python3 scripts/task_detail_evidence_ui_smoke.py
 ```
 
 ## Current Status Summary

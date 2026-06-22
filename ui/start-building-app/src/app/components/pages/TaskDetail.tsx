@@ -28,6 +28,11 @@ export function TaskDetail() {
   const taskEvals = data.detail.evaluations;
   const taskArtifacts = data.detail.artifacts || [];
   const taskCaseRuns = data.detail.evaluation_case_runs || [];
+  const latestRun = taskRuns[taskRuns.length - 1];
+  const pendingApprovals = taskApprovals.filter(ap => ap.decision === "pending");
+  const passedEvals = taskEvals.filter(ev => ev.pass_fail === "pass").length;
+  const failedEvals = taskEvals.filter(ev => ev.pass_fail === "fail" || ev.pass_fail === "failed").length;
+  const evidenceStatus = pendingApprovals.length > 0 ? "attention" : taskArtifacts.length > 0 && taskRuns.length > 0 ? "pass" : "planned";
   const latestEval = taskEvals[taskEvals.length - 1];
   const latestScore = latestEval ? (latestEval.score <= 1 ? Math.round(latestEval.score * 100) : Math.round(latestEval.score)) : 0;
 
@@ -56,6 +61,19 @@ export function TaskDetail() {
       memory: "Memory Candidates",
       benchmarkEvidence: "Benchmark Evidence",
       noBenchmarkEvidence: "No approved evaluation case runs recorded yet.",
+      evidenceSummary: "Delivery Evidence Summary",
+      ledgerState: "Ledger state",
+      latestRun: "Latest run",
+      openRun: "Open run",
+      reviewApproval: "Review approval",
+      evidenceCounts: {
+        runs: "Runs",
+        artifacts: "Artifacts",
+        approvals: "Approvals",
+        evaluations: "Evaluations",
+        memories: "Memories",
+        benchmark: "Benchmarks",
+      },
       headers: ["Run ID", "Agent", "Runtime", "Status", "Cost", "Tokens"],
     },
     zh: {
@@ -76,6 +94,19 @@ export function TaskDetail() {
       memory: "记忆候选",
       benchmarkEvidence: "基准证据",
       noBenchmarkEvidence: "暂无已批准评估用例执行记录。",
+      evidenceSummary: "交付证据摘要",
+      ledgerState: "账本状态",
+      latestRun: "最新运行",
+      openRun: "打开运行",
+      reviewApproval: "处理审批",
+      evidenceCounts: {
+        runs: "运行",
+        artifacts: "交付物",
+        approvals: "审批",
+        evaluations: "评估",
+        memories: "记忆",
+        benchmark: "基准",
+      },
       headers: ["运行 ID", "代理", "运行时", "状态", "成本", "Token"],
     },
   });
@@ -123,6 +154,65 @@ export function TaskDetail() {
               {task.due_date ? new Date(task.due_date).toLocaleDateString() : "—"}
             </div>
           </div>
+        </div>
+      </div>
+
+      <div
+        className="rounded-xl p-4"
+        style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="text-xs font-semibold flex items-center gap-1.5" style={{ color: "var(--mis-text)" }}>
+              <ShieldCheck size={13} style={{ color: evidenceStatus === "attention" ? "#FBBF24" : "var(--mis-success)" }} />
+              {copy.evidenceSummary}
+            </div>
+            <p className="mt-1 text-[11px] leading-relaxed" style={{ color: "var(--mis-muted)" }}>
+              {copy.ledgerState}: {evidenceStatus === "pass"
+                ? (locale === "zh" ? "已有 run / artifact / evaluation 证据，可进入交付审查。" : "Run / artifact / evaluation evidence is present for delivery review.")
+                : evidenceStatus === "attention"
+                  ? (locale === "zh" ? "存在待处理审批，交付前需要人工确认。" : "Pending approval exists and needs human review before delivery.")
+                  : (locale === "zh" ? "任务还没有完整运行证据。" : "The task does not have a complete run evidence chain yet.")}
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2 text-[10px]">
+            {latestRun && (
+              <Link
+                to={`/admin/runs/${latestRun.run_id}`}
+                className="rounded px-2.5 py-1.5"
+                style={{ background: "rgba(34,211,238,0.10)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.22)" }}
+              >
+                {copy.openRun}: {latestRun.run_id}
+              </Link>
+            )}
+            {pendingApprovals.length > 0 && (
+              <Link
+                to="/workspace/approvals"
+                className="rounded px-2.5 py-1.5"
+                style={{ background: "rgba(251,191,36,0.12)", color: "#FBBF24", border: "1px solid rgba(251,191,36,0.24)" }}
+              >
+                {copy.reviewApproval}: {pendingApprovals.length}
+              </Link>
+            )}
+          </div>
+        </div>
+        <div className="mt-3 grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2">
+          {[
+            { label: copy.evidenceCounts.runs, value: taskRuns.length, status: taskRuns.length > 0 ? "pass" : "planned" },
+            { label: copy.evidenceCounts.artifacts, value: taskArtifacts.length, status: taskArtifacts.length > 0 ? "pass" : "planned" },
+            { label: copy.evidenceCounts.approvals, value: `${pendingApprovals.length}/${taskApprovals.length}`, status: pendingApprovals.length > 0 ? "attention" : taskApprovals.length > 0 ? "pass" : "planned" },
+            { label: copy.evidenceCounts.evaluations, value: `${passedEvals}/${taskEvals.length}`, status: failedEvals > 0 ? "fail" : taskEvals.length > 0 ? "pass" : "planned" },
+            { label: copy.evidenceCounts.memories, value: taskMemories.length, status: taskMemories.length > 0 ? "attention" : "planned" },
+            { label: copy.evidenceCounts.benchmark, value: taskCaseRuns.length, status: taskCaseRuns.length > 0 ? "pass" : "planned" },
+          ].map(item => (
+            <div key={item.label} className="rounded px-3 py-2" style={{ background: "var(--mis-surface2)", border: "1px solid rgba(148,163,184,0.14)" }}>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{item.label}</span>
+                <StatusBadge status={item.status} />
+              </div>
+              <div className="mt-1 text-sm font-semibold" style={{ color: "var(--mis-text)" }}>{item.value}</div>
+            </div>
+          ))}
         </div>
       </div>
 

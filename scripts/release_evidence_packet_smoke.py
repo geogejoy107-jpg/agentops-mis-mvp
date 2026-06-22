@@ -125,6 +125,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "task_detail_evidence_ui",
+        "command": "python3 scripts/task_detail_evidence_ui_smoke.py",
+        "summary": "Task detail page exposes delivery evidence state, latest run and approval links.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "security_readiness",
         "command": "python3 scripts/security_production_readiness_smoke.py --base-url \"$AGENTOPS_BASE_URL\"",
         "summary": "Server-backed security readiness gates.",

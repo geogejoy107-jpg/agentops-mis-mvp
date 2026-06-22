@@ -189,10 +189,12 @@ def main() -> int:
                 "scripts/customer_task_template_smoke.py",
                 "scripts/customer_project_report_smoke.py",
                 "scripts/customer_delivery_boundary_smoke.py",
+                "scripts/task_detail_evidence_ui_smoke.py",
             ],
             source_markers={
                 "server.py": ["/api/workflows/customer-task-templates", "/api/workflows/customer-projects", "report-artifact"],
                 "ui/start-building-app/src/app/components/pages/PixelOffice.tsx": ["CustomerDispatchPanel"],
+                "ui/start-building-app/src/app/components/pages/TaskDetail.tsx": ["Delivery Evidence Summary", "交付证据摘要", "evidenceCounts"],
                 "ui/start-building-app/src/app/components/pixel/CustomerDispatchPanel.tsx": [
                     "loadCustomerTaskTemplates",
                     "runCustomerTaskTemplateWorkflow",
