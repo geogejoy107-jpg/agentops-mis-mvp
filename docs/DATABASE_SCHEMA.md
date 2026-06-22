@@ -215,6 +215,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_logs(entity_type, entity_id
 | `template_packages` | 用例模板：agent roles、task schema、memory schema、quality gates、approval policy。 |
 | `template_bindings` | 模板与 base/workspace 的绑定。 |
 | `migration_runs` | base/template switching preview 和未来迁移结果。 |
+| `prepared_actions` | 外部副作用 exact-resume 合约：绑定 task/run/tool/approval，保存规范化参数 hash、快照 hash、状态和消费结果。 |
 | `agent_plans` | Agent 执行前的 READ/PLAN/RETRIEVE/COMPARE 计划账本。 |
 | `plan_evidence_manifests` | Agent 执行后的计划证据绑定：plan、run、tool call、evaluation、artifact、audit 证据与验证状态。 |
 | `knowledge_documents` | Markdown 知识文件的索引元数据、hash、分类和摘要。 |

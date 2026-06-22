@@ -43,6 +43,9 @@ def main() -> int:
     write_task = "tsk_storage_write"
     write_run = "run_storage_write"
     write_tool_call = "tc_storage_write"
+    write_prepared_tool_b = "tc_storage_prepared_b"
+    write_prepared_action = "pact_storage_write"
+    write_prepared_action_b = "pact_storage_b"
     write_runtime_event = "rte_storage_write"
     write_audit = "aud_storage_write"
     write_plan = "plan_storage_write"
@@ -410,6 +413,113 @@ def main() -> int:
             approval_ids_after_write = ids(server.repo_list_workspace_approvals(conn, workspace_a), "approval_id")
             require(write_approval in approval_ids_after_write, f"approval write helper row not visible in workspace list: {approval_ids_after_write}")
 
+            prepared_tool_b_row = {
+                "tool_call_id": write_prepared_tool_b,
+                "run_id": run_b,
+                "agent_id": agent_b,
+                "tool_name": "storage.boundary.external_write",
+                "tool_version": "v1",
+                "tool_category": "custom",
+                "normalized_args_json": json.dumps({"raw_omitted": True, "workspace": workspace_b}, ensure_ascii=False),
+                "target_resource": "external://storage-boundary/b",
+                "risk_level": "high",
+                "status": "waiting_approval",
+                "result_summary": "Workspace B prepared action tool call.",
+                "side_effect_id": None,
+                "started_at": write_now,
+                "ended_at": None,
+                "created_at": write_now,
+            }
+            before_prepared_tool_b, prepared_tool_b_outcome = server.repo_upsert_tool_call(conn, dict(prepared_tool_b_row))
+            require(before_prepared_tool_b is None and prepared_tool_b_outcome == "created", f"prepared action B tool create failed: {prepared_tool_b_outcome}")
+
+            write_prepared_action_row = {
+                "prepared_action_id": write_prepared_action,
+                "workspace_id": workspace_a,
+                "task_id": write_task,
+                "run_id": write_run,
+                "tool_call_id": write_tool_call,
+                "approval_id": write_approval,
+                "requested_by_agent_id": agent_a,
+                "action_type": "external_write_exact_resume",
+                "provider": "storage-boundary",
+                "target_resource": "external://storage-boundary/a",
+                "normalized_args_json": json.dumps({"document_hash": "doc_hash_storage_a", "raw_omitted": True}, ensure_ascii=False, sort_keys=True),
+                "args_hash": None,
+                "snapshot_ref": "snapshot://storage-boundary/a",
+                "snapshot_hash": "snapshot_hash_storage_a",
+                "status": "waiting_approval",
+                "result_json": "{}",
+                "created_at": write_now,
+                "updated_at": write_now,
+                "approved_at": None,
+                "consumed_at": None,
+            }
+            before_prepared_action, prepared_action_outcome = server.repo_upsert_prepared_action(conn, dict(write_prepared_action_row))
+            require(before_prepared_action is None and prepared_action_outcome == "created", f"prepared action write helper create failed: {prepared_action_outcome}")
+            prepared_action_created = conn.execute("SELECT * FROM prepared_actions WHERE prepared_action_id=?", (write_prepared_action,)).fetchone()
+            require(
+                prepared_action_created
+                and prepared_action_created["args_hash"] == server.prepared_action_args_hash(write_prepared_action_row["normalized_args_json"]),
+                "prepared action helper did not persist args hash",
+            )
+            write_prepared_action_row["snapshot_hash"] = "snapshot_hash_storage_a_updated"
+            write_prepared_action_row["updated_at"] = server.now_iso()
+            before_prepared_action, prepared_action_outcome = server.repo_upsert_prepared_action(conn, dict(write_prepared_action_row))
+            require(before_prepared_action and prepared_action_outcome == "updated", f"prepared action write helper update failed: {prepared_action_outcome}")
+            _before_prepared_approved, after_prepared_approved, prepared_approved_outcome = server.repo_update_prepared_action_status(conn, write_prepared_action, "approved")
+            require(
+                after_prepared_approved
+                and prepared_approved_outcome == "updated"
+                and after_prepared_approved["status"] == "approved"
+                and after_prepared_approved["approved_at"],
+                f"prepared action approve helper failed: {prepared_approved_outcome}",
+            )
+            _before_prepared_consumed, after_prepared_consumed, prepared_consumed_outcome = server.repo_update_prepared_action_status(
+                conn,
+                write_prepared_action,
+                "consumed",
+                result_json={"provider_object_id": "external_object_storage_a", "raw_omitted": True},
+            )
+            require(
+                after_prepared_consumed
+                and prepared_consumed_outcome == "updated"
+                and after_prepared_consumed["status"] == "consumed"
+                and after_prepared_consumed["consumed_at"]
+                and "raw_omitted" in after_prepared_consumed["result_json"],
+                f"prepared action consume helper failed: {prepared_consumed_outcome}",
+            )
+
+            prepared_action_b_row = dict(write_prepared_action_row)
+            prepared_action_b_row.update({
+                "prepared_action_id": write_prepared_action_b,
+                "workspace_id": workspace_b,
+                "task_id": task_b,
+                "run_id": run_b,
+                "tool_call_id": write_prepared_tool_b,
+                "approval_id": approval_b["approval"]["approval_id"],
+                "requested_by_agent_id": agent_b,
+                "target_resource": "external://storage-boundary/b",
+                "normalized_args_json": json.dumps({"document_hash": "doc_hash_storage_b", "raw_omitted": True}, ensure_ascii=False, sort_keys=True),
+                "args_hash": None,
+                "snapshot_ref": "snapshot://storage-boundary/b",
+                "snapshot_hash": "snapshot_hash_storage_b",
+                "status": "waiting_approval",
+                "result_json": "{}",
+                "approved_at": None,
+                "consumed_at": None,
+                "created_at": write_now,
+                "updated_at": write_now,
+            })
+            before_prepared_action_b, prepared_action_b_outcome = server.repo_upsert_prepared_action(conn, dict(prepared_action_b_row))
+            require(before_prepared_action_b is None and prepared_action_b_outcome == "created", f"prepared action B helper create failed: {prepared_action_b_outcome}")
+            prepared_action_ids = ids(server.repo_list_workspace_prepared_actions(conn, workspace_a), "prepared_action_id")
+            require(write_prepared_action in prepared_action_ids and write_prepared_action_b not in prepared_action_ids, f"prepared action helper leaked workspace rows: {prepared_action_ids}")
+            consumed_prepared_action_ids = ids(server.repo_list_workspace_prepared_actions(conn, workspace_a, statuses=["consumed"]), "prepared_action_id")
+            require(consumed_prepared_action_ids == {write_prepared_action}, f"prepared action status filter failed: {consumed_prepared_action_ids}")
+            require(server.repo_get_workspace_prepared_action(conn, workspace_a, write_prepared_action), "prepared action helper missed workspace A row")
+            require(not server.repo_get_workspace_prepared_action(conn, workspace_a, write_prepared_action_b), "prepared action helper exposed workspace B row")
+
             write_eval_row = {
                 "evaluation_id": write_eval,
                 "task_id": write_task,
@@ -650,6 +760,10 @@ def main() -> int:
                 "repo_insert_audit_log",
                 "repo_upsert_approval",
                 "repo_update_approval_decision",
+                "repo_upsert_prepared_action",
+                "repo_update_prepared_action_status",
+                "repo_list_workspace_prepared_actions",
+                "repo_get_workspace_prepared_action",
                 "repo_upsert_evaluation",
                 "repo_upsert_artifact",
                 "repo_upsert_memory_candidate",
@@ -664,6 +778,7 @@ def main() -> int:
             "write_task": write_task,
             "write_run": write_run,
             "write_tool_call": write_tool_call,
+            "write_prepared_action": write_prepared_action,
             "write_runtime_event": write_runtime_event,
             "write_audit": write_audit,
             "write_agent_plan": write_plan,

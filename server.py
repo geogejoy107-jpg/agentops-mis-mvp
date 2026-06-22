@@ -557,6 +557,34 @@ CREATE TABLE IF NOT EXISTS approvals (
     FOREIGN KEY(approver_user_id) REFERENCES users(user_id)
 );
 
+CREATE TABLE IF NOT EXISTS prepared_actions (
+    prepared_action_id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL DEFAULT 'local-demo',
+    task_id TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    tool_call_id TEXT NOT NULL,
+    approval_id TEXT,
+    requested_by_agent_id TEXT,
+    action_type TEXT NOT NULL,
+    provider TEXT,
+    target_resource TEXT,
+    normalized_args_json TEXT NOT NULL DEFAULT '{}',
+    args_hash TEXT NOT NULL,
+    snapshot_ref TEXT,
+    snapshot_hash TEXT,
+    status TEXT NOT NULL CHECK(status IN ('prepared','waiting_approval','approved','rejected','consumed','expired','canceled')),
+    result_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    approved_at TEXT,
+    consumed_at TEXT,
+    FOREIGN KEY(task_id) REFERENCES tasks(task_id),
+    FOREIGN KEY(run_id) REFERENCES runs(run_id),
+    FOREIGN KEY(tool_call_id) REFERENCES tool_calls(tool_call_id),
+    FOREIGN KEY(approval_id) REFERENCES approvals(approval_id),
+    FOREIGN KEY(requested_by_agent_id) REFERENCES agents(agent_id)
+);
+
 CREATE TABLE IF NOT EXISTS memories (
     memory_id TEXT PRIMARY KEY,
     workspace_id TEXT NOT NULL DEFAULT 'local-demo',
@@ -961,6 +989,9 @@ CREATE INDEX IF NOT EXISTS idx_runs_created ON runs(created_at);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_run ON tool_calls(run_id);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_risk ON tool_calls(risk_level);
 CREATE INDEX IF NOT EXISTS idx_approvals_decision ON approvals(decision);
+CREATE INDEX IF NOT EXISTS idx_prepared_actions_workspace ON prepared_actions(workspace_id, updated_at);
+CREATE INDEX IF NOT EXISTS idx_prepared_actions_status ON prepared_actions(status, updated_at);
+CREATE INDEX IF NOT EXISTS idx_prepared_actions_tool ON prepared_actions(tool_call_id);
 CREATE INDEX IF NOT EXISTS idx_memories_status ON memories(review_status);
 CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope);
 CREATE INDEX IF NOT EXISTS idx_memories_workspace ON memories(workspace_id, updated_at);
@@ -1047,6 +1078,9 @@ def ensure_schema_migrations(conn: sqlite3.Connection):
     conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_workspace ON tasks(workspace_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_workspace ON runs(workspace_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_workspace ON memories(workspace_id, updated_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_prepared_actions_workspace ON prepared_actions(workspace_id, updated_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_prepared_actions_status ON prepared_actions(status, updated_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_prepared_actions_tool ON prepared_actions(tool_call_id)")
     conn.execute(
         """UPDATE memories
         SET workspace_id=(
@@ -1883,6 +1917,118 @@ def repo_update_approval_decision(
         row["reason"] = reason
     before, outcome = repo_upsert_approval(conn, row)
     after = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (approval_id,)).fetchone()
+    return before, after, outcome
+
+
+def prepared_action_args_hash(normalized_args_json: str | None) -> str:
+    raw = normalized_args_json or "{}"
+    try:
+        return stable_hash(json.loads(raw))
+    except Exception:
+        return stable_hash(raw)
+
+
+def repo_list_workspace_prepared_actions(
+    conn: sqlite3.Connection,
+    workspace_id: str,
+    statuses: list[str] | None = None,
+    limit: int = 100,
+) -> list[sqlite3.Row]:
+    workspace_id = normalize_workspace_id(workspace_id)
+    limit = max(1, min(int(limit or 100), 500))
+    params: list = [workspace_id]
+    where = ["workspace_id=?"]
+    if statuses:
+        where.append("status IN (" + ",".join("?" for _ in statuses) + ")")
+        params.extend(statuses)
+    params.append(limit)
+    return conn.execute(
+        f"""SELECT * FROM prepared_actions
+        WHERE {' AND '.join(where)}
+        ORDER BY updated_at DESC
+        LIMIT ?""",
+        params,
+    ).fetchall()
+
+
+def repo_get_workspace_prepared_action(conn: sqlite3.Connection, workspace_id: str, prepared_action_id: str) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT * FROM prepared_actions WHERE workspace_id=? AND prepared_action_id=?",
+        (normalize_workspace_id(workspace_id), prepared_action_id),
+    ).fetchone()
+
+
+def repo_upsert_prepared_action(conn: sqlite3.Connection, row: dict, allow_update: bool = True) -> tuple[sqlite3.Row | None, str]:
+    if not row.get("workspace_id"):
+        workspace_id = "local-demo"
+        if row.get("task_id"):
+            task = conn.execute("SELECT workspace_id FROM tasks WHERE task_id=?", (row.get("task_id"),)).fetchone()
+            workspace_id = row_workspace(task) if task else workspace_id
+        row["workspace_id"] = workspace_id
+    else:
+        row["workspace_id"] = normalize_workspace_id(row.get("workspace_id"))
+    row["normalized_args_json"] = row.get("normalized_args_json") or "{}"
+    row["args_hash"] = row.get("args_hash") or prepared_action_args_hash(row["normalized_args_json"])
+    row["result_json"] = row.get("result_json") or "{}"
+    row["created_at"] = row.get("created_at") or now_iso()
+    row["updated_at"] = row.get("updated_at") or now_iso()
+    row.setdefault("approval_id", None)
+    row.setdefault("requested_by_agent_id", None)
+    row.setdefault("provider", None)
+    row.setdefault("target_resource", None)
+    row.setdefault("snapshot_ref", None)
+    row.setdefault("snapshot_hash", None)
+    row.setdefault("approved_at", None)
+    row.setdefault("consumed_at", None)
+    before = conn.execute("SELECT * FROM prepared_actions WHERE prepared_action_id=?", (row["prepared_action_id"],)).fetchone()
+    if before:
+        if not allow_update or row_unchanged(before, row, {"created_at", "updated_at"}):
+            return before, "unchanged"
+        conn.execute(
+            """UPDATE prepared_actions SET workspace_id=:workspace_id, task_id=:task_id, run_id=:run_id,
+            tool_call_id=:tool_call_id, approval_id=:approval_id, requested_by_agent_id=:requested_by_agent_id,
+            action_type=:action_type, provider=:provider, target_resource=:target_resource,
+            normalized_args_json=:normalized_args_json, args_hash=:args_hash, snapshot_ref=:snapshot_ref,
+            snapshot_hash=:snapshot_hash, status=:status, result_json=:result_json, updated_at=:updated_at,
+            approved_at=:approved_at, consumed_at=:consumed_at WHERE prepared_action_id=:prepared_action_id""",
+            row,
+        )
+        return before, "updated"
+    conn.execute(
+        """INSERT INTO prepared_actions(prepared_action_id,workspace_id,task_id,run_id,tool_call_id,approval_id,
+        requested_by_agent_id,action_type,provider,target_resource,normalized_args_json,args_hash,snapshot_ref,
+        snapshot_hash,status,result_json,created_at,updated_at,approved_at,consumed_at)
+        VALUES(:prepared_action_id,:workspace_id,:task_id,:run_id,:tool_call_id,:approval_id,
+        :requested_by_agent_id,:action_type,:provider,:target_resource,:normalized_args_json,:args_hash,:snapshot_ref,
+        :snapshot_hash,:status,:result_json,:created_at,:updated_at,:approved_at,:consumed_at)""",
+        row,
+    )
+    return before, "created"
+
+
+def repo_update_prepared_action_status(
+    conn: sqlite3.Connection,
+    prepared_action_id: str,
+    status: str,
+    approval_id: str | None = None,
+    result_json=None,
+) -> tuple[sqlite3.Row | None, sqlite3.Row | None, str]:
+    before = conn.execute("SELECT * FROM prepared_actions WHERE prepared_action_id=?", (prepared_action_id,)).fetchone()
+    if not before:
+        return None, None, "missing"
+    row = dict(before)
+    row["status"] = status
+    row["updated_at"] = now_iso()
+    if approval_id is not None:
+        row["approval_id"] = approval_id
+    if status == "approved" and not row.get("approved_at"):
+        row["approved_at"] = row["updated_at"]
+    if status == "consumed" and not row.get("consumed_at"):
+        row["consumed_at"] = row["updated_at"]
+    if result_json is not None:
+        row["result_json"] = json.dumps(result_json, ensure_ascii=False, sort_keys=True) if isinstance(result_json, (dict, list)) else str(result_json)
+    before, outcome = repo_upsert_prepared_action(conn, row)
+    after = conn.execute("SELECT * FROM prepared_actions WHERE prepared_action_id=?", (prepared_action_id,)).fetchone()
     return before, after, outcome
 
 

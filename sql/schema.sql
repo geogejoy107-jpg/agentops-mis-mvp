@@ -197,7 +197,8 @@ CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope);
 CREATE INDEX IF NOT EXISTS idx_memories_workspace ON memories(workspace_id, updated_at);
 CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_logs(entity_type, entity_id);
 
--- The executable schema in server.py also initializes the Agent Work Method
--- tables: agent_plans, plan_evidence_manifests, knowledge_documents, and
--- optional SQLite FTS5 knowledge_fts. Keep server.py as the migration
+-- The executable schema in server.py also initializes extended commercial and
+-- Agent Work Method tables: workflow_jobs, gateway credentials/sessions,
+-- prepared_actions, agent_plans, plan_evidence_manifests, knowledge_documents,
+-- and optional SQLite FTS5 knowledge_fts. Keep server.py as the migration
 -- authority for this local MVP.
