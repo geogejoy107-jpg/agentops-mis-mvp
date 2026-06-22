@@ -95,6 +95,15 @@ def task_evidence(db_path: Path, task_id: str) -> dict:
         conn.close()
 
 
+def delete_localization_artifact(db_path: Path, task_id: str) -> None:
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute("DELETE FROM artifacts WHERE task_id=? AND artifact_type='commander_repo_map_localization'", (task_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def leaked_secret(text: str) -> bool:
     return any(pattern.search(text) for pattern in SECRET_PATTERNS)
 
@@ -124,6 +133,8 @@ def main() -> int:
         require(status == 201, f"create failed: {status} {created}")
         task_ids = created.get("created_task_ids") or []
         require(len(task_ids) == 3, f"expected 3 task ids: {created}")
+        if DEFAULT_DB.exists():
+            delete_localization_artifact(DEFAULT_DB, task_ids[0])
 
         api_status, api_dispatch = http_json("POST", f"/api/commander/work-packages/{task_ids[0]}/dispatch", {
             "adapter": "mock",
@@ -178,6 +189,9 @@ def main() -> int:
         require(packages.get(task_ids[0], {}).get("package_status") == "ready_for_review", f"API package not ready: {packages.get(task_ids[0])}")
         require(packages.get(task_ids[1], {}).get("package_status") == "ready_for_review", f"CLI package not ready: {packages.get(task_ids[1])}")
         require(packages.get(task_ids[2], {}).get("package_status") == "planned", f"Hermes gated package should remain planned: {packages.get(task_ids[2])}")
+        require((packages.get(task_ids[0], {}).get("localization_artifact") or {}).get("artifact_type") == "commander_repo_map_localization", f"API dispatch did not restore localization artifact: {packages.get(task_ids[0])}")
+        require((packages.get(task_ids[0], {}).get("localization_gate") or {}).get("status") == "recorded", f"API dispatch localization gate not recorded: {packages.get(task_ids[0])}")
+        require((readback.get("summary", {}).get("localization") or {}).get("recorded", 0) >= 3, f"readback localization summary missing records: {readback}")
 
         if DEFAULT_DB.exists():
             for task_id in task_ids[:2]:

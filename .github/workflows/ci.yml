@@ -109,6 +109,8 @@ jobs:
           python3 scripts/operator_action_receipts_cli_smoke.py
           python3 scripts/operator_action_receipt_cli_record_smoke.py
           python3 scripts/operator_handoff_smoke.py
+          python3 scripts/commander_work_package_plan_smoke.py
+          python3 scripts/commander_work_package_dispatch_smoke.py
           python3 scripts/operator_health_smoke.py
           python3 scripts/worker_adapter_readiness_smoke.py --base-url "$AGENTOPS_BASE_URL"
           python3 scripts/worker_secret_boundary_smoke.py --base-url "$AGENTOPS_BASE_URL"

@@ -125,6 +125,18 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "commander_work_package_plan",
+        "command": "python3 scripts/commander_work_package_plan_smoke.py",
+        "summary": "Commander work-package planning creates task-bound repo-map localization artifacts without live execution.",
+        "ci_step": "Server-backed smoke suite",
+    },
+    {
+        "id": "commander_work_package_dispatch",
+        "command": "python3 scripts/commander_work_package_dispatch_smoke.py",
+        "summary": "Commander targeted dispatch preserves/restores repo-map localization artifacts before worker execution.",
+        "ci_step": "Server-backed smoke suite",
+    },
+    {
         "id": "responsiveness",
         "command": "python3 scripts/ai_employees_responsiveness_smoke.py",
         "summary": "Agent command-center API latency and fan-out budget.",

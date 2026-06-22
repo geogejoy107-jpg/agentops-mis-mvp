@@ -62,7 +62,8 @@ product exposes:
 - Persisted commander work-package readback through
   `GET /api/commander/work-packages` and `agentops commander packages`, so a
   customer can refresh the app and still see lane status, latest run, evidence
-  counts, dependencies, verification commands, and next actions.
+  counts, dependencies, verification commands, repo-map localization artifacts,
+  and next actions.
 - Read-only coding-task localization through `GET /api/commander/repo-map` and
   `agentops commander repo-map`, so an agent or operator can identify relevant
   repo files, symbols, redacted snippets, content hashes, and source

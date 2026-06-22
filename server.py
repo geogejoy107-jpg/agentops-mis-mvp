@@ -14898,6 +14898,8 @@ COMMANDER_DEFAULT_WORK_PACKAGE_LANES = [
     },
 ]
 
+COMMANDER_LOCALIZATION_ARTIFACT_TYPE = "commander_repo_map_localization"
+
 
 def commander_normalize_lane(raw_lane: dict, index: int) -> dict:
     lane = raw_lane if isinstance(raw_lane, dict) else {}
@@ -14940,6 +14942,189 @@ def commander_work_package_description(goal: str, lane: dict, dependencies: list
         ]),
         1200,
     )
+
+
+def commander_work_package_localization_query(goal: str, lane: dict, title: str, task_id: str) -> str:
+    return commander_safe_text(
+        " ".join(
+            part for part in [
+                title,
+                task_id,
+                lane.get("lane_id"),
+                lane.get("scope"),
+                lane.get("avoid_scope"),
+                goal,
+            ]
+            if part
+        ),
+        240,
+    )
+
+
+def commander_preview_repo_map_localization(*, task_id: str, workspace_id: str, project_id: str, plan_id: str, goal: str, lane: dict, title: str) -> dict:
+    query = commander_work_package_localization_query(goal, lane, title, task_id)
+    repo_map_payload = commander_repo_map({
+        "q": [query],
+        "limit": ["8"],
+        "char_budget": ["4800"],
+        "candidate_limit": ["360"],
+    })
+    safe_files = [
+        {
+            "path": item.get("path"),
+            "score": item.get("score"),
+            "matched_fields": item.get("matched_fields") or [],
+            "symbols": item.get("symbols") or [],
+            "content_hash": item.get("content_hash"),
+            "source_provenance": item.get("source_provenance") or {},
+            "rank_reason": item.get("rank_reason"),
+            "snippets_omitted": True,
+            "raw_content_omitted": True,
+            "token_omitted": True,
+        }
+        for item in (repo_map_payload.get("files") or [])[:8]
+    ]
+    manifest = {
+        "operation": "commander_repo_map_localization",
+        "workspace_id": workspace_id,
+        "project_id": project_id,
+        "plan_id": plan_id,
+        "task_id": task_id,
+        "lane_id": lane.get("lane_id"),
+        "query": repo_map_payload.get("query"),
+        "selected_count": repo_map_payload.get("selected_count"),
+        "candidate_count": repo_map_payload.get("candidate_count"),
+        "ranking": repo_map_payload.get("ranking") or {},
+        "files": safe_files,
+        "raw_content_omitted": True,
+        "snippets_omitted": True,
+        "token_omitted": True,
+    }
+    return {
+        "operation": repo_map_payload.get("operation"),
+        "status": repo_map_payload.get("status"),
+        "query": repo_map_payload.get("query"),
+        "selected_count": repo_map_payload.get("selected_count"),
+        "candidate_count": repo_map_payload.get("candidate_count"),
+        "files": safe_files,
+        "manifest_hash": stable_hash(manifest),
+        "safety": repo_map_payload.get("safety") or {},
+        "snippets_omitted": True,
+        "raw_content_omitted": True,
+        "token_omitted": True,
+    }
+
+
+def commander_create_repo_map_localization_artifact(
+    conn: sqlite3.Connection,
+    *,
+    task_id: str,
+    workspace_id: str,
+    project_id: str,
+    plan_id: str,
+    goal: str,
+    lane: dict,
+    title: str,
+) -> dict:
+    query = commander_work_package_localization_query(goal, lane, title, task_id)
+    repo_map_payload = commander_repo_map({
+        "q": [query],
+        "limit": ["8"],
+        "char_budget": ["4800"],
+        "candidate_limit": ["360"],
+    })
+    safe_files = [
+        {
+            "path": item.get("path"),
+            "score": item.get("score"),
+            "matched_fields": item.get("matched_fields") or [],
+            "symbols": item.get("symbols") or [],
+            "content_hash": item.get("content_hash"),
+            "source_provenance": item.get("source_provenance") or {},
+            "rank_reason": item.get("rank_reason"),
+            "snippets_omitted": True,
+            "raw_content_omitted": True,
+            "token_omitted": True,
+        }
+        for item in (repo_map_payload.get("files") or [])[:8]
+    ]
+    manifest = {
+        "operation": "commander_repo_map_localization",
+        "workspace_id": workspace_id,
+        "project_id": project_id,
+        "plan_id": plan_id,
+        "task_id": task_id,
+        "lane_id": lane.get("lane_id"),
+        "query": repo_map_payload.get("query"),
+        "selected_count": repo_map_payload.get("selected_count"),
+        "candidate_count": repo_map_payload.get("candidate_count"),
+        "ranking": repo_map_payload.get("ranking") or {},
+        "files": safe_files,
+        "raw_content_omitted": True,
+        "snippets_omitted": True,
+        "token_omitted": True,
+    }
+    manifest_hash = stable_hash(manifest)
+    artifact_id = stable_id("art_cmd_repo_map", task_id)
+    paths = [item.get("path") for item in safe_files if item.get("path")]
+    summary = commander_safe_text(
+        f"Repo-map localization for {lane.get('lane_id') or 'lane'}: {', '.join(paths[:6]) or 'no file candidates'}; "
+        f"manifest_hash={manifest_hash[:16]}; raw file bodies omitted.",
+        520,
+    )
+    artifact = {
+        "artifact_id": artifact_id,
+        "task_id": task_id,
+        "run_id": None,
+        "artifact_type": COMMANDER_LOCALIZATION_ARTIFACT_TYPE,
+        "title": f"Repo Map Localization: {lane.get('lane_id') or task_id}",
+        "uri": f"repo-map://{task_id}/{manifest_hash[:16]}",
+        "summary": summary,
+        "created_at": now_iso(),
+    }
+    conn.execute(
+        """INSERT OR REPLACE INTO artifacts(artifact_id,task_id,run_id,artifact_type,title,uri,summary,created_at)
+        VALUES(:artifact_id,:task_id,:run_id,:artifact_type,:title,:uri,:summary,:created_at)""",
+        artifact,
+    )
+    runtime_event(
+        conn,
+        "rtc_agent_gateway_local",
+        "commander.repo_map_localization",
+        "completed" if safe_files else "empty",
+        task_id=task_id,
+        input_summary=f"Commander repo-map localization query_hash={stable_hash(query)[:16]}",
+        output_summary=summary,
+        raw_payload_hash=manifest_hash,
+    )
+    audit(conn, "system", "agentops-commander", "commander.repo_map_localization_artifact", "artifacts", artifact_id, None, artifact, {
+        "workspace_id": workspace_id,
+        "project_id": project_id,
+        "plan_id": plan_id,
+        "lane_id": lane.get("lane_id"),
+        "manifest_hash": manifest_hash,
+        "selected_count": len(safe_files),
+        "paths": paths[:12],
+        "raw_content_omitted": True,
+        "snippets_omitted": True,
+        "token_omitted": True,
+    })
+    return {
+        "artifact": artifact,
+        "repo_map": {
+            "operation": repo_map_payload.get("operation"),
+            "status": repo_map_payload.get("status"),
+            "query": repo_map_payload.get("query"),
+            "selected_count": repo_map_payload.get("selected_count"),
+            "candidate_count": repo_map_payload.get("candidate_count"),
+            "files": safe_files,
+            "manifest_hash": manifest_hash,
+            "safety": repo_map_payload.get("safety") or {},
+            "snippets_omitted": True,
+            "raw_content_omitted": True,
+            "token_omitted": True,
+        },
+    }
 
 
 def commander_plan_work_packages(conn: sqlite3.Connection, body: dict, headers) -> tuple[dict, int]:
@@ -14991,6 +15176,15 @@ def commander_plan_work_packages(conn: sqlite3.Connection, body: dict, headers) 
             "scope": lane["scope"],
             "avoid_scope": lane["avoid_scope"],
         }
+        package["repo_map_localization"] = commander_preview_repo_map_localization(
+            task_id=task_id,
+            workspace_id=workspace_id,
+            project_id=project_id,
+            plan_id=plan_id,
+            goal=goal,
+            lane=lane,
+            title=title,
+        )
         planned_packages.append(package)
         if confirm_create:
             payload, status = create_task_api(conn, {
@@ -15011,7 +15205,23 @@ def commander_plan_work_packages(conn: sqlite3.Connection, body: dict, headers) 
             if status >= 400:
                 errors.append({"lane_id": lane["lane_id"], "task_id": task_id, "error": payload.get("error"), "message": payload.get("message")})
             else:
-                created_packages.append(payload.get("task") or package)
+                localization = commander_create_repo_map_localization_artifact(
+                    conn,
+                    task_id=task_id,
+                    workspace_id=workspace_id,
+                    project_id=project_id,
+                    plan_id=plan_id,
+                    goal=goal,
+                    lane=lane,
+                    title=title,
+                )
+                package["localization_artifact"] = localization.get("artifact")
+                package["repo_map_localization"] = localization.get("repo_map")
+                created_task = payload.get("task") or package
+                if isinstance(created_task, dict):
+                    created_task["localization_artifact"] = localization.get("artifact")
+                    created_task["repo_map_localization"] = localization.get("repo_map")
+                created_packages.append(created_task)
 
     if confirm_create and created_packages:
         runtime_event(
@@ -15050,6 +15260,15 @@ def commander_plan_work_packages(conn: sqlite3.Connection, body: dict, headers) 
         "planned_count": len(planned_packages),
         "work_packages": planned_packages,
         "created_task_ids": [item.get("task_id") for item in created_packages],
+        "localization_summary": {
+            "artifact_type": COMMANDER_LOCALIZATION_ARTIFACT_TYPE,
+            "ready": sum(1 for item in planned_packages if (item.get("repo_map_localization") or {}).get("status") == "ready"),
+            "empty": sum(1 for item in planned_packages if (item.get("repo_map_localization") or {}).get("status") == "empty"),
+            "artifacts_recorded": len(created_packages) if confirm_create else 0,
+            "raw_content_omitted": True,
+            "snippets_omitted": True,
+            "token_omitted": True,
+        },
         "errors": errors,
         "recommended_next_actions": [
             "agentops commander board",
@@ -15143,6 +15362,15 @@ def commander_work_package_from_task(conn: sqlite3.Connection, row: sqlite3.Row)
     ).fetchone()
     latest_run = dict(latest_run_row) if latest_run_row else None
     evidence = commander_evidence_counts(conn, task_id=task["task_id"], run_id=(latest_run or {}).get("run_id"))
+    localization_row = conn.execute(
+        """SELECT artifact_id, task_id, run_id, artifact_type, title, uri, summary, created_at
+        FROM artifacts
+        WHERE task_id=? AND artifact_type=?
+        ORDER BY created_at DESC
+        LIMIT 1""",
+        (task["task_id"], COMMANDER_LOCALIZATION_ARTIFACT_TYPE),
+    ).fetchone()
+    localization_artifact = dict(localization_row) if localization_row else None
     item = {
         "work_package_id": task["task_id"],
         "task_id": task["task_id"],
@@ -15163,6 +15391,17 @@ def commander_work_package_from_task(conn: sqlite3.Connection, row: sqlite3.Row)
         "verification_commands": commander_extract_verification(description),
         "acceptance_criteria": commander_safe_text(task.get("acceptance_criteria"), 360),
         "latest_run": latest_run,
+        "localization_artifact": localization_artifact,
+        "localization_gate": {
+            "status": "recorded" if localization_artifact else "missing",
+            "required_before_dispatch": True,
+            "artifact_type": COMMANDER_LOCALIZATION_ARTIFACT_TYPE,
+            "artifact_id": (localization_artifact or {}).get("artifact_id"),
+            "artifact_uri": (localization_artifact or {}).get("uri"),
+            "raw_content_omitted": True,
+            "snippets_omitted": True,
+            "token_omitted": True,
+        },
         "evidence_counts": evidence,
         "created_at": task.get("created_at"),
         "updated_at": task.get("updated_at"),
@@ -15203,6 +15442,7 @@ def commander_work_packages_readback(conn: sqlite3.Connection, qs=None, headers=
     for item in packages:
         key = item.get("project_id") or "unknown"
         project_counts[key] = project_counts.get(key, 0) + 1
+    localization_recorded = sum(1 for item in packages if ((item.get("localization_gate") or {}).get("status") == "recorded"))
     next_actions = []
     for item in packages:
         action = item.get("recommended_action")
@@ -15225,6 +15465,15 @@ def commander_work_packages_readback(conn: sqlite3.Connection, qs=None, headers=
             "total": len(packages),
             "by_status": counts,
             "by_project": project_counts,
+            "localization": {
+                "artifact_type": COMMANDER_LOCALIZATION_ARTIFACT_TYPE,
+                "recorded": localization_recorded,
+                "missing": max(len(packages) - localization_recorded, 0),
+                "coverage_percent": round((localization_recorded / len(packages)) * 100, 1) if packages else 100.0,
+                "raw_content_omitted": True,
+                "snippets_omitted": True,
+                "token_omitted": True,
+            },
         },
         "work_packages": packages,
         "recommended_next_actions": next_actions[:8],
@@ -15311,6 +15560,22 @@ def commander_dispatch_work_package(conn: sqlite3.Connection, task_id: str, body
         task_id,
         dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d%H%M%S%f"),
     )
+    if not before_package.get("localization_artifact"):
+        description = task["description"] or ""
+        commander_create_repo_map_localization_artifact(
+            conn,
+            task_id=task_id,
+            workspace_id=workspace_id,
+            project_id=commander_extract_line(description, "Commander project"),
+            plan_id=commander_plan_id_from_task(task_id, description),
+            goal=commander_extract_line(description, "Goal") or task["title"],
+            lane={
+                "lane_id": commander_extract_line(description, "Lane") or "unknown",
+                "scope": commander_extract_line(description, "Scope"),
+                "avoid_scope": commander_extract_line(description, "Avoid scope"),
+            },
+            title=task["title"],
+        )
     dispatch = dispatch_local_worker_once(conn, {
         "adapter": adapter,
         "confirm_run": confirm_run,

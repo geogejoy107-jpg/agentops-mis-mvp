@@ -15,7 +15,10 @@ It is the product version of the current development workflow: a commander decom
 - Mock dispatch is safe for local demos. Hermes/OpenClaw dispatch requires explicit `confirm_run:true` / `--confirm-run`.
 - Failed benchmark remediation can enter the same loop: `agentops eval remediate-case-run --case-run-id ... --confirm-create` creates a normal task whose description follows the Commander work-package contract.
 - Stored text is redacted and bounded; raw prompts, credentials, tokens, raw model responses, and private transcripts are not stored.
-- Confirmed planning writes normal MIS task rows plus runtime/audit evidence.
+- Confirmed planning writes normal MIS task rows plus runtime/audit evidence and
+  a `commander_repo_map_localization` artifact for each package. The artifact
+  stores candidate paths, hashes, provenance and omission proof only; it does
+  not store raw source files or snippets.
 
 ## API
 
@@ -50,7 +53,9 @@ curl -s "http://127.0.0.1:8787/api/commander/work-packages?project_id=proj_x&lim
 
 The readback endpoint is read-only. It reconstructs work-package state from
 normal MIS `tasks`, links the latest run, counts evidence rows, and returns a
-recommended next action for each lane.
+recommended next action for each lane. For confirmed Commander packages it also
+returns the latest repo-map localization artifact so a worker can see the
+intended file scope before dispatch.
 
 Failed evaluation-case runs can be converted into one-package Commander
 remediation plans:
@@ -348,6 +353,7 @@ The panel supports:
 - confirming task creation
 - opening created task detail pages
 - reading persisted work-package status after refresh
+- seeing each package's repo-map localization artifact and evidence count
 - dispatching a persisted package through mock, Hermes, or OpenClaw worker adapters
 - queueing currently planned packages as mock async workflow jobs
 - synthesizing ready package outputs into a ledger-backed review artifact through CLI/API

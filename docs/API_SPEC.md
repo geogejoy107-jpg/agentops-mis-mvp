@@ -224,6 +224,29 @@ agent needs to localize likely files without loading the whole repository into
 context. It does not create tasks, approve plans, execute shell commands, call
 Hermes/OpenClaw, or bypass Agent Plan, Approval Wall, test, or merge gates.
 
+## Commander Work Packages
+
+```http
+POST /api/commander/work-packages/plan
+GET  /api/commander/work-packages?project_id=proj_x&limit=25
+POST /api/commander/work-packages/:task_id/dispatch
+```
+
+`POST /api/commander/work-packages/plan` previews by default. With
+`confirm_create:true`, it creates normal MIS `tasks` plus runtime/audit evidence
+and a `commander_repo_map_localization` artifact for each created package. The
+artifact URI uses `repo-map://...`, its summary contains only bounded file
+paths and a manifest hash, and the audit metadata records raw-content/snippet
+omission proof. It does not store raw source files, raw prompts, model
+responses, credentials, or private transcripts.
+
+`GET /api/commander/work-packages` is read-only. It reconstructs package state
+from normal MIS tasks, latest runs, evidence counts and the latest
+`commander_repo_map_localization` artifact so humans and workers can inspect
+the intended file scope before dispatch. `POST .../:task_id/dispatch` remains
+the explicit execution boundary; Hermes/OpenClaw dispatch still requires
+`confirm_run:true`.
+
 ## Agent Plans
 
 ```http
