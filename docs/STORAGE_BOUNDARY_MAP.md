@@ -38,6 +38,7 @@ human/admin APIs:
 | Postgres parity pre-container contract | generated Postgres-compatible DDL and placeholder translation contract from `server.SCHEMA_SQL` | future Postgres adapter using the same helper contract as SQLite | `python3 scripts/storage_postgres_contract_smoke.py` |
 | Postgres container parity contract | generated schema plus representative task/run/tool/approval/prepared-action/plan-evidence fixture in a temporary Postgres container | BYOC Postgres migration readiness before a Python Postgres adapter is accepted | `python3 scripts/storage_postgres_container_smoke.py` |
 | Postgres adapter SQL contract | SQLite helper qmark/named placeholder translation plus representative helper insert/update/select execution in a temporary Postgres container | optional psycopg adapter path without changing Free Local dependencies | `python3 scripts/storage_postgres_adapter_contract_smoke.py` |
+| Optional psycopg adapter contract | `agentops_mis_storage.postgres` adapter executes generated schema plus representative helper SQL through psycopg in a temporary Postgres container | first reusable Python Postgres adapter primitive while keeping Free Local dependency-free | `python3 scripts/storage_postgres_optional_adapter_smoke.py` |
 
 The helpers deliberately keep the existing SQLite row shape and ordering. They
 only centralize workspace filters and detail assembly so a future adapter can
@@ -48,7 +49,7 @@ match behavior before Postgres is introduced.
 | Candidate | Why next | Required proof before Postgres |
 | --- | --- | --- |
 | Prepared-action route integration audit | Notion export, Dify upload, Hermes default run-task, Agnesfallback fixed probes, OpenClaw fixed probe, and customer-worker external writes are covered; future external side-effect routes must be added here before Postgres parity claims | Connector/runtime smokes that prove no provider call before approval and exact one-shot resume after approval |
-| Postgres adapter contract | SQLite helpers now cover core ledger/evidence writes, schema/container parity passes, and representative helper SQL translation is locked | Python Postgres adapter smoke with identical storage-boundary fixtures and response-shape comparison |
+| Postgres adapter contract | SQLite helpers now cover core ledger/evidence writes, schema/container parity passes, representative helper SQL translation is locked, and optional psycopg execution is proven | Python Postgres adapter smoke with identical storage-boundary fixtures and response-shape comparison |
 
 ## Postgres Parity Rule
 
@@ -73,3 +74,8 @@ The adapter SQL contract must pass before adding a Python Postgres execution
 adapter:
 
 - `python3 scripts/storage_postgres_adapter_contract_smoke.py`
+
+The optional psycopg adapter primitive must pass before routing server helpers
+through Postgres:
+
+- `python3 scripts/storage_postgres_optional_adapter_smoke.py`

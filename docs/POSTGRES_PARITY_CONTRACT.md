@@ -15,6 +15,12 @@ Postgres container before a Python Postgres adapter is accepted. The third
 layer is the adapter SQL contract, `postgres_adapter_sql_contract_v1`, which
 locks SQLite helper placeholder translation and proves representative
 insert/update/select helper SQL inside Postgres while keeping psycopg optional.
+The fourth layer is the optional driver contract,
+`postgres_optional_psycopg_adapter_v1`, which proves the reusable
+`agentops_mis_storage.postgres` adapter against a real Postgres container using
+a temporary psycopg installation outside the Free Local dependency set.
+`agentops_mis_storage.postgres` must remain importable without psycopg so
+standard Free Local installs keep working.
 
 Both layers are intentionally derived from `server.SCHEMA_SQL`, because
 `server.py` is still the executable schema authority for the dependency-free
@@ -63,6 +69,7 @@ Gate 3 proof commands:
 python3 scripts/storage_postgres_contract_smoke.py
 python3 scripts/storage_postgres_container_smoke.py
 python3 scripts/storage_postgres_adapter_contract_smoke.py
+python3 scripts/storage_postgres_optional_adapter_smoke.py
 python3 scripts/storage_boundary_sqlite_smoke.py
 ```
 
@@ -73,8 +80,10 @@ prepared-action/plan-evidence rows, and proves workspace isolation plus parity
 indexes. The third command translates representative SQLite helper SQL into
 psycopg-compatible parameter forms, executes rendered helper SQL inside
 Postgres, and verifies Free Local still has no required psycopg dependency. The
-fourth command proves the current SQLite helper behavior that Postgres must
-match.
+fourth command uses the optional psycopg-backed adapter module to execute schema
+and representative helper SQL against a real Postgres container while keeping
+driver installation in a temporary target. The fifth command proves the current
+SQLite helper behavior that Postgres must match.
 
 When Docker is unavailable on a local machine, use the non-authoritative
 diagnostic mode only to keep wider readiness checks moving:
@@ -82,6 +91,7 @@ diagnostic mode only to keep wider readiness checks moving:
 ```bash
 python3 scripts/storage_postgres_container_smoke.py --skip-if-unavailable
 python3 scripts/storage_postgres_adapter_contract_smoke.py --skip-if-unavailable
+python3 scripts/storage_postgres_optional_adapter_smoke.py --skip-if-unavailable
 ```
 
 This mode reports `skipped: true`; it is not final BYOC/Postgres evidence.
@@ -93,6 +103,11 @@ Current local evidence on `codex/commercial-migration-closed-loop`:
 - `postgres_adapter_sql_contract_v1` passed against `postgres:16-alpine` with
   `fixture_hash=64bcf2f3312c97ff045d52a32a32fd0dbd9a19019f98cec69395e2d13a980491`
   and `free_local_dependencies=[]`.
+- `postgres_optional_psycopg_adapter_v1` passed against `postgres:16-alpine`
+  with a temporary psycopg target, `free_local_dependencies=[]`, qmark/named
+  SQL execution, dict-like row shape, and zero cross-workspace rows.
+- Source install packaging includes `agentops_mis_storage.postgres`; importing
+  the module and translating SQL does not require psycopg.
 
 ## Next Gate
 
@@ -105,5 +120,7 @@ Postgres parity is not complete until the container-backed smoke:
 - proves cross-workspace exclusion;
 - proves representative Python adapter SQL translation for qmark and named
   placeholders without adding required Free Local dependencies;
+- proves the reusable optional psycopg adapter can execute schema and
+  representative helper SQL against Postgres;
 - verifies no raw prompts, raw responses, secrets, generated caches, local DBs,
   or private transcripts are written.

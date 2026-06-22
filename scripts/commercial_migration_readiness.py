@@ -179,9 +179,11 @@ def main() -> int:
             and file_contains("docs/POSTGRES_PARITY_CONTRACT.md", "postgres_parity_pre_container_v1")
             and file_contains("docs/POSTGRES_PARITY_CONTRACT.md", "postgres_container_parity_v1")
             and file_contains("docs/POSTGRES_PARITY_CONTRACT.md", "postgres_adapter_sql_contract_v1")
+            and file_contains("docs/POSTGRES_PARITY_CONTRACT.md", "postgres_optional_psycopg_adapter_v1")
             and file_contains("server.py", "repo_list_workspace_tasks")
+            and (ROOT / "agentops_mis_storage" / "postgres.py").exists()
             and (ROOT / "scripts" / "storage_boundary_sqlite_smoke.py").exists(),
-            "workspace-scoped helpers, isolated SQLite smoke, Postgres container parity, and adapter SQL contract are present",
+            "workspace-scoped helpers, isolated SQLite smoke, Postgres container parity, adapter SQL contract, and optional psycopg adapter are present",
         ),
         check(
             "blocked_generated_or_runtime_artifacts_absent",
@@ -226,6 +228,7 @@ def main() -> int:
                 "python3 scripts/storage_postgres_contract_smoke.py",
                 "python3 scripts/storage_postgres_container_smoke.py",
                 "python3 scripts/storage_postgres_adapter_contract_smoke.py",
+                "python3 scripts/storage_postgres_optional_adapter_smoke.py",
             ],
         },
         {
