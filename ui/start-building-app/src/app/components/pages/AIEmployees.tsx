@@ -356,6 +356,8 @@ export function AIEmployees() {
       gateEvidenceGaps: "Gaps",
       gateEvidenceProof: "Proof",
       loopChainTitle: "Latest loop chain",
+      loopWorkOrderTitle: "Loop work order",
+      loopWorkOrderSummary: "Copy the next gate action, verify command, and audited receipt commands from the loop action package.",
       copyFirstGateIssue: "Copy first issue",
       firstGateIssue: "First issue",
       allGatesPassing: "All gates passing",
@@ -381,6 +383,7 @@ export function AIEmployees() {
       recordVerifyReceipt: "Verify receipt",
       copyReceiptCommand: "Copy receipt CLI",
       copyVerifyReceiptCommand: "Copy verify CLI",
+      copyActionCommand: "Copy action",
       recordingReceipt: "Recording...",
       actionReceipts: "Receipts",
       receiptProof: "Receipt",
@@ -737,6 +740,8 @@ export function AIEmployees() {
       gateEvidenceGaps: "缺口",
       gateEvidenceProof: "证明",
       loopChainTitle: "最新 Loop 链路",
+      loopWorkOrderTitle: "Loop 执行包",
+      loopWorkOrderSummary: "从 loop action package 复制下一步 Gate 动作、验收命令和审计收据命令。",
       copyFirstGateIssue: "复制首个异常",
       firstGateIssue: "首个异常",
       allGatesPassing: "全部 Gate 通过",
@@ -762,6 +767,7 @@ export function AIEmployees() {
       recordVerifyReceipt: "验收记账",
       copyReceiptCommand: "复制记账 CLI",
       copyVerifyReceiptCommand: "复制验收 CLI",
+      copyActionCommand: "复制动作",
       recordingReceipt: "记账中...",
       actionReceipts: "收据",
       receiptProof: "收据证明",
@@ -1162,6 +1168,8 @@ export function AIEmployees() {
   const isCloseEvidenceGapCommand = (action: string) => action.startsWith("agentops operator close-evidence-gap --run-id ");
   const loopAuditSteps = operatorLoopAudit?.steps || [];
   const loopAuditSummary = operatorLoopAudit?.summary;
+  const loopActionPackage = operatorLoopAudit?.action_package;
+  const loopActionPackageItems = loopActionPackage?.items || [];
   const loopAuditNextAction = operatorLoopAudit?.next_actions?.[0] || "agentops operator loop-audit --limit 20";
   const firstLoopIssueStep = loopAuditSteps.find((step) => step.status !== "pass");
   const actionReceiptRows = operatorActionReceipts?.receipts || operatorActionPlan?.action_receipts?.receipts || [];
@@ -2920,6 +2928,82 @@ export function AIEmployees() {
                     );
                   })}
                 </div>
+              </div>
+            </div>
+          )}
+          {loopActionPackageItems.length > 0 && (
+            <div className="mt-3 rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+              <div className="flex flex-col md:flex-row md:items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.loopWorkOrderTitle}</div>
+                  <div className="text-[9px] mt-0.5" style={{ color: "var(--mis-muted)" }}>{copy.loopWorkOrderSummary}</div>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
+                  <StatusBadge status={loopActionPackage?.status || "unknown"} />
+                  <StatusBadge status={loopActionPackage?.safety?.read_only && !loopActionPackage?.safety?.ledger_mutated ? "pass" : "attention"} label={loopActionPackage?.safety?.read_only ? copy.readOnlyProof : copy.statusAttention} />
+                </div>
+              </div>
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-2 mt-2">
+                {loopActionPackageItems.slice(0, 4).map((item) => (
+                  <div key={item.package_id || `${item.gate_id}:${item.action_command}`} className="rounded px-2 py-1.5" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="text-[10px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{item.gate_label || item.gate_id}</div>
+                        <div className="text-[9px] truncate mt-0.5" style={{ color: "var(--mis-muted)" }}>{item.source || copy.actionSource}</div>
+                      </div>
+                      <StatusBadge status={item.gate_status} />
+                    </div>
+                    {item.message && (
+                      <div className="text-[9px] mt-1 line-clamp-2" style={{ color: "var(--mis-dim)" }}>{item.message}</div>
+                    )}
+                    <div className="flex flex-wrap gap-1.5 mt-2">
+                      {item.action_command && (
+                        <button
+                          onClick={() => void copyIntakeCommand(item.action_command)}
+                          className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded"
+                          style={{ color: "var(--mis-cyan)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}
+                          title={item.action_command}
+                        >
+                          <Copy size={9} />
+                          {copiedIntakeCommand === item.action_command ? copy.copiedCommand : copy.copyActionCommand}
+                        </button>
+                      )}
+                      {item.verify_command && (
+                        <button
+                          onClick={() => void copyIntakeCommand(item.verify_command)}
+                          className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded"
+                          style={{ color: "var(--mis-cyan)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}
+                          title={item.verify_command}
+                        >
+                          <Copy size={9} />
+                          {copiedIntakeCommand === item.verify_command ? copy.copiedCommand : copy.verifyAfterAction}
+                        </button>
+                      )}
+                      {item.receipt_record_command && (
+                        <button
+                          onClick={() => void copyIntakeCommand(item.receipt_record_command)}
+                          className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded"
+                          style={{ color: "var(--mis-warning)", background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.18)" }}
+                          title={item.receipt_record_command}
+                        >
+                          <Copy size={9} />
+                          {copiedIntakeCommand === item.receipt_record_command ? copy.copiedCommand : copy.copyReceiptCommand}
+                        </button>
+                      )}
+                      {item.receipt_verify_record_command && (
+                        <button
+                          onClick={() => void copyIntakeCommand(item.receipt_verify_record_command)}
+                          className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded"
+                          style={{ color: "var(--mis-success)", background: "rgba(45,212,191,0.08)", border: "1px solid rgba(45,212,191,0.18)" }}
+                          title={item.receipt_verify_record_command}
+                        >
+                          <Copy size={9} />
+                          {copiedIntakeCommand === item.receipt_verify_record_command ? copy.copiedCommand : copy.copyVerifyReceiptCommand}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           )}
