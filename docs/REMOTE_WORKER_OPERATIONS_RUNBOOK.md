@@ -310,11 +310,14 @@ agentops workflow run-template \
   --confirm-run \
   --async-job
 
+agentops workflow jobs --status queued,running,completed --limit 25
 agentops workflow job-status --job-id wfjob_... --wait --timeout 420
 ```
 
 The job status response returns the final `run_id`, `task_id`, `artifact_id`,
-evidence counts, and `token_omitted:true` when the worker completes.
+evidence counts, and `token_omitted:true` when the worker completes. The queue
+list is read-only and returns status/type summaries plus stuck-job recovery
+commands.
 
 For scoped remote tokens, `agentops task create` maps to
 `POST /api/agent-gateway/tasks` and requires `tasks:create`. The Gateway binds

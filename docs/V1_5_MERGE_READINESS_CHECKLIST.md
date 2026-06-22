@@ -288,6 +288,7 @@ python3 scripts/agent_gateway_review_queue_smoke.py
 - [x] Enable foreign keys.
 - [x] Enable WAL.
 - [x] Set a busy timeout.
+- [x] Use autocommit connections to avoid implicit write transactions spanning subprocess/model calls.
 - [x] Use an appropriate local synchronous mode.
 - [x] Keep the verified write path short in the SQLite reliability smoke.
 - [ ] Audit every long-running workflow path for model/network/subprocess calls held inside a write transaction.
@@ -299,7 +300,7 @@ Recommended local settings:
 ```sql
 PRAGMA foreign_keys=ON;
 PRAGMA journal_mode=WAL;
-PRAGMA busy_timeout=5000;
+PRAGMA busy_timeout=30000;
 PRAGMA synchronous=NORMAL;
 ```
 
@@ -472,9 +473,9 @@ live runtime suite
 
 ### Customer workflow
 
-- [ ] Synchronous and asynchronous submission work.
-- [ ] Jobs can be listed and polled.
-- [ ] Stuck jobs can be recovered.
+- [x] Synchronous and asynchronous submission work. Template/customer-worker sync paths are covered by existing customer workflow smokes; async template jobs are covered by `scripts/workflow_jobs_list_poll_smoke.py`.
+- [x] Jobs can be listed and polled. `GET /api/workflows/jobs` now supports status/type filters, queue summary, and recovery next-actions; `agentops workflow jobs` plus `agentops workflow job-status --wait` are covered by `scripts/workflow_jobs_list_poll_smoke.py`.
+- [x] Stuck jobs can be recovered. Existing operator recovery path is covered by `scripts/workflow_job_stuck_recovery_smoke.py`; run it against the target MIS database before shared/commercial deployment evidence capture.
 - [ ] Delivery board links task/run/artifact/approval/evaluation/audit.
 - [x] Customer report excludes internal prompts and private transcripts. Customer-facing markdown now shows only delivery summary, safety boundary and progress, while run/tool/approval/audit IDs stay in a separate internal evidence payload. Guarded by `scripts/customer_delivery_boundary_smoke.py` and `scripts/customer_project_report_smoke.py`.
 - [x] Delivery approval is not confused with tool-action execution approval: KB bot external upload approval is an Approval Wall prepared-action gate; approval alone does not complete the tool/run, and delivery/report approval remains a separate plan-evidence/customer handoff gate. Guarded by `scripts/approval_decision_side_effect_smoke.py`, `scripts/prepared_action_approval_wall_smoke.py`, `scripts/kb_bot_demo_smoke.py`, and `scripts/delivery_approval_manifest_gate_smoke.py`.

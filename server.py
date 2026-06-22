@@ -203,7 +203,7 @@ def json_array_contains(raw, needle) -> int:
 
 
 def db() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH, timeout=30)
+    conn = sqlite3.connect(DB_PATH, timeout=30, isolation_level=None)
     conn.row_factory = sqlite3.Row
     conn.create_function("agentops_json_array_contains", 2, json_array_contains)
     conn.execute("PRAGMA foreign_keys = ON")
@@ -10736,6 +10736,8 @@ def run_customer_task_template_workflow(conn, body: dict) -> tuple[dict, int]:
             "worker_agent_id": body.get("worker_agent_id") or body.get("owner_agent_id"),
             "requester_id": body.get("requester_id", "usr_customer_demo"),
             "hermes_timeout": body.get("hermes_timeout") or 300,
+            "base_url": body.get("base_url") or body.get("_base_url"),
+            "_base_url": body.get("_base_url"),
         }
         result, _status = run_customer_worker_task_workflow(conn, worker_payload)
         result["template_execution"] = {
@@ -20164,6 +20166,8 @@ def run_customer_worker_task_workflow(conn, body: dict) -> tuple[dict, int]:
         "requester_id": body.get("requester_id", "usr_customer_demo"),
         "agent_id": worker_agent_id,
         "hermes_timeout": body.get("hermes_timeout") or 300,
+        "base_url": body.get("base_url") or body.get("_base_url"),
+        "_base_url": body.get("_base_url"),
     })
     worker_results = ((dispatch.get("worker_result") or {}).get("results") or [])
     processed = next((item for item in worker_results if item.get("processed")), worker_results[0] if worker_results else {})
@@ -21214,9 +21218,59 @@ class Handler(BaseHTTPRequestHandler):
                 adapter = coerce_choice((qs.get("adapter") or ["mock"])[0], {"mock", "hermes", "openclaw"}, "mock")
                 return self.send_json({"provider": "agentops-worker", "daemon": read_worker_daemon(adapter, include_log=True)})
             if path == "/api/workflows/jobs":
-                limit = min(int((qs.get("limit") or ["50"])[0]), 200)
-                rows = conn.execute("SELECT * FROM workflow_jobs ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
-                return self.send_json({"jobs": [workflow_job_public(row) for row in rows], "token_omitted": True})
+                limit = min(max(int((qs.get("limit") or ["50"])[0]), 1), 200)
+                statuses = {
+                    value
+                    for raw in qs.get("status", [])
+                    for value in str(raw).split(",")
+                    if value in {"queued", "running", "completed", "failed"}
+                }
+                workflow_types = {value for raw in qs.get("workflow_type", []) for value in str(raw).split(",") if value}
+                where, params = [], []
+                if statuses:
+                    where.append("status IN (" + ",".join("?" for _ in statuses) + ")")
+                    params.extend(sorted(statuses))
+                if workflow_types:
+                    where.append("workflow_type IN (" + ",".join("?" for _ in workflow_types) + ")")
+                    params.extend(sorted(workflow_types))
+                sql = "SELECT * FROM workflow_jobs"
+                if where:
+                    sql += " WHERE " + " AND ".join(where)
+                sql += " ORDER BY created_at DESC LIMIT ?"
+                rows = conn.execute(sql, [*params, limit]).fetchall()
+                summary_rows = conn.execute("SELECT status, COUNT(*) c FROM workflow_jobs GROUP BY status").fetchall()
+                workflow_type_rows = conn.execute("SELECT workflow_type, COUNT(*) c FROM workflow_jobs GROUP BY workflow_type").fetchall()
+                active_count = scalar_count(conn, "SELECT COUNT(*) FROM workflow_jobs WHERE status IN ('queued','running')")
+                stuck_count = len(workflow_stuck_jobs(conn, threshold_sec=900, limit=200))
+                return self.send_json({
+                    "provider": "agentops-workflow-job",
+                    "operation": "workflow_jobs_list",
+                    "jobs": [workflow_job_public(row) for row in rows],
+                    "count": len(rows),
+                    "limit": limit,
+                    "filters": {
+                        "status": sorted(statuses),
+                        "workflow_type": sorted(workflow_types),
+                    },
+                    "summary": {
+                        "by_status": {row["status"]: row["c"] for row in summary_rows},
+                        "by_workflow_type": {row["workflow_type"]: row["c"] for row in workflow_type_rows},
+                        "active_jobs": active_count,
+                        "stuck_jobs": stuck_count,
+                    },
+                    "next_actions": [
+                        "agentops workflow job-status --job-id <job_id> --wait",
+                        "agentops workflow stuck-jobs --threshold-sec 900 --limit 25",
+                        "agentops workflow job-mark-failed --job-id <job_id> --reason '<reason>'",
+                    ],
+                    "safety": {
+                        "read_only": True,
+                        "ledger_mutated": False,
+                        "live_execution_performed": False,
+                        "token_omitted": True,
+                    },
+                    "token_omitted": True,
+                })
             if path == "/api/workflows/jobs/stuck":
                 threshold = int((qs.get("threshold_sec") or ["900"])[0])
                 limit = int((qs.get("limit") or ["25"])[0])

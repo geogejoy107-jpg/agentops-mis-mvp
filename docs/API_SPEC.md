@@ -475,6 +475,9 @@ queues the same workflow as a `workflow_jobs` row and returns immediately with a
 outlive a short browser or CLI request. Job records store status, request hash,
 safe summaries, result ids, and safe result JSON; they must not store raw
 prompts, raw responses, credentials, tokens, or private transcripts.
+`GET /api/workflows/jobs` is a read-only queue view with optional `status` and
+`workflow_type` filters. It returns the current job rows, status/type summaries,
+active/stuck counts, and copyable `agentops workflow ...` next actions.
 
 For confirmed Hermes/OpenClaw tasks that declare `external_write_intent:true`
 or match obvious publish/upload/deploy/webhook/external-write wording,

@@ -1594,6 +1594,18 @@ def cmd_workflow_job_status(args, client: AgentOpsClient) -> dict:
     return result
 
 
+def cmd_workflow_jobs(args, client: AgentOpsClient) -> dict:
+    query = {"limit": args.limit}
+    if args.status:
+        query["status"] = args.status
+    if args.workflow_type:
+        query["workflow_type"] = args.workflow_type
+    result = client.get("/api/workflows/jobs", query=query)
+    result["read_only"] = True
+    result["token_omitted"] = True
+    return result
+
+
 def cmd_workflow_stuck_jobs(args, client: AgentOpsClient) -> dict:
     return client.get("/api/workflows/jobs/stuck", query={"threshold_sec": args.threshold_sec, "limit": args.limit})
 
@@ -2691,6 +2703,11 @@ def build_parser() -> argparse.ArgumentParser:
     run_template.add_argument("--request-timeout", type=int, default=None)
     run_template.add_argument("--async-job", action="store_true", help="Submit a workflow job and return immediately; use workflow job-status to poll.")
     run_template.set_defaults(handler="workflow_run_template")
+    jobs_list = workflow_sub.add_parser("jobs", help="List async workflow jobs with read-only queue summary.")
+    jobs_list.add_argument("--status", default="", help="Optional comma-separated status filter: queued,running,completed,failed.")
+    jobs_list.add_argument("--workflow-type", default="", help="Optional comma-separated workflow_type filter.")
+    jobs_list.add_argument("--limit", type=int, default=25)
+    jobs_list.set_defaults(handler="workflow_jobs")
     job_status = workflow_sub.add_parser("job-status", help="Inspect or wait for a submitted workflow job.")
     job_status.add_argument("--job-id", required=True)
     job_status.add_argument("--wait", action="store_true")
@@ -2992,6 +3009,7 @@ HANDLERS = {
     "workflow_delivery_board": cmd_workflow_delivery_board,
     "workflow_hermes_openclaw_loop": cmd_workflow_hermes_openclaw_loop,
     "workflow_run_template": cmd_workflow_run_template,
+    "workflow_jobs": cmd_workflow_jobs,
     "workflow_job_status": cmd_workflow_job_status,
     "workflow_stuck_jobs": cmd_workflow_stuck_jobs,
     "workflow_job_mark_failed": cmd_workflow_job_mark_failed,

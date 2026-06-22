@@ -785,9 +785,13 @@ agentops workflow job-status --job-id wfjob_... --wait --timeout 420
 ```
 
 `--async-job` maps to `POST /api/workflows/customer-task-templates/submit`.
-`job-status` maps to `GET /api/workflows/jobs/:job_id`. The job record stores
-status, request hash, safe summaries, result ids, and token omission metadata;
-it must not store raw prompts, raw documents, credentials, or token values.
+Use `agentops workflow jobs --status queued,running,completed --limit 25` for
+the read-only queue view before polling or recovery. It maps to
+`GET /api/workflows/jobs`, supports `status` and `workflow_type` filters, and
+returns status/type summaries plus next-action commands. `job-status` maps to
+`GET /api/workflows/jobs/:job_id`. The job record stores status, request hash,
+safe summaries, result ids, and token omission metadata; it must not store raw
+prompts, raw documents, credentials, or token values.
 
 ### `agentops workflow customer-worker-task`
 
@@ -867,6 +871,10 @@ agentops workflow job-status --job-id wfjob_... --wait --timeout 420
 ```
 
 `--async-job` maps to `POST /api/workflows/customer-worker-task/submit`.
+Operators can list the queue with
+`agentops workflow jobs --status queued,running,completed --limit 25` before
+waiting on a specific job. This read-only command returns queue counts, active
+job count, stuck job count, and copyable recovery commands.
 The job starts quickly, records request hash and safe summaries, and later
 stores `result_task_id`, `result_run_id`, `result_artifact_id`, status, and safe
 result JSON. This is the preferred product path for customer-visible long
