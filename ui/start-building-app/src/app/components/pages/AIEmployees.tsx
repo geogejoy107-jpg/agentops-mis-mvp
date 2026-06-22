@@ -312,25 +312,71 @@ export function AIEmployees() {
     heartbeat_timeout_sec: "300",
     scopes: DEFAULT_GATEWAY_SCOPES.join(", "),
   });
-  const { data, loading, error, refresh } = useLiveData(async () => {
-    const baseContext = await loadAIEmployeesPanelSet(AI_EMPLOYEES_PANEL_LOADERS, { integrationInboxBucket });
-    const scopedLoopId = latestLoopIdFromReadback(baseContext.loopLaneReadback as HermesOpenClawLoopReadbackPayload | undefined);
-    const scopedContext = await loadAIEmployeesPanelSet(AI_EMPLOYEES_SCOPED_PANEL_LOADERS, { ...baseContext, scopedLoopId });
-    const agentContext = await loadAIEmployeesPanelSet([{
-      id: "agents",
-      load: async (context) => ({ agents: await loadAgents(context.metrics as Parameters<typeof loadAgents>[0]) }),
-    }], baseContext);
-    return {
-      ...baseContext,
-      ...scopedContext,
-      ...agentContext,
-      panelLoadState: {
-        ...(baseContext.panelLoadState || {}),
-        ...(scopedContext.panelLoadState || {}),
-        ...(agentContext.panelLoadState || {}),
-      },
-    };
+  const [data, setData] = useState<AIEmployeesLiveData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [deferredLoading, setDeferredLoading] = useState(false);
+  const [deferredError, setDeferredError] = useState<string | null>(null);
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    setDeferredError(null);
+    try {
+      const coreContext = await loadAIEmployeesPanelSet([
+        ...AI_EMPLOYEES_CORE_PANEL_LOADERS,
+        { id: "operator_health", load: async () => ({ operatorHealth: await loadOperatorHealth(12, "") }) },
+      ], { integrationInboxBucket });
+      setData((current) => ({
+        ...(current || {}),
+        ...coreContext,
+        panelLoadState: {
+          ...((current || {}).panelLoadState || {}),
+          ...(coreContext.panelLoadState || {}),
+        },
+      }));
+      setLoading(false);
+      setDeferredLoading(true);
+      try {
+        const deferredContext = await loadAIEmployeesPanelSet(AI_EMPLOYEES_DEFERRED_PANEL_LOADERS, {
+          ...coreContext,
+          integrationInboxBucket,
+        });
+        const scopedLoopId = latestLoopIdFromReadback(deferredContext.loopLaneReadback as HermesOpenClawLoopReadbackPayload | undefined);
+        const scopedContext = await loadAIEmployeesPanelSet(AI_EMPLOYEES_SCOPED_PANEL_LOADERS, {
+          ...coreContext,
+          ...deferredContext,
+          scopedLoopId,
+        });
+        const agentContext = await loadAIEmployeesPanelSet([{
+          id: "agents",
+          load: async (context) => ({ agents: await loadAgents(context.metrics as Parameters<typeof loadAgents>[0]) }),
+        }], coreContext);
+        setData((current) => ({
+          ...(current || {}),
+          ...deferredContext,
+          ...scopedContext,
+          ...agentContext,
+          panelLoadState: {
+            ...((current || {}).panelLoadState || {}),
+            ...(deferredContext.panelLoadState || {}),
+            ...(scopedContext.panelLoadState || {}),
+            ...(agentContext.panelLoadState || {}),
+          },
+        }));
+      } catch (err) {
+        setDeferredError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setDeferredLoading(false);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setLoading(false);
+      setDeferredLoading(false);
+    }
   }, [integrationInboxBucket]);
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
   const loadSelectedDaemonLog = async (adapter = selectedLogAdapter) => {
     setDaemonLogsLoading(true);
     setDaemonLogsError(null);
@@ -455,7 +501,12 @@ export function AIEmployees() {
       title: "AI Employees",
       summary: `${agents.length} registered agents · ${activeAgents} active · live backend`,
       loading: "Loading live agents...",
+      deferredLoading: "Loading secondary governance panels...",
+      deferredUnavailable: "Some secondary panels are still unavailable",
       backendUnavailable: "Live backend unavailable",
+      panelLoadReady: "panel ready",
+      panelLoadUnavailable: "panel unavailable",
+      panelLoadLoading: "panel loading",
       refresh: "Refresh live agents",
       commandCenterTitle: "Worker Fleet Console",
       commandCenterSummary: "Adapter readiness, daemon capacity, remote heartbeat/session health, stuck recovery, and the next safe CLI/API action.",
@@ -893,7 +944,12 @@ export function AIEmployees() {
       title: "AI 员工",
       summary: `${agents.length} 个已注册代理 · ${activeAgents} 个运行中 · 连接本地后端`,
       loading: "正在加载实时代理...",
+      deferredLoading: "正在加载次级治理面板...",
+      deferredUnavailable: "部分次级面板暂不可用",
       backendUnavailable: "本地后端不可用",
+      panelLoadReady: "面板就绪",
+      panelLoadUnavailable: "面板不可用",
+      panelLoadLoading: "面板加载中",
       refresh: "刷新实时代理",
       commandCenterTitle: "Worker Fleet 控制台",
       commandCenterSummary: "集中查看 adapter 就绪、daemon 容量、远程心跳/session、卡住恢复和下一步安全 CLI/API 动作。",
@@ -1328,6 +1384,22 @@ export function AIEmployees() {
       statusSetup: "待配置",
     },
   });
+  const panelLoadState = data?.panelLoadState || {};
+  const panelStatus = (panelId: string) => {
+    if (panelLoadState[panelId]?.status === "unavailable") return "unavailable";
+    if (panelLoadState[panelId]?.status === "ready") return "ready";
+    return loading || deferredLoading ? "running" : "unknown";
+  };
+  const panelStatusLabel = (panelId: string) => {
+    const status = panelStatus(panelId);
+    if (status === "ready") return copy.panelLoadReady;
+    if (status === "unavailable") return copy.panelLoadUnavailable;
+    if (status === "running") return copy.panelLoadLoading;
+    return status;
+  };
+  const panelStatusBadge = (panelId: string) => (
+    <StatusBadge status={panelStatus(panelId)} label={panelStatusLabel(panelId)} />
+  );
   const operatorReadiness = [
     {
       title: copy.modeLocalTitle,
@@ -2501,12 +2573,17 @@ export function AIEmployees() {
     <div className="space-y-5 w-full">
       {/* Header */}
       <div>
-        <h1 className="text-lg font-semibold" style={{ color: "var(--mis-text)" }}>{copy.title}</h1>
+        <div className="flex flex-wrap items-center gap-2">
+          <h1 className="text-lg font-semibold" style={{ color: "var(--mis-text)" }}>{copy.title}</h1>
+          <StatusBadge status={deferredLoading ? "running" : deferredError ? "unavailable" : loading ? "running" : "ready"} label={deferredLoading ? copy.panelLoadLoading : deferredError ? copy.panelLoadUnavailable : loading ? copy.panelLoadLoading : copy.panelLoadReady} />
+        </div>
         <p className="text-xs mt-0.5" style={{ color: "var(--mis-dim)" }}>
           {copy.summary}
         </p>
         {loading && <p className="text-xs mt-2" style={{ color: "var(--mis-muted)" }}>{copy.loading}</p>}
+        {!loading && deferredLoading && <p className="text-xs mt-2" style={{ color: "var(--mis-muted)" }}>{copy.deferredLoading}</p>}
         {error && <p className="text-xs mt-2" style={{ color: "#F87171" }}>{copy.backendUnavailable}: {error}</p>}
+        {deferredError && <p className="text-xs mt-2" style={{ color: "var(--mis-warning)" }}>{copy.deferredUnavailable}: {deferredError}</p>}
         <button onClick={refresh} className="mt-3 text-[11px] px-3 py-1.5 rounded" style={{ background: "rgba(34,211,238,0.12)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.2)" }}>
           {copy.refresh}
         </button>
@@ -3079,6 +3156,7 @@ export function AIEmployees() {
               <Activity size={14} style={{ color: "var(--mis-cyan)" }} />
               <h2 className="text-sm font-semibold" style={{ color: "var(--mis-text)" }}>{copy.commandCenterTitle}</h2>
               <StatusBadge status={operatorHealth?.status || fleetHealth?.overall || workerStatus?.status || "unknown"} />
+              {panelStatusBadge("worker_status")}
             </div>
             <p className="text-[11px] mt-1 max-w-3xl" style={{ color: "var(--mis-dim)" }}>{copy.commandCenterSummary}</p>
             {operatorHealth && (
@@ -3124,6 +3202,7 @@ export function AIEmployees() {
                 <ShieldCheck size={13} style={{ color: operatorEvidenceReport?.status === "blocked" ? "var(--mis-warning)" : "var(--mis-success)" }} />
                 <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.evidenceReportTitle}</div>
                 <StatusBadge status={operatorEvidenceReport?.status || "unknown"} />
+                {panelStatusBadge("operator_evidence_report")}
                 <StatusBadge status={operatorEvidenceReport?.safety?.read_only && !operatorEvidenceReport?.safety?.ledger_mutated ? "pass" : "attention"} label={operatorEvidenceReport?.safety?.read_only ? copy.readOnlyProof : copy.statusAttention} />
               </div>
               <p className="text-[10px] mt-1 max-w-4xl" style={{ color: "var(--mis-dim)" }}>{copy.evidenceReportSummary}</p>
@@ -3343,6 +3422,7 @@ export function AIEmployees() {
                 <Activity size={13} style={{ color: operatorLoopAudit?.status === "blocked" ? "var(--mis-warning)" : "var(--mis-cyan)" }} />
                 <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.loopAuditTitle}</div>
                 <StatusBadge status={operatorLoopAudit?.status || "unknown"} />
+                {panelStatusBadge("operator_loop_audit")}
               </div>
               <p className="text-[10px] mt-1 max-w-4xl" style={{ color: "var(--mis-dim)" }}>
                 {copy.loopAuditSummary}
@@ -3518,6 +3598,7 @@ export function AIEmployees() {
                     <ShieldCheck size={12} style={{ color: "var(--mis-cyan)" }} />
                     <div className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.operatorHandoffTitle}</div>
                     <StatusBadge status={operatorHandoff.status || "unknown"} />
+                    {panelStatusBadge("operator_handoff")}
                     <StatusBadge status={operatorHandoff.safety.read_only && !operatorHandoff.safety.ledger_mutated && !operatorHandoff.safety.live_execution_performed ? "pass" : "attention"} label={operatorHandoff.safety.read_only ? copy.readOnlyProof : copy.statusAttention} />
                   </div>
                   <div className="text-[9px] mt-0.5 max-w-4xl" style={{ color: "var(--mis-muted)" }}>{copy.operatorHandoffSummary}</div>
@@ -4014,6 +4095,7 @@ export function AIEmployees() {
                 <GripVertical size={13} style={{ color: "var(--mis-cyan)" }} />
                 <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.actionQueueTitle}</div>
                 <StatusBadge status={operatorActionPlan?.status || "unknown"} />
+                {panelStatusBadge("operator_action_plan")}
               </div>
               <p className="text-[10px] mt-1" style={{ color: "var(--mis-muted)" }}>
                 {copy.actionQueueSummary}

@@ -152,6 +152,7 @@ def static_contract() -> dict:
         "has_lazy_daemon_log_effect": "if (!daemonLogsOpen) return;" in text and "loadSelectedDaemonLog(selectedLogAdapter)" in text,
         "has_panel_loader_manifest": "AI_EMPLOYEES_PANEL_LOADERS" in text and "AI_EMPLOYEES_SCOPED_PANEL_LOADERS" in text,
         "has_independent_panel_settling": "Promise.allSettled(loaders.map" in text and "panelLoadState" in text,
+        "has_visible_panel_status": "panelStatusBadge" in text and "panelLoadReady" in text and "panelLoadUnavailable" in text,
         "has_monolithic_initial_loader": "const [metrics, demoReadiness, workerStatus" in text,
         "has_monolithic_scoped_loader": "const [operatorLoopAudit, operatorHandoff, operatorHealth, operatorLoopSelfCheck]" in text,
         "initial_loader_mentions": len(re.findall(r"load[A-Za-z0-9_]+\(", text[: text.find("const loadSelectedDaemonLog")])),
@@ -252,6 +253,8 @@ def main() -> int:
         failures.append("AI Employees lazy daemon log effect is missing")
     if not contract["has_panel_loader_manifest"] or not contract["has_independent_panel_settling"]:
         failures.append(f"AI Employees panels are not independently loadable: {contract}")
+    if not contract["has_visible_panel_status"]:
+        failures.append(f"AI Employees panel load state is not visible to operators: {contract}")
     if contract["has_monolithic_initial_loader"] or contract["has_monolithic_scoped_loader"]:
         failures.append(f"AI Employees still has a monolithic panel loader: {contract}")
     if before != after:
