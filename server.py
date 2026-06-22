@@ -112,7 +112,7 @@ from agentops_mis_core.worker_fleet import (
     build_worker_fleet_view,
     build_worker_status_payload,
 )
-from agentops_mis_core.workflow_jobs import workflow_job_public
+from agentops_mis_core.workflow_jobs import workflow_job_public, workflow_job_stuck_projection
 from agentops_mis_cli.advance_loop_policy import advance_loop_command_policy, advance_loop_policy_summary
 from agentops_mis_cli.redaction import redact_full_text as shared_redact_full_text
 from agentops_mis_cli.redaction import redact_text as shared_redact_text
@@ -10653,18 +10653,6 @@ def run_customer_task_template_workflow(conn, body: dict) -> tuple[dict, int]:
     return result, 201
 
 
-def _parse_iso_datetime(value: str | None) -> dt.datetime | None:
-    if not value:
-        return None
-    try:
-        parsed = dt.datetime.fromisoformat(value)
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=dt.timezone.utc)
-        return parsed
-    except Exception:
-        return None
-
-
 def workflow_stuck_jobs(conn, threshold_sec: int = 900, limit: int = 25) -> list[dict]:
     threshold_sec = max(int(threshold_sec or 900), 30)
     limit = min(max(int(limit or 25), 1), 200)
@@ -10674,18 +10662,8 @@ def workflow_stuck_jobs(conn, threshold_sec: int = 900, limit: int = 25) -> list
     ).fetchall()
     stuck: list[dict] = []
     for row in rows:
-        data = workflow_job_public(row) or {}
-        anchor = (
-            _parse_iso_datetime(data.get("updated_at"))
-            or _parse_iso_datetime(data.get("started_at"))
-            or _parse_iso_datetime(data.get("created_at"))
-            or now_dt
-        )
-        age_sec = max(int((now_dt - anchor).total_seconds()), 0)
-        if age_sec >= threshold_sec:
-            data["age_sec"] = age_sec
-            data["threshold_sec"] = threshold_sec
-            data["stuck_reason"] = "workflow_job_exceeded_threshold"
+        data = workflow_job_stuck_projection(row, now_dt=now_dt, threshold_sec=threshold_sec)
+        if data:
             stuck.append(data)
         if len(stuck) >= limit:
             break

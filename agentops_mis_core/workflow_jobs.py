@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import datetime as dt
 from typing import Any
 
 
@@ -37,3 +38,37 @@ def workflow_job_public(row: Any | None) -> dict | None:
         "raw_request_omitted": True,
         "token_omitted": True,
     }
+
+
+def workflow_job_parse_iso_datetime(value: str | None) -> dt.datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = dt.datetime.fromisoformat(value)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=dt.timezone.utc)
+        return parsed
+    except Exception:
+        return None
+
+
+def workflow_job_stuck_projection(
+    row: Any | None,
+    *,
+    now_dt: dt.datetime,
+    threshold_sec: int,
+) -> dict | None:
+    data = workflow_job_public(row) or {}
+    anchor = (
+        workflow_job_parse_iso_datetime(data.get("updated_at"))
+        or workflow_job_parse_iso_datetime(data.get("started_at"))
+        or workflow_job_parse_iso_datetime(data.get("created_at"))
+        or now_dt
+    )
+    age_sec = max(int((now_dt - anchor).total_seconds()), 0)
+    if age_sec < threshold_sec:
+        return None
+    data["age_sec"] = age_sec
+    data["threshold_sec"] = threshold_sec
+    data["stuck_reason"] = "workflow_job_exceeded_threshold"
+    return data

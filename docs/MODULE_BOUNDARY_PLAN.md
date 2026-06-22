@@ -981,6 +981,38 @@ python3 scripts/workflow_jobs_list_poll_smoke.py
 python3 scripts/workflow_job_stuck_recovery_smoke.py
 ```
 
+### Slice 33: Workflow Job Stuck Projection
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/workflow_jobs.py`
+
+Moved out of `server.py`:
+
+- workflow-job ISO timestamp parsing
+- stuck-job age calculation from public job fields
+- threshold comparison and stuck-reason projection
+- omission proof preservation on stuck-job readback
+
+Still owned by `server.py`:
+
+- HTTP routes
+- SQLite workflow-job reads and writes
+- workflow-job threshold and limit normalization
+- async job submission and status transitions
+- stuck-job recovery mutations
+- runtime events, audit logs and commits
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/workflow_job_stuck_recovery_smoke.py
+python3 scripts/workflow_jobs_list_poll_smoke.py
+```
+
 ## Next Candidate Slices
 
 - Continue P1-05 with small smoke-backed strangler slices only; prefer pure
