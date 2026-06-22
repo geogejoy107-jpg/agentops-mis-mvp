@@ -158,6 +158,11 @@ export interface RuntimeConnector {
   trust_status?: string;
   trust_note?: string;
   trust_updated_at?: string;
+  observation_level?: string;
+  risk_floor?: string;
+  commercial_readiness?: string;
+  capability_policy_hash?: string;
+  capability_manifest?: Record<string, unknown>;
   endpoint: string;
   import_count?: number;
   last_event?: string;

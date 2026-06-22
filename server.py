@@ -1475,7 +1475,9 @@ def agnesfallback_cli_command(agnes: dict, prompt: str) -> list[str]:
 
 def runtime_connector_capability_manifest(connector_id: str, provider: str, connector_type: str) -> dict:
     adapter = "mock"
-    if connector_id == "rtc_hermes_default_gateway" or provider == "hermes":
+    if connector_id == "rtc_agent_gateway_local" or provider == "agent-gateway":
+        adapter = "agent_gateway"
+    elif connector_id == "rtc_hermes_default_gateway" or provider == "hermes":
         adapter = "hermes"
     elif connector_id == "rtc_openclaw_local" or provider == "openclaw":
         adapter = "openclaw"
@@ -1493,6 +1495,34 @@ def runtime_connector_capability_manifest(connector_id: str, provider: str, conn
         "raw_response_omitted": True,
     }
     manifests = {
+        "agent_gateway": {
+            "observation_level": "structured_ledger",
+            "risk_floor": "low",
+            "commercial_readiness": "local_demo_ready",
+            "capabilities": {
+                "filesystem": "none",
+                "shell": "repo_local_cli_wrapper",
+                "network": "loopback_http_api",
+                "git": "none",
+                "external_write": "none_without_worker_or_prepared_action",
+                "confirmation": "not_required_for_read_only_gateway_calls",
+                "trust_policy": "runtime_connector_trust_registry",
+                "secrets": "scoped_tokens_env_or_config_not_ledger",
+                "tool_event_ingestion": "structured",
+            },
+            "boundaries": {
+                "workdir": "local://agentops-mis",
+                "network": "127.0.0.1 agent-gateway API",
+                "external_side_effects": "disabled_without_explicit_worker_or_prepared_action",
+            },
+            "governance": {
+                "requires_confirm_run": False,
+                "requires_prepared_action_for_external_write": True,
+                "trust_status_source": "runtime_connectors.trust_status",
+                "live_execution_blocked_when_trust_status_blocked": True,
+                "shared_commercial_policy": "scoped_token_required_outside_loopback_local_dev",
+            },
+        },
         "mock": {
             "observation_level": "structured_ledger",
             "risk_floor": "low",
@@ -1503,6 +1533,8 @@ def runtime_connector_capability_manifest(connector_id: str, provider: str, conn
                 "network": "none",
                 "git": "none",
                 "external_write": "none",
+                "confirmation": "not_required_for_mock_execution",
+                "trust_policy": "runtime_connector_trust_registry",
                 "secrets": "none",
                 "tool_event_ingestion": "structured",
             },
@@ -1514,6 +1546,8 @@ def runtime_connector_capability_manifest(connector_id: str, provider: str, conn
             "governance": {
                 "requires_confirm_run": False,
                 "requires_prepared_action_for_external_write": False,
+                "trust_status_source": "runtime_connectors.trust_status",
+                "live_execution_blocked_when_trust_status_blocked": True,
                 "shared_commercial_policy": "allowed_for_tests_only",
             },
         },
@@ -1527,6 +1561,8 @@ def runtime_connector_capability_manifest(connector_id: str, provider: str, conn
                 "network": "runtime_internal_opaque",
                 "git": "runtime_internal_opaque",
                 "external_write": "must_route_through_mis_guarded_tools",
+                "confirmation": "confirm_run_required_for_live_execution",
+                "trust_policy": "runtime_connector_trust_registry",
                 "secrets": "runtime_env_only_not_ledger",
                 "tool_event_ingestion": "summary_hash_only",
             },
@@ -1538,6 +1574,8 @@ def runtime_connector_capability_manifest(connector_id: str, provider: str, conn
             "governance": {
                 "requires_confirm_run": True,
                 "requires_prepared_action_for_external_write": True,
+                "trust_status_source": "runtime_connectors.trust_status",
+                "live_execution_blocked_when_trust_status_blocked": True,
                 "shared_commercial_policy": "restricted_when_tool_events_unavailable",
             },
         },
@@ -1551,6 +1589,8 @@ def runtime_connector_capability_manifest(connector_id: str, provider: str, conn
                 "network": "runtime_internal_opaque",
                 "git": "runtime_internal_opaque",
                 "external_write": "must_route_through_mis_guarded_tools",
+                "confirmation": "confirm_run_required_for_live_execution",
+                "trust_policy": "runtime_connector_trust_registry",
                 "secrets": "runtime_env_only_not_ledger",
                 "tool_event_ingestion": "summary_hash_only",
             },
@@ -1563,6 +1603,8 @@ def runtime_connector_capability_manifest(connector_id: str, provider: str, conn
             "governance": {
                 "requires_confirm_run": True,
                 "requires_prepared_action_for_external_write": True,
+                "trust_status_source": "runtime_connectors.trust_status",
+                "live_execution_blocked_when_trust_status_blocked": True,
                 "shared_commercial_policy": "restricted_when_tool_events_unavailable",
             },
         },
@@ -1576,6 +1618,8 @@ def runtime_connector_capability_manifest(connector_id: str, provider: str, conn
                 "network": "local_loopback_gateway_optional",
                 "git": "none_declared",
                 "external_write": "none_for_fixed_probe",
+                "confirmation": "confirm_run_required_for_fixed_probe",
+                "trust_policy": "runtime_connector_trust_registry",
                 "secrets": "runtime_env_only_not_ledger",
                 "tool_event_ingestion": "summary_hash_only",
             },
@@ -1587,6 +1631,8 @@ def runtime_connector_capability_manifest(connector_id: str, provider: str, conn
             "governance": {
                 "requires_confirm_run": True,
                 "requires_prepared_action_for_external_write": True,
+                "trust_status_source": "runtime_connectors.trust_status",
+                "live_execution_blocked_when_trust_status_blocked": True,
                 "shared_commercial_policy": "not_a_general_worker_adapter",
             },
         },
@@ -1610,7 +1656,7 @@ def runtime_connector_rows() -> list[dict]:
             "binary_path": None,
             "status": "available",
             "allow_real_run": 1,
-            "require_confirm_run": 1,
+            "require_confirm_run": 0,
             "trust_status": "trusted",
             "trust_note": None,
             "trust_updated_at": now,
@@ -1728,6 +1774,22 @@ def runtime_connector_for_adapter(adapter: str) -> str | None:
     if adapter == "mock":
         return "rtc_agent_gateway_local"
     return None
+
+
+def runtime_connector_public_row(row) -> dict:
+    item = dict(row)
+    manifest = {}
+    if item.get("capability_manifest_json"):
+        try:
+            manifest = json.loads(item.get("capability_manifest_json") or "{}")
+        except Exception:
+            manifest = {}
+    item["capability_manifest"] = manifest
+    item["capability_policy_hash"] = item.get("capability_policy_hash") or manifest.get("manifest_hash")
+    item["token_omitted"] = True
+    item["raw_prompt_omitted"] = True
+    item["raw_response_omitted"] = True
+    return item
 
 
 def runtime_connector_trust(conn, connector_id: str | None, refresh: bool = True) -> dict | None:
@@ -24598,7 +24660,8 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/runtime-connectors":
                 refresh_runtime_connectors(conn)
                 conn.commit()
-                return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM runtime_connectors ORDER BY provider, connector_type, profile_name").fetchall()))
+                rows = conn.execute("SELECT * FROM runtime_connectors ORDER BY provider, connector_type, profile_name").fetchall()
+                return self.send_json([runtime_connector_public_row(row) for row in rows])
             if path == "/api/runtime-events":
                 return self.send_json(rows_to_dicts(conn.execute("SELECT * FROM runtime_events ORDER BY created_at DESC LIMIT 200").fetchall()))
             if path == "/api/workers/status":

@@ -1042,6 +1042,37 @@ It is read-only and does not print raw tokens. The response also includes
 This makes the CLI/API layer usable by external workers and automation scripts,
 not only by a human browsing the admin UI.
 
+### `agentops runtime connectors`
+
+Returns the complete runtime connector trust registry and capability manifest
+read model. This is broader than `agentops worker readiness`: it includes
+Agent Gateway, OpenClaw, Hermes, Agnesfallback CLI and Agnesfallback
+OpenAI-compatible gateway connectors, even when a connector is not a normal
+worker adapter.
+
+```bash
+agentops runtime connectors
+```
+
+The command is read-only. It does not pull tasks, claim tasks, start runs,
+execute a runtime, call a provider, or write ledger rows. Each connector row
+includes parsed `capability_manifest`, `capability_policy_hash`,
+`observation_level`, `trust_status`, confirmation policy, and explicit
+token/prompt/response omission fields. Capability manifests must declare:
+
+- filesystem
+- shell
+- network
+- Git
+- external write
+- confirmation
+- trust policy
+- secrets
+- runtime/tool-event ingestion
+
+Use this command when an operator or remote agent needs to understand what a
+runtime is allowed to do before choosing a route or requesting approval.
+
 ### `agentops worker readiness`
 
 Returns read-only readiness for all worker adapters in one response. It checks

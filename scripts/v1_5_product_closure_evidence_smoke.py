@@ -108,6 +108,7 @@ def main() -> int:
                 "scripts/agent_worker.py",
                 "scripts/hermes_openclaw_loop.py",
                 "scripts/hermes_openclaw_loop_smoke.py",
+                "scripts/runtime_capability_manifest_smoke.py",
                 "scripts/runtime_connector_trust_smoke.py",
                 "scripts/worker_adapter_readiness_smoke.py",
             ],

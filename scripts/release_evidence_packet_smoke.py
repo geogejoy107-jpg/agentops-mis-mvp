@@ -191,6 +191,12 @@ TEST_COMMANDS = [
         "ci_step": "Server-backed smoke suite",
     },
     {
+        "id": "runtime_capability_manifest",
+        "command": "python3 scripts/runtime_capability_manifest_smoke.py --base-url \"$AGENTOPS_BASE_URL\"",
+        "summary": "Runtime connector capability manifests cover Agent Gateway, OpenClaw, Hermes and Agnesfallback with confirmation/trust policy fields.",
+        "ci_step": "Server-backed smoke suite",
+    },
+    {
         "id": "agent_gateway_knowledge_scope",
         "command": "python3 scripts/agent_gateway_knowledge_scope_smoke.py",
         "summary": "Agent Gateway scoped knowledge visibility, provenance and spoof-resistance gate.",

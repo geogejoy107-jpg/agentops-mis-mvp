@@ -801,7 +801,23 @@ GET /api/template-bindings
 POST /api/migration/preview
 ```
 
-These endpoints support the v1.2.1 "external base" story:
+`GET /api/runtime-connectors` is now the public read model for runtime
+capability manifests and connector trust state. Each row keeps the persisted
+`capability_manifest_json` and also returns parsed `capability_manifest`,
+`capability_policy_hash`, `observation_level`, `trust_status`,
+`require_confirm_run`, `token_omitted:true`, `raw_prompt_omitted:true`, and
+`raw_response_omitted:true`. The manifest schema is
+`runtime-capability-manifest-v1`; it covers Agent Gateway, OpenClaw, Hermes,
+Agnesfallback CLI, and Agnesfallback OpenAI-compatible gateway connectors.
+
+The manifest must declare filesystem, shell, network, Git, secret,
+external-write, confirmation, trust-policy and runtime-event ingestion
+capabilities. It is read-only: listing connectors does not pull tasks, call
+models, run providers, or write ledger rows. Use
+`GET /api/workers/adapter-readiness` for route selection and prepared actions
+for high-risk live side effects.
+
+The remaining endpoints support the v1.2.1 "external base" story:
 
 - Agent-MIS local bases remain canonical for task, memory, template and audit ledger records.
 - Notion is modeled as an external base in dry-run mode by default.

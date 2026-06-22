@@ -2556,6 +2556,19 @@ function parseJsonArray(value: unknown): string[] {
   }
 }
 
+function parseJsonObject(value: unknown): Record<string, unknown> {
+  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  if (typeof value !== "string" || !value.trim()) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
+}
+
 function numberValue(value: unknown, fallback = 0): number {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
@@ -2835,6 +2848,7 @@ export function normalizeAudit(row: Record<string, unknown>): AuditLog {
 }
 
 export function normalizeConnector(row: Record<string, unknown>): RuntimeConnector {
+  const capabilityManifest = parseJsonObject(row.capability_manifest || row.capability_manifest_json);
   return {
     connector_id: String(row.runtime_connector_id || row.connector_id || ""),
     provider: String(row.provider || ""),
@@ -2846,6 +2860,11 @@ export function normalizeConnector(row: Record<string, unknown>): RuntimeConnect
     trust_status: String(row.trust_status || "trusted"),
     trust_note: row.trust_note ? String(row.trust_note) : undefined,
     trust_updated_at: row.trust_updated_at ? String(row.trust_updated_at) : undefined,
+    observation_level: String(row.observation_level || capabilityManifest.observation_level || ""),
+    risk_floor: String(row.risk_floor || capabilityManifest.risk_floor || ""),
+    commercial_readiness: String(row.commercial_readiness || capabilityManifest.commercial_readiness || ""),
+    capability_policy_hash: String(row.capability_policy_hash || capabilityManifest.manifest_hash || ""),
+    capability_manifest: capabilityManifest,
     endpoint: String(row.base_url || row.binary_path || ""),
     import_count: undefined,
     last_event: row.last_error ? String(row.last_error) : undefined,

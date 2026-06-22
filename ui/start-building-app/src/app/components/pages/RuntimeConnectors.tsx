@@ -36,6 +36,14 @@ export function RuntimeConnectors() {
       trustSummary: "Controls whether live adapters are trusted, require review, or are blocked before customer worker execution.",
       updatingTrust: "Updating...",
       trustUpdated: "Trust policy updated",
+      capabilityManifest: "Capability Manifest",
+      policyHash: "Policy hash",
+      observation: "Observation",
+      riskFloor: "Risk",
+      externalWrite: "External write",
+      confirm: "Confirm",
+      trustPolicy: "Trust policy",
+      commercial: "Commercial",
       plannedConnectors: "Planned Connectors",
       recentRuntimeEvents: "Recent Runtime Events",
     },
@@ -56,10 +64,33 @@ export function RuntimeConnectors() {
       trustSummary: "控制 live adapter 在客户 worker 执行前是可信、需复核，还是被阻止。",
       updatingTrust: "正在更新...",
       trustUpdated: "信任策略已更新",
+      capabilityManifest: "能力清单",
+      policyHash: "策略哈希",
+      observation: "观测级别",
+      riskFloor: "风险下限",
+      externalWrite: "外部写入",
+      confirm: "确认要求",
+      trustPolicy: "信任策略",
+      commercial: "商业状态",
       plannedConnectors: "计划接入的连接器",
       recentRuntimeEvents: "最近运行时事件",
     },
   });
+
+  const capabilitySummary = (connector: (typeof runtimeConnectors)[number]) => {
+    const manifest = connector.capability_manifest || {};
+    const capabilities = typeof manifest.capabilities === "object" && manifest.capabilities !== null
+      ? manifest.capabilities as Record<string, unknown>
+      : {};
+    return [
+      { label: copy.observation, value: connector.observation_level || String(manifest.observation_level || "—") },
+      { label: copy.riskFloor, value: connector.risk_floor || String(manifest.risk_floor || "—") },
+      { label: copy.externalWrite, value: String(capabilities.external_write || "—") },
+      { label: copy.confirm, value: String(capabilities.confirmation || "—") },
+      { label: copy.trustPolicy, value: String(capabilities.trust_policy || connector.trust_status || "—") },
+      { label: copy.commercial, value: connector.commercial_readiness || String(manifest.commercial_readiness || "—") },
+    ];
+  };
 
   const changeTrust = async (connectorId: string, trustStatus: "trusted" | "review_required" | "blocked") => {
     setTrustAction(`${connectorId}:${trustStatus}`);
@@ -156,6 +187,24 @@ export function RuntimeConnectors() {
                     >
                       {trustAction === `${connector.connector_id}:${item.status}` ? copy.updatingTrust : item.label}
                     </button>
+                  ))}
+                </div>
+              </div>
+              <div className="rounded-lg p-3 mt-3" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.capabilityManifest}</div>
+                  {connector.capability_policy_hash && (
+                    <div className="text-[10px] truncate max-w-[180px]" style={{ color: "var(--mis-muted)" }}>
+                      {copy.policyHash}: {connector.capability_policy_hash.slice(0, 12)}
+                    </div>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 gap-2 mt-3">
+                  {capabilitySummary(connector).map(item => (
+                    <div key={item.label} className="min-w-0 rounded px-2 py-1.5" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                      <div className="text-[9px]" style={{ color: "var(--mis-muted)" }}>{item.label}</div>
+                      <div className="text-[10px] font-semibold truncate" title={item.value} style={{ color: "var(--mis-text)" }}>{item.value}</div>
+                    </div>
                   ))}
                 </div>
               </div>

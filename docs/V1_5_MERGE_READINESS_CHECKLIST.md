@@ -199,7 +199,7 @@ Choose one v1.5 contract.
 - [x] Existing approval is described as ledger/delivery approval. Guarded by `scripts/approval_semantics_boundary_smoke.py`, with the durable rule in `docs/APPROVAL_SEMANTICS_BOUNDARY.md`.
 - [x] UI/docs do not claim exact tool-action resume. Guarded by `scripts/approval_semantics_boundary_smoke.py`; exact resume wording is allowed only for prepared-action contexts that expose action hash/checkpoint/resume semantics.
 - [x] Generic external side effects are denied. Guarded by `scripts/generic_external_side_effect_gate_smoke.py`, which verifies a caller cannot mark an external upload/write as low risk and record it as completed; MIS elevates the effective risk and requires a prepared action.
-- [x] Live runtimes stay within documented capabilities and sandbox boundaries. Guarded by `scripts/worker_adapter_readiness_smoke.py`, which verifies mock/Hermes/OpenClaw readiness, capability manifests, risk floors, summary-only opaque runtime disclosure, commercial restrictions, and no live execution during readiness checks.
+- [x] Live runtimes stay within documented capabilities and sandbox boundaries. Guarded by `scripts/runtime_capability_manifest_smoke.py` and `scripts/worker_adapter_readiness_smoke.py`, which verify Agent Gateway/OpenClaw/Hermes/Agnesfallback connector manifests, mock/Hermes/OpenClaw readiness, capability fields, confirmation/trust policy, risk floors, summary-only opaque runtime disclosure, commercial restrictions, and no live execution during readiness checks.
 
 ```bash
 python3 scripts/approval_decision_side_effect_smoke.py
@@ -211,6 +211,7 @@ python3 scripts/prepared_action_approval_wall_smoke.py
 python3 scripts/approval_semantics_boundary_smoke.py
 python3 scripts/generic_external_side_effect_gate_smoke.py --base-url http://127.0.0.1:8787
 python3 scripts/agent_gateway_runtime_event_smoke.py
+python3 scripts/runtime_capability_manifest_smoke.py --base-url http://127.0.0.1:8787
 python3 scripts/worker_adapter_readiness_smoke.py --base-url http://127.0.0.1:8787
 python3 scripts/kb_bot_demo_smoke.py
 ```
@@ -218,16 +219,19 @@ python3 scripts/kb_bot_demo_smoke.py
 ### Runtime capabilities
 
 - [x] Runtime execution is not always recorded as low risk. Guarded by `scripts/worker_adapter_retry_smoke.py`, which verifies Hermes worker evidence uses the medium runtime capability risk floor instead of low.
-- [x] Each adapter declares filesystem, shell, network, Git and external-write capabilities through a runtime capability manifest.
+- [x] Each adapter/connector declares filesystem, shell, network, Git, secret, external-write, confirmation, trust-policy and runtime-event capabilities through a runtime capability manifest. Guarded by `scripts/runtime_capability_manifest_smoke.py`.
 - [x] Live execution requires compatible trust and policy decisions. Guarded by `scripts/runtime_connector_trust_smoke.py`, `scripts/worker_live_confirm_gate_smoke.py`, and external-write prepared-action gate smokes.
 - [x] Work directory and write boundaries are explicit in the manifest/readiness payload.
 - [x] Runtime tool events are ingested when available through the scoped `POST /api/agent-gateway/runtime-events` and `agentops runtime-event record` contract. Guarded by `scripts/agent_gateway_runtime_event_smoke.py`, which records a hash-only runtime-internal event with a scoped token and verifies run readback, audit evidence and redaction.
 - [x] Shared/commercial mode is restricted when detailed tool events are unavailable.
 - [x] Secrets are consumed inside trusted tools rather than returned to model output. Guarded by `scripts/worker_secret_boundary_smoke.py`, which injects fake task/env/URL secrets, verifies the worker prompt/output/run/tool/evaluation/audit surfaces omit raw values, and requires `secret_boundary=trusted_worker_client_v1` evidence.
 
-Current v1.5 hardening status: `GET /api/workers/adapter-readiness` and
-`agentops worker readiness` expose `runtime-capability-manifest-v1` for mock,
-Hermes and OpenClaw. Worker tool-call risk now consumes the manifest:
+Current v1.5 hardening status: `GET /api/runtime-connectors` and
+`agentops runtime connectors` expose all connector manifests, including Agent
+Gateway, OpenClaw, Hermes, Agnesfallback CLI and Agnesfallback OpenAI-compatible
+gateway. `GET /api/workers/adapter-readiness` and `agentops worker readiness`
+expose route-selection manifests for mock, Hermes and OpenClaw. Worker
+tool-call risk now consumes the manifest:
 Hermes/OpenClaw are recorded at a medium risk floor with
 `ledger_summary_only`, `restricted_until_runtime_tool_events`, and
 `requires_prepared_action_for_external_write` metadata. Confirmed
@@ -260,6 +264,7 @@ tool-call record after the side effect.
 
 ```bash
 python3 scripts/runtime_connector_trust_smoke.py
+python3 scripts/runtime_capability_manifest_smoke.py
 python3 scripts/worker_live_confirm_gate_smoke.py
 python3 scripts/worker_external_write_preflight_gate_smoke.py
 python3 scripts/worker_adapter_readiness_smoke.py

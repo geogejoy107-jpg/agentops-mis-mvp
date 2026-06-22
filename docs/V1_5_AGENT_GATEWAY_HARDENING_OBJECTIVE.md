@@ -131,6 +131,7 @@ Required behavior:
 Primary evidence:
 
 - `scripts/agent_gateway_runtime_event_smoke.py`
+- `scripts/runtime_capability_manifest_smoke.py`
 - `scripts/runtime_connector_trust_smoke.py`
 - `scripts/protected_live_runtime_ids_smoke.py`
 - `docs/PUBLIC_CLAIMS_AND_LIMITATIONS.md`

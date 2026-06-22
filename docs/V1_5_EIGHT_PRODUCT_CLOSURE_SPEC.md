@@ -175,8 +175,11 @@ Current v1.5 implementation:
   - `observation_level`
   - `capability_manifest_json`
   - `capability_policy_hash`
-  - per-adapter filesystem, shell, network, Git, external-write, secret, and
-    tool-event-ingestion declarations
+  - per-connector filesystem, shell, network, Git, external-write, secret,
+    confirmation, trust-policy, and tool-event-ingestion declarations
+  - Agent Gateway, OpenClaw, Hermes, Agnesfallback CLI, and Agnesfallback
+    OpenAI-compatible gateway connector manifests through
+    `GET /api/runtime-connectors` and `agentops runtime connectors`
   - Hermes/OpenClaw are intentionally marked `ledger_summary_only` and
     `restricted_until_runtime_tool_events` until internal tool events are
     ingested or risky external writes are routed through prepared actions.
@@ -197,7 +200,8 @@ Current v1.5 implementation:
   `requires_prepared_action_for_external_write` in tool-call args, evaluation
   rubric, and audit metadata.
 - Adapter output is summarized and hashed; raw prompt/response is not stored.
-- `GET /api/workers/adapter-readiness` and `agentops worker readiness` expose
+- `GET /api/runtime-connectors`, `agentops runtime connectors`,
+  `GET /api/workers/adapter-readiness`, and `agentops worker readiness` expose
   these manifests to operators and external agents without executing live work.
 
 Acceptance evidence:
@@ -233,6 +237,10 @@ Acceptance evidence:
   - OpenClaw customer worker live execution returned `runtime_connector_trust_blocked`
   - blocked task `tsk_customer_worker_trust_blocked_30651ba025db2763`
   - restored `rtc_openclaw_local` to `trusted`.
+- Runtime capability manifest smoke:
+  - `python3 scripts/runtime_capability_manifest_smoke.py --base-url http://127.0.0.1:8787`
+  - verifies Agent Gateway, OpenClaw, Hermes, Agnesfallback CLI and Agnesfallback API connector manifests through both API and CLI readback;
+  - confirms no live execution and no token/raw prompt/raw response leakage.
 - `python3 scripts/worker_adapter_retry_smoke.py` verified adapter retry behavior:
   - mock transient failure succeeded after two attempts in `run_gw_a572f60ec9f4`,
   - Hermes without `--confirm-run` stopped after one non-retryable `ConfirmRunRequired` attempt in `run_gw_9951c583b9a7`,

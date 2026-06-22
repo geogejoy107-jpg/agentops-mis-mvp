@@ -116,6 +116,7 @@ jobs:
           python3 scripts/commander_work_package_dispatch_smoke.py
           python3 scripts/local_coding_project_template_smoke.py
           python3 scripts/operator_health_smoke.py
+          python3 scripts/runtime_capability_manifest_smoke.py --base-url "$AGENTOPS_BASE_URL"
           python3 scripts/worker_adapter_readiness_smoke.py --base-url "$AGENTOPS_BASE_URL"
           python3 scripts/worker_secret_boundary_smoke.py --base-url "$AGENTOPS_BASE_URL"
           python3 scripts/prepared_action_approval_wall_smoke.py --base-url "$AGENTOPS_BASE_URL"

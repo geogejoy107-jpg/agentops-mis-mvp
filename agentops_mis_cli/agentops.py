@@ -1211,6 +1211,17 @@ def cmd_run_heartbeat(args, client: AgentOpsClient) -> dict:
     return client.post(f"/api/agent-gateway/runs/{args.run_id}/heartbeat", payload)
 
 
+def cmd_runtime_connectors(args, client: AgentOpsClient) -> dict:
+    return {
+        "provider": "agentops-runtime",
+        "operation": "runtime_connectors",
+        "connectors": client.get("/api/runtime-connectors"),
+        "contract": "read-only runtime connector manifest and trust registry view; use worker readiness for route selection and prepared actions for high-risk live side effects",
+        "live_execution_performed": False,
+        "token_omitted": True,
+    }
+
+
 def cmd_runtime_event_record(args, client: AgentOpsClient) -> dict:
     payload = {
         "workspace_id": client.workspace_id,
@@ -2588,6 +2599,11 @@ def build_parser() -> argparse.ArgumentParser:
     run_hb.add_argument("--error-message", default=None)
     run_hb.set_defaults(handler="run_heartbeat")
 
+    runtime = sub.add_parser("runtime", help="Read-only runtime connector and capability commands.")
+    runtime_sub = runtime.add_subparsers(dest="action", required=True)
+    runtime_connectors = runtime_sub.add_parser("connectors", help="List runtime connector capability manifests and trust states.")
+    runtime_connectors.set_defaults(handler="runtime_connectors")
+
     runtime_event = sub.add_parser("runtime-event", help="Runtime internal event evidence commands.")
     runtime_event_sub = runtime_event.add_subparsers(dest="action", required=True)
     runtime_event_record = runtime_event_sub.add_parser("record", help="Record a redacted runtime/tool event summary for a run.")
@@ -3227,6 +3243,7 @@ HANDLERS = {
     "run_graph": cmd_run_graph,
     "run_start": cmd_run_start,
     "run_heartbeat": cmd_run_heartbeat,
+    "runtime_connectors": cmd_runtime_connectors,
     "runtime_event_record": cmd_runtime_event_record,
     "toolcall_record": cmd_toolcall_record,
     "artifact_list": cmd_artifact_list,
