@@ -101,11 +101,20 @@ Required behavior:
 Primary evidence:
 
 - `scripts/prepared_action_approval_wall_smoke.py`
+- `scripts/high_risk_toolcall_prepared_action_gate_smoke.py`
+- `scripts/customer_worker_external_write_gate_smoke.py`
 - `scripts/runtime_probe_prepared_action_gate_smoke.py`
 - `scripts/dify_upload_prepared_action_gate_smoke.py`
 - `scripts/notion_export_prepared_action_gate_smoke.py`
 - `scripts/worker_external_write_preflight_gate_smoke.py`
 - `scripts/generic_external_side_effect_gate_smoke.py`
+- `scripts/external_connector_runtime_inventory_smoke.py`
+
+Required inventory gate:
+
+```bash
+python3 scripts/external_connector_runtime_inventory_smoke.py
+```
 
 ### 5. Runtime Internal Behavior Is Visible Enough For The Claim
 

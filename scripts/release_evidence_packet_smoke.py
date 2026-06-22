@@ -53,6 +53,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "external_connector_runtime_inventory",
+        "command": "python3 scripts/external_connector_runtime_inventory_smoke.py",
+        "summary": "High-risk external connector/runtime prepared-action inventory and guard coverage.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "sqlite_concurrency",
         "command": "python3 scripts/sqlite_concurrency_smoke.py",
         "summary": "SQLite pragma, concurrent read/write and long-subprocess transaction safety gate.",
