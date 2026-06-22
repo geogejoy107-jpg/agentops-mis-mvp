@@ -2069,12 +2069,30 @@ export interface SecurityProductionGate {
   next_action: string;
 }
 
+export interface StartupSecurityAssessment {
+  ok: boolean;
+  status: string;
+  host: string;
+  deployment_mode: string;
+  non_loopback: boolean;
+  production_requested: boolean;
+  allow_non_loopback: boolean;
+  api_key_configured: boolean;
+  admin_key_configured: boolean;
+  failures: { id: string; message: string }[];
+  warnings: { id: string; message: string }[];
+  contract: string;
+  token_omitted: boolean;
+}
+
 export interface SecurityProductionReadinessPayload {
   provider: string;
   operation: string;
   status: string;
   production_ready: boolean;
   production_requested: boolean;
+  deployment_mode: string;
+  startup_security?: StartupSecurityAssessment;
   auth_mode: string;
   gateway_status_code: number;
   gates: SecurityProductionGate[];
@@ -5382,6 +5400,7 @@ export async function loadSecurityProductionReadiness(): Promise<SecurityProduct
     status: "unavailable",
     production_ready: false,
     production_requested: false,
+    deployment_mode: "unknown",
     auth_mode: "unknown",
     gateway_status_code: 0,
     gates: [],
@@ -5396,12 +5415,35 @@ export async function loadSecurityProductionReadiness(): Promise<SecurityProduct
     live_execution_performed: false,
   });
   const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
+  const startupRaw = typeof raw.startup_security === "object" && raw.startup_security !== null ? raw.startup_security as Record<string, unknown> : {};
   return {
     provider: String(raw.provider || "agentops-security"),
     operation: String(raw.operation || "production_readiness"),
     status: String(raw.status || "unknown"),
     production_ready: boolValue(raw.production_ready),
     production_requested: boolValue(raw.production_requested),
+    deployment_mode: String(raw.deployment_mode || "unknown"),
+    startup_security: {
+      ok: boolValue(startupRaw.ok),
+      status: String(startupRaw.status || "unknown"),
+      host: String(startupRaw.host || ""),
+      deployment_mode: String(startupRaw.deployment_mode || raw.deployment_mode || "unknown"),
+      non_loopback: boolValue(startupRaw.non_loopback),
+      production_requested: boolValue(startupRaw.production_requested),
+      allow_non_loopback: boolValue(startupRaw.allow_non_loopback),
+      api_key_configured: boolValue(startupRaw.api_key_configured),
+      admin_key_configured: boolValue(startupRaw.admin_key_configured),
+      failures: asArray<Record<string, unknown>>(startupRaw.failures).map((item) => ({
+        id: String(item.id || ""),
+        message: String(item.message || ""),
+      })).filter((item) => item.id || item.message),
+      warnings: asArray<Record<string, unknown>>(startupRaw.warnings).map((item) => ({
+        id: String(item.id || ""),
+        message: String(item.message || ""),
+      })).filter((item) => item.id || item.message),
+      contract: String(startupRaw.contract || ""),
+      token_omitted: boolValue(startupRaw.token_omitted),
+    },
     auth_mode: String(raw.auth_mode || "unknown"),
     gateway_status_code: numberValue(raw.gateway_status_code, 0),
     gates: asArray<Record<string, unknown>>(raw.gates).map((gate) => ({

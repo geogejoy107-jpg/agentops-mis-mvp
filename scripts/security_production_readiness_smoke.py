@@ -56,6 +56,7 @@ def validate(payload: dict, label: str) -> None:
     require(payload.get("provider") == "agentops-security", f"{label} wrong provider: {payload}")
     require(payload.get("operation") == "production_readiness", f"{label} wrong operation: {payload}")
     require(payload.get("status") in {"ready", "attention", "blocked"}, f"{label} bad status: {payload.get('status')}")
+    require(payload.get("deployment_mode") in {"local", "production", "prod", "shared", "hosted"}, f"{label} deployment_mode missing or invalid: {payload}")
     require(payload.get("token_omitted") is True, f"{label} token omission proof missing")
     require(payload.get("live_execution_performed") is False, f"{label} must not execute live work")
     startup = payload.get("startup_security") or {}

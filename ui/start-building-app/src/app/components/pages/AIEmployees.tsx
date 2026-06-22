@@ -2867,7 +2867,7 @@ export function AIEmployees() {
           </div>
           <div className="grid grid-cols-2 gap-2 min-w-[260px]">
             {[
-              { label: copy.deploymentMode, value: securityReadiness?.auth_mode || (securityReadiness?.production_requested ? "shared" : "local") },
+              { label: copy.deploymentMode, value: securityReadiness?.deployment_mode || (securityReadiness?.production_requested ? "shared" : "local") },
               { label: copy.startupSecurity, value: securityReadiness?.startup_security?.status || "unknown" },
             ].map((item) => (
               <div key={item.label} className="rounded px-2 py-1" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
