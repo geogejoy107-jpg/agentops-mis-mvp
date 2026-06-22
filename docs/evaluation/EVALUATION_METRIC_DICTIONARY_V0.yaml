@@ -1,0 +1,499 @@
+schema_version: "0.1"
+scorecard_id: "agentops-mis-evaluation-scorecard-v0"
+status: "candidate"
+canonical: false
+base_repository: "geogejoy107-jpg/agentops-mis-mvp"
+base_branch: "codex/agent-gateway-kb-demo"
+base_commit: "4a4a96dc079d7d178894902626728648e73441b2"
+issue: 16
+
+evidence_levels:
+  E1:
+    name: "exact_head_ci"
+    authority: "GitHub"
+  E2:
+    name: "versioned_acceptance"
+    authority: "GitHub versioned docs and smokes"
+  E3:
+    name: "live_ledger"
+    authority: "AgentOps MIS SQLite/API"
+  E4:
+    name: "user_study"
+    authority: "Versioned redacted research artifact"
+  E5:
+    name: "economic_validation"
+    authority: "Reviewed pilot economic baseline"
+
+privacy:
+  allow:
+    - "counts"
+    - "durations"
+    - "statuses"
+    - "stable IDs"
+    - "hashes"
+    - "short redacted summaries"
+  deny_by_default:
+    - "credentials"
+    - "raw prompts"
+    - "raw model responses"
+    - "raw private transcripts"
+    - "raw customer content"
+    - "unsafe runtime logs"
+
+metrics:
+  - id: "FLOW-GTCR-01"
+    name: "Governed Task Closure Rate"
+    category: "workflow"
+    kind: "ratio"
+    numerator: "distinct governed non-synthetic tasks started in the window that reach evidence-ready accepted closure with no unresolved high/critical safety finding"
+    denominator: "distinct governed non-synthetic tasks whose first governed run starts in the window"
+    exclusions:
+      - "CI and smoke fixtures"
+      - "tasks cancelled before a run starts"
+      - "historical imports outside the window"
+      - "explicitly ungoverned local experiments"
+    unit: "ratio"
+    authority: "AgentOps MIS SQLite/API"
+    evidence_level_required: "E3"
+    cadence:
+      - "rolling_7d"
+      - "rolling_30d"
+      - "milestone"
+    owner: "Product owner + Evaluation steward"
+    target: "baseline_first"
+    current_value: null
+    current_state: "unknown_not_measured"
+
+  - id: "SAFE-EXT-01"
+    name: "Unauthorized external side effects"
+    category: "safety"
+    kind: "count"
+    unit: "events"
+    authority: "AgentOps MIS prepared actions, tool calls, approvals, and audit"
+    evidence_level_required: "E3"
+    cadence:
+      - "continuous"
+      - "weekly"
+    owner: "Security/Governance steward"
+    target: 0
+    current_value: null
+    current_state: "live_incident_count_unknown"
+    test_gate: "prepared-action and external connector/runtime inventory smokes"
+
+  - id: "SAFE-SEC-01"
+    name: "Credential or secret disclosure events"
+    category: "safety"
+    kind: "count"
+    unit: "events"
+    authority: "AgentOps MIS security evaluations and audit"
+    evidence_level_required: "E3"
+    cadence:
+      - "continuous"
+      - "weekly"
+    owner: "Security/Governance steward"
+    target: 0
+    current_value: null
+    current_state: "live_incident_count_unknown"
+    test_gate: "redaction, fuzz, secret-scan, and production-readiness smokes"
+
+  - id: "SAFE-SCOPE-01"
+    name: "Confirmed workspace/project/agent scope breaches"
+    category: "safety"
+    kind: "count"
+    unit: "events"
+    authority: "AgentOps MIS audit and security incident records"
+    evidence_level_required: "E3"
+    cadence:
+      - "continuous"
+      - "weekly"
+    owner: "Security/Governance steward"
+    target: 0
+    current_value: null
+    current_state: "live_incident_count_unknown"
+    test_gate: "workspace, collaborator, scope-matrix, and scoped-read smokes"
+
+  - id: "SAFE-PLAN-01"
+    name: "Runs started without an applicable verified plan"
+    category: "safety"
+    kind: "count"
+    unit: "runs"
+    authority: "AgentOps MIS runs, plans, and plan verification"
+    evidence_level_required: "E3"
+    cadence:
+      - "continuous"
+      - "weekly"
+    owner: "Agent Plan steward"
+    target: 0
+    current_value: null
+    current_state: "live_incident_count_unknown"
+    test_gate: "agent-plan integrity and run-start plan-gate smokes"
+
+  - id: "SAFE-APPR-01"
+    name: "Self-approval or approval-role bypass"
+    category: "safety"
+    kind: "count"
+    unit: "events"
+    authority: "AgentOps MIS plans, approvals, actors, and audit"
+    evidence_level_required: "E3"
+    cadence:
+      - "continuous"
+      - "weekly"
+    owner: "Approval steward"
+    target: 0
+    current_value: null
+    current_state: "live_incident_count_unknown"
+    test_gate: "agent-plan integrity and approval-semantics smokes"
+
+  - id: "SAFE-REPLAY-01"
+    name: "Prepared-action duplicate side effects"
+    category: "safety"
+    kind: "count"
+    unit: "events"
+    authority: "AgentOps MIS prepared actions, side-effect IDs, and audit"
+    evidence_level_required: "E3"
+    cadence:
+      - "continuous"
+      - "weekly"
+    owner: "Approval steward"
+    target: 0
+    current_value: null
+    current_state: "live_incident_count_unknown"
+    test_gate: "prepared-action approval-wall smoke"
+
+  - id: "TECH-CI-01"
+    name: "Exact-head required-check pass rate"
+    category: "technical"
+    kind: "ratio"
+    numerator: "required GitHub checks with conclusion success on the exact commit"
+    denominator: "required GitHub checks on the exact commit"
+    unit: "ratio"
+    authority: "GitHub"
+    evidence_level_required: "E1"
+    cadence:
+      - "per_commit"
+      - "per_pr"
+    owner: "Release steward"
+    target: 1.0
+    current_value: 1.0
+    current_state: "measured_exact_head"
+    evidence:
+      commit: "4a4a96dc079d7d178894902626728648e73441b2"
+      workflow_run_id: 27958721483
+      passed_checks: 2
+      required_checks: 2
+
+  - id: "TECH-DB-01"
+    name: "SQLite locked or busy failures"
+    category: "technical"
+    kind: "count"
+    unit: "failures"
+    authority: "GitHub acceptance smoke for baseline; AgentOps MIS operational evidence for live use"
+    evidence_level_required: "E2_then_E3"
+    cadence:
+      - "per_release"
+      - "weekly_live"
+    owner: "Data/Runtime steward"
+    target: 0
+    current_value: 0
+    current_state: "versioned_acceptance_baseline"
+    evidence: "docs/V1_5_MERGE_READINESS_CHECKLIST.md"
+
+  - id: "TECH-READ-01"
+    name: "Ordinary control-plane read p95"
+    category: "technical"
+    kind: "latency"
+    unit: "ms"
+    authority: "AgentOps MIS evaluation/benchmark artifact"
+    evidence_level_required: "E2_then_E3"
+    cadence:
+      - "per_release"
+      - "weekly_live"
+    owner: "Runtime steward"
+    target_max: 150
+    current_value: null
+    current_state: "budget_defined_exact_value_not_recorded"
+
+  - id: "TECH-SCOPE-01"
+    name: "Scoped queue and knowledge p95"
+    category: "technical"
+    kind: "latency"
+    unit: "ms"
+    authority: "AgentOps MIS evaluation/benchmark artifact"
+    evidence_level_required: "E2_then_E3"
+    cadence:
+      - "per_release"
+      - "weekly_live"
+    owner: "Runtime + Knowledge stewards"
+    target_max: 200
+    current_value: null
+    current_state: "budget_defined_exact_value_not_recorded"
+
+  - id: "TECH-UI-01"
+    name: "AI Employees initial API reads"
+    category: "technical"
+    kind: "count"
+    unit: "requests"
+    authority: "GitHub responsiveness smoke"
+    evidence_level_required: "E2"
+    cadence:
+      - "per_release"
+    owner: "UI steward"
+    target_max: 32
+    current_value: 29
+    current_state: "versioned_acceptance_baseline"
+    evidence: "docs/V1_5_MERGE_READINESS_CHECKLIST.md"
+
+  - id: "GOV-PLAN-01"
+    name: "Verified-plan run rate"
+    category: "governance"
+    kind: "ratio"
+    numerator: "governed runs with a verified matching immutable plan"
+    denominator: "governed runs"
+    unit: "ratio"
+    authority: "AgentOps MIS SQLite/API"
+    evidence_level_required: "E3"
+    cadence:
+      - "weekly"
+      - "monthly"
+    owner: "Agent Plan steward"
+    target: 1.0
+    current_value: null
+    current_state: "unknown_not_measured"
+
+  - id: "GOV-MANI-01"
+    name: "Verified plan-evidence manifest coverage"
+    category: "governance"
+    kind: "ratio"
+    numerator: "governed runs with a verified plan-evidence manifest"
+    denominator: "governed runs requiring delivery evidence"
+    unit: "ratio"
+    authority: "AgentOps MIS SQLite/API"
+    evidence_level_required: "E3"
+    cadence:
+      - "weekly"
+      - "monthly"
+    owner: "Evidence steward"
+    target: 1.0
+    current_value: null
+    current_state: "unknown_not_measured"
+
+  - id: "GOV-APPR-01"
+    name: "Exact prepared-action coverage"
+    category: "governance"
+    kind: "ratio"
+    numerator: "eligible high-risk external actions using an exact prepared-action gate"
+    denominator: "eligible high-risk external actions"
+    unit: "ratio"
+    authority: "AgentOps MIS SQLite/API"
+    evidence_level_required: "E3"
+    cadence:
+      - "weekly"
+      - "monthly"
+    owner: "Approval steward"
+    target: 1.0
+    current_value: null
+    current_state: "unknown_not_measured"
+
+  - id: "GOV-PROV-01"
+    name: "Evidence provenance coverage"
+    category: "governance"
+    kind: "ratio"
+    numerator: "evidence items containing required source ID/path/hash/scope"
+    denominator: "evidence items requiring provenance"
+    unit: "ratio"
+    authority: "AgentOps MIS SQLite/API"
+    evidence_level_required: "E3"
+    cadence:
+      - "weekly"
+      - "monthly"
+    owner: "Evidence steward"
+    target: 1.0
+    current_value: null
+    current_state: "unknown_not_measured"
+
+  - id: "FLOW-CYCLE-01"
+    name: "Governed task cycle time"
+    category: "workflow"
+    kind: "duration"
+    unit: "minutes"
+    authority: "AgentOps MIS SQLite/API"
+    evidence_level_required: "E3"
+    cadence:
+      - "weekly"
+      - "monthly"
+    owner: "Operations steward"
+    target: "baseline_first"
+    current_value: null
+    current_state: "unknown_not_measured"
+    statistics:
+      - "median"
+      - "p95"
+
+  - id: "FLOW-WAIT-01"
+    name: "Approval wait share"
+    category: "workflow"
+    kind: "ratio"
+    numerator: "duration in approval-wait states"
+    denominator: "total governed task cycle duration"
+    unit: "ratio"
+    authority: "AgentOps MIS SQLite/API"
+    evidence_level_required: "E3"
+    cadence:
+      - "weekly"
+      - "monthly"
+    owner: "Operations + Approval stewards"
+    target: "baseline_first"
+    current_value: null
+    current_state: "unknown_not_measured"
+
+  - id: "KNOW-R5-01"
+    name: "Recall at 5"
+    category: "knowledge"
+    kind: "ratio"
+    numerator: "approved retrieval queries with the expected item in the top five"
+    denominator: "approved retrieval test queries"
+    unit: "ratio"
+    authority: "GitHub retrieval-quality smoke"
+    evidence_level_required: "E2"
+    cadence:
+      - "per_release"
+    owner: "Knowledge steward"
+    target_min: 0.95
+    current_value: 1.0
+    current_state: "versioned_acceptance_baseline"
+    evidence: "docs/V1_5_MERGE_READINESS_CHECKLIST.md"
+
+  - id: "KNOW-MRR-01"
+    name: "Mean reciprocal rank"
+    category: "knowledge"
+    kind: "ratio"
+    unit: "ratio"
+    authority: "GitHub retrieval-quality smoke"
+    evidence_level_required: "E2"
+    cadence:
+      - "per_release"
+    owner: "Knowledge steward"
+    target_min: 0.90
+    current_value: 1.0
+    current_state: "versioned_acceptance_baseline"
+    evidence: "docs/V1_5_MERGE_READINESS_CHECKLIST.md"
+
+  - id: "KNOW-P95-01"
+    name: "Local retrieval p95"
+    category: "knowledge"
+    kind: "latency"
+    unit: "ms"
+    authority: "GitHub retrieval-quality smoke"
+    evidence_level_required: "E2"
+    cadence:
+      - "per_release"
+    owner: "Knowledge steward"
+    target_max: 200
+    current_value_max: 20
+    current_state: "versioned_acceptance_baseline"
+    evidence: "docs/V1_5_MERGE_READINESS_CHECKLIST.md"
+
+  - id: "KNOW-PROV-01"
+    name: "Retrieval provenance coverage"
+    category: "knowledge"
+    kind: "ratio"
+    numerator: "returned results with path, hash, scope, and retrieval ID"
+    denominator: "returned retrieval results"
+    unit: "ratio"
+    authority: "AgentOps MIS knowledge API and evaluation"
+    evidence_level_required: "E3"
+    cadence:
+      - "weekly"
+      - "per_release"
+    owner: "Knowledge steward"
+    target: 1.0
+    current_value: null
+    current_state: "live_value_unknown_acceptance_gate_passes"
+
+  - id: "USER-TASK-01"
+    name: "UAT scenario completion rate"
+    category: "user"
+    kind: "ratio"
+    numerator: "completed representative scenarios"
+    denominator: "attempted representative scenarios"
+    unit: "ratio"
+    authority: "Versioned UAT artifact"
+    evidence_level_required: "E4"
+    cadence:
+      - "per_uat_round"
+    owner: "Research/UAT steward"
+    target_min: 0.85
+    current_value: null
+    current_state: "unknown_lane_b_required"
+
+  - id: "USER-SUS-01"
+    name: "System Usability Scale"
+    category: "user"
+    kind: "score"
+    unit: "0_to_100"
+    authority: "Versioned UAT artifact"
+    evidence_level_required: "E4"
+    cadence:
+      - "per_uat_round"
+    owner: "Research/UAT steward"
+    target_min: 70
+    current_value: null
+    current_state: "unknown_lane_b_required"
+
+  - id: "USER-CSAT-01"
+    name: "Task-level customer satisfaction"
+    category: "user"
+    kind: "score"
+    unit: "1_to_5"
+    authority: "Versioned UAT artifact"
+    evidence_level_required: "E4"
+    cadence:
+      - "per_uat_round"
+    owner: "Research/UAT steward"
+    target_min: 4.0
+    current_value: null
+    current_state: "unknown_lane_b_required"
+
+  - id: "ECON-HUMAN-01"
+    name: "Human minutes per governed closure"
+    category: "economic"
+    kind: "cost"
+    unit: "minutes_per_closure"
+    authority: "Reviewed pilot economic baseline"
+    evidence_level_required: "E5"
+    cadence:
+      - "monthly"
+      - "pilot_milestone"
+    owner: "Product owner + Economic steward"
+    target: "baseline_first"
+    current_value: null
+    current_state: "unknown_lane_d_required"
+
+  - id: "ECON-API-01"
+    name: "Model and API cost per governed closure"
+    category: "economic"
+    kind: "cost"
+    unit: "currency_per_closure"
+    authority: "Reviewed pilot economic baseline"
+    evidence_level_required: "E5"
+    cadence:
+      - "monthly"
+      - "pilot_milestone"
+    owner: "Product owner + Economic steward"
+    target: "baseline_first"
+    current_value: null
+    current_state: "unknown_lane_d_required"
+
+  - id: "ECON-AUDIT-01"
+    name: "Audit preparation time"
+    category: "economic"
+    kind: "duration"
+    unit: "minutes"
+    authority: "Reviewed pilot economic baseline"
+    evidence_level_required: "E5"
+    cadence:
+      - "pilot_milestone"
+    owner: "Audit/Economic steward"
+    target: "baseline_first"
+    current_value: null
+    current_state: "unknown_lane_d_required"
