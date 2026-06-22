@@ -53,6 +53,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "sqlite_concurrency",
+        "command": "python3 scripts/sqlite_concurrency_smoke.py",
+        "summary": "SQLite pragma, concurrent read/write and long-subprocess transaction safety gate.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "secret_scan",
         "command": "python3 scripts/secret_scan_smoke.py",
         "summary": "Tracked files remain free of real credentials and token-like material.",
@@ -92,6 +98,12 @@ TEST_COMMANDS = [
         "id": "security_readiness",
         "command": "python3 scripts/security_production_readiness_smoke.py --base-url \"$AGENTOPS_BASE_URL\"",
         "summary": "Server-backed security readiness gates.",
+        "ci_step": "Server-backed smoke suite",
+    },
+    {
+        "id": "agent_gateway_knowledge_scope",
+        "command": "python3 scripts/agent_gateway_knowledge_scope_smoke.py",
+        "summary": "Agent Gateway scoped knowledge visibility, provenance and spoof-resistance gate.",
         "ci_step": "Server-backed smoke suite",
     },
     {

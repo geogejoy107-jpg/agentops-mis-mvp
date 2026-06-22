@@ -119,6 +119,8 @@ Required checks:
 ```bash
 python3 scripts/agent_work_method_block_smoke.py
 python3 scripts/agent_gateway_scoped_read_smoke.py
+python3 scripts/agent_gateway_knowledge_scope_smoke.py
+python3 scripts/knowledge_scope_policy_smoke.py
 python3 scripts/knowledge_retrieval_quality_smoke.py
 ```
 
@@ -339,6 +341,7 @@ Required checks:
 ```bash
 python3 scripts/sqlite_pragmas_smoke.py
 python3 scripts/sqlite_reliability_smoke.py
+python3 scripts/sqlite_concurrency_smoke.py
 python3 scripts/sqlite_long_transaction_audit_smoke.py
 ```
 

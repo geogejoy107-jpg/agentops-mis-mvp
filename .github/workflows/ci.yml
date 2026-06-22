@@ -53,6 +53,7 @@ jobs:
           python3 scripts/redaction_policy_smoke.py
           python3 scripts/sqlite_pragmas_smoke.py
           python3 scripts/sqlite_reliability_smoke.py
+          python3 scripts/sqlite_concurrency_smoke.py
           python3 scripts/migration_rollback_smoke.py
           python3 scripts/release_branch_control_smoke.py
           python3 scripts/release_evidence_packet_smoke.py
@@ -105,6 +106,7 @@ jobs:
           python3 scripts/agent_gateway_scope_matrix_smoke.py --base-url "$AGENTOPS_BASE_URL"
           python3 scripts/agent_gateway_scoped_read_smoke.py
           python3 scripts/knowledge_scope_policy_smoke.py
+          python3 scripts/agent_gateway_knowledge_scope_smoke.py
           python3 scripts/task_claim_conflict_smoke.py --base-url "$AGENTOPS_BASE_URL"
           python3 scripts/workspace_isolation_smoke.py --base-url "$AGENTOPS_BASE_URL"
           python3 scripts/v1_5_local_product_acceptance.py --base-url "$AGENTOPS_BASE_URL"
