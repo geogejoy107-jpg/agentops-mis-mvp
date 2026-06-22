@@ -92,6 +92,18 @@ The packet includes the canonical command manifest used for release review:
 The smoke verifies each command is backed by `.github/workflows/ci.yml` and that
 referenced script files exist.
 
+### Clean-Machine RC
+
+Checklist phrase: clean-machine RC.
+
+`python3 scripts/clean_machine_rc_smoke.py` clones the exact current HEAD into a
+temporary directory, rejects tracked runtime/generated files, uses isolated
+SQLite state, verifies source-package installation including `agentops --help`
+and `agentops-worker --help`, runs release gates, creates a safe closure packet
+with submitted/verified Agent Plan evidence, starts a reset local server, and
+checks the read-only delivery board. The UI build remains covered by the
+dedicated CI `UI build` job and by the packet's canonical command manifest.
+
 ## Forbidden Evidence
 
 Never include raw credentials, private prompts, raw model responses, customer

@@ -45,10 +45,12 @@ def main() -> int:
         bin_dir = venv_path / ("Scripts" if os.name == "nt" else "bin")
         python = bin_dir / "python"
         agentops = bin_dir / "agentops"
+        agentops_worker = bin_dir / "agentops-worker"
 
         install_cmd = [uv, "pip", "install", "--python", str(python), str(ROOT)] if uv else [str(python), "-m", "pip", "install", str(ROOT)]
         install = run(install_cmd, cwd=tmp_path, env=env)
         help_run = run([str(agentops), "--help"], cwd=tmp_path, env=env)
+        worker_entry_help_run = run([str(agentops_worker), "--help"], cwd=tmp_path, env=env)
         login_run = run(
             [
                 str(agentops),
@@ -105,6 +107,8 @@ def main() -> int:
             install.returncode == 0
             and help_run.returncode == 0
             and "AgentOps MIS local Agent Gateway CLI" in help_run.stdout
+            and worker_entry_help_run.returncode == 0
+            and "usage: agentops-worker" in worker_entry_help_run.stdout
             and login_run.returncode == 0
             and login_payload.get("ok") is True
             and login_payload.get("has_api_key") is False
@@ -142,6 +146,7 @@ def main() -> int:
             "install_returncode": install.returncode,
             "install_mode": "source_wheel",
             "help_returncode": help_run.returncode,
+            "worker_entry_help_returncode": worker_entry_help_run.returncode,
             "login_returncode": login_run.returncode,
             "status_returncode": status_run.returncode,
             "worker_status_returncode": worker_status_run.returncode,
@@ -155,6 +160,7 @@ def main() -> int:
             "workflow_job_status_help_returncode": workflow_job_status_help_run.returncode,
             "workflow_help_returncode": workflow_help_run.returncode,
             "command": str(agentops),
+            "worker_command": str(agentops_worker),
             "config_path": str(config_path),
             "config_created": config_path.exists(),
             "token_written": bool(login_payload.get("has_api_key")),
@@ -169,6 +175,7 @@ def main() -> int:
         if not ok:
             print("pip install stderr:", install.stderr[-1200:], file=sys.stderr)
             print("help stderr:", help_run.stderr[-1200:], file=sys.stderr)
+            print("agentops-worker help stderr:", worker_entry_help_run.stderr[-1200:], file=sys.stderr)
             print("login stderr:", login_run.stderr[-1200:], file=sys.stderr)
             print("status stderr:", status_run.stderr[-1200:], file=sys.stderr)
             print("worker status stderr:", worker_status_run.stderr[-1200:], file=sys.stderr)

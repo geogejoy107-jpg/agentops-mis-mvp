@@ -203,7 +203,7 @@ def run_task(client: AgentOpsClient, workspace_id: str, task_id: str, task: dict
                 "project_id": project_id,
                 "summary_only": True,
                 "raw_document_storage": "not_in_mis",
-                "credential_storage": "env_or_external_secret_manager_only",
+                "credential_storage": "env_secret_reference_only",
             },
             "result_summary": tool["summary"],
         }
@@ -409,7 +409,7 @@ def demo_tasks() -> list[dict]:
             "description": "汇总客户可读交付：架构、工具选择、实施步骤、审批事项和风险清单。",
             "acceptance": "输出 1 页交付摘要，能用于课堂 demo 讲解。",
             "tool_calls": [
-                {"name": "artifact.delivery_summary", "category": "custom", "risk": "low", "summary": "Prepared customer-facing delivery summary."},
+                {"name": "artifact.customer_summary", "category": "custom", "risk": "low", "summary": "Prepared customer-facing delivery summary."},
             ],
             "output_summary": "交付摘要完成：本地 MIS 已管理任务、运行、工具、审批、评估、记忆和审计；外部知识库写入等待人工批准。",
             "artifact": {

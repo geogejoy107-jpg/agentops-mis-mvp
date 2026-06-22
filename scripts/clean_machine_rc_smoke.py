@@ -13,9 +13,13 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
+import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -23,11 +27,13 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_COMMANDS = [
     ["python3", "-m", "py_compile", "server.py", "agentops_mis_cli/agentops.py", "agentops_mis_cli/worker.py"],
+    ["python3", "scripts/agentops_pip_install_smoke.py"],
     ["python3", "scripts/release_freeze_protocol_smoke.py"],
     ["python3", "scripts/release_evidence_packet_smoke.py"],
     ["python3", "scripts/license_provenance_smoke.py"],
     ["python3", "scripts/public_claims_release_gate_smoke.py"],
     ["python3", "scripts/migration_rollback_smoke.py"],
+    ["python3", "scripts/safe_closure_evidence_packet_smoke.py"],
 ]
 FORBIDDEN_TRACKED_PATTERNS = [
     re.compile(r"(^|/)(node_modules|\.next|dist|__pycache__|\.pytest_cache|\.agentops_runtime)(/|$)"),
@@ -97,6 +103,77 @@ def run_clean_command(clone_dir: Path, cmd: list[str], env: dict[str, str]) -> d
     }
 
 
+def choose_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def wait_ready(base_url: str, proc: subprocess.Popen[str], timeout: float = 30.0) -> bool:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if proc.poll() is not None:
+            return False
+        try:
+            with urllib.request.urlopen(base_url + "/api/agent-gateway/status", timeout=1) as resp:
+                return resp.status == 200
+        except (TimeoutError, urllib.error.URLError):
+            time.sleep(0.25)
+    return False
+
+
+def terminate(proc: subprocess.Popen[str]) -> tuple[str, str]:
+    if proc.poll() is None:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
+    stdout, stderr = proc.communicate(timeout=5)
+    return stdout or "", stderr or ""
+
+
+def run_reset_delivery_board(clone_dir: Path, tmp_path: Path, env: dict[str, str]) -> dict[str, Any]:
+    port = choose_port()
+    base_url = f"http://127.0.0.1:{port}"
+    server_env = env.copy()
+    server_env["AGENTOPS_DB_PATH"] = str(tmp_path / "clean_machine_reset_delivery.sqlite")
+    server_env["AGENTOPS_BASE_URL"] = base_url
+    proc = subprocess.Popen(
+        ["python3", "server.py", "--host", "127.0.0.1", "--port", str(port), "--reset", "--serve"],
+        cwd=clone_dir,
+        env=server_env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    ready = False
+    delivery: subprocess.CompletedProcess[str] | None = None
+    stdout = ""
+    stderr = ""
+    try:
+        ready = wait_ready(base_url, proc)
+        if ready:
+            delivery = run(
+                ["python3", "scripts/customer_delivery_board_smoke.py", "--base-url", base_url],
+                cwd=clone_dir,
+                env=server_env,
+                timeout=180,
+            )
+    finally:
+        stdout, stderr = terminate(proc)
+    combined = redact(stdout + stderr + ((delivery.stdout if delivery else "") or "") + ((delivery.stderr if delivery else "") or ""))
+    return {
+        "command": "python3 server.py --reset --serve && python3 scripts/customer_delivery_board_smoke.py",
+        "ok": ready and delivery is not None and delivery.returncode == 0,
+        "returncode": delivery.returncode if delivery is not None else None,
+        "server_ready": ready,
+        "base_url": base_url,
+        "output_tail": combined[-1200:],
+    }
+
+
 def main() -> int:
     failures: list[str] = []
     current_head = git_text(["rev-parse", "HEAD"])
@@ -141,6 +218,9 @@ def main() -> int:
                 result = run_clean_command(clone_dir, cmd, env)
                 command_results.append(result)
                 require(result["ok"], f"clean clone command failed: {result['command']}", failures)
+            reset_delivery = run_reset_delivery_board(clone_dir, tmp_path, env)
+            command_results.append(reset_delivery)
+            require(reset_delivery["ok"], "clean clone reset server / delivery board closure failed", failures)
 
     output_text = json.dumps(command_results, ensure_ascii=False)
     secret_leaked = any(pattern.search(output_text) for pattern in SECRET_PATTERNS)
@@ -156,10 +236,16 @@ def main() -> int:
                 "tracked_files": len(clone_files),
                 "forbidden_tracked_files": forbidden_files,
                 "commands": [
-                    {"command": item["command"], "ok": item["ok"], "returncode": item["returncode"]}
+                    {
+                        "command": item["command"],
+                        "ok": item["ok"],
+                        "returncode": item["returncode"],
+                        "server_ready": item.get("server_ready"),
+                    }
                     for item in command_results
                 ],
                 "ui_build_evidence": "Covered by dedicated CI UI build job; package-lock presence is verified in the clean clone.",
+                "closure_evidence": "Clean clone runs pip install, agentops/agentops-worker help, release gates, safe closure packet, server reset and delivery board smoke with isolated SQLite state.",
                 "safety": {
                     "temporary_directory": True,
                     "temporary_sqlite": True,

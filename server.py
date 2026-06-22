@@ -7858,7 +7858,28 @@ def tool_call_has_external_side_effect_intent(tool_name: str, category: str, tar
     scanned_args = dict(args or {})
     # Capability metadata says whether a runtime would need a prepared action for
     # external writes; it is not itself an external write intent.
-    scanned_args.pop("requires_prepared_action_for_external_write", None)
+    safe_metadata_keys = {
+        "requires_prepared_action_for_external_write",
+        "credential_storage",
+        "credential_storage_policy",
+        "credentials_stored",
+        "raw_document_storage",
+        "raw_documents_stored",
+        "raw_payload_stored",
+        "raw_text_omitted",
+        "summary_only",
+    }
+    for key in list(scanned_args):
+        if key in safe_metadata_keys or str(key).endswith("_storage"):
+            scanned_args.pop(key, None)
+    explicit_target = str(
+        scanned_args.get("target")
+        or scanned_args.get("url")
+        or scanned_args.get("endpoint")
+        or scanned_args.get("resource")
+        or scanned_args.get("destination")
+        or ""
+    ).strip().lower()
     haystack = " ".join([
         tool_name or "",
         category or "",
@@ -7866,7 +7887,7 @@ def tool_call_has_external_side_effect_intent(tool_name: str, category: str, tar
         json.dumps(scanned_args, ensure_ascii=False, sort_keys=True),
     ]).lower()
     target = (target_resource or "").strip().lower()
-    if target.startswith(EXTERNAL_SIDE_EFFECT_SCHEMES):
+    if target.startswith(EXTERNAL_SIDE_EFFECT_SCHEMES) or explicit_target.startswith(EXTERNAL_SIDE_EFFECT_SCHEMES):
         return True
     if tool_name in RISKY_TOOLS:
         return True

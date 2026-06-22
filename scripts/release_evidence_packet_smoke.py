@@ -49,7 +49,7 @@ TEST_COMMANDS = [
     {
         "id": "clean_machine_rc",
         "command": "python3 scripts/clean_machine_rc_smoke.py",
-        "summary": "Fresh temporary clone, isolated SQLite state and core RC gate replay.",
+        "summary": "Temporary clean clone RC chain covering installable CLIs, reset server, safe closure and delivery-board evidence.",
         "ci_step": "Offline safety smokes",
     },
     {

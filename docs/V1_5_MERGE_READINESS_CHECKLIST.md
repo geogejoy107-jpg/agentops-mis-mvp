@@ -545,7 +545,10 @@ live runtime suite
 
 ## 13. Clean-machine RC
 
+- [x] Clean clone RC command chain. Guarded by `scripts/clean_machine_rc_smoke.py`, which clones the exact current HEAD into a temporary directory, rejects tracked runtime/generated files, installs the package, verifies `agentops --help` and `agentops-worker --help`, runs release gates, creates an isolated safe-closure packet, starts a reset local server, inspects the delivery board, and emits only safe statuses, IDs, counts and summaries.
+
 ```bash
+python3 scripts/clean_machine_rc_smoke.py
 python3 -m pip install .
 agentops --help
 agentops-worker --help
@@ -591,10 +594,10 @@ MERGED
 ```text
 [ ] all blocking security/correctness gates pass
 [ ] CI is green on the exact HEAD
-[x] clean-machine RC passes. Guarded by `scripts/clean_machine_rc_smoke.py`, which clones the current repository into a temporary directory, checks out the exact current `HEAD`, rejects tracked runtime/generated files, runs core RC evidence gates with an isolated SQLite database, and relies on the dedicated CI UI build job for frontend build evidence.
-[ ] migration and rollback pass
-[ ] public claims match tested behavior
-[ ] license and provenance are resolved
+[x] clean-machine RC passes. Guarded by `scripts/clean_machine_rc_smoke.py`, which clones the current repository into a temporary directory, checks out the exact current `HEAD`, rejects tracked runtime/generated files, verifies installable CLI entrypoints, runs core RC evidence gates with isolated SQLite state, creates safe closure evidence, starts a reset server, inspects the delivery board, and relies on the dedicated CI UI build job for frontend build evidence.
+[x] migration and rollback pass. Guarded by `scripts/migration_rollback_smoke.py`, which uses isolated SQLite state, writes migration preview/audit evidence, verifies backup integrity, requires explicit restore confirmation, and checks restored migration/audit counts.
+[x] public claims match tested behavior. Guarded by `scripts/public_claims_release_gate_smoke.py`, which keeps public/demo copy aligned with local-MVP/NOT_READY, no-hosted-SaaS, no-billing, no-production-fleet, protected-runtime and no-raw-secret boundaries.
+[x] license and provenance are resolved. Guarded by `scripts/license_provenance_smoke.py`, release provenance/SBOM docs, and Pixel Office commercial asset exclusion evidence.
 ```
 
 Current state:
