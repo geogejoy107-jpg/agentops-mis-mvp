@@ -1785,6 +1785,26 @@ export interface OperatorLoopLaunchPacketPayload {
     receipt_state?: Record<string, unknown>;
     token_omitted?: boolean;
   }[];
+  control_summary?: {
+    operation: string;
+    status: string;
+    mode?: string;
+    recommended_step?: Record<string, unknown>;
+    next_command?: string | null;
+    verify_command?: string | null;
+    receipt_command?: string | null;
+    requires_human?: boolean;
+    requires_receipt?: boolean;
+    server_executes_shell?: boolean;
+    copy_only?: boolean;
+    step_counts?: Record<string, number>;
+    unverified_receipt_steps?: number;
+    blocking_steps?: string[];
+    attention_steps?: string[];
+    verified_steps?: string[];
+    policy_id?: string;
+    token_omitted?: boolean;
+  };
   agent_plan_draft: Record<string, unknown>;
   evaluation_contract: {
     operation: string;
@@ -5093,6 +5113,25 @@ export async function loadOperatorLoopLaunchPacket(limit = 8, query = "Agent Wor
     summary: {},
     launch_sequence: [],
     execution_chain: [],
+    control_summary: {
+      operation: "loop_launch_control_summary",
+      status: "unavailable",
+      mode: "read_only_copy",
+      recommended_step: {},
+      next_command: null,
+      verify_command: null,
+      receipt_command: null,
+      requires_human: false,
+      requires_receipt: false,
+      server_executes_shell: false,
+      copy_only: true,
+      step_counts: {},
+      unverified_receipt_steps: 0,
+      blocking_steps: [],
+      attention_steps: [],
+      verified_steps: [],
+      token_omitted: true,
+    },
     agent_plan_draft: {},
     evaluation_contract: {
       operation: "loop_evaluation_contract",
@@ -5128,6 +5167,7 @@ export async function loadOperatorLoopLaunchPacket(limit = 8, query = "Agent Wor
   const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
   const evaluationRaw = typeof raw.evaluation_contract === "object" && raw.evaluation_contract !== null ? raw.evaluation_contract as Record<string, unknown> : {};
   const auditRaw = typeof raw.audit_contract === "object" && raw.audit_contract !== null ? raw.audit_contract as Record<string, unknown> : {};
+  const controlRaw = typeof raw.control_summary === "object" && raw.control_summary !== null ? raw.control_summary as Record<string, unknown> : {};
   return {
     provider: String(raw.provider || "agentops-operator"),
     operation: String(raw.operation || "operator_loop_launch_packet"),
@@ -5161,6 +5201,26 @@ export async function loadOperatorLoopLaunchPacket(limit = 8, query = "Agent Wor
       receipt_state: typeof item.receipt_state === "object" && item.receipt_state !== null ? item.receipt_state as Record<string, unknown> : undefined,
       token_omitted: item.token_omitted === undefined ? undefined : boolValue(item.token_omitted),
     })).filter((item) => item.step_id || item.command),
+    control_summary: {
+      operation: String(controlRaw.operation || "loop_launch_control_summary"),
+      status: String(controlRaw.status || "unknown"),
+      mode: controlRaw.mode ? String(controlRaw.mode) : undefined,
+      recommended_step: typeof controlRaw.recommended_step === "object" && controlRaw.recommended_step !== null ? controlRaw.recommended_step as Record<string, unknown> : {},
+      next_command: controlRaw.next_command ? String(controlRaw.next_command) : null,
+      verify_command: controlRaw.verify_command ? String(controlRaw.verify_command) : null,
+      receipt_command: controlRaw.receipt_command ? String(controlRaw.receipt_command) : null,
+      requires_human: controlRaw.requires_human === undefined ? undefined : boolValue(controlRaw.requires_human),
+      requires_receipt: controlRaw.requires_receipt === undefined ? undefined : boolValue(controlRaw.requires_receipt),
+      server_executes_shell: controlRaw.server_executes_shell === undefined ? undefined : boolValue(controlRaw.server_executes_shell),
+      copy_only: controlRaw.copy_only === undefined ? undefined : boolValue(controlRaw.copy_only),
+      step_counts: typeof controlRaw.step_counts === "object" && controlRaw.step_counts !== null ? controlRaw.step_counts as Record<string, number> : {},
+      unverified_receipt_steps: controlRaw.unverified_receipt_steps === undefined ? undefined : numberValue(controlRaw.unverified_receipt_steps, 0),
+      blocking_steps: asArray<unknown>(controlRaw.blocking_steps).map(String).filter(Boolean),
+      attention_steps: asArray<unknown>(controlRaw.attention_steps).map(String).filter(Boolean),
+      verified_steps: asArray<unknown>(controlRaw.verified_steps).map(String).filter(Boolean),
+      policy_id: controlRaw.policy_id ? String(controlRaw.policy_id) : undefined,
+      token_omitted: controlRaw.token_omitted === undefined ? undefined : boolValue(controlRaw.token_omitted),
+    },
     agent_plan_draft: typeof raw.agent_plan_draft === "object" && raw.agent_plan_draft !== null ? raw.agent_plan_draft as Record<string, unknown> : {},
     evaluation_contract: {
       operation: String(evaluationRaw.operation || "loop_evaluation_contract"),

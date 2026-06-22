@@ -17102,6 +17102,78 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
         },
     ]
     execution_chain = [enrich_execution_step(step) for step in execution_chain]
+
+    def launch_control_summary(steps: list[dict]) -> dict:
+        status_counts = {
+            "ready": sum(1 for item in steps if item.get("step_status") == "ready"),
+            "attention": sum(1 for item in steps if item.get("step_status") == "attention"),
+            "blocked": sum(1 for item in steps if item.get("step_status") == "blocked"),
+            "verified": sum(1 for item in steps if item.get("step_status") == "verified"),
+        }
+        recommended_step = next((item for item in steps if item.get("step_status") in {"attention", "blocked"}), None)
+        if not recommended_step:
+            recommended_step = next((item for item in steps if item.get("step_status") == "ready"), None)
+        if not recommended_step:
+            recommended_step = steps[-1] if steps else {}
+        receipt_state = recommended_step.get("receipt_state") or {}
+        receipt_missing = bool(receipt_state.get("required")) and not bool(receipt_state.get("verified"))
+        mutating = bool(recommended_step.get("mutating"))
+        confirm_required = bool(recommended_step.get("confirm_required"))
+        blocked = recommended_step.get("step_status") == "blocked"
+        if blocked:
+            control_mode = "blocked_waiting_input"
+        elif confirm_required or mutating:
+            control_mode = "human_confirm_required"
+        elif receipt_missing:
+            control_mode = "receipt_required"
+        else:
+            control_mode = "read_only_copy"
+        reason = recommended_step.get("blocked_reason") or recommended_step.get("ready_reason") or "follow the next safe command, then verify the loop state"
+        recommended = {
+            "step_id": recommended_step.get("step_id"),
+            "label": recommended_step.get("label"),
+            "phase": recommended_step.get("phase"),
+            "status": recommended_step.get("step_status") or "unknown",
+            "control_mode": control_mode,
+            "command": recommended_step.get("next_safe_command") or recommended_step.get("command"),
+            "verify_command": recommended_step.get("verify_command"),
+            "receipt_command": recommended_step.get("receipt_command"),
+            "reason": reason,
+            "mutating": mutating,
+            "confirm_required": confirm_required,
+            "receipt_required": bool(recommended_step.get("receipt_required")),
+            "receipt_verified": bool(receipt_state.get("verified")),
+            "receipt_status": receipt_state.get("status"),
+            "receipt_hash": receipt_state.get("receipt_hash"),
+            "action_signature": recommended_step.get("action_signature") or receipt_state.get("action_signature"),
+            "policy_id": recommended_step.get("policy_id"),
+            "selected_gate": recommended_step.get("selected_gate"),
+            "source": recommended_step.get("source"),
+            "next_on_pass": recommended_step.get("next_on_pass"),
+            "token_omitted": True,
+        }
+        return {
+            "operation": "loop_launch_control_summary",
+            "status": "blocked" if status_counts["blocked"] else "attention" if status_counts["attention"] else "ready",
+            "mode": control_mode,
+            "recommended_step": recommended,
+            "next_command": recommended.get("command"),
+            "verify_command": recommended.get("verify_command"),
+            "receipt_command": recommended.get("receipt_command"),
+            "requires_human": blocked or confirm_required or mutating,
+            "requires_receipt": receipt_missing,
+            "server_executes_shell": False,
+            "copy_only": True,
+            "step_counts": status_counts,
+            "unverified_receipt_steps": sum(1 for item in steps if bool((item.get("receipt_state") or {}).get("required")) and not bool((item.get("receipt_state") or {}).get("verified"))),
+            "blocking_steps": [item.get("step_id") for item in steps if item.get("step_status") == "blocked"],
+            "attention_steps": [item.get("step_id") for item in steps if item.get("step_status") == "attention"],
+            "verified_steps": [item.get("step_id") for item in steps if item.get("step_status") == "verified"],
+            "policy_id": advance_policy.get("policy_id"),
+            "token_omitted": True,
+        }
+
+    control_summary = launch_control_summary(execution_chain)
     launch_sequence = [
         {
             "phase": "READ",
@@ -17178,9 +17250,13 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
             "audit_contract": audit_contract.get("operation"),
             "execution_chain_steps": len(execution_chain),
             "execution_chain_mutating_steps": sum(1 for step in execution_chain if step.get("mutating")),
+            "control_status": control_summary.get("status"),
+            "control_mode": control_summary.get("mode"),
+            "recommended_step": (control_summary.get("recommended_step") or {}).get("step_id"),
         },
         "launch_sequence": launch_sequence,
         "execution_chain": execution_chain,
+        "control_summary": control_summary,
         "agent_plan_draft": launch_sequence[1]["draft"],
         "evaluation_contract": evaluation_contract,
         "audit_contract": audit_contract,

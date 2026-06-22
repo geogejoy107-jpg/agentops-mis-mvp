@@ -218,6 +218,16 @@ def validate_packet(payload: dict, label: str, task_id: str, agent_id: str, fail
     require(confirm_step.get("blocked_reason") or (confirm_step.get("receipt_state") or {}).get("verified") is True, f"{label} confirm step should explain confirm/receipt gate: {confirm_step}", failures)
     record_step = next((item for item in execution_chain if item.get("step_id") == "record_plan_evidence"), {})
     require(record_step.get("step_status") in {"blocked", "verified"}, f"{label} plan evidence step should be id-gated or verified: {record_step}", failures)
+    control_summary = payload.get("control_summary") or {}
+    recommended_step = control_summary.get("recommended_step") or {}
+    require(control_summary.get("operation") == "loop_launch_control_summary", f"{label} control summary missing: {control_summary}", failures)
+    require(control_summary.get("status") in {"ready", "attention", "blocked"}, f"{label} control status invalid: {control_summary}", failures)
+    require(control_summary.get("copy_only") is True, f"{label} control summary must be copy-only: {control_summary}", failures)
+    require(control_summary.get("server_executes_shell") is False, f"{label} control summary server shell boundary missing: {control_summary}", failures)
+    require(recommended_step.get("step_id") in chain_ids, f"{label} recommended step not in chain: {recommended_step}", failures)
+    require(control_summary.get("next_command") == recommended_step.get("command"), f"{label} control next command mismatch: {control_summary}", failures)
+    require((recommended_step.get("control_mode") or control_summary.get("mode")) in {"read_only_copy", "receipt_required", "human_confirm_required", "blocked_waiting_input"}, f"{label} control mode invalid: {control_summary}", failures)
+    require(control_summary.get("token_omitted") is True and recommended_step.get("token_omitted") is True, f"{label} control token omission missing: {control_summary}", failures)
     sources = payload.get("sources") or {}
     require((sources.get("intake") or {}).get("operation") == "task_intake_checklist", f"{label} missing intake source: {sources}", failures)
     require((sources.get("knowledge_search") or {}).get("operation") == "knowledge_search", f"{label} missing knowledge source: {sources}", failures)

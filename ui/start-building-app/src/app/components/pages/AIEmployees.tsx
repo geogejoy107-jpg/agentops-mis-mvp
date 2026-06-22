@@ -511,6 +511,11 @@ export function AIEmployees() {
   const loopLaunchReceiptEvaluation = loopLaunchEvaluationContract?.receipt_evaluation || {};
   const loopLaunchCommands = operatorLoopLaunchPacket?.commands || [];
   const loopLaunchExecutionChain = operatorLoopLaunchPacket?.execution_chain || [];
+  const loopLaunchControlSummary = operatorLoopLaunchPacket?.control_summary;
+  const loopLaunchRecommendedStep = loopLaunchControlSummary?.recommended_step || {};
+  const loopLaunchRecommendedCommand = String(loopLaunchControlSummary?.next_command || loopLaunchRecommendedStep.command || "");
+  const loopLaunchRecommendedVerifyCommand = String(loopLaunchControlSummary?.verify_command || loopLaunchRecommendedStep.verify_command || "");
+  const loopLaunchRecommendedReceiptCommand = String(loopLaunchControlSummary?.receipt_command || loopLaunchRecommendedStep.receipt_command || "");
   const loopLaunchMutatingSteps = loopLaunchExecutionChain.filter(step => step.mutating).length;
   const loopLaunchReceiptSteps = loopLaunchExecutionChain.filter(step => step.receipt_required).length;
   const loopLaunchPacketJson = operatorLoopLaunchPacket ? JSON.stringify({
@@ -523,6 +528,7 @@ export function AIEmployees() {
     evaluation_contract: operatorLoopLaunchPacket.evaluation_contract,
     audit_contract: operatorLoopLaunchPacket.audit_contract,
     execution_chain: operatorLoopLaunchPacket.execution_chain,
+    control_summary: operatorLoopLaunchPacket.control_summary,
     commands: operatorLoopLaunchPacket.commands,
     safety: operatorLoopLaunchPacket.safety,
     token_omitted: operatorLoopLaunchPacket.token_omitted,
@@ -660,6 +666,11 @@ export function AIEmployees() {
       loopWorkOrderSummary: "Copy the next gate action, verify command, and audited receipt commands from the loop action package.",
       loopLaunchContractTitle: "Loop launch contract",
       loopLaunchContractSummary: "Machine-readable launch packet for the next agent: method, evaluation exit criteria, audit contract, ledgers, and safe commands.",
+      loopControlTitle: "Loop control",
+      loopControlSummary: "Next safe control step derived from execution-chain status, receipt proof, and bounded runner policy.",
+      recommendedStep: "Recommended step",
+      controlMode: "Control mode",
+      humanRequired: "Human required",
       evaluationContract: "Evaluation contract",
       auditContract: "Audit contract",
       exitCriteria: "Exit criteria",
@@ -1136,6 +1147,11 @@ export function AIEmployees() {
       loopWorkOrderSummary: "从 loop action package 复制下一步 Gate 动作、验收命令和审计收据命令。",
       loopLaunchContractTitle: "Loop 启动契约",
       loopLaunchContractSummary: "给下一位 Agent 的机器可读启动包：方法、评估退出标准、审计契约、账本和安全命令。",
+      loopControlTitle: "Loop 控制",
+      loopControlSummary: "由执行链状态、收据证明和受限 runner 策略推导出的下一步安全控制动作。",
+      recommendedStep: "推荐步骤",
+      controlMode: "控制模式",
+      humanRequired: "需要人工",
       evaluationContract: "评估契约",
       auditContract: "审计契约",
       exitCriteria: "退出标准",
@@ -3915,6 +3931,77 @@ export function AIEmployees() {
                   {copiedIntakeCommand === loopLaunchPacketJson ? copy.copiedCommand : copy.copyLaunchPacketJson}
                 </button>
               </div>
+              {loopLaunchControlSummary && (
+                <div className="mt-3 rounded px-2 py-1.5" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                  <div className="flex flex-col xl:flex-row xl:items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <Activity size={12} style={{ color: "var(--mis-cyan)" }} />
+                        <div className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.loopControlTitle}</div>
+                        <StatusBadge status={loopLaunchControlSummary.status || "unknown"} />
+                        <StatusBadge status={loopLaunchControlSummary.server_executes_shell ? "blocked" : "pass"} label={loopLaunchControlSummary.server_executes_shell ? "server shell" : "copy only"} />
+                      </div>
+                      <div className="text-[9px] mt-0.5 max-w-4xl" style={{ color: "var(--mis-muted)" }}>{copy.loopControlSummary}</div>
+                      <div className="grid grid-cols-2 xl:grid-cols-4 gap-1.5 mt-2">
+                        {[
+                          { label: copy.recommendedStep, value: String(loopLaunchRecommendedStep.label || loopLaunchRecommendedStep.step_id || "—"), status: String(loopLaunchRecommendedStep.status || loopLaunchControlSummary.status || "unknown") },
+                          { label: copy.controlMode, value: loopLaunchControlSummary.mode || "unknown", status: loopLaunchControlSummary.requires_human ? "attention" : "pass" },
+                          { label: copy.humanRequired, value: loopLaunchControlSummary.requires_human ? copy.confirmRequired : copy.readOnlyProof, status: loopLaunchControlSummary.requires_human ? "attention" : "pass" },
+                          { label: copy.receiptProof, value: loopLaunchControlSummary.requires_receipt ? copy.receiptNeeded : copy.verifiedReceipts, status: loopLaunchControlSummary.requires_receipt ? "attention" : "pass" },
+                        ].map((item) => (
+                          <div key={item.label} className="rounded px-2 py-1" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                            <div className="text-[8px]" style={{ color: "var(--mis-muted)" }}>{item.label}</div>
+                            <div className="flex items-center justify-between gap-1 mt-0.5">
+                              <div className="text-[9px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{item.value}</div>
+                              <StatusBadge status={item.status} />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      {(loopLaunchRecommendedStep.reason || loopLaunchRecommendedStep.blocked_reason || loopLaunchRecommendedStep.ready_reason) && (
+                        <div className="text-[8px] mt-1 line-clamp-2" style={{ color: loopLaunchControlSummary.status === "blocked" ? "var(--mis-warning)" : "var(--mis-dim)" }}>
+                          {loopLaunchControlSummary.status === "blocked" ? copy.blockedReason : copy.readyReason}: {String(loopLaunchRecommendedStep.reason || loopLaunchRecommendedStep.blocked_reason || loopLaunchRecommendedStep.ready_reason)}
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-1 shrink-0">
+                      {loopLaunchRecommendedCommand && (
+                        <button
+                          onClick={() => void copyIntakeCommand(loopLaunchRecommendedCommand)}
+                          className="inline-flex items-center gap-1 text-[8px] px-1.5 py-0.5 rounded max-w-full"
+                          style={{ color: loopLaunchControlSummary.requires_human ? "var(--mis-warning)" : "var(--mis-cyan)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}
+                          title={loopLaunchRecommendedCommand}
+                        >
+                          <Copy size={8} />
+                          <span className="truncate max-w-[96px]">{copiedIntakeCommand === loopLaunchRecommendedCommand ? copy.copiedCommand : copy.nextSafeCommand}</span>
+                        </button>
+                      )}
+                      {loopLaunchRecommendedVerifyCommand && (
+                        <button
+                          onClick={() => void copyIntakeCommand(loopLaunchRecommendedVerifyCommand)}
+                          className="inline-flex items-center gap-1 text-[8px] px-1.5 py-0.5 rounded max-w-full"
+                          style={{ color: "var(--mis-success)", background: "rgba(45,212,191,0.08)", border: "1px solid rgba(45,212,191,0.18)" }}
+                          title={loopLaunchRecommendedVerifyCommand}
+                        >
+                          <Copy size={8} />
+                          <span className="truncate max-w-[86px]">{copiedIntakeCommand === loopLaunchRecommendedVerifyCommand ? copy.copiedCommand : copy.verifyAfterAction}</span>
+                        </button>
+                      )}
+                      {loopLaunchRecommendedReceiptCommand && (
+                        <button
+                          onClick={() => void copyIntakeCommand(loopLaunchRecommendedReceiptCommand)}
+                          className="inline-flex items-center gap-1 text-[8px] px-1.5 py-0.5 rounded max-w-full"
+                          style={{ color: "var(--mis-warning)", background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.18)" }}
+                          title={loopLaunchRecommendedReceiptCommand}
+                        >
+                          <Copy size={8} />
+                          <span className="truncate max-w-[86px]">{copiedIntakeCommand === loopLaunchRecommendedReceiptCommand ? copy.copiedCommand : copy.copyVerifyReceiptCommand}</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3">
                 {[
                   { label: copy.evaluationContract, value: loopLaunchEvaluationContract?.status || "unknown", status: loopLaunchEvaluationContract?.status || "unknown" },
