@@ -29,6 +29,7 @@ def main() -> int:
         NEXT_APP / "app" / "layout.tsx",
         NEXT_APP / "app" / "workspace" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "agents" / "page.tsx",
+        NEXT_APP / "app" / "workspace" / "commercial" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "dispatch" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "dispatch" / "template-run" / "route.ts",
         NEXT_APP / "app" / "workspace" / "evidence" / "[manifestId]" / "page.tsx",
@@ -47,6 +48,7 @@ def main() -> int:
         NEXT_APP / "app" / "api" / "mis" / "[...path]" / "route.ts",
         NEXT_APP / "src" / "components" / "AppFrame.tsx",
         NEXT_APP / "src" / "components" / "AgentsParityPage.tsx",
+        NEXT_APP / "src" / "components" / "CommercialPage.tsx",
         NEXT_APP / "src" / "components" / "DispatchPage.tsx",
         NEXT_APP / "src" / "components" / "EvidencePage.tsx",
         NEXT_APP / "src" / "components" / "LedgerDetailPages.tsx",
@@ -69,6 +71,7 @@ def main() -> int:
     dispatch_route_text = read_text(NEXT_APP / "app" / "workspace" / "dispatch" / "template-run" / "route.ts")
     app_frame_text = read_text(NEXT_APP / "src" / "components" / "AppFrame.tsx")
     agents_page_text = read_text(NEXT_APP / "src" / "components" / "AgentsParityPage.tsx")
+    commercial_page_text = read_text(NEXT_APP / "src" / "components" / "CommercialPage.tsx")
     dispatch_page_text = read_text(NEXT_APP / "src" / "components" / "DispatchPage.tsx")
     evidence_page_text = read_text(NEXT_APP / "src" / "components" / "EvidencePage.tsx")
     ledger_detail_pages_text = read_text(NEXT_APP / "src" / "components" / "LedgerDetailPages.tsx")
@@ -104,9 +107,13 @@ def main() -> int:
     require("/workspace/tasks" in app_frame_text and "/workspace/runs" in app_frame_text, "Next.js nav must expose task and run parity routes")
     require("/workspace/memory" in app_frame_text and "/workspace/audit" in app_frame_text, "Next.js nav must expose governance parity routes")
     require("/workspace/reports" in app_frame_text, "Next.js nav must expose reports parity route")
+    require("/workspace/commercial" in app_frame_text, "Next.js nav must expose commercial parity route")
     require("/workspace/dispatch" in app_frame_text, "Next.js nav must expose dispatch parity route")
     require("/workspace/agents" in app_frame_text, "Next.js nav must expose agents parity route")
     require("loadAgentControlSnapshot" in agents_page_text and "Production security" in agents_page_text, "agents parity page must expose safety/readiness control plane")
+    require("CommercialParityPage" in commercial_page_text and "Capability matrix" in commercial_page_text and "Fail-closed gates" in commercial_page_text, "commercial parity page must expose capability gates")
+    require("billing call" in commercial_page_text and "token omitted" in commercial_page_text, "commercial parity page must expose safety proof")
+    require("loadServerCommercialEntitlements" in server_lib_text, "commercial parity page must load server entitlement state")
     require("DispatchParityPage" in dispatch_page_text and "Entitlement required" in dispatch_page_text, "dispatch parity page must expose fail-closed entitlement state")
     require("verify_dispatch_entitlement_block" in playwright_smoke_text and "verify_dispatch_template_run_success" in playwright_smoke_text, "browser smoke must verify both blocked and entitled dispatch paths")
     require("AGENTOPS_ENTITLEMENTS_PATH" in playwright_smoke_text and "pro_workspace" in playwright_smoke_text, "browser smoke must use an isolated commercial entitlement fixture")
@@ -133,6 +140,7 @@ def main() -> int:
         "routes": [
             "/workspace",
             "/workspace/agents",
+            "/workspace/commercial",
             "/workspace/dispatch",
             "/workspace/evidence/[manifestId]",
             "/workspace/tasks",

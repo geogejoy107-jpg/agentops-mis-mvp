@@ -32,6 +32,7 @@ NEXT_ENV = NEXT_APP / "next-env.d.ts"
 ROUTES = [
     ("/workspace", ["Workspace control plane", "Active tasks", "Pending approval queue"]),
     ("/workspace/agents", ["Agents", "Production security", "Adapter readiness"]),
+    ("/workspace/commercial", ["Commercial", "Capability matrix", "Fail-closed gates"]),
     ("/workspace/tasks", ["Tasks", "running", "planned"]),
     ("/workspace/runs", ["Run Ledger", "Run", "Status"]),
     ("/workspace/approvals", ["Approvals", "Pending approval", "Decision history"]),
@@ -689,6 +690,8 @@ def main() -> int:
                 "agents": len(http_json(f"{next_base}/api/mis/agents")),
                 "tasks": len(http_json(f"{next_base}/api/mis/tasks")),
                 "memories": len(http_json(f"{next_base}/api/mis/memories")),
+                "commercial_edition": http_json(f"{next_base}/api/mis/commercial/entitlements").get("edition"),
+                "commercial_report_templates": http_json(f"{next_base}/api/mis/commercial/entitlements").get("capabilities", {}).get("report_templates"),
                 "customer_projects": len(http_json(f"{next_base}/api/mis/workflows/customer-projects?limit=25").get("projects", [])),
                 "security_status": http_json(f"{next_base}/api/mis/security/production-readiness").get("status"),
                 "worker_status": http_json(f"{next_base}/api/mis/workers/status").get("status"),

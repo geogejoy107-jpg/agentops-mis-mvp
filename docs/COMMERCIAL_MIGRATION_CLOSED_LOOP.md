@@ -148,7 +148,8 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   snapshots, approves one pending approval through the Next.js approvals page,
   approves one candidate memory through the Next.js memory page, verifies both
   state changes through `/api/mis/*`, renders a fixture-backed customer project
-  report, archives that report to the MIS ledger through a Next.js form fallback,
+  report, opens the commercial entitlement parity page, archives that report to
+  the MIS ledger through a Next.js form fallback,
   verifies `report_artifact_id`, clicks a customer template dispatch action,
   verifies the Free Local `report_templates` entitlement block, confirms no
   customer project was created by the blocked action, flips an isolated temporary
@@ -162,6 +163,7 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
 - First migration artifact:
   - `ui/next-app/app/workspace/page.tsx`
   - `ui/next-app/app/workspace/agents/page.tsx`
+  - `ui/next-app/app/workspace/commercial/page.tsx`
   - `ui/next-app/app/workspace/dispatch/page.tsx`
   - `ui/next-app/app/workspace/dispatch/template-run/route.ts`
   - `ui/next-app/app/workspace/evidence/[manifestId]/page.tsx`
@@ -179,6 +181,7 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   - `ui/next-app/app/workspace/audit/page.tsx`
   - `ui/next-app/app/api/mis/[...path]/route.ts`
   - `ui/next-app/src/lib/misServer.ts`
+  - `ui/next-app/src/components/CommercialPage.tsx`
   - `ui/next-app/src/components/DispatchPage.tsx`
   - `ui/next-app/src/components/DeliveryPages.tsx`
   - `scripts/nextjs_parity_smoke.py`
@@ -280,6 +283,9 @@ Initial status:
   `Start template` without creating a project, while an isolated
   `pro_workspace` entitlement fixture allows the same Next.js form fallback to
   create a ledger-backed customer project and report artifact.
+- The Next.js commercial parity page must render current edition, capability
+  matrix, fail-closed gates, billing-call omission, and token-omission proof
+  through the MIS proxy without introducing billing writes.
 - The entitled template path preserves the Agent Gateway evidence contract:
   `scripts/run_kb_bot_demo.py` creates Agent Plans before starting runs and
   records plan-evidence manifests for the completed low-risk/customer-delivery

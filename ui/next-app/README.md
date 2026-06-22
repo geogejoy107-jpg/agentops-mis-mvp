@@ -32,6 +32,7 @@ memory review actions through the Next.js UI, verifies the state change through
 
 - App Router route: `/workspace`
 - App Router route: `/workspace/agents`
+- App Router route: `/workspace/commercial`
 - App Router route: `/workspace/dispatch`
 - App Router route: `/workspace/evidence/[manifestId]`
 - App Router route: `/workspace/tasks`
@@ -45,6 +46,7 @@ memory review actions through the Next.js UI, verifies the state change through
 - App Router route: `/workspace/customer-projects/[projectId]/report`
 - Runtime API proxy: `/api/mis/[...path]`
 - Live data contract: dashboard metrics, agents, production readiness, worker readiness, tasks, runs, approvals, memories, audit, customer projects, delivery board, customer project report
+- Commercial contract: edition, capability matrix, fail-closed gates, billing-call omission, and token omission load read-only through the MIS API proxy
 - First-paint contract: approval and memory review queues can load on the App Router server path from the configured MIS API
 - Interaction contract: approval review and memory review write through the Next.js UI, with client fetch plus Next form fallback routes, then refresh from the MIS API proxy
 - Ledger detail contract: task/run detail routes are read-only, load through the MIS API proxy, and expose linked evidence rows plus token omission state
