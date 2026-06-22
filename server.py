@@ -48,6 +48,7 @@ HERMES_HOME = Path.home() / ".hermes"
 OPENCLAW_BIN = Path(os.environ.get("OPENCLAW_BIN") or "/opt/homebrew/bin/openclaw")
 DEFAULT_ENTITLEMENTS_PATH = ROOT / "config" / "entitlements.local.json"
 STORAGE_BACKEND = os.environ.get("AGENTOPS_STORAGE_BACKEND", "sqlite").strip().lower() or "sqlite"
+POSTGRES_HTTP_WRITE_ALLOWED_ROUTES = {("POST", "/api/tasks")}
 
 RISKY_TOOLS = {
     "shell.exec",
@@ -286,13 +287,16 @@ def storage_backend_status(headers=None) -> dict:
     dsn = os.environ.get("AGENTOPS_POSTGRES_DSN") or os.environ.get("DATABASE_URL")
     explicit_enable = os.environ.get("AGENTOPS_ENABLE_POSTGRES_STORAGE", "").strip().lower() in {"1", "true", "yes"}
     read_only_http = os.environ.get("AGENTOPS_POSTGRES_READ_ONLY_HTTP", "").strip().lower() in {"1", "true", "yes", "on"}
+    write_http = os.environ.get("AGENTOPS_POSTGRES_WRITE_HTTP", "").strip().lower() in {"1", "true", "yes", "on"}
     checks = {
         "enterprise_entitlement": bool(entitlement.get("capabilities", {}).get("postgres_adapter")),
         "dsn_configured": bool(dsn),
         "experimental_enable_flag": explicit_enable,
         "read_only_http_flag": read_only_http,
+        "experimental_write_http_flag": write_http,
         "driver_available": False,
         "server_backend_routable": False,
+        "write_http_routable": False,
     }
     try:
         from agentops_mis_storage.postgres import load_psycopg  # noqa: PLC0415
@@ -302,6 +306,7 @@ def storage_backend_status(headers=None) -> dict:
     except Exception:
         checks["driver_available"] = False
     checks["server_backend_routable"] = bool(read_only_http and checks["driver_available"])
+    checks["write_http_routable"] = bool(write_http and checks["server_backend_routable"])
     if not checks["enterprise_entitlement"]:
         reason = "entitlement_required"
     elif not checks["dsn_configured"]:
@@ -313,13 +318,15 @@ def storage_backend_status(headers=None) -> dict:
     elif not checks["driver_available"]:
         reason = "optional_psycopg_unavailable"
     else:
+        mode = "experimental_write_http" if write_http else "read_only_http"
         return {
             "provider": "agentops-storage",
             "status": "active",
             "selected_backend": "postgres",
             "active_backend": "postgres",
-            "mode": "read_only_http",
-            "writes_allowed": False,
+            "mode": mode,
+            "writes_allowed": bool(write_http),
+            "write_allowlist": [{"method": method, "path": path} for method, path in sorted(POSTGRES_HTTP_WRITE_ALLOWED_ROUTES)] if write_http else [],
             "checks": checks,
             "required_edition": "enterprise_byoc",
             "postgres": {
@@ -327,11 +334,13 @@ def storage_backend_status(headers=None) -> dict:
                 "required_edition": "enterprise_byoc",
                 "server_backend_routable": True,
                 "read_only_http_routable": True,
+                "write_http_routable": bool(write_http),
                 "free_local_dependency": False,
             },
             "fallback_performed": False,
             "token_omitted": True,
-            "contract": "postgres_http_read_parity_v1",
+            "contract": "postgres_http_write_task_parity_v1" if write_http else "postgres_http_read_parity_v1",
+            "contracts": ["postgres_http_read_parity_v1", "postgres_http_write_task_parity_v1"] if write_http else ["postgres_http_read_parity_v1"],
         }
     return {
         "provider": "agentops-storage",
@@ -366,12 +375,20 @@ def postgres_read_only_write_block(method: str, path: str) -> dict:
         "provider": "agentops-storage",
         "method": method,
         "path": path,
-        "message": "Postgres backend is currently enabled only for verified read-only HTTP routes.",
+        "message": "Postgres backend blocks this write route. Only explicitly allowlisted experimental routes may write when AGENTOPS_POSTGRES_WRITE_HTTP=1.",
         "writes_allowed": False,
+        "write_allowlist": [{"method": route_method, "path": route_path} for route_method, route_path in sorted(POSTGRES_HTTP_WRITE_ALLOWED_ROUTES)],
         "fallback_performed": False,
         "token_omitted": True,
-        "contract": "postgres_http_read_parity_v1",
+        "contract": "postgres_http_write_task_parity_v1",
     }
+
+
+def postgres_http_write_allowed(method: str, path: str) -> bool:
+    if (method.upper(), path) not in POSTGRES_HTTP_WRITE_ALLOWED_ROUTES:
+        return False
+    status = storage_backend_status(None)
+    return bool(status.get("status") == "active" and status.get("writes_allowed") is True)
 
 
 def commercial_entitlement_block(conn, capability: str, operation: str, actor: str = "commercial-gate") -> dict:
@@ -12865,7 +12882,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         parsed = urlparse(self.path)
-        if STORAGE_BACKEND == "postgres":
+        if STORAGE_BACKEND == "postgres" and not postgres_http_write_allowed("POST", parsed.path):
             return self.send_json(postgres_read_only_write_block("POST", parsed.path), status=503)
         body = parse_json_body(self)
         try:
@@ -12875,7 +12892,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_PATCH(self):
         parsed = urlparse(self.path)
-        if STORAGE_BACKEND == "postgres":
+        if STORAGE_BACKEND == "postgres" and not postgres_http_write_allowed("PATCH", parsed.path):
             return self.send_json(postgres_read_only_write_block("PATCH", parsed.path), status=503)
         body = parse_json_body(self)
         try:
@@ -14108,16 +14125,17 @@ def main():
     enforce_storage_backend_startup()
     if STORAGE_BACKEND == "postgres":
         if args.reset:
+            status = storage_backend_status(None)
             print(json.dumps({
                 "provider": "agentops-storage",
                 "status": "blocked",
                 "selected_backend": "postgres",
                 "active_backend": "postgres",
                 "reason": "postgres_reset_not_supported",
-                "message": "Postgres read-only HTTP mode expects schema and fixtures to be prepared before server start.",
+                "message": "Postgres HTTP mode expects schema and fixtures to be prepared before server start.",
                 "fallback_performed": False,
                 "token_omitted": True,
-                "contract": "postgres_http_read_parity_v1",
+                "contract": status.get("contract"),
             }, ensure_ascii=False, indent=2, sort_keys=True), file=sys.stderr)
             raise SystemExit(2)
     elif args.reset:

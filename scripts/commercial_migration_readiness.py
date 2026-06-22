@@ -397,6 +397,18 @@ def main() -> int:
             "Postgres write-helper parity smoke, INSERT OR IGNORE translation, and audit dict-row compatibility are present",
         ),
         check(
+            "postgres_http_write_task_surface_exists",
+            file_contains("docs/POSTGRES_PARITY_CONTRACT.md", "postgres_http_write_task_parity_v1")
+            and file_contains("docs/STORAGE_BOUNDARY_MAP.md", "storage_postgres_http_write_task_smoke.py")
+            and file_contains("docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md", "storage_postgres_http_write_task_smoke.py")
+            and file_contains("server.py", "AGENTOPS_POSTGRES_WRITE_HTTP")
+            and file_contains("server.py", "POSTGRES_HTTP_WRITE_ALLOWED_ROUTES")
+            and file_contains("scripts/storage_postgres_http_write_task_smoke.py", 'method="POST"')
+            and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "/api/tasks")
+            and (ROOT / "scripts" / "storage_postgres_http_write_task_smoke.py").exists(),
+            "experimental Postgres HTTP task write route is explicitly allowlisted, smoke-tested, and documented",
+        ),
+        check(
             "blocked_generated_or_runtime_artifacts_absent",
             not blocked_paths,
             "blocked_paths=" + json.dumps(blocked_paths, ensure_ascii=False),
@@ -446,6 +458,7 @@ def main() -> int:
                 "python3 scripts/storage_postgres_http_read_parity_smoke.py",
                 "python3 scripts/storage_postgres_cli_read_parity_smoke.py",
                 "python3 scripts/storage_postgres_write_helper_parity_smoke.py",
+                "python3 scripts/storage_postgres_http_write_task_smoke.py",
             ],
         },
         {

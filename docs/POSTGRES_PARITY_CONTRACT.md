@@ -44,7 +44,12 @@ tenth layer is the write-helper parity contract,
 `postgres_write_helper_parity_v1`, which runs selected `server.repo_*` write
 helpers against both temporary SQLite and temporary Postgres, compares outcomes
 and snapshots, and keeps HTTP/CLI writes fail-closed until a routed write
-adapter is explicitly proven.
+adapter is explicitly proven. The eleventh layer is the first routed write
+contract, `postgres_http_write_task_parity_v1`, which keeps Postgres HTTP
+writes blocked by default, then enables only the explicit `POST /api/tasks`
+allowlist under `AGENTOPS_POSTGRES_WRITE_HTTP=1` and proves task, runtime event,
+and audit rows persist in Postgres while non-allowlisted writes still fail
+closed.
 
 All layers are intentionally derived from `server.SCHEMA_SQL`, because
 `server.py` is still the executable schema authority for the dependency-free
@@ -102,6 +107,7 @@ python3 scripts/storage_backend_selection_smoke.py
 python3 scripts/storage_postgres_http_read_parity_smoke.py
 python3 scripts/storage_postgres_cli_read_parity_smoke.py
 python3 scripts/storage_postgres_write_helper_parity_smoke.py
+python3 scripts/storage_postgres_http_write_task_smoke.py
 python3 scripts/storage_boundary_sqlite_smoke.py
 ```
 
@@ -131,7 +137,12 @@ list/get/verify reads, against the same Postgres-backed server and checks a CLI
 write command is blocked. The tenth command executes selected `repo_*` write
 helpers on SQLite and Postgres, compares helper outcomes and persisted
 snapshots, proves chained audit-row dict compatibility and transaction rollback
-control, and still does not enable any HTTP/CLI writes. The final command
+control, and still does not enable any HTTP/CLI writes. The eleventh command
+starts the actual Postgres-backed server twice: first to confirm read-only
+HTTP still blocks `POST /api/tasks`, then with
+`AGENTOPS_POSTGRES_WRITE_HTTP=1` to create one task through the explicit
+allowlist, read it back, prove runtime/audit evidence persisted, and prove
+other writes remain blocked. The final command
 proves the broader current SQLite helper behavior that Postgres must match.
 
 When Docker is unavailable on a local machine, use the non-authoritative
@@ -146,6 +157,7 @@ python3 scripts/storage_postgres_route_read_model_smoke.py --skip-if-unavailable
 python3 scripts/storage_postgres_http_read_parity_smoke.py --skip-if-unavailable
 python3 scripts/storage_postgres_cli_read_parity_smoke.py --skip-if-unavailable
 python3 scripts/storage_postgres_write_helper_parity_smoke.py --skip-if-unavailable
+python3 scripts/storage_postgres_http_write_task_smoke.py --skip-if-unavailable
 ```
 
 This mode reports `skipped: true`; it is not final BYOC/Postgres evidence.
@@ -195,6 +207,14 @@ Current local evidence on `codex/commercial-migration-closed-loop`:
   verified, `postgres_write_helper_hash=bb601af77f646cd06e885254818dac5a63f3b4f596475be872efe0f7ff560c0b`,
   `free_local_dependencies=[]`, no fallback to SQLite occurred, and HTTP/CLI
   writes remain disabled at this gate.
+- `postgres_http_write_task_parity_v1` passed against `postgres:16-alpine`
+  with a temporary psycopg target: read-only mode still returned
+  `503 postgres_read_only_backend` for `POST /api/tasks`, explicit
+  `AGENTOPS_POSTGRES_WRITE_HTTP=1` mode allowed only `POST /api/tasks`, created
+  task `tsk_pg_http_write_task`, read it back through HTTP, persisted one
+  runtime event and two audit rows in Postgres, kept `POST /api/agents`
+  blocked at `503`, kept `free_local_dependencies=[]`, and did not fall back to
+  SQLite.
 - Source install packaging includes `agentops_mis_storage.postgres`; importing
   the module and translating SQL does not require psycopg.
 
@@ -203,7 +223,8 @@ Current local evidence on `codex/commercial-migration-closed-loop`:
 Postgres parity is not complete until the adapter boundary:
 
 - routes more `repo_*` helper flows through the same shared fixture pattern;
-- proves Postgres write helpers before enabling any Postgres write routes;
+- proves Postgres write helpers before widening any routed Postgres write
+  routes beyond the explicit task-write allowlist;
 - keeps write routes disabled until an explicit routed write-adapter smoke
   proves the small route surface that will be enabled;
 - keeps backend selection fail-closed so Postgres configuration cannot silently

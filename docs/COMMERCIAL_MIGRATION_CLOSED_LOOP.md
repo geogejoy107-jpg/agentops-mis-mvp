@@ -135,6 +135,10 @@ Must be true:
   list/get/verify readback before Postgres writes are enabled.
 - Postgres write helpers must match SQLite outcomes and snapshots before any
   routed HTTP/CLI write surface is enabled.
+- The first routed Postgres HTTP write is an explicit `POST /api/tasks`
+  allowlist behind `AGENTOPS_POSTGRES_WRITE_HTTP=1`; read-only mode must still
+  block it, the allowlisted write must persist task/runtime/audit evidence in
+  Postgres, and non-allowlisted writes must remain blocked.
 - Verification includes local acceptance against a temporary SQLite database
   before any Postgres work starts:
 
@@ -146,6 +150,7 @@ python3 scripts/storage_backend_selection_smoke.py
 python3 scripts/storage_postgres_http_read_parity_smoke.py
 python3 scripts/storage_postgres_cli_read_parity_smoke.py
 python3 scripts/storage_postgres_write_helper_parity_smoke.py
+python3 scripts/storage_postgres_http_write_task_smoke.py
 ```
 
 ### Gate 4: UI/API Parity Before Next.js
