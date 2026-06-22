@@ -65,8 +65,9 @@ execution touches undeclared file/tool      readiness gate fails
 - [x] CLI supports create/get/resume.
 - [x] Customer-worker Hermes/OpenClaw external-write intent pauses before live runtime execution and creates a prepared action plus approval.
 - [x] Agent Gateway high-risk external side-effect tool calls cannot be recorded as completed or with `side_effect_id` unless they create a prepared action; the KB bot external upload plan now uses the Approval Wall path. Guarded by `scripts/high_risk_toolcall_prepared_action_gate_smoke.py`.
+- [x] Direct live worker and local dispatch external-write tasks pause before Hermes/OpenClaw execution and create a prepared action plus approval. Guarded by `scripts/worker_external_write_preflight_gate_smoke.py`.
 - [x] Dify connector live text upload cannot call the provider with only `confirm_upload` or a generic approval id; it creates a prepared action first, waits for approval, verifies the exact upload args on resume, and consumes the prepared action with the Dify document id. Guarded by `scripts/dify_upload_prepared_action_gate_smoke.py`.
-- [ ] All high-risk external connector/runtime tool paths use prepared actions before shared/commercial deployment. Agent Gateway high/critical external side-effect tool calls, KB bot external upload, customer-worker external-write intent, and Dify live upload now use prepared actions; remaining worker daemon/dispatch, Notion export, and fixed live runtime paths still need final coverage before shared/commercial deployment.
+- [ ] All high-risk external connector/runtime tool paths use prepared actions before shared/commercial deployment. Agent Gateway high/critical external side-effect tool calls, KB bot external upload, customer-worker external-write intent, direct worker/dispatch external-write intent, and Dify live upload now use prepared actions; remaining Notion export and fixed live runtime paths still need final coverage before shared/commercial deployment.
 
 Required check:
 
@@ -74,6 +75,7 @@ Required check:
 python3 scripts/prepared_action_approval_wall_smoke.py --base-url http://127.0.0.1:8787
 python3 scripts/customer_worker_external_write_gate_smoke.py
 python3 scripts/high_risk_toolcall_prepared_action_gate_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/worker_external_write_preflight_gate_smoke.py
 python3 scripts/dify_upload_prepared_action_gate_smoke.py
 ```
 
@@ -227,9 +229,18 @@ waiting-approval run/tool/prepared action and does not call Dify. The approved
 resume path verifies the normalized Dify upload args and consumes the prepared
 action with the provider document id.
 
+The shared worker loop now applies the same preflight before live adapter
+execution. Confirmed Hermes/OpenClaw worker tasks whose title, description,
+acceptance criteria, or target metadata indicates publish/upload/deploy/webhook/
+external-write intent create a waiting-approval tool call plus prepared action
+after run start and before `execute_adapter_with_retries`, so daemon mode,
+direct `agentops-worker --once`, and UI dispatch do not rely on a later
+tool-call record after the side effect.
+
 ```bash
 python3 scripts/runtime_connector_trust_smoke.py
 python3 scripts/worker_live_confirm_gate_smoke.py
+python3 scripts/worker_external_write_preflight_gate_smoke.py
 python3 scripts/worker_adapter_readiness_smoke.py
 python3 scripts/worker_adapter_retry_smoke.py
 ```

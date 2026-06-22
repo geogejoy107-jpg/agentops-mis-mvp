@@ -19725,6 +19725,31 @@ def dispatch_local_worker_once(conn, body: dict) -> dict:
     audit(conn, "user", "usr_founder", "worker.dispatch_task.create", "tasks", task_id, None, row, {"adapter": adapter, "confirm_run": confirm_run})
     conn.commit()
 
+    adapter_readiness = (worker_adapter_readiness(conn).get("adapters") or {}).get(adapter) or {}
+    manifest_governance = ((adapter_readiness.get("capability_manifest") or {}).get("governance") or {})
+    connector_id = runtime_connector_for_adapter(adapter)
+    if (
+        adapter in {"hermes", "openclaw"}
+        and confirm_run
+        and manifest_governance.get("requires_prepared_action_for_external_write") is True
+        and customer_worker_external_write_intent({**body, "task_id": task_id, "requester_id": row["requester_id"]}, title, description, acceptance)
+    ):
+        payload, status = create_customer_worker_external_write_gate(
+            conn,
+            {**body, "task_id": task_id, "requester_id": row["requester_id"], "budget_limit_usd": row["budget_limit_usd"]},
+            adapter,
+            connector_id,
+            adapter_readiness,
+            title,
+            description,
+            acceptance,
+            agent_id,
+        )
+        payload["workflow"] = "worker_dispatch_once"
+        payload["dispatch_status"] = status
+        payload["note"] = "UI worker dispatch paused before starting the local worker process because the task appears to request an external write."
+        return payload
+
     cmd = [
         sys.executable,
         str(ROOT / "scripts" / "agent_worker.py"),

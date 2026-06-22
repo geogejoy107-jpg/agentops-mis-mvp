@@ -522,6 +522,133 @@ def adapter_capability_profile(adapter: str) -> dict:
     }
 
 
+EXTERNAL_WRITE_INTENT_KEYWORDS = {
+    "publish",
+    "upload",
+    "deploy",
+    "push",
+    "send email",
+    "webhook",
+    "external write",
+    "notion",
+    "dify",
+    "dataset",
+    "file search",
+    "customer portal",
+    "生产发布",
+    "发布",
+    "上传",
+    "部署",
+    "推送",
+    "发邮件",
+    "外部写入",
+    "知识库上传",
+}
+
+
+def worker_external_write_intent(task: dict, args, capability: dict) -> bool:
+    if args.adapter not in {"hermes", "openclaw"}:
+        return False
+    if not args.confirm_run:
+        return False
+    if capability.get("requires_prepared_action_for_external_write") is not True:
+        return False
+    combined = " ".join([
+        str(task.get("title") or ""),
+        str(task.get("description") or ""),
+        str(task.get("acceptance_criteria") or ""),
+        str(task.get("target_resource") or ""),
+        str(task.get("external_action_type") or ""),
+    ]).lower()
+    return any(keyword.lower() in combined for keyword in EXTERNAL_WRITE_INTENT_KEYWORDS)
+
+
+def create_worker_external_write_gate(client: AgentOpsClient, task: dict, args, plan_id: str, run_id: str, capability: dict) -> dict:
+    task_id = task["task_id"]
+    action_type = f"agent_worker.{args.adapter}.external_write"
+    target_resource = f"{args.adapter}://external-write/{task_id}"
+    tool_risk = max_risk(task.get("risk_level"), "high", capability.get("risk_floor"))
+    normalized_args = {
+        "task_id": task_id,
+        "adapter": args.adapter,
+        "title": redact_text(task.get("title"), 140),
+        "external_write_intent": True,
+        "target_resource": target_resource,
+        "observation_level": capability.get("observation_level"),
+        "commercial_readiness": capability.get("commercial_readiness"),
+        "requires_prepared_action_for_external_write": True,
+        "raw_prompt_omitted": True,
+        "raw_response_omitted": True,
+    }
+    tool_payload = client.post("/api/agent-gateway/tool-calls", {
+        "workspace_id": client.workspace_id,
+        "run_id": run_id,
+        "agent_id": client.agent_id,
+        "tool_name": action_type,
+        "tool_category": "custom",
+        "risk_level": tool_risk,
+        "status": "waiting_approval",
+        "target_resource": target_resource,
+        "args": normalized_args,
+        "result_summary": "Live worker runtime paused before external write; prepared action approval is required.",
+        "prepare_action": True,
+        "action_type": action_type,
+        "checkpoint": {
+            "checkpoint": "before_agent_worker_external_write_runtime_execution",
+            "task_id": task_id,
+            "run_id": run_id,
+            "adapter": args.adapter,
+        },
+        "idempotency_key": stable_hash({
+            "task_id": task_id,
+            "run_id": run_id,
+            "adapter": args.adapter,
+            "action_type": action_type,
+            "target_resource": target_resource,
+        })[:32],
+        "approval_reason": f"{args.adapter} is an opaque live worker runtime and this task appears to request external write/upload/publish. Approve exact prepared action before execution resumes.",
+    })
+    wall = tool_payload.get("approval_wall") or {}
+    approval = wall.get("approval") or {}
+    prepared_action = wall.get("prepared_action") or {}
+    tool_call = tool_payload.get("tool_call") or {}
+    client.post("/api/agent-gateway/audit", {
+        "workspace_id": client.workspace_id,
+        "agent_id": client.agent_id,
+        "action": "agent_worker.external_write_prepared_action_required",
+        "entity_type": "runs",
+        "entity_id": run_id,
+        "task_id": task_id,
+        "run_id": run_id,
+        "metadata": {
+            "adapter": args.adapter,
+            "agent_plan_id": plan_id,
+            "tool_call_id": tool_call.get("tool_call_id"),
+            "approval_id": approval.get("approval_id"),
+            "prepared_action_id": prepared_action.get("action_id"),
+            "live_execution_performed": False,
+            "token_omitted": True,
+        },
+    })
+    return {
+        "processed": False,
+        "ok": True,
+        "task_id": task_id,
+        "run_id": run_id,
+        "plan_id": plan_id,
+        "adapter": args.adapter,
+        "reason": "external_write_prepared_action_required",
+        "live_execution_performed": False,
+        "tool_call_id": tool_call.get("tool_call_id"),
+        "approval_id": approval.get("approval_id"),
+        "prepared_action_id": prepared_action.get("action_id"),
+        "prepared_action_hash": prepared_action.get("action_hash"),
+        "next_action": tool_payload.get("next_action"),
+        "output_summary": "Worker paused before live runtime execution because the task appears to request an external write.",
+        "token_omitted": True,
+    }
+
+
 def emit_jsonl(args, payload: dict):
     if args.jsonl_log:
         print(json.dumps(payload, ensure_ascii=False, sort_keys=True), flush=True)
@@ -667,8 +794,11 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
     run = run_payload["run"]
     run_id = run["run_id"]
 
-    result = execute_adapter_with_retries(task, args)
     capability = adapter_capability_profile(args.adapter)
+    if worker_external_write_intent(task, args, capability):
+        return create_worker_external_write_gate(client, task, args, plan_id, run_id, capability)
+
+    result = execute_adapter_with_retries(task, args)
     tool_risk = max_risk(task.get("risk_level"), capability.get("risk_floor"))
 
     tool_status = "completed" if result.ok else "failed"

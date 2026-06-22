@@ -845,6 +845,13 @@ For external-write gates, the response instead includes `approval_wall`,
 full raw model responses,
 credentials, or private transcripts.
 
+The same external-write preflight runs inside `agentops-worker` itself. A
+daemon or direct `agentops-worker --once --adapter hermes|openclaw --confirm-run`
+may process ordinary live tasks, but if the pulled task appears to publish,
+upload, deploy, send, webhook, or otherwise write externally, the worker creates
+the run-scoped prepared action and exits that iteration before calling Hermes or
+OpenClaw.
+
 For real Hermes/OpenClaw work or any customer task that may run longer than a
 short HTTP request, submit it as an async workflow job:
 
@@ -1040,7 +1047,7 @@ and attempts a version read only. The result includes
 
 ### `agentops worker start`
 
-Starts a local worker daemon through the MIS supervisor. `mock` can start directly; `hermes` and `openclaw` require explicit `--confirm-run`.
+Starts a local worker daemon through the MIS supervisor. `mock` can start directly; `hermes` and `openclaw` require explicit `--confirm-run`. `--confirm-run` is not external-write authorization: worker preflight still pauses publish/upload/deploy/webhook tasks behind a prepared action before any live adapter call.
 
 ```bash
 agentops worker start --adapter mock --poll-interval 5 --max-tasks 0

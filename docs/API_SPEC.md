@@ -340,6 +340,9 @@ ledger counts so the operator can distinguish a freshly proven dispatch from a
 blocked backlog task. This fresh one-shot path uses the worker self-plan flow:
 it bypasses backlog pull enforcement but must still create and verify an
 Agent Plan before `run_start`, then bind the run with a plan-evidence manifest.
+For Hermes/OpenClaw external-write wording, dispatch-once now pauses before
+starting the local worker subprocess and creates a waiting-approval prepared
+action instead.
 `GET /api/operator/action-plan` also embeds these verified dispatch/customer
 runs as the read-only `dispatch_evidence` source so the command center can keep
 showing proofs after the immediate dispatch result card disappears.
@@ -480,6 +483,15 @@ waiting-approval task, run, tool call, prepared action, and approval, then
 returns `202 external_write_prepared_action_required` with
 `approval_wall`, `approval_id`, `prepared_action_id`, and a precise
 `next_action` resume command.
+
+The installable worker loop applies the same preflight rule at the shared
+`agentops-worker` execution point. After pull/claim/plan/run-start, but before
+`execute_adapter_with_retries`, confirmed Hermes/OpenClaw tasks whose title,
+description, acceptance criteria, or target metadata indicate publish/upload/
+deploy/webhook/external-write intent create a waiting-approval tool call plus
+prepared action and return `external_write_prepared_action_required` without
+calling the live adapter. This covers daemon mode, direct `agentops-worker
+--once`, and UI dispatch paths.
 
 `/workflows/jobs/stuck` lists queued/running jobs older than a threshold.
 `/mark-failed` is an operator recovery action for stale jobs; it marks the job
