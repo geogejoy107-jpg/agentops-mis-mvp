@@ -189,7 +189,7 @@ Choose one v1.5 contract.
 - [ ] Existing approval is described as ledger/delivery approval.
 - [ ] UI/docs do not claim exact tool-action resume.
 - [ ] Generic external side effects are denied.
-- [ ] Live runtimes stay within documented capabilities and sandbox boundaries.
+- [x] Live runtimes stay within documented capabilities and sandbox boundaries. Guarded by `scripts/worker_adapter_readiness_smoke.py`, which verifies mock/Hermes/OpenClaw readiness, capability manifests, risk floors, summary-only opaque runtime disclosure, commercial restrictions, and no live execution during readiness checks.
 
 ```bash
 python3 scripts/approval_decision_side_effect_smoke.py
@@ -199,6 +199,7 @@ python3 scripts/review_queue_smoke.py
 python3 scripts/agent_gateway_review_queue_smoke.py
 python3 scripts/prepared_action_approval_wall_smoke.py
 python3 scripts/agent_gateway_runtime_event_smoke.py
+python3 scripts/worker_adapter_readiness_smoke.py --base-url http://127.0.0.1:8787
 python3 scripts/kb_bot_demo_smoke.py
 ```
 
@@ -534,7 +535,7 @@ Optional live runtime checks occur only after preflight and explicit human confi
 - [ ] Exact RC SHA.
 - [ ] CI links and status.
 - [ ] Test command list and summary.
-- [ ] Performance and retrieval baseline.
+- [x] Performance and retrieval baseline. Guarded by `scripts/ai_employees_responsiveness_smoke.py` and `scripts/knowledge_retrieval_quality_smoke.py`; current local evidence stayed within the `/workspace/agents` API fan-out/latency budgets and achieved Recall@5/MRR 1.0 on the bilingual retrieval baseline.
 - [ ] Migration and rollback result.
 - [x] Security readiness and secret scan. Guarded by `scripts/security_production_readiness_smoke.py` plus `scripts/secret_scan_smoke.py`, which scans tracked files for token-like credentials while allowing only narrow fake-token smoke fixtures.
 - [x] License/provenance/SBOM. Guarded by `scripts/license_provenance_smoke.py` and `scripts/pixel_office_visualizer_boundary_smoke.py`; evidence files are `LICENSE`, `docs/THIRD_PARTY_NOTICES.md`, `docs/RELEASE_PROVENANCE.md`, `docs/SBOM_MINIMAL.md`, `docs/PIXEL_OFFICE_REFERENCE_AUDIT.md`, and `docs/PIXEL_OFFICE_ASSET_REPLACEMENT_PLAN.md`.
