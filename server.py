@@ -985,9 +985,11 @@ CREATE TABLE IF NOT EXISTS knowledge_documents (
 
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_owner ON tasks(owner_agent_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_workspace ON tasks(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_runs_task ON runs(task_id);
 CREATE INDEX IF NOT EXISTS idx_runs_agent ON runs(agent_id);
 CREATE INDEX IF NOT EXISTS idx_runs_created ON runs(created_at);
+CREATE INDEX IF NOT EXISTS idx_runs_workspace ON runs(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_run ON tool_calls(run_id);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_risk ON tool_calls(risk_level);
 CREATE INDEX IF NOT EXISTS idx_approvals_decision ON approvals(decision);
@@ -1006,6 +1008,7 @@ CREATE INDEX IF NOT EXISTS idx_sync_events_connector ON sync_events(connector_id
 CREATE INDEX IF NOT EXISTS idx_external_links_internal ON external_object_links(internal_object_type, internal_object_id);
 CREATE INDEX IF NOT EXISTS idx_agent_plans_task ON agent_plans(task_id);
 CREATE INDEX IF NOT EXISTS idx_agent_plans_agent ON agent_plans(agent_id);
+CREATE INDEX IF NOT EXISTS idx_agent_plans_workspace ON agent_plans(workspace_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_plan_evidence_plan ON plan_evidence_manifests(plan_id);
 CREATE INDEX IF NOT EXISTS idx_plan_evidence_run ON plan_evidence_manifests(run_id);
 CREATE INDEX IF NOT EXISTS idx_plan_evidence_agent ON plan_evidence_manifests(agent_id);

@@ -102,6 +102,7 @@ def main() -> int:
         "docs/PARALLEL_PRODUCT_DELIVERY_BRANCH_PLAN.md",
         "docs/CODEX_NEXTJS_HANDOFF_PROMPT.md",
         "docs/STORAGE_BOUNDARY_MAP.md",
+        "docs/POSTGRES_PARITY_CONTRACT.md",
     ]
     required_stack = [
         "server.py",
@@ -175,9 +176,10 @@ def main() -> int:
         check(
             "storage_boundary_surface_exists",
             file_contains("docs/STORAGE_BOUNDARY_MAP.md", "repo_list_workspace_tasks")
+            and file_contains("docs/POSTGRES_PARITY_CONTRACT.md", "postgres_parity_pre_container_v1")
             and file_contains("server.py", "repo_list_workspace_tasks")
             and (ROOT / "scripts" / "storage_boundary_sqlite_smoke.py").exists(),
-            "workspace-scoped task/run/memory helpers and isolated SQLite smoke are present",
+            "workspace-scoped helpers, isolated SQLite smoke, and Postgres pre-container contract are present",
         ),
         check(
             "blocked_generated_or_runtime_artifacts_absent",
@@ -217,7 +219,10 @@ def main() -> int:
             "id": "gate_3",
             "name": "Storage Boundary Before Postgres",
             "status": "next",
-            "verify": ["python3 scripts/storage_boundary_sqlite_smoke.py"],
+            "verify": [
+                "python3 scripts/storage_boundary_sqlite_smoke.py",
+                "python3 scripts/storage_postgres_contract_smoke.py",
+            ],
         },
         {
             "id": "gate_4",
@@ -234,7 +239,11 @@ def main() -> int:
             "id": "gate_5",
             "name": "BYOC / Enterprise Deployment",
             "status": "planned",
-            "verify": ["Postgres ledger acceptance", "backup/restore and signed export checks"],
+            "verify": [
+                "Postgres container parity smoke",
+                "Postgres ledger acceptance",
+                "backup/restore and signed export checks",
+            ],
         },
     ]
 
