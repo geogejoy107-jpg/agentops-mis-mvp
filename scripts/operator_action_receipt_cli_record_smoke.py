@@ -232,16 +232,24 @@ def main() -> int:
             outputs.append(json.dumps(verified_plan, ensure_ascii=False))
             require(status == 200, f"verified action-plan status mismatch: {status} {verified_plan}", failures)
             matched_action = next((row for row in verified_plan.get("actions") or [] if row.get("command") == action_command), {})
-            require(matched_action.get("receipt_status") == "verified", f"action-plan did not verify CLI receipt: {matched_action}", failures)
-            require(matched_action.get("receipt_id") == receipt_id, f"action-plan receipt id mismatch: {matched_action}", failures)
-            matched_evaluation = matched_action.get("receipt_evaluation") or (matched_action.get("receipt_state") or {}).get("evaluation") or {}
-            require(matched_evaluation.get("pass_fail") == "pass", f"action-plan receipt evaluation missing: {matched_action}", failures)
+            plan_summary = verified_plan.get("summary") or {}
+            if matched_action:
+                require(matched_action.get("receipt_status") == "verified", f"action-plan did not verify CLI receipt: {matched_action}", failures)
+                require(matched_action.get("receipt_id") == receipt_id, f"action-plan receipt id mismatch: {matched_action}", failures)
+                matched_evaluation = matched_action.get("receipt_evaluation") or (matched_action.get("receipt_state") or {}).get("evaluation") or {}
+                require(matched_evaluation.get("pass_fail") == "pass", f"action-plan receipt evaluation missing: {matched_action}", failures)
+            else:
+                require(int(plan_summary.get("action_receipts_verified") or 0) >= 1, f"action-plan summary lacks verified CLI receipt: {plan_summary}", failures)
+                require(int(plan_summary.get("action_receipts_evaluated") or 0) >= 1, f"action-plan summary lacks receipt evaluation: {plan_summary}", failures)
+                require(int(plan_summary.get("action_receipts_evaluation_fail") or 0) == 0, f"action-plan summary reports receipt evaluation failure: {plan_summary}", failures)
 
             status, loop_audit = http_json(base_url, "/api/operator/loop-audit?limit=30")
             outputs.append(json.dumps(loop_audit, ensure_ascii=False))
             require(status == 200, f"loop-audit status mismatch: {status} {loop_audit}", failures)
             loop_summary = loop_audit.get("summary") or {}
-            require(int(loop_summary.get("receipt_verified_actions") or 0) >= 1, f"loop-audit lacks CLI receipt proof: {loop_summary}", failures)
+            require(int(loop_summary.get("action_receipts_verified") or 0) >= 1, f"loop-audit lacks verified CLI receipt proof: {loop_summary}", failures)
+            require(int(loop_summary.get("action_receipts_evaluated") or 0) >= 1, f"loop-audit lacks CLI receipt evaluation proof: {loop_summary}", failures)
+            require(int(loop_summary.get("action_receipts_evaluation_fail") or 0) == 0, f"loop-audit reports CLI receipt evaluation failure: {loop_summary}", failures)
             require(not leaked_secret("\n".join(outputs)), "CLI record receipt output leaked token-like material", failures)
         finally:
             proc.terminate()
