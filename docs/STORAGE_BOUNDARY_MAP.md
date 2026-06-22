@@ -29,6 +29,7 @@ human/admin APIs:
 | Tool/runtime/audit write append | `repo_upsert_tool_call`, `repo_insert_runtime_event`, `repo_insert_audit_log` | Tool-call adapter imports, Agent Gateway tool call writes, runtime connector events, audit tamper-chain append | `python3 scripts/storage_boundary_sqlite_smoke.py` |
 | Review decision updates | `repo_update_approval_decision`, `repo_update_memory_review_status`, `repo_update_tool_call_status` | Approval approve/reject, memory approve/reject, approval-driven tool status transitions | `python3 scripts/storage_boundary_sqlite_smoke.py` |
 | Prepared-action exact-resume contract | `repo_upsert_prepared_action`, `repo_update_prepared_action_status`, `repo_list_workspace_prepared_actions`, `repo_get_workspace_prepared_action` | External side-effect preparation ledger, approval binding, exact-resume argument hash/snapshot, consumed result evidence | `python3 scripts/storage_boundary_sqlite_smoke.py` |
+| Notion export prepared-action integration | `notion_prepare_confirmed_export`, `notion_resume_prepared_export`, `post_notion_page` with configurable API base | `POST /api/integrations/notion/export-confirmed`, `POST /api/integrations/notion/export-report` when confirmed | `python3 scripts/notion_export_prepared_action_smoke.py` |
 
 The helpers deliberately keep the existing SQLite row shape and ordering. They
 only centralize workspace filters and detail assembly so a future adapter can
@@ -38,7 +39,7 @@ match behavior before Postgres is introduced.
 
 | Candidate | Why next | Required proof before Postgres |
 | --- | --- | --- |
-| Prepared-action route integration | Prepared-action schema/helpers exist; concrete external connector/runtime write paths still need to create, approve, resume, and consume prepared actions | Connector/runtime smokes that prove no provider call before approval and exact one-shot resume after approval |
+| Remaining prepared-action route integration | Notion export is covered; Dify upload plus live runtime probes and external worker writes still need to create, approve, resume, and consume prepared actions | Connector/runtime smokes that prove no provider call before approval and exact one-shot resume after approval |
 | Postgres adapter contract | SQLite helpers now cover core ledger and evidence writes; next step is a second adapter exercising the same helper contract | SQLite smoke parity plus Postgres container smoke with identical fixtures |
 
 ## Postgres Parity Rule
