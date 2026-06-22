@@ -138,10 +138,15 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
     summary = payload.get("summary") or {}
     require(isinstance(summary.get("ready_adapters") or [], list), f"{label} ready adapters missing: {summary}", failures)
     require(isinstance(summary.get("requires_confirm_run") or [], list), f"{label} confirm-run summary missing: {summary}", failures)
+    require(summary.get("operator_health_score") is None, f"{label} runtime doctor must stay a lightweight first-check, not run full operator health: {summary}", failures)
+    require(summary.get("control_status") == "inspect_handoff", f"{label} control status should point to handoff inspection: {summary}", failures)
     sources = payload.get("sources") or {}
     for key in ["operator_health", "adapter_readiness", "worker_fleet", "handoff"]:
         require(key in sources, f"{label} source {key} missing: {sources}", failures)
         require((sources.get(key) or {}).get("token_omitted") is True, f"{label} source {key} token omission missing: {sources.get(key)}", failures)
+    operator_health_source = sources.get("operator_health") or {}
+    require(operator_health_source.get("status") == "not_sampled", f"{label} operator health must not be sampled inside runtime-doctor: {operator_health_source}", failures)
+    require(operator_health_source.get("score") is None, f"{label} operator health score should be omitted in lightweight doctor: {operator_health_source}", failures)
     auth = payload.get("auth") or {}
     require(auth.get("mode") in {"local_dev_no_token", "global_api_key", "agent_token", "agent_session"}, f"{label} auth mode wrong: {auth}", failures)
     require(auth.get("required_scope") == "tasks:read", f"{label} auth scope wrong: {auth}", failures)

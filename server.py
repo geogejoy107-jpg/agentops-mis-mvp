@@ -21027,22 +21027,16 @@ def operator_runtime_doctor(conn: sqlite3.Connection, headers, qs=None, auth_ctx
         effective_headers["X-AgentOps-Workspace-Id"] = auth_ctx.get("workspace_id") or "local-demo"
         effective_headers["X-AgentOps-Agent-Id"] = auth_ctx.get("agent_id") or ""
 
-    loop_query = {"limit": [str(limit)], "loop_id": [loop_id]} if loop_id else {"limit": [str(limit)]}
-    health = operator_health(conn, effective_headers, loop_query, auth_ctx)
-    readiness = worker_adapter_readiness(conn, refresh=False)
-    fleet = worker_fleet_view(conn)
-    handoff = operator_handoff(conn, effective_headers, loop_query, auth_ctx)
-    health_summary = health.get("summary") or {}
-    readiness_summary = readiness.get("summary") or {}
-    adapters = readiness.get("adapters") or {}
-    fleet_summary = fleet.get("summary") or {}
-    handoff_summary = handoff.get("summary") or {}
-    loop_health = handoff.get("loop_health") or {}
-    workspace_id = health.get("workspace_id") or normalize_workspace_id(
+    workspace_id = normalize_workspace_id(
         (auth_ctx or {}).get("workspace_id")
         or effective_headers.get("X-AgentOps-Workspace-Id")
         or "local-demo"
     )
+    readiness = worker_adapter_readiness(conn, refresh=True)
+    fleet = worker_fleet_view(conn)
+    readiness_summary = readiness.get("summary") or {}
+    adapters = readiness.get("adapters") or {}
+    fleet_summary = fleet.get("summary") or {}
 
     def table_count(table: str, where: str = "", params=()) -> int:
         exists = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
@@ -21114,8 +21108,8 @@ def operator_runtime_doctor(conn: sqlite3.Connection, headers, qs=None, auth_ctx
     add_gate(
         "mis_api",
         "Local MIS API",
-        component_status(health.get("status")),
-        f"operator_health={health.get('status')} score={health.get('score')}",
+        "pass",
+        "runtime-doctor endpoint is responding from the local MIS API",
         commands["operator_health"],
     )
     add_gate(
@@ -21186,10 +21180,9 @@ def operator_runtime_doctor(conn: sqlite3.Connection, headers, qs=None, auth_ctx
     add_gate(
         "handoff_evidence_chain",
         "Handoff and evidence chain",
-        component_status(loop_health.get("status") or handoff.get("status") or evidence_chain_status),
-        f"handoff={handoff.get('status')} loop_health={loop_health.get('status')} evidence_report={handoff_summary.get('evidence_report_status')} agent_plans={evidence_counts['agent_plans']} manifests={evidence_counts['plan_evidence_manifests']} audit_logs={evidence_counts['audit_logs']} receipts={evidence_counts['operator_action_receipts']}",
+        evidence_chain_status,
+        f"agent_plans={evidence_counts['agent_plans']} manifests={evidence_counts['plan_evidence_manifests']} audit_logs={evidence_counts['audit_logs']} receipts={evidence_counts['operator_action_receipts']}",
         commands["handoff"],
-        loop_health_score=loop_health.get("score"),
         evidence_counts=evidence_counts,
     )
     add_gate(
@@ -21218,8 +21211,8 @@ def operator_runtime_doctor(conn: sqlite3.Connection, headers, qs=None, auth_ctx
         "workspace_id": workspace_id,
         "base_url": base_url,
         "summary": {
-            "mis_status": health.get("status"),
-            "operator_health_score": health.get("score"),
+            "mis_status": "ready",
+            "operator_health_score": None,
             "recommended_adapter": recommended_adapter,
             "ready_adapters": readiness_summary.get("ready_adapters") or [],
             "live_ready_adapters": readiness_summary.get("live_ready_adapters") or [],
@@ -21228,8 +21221,8 @@ def operator_runtime_doctor(conn: sqlite3.Connection, headers, qs=None, auth_ctx
             "remote_worker_count": fleet_summary.get("remote_worker_count", 0),
             "stale_remote_enrollments": fleet_summary.get("stale_remote_enrollments", 0),
             "never_seen_remote_enrollments": fleet_summary.get("never_seen_remote_enrollments", 0),
-            "control_status": health_summary.get("control_status"),
-            "control_mode": health_summary.get("control_mode"),
+            "control_status": "inspect_handoff",
+            "control_mode": "copy_only",
             "evidence_chain_status": evidence_chain_status,
             "blocked_gates": [gate["id"] for gate in blocked],
             "attention_gates": [gate["id"] for gate in attention],
@@ -21238,9 +21231,12 @@ def operator_runtime_doctor(conn: sqlite3.Connection, headers, qs=None, auth_ctx
         "commands": commands,
         "sources": {
             "operator_health": {
-                "status": health.get("status"),
-                "score": health.get("score"),
-                "summary": health_summary,
+                "status": "not_sampled",
+                "score": None,
+                "summary": {
+                    "reason": "runtime_doctor_is_lightweight_first_check; run agentops operator health for the full aggregate health model",
+                    "command": commands["operator_health"],
+                },
                 "token_omitted": True,
             },
             "adapter_readiness": {
@@ -21254,12 +21250,15 @@ def operator_runtime_doctor(conn: sqlite3.Connection, headers, qs=None, auth_ctx
                 "token_omitted": True,
             },
             "handoff": {
-                "status": handoff.get("status"),
-                "summary": {**handoff_summary, "evidence_counts": evidence_counts},
+                "status": evidence_chain_status,
+                "summary": {
+                    "evidence_counts": evidence_counts,
+                    "command": commands["handoff"],
+                },
                 "loop_health": {
-                    "status": loop_health.get("status"),
-                    "score": loop_health.get("score"),
-                    "next_action": loop_health.get("next_action"),
+                    "status": evidence_chain_status,
+                    "score": None,
+                    "next_action": commands["handoff"],
                     "token_omitted": True,
                 },
                 "token_omitted": True,
@@ -21267,7 +21266,7 @@ def operator_runtime_doctor(conn: sqlite3.Connection, headers, qs=None, auth_ctx
         },
         "contract": "read-only runtime doctor for local MIS, Hermes, OpenClaw, Codex supervision, remote Agent fleet, launch packet, handoff, confirm-run walls, prepared-action walls, and evidence commands; it never starts runtimes, executes tasks, or mutates ledgers",
         "auth": {
-            "mode": (auth_ctx or {}).get("mode") or (health.get("auth") or {}).get("mode") or "unknown",
+            "mode": (auth_ctx or {}).get("mode") or "unknown",
             "required_scope": "tasks:read",
             "workspace_id": workspace_id,
             "agent_id": (auth_ctx or {}).get("agent_id") or effective_headers.get("X-AgentOps-Agent-Id") or None,
