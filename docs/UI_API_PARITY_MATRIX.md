@@ -65,8 +65,12 @@ route retirement:
   `python3 scripts/ui_task_run_route_parity_smoke.py`
   (`ui_task_run_route_parity_v1`) checks Next list links to detail routes and
   compares direct MIS API task/run list/detail/graph read models with the Next
-  `/api/mis/*` proxy. Retirement still needs Vite detail browser snapshots and
-  a route naming decision for `/admin/*` to `/workspace/*`.
+  `/api/mis/*` proxy. `python3 scripts/vite_playwright_snapshot_smoke.py`
+  (`vite_browser_snapshot_parity_v1`) now also opens seeded Vite task/run detail
+  routes and checks the related task/run IDs plus evidence sections. Retirement
+  still needs a route naming/navigation decision for `/admin/tasks/:id` to
+  `/workspace/tasks/:taskId`, `/admin/runs` to `/workspace/runs`, and
+  `/admin/runs/:id` to `/workspace/runs/:runId`.
 
 ## Verification Stack
 

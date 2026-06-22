@@ -177,8 +177,15 @@ def main() -> int:
             and file_contains("ui/start-building-app/vite.config.ts", "VITE_AGENTOPS_PROXY_TARGET")
             and file_contains("scripts/vite_playwright_snapshot_smoke.py", "vite_browser_snapshot_parity_v1")
             and file_contains("scripts/vite_playwright_snapshot_smoke.py", "/mis-api/dashboard/metrics")
+            and file_contains("scripts/vite_playwright_snapshot_smoke.py", "snapshot_vite_detail_routes")
+            and file_contains("scripts/vite_playwright_snapshot_smoke.py", "detail_snapshots = snapshot_vite_detail_routes")
+            and file_contains("scripts/vite_playwright_snapshot_smoke.py", "snapshots + detail_snapshots")
+            and file_contains("scripts/vite_playwright_snapshot_smoke.py", '"detail_task_id"')
+            and file_contains("scripts/vite_playwright_snapshot_smoke.py", '"detail_run_id"')
+            and file_contains("scripts/vite_playwright_snapshot_smoke.py", "/admin/tasks/")
+            and file_contains("scripts/vite_playwright_snapshot_smoke.py", "/admin/runs/")
             and (ROOT / "scripts" / "vite_playwright_snapshot_smoke.py").exists(),
-            "canonical Vite UI browser snapshot smoke and configurable MIS proxy target are present",
+            "canonical Vite UI browser snapshot smoke covers list/detail routes and configurable MIS proxy target is present",
         ),
         check(
             "ui_api_parity_matrix_surface_exists",

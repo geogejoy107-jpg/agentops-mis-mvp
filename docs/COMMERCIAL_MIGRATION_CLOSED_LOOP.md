@@ -191,8 +191,11 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
 
   The Vite smoke starts isolated MIS API and Vite dev servers, captures
   canonical Vite route snapshots for workspace, Pixel Office, tasks, agents,
-  approvals, memory, reports, run ledger, audit, and customer project report,
-  verifies `/mis-api/*` proxy reads, and checks for token-like leakage.
+  approvals, memory, reports, run ledger, Vite `/admin/tasks/:id` task detail,
+  Vite `/admin/runs/:id` run detail, audit, and customer project report,
+  verifies `/mis-api/*` proxy reads, and checks for token-like leakage. These
+  detail snapshots are evidence for the existing Vite routes; they are not a
+  retirement or rename decision.
 
   The Next.js smoke starts isolated MIS API and Next.js servers, captures route
   snapshots, approves one pending approval through the Next.js approvals page,

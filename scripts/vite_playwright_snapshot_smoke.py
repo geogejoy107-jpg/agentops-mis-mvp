@@ -100,6 +100,75 @@ def snapshot_route(base_url: str, path: str, expected: list[Expectation], env: d
     }
 
 
+def snapshot_text(env: dict[str, str], path: str) -> str:
+    snapshot = playwright(env, "snapshot")
+    require(snapshot.returncode == 0, f"Playwright snapshot failed for {path}: {snapshot.stderr or snapshot.stdout}")
+    text = snapshot.stdout + snapshot.stderr
+    require(not leaked_secret(text), f"Vite snapshot for {path} leaked token-like material")
+    return text
+
+
+def wait_for_snapshot_text(env: dict[str, str], path: str, predicate, description: str, timeout_sec: int = 12) -> str:
+    deadline = time.time() + timeout_sec
+    last_text = ""
+    while time.time() < deadline:
+        last_text = snapshot_text(env, path)
+        if predicate(last_text):
+            return last_text
+        time.sleep(0.5)
+    raise AssertionError(f"Timed out waiting for {description}; last Vite snapshot had {len(last_text)} chars")
+
+
+def find_first_run_with_task(rows: object) -> dict:
+    require(isinstance(rows, list), f"Expected run list payload, got {type(rows).__name__}")
+    for row in rows:
+        if isinstance(row, dict) and row.get("run_id") and row.get("task_id"):
+            return row
+    raise AssertionError("Seeded run list did not contain a run with task_id")
+
+
+def snapshot_vite_detail_routes(base_url: str, run: dict, env: dict[str, str]) -> list[dict]:
+    run_id = str(run.get("run_id") or "")
+    task_id = str(run.get("task_id") or "")
+    require(bool(run_id and task_id), f"Cannot snapshot detail routes without task/run ids: {run!r}")
+
+    details: list[dict] = []
+    task_path = f"/admin/tasks/{task_id}"
+    task_goto = playwright(env, "goto", base_url.rstrip("/") + task_path)
+    require(task_goto.returncode == 0, f"Playwright goto failed for {task_path}: {task_goto.stderr or task_goto.stdout}")
+    task_text = wait_for_snapshot_text(
+        env,
+        task_path,
+        lambda text: task_id in text and run_id in text and (("Related Runs" in text) or ("相关运行" in text)),
+        "Vite task detail to render related run evidence",
+    )
+    task_missing = missing_expectations(task_text, [("Acceptance Criteria", "验收标准"), ("Related Runs", "相关运行"), task_id, run_id])
+    require(not task_missing, f"Vite task detail snapshot missed expected text: {task_missing}")
+    details.append({
+        "path": task_path,
+        "expected": ["Acceptance Criteria / 验收标准", "Related Runs / 相关运行", task_id, run_id],
+        "snapshot_chars": len(task_text),
+    })
+
+    run_path = f"/admin/runs/{run_id}"
+    run_goto = playwright(env, "goto", base_url.rstrip("/") + run_path)
+    require(run_goto.returncode == 0, f"Playwright goto failed for {run_path}: {run_goto.stderr or run_goto.stdout}")
+    run_text = wait_for_snapshot_text(
+        env,
+        run_path,
+        lambda text: run_id in text and task_id in text and "Tool Calls" in text,
+        "Vite run detail to render ledger evidence",
+    )
+    run_missing = missing_expectations(run_text, ["Tool Calls", "Cost", "Input Tokens", task_id, run_id])
+    require(not run_missing, f"Vite run detail snapshot missed expected text: {run_missing}")
+    details.append({
+        "path": run_path,
+        "expected": ["Tool Calls", "Cost", "Input Tokens", task_id, run_id],
+        "snapshot_chars": len(run_text),
+    })
+    return details
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run Vite Playwright snapshot smoke.")
     parser.add_argument("--api-port", type=int, default=0)
@@ -148,6 +217,8 @@ def main() -> int:
 
             proxy_metrics = http_json(f"{vite_base}/mis-api/dashboard/metrics")
             require(isinstance(proxy_metrics, dict), f"Vite proxy metrics returned non-object: {proxy_metrics!r}")
+            proxy_runs = http_json(f"{vite_base}/mis-api/runs")
+            detail_run = find_first_run_with_task(proxy_runs)
 
             pw_env = os.environ.copy()
             pw_env["PLAYWRIGHT_CLI_SESSION"] = session
@@ -164,11 +235,14 @@ def main() -> int:
                 ),
             ]
             snapshots = [snapshot_route(vite_base, path, expected, pw_env) for path, expected in routes]
+            detail_snapshots = snapshot_vite_detail_routes(vite_base, detail_run, pw_env)
             proxy_checks = {
                 "agents": len(http_json(f"{vite_base}/mis-api/agents")),
                 "tasks": len(http_json(f"{vite_base}/mis-api/tasks")),
                 "approvals": len(http_json(f"{vite_base}/mis-api/approvals")),
                 "memories": len(http_json(f"{vite_base}/mis-api/memories")),
+                "detail_task_id": detail_run.get("task_id"),
+                "detail_run_id": detail_run.get("run_id"),
                 "customer_project_fixture": project_id,
                 "metrics_agents_total": proxy_metrics.get("agents_total"),
             }
@@ -182,7 +256,7 @@ def main() -> int:
                 "contract": "vite_browser_snapshot_parity_v1",
                 "api_base": api_base,
                 "vite_base": vite_base,
-                "routes": snapshots,
+                "routes": snapshots + detail_snapshots,
                 "proxy_checks": proxy_checks,
                 "secret_leaked": False,
             }

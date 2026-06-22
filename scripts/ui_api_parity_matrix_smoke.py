@@ -111,6 +111,13 @@ def source_text_for(paths: list[str]) -> str:
     return "\n".join(chunks)
 
 
+def assert_entry_routes(entry: dict | None, entry_id: str, vite_routes: list[str], next_routes: list[str]) -> None:
+    require(isinstance(entry, dict), f"missing matrix entry for {entry_id}")
+    require(entry.get("vite_routes") == vite_routes, f"{entry_id}.vite_routes changed; expected {vite_routes}")
+    require(entry.get("next_routes") == next_routes, f"{entry_id}.next_routes changed; expected {next_routes}")
+    require(entry.get("retirement_allowed") is False, f"{entry_id} must stay blocked from retirement until a naming/navigation decision exists")
+
+
 def main() -> int:
     matrix = load_matrix()
     require(matrix.get("contract_id") == CONTRACT_ID, f"matrix contract_id must be {CONTRACT_ID}")
@@ -122,6 +129,7 @@ def main() -> int:
     require(isinstance(entries, list) and entries, "matrix entries must be a non-empty list")
 
     ids: set[str] = set()
+    entries_by_id: dict[str, dict] = {}
     matrix_vite_routes: set[str] = set()
     matrix_next_routes: set[str] = set()
     gate4_required: set[str] = set()
@@ -133,6 +141,7 @@ def main() -> int:
         require(entry_id, "matrix entry is missing id")
         require(entry_id not in ids, f"duplicate matrix id: {entry_id}")
         ids.add(entry_id)
+        entries_by_id[entry_id] = entry
 
         status = str(entry.get("status") or "")
         require(status in STATUS_VALUES, f"{entry_id} has invalid status: {status}")
@@ -184,6 +193,15 @@ def main() -> int:
 
     require(not retired, f"no Vite routes may be retired in this gate slice; found {retired}")
     require(GATE4_REQUIRED_IDS.issubset(gate4_required), f"missing Gate 4 required ids: {sorted(GATE4_REQUIRED_IDS - gate4_required)}")
+    vite_smoke_text = read_text(ROOT / "scripts" / "vite_playwright_snapshot_smoke.py")
+    require("snapshot_vite_detail_routes" in vite_smoke_text, "Vite browser smoke must include task/run detail snapshot coverage")
+    require("/admin/tasks/" in vite_smoke_text and "/admin/runs/" in vite_smoke_text, "Vite browser smoke must navigate task/run admin detail routes")
+    for detail_id in ("task_detail", "run_detail"):
+        evidence = entries_by_id.get(detail_id, {}).get("evidence_commands") or []
+        require("python3 scripts/vite_playwright_snapshot_smoke.py" in evidence, f"{detail_id} must include Vite browser detail snapshot evidence")
+    assert_entry_routes(entries_by_id.get("task_detail"), "task_detail", ["/admin/tasks/:id"], ["/workspace/tasks/:taskId"])
+    assert_entry_routes(entries_by_id.get("run_ledger"), "run_ledger", ["/admin/runs"], ["/workspace/runs"])
+    assert_entry_routes(entries_by_id.get("run_detail"), "run_detail", ["/admin/runs/:id"], ["/workspace/runs/:runId"])
 
     vite_routes = actual_vite_routes()
     next_routes = actual_next_routes()

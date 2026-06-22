@@ -170,11 +170,12 @@
       ],
       "evidence_commands": [
         "python3 scripts/ui_task_run_route_parity_smoke.py",
+        "python3 scripts/vite_playwright_snapshot_smoke.py",
         "python3 scripts/nextjs_playwright_snapshot_smoke.py",
         "python3 scripts/nextjs_parity_smoke.py"
       ],
       "retirement_allowed": false,
-      "retirement_gate": "Task detail API/proxy diff and related-run links have route-level evidence; need Vite detail browser snapshot before retiring the admin detail route."
+      "retirement_gate": "Task detail API/proxy diff, related-run links, and Vite detail browser snapshot have route-level evidence; need /admin/tasks/:id to /workspace/tasks/:taskId naming/navigation decision before retiring the admin detail route."
     },
     {
       "id": "worker_console",
@@ -441,11 +442,12 @@
       ],
       "evidence_commands": [
         "python3 scripts/ui_task_run_route_parity_smoke.py",
+        "python3 scripts/vite_playwright_snapshot_smoke.py",
         "python3 scripts/nextjs_playwright_snapshot_smoke.py",
         "python3 scripts/nextjs_parity_smoke.py"
       ],
       "retirement_allowed": false,
-      "retirement_gate": "Run detail API/proxy diff has route-level evidence; need Vite detail browser snapshot and route naming decision before retiring the admin detail route."
+      "retirement_gate": "Run detail API/proxy diff and Vite detail browser snapshot have route-level evidence; need /admin/runs/:id to /workspace/runs/:runId naming/navigation decision before retiring the admin detail route."
     },
     {
       "id": "tool_calls",
