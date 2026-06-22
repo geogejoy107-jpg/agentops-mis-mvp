@@ -15648,6 +15648,97 @@ def operator_loop_audit(conn: sqlite3.Connection, headers, qs=None) -> dict:
     }
 
 
+def operator_handoff(conn: sqlite3.Connection, headers, qs=None) -> dict:
+    qs = qs or {}
+    limit = min(max(int((qs.get("limit") or ["12"])[0]), 1), 30)
+    loop_id = redact_text((qs.get("loop_id") or [""])[0], 120)
+    loop_audit = operator_loop_audit(conn, headers, {"limit": [str(limit)], "loop_id": [loop_id]} if loop_id else {"limit": [str(limit)]})
+    action_plan = operator_action_plan(conn, headers, {"limit": [str(limit)]})
+    action_package = loop_audit.get("action_package") or {}
+    action_package_items = action_package.get("items") or []
+    action_plan_actions = action_plan.get("actions") or []
+    receipt_coverage = action_plan.get("receipt_coverage") or {}
+    loop_record = loop_audit.get("loop_record") or {}
+    action_receipts = action_plan.get("action_receipts") or {}
+    handoff_commands: list[str] = []
+    for item in action_package_items:
+        for key in ["action_command", "verify_command", "receipt_record_command", "receipt_verify_record_command"]:
+            command = str(item.get(key) or "").strip()
+            if command and command not in handoff_commands:
+                handoff_commands.append(command)
+    for action in action_plan_actions:
+        for key in ["command", "verify_command", "receipt_record_command", "receipt_verify_record_command"]:
+            command = str(action.get(key) or "").strip()
+            if command and command not in handoff_commands:
+                handoff_commands.append(command)
+            if len(handoff_commands) >= 20:
+                break
+        if len(handoff_commands) >= 20:
+            break
+    return {
+        "provider": "agentops-operator",
+        "operation": "operator_handoff",
+        "status": loop_audit.get("status") or action_plan.get("status") or "unknown",
+        "workspace_id": loop_audit.get("workspace_id") or action_plan.get("workspace_id") or normalize_workspace_id(headers.get("X-AgentOps-Workspace-Id") or "local-demo"),
+        "loop_id": loop_audit.get("loop_id"),
+        "summary": {
+            "loop_status": loop_audit.get("status"),
+            "action_plan_status": action_plan.get("status"),
+            "loop_package_items": len(action_package_items),
+            "operator_actions": len(action_plan_actions),
+            "receipt_required": receipt_coverage.get("required", 0),
+            "receipt_verified": receipt_coverage.get("verified", 0),
+            "receipt_missing": receipt_coverage.get("missing", 0),
+            "receipt_stale": receipt_coverage.get("stale", 0),
+            "loop_record_status": loop_record.get("status"),
+            "loop_record_candidates": loop_record.get("candidate_count", 0),
+            "loop_record_approved": loop_record.get("approved_count", 0),
+            "loop_record_pending_approvals": loop_record.get("pending_approval_count", 0),
+        },
+        "work_order": {
+            "method": loop_audit.get("method"),
+            "action_package": action_package,
+            "next_actions": loop_audit.get("next_actions") or [],
+            "top_operator_actions": action_plan_actions[: min(limit, 8)],
+            "commands": handoff_commands[:20],
+            "token_omitted": True,
+        },
+        "receipt_state": {
+            "coverage": receipt_coverage,
+            "recent": (action_receipts.get("receipts") or [])[: min(limit, 8)],
+            "summary": action_receipts.get("summary") or {},
+            "token_omitted": True,
+        },
+        "review_state": {
+            "loop_record": loop_record,
+            "token_omitted": True,
+        },
+        "sources": {
+            "loop_audit": {
+                "status": loop_audit.get("status"),
+                "summary": loop_audit.get("summary") or {},
+                "source_status": loop_audit.get("source_status") or {},
+            },
+            "action_plan": {
+                "status": action_plan.get("status"),
+                "summary": action_plan.get("summary") or {},
+                "source_status": action_plan.get("source_status") or {},
+            },
+        },
+        "contract": "read-only operator handoff; combines loop work order, action queue receipts, and review state without executing commands or mutating ledgers",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+
+
 def request_base_url(headers=None) -> str | None:
     host = headers.get("Host") if headers else ""
     return f"http://{host}" if host else None
@@ -16662,6 +16753,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(payload)
             if path == "/api/operator/loop-audit":
                 payload = operator_loop_audit(conn, self.headers, qs)
+                conn.rollback()
+                return self.send_json(payload)
+            if path == "/api/operator/handoff":
+                payload = operator_handoff(conn, self.headers, qs)
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/operator/action-receipts":

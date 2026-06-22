@@ -1447,6 +1447,58 @@ export interface OperatorLoopActionPackagePayload {
   token_omitted?: boolean;
 }
 
+export interface OperatorHandoffPayload {
+  provider: string;
+  operation: string;
+  status: string;
+  workspace_id: string;
+  loop_id?: string | null;
+  summary: {
+    loop_status?: string;
+    action_plan_status?: string;
+    loop_package_items: number;
+    operator_actions: number;
+    receipt_required: number;
+    receipt_verified: number;
+    receipt_missing: number;
+    receipt_stale: number;
+    loop_record_status?: string;
+    loop_record_candidates: number;
+    loop_record_approved: number;
+    loop_record_pending_approvals: number;
+  };
+  work_order: {
+    method?: string;
+    action_package?: OperatorLoopActionPackagePayload;
+    next_actions: string[];
+    top_operator_actions: OperatorActionPlanItem[];
+    commands: string[];
+    token_omitted?: boolean;
+  };
+  receipt_state: {
+    coverage?: OperatorActionPlanPayload["receipt_coverage"];
+    recent: OperatorActionReceipt[];
+    summary: Record<string, number>;
+    token_omitted?: boolean;
+  };
+  review_state: {
+    loop_record?: OperatorLoopRecordPayload;
+    token_omitted?: boolean;
+  };
+  sources?: Record<string, unknown>;
+  contract?: string;
+  safety: {
+    read_only: boolean;
+    ledger_mutated: boolean;
+    live_execution_performed: boolean;
+    raw_prompt_omitted: boolean;
+    raw_response_omitted: boolean;
+    token_omitted: boolean;
+  };
+  token_omitted?: boolean;
+  live_execution_performed?: boolean;
+}
+
 export interface EvaluationCaseCandidate {
   case_id: string;
   workspace_id: string;
@@ -3956,6 +4008,50 @@ export async function loadOperatorActionPlan(limit = 12): Promise<OperatorAction
   };
 }
 
+function normalizeOperatorLoopActionPackage(rawValue: unknown, loopId = ""): OperatorLoopActionPackagePayload {
+  const actionPackageRaw = typeof rawValue === "object" && rawValue !== null ? rawValue as Record<string, unknown> : {};
+  const actionPackageSummaryRaw = typeof actionPackageRaw.summary === "object" && actionPackageRaw.summary !== null ? actionPackageRaw.summary as Record<string, unknown> : {};
+  const actionPackageSafetyRaw = typeof actionPackageRaw.safety === "object" && actionPackageRaw.safety !== null ? actionPackageRaw.safety as Record<string, unknown> : {};
+  return {
+    operation: String(actionPackageRaw.operation || "loop_action_package"),
+    status: String(actionPackageRaw.status || "empty"),
+    loop_id: actionPackageRaw.loop_id ? String(actionPackageRaw.loop_id) : loopId || null,
+    method: actionPackageRaw.method ? String(actionPackageRaw.method) : undefined,
+    verify_command: actionPackageRaw.verify_command ? String(actionPackageRaw.verify_command) : undefined,
+    items: asArray<Record<string, unknown>>(actionPackageRaw.items).map((item) => ({
+      package_id: String(item.package_id || ""),
+      loop_id: item.loop_id ? String(item.loop_id) : null,
+      gate_id: String(item.gate_id || ""),
+      gate_label: String(item.gate_label || item.gate_id || ""),
+      gate_status: String(item.gate_status || "attention"),
+      source: item.source ? String(item.source) : undefined,
+      action_id: item.action_id ? String(item.action_id) : undefined,
+      action_signature: item.action_signature ? String(item.action_signature) : undefined,
+      action_command: String(item.action_command || ""),
+      verify_command: String(item.verify_command || ""),
+      receipt_record_command: String(item.receipt_record_command || ""),
+      receipt_verify_record_command: String(item.receipt_verify_record_command || ""),
+      message: item.message ? String(item.message) : undefined,
+      evidence: typeof item.evidence === "object" && item.evidence !== null ? item.evidence as Record<string, unknown> : undefined,
+      token_omitted: item.token_omitted === undefined ? undefined : boolValue(item.token_omitted),
+    })).filter((item) => item.package_id || item.action_command),
+    summary: {
+      items: numberValue(actionPackageSummaryRaw.items, 0),
+      blocked: numberValue(actionPackageSummaryRaw.blocked, 0),
+      attention: numberValue(actionPackageSummaryRaw.attention, 0),
+      loop_scoped: boolValue(actionPackageSummaryRaw.loop_scoped),
+    },
+    contract: actionPackageRaw.contract ? String(actionPackageRaw.contract) : undefined,
+    safety: {
+      read_only: actionPackageSafetyRaw.read_only === undefined ? undefined : boolValue(actionPackageSafetyRaw.read_only),
+      ledger_mutated: actionPackageSafetyRaw.ledger_mutated === undefined ? undefined : boolValue(actionPackageSafetyRaw.ledger_mutated),
+      live_execution_performed: actionPackageSafetyRaw.live_execution_performed === undefined ? undefined : boolValue(actionPackageSafetyRaw.live_execution_performed),
+      token_omitted: actionPackageSafetyRaw.token_omitted === undefined ? undefined : boolValue(actionPackageSafetyRaw.token_omitted),
+    },
+    token_omitted: actionPackageRaw.token_omitted === undefined ? undefined : boolValue(actionPackageRaw.token_omitted),
+  };
+}
+
 export async function loadOperatorLoopAudit(limit = 12, loopId = ""): Promise<OperatorLoopAuditPayload> {
   const params = new URLSearchParams({ limit: String(limit) });
   if (loopId) params.set("loop_id", loopId);
@@ -3984,9 +4080,6 @@ export async function loadOperatorLoopAudit(limit = 12, loopId = ""): Promise<Op
   const summaryRaw = typeof raw.summary === "object" && raw.summary !== null ? raw.summary as Record<string, unknown> : {};
   const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
   const loopRecordRaw = typeof raw.loop_record === "object" && raw.loop_record !== null ? raw.loop_record as Record<string, unknown> : {};
-  const actionPackageRaw = typeof raw.action_package === "object" && raw.action_package !== null ? raw.action_package as Record<string, unknown> : {};
-  const actionPackageSummaryRaw = typeof actionPackageRaw.summary === "object" && actionPackageRaw.summary !== null ? actionPackageRaw.summary as Record<string, unknown> : {};
-  const actionPackageSafetyRaw = typeof actionPackageRaw.safety === "object" && actionPackageRaw.safety !== null ? actionPackageRaw.safety as Record<string, unknown> : {};
   return {
     provider: String(raw.provider || "agentops-operator"),
     operation: String(raw.operation || "loop_audit"),
@@ -4024,44 +4117,7 @@ export async function loadOperatorLoopAudit(limit = 12, loopId = ""): Promise<Op
       source: String(step.source || ""),
       token_omitted: step.token_omitted === undefined ? undefined : boolValue(step.token_omitted),
     })).filter((step) => step.id),
-    action_package: {
-      operation: String(actionPackageRaw.operation || "loop_action_package"),
-      status: String(actionPackageRaw.status || "empty"),
-      loop_id: actionPackageRaw.loop_id ? String(actionPackageRaw.loop_id) : null,
-      method: actionPackageRaw.method ? String(actionPackageRaw.method) : undefined,
-      verify_command: actionPackageRaw.verify_command ? String(actionPackageRaw.verify_command) : undefined,
-      items: asArray<Record<string, unknown>>(actionPackageRaw.items).map((item) => ({
-        package_id: String(item.package_id || ""),
-        loop_id: item.loop_id ? String(item.loop_id) : null,
-        gate_id: String(item.gate_id || ""),
-        gate_label: String(item.gate_label || item.gate_id || ""),
-        gate_status: String(item.gate_status || "attention"),
-        source: item.source ? String(item.source) : undefined,
-        action_id: item.action_id ? String(item.action_id) : undefined,
-        action_signature: item.action_signature ? String(item.action_signature) : undefined,
-        action_command: String(item.action_command || ""),
-        verify_command: String(item.verify_command || ""),
-        receipt_record_command: String(item.receipt_record_command || ""),
-        receipt_verify_record_command: String(item.receipt_verify_record_command || ""),
-        message: item.message ? String(item.message) : undefined,
-        evidence: typeof item.evidence === "object" && item.evidence !== null ? item.evidence as Record<string, unknown> : undefined,
-        token_omitted: item.token_omitted === undefined ? undefined : boolValue(item.token_omitted),
-      })).filter((item) => item.package_id || item.action_command),
-      summary: {
-        items: numberValue(actionPackageSummaryRaw.items, 0),
-        blocked: numberValue(actionPackageSummaryRaw.blocked, 0),
-        attention: numberValue(actionPackageSummaryRaw.attention, 0),
-        loop_scoped: boolValue(actionPackageSummaryRaw.loop_scoped),
-      },
-      contract: actionPackageRaw.contract ? String(actionPackageRaw.contract) : undefined,
-      safety: {
-        read_only: actionPackageSafetyRaw.read_only === undefined ? undefined : boolValue(actionPackageSafetyRaw.read_only),
-        ledger_mutated: actionPackageSafetyRaw.ledger_mutated === undefined ? undefined : boolValue(actionPackageSafetyRaw.ledger_mutated),
-        live_execution_performed: actionPackageSafetyRaw.live_execution_performed === undefined ? undefined : boolValue(actionPackageSafetyRaw.live_execution_performed),
-        token_omitted: actionPackageSafetyRaw.token_omitted === undefined ? undefined : boolValue(actionPackageSafetyRaw.token_omitted),
-      },
-      token_omitted: actionPackageRaw.token_omitted === undefined ? undefined : boolValue(actionPackageRaw.token_omitted),
-    },
+    action_package: normalizeOperatorLoopActionPackage(raw.action_package, loopId),
     next_actions: asArray<unknown>(raw.next_actions).map(String).filter(Boolean),
     source_status: typeof raw.source_status === "object" && raw.source_status !== null ? raw.source_status as Record<string, string | undefined> : {},
     sources: typeof raw.sources === "object" && raw.sources !== null ? raw.sources as Record<string, unknown> : undefined,
@@ -4121,6 +4177,164 @@ export async function loadOperatorLoopAudit(limit = 12, loopId = ""): Promise<Op
       token_omitted: loopRecordRaw.token_omitted === undefined ? undefined : boolValue(loopRecordRaw.token_omitted),
     },
     loop_readback: typeof raw.loop_readback === "object" && raw.loop_readback !== null ? raw.loop_readback as Record<string, unknown> : undefined,
+    safety: {
+      read_only: boolValue(safetyRaw.read_only),
+      ledger_mutated: boolValue(safetyRaw.ledger_mutated),
+      live_execution_performed: boolValue(safetyRaw.live_execution_performed),
+      raw_prompt_omitted: boolValue(safetyRaw.raw_prompt_omitted),
+      raw_response_omitted: boolValue(safetyRaw.raw_response_omitted),
+      token_omitted: boolValue(safetyRaw.token_omitted),
+    },
+    token_omitted: boolValue(raw.token_omitted),
+    live_execution_performed: boolValue(raw.live_execution_performed),
+  };
+}
+
+export async function loadOperatorHandoff(limit = 12, loopId = ""): Promise<OperatorHandoffPayload> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (loopId) params.set("loop_id", loopId);
+  const raw = await optionalApiJson<Record<string, unknown>>(`/operator/handoff?${params.toString()}`, {
+    provider: "agentops-operator",
+    operation: "operator_handoff",
+    status: "unavailable",
+    workspace_id: "local-demo",
+    loop_id: loopId || null,
+    summary: {},
+    work_order: {
+      method: "READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD",
+      action_package: {},
+      next_actions: [],
+      top_operator_actions: [],
+      commands: [],
+      token_omitted: true,
+    },
+    receipt_state: {
+      coverage: {},
+      recent: [],
+      summary: {},
+      token_omitted: true,
+    },
+    review_state: {
+      loop_record: {},
+      token_omitted: true,
+    },
+    sources: {},
+    safety: {
+      read_only: true,
+      ledger_mutated: false,
+      live_execution_performed: false,
+      raw_prompt_omitted: true,
+      raw_response_omitted: true,
+      token_omitted: true,
+    },
+    token_omitted: true,
+    live_execution_performed: false,
+  });
+  const summaryRaw = typeof raw.summary === "object" && raw.summary !== null ? raw.summary as Record<string, unknown> : {};
+  const workOrderRaw = typeof raw.work_order === "object" && raw.work_order !== null ? raw.work_order as Record<string, unknown> : {};
+  const receiptStateRaw = typeof raw.receipt_state === "object" && raw.receipt_state !== null ? raw.receipt_state as Record<string, unknown> : {};
+  const receiptCoverageRaw = typeof receiptStateRaw.coverage === "object" && receiptStateRaw.coverage !== null ? receiptStateRaw.coverage as Record<string, unknown> : {};
+  const receiptSummaryRaw = typeof receiptStateRaw.summary === "object" && receiptStateRaw.summary !== null ? receiptStateRaw.summary as Record<string, unknown> : {};
+  const reviewStateRaw = typeof raw.review_state === "object" && raw.review_state !== null ? raw.review_state as Record<string, unknown> : {};
+  const loopRecordRaw = typeof reviewStateRaw.loop_record === "object" && reviewStateRaw.loop_record !== null ? reviewStateRaw.loop_record as Record<string, unknown> : {};
+  const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
+  return {
+    provider: String(raw.provider || "agentops-operator"),
+    operation: String(raw.operation || "operator_handoff"),
+    status: String(raw.status || "unknown"),
+    workspace_id: String(raw.workspace_id || "local-demo"),
+    loop_id: raw.loop_id ? String(raw.loop_id) : null,
+    summary: {
+      loop_status: summaryRaw.loop_status ? String(summaryRaw.loop_status) : undefined,
+      action_plan_status: summaryRaw.action_plan_status ? String(summaryRaw.action_plan_status) : undefined,
+      loop_package_items: numberValue(summaryRaw.loop_package_items, 0),
+      operator_actions: numberValue(summaryRaw.operator_actions, 0),
+      receipt_required: numberValue(summaryRaw.receipt_required, 0),
+      receipt_verified: numberValue(summaryRaw.receipt_verified, 0),
+      receipt_missing: numberValue(summaryRaw.receipt_missing, 0),
+      receipt_stale: numberValue(summaryRaw.receipt_stale, 0),
+      loop_record_status: summaryRaw.loop_record_status ? String(summaryRaw.loop_record_status) : undefined,
+      loop_record_candidates: numberValue(summaryRaw.loop_record_candidates, 0),
+      loop_record_approved: numberValue(summaryRaw.loop_record_approved, 0),
+      loop_record_pending_approvals: numberValue(summaryRaw.loop_record_pending_approvals, 0),
+    },
+    work_order: {
+      method: workOrderRaw.method ? String(workOrderRaw.method) : undefined,
+      action_package: normalizeOperatorLoopActionPackage(workOrderRaw.action_package, loopId),
+      next_actions: asArray<unknown>(workOrderRaw.next_actions).map(String).filter(Boolean),
+      top_operator_actions: asArray<Record<string, unknown>>(workOrderRaw.top_operator_actions).map((item) => ({
+        action_id: String(item.action_id || item.command || item.title || ""),
+        action_signature: item.action_signature ? String(item.action_signature) : null,
+        lane: String(item.lane || "operator"),
+        severity: String(item.severity || "attention"),
+        priority: numberValue(item.priority, 0),
+        base_priority: numberValue(item.base_priority, numberValue(item.priority, 0)),
+        receipt_priority_boost: numberValue(item.receipt_priority_boost, 0),
+        title: String(item.title || item.command || "Operator action"),
+        summary: item.summary ? String(item.summary) : undefined,
+        command: String(item.command || ""),
+        verify_command: item.verify_command ? String(item.verify_command) : null,
+        receipt_record_command: item.receipt_record_command ? String(item.receipt_record_command) : null,
+        receipt_record_confirm_command: item.receipt_record_confirm_command ? String(item.receipt_record_confirm_command) : null,
+        receipt_verify_record_command: item.receipt_verify_record_command ? String(item.receipt_verify_record_command) : null,
+        ui_route: item.ui_route ? String(item.ui_route) : null,
+        source: String(item.source || "operator"),
+        evidence: typeof item.evidence === "object" && item.evidence !== null ? item.evidence as Record<string, unknown> : undefined,
+        receipt_required: boolValue(item.receipt_required),
+        receipt_status: String(item.receipt_status || "missing"),
+        receipt_underlying_status: item.receipt_underlying_status ? String(item.receipt_underlying_status) : undefined,
+        receipt_match: item.receipt_match ? String(item.receipt_match) : undefined,
+        receipt_current: item.receipt_current === undefined ? undefined : boolValue(item.receipt_current),
+        receipt_verified: boolValue(item.receipt_verified),
+        receipt_id: item.receipt_id ? String(item.receipt_id) : null,
+        receipt_hash: item.receipt_hash ? String(item.receipt_hash) : null,
+        receipt_state: typeof item.receipt_state === "object" && item.receipt_state !== null ? item.receipt_state as Record<string, unknown> : undefined,
+      })).filter((item) => item.command),
+      commands: asArray<unknown>(workOrderRaw.commands).map(String).filter(Boolean),
+      token_omitted: workOrderRaw.token_omitted === undefined ? undefined : boolValue(workOrderRaw.token_omitted),
+    },
+    receipt_state: {
+      coverage: {
+        required: numberValue(receiptCoverageRaw.required, 0),
+        verified: numberValue(receiptCoverageRaw.verified, 0),
+        stale: numberValue(receiptCoverageRaw.stale, 0),
+        missing: numberValue(receiptCoverageRaw.missing, 0),
+        missing_verified: numberValue(receiptCoverageRaw.missing_verified, 0),
+        coverage_percent: numberValue(receiptCoverageRaw.coverage_percent, 0),
+        status: String(receiptCoverageRaw.status || "unknown"),
+        lookup_window: numberValue(receiptCoverageRaw.lookup_window, 0),
+        display_receipts: numberValue(receiptCoverageRaw.display_receipts, 0),
+        token_omitted: receiptCoverageRaw.token_omitted === undefined ? undefined : boolValue(receiptCoverageRaw.token_omitted),
+      },
+      recent: asArray<Record<string, unknown>>(receiptStateRaw.recent).map(normalizeOperatorActionReceipt).filter(item => item.receipt_id),
+      summary: Object.fromEntries(Object.entries(receiptSummaryRaw).map(([key, value]) => [key, numberValue(value, 0)])),
+      token_omitted: receiptStateRaw.token_omitted === undefined ? undefined : boolValue(receiptStateRaw.token_omitted),
+    },
+    review_state: {
+      loop_record: {
+        status: String(loopRecordRaw.status || (loopId ? "unknown" : "unscoped")),
+        loop_id: loopRecordRaw.loop_id ? String(loopRecordRaw.loop_id) : null,
+        memory_reviews: asArray<Record<string, unknown>>(loopRecordRaw.memory_reviews).map((item) => ({
+          memory_id: String(item.memory_id || ""),
+          review_status: String(item.review_status || "candidate"),
+        })).filter((item) => item.memory_id),
+        approval_reviews: asArray<Record<string, unknown>>(loopRecordRaw.approval_reviews).map((item) => ({
+          approval_id: String(item.approval_id || ""),
+          decision: String(item.decision || "pending"),
+        })).filter((item) => item.approval_id),
+        candidate_count: numberValue(loopRecordRaw.candidate_count, 0),
+        approved_count: numberValue(loopRecordRaw.approved_count, 0),
+        pending_approval_count: numberValue(loopRecordRaw.pending_approval_count, 0),
+        audit_count: numberValue(loopRecordRaw.audit_count, 0),
+        audit_trail: [],
+        next_action: loopRecordRaw.next_action ? String(loopRecordRaw.next_action) : undefined,
+        review_queue_command: loopRecordRaw.review_queue_command ? String(loopRecordRaw.review_queue_command) : undefined,
+        token_omitted: loopRecordRaw.token_omitted === undefined ? undefined : boolValue(loopRecordRaw.token_omitted),
+      },
+      token_omitted: reviewStateRaw.token_omitted === undefined ? undefined : boolValue(reviewStateRaw.token_omitted),
+    },
+    sources: typeof raw.sources === "object" && raw.sources !== null ? raw.sources as Record<string, unknown> : undefined,
+    contract: raw.contract ? String(raw.contract) : undefined,
     safety: {
       read_only: boolValue(safetyRaw.read_only),
       ledger_mutated: boolValue(safetyRaw.ledger_mutated),

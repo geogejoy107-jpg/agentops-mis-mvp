@@ -26,6 +26,7 @@ import {
   loadLocalReadiness,
   loadOperatorActionReceipts,
   loadOperatorActionPlan,
+  loadOperatorHandoff,
   loadOperatorLoopAudit,
   loadReviewQueue,
   loadSecurityProductionReadiness,
@@ -67,6 +68,7 @@ import {
   type HermesOpenClawLoopWorkflowResult,
   type OperatorActionPlanPayload,
   type OperatorActionReceiptsPayload,
+  type OperatorHandoffPayload,
   type OperatorLoopAuditPayload,
   type ReviewQueuePayload,
   type TaskIntakeChecklistItem,
@@ -239,9 +241,12 @@ export function AIEmployees() {
       loadStuckWorkflowJobs(30, 8),
     ]);
     const scopedLoopId = latestLoopIdFromReadback(loopLaneReadback);
-    const operatorLoopAudit = await loadOperatorLoopAudit(12, scopedLoopId);
+    const [operatorLoopAudit, operatorHandoff] = await Promise.all([
+      loadOperatorLoopAudit(12, scopedLoopId),
+      loadOperatorHandoff(12, scopedLoopId),
+    ]);
     const agents = await loadAgents(metrics);
-    return { agents, demoReadiness, workerStatus, workerFleet, workerHygiene, adapterReadiness, localReadiness, operatorActionPlan, operatorActionReceipts, operatorLoopAudit, securityReadiness, integrationInbox, commanderWorkPackages, reviewQueue, customerDeliveryBoard, loopLaneReadback, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs };
+    return { agents, demoReadiness, workerStatus, workerFleet, workerHygiene, adapterReadiness, localReadiness, operatorActionPlan, operatorActionReceipts, operatorLoopAudit, operatorHandoff, securityReadiness, integrationInbox, commanderWorkPackages, reviewQueue, customerDeliveryBoard, loopLaneReadback, enrollmentPayload, sessionPayload, gatewayStatus, approvals, daemonLogs, workflowJobs, stuckWorkflowJobs };
   }, [integrationInboxBucket]);
   const agents = data?.agents || [];
   const demoReadiness = data?.demoReadiness;
@@ -254,6 +259,7 @@ export function AIEmployees() {
   const operatorActionPlan = data?.operatorActionPlan as OperatorActionPlanPayload | undefined;
   const operatorActionReceipts = data?.operatorActionReceipts as OperatorActionReceiptsPayload | undefined;
   const operatorLoopAudit = data?.operatorLoopAudit as OperatorLoopAuditPayload | undefined;
+  const operatorHandoff = data?.operatorHandoff as OperatorHandoffPayload | undefined;
   const operatorPlanActions = operatorActionPlan?.actions || [];
   const operatorPlanSummary = operatorActionPlan?.summary;
   const operatorReceiptCoverage = operatorActionPlan?.receipt_coverage;
@@ -358,6 +364,12 @@ export function AIEmployees() {
       loopChainTitle: "Latest loop chain",
       loopWorkOrderTitle: "Loop work order",
       loopWorkOrderSummary: "Copy the next gate action, verify command, and audited receipt commands from the loop action package.",
+      operatorHandoffTitle: "Operator handoff",
+      operatorHandoffSummary: "Read-only handoff package for Hermes, OpenClaw, Codex, or a human operator: loop work order, receipts, review state, and source proof.",
+      handoffCommands: "Handoff commands",
+      handoffSources: "Sources",
+      copyHandoffJson: "Copy handoff JSON",
+      loopRecordState: "Loop record",
       copyFirstGateIssue: "Copy first issue",
       firstGateIssue: "First issue",
       allGatesPassing: "All gates passing",
@@ -742,6 +754,12 @@ export function AIEmployees() {
       loopChainTitle: "最新 Loop 链路",
       loopWorkOrderTitle: "Loop 执行包",
       loopWorkOrderSummary: "从 loop action package 复制下一步 Gate 动作、验收命令和审计收据命令。",
+      operatorHandoffTitle: "Operator 交接包",
+      operatorHandoffSummary: "给 Hermes、OpenClaw、Codex 或人工 operator 的只读交接包：Loop 执行包、收据、评审状态和来源证明。",
+      handoffCommands: "交接命令",
+      handoffSources: "来源",
+      copyHandoffJson: "复制交接 JSON",
+      loopRecordState: "Loop 记录",
       copyFirstGateIssue: "复制首个异常",
       firstGateIssue: "首个异常",
       allGatesPassing: "全部 Gate 通过",
@@ -1170,6 +1188,19 @@ export function AIEmployees() {
   const loopAuditSummary = operatorLoopAudit?.summary;
   const loopActionPackage = operatorLoopAudit?.action_package;
   const loopActionPackageItems = loopActionPackage?.items || [];
+  const operatorHandoffSummary = operatorHandoff?.summary;
+  const operatorHandoffCommands = operatorHandoff?.work_order?.commands || [];
+  const operatorHandoffSources = operatorHandoff?.sources || {};
+  const operatorHandoffJson = operatorHandoff ? JSON.stringify({
+    summary: operatorHandoff.summary,
+    work_order: operatorHandoff.work_order,
+    receipt_state: operatorHandoff.receipt_state,
+    review_state: operatorHandoff.review_state,
+    sources: operatorHandoff.sources,
+    contract: operatorHandoff.contract,
+    safety: operatorHandoff.safety,
+    token_omitted: operatorHandoff.token_omitted,
+  }, null, 2) : "";
   const loopAuditNextAction = operatorLoopAudit?.next_actions?.[0] || "agentops operator loop-audit --limit 20";
   const firstLoopIssueStep = loopAuditSteps.find((step) => step.status !== "pass");
   const actionReceiptRows = operatorActionReceipts?.receipts || operatorActionPlan?.action_receipts?.receipts || [];
@@ -3003,6 +3034,101 @@ export function AIEmployees() {
                       )}
                     </div>
                   </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {operatorHandoff && (
+            <div className="mt-3 rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+              <div className="flex flex-col xl:flex-row xl:items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <ShieldCheck size={12} style={{ color: "var(--mis-cyan)" }} />
+                    <div className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.operatorHandoffTitle}</div>
+                    <StatusBadge status={operatorHandoff.status || "unknown"} />
+                    <StatusBadge status={operatorHandoff.safety.read_only && !operatorHandoff.safety.ledger_mutated && !operatorHandoff.safety.live_execution_performed ? "pass" : "attention"} label={operatorHandoff.safety.read_only ? copy.readOnlyProof : copy.statusAttention} />
+                  </div>
+                  <div className="text-[9px] mt-0.5 max-w-4xl" style={{ color: "var(--mis-muted)" }}>{copy.operatorHandoffSummary}</div>
+                  <div className="text-[9px] mt-0.5 truncate" style={{ color: "var(--mis-dim)" }}>
+                    {copy.methodBlock}: {operatorHandoff.work_order.method || operatorLoopAudit?.method || "READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD"}
+                  </div>
+                </div>
+                <button
+                  onClick={() => void copyIntakeCommand(operatorHandoffJson)}
+                  className="inline-flex items-center gap-1 text-[9px] px-2 py-1 rounded shrink-0"
+                  style={{ color: "var(--mis-cyan)", background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}
+                  title={operatorHandoff.contract || copy.operatorHandoffTitle}
+                >
+                  <Copy size={10} />
+                  {copiedIntakeCommand === operatorHandoffJson ? copy.copiedCommand : copy.copyHandoffJson}
+                </button>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3">
+                {[
+                  { label: copy.loopAuditTitle, value: operatorHandoffSummary?.loop_status || "unknown", status: operatorHandoffSummary?.loop_status || operatorHandoff.status },
+                  { label: copy.actionQueueTitle, value: operatorHandoffSummary?.action_plan_status || "unknown", status: operatorHandoffSummary?.action_plan_status || operatorHandoff.status },
+                  { label: copy.handoffCommands, value: `${operatorHandoffCommands.length}/${operatorHandoffSummary?.loop_package_items ?? 0}`, status: operatorHandoffCommands.length > 0 ? "attention" : "pass" },
+                  { label: copy.loopRecordState, value: `${operatorHandoffSummary?.loop_record_approved ?? 0}/${operatorHandoffSummary?.loop_record_candidates ?? 0}/${operatorHandoffSummary?.loop_record_pending_approvals ?? 0}`, status: operatorHandoffSummary?.loop_record_status || "unknown" },
+                ].map((item) => (
+                  <div key={item.label} className="rounded px-2 py-1" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                    <div className="text-[9px]" style={{ color: "var(--mis-muted)" }}>{item.label}</div>
+                    <div className="flex items-center justify-between gap-2 mt-0.5">
+                      <div className="text-[10px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{item.value}</div>
+                      <StatusBadge status={item.status} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="grid grid-cols-1 xl:grid-cols-3 gap-2 mt-2">
+                <div className="rounded px-2 py-1.5" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                  <div className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.receiptProof}</div>
+                  <div className="text-[9px] mt-1" style={{ color: "var(--mis-muted)" }}>
+                    {operatorHandoff.receipt_state.coverage?.verified ?? 0}/{operatorHandoff.receipt_state.coverage?.required ?? 0} · missing {operatorHandoff.receipt_state.coverage?.missing ?? 0} · stale {operatorHandoff.receipt_state.coverage?.stale ?? 0}
+                  </div>
+                  <div className="text-[9px] mt-0.5" style={{ color: "var(--mis-dim)" }}>
+                    {copy.actionReceipts}: {operatorHandoff.receipt_state.summary.receipts ?? operatorHandoff.receipt_state.recent.length}/{operatorHandoff.receipt_state.summary.verified ?? 0}
+                  </div>
+                </div>
+                <div className="rounded px-2 py-1.5" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                  <div className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.reviewQueueTitle}</div>
+                  <div className="text-[9px] mt-1" style={{ color: "var(--mis-muted)" }}>
+                    {copy.memoryCandidates}: {operatorHandoff.review_state.loop_record?.candidate_count ?? 0} · {copy.pendingApprovals}: {operatorHandoff.review_state.loop_record?.pending_approval_count ?? 0}
+                  </div>
+                  <div className="text-[9px] mt-0.5 truncate" style={{ color: "var(--mis-cyan)" }}>
+                    {copy.nextAction}: {operatorHandoff.review_state.loop_record?.next_action || operatorHandoff.work_order.next_actions[0] || loopAuditNextAction}
+                  </div>
+                </div>
+                <div className="rounded px-2 py-1.5" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                  <div className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.handoffSources}</div>
+                  {Object.entries(operatorHandoffSources).slice(0, 2).map(([sourceName, sourceValue]) => {
+                    const sourceRecord = sourceValue && typeof sourceValue === "object" ? sourceValue as Record<string, unknown> : {};
+                    const sourceStatus = String(sourceRecord.status || "unknown");
+                    const sourceStatusRaw = typeof sourceRecord.source_status === "object" && sourceRecord.source_status !== null ? sourceRecord.source_status as Record<string, unknown> : {};
+                    const sourceStatusText = Object.entries(sourceStatusRaw).slice(0, 3).map(([key, value]) => `${key}:${String(value)}`).join(" · ");
+                    return (
+                      <div key={sourceName} className="mt-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="text-[9px] truncate" style={{ color: "var(--mis-muted)" }}>{sourceName}</div>
+                          <StatusBadge status={sourceStatus} />
+                        </div>
+                        {sourceStatusText && <div className="text-[8px] truncate" style={{ color: "var(--mis-dim)" }}>{sourceStatusText}</div>}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                {operatorHandoffCommands.slice(0, 6).map((handoffCommand) => (
+                  <button
+                    key={handoffCommand}
+                    onClick={() => void copyIntakeCommand(handoffCommand)}
+                    className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded max-w-full"
+                    style={{ color: "var(--mis-cyan)", background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}
+                    title={handoffCommand}
+                  >
+                    <Copy size={9} />
+                    <span className="truncate max-w-[220px]">{copiedIntakeCommand === handoffCommand ? copy.copiedCommand : handoffCommand}</span>
+                  </button>
                 ))}
               </div>
             </div>

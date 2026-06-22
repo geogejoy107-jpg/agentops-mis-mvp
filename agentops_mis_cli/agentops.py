@@ -400,6 +400,10 @@ def cmd_operator_loop_audit(args, client: AgentOpsClient) -> dict:
     return client.get("/api/operator/loop-audit", query={"limit": args.limit, "loop_id": args.loop_id or None})
 
 
+def cmd_operator_handoff(args, client: AgentOpsClient) -> dict:
+    return client.get("/api/operator/handoff", query={"limit": args.limit, "loop_id": args.loop_id or None})
+
+
 def cmd_operator_intake_checklist(args, client: AgentOpsClient) -> dict:
     return client.get("/api/operator/intake-checklist", query={"limit": args.limit})
 
@@ -1725,6 +1729,10 @@ def build_parser() -> argparse.ArgumentParser:
     operator_loop.add_argument("--loop-id", default=None)
     operator_loop.add_argument("--limit", type=int, default=12)
     operator_loop.set_defaults(handler="operator_loop_audit")
+    operator_handoff = operator_sub.add_parser("handoff", help="Read a loop/operator handoff package with work-order, receipt, review, and safety state.")
+    operator_handoff.add_argument("--loop-id", default=None)
+    operator_handoff.add_argument("--limit", type=int, default=12)
+    operator_handoff.set_defaults(handler="operator_handoff")
     operator_intake = operator_sub.add_parser("intake-checklist", help="Show read-only pre-intake gates for planned/backlog tasks.")
     operator_intake.add_argument("--limit", type=int, default=12)
     operator_intake.set_defaults(handler="operator_intake_checklist")
@@ -2487,6 +2495,7 @@ HANDLERS = {
     "operator_action_receipts": cmd_operator_action_receipts,
     "operator_record_action_receipt": cmd_operator_record_action_receipt,
     "operator_loop_audit": cmd_operator_loop_audit,
+    "operator_handoff": cmd_operator_handoff,
     "operator_intake_checklist": cmd_operator_intake_checklist,
     "operator_remediate_evidence_gap": cmd_operator_remediate_evidence_gap,
     "operator_close_evidence_gap": cmd_operator_close_evidence_gap,

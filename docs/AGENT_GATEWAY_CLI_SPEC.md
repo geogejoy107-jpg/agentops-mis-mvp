@@ -359,6 +359,22 @@ repeatable loop work order after each audit pass.
 It recommends explicit next commands but does not create runs, approvals,
 memories, audit rows, or live adapter work.
 
+### `agentops operator handoff`
+
+Packages the current operator state for handoff between a human operator,
+Hermes, OpenClaw, Codex, or a remote Agent:
+
+```bash
+agentops operator handoff --limit 12
+agentops operator handoff --loop-id loop_smoke_api_123 --limit 10
+```
+
+Maps to `GET /api/operator/handoff`. This is read-only and combines the
+loop-audit `action_package`, action-plan receipt coverage, recent receipts, and
+loop review state into a single handoff payload. It returns `work_order`,
+`receipt_state`, `review_state`, source summaries, and safety flags without
+executing commands or mutating audit/runtime ledgers.
+
 ### `agentops approval prepared-action`
 
 Creates and resumes the durable Approval Wall primitive for exact tool/action
