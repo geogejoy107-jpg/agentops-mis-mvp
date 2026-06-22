@@ -20,9 +20,12 @@ The fourth layer is the optional driver contract,
 `agentops_mis_storage.postgres` adapter against a real Postgres container using
 a temporary psycopg installation outside the Free Local dependency set.
 `agentops_mis_storage.postgres` must remain importable without psycopg so
-standard Free Local installs keep working.
+standard Free Local installs keep working. The fifth layer is the shared
+boundary fixture contract, `postgres_boundary_fixture_parity_v1`, which runs
+the same Python fixture through SQLite and the optional Postgres adapter, then
+compares normalized snapshots.
 
-Both layers are intentionally derived from `server.SCHEMA_SQL`, because
+All layers are intentionally derived from `server.SCHEMA_SQL`, because
 `server.py` is still the executable schema authority for the dependency-free
 local product line.
 
@@ -70,6 +73,7 @@ python3 scripts/storage_postgres_contract_smoke.py
 python3 scripts/storage_postgres_container_smoke.py
 python3 scripts/storage_postgres_adapter_contract_smoke.py
 python3 scripts/storage_postgres_optional_adapter_smoke.py
+python3 scripts/storage_postgres_boundary_parity_smoke.py
 python3 scripts/storage_boundary_sqlite_smoke.py
 ```
 
@@ -83,7 +87,9 @@ Postgres, and verifies Free Local still has no required psycopg dependency. The
 fourth command uses the optional psycopg-backed adapter module to execute schema
 and representative helper SQL against a real Postgres container while keeping
 driver installation in a temporary target. The fifth command proves the current
-SQLite helper behavior that Postgres must match.
+SQLite helper behavior can be replayed through the same shared fixture against
+SQLite and Postgres with identical snapshots. The final command proves the
+broader current SQLite helper behavior that Postgres must match.
 
 When Docker is unavailable on a local machine, use the non-authoritative
 diagnostic mode only to keep wider readiness checks moving:
@@ -92,6 +98,7 @@ diagnostic mode only to keep wider readiness checks moving:
 python3 scripts/storage_postgres_container_smoke.py --skip-if-unavailable
 python3 scripts/storage_postgres_adapter_contract_smoke.py --skip-if-unavailable
 python3 scripts/storage_postgres_optional_adapter_smoke.py --skip-if-unavailable
+python3 scripts/storage_postgres_boundary_parity_smoke.py --skip-if-unavailable
 ```
 
 This mode reports `skipped: true`; it is not final BYOC/Postgres evidence.
@@ -106,21 +113,21 @@ Current local evidence on `codex/commercial-migration-closed-loop`:
 - `postgres_optional_psycopg_adapter_v1` passed against `postgres:16-alpine`
   with a temporary psycopg target, `free_local_dependencies=[]`, qmark/named
   SQL execution, dict-like row shape, and zero cross-workspace rows.
+- `postgres_boundary_fixture_parity_v1` passed against `postgres:16-alpine`
+  with shared fixture `storage_boundary_shared_fixture_v1`, identical SQLite
+  and Postgres snapshot hash
+  `7dcff5f12e7ec4e9fccae0fa92d941c78e95ac1e98e2a14d6f1a7f0de493dd1f`,
+  `free_local_dependencies=[]`, and zero cross-workspace leakage.
 - Source install packaging includes `agentops_mis_storage.postgres`; importing
   the module and translating SQL does not require psycopg.
 
 ## Next Gate
 
-Postgres parity is not complete until the container-backed smoke:
+Postgres parity is not complete until the adapter boundary:
 
-- creates the generated Postgres schema;
-- runs the storage-boundary fixture against a Postgres adapter;
-- proves identical create/read/update/filter outcomes for the locked helper
-  set;
-- proves cross-workspace exclusion;
-- proves representative Python adapter SQL translation for qmark and named
-  placeholders without adding required Free Local dependencies;
-- proves the reusable optional psycopg adapter can execute schema and
-  representative helper SQL against Postgres;
+- routes more `repo_*` helper flows through the same shared fixture pattern;
+- proves route-level response-shape parity for selected HTTP/CLI surfaces;
+- keeps qmark/named placeholder translation and literal `?` behavior locked;
+- keeps psycopg optional and outside Free Local dependencies;
 - verifies no raw prompts, raw responses, secrets, generated caches, local DBs,
   or private transcripts are written.

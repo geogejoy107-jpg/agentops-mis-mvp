@@ -5,4 +5,4 @@ Optional modules in this package are imported by BYOC/commercial smokes and
 future adapters only when their optional dependencies are available.
 """
 
-__all__ = ["postgres"]
+__all__ = ["parity_fixture", "postgres"]

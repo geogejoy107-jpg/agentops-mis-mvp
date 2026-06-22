@@ -120,11 +120,14 @@ Must be true:
   `AGENTOPS_DB_PATH`.
 - Postgres is introduced as an adapter target after SQLite behavior is locked by
   tests.
+- Shared fixture parity compares SQLite and Postgres outcomes before any
+  storage adapter is treated as BYOC-ready.
 - Verification includes local acceptance against a temporary SQLite database
   before any Postgres work starts:
 
 ```bash
 python3 scripts/storage_boundary_sqlite_smoke.py
+python3 scripts/storage_postgres_boundary_parity_smoke.py
 ```
 
 ### Gate 4: UI/API Parity Before Next.js
