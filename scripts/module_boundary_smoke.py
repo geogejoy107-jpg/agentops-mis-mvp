@@ -70,6 +70,10 @@ from agentops_mis_core.agent_plans import (
     resolve_agent_plan_file_scope,
     resolve_agent_plan_spec_authority,
 )
+from agentops_mis_core.gateway_runs import (
+    build_run_heartbeat_update,
+    run_heartbeat_terminal_task_status,
+)
 from agentops_mis_core.read_model_cache import ReadModelCache
 from agentops_mis_core.commander_work_packages import (
     build_commander_work_packages_readback,
@@ -115,6 +119,7 @@ TRUST = ROOT / "agentops_mis_runtime" / "trust.py"
 READ_MODEL_CACHE = ROOT / "agentops_mis_core" / "read_model_cache.py"
 APPROVAL_WALL = ROOT / "agentops_mis_core" / "approval_wall.py"
 AGENT_PLANS = ROOT / "agentops_mis_core" / "agent_plans.py"
+GATEWAY_RUNS = ROOT / "agentops_mis_core" / "gateway_runs.py"
 COMMANDER_WORK_PACKAGES = ROOT / "agentops_mis_core" / "commander_work_packages.py"
 OPERATOR_COMMAND_CENTER = ROOT / "agentops_mis_core" / "operator_command_center.py"
 WORKER_FLEET = ROOT / "agentops_mis_core" / "worker_fleet.py"
@@ -321,6 +326,14 @@ SERVER_AGENT_PLAN_IMPORTS = {
     "resolve_agent_plan_file_scope",
     "resolve_agent_plan_spec_authority",
 }
+EXTRACTED_GATEWAY_RUN_HELPERS = {
+    "build_run_heartbeat_update",
+    "run_heartbeat_terminal_task_status",
+}
+SERVER_GATEWAY_RUN_IMPORTS = {
+    "build_run_heartbeat_update",
+    "run_heartbeat_terminal_task_status",
+}
 
 
 def require(condition: bool, message: str, failures: list[str]) -> None:
@@ -370,11 +383,13 @@ def main() -> int:
     require(READ_MODEL_CACHE.exists(), "read model cache core module missing", failures)
     require(APPROVAL_WALL.exists(), "approval wall core module missing", failures)
     require(AGENT_PLANS.exists(), "agent plans core module missing", failures)
+    require(GATEWAY_RUNS.exists(), "gateway runs core module missing", failures)
     require(COMMANDER_WORK_PACKAGES.exists(), "commander work packages core module missing", failures)
     require(OPERATOR_COMMAND_CENTER.exists(), "operator command center core module missing", failures)
     require(WORKER_FLEET.exists(), "worker fleet core module missing", failures)
     require("from agentops_mis_core.approval_wall import" in server_text, "server.py must import approval wall core module", failures)
     require("from agentops_mis_core.agent_plans import" in server_text, "server.py must import agent plans core module", failures)
+    require("from agentops_mis_core.gateway_runs import" in server_text, "server.py must import gateway runs core module", failures)
     require("from agentops_mis_core.read_model_cache import ReadModelCache" in server_text, "server.py must import read model cache core module", failures)
     require("from agentops_mis_core.commander_work_packages import" in server_text, "server.py must import commander work packages core module", failures)
     require("from agentops_mis_core.operator_command_center import" in server_text, "server.py must import operator command center core module", failures)
@@ -385,6 +400,7 @@ def main() -> int:
     server_functions = function_names(SERVER)
     approval_wall_functions = function_names(APPROVAL_WALL) if APPROVAL_WALL.exists() else set()
     agent_plan_functions = function_names(AGENT_PLANS) if AGENT_PLANS.exists() else set()
+    gateway_run_functions = function_names(GATEWAY_RUNS) if GATEWAY_RUNS.exists() else set()
     commander_work_package_functions = function_names(COMMANDER_WORK_PACKAGES) if COMMANDER_WORK_PACKAGES.exists() else set()
     operator_command_center_functions = function_names(OPERATOR_COMMAND_CENTER) if OPERATOR_COMMAND_CENTER.exists() else set()
     worker_fleet_functions = function_names(WORKER_FLEET) if WORKER_FLEET.exists() else set()
@@ -409,6 +425,9 @@ def main() -> int:
     for helper in sorted(EXTRACTED_AGENT_PLAN_HELPERS):
         require(helper not in server_functions, f"server.py still defines {helper}", failures)
         require(helper in agent_plan_functions, f"agent plans module missing {helper}", failures)
+    for helper in sorted(EXTRACTED_GATEWAY_RUN_HELPERS):
+        require(helper not in server_functions, f"server.py still defines {helper}", failures)
+        require(helper in gateway_run_functions, f"gateway runs module missing {helper}", failures)
     require("worker_adapter_readiness" in server_functions, "worker_adapter_readiness must remain server-owned for runtime probing", failures)
     require("worker_adapter_readiness" not in worker_fleet_functions, "worker fleet module must not own runtime adapter probing", failures)
     for helper, sources in imported_symbol_sources(SERVER, SERVER_CAPABILITY_IMPORTS).items():
@@ -427,6 +446,8 @@ def main() -> int:
         require(sources == {"agentops_mis_core.approval_wall"}, f"{helper} imported from wrong or multiple modules: {sorted(sources)}", failures)
     for helper, sources in imported_symbol_sources(SERVER, SERVER_AGENT_PLAN_IMPORTS).items():
         require(sources == {"agentops_mis_core.agent_plans"}, f"{helper} imported from wrong or multiple modules: {sorted(sources)}", failures)
+    for helper, sources in imported_symbol_sources(SERVER, SERVER_GATEWAY_RUN_IMPORTS).items():
+        require(sources == {"agentops_mis_core.gateway_runs"}, f"{helper} imported from wrong or multiple modules: {sorted(sources)}", failures)
 
     imports = imported_modules(CAPABILITIES)
     connector_imports = imported_modules(CONNECTORS) if CONNECTORS.exists() else set()
@@ -434,6 +455,7 @@ def main() -> int:
     read_model_cache_imports = imported_modules(READ_MODEL_CACHE) if READ_MODEL_CACHE.exists() else set()
     approval_wall_imports = imported_modules(APPROVAL_WALL) if APPROVAL_WALL.exists() else set()
     agent_plan_imports = imported_modules(AGENT_PLANS) if AGENT_PLANS.exists() else set()
+    gateway_run_imports = imported_modules(GATEWAY_RUNS) if GATEWAY_RUNS.exists() else set()
     commander_work_package_imports = imported_modules(COMMANDER_WORK_PACKAGES) if COMMANDER_WORK_PACKAGES.exists() else set()
     operator_command_center_imports = imported_modules(OPERATOR_COMMAND_CENTER) if OPERATOR_COMMAND_CENTER.exists() else set()
     worker_fleet_imports = imported_modules(WORKER_FLEET) if WORKER_FLEET.exists() else set()
@@ -455,6 +477,9 @@ def main() -> int:
     agent_plan_forbidden = sorted(module for module in agent_plan_imports if module in {"sqlite3", "subprocess", "http.server", "urllib.request"})
     require(not agent_plan_forbidden, f"agent plans module imports forbidden app/runtime dependencies: {agent_plan_forbidden}", failures)
     require("server" not in agent_plan_imports, "agent plans module must not import server module", failures)
+    gateway_run_forbidden = sorted(module for module in gateway_run_imports if module in {"sqlite3", "subprocess", "http.server", "urllib.request"})
+    require(not gateway_run_forbidden, f"gateway runs module imports forbidden app/runtime dependencies: {gateway_run_forbidden}", failures)
+    require("server" not in gateway_run_imports, "gateway runs module must not import server module", failures)
     commander_work_package_forbidden = sorted(module for module in commander_work_package_imports if module in {"sqlite3", "subprocess", "http.server", "urllib.request"})
     require(not commander_work_package_forbidden, f"commander work packages module imports forbidden app/runtime dependencies: {commander_work_package_forbidden}", failures)
     require("server" not in commander_work_package_imports, "commander work packages module must not import server module", failures)
@@ -889,6 +914,17 @@ def main() -> int:
             "verification": {"pass": True},
         },
     )
+    run_heartbeat_update = build_run_heartbeat_update(
+        {"run_id": "run_heartbeat_smoke", "status": "running"},
+        status="completed",
+        ended_at="2026-06-22T00:00:00+00:00",
+        duration_ms=1234,
+        output_summary="Heartbeat complete.",
+        error_type=None,
+        error_message=None,
+        output_tokens=42,
+        cost_usd=0.0,
+    )
     high_risk_required_response = build_high_risk_toolcall_prepared_action_required_response(
         tool_name="openai.file_search.upload",
         risk_level="critical",
@@ -979,6 +1015,11 @@ def main() -> int:
     require((run_start_success_response.get("run") or {}).get("run_id") == "run_start_success_smoke", "run-start success response run failed", failures)
     require((run_start_success_response.get("agent_plan") or {}).get("plan_hash") == "hash_success_smoke", "run-start success response plan hash failed", failures)
     require((run_start_success_response.get("agent_plan") or {}).get("verification_pass") is True, "run-start success response verification flag failed", failures)
+    require(run_heartbeat_update.get("run_id") == "run_heartbeat_smoke" and run_heartbeat_update.get("status") == "completed", "run heartbeat update projection failed", failures)
+    require(run_heartbeat_update.get("token_omitted") is True, "run heartbeat update token omission proof failed", failures)
+    require(run_heartbeat_terminal_task_status("completed") == "completed", "run heartbeat completed task status failed", failures)
+    require(run_heartbeat_terminal_task_status("blocked") == "blocked", "run heartbeat blocked task status failed", failures)
+    require(run_heartbeat_terminal_task_status("running") is None, "run heartbeat non-terminal task status failed", failures)
     require(all(payload.get("token_omitted") is True for payload in [
         agent_plan_anchor_response,
         agent_plan_status_response,
@@ -1238,7 +1279,7 @@ def main() -> int:
     output = {
         "ok": not failures,
         "operation": "module_boundary_smoke",
-        "boundary": "agentops_mis_runtime.capabilities+connectors+trust + agentops_mis_core.read_model_cache+approval_wall+agent_plans+commander_work_packages+operator_command_center+worker_fleet",
+        "boundary": "agentops_mis_runtime.capabilities+connectors+trust + agentops_mis_core.read_model_cache+approval_wall+agent_plans+gateway_runs+commander_work_packages+operator_command_center+worker_fleet",
         "server_line_count": len(server_text.splitlines()),
         "module_imports": {
             "capabilities": sorted(imports),
@@ -1247,6 +1288,7 @@ def main() -> int:
             "read_model_cache": sorted(read_model_cache_imports),
             "approval_wall": sorted(approval_wall_imports),
             "agent_plans": sorted(agent_plan_imports),
+            "gateway_runs": sorted(gateway_run_imports),
             "commander_work_packages": sorted(commander_work_package_imports),
             "operator_command_center": sorted(operator_command_center_imports),
             "worker_fleet": sorted(worker_fleet_imports),

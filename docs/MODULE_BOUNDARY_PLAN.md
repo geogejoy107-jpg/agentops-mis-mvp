@@ -888,6 +888,36 @@ python3 scripts/run_start_plan_gate_smoke.py --base-url http://127.0.0.1:8787
 python3 scripts/agent_plan_integrity_smoke.py --base-url http://127.0.0.1:8787
 ```
 
+### Slice 30: Run-Heartbeat Update Projection
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/gateway_runs.py`
+
+Moved out of `server.py`:
+
+- Run heartbeat update row projection
+- Run heartbeat terminal run-status to task-status mapping
+- Token-omission proof for the heartbeat update projection
+
+Still owned by `server.py`:
+
+- HTTP routes
+- Agent Gateway identity and run access checks
+- redaction, parsing and default selection
+- SQLite run/task/agent updates
+- runtime events, audit logs and commits
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/agent_gateway_scoped_read_smoke.py
+python3 scripts/workspace_isolation_smoke.py
+```
+
 ## Next Candidate Slices
 
 - Continue P1-05 with small smoke-backed strangler slices only; prefer pure

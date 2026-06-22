@@ -87,6 +87,10 @@ from agentops_mis_core.agent_plans import (
     resolve_agent_plan_file_scope,
     resolve_agent_plan_spec_authority,
 )
+from agentops_mis_core.gateway_runs import (
+    build_run_heartbeat_update,
+    run_heartbeat_terminal_task_status,
+)
 from agentops_mis_core.commander_work_packages import (
     build_commander_work_packages_readback,
     build_commander_project_board_gates,
@@ -7475,23 +7479,25 @@ def agent_gateway_run_heartbeat(conn, run_id: str, body) -> tuple[dict, int]:
     duration_ms = parse_ms(body.get("duration_ms"))
     if duration_ms is None:
         duration_ms = before["duration_ms"]
-    conn.execute(
-        """UPDATE runs SET status=?, ended_at=?, duration_ms=?, output_summary=?, error_type=?, error_message=?, output_tokens=?, cost_usd=?
-        WHERE run_id=?""",
-        (
-            status,
-            ended_at,
-            duration_ms,
-            output_summary,
-            redact_text(body.get("error_type"), 80) if body.get("error_type") else before["error_type"],
-            redact_text(body.get("error_message"), 200) if body.get("error_message") else before["error_message"],
-            int(body.get("output_tokens") or before["output_tokens"] or 0),
-            float(body.get("cost_usd") if body.get("cost_usd") is not None else before["cost_usd"] or 0),
-            run_id,
-        ),
+    heartbeat_update = build_run_heartbeat_update(
+        before,
+        status=status,
+        ended_at=ended_at,
+        duration_ms=duration_ms,
+        output_summary=output_summary,
+        error_type=redact_text(body.get("error_type"), 80) if body.get("error_type") else before["error_type"],
+        error_message=redact_text(body.get("error_message"), 200) if body.get("error_message") else before["error_message"],
+        output_tokens=int(body.get("output_tokens") or before["output_tokens"] or 0),
+        cost_usd=float(body.get("cost_usd") if body.get("cost_usd") is not None else before["cost_usd"] or 0),
     )
-    if status in {"completed", "failed", "blocked"}:
-        task_status = "completed" if status == "completed" else "blocked" if status == "blocked" else "failed"
+    conn.execute(
+        """UPDATE runs SET status=:status, ended_at=:ended_at, duration_ms=:duration_ms, output_summary=:output_summary,
+        error_type=:error_type, error_message=:error_message, output_tokens=:output_tokens, cost_usd=:cost_usd
+        WHERE run_id=:run_id""",
+        heartbeat_update,
+    )
+    task_status = run_heartbeat_terminal_task_status(status)
+    if task_status:
         conn.execute("UPDATE tasks SET status=?, updated_at=? WHERE task_id=?", (task_status, now_iso(), before["task_id"]))
         conn.execute("UPDATE agents SET status='idle', updated_at=? WHERE agent_id=?", (now_iso(), before["agent_id"]))
     after = conn.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
