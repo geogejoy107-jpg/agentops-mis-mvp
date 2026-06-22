@@ -8453,32 +8453,12 @@ def customer_project_report_artifact(conn, project_id: str) -> tuple[dict, int]:
     }, 201 if before is None else 200
 
 
-def hermes_run_task(conn, body: dict) -> dict:
-    cfg = hermes_runtime_config()
-    status = hermes_status()
-    refresh_runtime_connectors(conn, status)
-    confirm = bool(body.get("confirm_run"))
-    prompt = "请只回复 HERMES_DEFAULT_RUN_OK，不要解释。"
-    prompt_hash = stable_hash(prompt)
-    plan = {
-        "created": False,
-        "dry_run": True,
-        "provider": "hermes",
-        "mode": "default_gateway_fixed_probe",
-        "would_post": status["gateway_url"].rstrip("/") + "/v1/chat/completions",
-        "prompt_hash": prompt_hash,
-        "requires": {"HERMES_ALLOW_REAL_RUN": True, "confirm_run": True, "api_listening": True},
-        "note": "Only a fixed safe probe is enabled here. Arbitrary Hermes task prompts remain disabled.",
-    }
-    risk = body.get("risk_level", "low")
-    if risk not in ("low", "medium") and not body.get("confirm_run"):
-        return {"created": False, "dry_run": True, "requires_confirm_run": True, "reason": "High-risk runtime tasks require confirm_run=true."}
-    if not (cfg["allow_real_run"] and confirm and status["api_listening"]):
-        runtime_event(conn, "rtc_hermes_default_gateway", "run_task_dry_run", "planned", prompt_hash=prompt_hash, input_summary="Hermes default fixed run-task dry-run.")
-        audit(conn, "system", "hermes-run-task", "runtime.run_task.dry_run", "runtime_connectors", "rtc_hermes_default_gateway", None, plan, {"confirm_run": confirm, "api_listening": status["api_listening"]})
-        conn.commit()
-        return plan
+def hermes_default_run_prompt() -> str:
+    return "请只回复 HERMES_DEFAULT_RUN_OK，不要解释。"
 
+
+def ensure_hermes_run_task_agent_task(conn, body: dict, task_status: str = "planned") -> tuple[str, str]:
+    now = now_iso()
     agent_id = "agt_hermes_gateway"
     upsert_agent(conn, {
         "agent_id": agent_id,
@@ -8493,37 +8473,200 @@ def hermes_run_task(conn, body: dict) -> dict:
         "allowed_tools": json.dumps(["hermes.gateway", "openai_compatible.chat", "runtime.probe"], ensure_ascii=False),
         "budget_limit_usd": 10.0,
         "owner_user_id": "usr_founder",
-        "created_at": now_iso(),
-        "updated_at": now_iso(),
+        "created_at": now,
+        "updated_at": now,
     }, "hermes-run-task")
-    task_id = "tsk_hermes_default_run_task"
+    task_id = body.get("task_id") or "tsk_hermes_default_run_task"
     upsert_task(conn, {
         "task_id": task_id,
+        "workspace_id": normalize_workspace_id(body.get("workspace_id") or "local-demo"),
         "title": "Hermes default gateway fixed runtime task",
         "description": "Confirmed low-risk Hermes default gateway run. Full prompt and raw response are not stored.",
-        "requester_id": "usr_founder",
+        "requester_id": body.get("requester_id") or "usr_founder",
         "owner_agent_id": agent_id,
         "collaborator_agent_ids": json.dumps([], ensure_ascii=False),
-        "status": "planned",
+        "status": task_status,
         "priority": "high",
         "due_date": None,
         "acceptance_criteria": "Hermes default gateway returns the fixed marker and writes run/evaluation/audit evidence.",
         "risk_level": "low",
         "budget_limit_usd": 1.0,
-        "created_at": now_iso(),
-        "updated_at": now_iso(),
+        "created_at": now,
+        "updated_at": now,
     }, "hermes-run-task")
+    return agent_id, task_id
 
+
+def hermes_run_task_args(status: dict, prompt_hash: str, risk: str) -> dict:
+    return {
+        "gateway_url": status["gateway_url"].rstrip("/"),
+        "endpoint": status["gateway_url"].rstrip("/") + "/v1/chat/completions",
+        "model": "hermes-agent",
+        "prompt_hash": prompt_hash,
+        "risk_level": risk,
+        "raw_prompt_omitted": True,
+    }
+
+
+def hermes_prepare_run_task(conn, body: dict, cfg: dict, status: dict, prompt_hash: str, risk: str) -> tuple[dict, int]:
+    agent_id, task_id = ensure_hermes_run_task_agent_task(conn, body, "waiting_approval")
+    now = now_iso()
+    run_id = body.get("run_id") or stable_id("run_hermes_default_task", prompt_hash[:16])
+    tool_call_id = body.get("tool_call_id") or stable_id("tc_hermes_default_task", run_id)
+    approval_id = body.get("approval_id") or stable_id("ap_hermes_default_task", run_id)
+    prepared_action_id = body.get("prepared_action_id") or stable_id("pact_hermes_default_task", run_id, prompt_hash[:16])
+    args = hermes_run_task_args(status, prompt_hash, risk)
+    repo_upsert_run(conn, {
+        "run_id": run_id,
+        "workspace_id": normalize_workspace_id(body.get("workspace_id") or "local-demo"),
+        "task_id": task_id,
+        "agent_id": agent_id,
+        "runtime_type": "hermes",
+        "status": "waiting_approval",
+        "started_at": now,
+        "ended_at": None,
+        "duration_ms": None,
+        "input_summary": f"Prepare Hermes default fixed run-task prompt_hash={prompt_hash[:16]}",
+        "output_summary": None,
+        "model_provider": "hermes",
+        "model_name": "hermes-agent",
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "reasoning_tokens": 0,
+        "cost_usd": 0.0,
+        "error_type": None,
+        "error_message": None,
+        "trace_id": None,
+        "parent_run_id": body.get("parent_run_id"),
+        "delegation_id": "hermes:default-gateway",
+        "approval_required": 1,
+        "created_at": now,
+    })
+    repo_upsert_tool_call(conn, {
+        "tool_call_id": tool_call_id,
+        "run_id": run_id,
+        "agent_id": agent_id,
+        "tool_name": "hermes.default_gateway.run_task",
+        "tool_version": "v1",
+        "tool_category": "custom",
+        "normalized_args_json": json.dumps(args, ensure_ascii=False, sort_keys=True),
+        "target_resource": "hermes://default-gateway/v1/chat/completions",
+        "risk_level": "high",
+        "status": "waiting_approval",
+        "result_summary": "Prepared Hermes run-task is waiting for explicit approval.",
+        "side_effect_id": None,
+        "started_at": now,
+        "ended_at": None,
+        "created_at": now,
+    })
+    repo_upsert_approval(conn, {
+        "approval_id": approval_id,
+        "task_id": task_id,
+        "run_id": run_id,
+        "tool_call_id": tool_call_id,
+        "requested_by_agent_id": agent_id,
+        "approver_user_id": body.get("approver_user_id") or "usr_founder",
+        "decision": "pending",
+        "reason": f"Approve exact-resume Hermes fixed run-task prompt_hash={prompt_hash[:16]}.",
+        "expires_at": (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=1)).isoformat(),
+        "created_at": now,
+        "decided_at": None,
+    })
+    repo_upsert_prepared_action(conn, {
+        "prepared_action_id": prepared_action_id,
+        "workspace_id": normalize_workspace_id(body.get("workspace_id") or "local-demo"),
+        "task_id": task_id,
+        "run_id": run_id,
+        "tool_call_id": tool_call_id,
+        "approval_id": approval_id,
+        "requested_by_agent_id": agent_id,
+        "action_type": "runtime.hermes_run_task",
+        "provider": "hermes",
+        "target_resource": "hermes://default-gateway/v1/chat/completions",
+        "normalized_args_json": json.dumps(args, ensure_ascii=False, sort_keys=True),
+        "args_hash": None,
+        "snapshot_ref": "fixed-prompt://hermes-default-run-task",
+        "snapshot_hash": prompt_hash,
+        "status": "waiting_approval",
+        "result_json": "{}",
+        "created_at": now,
+        "updated_at": now,
+        "approved_at": None,
+        "consumed_at": None,
+    })
+    runtime_event(conn, "rtc_hermes_default_gateway", "run_task.prepared", "waiting_approval", run_id=run_id, task_id=task_id, agent_id=agent_id, input_summary=f"Hermes run-task prepared prompt_hash={prompt_hash[:16]}", raw_payload_hash=prompt_hash)
+    audit(conn, "system", "hermes-run-task", "runtime.run_task.prepared_action_created", "prepared_actions", prepared_action_id, None, {"status": "waiting_approval"}, {"approval_id": approval_id, "prompt_hash": prompt_hash, "provider_call_performed": False, "raw_prompt_omitted": True})
+    conn.commit()
+    return {
+        "created": False,
+        "dry_run": False,
+        "provider": "hermes",
+        "mode": "default_gateway_fixed_probe",
+        "ok": False,
+        "requires_approval": True,
+        "provider_call_performed": False,
+        "prepared_action_id": prepared_action_id,
+        "approval_id": approval_id,
+        "task_id": task_id,
+        "run_id": run_id,
+        "tool_call_id": tool_call_id,
+        "prompt_hash": prompt_hash,
+        "token_omitted": True,
+        "raw_prompt_omitted": True,
+    }, 202
+
+
+def hermes_resume_run_task(conn, body: dict, cfg: dict, status: dict, prompt: str, prompt_hash: str) -> tuple[dict, int]:
+    prepared_action_id = body.get("prepared_action_id")
+    action = conn.execute("SELECT * FROM prepared_actions WHERE prepared_action_id=?", (prepared_action_id,)).fetchone()
+    if not action or action["provider"] != "hermes" or action["action_type"] != "runtime.hermes_run_task":
+        return {"created": False, "provider": "hermes", "error": "prepared_action_not_found", "prepared_action_id": prepared_action_id, "token_omitted": True}, 404
+    if action["status"] == "consumed":
+        return {"created": False, "provider": "hermes", "error": "prepared_action_already_consumed", "prepared_action_id": prepared_action_id, "token_omitted": True}, 409
+    if action["status"] in {"rejected", "expired", "canceled"}:
+        return {"created": False, "provider": "hermes", "error": f"prepared_action_{action['status']}", "prepared_action_id": prepared_action_id, "token_omitted": True}, 409
+    if not approval_is_approved(conn, action["approval_id"]):
+        return {"created": False, "provider": "hermes", "error": "approval_required", "prepared_action_id": prepared_action_id, "approval_id": action["approval_id"], "token_omitted": True}, 428
+    supplied_prompt_hash = body.get("prompt_hash")
+    if action["snapshot_hash"] != prompt_hash or (supplied_prompt_hash and supplied_prompt_hash != action["snapshot_hash"]):
+        return {
+            "created": False,
+            "provider": "hermes",
+            "error": "prepared_action_prompt_hash_mismatch",
+            "prepared_action_id": prepared_action_id,
+            "expected_prompt_hash": action["snapshot_hash"],
+            "current_prompt_hash": supplied_prompt_hash or prompt_hash,
+            "token_omitted": True,
+            "raw_prompt_omitted": True,
+        }, 409
+    try:
+        stored_args = json.loads(action["normalized_args_json"] or "{}")
+    except json.JSONDecodeError:
+        stored_args = {}
+    if prepared_action_args_hash(json.dumps(stored_args, ensure_ascii=False, sort_keys=True)) != action["args_hash"]:
+        return {"created": False, "provider": "hermes", "error": "prepared_action_args_mismatch", "prepared_action_id": prepared_action_id, "token_omitted": True}, 409
+    if not (cfg["allow_real_run"] and status["api_listening"]):
+        return {
+            "created": False,
+            "provider": "hermes",
+            "error": "hermes_live_run_not_configured",
+            "prepared_action_id": prepared_action_id,
+            "requires": {"HERMES_ALLOW_REAL_RUN": True, "api_listening": True},
+            "token_omitted": True,
+            "raw_prompt_omitted": True,
+        }, 409
+    if action["status"] != "approved":
+        _before_action, action, _outcome = repo_update_prepared_action_status(conn, prepared_action_id, "approved")
     started_iso = now_iso()
     started = dt.datetime.now(dt.timezone.utc)
-    payload = {"model": "hermes-agent", "messages": [{"role": "user", "content": prompt}], "temperature": 0}
+    payload = {"model": stored_args.get("model") or "hermes-agent", "messages": [{"role": "user", "content": prompt}], "temperature": 0}
     ok = False
     visible = None
     error = None
     response_hash = None
     try:
         req = Request(
-            status["gateway_url"].rstrip("/") + "/v1/chat/completions",
+            (stored_args.get("endpoint") or status["gateway_url"].rstrip("/") + "/v1/chat/completions"),
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
             method="POST",
             headers={"Content-Type": "application/json"},
@@ -8538,13 +8681,12 @@ def hermes_run_task(conn, body: dict) -> dict:
             error = redact_text(visible or "unexpected response", 240)
     except Exception as exc:
         error = redact_text(str(exc), 240)
-
     duration = int((dt.datetime.now(dt.timezone.utc) - started).total_seconds() * 1000)
-    run_id = stable_id("run_hermes_default_task", dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d%H%M%S"))
     row = {
-        "run_id": run_id,
-        "task_id": task_id,
-        "agent_id": agent_id,
+        "run_id": action["run_id"],
+        "workspace_id": action["workspace_id"],
+        "task_id": action["task_id"],
+        "agent_id": action["requested_by_agent_id"],
         "runtime_type": "hermes",
         "status": "completed" if ok else "failed",
         "started_at": started_iso,
@@ -8561,17 +8703,76 @@ def hermes_run_task(conn, body: dict) -> dict:
         "error_type": None if ok else "HermesDefaultRunTaskFailed",
         "error_message": error,
         "trace_id": None,
-        "parent_run_id": None,
+        "parent_run_id": body.get("parent_run_id"),
         "delegation_id": "hermes:default-gateway",
-        "approval_required": 0,
+        "approval_required": 0 if ok else 1,
         "created_at": started_iso,
     }
-    upsert_run(conn, row, "hermes-run-task", {"prompt_hash": prompt_hash, "raw_payload_hash": response_hash})
+    repo_upsert_run(conn, row)
+    repo_update_tool_call_status(conn, action["tool_call_id"], "completed" if ok else "failed")
+    conn.execute(
+        "UPDATE tool_calls SET result_summary=?, side_effect_id=?, ended_at=? WHERE tool_call_id=?",
+        (row["output_summary"], f"hermes-response-hash:{response_hash[:16]}" if response_hash else None, row["ended_at"], action["tool_call_id"]),
+    )
+    conn.execute("UPDATE tasks SET status=?, updated_at=? WHERE task_id=?", ("completed" if ok else "failed", now_iso(), action["task_id"]))
+    if ok:
+        _before_action, after_action, _action_outcome = repo_update_prepared_action_status(conn, prepared_action_id, "consumed", result_json={"response_hash": response_hash, "raw_response_omitted": True})
+    else:
+        after_action = action
     upsert_evaluation(conn, quality_gate_for_run(row), "hermes-run-task")
-    runtime_event(conn, "rtc_hermes_default_gateway", "run_task", "completed" if ok else "failed", run_id=run_id, task_id=task_id, agent_id=agent_id, model_name="hermes-agent", latency_ms=duration, prompt_hash=prompt_hash, output_summary=visible, error_message=error, raw_payload_hash=response_hash)
-    audit(conn, "system", "hermes-run-task", "runtime.run_task", "runs", run_id, None, {"status": row["status"]}, {"prompt_hash": prompt_hash, "confirmed": True})
+    runtime_event(conn, "rtc_hermes_default_gateway", "run_task.resume", "completed" if ok else "failed", run_id=action["run_id"], task_id=action["task_id"], agent_id=action["requested_by_agent_id"], model_name="hermes-agent", latency_ms=duration, prompt_hash=prompt_hash, output_summary=visible, error_message=error, raw_payload_hash=response_hash or prompt_hash)
+    audit(conn, "system", "hermes-run-task", "runtime.run_task.resume", "runs", action["run_id"], None, {"status": row["status"]}, {"prompt_hash": prompt_hash, "prepared_action_id": prepared_action_id, "provider_call_performed": True, "raw_prompt_omitted": True, "raw_response_omitted": True})
     conn.commit()
-    return {"created": True, "dry_run": False, "provider": "hermes", "mode": "default_gateway_fixed_probe", "ok": ok, "run_id": run_id, "task_id": task_id, "duration_ms": duration, "output_summary": row["output_summary"], "error": error}
+    return {
+        "created": ok,
+        "dry_run": False,
+        "provider": "hermes",
+        "mode": "default_gateway_fixed_probe",
+        "ok": ok,
+        "prepared_action_id": prepared_action_id,
+        "prepared_action_status": after_action["status"] if after_action else action["status"],
+        "run_id": action["run_id"],
+        "task_id": action["task_id"],
+        "tool_call_id": action["tool_call_id"],
+        "duration_ms": duration,
+        "prompt_hash": prompt_hash,
+        "output_summary": row["output_summary"],
+        "error": error,
+        "provider_call_performed": True,
+        "token_omitted": True,
+        "raw_prompt_omitted": True,
+        "raw_response_omitted": True,
+    }, 201 if ok else 200
+
+
+def hermes_run_task(conn, body: dict) -> tuple[dict, int]:
+    cfg = hermes_runtime_config()
+    status = hermes_status()
+    refresh_runtime_connectors(conn, status)
+    confirm = bool(body.get("confirm_run"))
+    prompt = hermes_default_run_prompt()
+    prompt_hash = stable_hash(prompt)
+    plan = {
+        "created": False,
+        "dry_run": True,
+        "provider": "hermes",
+        "mode": "default_gateway_fixed_probe",
+        "would_post": status["gateway_url"].rstrip("/") + "/v1/chat/completions",
+        "prompt_hash": prompt_hash,
+        "requires": {"HERMES_ALLOW_REAL_RUN": True, "confirm_run": True, "api_listening": True},
+        "note": "Only a fixed safe probe is enabled here. Arbitrary Hermes task prompts remain disabled.",
+    }
+    risk = body.get("risk_level", "low")
+    if body.get("prepared_action_id"):
+        return hermes_resume_run_task(conn, body, cfg, status, prompt, prompt_hash)
+    if risk not in ("low", "medium") and not body.get("confirm_run"):
+        return {"created": False, "dry_run": True, "requires_confirm_run": True, "reason": "High-risk runtime tasks require confirm_run=true."}, 201
+    if not (cfg["allow_real_run"] and confirm and status["api_listening"]):
+        runtime_event(conn, "rtc_hermes_default_gateway", "run_task_dry_run", "planned", prompt_hash=prompt_hash, input_summary="Hermes default fixed run-task dry-run.")
+        audit(conn, "system", "hermes-run-task", "runtime.run_task.dry_run", "runtime_connectors", "rtc_hermes_default_gateway", None, plan, {"confirm_run": confirm, "api_listening": status["api_listening"]})
+        conn.commit()
+        return plan, 201
+    return hermes_prepare_run_task(conn, body, cfg, status, prompt_hash, risk)
 
 
 def worker_runtime_path(adapter: str, suffix: str) -> Path:
@@ -12591,10 +12792,8 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/integrations/hermes/chat-completion-probe":
                 return self.send_json(agnesfallback_chat_completion_probe(conn, body), 201)
             if path == "/api/integrations/hermes/run-task":
-                result = hermes_run_task(conn, body)
-                audit(conn, "user", "usr_founder", "runtime.run_task.preview", "runtime_connectors", "rtc_hermes_default_gateway", None, result, {"dry_run": result.get("dry_run", True)})
-                conn.commit()
-                return self.send_json(result, 201)
+                payload, status = hermes_run_task(conn, body)
+                return self.send_json(payload, status)
             if path == "/api/integrations/dify/upload-text":
                 payload, status = dify_create_document_by_text(conn, body)
                 return self.send_json(payload, status)
