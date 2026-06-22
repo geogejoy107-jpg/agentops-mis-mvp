@@ -6964,6 +6964,11 @@ def operator_action_receipt_public(row: sqlite3.Row) -> dict:
     }
 
 
+def operator_receipt_requires_control_readback(receipt: dict) -> bool:
+    source = str(receipt.get("source") or "")
+    return source.startswith("advance_loop:") or source == "handoff.evidence_remediation"
+
+
 def operator_action_receipt_rows(conn: sqlite3.Connection, workspace_id: str, limit: int) -> list[dict]:
     limit = min(max(int(limit), 1), 1000)
     rows = conn.execute(
@@ -7029,6 +7034,12 @@ def list_operator_action_receipts(conn: sqlite3.Connection, qs, headers=None) ->
     workspace_id = normalize_workspace_id((qs.get("workspace_id") or [headers.get("X-AgentOps-Workspace-Id") or "local-demo"])[0])
     limit = min(max(int((qs.get("limit") or ["12"])[0]), 1), 50)
     receipts = operator_action_receipt_rows(conn, workspace_id, limit)
+    control_readback_required = [item for item in receipts if operator_receipt_requires_control_readback(item)]
+    control_readback_attached = [
+        item for item in control_readback_required
+        if isinstance(item.get("control_readback"), dict) and bool((item.get("control_readback") or {}).get("before"))
+    ]
+    control_readback_missing = len(control_readback_required) - len(control_readback_attached)
     summary = {
         "receipts": len(receipts),
         "recorded": sum(1 for item in receipts if item.get("status") == "recorded"),
@@ -7038,6 +7049,12 @@ def list_operator_action_receipts(conn: sqlite3.Connection, qs, headers=None) ->
         "evaluated": sum(1 for item in receipts if item.get("evaluation")),
         "evaluation_pass": sum(1 for item in receipts if (item.get("evaluation") or {}).get("pass_fail") == "pass"),
         "evaluation_fail": sum(1 for item in receipts if (item.get("evaluation") or {}).get("pass_fail") == "fail"),
+        "control_readback_required": len(control_readback_required),
+        "control_readback_attached": len(control_readback_attached),
+        "control_readback_missing": control_readback_missing,
+        "control_readback_coverage_percent": round((len(control_readback_attached) / len(control_readback_required)) * 100) if control_readback_required else 100,
+        "control_readback_status": "attention" if control_readback_missing else "ready",
+        "latest_control_readback_hash": next((item.get("control_readback_hash") for item in receipts if item.get("control_readback_hash")), None),
     }
     return {
         "provider": "agentops-operator",
@@ -18449,6 +18466,10 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
     receipt_evaluation_status = "blocked" if receipt_evaluation_fail_count else "attention" if receipt_evaluation_missing_count else "ready"
     receipt_coverage_percent = round((receipt_verified_count / receipt_required_count) * 100) if receipt_required_count else 100
     receipt_coverage_status = "ready" if receipt_missing_count == 0 and receipt_stale_count == 0 else "attention"
+    control_readback_required_count = int(action_receipt_summary.get("control_readback_required") or 0)
+    control_readback_attached_count = int(action_receipt_summary.get("control_readback_attached") or 0)
+    control_readback_missing_count = int(action_receipt_summary.get("control_readback_missing") or 0)
+    control_readback_coverage_percent = int(action_receipt_summary.get("control_readback_coverage_percent") or 100)
     receipt_coverage = {
         "required": receipt_required_count,
         "verified": receipt_verified_count,
@@ -18464,6 +18485,12 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
         "evaluation_missing": receipt_evaluation_missing_count,
         "evaluation_coverage_percent": receipt_evaluation_coverage_percent,
         "evaluation_status": receipt_evaluation_status,
+        "control_readback_required": control_readback_required_count,
+        "control_readback_attached": control_readback_attached_count,
+        "control_readback_missing": control_readback_missing_count,
+        "control_readback_coverage_percent": control_readback_coverage_percent,
+        "control_readback_status": "attention" if control_readback_missing_count else "ready",
+        "latest_control_readback_hash": action_receipt_summary.get("latest_control_readback_hash"),
         "lookup_window": len(receipt_rows),
         "display_receipts": action_receipt_summary.get("receipts", 0),
         "token_omitted": True,
@@ -18666,6 +18693,10 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             "action_receipts_evaluated": action_receipt_summary.get("evaluated", 0),
             "action_receipts_evaluation_pass": action_receipt_summary.get("evaluation_pass", 0),
             "action_receipts_evaluation_fail": action_receipt_summary.get("evaluation_fail", 0),
+            "action_receipts_control_readback_required": control_readback_required_count,
+            "action_receipts_control_readback_attached": control_readback_attached_count,
+            "action_receipts_control_readback_missing": control_readback_missing_count,
+            "action_receipts_control_readback_coverage_percent": control_readback_coverage_percent,
             "receipt_failure_memory_candidates": receipt_failure_memory_summary.get("candidates", 0),
             "receipt_failure_memory_failed_receipts": receipt_failure_memory_summary.get("failed_receipts", 0),
             "receipt_failure_memory_existing_candidates": receipt_failure_memory_summary.get("existing_memory_candidates", 0),
@@ -19389,6 +19420,9 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
     receipt_evaluated = int(receipt_coverage.get("evaluated") or 0)
     receipt_evaluation_fail = int(receipt_coverage.get("evaluation_fail") or 0)
     receipt_evaluation_missing = int(receipt_coverage.get("evaluation_missing") or 0)
+    control_readback_required = int(receipt_coverage.get("control_readback_required") or 0)
+    control_readback_attached = int(receipt_coverage.get("control_readback_attached") or 0)
+    control_readback_missing = int(receipt_coverage.get("control_readback_missing") or 0)
     receipt_failure_memory_candidates = int(receipt_failure_memory_summary.get("candidates") or 0)
     receipt_failure_memory_failed_receipts = int(receipt_failure_memory_summary.get("failed_receipts") or 0)
     receipt_failure_memory_existing_candidates = int(receipt_failure_memory_summary.get("existing_memory_candidates") or 0)
@@ -20024,6 +20058,8 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
         loop_health_risks.append({"id": "receipt_evaluation_failed", "severity": "blocked", "count": receipt_evaluation_fail, "next_action": "agentops operator action-receipts --limit 20 --plan-limit 20"})
     elif receipt_evaluation_missing:
         loop_health_risks.append({"id": "receipt_evaluation_missing", "severity": "attention", "count": receipt_evaluation_missing, "next_action": "agentops operator action-receipts --limit 20 --plan-limit 20"})
+    if control_readback_missing:
+        loop_health_risks.append({"id": "control_readback_missing", "severity": "attention", "count": control_readback_missing, "next_action": "agentops operator action-receipts --limit 20 --plan-limit 20"})
     if receipt_failure_memory_candidates:
         next_action = (receipt_failure_work_order.get("next_actions") or receipt_failure_memory.get("next_actions") or ["agentops operator receipt-failure-memories --min-failures 2 --limit 8"])[0]
         loop_health_risks.append({"id": "receipt_failure_memory_review", "severity": "attention", "count": receipt_failure_memory_candidates, "next_action": next_action})
@@ -20096,6 +20132,15 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
             "failed": receipt_evaluation_fail,
             "missing": receipt_evaluation_missing,
             "coverage_percent": receipt_coverage.get("evaluation_coverage_percent", 100),
+        },
+        "control_readbacks": {
+            "status": "attention" if control_readback_missing else "pass",
+            "required": control_readback_required,
+            "attached": control_readback_attached,
+            "missing": control_readback_missing,
+            "coverage_percent": receipt_coverage.get("control_readback_coverage_percent", 100),
+            "latest_hash": receipt_coverage.get("latest_control_readback_hash"),
+            "next_action": "agentops operator action-receipts --limit 20 --plan-limit 20",
         },
         "receipt_failure_memory": {
             "status": "attention" if receipt_failure_memory_candidates else "pass",

@@ -4881,6 +4881,8 @@ export function AIEmployees() {
                 {operatorReceiptCoverage && ` · receipt eval ${operatorReceiptCoverage.evaluated ?? 0}/${operatorReceiptCoverage.evaluation_required ?? 0} · failed ${operatorReceiptCoverage.evaluation_fail ?? 0} · ${operatorReceiptCoverage.evaluation_coverage_percent ?? 100}%`}
                 {operatorPlanSummary && ` · failure memory ${operatorPlanSummary.receipt_failure_memory_candidates}/${operatorPlanSummary.receipt_failure_memory_failed_receipts}/${operatorPlanSummary.receipt_failure_memory_existing_candidates}`}
                 {operatorActionReceipts?.summary && ` · ${copy.actionReceipts.toLowerCase()} ${operatorActionReceipts.summary.receipts}/${operatorActionReceipts.summary.verified}`}
+                {operatorActionReceipts?.summary && ` · ${copy.controlReadback.toLowerCase()} ${operatorActionReceipts.summary.control_readback_attached}/${operatorActionReceipts.summary.control_readback_required} · missing ${operatorActionReceipts.summary.control_readback_missing} · ${operatorActionReceipts.summary.control_readback_coverage_percent}%`}
+                {operatorActionReceipts?.summary?.latest_control_readback_hash && ` · ${copy.tamperChain.toLowerCase()} ${operatorActionReceipts.summary.latest_control_readback_hash.slice(0, 10)}`}
               </p>
               {panelEvidenceLine("operator_action_plan")}
             </div>

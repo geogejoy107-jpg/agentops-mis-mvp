@@ -311,6 +311,9 @@ liveApi.ts                        > 2.2k lines
   `operator.action_queue_control_readback` 审计行挂到 Action Queue receipt
   上，`/api/operator/action-receipts` 和 `/workspace/agents` 需要展示
   before/after/self-check、cache bypass 与 tamper hash 证明。
+  Action Queue receipt summary 还必须计算 control readback required/attached/
+  missing/coverage/status，并由 operator health 的 `control_readbacks` gate
+  把缺失读回执作为 attention 风险暴露。
 - `agentops operator handoff` 的 `loop_health.gates.loop_control` 是当前
   推荐控制面的机器可读审计入口，字段包含 mode、selected gate、next
   action、verify command、receipt command、copy-only、server-shell boundary、

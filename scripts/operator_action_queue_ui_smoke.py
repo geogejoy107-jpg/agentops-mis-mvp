@@ -272,6 +272,9 @@ EXPECTED_MARKERS = {
     "action_receipt_control_readback_render": "{copy.controlReadback}: {copy.controlBefore}",
     "action_receipt_control_readback_cache": "queueControlCacheProof",
     "action_receipt_control_readback_hash": "queueControlReadbackHash",
+    "action_receipt_control_readback_summary": "operatorActionReceipts.summary.control_readback_attached",
+    "action_receipt_control_readback_summary_missing": "operatorActionReceipts.summary.control_readback_missing",
+    "action_receipt_control_readback_summary_hash": "operatorActionReceipts.summary.latest_control_readback_hash",
     "operator_health_loop_control_cache_refresh": "loopControlRefreshRequired",
     "operator_health_loop_control_top_badge": "copy.loopControlTitle}: ${loopControlGateStatus}",
     "operator_health_loop_control_metric": "{ label: copy.loopControlTitle, value: loopControlSelectedGate, status: loopControlGateStatus }",
@@ -397,6 +400,10 @@ EXPECTED_LIVE_API_MARKERS = {
     "operator_action_receipt_control_readback_type": "control_readback?: Record<string, unknown> | null;",
     "operator_action_receipt_control_readback_id_type": "control_readback_id?: string | null;",
     "operator_action_receipt_control_readback_hash_type": "control_readback_hash?: string | null;",
+    "operator_action_receipts_control_required_type": "control_readback_required: number;",
+    "operator_action_receipts_control_attached_type": "control_readback_attached: number;",
+    "operator_action_receipts_control_missing_type": "control_readback_missing: number;",
+    "operator_action_receipts_control_status_type": "control_readback_status: string;",
     "operator_health_control_summary_fallback": 'operation: "operator_loop_control_summary"',
     "operator_health_loop_control_fallback": 'control_readback_source: "agentops operator advance-loop --confirm-advance"',
     "operator_health_control_raw": "const controlRaw = typeof raw.control_summary",
@@ -407,6 +414,8 @@ EXPECTED_LIVE_API_MARKERS = {
     "operator_health_loop_control_token_omitted": "token_omitted: loopControlRaw.token_omitted",
     "operator_action_receipt_control_readback_normalize": "control_readback: typeof raw.control_readback",
     "operator_action_receipt_control_readback_hash_normalize": "control_readback_hash: raw.control_readback_hash",
+    "operator_action_receipts_control_required_normalize": "control_readback_required: numberValue(summaryRaw.control_readback_required",
+    "operator_action_receipts_control_hash_normalize": "latest_control_readback_hash: summaryRaw.latest_control_readback_hash",
 }
 
 FORBIDDEN_MARKERS = {

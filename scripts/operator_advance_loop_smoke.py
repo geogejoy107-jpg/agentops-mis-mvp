@@ -272,12 +272,22 @@ def main() -> int:
             require(((loop_readback_receipt.get("control_readback") or {}).get("before") or {}).get("selected_gate") == "record", f"loop persisted control readback before mismatch: {advanced_payload}", failures)
             receipts_after_advance = run_cli(["operator", "action-receipts", "--limit", "20"], base_url, outputs)
             receipts_payload = load_json(receipts_after_advance.stdout)
+            receipts_summary = receipts_payload.get("summary") or {}
             persisted_readbacks = [
                 receipt.get("control_readback") or {}
                 for receipt in receipts_payload.get("receipts") or []
                 if (receipt.get("control_readback") or {}).get("before")
             ]
             require(any((item.get("before") or {}).get("selected_gate") == "record" and item.get("cache_bypassed") is True for item in persisted_readbacks), f"action receipts should expose persisted loop control readback: {receipts_payload}", failures)
+            require(int(receipts_summary.get("control_readback_required") or 0) >= 3, f"action receipt summary should require control readbacks for advance receipts: {receipts_payload}", failures)
+            require(int(receipts_summary.get("control_readback_attached") or 0) >= int(receipts_summary.get("control_readback_required") or 0), f"action receipt summary should attach all required control readbacks: {receipts_payload}", failures)
+            require(int(receipts_summary.get("control_readback_missing") or 0) == 0, f"action receipt summary should not miss control readbacks: {receipts_payload}", failures)
+            require(receipts_summary.get("control_readback_status") == "ready", f"action receipt summary control readback status should be ready: {receipts_payload}", failures)
+            handoff_with_readbacks = run_cli(["operator", "handoff", "--loop-id", loop_id, "--limit", "10"], base_url, outputs)
+            handoff_with_readbacks_payload = load_json(handoff_with_readbacks.stdout)
+            control_readback_gate = ((((handoff_with_readbacks_payload.get("loop_health") or {}).get("gates") or {}).get("control_readbacks")) or {})
+            require(control_readback_gate.get("status") == "pass", f"handoff health should expose passing control readback gate: {handoff_with_readbacks_payload}", failures)
+            require(int(control_readback_gate.get("attached") or 0) >= int(control_readback_gate.get("required") or 0), f"handoff control readback gate should prove coverage: {handoff_with_readbacks_payload}", failures)
             require((advanced_payload.get("safety") or {}).get("ledger_mutated") is True, f"advance should record receipt: {advanced_payload}", failures)
             require((advanced_payload.get("safety") or {}).get("live_execution_performed") is False, f"advance must not run live work: {advanced_payload}", failures)
             require(after_advance["memories"].get("candidate", 0) == 1, f"advance should propose one loop memory candidate: {after_advance}", failures)

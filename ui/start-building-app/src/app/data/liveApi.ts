@@ -1352,6 +1352,12 @@ export interface OperatorActionReceiptsPayload {
     evaluated: number;
     evaluation_pass: number;
     evaluation_fail: number;
+    control_readback_required: number;
+    control_readback_attached: number;
+    control_readback_missing: number;
+    control_readback_coverage_percent: number;
+    control_readback_status: string;
+    latest_control_readback_hash?: string | null;
   };
   receipts: OperatorActionReceipt[];
   safety: {
@@ -4351,6 +4357,12 @@ export async function loadOperatorActionReceipts(limit = 8): Promise<OperatorAct
       evaluated: numberValue(summaryRaw.evaluated, 0),
       evaluation_pass: numberValue(summaryRaw.evaluation_pass, 0),
       evaluation_fail: numberValue(summaryRaw.evaluation_fail, 0),
+      control_readback_required: numberValue(summaryRaw.control_readback_required, 0),
+      control_readback_attached: numberValue(summaryRaw.control_readback_attached, 0),
+      control_readback_missing: numberValue(summaryRaw.control_readback_missing, 0),
+      control_readback_coverage_percent: numberValue(summaryRaw.control_readback_coverage_percent, 100),
+      control_readback_status: String(summaryRaw.control_readback_status || "ready"),
+      latest_control_readback_hash: summaryRaw.latest_control_readback_hash ? String(summaryRaw.latest_control_readback_hash) : null,
     },
     receipts: asArray<Record<string, unknown>>(raw.receipts).map(normalizeOperatorActionReceipt).filter(item => item.receipt_id),
     safety: {

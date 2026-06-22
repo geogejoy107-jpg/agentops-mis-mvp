@@ -1585,6 +1585,10 @@ including cache-bypass proof. The same readback is also written as an append-onl
 `operator.action_queue_control_readback` audit row attached to the Action Queue
 receipt, so `/api/operator/action-receipts` and the Operator Command Center can
 show before/after/self-check control proof with the readback tamper hash. This
+receipt read model also reports control-readback coverage
+(`required`/`attached`/`missing`/coverage/status), and operator health exposes a
+`control_readbacks` gate so missing post-advance readbacks become an explicit
+attention risk. This
 lets agents see that the next recommendation has moved after receipt/evaluation
 instead of reading stale handoff state. The
 policy scope allows safe local actions such as `knowledge index`, `memory
