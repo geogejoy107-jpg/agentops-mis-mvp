@@ -15,10 +15,14 @@ if str(ROOT) not in sys.path:
 from agentops_mis_core.approval_wall import (
     approval_wall_recommended_actions,
     build_prepared_action_get_response,
+    prepared_action_checkpoint,
     prepared_action_gate,
     prepared_action_hash,
     prepared_action_hash_payload,
+    prepared_action_id_from_request,
     prepared_action_public,
+    prepared_action_resume_gate_error,
+    prepared_action_stored_args,
 )
 from agentops_mis_core.read_model_cache import ReadModelCache
 from agentops_mis_core.commander_work_packages import (
@@ -162,17 +166,25 @@ SERVER_OPERATOR_COMMAND_CENTER_IMPORTS = {
 EXTRACTED_APPROVAL_WALL_HELPERS = {
     "approval_wall_recommended_actions",
     "build_prepared_action_get_response",
+    "prepared_action_checkpoint",
     "prepared_action_gate",
     "prepared_action_hash",
     "prepared_action_hash_payload",
+    "prepared_action_id_from_request",
     "prepared_action_public",
+    "prepared_action_resume_gate_error",
+    "prepared_action_stored_args",
 }
 SERVER_APPROVAL_WALL_IMPORTS = {
     "approval_wall_recommended_actions",
     "build_prepared_action_get_response",
+    "prepared_action_checkpoint",
     "prepared_action_gate",
     "prepared_action_hash",
+    "prepared_action_id_from_request",
     "prepared_action_public",
+    "prepared_action_resume_gate_error",
+    "prepared_action_stored_args",
 }
 
 
@@ -433,6 +445,58 @@ def main() -> int:
     require((prepared_get.get("hash_verification") or {}).get("match") is True, "prepared action get response hash verification failed", failures)
     require("approval prepared-action resume" in " ".join(prepared_actions), "approval wall recommended actions missing prepared-action resume", failures)
     require("fixture_secret_value" not in prepared_serialized and "fixture_session_value" not in prepared_serialized, "prepared action public projection leaked token-like metadata", failures)
+    require(prepared_action_id_from_request({"prepared_action_id": "pa_smoke"}) == "pa_smoke", "prepared action request id helper failed", failures)
+    require(prepared_action_stored_args(prepared_row).get("operation") == "publish", "prepared action stored args helper failed", failures)
+    require(prepared_action_checkpoint(prepared_row).get("checkpoint") == "before_publish", "prepared action checkpoint helper failed", failures)
+    missing_gate = prepared_action_resume_gate_error(
+        action_id=None,
+        row=None,
+        approval=None,
+        expected_args={"operation": "publish"},
+        expected_action_type="external.publish",
+        comparable_fields=("operation",),
+        missing_error="external_publish_prepared_action_required",
+        missing_message="External publish requires a prepared action.",
+        approval_message="External publish can execute only after approval.",
+    )
+    pending_gate = prepared_action_resume_gate_error(
+        action_id="pa_smoke",
+        row=prepared_row,
+        approval={"approval_id": "ap_pa_smoke", "decision": "pending"},
+        expected_args={"operation": "publish"},
+        expected_action_type="external.publish",
+        comparable_fields=("operation",),
+        missing_error="external_publish_prepared_action_required",
+        missing_message="External publish requires a prepared action.",
+        approval_message="External publish can execute only after approval.",
+    )
+    mismatch_gate = prepared_action_resume_gate_error(
+        action_id="pa_smoke",
+        row=prepared_row,
+        approval={"approval_id": "ap_pa_smoke", "decision": "approved"},
+        expected_args={"operation": "archive"},
+        expected_action_type="external.publish",
+        comparable_fields=("operation",),
+        missing_error="external_publish_prepared_action_required",
+        missing_message="External publish requires a prepared action.",
+        approval_message="External publish can execute only after approval.",
+    )
+    consumed_row = {**prepared_row, "status": "consumed", "consumed_at": "2026-06-22T00:01:00+00:00"}
+    consumed_gate = prepared_action_resume_gate_error(
+        action_id="pa_smoke",
+        row=consumed_row,
+        approval={"approval_id": "ap_pa_smoke", "decision": "approved"},
+        expected_args={"operation": "publish"},
+        expected_action_type="external.publish",
+        comparable_fields=("operation",),
+        missing_error="external_publish_prepared_action_required",
+        missing_message="External publish requires a prepared action.",
+        approval_message="External publish can execute only after approval.",
+    )
+    require(missing_gate and missing_gate.get("error") == "external_publish_prepared_action_required", "resume gate missing-id error failed", failures)
+    require(pending_gate and pending_gate.get("error") == "approval_required", "resume gate approval-required error failed", failures)
+    require(mismatch_gate and mismatch_gate.get("error") == "prepared_action_request_mismatch" and "operation" in mismatch_gate.get("mismatched_fields", []), "resume gate mismatch error failed", failures)
+    require(consumed_gate and consumed_gate.get("error") == "prepared_action_already_consumed", "resume gate consumed error failed", failures)
     daemons = [{
         "adapter": "mock",
         "agent_id": "agt_worker_local_smoke",

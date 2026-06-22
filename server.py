@@ -37,9 +37,13 @@ from urllib.error import HTTPError, URLError
 from agentops_mis_core.approval_wall import (
     approval_wall_recommended_actions,
     build_prepared_action_get_response,
+    prepared_action_checkpoint,
     prepared_action_gate,
     prepared_action_hash,
+    prepared_action_id_from_request,
     prepared_action_public,
+    prepared_action_resume_gate_error,
+    prepared_action_stored_args,
 )
 from agentops_mis_core.commander_work_packages import (
     build_commander_work_packages_readback,
@@ -9310,37 +9314,22 @@ def create_runtime_probe_prepared_action(conn, body: dict, *, provider: str, mod
 
 
 def runtime_probe_prepared_action_resume_gate(conn, body: dict, expected_args: dict) -> tuple[sqlite3.Row | None, dict | None]:
-    action_id = body.get("prepared_action_id") or body.get("action_id")
-    if not action_id:
-        return None, {"error": "runtime_probe_prepared_action_required", "message": "Live fixed runtime probes require a prepared_action_id created by the Approval Wall.", "token_omitted": True}
-    row = conn.execute("SELECT * FROM prepared_actions WHERE action_id=?", (action_id,)).fetchone()
-    if not row:
-        return None, {"error": "prepared_action_not_found", "prepared_action_id": action_id, "token_omitted": True}
-    approval = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (row["approval_id"],)).fetchone()
-    if not approval or approval["decision"] != "approved":
-        return None, {
-            "error": "approval_required",
-            "message": "Live fixed runtime probe can execute only after the linked prepared action approval is approved.",
-            "approval_id": row["approval_id"],
-            "prepared_action_id": action_id,
-            "decision": approval["decision"] if approval else None,
-            "token_omitted": True,
-        }
-    if row["consumed_at"] or row["status"] == "consumed":
-        return None, {"error": "prepared_action_already_consumed", "prepared_action": prepared_action_public(row), "token_omitted": True}
-    current_hash = prepared_action_hash(dict(row))
-    if current_hash != row["action_hash"]:
-        return None, {"error": "action_hash_mismatch", "stored_action_hash": row["action_hash"], "current_action_hash": current_hash, "token_omitted": True}
-    try:
-        stored_args = json.loads(row["normalized_args_json"] or "{}")
-    except Exception:
-        stored_args = {}
-    mismatched = [
-        key for key in ("provider", "operation", "mode", "connector_id", "prompt_hash", "target_resource")
-        if stored_args.get(key) != expected_args.get(key)
-    ]
-    if row["action_type"] != "runtime.fixed_probe" or mismatched:
-        return None, {"error": "prepared_action_request_mismatch", "prepared_action_id": action_id, "mismatched_fields": mismatched or ["action_type"], "token_omitted": True}
+    action_id = prepared_action_id_from_request(body)
+    row = conn.execute("SELECT * FROM prepared_actions WHERE action_id=?", (action_id,)).fetchone() if action_id else None
+    approval = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (row["approval_id"],)).fetchone() if row else None
+    gate_error = prepared_action_resume_gate_error(
+        action_id=action_id,
+        row=row,
+        approval=approval,
+        expected_args=expected_args,
+        expected_action_type="runtime.fixed_probe",
+        comparable_fields=("provider", "operation", "mode", "connector_id", "prompt_hash", "target_resource"),
+        missing_error="runtime_probe_prepared_action_required",
+        missing_message="Live fixed runtime probes require a prepared_action_id created by the Approval Wall.",
+        approval_message="Live fixed runtime probe can execute only after the linked prepared action approval is approved.",
+    )
+    if gate_error:
+        return None, gate_error
     return row, None
 
 
@@ -9875,55 +9864,22 @@ def dify_prepared_action_payload(conn, body: dict, cfg: dict, agent_id: str, tas
 
 
 def dify_prepared_action_resume_gate(conn, body: dict, expected_args: dict) -> tuple[sqlite3.Row | None, dict | None]:
-    action_id = body.get("prepared_action_id") or body.get("action_id")
-    if not action_id:
-        return None, {
-            "error": "dify_prepared_action_required",
-            "message": "Dify live upload requires a prepared_action_id created by the Approval Wall.",
-            "token_omitted": True,
-        }
-    row = conn.execute("SELECT * FROM prepared_actions WHERE action_id=?", (action_id,)).fetchone()
-    if not row:
-        return None, {"error": "prepared_action_not_found", "prepared_action_id": action_id, "token_omitted": True}
-    approval = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (row["approval_id"],)).fetchone()
-    if not approval or approval["decision"] != "approved":
-        return None, {
-            "error": "approval_required",
-            "message": "Dify upload can execute only after the linked prepared action approval is approved.",
-            "approval_id": row["approval_id"],
-            "prepared_action_id": action_id,
-            "decision": approval["decision"] if approval else None,
-            "token_omitted": True,
-        }
-    if row["consumed_at"] or row["status"] == "consumed":
-        return None, {
-            "error": "prepared_action_already_consumed",
-            "prepared_action": prepared_action_public(row),
-            "token_omitted": True,
-        }
-    current_hash = prepared_action_hash(dict(row))
-    if current_hash != row["action_hash"]:
-        return None, {
-            "error": "action_hash_mismatch",
-            "stored_action_hash": row["action_hash"],
-            "current_action_hash": current_hash,
-            "token_omitted": True,
-        }
-    try:
-        stored_args = json.loads(row["normalized_args_json"] or "{}")
-    except Exception:
-        stored_args = {}
-    mismatched = [
-        key for key in ("provider", "operation", "dataset_id", "document_name", "text_hash")
-        if stored_args.get(key) != expected_args.get(key)
-    ]
-    if row["action_type"] != "dify.knowledge.upload" or mismatched:
-        return None, {
-            "error": "prepared_action_request_mismatch",
-            "prepared_action_id": action_id,
-            "mismatched_fields": mismatched or ["action_type"],
-            "token_omitted": True,
-        }
+    action_id = prepared_action_id_from_request(body)
+    row = conn.execute("SELECT * FROM prepared_actions WHERE action_id=?", (action_id,)).fetchone() if action_id else None
+    approval = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (row["approval_id"],)).fetchone() if row else None
+    gate_error = prepared_action_resume_gate_error(
+        action_id=action_id,
+        row=row,
+        approval=approval,
+        expected_args=expected_args,
+        expected_action_type="dify.knowledge.upload",
+        comparable_fields=("provider", "operation", "dataset_id", "document_name", "text_hash"),
+        missing_error="dify_prepared_action_required",
+        missing_message="Dify live upload requires a prepared_action_id created by the Approval Wall.",
+        approval_message="Dify upload can execute only after the linked prepared action approval is approved.",
+    )
+    if gate_error:
+        return None, gate_error
     return row, None
 
 
@@ -22797,44 +22753,26 @@ def create_notion_export_prepared_action(conn, body: dict, markdown: str, title:
 
 
 def notion_export_prepared_action_resume_gate(conn, body: dict, expected_args: dict) -> tuple[sqlite3.Row | None, dict | None]:
-    action_id = body.get("prepared_action_id") or body.get("action_id")
-    if not action_id:
-        return None, {"error": "notion_prepared_action_required", "message": "Notion live export requires a prepared_action_id created by the Approval Wall.", "token_omitted": True}
-    row = conn.execute("SELECT * FROM prepared_actions WHERE action_id=?", (action_id,)).fetchone()
-    if not row:
-        return None, {"error": "prepared_action_not_found", "prepared_action_id": action_id, "token_omitted": True}
-    approval = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (row["approval_id"],)).fetchone()
-    if not approval or approval["decision"] != "approved":
-        return None, {
-            "error": "approval_required",
-            "message": "Notion export can execute only after the linked prepared action approval is approved.",
-            "approval_id": row["approval_id"],
-            "prepared_action_id": action_id,
-            "decision": approval["decision"] if approval else None,
-            "token_omitted": True,
-        }
-    if row["consumed_at"] or row["status"] == "consumed":
-        return None, {"error": "prepared_action_already_consumed", "prepared_action": prepared_action_public(row), "token_omitted": True}
-    current_hash = prepared_action_hash(dict(row))
-    if current_hash != row["action_hash"]:
-        return None, {"error": "action_hash_mismatch", "stored_action_hash": row["action_hash"], "current_action_hash": current_hash, "token_omitted": True}
-    try:
-        stored_args = json.loads(row["normalized_args_json"] or "{}")
-    except Exception:
-        stored_args = {}
-    mismatched = [
-        key for key in ("provider", "operation", "title", "export_mode", "target_parent")
-        if stored_args.get(key) != expected_args.get(key)
-    ]
-    try:
-        checkpoint = json.loads(row["checkpoint_json"] or "{}")
-    except Exception:
-        checkpoint = {}
-    _, snapshot_error = notion_export_read_snapshot(checkpoint, stored_args.get("markdown_hash") or "")
-    if snapshot_error:
-        mismatched.append(snapshot_error)
-    if row["action_type"] != "notion.report.export" or mismatched:
-        return None, {"error": "prepared_action_request_mismatch", "prepared_action_id": action_id, "mismatched_fields": mismatched or ["action_type"], "token_omitted": True}
+    action_id = prepared_action_id_from_request(body)
+    row = conn.execute("SELECT * FROM prepared_actions WHERE action_id=?", (action_id,)).fetchone() if action_id else None
+    approval = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (row["approval_id"],)).fetchone() if row else None
+    stored_args = prepared_action_stored_args(row)
+    checkpoint = prepared_action_checkpoint(row)
+    _, snapshot_error = notion_export_read_snapshot(checkpoint, stored_args.get("markdown_hash") or "") if row else (None, None)
+    gate_error = prepared_action_resume_gate_error(
+        action_id=action_id,
+        row=row,
+        approval=approval,
+        expected_args=expected_args,
+        expected_action_type="notion.report.export",
+        comparable_fields=("provider", "operation", "title", "export_mode", "target_parent"),
+        missing_error="notion_prepared_action_required",
+        missing_message="Notion live export requires a prepared_action_id created by the Approval Wall.",
+        approval_message="Notion export can execute only after the linked prepared action approval is approved.",
+        extra_mismatches=[snapshot_error] if snapshot_error else None,
+    )
+    if gate_error:
+        return None, gate_error
     return row, None
 
 

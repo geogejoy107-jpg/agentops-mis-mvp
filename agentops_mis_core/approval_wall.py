@@ -60,6 +60,26 @@ def _parse_json_metadata(value: Any) -> Any:
     return value
 
 
+def prepared_action_id_from_request(body: dict[str, Any]) -> Any:
+    return body.get("prepared_action_id") or body.get("action_id")
+
+
+def prepared_action_stored_args(row: Any) -> dict[str, Any]:
+    if not row:
+        return {}
+    data = dict(row)
+    value = _parse_json_metadata(data.get("normalized_args_json") or "{}")
+    return value if isinstance(value, dict) else {}
+
+
+def prepared_action_checkpoint(row: Any) -> dict[str, Any]:
+    if not row:
+        return {}
+    data = dict(row)
+    value = _parse_json_metadata(data.get("checkpoint_json") or "{}")
+    return value if isinstance(value, dict) else {}
+
+
 def prepared_action_hash_payload(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "workspace_id": normalize_workspace_id(row.get("workspace_id")),
@@ -124,6 +144,68 @@ def prepared_action_gate(row: Any) -> dict[str, Any]:
         "status": data.get("status"),
         "consumed_at": data.get("consumed_at"),
     }
+
+
+def prepared_action_resume_gate_error(
+    *,
+    action_id: Any,
+    row: Any,
+    approval: Any,
+    expected_args: dict[str, Any],
+    expected_action_type: str,
+    comparable_fields: tuple[str, ...],
+    missing_error: str,
+    missing_message: str,
+    approval_message: str,
+    extra_mismatches: list[str] | None = None,
+) -> dict[str, Any] | None:
+    if not action_id:
+        return {"error": missing_error, "message": missing_message, "token_omitted": True}
+    if not row:
+        return {"error": "prepared_action_not_found", "prepared_action_id": action_id, "token_omitted": True}
+
+    data = dict(row)
+    approval_data = dict(approval) if approval else None
+    if not approval_data or approval_data.get("decision") != "approved":
+        return {
+            "error": "approval_required",
+            "message": approval_message,
+            "approval_id": data.get("approval_id"),
+            "prepared_action_id": action_id,
+            "decision": approval_data.get("decision") if approval_data else None,
+            "token_omitted": True,
+        }
+    if data.get("consumed_at") or data.get("status") == "consumed":
+        return {
+            "error": "prepared_action_already_consumed",
+            "prepared_action": prepared_action_public(data),
+            "token_omitted": True,
+        }
+
+    verification = prepared_action_hash_verification(data)
+    if not verification["match"]:
+        return {
+            "error": "action_hash_mismatch",
+            "stored_action_hash": verification["stored_action_hash"],
+            "current_action_hash": verification["current_action_hash"],
+            "token_omitted": True,
+        }
+
+    stored_args = prepared_action_stored_args(data)
+    mismatched = [
+        field
+        for field in comparable_fields
+        if stored_args.get(field) != expected_args.get(field)
+    ]
+    mismatched.extend(item for item in (extra_mismatches or []) if item)
+    if data.get("action_type") != expected_action_type or mismatched:
+        return {
+            "error": "prepared_action_request_mismatch",
+            "prepared_action_id": action_id,
+            "mismatched_fields": mismatched or ["action_type"],
+            "token_omitted": True,
+        }
+    return None
 
 
 def build_prepared_action_get_response(prepared_action: Any, approval: Any) -> dict[str, Any]:

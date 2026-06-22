@@ -224,6 +224,33 @@ Still owned by `server.py`:
 - stable action id generation and final next-action receipt metadata
 - final command-center payload assembly
 
+### Slice 10: Approval Wall Resume-Gate Mismatch Helpers
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/approval_wall.py`
+
+Moved out of `server.py`:
+
+- prepared-action id extraction from resume requests
+- prepared-action stored-args and checkpoint parsing helpers
+- common resume-gate error shaping for missing action id, missing action row,
+  unapproved approval, already-consumed action, action-hash mismatch and
+  request/action-type mismatch
+- comparable-field mismatch aggregation shared by runtime probes, Dify upload
+  and Notion export resume gates
+
+Still owned by `server.py`:
+
+- HTTP routes
+- SQLite reads for prepared action and approval rows
+- Notion snapshot-path safety check
+- provider-specific creation of waiting-approval prepared actions
+- exact-once prepared-action resume writes, runtime events, audit logs and
+  provider side-effect evidence recording
+
 Verification:
 
 ```bash
@@ -242,7 +269,6 @@ python3 scripts/operator_command_center_smoke.py
 
 ## Next Candidate Slices
 
-- Approval Wall resume-gate mismatch helpers.
 - Runtime prepared-action response helpers.
 
 Each candidate must be extracted in a separate, smoke-backed slice.
