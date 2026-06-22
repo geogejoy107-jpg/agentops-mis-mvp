@@ -146,6 +146,28 @@ export function Reports() {
                 <div>{zh ? "评估" : "Evals"}<br /><span style={{ color: "var(--mis-text)" }}>{delivery.evaluation_summary?.count || 0}</span></div>
                 <div>{zh ? "审计" : "Audit"}<br /><span style={{ color: "var(--mis-text)" }}>{delivery.evidence?.audit_logs || 0}</span></div>
               </div>
+              <div className="mt-2 flex flex-wrap gap-1 text-[9px]" style={{ color: "var(--mis-muted)" }}>
+                {delivery.artifact_link?.api_url && (
+                  <span className="rounded px-1.5 py-0.5" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                    {zh ? "Artifact" : "Artifact"}: {delivery.artifact_id}
+                  </span>
+                )}
+                {(delivery.approval_links || []).slice(0, 2).map((link) => (
+                  <Link key={`approval-${link.approval_id}`} to={link.url || "/workspace/approvals"} className="rounded px-1.5 py-0.5" style={{ background: "rgba(251,191,36,0.10)", color: "var(--mis-warning)", border: "1px solid rgba(251,191,36,0.18)" }}>
+                    {zh ? "审批" : "Approval"} {link.approval_id}
+                  </Link>
+                ))}
+                {(delivery.evaluation_links || []).slice(0, 2).map((link) => (
+                  <Link key={`evaluation-${link.evaluation_id}`} to={link.url || "/admin/evaluations"} className="rounded px-1.5 py-0.5" style={{ background: "rgba(45,212,191,0.10)", color: "var(--mis-success)", border: "1px solid rgba(45,212,191,0.18)" }}>
+                    {zh ? "评估" : "Eval"} {link.evaluation_id}
+                  </Link>
+                ))}
+                {(delivery.audit_links || []).slice(0, 2).map((link) => (
+                  <Link key={`audit-${link.audit_id}`} to={link.url || "/admin/audit"} className="rounded px-1.5 py-0.5" style={{ background: "rgba(148,163,184,0.10)", color: "var(--mis-muted)", border: "1px solid var(--mis-border)" }}>
+                    {zh ? "审计" : "Audit"} {link.audit_id}
+                  </Link>
+                ))}
+              </div>
               <div className="mt-3 flex flex-wrap gap-1.5">
                 {delivery.task_id && (
                   <Link to={`/admin/tasks/${delivery.task_id}`} className="text-[10px] rounded px-2 py-1" style={{ background: "rgba(34,211,238,0.10)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.18)" }}>

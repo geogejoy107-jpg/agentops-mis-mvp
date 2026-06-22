@@ -11787,12 +11787,37 @@ def customer_delivery_board(conn, limit: int = 12) -> dict:
             "SELECT approval_id, decision, reason, created_at, decided_at FROM approvals WHERE " + " OR ".join(approval_clauses) + " ORDER BY created_at DESC LIMIT 12",
             approval_params,
         ).fetchall()) if approval_clauses else []
+        evidence_task_ids = sorted({item for item in [task_id, *project_task_ids] if item})
+        evidence_run_ids = sorted({item for item in [run_id, *project_run_ids] if item})
+        evaluation_clauses: list[str] = []
+        evaluation_params: list[str] = []
+        if evidence_task_ids:
+            evaluation_clauses.append("task_id IN (" + ",".join("?" for _ in evidence_task_ids) + ")")
+            evaluation_params.extend(evidence_task_ids)
+        if evidence_run_ids:
+            evaluation_clauses.append("run_id IN (" + ",".join("?" for _ in evidence_run_ids) + ")")
+            evaluation_params.extend(evidence_run_ids)
         evaluations = rows_to_dicts(conn.execute(
-            "SELECT evaluation_id, score, pass_fail, evaluator_type, created_at FROM evaluations WHERE task_id=? OR run_id=? ORDER BY created_at DESC LIMIT 8",
-            (task_id or "", run_id or ""),
-        ).fetchall()) if task_id or run_id else []
+            "SELECT evaluation_id, task_id, run_id, score, pass_fail, evaluator_type, created_at FROM evaluations WHERE "
+            + " OR ".join(evaluation_clauses)
+            + " ORDER BY created_at DESC LIMIT 12",
+            evaluation_params,
+        ).fetchall()) if evaluation_clauses else []
+        tool_calls = rows_to_dicts(conn.execute(
+            "SELECT tool_call_id, run_id, tool_name, status, risk_level, created_at FROM tool_calls WHERE run_id IN ("
+            + ",".join("?" for _ in evidence_run_ids)
+            + ") ORDER BY created_at DESC LIMIT 12",
+            evidence_run_ids,
+        ).fetchall()) if evidence_run_ids else []
+        audit_entity_ids = sorted({item for item in [artifact_id, task_id, run_id, *project_task_ids, *project_run_ids] if item})
+        audit_rows = rows_to_dicts(conn.execute(
+            "SELECT audit_id, action, entity_type, entity_id, actor_type, actor_id, created_at FROM audit_logs WHERE entity_id IN ("
+            + ",".join("?" for _ in audit_entity_ids)
+            + ") ORDER BY created_at DESC LIMIT 16",
+            audit_entity_ids,
+        ).fetchall()) if audit_entity_ids else []
         evidence = {
-            "tool_calls": conn.execute("SELECT COUNT(*) c FROM tool_calls WHERE run_id=?", (run_id or "",)).fetchone()["c"] if run_id else 0,
+            "tool_calls": len(tool_calls),
             "evaluations": len(evaluations),
             "evaluation_case_candidates": conn.execute(
                 """SELECT COUNT(*) c FROM evaluation_case_candidates
@@ -11814,10 +11839,7 @@ def customer_delivery_board(conn, limit: int = 12) -> dict:
                 (run_id or "", run_id or "", task_id or ""),
             ).fetchone()["c"],
             "runtime_events": conn.execute("SELECT COUNT(*) c FROM runtime_events WHERE run_id=? OR task_id=?", (run_id or "", task_id or "")).fetchone()["c"] if task_id or run_id else 0,
-            "audit_logs": conn.execute(
-                "SELECT COUNT(*) c FROM audit_logs WHERE entity_id IN (?,?,?)",
-                (artifact_id or "", task_id or "", run_id or ""),
-            ).fetchone()["c"],
+            "audit_logs": len(audit_rows),
             "approvals": len(approvals),
             "artifacts": 1,
         }
@@ -11886,8 +11908,58 @@ def customer_delivery_board(conn, limit: int = 12) -> dict:
             "ui_report_url": f"/workspace/customer-projects/{project_id}/report" if project_id else None,
             "task_url": f"/admin/tasks/{task_id}" if task_id else None,
             "run_url": f"/admin/runs/{run_id}" if run_id else None,
+            "artifact_url": f"/workspace/customer-projects/{project_id}/report" if project_id else artifact.get("uri"),
+            "artifact_link": {
+                "artifact_id": artifact_id,
+                "artifact_type": artifact.get("artifact_type"),
+                "uri": artifact.get("uri"),
+                "url": f"/workspace/customer-projects/{project_id}/report" if project_id else artifact.get("uri"),
+                "api_url": f"/api/agent-gateway/artifacts?task_id={task_id}" if task_id else (f"/api/agent-gateway/artifacts?run_id={run_id}" if run_id else None),
+            },
             "approval_ids": [row["approval_id"] for row in approvals],
             "pending_approval_ids": [row["approval_id"] for row in pending_approvals],
+            "approval_links": [
+                {
+                    "approval_id": row.get("approval_id"),
+                    "decision": row.get("decision"),
+                    "url": f"/workspace/approvals?approval_id={row.get('approval_id')}",
+                    "created_at": row.get("created_at"),
+                }
+                for row in approvals
+            ],
+            "tool_call_ids": [row["tool_call_id"] for row in tool_calls],
+            "tool_call_links": [
+                {
+                    "tool_call_id": row.get("tool_call_id"),
+                    "run_id": row.get("run_id"),
+                    "tool_name": row.get("tool_name"),
+                    "status": row.get("status"),
+                    "url": f"/admin/toolcalls?run_id={row.get('run_id')}",
+                }
+                for row in tool_calls
+            ],
+            "evaluation_ids": [row["evaluation_id"] for row in evaluations],
+            "evaluation_links": [
+                {
+                    "evaluation_id": row.get("evaluation_id"),
+                    "run_id": row.get("run_id"),
+                    "pass_fail": row.get("pass_fail"),
+                    "score": row.get("score"),
+                    "url": f"/admin/evaluations?run_id={row.get('run_id')}",
+                }
+                for row in evaluations
+            ],
+            "audit_ids": [row["audit_id"] for row in audit_rows],
+            "audit_links": [
+                {
+                    "audit_id": row.get("audit_id"),
+                    "action": row.get("action"),
+                    "entity_type": row.get("entity_type"),
+                    "entity_id": row.get("entity_id"),
+                    "url": f"/admin/audit?entity_id={row.get('entity_id')}",
+                }
+                for row in audit_rows
+            ],
             "evaluation_summary": {
                 "count": len(evaluations),
                 "failed": len(failed_eval),

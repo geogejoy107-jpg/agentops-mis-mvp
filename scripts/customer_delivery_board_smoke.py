@@ -76,7 +76,20 @@ def main() -> int:
         require(bool(fixture_delivery.get("run_id")), f"fixture delivery missing run link: {fixture_delivery}", failures)
         require(fixture_delivery.get("artifact_id") == fixture_artifact_id, f"fixture delivery artifact mismatch: {fixture_delivery}", failures)
         require(bool(fixture_delivery.get("task_url") and fixture_delivery.get("run_url")), f"fixture delivery missing UI/API links: {fixture_delivery}", failures)
-        require(len(fixture_delivery.get("approval_ids") or []) >= 1, f"fixture delivery missing approval link: {fixture_delivery}", failures)
+        require(bool(fixture_delivery.get("artifact_url") or (fixture_delivery.get("artifact_link") or {}).get("api_url")), f"fixture delivery missing artifact link: {fixture_delivery}", failures)
+        require(len(fixture_delivery.get("approval_ids") or []) >= 1, f"fixture delivery missing approval id: {fixture_delivery}", failures)
+        require(len(fixture_delivery.get("approval_links") or []) >= 1, f"fixture delivery missing approval link: {fixture_delivery}", failures)
+        require(
+            {row.get("approval_id") for row in fixture_delivery.get("approval_links") or []}.issuperset(set(fixture_delivery.get("approval_ids") or [])),
+            f"fixture delivery approval links do not cover approval ids: {fixture_delivery}",
+            failures,
+        )
+        require(len(fixture_delivery.get("evaluation_ids") or []) >= 1, f"fixture delivery missing evaluation ids: {fixture_delivery}", failures)
+        require(len(fixture_delivery.get("evaluation_links") or []) >= 1, f"fixture delivery missing evaluation links: {fixture_delivery}", failures)
+        require(len(fixture_delivery.get("audit_ids") or []) >= 1, f"fixture delivery missing audit ids: {fixture_delivery}", failures)
+        require(len(fixture_delivery.get("audit_links") or []) >= 1, f"fixture delivery missing audit links: {fixture_delivery}", failures)
+        require(len(fixture_delivery.get("tool_call_ids") or []) >= 1, f"fixture delivery missing tool-call ids: {fixture_delivery}", failures)
+        require(len(fixture_delivery.get("tool_call_links") or []) >= 1, f"fixture delivery missing tool-call links: {fixture_delivery}", failures)
         require(int(evaluation_summary.get("count") or 0) >= 1, f"fixture delivery missing evaluation summary: {fixture_delivery}", failures)
         require(int(evidence.get("tool_calls") or 0) >= 1, f"fixture delivery missing tool-call evidence: {fixture_delivery}", failures)
         require(int(evidence.get("evaluations") or 0) >= 1, f"fixture delivery missing evaluation evidence: {fixture_delivery}", failures)

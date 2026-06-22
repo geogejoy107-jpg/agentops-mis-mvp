@@ -205,6 +205,30 @@ loopback、本地自用、课程演示、受控 dogfood、单客户验证。
 11. HEAD 没有自动 CI status；
 12. 根目录许可证与第三方 provenance 尚未完成。
 
+### 2026-06-22 Reconciliation
+
+The list above is the original audit risk snapshot. Current v1.5 hardening work
+has since closed or partially closed several items on the development branch:
+
+- Agent Plan role separation, plan reference provenance checks, and run-start
+  `agent_plan_id` / `plan_hash` binding have smoke coverage in
+  `scripts/agent_plan_integrity_smoke.py` and `scripts/run_start_plan_gate_smoke.py`.
+- Prepared-action Approval Wall primitives now cover high-risk tool calls,
+  external-write worker preflight, Notion export, runtime fixed probes, and the
+  KB-bot external upload gate. This is still not a universal introspection layer
+  for every internal Hermes/OpenClaw tool action.
+- Shared redaction is centralized in `agentops_mis_cli/redaction.py`; current
+  hardening adds `scripts/redaction_fuzz_smoke.py` for common provider token,
+  JSON, env, URL, stdout/stderr-like and truncation-before-redaction cases.
+- Non-local/shared deployment, collaborator exact matching, knowledge scope
+  policy/redaction, SQLite WAL/busy-timeout pragmas, deterministic CI, and
+  customer delivery-board evidence links now have targeted checks in the merge
+  readiness checklist.
+
+Still do not claim hosted/commercial readiness until the exact release-candidate
+SHA has green required CI, clean-machine install/build evidence, license/SBOM
+evidence, and protected live-runtime acceptance where relevant.
+
 ## 9. 当前代码规模事实
 
 ```text

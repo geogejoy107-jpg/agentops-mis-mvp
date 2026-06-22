@@ -296,8 +296,46 @@ export interface CustomerDeliveryBoardItem {
   ui_report_url?: string | null;
   task_url?: string | null;
   run_url?: string | null;
+  artifact_url?: string | null;
+  artifact_link?: {
+    artifact_id?: string | null;
+    artifact_type?: string | null;
+    uri?: string | null;
+    url?: string | null;
+    api_url?: string | null;
+  };
   approval_ids?: string[];
   pending_approval_ids?: string[];
+  approval_links?: {
+    approval_id?: string | null;
+    decision?: string | null;
+    url?: string | null;
+    created_at?: string | null;
+  }[];
+  tool_call_ids?: string[];
+  tool_call_links?: {
+    tool_call_id?: string | null;
+    run_id?: string | null;
+    tool_name?: string | null;
+    status?: string | null;
+    url?: string | null;
+  }[];
+  evaluation_ids?: string[];
+  evaluation_links?: {
+    evaluation_id?: string | null;
+    run_id?: string | null;
+    pass_fail?: string | null;
+    score?: number | null;
+    url?: string | null;
+  }[];
+  audit_ids?: string[];
+  audit_links?: {
+    audit_id?: string | null;
+    action?: string | null;
+    entity_type?: string | null;
+    entity_id?: string | null;
+    url?: string | null;
+  }[];
   evaluation_summary?: {
     count?: number;
     failed?: number;

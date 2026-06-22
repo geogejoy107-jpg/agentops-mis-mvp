@@ -123,9 +123,10 @@ python3 scripts/knowledge_retrieval_quality_smoke.py
 - [x] Cover authorization headers, URL parameters, JSON fields, environment assignments and common provider formats.
 - [x] Raw stdout, stderr and model responses remain outside the ledger by default.
 - [x] Add mixed-case and unusual-separator regression tests.
-- [ ] Add fuzz/property tests before shared/commercial deployment.
+- [x] Add fuzz/property tests before shared/commercial deployment. Guarded by `scripts/redaction_fuzz_smoke.py`, which deterministically fuzzes headers, env vars, URL params, JSON fields, stdout/stderr-like lines, idempotence, truncation-before-redaction, and safe operational ID preservation across shared/server/worker redactors.
 
 ```bash
+python3 scripts/redaction_fuzz_smoke.py
 python3 scripts/redaction_policy_smoke.py
 python3 scripts/security_production_readiness_smoke.py
 python3 scripts/production_security_warning_ui_smoke.py
@@ -480,7 +481,7 @@ live runtime suite
 - [x] Synchronous and asynchronous submission work. Template/customer-worker sync paths are covered by existing customer workflow smokes; async template jobs are covered by `scripts/workflow_jobs_list_poll_smoke.py`.
 - [x] Jobs can be listed and polled. `GET /api/workflows/jobs` now supports status/type filters, queue summary, and recovery next-actions; `agentops workflow jobs` plus `agentops workflow job-status --wait` are covered by `scripts/workflow_jobs_list_poll_smoke.py`.
 - [x] Stuck jobs can be recovered. Existing operator recovery path is covered by `scripts/workflow_job_stuck_recovery_smoke.py`; run it against the target MIS database before shared/commercial deployment evidence capture.
-- [x] Delivery board links task/run/artifact/approval/evaluation/audit. `scripts/customer_delivery_board_smoke.py` creates a customer KB template fixture, verifies the board entry links the delivery artifact to task/run URLs, project-level approvals, evaluation summary, artifact evidence and audit evidence, and checks the CLI readback.
+- [x] Delivery board links task/run/artifact/approval/evaluation/audit. `scripts/customer_delivery_board_smoke.py` creates a customer KB template fixture, verifies the board entry links the delivery artifact to task/run URLs, `artifact_link` / `artifact_url`, project-level `approval_links`, `evaluation_links`, `tool_call_links`, `audit_links`, evidence counts, delivery approval gate, and CLI readback.
 - [x] Customer report excludes internal prompts and private transcripts. Customer-facing markdown now shows only delivery summary, safety boundary and progress, while run/tool/approval/audit IDs stay in a separate internal evidence payload. Guarded by `scripts/customer_delivery_boundary_smoke.py` and `scripts/customer_project_report_smoke.py`.
 - [x] Delivery approval is not confused with tool-action execution approval: KB bot external upload approval is an Approval Wall prepared-action gate; approval alone does not complete the tool/run, and delivery/report approval remains a separate plan-evidence/customer handoff gate. Guarded by `scripts/approval_decision_side_effect_smoke.py`, `scripts/prepared_action_approval_wall_smoke.py`, `scripts/kb_bot_demo_smoke.py`, and `scripts/delivery_approval_manifest_gate_smoke.py`.
 
