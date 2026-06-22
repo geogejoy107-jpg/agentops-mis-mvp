@@ -321,7 +321,7 @@ def main() -> int:
                 "normalized_args_json": json.dumps({"raw_omitted": True}, ensure_ascii=False),
                 "target_resource": "local://storage-boundary",
                 "risk_level": "low",
-                "status": "completed",
+                "status": "waiting_approval",
                 "result_summary": "Storage write boundary tool call.",
                 "side_effect_id": None,
                 "started_at": write_now,
@@ -333,9 +333,11 @@ def main() -> int:
             write_tool_call_row["result_summary"] = "Storage write boundary tool call updated."
             before_tool, tool_outcome = server.repo_upsert_tool_call(conn, dict(write_tool_call_row))
             require(before_tool and tool_outcome == "updated", f"tool call write helper update failed: {tool_outcome}")
+            _before_tool_status, after_tool_status, tool_status_outcome = server.repo_update_tool_call_status(conn, write_tool_call, "completed")
+            require(after_tool_status and tool_status_outcome == "updated" and after_tool_status["status"] == "completed", f"tool call status update helper failed: {tool_status_outcome}")
             write_run_detail = server.repo_run_detail(conn, server.repo_get_workspace_run(conn, workspace_a, write_run))
             require(
-                any(row["tool_call_id"] == write_tool_call and row["result_summary"].endswith("updated.") for row in write_run_detail["tool_calls"]),
+                any(row["tool_call_id"] == write_tool_call and row["status"] == "completed" and row["result_summary"].endswith("updated.") for row in write_run_detail["tool_calls"]),
                 "tool call write helper row not visible in run detail",
             )
 
@@ -392,10 +394,19 @@ def main() -> int:
             }
             before_approval, approval_outcome = server.repo_upsert_approval(conn, dict(write_approval_row))
             require(before_approval is None and approval_outcome == "created", f"approval write helper create failed: {approval_outcome}")
-            write_approval_row["decision"] = "approved"
-            write_approval_row["decided_at"] = server.now_iso()
-            before_approval, approval_outcome = server.repo_upsert_approval(conn, dict(write_approval_row))
-            require(before_approval and approval_outcome == "updated", f"approval write helper update failed: {approval_outcome}")
+            _before_approval_decision, after_approval_decision, approval_decision_outcome = server.repo_update_approval_decision(
+                conn,
+                write_approval,
+                "approved",
+                "Storage write boundary approval decided.",
+            )
+            require(
+                after_approval_decision
+                and approval_decision_outcome == "updated"
+                and after_approval_decision["decision"] == "approved"
+                and after_approval_decision["decided_at"],
+                f"approval decision update helper failed: {approval_decision_outcome}",
+            )
             approval_ids_after_write = ids(server.repo_list_workspace_approvals(conn, workspace_a), "approval_id")
             require(write_approval in approval_ids_after_write, f"approval write helper row not visible in workspace list: {approval_ids_after_write}")
 
@@ -465,7 +476,15 @@ def main() -> int:
             write_memory_row["updated_at"] = server.now_iso()
             before_memory, memory_outcome = server.repo_upsert_memory_candidate(conn, dict(write_memory_row))
             require(before_memory and memory_outcome == "updated", f"memory write helper update failed: {memory_outcome}")
-            require(server.repo_get_workspace_memory(conn, workspace_a, write_memory)["confidence"] == 0.91, "memory write helper did not persist update")
+            _before_memory_review, after_memory_review, memory_review_outcome = server.repo_update_memory_review_status(conn, write_memory, "approved")
+            require(
+                after_memory_review
+                and memory_review_outcome == "updated"
+                and after_memory_review["review_status"] == "approved",
+                f"memory review update helper failed: {memory_review_outcome}",
+            )
+            write_memory_after = server.repo_get_workspace_memory(conn, workspace_a, write_memory)
+            require(write_memory_after["confidence"] == 0.91 and write_memory_after["review_status"] == "approved", "memory write helper did not persist update")
 
             write_plan_row = {
                 "plan_id": write_plan,
@@ -626,12 +645,15 @@ def main() -> int:
                 "repo_upsert_task",
                 "repo_upsert_run",
                 "repo_upsert_tool_call",
+                "repo_update_tool_call_status",
                 "repo_insert_runtime_event",
                 "repo_insert_audit_log",
                 "repo_upsert_approval",
+                "repo_update_approval_decision",
                 "repo_upsert_evaluation",
                 "repo_upsert_artifact",
                 "repo_upsert_memory_candidate",
+                "repo_update_memory_review_status",
             ],
             "workspace_a": workspace_a,
             "workspace_b": workspace_b,

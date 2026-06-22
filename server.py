@@ -1833,6 +1833,17 @@ def repo_upsert_tool_call(conn: sqlite3.Connection, row: dict, allow_update: boo
     return before, "created"
 
 
+def repo_update_tool_call_status(conn: sqlite3.Connection, tool_call_id: str, status: str) -> tuple[sqlite3.Row | None, sqlite3.Row | None, str]:
+    before = conn.execute("SELECT * FROM tool_calls WHERE tool_call_id=?", (tool_call_id,)).fetchone()
+    if not before:
+        return None, None, "missing"
+    row = dict(before)
+    row["status"] = status
+    before, outcome = repo_upsert_tool_call(conn, row)
+    after = conn.execute("SELECT * FROM tool_calls WHERE tool_call_id=?", (tool_call_id,)).fetchone()
+    return before, after, outcome
+
+
 def repo_upsert_approval(conn: sqlite3.Connection, row: dict, allow_update: bool = True) -> tuple[sqlite3.Row | None, str]:
     ensure_default_user(conn, row.get("approver_user_id"))
     before = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (row["approval_id"],)).fetchone()
@@ -1853,6 +1864,26 @@ def repo_upsert_approval(conn: sqlite3.Connection, row: dict, allow_update: bool
         row,
     )
     return before, "created"
+
+
+def repo_update_approval_decision(
+    conn: sqlite3.Connection,
+    approval_id: str,
+    decision: str,
+    reason: str | None = None,
+    decided_at: str | None = None,
+) -> tuple[sqlite3.Row | None, sqlite3.Row | None, str]:
+    before = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (approval_id,)).fetchone()
+    if not before:
+        return None, None, "missing"
+    row = dict(before)
+    row["decision"] = decision
+    row["decided_at"] = decided_at or now_iso()
+    if reason is not None:
+        row["reason"] = reason
+    before, outcome = repo_upsert_approval(conn, row)
+    after = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (approval_id,)).fetchone()
+    return before, after, outcome
 
 
 def repo_upsert_evaluation(conn: sqlite3.Connection, row: dict, allow_update: bool = True) -> tuple[sqlite3.Row | None, str]:
@@ -1903,6 +1934,23 @@ def repo_upsert_memory_candidate(conn: sqlite3.Connection, row: dict, allow_upda
         row,
     )
     return before, "created"
+
+
+def repo_update_memory_review_status(
+    conn: sqlite3.Connection,
+    memory_id: str,
+    review_status: str,
+    updated_at: str | None = None,
+) -> tuple[sqlite3.Row | None, sqlite3.Row | None, str]:
+    before = conn.execute("SELECT * FROM memories WHERE memory_id=?", (memory_id,)).fetchone()
+    if not before:
+        return None, None, "missing"
+    row = dict(before)
+    row["review_status"] = review_status
+    row["updated_at"] = updated_at or now_iso()
+    before, outcome = repo_upsert_memory_candidate(conn, row)
+    after = conn.execute("SELECT * FROM memories WHERE memory_id=?", (memory_id,)).fetchone()
+    return before, after, outcome
 
 
 def repo_upsert_artifact(conn: sqlite3.Connection, row: dict, allow_update: bool = True) -> tuple[sqlite3.Row | None, str]:
@@ -12063,11 +12111,15 @@ class Handler(BaseHTTPRequestHandler):
                     "delivery_approval_gate": gate,
                     "token_omitted": True,
                 }, 409)
-        conn.execute("UPDATE approvals SET decision=?, decided_at=? WHERE approval_id=?", (decision, now_iso(), approval_id))
+        before, after, approval_outcome = repo_update_approval_decision(conn, approval_id, decision)
+        if approval_outcome == "missing" or not after:
+            return self.send_json({"error": "not found"}, 404)
         if before["tool_call_id"]:
-            tool_before = conn.execute("SELECT * FROM tool_calls WHERE tool_call_id=?", (before["tool_call_id"],)).fetchone()
-            conn.execute("UPDATE tool_calls SET status=? WHERE tool_call_id=?", ("completed" if decision == "approved" else "blocked", before["tool_call_id"]))
-            tool_after = conn.execute("SELECT * FROM tool_calls WHERE tool_call_id=?", (before["tool_call_id"],)).fetchone()
+            tool_before, tool_after, _tool_outcome = repo_update_tool_call_status(
+                conn,
+                before["tool_call_id"],
+                "completed" if decision == "approved" else "blocked",
+            )
             audit(conn, "user", "usr_founder", f"tool_call.approval_{decision}", "tool_calls", before["tool_call_id"], dict(tool_before) if tool_before else None, dict(tool_after) if tool_after else None, {"approval_id": approval_id})
         if decision == "approved":
             run = conn.execute("SELECT * FROM runs WHERE run_id=?", (before["run_id"],)).fetchone()
@@ -12084,7 +12136,6 @@ class Handler(BaseHTTPRequestHandler):
             conn.execute("UPDATE runs SET status='blocked', error_type='ApprovalRejected', error_message='High-risk tool approval rejected.', ended_at=? WHERE run_id=?", (now_iso(), before["run_id"]))
             conn.execute("UPDATE tasks SET status='blocked', updated_at=? WHERE task_id=?", (now_iso(), before["task_id"]))
             audit(conn, "user", "usr_founder", "run.blocked", "runs", before["run_id"], dict(run), {"status": "blocked"}, {"approval_id": approval_id})
-        after = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (approval_id,)).fetchone()
         sync_enrollment_request_decision(conn, approval_id, decision)
         audit(conn, "user", "usr_founder", f"approval.{decision}", "approvals", approval_id, dict(before), dict(after), {})
         conn.commit()
@@ -12095,8 +12146,9 @@ class Handler(BaseHTTPRequestHandler):
         before = repo_get_workspace_memory(conn, workspace_id, memory_id)
         if not before:
             return self.send_json(workspace_hidden("memory", memory_id), 404)
-        conn.execute("UPDATE memories SET review_status=?, updated_at=? WHERE memory_id=?", (status, now_iso(), memory_id))
-        after = conn.execute("SELECT * FROM memories WHERE memory_id=?", (memory_id,)).fetchone()
+        _before_update, after, memory_outcome = repo_update_memory_review_status(conn, memory_id, status)
+        if memory_outcome == "missing" or not after:
+            return self.send_json(workspace_hidden("memory", memory_id), 404)
         audit(conn, "user", "usr_founder", f"memory.{status}", "memories", memory_id, dict(before), dict(after), {})
         conn.commit()
         return self.send_json(dict(after))
