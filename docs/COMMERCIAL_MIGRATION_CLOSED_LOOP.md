@@ -135,13 +135,16 @@ Must be true:
   list/get/verify readback before Postgres writes are enabled.
 - Postgres write helpers must match SQLite outcomes and snapshots before any
   routed HTTP/CLI write surface is enabled.
-- The first routed Postgres HTTP writes are explicit task-create allowlist
-  routes behind `AGENTOPS_POSTGRES_WRITE_HTTP=1`: `POST /api/tasks` and scoped
-  `POST /api/agent-gateway/tasks`; read-only mode must still block both, the
-  allowlisted writes must persist task/runtime/audit evidence in Postgres,
-  scoped Gateway writes must reject absent tokens, missing scope, body/header
-  cross-workspace, and cross-agent attempts, and non-allowlisted writes such as
-  `POST /api/agent-gateway/runs/start` must remain blocked.
+- The first routed Postgres HTTP writes are explicit task and execution-start
+  allowlist routes behind `AGENTOPS_POSTGRES_WRITE_HTTP=1`: `POST /api/tasks`,
+  scoped `POST /api/agent-gateway/tasks`, scoped
+  `POST /api/agent-gateway/tasks/:task_id/claim`, and scoped
+  `POST /api/agent-gateway/runs/start`; read-only mode must still block all of
+  them, the allowlisted writes must persist task/run/runtime/audit evidence in
+  Postgres, scoped Gateway writes must reject absent tokens, missing scopes,
+  body/header cross-workspace, cross-agent, and same-workspace intruder attempts,
+  and broader evidence writes such as `POST /api/agent-gateway/tool-calls` must
+  remain blocked.
 - Verification includes local acceptance against a temporary SQLite database
   before any Postgres work starts:
 

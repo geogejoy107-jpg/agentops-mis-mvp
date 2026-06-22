@@ -460,20 +460,27 @@ def main() -> int:
             file_contains("docs/POSTGRES_PARITY_CONTRACT.md", "postgres_http_write_task_parity_v1")
             and file_contains("docs/STORAGE_BOUNDARY_MAP.md", "storage_postgres_http_write_task_smoke.py")
             and file_contains("docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md", "storage_postgres_http_write_task_smoke.py")
-            and file_contains("docs/AGENT_GATEWAY_CLI_SPEC.md", "Postgres routed task-write helper")
+            and file_contains("docs/AGENT_GATEWAY_CLI_SPEC.md", "Postgres routed task/execution-start helper")
             and file_contains("server.py", "AGENTOPS_POSTGRES_WRITE_HTTP")
             and file_contains("server.py", "POSTGRES_HTTP_WRITE_ALLOWED_ROUTES")
             and file_contains("scripts/storage_postgres_http_write_task_smoke.py", 'method="POST"')
             and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "/api/tasks")
             and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "/api/agent-gateway/tasks")
+            and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "/api/agent-gateway/tasks/{GATEWAY_TASK_ID}/claim")
+            and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "/api/agent-gateway/runs/start")
             and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "gateway_missing_scope_status")
+            and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "gateway_missing_claim_scope_status")
+            and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "gateway_missing_run_scope_status")
             and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "gateway_cross_workspace_status")
             and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "gateway_header_workspace_status")
             and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "gateway_other_agent_status")
+            and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "gateway_intruder_claim_status")
+            and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "gateway_intruder_run_status")
             and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "gateway_no_token_status")
             and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "gateway_non_allowlisted_write_status")
+            and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "postgres_http_gateway_execution_start_write_v1")
             and (ROOT / "scripts" / "storage_postgres_http_write_task_smoke.py").exists(),
-            "experimental Postgres HTTP task and Agent Gateway task write routes are explicitly allowlisted, smoke-tested, and documented",
+            "experimental Postgres HTTP task, Agent Gateway task, claim, and run-start write routes are explicitly allowlisted, smoke-tested, and documented",
         ),
         check(
             "blocked_generated_or_runtime_artifacts_absent",

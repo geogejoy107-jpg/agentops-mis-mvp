@@ -48,7 +48,12 @@ HERMES_HOME = Path.home() / ".hermes"
 OPENCLAW_BIN = Path(os.environ.get("OPENCLAW_BIN") or "/opt/homebrew/bin/openclaw")
 DEFAULT_ENTITLEMENTS_PATH = ROOT / "config" / "entitlements.local.json"
 STORAGE_BACKEND = os.environ.get("AGENTOPS_STORAGE_BACKEND", "sqlite").strip().lower() or "sqlite"
-POSTGRES_HTTP_WRITE_ALLOWED_ROUTES = {("POST", "/api/agent-gateway/tasks"), ("POST", "/api/tasks")}
+POSTGRES_HTTP_WRITE_ALLOWED_ROUTES = {
+    ("POST", "/api/agent-gateway/runs/start"),
+    ("POST", "/api/agent-gateway/tasks"),
+    ("POST", "/api/agent-gateway/tasks/:task_id/claim"),
+    ("POST", "/api/tasks"),
+}
 
 RISKY_TOOLS = {
     "shell.exec",
@@ -344,6 +349,7 @@ def storage_backend_status(headers=None) -> dict:
                 "postgres_http_read_parity_v1",
                 "postgres_http_write_task_parity_v1",
                 "postgres_http_gateway_task_write_parity_v1",
+                "postgres_http_gateway_execution_start_write_v1",
             ] if write_http else ["postgres_http_read_parity_v1"],
         }
     return {
@@ -385,11 +391,25 @@ def postgres_read_only_write_block(method: str, path: str) -> dict:
         "fallback_performed": False,
         "token_omitted": True,
         "contract": "postgres_http_write_task_parity_v1",
+        "contracts": [
+            "postgres_http_write_task_parity_v1",
+            "postgres_http_gateway_task_write_parity_v1",
+            "postgres_http_gateway_execution_start_write_v1",
+        ],
     }
 
 
+def postgres_write_route_key(method: str, path: str) -> tuple[str, str]:
+    normalized_method = method.upper()
+    if normalized_method == "POST" and path.startswith("/api/agent-gateway/tasks/") and path.endswith("/claim"):
+        middle = path[len("/api/agent-gateway/tasks/"):-len("/claim")].strip("/")
+        if middle and "/" not in middle:
+            return normalized_method, "/api/agent-gateway/tasks/:task_id/claim"
+    return normalized_method, path
+
+
 def postgres_http_write_allowed(method: str, path: str) -> bool:
-    if (method.upper(), path) not in POSTGRES_HTTP_WRITE_ALLOWED_ROUTES:
+    if postgres_write_route_key(method, path) not in POSTGRES_HTTP_WRITE_ALLOWED_ROUTES:
         return False
     status = storage_backend_status(None)
     return bool(status.get("status") == "active" and status.get("writes_allowed") is True)
