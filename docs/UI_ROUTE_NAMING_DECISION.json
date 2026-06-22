@@ -10,6 +10,7 @@
     "target_owner": "nextjs_app_router",
     "decision": "Task and run operator routes use /workspace as the future commercial namespace. Existing Vite /admin task/run routes remain legacy compatibility routes until explicit retirement gates pass.",
     "alias_contract": "ui_legacy_route_alias_v1",
+    "navigation_inventory_contract": "ui_navigation_inventory_v1",
     "retirement_allowed_by_default": false,
     "redirects_required_before_retirement": true,
     "no_breaking_deep_links": true
@@ -38,10 +39,10 @@
       "target_route_status": "next_parity_target",
       "retirement_allowed": false,
       "cutover_evidence": [
-        "backward_compatible_redirect_or_alias"
+        "backward_compatible_redirect_or_alias",
+        "canonical_navigation_inventory_verified"
       ],
       "remaining_cutover_requires": [
-        "navigation_inventory_update",
         "explicit_route_retirement_commit"
       ],
       "cutover_requires": [
@@ -77,10 +78,10 @@
       "target_route_status": "next_parity_target",
       "retirement_allowed": false,
       "cutover_evidence": [
-        "backward_compatible_redirect_or_alias"
+        "backward_compatible_redirect_or_alias",
+        "canonical_navigation_inventory_verified"
       ],
       "remaining_cutover_requires": [
-        "navigation_inventory_update",
         "explicit_route_retirement_commit"
       ],
       "cutover_requires": [
@@ -114,10 +115,10 @@
       "target_route_status": "next_parity_target",
       "retirement_allowed": false,
       "cutover_evidence": [
-        "backward_compatible_redirect_or_alias"
+        "backward_compatible_redirect_or_alias",
+        "canonical_navigation_inventory_verified"
       ],
       "remaining_cutover_requires": [
-        "navigation_inventory_update",
         "explicit_route_retirement_commit"
       ],
       "cutover_requires": [

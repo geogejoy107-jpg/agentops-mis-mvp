@@ -1,0 +1,45 @@
+{
+  "contract_id": "ui_navigation_inventory_v1",
+  "gate": "gate_4_ui_api_parity_before_nextjs",
+  "status": "accepted_no_route_retirement",
+  "updated_at": "2026-06-22",
+  "policy": {
+    "scope": "task_run_route_cutover",
+    "next_primary_namespace": "/workspace",
+    "legacy_namespace": "/admin",
+    "legacy_admin_usage_in_next": "redirect_alias_only",
+    "retirement_allowed": false,
+    "verification_command": "python3 scripts/ui_navigation_inventory_smoke.py"
+  },
+  "canonical_next_routes": [
+    "/workspace/tasks",
+    "/workspace/tasks/:taskId",
+    "/workspace/runs",
+    "/workspace/runs/:runId"
+  ],
+  "allowed_next_alias_routes": [
+    "/admin/tasks/:taskId",
+    "/admin/runs",
+    "/admin/runs/:runId"
+  ],
+  "next_primary_inventory_files": [
+    "ui/next-app/src/components/AppFrame.tsx",
+    "ui/next-app/src/components/LedgerPages.tsx",
+    "ui/next-app/src/components/LedgerDetailPages.tsx",
+    "ui/next-app/src/components/EvidencePage.tsx"
+  ],
+  "next_alias_files": [
+    "ui/next-app/app/admin/tasks/[taskId]/page.tsx",
+    "ui/next-app/app/admin/runs/page.tsx",
+    "ui/next-app/app/admin/runs/[runId]/page.tsx"
+  ],
+  "legacy_vite_inventory_status": "kept_for_compatibility_until_explicit_retirement_commit",
+  "cutover_evidence": [
+    "next_primary_navigation_uses_workspace_task_run_routes",
+    "legacy_admin_task_run_routes_are_redirect_aliases_in_next",
+    "vite_admin_task_run_routes_remain_documented_compatibility_routes"
+  ],
+  "remaining_cutover_requires": [
+    "explicit_route_retirement_commit"
+  ]
+}

@@ -74,6 +74,8 @@ def route_naming_decision_semantics_ok() -> bool:
         return False
     if policy.get("alias_contract") != "ui_legacy_route_alias_v1":
         return False
+    if policy.get("navigation_inventory_contract") != "ui_navigation_inventory_v1":
+        return False
     if policy.get("retirement_allowed_by_default") is not False:
         return False
     if policy.get("redirects_required_before_retirement") is not True:
@@ -98,6 +100,10 @@ def route_naming_decision_semantics_ok() -> bool:
         if pair.get("next_alias_status") != "redirects_to_target_route":
             return False
         if "backward_compatible_redirect_or_alias" not in set(pair.get("cutover_evidence") or []):
+            return False
+        if "canonical_navigation_inventory_verified" not in set(pair.get("cutover_evidence") or []):
+            return False
+        if set(pair.get("remaining_cutover_requires") or []) != {"explicit_route_retirement_commit"}:
             return False
         if pair.get("retirement_allowed") is not False:
             return False
@@ -290,6 +296,19 @@ def main() -> int:
             "Gate 4 Next.js legacy /admin task/run aliases redirect to /workspace targets while route retirement remains blocked",
         ),
         check(
+            "ui_navigation_inventory_surface_exists",
+            file_contains("docs/UI_NAVIGATION_INVENTORY.json", "ui_navigation_inventory_v1")
+            and file_contains("docs/UI_NAVIGATION_INVENTORY.md", "ui_navigation_inventory_v1")
+            and file_contains("docs/UI_ROUTE_NAMING_DECISION.json", "canonical_navigation_inventory_verified")
+            and file_contains("docs/UI_API_PARITY_MATRIX.json", "ui_navigation_inventory_v1")
+            and file_contains("docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md", "ui_navigation_inventory_smoke.py")
+            and file_contains("scripts/ui_navigation_inventory_smoke.py", "ui_navigation_inventory_v1")
+            and file_contains("ui/next-app/src/components/AppFrame.tsx", 'href: "/workspace/tasks"')
+            and file_contains("ui/next-app/src/components/AppFrame.tsx", 'href: "/workspace/runs"')
+            and (ROOT / "scripts" / "ui_navigation_inventory_smoke.py").exists(),
+            "Gate 4 Next.js task/run primary navigation is inventoried under /workspace; /admin remains redirect-alias only",
+        ),
+        check(
             "postgres_is_gated_not_immediate",
             file_contains("docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md", "Storage Boundary Before Postgres"),
             "Postgres migration is behind a storage-boundary gate",
@@ -403,6 +422,7 @@ def main() -> int:
                 "python3 scripts/ui_task_run_route_parity_smoke.py",
                 "python3 scripts/ui_route_naming_decision_smoke.py",
                 "python3 scripts/ui_legacy_route_alias_smoke.py",
+                "python3 scripts/ui_navigation_inventory_smoke.py",
                 "python3 scripts/vite_playwright_snapshot_smoke.py",
                 "python3 scripts/nextjs_playwright_snapshot_smoke.py",
             ],

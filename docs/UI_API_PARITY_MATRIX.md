@@ -76,8 +76,11 @@ route retirement:
   `docs/UI_ROUTE_NAMING_DECISION.json`. `python3
   scripts/ui_legacy_route_alias_smoke.py` (`ui_legacy_route_alias_v1`) verifies
   Next.js `/admin` task/run deep links redirect to the `/workspace` target
-  routes. Retirement still needs a navigation inventory update and an explicit
-  route retirement commit for each route pair.
+  routes. `python3 scripts/ui_navigation_inventory_smoke.py`
+  (`ui_navigation_inventory_v1`) verifies Next primary task/run navigation uses
+  `/workspace` and treats `/admin` task/run routes as redirect aliases only.
+  Retirement still needs an explicit route retirement commit for each route
+  pair.
 
 ## Verification Stack
 
