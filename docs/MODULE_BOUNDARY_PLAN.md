@@ -535,6 +535,36 @@ python3 scripts/module_boundary_smoke.py
 python3 scripts/agent_plan_integrity_smoke.py --base-url http://127.0.0.1:8787
 ```
 
+### Slice 19: Agent Plan Create And Role-Gate Response Helpers
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/agent_plans.py`
+
+Moved out of `server.py`:
+
+- approval-required Agent Plan missing-anchor response projection
+- agent-created invalid initial status response projection
+- bound Agent Gateway token/session approval-forbidden response projection
+- token-omission proof on Agent Plan role-gate responses
+
+Still owned by `server.py`:
+
+- HTTP routes
+- task/run anchor lookup
+- Agent Plan creation, verification and state transitions
+- scoped auth, bound-token detection and role resolution
+- approval rows, runtime events, audit logs and commits
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/agent_plan_integrity_smoke.py --base-url http://127.0.0.1:8787
+```
+
 ## Next Candidate Slices
 
 - Continue P1-05 with small smoke-backed strangler slices only; prefer pure

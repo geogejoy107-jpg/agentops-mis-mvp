@@ -41,7 +41,10 @@ from agentops_mis_core.approval_wall import (
     runtime_probe_prepared_action_required_payload,
 )
 from agentops_mis_core.agent_plans import (
+    build_agent_plan_approval_anchor_required_response,
     build_agent_plan_approval_decision_response,
+    build_agent_plan_bound_approval_forbidden_response,
+    build_agent_plan_status_transition_required_response,
 )
 from agentops_mis_core.read_model_cache import ReadModelCache
 from agentops_mis_core.commander_work_packages import (
@@ -236,10 +239,16 @@ SERVER_APPROVAL_WALL_IMPORTS = {
     "runtime_probe_prepared_action_required_payload",
 }
 EXTRACTED_AGENT_PLAN_HELPERS = {
+    "build_agent_plan_approval_anchor_required_response",
     "build_agent_plan_approval_decision_response",
+    "build_agent_plan_bound_approval_forbidden_response",
+    "build_agent_plan_status_transition_required_response",
 }
 SERVER_AGENT_PLAN_IMPORTS = {
+    "build_agent_plan_approval_anchor_required_response",
     "build_agent_plan_approval_decision_response",
+    "build_agent_plan_bound_approval_forbidden_response",
+    "build_agent_plan_status_transition_required_response",
 }
 
 
@@ -673,6 +682,15 @@ def main() -> int:
             "verification_result_hash": "hash_plan_verification_smoke",
         },
     )
+    agent_plan_anchor_response = build_agent_plan_approval_anchor_required_response(
+        plan_id="plan_anchor_smoke",
+    )
+    agent_plan_status_response = build_agent_plan_status_transition_required_response(
+        requested_status="approved",
+    )
+    agent_plan_bound_response = build_agent_plan_bound_approval_forbidden_response(
+        auth_ctx={"mode": "session", "agent_id": "agt_bound_smoke"},
+    )
     high_risk_required_response = build_high_risk_toolcall_prepared_action_required_response(
         tool_name="openai.file_search.upload",
         risk_level="critical",
@@ -710,6 +728,13 @@ def main() -> int:
     require((agent_plan_approval_decision_response.get("agent_plan") or {}).get("status") == "approved", "agent plan approval decision response plan failed", failures)
     require(agent_plan_approval_decision_response.get("verification_result_hash") == "hash_plan_verification_smoke", "agent plan approval decision response hash failed", failures)
     require(agent_plan_approval_decision_response.get("token_omitted") is True, "agent plan approval decision response omission proof missing", failures)
+    require(agent_plan_anchor_response.get("error") == "agent_plan_approval_anchor_required", "agent plan anchor-required response failed", failures)
+    require(agent_plan_anchor_response.get("plan_id") == "plan_anchor_smoke", "agent plan anchor-required plan id failed", failures)
+    require(agent_plan_status_response.get("error") == "plan_status_transition_required", "agent plan status-transition response failed", failures)
+    require(agent_plan_status_response.get("allowed_create_statuses") == ["draft", "submitted"], "agent plan status allowed statuses failed", failures)
+    require(agent_plan_bound_response.get("error") == "agent_plan_human_approval_required", "agent plan bound approval response failed", failures)
+    require(agent_plan_bound_response.get("agent_id") == "agt_bound_smoke", "agent plan bound approval agent failed", failures)
+    require(all(payload.get("token_omitted") is True for payload in [agent_plan_anchor_response, agent_plan_status_response, agent_plan_bound_response]), "agent plan response omission proof missing", failures)
     require(high_risk_required_response.get("error") == "high_risk_prepared_action_required", "high-risk prepared-action required response error failed", failures)
     require(high_risk_required_response.get("external_side_effect_intent") is True, "high-risk prepared-action required response intent failed", failures)
     require("prepare_action=true" in high_risk_required_response.get("message", ""), "high-risk prepared-action guidance failed", failures)

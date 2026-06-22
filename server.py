@@ -59,7 +59,10 @@ from agentops_mis_core.approval_wall import (
     runtime_probe_prepared_action_required_payload,
 )
 from agentops_mis_core.agent_plans import (
+    build_agent_plan_approval_anchor_required_response,
     build_agent_plan_approval_decision_response,
+    build_agent_plan_bound_approval_forbidden_response,
+    build_agent_plan_status_transition_required_response,
 )
 from agentops_mis_core.commander_work_packages import (
     build_commander_work_packages_readback,
@@ -5303,19 +5306,11 @@ def agent_gateway_create_agent_plan(conn: sqlite3.Connection, body) -> tuple[dic
     risk = coerce_choice(body.get("risk_level"), VALID_RISK_LEVELS, "medium")
     requested_status = body.get("status") or "submitted"
     if (body.get("approval_required") or risk in {"high", "critical"}) and requested_status == "submitted" and not task_id and not run_id:
-        return {
-            "error": "agent_plan_approval_anchor_required",
-            "message": "Approval-required Agent Plans must be attached to a task or run so the approval ledger has task/run anchors.",
-            "token_omitted": True,
-        }, 400
+        return build_agent_plan_approval_anchor_required_response(), 400
     if requested_status not in {"draft", "submitted"}:
-        return {
-            "error": "plan_status_transition_required",
-            "message": "Agent-created plans may only start as draft or submitted. Human/admin approval must be a separate transition.",
-            "requested_status": redact_text(requested_status, 80),
-            "allowed_create_statuses": ["draft", "submitted"],
-            "token_omitted": True,
-        }, 400
+        return build_agent_plan_status_transition_required_response(
+            requested_status=redact_text(requested_status, 80),
+        ), 400
     row = {
         "plan_id": body.get("plan_id") or stable_id("plan", agent_id, task_id or run_id or stable_hash(understanding)[:12], now_iso()),
         "workspace_id": ident["workspace_id"],
@@ -5362,7 +5357,7 @@ def agent_gateway_create_agent_plan(conn: sqlite3.Connection, body) -> tuple[dic
     if approval_row:
         approval_row["run_id"] = ensure_agent_plan_approval_run(conn, row)
         if not approval_row.get("task_id") or not approval_row.get("run_id"):
-            return {"error": "agent_plan_approval_anchor_required", "message": "Approval-required Agent Plans must be attached to a task or run so the approval ledger has task/run anchors.", "plan_id": row["plan_id"], "token_omitted": True}, 400
+            return build_agent_plan_approval_anchor_required_response(plan_id=row["plan_id"]), 400
         approval_row = insert_or_keep_agent_plan_approval(conn, approval_row)
         audit(conn, "agent", agent_id, "agent_gateway.agent_plan_approval_request", "approvals", approval_row["approval_id"], None, approval_row, {"plan_id": row["plan_id"], "plan_hash": row["plan_hash"], "token_omitted": True})
     audit(conn, "agent", agent_id, "agent_gateway.agent_plan_create", "agent_plans", row["plan_id"], None, row, {"raw_omitted": True, "plan_hash": row["plan_hash"]})
@@ -5383,13 +5378,7 @@ def agent_plan_transition_actor(conn: sqlite3.Connection, headers, body) -> tupl
     if auth_error:
         return None, (auth_error, agent_gateway_error_status(auth_error))
     if agent_gateway_is_bound_auth(auth_ctx):
-        return None, ({
-            "error": "agent_plan_human_approval_required",
-            "message": "Bound Agent Gateway tokens and sessions cannot approve or reject Agent Plans.",
-            "auth_mode": auth_ctx.get("mode"),
-            "agent_id": auth_ctx.get("agent_id"),
-            "token_omitted": True,
-        }, 403)
+        return None, (build_agent_plan_bound_approval_forbidden_response(auth_ctx=auth_ctx), 403)
     requested_actor_type = str(body.get("actor_type") or "user").strip().lower()
     actor_type = requested_actor_type if requested_actor_type in {"user", "admin", "policy"} else "user"
     actor_id = (
