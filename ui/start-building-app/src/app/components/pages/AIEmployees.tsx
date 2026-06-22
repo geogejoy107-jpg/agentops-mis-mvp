@@ -378,6 +378,9 @@ export function AIEmployees() {
       operatorHandoffTitle: "Operator handoff",
       operatorHandoffSummary: "Read-only handoff package for Hermes, OpenClaw, Codex, or a human operator: loop work order, receipts, review state, and source proof.",
       handoffCommands: "Handoff commands",
+      loopSelfCheckTitle: "Pre-advance check",
+      loopSelfCheckSummary: "Copy the read-only self-check that verifies policy, receipts, evaluations, audit proof, and handoff health before advancing.",
+      loopSelfCheckCopy: "Copy self-check",
       advanceLoopTitle: "Bounded advance",
       advanceLoopSummary: "Copy the local CLI runner that advances one allowlisted loop action, verifies it, and records a receipt.",
       previewAdvanceLoop: "Preview advance",
@@ -792,6 +795,9 @@ export function AIEmployees() {
       operatorHandoffTitle: "Operator 交接包",
       operatorHandoffSummary: "给 Hermes、OpenClaw、Codex 或人工 operator 的只读交接包：Loop 执行包、收据、评审状态和来源证明。",
       handoffCommands: "交接命令",
+      loopSelfCheckTitle: "推进前自检",
+      loopSelfCheckSummary: "复制只读自检：推进前检查策略、收据、评估、审计证明和交接健康。",
+      loopSelfCheckCopy: "复制自检",
       advanceLoopTitle: "受限推进",
       advanceLoopSummary: "复制本地 CLI runner：只推进一个 allowlist loop 动作、验收并记录收据。",
       previewAdvanceLoop: "预览推进",
@@ -1245,6 +1251,9 @@ export function AIEmployees() {
   const loopActionPackageItems = loopActionPackage?.items || [];
   const operatorHandoffSummary = operatorHandoff?.summary;
   const operatorHandoffCommands = operatorHandoff?.work_order?.commands || [];
+  const loopSelfCheckCommand = operatorHandoff?.loop_id
+    ? `agentops operator loop-self-check --loop-id ${operatorHandoff.loop_id} --limit 12`
+    : "agentops operator loop-self-check --limit 12";
   const advanceLoopRaw = (
     operatorHandoff?.work_order?.advance_loop &&
     typeof operatorHandoff.work_order.advance_loop === "object"
@@ -3208,7 +3217,7 @@ export function AIEmployees() {
                   </div>
                 ))}
               </div>
-              <div className="grid grid-cols-1 xl:grid-cols-5 gap-2 mt-2">
+              <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-6 gap-2 mt-2">
                 <div className="rounded px-2 py-1.5" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
                   <div className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.loopHealth}</div>
                   <div className="text-[9px] mt-1" style={{ color: "var(--mis-muted)" }}>
@@ -3217,6 +3226,27 @@ export function AIEmployees() {
                   <div className="text-[9px] mt-0.5 truncate" style={{ color: "var(--mis-cyan)" }}>
                     {copy.nextAction}: {operatorHandoff.loop_health?.next_action || operatorHandoff.work_order.next_actions[0] || loopAuditNextAction}
                   </div>
+                </div>
+                <div className="rounded px-2 py-1.5" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="text-[10px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{copy.loopSelfCheckTitle}</div>
+                    <StatusBadge status={operatorHandoff.loop_health?.status || "unknown"} />
+                  </div>
+                  <div className="text-[9px] mt-1 truncate" style={{ color: "var(--mis-muted)" }}>
+                    {copy.loopHealth}: {operatorHandoff.loop_health?.score ?? 0}/100 · {copy.advanceLoopPolicyLabel}: {advanceLoopPolicyId}
+                  </div>
+                  <div className="text-[9px] mt-0.5 truncate" style={{ color: "var(--mis-dim)" }}>
+                    {copy.advanceLoopPolicy}
+                  </div>
+                  <button
+                    onClick={() => void copyIntakeCommand(loopSelfCheckCommand)}
+                    className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded max-w-full mt-1"
+                    style={{ color: "var(--mis-cyan)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}
+                    title={copy.loopSelfCheckSummary}
+                  >
+                    <ShieldCheck size={9} />
+                    <span className="truncate max-w-[150px]">{copiedIntakeCommand === loopSelfCheckCommand ? copy.copiedCommand : copy.loopSelfCheckCopy}</span>
+                  </button>
                 </div>
                 <div className="rounded px-2 py-1.5" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
                   <div className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.receiptProof}</div>
