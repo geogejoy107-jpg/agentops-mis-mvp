@@ -30,6 +30,7 @@ def main() -> int:
         NEXT_APP / "app" / "workspace" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "agents" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "agents" / "[agentId]" / "page.tsx",
+        NEXT_APP / "app" / "workspace" / "agents" / "dispatch-once" / "route.ts",
         NEXT_APP / "app" / "workspace" / "commercial" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "governance" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "deployment" / "page.tsx",
@@ -83,6 +84,7 @@ def main() -> int:
         ROOT / "scripts" / "ui_navigation_inventory_smoke.py",
         ROOT / "scripts" / "ui_route_retirement_packet_smoke.py",
         ROOT / "scripts" / "nextjs_agent_gateway_task_proxy_smoke.py",
+        ROOT / "scripts" / "nextjs_worker_dispatch_once_smoke.py",
         ROOT / "docs" / "UI_NAVIGATION_INVENTORY.json",
         ROOT / "docs" / "UI_ROUTE_RETIREMENT_PACKET.json",
     ]
@@ -97,6 +99,7 @@ def main() -> int:
     dispatch_route_text = read_text(NEXT_APP / "app" / "workspace" / "dispatch" / "template-run" / "route.ts")
     connector_trust_route_text = read_text(NEXT_APP / "app" / "workspace" / "connectors" / "trust" / "route.ts")
     notion_export_route_text = read_text(NEXT_APP / "app" / "workspace" / "external-bases" / "notion" / "export" / "route.ts")
+    agents_dispatch_route_text = read_text(NEXT_APP / "app" / "workspace" / "agents" / "dispatch-once" / "route.ts")
     admin_task_alias_text = read_text(NEXT_APP / "app" / "admin" / "tasks" / "[taskId]" / "page.tsx")
     admin_runs_alias_text = read_text(NEXT_APP / "app" / "admin" / "runs" / "page.tsx")
     admin_run_alias_text = read_text(NEXT_APP / "app" / "admin" / "runs" / "[runId]" / "page.tsx")
@@ -122,6 +125,7 @@ def main() -> int:
     server_lib_text = read_text(NEXT_APP / "src" / "lib" / "misServer.ts")
     playwright_smoke_text = read_text(ROOT / "scripts" / "nextjs_playwright_snapshot_smoke.py")
     gateway_task_proxy_smoke_text = read_text(ROOT / "scripts" / "nextjs_agent_gateway_task_proxy_smoke.py")
+    worker_dispatch_smoke_text = read_text(ROOT / "scripts" / "nextjs_worker_dispatch_once_smoke.py")
     route_parity_smoke_text = read_text(ROOT / "scripts" / "ui_task_run_route_parity_smoke.py")
     route_alias_smoke_text = read_text(ROOT / "scripts" / "ui_legacy_route_alias_smoke.py")
     navigation_inventory_smoke_text = read_text(ROOT / "scripts" / "ui_navigation_inventory_smoke.py")
@@ -133,10 +137,16 @@ def main() -> int:
     require(dependencies.get("react") == "19.2.7", "React version is not pinned to the selected migration version")
     require("build" in scripts and "next build" in scripts["build"], "Next.js build script is missing")
     require("AGENTOPS_API_BASE" in route_text, "API proxy must be configurable with AGENTOPS_API_BASE")
+    require("mock_only_next_parity" in route_text and "isWorkerDispatchPath" in route_text, "API proxy must fail closed for non-mock worker dispatch")
     require("nextjs_agent_gateway_task_proxy_v1" in gateway_task_proxy_smoke_text, "Next Agent Gateway task proxy smoke contract is missing")
     require("/api/mis/agent-gateway/tasks" in gateway_task_proxy_smoke_text, "Next Gateway task proxy smoke must exercise the Next /api/mis route")
     require("AGENTOPS_API_KEY" in gateway_task_proxy_smoke_text and "no_token_status == 401" in gateway_task_proxy_smoke_text, "Next Gateway task proxy smoke must disable local no-token fallback")
     require("direct_api_matches_next_proxy" in gateway_task_proxy_smoke_text, "Next Gateway task proxy smoke must compare direct MIS and Next proxy readback")
+    require("nextjs_worker_dispatch_once_v1" in worker_dispatch_smoke_text, "Next worker dispatch once smoke contract is missing")
+    require("/api/mis/workers/local/dispatch-once" in worker_dispatch_smoke_text, "Next worker dispatch smoke must exercise the /api/mis proxy route")
+    require("/workspace/agents/dispatch-once" in worker_dispatch_smoke_text, "Next worker dispatch smoke must exercise the form fallback route")
+    require("AGENTOPS_BASE_URL" in worker_dispatch_smoke_text, "Next worker dispatch smoke must isolate the worker subprocess base URL")
+    require("non_mock_proxy_status" in worker_dispatch_smoke_text and "mock_only_next_parity" in worker_dispatch_smoke_text, "Next worker dispatch smoke must prove non-mock proxy and form dispatch fail closed")
     require("AGENTOPS_API_BASE" in server_lib_text and "loadServerApprovals" in server_lib_text, "server-side first paint loaders are missing")
     require("/dashboard/metrics" in lib_text, "workspace parity data must include dashboard metrics")
     require("/tasks" in lib_text and "/runs" in lib_text and "/approvals" in lib_text, "workspace parity data misses core ledgers")
@@ -148,6 +158,8 @@ def main() -> int:
     require("/integrations/notion/dry-run-export" in lib_text and "/integrations/notion/export-confirmed" in lib_text, "Notion external base export actions are missing")
     require("/memories" in lib_text and "/audit?limit=120" in lib_text, "governance parity data misses memory or audit ledgers")
     require("/workers/status" in lib_text and "/workers/adapter-readiness" in lib_text, "agent-control parity data misses worker readiness")
+    require("/workers/local/dispatch-once" in lib_text and "dispatchLocalWorkerOnce" in lib_text, "agent-control parity data misses worker dispatch mutation")
+    require("mock_only_next_parity" in lib_text, "agent-control parity mutation helper must fail closed outside mock")
     require("/agents/${encodeURIComponent(agentId)}/performance" in lib_text and "loadAgentPerformance" in lib_text, "agent detail performance parity data is missing")
     require("/security/production-readiness" in lib_text, "agent-control parity data misses production readiness")
     require("/local/readiness" in server_lib_text, "deployment parity data misses local readiness")
@@ -179,6 +191,9 @@ def main() -> int:
     require("/workspace/dispatch" in app_frame_text, "Next.js nav must expose dispatch parity route")
     require("/workspace/agents" in app_frame_text, "Next.js nav must expose agents parity route")
     require("loadAgentControlSnapshot" in agents_page_text and "Production security" in agents_page_text, "agents parity page must expose safety/readiness control plane")
+    require("dispatchLocalWorkerOnce" in agents_page_text and "Run mock once" in agents_page_text, "agents parity page must expose safe mock worker dispatch")
+    require('action="/workspace/agents/dispatch-once"' in agents_page_text, "agents parity page must keep the Next worker dispatch form fallback")
+    require("mock_only_next_parity" in agents_dispatch_route_text and 'adapter !== "mock"' in agents_dispatch_route_text, "worker dispatch form fallback must reject non-mock adapters before upstream execution")
     require("/workspace/agents/${encodeURIComponent(agent.agent_id)}" in agents_page_text, "agents parity page must link rows to agent detail")
     require("AgentDetailParityPage" in agent_detail_page_text and "loadAgentPerformance" in agent_detail_page_text, "agent detail page must load live performance data")
     require("Per-agent performance" in agent_detail_page_text and "Recent Runs" in agent_detail_page_text, "agent detail page must expose performance and recent run evidence")
@@ -251,6 +266,7 @@ def main() -> int:
             "/workspace",
             "/workspace/agents",
             "/workspace/agents/[agentId]",
+            "/workspace/agents/dispatch-once",
             "/workspace/commercial",
             "/workspace/governance",
             "/workspace/deployment",
@@ -276,6 +292,7 @@ def main() -> int:
         ],
         "contracts": [
             "nextjs_agent_gateway_task_proxy_v1",
+            "nextjs_worker_dispatch_once_v1",
         ],
         "stack": {
             "next": dependencies.get("next"),

@@ -32,6 +32,23 @@ function proxyUrl(path: string[], search: string) {
   return `${TARGET_BASE.replace(/\/$/, "")}/${cleanPath}${search}`;
 }
 
+function isWorkerDispatchPath(path: string[]) {
+  return path.join("/") === "workers/local/dispatch-once";
+}
+
+function workerDispatchAdapter(body: Buffer | undefined) {
+  if (!body || body.byteLength === 0) return "mock";
+  try {
+    const parsed = JSON.parse(body.toString("utf-8"));
+    if (parsed && typeof parsed === "object" && "adapter" in parsed) {
+      return String((parsed as { adapter?: unknown }).adapter || "mock");
+    }
+  } catch {
+    return "invalid_json";
+  }
+  return "mock";
+}
+
 function forwardedHeaders(request: NextRequest) {
   const headers = new Headers();
   for (const [key, value] of request.headers.entries()) {
@@ -92,6 +109,12 @@ async function proxy(request: NextRequest, context: RouteContext) {
   const body = ["GET", "HEAD"].includes(request.method)
     ? undefined
     : Buffer.from(new Uint8Array(await request.arrayBuffer()));
+  if (request.method === "POST" && isWorkerDispatchPath(path)) {
+    const adapter = workerDispatchAdapter(body);
+    if (adapter !== "mock") {
+      return NextResponse.json({ ok: false, error: adapter === "invalid_json" ? "invalid_json" : "mock_only_next_parity" }, { status: 403 });
+    }
+  }
   const response = await proxyRequest(proxyUrl(path, request.nextUrl.search), request.method, forwardedHeaders(request), body);
   const headers = new Headers(response.headers);
   for (const key of HOP_BY_HOP_HEADERS) {

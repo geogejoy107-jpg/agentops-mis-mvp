@@ -2,9 +2,9 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { Activity, Bot, KeyRound, RefreshCw, ShieldCheck, TerminalSquare } from "lucide-react";
+import { Activity, Bot, KeyRound, Play, RefreshCw, ShieldCheck, TerminalSquare } from "lucide-react";
 import { AppFrame } from "./AppFrame";
-import { loadAgentControlSnapshot, type AgentControlSnapshot, type ReadinessGate } from "@/lib/mis";
+import { dispatchLocalWorkerOnce, loadAgentControlSnapshot, type AgentControlSnapshot, type ReadinessGate } from "@/lib/mis";
 
 type LoadState = {
   data: AgentControlSnapshot | null;
@@ -48,6 +48,9 @@ function GateList({ gates }: Readonly<{ gates?: ReadinessGate[] }>) {
 
 export function AgentsParityPage() {
   const [state, setState] = useState<LoadState>({ data: null, error: null, loading: true });
+  const [dispatching, setDispatching] = useState(false);
+  const [dispatchMessage, setDispatchMessage] = useState<string | null>(null);
+  const [dispatchStatus, setDispatchStatus] = useState<"success" | "error" | null>(null);
 
   const refresh = async () => {
     setState((current) => ({ ...current, error: null, loading: true }));
@@ -59,8 +62,41 @@ export function AgentsParityPage() {
   };
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const status = params.get("dispatch_status");
+    if (status) {
+      const taskId = params.get("task_id");
+      const runId = params.get("run_id");
+      const error = params.get("error");
+      setDispatchStatus(status === "started" ? "success" : "error");
+      setDispatchMessage(status === "started" ? `mock worker completed ${runId || taskId || "task"}` : `mock worker dispatch failed ${error || ""}`.trim());
+    }
     void refresh();
   }, []);
+
+  const runMockWorkerOnce = async () => {
+    setDispatching(true);
+    setDispatchStatus(null);
+    setDispatchMessage(null);
+    try {
+      const result = await dispatchLocalWorkerOnce({
+        adapter: "mock",
+        title: "Next mock worker dispatch task",
+        description: "Triggered from the Next.js worker console parity route.",
+        acceptance_criteria: "Mock worker must complete and write run/tool/evaluation/audit plus plan evidence.",
+      });
+      const workerResult = result.worker_result?.results?.[0];
+      const runId = workerResult?.run_id || result.task_id;
+      setDispatchStatus(result.ok ? "success" : "error");
+      setDispatchMessage(`mock worker ${result.ok ? "completed" : "failed"} ${runId || "task"}`);
+      await refresh();
+    } catch (err) {
+      setDispatchStatus("error");
+      setDispatchMessage(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDispatching(false);
+    }
+  };
 
   const agents = state.data?.agents || [];
   const security = state.data?.security;
@@ -83,6 +119,7 @@ export function AgentsParityPage() {
       </header>
 
       {state.error ? <div className="banner error">MIS API unavailable through /api/mis agent-control endpoints: {state.error}</div> : null}
+      {dispatchMessage ? <div className={`banner ${dispatchStatus === "success" ? "success" : "error"}`}>{dispatchMessage}</div> : null}
 
       <section className="metrics">
         {[
@@ -129,6 +166,17 @@ export function AgentsParityPage() {
             <span>sessions <strong>{numberValue(worker?.active_remote_sessions)}</strong></span>
           </div>
           <GateList gates={worker?.fleet_health?.gates} />
+          <div className="proofStrip">
+            <button className="miniButton good" type="button" onClick={runMockWorkerOnce} disabled={dispatching} data-smoke="run-mock-worker-once">
+              <Play size={13} /> {dispatching ? "Running mock" : "Run mock once"}
+            </button>
+            <form className="inlineForm" method="post" action="/workspace/agents/dispatch-once" data-smoke="mock-worker-form-fallback">
+              <input type="hidden" name="adapter" value="mock" />
+              <button className="miniButton" type="submit" disabled={dispatching}>
+                <Play size={13} /> Form fallback
+              </button>
+            </form>
+          </div>
         </div>
       </section>
 

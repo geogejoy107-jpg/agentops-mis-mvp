@@ -137,6 +137,7 @@ def main() -> int:
     require("ui_navigation_inventory_v1" in route_contracts, "matrix policy must include the navigation inventory contract")
     require("ui_route_retirement_packet_v1" in route_contracts, "matrix policy must include the route retirement packet contract")
     require("nextjs_agent_gateway_task_proxy_v1" in route_contracts, "matrix policy must include the Next Gateway task proxy contract")
+    require("nextjs_worker_dispatch_once_v1" in route_contracts, "matrix policy must include the Next worker dispatch contract")
 
     entries = matrix.get("entries")
     require(isinstance(entries, list) and entries, "matrix entries must be a non-empty list")
@@ -225,6 +226,10 @@ def main() -> int:
     agent_detail_evidence = entries_by_id.get("agent_detail", {}).get("evidence_commands") or []
     require("python3 scripts/nextjs_parity_smoke.py" in agent_detail_evidence, "agent_detail must include Next static parity evidence")
     require("python3 scripts/nextjs_playwright_snapshot_smoke.py" in agent_detail_evidence, "agent_detail must include Next browser evidence")
+    worker_console_evidence = entries_by_id.get("worker_console", {}).get("evidence_commands") or []
+    require("python3 scripts/nextjs_worker_dispatch_once_smoke.py" in worker_console_evidence, "worker_console must include Next worker dispatch mutation evidence")
+    worker_console_gate = str(entries_by_id.get("worker_console", {}).get("retirement_gate") or "")
+    require("mock_only_next_parity" in worker_console_gate, "worker_console retirement gate must record non-mock dispatch fail-closed evidence")
     assert_entry_routes(entries_by_id.get("tool_calls"), "tool_calls", ["/admin/toolcalls"], ["/workspace/tool-calls"])
     tool_call_evidence = entries_by_id.get("tool_calls", {}).get("evidence_commands") or []
     require("python3 scripts/nextjs_parity_smoke.py" in tool_call_evidence, "tool_calls must include Next static parity evidence")

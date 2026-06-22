@@ -339,6 +339,33 @@ export type WorkerAdapterReadinessSummary = {
   token_omitted?: boolean;
 };
 
+export type WorkerDispatchResult = {
+  provider?: string;
+  dry_run?: boolean;
+  ok?: boolean;
+  adapter?: string;
+  agent_id?: string;
+  task_id?: string;
+  duration_ms?: number;
+  worker_result?: {
+    ok?: boolean;
+    processed?: number;
+    results?: Array<{
+      ok?: boolean;
+      task_id?: string;
+      run_id?: string;
+      plan_id?: string;
+      plan_evidence_manifest_id?: string;
+      plan_evidence_status?: string;
+      plan_evidence_pass?: boolean;
+      processed?: boolean;
+      error?: string;
+    }>;
+    token_omitted?: boolean;
+  };
+  error?: string | null;
+};
+
 export type AgentGatewaySessionSummary = {
   session_id?: string;
   session_ref?: string;
@@ -830,6 +857,21 @@ export async function loadWorkerStatus(): Promise<WorkerStatusSummary> {
 
 export async function loadWorkerAdapterReadiness(): Promise<WorkerAdapterReadinessSummary> {
   return misJson<WorkerAdapterReadinessSummary>("/workers/adapter-readiness");
+}
+
+export async function dispatchLocalWorkerOnce(input: {
+  adapter: "mock";
+  title?: string;
+  description?: string;
+  acceptance_criteria?: string;
+}): Promise<WorkerDispatchResult> {
+  if (input.adapter !== "mock") {
+    throw new Error("mock_only_next_parity");
+  }
+  return misJson<WorkerDispatchResult>("/workers/local/dispatch-once", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
 }
 
 export async function loadCustomerProjects(limit = 25): Promise<CustomerProjectIndexPayload> {

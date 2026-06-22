@@ -11,7 +11,8 @@
         "ui_legacy_route_alias_v1",
         "ui_navigation_inventory_v1",
         "ui_route_retirement_packet_v1",
-        "nextjs_agent_gateway_task_proxy_v1"
+        "nextjs_agent_gateway_task_proxy_v1",
+        "nextjs_worker_dispatch_once_v1"
       ],
     "retirement_rule": "A Vite route can be retired only after the matrix marks its capability covered, Vite and Next browser evidence both pass, API contracts match, and the route has an explicit retirement decision."
   },
@@ -196,7 +197,8 @@
         "/workspace/agents"
       ],
       "next_routes": [
-        "/workspace/agents"
+        "/workspace/agents",
+        "/workspace/agents/dispatch-once"
       ],
       "api_contracts": [
         "GET /agents",
@@ -218,17 +220,19 @@
       ],
       "next_files": [
         "ui/next-app/app/workspace/agents/page.tsx",
+        "ui/next-app/app/workspace/agents/dispatch-once/route.ts",
         "ui/next-app/src/components/AgentsParityPage.tsx",
         "ui/next-app/src/lib/mis.ts"
       ],
       "evidence_commands": [
         "python3 scripts/ui_task_run_route_parity_smoke.py",
+        "python3 scripts/nextjs_worker_dispatch_once_smoke.py",
         "python3 scripts/vite_playwright_snapshot_smoke.py",
         "python3 scripts/nextjs_playwright_snapshot_smoke.py",
         "python3 scripts/nextjs_parity_smoke.py"
       ],
       "retirement_allowed": false,
-      "retirement_gate": "Next route is intentionally read-only; Vite worker start/stop/restart, enrollment mutation, release, and dispatch controls remain canonical."
+      "retirement_gate": "Next now proves one safe mock worker dispatch mutation and rejects non-mock proxy/form dispatch with mock_only_next_parity, but Vite worker start/stop/restart, enrollment mutation, release, live dispatch controls, and route retirement remain canonical."
     },
     {
       "id": "agent_detail",

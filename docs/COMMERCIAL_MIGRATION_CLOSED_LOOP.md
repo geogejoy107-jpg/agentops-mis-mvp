@@ -189,6 +189,7 @@ python3 scripts/ui_legacy_route_alias_smoke.py
 python3 scripts/ui_navigation_inventory_smoke.py
 python3 scripts/ui_route_retirement_packet_smoke.py
 python3 scripts/nextjs_agent_gateway_task_proxy_smoke.py
+python3 scripts/nextjs_worker_dispatch_once_smoke.py
 python3 scripts/vite_playwright_snapshot_smoke.py
 python3 scripts/nextjs_playwright_snapshot_smoke.py
 ```
@@ -261,10 +262,20 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   are `403`, valid scoped tokens create and read back the task through the Next
   proxy, and direct MIS readback matches without token leakage.
 
+  The Next worker dispatch smoke starts isolated MIS API and Next.js servers,
+  sets `AGENTOPS_BASE_URL` so the worker subprocess writes into that isolated
+  ledger, then proves the Next `/api/mis/workers/local/dispatch-once` proxy and
+  `/workspace/agents/dispatch-once` form fallback can run one safe `mock`
+  worker, persist task/run/verified plan-evidence proof, read the completed
+  task back without token leakage, and reject non-mock proxy/form dispatch
+  before upstream execution with `mock_only_next_parity`. This does not retire
+  Vite worker controls or enable live Hermes/OpenClaw dispatch in Next.
+
 - First migration artifact:
   - `ui/next-app/app/workspace/page.tsx`
   - `ui/next-app/app/workspace/agents/page.tsx`
   - `ui/next-app/app/workspace/agents/[agentId]/page.tsx`
+  - `ui/next-app/app/workspace/agents/dispatch-once/route.ts`
   - `ui/next-app/app/workspace/commercial/page.tsx`
   - `ui/next-app/app/workspace/governance/page.tsx`
   - `ui/next-app/app/workspace/deployment/page.tsx`
@@ -310,6 +321,7 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   - `ui/next-app/src/styles/globals.css`
   - `scripts/nextjs_parity_smoke.py`
   - `scripts/nextjs_agent_gateway_task_proxy_smoke.py`
+  - `scripts/nextjs_worker_dispatch_once_smoke.py`
   - `scripts/nextjs_playwright_snapshot_smoke.py`
   - `scripts/vite_playwright_snapshot_smoke.py`
   - `docs/UI_API_PARITY_MATRIX.md`

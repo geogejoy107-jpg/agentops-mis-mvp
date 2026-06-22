@@ -251,8 +251,20 @@ def main() -> int:
             and file_contains("scripts/nextjs_agent_gateway_task_proxy_smoke.py", "no_token_status == 401")
             and file_contains("scripts/nextjs_agent_gateway_task_proxy_smoke.py", "direct_api_matches_next_proxy")
             and file_contains("docs/UI_API_PARITY_MATRIX.json", "nextjs_agent_gateway_task_proxy_v1")
+            and file_contains("ui/next-app/app/api/mis/[...path]/route.ts", "mock_only_next_parity")
+            and file_contains("ui/next-app/app/api/mis/[...path]/route.ts", "isWorkerDispatchPath")
+            and file_contains("ui/next-app/src/lib/mis.ts", "/workers/local/dispatch-once")
+            and file_contains("ui/next-app/src/lib/mis.ts", "mock_only_next_parity")
+            and file_contains("ui/next-app/src/components/AgentsParityPage.tsx", "dispatchLocalWorkerOnce")
+            and file_contains("ui/next-app/app/workspace/agents/dispatch-once/route.ts", "/workers/local/dispatch-once")
+            and file_contains("ui/next-app/app/workspace/agents/dispatch-once/route.ts", "mock_only_next_parity")
+            and file_contains("scripts/nextjs_worker_dispatch_once_smoke.py", "nextjs_worker_dispatch_once_v1")
+            and file_contains("scripts/nextjs_worker_dispatch_once_smoke.py", "/api/mis/workers/local/dispatch-once")
+            and file_contains("scripts/nextjs_worker_dispatch_once_smoke.py", "mock_only_next_parity")
+            and file_contains("docs/UI_API_PARITY_MATRIX.json", "nextjs_worker_dispatch_once_v1")
             and (ROOT / "ui" / "next-app" / "app" / "workspace" / "tool-calls" / "page.tsx").exists()
             and (ROOT / "ui" / "next-app" / "app" / "workspace" / "agents" / "[agentId]" / "page.tsx").exists()
+            and (ROOT / "ui" / "next-app" / "app" / "workspace" / "agents" / "dispatch-once" / "route.ts").exists()
             and (ROOT / "ui" / "next-app" / "app" / "workspace" / "evaluations" / "page.tsx").exists()
             and (ROOT / "ui" / "next-app" / "app" / "workspace" / "connectors" / "page.tsx").exists()
             and (ROOT / "ui" / "next-app" / "app" / "workspace" / "connectors" / "trust" / "route.ts").exists()
@@ -260,8 +272,9 @@ def main() -> int:
             and (ROOT / "ui" / "next-app" / "app" / "workspace" / "external-bases" / "notion" / "export" / "route.ts").exists()
             and (ROOT / "scripts" / "nextjs_parity_smoke.py").exists()
             and (ROOT / "scripts" / "nextjs_agent_gateway_task_proxy_smoke.py").exists()
+            and (ROOT / "scripts" / "nextjs_worker_dispatch_once_smoke.py").exists()
             and (ROOT / "scripts" / "nextjs_playwright_snapshot_smoke.py").exists(),
-            "parallel Next.js App Router track has API proxy, Gateway task-create proxy, workspace/storage/tool-call/evaluation/runtime-connector/Notion external-base/agent-detail data contracts, deployment storage gate, and browser snapshot smoke",
+            "parallel Next.js App Router track has API proxy, Gateway task-create proxy, worker mock dispatch, workspace/storage/tool-call/evaluation/runtime-connector/Notion external-base/agent-detail data contracts, deployment storage gate, and browser snapshot smoke",
         ),
         check(
             "vite_browser_snapshot_surface_exists",
@@ -490,6 +503,7 @@ def main() -> int:
                 "python3 scripts/ui_navigation_inventory_smoke.py",
                 "python3 scripts/ui_route_retirement_packet_smoke.py",
                 "python3 scripts/nextjs_agent_gateway_task_proxy_smoke.py",
+                "python3 scripts/nextjs_worker_dispatch_once_smoke.py",
                 "python3 scripts/vite_playwright_snapshot_smoke.py",
                 "python3 scripts/nextjs_playwright_snapshot_smoke.py",
             ],

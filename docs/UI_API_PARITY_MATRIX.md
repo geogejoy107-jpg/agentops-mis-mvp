@@ -135,6 +135,7 @@ python3 scripts/nextjs_parity_smoke.py
 cd ui/start-building-app && npm run build
 cd ui/next-app && npm run build
 python3 scripts/nextjs_agent_gateway_task_proxy_smoke.py
+python3 scripts/nextjs_worker_dispatch_once_smoke.py
 python3 scripts/vite_playwright_snapshot_smoke.py
 python3 scripts/nextjs_playwright_snapshot_smoke.py
 ```
@@ -149,3 +150,12 @@ task-create contract: no token stays `401`, missing `tasks:create` stays `403`,
 workspace/agent impersonation stays blocked, valid scoped tokens create and
 read back a task through the Next proxy, and direct MIS readback matches the
 Next proxy response without token leakage.
+
+`python3 scripts/nextjs_worker_dispatch_once_smoke.py`
+(`nextjs_worker_dispatch_once_v1`) starts isolated MIS API and Next.js servers,
+sets `AGENTOPS_BASE_URL` so the worker subprocess writes into the isolated
+ledger, then proves `POST /api/mis/workers/local/dispatch-once` and the Next
+`/workspace/agents/dispatch-once` form fallback can run one safe `mock` worker,
+persist task/run/plan-evidence proof, read the completed task back without
+token leakage, and reject non-mock proxy/form dispatch before upstream
+execution with `mock_only_next_parity`.
