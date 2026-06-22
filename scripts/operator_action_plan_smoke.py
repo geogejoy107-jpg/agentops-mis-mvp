@@ -156,6 +156,11 @@ def validate_plan(payload: dict, label: str, failures: list[str], limit: int) ->
         "operator_health_risks",
         "operator_health_blocked",
         "operator_health_attention",
+        "evidence_remediation_workflow_actions",
+        "evidence_remediation_workflow_mutating",
+        "evidence_remediation_workflow_confirm_required",
+        "evidence_remediation_workflow_receipt_missing",
+        "evidence_remediation_workflow_receipt_verified",
         "action_receipts",
         "action_receipts_recorded",
         "action_receipts_verified",
@@ -204,6 +209,7 @@ def validate_plan(payload: dict, label: str, failures: list[str], limit: int) ->
     require("task_intake" in (payload.get("source_status") or {}), f"{label} task intake source status missing: {payload.get('source_status')}", failures)
     require("dispatch_evidence" in (payload.get("source_status") or {}), f"{label} dispatch evidence source status missing: {payload.get('source_status')}", failures)
     require("operator_health" in (payload.get("source_status") or {}), f"{label} operator health source status missing: {payload.get('source_status')}", failures)
+    require("evidence_remediation_workflow" in (payload.get("source_status") or {}), f"{label} evidence remediation workflow source status missing: {payload.get('source_status')}", failures)
     require("action_receipts" in (payload.get("source_status") or {}), f"{label} action receipts source status missing: {payload.get('source_status')}", failures)
     require("receipt_failure_memory" in (payload.get("source_status") or {}), f"{label} receipt failure memory source status missing: {payload.get('source_status')}", failures)
     evidence_source = payload.get("execution_evidence") or {}
@@ -226,6 +232,14 @@ def validate_plan(payload: dict, label: str, failures: list[str], limit: int) ->
     operator_health_safety = operator_health_source.get("safety") or {}
     require(operator_health_safety.get("read_only") is True, f"{label} operator health read_only missing: {operator_health_safety}", failures)
     require(operator_health_safety.get("ledger_mutated") is False, f"{label} operator health must not mutate ledger: {operator_health_safety}", failures)
+    remediation_workflow_source = payload.get("evidence_remediation_workflow") or {}
+    require(remediation_workflow_source.get("status") in {"ready", "attention"}, f"{label} remediation workflow source missing: {remediation_workflow_source}", failures)
+    remediation_workflow_summary = remediation_workflow_source.get("summary") or {}
+    for key in ["actions", "mutating", "confirm_required", "receipt_missing", "receipt_verified"]:
+        require(isinstance(remediation_workflow_summary.get(key), int), f"{label} remediation workflow summary.{key} missing: {remediation_workflow_summary}", failures)
+    remediation_workflow_safety = remediation_workflow_source.get("safety") or {}
+    require(remediation_workflow_safety.get("read_only") is True, f"{label} remediation workflow source read_only missing: {remediation_workflow_safety}", failures)
+    require(remediation_workflow_safety.get("ledger_mutated") is False, f"{label} remediation workflow source must not mutate ledger: {remediation_workflow_safety}", failures)
     receipt_summary = receipt_source.get("summary") or {}
     for key in ["receipts", "recorded", "verified", "failed", "skipped", "evaluated", "evaluation_pass", "evaluation_fail"]:
         require(isinstance(receipt_summary.get(key), int), f"{label} action receipts summary.{key} missing: {receipt_summary}", failures)
@@ -347,6 +361,32 @@ def validate_plan(payload: dict, label: str, failures: list[str], limit: int) ->
                 require("--source handoff.evidence_remediation" in (action.get("receipt_record_command") or ""), f"{label} remediation receipt source missing: {action}", failures)
                 require("--source handoff.evidence_remediation" in (action.get("receipt_verify_record_command") or ""), f"{label} remediation verify receipt source missing: {action}", failures)
                 require("Evidence remediation preview reviewed for run" in (action.get("receipt_verify_record_command") or ""), f"{label} remediation receipt summary missing: {action}", failures)
+        if str(action.get("source") or "").startswith("evidence_remediation_workflow:"):
+            evidence = action.get("evidence") or {}
+            command = str(action.get("command") or "")
+            step_id = str(evidence.get("workflow_step_id") or "")
+            run_id = str(evidence.get("run_id") or "").strip()
+            require(bool(step_id), f"{label} workflow action step id missing: {action}", failures)
+            require(bool(run_id), f"{label} workflow action run id missing: {action}", failures)
+            require(action.get("action_id") == (f"evidence_remediation:{run_id}" if step_id == "preview" else f"evidence_remediation:{run_id}:{step_id}"), f"{label} workflow action id mismatch: {action}", failures)
+            require(evidence.get("handoff_remediation_chain") is True, f"{label} workflow handoff marker missing: {action}", failures)
+            require(str(evidence.get("handoff_remediation_source") or "").startswith("handoff.evidence_remediation"), f"{label} workflow handoff source missing: {action}", failures)
+            require(evidence.get("next_safe_command_kind") == "action", f"{label} workflow next command kind missing: {action}", failures)
+            require(isinstance(evidence.get("mutating"), bool), f"{label} workflow mutating flag missing: {action}", failures)
+            require(isinstance(evidence.get("confirm_required"), bool), f"{label} workflow confirm flag missing: {action}", failures)
+            require("--source handoff.evidence_remediation" in (action.get("receipt_record_command") or ""), f"{label} workflow receipt source missing: {action}", failures)
+            require("--source handoff.evidence_remediation" in (action.get("receipt_verify_record_command") or ""), f"{label} workflow verify receipt source missing: {action}", failures)
+            require(
+                command.startswith("agentops operator remediate-evidence-gap --run-id ")
+                or command.startswith("agentops commander dispatch-package --task-id ")
+                or command.startswith("agentops plan-evidence ")
+                or command.startswith("agentops commander synthesize --project-id ")
+                or command.startswith("agentops commander promote-synthesis --artifact-id ")
+                or command.startswith("agentops operator close-evidence-gap --run-id ")
+                or command.startswith("agentops approval inspect --approval-id "),
+                f"{label} workflow action command outside allowed remediation stages: {action}",
+                failures,
+            )
         if action.get("source") == "task_intake_checklist":
             command = str(action.get("command") or "")
             require(

@@ -1491,29 +1491,38 @@ export function AIEmployees() {
       status: firstLoopIssueStep.status,
       verifyAction: loopAuditNextAction,
     }] : []),
-    ...operatorPlanActions.map((item) => ({
-      id: `operator:${item.action_id}`,
-      action: item.command,
-      source: `${item.lane === "operator_health" ? copy.operatorHealthTitle : copy.operatorTitle} · ${((item.evidence || {}) as Record<string, unknown>).handoff_remediation_chain ? "evidence remediation" : item.lane}`,
-      status: item.severity || operatorActionPlan?.status || "attention",
-      operatorAction: item,
-      verifyAction: item.verify_command || (isCloseEvidenceGapCommand(item.command) ? "agentops operator action-plan --limit 20" : undefined),
-      actionSignature: item.action_signature,
-      receiptRequired: item.receipt_required,
-      receiptStatus: item.receipt_status,
-      receiptVerified: item.receipt_verified,
-      receiptHash: item.receipt_hash,
-      receiptEvaluation: item.receipt_evaluation,
-      receiptId: item.receipt_id,
-      receiptRecordCommand: item.receipt_record_command,
-      receiptRecordConfirmCommand: item.receipt_record_confirm_command,
-      receiptVerifyRecordCommand: item.receipt_verify_record_command,
-      isReceiptCoverageRecovery: item.source === "receipt_coverage",
-      isReceiptEvaluationRecovery: item.source === "receipt_evaluation",
-      isReceiptFailureMemoryRecovery: item.source === "receipt_failure_memory",
-      isOperatorHealthRisk: item.lane === "operator_health" || item.source.startsWith("operator_health:"),
-      isEvidenceRemediation: Boolean(((item.evidence || {}) as Record<string, unknown>).handoff_remediation_chain),
-    })),
+    ...operatorPlanActions.map((item) => {
+      const evidence = (item.evidence || {}) as Record<string, unknown>;
+      const workflowStepId = String(evidence.workflow_step_id || "");
+      return {
+        id: `operator:${item.action_id}`,
+        action: item.command,
+        source: `${item.lane === "operator_health" ? copy.operatorHealthTitle : copy.operatorTitle} · ${workflowStepId ? `${copy.remediationWorkflow} · ${workflowStepId}` : evidence.handoff_remediation_chain ? "evidence remediation" : item.lane}`,
+        status: item.severity || operatorActionPlan?.status || "attention",
+        operatorAction: item,
+        verifyAction: item.verify_command || (isCloseEvidenceGapCommand(item.command) ? "agentops operator action-plan --limit 20" : undefined),
+        actionSignature: item.action_signature,
+        receiptRequired: item.receipt_required,
+        receiptStatus: item.receipt_status,
+        receiptVerified: item.receipt_verified,
+        receiptHash: item.receipt_hash,
+        receiptEvaluation: item.receipt_evaluation,
+        receiptId: item.receipt_id,
+        receiptRecordCommand: item.receipt_record_command,
+        receiptRecordConfirmCommand: item.receipt_record_confirm_command,
+        receiptVerifyRecordCommand: item.receipt_verify_record_command,
+        remediationWorkflowStepId: workflowStepId,
+        remediationWorkflowKind: String(evidence.next_safe_command_kind || ""),
+        remediationWorkflowPrerequisite: String(evidence.prerequisite_step || ""),
+        remediationWorkflowMutating: Boolean(evidence.mutating),
+        remediationWorkflowConfirmRequired: Boolean(evidence.confirm_required),
+        isReceiptCoverageRecovery: item.source === "receipt_coverage",
+        isReceiptEvaluationRecovery: item.source === "receipt_evaluation",
+        isReceiptFailureMemoryRecovery: item.source === "receipt_failure_memory",
+        isOperatorHealthRisk: item.lane === "operator_health" || item.source.startsWith("operator_health:"),
+        isEvidenceRemediation: Boolean(evidence.handoff_remediation_chain),
+      };
+    }),
     ...recommendedActions.map((action, index) => ({
       id: `fleet:${index}:${action}`,
       action,
@@ -3984,6 +3993,11 @@ export function AIEmployees() {
               const queueNeedsReceipt = !candidateReceiptVerified(item);
               const receiptRecordCommand = "receiptRecordCommand" in item ? item.receiptRecordCommand : undefined;
               const receiptVerifyRecordCommand = "receiptVerifyRecordCommand" in item ? item.receiptVerifyRecordCommand : undefined;
+              const remediationWorkflowStepId = "remediationWorkflowStepId" in item ? item.remediationWorkflowStepId : "";
+              const remediationWorkflowKind = "remediationWorkflowKind" in item ? item.remediationWorkflowKind : "";
+              const remediationWorkflowPrerequisite = "remediationWorkflowPrerequisite" in item ? item.remediationWorkflowPrerequisite : "";
+              const remediationWorkflowMutating = "remediationWorkflowMutating" in item ? item.remediationWorkflowMutating : false;
+              const remediationWorkflowConfirmRequired = "remediationWorkflowConfirmRequired" in item ? item.remediationWorkflowConfirmRequired : false;
               return (
                 <div
                   key={item.id}
@@ -4017,6 +4031,17 @@ export function AIEmployees() {
                     <div className="text-[10px] truncate mt-0.5" style={{ color: "var(--mis-muted)" }}>
                       {copy.actionSource}: {item.source}
                     </div>
+                    {remediationWorkflowStepId && (
+                      <div className="flex flex-wrap items-center gap-1.5 mt-0.5 text-[10px]" style={{ color: "var(--mis-dim)" }}>
+                        <span className="truncate">
+                          {copy.remediationWorkflow}: {remediationWorkflowStepId} · {remediationWorkflowKind || "action"}
+                          {remediationWorkflowPrerequisite ? ` · ${copy.prerequisiteStep}: ${remediationWorkflowPrerequisite}` : ""}
+                        </span>
+                        {(remediationWorkflowMutating || remediationWorkflowConfirmRequired) && (
+                          <StatusBadge status="attention" label={remediationWorkflowConfirmRequired ? "confirm" : "write"} />
+                        )}
+                      </div>
+                    )}
                     {"verifyAction" in item && item.verifyAction && (
                       <div className="flex items-center gap-1.5 mt-0.5 min-w-0">
                         <div className="text-[10px] truncate" style={{ color: "var(--mis-cyan)" }}>

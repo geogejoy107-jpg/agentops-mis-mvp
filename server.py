@@ -16566,6 +16566,163 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             "token_omitted": True,
         })
 
+    def remediation_workflow_stage_action(item: dict) -> dict | None:
+        run_id = str(item.get("run_id") or "").strip()
+        if not run_id:
+            return None
+        preview_command = f"agentops operator remediate-evidence-gap --run-id {shlex.quote(run_id)}"
+        preview_signature = stable_id("op_action_sig", "evidence_remediation", workspace_id, run_id, preview_command)[-18:]
+        preview_receipt, preview_match = latest_receipt_for_action(preview_command, f"evidence_remediation:{run_id}", preview_signature)
+        preview_verified = bool(preview_match == "current" and (preview_receipt or {}).get("status") == "verified")
+        remediation_task_id = str(item.get("remediation_task_id") or "").strip()
+        remediation_status = str(item.get("remediation_status") or item.get("remediation_package_status") or "").strip()
+        synthesis_status = str(item.get("remediation_synthesis_status") or "").strip()
+        gap_decision_status = str(item.get("gap_decision_status") or "").strip()
+        package_ready = remediation_status in {"verified", "ready_for_review"}
+        synthesis_promoted = synthesis_status in {"promoted", "memory_pending_review"}
+        gap_closed = gap_decision_status == "closed"
+        plan_id = str(item.get("plan_id") or "").strip()
+        manifest_id = str(item.get("manifest_id") or "").strip()
+        task_id_for_command = str(remediation_task_id or stable_id("tsk_exec_evidence_fix", workspace_id, run_id))
+        project_id_for_command = str(stable_id("proj_execution_evidence", workspace_id, run_id))
+        evidence_report_verify = f"agentops operator evidence-report --run-id {shlex.quote(run_id)} --limit 1"
+        gap_command = str(item.get("command") or "").strip()
+        close_confirm_command = gap_command if gap_command.startswith("agentops operator close-evidence-gap --run-id ") and "--confirm-close" in gap_command else None
+        close_preview_command = close_confirm_command.replace(" --confirm-close", "") if close_confirm_command else None
+        plan_evidence_create_command = f"agentops plan-evidence create --plan-id {shlex.quote(plan_id)} --run-id {shlex.quote(run_id)} --mismatch-policy block" if plan_id and not manifest_id else None
+        plan_evidence_verify_command = f"agentops plan-evidence verify --manifest-id {shlex.quote(manifest_id)}" if manifest_id else None
+        synthesis_command = gap_command if (
+            gap_command.startswith("agentops commander synthesize --project-id ")
+            or gap_command.startswith("agentops approval inspect --approval-id ")
+            or gap_command.startswith("agentops commander promote-synthesis --artifact-id ")
+        ) else None
+
+        if not preview_verified:
+            step_id = "preview"
+            command = preview_command
+            verify_command = evidence_report_verify
+            priority = 110
+            severity = item.get("severity") or "attention"
+            summary = "Preview the remediation package and record a verified preview receipt before mutating remediation state."
+            mutating = False
+            confirm_required = False
+            prerequisite_step = None
+            blocked_reason = None
+            ready_reason = "Preview is read-only and allowed before creating remediation work."
+        elif not remediation_task_id:
+            step_id = "create_task"
+            command = f"{preview_command} --confirm-create"
+            verify_command = evidence_report_verify
+            priority = 108
+            severity = "attention"
+            summary = "Preview receipt is verified; create the explicit remediation work package."
+            mutating = True
+            confirm_required = True
+            prerequisite_step = "preview"
+            blocked_reason = None
+            ready_reason = "Preview receipt is verified; explicit --confirm-create is now allowed."
+        elif not package_ready:
+            step_id = "dispatch_package"
+            command = f"agentops commander dispatch-package --task-id {shlex.quote(task_id_for_command)} --adapter mock"
+            verify_command = f"agentops commander packages --project-id {shlex.quote(project_id_for_command)} --limit 5"
+            priority = 106
+            severity = "attention"
+            summary = "Remediation task exists and can be dispatched through Commander."
+            mutating = True
+            confirm_required = False
+            prerequisite_step = "create_task"
+            blocked_reason = None
+            ready_reason = "Remediation task exists and can be dispatched through Commander."
+        elif plan_evidence_create_command or plan_evidence_verify_command:
+            step_id = "plan_evidence"
+            command = plan_evidence_create_command or plan_evidence_verify_command
+            verify_command = evidence_report_verify
+            priority = 104
+            severity = "attention"
+            summary = "Create or verify plan evidence for the remediation run before synthesis."
+            mutating = bool(plan_evidence_create_command)
+            confirm_required = False
+            prerequisite_step = "preview"
+            blocked_reason = None
+            ready_reason = "Plan evidence can be created or verified for this run."
+        elif synthesis_command and not synthesis_promoted:
+            step_id = "synthesize"
+            command = synthesis_command
+            verify_command = "agentops operator action-plan --limit 20"
+            priority = 102
+            severity = "attention"
+            summary = "Remediation package is ready for synthesis, approval inspection, or promotion."
+            mutating = bool("--confirm-create" in synthesis_command or "--confirm-promote" in synthesis_command)
+            confirm_required = mutating
+            prerequisite_step = "dispatch_package"
+            blocked_reason = None
+            ready_reason = "Remediation package is ready for synthesis or approval inspection."
+        elif close_confirm_command and synthesis_promoted and not gap_closed:
+            step_id = "close_gap"
+            command = close_confirm_command or close_preview_command
+            verify_command = evidence_report_verify
+            priority = 100
+            severity = "attention"
+            summary = "Synthesis has been promoted; explicit source evidence gap closure can be confirmed."
+            mutating = bool(close_confirm_command)
+            confirm_required = bool(close_confirm_command)
+            prerequisite_step = "synthesize"
+            blocked_reason = None
+            ready_reason = "Synthesis has been promoted; explicit gap closure can be confirmed."
+        else:
+            return None
+
+        action_id = f"evidence_remediation:{run_id}" if step_id == "preview" else f"evidence_remediation:{run_id}:{step_id}"
+        action_signature = (
+            preview_signature
+            if step_id == "preview"
+            else stable_id("op_action_sig", "evidence_remediation_step", workspace_id, run_id, step_id, command)[-18:]
+        )
+        receipt_source = "handoff.evidence_remediation" if step_id == "preview" else f"handoff.evidence_remediation.{step_id}"
+        return {
+            "step_id": step_id,
+            "command": command,
+            "verify_command": verify_command,
+            "priority": priority,
+            "severity": severity,
+            "summary": summary,
+            "mutating": mutating,
+            "confirm_required": confirm_required,
+            "prerequisite_step": prerequisite_step,
+            "blocked_reason": blocked_reason,
+            "ready_reason": ready_reason,
+            "next_safe_command_kind": "action",
+            "action_id": action_id,
+            "action_signature": action_signature,
+            "receipt_source": receipt_source,
+            "receipt_result_summary": f"Evidence remediation {step_id} completed for run {run_id}.",
+            "evidence": {
+                "task_id": item.get("task_id"),
+                "run_id": run_id,
+                "agent_id": item.get("agent_id"),
+                "workflow_step_id": step_id,
+                "next_safe_command_kind": "action",
+                "mutating": mutating,
+                "confirm_required": confirm_required,
+                "prerequisite_step": prerequisite_step,
+                "blocked_reason": blocked_reason,
+                "ready_reason": ready_reason,
+                "receipt_source": receipt_source,
+                "preview_receipt_verified": preview_verified,
+                "preview_receipt_status": (preview_receipt or {}).get("status") if preview_receipt else "missing",
+                "remediation_task_id": remediation_task_id or None,
+                "remediation_status": remediation_status or None,
+                "remediation_package_status": item.get("remediation_package_status"),
+                "remediation_synthesis_status": synthesis_status or None,
+                "gap_decision_status": gap_decision_status or None,
+                "gap_types": item.get("gap_types") or [],
+                "missing_evidence": item.get("missing_evidence") or [],
+                "evidence_counts": item.get("evidence_counts") or {},
+                "handoff_remediation_chain": True,
+                "handoff_remediation_source": receipt_source,
+            },
+        }
+
     for item in (review.get("review_items") or [])[:limit]:
         item_type = item.get("item_type") or "review"
         title = item.get("title") or item.get("item_id") or item_type
@@ -16835,6 +16992,24 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             receipt_source="handoff.evidence_remediation" if is_remediation_preview else None,
             receipt_result_summary=f"Evidence remediation preview reviewed for run {run_id}." if is_remediation_preview else None,
         )
+        stage_action = remediation_workflow_stage_action(item)
+        if stage_action:
+            add_action(
+                "execution_evidence",
+                f"Remediation workflow: {stage_action['step_id']}",
+                stage_action["command"],
+                priority=int(stage_action["priority"]),
+                severity=str(stage_action["severity"] or "attention"),
+                source=f"evidence_remediation_workflow:{stage_action['step_id']}",
+                summary=str(stage_action["summary"] or ""),
+                ui_route=item.get("ui_route") or f"/admin/runs/{item.get('run_id')}",
+                evidence=stage_action["evidence"],
+                verify_command_override=str(stage_action["verify_command"] or ""),
+                action_signature_override=str(stage_action["action_signature"] or ""),
+                action_id_override=str(stage_action["action_id"] or ""),
+                receipt_source=str(stage_action["receipt_source"] or ""),
+                receipt_result_summary=str(stage_action["receipt_result_summary"] or ""),
+            )
 
     for item in (dispatch_evidence.get("items") or [])[:limit]:
         add_action(
@@ -17087,6 +17262,29 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
         },
         "token_omitted": True,
     }
+    remediation_workflow_actions = [
+        item for item in deduped
+        if str(item.get("source") or "").startswith("evidence_remediation_workflow:")
+    ]
+    remediation_workflow_source = {
+        "status": "attention" if remediation_workflow_actions else "ready",
+        "summary": {
+            "actions": len(remediation_workflow_actions),
+            "mutating": len([item for item in remediation_workflow_actions if ((item.get("evidence") or {}).get("mutating"))]),
+            "confirm_required": len([item for item in remediation_workflow_actions if ((item.get("evidence") or {}).get("confirm_required"))]),
+            "receipt_missing": len([item for item in remediation_workflow_actions if not item.get("receipt_verified")]),
+            "receipt_verified": len([item for item in remediation_workflow_actions if item.get("receipt_verified")]),
+        },
+        "items": remediation_workflow_actions[:limit],
+        "contract": "read-only projection of the current handoff remediation workflow step into Action Queue ordering; commands remain explicit copy/CLI actions and receipts govern RECORD",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
     return {
         "provider": "agentops-operator",
         "operation": "action_plan",
@@ -17133,6 +17331,11 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             "operator_health_risks": (operator_health_source.get("summary") or {}).get("risks", 0),
             "operator_health_blocked": (operator_health_source.get("summary") or {}).get("blocked", 0),
             "operator_health_attention": (operator_health_source.get("summary") or {}).get("attention", 0),
+            "evidence_remediation_workflow_actions": (remediation_workflow_source.get("summary") or {}).get("actions", 0),
+            "evidence_remediation_workflow_mutating": (remediation_workflow_source.get("summary") or {}).get("mutating", 0),
+            "evidence_remediation_workflow_confirm_required": (remediation_workflow_source.get("summary") or {}).get("confirm_required", 0),
+            "evidence_remediation_workflow_receipt_missing": (remediation_workflow_source.get("summary") or {}).get("receipt_missing", 0),
+            "evidence_remediation_workflow_receipt_verified": (remediation_workflow_source.get("summary") or {}).get("receipt_verified", 0),
             "action_receipts": action_receipt_summary.get("receipts", 0),
             "action_receipts_recorded": action_receipt_summary.get("recorded", 0),
             "action_receipts_verified": action_receipt_summary.get("verified", 0),
@@ -17171,6 +17374,7 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             "task_intake": task_intake.get("status"),
             "dispatch_evidence": dispatch_evidence.get("status"),
             "operator_health": operator_health_source.get("status"),
+            "evidence_remediation_workflow": remediation_workflow_source.get("status"),
             "action_receipts": action_receipts.get("status"),
             "receipt_evaluation": receipt_evaluation_status,
             "receipt_failure_memory": receipt_failure_memory.get("status"),
@@ -17180,6 +17384,7 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
         "task_intake": task_intake,
         "dispatch_evidence": dispatch_evidence,
         "operator_health": operator_health_source,
+        "evidence_remediation_workflow": remediation_workflow_source,
         "action_receipts": action_receipts,
         "receipt_failure_memory": receipt_failure_memory,
         "contract": "read-only operator action plan; execution stays in explicit CLI/API commands and live adapters still require confirmation",

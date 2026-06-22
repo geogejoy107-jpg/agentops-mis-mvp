@@ -286,8 +286,8 @@ python3 scripts/sqlite_reliability_smoke.py
 
 ## 9. UI/API responsiveness
 
-- [ ] Measure AI Employees initial request count.
-- [ ] Measure time to first useful panel.
+- [x] Measure AI Employees initial request count: `scripts/ai_employees_responsiveness_smoke.py` models the `/workspace/agents` initial loader and currently measures 27 API reads: 22 phase-1 parallel reads, 4 loop-scoped operator reads, and 1 final `/api/agents` read; the budget is <=32 and daemon log prefetch stays absent.
+- [x] Measure time to first useful panel: `scripts/ai_employees_responsiveness_smoke.py` measures command-center critical readiness against a <1s budget and current first useful panel against a <1.5s budget on an isolated local DB; recent runs stayed below budget, with no ledger mutation and no token leakage.
 - [x] Do not fetch daemon logs before the panel is opened: AI Employees removes the initial `loadWorkerDaemonLogs` fan-out, loads only the selected adapter after the log panel is opened, and UI smoke forbids the old prefetch marker.
 - [ ] Make panels independently loadable.
 - [x] Add a lightweight command-center read model or equivalent aggregation: `operator evidence-report` aggregates Agent Plan, approval, plan_evidence_manifest and ledger evidence by run.
@@ -295,6 +295,7 @@ python3 scripts/sqlite_reliability_smoke.py
 - [x] Bounded advance consumes handoff evidence work: unscoped `agentops operator advance-loop` prioritizes the read-only `evidence_report` work order for blocked/attention run evidence, verifies through handoff, records action receipt/evaluation proof, feeds that receipt back into handoff/UI, skips the same evidence work order after it is verified, and then continues into the first read-only `evidence_remediation` preview while preserving the `handoff.evidence_remediation` receipt source; scoped `--loop-id` still advances that loop's gate.
 - [x] Evidence remediation chain is explicit in handoff: each non-ready evidence-report run has preview, create, plan-evidence, close-gap, verify, and receipt commands; preview can be consumed by bounded advance, while create/close/confirm mutating steps remain explicit operator actions and are never auto-run by handoff/advance-loop.
 - [x] Evidence remediation handoff items expose stage-level workflow state: `workflow_steps` covers preview, create task, dispatch package, plan evidence, synthesis, and close-gap, with only preview marked auto-advanceable and mutating stages marked receipt-gated explicit work. Each command-bearing stage has its own receipt readback, generated record/verify receipt commands, blocked/ready reason, prerequisite step, next safe command kind, and receipt-next command. Handoff and loop-self-check both expose `evidence_remediation_workflow` gates, while `/workspace/agents` shows ready/blocked counts plus a copy-only remediation workflow table for the leading runs.
+- [x] Action Queue projects the current remediation workflow stage: `operator action-plan` now exposes `evidence_remediation_workflow` source/summary/items, including step id, mutating/confirm flags, next-safe command kind, receipt source, and verify command. `/workspace/agents` labels these stage actions so operators can continue from preview into explicit package, plan-evidence, synthesis, or close-gap work without reading raw JSON.
 - [x] Operator Action Queue recovery items can record action receipts and show VERIFY commands in action-plan / loop-audit readback.
 - [x] Paginate large run, tool and audit lists: `/api/runs`, `/api/tool-calls`, and `/api/audit` accept `limit`/`offset`; `include_page=true` returns an envelope with page metadata while legacy array responses remain compatible. UI ledger loaders use bounded limits by default, and `scripts/ledger_pagination_smoke.py` verifies array compatibility plus paginated metadata.
 - [x] Briefly cache expensive aggregate read models: dashboard metrics plus operator action-plan, evidence-report, health, handoff, and loop-self-check use a 2s in-process read-model cache keyed by query and auth/workspace profile; responses include `read_model_cache` miss/hit/bypass proof, `refresh_cache=true` bypasses cache, Action Queue receipt/memory writes invalidate cached operator readbacks, and `scripts/read_model_cache_smoke.py` plus `scripts/operator_advance_loop_smoke.py` verify scoped-token separation, read-only ledger behavior, and write-after-receipt freshness.
@@ -333,6 +334,7 @@ SQLite DB.
 ui-build: npm ci + npm run build under ui/start-building-app.
 AI Employees optional endpoint fallback: `cd ui/start-building-app && npm run build`.
 AI Employees lazy daemon logs: `python3 scripts/operator_action_queue_ui_smoke.py`.
+AI Employees responsiveness baseline: `python3 scripts/ai_employees_responsiveness_smoke.py`.
 ```
 
 The workflow intentionally keeps Hermes/OpenClaw live runtime work out of CI.

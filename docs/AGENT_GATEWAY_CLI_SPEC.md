@@ -1549,6 +1549,15 @@ or explicit mutating work that only gets copied into the local operator path.
 `operator loop-self-check` mirrors the same `evidence_remediation_workflow`
 gate before bounded advance, and `/workspace/agents` renders the first few
 remediation workflow rows without executing commands.
+`operator action-plan` also projects the current actionable remediation
+workflow stage into the shared Action Queue with source
+`evidence_remediation_workflow:<step>`. These rows reuse the handoff remediation
+receipt source, expose `workflow_step_id`, `next_safe_command_kind`,
+`mutating`, `confirm_required`, and `prerequisite_step` in `evidence`, and
+return an `evidence_remediation_workflow` read model with action, mutating,
+confirm-required, missing-receipt, and verified-receipt counts. The UI consumes
+those backend rows directly, so Hermes/OpenClaw/Codex see one ordered queue
+instead of a separate handoff table and a separate action-plan table.
 After promotion, action-plan recommends an explicit operator closure:
 
 ```bash
