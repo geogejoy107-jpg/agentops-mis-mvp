@@ -139,6 +139,14 @@ def main() -> int:
         server = start_server(db_path, port, tmpdir / "server.log")
         try:
             wait_for_server(base_url)
+            policy = run_cli(["operator", "advance-loop-policy"], base_url, outputs)
+            policy_payload = load_json(policy.stdout)
+            policy_summary = policy_payload.get("policy") or {}
+            require(policy.returncode == 0, f"advance policy CLI failed: {policy.stderr or policy.stdout}", failures)
+            require(policy_payload.get("operation") == "operator_advance_loop_policy", f"advance policy operation mismatch: {policy_payload}", failures)
+            require(policy_summary.get("policy_id") == "advance_loop_local_bounded_v1", f"advance policy id missing: {policy_payload}", failures)
+            require((policy_payload.get("safety") or {}).get("read_only") is True, f"advance policy should be read-only: {policy_payload}", failures)
+
             workflow = run_cli([
                 "workflow",
                 "hermes-openclaw-loop",
@@ -167,6 +175,8 @@ def main() -> int:
             require(preview.returncode == 0, f"advance preview failed: {preview.stderr or preview.stdout}", failures)
             require(preview_payload.get("status") == "preview", f"advance should default to preview: {preview_payload}", failures)
             require((preview_payload.get("preview") or {}).get("gate_id") == "record", f"advance should select record gate: {preview_payload}", failures)
+            require((preview_payload.get("policy") or {}).get("policy_id") == "advance_loop_local_bounded_v1", f"advance preview policy id missing: {preview_payload}", failures)
+            require(((preview_payload.get("preview") or {}).get("action_policy") or {}).get("policy_id") == "advance_loop_local_bounded_v1", f"advance action policy id missing: {preview_payload}", failures)
             require(after_preview == before, f"advance preview mutated db: {before} -> {after_preview}", failures)
 
             advanced = run_cli(["operator", "advance-loop", "--loop-id", loop_id, "--limit", "10", "--confirm-advance"], base_url, outputs)
@@ -177,6 +187,7 @@ def main() -> int:
             require(advanced_payload.get("advanced") is True, f"advance did not execute: {advanced_payload}", failures)
             require(advanced_payload.get("status") == "advanced", f"advance should finish verified: {advanced_payload}", failures)
             require((advanced_payload.get("preview") or {}).get("gate_id") == "record", f"advanced wrong gate: {advanced_payload}", failures)
+            require((advanced_payload.get("policy") or {}).get("policy_id") == "advance_loop_local_bounded_v1", f"advanced policy id missing: {advanced_payload}", failures)
             require((advanced_payload.get("action_result") or {}).get("ok") is True, f"advance action failed: {advanced_payload}", failures)
             require((advanced_payload.get("verify_result") or {}).get("ok") is True, f"advance verify failed: {advanced_payload}", failures)
             require((advanced_payload.get("safety") or {}).get("ledger_mutated") is True, f"advance should record receipt: {advanced_payload}", failures)
@@ -195,7 +206,7 @@ def main() -> int:
                 [
                     sys.executable,
                     "-c",
-                    "from agentops_mis_cli.agentops import advance_loop_command_policy; import json; print(json.dumps(advance_loop_command_policy('agentops memory approve --memory-id mem_x', phase='action')))",
+                    "from agentops_mis_cli.advance_loop_policy import advance_loop_command_policy; import json; print(json.dumps(advance_loop_command_policy('agentops memory approve --memory-id mem_x', phase='action')))",
                 ],
                 cwd=ROOT,
                 capture_output=True,

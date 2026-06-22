@@ -165,6 +165,10 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
     require(advance_loop.get("status") in {"attention", "empty"}, f"{label} advance loop status wrong: {advance_loop}", failures)
     require("advance-loop" in str(advance_loop.get("preview_command") or ""), f"{label} advance loop preview command missing: {advance_loop}", failures)
     require("--confirm-advance" in str(advance_loop.get("confirm_command") or ""), f"{label} advance loop confirm command missing: {advance_loop}", failures)
+    advance_policy = advance_loop.get("policy") or {}
+    require(advance_policy.get("policy_id") == "advance_loop_local_bounded_v1", f"{label} advance loop policy id missing: {advance_policy}", failures)
+    require(advance_policy.get("server_executes_shell") is False, f"{label} advance loop policy should keep shell local: {advance_policy}", failures)
+    require((advance_loop.get("summary") or {}).get("policy_id") == "advance_loop_local_bounded_v1", f"{label} advance loop summary policy id missing: {advance_loop}", failures)
     advance_safety = advance_loop.get("safety") or {}
     require(advance_safety.get("read_only") is True, f"{label} advance loop handoff should be read-only: {advance_safety}", failures)
     require(advance_safety.get("server_shell_execution") is False, f"{label} advance loop should not execute shell from server: {advance_safety}", failures)
