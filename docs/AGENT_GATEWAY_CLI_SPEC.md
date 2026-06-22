@@ -494,6 +494,15 @@ agentops toolcall record \
 The response includes `approval_wall.prepared_action`, the linked approval, and
 a precise `next_action` command chain for inspect, approve, and exact resume.
 
+Dify connector live uploads follow the same exact-resume rule even though the
+operator-facing endpoint is `/api/integrations/dify/upload-text` instead of the
+generic tool-call API. `confirm_upload` plus `DIFY_ALLOW_REAL_UPLOAD` only moves
+the request to the Approval Wall: MIS creates a waiting-approval run/tool call,
+prepared action, and approval without calling Dify. After approval, repeat the
+upload request with the returned `prepared_action_id`; MIS verifies the stored
+upload hash/args before calling Dify and consumes the action with the Dify
+document id.
+
 ### `agentops task claim`
 
 Claims a task for an agent.
@@ -1896,7 +1905,7 @@ Add adapters that translate runtime activity into Agent Gateway calls:
 
 - OpenClaw agent or cron jobs call `task pull`, `run start`, `toolcall record`, and `eval submit`.
 - Hermes or Agnesfallback local probes call `run start`, `run heartbeat`, and `audit emit`.
-- Dify / OpenAI File Search workflows can be represented as external runtimes or connectors, with uploads and writes gated by approvals.
+- Dify / OpenAI File Search workflows can be represented as external runtimes or connectors, with uploads and writes gated by prepared actions before provider side effects.
 
 ### Step 5: Remote Agent Support
 

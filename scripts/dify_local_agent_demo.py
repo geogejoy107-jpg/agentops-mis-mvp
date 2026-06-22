@@ -7,7 +7,8 @@ Default mode is a dry-run. Live upload requires:
 - DIFY_ALLOW_REAL_UPLOAD=true
 - --confirm-upload
 
-For cloud/cross-domain Dify, the server also requires an approved approval_id.
+For live upload, the server first returns a prepared_action_id. Approve the
+linked approval, then repeat the request with --prepared-action-id.
 """
 from __future__ import annotations
 
@@ -51,6 +52,7 @@ def main() -> int:
     parser.add_argument("--text", default="AgentOps MIS local Dify smoke: this text is intentionally small and non-sensitive.")
     parser.add_argument("--dataset-id", default=os.environ.get("DIFY_DATASET_ID", ""))
     parser.add_argument("--approval-id", default="")
+    parser.add_argument("--prepared-action-id", default="")
     parser.add_argument("--confirm-upload", action="store_true")
     args = parser.parse_args()
 
@@ -61,6 +63,7 @@ def main() -> int:
         "text": args.text,
         "dataset_id": args.dataset_id or None,
         "approval_id": args.approval_id or None,
+        "prepared_action_id": args.prepared_action_id or None,
         "confirm_upload": args.confirm_upload,
     })
     print(json.dumps({
@@ -70,6 +73,7 @@ def main() -> int:
             "script_stores_api_key": False,
             "mis_stores_full_text": False,
             "live_upload_requires_confirm": True,
+            "live_upload_requires_prepared_action": True,
         },
     }, ensure_ascii=False, indent=2))
     return 0

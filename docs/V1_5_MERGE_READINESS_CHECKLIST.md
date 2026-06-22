@@ -65,7 +65,8 @@ execution touches undeclared file/tool      readiness gate fails
 - [x] CLI supports create/get/resume.
 - [x] Customer-worker Hermes/OpenClaw external-write intent pauses before live runtime execution and creates a prepared action plus approval.
 - [x] Agent Gateway high-risk external side-effect tool calls cannot be recorded as completed or with `side_effect_id` unless they create a prepared action; the KB bot external upload plan now uses the Approval Wall path. Guarded by `scripts/high_risk_toolcall_prepared_action_gate_smoke.py`.
-- [ ] All high-risk external connector/runtime tool paths use prepared actions before shared/commercial deployment. Agent Gateway high/critical external side-effect tool calls and KB bot external upload now require `prepare_action=true`; remaining connector-specific live paths still need final coverage audit before shared/commercial deployment.
+- [x] Dify connector live text upload cannot call the provider with only `confirm_upload` or a generic approval id; it creates a prepared action first, waits for approval, verifies the exact upload args on resume, and consumes the prepared action with the Dify document id. Guarded by `scripts/dify_upload_prepared_action_gate_smoke.py`.
+- [ ] All high-risk external connector/runtime tool paths use prepared actions before shared/commercial deployment. Agent Gateway high/critical external side-effect tool calls, KB bot external upload, customer-worker external-write intent, and Dify live upload now use prepared actions; remaining worker daemon/dispatch, Notion export, and fixed live runtime paths still need final coverage before shared/commercial deployment.
 
 Required check:
 
@@ -73,6 +74,7 @@ Required check:
 python3 scripts/prepared_action_approval_wall_smoke.py --base-url http://127.0.0.1:8787
 python3 scripts/customer_worker_external_write_gate_smoke.py
 python3 scripts/high_risk_toolcall_prepared_action_gate_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/dify_upload_prepared_action_gate_smoke.py
 ```
 
 ## 3. Knowledge safety and quality
@@ -218,6 +220,12 @@ external OpenAI/Dify/AnythingLLM upload plan therefore creates a prepared action
 plus pending approval and leaves that run/tool in `waiting_approval`; approving
 the approval requires an explicit prepared-action resume before any provider
 side-effect evidence can be recorded.
+
+Dify connector live text upload now uses the same exact-resume wall. A request
+that has live-upload prerequisites but lacks `prepared_action_id` creates the
+waiting-approval run/tool/prepared action and does not call Dify. The approved
+resume path verifies the normalized Dify upload args and consumes the prepared
+action with the provider document id.
 
 ```bash
 python3 scripts/runtime_connector_trust_smoke.py

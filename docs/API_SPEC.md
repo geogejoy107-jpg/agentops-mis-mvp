@@ -259,6 +259,18 @@ records a provider side-effect id, marks the action `consumed`, updates the
 linked tool-call evidence, writes runtime/audit evidence, and rejects replay
 with `409 prepared_action_already_consumed`.
 
+`POST /api/integrations/dify/upload-text` follows the same exact-resume
+contract for live provider writes. Dry-run remains the default. When
+`DIFY_ALLOW_REAL_UPLOAD`, `confirm_upload`, API key, dataset id, and document
+text are all present but no approved `prepared_action_id` is supplied, MIS
+creates a waiting-approval run, tool call, prepared action, and approval, then
+returns `dify_external_write_prepared_action_required` without calling Dify.
+After the linked approval is approved, the caller repeats the upload request
+with `prepared_action_id`; MIS verifies the action hash and normalized upload
+arguments before sending text to Dify, then consumes the prepared action with
+the returned document id. The API stores hashes, ids, summaries, and audit
+evidence only; it does not persist the full document text or API key.
+
 `GET /api/operator/action-plan` includes a read-only `execution_evidence`
 source. It audits recent completed or failed runs for missing plan bindings,
 missing/unverified plan-evidence manifests, and missing tool, evaluation,
