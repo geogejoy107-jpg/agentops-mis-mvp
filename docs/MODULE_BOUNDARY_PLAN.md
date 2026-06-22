@@ -823,6 +823,38 @@ python3 scripts/run_start_plan_gate_smoke.py --base-url http://127.0.0.1:8787
 python3 scripts/agent_plan_integrity_smoke.py --base-url http://127.0.0.1:8787
 ```
 
+### Slice 28: Run-Start Success Response Projection
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/agent_plans.py`
+
+Moved out of `server.py`:
+
+- Run-start success response projection
+- Run outcome readback field
+- Agent Plan id, plan hash, verification-result hash and verification-pass
+  readback fields
+
+Still owned by `server.py`:
+
+- HTTP routes
+- Agent Plan resolution and verification
+- run row construction and upsert
+- task/agent state updates
+- runtime events, audit logs and commits
+- response status-code selection
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/run_start_plan_gate_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/agent_plan_integrity_smoke.py --base-url http://127.0.0.1:8787
+```
+
 ## Next Candidate Slices
 
 - Continue P1-05 with small smoke-backed strangler slices only; prefer pure

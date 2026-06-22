@@ -78,6 +78,7 @@ from agentops_mis_core.agent_plans import (
     build_agent_plan_verification,
     build_agent_plan_verification_failed_response,
     build_run_start_rebind_forbidden_response,
+    build_run_start_success_response,
     compute_agent_plan_hash,
     load_json_list_field,
     plan_ref_path,
@@ -7456,16 +7457,7 @@ def agent_gateway_start_run(conn, body) -> tuple[dict, int]:
     conn.execute("UPDATE tasks SET status='running', owner_agent_id=COALESCE(NULLIF(owner_agent_id,''), ?), updated_at=? WHERE task_id=?", (agent_id, now_iso(), task_id))
     conn.execute("UPDATE agents SET status='running', updated_at=? WHERE agent_id=?", (now_iso(), agent_id))
     runtime_event(conn, "rtc_agent_gateway_local", "run.start", "running", task_id=task_id, run_id=run_id, agent_id=agent_id, input_summary=row["input_summary"], output_summary=f"Run bound to agent_plan {plan_binding['plan_id']}.")
-    return {
-        "run": row,
-        "outcome": outcome,
-        "agent_plan": {
-            "plan_id": plan_binding["plan_id"],
-            "plan_hash": plan_binding["plan_hash"],
-            "verification_result_hash": plan_binding.get("verification_result_hash"),
-            "verification_pass": bool((plan_binding.get("verification") or {}).get("pass")),
-        },
-    }, 201 if outcome == "created" else 200
+    return build_run_start_success_response(run=row, outcome=outcome, plan_binding=plan_binding), 201 if outcome == "created" else 200
 
 
 def agent_gateway_run_heartbeat(conn, run_id: str, body) -> tuple[dict, int]:

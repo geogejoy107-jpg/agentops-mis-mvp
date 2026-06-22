@@ -60,6 +60,7 @@ from agentops_mis_core.agent_plans import (
     build_agent_plan_verification,
     build_agent_plan_verification_failed_response,
     build_run_start_rebind_forbidden_response,
+    build_run_start_success_response,
     compute_agent_plan_hash,
     load_json_list_field,
     plan_ref_is_safe_relative_path,
@@ -280,6 +281,7 @@ EXTRACTED_AGENT_PLAN_HELPERS = {
     "build_agent_plan_verification",
     "build_agent_plan_verification_failed_response",
     "build_run_start_rebind_forbidden_response",
+    "build_run_start_success_response",
     "compute_agent_plan_hash",
     "load_json_list_field",
     "plan_ref_is_safe_relative_path",
@@ -308,6 +310,7 @@ SERVER_AGENT_PLAN_IMPORTS = {
     "build_agent_plan_verification",
     "build_agent_plan_verification_failed_response",
     "build_run_start_rebind_forbidden_response",
+    "build_run_start_success_response",
     "compute_agent_plan_hash",
     "load_json_list_field",
     "plan_ref_path",
@@ -860,6 +863,16 @@ def main() -> int:
         requested_plan_hash="hash_requested_smoke",
         mismatches=["agent_plan_id", "plan_hash"],
     )
+    run_start_success_response = build_run_start_success_response(
+        run={"run_id": "run_start_success_smoke", "agent_plan_id": "plan_success_smoke", "plan_hash": "hash_success_smoke"},
+        outcome="created",
+        plan_binding={
+            "plan_id": "plan_success_smoke",
+            "plan_hash": "hash_success_smoke",
+            "verification_result_hash": "hash_verification_success_smoke",
+            "verification": {"pass": True},
+        },
+    )
     high_risk_required_response = build_high_risk_toolcall_prepared_action_required_response(
         tool_name="openai.file_search.upload",
         risk_level="critical",
@@ -944,6 +957,9 @@ def main() -> int:
     require(run_start_rebind_response.get("error") == "run_start_rebind_forbidden", "run-start rebind response error failed", failures)
     require(run_start_rebind_response.get("existing_agent_plan_id") == "plan_existing_smoke" and run_start_rebind_response.get("requested_agent_plan_id") == "plan_requested_smoke", "run-start rebind response plan ids failed", failures)
     require(run_start_rebind_response.get("mismatches") == ["agent_plan_id", "plan_hash"], "run-start rebind response mismatches failed", failures)
+    require((run_start_success_response.get("run") or {}).get("run_id") == "run_start_success_smoke", "run-start success response run failed", failures)
+    require((run_start_success_response.get("agent_plan") or {}).get("plan_hash") == "hash_success_smoke", "run-start success response plan hash failed", failures)
+    require((run_start_success_response.get("agent_plan") or {}).get("verification_pass") is True, "run-start success response verification flag failed", failures)
     require(all(payload.get("token_omitted") is True for payload in [
         agent_plan_anchor_response,
         agent_plan_status_response,

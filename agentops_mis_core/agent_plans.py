@@ -414,3 +414,17 @@ def build_run_start_rebind_forbidden_response(
         "mismatches": mismatches,
         "token_omitted": True,
     }
+
+
+def build_run_start_success_response(*, run: Any, outcome: Any, plan_binding: dict[str, Any]) -> dict[str, Any]:
+    verification = plan_binding.get("verification") or {}
+    return {
+        "run": dict(run),
+        "outcome": outcome,
+        "agent_plan": {
+            "plan_id": plan_binding["plan_id"],
+            "plan_hash": plan_binding["plan_hash"],
+            "verification_result_hash": plan_binding.get("verification_result_hash"),
+            "verification_pass": bool(verification.get("pass")),
+        },
+    }
