@@ -3211,15 +3211,42 @@ export function AIEmployees() {
                   <div className="text-[9px] mt-0.5" style={{ color: "var(--mis-dim)" }}>
                     {copy.existingCandidates}: {receiptFailureMemoryExistingCandidates} · {receiptFailureMemoryCandidates[0]?.action_hash_short ? String(receiptFailureMemoryCandidates[0].action_hash_short) : "—"}
                   </div>
-                  <button
-                    onClick={() => void copyIntakeCommand(receiptFailureMemoryNextAction)}
-                    className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded mt-1 max-w-full"
-                    style={{ color: "var(--mis-cyan)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}
-                    title={receiptFailureMemoryNextAction}
-                  >
-                    <Copy size={9} />
-                    <span className="truncate max-w-[190px]">{copiedIntakeCommand === receiptFailureMemoryNextAction ? copy.copiedCommand : copy.proposeFailureMemory}</span>
-                  </button>
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    <button
+                      onClick={() => void handleReceiptFailureMemory(false)}
+                      disabled={Boolean(receiptFailureMemoryAction)}
+                      className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded disabled:opacity-50"
+                      style={{ color: "var(--mis-cyan)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}
+                      title={copy.receiptFailureMemorySummary}
+                    >
+                      <ShieldCheck size={9} />
+                      {receiptFailureMemoryAction === "receipt-failure-memory-preview" ? copy.dispatching : copy.previewFailureMemory}
+                    </button>
+                    <button
+                      onClick={() => void handleReceiptFailureMemory(true)}
+                      disabled={Boolean(receiptFailureMemoryAction) || receiptFailureMemoryCandidateCount === 0}
+                      className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded disabled:opacity-50"
+                      style={{ color: "var(--mis-success)", background: "rgba(45,212,191,0.08)", border: "1px solid rgba(45,212,191,0.18)" }}
+                      title={copy.createFailureMemoryConfirm}
+                    >
+                      <CheckCircle2 size={9} />
+                      {receiptFailureMemoryAction === "receipt-failure-memory-create" ? copy.dispatching : copy.createFailureMemory}
+                    </button>
+                    <button
+                      onClick={() => void copyIntakeCommand(receiptFailureMemoryNextAction)}
+                      className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded max-w-full"
+                      style={{ color: "var(--mis-cyan)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}
+                      title={receiptFailureMemoryNextAction}
+                    >
+                      <Copy size={9} />
+                      <span className="truncate max-w-[150px]">{copiedIntakeCommand === receiptFailureMemoryNextAction ? copy.copiedCommand : copy.proposeFailureMemory}</span>
+                    </button>
+                  </div>
+                  {receiptFailureMemoryResult && (
+                    <div className="text-[9px] mt-1 truncate" style={{ color: receiptFailureMemoryResult.toLowerCase().includes("error") ? "#F87171" : "var(--mis-cyan)" }}>
+                      {receiptFailureMemoryResult}
+                    </div>
+                  )}
                 </div>
                 <div className="rounded px-2 py-1.5" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
                   <div className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.reviewQueueTitle}</div>
