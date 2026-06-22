@@ -220,6 +220,7 @@ def main() -> int:
                 "scripts/release_evidence_packet_smoke.py",
                 "scripts/merge_readiness_status_smoke.py",
                 "scripts/github_required_checks_smoke.py",
+                "scripts/open_source_adoption_boundary_smoke.py",
             ],
             source_markers={
                 "docs/V1_5_MERGE_READINESS_CHECKLIST.md": ["READY_TO_MERGE", "Backend deterministic smokes", "UI build"],
