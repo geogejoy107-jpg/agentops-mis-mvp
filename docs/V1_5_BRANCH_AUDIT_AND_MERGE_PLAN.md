@@ -391,7 +391,12 @@ Current CI scope:
 
 **Severity: High**
 
-The DB factory still enables only foreign keys. The application now combines threaded HTTP, workers, workflow jobs, heartbeat, review queues and many UI reads.
+Status: core local baseline implemented after the original audit. The shared
+`server.db()` factory enables foreign keys, WAL, busy timeout and
+`synchronous=NORMAL`; schema initialization records the baseline in
+`schema_migrations`; CI runs both the pragma check and an isolated concurrent
+read/write smoke. The remaining work is broader transaction profiling across
+long-running live workflow paths before shared/commercial deployment.
 
 ### Required fix
 
@@ -403,6 +408,13 @@ PRAGMA synchronous=NORMAL;
 ```
 
 Also require short transactions and no model/network/subprocess call while a write transaction is held.
+
+Current verification:
+
+```bash
+python3 scripts/sqlite_pragmas_smoke.py
+python3 scripts/sqlite_reliability_smoke.py
+```
 
 ## B0-12: License and provenance are incomplete
 

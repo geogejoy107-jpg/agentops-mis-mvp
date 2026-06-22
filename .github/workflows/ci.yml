@@ -51,6 +51,7 @@ jobs:
           set -euo pipefail
           python3 scripts/redaction_policy_smoke.py
           python3 scripts/sqlite_pragmas_smoke.py
+          python3 scripts/sqlite_reliability_smoke.py
           python3 scripts/startup_security_guard_smoke.py
           python3 scripts/operator_loop_audit_closed_loop_smoke.py
 
@@ -78,6 +79,7 @@ jobs:
           python3 scripts/collaborator_exact_scope_smoke.py "$AGENTOPS_BASE_URL"
           python3 scripts/operator_task_intake_smoke.py
           python3 scripts/operator_action_plan_smoke.py --base-url "$AGENTOPS_BASE_URL"
+          python3 scripts/operator_action_receipt_smoke.py
           python3 scripts/operator_action_receipts_cli_smoke.py
           python3 scripts/operator_action_receipt_cli_record_smoke.py
           python3 scripts/operator_handoff_smoke.py

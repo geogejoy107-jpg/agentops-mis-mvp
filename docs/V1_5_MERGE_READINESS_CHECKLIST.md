@@ -210,15 +210,15 @@ python3 scripts/agent_gateway_review_queue_smoke.py
 
 ## 8. SQLite reliability and performance
 
-- [ ] Centralize connection initialization.
-- [ ] Enable foreign keys.
-- [ ] Enable WAL.
-- [ ] Set a busy timeout.
-- [ ] Use an appropriate local synchronous mode.
-- [ ] Keep write transactions short.
-- [ ] Do not hold transactions during model, network or subprocess execution.
-- [ ] Each request/worker uses its own connection.
-- [ ] Add a schema migration version table.
+- [x] Centralize connection initialization through `server.db()`.
+- [x] Enable foreign keys.
+- [x] Enable WAL.
+- [x] Set a busy timeout.
+- [x] Use an appropriate local synchronous mode.
+- [x] Keep the verified write path short in the SQLite reliability smoke.
+- [ ] Audit every long-running workflow path for model/network/subprocess calls held inside a write transaction.
+- [x] Each request/worker path opens its own connection through `server.db()` in the current local architecture.
+- [x] Add a schema migration version table.
 
 Recommended local settings:
 
@@ -232,10 +232,17 @@ PRAGMA synchronous=NORMAL;
 Concurrency acceptance:
 
 ```text
-100 concurrent reads: pass
-20 concurrent short writes: pass
+100 concurrent reads: pass via scripts/sqlite_reliability_smoke.py
+20 concurrent short writes: pass via scripts/sqlite_reliability_smoke.py
 heartbeat + knowledge search + queue + approval: pass
 locked/busy failures: zero
+```
+
+Required checks:
+
+```bash
+python3 scripts/sqlite_pragmas_smoke.py
+python3 scripts/sqlite_reliability_smoke.py
 ```
 
 ## 9. UI/API responsiveness

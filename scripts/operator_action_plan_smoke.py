@@ -153,6 +153,9 @@ def validate_plan(payload: dict, label: str, failures: list[str], limit: int) ->
         "dispatch_evidence_ready",
         "dispatch_evidence_waiting_approval",
         "dispatch_evidence_verified_manifests",
+        "operator_health_risks",
+        "operator_health_blocked",
+        "operator_health_attention",
         "action_receipts",
         "action_receipts_recorded",
         "action_receipts_verified",
@@ -183,6 +186,7 @@ def validate_plan(payload: dict, label: str, failures: list[str], limit: int) ->
     require("execution_evidence" in (payload.get("source_status") or {}), f"{label} execution evidence source status missing: {payload.get('source_status')}", failures)
     require("task_intake" in (payload.get("source_status") or {}), f"{label} task intake source status missing: {payload.get('source_status')}", failures)
     require("dispatch_evidence" in (payload.get("source_status") or {}), f"{label} dispatch evidence source status missing: {payload.get('source_status')}", failures)
+    require("operator_health" in (payload.get("source_status") or {}), f"{label} operator health source status missing: {payload.get('source_status')}", failures)
     require("action_receipts" in (payload.get("source_status") or {}), f"{label} action receipts source status missing: {payload.get('source_status')}", failures)
     evidence_source = payload.get("execution_evidence") or {}
     require(evidence_source.get("operation") == "execution_evidence_gaps", f"{label} execution evidence payload missing: {evidence_source}", failures)
@@ -191,6 +195,14 @@ def validate_plan(payload: dict, label: str, failures: list[str], limit: int) ->
     require(dispatch_source.get("operation") == "dispatch_evidence_lane", f"{label} dispatch evidence payload missing: {dispatch_source}", failures)
     receipt_source = payload.get("action_receipts") or {}
     require(receipt_source.get("operation") == "operator_action_receipts", f"{label} action receipts payload missing: {receipt_source}", failures)
+    operator_health_source = payload.get("operator_health") or {}
+    require(operator_health_source.get("status") in {"blocked", "attention", "ready"}, f"{label} operator health source missing: {operator_health_source}", failures)
+    operator_health_summary = operator_health_source.get("summary") or {}
+    for key in ["components", "risks", "ready", "blocked", "attention", "review_items_total"]:
+        require(isinstance(operator_health_summary.get(key), int), f"{label} operator health summary.{key} missing: {operator_health_summary}", failures)
+    operator_health_safety = operator_health_source.get("safety") or {}
+    require(operator_health_safety.get("read_only") is True, f"{label} operator health read_only missing: {operator_health_safety}", failures)
+    require(operator_health_safety.get("ledger_mutated") is False, f"{label} operator health must not mutate ledger: {operator_health_safety}", failures)
     receipt_summary = receipt_source.get("summary") or {}
     for key in ["receipts", "recorded", "verified", "failed", "skipped"]:
         require(isinstance(receipt_summary.get(key), int), f"{label} action receipts summary.{key} missing: {receipt_summary}", failures)
@@ -311,6 +323,11 @@ def validate_plan(payload: dict, label: str, failures: list[str], limit: int) ->
                 f"{label} task intake action should stay in read/plan/pull commands: {action}",
                 failures,
             )
+        if action.get("lane") == "operator_health" or str(action.get("source") or "").startswith("operator_health:"):
+            require(str(action.get("command") or "").startswith("agentops "), f"{label} operator health action must be a CLI command: {action}", failures)
+            require(action.get("verify_command") == "agentops operator health --limit 20", f"{label} operator health action verify command wrong: {action}", failures)
+            require(str(action.get("source") or "").startswith("operator_health:"), f"{label} operator health source wrong: {action}", failures)
+            require(action.get("receipt_required") is True, f"{label} operator health action must require receipt: {action}", failures)
         require(bool(action.get("source")), f"{label} source missing: {action}", failures)
     for command in payload.get("top_commands") or []:
         require(

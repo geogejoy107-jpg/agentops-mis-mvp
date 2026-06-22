@@ -39,6 +39,7 @@ from agentops_mis_cli.redaction import redact_text as shared_redact_text
 
 ROOT = Path(__file__).resolve().parent
 DB_PATH = Path(os.environ.get("AGENTOPS_DB_PATH") or (ROOT / "agentops_mis.db"))
+SQLITE_SCHEMA_BASELINE_ID = "2026-06-22-v1.5-sqlite-reliability"
 STATIC_DIR = ROOT / "static"
 ARTIFACTS_DIR = ROOT / "artifacts"
 RUNTIME_DIR = ROOT / ".agentops_runtime"
@@ -267,6 +268,12 @@ def notion_rich_block(kind: str, text: str) -> dict:
 
 
 SCHEMA_SQL = r"""
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    migration_id TEXT PRIMARY KEY,
+    description TEXT NOT NULL,
+    applied_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS users (
     user_id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -453,6 +460,23 @@ CREATE TABLE IF NOT EXISTS evaluations (
     FOREIGN KEY(task_id) REFERENCES tasks(task_id),
     FOREIGN KEY(run_id) REFERENCES runs(run_id),
     FOREIGN KEY(agent_id) REFERENCES agents(agent_id)
+);
+
+CREATE TABLE IF NOT EXISTS operator_action_evaluations (
+    evaluation_id TEXT PRIMARY KEY,
+    receipt_id TEXT NOT NULL,
+    workspace_id TEXT NOT NULL DEFAULT 'local-demo',
+    action_id TEXT,
+    action_signature TEXT,
+    action_hash TEXT NOT NULL,
+    verify_hash TEXT,
+    source TEXT NOT NULL DEFAULT 'operator_action_queue',
+    evaluator_type TEXT NOT NULL CHECK(evaluator_type IN ('rule')),
+    score REAL NOT NULL,
+    pass_fail TEXT NOT NULL CHECK(pass_fail IN ('pass','fail')),
+    rubric_json TEXT NOT NULL DEFAULT '{}',
+    notes TEXT,
+    created_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS evaluation_case_candidates (
@@ -1015,6 +1039,21 @@ def ensure_memory_type_schema(conn: sqlite3.Connection):
 
 
 def ensure_schema_migrations(conn: sqlite3.Connection):
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS schema_migrations (
+            migration_id TEXT PRIMARY KEY,
+            description TEXT NOT NULL,
+            applied_at TEXT NOT NULL
+        )"""
+    )
+    conn.execute(
+        "INSERT OR IGNORE INTO schema_migrations(migration_id, description, applied_at) VALUES(?,?,?)",
+        (
+            SQLITE_SCHEMA_BASELINE_ID,
+            "SQLite reliability baseline: centralized db() pragmas, WAL, busy timeout, synchronous=NORMAL, and v1.5 additive migrations.",
+            now_iso(),
+        ),
+    )
     ensure_memory_type_schema(conn)
     ensure_column(conn, "tasks", "workspace_id", "workspace_id TEXT NOT NULL DEFAULT 'local-demo'")
     ensure_column(conn, "runs", "workspace_id", "workspace_id TEXT NOT NULL DEFAULT 'local-demo'")
@@ -5940,6 +5979,33 @@ def operator_close_execution_evidence_gap(conn: sqlite3.Connection, body: dict, 
 VALID_OPERATOR_ACTION_RECEIPT_STATUSES = {"recorded", "verified", "failed", "skipped"}
 
 
+def operator_action_evaluation_public(row: sqlite3.Row | dict | None) -> dict | None:
+    if not row:
+        return None
+    row_dict = dict(row)
+    try:
+        rubric = json.loads(row_dict.get("rubric_json") or "{}")
+    except Exception:
+        rubric = {}
+    return {
+        "evaluation_id": row_dict.get("evaluation_id"),
+        "receipt_id": row_dict.get("receipt_id"),
+        "workspace_id": row_dict.get("workspace_id") or "local-demo",
+        "action_id": row_dict.get("action_id"),
+        "action_signature": row_dict.get("action_signature"),
+        "action_hash": row_dict.get("action_hash"),
+        "verify_hash": row_dict.get("verify_hash"),
+        "source": row_dict.get("source") or "operator_action_queue",
+        "evaluator_type": row_dict.get("evaluator_type") or "rule",
+        "score": float(row_dict.get("score") or 0),
+        "pass_fail": row_dict.get("pass_fail"),
+        "rubric": rubric,
+        "notes": row_dict.get("notes"),
+        "created_at": row_dict.get("created_at"),
+        "token_omitted": True,
+    }
+
+
 def operator_action_receipt_public(row: sqlite3.Row) -> dict:
     try:
         metadata = json.loads(row["metadata_json"] or "{}")
@@ -5975,10 +6041,33 @@ def operator_action_receipt_rows(conn: sqlite3.Connection, workspace_id: str, li
         LIMIT ?""",
         (max(limit * 3, limit),),
     ).fetchall()
-    return [
+    receipts = [
         receipt for receipt in (operator_action_receipt_public(row) for row in rows)
         if receipt.get("workspace_id") == workspace_id
     ][:limit]
+    receipt_ids = [str(receipt.get("receipt_id")) for receipt in receipts if receipt.get("receipt_id")]
+    if receipt_ids:
+        placeholders = ",".join("?" for _ in receipt_ids)
+        evaluation_rows = rows_to_dicts(conn.execute(
+            f"""SELECT *
+                FROM operator_action_evaluations
+                WHERE workspace_id=? AND receipt_id IN ({placeholders})
+                ORDER BY created_at DESC""",
+            [workspace_id, *receipt_ids],
+        ).fetchall())
+        evaluation_by_receipt: dict[str, dict] = {}
+        for evaluation in evaluation_rows:
+            receipt_id = str(evaluation.get("receipt_id") or "")
+            if receipt_id and receipt_id not in evaluation_by_receipt:
+                evaluation_by_receipt[receipt_id] = operator_action_evaluation_public(evaluation) or {}
+        for receipt in receipts:
+            evaluation = evaluation_by_receipt.get(str(receipt.get("receipt_id") or ""))
+            if evaluation:
+                receipt["evaluation"] = evaluation
+                receipt["evaluation_id"] = evaluation.get("evaluation_id")
+                receipt["evaluation_pass_fail"] = evaluation.get("pass_fail")
+                receipt["evaluation_score"] = evaluation.get("score")
+    return receipts
 
 
 def list_operator_action_receipts(conn: sqlite3.Connection, qs, headers=None) -> dict:
@@ -5992,6 +6081,9 @@ def list_operator_action_receipts(conn: sqlite3.Connection, qs, headers=None) ->
         "verified": sum(1 for item in receipts if item.get("status") == "verified"),
         "failed": sum(1 for item in receipts if item.get("status") == "failed"),
         "skipped": sum(1 for item in receipts if item.get("status") == "skipped"),
+        "evaluated": sum(1 for item in receipts if item.get("evaluation")),
+        "evaluation_pass": sum(1 for item in receipts if (item.get("evaluation") or {}).get("pass_fail") == "pass"),
+        "evaluation_fail": sum(1 for item in receipts if (item.get("evaluation") or {}).get("pass_fail") == "fail"),
     }
     return {
         "provider": "agentops-operator",
@@ -6064,6 +6156,58 @@ def record_operator_action_receipt(conn: sqlite3.Connection, body: dict, headers
         "live_execution_performed": False,
         "ledger_mutated": True,
     })
+    evaluation = None
+    if status in {"verified", "failed"}:
+        passed = status == "verified"
+        evaluation_id = stable_id("oae", receipt_id, action_hash, verify_hash or "", status)
+        rubric = {
+            "receipt_status": status,
+            "action_command_present": bool(raw_action),
+            "verify_command_present": bool(raw_verify),
+            "operator_marked_verified": passed,
+            "live_execution_performed": False,
+            "raw_secret_omitted": True,
+            "token_omitted": True,
+        }
+        evaluation_row = {
+            "evaluation_id": evaluation_id,
+            "receipt_id": receipt_id,
+            "workspace_id": workspace_id,
+            "action_id": after.get("action_id"),
+            "action_signature": after.get("action_signature"),
+            "action_hash": action_hash,
+            "verify_hash": verify_hash,
+            "source": after.get("source") or "operator_action_queue",
+            "evaluator_type": "rule",
+            "score": 1.0 if passed else 0.0,
+            "pass_fail": "pass" if passed else "fail",
+            "rubric_json": json.dumps(rubric, ensure_ascii=False),
+            "notes": result_summary or ("Operator action receipt verified." if passed else "Operator action receipt marked failed."),
+            "created_at": now_iso(),
+        }
+        conn.execute(
+            """INSERT INTO operator_action_evaluations(
+                evaluation_id,receipt_id,workspace_id,action_id,action_signature,
+                action_hash,verify_hash,source,evaluator_type,score,pass_fail,
+                rubric_json,notes,created_at
+            ) VALUES(
+                :evaluation_id,:receipt_id,:workspace_id,:action_id,:action_signature,
+                :action_hash,:verify_hash,:source,:evaluator_type,:score,:pass_fail,
+                :rubric_json,:notes,:created_at
+            )""",
+            evaluation_row,
+        )
+        audit(conn, "system", "operator-action-evaluator", "operator.action_queue_evaluation", "operator_action_evaluations", evaluation_id, None, evaluation_row, {
+            "receipt_id": receipt_id,
+            "workspace_id": workspace_id,
+            "source": after.get("source"),
+            "score": evaluation_row["score"],
+            "pass_fail": evaluation_row["pass_fail"],
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        })
+        evaluation = operator_action_evaluation_public(evaluation_row)
     audit_row = conn.execute(
         """SELECT audit_id, actor_id, entity_id, metadata_json, tamper_chain_hash, created_at
         FROM audit_logs
@@ -6078,6 +6222,7 @@ def record_operator_action_receipt(conn: sqlite3.Connection, body: dict, headers
         "status": status,
         "workspace_id": workspace_id,
         "receipt": operator_action_receipt_public(audit_row) if audit_row else after,
+        "evaluation": evaluation,
         "next_actions": [after["verify_command"]] if after.get("verify_command") and status == "recorded" else ["agentops operator action-plan --limit 20"],
         "safety": {
             "read_only": False,
@@ -14645,12 +14790,31 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
     evidence_gaps = operator_execution_evidence_gaps(conn, workspace_id, limit=max(limit, 8))
     task_intake = operator_task_intake_checklist(conn, workspace_id, limit=max(limit, 8))
     dispatch_evidence = operator_dispatch_evidence_lane(conn, workspace_id, limit=max(limit, 8))
+    local_readiness_snapshot = local_readiness(conn, headers)
+    security_readiness_snapshot = security_production_readiness(conn, headers)
     action_receipts = list_operator_action_receipts(conn, {"limit": [str(max(limit, 8))], "workspace_id": [workspace_id]}, headers)
     action_receipt_summary = action_receipts.get("summary") or {}
     receipt_lookup_limit = min(max(max(limit, 8) * 40, 200), 1000)
     receipt_rows = operator_action_receipt_rows(conn, workspace_id, receipt_lookup_limit)
 
     actions: list[dict] = []
+
+    def normalized_operator_status(value: str | None) -> str:
+        value = str(value or "unknown")
+        if value in {"ready", "pass", "running", "ok"}:
+            return "ready"
+        if value in {"blocked", "fail", "failed", "error"}:
+            return "blocked"
+        if value in {"attention", "warn", "warning", "planned", "unknown", "unavailable"}:
+            return "attention"
+        return value
+
+    def first_cli_action(values, fallback: str) -> str:
+        for value in values or []:
+            candidate = str(value or "").strip()
+            if candidate.startswith("agentops "):
+                return candidate
+        return fallback
 
     def inferred_verify_command(lane: str, command: str) -> str | None:
         command = (command or "").strip()
@@ -14666,6 +14830,8 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             return "agentops workflow delivery-board --limit 12"
         if lane == "task_intake":
             return "agentops operator intake-checklist --limit 20"
+        if lane == "operator_health":
+            return "agentops operator health --limit 20"
         if lane in {"execution_evidence", "dispatch_evidence", "remediation_loop", "review"}:
             return "agentops operator action-plan --limit 20"
         return None
@@ -14732,6 +14898,7 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             or (receipt or {}).get("action_hash")
             or (receipt or {}).get("audit_id")
         )
+        receipt_evaluation = (receipt or {}).get("evaluation")
         receipt_priority_boost = 0 if receipt_verified else 8
         actions.append({
             "action_id": action_id,
@@ -14759,6 +14926,7 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             "receipt_verified": receipt_verified,
             "receipt_id": (receipt or {}).get("receipt_id"),
             "receipt_hash": receipt_hash,
+            "receipt_evaluation": receipt_evaluation,
             "receipt_state": {
                 "required": True,
                 "status": receipt_status,
@@ -14768,6 +14936,7 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
                 "verified": receipt_verified,
                 "receipt_id": (receipt or {}).get("receipt_id"),
                 "receipt_hash": receipt_hash,
+                "evaluation": receipt_evaluation,
                 "action_hash": (receipt or {}).get("action_hash"),
                 "verify_hash": (receipt or {}).get("verify_hash"),
                 "source": (receipt or {}).get("source"),
@@ -14877,6 +15046,74 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             summary=f"recommended_adapter={recommended_adapter}; live routes require explicit confirmation.",
             ui_route="/workspace/agents",
             evidence=adapter_summary,
+        )
+
+    review_summary = review.get("summary") or {}
+    review_items_total = int(review_summary.get("review_items_total") or len(review.get("review_items") or []))
+    operator_health_components = [
+        {
+            "id": "local_readiness",
+            "title": "Recover local MIS readiness",
+            "status": normalized_operator_status(local_readiness_snapshot.get("status")),
+            "command": first_cli_action(local_readiness_snapshot.get("next_actions") or [], "agentops local readiness"),
+            "summary": f"Local readiness status={local_readiness_snapshot.get('status') or 'unknown'} gates={len(local_readiness_snapshot.get('gates') or [])}.",
+            "priority": 96,
+            "ui_route": "/workspace/agents",
+            "evidence": {
+                "status": local_readiness_snapshot.get("status"),
+                "gates": len(local_readiness_snapshot.get("gates") or []),
+            },
+        },
+        {
+            "id": "security_readiness",
+            "title": "Recover security readiness boundary",
+            "status": normalized_operator_status(security_readiness_snapshot.get("status")),
+            "command": first_cli_action(security_readiness_snapshot.get("next_actions") or [], "agentops security production-readiness"),
+            "summary": f"Security status={security_readiness_snapshot.get('status') or 'unknown'} auth_mode={security_readiness_snapshot.get('auth_mode') or 'unknown'}.",
+            "priority": 95,
+            "ui_route": "/admin/security",
+            "evidence": {
+                "status": security_readiness_snapshot.get("status"),
+                "auth_mode": security_readiness_snapshot.get("auth_mode"),
+                "production_ready": bool(security_readiness_snapshot.get("production_ready")),
+            },
+        },
+        {
+            "id": "worker_fleet",
+            "title": "Recover worker fleet health",
+            "status": normalized_operator_status((fleet.get("summary") or {}).get("overall") or fleet.get("status")),
+            "command": first_cli_action(fleet.get("next_actions") or [], "agentops worker status"),
+            "summary": "Worker fleet health is part of the operator health score.",
+            "priority": 94,
+            "ui_route": "/workspace/agents",
+            "evidence": fleet_summary,
+        },
+        {
+            "id": "review_queue",
+            "title": "Drain human review queue pressure",
+            "status": "attention" if review_items_total else "ready",
+            "command": first_cli_action(review.get("next_actions") or [], "agentops review queue --limit 20"),
+            "summary": f"Review items={review_items_total}; approvals={review_summary.get('pending_approvals', 0)}; memories={review_summary.get('memory_candidates', 0)}.",
+            "priority": 93,
+            "ui_route": "/workspace/agents",
+            "evidence": review_summary,
+        },
+    ]
+    operator_health_risks = [
+        item for item in operator_health_components
+        if normalized_operator_status(str(item.get("status") or "unknown")) != "ready"
+    ]
+    for item in operator_health_risks[:limit]:
+        add_action(
+            "operator_health",
+            str(item.get("title") or item.get("id") or "Operator health recovery"),
+            str(item.get("command") or "agentops operator health --limit 20"),
+            priority=int(item.get("priority") or 84),
+            severity=normalized_operator_status(str(item.get("status") or "attention")),
+            source=f"operator_health:{item.get('id') or 'risk'}",
+            summary=str(item.get("summary") or ""),
+            ui_route=str(item.get("ui_route") or "/workspace/agents"),
+            evidence=item.get("evidence") if isinstance(item.get("evidence"), dict) else {},
         )
 
     for item in (inbox.get("inbox_items") or [])[:limit]:
@@ -15078,6 +15315,29 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             blocked = [item for item in deduped if item.get("severity") == "blocked"]
             attention = [item for item in deduped if item.get("severity") == "attention"]
     status = "blocked" if blocked else "attention" if attention else "ready"
+    operator_health_source = {
+        "status": "blocked" if any(normalized_operator_status(str(item.get("status"))) == "blocked" for item in operator_health_risks) else "attention" if operator_health_risks else "ready",
+        "summary": {
+            "components": len(operator_health_components),
+            "risks": len(operator_health_risks),
+            "ready": len(operator_health_components) - len(operator_health_risks),
+            "blocked": len([item for item in operator_health_risks if normalized_operator_status(str(item.get("status"))) == "blocked"]),
+            "attention": len([item for item in operator_health_risks if normalized_operator_status(str(item.get("status"))) == "attention"]),
+            "local_readiness_status": local_readiness_snapshot.get("status"),
+            "security_status": security_readiness_snapshot.get("status"),
+            "worker_fleet_status": fleet.get("status"),
+            "review_items_total": review_items_total,
+        },
+        "components": operator_health_components,
+        "contract": "non-recursive operator health recovery source embedded in action-plan; full health score remains available through operator health",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
     return {
         "provider": "agentops-operator",
         "operation": "action_plan",
@@ -15121,6 +15381,9 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             "dispatch_evidence_ready": (dispatch_evidence.get("summary") or {}).get("ready_for_delivery", 0),
             "dispatch_evidence_waiting_approval": (dispatch_evidence.get("summary") or {}).get("waiting_approval", 0),
             "dispatch_evidence_verified_manifests": (dispatch_evidence.get("summary") or {}).get("verified_manifests", 0),
+            "operator_health_risks": (operator_health_source.get("summary") or {}).get("risks", 0),
+            "operator_health_blocked": (operator_health_source.get("summary") or {}).get("blocked", 0),
+            "operator_health_attention": (operator_health_source.get("summary") or {}).get("attention", 0),
             "action_receipts": action_receipt_summary.get("receipts", 0),
             "action_receipts_recorded": action_receipt_summary.get("recorded", 0),
             "action_receipts_verified": action_receipt_summary.get("verified", 0),
@@ -15146,12 +15409,14 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             "execution_evidence": evidence_gaps.get("status"),
             "task_intake": task_intake.get("status"),
             "dispatch_evidence": dispatch_evidence.get("status"),
+            "operator_health": operator_health_source.get("status"),
             "action_receipts": action_receipts.get("status"),
         },
         "remediation_loop": remediation_loop,
         "execution_evidence": evidence_gaps,
         "task_intake": task_intake,
         "dispatch_evidence": dispatch_evidence,
+        "operator_health": operator_health_source,
         "action_receipts": action_receipts,
         "contract": "read-only operator action plan; execution stays in explicit CLI/API commands and live adapters still require confirmation",
         "safety": {

@@ -399,7 +399,9 @@ pressure, and the action-plan summary. It returns a 0..100 score, component
 statuses, risks, next actions, source summaries, `auth` boundary proof, and
 safety flags. Each risk includes an explicit action command, verify command,
 action signature, and receipt helper commands so the same health issue can be
-copied into the Operator Action Queue and closed with an audited receipt. Like
+closed with an audited receipt. The shared Operator Action Queue consumes the
+backend `operator action-plan` `operator_health` lane instead of synthesizing
+frontend-only health actions. Like
 handoff, local no-token demo reads are allowed only when the server has no
 configured API key; supplied Agent Gateway tokens/sessions must be valid, carry
 `tasks:read`, and remain bound to their workspace.
@@ -1308,8 +1310,9 @@ Reruns still require the explicit `agentops eval run-cases` path.
 
 Returns the prioritized operator command-center plan as JSON. It merges the
 review queue, customer delivery board, worker fleet status, adapter readiness,
-commander inbox, task-intake gates, execution-evidence gaps, and remediation
-loop into safe next CLI/UI actions.
+commander inbox, task-intake gates, execution-evidence gaps, remediation loop,
+and a non-recursive `operator_health` recovery source into safe next CLI/UI
+actions.
 
 ```bash
 agentops operator action-plan --limit 12
@@ -1329,7 +1332,11 @@ reports summary counters such as `evidence_gap_runs`, `missing_plan_runs`,
 `agentops operator remediate-evidence-gap --run-id <run_id>` without mutating
 the ledger. `task_intake` is the pre-run source for planned/backlog tasks: it
 checks assignment, verified Agent Plan, knowledge/spec references, base
-references, and high-risk approval boundaries before the task is pulled. Each
+references, and high-risk approval boundaries before the task is pulled.
+`operator_health` actions mirror health components that can be checked without
+calling full health recursively, such as local readiness, security readiness,
+worker fleet health, or human-review pressure, and verify through
+`agentops operator health --limit 20`. Each
 receipt-required `actions[]` row also includes `receipt_record_command`
 (preview-only), `receipt_record_confirm_command` (append a recorded receipt),
 and `receipt_verify_record_command` (append a verified action/VERIFY receipt)
@@ -1367,8 +1374,11 @@ present. Without confirmation it returns
 `operator_action_receipt_cli_preview`, hashes the supplied action/verify
 commands, and does not mutate the ledger. With confirmation it appends
 `operator.action_queue_receipt` runtime/audit evidence, still never executing
-`action_command` or `verify_command`. Valid statuses are `recorded`,
-`verified`, `failed`, and `skipped`.
+`action_command` or `verify_command`. Confirmed `verified` and `failed`
+receipts also write an `operator_action_evaluations` rule score and an
+`operator.action_queue_evaluation` audit row, so recovery work has both RECORD
+and VERIFY-quality evidence. Valid receipt statuses are `recorded`, `verified`,
+`failed`, and `skipped`.
 
 ```bash
 agentops operator intake-checklist --limit 12

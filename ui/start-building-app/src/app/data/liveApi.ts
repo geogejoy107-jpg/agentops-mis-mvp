@@ -1064,6 +1064,7 @@ export interface OperatorActionPlanItem {
   receipt_verified?: boolean;
   receipt_id?: string | null;
   receipt_hash?: string | null;
+  receipt_evaluation?: Record<string, unknown> | null;
   receipt_state?: Record<string, unknown>;
 }
 
@@ -1183,6 +1184,9 @@ export interface OperatorActionPlanPayload {
     dispatch_evidence_ready: number;
     dispatch_evidence_waiting_approval: number;
     dispatch_evidence_verified_manifests: number;
+    operator_health_risks: number;
+    operator_health_blocked: number;
+    operator_health_attention: number;
     action_receipts: number;
     action_receipts_recorded: number;
     action_receipts_verified: number;
@@ -1213,6 +1217,7 @@ export interface OperatorActionPlanPayload {
   execution_evidence?: ExecutionEvidenceGapsPayload;
   task_intake?: TaskIntakeChecklistPayload;
   dispatch_evidence?: Record<string, unknown>;
+  operator_health?: Record<string, unknown>;
   action_receipts?: OperatorActionReceiptsPayload;
   safety: {
     read_only: boolean;
@@ -1240,6 +1245,10 @@ export interface OperatorActionReceipt {
   verify_command?: string | null;
   verify_hash?: string | null;
   result_summary?: string | null;
+  evaluation?: Record<string, unknown> | null;
+  evaluation_id?: string | null;
+  evaluation_pass_fail?: string | null;
+  evaluation_score?: number | null;
   created_at?: string;
   tamper_chain_hash?: string;
   token_omitted?: boolean;
@@ -1256,6 +1265,9 @@ export interface OperatorActionReceiptsPayload {
     verified: number;
     failed: number;
     skipped: number;
+    evaluated: number;
+    evaluation_pass: number;
+    evaluation_fail: number;
   };
   receipts: OperatorActionReceipt[];
   safety: {
@@ -1275,6 +1287,7 @@ export interface OperatorActionReceiptResult {
   status: string;
   workspace_id?: string;
   receipt?: OperatorActionReceipt;
+  evaluation?: Record<string, unknown> | null;
   next_actions?: string[];
   safety?: {
     read_only: boolean;
@@ -3854,6 +3867,10 @@ function normalizeOperatorActionReceipt(raw: Record<string, unknown>): OperatorA
     verify_command: raw.verify_command ? String(raw.verify_command) : null,
     verify_hash: raw.verify_hash ? String(raw.verify_hash) : null,
     result_summary: raw.result_summary ? String(raw.result_summary) : null,
+    evaluation: typeof raw.evaluation === "object" && raw.evaluation !== null ? raw.evaluation as Record<string, unknown> : null,
+    evaluation_id: raw.evaluation_id ? String(raw.evaluation_id) : null,
+    evaluation_pass_fail: raw.evaluation_pass_fail ? String(raw.evaluation_pass_fail) : null,
+    evaluation_score: raw.evaluation_score === undefined || raw.evaluation_score === null ? null : numberValue(raw.evaluation_score, 0),
     created_at: raw.created_at ? String(raw.created_at) : undefined,
     tamper_chain_hash: raw.tamper_chain_hash ? String(raw.tamper_chain_hash) : undefined,
     token_omitted: raw.token_omitted === undefined ? undefined : boolValue(raw.token_omitted),
@@ -3891,6 +3908,9 @@ export async function loadOperatorActionReceipts(limit = 8): Promise<OperatorAct
       verified: numberValue(summaryRaw.verified, 0),
       failed: numberValue(summaryRaw.failed, 0),
       skipped: numberValue(summaryRaw.skipped, 0),
+      evaluated: numberValue(summaryRaw.evaluated, 0),
+      evaluation_pass: numberValue(summaryRaw.evaluation_pass, 0),
+      evaluation_fail: numberValue(summaryRaw.evaluation_fail, 0),
     },
     receipts: asArray<Record<string, unknown>>(raw.receipts).map(normalizeOperatorActionReceipt).filter(item => item.receipt_id),
     safety: {
@@ -3928,12 +3948,14 @@ export async function recordOperatorActionReceipt(input: {
   }, [400]);
   const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
   const receiptRaw = typeof raw.receipt === "object" && raw.receipt !== null ? raw.receipt as Record<string, unknown> : undefined;
+  const evaluationRaw = typeof raw.evaluation === "object" && raw.evaluation !== null ? raw.evaluation as Record<string, unknown> : undefined;
   return {
     provider: raw.provider ? String(raw.provider) : undefined,
     operation: raw.operation ? String(raw.operation) : undefined,
     status: String(raw.status || raw.error || input.status || "recorded"),
     workspace_id: raw.workspace_id ? String(raw.workspace_id) : undefined,
     receipt: receiptRaw ? normalizeOperatorActionReceipt(receiptRaw) : undefined,
+    evaluation: evaluationRaw || null,
     next_actions: asArray<unknown>(raw.next_actions).map(String).filter(Boolean),
     safety: {
       read_only: boolValue(safetyRaw.read_only),
@@ -4013,6 +4035,9 @@ export async function loadOperatorActionPlan(limit = 12): Promise<OperatorAction
       dispatch_evidence_ready: numberValue(summaryRaw.dispatch_evidence_ready, 0),
       dispatch_evidence_waiting_approval: numberValue(summaryRaw.dispatch_evidence_waiting_approval, 0),
       dispatch_evidence_verified_manifests: numberValue(summaryRaw.dispatch_evidence_verified_manifests, 0),
+      operator_health_risks: numberValue(summaryRaw.operator_health_risks, 0),
+      operator_health_blocked: numberValue(summaryRaw.operator_health_blocked, 0),
+      operator_health_attention: numberValue(summaryRaw.operator_health_attention, 0),
       action_receipts: numberValue(summaryRaw.action_receipts, 0),
       action_receipts_recorded: numberValue(summaryRaw.action_receipts_recorded, 0),
       action_receipts_verified: numberValue(summaryRaw.action_receipts_verified, 0),
@@ -4051,6 +4076,7 @@ export async function loadOperatorActionPlan(limit = 12): Promise<OperatorAction
       receipt_verified: boolValue(item.receipt_verified),
       receipt_id: item.receipt_id ? String(item.receipt_id) : null,
       receipt_hash: item.receipt_hash ? String(item.receipt_hash) : null,
+      receipt_evaluation: typeof item.receipt_evaluation === "object" && item.receipt_evaluation !== null ? item.receipt_evaluation as Record<string, unknown> : null,
       receipt_state: typeof item.receipt_state === "object" && item.receipt_state !== null ? item.receipt_state as Record<string, unknown> : undefined,
     })).filter((item) => item.command),
     top_commands: asArray<unknown>(raw.top_commands).map(String).filter(Boolean),
@@ -4070,6 +4096,7 @@ export async function loadOperatorActionPlan(limit = 12): Promise<OperatorAction
     execution_evidence: normalizeExecutionEvidenceGaps(raw.execution_evidence),
     task_intake: normalizeTaskIntakeChecklist(raw.task_intake),
     dispatch_evidence: typeof raw.dispatch_evidence === "object" && raw.dispatch_evidence !== null ? raw.dispatch_evidence as Record<string, unknown> : undefined,
+    operator_health: typeof raw.operator_health === "object" && raw.operator_health !== null ? raw.operator_health as Record<string, unknown> : undefined,
     action_receipts: typeof raw.action_receipts === "object" && raw.action_receipts !== null ? {
       ...(raw.action_receipts as OperatorActionReceiptsPayload),
       receipts: asArray<Record<string, unknown>>((raw.action_receipts as Record<string, unknown>).receipts).map(normalizeOperatorActionReceipt).filter(item => item.receipt_id),
@@ -4386,6 +4413,7 @@ export async function loadOperatorHandoff(limit = 12, loopId = ""): Promise<Oper
         receipt_verified: boolValue(item.receipt_verified),
         receipt_id: item.receipt_id ? String(item.receipt_id) : null,
         receipt_hash: item.receipt_hash ? String(item.receipt_hash) : null,
+        receipt_evaluation: typeof item.receipt_evaluation === "object" && item.receipt_evaluation !== null ? item.receipt_evaluation as Record<string, unknown> : null,
         receipt_state: typeof item.receipt_state === "object" && item.receipt_state !== null ? item.receipt_state as Record<string, unknown> : undefined,
       })).filter((item) => item.command),
       commands: asArray<unknown>(workOrderRaw.commands).map(String).filter(Boolean),

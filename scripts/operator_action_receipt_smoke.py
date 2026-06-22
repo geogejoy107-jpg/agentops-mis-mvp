@@ -74,7 +74,18 @@ def db_counts(db_path: Path) -> dict:
         runtime_row = conn.execute(
             "SELECT COUNT(*) AS c FROM runtime_events WHERE event_type='operator.action_queue_receipt'"
         ).fetchone()
-        return {"audit_logs": int(audit_row["c"] or 0), "runtime_events": int(runtime_row["c"] or 0)}
+        evaluation_row = conn.execute(
+            "SELECT COUNT(*) AS c FROM operator_action_evaluations"
+        ).fetchone()
+        evaluation_audit_row = conn.execute(
+            "SELECT COUNT(*) AS c FROM audit_logs WHERE action='operator.action_queue_evaluation'"
+        ).fetchone()
+        return {
+            "audit_logs": int(audit_row["c"] or 0),
+            "runtime_events": int(runtime_row["c"] or 0),
+            "operator_action_evaluations": int(evaluation_row["c"] or 0),
+            "evaluation_audit_logs": int(evaluation_audit_row["c"] or 0),
+        }
     finally:
         conn.close()
 
@@ -156,6 +167,10 @@ def main() -> int:
             require(item.get("action_signature") == payload["action_signature"], f"action signature mismatch: {item}", failures)
             require(bool(item.get("action_hash")), f"action hash missing: {item}", failures)
             require(bool(item.get("verify_hash")), f"verify hash missing: {item}", failures)
+            evaluation = receipt.get("evaluation") or {}
+            require(evaluation.get("pass_fail") == "pass", f"verified receipt evaluation should pass: {evaluation}", failures)
+            require(float(evaluation.get("score") or 0) == 1.0, f"verified receipt evaluation score wrong: {evaluation}", failures)
+            require(evaluation.get("receipt_id") == item.get("receipt_id"), f"receipt evaluation id mismatch: {evaluation}", failures)
 
             stale_payload = None
             stale_item = None
@@ -174,6 +189,8 @@ def main() -> int:
                 require(status == 201, f"stale POST status mismatch: {status} {stale_receipt}", failures)
                 stale_item = stale_receipt.get("receipt") or {}
                 require(stale_item.get("action_signature") == stale_payload["action_signature"], f"stale action signature mismatch: {stale_item}", failures)
+                stale_evaluation = stale_receipt.get("evaluation") or {}
+                require(stale_evaluation.get("pass_fail") == "pass", f"stale verified receipt evaluation should pass: {stale_evaluation}", failures)
 
             unrelated_writes = 35
             for index in range(unrelated_writes):
@@ -196,6 +213,7 @@ def main() -> int:
             require(readback.get("operation") == "operator_action_receipts", f"wrong readback operation: {readback}", failures)
             summary = readback.get("summary") or {}
             require(int(summary.get("recorded") or 0) == 5, f"recent receipt display should contain latest noise receipts: {summary}", failures)
+            require(int(summary.get("evaluated") or 0) == 0, f"recorded-only recent receipts should not be evaluated: {summary}", failures)
             receipt_ids = {row.get("receipt_id") for row in readback.get("receipts") or []}
             require(item.get("receipt_id") not in receipt_ids, f"target receipt should be older than recent display rows: {readback}", failures)
 
@@ -223,6 +241,9 @@ def main() -> int:
             require(matched_action.get("receipt_verified") is True, f"action-plan action receipt proof missing: {matched_action}", failures)
             require(matched_action.get("receipt_id") == item.get("receipt_id"), f"action-plan action receipt id mismatch: {matched_action}", failures)
             require(bool(matched_action.get("receipt_hash")), f"action-plan action receipt hash missing: {matched_action}", failures)
+            matched_evaluation = matched_action.get("receipt_evaluation") or (matched_action.get("receipt_state") or {}).get("evaluation") or {}
+            require(matched_evaluation.get("pass_fail") == "pass", f"action-plan receipt evaluation missing: {matched_action}", failures)
+            require(matched_evaluation.get("receipt_id") == item.get("receipt_id"), f"action-plan receipt evaluation id mismatch: {matched_action}", failures)
             shared_verify = [
                 row for row in action_plan.get("actions") or []
                 if row.get("command") != payload["action_command"]
@@ -258,6 +279,9 @@ def main() -> int:
             after = db_counts(db_path)
             expected_writes = 1 + (1 if stale_payload else 0) + unrelated_writes
             require(after["audit_logs"] == before["audit_logs"] + expected_writes, f"audit count did not increase by {expected_writes}: {before} -> {after}", failures)
+            expected_evaluations = 1 + (1 if stale_payload else 0)
+            require(after["operator_action_evaluations"] == before["operator_action_evaluations"] + expected_evaluations, f"operator action evaluation count wrong: {before} -> {after}", failures)
+            require(after["evaluation_audit_logs"] == before["evaluation_audit_logs"] + expected_evaluations, f"operator action evaluation audit count wrong: {before} -> {after}", failures)
             require(after["runtime_events"] == before["runtime_events"] + expected_writes, f"runtime count did not increase by {expected_writes}: {before} -> {after}", failures)
             require(not leaked_secret("\n".join(outputs)), "receipt output leaked token-like material", failures)
         finally:
