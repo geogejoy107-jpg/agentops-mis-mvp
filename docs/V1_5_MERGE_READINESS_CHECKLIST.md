@@ -3,6 +3,11 @@
 > Frozen source: `8d1827e00629bdca4779794121ca4a31dfa3f1e1`  
 > Current status: `NOT_READY`
 
+Hardening overlay:
+`docs/V1_5_AGENT_GATEWAY_HARDENING_OBJECTIVE.md`. Use it as the P0 objective
+and acceptance-gate map for the first `audit/v1-5-agent-gateway-hardening`
+findings before marking this branch release-candidate ready.
+
 ## 1. Branch control
 
 - [x] Open-source adoption boundary is captured as a project rule. `PROJECT_SPEC.md`, `AGENT_WORKFLOW.md`, and `docs/V1_5_EIGHT_PRODUCT_CLOSURE_SPEC.md` point to `docs/OPEN_SOURCE_ADOPTION_BOUNDARY_SPEC.md`, which separates direct tool adoption, reference-only method adaptation, and first-party MIS authority modules.
@@ -535,9 +540,9 @@ Optional live runtime checks occur only after preflight and explicit human confi
 
 ## 14. Release evidence packet
 
-- [ ] Exact RC SHA.
-- [ ] CI links and status.
-- [ ] Test command list and summary.
+- [x] Exact RC SHA. Guarded by `scripts/release_evidence_packet_smoke.py`, which emits the current `git rev-parse HEAD` value at runtime with branch, upstream sync and working-tree summary instead of storing a stale tracked SHA.
+- [x] CI links and status. Guarded by `scripts/release_evidence_packet_smoke.py` and `docs/RELEASE_EVIDENCE_PACKET.md`; CI run URL/status is derived from GitHub Actions env or `gh run list`, and missing/non-green current-head CI keeps the release in `NOT_READY` unless the stricter RC flags pass.
+- [x] Test command list and summary. Guarded by `scripts/release_evidence_packet_smoke.py`, which verifies the canonical release command manifest is backed by `.github/workflows/ci.yml` and that referenced script files exist.
 - [x] Performance and retrieval baseline. Guarded by `scripts/ai_employees_responsiveness_smoke.py` and `scripts/knowledge_retrieval_quality_smoke.py`; current local evidence stayed within the `/workspace/agents` API fan-out/latency budgets and achieved Recall@5/MRR 1.0 on the bilingual retrieval baseline.
 - [x] Migration and rollback result. Guarded by `scripts/migration_rollback_smoke.py`, which writes an isolated `/api/migration/preview` row with rollback steps and audit evidence, then verifies local backup, hash/integrity check, dry-run restore confirmation gate, confirmed restore, and restored migration/audit counts.
 - [x] Security readiness and secret scan. Guarded by `scripts/security_production_readiness_smoke.py` plus `scripts/secret_scan_smoke.py`, which scans tracked files for token-like credentials while allowing only narrow fake-token smoke fixtures.

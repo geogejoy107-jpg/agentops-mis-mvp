@@ -7855,11 +7855,15 @@ def agent_gateway_run_heartbeat(conn, run_id: str, body) -> tuple[dict, int]:
 
 
 def tool_call_has_external_side_effect_intent(tool_name: str, category: str, target_resource: str | None, args: dict) -> bool:
+    scanned_args = dict(args or {})
+    # Capability metadata says whether a runtime would need a prepared action for
+    # external writes; it is not itself an external write intent.
+    scanned_args.pop("requires_prepared_action_for_external_write", None)
     haystack = " ".join([
         tool_name or "",
         category or "",
         target_resource or "",
-        json.dumps(args, ensure_ascii=False, sort_keys=True),
+        json.dumps(scanned_args, ensure_ascii=False, sort_keys=True),
     ]).lower()
     target = (target_resource or "").strip().lower()
     if target.startswith(EXTERNAL_SIDE_EFFECT_SCHEMES):
