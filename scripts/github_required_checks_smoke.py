@@ -12,7 +12,7 @@ import json
 import os
 import shutil
 import subprocess
-import sys
+import argparse
 import urllib.error
 import urllib.request
 from typing import Any
@@ -74,6 +74,13 @@ def protection_checks(payload: dict[str, Any]) -> set[str]:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--allow-ci-permission-limited",
+        action="store_true",
+        help="Report a GitHub Actions branch-protection permission limit without failing. Do not use for final RC verification.",
+    )
+    args = parser.parse_args()
     repo = os.environ.get("GITHUB_REPOSITORY", DEFAULT_REPO).strip() or DEFAULT_REPO
     branch = os.environ.get("AGENTOPS_REQUIRED_CHECKS_BRANCH", DEFAULT_BRANCH).strip() or DEFAULT_BRANCH
     expected = {
@@ -86,15 +93,26 @@ def main() -> int:
 
     require(bool(token), "GitHub token is required to read branch protection", failures)
     status, payload = fetch_protection(repo, branch, token)
-    require(status == 200, f"branch protection read failed for {repo}:{branch}: status={status} message={payload.get('message')}", failures)
+    ci_permission_limited = (
+        status == 403
+        and args.allow_ci_permission_limited
+        and os.environ.get("GITHUB_ACTIONS", "").lower() == "true"
+        and "Resource not accessible by integration" in str(payload.get("message") or "")
+    )
+    require(
+        status == 200 or ci_permission_limited,
+        f"branch protection read failed for {repo}:{branch}: status={status} message={payload.get('message')}",
+        failures,
+    )
 
     required_status_checks = payload.get("required_status_checks") or {}
     contexts = protection_checks(payload)
     missing = sorted(expected - contexts)
-    require(required_status_checks.get("strict") is True, "required status checks must require branches to be up to date before merge", failures)
-    require(not missing, f"missing required status checks: {missing}", failures)
-    require((payload.get("allow_force_pushes") or {}).get("enabled") is False, "force pushes must be disabled for the protected branch", failures)
-    require((payload.get("allow_deletions") or {}).get("enabled") is False, "branch deletions must be disabled for the protected branch", failures)
+    if not ci_permission_limited:
+        require(required_status_checks.get("strict") is True, "required status checks must require branches to be up to date before merge", failures)
+        require(not missing, f"missing required status checks: {missing}", failures)
+        require((payload.get("allow_force_pushes") or {}).get("enabled") is False, "force pushes must be disabled for the protected branch", failures)
+        require((payload.get("allow_deletions") or {}).get("enabled") is False, "branch deletions must be disabled for the protected branch", failures)
 
     output = {
         "ok": not failures,
@@ -105,6 +123,9 @@ def main() -> int:
         "observed_contexts": sorted(contexts),
         "strict": required_status_checks.get("strict"),
         "branch_protected": status == 200,
+        "verification_mode": "ci_permission_limited" if ci_permission_limited else "live_branch_protection_read",
+        "permission_limited": ci_permission_limited,
+        "permission_note": "GitHub Actions token cannot read branch protection; run locally with gh auth for live verification." if ci_permission_limited else None,
         "safety": {
             "read_only": True,
             "github_settings_mutated": False,
