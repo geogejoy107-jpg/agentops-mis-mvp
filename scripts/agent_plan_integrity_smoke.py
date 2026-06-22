@@ -45,12 +45,15 @@ def run(args: list[str], base_url: str, agent_id: str) -> subprocess.CompletedPr
     )
 
 
-def http_json(base_url: str, path: str, body: dict) -> tuple[int, dict]:
+def http_json(base_url: str, path: str, body: dict, headers: dict | None = None) -> tuple[int, dict]:
     raw = json.dumps(body, ensure_ascii=False).encode("utf-8")
+    req_headers = {"Content-Type": "application/json"}
+    if headers:
+        req_headers.update(headers)
     req = Request(
         base_url.rstrip("/") + path,
         data=raw,
-        headers={"Content-Type": "application/json"},
+        headers=req_headers,
         method="POST",
     )
     try:
@@ -357,6 +360,108 @@ def main() -> int:
     require(verification.get("plan_hash") == plan_hash, f"verification plan_hash mismatch: {verified_payload}", failures)
     require(verified_plan.get("verified_at"), f"verified_at missing: {verified_plan}", failures)
     require(isinstance(verified_plan.get("verification_result_hash"), str) and len(verified_plan.get("verification_result_hash")) == 64, f"verification hash missing: {verified_plan}", failures)
+
+    approval_plan = run([
+        "agent-plan",
+        "create",
+        "--agent-id",
+        agent_id,
+        "--task-id",
+        task_id,
+        "--task-understanding",
+        "Create an approval-required plan that must not run before human approval.",
+        "--referenced-specs",
+        "PROJECT_SPEC.md,AGENT_WORKFLOW.md",
+        "--referenced-memories",
+        str(candidate_memory_id),
+        "--referenced-bases",
+        "base_local_tasks",
+        "--proposed-files-to-change",
+        "server.py",
+        "--risk",
+        "high",
+        "--execution-steps",
+        "READ,PLAN,RETRIEVE,COMPARE,VERIFY",
+        "--verification-plan",
+        "High-risk work must be approved before run_start.",
+        "--rollback-plan",
+        "Reject plan and keep task planned if approval is not granted.",
+    ], args.base_url, agent_id)
+    outputs.extend([approval_plan.stdout, approval_plan.stderr])
+    approval_plan_payload = load_json(approval_plan)
+    approval_plan_record = approval_plan_payload.get("agent_plan") or {}
+    approval_plan_id = approval_plan_record.get("plan_id")
+    pending_plan_approval = approval_plan_payload.get("approval") or {}
+    require(approval_plan.returncode == 0 and bool(approval_plan_id), f"approval-required plan create failed: {approval_plan.stderr or approval_plan.stdout}", failures)
+    require(approval_plan_record.get("approval_required") in {1, True}, f"approval_required missing: {approval_plan_payload}", failures)
+    require(bool(approval_plan_record.get("approval_id")), f"approval_id missing on high-risk plan: {approval_plan_payload}", failures)
+    require(pending_plan_approval.get("approval_id") == approval_plan_record.get("approval_id"), f"pending approval not linked to plan: {approval_plan_payload}", failures)
+    require(pending_plan_approval.get("decision") == "pending", f"plan approval should start pending: {approval_plan_payload}", failures)
+
+    approval_verify = run(["agent-plan", "verify", "--plan-id", str(approval_plan_id)], args.base_url, agent_id)
+    outputs.extend([approval_verify.stdout, approval_verify.stderr])
+    approval_verify_payload = load_json(approval_verify)
+    require(approval_verify.returncode == 0, f"approval-required plan verify failed: {approval_verify.stderr or approval_verify.stdout}", failures)
+    require((approval_verify_payload.get("verification") or {}).get("pass") is True, f"approval-required plan should verify before approval: {approval_verify_payload}", failures)
+
+    preapproval_run_status, preapproval_run_payload = http_json(args.base_url, "/api/agent-gateway/runs/start", {
+        "workspace_id": "local-demo",
+        "agent_id": agent_id,
+        "task_id": task_id,
+        "runtime_type": "mock",
+        "input_summary": "This run_start must be blocked until the plan is approved.",
+        "agent_plan_id": approval_plan_id,
+    })
+    outputs.append(json.dumps(preapproval_run_payload, ensure_ascii=False))
+    require(preapproval_run_status == 428, f"approval-required run_start should be blocked: {preapproval_run_status} {preapproval_run_payload}", failures)
+    require(preapproval_run_payload.get("error") == "agent_plan_approval_required", f"wrong preapproval run_start error: {preapproval_run_payload}", failures)
+
+    token_status, token_payload = http_json(args.base_url, "/api/agent-gateway/enrollment/create", {
+        "workspace_id": "local-demo",
+        "agent_id": agent_id,
+        "name": f"Plan Integrity Token {stamp}",
+        "runtime_type": "mock",
+        "scopes": ["agent_plans:read", "agent_plans:write"],
+        "ttl_days": 1,
+    })
+    token = token_payload.get("token")
+    require(token_status == 201 and isinstance(token, str) and token.startswith("agtok_"), f"agent token create failed: {token_status} {token_payload}", failures)
+
+    bound_approval_status, bound_approval_payload = http_json(
+        args.base_url,
+        f"/api/agent-plans/{approval_plan_id}/approve",
+        {"workspace_id": "local-demo", "approver_user_id": "usr_founder", "reason": "Agent token must not approve this plan."},
+        headers={
+            "Authorization": f"Bearer {token}",
+            "X-AgentOps-Agent-Id": agent_id,
+            "X-AgentOps-Workspace-Id": "local-demo",
+        },
+    )
+    outputs.append(json.dumps(bound_approval_payload, ensure_ascii=False))
+    require(bound_approval_status == 403, f"bound agent token should not approve plan: {bound_approval_status} {bound_approval_payload}", failures)
+    require(bound_approval_payload.get("error") == "agent_plan_human_approval_required", f"wrong bound approval error: {bound_approval_payload}", failures)
+
+    human_approval_status, human_approval_payload = http_json(args.base_url, f"/api/approvals/{approval_plan_record.get('approval_id')}/approve", {})
+    outputs.append(json.dumps(human_approval_payload, ensure_ascii=False))
+    approved_transition_plan = human_approval_payload.get("agent_plan") or {}
+    approval_object = human_approval_payload.get("approval") or {}
+    require(human_approval_status == 200, f"human plan approval failed: {human_approval_status} {human_approval_payload}", failures)
+    require(approved_transition_plan.get("status") == "approved", f"plan not approved: {human_approval_payload}", failures)
+    require(approved_transition_plan.get("approved_by_user_id") == "usr_founder", f"approver not recorded: {human_approval_payload}", failures)
+    require(approval_object.get("decision") == "approved" and approval_object.get("approval_id"), f"approval object missing: {human_approval_payload}", failures)
+
+    postapproval_run_status, postapproval_run_payload = http_json(args.base_url, "/api/agent-gateway/runs/start", {
+        "workspace_id": "local-demo",
+        "agent_id": agent_id,
+        "task_id": task_id,
+        "runtime_type": "mock",
+        "input_summary": "This run_start should pass after the plan is approved.",
+        "agent_plan_id": approval_plan_id,
+    })
+    outputs.append(json.dumps(postapproval_run_payload, ensure_ascii=False))
+    require(postapproval_run_status == 201, f"approved plan run_start should pass: {postapproval_run_status} {postapproval_run_payload}", failures)
+    require(((postapproval_run_payload.get("agent_plan") or {}).get("plan_id") == approval_plan_id), f"run_start did not bind approved plan: {postapproval_run_payload}", failures)
+
     require(not leaked("\n".join(outputs)), "Agent Plan integrity output leaked token-like material", failures)
 
     print(json.dumps({
@@ -368,6 +473,11 @@ def main() -> int:
         "candidate_memory_rejected": "memory_authority" in failed_ids,
         "approved_memory_verified": bool((approved_verify_payload.get("verification") or {}).get("pass")),
         "negative_reference_results": negative_results,
+        "approval_required_run_blocked": preapproval_run_status == 428,
+        "bound_agent_approval_rejected": bound_approval_status == 403,
+        "human_plan_approved": human_approval_status == 200,
+        "approved_plan_run_started": postapproval_run_status == 201,
+        "approval_id": approval_object.get("approval_id"),
         "plan_hash": plan_hash,
         "verification_result_hash": verified_plan.get("verification_result_hash"),
         "failures": failures,

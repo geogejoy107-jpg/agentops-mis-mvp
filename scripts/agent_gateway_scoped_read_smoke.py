@@ -2,8 +2,10 @@
 """Verify Agent Gateway readback endpoints enforce scoped workspace visibility."""
 from __future__ import annotations
 
+import argparse
 import datetime as dt
 import json
+import os
 import re
 import sys
 import urllib.error
@@ -93,7 +95,10 @@ def create_verified_plan(base_url: str, token: str, workspace: str, agent_id: st
 
 
 def main() -> int:
-    base_url = "http://127.0.0.1:8787"
+    parser = argparse.ArgumentParser(description="Verify Agent Gateway scoped readback endpoints.")
+    parser.add_argument("--base-url", default=os.environ.get("AGENTOPS_BASE_URL", "http://127.0.0.1:8787"))
+    args = parser.parse_args()
+    base_url = args.base_url
     stamp = now_stamp()
     agent_id = f"agt_scoped_read_{stamp}"
     workspace_a = f"ws_read_a_{stamp}"

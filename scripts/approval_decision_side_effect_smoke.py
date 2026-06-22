@@ -37,8 +37,7 @@ def run_project(base_url: str) -> dict:
     if not approval_ids:
         raise RuntimeError(f"workflow did not create approval: {payload}")
     approval_id = approval_ids[0]
-    approval_rows = http_json("GET", base_url, "/api/approvals")
-    approval = next(item for item in approval_rows if item.get("approval_id") == approval_id)
+    approval = http_json("GET", base_url, f"/api/agent-gateway/approvals/{approval_id}")["approval"]
     return {"workflow": payload, "approval": approval}
 
 

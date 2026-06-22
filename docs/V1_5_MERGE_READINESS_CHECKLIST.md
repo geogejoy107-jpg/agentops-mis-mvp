@@ -21,9 +21,9 @@ git diff --check main...codex/agent-gateway-kb-demo
 ## 2. Agent Plan integrity
 
 - [x] Agent-created plans can only be `draft` or `submitted`.
-- [ ] Human/admin/policy identity alone can approve or reject a plan.
-- [ ] High/critical plans create or reference a real approval object.
-- [ ] Plan transitions are append-only and audited.
+- [x] Human/admin/policy identity alone can approve or reject a plan.
+- [x] High/critical or approval-required plans create/reference a real approval object and cannot authorize `run_start` until approved.
+- [x] Plan approve/reject transitions append audit/runtime evidence with actor and approval object references.
 - [x] Plan has an immutable hash/version.
 - [x] Verification result has a hash and timestamp.
 - [x] Every referenced spec exists and is readable.

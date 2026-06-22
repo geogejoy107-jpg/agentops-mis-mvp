@@ -1086,6 +1086,24 @@ def cmd_agent_plan_verify(args, client: AgentOpsClient) -> dict:
     return client.get(f"/api/agent-gateway/agent-plans/{args.plan_id}/verify")
 
 
+def cmd_agent_plan_approve(args, client: AgentOpsClient) -> dict:
+    return client.post(f"/api/agent-plans/{args.plan_id}/approve", {
+        "workspace_id": client.workspace_id,
+        "approver_user_id": args.approver_user_id,
+        "actor_type": args.actor_type,
+        "reason": args.reason,
+    })
+
+
+def cmd_agent_plan_reject(args, client: AgentOpsClient) -> dict:
+    return client.post(f"/api/agent-plans/{args.plan_id}/reject", {
+        "workspace_id": client.workspace_id,
+        "approver_user_id": args.approver_user_id,
+        "actor_type": args.actor_type,
+        "reason": args.reason,
+    })
+
+
 def cmd_plan_evidence_create(args, client: AgentOpsClient) -> dict:
     payload = {
         "workspace_id": client.workspace_id,
@@ -2328,6 +2346,18 @@ def build_parser() -> argparse.ArgumentParser:
     agent_plan_verify = agent_plan_sub.add_parser("verify", help="Verify one agent plan has required method-block evidence.")
     agent_plan_verify.add_argument("--plan-id", required=True)
     agent_plan_verify.set_defaults(handler="agent_plan_verify")
+    agent_plan_approve = agent_plan_sub.add_parser("approve", help="Approve a verified Agent Plan through the human/admin governance API.")
+    agent_plan_approve.add_argument("--plan-id", required=True)
+    agent_plan_approve.add_argument("--approver-user-id", default="usr_founder")
+    agent_plan_approve.add_argument("--actor-type", default="user", choices=["user", "admin", "policy"])
+    agent_plan_approve.add_argument("--reason", default="CLI Agent Plan approval.")
+    agent_plan_approve.set_defaults(handler="agent_plan_approve")
+    agent_plan_reject = agent_plan_sub.add_parser("reject", help="Reject an Agent Plan through the human/admin governance API.")
+    agent_plan_reject.add_argument("--plan-id", required=True)
+    agent_plan_reject.add_argument("--approver-user-id", default="usr_founder")
+    agent_plan_reject.add_argument("--actor-type", default="user", choices=["user", "admin", "policy"])
+    agent_plan_reject.add_argument("--reason", default="CLI Agent Plan rejection.")
+    agent_plan_reject.set_defaults(handler="agent_plan_reject")
 
     plan_evidence = sub.add_parser("plan-evidence", help="Bind verified agent plans to run/tool/eval/artifact/audit evidence.")
     plan_evidence_sub = plan_evidence.add_subparsers(dest="action", required=True)
@@ -2845,6 +2875,8 @@ HANDLERS = {
     "agent_plan_list": cmd_agent_plan_list,
     "agent_plan_get": cmd_agent_plan_get,
     "agent_plan_verify": cmd_agent_plan_verify,
+    "agent_plan_approve": cmd_agent_plan_approve,
+    "agent_plan_reject": cmd_agent_plan_reject,
     "plan_evidence_create": cmd_plan_evidence_create,
     "plan_evidence_list": cmd_plan_evidence_list,
     "plan_evidence_get": cmd_plan_evidence_get,

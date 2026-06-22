@@ -859,6 +859,7 @@ CREATE TABLE IF NOT EXISTS agent_plans (
     plan_hash TEXT,
     verified_at TEXT,
     verification_result_hash TEXT,
+    approval_id TEXT,
     approved_by_user_id TEXT,
     approved_at TEXT,
     created_at TEXT NOT NULL,
@@ -1079,6 +1080,7 @@ def ensure_schema_migrations(conn: sqlite3.Connection):
     ensure_column(conn, "agent_plans", "plan_hash", "plan_hash TEXT")
     ensure_column(conn, "agent_plans", "verified_at", "verified_at TEXT")
     ensure_column(conn, "agent_plans", "verification_result_hash", "verification_result_hash TEXT")
+    ensure_column(conn, "agent_plans", "approval_id", "approval_id TEXT")
     ensure_column(conn, "agent_plans", "approved_by_user_id", "approved_by_user_id TEXT")
     ensure_column(conn, "agent_plans", "approved_at", "approved_at TEXT")
     ensure_column(conn, "plan_evidence_manifests", "plan_hash", "plan_hash TEXT")
@@ -5025,6 +5027,82 @@ def verify_agent_plan_row(row: sqlite3.Row | dict, conn: sqlite3.Connection | No
     }
 
 
+def build_agent_plan_pending_approval(row: sqlite3.Row | dict) -> dict:
+    plan_id = row_field(row, "plan_id")
+    return {
+        "approval_id": row_field(row, "approval_id") or stable_id("ap_plan", plan_id),
+        "task_id": row_field(row, "task_id"),
+        "run_id": row_field(row, "run_id"),
+        "tool_call_id": None,
+        "requested_by_agent_id": row_field(row, "agent_id"),
+        "approver_user_id": "usr_founder",
+        "decision": "pending",
+        "reason": redact_text(
+            f"Agent Plan approval required before execution: {plan_id} risk={row_field(row, 'risk_level')} hash={(row_field(row, 'plan_hash') or '')[:12]}",
+            500,
+        ),
+        "expires_at": (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=7)).isoformat(),
+        "created_at": now_iso(),
+        "decided_at": None,
+    }
+
+
+def insert_or_keep_agent_plan_approval(conn: sqlite3.Connection, approval_row: dict) -> dict:
+    existing = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (approval_row["approval_id"],)).fetchone()
+    if existing:
+        return dict(existing)
+    conn.execute(
+        """INSERT INTO approvals(approval_id,task_id,run_id,tool_call_id,requested_by_agent_id,approver_user_id,decision,reason,expires_at,created_at,decided_at)
+        VALUES(:approval_id,:task_id,:run_id,:tool_call_id,:requested_by_agent_id,:approver_user_id,:decision,:reason,:expires_at,:created_at,:decided_at)""",
+        approval_row,
+    )
+    return approval_row
+
+
+def ensure_agent_plan_approval_run(conn: sqlite3.Connection, row: sqlite3.Row | dict) -> str | None:
+    if row_field(row, "run_id"):
+        return row_field(row, "run_id")
+    task_id = row_field(row, "task_id")
+    plan_id = row_field(row, "plan_id")
+    agent_id = row_field(row, "agent_id")
+    if not task_id or not agent_id or not plan_id:
+        return None
+    run_id = stable_id("run_plan_approval", plan_id)
+    existing = conn.execute("SELECT run_id FROM runs WHERE run_id=?", (run_id,)).fetchone()
+    if existing:
+        return run_id
+    now = now_iso()
+    upsert_run(conn, {
+        "run_id": run_id,
+        "workspace_id": row_field(row, "workspace_id") or "local-demo",
+        "task_id": task_id,
+        "agent_id": agent_id,
+        "runtime_type": "governance",
+        "status": "waiting_approval",
+        "started_at": now,
+        "ended_at": None,
+        "duration_ms": None,
+        "input_summary": f"Governance anchor for Agent Plan approval {plan_id}.",
+        "output_summary": None,
+        "model_provider": "agentops",
+        "model_name": "agent-plan-approval-gate",
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "reasoning_tokens": 0,
+        "cost_usd": 0.0,
+        "error_type": None,
+        "error_message": None,
+        "trace_id": stable_id("trace_plan_approval", plan_id),
+        "parent_run_id": None,
+        "delegation_id": stable_id("del_plan_approval", plan_id),
+        "approval_required": 1,
+        "agent_plan_id": plan_id,
+        "plan_hash": row_field(row, "plan_hash"),
+        "created_at": now,
+    }, actor_id="agent-plan-approval-gate", audit_metadata={"plan_id": plan_id, "token_omitted": True})
+    return run_id
+
+
 def agent_plan_verification_hash(plan_id: str, verification: dict) -> str:
     return stable_hash({
         "plan_id": plan_id,
@@ -5092,6 +5170,12 @@ def agent_gateway_create_agent_plan(conn: sqlite3.Connection, body) -> tuple[dic
         return {"error": "task_understanding is required"}, 400
     risk = coerce_choice(body.get("risk_level"), VALID_RISK_LEVELS, "medium")
     requested_status = body.get("status") or "submitted"
+    if (body.get("approval_required") or risk in {"high", "critical"}) and requested_status == "submitted" and not task_id and not run_id:
+        return {
+            "error": "agent_plan_approval_anchor_required",
+            "message": "Approval-required Agent Plans must be attached to a task or run so the approval ledger has task/run anchors.",
+            "token_omitted": True,
+        }, 400
     if requested_status not in {"draft", "submitted"}:
         return {
             "error": "plan_status_transition_required",
@@ -5121,26 +5205,252 @@ def agent_gateway_create_agent_plan(conn: sqlite3.Connection, body) -> tuple[dic
         "plan_hash": None,
         "verified_at": None,
         "verification_result_hash": None,
+        "approval_id": None,
         "approved_by_user_id": None,
         "approved_at": None,
         "created_at": now_iso(),
         "updated_at": now_iso(),
     }
     row["plan_hash"] = compute_agent_plan_hash(row)
+    approval_row = None
+    if row["approval_required"] and row["status"] == "submitted":
+        approval_row = build_agent_plan_pending_approval(row)
+        row["approval_id"] = approval_row["approval_id"]
     conn.execute(
         """INSERT INTO agent_plans(plan_id,workspace_id,task_id,run_id,agent_id,task_understanding,referenced_specs_json,
         referenced_memories_json,referenced_bases_json,proposed_files_to_change_json,risk_level,approval_required,
         execution_steps_json,verification_plan,rollback_plan,status,plan_version,plan_hash,verified_at,verification_result_hash,
-        approved_by_user_id,approved_at,created_at,updated_at)
+        approval_id,approved_by_user_id,approved_at,created_at,updated_at)
         VALUES(:plan_id,:workspace_id,:task_id,:run_id,:agent_id,:task_understanding,:referenced_specs_json,
         :referenced_memories_json,:referenced_bases_json,:proposed_files_to_change_json,:risk_level,:approval_required,
         :execution_steps_json,:verification_plan,:rollback_plan,:status,:plan_version,:plan_hash,:verified_at,:verification_result_hash,
-        :approved_by_user_id,:approved_at,:created_at,:updated_at)""",
+        :approval_id,:approved_by_user_id,:approved_at,:created_at,:updated_at)""",
         row,
     )
+    if approval_row:
+        approval_row["run_id"] = ensure_agent_plan_approval_run(conn, row)
+        if not approval_row.get("task_id") or not approval_row.get("run_id"):
+            return {"error": "agent_plan_approval_anchor_required", "message": "Approval-required Agent Plans must be attached to a task or run so the approval ledger has task/run anchors.", "plan_id": row["plan_id"], "token_omitted": True}, 400
+        approval_row = insert_or_keep_agent_plan_approval(conn, approval_row)
+        audit(conn, "agent", agent_id, "agent_gateway.agent_plan_approval_request", "approvals", approval_row["approval_id"], None, approval_row, {"plan_id": row["plan_id"], "plan_hash": row["plan_hash"], "token_omitted": True})
     audit(conn, "agent", agent_id, "agent_gateway.agent_plan_create", "agent_plans", row["plan_id"], None, row, {"raw_omitted": True, "plan_hash": row["plan_hash"]})
     runtime_event(conn, "rtc_agent_gateway_local", "agent_plan.create", "completed", run_id=run_id, task_id=task_id, agent_id=agent_id, output_summary=f"Agent plan {row['plan_id']} submitted with plan_hash={row['plan_hash'][:12]}.")
-    return {"agent_plan": row, "token_omitted": True}, 201
+    return {"agent_plan": row, "approval": approval_row, "token_omitted": True}, 201
+
+
+def agent_plan_transition_actor(conn: sqlite3.Connection, headers, body) -> tuple[dict | None, tuple[dict, int] | None]:
+    admin_key = os.environ.get("AGENTOPS_ADMIN_KEY", "").strip()
+    if admin_key and agent_gateway_admin_auth_error(headers) is None:
+        return {
+            "actor_type": "admin",
+            "actor_id": body.get("approver_user_id") or headers.get("X-AgentOps-User-Id") or "usr_admin",
+            "workspace_id": normalize_workspace_id(body.get("workspace_id") or headers.get("X-AgentOps-Workspace-Id") or "local-demo"),
+            "auth_mode": "admin_key",
+        }, None
+    auth_ctx, auth_error = agent_gateway_auth_context(conn, headers, "agent_plans:write")
+    if auth_error:
+        return None, (auth_error, agent_gateway_error_status(auth_error))
+    if agent_gateway_is_bound_auth(auth_ctx):
+        return None, ({
+            "error": "agent_plan_human_approval_required",
+            "message": "Bound Agent Gateway tokens and sessions cannot approve or reject Agent Plans.",
+            "auth_mode": auth_ctx.get("mode"),
+            "agent_id": auth_ctx.get("agent_id"),
+            "token_omitted": True,
+        }, 403)
+    requested_actor_type = str(body.get("actor_type") or "user").strip().lower()
+    actor_type = requested_actor_type if requested_actor_type in {"user", "admin", "policy"} else "user"
+    actor_id = (
+        body.get("approver_user_id")
+        or body.get("actor_id")
+        or headers.get("X-AgentOps-User-Id")
+        or ("policy_plan_gate" if actor_type == "policy" else "usr_founder")
+    )
+    return {
+        "actor_type": actor_type,
+        "actor_id": redact_text(actor_id, 120),
+        "workspace_id": normalize_workspace_id(body.get("workspace_id") or (auth_ctx or {}).get("workspace_id") or headers.get("X-AgentOps-Workspace-Id") or "local-demo"),
+        "auth_mode": (auth_ctx or {}).get("mode") or "local_dev_no_token",
+    }, None
+
+
+def transition_agent_plan(conn: sqlite3.Connection, plan_id: str, decision: str, headers, body) -> tuple[dict, int]:
+    decision = coerce_choice(decision, {"approved", "rejected"}, "rejected")
+    actor, actor_error = agent_plan_transition_actor(conn, headers, body or {})
+    if actor_error:
+        return actor_error
+    plan = conn.execute("SELECT * FROM agent_plans WHERE plan_id=?", (plan_id,)).fetchone()
+    if not plan:
+        return {"error": "agent plan not found"}, 404
+    if normalize_workspace_id(plan["workspace_id"]) != actor["workspace_id"]:
+        return workspace_forbidden("agent_plan", plan_id, actor["workspace_id"], plan["workspace_id"])
+    before = dict(plan)
+    if before["status"] in {"superseded"}:
+        return {"error": "agent_plan_not_transitionable", "message": "Superseded plans cannot be approved or rejected.", "plan_id": plan_id, "status": before["status"], "token_omitted": True}, 409
+    if decision == "approved":
+        if before["status"] != "submitted":
+            return {"error": "agent_plan_not_approvable", "message": "Only submitted plans can be approved.", "plan_id": plan_id, "status": before["status"], "token_omitted": True}, 409
+        verification = verify_agent_plan_row(plan, conn)
+        if not verification.get("pass"):
+            return {"error": "agent_plan_verification_failed", "message": "Agent Plan must pass verification before approval.", "plan_id": plan_id, "failed_checks": verification.get("failed_checks") or [], "token_omitted": True}, 428
+        plan, verification_hash = persist_agent_plan_verification(conn, plan_id, verification)
+    else:
+        verification = verify_agent_plan_row(plan, conn)
+        verification_hash = agent_plan_verification_hash(plan_id, verification)
+        if before["status"] == "rejected":
+            approval = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (before["approval_id"],)).fetchone() if before.get("approval_id") else None
+            return {
+                "provider": "agentops-agent-plan",
+                "operation": "agent_plan_transition",
+                "transition": "rejected",
+                "changed": False,
+                "agent_plan": dict(plan),
+                "approval": dict(approval) if approval else None,
+                "verification": verification,
+                "token_omitted": True,
+            }, 200
+    now = now_iso()
+    approval_id = before.get("approval_id") or stable_id("ap_plan", plan_id)
+    approval_row = {
+        "approval_id": approval_id,
+        "task_id": before.get("task_id") or stable_id("tsk_plan_approval", plan_id),
+        "run_id": ensure_agent_plan_approval_run(conn, before) or before.get("run_id") or stable_id("run_plan_approval", plan_id),
+        "tool_call_id": None,
+        "requested_by_agent_id": before.get("agent_id"),
+        "approver_user_id": actor["actor_id"],
+        "decision": decision,
+        "reason": redact_text(body.get("reason") or f"Agent Plan {decision}: {plan_id} hash={(before.get('plan_hash') or '')[:12]}", 500),
+        "expires_at": (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=7)).isoformat(),
+        "created_at": now,
+        "decided_at": now,
+    }
+    insert_or_keep_agent_plan_approval(conn, approval_row)
+    conn.execute(
+        """UPDATE approvals
+        SET task_id=?, run_id=?, tool_call_id=NULL, requested_by_agent_id=?, approver_user_id=?, decision=?, reason=?, decided_at=?
+        WHERE approval_id=?""",
+        (
+            approval_row["task_id"],
+            approval_row["run_id"],
+            approval_row["requested_by_agent_id"],
+            approval_row["approver_user_id"],
+            approval_row["decision"],
+            approval_row["reason"],
+            approval_row["decided_at"],
+            approval_id,
+        ),
+    )
+    conn.execute(
+        """UPDATE agent_plans
+        SET status=?, approval_id=?, approved_by_user_id=?, approved_at=?, updated_at=?
+        WHERE plan_id=?""",
+        (decision, approval_id, actor["actor_id"] if decision == "approved" else None, now if decision == "approved" else None, now, plan_id),
+    )
+    after = dict(conn.execute("SELECT * FROM agent_plans WHERE plan_id=?", (plan_id,)).fetchone())
+    action = f"agent_plan.{decision}"
+    audit(conn, actor["actor_type"], actor["actor_id"], action, "agent_plans", plan_id, before, after, {
+        "approval_id": approval_id,
+        "plan_hash": after.get("plan_hash"),
+        "verification_result_hash": after.get("verification_result_hash") or verification_hash,
+        "auth_mode": actor["auth_mode"],
+        "token_omitted": True,
+    })
+    runtime_event(
+        conn,
+        "rtc_agent_gateway_local",
+        f"agent_plan.{decision}",
+        "completed",
+        run_id=after.get("run_id"),
+        task_id=after.get("task_id"),
+        agent_id=after.get("agent_id"),
+        output_summary=f"Agent Plan {plan_id} {decision} by {actor['actor_type']} {actor['actor_id']}; approval_id={approval_id}.",
+    )
+    approval = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (approval_id,)).fetchone()
+    return {
+        "provider": "agentops-agent-plan",
+        "operation": "agent_plan_transition",
+        "transition": decision,
+        "changed": True,
+        "agent_plan": after,
+        "approval": dict(approval) if approval else approval_row,
+        "verification": verification,
+        "verification_result_hash": after.get("verification_result_hash") or verification_hash,
+        "actor": actor,
+        "token_omitted": True,
+    }, 200
+
+
+def apply_agent_plan_approval_decision(conn: sqlite3.Connection, approval: sqlite3.Row | dict, decision: str, actor_id: str = "usr_founder") -> tuple[dict | None, tuple[dict, int] | None]:
+    approval_id = row_field(approval, "approval_id")
+    plan = conn.execute("SELECT * FROM agent_plans WHERE approval_id=?", (approval_id,)).fetchone()
+    if not plan:
+        return None, None
+    before = dict(plan)
+    if before["status"] == "superseded":
+        return None, ({
+            "error": "agent_plan_not_transitionable",
+            "message": "Superseded plans cannot be approved or rejected.",
+            "plan_id": before["plan_id"],
+            "status": before["status"],
+            "token_omitted": True,
+        }, 409)
+    verification = verify_agent_plan_row(plan, conn)
+    verification_hash = agent_plan_verification_hash(before["plan_id"], verification)
+    if decision == "approved":
+        if before["status"] not in {"submitted", "approved"}:
+            return None, ({
+                "error": "agent_plan_not_approvable",
+                "message": "Only submitted Agent Plans can be approved.",
+                "plan_id": before["plan_id"],
+                "status": before["status"],
+                "token_omitted": True,
+            }, 409)
+        if not verification.get("pass"):
+            return None, ({
+                "error": "agent_plan_verification_failed",
+                "message": "Agent Plan must pass method-block verification before approval.",
+                "plan_id": before["plan_id"],
+                "failed_checks": verification.get("failed_checks") or [],
+                "token_omitted": True,
+            }, 428)
+        _persisted, verification_hash = persist_agent_plan_verification(conn, before["plan_id"], verification)
+        conn.execute(
+            """UPDATE agent_plans
+            SET status='approved', approved_by_user_id=?, approved_at=COALESCE(approved_at, ?), updated_at=?
+            WHERE plan_id=?""",
+            (actor_id, now_iso(), now_iso(), before["plan_id"]),
+        )
+    else:
+        conn.execute(
+            """UPDATE agent_plans
+            SET status='rejected', approved_by_user_id=NULL, approved_at=NULL, updated_at=?
+            WHERE plan_id=?""",
+            (now_iso(), before["plan_id"]),
+        )
+    after = dict(conn.execute("SELECT * FROM agent_plans WHERE plan_id=?", (before["plan_id"],)).fetchone())
+    audit(conn, "user", actor_id, f"agent_plan.{decision}", "agent_plans", before["plan_id"], before, after, {
+        "approval_id": approval_id,
+        "plan_hash": after.get("plan_hash"),
+        "verification_result_hash": after.get("verification_result_hash") or verification_hash,
+        "via": "approval_decision",
+        "token_omitted": True,
+    })
+    runtime_event(
+        conn,
+        "rtc_agent_gateway_local",
+        f"agent_plan.{decision}",
+        "completed",
+        run_id=after.get("run_id"),
+        task_id=after.get("task_id"),
+        agent_id=after.get("agent_id"),
+        output_summary=f"Agent Plan {before['plan_id']} {decision} through approval {approval_id}.",
+    )
+    return {
+        "agent_plan": after,
+        "verification": verification,
+        "verification_result_hash": after.get("verification_result_hash") or verification_hash,
+        "token_omitted": True,
+    }, None
 
 
 def load_plan_evidence_manifest(conn: sqlite3.Connection, manifest_id: str, ident: dict, auth_ctx=None) -> tuple[sqlite3.Row | None, tuple[dict, int] | None]:
@@ -6794,6 +7104,18 @@ def resolve_agent_plan_for_run(conn: sqlite3.Connection, body: dict, task: sqlit
         return None, ({"error": "agent_plan_agent_mismatch", "message": "Agent Plan agent_id must match run_start agent_id.", "plan_id": plan["plan_id"], "token_omitted": True}, 409)
     if plan["status"] not in {"submitted", "approved"}:
         return None, ({"error": "agent_plan_not_executable", "message": "Agent Plan must be submitted or approved before run_start.", "plan_id": plan["plan_id"], "status": plan["status"], "token_omitted": True}, 409)
+    if bool(plan["approval_required"]):
+        approval = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (plan["approval_id"] or "",)).fetchone()
+        if plan["status"] != "approved" or not approval or approval["decision"] != "approved":
+            return None, ({
+                "error": "agent_plan_approval_required",
+                "message": "This Agent Plan requires human/admin/policy approval before run_start.",
+                "plan_id": plan["plan_id"],
+                "status": plan["status"],
+                "approval_id": plan["approval_id"],
+                "approval_decision": approval["decision"] if approval else None,
+                "token_omitted": True,
+            }, 428)
     stored_hash = plan["plan_hash"]
     current_hash = compute_agent_plan_hash(plan)
     if stored_hash and stored_hash != current_hash:
@@ -19361,6 +19683,16 @@ class Handler(BaseHTTPRequestHandler):
                 payload, status = local_write_auth_error
                 conn.rollback()
                 return self.send_json(payload, status)
+            if path.startswith("/api/agent-plans/") and path.endswith("/approve"):
+                plan_id = path.split("/")[-2]
+                payload, status = transition_agent_plan(conn, plan_id, "approved", self.headers, body)
+                conn.commit()
+                return self.send_json(payload, status)
+            if path.startswith("/api/agent-plans/") and path.endswith("/reject"):
+                plan_id = path.split("/")[-2]
+                payload, status = transition_agent_plan(conn, plan_id, "rejected", self.headers, body)
+                conn.commit()
+                return self.send_json(payload, status)
             if path == "/api/knowledge/index":
                 payload = sync_knowledge_index(conn, rebuild=bool(body.get("rebuild")))
                 conn.commit()
@@ -19517,6 +19849,7 @@ class Handler(BaseHTTPRequestHandler):
                 payload, status = run_hermes_openclaw_loop_workflow(body, self.headers.get("Host"))
                 return self.send_json(payload, status)
             if path == "/api/workflows/kb-bot-project":
+                body.setdefault("base_url", f"http://{self.headers.get('Host', '127.0.0.1:8787')}")
                 return self.send_json(run_kb_bot_project_workflow(conn, body), 201)
             if path == "/api/workflows/customer-task-templates/run":
                 payload, status = run_customer_task_template_workflow(conn, body)
@@ -19741,6 +20074,24 @@ class Handler(BaseHTTPRequestHandler):
             audit(conn, "user", "usr_founder", f"approval.{decision}", "approvals", approval_id, dict(before), dict(after), {"prepared_action_id": prepared_action["action_id"], "action_hash": prepared_action["action_hash"], "run_task_status_unchanged": decision == "approved", "token_omitted": True})
             conn.commit()
             return self.send_json({"approval": dict(after), "prepared_action": prepared_action_public(action_after), "resume_required": decision == "approved", "token_omitted": True})
+        agent_plan_decision, agent_plan_error = apply_agent_plan_approval_decision(conn, before, decision)
+        if agent_plan_error:
+            payload, status = agent_plan_error
+            audit(conn, "user", "usr_founder", "approval.blocked_agent_plan_transition", "approvals", approval_id, dict(before), dict(before), payload)
+            conn.commit()
+            return self.send_json(payload, status)
+        if agent_plan_decision:
+            conn.execute("UPDATE approvals SET decision=?, decided_at=? WHERE approval_id=?", (decision, now_iso(), approval_id))
+            after = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (approval_id,)).fetchone()
+            audit(conn, "user", "usr_founder", f"approval.{decision}", "approvals", approval_id, dict(before), dict(after), {"agent_plan_id": agent_plan_decision["agent_plan"]["plan_id"], "token_omitted": True})
+            conn.commit()
+            return self.send_json({
+                "approval": dict(after),
+                "agent_plan": agent_plan_decision["agent_plan"],
+                "verification": agent_plan_decision["verification"],
+                "verification_result_hash": agent_plan_decision["verification_result_hash"],
+                "token_omitted": True,
+            })
         conn.execute("UPDATE approvals SET decision=?, decided_at=? WHERE approval_id=?", (decision, now_iso(), approval_id))
         if before["tool_call_id"]:
             tool_before = conn.execute("SELECT * FROM tool_calls WHERE tool_call_id=?", (before["tool_call_id"],)).fetchone()
