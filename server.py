@@ -17171,6 +17171,41 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
     agent_id = requested_agent_id or (assigned_agent_ids[0] if assigned_agent_ids else "<agent_id>")
     risk_level = (selected_task or {}).get("risk_level") or "medium"
     approval_required = risk_level in {"high", "critical"}
+    repo_map_query = commander_safe_text(
+        " ".join(
+            part for part in [
+                selected_title if selected_title != selected_task_id else "",
+                selected_task_id if selected_task_id != "<task_id>" else "",
+                query,
+            ]
+            if part
+        ).strip() or query,
+        240,
+    )
+    repo_map_limit = min(max(limit, 6), 12)
+    repo_map_char_budget = 4800
+    repo_map_command = f"agentops commander repo-map --query {shlex.quote(repo_map_query)} --limit {repo_map_limit} --char-budget {repo_map_char_budget}"
+    repo_map_payload = commander_repo_map({
+        "q": [repo_map_query],
+        "limit": [str(repo_map_limit)],
+        "char_budget": [str(repo_map_char_budget)],
+        "candidate_limit": ["360"],
+    }, headers)
+    safe_repo_map_files = [
+        {
+            "path": item.get("path"),
+            "score": item.get("score"),
+            "matched_fields": item.get("matched_fields") or [],
+            "symbols": item.get("symbols") or [],
+            "content_hash": item.get("content_hash"),
+            "source_provenance": item.get("source_provenance") or {},
+            "rank_reason": item.get("rank_reason"),
+            "snippets_omitted": True,
+            "raw_content_omitted": True,
+            "token_omitted": True,
+        }
+        for item in (repo_map_payload.get("files") or [])[:repo_map_limit]
+    ]
     knowledge_paths = [row.get("path") for row in safe_knowledge_results if row.get("path")]
     referenced_specs = ["PROJECT_SPEC.md", "AGENT_WORKFLOW.md", "BASE_INDEX.md"]
     referenced_memories = []
@@ -17182,7 +17217,7 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
     if not referenced_memories:
         referenced_memories = ["knowledge/shared/common_failures.md"]
     referenced_bases = ["base_local_tasks", "base_local_memory", "agentops_mis.db"]
-    proposed_files = ["<declare_before_execution>"]
+    proposed_files = [item.get("path") for item in safe_repo_map_files if item.get("path")] or ["<declare_before_execution>"]
     execution_steps = ["READ", "PLAN", "RETRIEVE", "COMPARE", "EXECUTE", "VERIFY", "RECORD"]
     def csv_arg(values: list[str]) -> str:
         return ",".join(str(value) for value in values if value)
@@ -17622,8 +17657,21 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
         },
         {
             "phase": "RETRIEVE",
-            "commands": [retrieve_command],
+            "commands": [retrieve_command, repo_map_command],
             "knowledge_results": safe_knowledge_results,
+            "repo_map": {
+                "operation": repo_map_payload.get("operation"),
+                "status": repo_map_payload.get("status"),
+                "query": repo_map_payload.get("query"),
+                "command": repo_map_command,
+                "selected_count": repo_map_payload.get("selected_count"),
+                "candidate_count": repo_map_payload.get("candidate_count"),
+                "files": safe_repo_map_files,
+                "safety": repo_map_payload.get("safety") or {},
+                "snippets_omitted": True,
+                "raw_content_omitted": True,
+                "token_omitted": True,
+            },
         },
         {
             "phase": "COMPARE",
@@ -17651,7 +17699,7 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
     ]
     handoff_commands = ((handoff.get("work_order") or {}).get("commands") or [])[:8]
     commands = []
-    for item in [self_check_command, retrieve_command, plan_create_command, plan_verify_command, compare_command, execute_command, verify_command, evidence_report_command, plan_evidence_command, record_command, action_receipts_command, *handoff_commands]:
+    for item in [self_check_command, retrieve_command, repo_map_command, plan_create_command, plan_verify_command, compare_command, execute_command, verify_command, evidence_report_command, plan_evidence_command, record_command, action_receipts_command, *handoff_commands]:
         if item and item not in commands:
             commands.append(item)
     return {
@@ -17667,6 +17715,7 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
             "intake_status": intake.get("status"),
             "selected_task_severity": (selected_task or {}).get("severity"),
             "knowledge_results": knowledge_payload.get("count", 0),
+            "repo_map_files": repo_map_payload.get("selected_count", 0),
             "handoff_status": handoff.get("status"),
             "commands": len(commands),
             "approval_required": approval_required,
@@ -17693,6 +17742,20 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
                 "count": knowledge_payload.get("count"),
                 "results": safe_knowledge_results,
                 "index": knowledge_payload.get("index") or {},
+                "token_omitted": True,
+            },
+            "repo_map": {
+                "operation": repo_map_payload.get("operation"),
+                "status": repo_map_payload.get("status"),
+                "query": repo_map_payload.get("query"),
+                "command": repo_map_command,
+                "selected_count": repo_map_payload.get("selected_count"),
+                "candidate_count": repo_map_payload.get("candidate_count"),
+                "files": safe_repo_map_files,
+                "ranking": repo_map_payload.get("ranking") or {},
+                "safety": repo_map_payload.get("safety") or {},
+                "snippets_omitted": True,
+                "raw_content_omitted": True,
                 "token_omitted": True,
             },
             "handoff": {

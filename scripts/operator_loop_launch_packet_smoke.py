@@ -161,6 +161,7 @@ def validate_packet(payload: dict, label: str, task_id: str, agent_id: str, fail
     require("agentops agent-plan create" in joined, f"{label} missing agent-plan create command: {commands}", failures)
     require("agentops agent-plan verify" in joined, f"{label} missing plan verify command: {commands}", failures)
     require("agentops knowledge search" in joined, f"{label} missing knowledge search command: {commands}", failures)
+    require("agentops commander repo-map" in joined, f"{label} missing commander repo-map command: {commands}", failures)
     require("agentops operator loop-self-check" in joined, f"{label} missing loop self-check command: {commands}", failures)
     require("agentops operator evidence-report" in joined, f"{label} missing evidence report command: {commands}", failures)
     require("agentops operator action-receipts" in joined, f"{label} missing action receipts command: {commands}", failures)
@@ -183,8 +184,19 @@ def validate_packet(payload: dict, label: str, task_id: str, agent_id: str, fail
     require(bounded_runner.get("policy_id") == "advance_loop_local_bounded_v1", f"{label} bounded policy missing: {bounded_runner}", failures)
     require(bounded_runner.get("server_executes_shell") is False, f"{label} server shell boundary missing: {bounded_runner}", failures)
     require("--confirm-live" in (bounded_runner.get("denied_flags") or []), f"{label} live confirm denied flag missing: {bounded_runner}", failures)
+    retrieve_phase = next((item for item in payload.get("launch_sequence") or [] if item.get("phase") == "RETRIEVE"), {})
     verify_phase = next((item for item in payload.get("launch_sequence") or [] if item.get("phase") == "VERIFY"), {})
     record_phase = next((item for item in payload.get("launch_sequence") or [] if item.get("phase") == "RECORD"), {})
+    repo_map = retrieve_phase.get("repo_map") or {}
+    require(repo_map.get("operation") == "repo_map", f"{label} retrieve phase lacks repo-map: {retrieve_phase}", failures)
+    require(repo_map.get("status") in {"ready", "empty"}, f"{label} repo-map status invalid: {repo_map}", failures)
+    require(repo_map.get("command") and "agentops commander repo-map" in repo_map.get("command"), f"{label} repo-map command missing: {repo_map}", failures)
+    require((repo_map.get("safety") or {}).get("read_only") is True, f"{label} repo-map read-only proof missing: {repo_map}", failures)
+    require(repo_map.get("snippets_omitted") is True and repo_map.get("raw_content_omitted") is True, f"{label} repo-map should omit raw content: {repo_map}", failures)
+    for item in repo_map.get("files") or []:
+        require(item.get("path") and item.get("content_hash"), f"{label} repo-map file missing path/hash: {item}", failures)
+        require((item.get("source_provenance") or {}).get("raw_content_returned") is False, f"{label} repo-map provenance leaked raw body: {item}", failures)
+        require(item.get("snippets_omitted") is True and item.get("raw_content_omitted") is True, f"{label} repo-map file should omit snippets/raw body: {item}", failures)
     require((verify_phase.get("evaluation_contract") or {}).get("operation") == "loop_evaluation_contract", f"{label} verify phase lacks evaluation contract: {verify_phase}", failures)
     require((record_phase.get("audit_contract") or {}).get("operation") == "loop_audit_contract", f"{label} record phase lacks audit contract: {record_phase}", failures)
     execution_chain = payload.get("execution_chain") or []
@@ -231,6 +243,7 @@ def validate_packet(payload: dict, label: str, task_id: str, agent_id: str, fail
     sources = payload.get("sources") or {}
     require((sources.get("intake") or {}).get("operation") == "task_intake_checklist", f"{label} missing intake source: {sources}", failures)
     require((sources.get("knowledge_search") or {}).get("operation") == "knowledge_search", f"{label} missing knowledge source: {sources}", failures)
+    require((sources.get("repo_map") or {}).get("operation") == "repo_map", f"{label} missing repo-map source: {sources}", failures)
     require((sources.get("handoff") or {}).get("operation") == "operator_handoff", f"{label} missing handoff source: {sources}", failures)
 
 

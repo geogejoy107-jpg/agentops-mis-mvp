@@ -1571,13 +1571,18 @@ agentops operator loop-launch-packet --task-id tsk_123 --agent-id agt_worker --l
 
 Maps to `GET /api/operator/loop-launch-packet`. This is a read-only Agent Work
 Method launch packet for Hermes, OpenClaw, Codex, or a remote Agent. It combines
-the intake checklist, safe knowledge-search metadata, operator handoff state,
-and a complete agent-plan draft into one machine-readable
+the intake checklist, safe knowledge-search metadata, repo-map localization,
+operator handoff state, and a complete agent-plan draft into one machine-readable
 `READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD` sequence.
-It emits commands for loop self-check, knowledge search, plan creation/verification,
-intake comparison, enforced task pull, loop verification, plan-evidence
-binding, evidence reporting, Action Queue receipt readback, and review queue
-drain. The payload includes an `evaluation_contract` with minimum exit
+It emits commands for loop self-check, knowledge search, commander repo-map
+localization, plan creation/verification, intake comparison, enforced task
+pull, loop verification, plan-evidence binding, evidence reporting, Action
+Queue receipt readback, and review queue drain. The RETRIEVE phase includes
+`agentops commander repo-map`
+and `sources.repo_map` with sanitized paths, symbols, hashes, provenance,
+ranking proof, and raw-content/snippet omission flags; the agent-plan draft
+uses those paths as initial proposed files when candidates are found. The
+payload includes an `evaluation_contract` with minimum exit
 criteria and required ledgers, plus an `audit_contract` with tamper-chain,
 recording, bounded-runner, and raw-content omission requirements. It also
 includes an `execution_chain` that spells out self-check, bounded advance

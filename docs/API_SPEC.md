@@ -346,6 +346,16 @@ the `task_intake` source and reports `task_intake_checked`,
 `task_intake_ready`, `task_intake_blocked`, `task_intake_attention`, and
 `task_intake_missing_agent_plan`.
 
+`GET /api/operator/loop-launch-packet` is the read-only Agent Work Method
+handoff packet for Hermes, OpenClaw, Codex, or remote agents. Its RETRIEVE
+phase includes both safe knowledge-search metadata and a
+`GET /api/commander/repo-map` localization source: sanitized paths, symbols,
+content hashes, provenance, ranking proof, omission flags, and the exact
+`agentops commander repo-map` command to rerun. The embedded agent-plan draft
+uses those repo-map paths as initial `proposed_files_to_change` candidates
+when localization succeeds. The packet does not create plans, run workers,
+approve gates, create memories, mutate ledgers, or return raw file bodies.
+
 `GET /api/operator/loop-audit` is the read-only Agent Work Method Block audit.
 It turns `READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD`
 into seven machine-checkable gates using the existing knowledge index, Agent

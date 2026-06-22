@@ -141,10 +141,26 @@ def validate(payload: dict, failures: list[str]) -> None:
         require(not str(item.get("path") or "").startswith("node_modules/"), f"node_modules leaked into repo map: {item}", failures)
 
 
+def validate_launch_packet(payload: dict, failures: list[str]) -> None:
+    require(payload.get("operation") == "operator_loop_launch_packet", f"launch packet operation mismatch: {payload}", failures)
+    repo_map = (payload.get("sources") or {}).get("repo_map") or {}
+    require(repo_map.get("operation") == "repo_map", f"launch packet repo-map source missing: {payload}", failures)
+    require("agentops commander repo-map" in str(repo_map.get("command") or ""), f"launch packet repo-map command missing: {repo_map}", failures)
+    require((repo_map.get("safety") or {}).get("read_only") is True, f"launch packet repo-map read-only proof missing: {repo_map}", failures)
+    require(repo_map.get("snippets_omitted") is True, f"launch packet should omit repo-map snippets: {repo_map}", failures)
+    require(repo_map.get("raw_content_omitted") is True, f"launch packet should omit raw repo content: {repo_map}", failures)
+    require(int(repo_map.get("selected_count") or 0) > 0, f"launch packet repo-map should select files: {repo_map}", failures)
+    retrieve = next((item for item in payload.get("launch_sequence") or [] if item.get("phase") == "RETRIEVE"), {})
+    retrieve_commands = retrieve.get("commands") or []
+    require(any("agentops commander repo-map" in str(command) for command in retrieve_commands), f"RETRIEVE phase missing repo-map command: {retrieve}", failures)
+    proposed_files = (payload.get("agent_plan_draft") or {}).get("proposed_files_to_change") or []
+    require(proposed_files and proposed_files != ["<declare_before_execution>"], f"agent plan draft did not inherit repo-map files: {proposed_files}", failures)
+
+
 def main() -> int:
     failures: list[str] = []
     outputs: list[str] = []
-    query = "commander repo-map cmd_commander_repo_map /api/commander/repo-map"
+    query = "commander_repo_map cmd_commander_repo_map Handler /api/commander/repo-map"
     with tempfile.TemporaryDirectory(prefix="agentops-repo-map-") as tmp:
         tmpdir = Path(tmp)
         db_path = tmpdir / "agentops_mis.db"
@@ -157,17 +173,20 @@ def main() -> int:
             status, api_payload, raw_one = http_json(base_url, "/api/commander/repo-map", {"q": query, "limit": 8, "char_budget": 4800})
             status_two, api_payload_two, raw_two = http_json(base_url, "/api/commander/repo-map", {"q": query, "limit": 8, "char_budget": 4800})
             status_bad, api_payload_bad, raw_bad = http_json(base_url, "/api/commander/repo-map", {"q": query, "limit": "bad", "char_budget": "bad", "candidate_limit": "bad"})
+            status_launch, launch_payload, raw_launch = http_json(base_url, "/api/operator/loop-launch-packet", {"q": query, "limit": 8})
             after = table_counts(db_path)
-            outputs.extend([raw_one, raw_two, raw_bad])
+            outputs.extend([raw_one, raw_two, raw_bad, raw_launch])
             require(status == 200, f"API status mismatch: {status} {api_payload}", failures)
             require(status_two == 200, f"second API status mismatch: {status_two} {api_payload_two}", failures)
             require(status_bad == 200, f"bad query params should fall back to bounded defaults: {status_bad} {api_payload_bad}", failures)
+            require(status_launch == 200, f"launch packet status mismatch: {status_launch} {launch_payload}", failures)
             validate(api_payload, failures)
             validate(api_payload_bad, failures)
+            validate_launch_packet(launch_payload, failures)
             require(api_payload_bad.get("limit") == 12, f"bad limit should use default: {api_payload_bad}", failures)
             require(api_payload_bad.get("char_budget") == 8000, f"bad char_budget should use default: {api_payload_bad}", failures)
             require([item.get("path") for item in api_payload.get("files") or []] == [item.get("path") for item in api_payload_two.get("files") or []], "repo-map ranking is not deterministic", failures)
-            require(before == after, f"repo-map mutated ledger tables: {before} -> {after}", failures)
+            require(before == after, f"repo-map/launch packet mutated ledger tables: {before} -> {after}", failures)
 
             proc = run_cli(base_url, query)
             outputs.extend([proc.stdout, proc.stderr])
