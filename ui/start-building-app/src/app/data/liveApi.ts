@@ -1762,6 +1762,24 @@ export interface OperatorLoopLaunchPacketPayload {
   method: string;
   summary: Record<string, number | string | boolean | null | undefined>;
   launch_sequence: Record<string, unknown>[];
+  execution_chain: {
+    step_id: string;
+    label: string;
+    phase: string;
+    command: string;
+    verify_command?: string | null;
+    receipt_command?: string | null;
+    mutating: boolean;
+    confirm_required: boolean;
+    receipt_required: boolean;
+    source?: string;
+    selected_gate?: string | null;
+    selected_status?: string | null;
+    action_signature?: string | null;
+    policy_id?: string | null;
+    next_on_pass?: string | null;
+    token_omitted?: boolean;
+  }[];
   agent_plan_draft: Record<string, unknown>;
   evaluation_contract: {
     operation: string;
@@ -5069,6 +5087,7 @@ export async function loadOperatorLoopLaunchPacket(limit = 8, query = "Agent Wor
     method: "READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD",
     summary: {},
     launch_sequence: [],
+    execution_chain: [],
     agent_plan_draft: {},
     evaluation_contract: {
       operation: "loop_evaluation_contract",
@@ -5114,6 +5133,24 @@ export async function loadOperatorLoopLaunchPacket(limit = 8, query = "Agent Wor
     method: String(raw.method || "READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD"),
     summary: summaryRaw as Record<string, number | string | boolean | null | undefined>,
     launch_sequence: asArray<Record<string, unknown>>(raw.launch_sequence),
+    execution_chain: asArray<Record<string, unknown>>(raw.execution_chain).map((item) => ({
+      step_id: String(item.step_id || ""),
+      label: String(item.label || item.step_id || ""),
+      phase: String(item.phase || ""),
+      command: String(item.command || ""),
+      verify_command: item.verify_command ? String(item.verify_command) : null,
+      receipt_command: item.receipt_command ? String(item.receipt_command) : null,
+      mutating: boolValue(item.mutating),
+      confirm_required: boolValue(item.confirm_required),
+      receipt_required: boolValue(item.receipt_required),
+      source: item.source ? String(item.source) : undefined,
+      selected_gate: item.selected_gate ? String(item.selected_gate) : null,
+      selected_status: item.selected_status ? String(item.selected_status) : null,
+      action_signature: item.action_signature ? String(item.action_signature) : null,
+      policy_id: item.policy_id ? String(item.policy_id) : null,
+      next_on_pass: item.next_on_pass ? String(item.next_on_pass) : null,
+      token_omitted: item.token_omitted === undefined ? undefined : boolValue(item.token_omitted),
+    })).filter((item) => item.step_id || item.command),
     agent_plan_draft: typeof raw.agent_plan_draft === "object" && raw.agent_plan_draft !== null ? raw.agent_plan_draft as Record<string, unknown> : {},
     evaluation_contract: {
       operation: String(evaluationRaw.operation || "loop_evaluation_contract"),

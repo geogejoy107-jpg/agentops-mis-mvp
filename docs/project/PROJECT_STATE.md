@@ -1,12 +1,14 @@
 # AgentOps MIS Current Project State
 
-> Status date: 2026-06-21  
-> Repository: `geogejoy107-jpg/agentops-mis-mvp`  
-> Development line: `codex/agent-gateway-kb-demo`  
-> Project-governance integration commit: `5f1706c3afed22156e0bb3dc06ca351f698713d9`  
-> Last full audit baseline: `8d1827e00629bdca4779794121ca4a31dfa3f1e1`  
-> Governance PR: `#6` merged  
-> Audit PR: `#5` draft
+> Status date: 2026-06-22
+> Repository: `geogejoy107-jpg/agentops-mis-mvp`
+> Development line: `codex/agent-gateway-kb-demo`
+> Project-governance integration commit: `5f1706c3afed22156e0bb3dc06ca351f698713d9`
+> Last full audit baseline: `8d1827e00629bdca4779794121ca4a31dfa3f1e1`
+> Current observed HEAD: `1217ab612bf560db9c9bacaeee915285be3e8a43`
+> Current release status: `READY_TO_MERGE` by `docs/V1_5_MERGE_READINESS_CHECKLIST.md`
+> Governance PR: `#6` merged
+> Audit PR: `#5` draft; its P0 findings are now incorporated into the hardening overlay.
 
 Always fetch the exact current development HEAD from GitHub before code or architecture work. The integration commit above is a stable baseline, not a claim that the branch will never advance.
 
@@ -50,30 +52,30 @@ The full audit at `8d1827e` verified a credible local-first control-plane candid
 - Markdown plus SQLite FTS5 Knowledge Index v0;
 - Agent Plan API/CLI and verification v0.
 
-Observed post-audit work includes customer local-deployment and SQLite backup/restore tooling, the Commander Work Package Planner, and the project-governance integration at `5f1706c3`. These later commits have not yet received the same complete audit as `8d1827e`; historical blocker status must not be assumed resolved.
+Observed post-audit work includes customer local-deployment and SQLite backup/restore tooling, the Commander Work Package Planner, project-governance integration at `5f1706c3`, and the v1.5 hardening pass. The audit blockers are now captured as explicit P0 gates in `docs/V1_5_AGENT_GATEWAY_HARDENING_OBJECTIVE.md` and `docs/V1_5_MERGE_READINESS_CHECKLIST.md`; future commits must re-run those exact-head gates rather than rely on historical pass/fail claims.
 
 ## Current Deployment Truth
 
 Appropriate now: loopback local use, course demonstration, controlled dogfood, and single-customer validation with explicit confirmation.
 
-Not yet approved as a canonical claim: shared production deployment, multi-tenant SaaS, unattended high-impact actions, or enterprise-grade multi-workspace ACL.
+Not yet approved as a canonical claim: hosted SaaS, billing, unattended high-impact actions, universal runtime-internal per-action governance, or enterprise-grade multi-workspace operations beyond the tested local/shared guards.
 
 ## Current Milestone
 
 ```text
 project governance installed
--> re-verify exact latest development HEAD
--> close execution and permission correctness gaps
--> establish CI, security, concurrency, and performance gates
--> produce a clean v1.5 release candidate
+-> audit findings converted into hardening objective
+-> Agent Plan / Approval Wall / redaction / workspace / knowledge / SQLite / CI gates implemented or guarded
+-> exact-head CI and strict merge-readiness checks green
+-> READY_TO_MERGE release-candidate state
 -> merge to main through a reviewed release PR
 ```
 
 Horizontal feature expansion remains secondary until this sequence is complete.
 
-## P0 Items Requiring Current-HEAD Verification
+## P0 Findings Incorporated Into Release Gates
 
-The last full audit found these areas. Each must be checked against the exact latest development commit before changing code:
+The first full audit found these areas. They are no longer only loose notes; each is mapped to hardening objective/checklist evidence and must remain green on the exact current head:
 
 1. Agent Plan approval roles and self-approval prevention.
 2. Immutable Plan hash and verified Plan hard-binding to Run and Delivery.
@@ -104,6 +106,6 @@ The last full audit found these areas. Each must be checked against the exact la
 - ChatGPT Project Instructions cannot be edited through the available connector.
 - Automatic capture must remain candidate-only until deduplication and approval are enforced.
 
-## Next Single Recommended Action
+## Current Release Command
 
-Re-audit the exact latest development head, reconcile every historical P0 item with current code and tests, and implement the first unresolved correctness gate: approval-role separation plus verified Plan-to-Run hard binding.
+Keep the branch frozen for release-hardening changes, re-run strict exact-head gates after any new commit, and merge through the reviewed PR only while `docs/V1_5_MERGE_READINESS_CHECKLIST.md` remains `READY_TO_MERGE`.

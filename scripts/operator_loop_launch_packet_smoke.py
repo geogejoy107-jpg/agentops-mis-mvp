@@ -187,6 +187,30 @@ def validate_packet(payload: dict, label: str, task_id: str, agent_id: str, fail
     record_phase = next((item for item in payload.get("launch_sequence") or [] if item.get("phase") == "RECORD"), {})
     require((verify_phase.get("evaluation_contract") or {}).get("operation") == "loop_evaluation_contract", f"{label} verify phase lacks evaluation contract: {verify_phase}", failures)
     require((record_phase.get("audit_contract") or {}).get("operation") == "loop_audit_contract", f"{label} record phase lacks audit contract: {record_phase}", failures)
+    execution_chain = payload.get("execution_chain") or []
+    require(len(execution_chain) >= 7, f"{label} execution chain too short: {execution_chain}", failures)
+    chain_ids = [item.get("step_id") for item in execution_chain]
+    for step_id in [
+        "pre_advance_self_check",
+        "bounded_advance_preview",
+        "bounded_advance_confirm",
+        "verify_loop_evidence",
+        "record_plan_evidence",
+        "record_review_queue",
+        "loop_audit_final",
+    ]:
+        require(step_id in chain_ids, f"{label} execution chain missing {step_id}: {chain_ids}", failures)
+    chain_joined = "\n".join(str(item.get("command") or "") for item in execution_chain)
+    require("agentops operator advance-loop" in chain_joined, f"{label} execution chain missing advance-loop: {execution_chain}", failures)
+    require("--confirm-advance" in chain_joined, f"{label} execution chain missing confirm advance: {execution_chain}", failures)
+    require("agentops plan-evidence create" in chain_joined, f"{label} execution chain missing plan evidence: {execution_chain}", failures)
+    confirm_step = next((item for item in execution_chain if item.get("step_id") == "bounded_advance_confirm"), {})
+    require(confirm_step.get("mutating") is True, f"{label} confirm step should be mutating: {confirm_step}", failures)
+    require(confirm_step.get("confirm_required") is True, f"{label} confirm step should require confirmation: {confirm_step}", failures)
+    require(confirm_step.get("receipt_required") is True, f"{label} confirm step should require receipt: {confirm_step}", failures)
+    require(confirm_step.get("policy_id") == "advance_loop_local_bounded_v1", f"{label} confirm step policy missing: {confirm_step}", failures)
+    require("--confirm-live" in (confirm_step.get("denied_flags") or []), f"{label} confirm step denied flags missing: {confirm_step}", failures)
+    require(all(item.get("token_omitted") is True for item in execution_chain), f"{label} execution chain token omission missing: {execution_chain}", failures)
     sources = payload.get("sources") or {}
     require((sources.get("intake") or {}).get("operation") == "task_intake_checklist", f"{label} missing intake source: {sources}", failures)
     require((sources.get("knowledge_search") or {}).get("operation") == "knowledge_search", f"{label} missing knowledge source: {sources}", failures)

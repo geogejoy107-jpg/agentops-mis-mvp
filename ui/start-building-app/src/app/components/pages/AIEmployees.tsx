@@ -510,6 +510,9 @@ export function AIEmployees() {
   const loopLaunchBoundedRunner = loopLaunchAuditContract?.bounded_runner || {};
   const loopLaunchReceiptEvaluation = loopLaunchEvaluationContract?.receipt_evaluation || {};
   const loopLaunchCommands = operatorLoopLaunchPacket?.commands || [];
+  const loopLaunchExecutionChain = operatorLoopLaunchPacket?.execution_chain || [];
+  const loopLaunchMutatingSteps = loopLaunchExecutionChain.filter(step => step.mutating).length;
+  const loopLaunchReceiptSteps = loopLaunchExecutionChain.filter(step => step.receipt_required).length;
   const loopLaunchPacketJson = operatorLoopLaunchPacket ? JSON.stringify({
     status: operatorLoopLaunchPacket.status,
     method: operatorLoopLaunchPacket.method,
@@ -519,6 +522,7 @@ export function AIEmployees() {
     agent_plan_draft: operatorLoopLaunchPacket.agent_plan_draft,
     evaluation_contract: operatorLoopLaunchPacket.evaluation_contract,
     audit_contract: operatorLoopLaunchPacket.audit_contract,
+    execution_chain: operatorLoopLaunchPacket.execution_chain,
     commands: operatorLoopLaunchPacket.commands,
     safety: operatorLoopLaunchPacket.safety,
     token_omitted: operatorLoopLaunchPacket.token_omitted,
@@ -663,6 +667,10 @@ export function AIEmployees() {
       tamperChain: "Tamper chain",
       rawContentPolicy: "Raw-content policy",
       copyLaunchPacketJson: "Copy launch packet",
+      executionChain: "Execution chain",
+      mutatingSteps: "Mutating steps",
+      receiptSteps: "Receipt steps",
+      confirmRequired: "Confirm required",
       operatorHandoffTitle: "Operator handoff",
       operatorHandoffSummary: "Read-only handoff package for Hermes, OpenClaw, Codex, or a human operator: loop work order, receipts, review state, and source proof.",
       handoffCommands: "Handoff commands",
@@ -1135,6 +1143,10 @@ export function AIEmployees() {
       tamperChain: "防篡改链",
       rawContentPolicy: "原始内容规则",
       copyLaunchPacketJson: "复制启动包",
+      executionChain: "执行链",
+      mutatingSteps: "写入步骤",
+      receiptSteps: "收据步骤",
+      confirmRequired: "需要确认",
       operatorHandoffTitle: "Operator 交接包",
       operatorHandoffSummary: "给 Hermes、OpenClaw、Codex 或人工 operator 的只读交接包：Loop 执行包、收据、评审状态和来源证明。",
       handoffCommands: "交接命令",
@@ -3911,7 +3923,7 @@ export function AIEmployees() {
                   { label: copy.receiptEvaluations, value: `${Number(loopLaunchReceiptEvaluation.evaluated ?? 0)}/${Number(loopLaunchReceiptEvaluation.required ?? 0)}`, status: String(loopLaunchReceiptEvaluation.status || "unknown") },
                   { label: copy.tamperChain, value: loopLaunchAuditContract?.tamper_chain_required ? "required" : "missing", status: loopLaunchAuditContract?.tamper_chain_required ? "pass" : "blocked" },
                   { label: copy.agentPlan, value: operatorLoopLaunchPacket.task_id || "—", status: operatorLoopLaunchPacket.task_id ? "attention" : "unknown" },
-                  { label: copy.handoffCommands, value: loopLaunchCommands.length, status: loopLaunchCommands.length > 0 ? "attention" : "unknown" },
+                  { label: copy.executionChain, value: `${loopLaunchExecutionChain.length}/${loopLaunchReceiptSteps}`, status: loopLaunchExecutionChain.length > 0 ? "attention" : "unknown" },
                   { label: copy.advanceLoopPolicyLabel, value: String(loopLaunchBoundedRunner.policy_id || "advance_loop_local_bounded_v1"), status: loopLaunchBoundedRunner.server_executes_shell ? "blocked" : "pass" },
                 ].map((item) => (
                   <div key={item.label} className="rounded px-2 py-1" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
@@ -3923,6 +3935,68 @@ export function AIEmployees() {
                   </div>
                 ))}
               </div>
+              {loopLaunchExecutionChain.length > 0 && (
+                <div className="mt-2 rounded px-2 py-1.5" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.executionChain}</div>
+                      <div className="text-[9px] mt-0.5 truncate" style={{ color: "var(--mis-muted)" }}>
+                        {copy.mutatingSteps}: {loopLaunchMutatingSteps} · {copy.receiptSteps}: {loopLaunchReceiptSteps}
+                      </div>
+                    </div>
+                    <StatusBadge status={loopLaunchMutatingSteps > 0 ? "attention" : "pass"} label={loopLaunchMutatingSteps > 0 ? copy.confirmRequired : copy.readOnlyProof} />
+                  </div>
+                  <div className="mt-2 overflow-x-auto">
+                    <div className="flex items-stretch gap-1 min-w-max">
+                      {loopLaunchExecutionChain.slice(0, 7).map((step, index) => (
+                        <div key={step.step_id || `${step.command}-${index}`} className="flex items-center gap-1">
+                          <div className="w-[150px] rounded px-2 py-1.5" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                            <div className="flex items-center justify-between gap-1">
+                              <span className="text-[9px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{step.label || step.step_id}</span>
+                              <StatusBadge status={step.mutating ? "attention" : "pass"} />
+                            </div>
+                            <div className="text-[8px] mt-0.5 truncate" style={{ color: "var(--mis-muted)" }}>
+                              {step.phase} · {step.source || copy.actionSource}
+                            </div>
+                            <div className="flex flex-wrap gap-1 mt-1">
+                              {step.command && (
+                                <button
+                                  onClick={() => void copyIntakeCommand(step.command)}
+                                  className="inline-flex items-center gap-1 text-[8px] px-1 py-0.5 rounded max-w-full"
+                                  style={{ color: step.mutating ? "var(--mis-warning)" : "var(--mis-cyan)", background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}
+                                  title={step.command}
+                                >
+                                  <Copy size={8} />
+                                  <span className="truncate max-w-[90px]">{copiedIntakeCommand === step.command ? copy.copiedCommand : copy.copyActionCommand}</span>
+                                </button>
+                              )}
+                              {step.verify_command && (
+                                <button
+                                  onClick={() => void copyIntakeCommand(String(step.verify_command))}
+                                  className="inline-flex items-center gap-1 text-[8px] px-1 py-0.5 rounded max-w-full"
+                                  style={{ color: "var(--mis-success)", background: "rgba(45,212,191,0.08)", border: "1px solid rgba(45,212,191,0.18)" }}
+                                  title={String(step.verify_command)}
+                                >
+                                  <Copy size={8} />
+                                  <span className="truncate max-w-[74px]">{copiedIntakeCommand === step.verify_command ? copy.copiedCommand : copy.verifyAfterAction}</span>
+                                </button>
+                              )}
+                            </div>
+                            {(step.confirm_required || step.receipt_required) && (
+                              <div className="text-[8px] mt-1 truncate" style={{ color: "var(--mis-warning)" }}>
+                                {step.confirm_required ? copy.confirmRequired : copy.receiptProof} · {step.policy_id || step.selected_gate || "—"}
+                              </div>
+                            )}
+                          </div>
+                          {index < Math.min(loopLaunchExecutionChain.length, 7) - 1 && (
+                            <div className="text-[10px]" style={{ color: "var(--mis-dim)" }}>-&gt;</div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
               <div className="grid grid-cols-1 xl:grid-cols-3 gap-2 mt-2">
                 <div className="rounded px-2 py-1.5" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
                   <div className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.exitCriteria}</div>

@@ -1,40 +1,41 @@
 # AgentOps MIS Prioritized Backlog
 
-> Status date: 2026-06-21  
-> Development line: `codex/agent-gateway-kb-demo`  
-> Latest observed head when this backlog was created: `6305b2533f7219ecdeb1fc3763e1196a25a38272`
+> Status date: 2026-06-22
+> Development line: `codex/agent-gateway-kb-demo`
+> Latest observed head when this backlog was updated: `1217ab612bf560db9c9bacaeee915285be3e8a43`
+> Current release status: `READY_TO_MERGE`
 
 ## Status Vocabulary
 
 ```text
-Next | Verify Current Head | Ready | In Progress | Blocked | Done | Superseded
+Next | Verify Current Head | Ready | In Progress | Blocked | Done | Keep Green | Superseded
 ```
 
 ## P0 — Release and Authority Correctness
 
 | ID | Work item | Status | Acceptance evidence |
 |---|---|---|---|
-| P0-00 | Re-audit the exact latest development head | Next | Current branch/commit stated; each historical blocker marked open, partially resolved, or closed with file/test evidence |
-| P0-01 | Separate Agent Plan authoring from approval | Verify Current Head | Agent may create only draft/submitted plans; only human/admin path can approve/reject; audit records actor and transition |
-| P0-02 | Hard-bind a verified immutable Agent Plan to Run and Delivery | Verify Current Head | `plan_id`, version/hash, verification and approval checked at run start; delivery proves plan/run/tool/eval/artifact consistency |
-| P0-03 | Validate plan reference provenance and visibility | Verify Current Head | Referenced specs, files, memories, bases, and decisions exist and are visible in the same workspace/project scope |
-| P0-04 | Close Prepared Action approval and exact resume | Verify Current Head | Approval is bound to one action hash and checkpoint; approve resumes once; reject blocks; retries do not duplicate side effects |
-| P0-05 | Unify redaction and shared-deployment authentication guards | Verify Current Head | Server, worker, and CLI use one redaction contract; non-local production mode fails closed without configured authentication |
-| P0-06 | Replace approximate collaborator and workspace visibility checks | Verify Current Head | Exact relationship or structured membership checks; negative cross-workspace tests pass |
-| P0-07 | Add Knowledge workspace/ACL isolation and retrieval provenance | Verify Current Head | Search filters by workspace/project/access tags; result carries source, version/hash, authority class, and visibility proof |
-| P0-08 | Establish SQLite concurrency baseline | Verify Current Head | Central connection factory uses foreign keys, WAL, busy timeout, short transactions; concurrent benchmark reports lock/error rates |
-| P0-09 | Establish CI, secret scan, SBOM, license, and release evidence | Verify Current Head | PR head receives automated checks; safe smoke/build commands pass; Gitleaks/SBOM/license/provenance evidence attached |
-| P0-10 | Install durable project governance in repository and Notion | In Progress | `AGENTS.md`, project state/decision/backlog/handoff files, Project Ledger views, repo-local skill, and a governance PR exist |
+| P0-00 | Re-audit the exact latest development head | Done | `docs/V1_5_MERGE_READINESS_CHECKLIST.md` is `READY_TO_MERGE`; strict gates read the current `git rev-parse HEAD` at runtime |
+| P0-01 | Separate Agent Plan authoring from approval | Keep Green | Guarded by `scripts/agent_plan_integrity_smoke.py` and `scripts/approval_semantics_boundary_smoke.py` |
+| P0-02 | Hard-bind a verified immutable Agent Plan to Run and Delivery | Keep Green | Guarded by `scripts/run_start_plan_gate_smoke.py`, `scripts/operator_evidence_report_smoke.py`, and release checklist plan-evidence gates |
+| P0-03 | Validate plan reference provenance and visibility | Keep Green | Guarded by `scripts/agent_plan_integrity_smoke.py`, `scripts/knowledge_scope_policy_smoke.py`, and `scripts/agent_gateway_knowledge_scope_smoke.py` |
+| P0-04 | Close Prepared Action approval and exact resume | Keep Green | Guarded by prepared-action and external connector/runtime inventory smokes listed in `docs/V1_5_AGENT_GATEWAY_HARDENING_OBJECTIVE.md` |
+| P0-05 | Unify redaction and shared-deployment authentication guards | Keep Green | Guarded by redaction, secret scan, doctor, and shared-mode local-write guard smokes |
+| P0-06 | Replace approximate collaborator and workspace visibility checks | Keep Green | Guarded by workspace isolation and scoped reviewable-list smokes |
+| P0-07 | Add Knowledge workspace/ACL isolation and retrieval provenance | Keep Green | Guarded by knowledge scope, retrieval quality, and search policy smokes |
+| P0-08 | Establish SQLite concurrency baseline | Keep Green | Guarded by `scripts/sqlite_pragmas_smoke.py` and `scripts/sqlite_concurrency_smoke.py` |
+| P0-09 | Establish CI, secret scan, SBOM, license, and release evidence | Keep Green | Required PR checks `Backend deterministic smokes` and `UI build` are green on `1217ab6`; strict release evidence gates remain required after any new commit |
+| P0-10 | Install durable project governance in repository and Notion | Done | `AGENTS.md`, project state/decision/backlog/handoff files, Project Ledger views, repo-local skill, and governance PR #6 exist |
 | P0-11 | Install the prepared ChatGPT Project Instructions | Blocked | Project owner pastes the versioned template into ChatGPT Project Instructions and confirms a new project chat follows it |
 
 ## P1 — Productization After P0
 
 | ID | Work item | Status | Acceptance evidence |
 |---|---|---|---|
-| P1-01 | Aider-style repository map and task localization | Ready after P0 | Relevant symbols/files selected within token budget with source provenance and reproducible ranking |
-| P1-02 | Local Coding Project Template | Ready after P0 | WorkPackage, worktree/branch workspace, localization artifact, patch, tests, verifier, and merge gate linked in MIS |
-| P1-03 | Command Center BFF | Ready after P0 | One stable operator read model for projects, blocked runs, approvals, deliveries, stale workers, and next actions |
-| P1-04 | Runtime Capability Manifest | Ready after P0 | Each adapter declares file, shell, network, Git, secret, external-write, confirmation, and trust capabilities |
+| P1-01 | Aider-style repository map and task localization | Ready | Relevant symbols/files selected within token budget with source provenance and reproducible ranking |
+| P1-02 | Local Coding Project Template | Ready | WorkPackage, worktree/branch workspace, localization artifact, patch, tests, verifier, and merge gate linked in MIS |
+| P1-03 | Command Center BFF | Ready | One stable operator read model for projects, blocked runs, approvals, deliveries, stale workers, and next actions |
+| P1-04 | Runtime Capability Manifest | Ready | Each adapter declares file, shell, network, Git, secret, external-write, confirmation, and trust capabilities |
 | P1-05 | Split oversized horizontal modules | Ready after P0 | Strangler-style module boundaries; no big-bang rewrite; existing contracts preserved and tested |
 | P1-06 | Knowledge chunking, retrieval evaluation, Repo Map, then hybrid search | Ready after P0 | FTS baseline measured first; chunking/Repo Map improves named retrieval cases; vectors remain optional |
 
@@ -57,4 +58,4 @@ A new idea does not change priority merely because it is newly discussed. Any pr
 
 ## Completion Rule
 
-A backlog item is `Done` only when acceptance evidence exists on the exact relevant branch and commit. Documentation that an older revision once passed is not completion evidence for a newer head.
+A backlog item is `Done` only when acceptance evidence exists on the exact relevant branch and commit. A `Keep Green` item is implemented but remains a release invariant: any new commit must keep its guard scripts and required CI checks passing.
