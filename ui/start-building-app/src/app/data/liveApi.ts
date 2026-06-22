@@ -1388,6 +1388,7 @@ export interface OperatorLoopAuditPayload {
     audit_logs: number;
   };
   steps: OperatorLoopAuditStep[];
+  action_package?: OperatorLoopActionPackagePayload;
   next_actions: string[];
   source_status: Record<string, string | undefined>;
   sources?: Record<string, unknown>;
@@ -1403,6 +1404,47 @@ export interface OperatorLoopAuditPayload {
   };
   token_omitted?: boolean;
   live_execution_performed?: boolean;
+}
+
+export interface OperatorLoopActionPackageItem {
+  package_id: string;
+  loop_id?: string | null;
+  gate_id: string;
+  gate_label: string;
+  gate_status: string;
+  source?: string;
+  action_id?: string;
+  action_signature?: string;
+  action_command: string;
+  verify_command: string;
+  receipt_record_command: string;
+  receipt_verify_record_command: string;
+  message?: string;
+  evidence?: Record<string, unknown>;
+  token_omitted?: boolean;
+}
+
+export interface OperatorLoopActionPackagePayload {
+  operation: string;
+  status: string;
+  loop_id?: string | null;
+  method?: string;
+  verify_command?: string;
+  items: OperatorLoopActionPackageItem[];
+  summary: {
+    items: number;
+    blocked: number;
+    attention: number;
+    loop_scoped: boolean;
+  };
+  contract?: string;
+  safety?: {
+    read_only?: boolean;
+    ledger_mutated?: boolean;
+    live_execution_performed?: boolean;
+    token_omitted?: boolean;
+  };
+  token_omitted?: boolean;
 }
 
 export interface EvaluationCaseCandidate {
@@ -3942,6 +3984,9 @@ export async function loadOperatorLoopAudit(limit = 12, loopId = ""): Promise<Op
   const summaryRaw = typeof raw.summary === "object" && raw.summary !== null ? raw.summary as Record<string, unknown> : {};
   const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
   const loopRecordRaw = typeof raw.loop_record === "object" && raw.loop_record !== null ? raw.loop_record as Record<string, unknown> : {};
+  const actionPackageRaw = typeof raw.action_package === "object" && raw.action_package !== null ? raw.action_package as Record<string, unknown> : {};
+  const actionPackageSummaryRaw = typeof actionPackageRaw.summary === "object" && actionPackageRaw.summary !== null ? actionPackageRaw.summary as Record<string, unknown> : {};
+  const actionPackageSafetyRaw = typeof actionPackageRaw.safety === "object" && actionPackageRaw.safety !== null ? actionPackageRaw.safety as Record<string, unknown> : {};
   return {
     provider: String(raw.provider || "agentops-operator"),
     operation: String(raw.operation || "loop_audit"),
@@ -3979,6 +4024,44 @@ export async function loadOperatorLoopAudit(limit = 12, loopId = ""): Promise<Op
       source: String(step.source || ""),
       token_omitted: step.token_omitted === undefined ? undefined : boolValue(step.token_omitted),
     })).filter((step) => step.id),
+    action_package: {
+      operation: String(actionPackageRaw.operation || "loop_action_package"),
+      status: String(actionPackageRaw.status || "empty"),
+      loop_id: actionPackageRaw.loop_id ? String(actionPackageRaw.loop_id) : null,
+      method: actionPackageRaw.method ? String(actionPackageRaw.method) : undefined,
+      verify_command: actionPackageRaw.verify_command ? String(actionPackageRaw.verify_command) : undefined,
+      items: asArray<Record<string, unknown>>(actionPackageRaw.items).map((item) => ({
+        package_id: String(item.package_id || ""),
+        loop_id: item.loop_id ? String(item.loop_id) : null,
+        gate_id: String(item.gate_id || ""),
+        gate_label: String(item.gate_label || item.gate_id || ""),
+        gate_status: String(item.gate_status || "attention"),
+        source: item.source ? String(item.source) : undefined,
+        action_id: item.action_id ? String(item.action_id) : undefined,
+        action_signature: item.action_signature ? String(item.action_signature) : undefined,
+        action_command: String(item.action_command || ""),
+        verify_command: String(item.verify_command || ""),
+        receipt_record_command: String(item.receipt_record_command || ""),
+        receipt_verify_record_command: String(item.receipt_verify_record_command || ""),
+        message: item.message ? String(item.message) : undefined,
+        evidence: typeof item.evidence === "object" && item.evidence !== null ? item.evidence as Record<string, unknown> : undefined,
+        token_omitted: item.token_omitted === undefined ? undefined : boolValue(item.token_omitted),
+      })).filter((item) => item.package_id || item.action_command),
+      summary: {
+        items: numberValue(actionPackageSummaryRaw.items, 0),
+        blocked: numberValue(actionPackageSummaryRaw.blocked, 0),
+        attention: numberValue(actionPackageSummaryRaw.attention, 0),
+        loop_scoped: boolValue(actionPackageSummaryRaw.loop_scoped),
+      },
+      contract: actionPackageRaw.contract ? String(actionPackageRaw.contract) : undefined,
+      safety: {
+        read_only: actionPackageSafetyRaw.read_only === undefined ? undefined : boolValue(actionPackageSafetyRaw.read_only),
+        ledger_mutated: actionPackageSafetyRaw.ledger_mutated === undefined ? undefined : boolValue(actionPackageSafetyRaw.ledger_mutated),
+        live_execution_performed: actionPackageSafetyRaw.live_execution_performed === undefined ? undefined : boolValue(actionPackageSafetyRaw.live_execution_performed),
+        token_omitted: actionPackageSafetyRaw.token_omitted === undefined ? undefined : boolValue(actionPackageSafetyRaw.token_omitted),
+      },
+      token_omitted: actionPackageRaw.token_omitted === undefined ? undefined : boolValue(actionPackageRaw.token_omitted),
+    },
     next_actions: asArray<unknown>(raw.next_actions).map(String).filter(Boolean),
     source_status: typeof raw.source_status === "object" && raw.source_status !== null ? raw.source_status as Record<string, string | undefined> : {},
     sources: typeof raw.sources === "object" && raw.sources !== null ? raw.sources as Record<string, unknown> : undefined,
