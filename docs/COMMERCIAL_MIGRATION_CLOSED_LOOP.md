@@ -190,6 +190,7 @@ python3 scripts/ui_navigation_inventory_smoke.py
 python3 scripts/ui_route_retirement_packet_smoke.py
 python3 scripts/nextjs_agent_gateway_task_proxy_smoke.py
 python3 scripts/nextjs_worker_dispatch_once_smoke.py
+python3 scripts/nextjs_worker_stuck_release_smoke.py
 python3 scripts/vite_playwright_snapshot_smoke.py
 python3 scripts/nextjs_playwright_snapshot_smoke.py
 ```
@@ -271,11 +272,21 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   before upstream execution with `mock_only_next_parity`. This does not retire
   Vite worker controls or enable live Hermes/OpenClaw dispatch in Next.
 
+  The Next worker stuck-release smoke starts isolated MIS API and Next.js
+  servers, creates stale running worker tasks, proves the Next
+  `/api/mis/workers/stuck-tasks` read path plus
+  `/api/mis/workers/tasks/release` mutation can return one task to `planned`
+  and block the linked running run as `WorkerTaskReleased`, proves the
+  `/workspace/agents/release-task` form fallback performs the same recovery,
+  and proves `force:true` is rejected at the Next proxy with
+  `force_release_not_allowed_next_parity`.
+
 - First migration artifact:
   - `ui/next-app/app/workspace/page.tsx`
   - `ui/next-app/app/workspace/agents/page.tsx`
   - `ui/next-app/app/workspace/agents/[agentId]/page.tsx`
   - `ui/next-app/app/workspace/agents/dispatch-once/route.ts`
+  - `ui/next-app/app/workspace/agents/release-task/route.ts`
   - `ui/next-app/app/workspace/commercial/page.tsx`
   - `ui/next-app/app/workspace/governance/page.tsx`
   - `ui/next-app/app/workspace/deployment/page.tsx`
@@ -322,6 +333,7 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   - `scripts/nextjs_parity_smoke.py`
   - `scripts/nextjs_agent_gateway_task_proxy_smoke.py`
   - `scripts/nextjs_worker_dispatch_once_smoke.py`
+  - `scripts/nextjs_worker_stuck_release_smoke.py`
   - `scripts/nextjs_playwright_snapshot_smoke.py`
   - `scripts/vite_playwright_snapshot_smoke.py`
   - `docs/UI_API_PARITY_MATRIX.md`

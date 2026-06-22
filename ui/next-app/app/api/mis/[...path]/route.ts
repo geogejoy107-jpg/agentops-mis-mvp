@@ -36,10 +36,19 @@ function isWorkerDispatchPath(path: string[]) {
   return path.join("/") === "workers/local/dispatch-once";
 }
 
+function isWorkerReleasePath(path: string[]) {
+  return path.join("/") === "workers/tasks/release";
+}
+
+function parseJsonBody(body: Buffer | undefined) {
+  if (!body || body.byteLength === 0) return {};
+  return JSON.parse(body.toString("utf-8"));
+}
+
 function workerDispatchAdapter(body: Buffer | undefined) {
   if (!body || body.byteLength === 0) return "mock";
   try {
-    const parsed = JSON.parse(body.toString("utf-8"));
+    const parsed = parseJsonBody(body);
     if (parsed && typeof parsed === "object" && "adapter" in parsed) {
       return String((parsed as { adapter?: unknown }).adapter || "mock");
     }
@@ -47,6 +56,25 @@ function workerDispatchAdapter(body: Buffer | undefined) {
     return "invalid_json";
   }
   return "mock";
+}
+
+function workerReleaseGuard(body: Buffer | undefined) {
+  try {
+    const parsed = parseJsonBody(body);
+    if (!parsed || typeof parsed !== "object") {
+      return { ok: false, status: 400, error: "invalid_json" };
+    }
+    const input = parsed as { task_id?: unknown; force?: unknown };
+    if (!input.task_id || typeof input.task_id !== "string") {
+      return { ok: false, status: 400, error: "task_id_required" };
+    }
+    if (input.force) {
+      return { ok: false, status: 403, error: "force_release_not_allowed_next_parity" };
+    }
+    return { ok: true, status: 200, error: "" };
+  } catch {
+    return { ok: false, status: 400, error: "invalid_json" };
+  }
 }
 
 function forwardedHeaders(request: NextRequest) {
@@ -113,6 +141,12 @@ async function proxy(request: NextRequest, context: RouteContext) {
     const adapter = workerDispatchAdapter(body);
     if (adapter !== "mock") {
       return NextResponse.json({ ok: false, error: adapter === "invalid_json" ? "invalid_json" : "mock_only_next_parity" }, { status: 403 });
+    }
+  }
+  if (request.method === "POST" && isWorkerReleasePath(path)) {
+    const guard = workerReleaseGuard(body);
+    if (!guard.ok) {
+      return NextResponse.json({ released: false, error: guard.error }, { status: guard.status });
     }
   }
   const response = await proxyRequest(proxyUrl(path, request.nextUrl.search), request.method, forwardedHeaders(request), body);

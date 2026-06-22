@@ -292,6 +292,7 @@ export type WorkerStatusSummary = {
   recent_completed_runs?: number;
   pending_worker_tasks?: number;
   stuck_worker_tasks?: number;
+  stuck_tasks?: WorkerStuckTask[];
   remote_worker_count?: number;
   active_remote_enrollments?: number;
   fresh_remote_enrollments?: number;
@@ -312,6 +313,14 @@ export type WorkerStatusSummary = {
     unavailable_adapters?: string[];
     blocked_adapters?: string[];
   };
+};
+
+export type WorkerStuckTask = TaskSummary & {
+  age_sec?: number;
+  threshold_sec?: number;
+  running_run_id?: string | null;
+  running_run_started_at?: string | null;
+  stuck_reason?: string;
 };
 
 export type WorkerAdapterReadinessSummary = {
@@ -364,6 +373,15 @@ export type WorkerDispatchResult = {
     token_omitted?: boolean;
   };
   error?: string | null;
+};
+
+export type WorkerTaskReleaseResult = {
+  released?: boolean;
+  task?: TaskSummary;
+  released_runs?: string[];
+  token_omitted?: boolean;
+  error?: string | null;
+  message?: string | null;
 };
 
 export type AgentGatewaySessionSummary = {
@@ -869,6 +887,16 @@ export async function dispatchLocalWorkerOnce(input: {
     throw new Error("mock_only_next_parity");
   }
   return misJson<WorkerDispatchResult>("/workers/local/dispatch-once", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function releaseWorkerTask(input: {
+  task_id: string;
+  reason?: string;
+}): Promise<WorkerTaskReleaseResult> {
+  return misJson<WorkerTaskReleaseResult>("/workers/tasks/release", {
     method: "POST",
     body: JSON.stringify(input),
   });

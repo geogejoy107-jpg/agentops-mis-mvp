@@ -2,9 +2,9 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { Activity, Bot, KeyRound, Play, RefreshCw, ShieldCheck, TerminalSquare } from "lucide-react";
+import { Activity, Bot, KeyRound, Play, RefreshCw, ShieldCheck, TerminalSquare, Undo2 } from "lucide-react";
 import { AppFrame } from "./AppFrame";
-import { dispatchLocalWorkerOnce, loadAgentControlSnapshot, type AgentControlSnapshot, type ReadinessGate } from "@/lib/mis";
+import { dispatchLocalWorkerOnce, loadAgentControlSnapshot, releaseWorkerTask, type AgentControlSnapshot, type ReadinessGate } from "@/lib/mis";
 
 type LoadState = {
   data: AgentControlSnapshot | null;
@@ -49,6 +49,7 @@ function GateList({ gates }: Readonly<{ gates?: ReadinessGate[] }>) {
 export function AgentsParityPage() {
   const [state, setState] = useState<LoadState>({ data: null, error: null, loading: true });
   const [dispatching, setDispatching] = useState(false);
+  const [releasingTaskId, setReleasingTaskId] = useState<string | null>(null);
   const [dispatchMessage, setDispatchMessage] = useState<string | null>(null);
   const [dispatchStatus, setDispatchStatus] = useState<"success" | "error" | null>(null);
 
@@ -70,6 +71,14 @@ export function AgentsParityPage() {
       const error = params.get("error");
       setDispatchStatus(status === "started" ? "success" : "error");
       setDispatchMessage(status === "started" ? `mock worker completed ${runId || taskId || "task"}` : `mock worker dispatch failed ${error || ""}`.trim());
+    }
+    const releaseStatus = params.get("release_status");
+    if (releaseStatus) {
+      const taskId = params.get("task_id");
+      const runs = params.get("released_runs");
+      const error = params.get("error");
+      setDispatchStatus(releaseStatus === "released" ? "success" : "error");
+      setDispatchMessage(releaseStatus === "released" ? `stuck task released ${taskId || "task"} · runs ${runs || "0"}` : `stuck task release failed ${error || ""}`.trim());
     }
     void refresh();
   }, []);
@@ -98,9 +107,30 @@ export function AgentsParityPage() {
     }
   };
 
+  const releaseStuckTask = async (taskId: string) => {
+    setReleasingTaskId(taskId);
+    setDispatchStatus(null);
+    setDispatchMessage(null);
+    try {
+      const result = await releaseWorkerTask({
+        task_id: taskId,
+        reason: "Next worker console released stuck task",
+      });
+      setDispatchStatus(result.released ? "success" : "error");
+      setDispatchMessage(`stuck task ${result.released ? "released" : "not released"} ${taskId} · runs ${(result.released_runs || []).length}`);
+      await refresh();
+    } catch (err) {
+      setDispatchStatus("error");
+      setDispatchMessage(err instanceof Error ? err.message : String(err));
+    } finally {
+      setReleasingTaskId(null);
+    }
+  };
+
   const agents = state.data?.agents || [];
   const security = state.data?.security;
   const worker = state.data?.workerStatus;
+  const stuckTasks = worker?.stuck_tasks || [];
   const adapter = state.data?.adapterReadiness;
   const runningDaemons = (worker?.daemons || []).filter((daemon) => daemon.running).length;
   const adapterRows = useMemo(() => Object.values(adapter?.adapters || {}), [adapter?.adapters]);
@@ -176,6 +206,36 @@ export function AgentsParityPage() {
                 <Play size={13} /> Form fallback
               </button>
             </form>
+          </div>
+          <div className="list compact">
+            {stuckTasks.length === 0 ? (
+              <article className="row">
+                <div>
+                  <strong>No stuck worker tasks</strong>
+                  <span>Worker recovery is idle; release remains available through the guarded Next route.</span>
+                </div>
+                <span className="status statusGood">clear</span>
+              </article>
+            ) : null}
+            {stuckTasks.slice(0, 4).map((task) => (
+              <article className="row" key={task.task_id}>
+                <div>
+                  <strong>{task.title || task.task_id}</strong>
+                  <span>{task.task_id} · {task.owner_agent_id || "unassigned"} · age {numberValue(task.age_sec)}s · run {task.running_run_id || "none"}</span>
+                </div>
+                <div className="proofStrip">
+                  <button className="miniButton" type="button" onClick={() => releaseStuckTask(task.task_id)} disabled={Boolean(releasingTaskId)} data-smoke="release-stuck-worker-task">
+                    <Undo2 size={13} /> {releasingTaskId === task.task_id ? "Releasing" : "Release"}
+                  </button>
+                  <form className="inlineForm" method="post" action="/workspace/agents/release-task" data-smoke="release-stuck-worker-form">
+                    <input type="hidden" name="task_id" value={task.task_id} />
+                    <button className="miniButton" type="submit" disabled={Boolean(releasingTaskId)}>
+                      <Undo2 size={13} /> Form
+                    </button>
+                  </form>
+                </div>
+              </article>
+            ))}
           </div>
         </div>
       </section>

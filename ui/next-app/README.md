@@ -22,6 +22,7 @@ python3 scripts/nextjs_parity_smoke.py
 cd ui/next-app && npm run build
 python3 scripts/nextjs_agent_gateway_task_proxy_smoke.py
 python3 scripts/nextjs_worker_dispatch_once_smoke.py
+python3 scripts/nextjs_worker_stuck_release_smoke.py
 python3 scripts/nextjs_playwright_snapshot_smoke.py
 ```
 
@@ -35,6 +36,7 @@ memory review actions through the Next.js UI, verifies the state change through
 - App Router route: `/workspace`
 - App Router route: `/workspace/agents`
 - App Router route: `/workspace/agents/dispatch-once`
+- App Router route: `/workspace/agents/release-task`
 - App Router route: `/workspace/commercial`
 - App Router route: `/workspace/governance`
 - App Router route: `/workspace/deployment`
@@ -58,6 +60,10 @@ memory review actions through the Next.js UI, verifies the state change through
   `/workspace/agents/dispatch-once` form fallback; the proxy and fallback
   reject non-mock adapters with `mock_only_next_parity` before upstream
   execution.
+- Worker recovery contract: the Next worker console can read stuck tasks and
+  release one stale running task through `POST /api/mis/workers/tasks/release`
+  plus the `/workspace/agents/release-task` form fallback; the proxy rejects
+  `force:true` with `force_release_not_allowed_next_parity`.
 - Live data contract: dashboard metrics, agents, production readiness, worker readiness, tasks, runs, approvals, memories, audit, customer projects, delivery board, customer project report
 - Commercial contract: edition, capability matrix, fail-closed gates, billing-call omission, and token omission load read-only through the MIS API proxy
 - Governance contract: production readiness, workspace/RBAC gate state, short-lived session governance, and audit evidence load read-only through the MIS API proxy without raw session IDs

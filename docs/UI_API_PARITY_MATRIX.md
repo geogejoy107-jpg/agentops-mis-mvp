@@ -136,6 +136,7 @@ cd ui/start-building-app && npm run build
 cd ui/next-app && npm run build
 python3 scripts/nextjs_agent_gateway_task_proxy_smoke.py
 python3 scripts/nextjs_worker_dispatch_once_smoke.py
+python3 scripts/nextjs_worker_stuck_release_smoke.py
 python3 scripts/vite_playwright_snapshot_smoke.py
 python3 scripts/nextjs_playwright_snapshot_smoke.py
 ```
@@ -159,3 +160,12 @@ ledger, then proves `POST /api/mis/workers/local/dispatch-once` and the Next
 persist task/run/plan-evidence proof, read the completed task back without
 token leakage, and reject non-mock proxy/form dispatch before upstream
 execution with `mock_only_next_parity`.
+
+`python3 scripts/nextjs_worker_stuck_release_smoke.py`
+(`nextjs_worker_stuck_release_v1`) starts isolated MIS API and Next.js servers,
+creates stale running worker tasks, proves Next `/api/mis/workers/stuck-tasks`
+can read them, proves Next `/api/mis/workers/tasks/release` returns one task to
+`planned` and blocks the linked running run as `WorkerTaskReleased`, proves the
+`/workspace/agents/release-task` form fallback performs the same recovery, and
+proves `force:true` is rejected at the Next proxy with
+`force_release_not_allowed_next_parity`.
