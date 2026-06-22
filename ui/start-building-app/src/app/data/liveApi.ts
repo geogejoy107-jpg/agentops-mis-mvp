@@ -1485,8 +1485,27 @@ export interface OperatorHandoffPayload {
     loop_record?: OperatorLoopRecordPayload;
     token_omitted?: boolean;
   };
+  loop_health?: {
+    operation: string;
+    status: string;
+    score: number;
+    score_parts: Record<string, number>;
+    gates: Record<string, Record<string, unknown>>;
+    risks: { id: string; severity: string; count: number; next_action?: string }[];
+    next_action?: string;
+    contract?: string;
+    token_omitted?: boolean;
+  };
   sources?: Record<string, unknown>;
   contract?: string;
+  auth?: {
+    mode: string;
+    scoped: boolean;
+    required_scope: string;
+    workspace_id: string;
+    agent_id?: string | null;
+    token_omitted?: boolean;
+  };
   safety: {
     read_only: boolean;
     ledger_mutated: boolean;
@@ -4218,7 +4237,23 @@ export async function loadOperatorHandoff(limit = 12, loopId = ""): Promise<Oper
       loop_record: {},
       token_omitted: true,
     },
+    loop_health: {
+      operation: "operator_loop_health",
+      status: "unknown",
+      score: 0,
+      score_parts: {},
+      gates: {},
+      risks: [],
+      token_omitted: true,
+    },
     sources: {},
+    auth: {
+      mode: "local_dev_no_token",
+      scoped: false,
+      required_scope: "tasks:read",
+      workspace_id: "local-demo",
+      token_omitted: true,
+    },
     safety: {
       read_only: true,
       ledger_mutated: false,
@@ -4237,6 +4272,9 @@ export async function loadOperatorHandoff(limit = 12, loopId = ""): Promise<Oper
   const receiptSummaryRaw = typeof receiptStateRaw.summary === "object" && receiptStateRaw.summary !== null ? receiptStateRaw.summary as Record<string, unknown> : {};
   const reviewStateRaw = typeof raw.review_state === "object" && raw.review_state !== null ? raw.review_state as Record<string, unknown> : {};
   const loopRecordRaw = typeof reviewStateRaw.loop_record === "object" && reviewStateRaw.loop_record !== null ? reviewStateRaw.loop_record as Record<string, unknown> : {};
+  const loopHealthRaw = typeof raw.loop_health === "object" && raw.loop_health !== null ? raw.loop_health as Record<string, unknown> : {};
+  const loopHealthScorePartsRaw = typeof loopHealthRaw.score_parts === "object" && loopHealthRaw.score_parts !== null ? loopHealthRaw.score_parts as Record<string, unknown> : {};
+  const authRaw = typeof raw.auth === "object" && raw.auth !== null ? raw.auth as Record<string, unknown> : {};
   const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
   return {
     provider: String(raw.provider || "agentops-operator"),
@@ -4333,8 +4371,32 @@ export async function loadOperatorHandoff(limit = 12, loopId = ""): Promise<Oper
       },
       token_omitted: reviewStateRaw.token_omitted === undefined ? undefined : boolValue(reviewStateRaw.token_omitted),
     },
+    loop_health: {
+      operation: String(loopHealthRaw.operation || "operator_loop_health"),
+      status: String(loopHealthRaw.status || "unknown"),
+      score: numberValue(loopHealthRaw.score, 0),
+      score_parts: Object.fromEntries(Object.entries(loopHealthScorePartsRaw).map(([key, value]) => [key, numberValue(value, 0)])),
+      gates: typeof loopHealthRaw.gates === "object" && loopHealthRaw.gates !== null ? loopHealthRaw.gates as Record<string, Record<string, unknown>> : {},
+      risks: asArray<Record<string, unknown>>(loopHealthRaw.risks).map((item) => ({
+        id: String(item.id || ""),
+        severity: String(item.severity || "attention"),
+        count: numberValue(item.count, 0),
+        next_action: item.next_action ? String(item.next_action) : undefined,
+      })).filter((item) => item.id),
+      next_action: loopHealthRaw.next_action ? String(loopHealthRaw.next_action) : undefined,
+      contract: loopHealthRaw.contract ? String(loopHealthRaw.contract) : undefined,
+      token_omitted: loopHealthRaw.token_omitted === undefined ? undefined : boolValue(loopHealthRaw.token_omitted),
+    },
     sources: typeof raw.sources === "object" && raw.sources !== null ? raw.sources as Record<string, unknown> : undefined,
     contract: raw.contract ? String(raw.contract) : undefined,
+    auth: {
+      mode: String(authRaw.mode || "unknown"),
+      scoped: boolValue(authRaw.scoped),
+      required_scope: String(authRaw.required_scope || "tasks:read"),
+      workspace_id: String(authRaw.workspace_id || "local-demo"),
+      agent_id: authRaw.agent_id ? String(authRaw.agent_id) : null,
+      token_omitted: authRaw.token_omitted === undefined ? undefined : boolValue(authRaw.token_omitted),
+    },
     safety: {
       read_only: boolValue(safetyRaw.read_only),
       ledger_mutated: boolValue(safetyRaw.ledger_mutated),

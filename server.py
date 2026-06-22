@@ -2399,6 +2399,14 @@ def coerce_choice(value, allowed: set[str], fallback: str) -> str:
     return value if value in allowed else fallback
 
 
+def bounded_int(value, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(str(value).strip())
+    except Exception:
+        parsed = default
+    return min(max(parsed, minimum), maximum)
+
+
 def safe_json_metadata(value):
     if isinstance(value, dict):
         return {str(k)[:80]: safe_json_metadata(v) for k, v in list(value.items())[:40]}
@@ -15648,18 +15656,49 @@ def operator_loop_audit(conn: sqlite3.Connection, headers, qs=None) -> dict:
     }
 
 
-def operator_handoff(conn: sqlite3.Connection, headers, qs=None) -> dict:
+def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) -> dict:
     qs = qs or {}
-    limit = min(max(int((qs.get("limit") or ["12"])[0]), 1), 30)
+    limit = bounded_int((qs.get("limit") or ["12"])[0], 12, 1, 30)
     loop_id = redact_text((qs.get("loop_id") or [""])[0], 120)
-    loop_audit = operator_loop_audit(conn, headers, {"limit": [str(limit)], "loop_id": [loop_id]} if loop_id else {"limit": [str(limit)]})
-    action_plan = operator_action_plan(conn, headers, {"limit": [str(limit)]})
+    effective_headers = headers
+    if agent_gateway_is_bound_auth(auth_ctx):
+        effective_headers = dict(headers)
+        effective_headers["X-AgentOps-Workspace-Id"] = auth_ctx.get("workspace_id") or "local-demo"
+        effective_headers["X-AgentOps-Agent-Id"] = auth_ctx.get("agent_id") or ""
+    loop_audit = operator_loop_audit(conn, effective_headers, {"limit": [str(limit)], "loop_id": [loop_id]} if loop_id else {"limit": [str(limit)]})
+    action_plan = operator_action_plan(conn, effective_headers, {"limit": [str(limit)]})
     action_package = loop_audit.get("action_package") or {}
     action_package_items = action_package.get("items") or []
     action_plan_actions = action_plan.get("actions") or []
     receipt_coverage = action_plan.get("receipt_coverage") or {}
     loop_record = loop_audit.get("loop_record") or {}
     action_receipts = action_plan.get("action_receipts") or {}
+    loop_steps = loop_audit.get("steps") or []
+    loop_pass = len([step for step in loop_steps if step.get("status") == "pass"])
+    loop_blocked = len([step for step in loop_steps if step.get("status") == "blocked"])
+    loop_attention = len([step for step in loop_steps if step.get("status") == "attention"])
+    loop_total = len(loop_steps) or 7
+    receipt_required = int(receipt_coverage.get("required") or 0)
+    receipt_verified = int(receipt_coverage.get("verified") or 0)
+    receipt_missing = int(receipt_coverage.get("missing") or 0)
+    receipt_stale = int(receipt_coverage.get("stale") or 0)
+    loop_record_status = str(loop_record.get("status") or "unknown")
+    loop_health_risks: list[dict] = []
+    if loop_blocked:
+        loop_health_risks.append({"id": "blocked_method_gate", "severity": "blocked", "count": loop_blocked, "next_action": (loop_audit.get("next_actions") or ["agentops operator loop-audit --limit 20"])[0]})
+    if loop_attention:
+        loop_health_risks.append({"id": "attention_method_gate", "severity": "attention", "count": loop_attention, "next_action": (loop_audit.get("next_actions") or ["agentops operator loop-audit --limit 20"])[0]})
+    if receipt_required and receipt_verified < receipt_required:
+        loop_health_risks.append({"id": "receipt_coverage_gap", "severity": "attention", "count": receipt_required - receipt_verified, "next_action": "agentops operator action-receipts --limit 20 --plan-limit 20"})
+    if receipt_missing or receipt_stale:
+        loop_health_risks.append({"id": "receipt_missing_or_stale", "severity": "attention", "count": receipt_missing + receipt_stale, "next_action": "agentops operator action-plan --limit 20"})
+    if loop_record_status not in {"ready", "pass", "closed"}:
+        loop_health_risks.append({"id": "loop_record_not_closed", "severity": "attention", "count": int(loop_record.get("candidate_count") or 0) + int(loop_record.get("pending_approval_count") or 0), "next_action": loop_record.get("next_action") or "agentops review queue --limit 20"})
+    auth_mode = (auth_ctx or {}).get("mode") or "unknown"
+    auth_ready = auth_mode in {"local_dev_no_token", "global_api_key", "agent_token", "agent_session"}
+    if not auth_ready:
+        loop_health_risks.append({"id": "auth_boundary_unknown", "severity": "blocked", "count": 1, "next_action": "agentops status"})
+    safety_ready = True
     handoff_commands: list[str] = []
     for item in action_package_items:
         for key in ["action_command", "verify_command", "receipt_record_command", "receipt_verify_record_command"]:
@@ -15675,6 +15714,51 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None) -> dict:
                 break
         if len(handoff_commands) >= 20:
             break
+    gate_checks = {
+        "method_gates": {
+            "status": "blocked" if loop_blocked else "attention" if loop_attention else "pass",
+            "pass": loop_pass,
+            "attention": loop_attention,
+            "blocked": loop_blocked,
+            "total": loop_total,
+        },
+        "receipts": {
+            "status": "pass" if receipt_required == 0 or receipt_verified >= receipt_required else "attention",
+            "required": receipt_required,
+            "verified": receipt_verified,
+            "missing": receipt_missing,
+            "stale": receipt_stale,
+        },
+        "record": {
+            "status": loop_record_status,
+            "candidates": int(loop_record.get("candidate_count") or 0),
+            "approved": int(loop_record.get("approved_count") or 0),
+            "pending_approvals": int(loop_record.get("pending_approval_count") or 0),
+            "audit_count": int(loop_record.get("audit_count") or 0),
+        },
+        "auth": {
+            "status": "pass" if auth_ready else "blocked",
+            "mode": auth_mode,
+            "required_scope": "tasks:read",
+            "scoped": agent_gateway_is_bound_auth(auth_ctx),
+        },
+        "safety": {
+            "status": "pass" if safety_ready else "blocked",
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "token_omitted": True,
+        },
+    }
+    score_parts = [
+        int(round((loop_pass / max(loop_total, 1)) * 40)),
+        20 if receipt_required == 0 or receipt_verified >= receipt_required else int(round((receipt_verified / max(receipt_required, 1)) * 20)),
+        15 if loop_record_status in {"ready", "pass", "closed"} else 5 if loop_record.get("approved_count") else 0,
+        15 if auth_ready else 0,
+        10 if safety_ready else 0,
+    ]
+    loop_health_score = min(max(sum(score_parts), 0), 100)
+    loop_health_status = "blocked" if loop_blocked or not auth_ready or not safety_ready else "attention" if loop_health_risks or loop_health_score < 90 else "ready"
     return {
         "provider": "agentops-operator",
         "operation": "operator_handoff",
@@ -15725,7 +15809,32 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None) -> dict:
                 "source_status": action_plan.get("source_status") or {},
             },
         },
+        "loop_health": {
+            "operation": "operator_loop_health",
+            "status": loop_health_status,
+            "score": loop_health_score,
+            "score_parts": {
+                "method_gates": score_parts[0],
+                "receipts": score_parts[1],
+                "record": score_parts[2],
+                "auth": score_parts[3],
+                "safety": score_parts[4],
+            },
+            "gates": gate_checks,
+            "risks": loop_health_risks[:8],
+            "next_action": (loop_health_risks[0]["next_action"] if loop_health_risks else (loop_audit.get("next_actions") or ["agentops operator loop-audit --limit 20"])[0]),
+            "contract": "read-only loop health snapshot derived from loop-audit, action-plan receipts, review state, auth, and safety; it never executes commands or writes ledger rows",
+            "token_omitted": True,
+        },
         "contract": "read-only operator handoff; combines loop work order, action queue receipts, and review state without executing commands or mutating ledgers",
+        "auth": {
+            "mode": (auth_ctx or {}).get("mode") or "unknown",
+            "scoped": agent_gateway_is_bound_auth(auth_ctx),
+            "required_scope": "tasks:read",
+            "workspace_id": normalize_workspace_id((auth_ctx or {}).get("workspace_id") or effective_headers.get("X-AgentOps-Workspace-Id") or "local-demo"),
+            "agent_id": (auth_ctx or {}).get("agent_id") or effective_headers.get("X-AgentOps-Agent-Id") or None,
+            "token_omitted": True,
+        },
         "safety": {
             "read_only": True,
             "ledger_mutated": False,
@@ -16756,7 +16865,16 @@ class Handler(BaseHTTPRequestHandler):
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/operator/handoff":
-                payload = operator_handoff(conn, self.headers, qs)
+                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                if auth_error:
+                    conn.rollback()
+                    return self.send_json(auth_error, agent_gateway_error_status(auth_error))
+                if agent_gateway_is_bound_auth(auth_ctx):
+                    requested_header_workspace = normalize_workspace_id(self.headers.get("X-AgentOps-Workspace-Id") or auth_ctx["workspace_id"])
+                    if requested_header_workspace != auth_ctx["workspace_id"]:
+                        conn.rollback()
+                        return self.send_json({"error": "forbidden", "message": "Agent token cannot use another workspace header."}, 403)
+                payload = operator_handoff(conn, self.headers, qs, auth_ctx)
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/operator/action-receipts":

@@ -368,6 +368,9 @@ export function AIEmployees() {
       operatorHandoffSummary: "Read-only handoff package for Hermes, OpenClaw, Codex, or a human operator: loop work order, receipts, review state, and source proof.",
       handoffCommands: "Handoff commands",
       handoffSources: "Sources",
+      authBoundary: "Auth boundary",
+      loopHealth: "Loop health",
+      loopRisks: "Risks",
       copyHandoffJson: "Copy handoff JSON",
       loopRecordState: "Loop record",
       copyFirstGateIssue: "Copy first issue",
@@ -758,6 +761,9 @@ export function AIEmployees() {
       operatorHandoffSummary: "给 Hermes、OpenClaw、Codex 或人工 operator 的只读交接包：Loop 执行包、收据、评审状态和来源证明。",
       handoffCommands: "交接命令",
       handoffSources: "来源",
+      authBoundary: "认证边界",
+      loopHealth: "Loop 健康",
+      loopRisks: "风险",
       copyHandoffJson: "复制交接 JSON",
       loopRecordState: "Loop 记录",
       copyFirstGateIssue: "复制首个异常",
@@ -1196,8 +1202,10 @@ export function AIEmployees() {
     work_order: operatorHandoff.work_order,
     receipt_state: operatorHandoff.receipt_state,
     review_state: operatorHandoff.review_state,
+    loop_health: operatorHandoff.loop_health,
     sources: operatorHandoff.sources,
     contract: operatorHandoff.contract,
+    auth: operatorHandoff.auth,
     safety: operatorHandoff.safety,
     token_omitted: operatorHandoff.token_omitted,
   }, null, 2) : "";
@@ -3067,8 +3075,8 @@ export function AIEmployees() {
                 {[
                   { label: copy.loopAuditTitle, value: operatorHandoffSummary?.loop_status || "unknown", status: operatorHandoffSummary?.loop_status || operatorHandoff.status },
                   { label: copy.actionQueueTitle, value: operatorHandoffSummary?.action_plan_status || "unknown", status: operatorHandoffSummary?.action_plan_status || operatorHandoff.status },
+                  { label: copy.loopHealth, value: `${operatorHandoff.loop_health?.score ?? 0}/100`, status: operatorHandoff.loop_health?.status || "unknown" },
                   { label: copy.handoffCommands, value: `${operatorHandoffCommands.length}/${operatorHandoffSummary?.loop_package_items ?? 0}`, status: operatorHandoffCommands.length > 0 ? "attention" : "pass" },
-                  { label: copy.loopRecordState, value: `${operatorHandoffSummary?.loop_record_approved ?? 0}/${operatorHandoffSummary?.loop_record_candidates ?? 0}/${operatorHandoffSummary?.loop_record_pending_approvals ?? 0}`, status: operatorHandoffSummary?.loop_record_status || "unknown" },
                 ].map((item) => (
                   <div key={item.label} className="rounded px-2 py-1" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
                     <div className="text-[9px]" style={{ color: "var(--mis-muted)" }}>{item.label}</div>
@@ -3080,6 +3088,15 @@ export function AIEmployees() {
                 ))}
               </div>
               <div className="grid grid-cols-1 xl:grid-cols-3 gap-2 mt-2">
+                <div className="rounded px-2 py-1.5" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                  <div className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.loopHealth}</div>
+                  <div className="text-[9px] mt-1" style={{ color: "var(--mis-muted)" }}>
+                    {copy.loopRisks}: {operatorHandoff.loop_health?.risks?.length ?? 0} · {copy.authBoundary}: {operatorHandoff.auth?.mode || "unknown"} · {operatorHandoff.auth?.required_scope || "tasks:read"}
+                  </div>
+                  <div className="text-[9px] mt-0.5 truncate" style={{ color: "var(--mis-cyan)" }}>
+                    {copy.nextAction}: {operatorHandoff.loop_health?.next_action || operatorHandoff.work_order.next_actions[0] || loopAuditNextAction}
+                  </div>
+                </div>
                 <div className="rounded px-2 py-1.5" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
                   <div className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.receiptProof}</div>
                   <div className="text-[9px] mt-1" style={{ color: "var(--mis-muted)" }}>
@@ -3094,19 +3111,24 @@ export function AIEmployees() {
                   <div className="text-[9px] mt-1" style={{ color: "var(--mis-muted)" }}>
                     {copy.memoryCandidates}: {operatorHandoff.review_state.loop_record?.candidate_count ?? 0} · {copy.pendingApprovals}: {operatorHandoff.review_state.loop_record?.pending_approval_count ?? 0}
                   </div>
+                  <div className="text-[9px] mt-0.5" style={{ color: "var(--mis-dim)" }}>
+                    {copy.loopRecordState}: {operatorHandoffSummary?.loop_record_approved ?? 0}/{operatorHandoffSummary?.loop_record_candidates ?? 0}/{operatorHandoffSummary?.loop_record_pending_approvals ?? 0}
+                  </div>
                   <div className="text-[9px] mt-0.5 truncate" style={{ color: "var(--mis-cyan)" }}>
                     {copy.nextAction}: {operatorHandoff.review_state.loop_record?.next_action || operatorHandoff.work_order.next_actions[0] || loopAuditNextAction}
                   </div>
                 </div>
-                <div className="rounded px-2 py-1.5" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
-                  <div className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.handoffSources}</div>
+              </div>
+              <div className="rounded px-2 py-1.5 mt-2" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                <div className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.handoffSources}</div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-1">
                   {Object.entries(operatorHandoffSources).slice(0, 2).map(([sourceName, sourceValue]) => {
                     const sourceRecord = sourceValue && typeof sourceValue === "object" ? sourceValue as Record<string, unknown> : {};
                     const sourceStatus = String(sourceRecord.status || "unknown");
                     const sourceStatusRaw = typeof sourceRecord.source_status === "object" && sourceRecord.source_status !== null ? sourceRecord.source_status as Record<string, unknown> : {};
                     const sourceStatusText = Object.entries(sourceStatusRaw).slice(0, 3).map(([key, value]) => `${key}:${String(value)}`).join(" · ");
                     return (
-                      <div key={sourceName} className="mt-1">
+                      <div key={sourceName} className="min-w-0">
                         <div className="flex items-center justify-between gap-2">
                           <div className="text-[9px] truncate" style={{ color: "var(--mis-muted)" }}>{sourceName}</div>
                           <StatusBadge status={sourceStatus} />

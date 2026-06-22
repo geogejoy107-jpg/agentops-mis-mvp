@@ -372,8 +372,16 @@ agentops operator handoff --loop-id loop_smoke_api_123 --limit 10
 Maps to `GET /api/operator/handoff`. This is read-only and combines the
 loop-audit `action_package`, action-plan receipt coverage, recent receipts, and
 loop review state into a single handoff payload. It returns `work_order`,
-`receipt_state`, `review_state`, source summaries, and safety flags without
-executing commands or mutating audit/runtime ledgers.
+`receipt_state`, `review_state`, source summaries, `loop_health`, an `auth`
+boundary (`mode`, scoped flag, required `tasks:read` scope), and safety flags
+without executing commands or mutating audit/runtime ledgers. `loop_health` is
+a read-only score/status snapshot derived from method gates, receipt coverage,
+loop RECORD state, auth, and safety; it carries gate summaries, risks, and the
+next recommended action. Local no-token demo reads remain supported when
+`AGENTOPS_API_KEY` is unset; supplied Agent Gateway tokens/sessions must be
+valid and carry `tasks:read`. Invalid or out-of-range `limit` values are safely
+bounded to the supported 1..30 range instead of turning the handoff endpoint
+into a 500.
 
 ### `agentops approval prepared-action`
 
