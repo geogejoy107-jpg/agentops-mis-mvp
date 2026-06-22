@@ -79,10 +79,11 @@ npm run build
 4. 进入任务详情点击 `Start mock run`。
 5. 查看 `/runs` 和 `/tool-calls`。
 6. 如果生成高风险 tool call，进入 `/approvals` 批准或拒绝。
-7. Run 完成后查看 `/evaluations`。
-8. 查看 `/memory` 中的候选组织记忆，并批准/拒绝。
-9. 查看 `/audit` 的审计记录。
-10. 打开 `/integrations`，运行 OpenClaw 本地导入、OpenClaw 手动 probe、Hermes 手动 probe，并查看 Notion dry-run/export。
+7. 注意普通审批是账本/交付/审核决策；只有带 `prepared_action` 的审批才代表批准后可按 action hash 精确恢复，并且仍需要单独 resume。
+8. Run 完成后查看 `/evaluations`。
+9. 查看 `/memory` 中的候选组织记忆，并批准/拒绝。
+10. 查看 `/audit` 的审计记录。
+11. 打开 `/integrations`，运行 OpenClaw 本地导入、OpenClaw 手动 probe、Hermes 手动 probe，并查看 Notion dry-run/export。
 
 ## v1.2.1 可录屏复现路径
 

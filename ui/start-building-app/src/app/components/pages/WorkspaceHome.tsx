@@ -375,6 +375,9 @@ export function WorkspaceHome() {
               <h2 className="text-sm font-semibold" style={{ color: "var(--mis-text)" }}>Pending Approvals</h2>
               <Link to="/workspace/approvals" className="text-[11px]" style={{ color: "var(--mis-cyan)" }}>Review all</Link>
             </div>
+            <p className="text-[11px] mb-2" style={{ color: "var(--mis-muted)" }}>
+              Ledger/delivery decisions; exact tool-action resume is shown only for prepared actions.
+            </p>
             <div className="space-y-2">
               {pendingApprovals.length === 0 && <p className="text-xs" style={{ color: "var(--mis-muted)" }}>No pending approvals.</p>}
               {pendingApprovals.map(ap => (

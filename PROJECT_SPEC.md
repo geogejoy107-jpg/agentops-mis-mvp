@@ -15,6 +15,11 @@ AgentOps MIS is the local control plane for a small AI workforce. It does not re
 See `docs/OPEN_SOURCE_ADOPTION_BOUNDARY_SPEC.md` before adding any framework,
 runtime, visualizer, agent system, policy engine, retrieval system, or workflow
 dependency.
+- Approval semantics are split by `docs/APPROVAL_SEMANTICS_BOUNDARY.md`:
+  generic approvals are ledger/delivery/review decisions, while exact
+  tool-action resume is valid only for approval-gated prepared actions with an
+  action hash, checkpoint, and consume-once evidence; exact tool-action resume
+  is valid only in that prepared-action context.
 
 ## First-Class Objects
 

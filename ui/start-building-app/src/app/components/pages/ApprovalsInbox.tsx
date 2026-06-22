@@ -28,6 +28,7 @@ export function ApprovalsInbox() {
     en: {
       title: "Approvals Inbox",
       summary: `${pending.length} pending · ${decided.length} decided from live MIS ledger`,
+      boundary: "Generic approvals are ledger, delivery, enrollment, review, or plan decisions. Exact tool-action resume only applies to prepared actions with an action hash and separate resume step.",
       loading: "Loading live approvals...",
       backendUnavailable: "Live backend unavailable",
       pending: "Pending Approval",
@@ -46,6 +47,7 @@ export function ApprovalsInbox() {
     zh: {
       title: "审批收件箱",
       summary: `${pending.length} 个待审批 · ${decided.length} 个已决策，来自实时 MIS 账本`,
+      boundary: "普通审批是账本、交付、接入、审核或计划决策。只有带 action hash 的 prepared action 才能进入单独的精确恢复步骤。",
       loading: "正在加载实时审批...",
       backendUnavailable: "本地后端不可用",
       pending: "待审批",
@@ -147,6 +149,7 @@ export function ApprovalsInbox() {
         <div>
           <h1 className="text-lg font-semibold" style={{ color: "var(--mis-text)" }}>{copy.title}</h1>
           <p className="text-xs mt-0.5" style={{ color: "var(--mis-dim)" }}>{copy.summary}</p>
+          <p className="text-[11px] mt-1 max-w-3xl" style={{ color: "var(--mis-muted)" }}>{copy.boundary}</p>
           {loading && <p className="text-xs mt-2" style={{ color: "var(--mis-muted)" }}>{copy.loading}</p>}
           {error && <p className="text-xs mt-2" style={{ color: "#F87171" }}>{copy.backendUnavailable}: {error}</p>}
         </div>

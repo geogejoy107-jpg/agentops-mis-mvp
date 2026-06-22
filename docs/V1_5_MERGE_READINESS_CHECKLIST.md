@@ -186,8 +186,8 @@ Choose one v1.5 contract.
 
 #### Restricted ledger/delivery contract
 
-- [ ] Existing approval is described as ledger/delivery approval.
-- [ ] UI/docs do not claim exact tool-action resume.
+- [x] Existing approval is described as ledger/delivery approval. Guarded by `scripts/approval_semantics_boundary_smoke.py`, with the durable rule in `docs/APPROVAL_SEMANTICS_BOUNDARY.md`.
+- [x] UI/docs do not claim exact tool-action resume. Guarded by `scripts/approval_semantics_boundary_smoke.py`; exact resume wording is allowed only for prepared-action contexts that expose action hash/checkpoint/resume semantics.
 - [x] Generic external side effects are denied. Guarded by `scripts/generic_external_side_effect_gate_smoke.py`, which verifies a caller cannot mark an external upload/write as low risk and record it as completed; MIS elevates the effective risk and requires a prepared action.
 - [x] Live runtimes stay within documented capabilities and sandbox boundaries. Guarded by `scripts/worker_adapter_readiness_smoke.py`, which verifies mock/Hermes/OpenClaw readiness, capability manifests, risk floors, summary-only opaque runtime disclosure, commercial restrictions, and no live execution during readiness checks.
 
@@ -198,6 +198,7 @@ python3 scripts/enrollment_credential_ui_smoke.py
 python3 scripts/review_queue_smoke.py
 python3 scripts/agent_gateway_review_queue_smoke.py
 python3 scripts/prepared_action_approval_wall_smoke.py
+python3 scripts/approval_semantics_boundary_smoke.py
 python3 scripts/generic_external_side_effect_gate_smoke.py --base-url http://127.0.0.1:8787
 python3 scripts/agent_gateway_runtime_event_smoke.py
 python3 scripts/worker_adapter_readiness_smoke.py --base-url http://127.0.0.1:8787
