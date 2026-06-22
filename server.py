@@ -8006,9 +8006,10 @@ def agent_gateway_prepare_action(conn, body) -> tuple[dict, int]:
 
 def agent_gateway_resume_prepared_action(conn, action_id: str, body) -> tuple[dict, int]:
     row = conn.execute("SELECT * FROM prepared_actions WHERE action_id=?", (action_id,)).fetchone()
-    missing_response = build_prepared_action_resume_blocked_response(action_id=action_id, row=row, approval=None)
-    if missing_response:
-        return missing_response
+    if row is None:
+        missing_response = build_prepared_action_resume_blocked_response(action_id=action_id, row=None, approval=None)
+        if missing_response:
+            return missing_response
     ident = agent_gateway_identity({}, body)
     if row_workspace(row) != ident["workspace_id"]:
         return workspace_forbidden("prepared_action", action_id, ident["workspace_id"], row_workspace(row))
