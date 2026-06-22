@@ -44,7 +44,7 @@ memory review actions through the Next.js UI, verifies the state change through
 - Live data contract: dashboard metrics, agents, production readiness, worker readiness, tasks, runs, approvals, memories, audit, customer projects, delivery board, customer project report
 - First-paint contract: approval and memory review queues can load on the App Router server path from the configured MIS API
 - Interaction contract: approval review and memory review write through the Next.js UI, with client fetch plus Next form fallback routes, then refresh from the MIS API proxy
-- Customer delivery contract: reports and customer project report pages load from the MIS API, and report archive writes through a Next form fallback route before refreshing the report artifact evidence
+- Customer delivery contract: reports and customer project report pages load from the MIS API, surface Agent Plan / plan-evidence status, and report archive writes through a Next form fallback route before refreshing the report artifact evidence
 - Dispatch contract: customer task templates and commercial entitlement gates load from the MIS API; template execution uses a Next form fallback and must surface Free Local `report_templates` blocking without creating a project, then create a ledger-backed project/report artifact when an isolated `pro_workspace` entitlement fixture is active. The entitled path must preserve Agent Gateway Agent Plan and plan-evidence boundaries.
 - Canonical predecessors:
   - `ui/start-building-app/src/app/components/pages/WorkspaceHome.tsx`

@@ -7048,6 +7048,14 @@ def customer_project_report(conn, project_id: str) -> tuple[dict, int]:
     ).fetchall())
     run_ids = [run["run_id"] for run in runs]
     run_placeholders = ",".join("?" for _ in run_ids) if run_ids else "''"
+    agent_plans = rows_to_dicts(conn.execute(
+        f"SELECT * FROM agent_plans WHERE task_id IN ({placeholders}) ORDER BY created_at",
+        task_ids,
+    ).fetchall())
+    plan_evidence_manifests = rows_to_dicts(conn.execute(
+        f"SELECT * FROM plan_evidence_manifests WHERE task_id IN ({placeholders}) ORDER BY created_at",
+        task_ids,
+    ).fetchall())
     tool_calls = rows_to_dicts(conn.execute(
         f"SELECT * FROM tool_calls WHERE run_id IN ({run_placeholders}) ORDER BY created_at",
         run_ids,
@@ -7074,6 +7082,42 @@ def customer_project_report(conn, project_id: str) -> tuple[dict, int]:
     delivery_artifacts = [artifact for artifact in artifacts if artifact.get("artifact_type") != "customer_project_report"]
     report_artifacts = [artifact for artifact in artifacts if artifact.get("artifact_type") == "customer_project_report"]
     final_artifact = delivery_artifacts[-1] if delivery_artifacts else None
+    verified_plan_evidence = [manifest for manifest in plan_evidence_manifests if manifest.get("status") == "verified"]
+    blocked_plan_evidence = [manifest for manifest in plan_evidence_manifests if manifest.get("status") == "blocked"]
+    warning_plan_evidence = [manifest for manifest in plan_evidence_manifests if manifest.get("status") == "warning"]
+    tasks_with_plans = {plan.get("task_id") for plan in agent_plans if plan.get("task_id")}
+    tasks_with_verified_plan_evidence = {manifest.get("task_id") for manifest in verified_plan_evidence if manifest.get("task_id")}
+    missing_plan_tasks = [task["task_id"] for task in tasks if task["task_id"] not in tasks_with_plans]
+    missing_verified_plan_evidence_tasks = [
+        task["task_id"]
+        for task in tasks
+        if task["risk_level"] not in {"high", "critical"} and task["task_id"] not in tasks_with_verified_plan_evidence
+    ]
+    execution_evidence = {
+        "agent_plans": len(agent_plans),
+        "plan_evidence_manifests": len(plan_evidence_manifests),
+        "verified_plan_evidence_manifests": len(verified_plan_evidence),
+        "blocked_plan_evidence_manifests": len(blocked_plan_evidence),
+        "warning_plan_evidence_manifests": len(warning_plan_evidence),
+        "tasks_missing_agent_plan": len(missing_plan_tasks),
+        "low_risk_tasks_missing_verified_plan_evidence": len(missing_verified_plan_evidence_tasks),
+        "approval_gated_tasks": len([task for task in tasks if task["risk_level"] in {"high", "critical"}]),
+        "manifest_ids": [manifest["manifest_id"] for manifest in plan_evidence_manifests],
+        "verified_manifest_ids": [manifest["manifest_id"] for manifest in verified_plan_evidence],
+        "recent_manifests": [
+            {
+                "manifest_id": manifest.get("manifest_id"),
+                "plan_id": manifest.get("plan_id"),
+                "task_id": manifest.get("task_id"),
+                "run_id": manifest.get("run_id"),
+                "agent_id": manifest.get("agent_id"),
+                "status": manifest.get("status"),
+                "mismatch_policy": manifest.get("mismatch_policy"),
+            }
+            for manifest in plan_evidence_manifests[-8:]
+        ],
+        "contract": "Agent Gateway runs require Agent Plans; customer delivery evidence records verified plan-evidence manifests when the step is completed rather than approval-gated.",
+    }
 
     lines = [
         f"# AI 知识库 / 问答机器人交付报告",
@@ -7093,6 +7137,15 @@ def customer_project_report(conn, project_id: str) -> tuple[dict, int]:
         "- Credentials stored in MIS: false",
         "- Raw documents stored in MIS: false",
         "- MIS stores summary/hash/ledger evidence only.",
+        "",
+        "## Agent Gateway Evidence",
+        "",
+        f"- Agent Plans: {execution_evidence['agent_plans']}",
+        f"- Plan evidence manifests: {execution_evidence['plan_evidence_manifests']}",
+        f"- Verified plan evidence manifests: {execution_evidence['verified_plan_evidence_manifests']}",
+        f"- Approval-gated tasks: {execution_evidence['approval_gated_tasks']}",
+        f"- Tasks missing Agent Plan: {execution_evidence['tasks_missing_agent_plan']}",
+        f"- Low-risk tasks missing verified plan evidence: {execution_evidence['low_risk_tasks_missing_verified_plan_evidence']}",
         "",
         "## Delivery Artifact",
         "",
@@ -7144,7 +7197,11 @@ def customer_project_report(conn, project_id: str) -> tuple[dict, int]:
             "evaluations": len(evaluations),
             "memories": len(memories),
             "artifacts": len(artifacts),
+            "agent_plans": len(agent_plans),
+            "plan_evidence_manifests": len(plan_evidence_manifests),
+            "verified_plan_evidence_manifests": len(verified_plan_evidence),
         },
+        "execution_evidence": execution_evidence,
         "artifact_id": final_artifact["artifact_id"] if final_artifact else None,
         "report_artifact_id": report_artifacts[-1]["artifact_id"] if report_artifacts else None,
         "approval_ids": [approval["approval_id"] for approval in approvals],

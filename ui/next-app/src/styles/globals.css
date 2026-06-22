@@ -197,6 +197,10 @@ h2 {
   grid-template-columns: repeat(6, minmax(0, 1fr));
 }
 
+.metrics.nine {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .metric,
 .panel {
   border: 1px solid var(--border);

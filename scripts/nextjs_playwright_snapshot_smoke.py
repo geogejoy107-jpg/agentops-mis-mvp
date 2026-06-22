@@ -549,6 +549,20 @@ def verify_dispatch_template_run_success(next_base: str, entitlement_path: Path,
     counts = report.get("counts") or {}
     require((counts.get("tasks") or 0) >= 1, f"Created project report has no task evidence: {counts}")
     require(bool(report.get("artifact_id")), f"Created project report has no delivery artifact: {report}")
+    execution_evidence = report.get("execution_evidence") or {}
+    require((execution_evidence.get("agent_plans") or 0) >= 1, f"Created project report has no Agent Plan evidence: {execution_evidence}")
+    require((execution_evidence.get("verified_plan_evidence_manifests") or 0) >= 1, f"Created project report has no verified plan evidence: {execution_evidence}")
+    report_target = next_base.rstrip("/") + f"/workspace/customer-projects/{project_id}/report"
+    report_goto = playwright(env, "goto", report_target)
+    require(report_goto.returncode == 0, f"Playwright goto failed for created project report: {report_goto.stderr or report_goto.stdout}")
+    report_snapshot = wait_for_snapshot_text(
+        env,
+        f"/workspace/customer-projects/{project_id}/report",
+        lambda text: "Agent Plan evidence" in text and "Verified Evidence" in text,
+        "created project report page to render Agent Plan evidence",
+        timeout_sec=12,
+    )
+    require("verified" in report_snapshot, "Created project report page did not show verified plan evidence")
     serialized = json.dumps(report, ensure_ascii=False)
     require(not leaked_secret(serialized), "Created project report leaked token-like material")
     return {
@@ -559,6 +573,8 @@ def verify_dispatch_template_run_success(next_base: str, entitlement_path: Path,
         "artifact_id": report.get("artifact_id"),
         "tasks": counts.get("tasks"),
         "runs": counts.get("runs"),
+        "agent_plans": execution_evidence.get("agent_plans"),
+        "verified_plan_evidence_manifests": execution_evidence.get("verified_plan_evidence_manifests"),
     }
 
 

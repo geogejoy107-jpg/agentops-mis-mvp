@@ -12,9 +12,9 @@ function count(value: unknown) {
 }
 
 function statusClass(status: string) {
-  if (["ready", "completed", "approved"].includes(status)) return "status statusGood";
+  if (["ready", "completed", "approved", "verified"].includes(status)) return "status statusGood";
   if (["needs_attention", "failed", "blocked", "rejected"].includes(status)) return "status statusBad";
-  if (["waiting_approval", "in_progress", "attention"].includes(status)) return "status statusWarn";
+  if (["waiting_approval", "in_progress", "attention", "warning"].includes(status)) return "status statusWarn";
   return "status";
 }
 
@@ -135,6 +135,8 @@ export function CustomerProjectReportParityPage({
 }: Readonly<{ projectId: string; report: CustomerProjectReportPayload | null; error?: string | null }>) {
   const counts = report?.counts || {};
   const safe = report?.safe_defaults || {};
+  const execution = report?.execution_evidence || {};
+  const manifests = execution.recent_manifests || [];
 
   return (
     <AppFrame>
@@ -157,7 +159,7 @@ export function CustomerProjectReportParityPage({
         <div className="banner error">{error || report?.error || "Report not found"}</div>
       ) : (
         <>
-          <section className="metrics six">
+          <section className="metrics nine">
             {[
               ["Tasks", counts.tasks],
               ["Runs", counts.runs],
@@ -165,6 +167,9 @@ export function CustomerProjectReportParityPage({
               ["Pending approvals", counts.pending_approvals],
               ["Evaluations", counts.evaluations],
               ["Artifacts", counts.artifacts],
+              ["Agent Plans", counts.agent_plans],
+              ["Plan Evidence", counts.plan_evidence_manifests],
+              ["Verified Evidence", counts.verified_plan_evidence_manifests],
             ].map(([label, value]) => (
               <div className="metric compactMetric" key={String(label)}>
                 <span>{label}</span>
@@ -195,6 +200,36 @@ export function CustomerProjectReportParityPage({
                 <span>report artifact {report.report_artifact_id || "not archived"}</span>
                 <span>approvals {(report.approval_ids || []).length}</span>
               </div>
+            </div>
+          </section>
+
+          <section className="panel wide">
+            <div className="panelHeader">
+              <h2><ShieldCheck size={14} /> Agent Plan evidence</h2>
+              <span>{count(execution.verified_plan_evidence_manifests)} verified</span>
+            </div>
+            <div className="proofStrip">
+              <span>agent plans {count(execution.agent_plans)}</span>
+              <span>manifests {count(execution.plan_evidence_manifests)}</span>
+              <span>blocked {count(execution.blocked_plan_evidence_manifests)}</span>
+              <span>approval gated {count(execution.approval_gated_tasks)}</span>
+              <span>missing plans {count(execution.tasks_missing_agent_plan)}</span>
+              <span>low-risk gaps {count(execution.low_risk_tasks_missing_verified_plan_evidence)}</span>
+            </div>
+            <p className="subtle">{execution.contract || "Agent Gateway evidence contract not loaded."}</p>
+            <div className="list compactList">
+              {manifests.length ? manifests.map((manifest) => (
+                <div className="row" key={manifest.manifest_id || `${manifest.plan_id}:${manifest.run_id}`}>
+                  <div>
+                    <strong>{manifest.manifest_id || "manifest"}</strong>
+                    <span>{manifest.plan_id || "plan"} · {manifest.run_id || "run"} · {manifest.agent_id || "agent"}</span>
+                  </div>
+                  <div className="rowActions">
+                    <span className={statusClass(manifest.status || "unknown")}>{manifest.status || "unknown"}</span>
+                    <span className="metaPill">{manifest.mismatch_policy || "policy"}</span>
+                  </div>
+                </div>
+              )) : <p className="empty">No plan evidence manifests loaded.</p>}
             </div>
           </section>
 

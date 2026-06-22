@@ -260,6 +260,31 @@ export type CustomerProjectReportPayload = {
     evaluations?: number;
     memories?: number;
     artifacts?: number;
+    agent_plans?: number;
+    plan_evidence_manifests?: number;
+    verified_plan_evidence_manifests?: number;
+  };
+  execution_evidence?: {
+    agent_plans?: number;
+    plan_evidence_manifests?: number;
+    verified_plan_evidence_manifests?: number;
+    blocked_plan_evidence_manifests?: number;
+    warning_plan_evidence_manifests?: number;
+    tasks_missing_agent_plan?: number;
+    low_risk_tasks_missing_verified_plan_evidence?: number;
+    approval_gated_tasks?: number;
+    manifest_ids?: string[];
+    verified_manifest_ids?: string[];
+    recent_manifests?: Array<{
+      manifest_id?: string;
+      plan_id?: string;
+      task_id?: string;
+      run_id?: string;
+      agent_id?: string;
+      status?: string;
+      mismatch_policy?: string;
+    }>;
+    contract?: string;
   };
   artifact_id?: string | null;
   report_artifact_id?: string | null;

@@ -153,8 +153,9 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   verifies the Free Local `report_templates` entitlement block, confirms no
   customer project was created by the blocked action, flips an isolated temporary
   entitlement fixture to `pro_workspace`, clicks the same Next.js dispatch path
-  again, verifies a customer project and report artifact are created, and checks
-  for token-like leakage.
+  again, verifies a customer project and report artifact are created, opens the
+  created project report page, verifies visible Agent Plan / plan-evidence
+  status, and checks for token-like leakage.
 
 - First migration artifact:
   - `ui/next-app/app/workspace/page.tsx`
@@ -278,6 +279,8 @@ Initial status:
   `scripts/run_kb_bot_demo.py` creates Agent Plans before starting runs and
   records plan-evidence manifests for the completed low-risk/customer-delivery
   steps while keeping the external-upload step approval-gated.
+- The Next.js delivery report must render that contract visibly as Agent Plan
+  evidence, not only rely on hidden JSON or backend-only smoke assertions.
 - Smoke: `python3 scripts/commercial_entitlements_smoke.py`
 
 ### WP2: Production Safety Contract
