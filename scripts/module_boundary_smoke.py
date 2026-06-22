@@ -49,7 +49,11 @@ from agentops_mis_core.agent_plans import (
     build_agent_plan_status_transition_required_response,
     compute_agent_plan_hash,
     load_json_list_field,
+    plan_ref_is_safe_relative_path,
+    plan_ref_path,
     row_field,
+    resolve_agent_plan_file_scope,
+    resolve_agent_plan_spec_authority,
 )
 from agentops_mis_core.read_model_cache import ReadModelCache
 from agentops_mis_core.commander_work_packages import (
@@ -252,7 +256,11 @@ EXTRACTED_AGENT_PLAN_HELPERS = {
     "build_agent_plan_status_transition_required_response",
     "compute_agent_plan_hash",
     "load_json_list_field",
+    "plan_ref_is_safe_relative_path",
+    "plan_ref_path",
     "row_field",
+    "resolve_agent_plan_file_scope",
+    "resolve_agent_plan_spec_authority",
 }
 SERVER_AGENT_PLAN_IMPORTS = {
     "agent_plan_contract",
@@ -263,7 +271,10 @@ SERVER_AGENT_PLAN_IMPORTS = {
     "build_agent_plan_status_transition_required_response",
     "compute_agent_plan_hash",
     "load_json_list_field",
+    "plan_ref_path",
     "row_field",
+    "resolve_agent_plan_file_scope",
+    "resolve_agent_plan_spec_authority",
 }
 
 
@@ -717,6 +728,10 @@ def main() -> int:
             "summary": {"execution_steps": 3},
         },
     )
+    spec_authority = resolve_agent_plan_spec_authority(["PROJECT_SPEC.md"], repo_root=ROOT)
+    missing_spec_authority = resolve_agent_plan_spec_authority(["missing/not-real.md"], repo_root=ROOT)
+    file_scope = resolve_agent_plan_file_scope(["server.py", "docs/MODULE_BOUNDARY_PLAN.md"], repo_root=ROOT)
+    unsafe_file_scope = resolve_agent_plan_file_scope(["../outside.py", "https://example.com/file.py"], repo_root=ROOT)
     agent_plan_approval_decision_response = build_agent_plan_approval_decision_response(
         approval={"approval_id": "ap_plan_smoke", "decision": "approved"},
         agent_plan_decision={
@@ -776,6 +791,13 @@ def main() -> int:
     require(agent_plan_contract_payload.get("approval_required") is True, "agent plan contract approval flag failed", failures)
     require(isinstance(agent_plan_hash, str) and len(agent_plan_hash) == 64 and agent_plan_hash == compute_agent_plan_hash(agent_plan_row), "agent plan hash stability failed", failures)
     require(isinstance(agent_plan_verification_digest, str) and len(agent_plan_verification_digest) == 64, "agent plan verification hash failed", failures)
+    require(plan_ref_is_safe_relative_path("server.py") is True, "agent plan safe path helper rejected relative path", failures)
+    require(plan_ref_is_safe_relative_path("../server.py") is False, "agent plan safe path helper accepted parent traversal", failures)
+    require(plan_ref_path("PROJECT_SPEC.md", repo_root=ROOT) is not None, "agent plan path resolver failed for repo file", failures)
+    require(spec_authority.get("ok") is True and spec_authority.get("readable"), "agent plan spec authority failed for readable spec", failures)
+    require(missing_spec_authority.get("ok") is False and missing_spec_authority.get("missing") == ["missing/not-real.md"], "agent plan spec authority missing-file failed", failures)
+    require(file_scope.get("ok") is True and len(file_scope.get("scoped") or []) == 2, "agent plan file scope failed for repo paths", failures)
+    require(unsafe_file_scope.get("ok") is False and len(unsafe_file_scope.get("unsafe") or []) == 2, "agent plan file scope accepted unsafe paths", failures)
     require((agent_plan_approval_decision_response.get("agent_plan") or {}).get("status") == "approved", "agent plan approval decision response plan failed", failures)
     require(agent_plan_approval_decision_response.get("verification_result_hash") == "hash_plan_verification_smoke", "agent plan approval decision response hash failed", failures)
     require(agent_plan_approval_decision_response.get("token_omitted") is True, "agent plan approval decision response omission proof missing", failures)

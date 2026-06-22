@@ -67,7 +67,10 @@ from agentops_mis_core.agent_plans import (
     build_agent_plan_status_transition_required_response,
     compute_agent_plan_hash,
     load_json_list_field,
+    plan_ref_path,
     row_field,
+    resolve_agent_plan_file_scope,
+    resolve_agent_plan_spec_authority,
 )
 from agentops_mis_core.commander_work_packages import (
     build_commander_work_packages_readback,
@@ -4909,55 +4912,6 @@ def get_agent_plan(conn: sqlite3.Connection, plan_id: str, headers=None, auth_ct
     return {"provider": "agentops-agent-plan", "operation": "agent_plan_get", "agent_plan": dict(row), "token_omitted": True}, 200
 
 
-def plan_ref_is_safe_relative_path(ref: str) -> bool:
-    value = str(ref or "").strip()
-    if not value or value.startswith(("http://", "https://", "file://", "~")):
-        return False
-    path = Path(value)
-    return not path.is_absolute() and ".." not in path.parts
-
-
-def plan_ref_path(ref: str) -> Path | None:
-    if not plan_ref_is_safe_relative_path(ref):
-        return None
-    try:
-        resolved = (ROOT / ref).resolve(strict=False)
-        root_resolved = ROOT.resolve(strict=True)
-    except Exception:
-        return None
-    try:
-        resolved.relative_to(root_resolved)
-    except ValueError:
-        return None
-    return resolved
-
-
-def resolve_agent_plan_spec_authority(refs: list) -> dict:
-    readable: list[dict] = []
-    missing: list[str] = []
-    unsafe: list[str] = []
-    for item in refs:
-        ref = str(item or "").strip()
-        if not ref:
-            continue
-        path = plan_ref_path(ref)
-        if not path:
-            unsafe.append(ref)
-            continue
-        if path.exists() and path.is_file():
-            readable.append({"ref": ref, "path": str(path.relative_to(ROOT.resolve(strict=True))), "bytes": path.stat().st_size})
-        else:
-            missing.append(ref)
-    return {
-        "ok": bool(readable) and not missing and not unsafe,
-        "readable": readable,
-        "missing": missing,
-        "unsafe": unsafe,
-        "message": "Referenced specs must be readable files inside the repository.",
-        "token_omitted": True,
-    }
-
-
 def resolve_agent_plan_base_authority(conn: sqlite3.Connection | None, refs: list) -> dict:
     table_bases: list[dict] = []
     file_bases: list[dict] = []
@@ -4976,7 +4930,7 @@ def resolve_agent_plan_base_authority(conn: sqlite3.Connection | None, refs: lis
         if base:
             table_bases.append(dict(base))
             continue
-        path = plan_ref_path(ref)
+        path = plan_ref_path(ref, repo_root=ROOT)
         if not path:
             unsafe.append(ref)
             continue
@@ -4992,27 +4946,6 @@ def resolve_agent_plan_base_authority(conn: sqlite3.Connection | None, refs: lis
         "missing": missing,
         "unsafe": unsafe,
         "message": "Referenced bases must exist in the bases table, as readable repository base specs, or as explicit internal ledger bases.",
-        "token_omitted": True,
-    }
-
-
-def resolve_agent_plan_file_scope(refs: list) -> dict:
-    scoped: list[dict] = []
-    unsafe: list[str] = []
-    for item in refs:
-        ref = str(item or "").strip()
-        if not ref:
-            continue
-        path = plan_ref_path(ref)
-        if not path:
-            unsafe.append(ref)
-            continue
-        scoped.append({"ref": ref, "path": str(path.relative_to(ROOT.resolve(strict=True))), "exists": path.exists()})
-    return {
-        "ok": not unsafe,
-        "scoped": scoped,
-        "unsafe": unsafe,
-        "message": "Proposed file changes must stay inside the repository and use relative paths.",
         "token_omitted": True,
     }
 
@@ -5080,10 +5013,10 @@ def verify_agent_plan_row(row: sqlite3.Row | dict, conn: sqlite3.Connection | No
     steps = load_json_list_field(row, "execution_steps_json")
     risk = row["risk_level"]
     approval_required = bool(row["approval_required"])
-    spec_authority = resolve_agent_plan_spec_authority(specs)
+    spec_authority = resolve_agent_plan_spec_authority(specs, repo_root=ROOT)
     memory_authority = resolve_agent_plan_memory_authority(conn, row, memories)
     base_authority = resolve_agent_plan_base_authority(conn, bases)
-    file_scope = resolve_agent_plan_file_scope(files)
+    file_scope = resolve_agent_plan_file_scope(files, repo_root=ROOT)
     checks = [
         {"id": "read_specs", "ok": bool(specs) and bool(spec_authority.get("ok")), "message": "Plan references readable specs or workflow docs.", "details": spec_authority},
         {"id": "retrieve_memory", "ok": bool(memories), "message": "Plan references memory, knowledge, or failure-case context."},
