@@ -224,6 +224,12 @@ has since closed or partially closed several items on the development branch:
   policy/redaction, SQLite WAL/busy-timeout pragmas, deterministic CI, and
   customer delivery-board evidence links now have targeted checks in the merge
   readiness checklist.
+- SQLite long workflow safety is now covered by
+  `scripts/sqlite_long_transaction_audit_smoke.py`: it statically audits
+  `server.py` for explicit transaction statements and non-autocommit sqlite
+  connections, then runs an isolated temp-DB smoke proving a concurrent writer
+  can insert a runtime event while the KB-bot workflow is inside a mocked long
+  `subprocess.run`.
 
 Still do not claim hosted/commercial readiness until the exact release-candidate
 SHA has green required CI, clean-machine install/build evidence, license/SBOM

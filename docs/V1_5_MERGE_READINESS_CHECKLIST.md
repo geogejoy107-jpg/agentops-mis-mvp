@@ -300,7 +300,7 @@ python3 scripts/agent_gateway_review_queue_smoke.py
 - [x] Use autocommit connections to avoid implicit write transactions spanning subprocess/model calls.
 - [x] Use an appropriate local synchronous mode.
 - [x] Keep the verified write path short in the SQLite reliability smoke.
-- [ ] Audit every long-running workflow path for model/network/subprocess calls held inside a write transaction.
+- [x] Audit every long-running workflow path for model/network/subprocess calls held inside a write transaction.
 - [x] Each request/worker path opens its own connection through `server.db()` in the current local architecture.
 - [x] Add a schema migration version table.
 
@@ -319,6 +319,7 @@ Concurrency acceptance:
 100 concurrent reads: pass via scripts/sqlite_reliability_smoke.py
 20 concurrent short writes: pass via scripts/sqlite_reliability_smoke.py
 heartbeat + knowledge search + queue + approval: pass
+long subprocess held-write-transaction audit: pass via scripts/sqlite_long_transaction_audit_smoke.py
 locked/busy failures: zero
 ```
 
@@ -327,6 +328,7 @@ Required checks:
 ```bash
 python3 scripts/sqlite_pragmas_smoke.py
 python3 scripts/sqlite_reliability_smoke.py
+python3 scripts/sqlite_long_transaction_audit_smoke.py
 ```
 
 ## 9. UI/API responsiveness
