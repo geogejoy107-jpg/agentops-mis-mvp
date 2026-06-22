@@ -84,7 +84,20 @@ def translate_qmark_sql(sql: str) -> tuple[str, int]:
     return translated, int(count)
 
 
+def translate_sqlite_insert_or_ignore(sql: str) -> str:
+    match = re.match(r"(?is)^(\s*)INSERT\s+OR\s+IGNORE\s+INTO\s+(.+?)(;?\s*)$", sql)
+    if not match:
+        return sql
+    prefix, rest, suffix = match.groups()
+    rest = rest.rstrip()
+    trailing_semicolon = ";" if rest.endswith(";") else ""
+    if trailing_semicolon:
+        rest = rest[:-1].rstrip()
+    return f"{prefix}INSERT INTO {rest} ON CONFLICT DO NOTHING{trailing_semicolon}{suffix}"
+
+
 def translate_sql(sql: str, params: Mapping[str, Any] | Sequence[Any] | None = None) -> tuple[str, Any]:
+    sql = translate_sqlite_insert_or_ignore(sql)
     if params is None:
         return sql, None
     if isinstance(params, Mapping):

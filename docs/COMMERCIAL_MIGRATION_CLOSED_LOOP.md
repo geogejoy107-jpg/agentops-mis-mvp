@@ -133,6 +133,8 @@ Must be true:
   Agent Gateway CLI/API read contract for selected `agentops` commands, not
   only browser/human API reads; this includes Agent Plan and plan-evidence
   list/get/verify readback before Postgres writes are enabled.
+- Postgres write helpers must match SQLite outcomes and snapshots before any
+  routed HTTP/CLI write surface is enabled.
 - Verification includes local acceptance against a temporary SQLite database
   before any Postgres work starts:
 
@@ -143,6 +145,7 @@ python3 scripts/storage_postgres_route_read_model_smoke.py
 python3 scripts/storage_backend_selection_smoke.py
 python3 scripts/storage_postgres_http_read_parity_smoke.py
 python3 scripts/storage_postgres_cli_read_parity_smoke.py
+python3 scripts/storage_postgres_write_helper_parity_smoke.py
 ```
 
 ### Gate 4: UI/API Parity Before Next.js
@@ -157,6 +160,10 @@ Must be true:
 - No route is retired until customer dispatch, worker console, reports,
   approvals, memory, and audit paths are verified in both UIs or explicitly
   deferred.
+- The Next.js deployment route must load `/api/storage/backend-status` through
+  the MIS proxy/server loader and surface SQLite default state, Postgres/BYOC
+  prerequisites, read-only mode, write blocking, fallback status, contract ID,
+  and next proof before any storage-backed route replacement is considered.
 - Verification includes current Vite build plus browser snapshots and critical
   review interactions before a Next.js route is accepted.
 - Browser verification is automated by:

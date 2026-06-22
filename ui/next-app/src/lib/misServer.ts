@@ -15,6 +15,7 @@ import type {
   RunDetailPayload,
   RunDetailSnapshot,
   SecurityReadinessSummary,
+  StorageBackendStatus,
   TaskDetailPayload,
   WorkerStatusSummary,
   AuditSummary,
@@ -80,6 +81,14 @@ export async function loadServerCustomerProjectReport(projectId: string): Promis
 export async function loadServerCommercialEntitlements(): Promise<ServerLoadResult<CommercialEntitlementStatus>> {
   try {
     return { data: await serverMisJson<CommercialEntitlementStatus>("/commercial/entitlements"), error: null };
+  } catch (err) {
+    return { data: {}, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export async function loadServerStorageBackendStatus(): Promise<ServerLoadResult<StorageBackendStatus>> {
+  try {
+    return { data: await serverMisJson<StorageBackendStatus>("/storage/backend-status"), error: null };
   } catch (err) {
     return { data: {}, error: err instanceof Error ? err.message : String(err) };
   }

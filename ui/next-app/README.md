@@ -51,6 +51,7 @@ memory review actions through the Next.js UI, verifies the state change through
 - Commercial contract: edition, capability matrix, fail-closed gates, billing-call omission, and token omission load read-only through the MIS API proxy
 - Governance contract: production readiness, workspace/RBAC gate state, short-lived session governance, and audit evidence load read-only through the MIS API proxy without raw session IDs
 - Deployment contract: local readiness, backup/restore evidence, retention/export gates, SSO hooks, and private connector policy load read-only through the MIS API proxy; restore remains CLI-confirmed
+- Storage migration contract: `/workspace/deployment` reads `/api/storage/backend-status` through the Next.js server loader and surfaces SQLite default state, Postgres/BYOC prerequisites, read-only HTTP mode, write blocking, fallback omission, and the next required parity proof
 - First-paint contract: approval and memory review queues can load on the App Router server path from the configured MIS API
 - Interaction contract: approval review and memory review write through the Next.js UI, with client fetch plus Next form fallback routes, then refresh from the MIS API proxy
 - Ledger detail contract: task/run detail routes are read-only, load through the MIS API proxy, and expose linked evidence rows plus token omission state

@@ -581,6 +581,31 @@ h2 {
   margin-top: 12px;
 }
 
+.storageGateGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.storageGateBlock {
+  min-width: 0;
+}
+
+.subHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 28px;
+}
+
+.subHeader h2 {
+  font-size: 13px;
+}
+
 .adapterCard {
   display: grid;
   gap: 10px;
@@ -633,6 +658,7 @@ h2 {
   .nav,
   .metrics,
   .grid,
+  .storageGateGrid,
   .approvalGrid {
     grid-template-columns: 1fr;
   }

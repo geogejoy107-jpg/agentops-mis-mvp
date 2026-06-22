@@ -1,9 +1,16 @@
 import { Archive, Database, FileCheck2, ServerCog, ShieldCheck } from "lucide-react";
 import { AppFrame } from "./AppFrame";
-import type { AuditSummary, CommercialEntitlementStatus, LocalReadinessPayload, ReadinessGate, SecurityReadinessSummary } from "@/lib/mis";
+import type {
+  AuditSummary,
+  CommercialEntitlementStatus,
+  LocalReadinessPayload,
+  ReadinessGate,
+  SecurityReadinessSummary,
+  StorageBackendStatus,
+} from "@/lib/mis";
 
 function statusClass(status?: string) {
-  if (["pass", "ready", "ok", "healthy"].includes(status || "")) return "status statusGood";
+  if (["pass", "ready", "ok", "healthy", "active"].includes(status || "")) return "status statusGood";
   if (["fail", "blocked", "missing_docs", "unavailable"].includes(status || "")) return "status statusBad";
   if (["warn", "attention", "needs_demo_run", "needs_seed_or_run", "gated"].includes(status || "")) return "status statusWarn";
   return "status";
@@ -22,6 +29,12 @@ function count(value: unknown) {
 
 function gateFor(entitlements: CommercialEntitlementStatus, capability: string) {
   return (entitlements.gates || []).find((gate) => gate.capability === capability);
+}
+
+function shortPath(value?: string) {
+  if (!value) return "not configured";
+  const parts = value.split("/");
+  return parts.slice(-2).join("/") || value;
 }
 
 function GateList({ gates }: Readonly<{ gates?: ReadinessGate[] }>) {
@@ -46,12 +59,14 @@ export function DeploymentParityPage({
   local,
   security,
   entitlements,
+  storage,
   audit,
   errors,
 }: Readonly<{
   local: LocalReadinessPayload;
   security: SecurityReadinessSummary;
   entitlements: CommercialEntitlementStatus;
+  storage: StorageBackendStatus;
   audit: AuditSummary[];
   errors?: string[];
 }>) {
@@ -66,6 +81,8 @@ export function DeploymentParityPage({
   const signedExportGate = gateFor(entitlements, "signed_audit_exports");
   const ssoGate = gateFor(entitlements, "sso_hooks");
   const connectorGate = gateFor(entitlements, "custom_connector_sdk");
+  const storageChecks = Object.entries(storage.checks || {});
+  const storageContract = storage.contract || (storage.selected_backend === "postgres" ? "postgres backend gate" : "sqlite free local");
 
   return (
     <AppFrame>
@@ -86,9 +103,9 @@ export function DeploymentParityPage({
         {[
           ["Local readiness", local.status || "unknown"],
           ["Production", security.status || "unknown"],
+          ["Storage", `${storage.active_backend || "unknown"} / ${storage.selected_backend || "unknown"}`],
           ["BYOC caps", `${byocEnabled}/${byocCapabilities.length}`],
           ["Backup docs", backupDocsReady ? "ready" : "attention"],
-          ["Audit events", audit.length],
           ["Token omitted", boolText(local.token_omitted !== false && security.token_omitted !== false)],
         ].map(([label, value]) => (
           <div className="metric compactMetric" key={String(label)}>
@@ -128,6 +145,61 @@ export function DeploymentParityPage({
             Backup restore remains CLI-confirmed; the browser surface only reports readiness, integrity, and omission contracts.
           </p>
         </div>
+      </section>
+
+      <section className="panel wide">
+        <div className="panelHeader">
+          <h2><Database size={14} /> Storage backend migration gate</h2>
+          <span className={statusClass(storage.status)}>{storage.status || "unknown"}</span>
+        </div>
+        <div className="proofStrip">
+          <span>selected {storage.selected_backend || "unknown"}</span>
+          <span>active {storage.active_backend || "none"}</span>
+          <span>mode {storage.mode || "local"}</span>
+          <span>writes allowed {boolText(storage.writes_allowed)}</span>
+          <span>fallback {boolText(storage.fallback_performed)}</span>
+          <span>contract {storageContract}</span>
+        </div>
+        <div className="storageGateGrid">
+          <div className="storageGateBlock">
+            <div className="subHeader">
+              <h2>Free Local ledger</h2>
+              <span className={statusClass(storage.sqlite?.free_local_default ? "ready" : "attention")}>{storage.sqlite?.free_local_default ? "default" : "not active"}</span>
+            </div>
+            <div className="proofStrip">
+              <span>dependency {storage.sqlite?.dependency || "unknown"}</span>
+              <span>db {shortPath(storage.sqlite?.db_path)}</span>
+            </div>
+          </div>
+          <div className="storageGateBlock">
+            <div className="subHeader">
+              <h2>Postgres BYOC gate</h2>
+              <span className={statusClass(storage.postgres?.server_backend_routable ? "ready" : "gated")}>{storage.postgres?.server_backend_routable ? "routable" : storage.reason || "gated"}</span>
+            </div>
+            <div className="proofStrip">
+              <span>dsn {boolText(storage.postgres?.dsn_configured)}</span>
+              <span>read-only http {boolText(storage.postgres?.read_only_http_routable)}</span>
+              <span>free local dep {boolText(storage.postgres?.free_local_dependency)}</span>
+              <span>requires {storage.postgres?.required_edition || storage.required_edition || "enterprise_byoc"}</span>
+            </div>
+          </div>
+        </div>
+        {storageChecks.length ? (
+          <div className="adapterGrid">
+            {storageChecks.map(([name, ok]) => (
+              <article className="adapterCard" key={name}>
+                <div>
+                  <strong>{name.replace(/_/g, " ")}</strong>
+                  <span>{ok ? "Postgres prerequisite satisfied" : "Postgres prerequisite still closed"}</span>
+                </div>
+                <span className={statusClass(ok ? "ready" : "attention")}>{ok ? "pass" : "closed"}</span>
+              </article>
+            ))}
+          </div>
+        ) : null}
+        <p className="subtle">
+          {storage.next_proof || "Next proof: keep Python/SQLite as the active provider until Next.js API parity and routed Postgres write-adapter evidence pass."}
+        </p>
       </section>
 
       <section className="grid">

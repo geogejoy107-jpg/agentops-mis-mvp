@@ -377,6 +377,37 @@ export type CommercialEntitlementStatus = {
   token_omitted?: boolean;
 };
 
+export type StorageBackendStatus = {
+  provider?: string;
+  status?: string;
+  selected_backend?: string;
+  active_backend?: string;
+  mode?: string;
+  writes_allowed?: boolean;
+  reason?: string;
+  required_edition?: string;
+  required_env?: string[];
+  supported_backends?: string[];
+  fallback_performed?: boolean;
+  token_omitted?: boolean;
+  contract?: string;
+  next_proof?: string;
+  sqlite?: {
+    db_path?: string;
+    dependency?: string;
+    free_local_default?: boolean;
+  };
+  postgres?: {
+    available_as_runtime_dependency?: boolean;
+    dsn_configured?: boolean;
+    required_edition?: string;
+    server_backend_routable?: boolean;
+    read_only_http_routable?: boolean;
+    free_local_dependency?: boolean;
+  };
+  checks?: Record<string, boolean>;
+};
+
 export type CustomerTaskTemplate = {
   template_id: string;
   name?: string;
@@ -627,6 +658,10 @@ export async function loadCustomerProjectReport(projectId: string): Promise<Cust
 
 export async function loadCommercialEntitlements(): Promise<CommercialEntitlementStatus> {
   return misJson<CommercialEntitlementStatus>("/commercial/entitlements");
+}
+
+export async function loadStorageBackendStatus(): Promise<StorageBackendStatus> {
+  return misJson<StorageBackendStatus>("/storage/backend-status");
 }
 
 export async function loadCustomerTaskTemplates(): Promise<CustomerTaskTemplateListPayload> {

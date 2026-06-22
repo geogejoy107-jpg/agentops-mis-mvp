@@ -1175,7 +1175,12 @@ CREATE INDEX IF NOT EXISTS idx_knowledge_documents_category ON knowledge_documen
 
 def repo_insert_audit_log(conn: sqlite3.Connection, row: dict, metadata: dict | None = None) -> dict:
     previous = conn.execute("SELECT tamper_chain_hash FROM audit_logs ORDER BY created_at DESC LIMIT 1").fetchone()
-    previous_hash = previous[0] if previous else "genesis"
+    if previous and isinstance(previous, dict):
+        previous_hash = previous["tamper_chain_hash"]
+    elif previous:
+        previous_hash = previous[0]
+    else:
+        previous_hash = "genesis"
     payload = {
         "actor_type": row["actor_type"],
         "actor_id": row.get("actor_id"),

@@ -164,9 +164,12 @@ def main() -> int:
             file_contains("ui/next-app/package.json", '"next": "16.2.9"')
             and file_contains("ui/next-app/app/api/mis/[...path]/route.ts", "AGENTOPS_API_BASE")
             and file_contains("ui/next-app/src/lib/mis.ts", "/dashboard/metrics")
+            and file_contains("ui/next-app/src/lib/mis.ts", "/storage/backend-status")
+            and file_contains("ui/next-app/src/lib/misServer.ts", "loadServerStorageBackendStatus")
+            and file_contains("ui/next-app/src/components/DeploymentPage.tsx", "Storage backend migration gate")
             and (ROOT / "scripts" / "nextjs_parity_smoke.py").exists()
             and (ROOT / "scripts" / "nextjs_playwright_snapshot_smoke.py").exists(),
-            "parallel Next.js App Router track has API proxy, workspace data contract, and browser snapshot smoke",
+            "parallel Next.js App Router track has API proxy, workspace/storage data contracts, deployment storage gate, and browser snapshot smoke",
         ),
         check(
             "postgres_is_gated_not_immediate",
@@ -207,6 +210,16 @@ def main() -> int:
             and file_contains("scripts/storage_postgres_cli_read_parity_smoke.py", "plan_evidence_verify")
             and (ROOT / "scripts" / "storage_postgres_cli_read_parity_smoke.py").exists(),
             "read-only Postgres CLI/API parity smoke and docs include Agent Plan and plan-evidence reads",
+        ),
+        check(
+            "postgres_write_helper_parity_surface_exists",
+            file_contains("docs/POSTGRES_PARITY_CONTRACT.md", "postgres_write_helper_parity_v1")
+            and file_contains("docs/STORAGE_BOUNDARY_MAP.md", "storage_postgres_write_helper_parity_smoke.py")
+            and file_contains("docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md", "storage_postgres_write_helper_parity_smoke.py")
+            and file_contains("agentops_mis_storage/postgres.py", "translate_sqlite_insert_or_ignore")
+            and file_contains("server.py", 'previous["tamper_chain_hash"]')
+            and (ROOT / "scripts" / "storage_postgres_write_helper_parity_smoke.py").exists(),
+            "Postgres write-helper parity smoke, INSERT OR IGNORE translation, and audit dict-row compatibility are present",
         ),
         check(
             "blocked_generated_or_runtime_artifacts_absent",
@@ -257,6 +270,7 @@ def main() -> int:
                 "python3 scripts/storage_backend_selection_smoke.py",
                 "python3 scripts/storage_postgres_http_read_parity_smoke.py",
                 "python3 scripts/storage_postgres_cli_read_parity_smoke.py",
+                "python3 scripts/storage_postgres_write_helper_parity_smoke.py",
             ],
         },
         {

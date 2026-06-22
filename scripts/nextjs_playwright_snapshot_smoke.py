@@ -34,7 +34,7 @@ ROUTES = [
     ("/workspace/agents", ["Agents", "Production security", "Adapter readiness"]),
     ("/workspace/commercial", ["Commercial", "Capability matrix", "Fail-closed gates"]),
     ("/workspace/governance", ["Governance", "Production readiness", "Session governance"]),
-    ("/workspace/deployment", ["Deployment", "Backup and restore evidence", "Storage and retention"]),
+    ("/workspace/deployment", ["Deployment", "Storage backend migration gate", "Storage and retention"]),
     ("/workspace/tasks", ["Tasks", "running", "planned"]),
     ("/workspace/runs", ["Run Ledger", "Run", "Status"]),
     ("/workspace/approvals", ["Approvals", "Pending approval", "Decision history"]),

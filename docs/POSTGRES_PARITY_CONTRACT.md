@@ -39,7 +39,12 @@ Postgres server adapter is still read-only. The ninth layer is the CLI read
 contract, `postgres_cli_read_parity_v1`, which drives selected `agentops` CLI
 read commands, including Agent Plan and plan-evidence list/get/verify reads,
 against that same Postgres-backed read-only server so the machine-facing Agent
-Gateway CLI/API contract remains valid beyond the default SQLite backend.
+Gateway CLI/API contract remains valid beyond the default SQLite backend. The
+tenth layer is the write-helper parity contract,
+`postgres_write_helper_parity_v1`, which runs selected `server.repo_*` write
+helpers against both temporary SQLite and temporary Postgres, compares outcomes
+and snapshots, and keeps HTTP/CLI writes fail-closed until a routed write
+adapter is explicitly proven.
 
 All layers are intentionally derived from `server.SCHEMA_SQL`, because
 `server.py` is still the executable schema authority for the dependency-free
@@ -62,6 +67,8 @@ The first Postgres adapter must preserve these invariants:
   `status`, `approved_at`, `consumed_at`, and `result_json`.
 - Translate DB-API `?` placeholders into Postgres `$1`, `$2`, ... placeholders
   without touching literal question marks inside SQL strings.
+- Translate SQLite `INSERT OR IGNORE` helper statements into Postgres
+  `ON CONFLICT DO NOTHING` without changing Free Local behavior.
 - Exclude SQLite-only runtime features from Postgres DDL generation, including
   PRAGMA and FTS5 virtual tables.
 
@@ -94,6 +101,7 @@ python3 scripts/storage_postgres_route_read_model_smoke.py
 python3 scripts/storage_backend_selection_smoke.py
 python3 scripts/storage_postgres_http_read_parity_smoke.py
 python3 scripts/storage_postgres_cli_read_parity_smoke.py
+python3 scripts/storage_postgres_write_helper_parity_smoke.py
 python3 scripts/storage_boundary_sqlite_smoke.py
 ```
 
@@ -120,8 +128,11 @@ selected GET routes match the locked read-model hash, and confirms POST writes
 return `postgres_read_only_backend` without creating rows. The ninth command
 runs selected `agentops` CLI reads, including Agent Plan and plan-evidence
 list/get/verify reads, against the same Postgres-backed server and checks a CLI
-write command is blocked. The final command proves the broader current SQLite
-helper behavior that Postgres must match.
+write command is blocked. The tenth command executes selected `repo_*` write
+helpers on SQLite and Postgres, compares helper outcomes and persisted
+snapshots, proves chained audit-row dict compatibility and transaction rollback
+control, and still does not enable any HTTP/CLI writes. The final command
+proves the broader current SQLite helper behavior that Postgres must match.
 
 When Docker is unavailable on a local machine, use the non-authoritative
 diagnostic mode only to keep wider readiness checks moving:
@@ -134,6 +145,7 @@ python3 scripts/storage_postgres_boundary_parity_smoke.py --skip-if-unavailable
 python3 scripts/storage_postgres_route_read_model_smoke.py --skip-if-unavailable
 python3 scripts/storage_postgres_http_read_parity_smoke.py --skip-if-unavailable
 python3 scripts/storage_postgres_cli_read_parity_smoke.py --skip-if-unavailable
+python3 scripts/storage_postgres_write_helper_parity_smoke.py --skip-if-unavailable
 ```
 
 This mode reports `skipped: true`; it is not final BYOC/Postgres evidence.
@@ -177,6 +189,12 @@ Current local evidence on `codex/commercial-migration-closed-loop`:
   `postgres_cli_read_snapshot_hash=97c7e8de76856edb42b34bdc7a3e9be1845f60ee000583d40af3c6864c47ba6a`,
   runtime-only `age_sec` is omitted from the contract hash,
   `free_local_dependencies=[]`, and no fallback to SQLite occurred.
+- `postgres_write_helper_parity_v1` passed against `postgres:16-alpine` with a
+  temporary psycopg target: 29 selected `server.repo_*` write-helper outcomes
+  and snapshots matched SQLite, chained audit append and rollback sentinel were
+  verified, `postgres_write_helper_hash=bb601af77f646cd06e885254818dac5a63f3b4f596475be872efe0f7ff560c0b`,
+  `free_local_dependencies=[]`, no fallback to SQLite occurred, and HTTP/CLI
+  writes remain disabled at this gate.
 - Source install packaging includes `agentops_mis_storage.postgres`; importing
   the module and translating SQL does not require psycopg.
 
@@ -186,6 +204,8 @@ Postgres parity is not complete until the adapter boundary:
 
 - routes more `repo_*` helper flows through the same shared fixture pattern;
 - proves Postgres write helpers before enabling any Postgres write routes;
+- keeps write routes disabled until an explicit routed write-adapter smoke
+  proves the small route surface that will be enabled;
 - keeps backend selection fail-closed so Postgres configuration cannot silently
   run against SQLite;
 - keeps qmark/named placeholder translation and literal `?` behavior locked;
