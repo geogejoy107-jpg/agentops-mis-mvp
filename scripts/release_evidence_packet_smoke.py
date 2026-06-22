@@ -131,6 +131,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "commander_coding_workspace",
+        "command": "python3 scripts/commander_coding_workspace_smoke.py",
+        "summary": "Commander coding workspace loop creates an isolated git worktree, collects patch/test/verifier evidence, records MIS artifacts and cleans branch/worktree residue.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "commander_work_package_plan",
         "command": "python3 scripts/commander_work_package_plan_smoke.py",
         "summary": "Commander work-package planning creates task-bound repo-map localization artifacts without live execution.",
@@ -145,7 +151,7 @@ TEST_COMMANDS = [
     {
         "id": "local_coding_project_template",
         "command": "python3 scripts/local_coding_project_template_smoke.py",
-        "summary": "Local Coding Project template creates Commander work packages with repo-map localization, branch/worktree and merge-gate evidence.",
+        "summary": "Server-backed Local Coding Project template creates Commander packages, previews coding workspace, dispatches mock worker, and records patch/test/verifier/merge evidence.",
         "ci_step": "Server-backed smoke suite",
     },
     {

@@ -86,6 +86,7 @@ The packet includes the canonical command manifest used for release review:
 - `python3 scripts/knowledge_retrieval_quality_smoke.py`
 - `python3 scripts/commander_repo_map_smoke.py`
 - `python3 scripts/commander_coding_project_template_smoke.py`
+- `python3 scripts/commander_coding_workspace_smoke.py`
 - `python3 scripts/commander_work_package_plan_smoke.py`
 - `python3 scripts/commander_work_package_dispatch_smoke.py`
 - `python3 scripts/local_coding_project_template_smoke.py`
@@ -101,6 +102,12 @@ The packet includes the canonical command manifest used for release review:
 
 The smoke verifies each command is backed by `.github/workflows/ci.yml` and that
 referenced script files exist.
+
+Server-backed commands, including
+`python3 scripts/local_coding_project_template_smoke.py`, require a running
+AgentOps MIS server selected by `AGENTOPS_BASE_URL`. The GitHub Actions backend
+suite starts an isolated `127.0.0.1:8787` server with a temporary SQLite
+database and live Hermes/OpenClaw/Dify/Notion disabled before running them.
 
 ### Clean-Machine RC
 

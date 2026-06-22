@@ -1517,6 +1517,47 @@ and strict merge-readiness gate. It reports `read_only:true`,
 `ledger_mutated:false`, `worktree_created:false`, `patch_created:false`,
 `repo_root_omitted:true`, and `token_omitted:true`.
 
+### `agentops commander coding-workspace`
+
+Previews or creates the isolated git worktree for one Commander coding package.
+
+```bash
+agentops commander coding-workspace --task-id tsk_local_coding_example
+agentops commander coding-workspace --task-id tsk_local_coding_example --confirm-create
+agentops commander coding-workspace-cleanup --task-id tsk_local_coding_example --confirm-cleanup
+```
+
+Maps to `POST /api/commander/work-packages/:task_id/coding-workspace` and
+`POST /api/commander/work-packages/:task_id/coding-workspace/cleanup`.
+Preview mode returns the branch, worktree path hash, repo-status summary and
+safety proof without mutating the ledger or filesystem. `--confirm-create`
+creates the worktree outside the repository and records a
+`commander_worktree_workspace` artifact. Cleanup removes the worktree and, by
+default, deletes the temporary branch. Use `--branch` when an operator needs a
+custom branch name, and pass the same value to `coding-evidence` and cleanup.
+
+### `agentops commander coding-evidence`
+
+Records the patch/test/verifier/merge-gate evidence for a dispatched Commander
+coding package.
+
+```bash
+agentops commander coding-evidence \
+  --task-id tsk_local_coding_example \
+  --run-id run_local_coding_example \
+  --collect-from-worktree \
+  --confirm-record
+```
+
+Maps to `POST /api/commander/work-packages/:task_id/coding-evidence`. It is a
+dry run unless `--confirm-record` is present. With `--collect-from-worktree`,
+the command collects bounded git status/diff metadata and syntax-check results
+from the prepared worktree, strips raw patch/log output, and writes
+summary/hash-only `commander_worktree_workspace`, `commander_patch_manifest`,
+`commander_test_log`, `commander_verifier_report`, and
+`commander_merge_gate_receipt` artifacts plus a rule evaluation and audit row.
+It does not merge, push, or execute a live runtime.
+
 ```bash
 agentops operator action-receipts --limit 12
 agentops operator action-receipts --limit 8 --plan-limit 20

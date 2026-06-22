@@ -72,6 +72,7 @@ jobs:
           python3 scripts/knowledge_retrieval_quality_smoke.py
           python3 scripts/commander_repo_map_smoke.py
           python3 scripts/commander_coding_project_template_smoke.py
+          python3 scripts/commander_coding_workspace_smoke.py
           python3 scripts/ai_employees_responsiveness_smoke.py
           python3 scripts/operator_action_queue_ui_smoke.py
           python3 scripts/task_detail_evidence_ui_smoke.py

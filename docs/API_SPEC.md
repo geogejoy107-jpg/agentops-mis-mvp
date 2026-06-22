@@ -239,6 +239,9 @@ GET  /api/commander/coding-project-template?q=local+coding+goal
 POST /api/commander/work-packages/plan
 GET  /api/commander/work-packages?project_id=proj_x&limit=25
 POST /api/commander/work-packages/:task_id/dispatch
+POST /api/commander/work-packages/:task_id/coding-workspace
+POST /api/commander/work-packages/:task_id/coding-workspace/cleanup
+POST /api/commander/work-packages/:task_id/coding-evidence
 ```
 
 `POST /api/commander/work-packages/plan` previews by default. With
@@ -255,6 +258,23 @@ from normal MIS tasks, latest runs, evidence counts and the latest
 the intended file scope before dispatch. `POST .../:task_id/dispatch` remains
 the explicit execution boundary; Hermes/OpenClaw dispatch still requires
 `confirm_run:true`.
+
+`POST .../:task_id/coding-workspace` previews by default and returns branch,
+worktree path hash, repo-root omission proof and current git status without
+creating a worktree. With `confirm_create:true`, it creates an explicit local
+git worktree outside the repo and records a `commander_worktree_workspace`
+artifact. `POST .../:task_id/coding-workspace/cleanup` is also preview-only
+unless `confirm_cleanup:true` is supplied.
+
+`POST .../:task_id/coding-evidence` records the coding package handoff after a
+worker run exists. Without `confirm_record:true`, it is a dry-run plan. With
+confirmation, it writes summary/hash-only `commander_worktree_workspace`,
+`commander_patch_manifest`, `commander_test_log`,
+`commander_verifier_report`, and `commander_merge_gate_receipt` artifacts,
+plus a rule evaluation, runtime event and audit evidence. If
+`collect_from_worktree:true` is supplied, it reads git status/diff metadata
+from the prepared worktree, strips raw patch output, stores hashes and bounded
+summaries only, and still does not merge or push.
 
 ## Agent Plans
 
@@ -588,7 +608,11 @@ active/stuck counts, and copyable `agentops workflow ...` next actions.
 packages by default, records task-bound repo-map localization artifacts, and
 returns branch/worktree, patch/test/verifier and merge-gate evidence
 requirements without running live Hermes/OpenClaw, creating a worktree, storing
-raw source, merging or pushing.
+raw source, merging or pushing. The next confirmed step is explicit:
+`agentops commander coding-workspace --confirm-create` for an isolated local
+worktree, then `agentops commander coding-evidence --confirm-record` to write
+summary/hash-only worktree, patch, test, verifier and merge-gate evidence back
+into MIS.
 
 For confirmed Hermes/OpenClaw tasks that declare `external_write_intent:true`
 or match obvious publish/upload/deploy/webhook/external-write wording,

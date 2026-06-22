@@ -113,6 +113,39 @@ curl -s -X POST http://127.0.0.1:8787/api/commander/work-packages/tsk_cmd_exampl
 If `adapter` is `hermes` or `openclaw` and confirmation is omitted, MIS writes a
 confirm-required runtime/audit event and does not create a run.
 
+Preview a coding worktree for a package:
+
+```bash
+curl -s -X POST http://127.0.0.1:8787/api/commander/work-packages/tsk_cmd_example_strategy/coding-workspace \
+  -H "Content-Type: application/json" \
+  -d '{}' | jq .
+```
+
+The preview returns branch naming, a worktree path hash, current git status,
+and safety proof. It does not create a worktree or mutate the ledger unless
+`confirm_create:true` is supplied.
+
+Record patch/test/verifier/merge-gate evidence after a package has a run:
+
+```bash
+curl -s -X POST http://127.0.0.1:8787/api/commander/work-packages/tsk_cmd_example_strategy/coding-evidence \
+  -H "Content-Type: application/json" \
+  -d '{
+    "run_id": "run_gw_example",
+    "confirm_record": true,
+    "changed_files": ["server.py"],
+    "verification_commands": ["git diff --check"]
+  }' | jq .
+```
+
+This records `commander_worktree_workspace`, `commander_patch_manifest`,
+`commander_test_log`, `commander_verifier_report`, and
+`commander_merge_gate_receipt` artifacts plus evaluation/runtime/audit
+evidence. It stores summaries, hashes, repo-relative paths and omission proof
+only; raw source, raw patches and raw test logs are not stored. If an explicit
+worktree was created, `collect_from_worktree:true` can collect sanitized git
+status/diff metadata from that worktree without merging or pushing.
+
 Queue several planned packages as async workflow jobs:
 
 ```bash
@@ -192,6 +225,37 @@ Read persisted packages:
 
 ```bash
 ./scripts/agentops commander packages --project-id proj_x --limit 25
+```
+
+Preview an isolated coding worktree:
+
+```bash
+./scripts/agentops commander coding-workspace --task-id tsk_cmd_example_strategy
+```
+
+Create it only when the operator explicitly confirms:
+
+```bash
+./scripts/agentops commander coding-workspace \
+  --task-id tsk_cmd_example_strategy \
+  --confirm-create
+```
+
+After a worker dispatch has produced a run, record coding evidence:
+
+```bash
+./scripts/agentops commander coding-evidence \
+  --task-id tsk_cmd_example_strategy \
+  --run-id run_gw_example \
+  --changed-file server.py \
+  --verification-command "git diff --check" \
+  --confirm-record
+```
+
+Cleanup is also preview-first:
+
+```bash
+./scripts/agentops commander coding-workspace-cleanup --task-id tsk_cmd_example_strategy
 ```
 
 Create a Commander-compatible remediation package from a failed benchmark:
@@ -379,6 +443,9 @@ The panel supports:
 - reading persisted work-package status after refresh
 - seeing each package's repo-map localization artifact and evidence count
 - dispatching a persisted package through mock, Hermes, or OpenClaw worker adapters
+- previewing/creating an isolated coding worktree through CLI/API
+- recording worktree/patch/test/verifier/merge-gate evidence through CLI/API
+- cleaning isolated worktree/branch residue through CLI/API after evidence capture
 - queueing currently planned packages as mock async workflow jobs
 - synthesizing ready package outputs into a ledger-backed review artifact through CLI/API
 - seeing safety proof for no live execution and token omission
@@ -387,9 +454,10 @@ The panel supports:
 
 ```bash
 python3 scripts/commander_coding_project_template_smoke.py
+python3 scripts/commander_coding_workspace_smoke.py
 python3 scripts/commander_work_package_plan_smoke.py
 python3 scripts/commander_work_package_dispatch_smoke.py
-python3 scripts/local_coding_project_template_smoke.py
+AGENTOPS_BASE_URL=http://127.0.0.1:8787 python3 scripts/local_coding_project_template_smoke.py
 python3 scripts/commander_work_package_batch_dispatch_smoke.py
 python3 scripts/commander_work_package_synthesis_smoke.py
 python3 -m py_compile server.py scripts/*.py agentops_mis_cli/*.py

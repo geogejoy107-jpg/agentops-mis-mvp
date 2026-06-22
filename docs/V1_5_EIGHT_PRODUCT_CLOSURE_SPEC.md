@@ -582,6 +582,13 @@ Current v1.5 implementation:
   branch/worktree constraints, patch/test/verifier requirements and merge-gate
   commands, without creating a worktree, storing raw source, merging, pushing,
   or running live Hermes/OpenClaw by default.
+- Commander coding work packages now have an explicit local coding evidence
+  checkpoint: after a worker dispatch produces a run, `agentops commander
+  coding-evidence --confirm-record` writes summary/hash-only worktree, patch,
+  test, verifier, merge-gate, evaluation, runtime and audit evidence back into
+  MIS. `agentops commander coding-workspace` and
+  `coding-workspace-cleanup` are preview-first, with real worktree creation or
+  cleanup requiring explicit confirmation.
 - External agents and operators can list and launch those templates through
   `agentops workflow templates` and `agentops workflow run-template`, which
   keeps machine-facing dispatch on CLI/API instead of browser UI clicks.
@@ -621,7 +628,7 @@ Acceptance evidence:
   - delivery artifact: `art_kb_bot_delivery_20260617190650`
   - pending external-upload approval: `ap_gw_8002e643f058`
 - Customer task template smoke: `python3 scripts/customer_task_template_smoke.py`
-  - template count: `3`
+  - historical template count at that time: `3`
   - template: `tpl_customer_kb_qa_bot`
   - project: `20260618154535`
   - final task: `tsk_kb_bot_20260618154535_06`
@@ -631,7 +638,7 @@ Acceptance evidence:
 - Customer template workflow CLI smoke:
   `python3 scripts/agentops_workflow_template_cli_smoke.py`
   - commands: `agentops workflow templates`, `agentops workflow run-template`
-  - template count: `3`
+  - historical template count at that time: `3`
   - project: `20260620165509944069`
   - final task: `tsk_kb_bot_20260620165509944069_06`
   - final run: `run_gw_5efecc40662f`
@@ -651,6 +658,14 @@ Acceptance evidence:
   - run: `run_gw_8eb6ebe95392`
   - artifact: `art_customer_worker_task_run_gw_8eb6ebe95392`
   - evidence: tool/evaluation/audit/artifact/memory/approval rows present
+- Local coding project template evidence:
+  - `python3 scripts/commander_coding_project_template_smoke.py`
+  - `python3 scripts/local_coding_project_template_smoke.py`
+  - verifies `tpl_local_coding_project`, repo-map localization artifacts,
+    workspace dry-run preview, mock worker dispatch, coding evidence
+    `confirm_record:true`, five coding evidence artifact types, evaluation,
+    readback `coding_evidence_gate=recorded`, no live runtime execution, and no
+    raw source/patch/token leakage.
 - Pixel Office async job UI build/snapshot:
   - `cd ui/start-building-app && npm run build`
   - Playwright snapshot on `/workspace/pixel-office` shows `异步 Workflow Jobs`
@@ -761,6 +776,11 @@ python3 scripts/customer_task_template_smoke.py
 python3 scripts/agentops_workflow_template_cli_smoke.py
 python3 scripts/agentops_workflow_async_job_smoke.py
 python3 scripts/commander_repo_map_smoke.py
+python3 scripts/commander_coding_project_template_smoke.py
+python3 scripts/commander_coding_workspace_smoke.py
+python3 scripts/local_coding_project_template_smoke.py
+python3 scripts/commander_work_package_plan_smoke.py
+python3 scripts/commander_work_package_dispatch_smoke.py
 python3 scripts/operator_action_queue_ui_smoke.py
 python3 scripts/operator_advance_loop_smoke.py
 cd ui/start-building-app && npm run build

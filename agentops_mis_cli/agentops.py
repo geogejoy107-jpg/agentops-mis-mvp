@@ -930,6 +930,54 @@ def cmd_commander_dispatch_package(args, client: AgentOpsClient) -> dict:
     return client.post(f"/api/commander/work-packages/{args.task_id}/dispatch", payload)
 
 
+def cmd_commander_coding_evidence(args, client: AgentOpsClient) -> dict:
+    payload = {
+        "workspace_id": client.workspace_id,
+        "run_id": args.run_id,
+        "branch": args.branch,
+        "collect_from_worktree": bool(args.collect_from_worktree),
+        "worktree_root": args.worktree_root,
+        "worktree_path": args.worktree_path,
+        "confirm_record": bool(args.confirm_record),
+        "patch_summary": args.patch_summary,
+        "test_summary": args.test_summary,
+        "verifier_summary": args.verifier_summary,
+        "merge_summary": args.merge_summary,
+        "test_status": args.test_status,
+        "verifier_status": args.verifier_status,
+        "merge_gate_status": args.merge_gate_status,
+        "changed_files": args.changed_file or [],
+        "verification_commands": args.verification_command or [],
+        "actor_id": args.actor_id,
+    }
+    return client.post(f"/api/commander/work-packages/{args.task_id}/coding-evidence", payload)
+
+
+def cmd_commander_coding_workspace(args, client: AgentOpsClient) -> dict:
+    payload = {
+        "workspace_id": client.workspace_id,
+        "branch": args.branch,
+        "worktree_root": args.worktree_root,
+        "worktree_path": args.worktree_path,
+        "confirm_create": bool(args.confirm_create),
+        "actor_id": args.actor_id,
+    }
+    return client.post(f"/api/commander/work-packages/{args.task_id}/coding-workspace", payload)
+
+
+def cmd_commander_coding_workspace_cleanup(args, client: AgentOpsClient) -> dict:
+    payload = {
+        "workspace_id": client.workspace_id,
+        "branch": args.branch,
+        "worktree_root": args.worktree_root,
+        "worktree_path": args.worktree_path,
+        "delete_branch": not bool(args.keep_branch),
+        "confirm_cleanup": bool(args.confirm_cleanup),
+        "actor_id": args.actor_id,
+    }
+    return client.post(f"/api/commander/work-packages/{args.task_id}/coding-workspace/cleanup", payload)
+
+
 def cmd_commander_dispatch_batch(args, client: AgentOpsClient) -> dict:
     payload = {
         "workspace_id": client.workspace_id,
@@ -2335,6 +2383,42 @@ def build_parser() -> argparse.ArgumentParser:
     commander_dispatch.add_argument("--worker-agent-id", default=None)
     commander_dispatch.add_argument("--hermes-timeout", type=int, default=300)
     commander_dispatch.set_defaults(handler="commander_dispatch_package")
+    commander_coding_workspace = commander_sub.add_parser("coding-workspace", help="Preview or create an isolated git worktree for one Commander coding package.")
+    commander_coding_workspace.add_argument("--task-id", required=True)
+    commander_coding_workspace.add_argument("--branch", default=None)
+    commander_coding_workspace.add_argument("--worktree-root", default=None)
+    commander_coding_workspace.add_argument("--worktree-path", default=None)
+    commander_coding_workspace.add_argument("--actor-id", default="usr_founder")
+    commander_coding_workspace.add_argument("--confirm-create", action="store_true", help="Actually create the git worktree and record workspace evidence.")
+    commander_coding_workspace.set_defaults(handler="commander_coding_workspace")
+    commander_coding_workspace_cleanup = commander_sub.add_parser("coding-workspace-cleanup", help="Preview or remove a Commander coding worktree and optional branch.")
+    commander_coding_workspace_cleanup.add_argument("--task-id", required=True)
+    commander_coding_workspace_cleanup.add_argument("--branch", default=None)
+    commander_coding_workspace_cleanup.add_argument("--worktree-root", default=None)
+    commander_coding_workspace_cleanup.add_argument("--worktree-path", default=None)
+    commander_coding_workspace_cleanup.add_argument("--keep-branch", action="store_true")
+    commander_coding_workspace_cleanup.add_argument("--actor-id", default="usr_founder")
+    commander_coding_workspace_cleanup.add_argument("--confirm-cleanup", action="store_true", help="Actually remove the git worktree and delete the branch unless --keep-branch is set.")
+    commander_coding_workspace_cleanup.set_defaults(handler="commander_coding_workspace_cleanup")
+    commander_coding_evidence = commander_sub.add_parser("coding-evidence", help="Record safe patch/test/verifier evidence for a dispatched coding work package.")
+    commander_coding_evidence.add_argument("--task-id", required=True)
+    commander_coding_evidence.add_argument("--run-id", default="")
+    commander_coding_evidence.add_argument("--branch", default=None)
+    commander_coding_evidence.add_argument("--collect-from-worktree", action="store_true", help="Collect git diff/status and verifier summaries from the package worktree.")
+    commander_coding_evidence.add_argument("--worktree-root", default=None)
+    commander_coding_evidence.add_argument("--worktree-path", default=None)
+    commander_coding_evidence.add_argument("--patch-summary", default="Patch manifest recorded as summary/hash only; raw patch omitted.")
+    commander_coding_evidence.add_argument("--test-summary", default="Focused tests passed; raw logs omitted.")
+    commander_coding_evidence.add_argument("--verifier-summary", default="Independent verifier evidence recorded; raw logs omitted.")
+    commander_coding_evidence.add_argument("--merge-summary", default="Merge gate remains pending human approval and exact-head release checks.")
+    commander_coding_evidence.add_argument("--test-status", choices=["pass", "fail", "warn"], default="pass")
+    commander_coding_evidence.add_argument("--verifier-status", choices=["pass", "fail", "warn"], default="pass")
+    commander_coding_evidence.add_argument("--merge-gate-status", choices=["pending_human_approval", "ready", "blocked", "not_checked"], default="pending_human_approval")
+    commander_coding_evidence.add_argument("--changed-file", action="append", default=None, help="Repo-relative touched file path. Repeatable; raw file bodies are never sent.")
+    commander_coding_evidence.add_argument("--verification-command", action="append", default=None, help="Verification command summary. Repeatable.")
+    commander_coding_evidence.add_argument("--actor-id", default="usr_founder")
+    commander_coding_evidence.add_argument("--confirm-record", action="store_true", help="Actually record artifacts/evaluation/audit. Omitted means preview only.")
+    commander_coding_evidence.set_defaults(handler="commander_coding_evidence")
     commander_dispatch_batch = commander_sub.add_parser("dispatch-batch", help="Queue multiple persisted commander work packages as async workflow jobs.")
     commander_dispatch_batch.add_argument("--project-id", default=None)
     commander_dispatch_batch.add_argument("--plan-id", default=None)
@@ -3095,6 +3179,9 @@ HANDLERS = {
     "commander_plan": cmd_commander_plan,
     "commander_packages": cmd_commander_packages,
     "commander_dispatch_package": cmd_commander_dispatch_package,
+    "commander_coding_workspace": cmd_commander_coding_workspace,
+    "commander_coding_workspace_cleanup": cmd_commander_coding_workspace_cleanup,
+    "commander_coding_evidence": cmd_commander_coding_evidence,
     "commander_dispatch_batch": cmd_commander_dispatch_batch,
     "commander_synthesize": cmd_commander_synthesize,
     "commander_promote_synthesis": cmd_commander_promote_synthesis,

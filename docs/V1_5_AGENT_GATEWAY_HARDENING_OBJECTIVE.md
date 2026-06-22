@@ -205,8 +205,10 @@ Primary evidence:
 - `.github/workflows/ci.yml`
 - `scripts/public_claims_release_gate_smoke.py`
 - `scripts/release_branch_control_smoke.py`
+- `scripts/release_evidence_packet_smoke.py`
 - `scripts/github_required_checks_smoke.py`
 - `scripts/license_provenance_smoke.py`
+- `docs/RELEASE_EVIDENCE_PACKET.md`
 - `docs/V1_5_MERGE_READINESS_CHECKLIST.md`
 
 ## Open-Source Adoption Boundary

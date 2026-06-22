@@ -15034,6 +15034,13 @@ COMMANDER_DEFAULT_WORK_PACKAGE_LANES = [
 
 COMMANDER_LOCALIZATION_ARTIFACT_TYPE = "commander_repo_map_localization"
 COMMANDER_CODING_TEMPLATE_ID = "tpl_local_coding_project_v1"
+COMMANDER_CODING_EVIDENCE_ARTIFACT_TYPES = {
+    "workspace": "commander_worktree_workspace",
+    "patch_manifest": "commander_patch_manifest",
+    "test_log": "commander_test_log",
+    "verifier_report": "commander_verifier_report",
+    "merge_gate_receipt": "commander_merge_gate_receipt",
+}
 
 
 def commander_coding_project_template(qs=None, headers=None) -> dict:
@@ -15188,6 +15195,7 @@ def commander_coding_project_template(qs=None, headers=None) -> dict:
         "workspace_contract": workspace_contract,
         "required_artifacts": [
             COMMANDER_LOCALIZATION_ARTIFACT_TYPE,
+            "worktree_workspace",
             "agent_plan",
             "patch",
             "test_log",
@@ -15703,6 +15711,16 @@ def commander_work_package_from_task(conn: sqlite3.Connection, row: sqlite3.Row)
         (task["task_id"], COMMANDER_LOCALIZATION_ARTIFACT_TYPE),
     ).fetchone()
     localization_artifact = dict(localization_row) if localization_row else None
+    coding_artifact_rows = rows_to_dicts(conn.execute(
+        """SELECT artifact_id, task_id, run_id, artifact_type, title, uri, summary, created_at
+        FROM artifacts
+        WHERE task_id=? AND artifact_type IN ({})
+        ORDER BY created_at DESC""".format(",".join("?" for _ in COMMANDER_CODING_EVIDENCE_ARTIFACT_TYPES)),
+        (task["task_id"], *COMMANDER_CODING_EVIDENCE_ARTIFACT_TYPES.values()),
+    ).fetchall())
+    coding_artifacts_by_type = {item["artifact_type"]: item for item in coding_artifact_rows}
+    required_coding_types = list(COMMANDER_CODING_EVIDENCE_ARTIFACT_TYPES.values())
+    recorded_coding_types = [artifact_type for artifact_type in required_coding_types if artifact_type in coding_artifacts_by_type]
     item = {
         "work_package_id": task["task_id"],
         "task_id": task["task_id"],
@@ -15732,6 +15750,16 @@ def commander_work_package_from_task(conn: sqlite3.Connection, row: sqlite3.Row)
             "artifact_uri": (localization_artifact or {}).get("uri"),
             "raw_content_omitted": True,
             "snippets_omitted": True,
+            "token_omitted": True,
+        },
+        "coding_evidence_gate": {
+            "status": "recorded" if len(recorded_coding_types) == len(required_coding_types) else "partial" if recorded_coding_types else "missing",
+            "required_before_merge": True,
+            "artifact_types": required_coding_types,
+            "recorded_artifact_types": recorded_coding_types,
+            "artifact_ids": [coding_artifacts_by_type[item]["artifact_id"] for item in recorded_coding_types],
+            "raw_source_omitted": True,
+            "raw_patch_omitted": True,
             "token_omitted": True,
         },
         "evidence_counts": evidence,
@@ -15775,6 +15803,8 @@ def commander_work_packages_readback(conn: sqlite3.Connection, qs=None, headers=
         key = item.get("project_id") or "unknown"
         project_counts[key] = project_counts.get(key, 0) + 1
     localization_recorded = sum(1 for item in packages if ((item.get("localization_gate") or {}).get("status") == "recorded"))
+    coding_recorded = sum(1 for item in packages if ((item.get("coding_evidence_gate") or {}).get("status") == "recorded"))
+    coding_partial = sum(1 for item in packages if ((item.get("coding_evidence_gate") or {}).get("status") == "partial"))
     next_actions = []
     for item in packages:
         action = item.get("recommended_action")
@@ -15804,6 +15834,16 @@ def commander_work_packages_readback(conn: sqlite3.Connection, qs=None, headers=
                 "coverage_percent": round((localization_recorded / len(packages)) * 100, 1) if packages else 100.0,
                 "raw_content_omitted": True,
                 "snippets_omitted": True,
+                "token_omitted": True,
+            },
+            "coding_evidence": {
+                "artifact_types": list(COMMANDER_CODING_EVIDENCE_ARTIFACT_TYPES.values()),
+                "recorded": coding_recorded,
+                "partial": coding_partial,
+                "missing": max(len(packages) - coding_recorded - coding_partial, 0),
+                "coverage_percent": round((coding_recorded / len(packages)) * 100, 1) if packages else 100.0,
+                "raw_source_omitted": True,
+                "raw_patch_omitted": True,
                 "token_omitted": True,
             },
         },
@@ -15977,6 +16017,567 @@ def commander_dispatch_work_package(conn: sqlite3.Connection, task_id: str, body
         "token_omitted": True,
         "live_execution_performed": bool(adapter in {"hermes", "openclaw"} and confirm_run and run_id),
     }, 201 if run_id else 500
+
+
+def commander_coding_safe_slug(value: str, fallback: str = "task") -> str:
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "-", value or "").strip("-.")
+    slug = re.sub(r"\.{2,}", ".", slug)
+    return (slug or fallback)[:96]
+
+
+def commander_coding_branch_name(task_id: str, requested: str | None = None) -> str:
+    raw = requested or f"codex/{commander_coding_safe_slug(task_id, 'work-package')}"
+    raw = raw.strip().replace(" ", "-")
+    if not raw.startswith("codex/"):
+        raw = f"codex/{raw}"
+    return commander_safe_text(raw.replace("..", "."), 160)
+
+
+def commander_coding_worktree_root(body: dict | None = None) -> tuple[Path | None, dict | None]:
+    body = body or {}
+    root_value = body.get("worktree_root") or os.environ.get("AGENTOPS_CODING_WORKTREE_ROOT") or str(ROOT.parent / "agentops-worktrees")
+    root = Path(str(root_value)).expanduser()
+    if not root.is_absolute():
+        root = (ROOT / root).resolve()
+    else:
+        root = root.resolve()
+    repo_root = ROOT.resolve()
+    try:
+        root.relative_to(repo_root)
+        return None, {
+            "error": "worktree_root_inside_repo_forbidden",
+            "message": "Coding worktrees must be outside the repository to keep the working tree clean.",
+            "token_omitted": True,
+        }
+    except ValueError:
+        return root, None
+
+
+def commander_coding_worktree_path(task_id: str, body: dict | None = None) -> tuple[Path | None, Path | None, dict | None]:
+    root, error = commander_coding_worktree_root(body)
+    if error:
+        return None, None, error
+    assert root is not None
+    safe_task = commander_coding_safe_slug(task_id, "work-package")
+    requested = (body or {}).get("worktree_path")
+    path = Path(str(requested)).expanduser() if requested else root / safe_task
+    if not path.is_absolute():
+        path = root / path
+    path = path.resolve()
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return None, None, {
+            "error": "worktree_path_outside_root",
+            "message": "Coding worktree path must stay inside the configured coding worktree root.",
+            "token_omitted": True,
+        }
+    return root, path, None
+
+
+def commander_run_git(args: list[str], cwd: Path, timeout: int = 60) -> dict:
+    started = time.time()
+    proc = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, timeout=timeout, check=False)
+    stdout = proc.stdout or ""
+    stderr = proc.stderr or ""
+    return {
+        "args": ["git", *args],
+        "returncode": proc.returncode,
+        "ok": proc.returncode == 0,
+        "stdout_hash": stable_hash(stdout) if stdout else None,
+        "stderr_hash": stable_hash(stderr) if stderr else None,
+        "stdout_summary": redact_text(stdout.strip(), 360) if stdout.strip() else "",
+        "stderr_summary": redact_text(stderr.strip(), 360) if stderr.strip() else "",
+        "duration_ms": int((time.time() - started) * 1000),
+        "raw_output_omitted": True,
+        "token_omitted": True,
+    }
+
+
+def commander_run_py_compile(cwd: Path, timeout: int = 120) -> dict:
+    files = [Path("server.py")]
+    files.extend(sorted(path.relative_to(cwd) for path in (cwd / "agentops_mis_cli").glob("*.py")))
+    files.extend(sorted(path.relative_to(cwd) for path in (cwd / "scripts").glob("*.py")))
+    existing = [str(path) for path in files if (cwd / path).exists()]
+    started = time.time()
+    proc = subprocess.run([sys.executable, "-m", "py_compile", *existing], cwd=cwd, capture_output=True, text=True, timeout=timeout, check=False)
+    stdout = proc.stdout or ""
+    stderr = proc.stderr or ""
+    return {
+        "args": [sys.executable, "-m", "py_compile", "<repo-python-files>"],
+        "checked_files": len(existing),
+        "returncode": proc.returncode,
+        "ok": proc.returncode == 0,
+        "stdout_hash": stable_hash(stdout) if stdout else None,
+        "stderr_hash": stable_hash(stderr) if stderr else None,
+        "stdout_summary": redact_text(stdout.strip(), 360) if stdout.strip() else "",
+        "stderr_summary": redact_text(stderr.strip(), 360) if stderr.strip() else "",
+        "duration_ms": int((time.time() - started) * 1000),
+        "raw_output_omitted": True,
+        "token_omitted": True,
+    }
+
+
+def commander_prepare_coding_workspace(conn: sqlite3.Connection, task_id: str, body: dict, headers=None) -> tuple[dict, int]:
+    headers = headers or {}
+    workspace_id = normalize_workspace_id(body.get("workspace_id") or headers.get("X-AgentOps-Workspace-Id") or "local-demo")
+    task = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+    if not task:
+        return {"error": "work_package_not_found", "task_id": task_id}, 404
+    if row_workspace(task) != workspace_id:
+        return workspace_forbidden("task", task_id, workspace_id, row_workspace(task))
+    if not (task["description"] or "").startswith("Commander project:"):
+        return {"error": "not_commander_work_package", "message": "Only Commander work packages can prepare coding workspaces.", "task_id": task_id, "token_omitted": True}, 400
+
+    root, worktree_path, path_error = commander_coding_worktree_path(task_id, body)
+    if path_error:
+        return path_error, 400
+    assert root is not None and worktree_path is not None
+    branch = commander_coding_branch_name(task_id, body.get("branch"))
+    path_hash = stable_hash(str(worktree_path))
+    branch_ref = subprocess.run(["git", "show-ref", "--verify", f"refs/heads/{branch}"], cwd=ROOT, capture_output=True, text=True, timeout=10, check=False)
+    status_probe = commander_run_git(["status", "--short", "--branch"], ROOT, timeout=15)
+    confirm_create = bool(body.get("confirm_create"))
+    preview = {
+        "provider": "agentops-commander",
+        "operation": "coding_workspace_prepare",
+        "ok": True,
+        "dry_run": not confirm_create,
+        "task_id": task_id,
+        "workspace_id": workspace_id,
+        "branch": branch,
+        "worktree_path_hash": path_hash[:16],
+        "worktree_path_hint": "<AGENTOPS_CODING_WORKTREE_ROOT>/<task_id>",
+        "worktree_root_configured": bool(body.get("worktree_root") or os.environ.get("AGENTOPS_CODING_WORKTREE_ROOT")),
+        "base_status": status_probe,
+        "safety": {
+            "ledger_mutated": False,
+            "worktree_created": False,
+            "branch_created": False,
+            "live_execution_performed": False,
+            "repo_root_omitted": True,
+            "local_path_omitted": True,
+            "raw_source_omitted": True,
+            "raw_patch_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+    if not confirm_create:
+        return {**preview, "requires": {"confirm_create": True}, "next_action": f"agentops commander coding-workspace --task-id {shlex.quote(task_id)} --confirm-create"}, 200
+    if branch_ref.returncode == 0:
+        return {**preview, "ok": False, "reason": "branch_already_exists", "message": f"Branch {branch} already exists; choose a different branch or clean up the previous workspace."}, 409
+    if worktree_path.exists():
+        return {**preview, "ok": False, "reason": "worktree_path_already_exists", "message": "Coding worktree path already exists; clean it up or choose a different worktree path."}, 409
+
+    root.mkdir(parents=True, exist_ok=True)
+    create = commander_run_git(["worktree", "add", "-b", branch, str(worktree_path), "HEAD"], ROOT, timeout=120)
+    if not create["ok"]:
+        return {**preview, "ok": False, "reason": "git_worktree_add_failed", "git": create}, 500
+    now = now_iso()
+    artifact_id = stable_id("art_cmd_worktree", task_id, branch)
+    row = {
+        "artifact_id": artifact_id,
+        "task_id": task_id,
+        "run_id": None,
+        "artifact_type": COMMANDER_CODING_EVIDENCE_ARTIFACT_TYPES["workspace"],
+        "title": f"Coding Worktree Workspace: {commander_extract_line(task['description'], 'Lane') or task_id}",
+        "uri": f"worktree://{task_id}/{stable_hash({'branch': branch, 'path_hash': path_hash})[:16]}",
+        "summary": redact_text(f"Local coding worktree prepared on branch {branch}; path_hash={path_hash[:16]}; absolute path and raw source omitted.", 520),
+        "created_at": now,
+    }
+    before = conn.execute("SELECT * FROM artifacts WHERE artifact_id=?", (artifact_id,)).fetchone()
+    conn.execute(
+        """INSERT OR REPLACE INTO artifacts(artifact_id,task_id,run_id,artifact_type,title,uri,summary,created_at)
+        VALUES(:artifact_id,:task_id,:run_id,:artifact_type,:title,:uri,:summary,:created_at)""",
+        row,
+    )
+    runtime_event(conn, "rtc_agent_gateway_local", "commander.coding_workspace_prepare", "completed", task_id=task_id, input_summary=f"Prepared coding worktree for {task_id}.", output_summary=f"Branch {branch}; path_hash={path_hash[:16]}.", raw_payload_hash=path_hash)
+    audit(conn, "user", body.get("actor_id") or "usr_founder", "commander.coding_workspace_prepare", "artifacts", artifact_id, dict(before) if before else None, row, {
+        "task_id": task_id,
+        "branch": branch,
+        "worktree_path_hash": path_hash,
+        "repo_root_omitted": True,
+        "local_path_omitted": True,
+        "raw_source_omitted": True,
+        "token_omitted": True,
+    })
+    conn.commit()
+    return {
+        **preview,
+        "dry_run": False,
+        "artifact": row,
+        "artifact_id": artifact_id,
+        "git": create,
+        "safety": {**preview["safety"], "ledger_mutated": True, "worktree_created": True, "branch_created": True},
+    }, 201
+
+
+def commander_cleanup_coding_workspace(conn: sqlite3.Connection, task_id: str, body: dict, headers=None) -> tuple[dict, int]:
+    headers = headers or {}
+    workspace_id = normalize_workspace_id(body.get("workspace_id") or headers.get("X-AgentOps-Workspace-Id") or "local-demo")
+    task = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+    if not task:
+        return {"error": "work_package_not_found", "task_id": task_id}, 404
+    if row_workspace(task) != workspace_id:
+        return workspace_forbidden("task", task_id, workspace_id, row_workspace(task))
+    root, worktree_path, path_error = commander_coding_worktree_path(task_id, body)
+    if path_error:
+        return path_error, 400
+    assert worktree_path is not None
+    branch = commander_coding_branch_name(task_id, body.get("branch"))
+    confirm_cleanup = bool(body.get("confirm_cleanup"))
+    path_hash = stable_hash(str(worktree_path))
+    preview = {
+        "provider": "agentops-commander",
+        "operation": "coding_workspace_cleanup",
+        "ok": True,
+        "dry_run": not confirm_cleanup,
+        "task_id": task_id,
+        "branch": branch,
+        "worktree_path_hash": path_hash[:16],
+        "safety": {
+            "ledger_mutated": False,
+            "worktree_removed": False,
+            "branch_deleted": False,
+            "live_execution_performed": False,
+            "repo_root_omitted": True,
+            "local_path_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+    if not confirm_cleanup:
+        return {**preview, "requires": {"confirm_cleanup": True}, "next_action": f"agentops commander coding-workspace-cleanup --task-id {shlex.quote(task_id)} --confirm-cleanup"}, 200
+
+    remove = commander_run_git(["worktree", "remove", "--force", str(worktree_path)], ROOT, timeout=120) if worktree_path.exists() else {"ok": True, "returncode": 0, "stdout_summary": "", "stderr_summary": "", "raw_output_omitted": True, "token_omitted": True}
+    prune = commander_run_git(["worktree", "prune"], ROOT, timeout=60)
+    branch_deleted = False
+    branch_probe = subprocess.run(["git", "show-ref", "--verify", f"refs/heads/{branch}"], cwd=ROOT, capture_output=True, text=True, timeout=10, check=False)
+    delete = None
+    if branch_probe.returncode == 0 and body.get("delete_branch", True):
+        delete = commander_run_git(["branch", "-D", branch], ROOT, timeout=60)
+        branch_deleted = bool(delete.get("ok"))
+    runtime_event(conn, "rtc_agent_gateway_local", "commander.coding_workspace_cleanup", "completed" if remove.get("ok") else "failed", task_id=task_id, input_summary=f"Cleanup coding worktree for {task_id}.", output_summary=f"path_hash={path_hash[:16]}; branch_deleted={branch_deleted}.", raw_payload_hash=path_hash)
+    audit(conn, "user", body.get("actor_id") or "usr_founder", "commander.coding_workspace_cleanup", "tasks", task_id, None, {"status": "cleanup_recorded"}, {
+        "branch": branch,
+        "worktree_path_hash": path_hash,
+        "worktree_removed": bool(remove.get("ok")),
+        "branch_deleted": branch_deleted,
+        "repo_root_omitted": True,
+        "local_path_omitted": True,
+        "token_omitted": True,
+    })
+    conn.commit()
+    return {
+        **preview,
+        "dry_run": False,
+        "git": {"remove": remove, "prune": prune, "delete_branch": delete},
+        "safety": {**preview["safety"], "ledger_mutated": True, "worktree_removed": bool(remove.get("ok")), "branch_deleted": branch_deleted},
+    }, 200 if remove.get("ok") else 500
+
+
+def commander_record_coding_evidence(conn: sqlite3.Connection, task_id: str, body: dict, headers=None) -> tuple[dict, int]:
+    headers = headers or {}
+    workspace_id = normalize_workspace_id(body.get("workspace_id") or headers.get("X-AgentOps-Workspace-Id") or "local-demo")
+    task = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+    if not task:
+        return {"error": "work_package_not_found", "task_id": task_id}, 404
+    if row_workspace(task) != workspace_id:
+        return workspace_forbidden("task", task_id, workspace_id, row_workspace(task))
+    if not (task["description"] or "").startswith("Commander project:"):
+        return {
+            "error": "not_commander_work_package",
+            "message": "Only Commander work packages can record coding evidence here.",
+            "task_id": task_id,
+            "token_omitted": True,
+        }, 400
+
+    run_id = commander_safe_text(body.get("run_id") or "", 120)
+    run = None
+    if run_id:
+        run = conn.execute("SELECT * FROM runs WHERE run_id=? AND task_id=?", (run_id, task_id)).fetchone()
+    else:
+        run = conn.execute(
+            "SELECT * FROM runs WHERE task_id=? ORDER BY created_at DESC LIMIT 1",
+            (task_id,),
+        ).fetchone()
+    if not run:
+        return {
+            "provider": "agentops-commander",
+            "operation": "coding_evidence_record",
+            "ok": False,
+            "reason": "run_required_before_coding_evidence",
+            "message": "Dispatch the Commander work package through a worker before recording patch/test/verifier evidence.",
+            "task_id": task_id,
+            "next_actions": [f"agentops commander dispatch-package --task-id {shlex.quote(task_id)} --adapter mock"],
+            "safety": {
+                "ledger_mutated": False,
+                "live_execution_performed": False,
+                "token_omitted": True,
+                "raw_source_omitted": True,
+                "raw_patch_omitted": True,
+            },
+            "token_omitted": True,
+            "live_execution_performed": False,
+        }, 409
+
+    run_dict = dict(run)
+    before_package = commander_work_package_from_task(conn, task)
+    confirm_record = bool(body.get("confirm_record"))
+    project_id = commander_extract_line(task["description"], "Commander project")
+    plan_id = commander_plan_id_from_task(task_id, task["description"] or "")
+    lane_id = commander_extract_line(task["description"], "Lane") or "unknown"
+    test_status = coerce_choice(body.get("test_status"), {"pass", "fail", "warn"}, "pass")
+    verifier_status = coerce_choice(body.get("verifier_status"), {"pass", "fail", "warn"}, "pass")
+    merge_gate_status = coerce_choice(body.get("merge_gate_status"), {"pending_human_approval", "ready", "blocked", "not_checked"}, "pending_human_approval")
+    patch_summary = redact_text(body.get("patch_summary") or "Patch manifest recorded as summary/hash only; raw patch omitted.", 360)
+    test_summary = redact_text(body.get("test_summary") or "Focused syntax/diff/release smoke checks recorded as summary/hash only.", 360)
+    verifier_summary = redact_text(body.get("verifier_summary") or "Independent verifier evidence recorded; raw logs omitted.", 360)
+    merge_summary = redact_text(body.get("merge_summary") or "Merge gate remains pending human approval and exact-head release checks.", 360)
+    changed_files = [
+        commander_safe_text(item, 180)
+        for item in (body.get("changed_files") or [])
+        if item and not Path(str(item)).is_absolute() and ".." not in Path(str(item)).parts
+    ][:24]
+    verification_commands = [
+        commander_safe_text(item, 220)
+        for item in (body.get("verification_commands") or commander_extract_verification(task["description"] or ""))
+        if item
+    ][:12]
+    branch = commander_coding_branch_name(task_id, body.get("branch"))
+    _root, planned_worktree_path, path_error = commander_coding_worktree_path(task_id, body)
+    worktree_path_hash = stable_hash(str(planned_worktree_path))[:16] if planned_worktree_path and not path_error else stable_hash(task_id)[:16]
+    collection = {}
+    if body.get("collect_from_worktree"):
+        _root, worktree_path, path_error = commander_coding_worktree_path(task_id, body)
+        if path_error:
+            return path_error, 400
+        assert worktree_path is not None
+        if not worktree_path.exists():
+            return {
+                "provider": "agentops-commander",
+                "operation": "coding_evidence_record",
+                "ok": False,
+                "reason": "coding_worktree_not_found",
+                "task_id": task_id,
+                "worktree_path_hash": stable_hash(str(worktree_path))[:16],
+                "next_action": f"agentops commander coding-workspace --task-id {shlex.quote(task_id)} --confirm-create",
+                "token_omitted": True,
+            }, 409
+        status_short = commander_run_git(["status", "--short", "--branch"], worktree_path, timeout=30)
+        diff_names_proc = subprocess.run(["git", "diff", "--name-only"], cwd=worktree_path, capture_output=True, text=True, timeout=60, check=False)
+        diff_names = [
+            commander_safe_text(line.strip(), 180)
+            for line in (diff_names_proc.stdout or "").splitlines()
+            if line.strip() and not Path(line.strip()).is_absolute() and ".." not in Path(line.strip()).parts
+        ][:24]
+        diff_binary = commander_run_git(["diff", "--binary"], worktree_path, timeout=90)
+        diff_binary["stdout_summary"] = ""
+        diff_binary["stderr_summary"] = redact_text(diff_binary.get("stderr_summary") or "", 180)
+        diff_check = commander_run_git(["diff", "--check"], worktree_path, timeout=60)
+        py_compile = commander_run_py_compile(worktree_path, timeout=120)
+        changed_files = diff_names or changed_files
+        verification_commands = [
+            "git status --short --branch",
+            "git diff --name-only",
+            "git diff --check",
+            "python3 -m py_compile server.py agentops_mis_cli/*.py scripts/*.py",
+            *verification_commands,
+        ][:12]
+        if not body.get("test_status"):
+            test_status = "pass" if diff_check.get("ok") and py_compile.get("ok") else "fail"
+        if not body.get("verifier_status"):
+            verifier_status = "pass" if diff_check.get("ok") and py_compile.get("ok") else "fail"
+        if not body.get("merge_gate_status"):
+            merge_gate_status = "pending_human_approval"
+        patch_hash = (diff_binary.get("stdout_hash") or stable_hash({"changed_files": changed_files}))
+        patch_summary = redact_text(body.get("patch_summary") or f"Collected worktree patch manifest for {len(changed_files)} changed file(s); patch_hash={patch_hash[:16]}.", 360)
+        test_summary = redact_text(body.get("test_summary") or f"Collected verifier checks: git diff --check returncode={diff_check.get('returncode')}; py_compile returncode={py_compile.get('returncode')}.", 360)
+        verifier_summary = redact_text(body.get("verifier_summary") or f"Independent verifier collected from coding worktree; changed_files={len(changed_files)}; raw logs omitted.", 360)
+        merge_summary = redact_text(body.get("merge_summary") or "Merge gate remains pending human approval after worktree evidence collection.", 360)
+        collection = {
+            "mode": "worktree",
+            "worktree_path_hash": stable_hash(str(worktree_path))[:16],
+            "changed_files_count": len(changed_files),
+            "patch_hash": patch_hash[:16],
+            "status": status_short,
+            "diff_name_hash": stable_hash(diff_names_proc.stdout or "")[:16],
+            "diff_binary": diff_binary,
+            "diff_check": diff_check,
+            "py_compile": py_compile,
+            "raw_source_omitted": True,
+            "raw_patch_omitted": True,
+            "raw_test_log_omitted": True,
+            "token_omitted": True,
+        }
+    evidence_manifest = {
+        "operation": "commander_coding_evidence",
+        "workspace_id": workspace_id,
+        "project_id": project_id,
+        "plan_id": plan_id,
+        "task_id": task_id,
+        "run_id": run_dict["run_id"],
+        "lane_id": lane_id,
+        "test_status": test_status,
+        "verifier_status": verifier_status,
+        "merge_gate_status": merge_gate_status,
+        "changed_files": changed_files,
+        "verification_commands": verification_commands,
+        "collection": collection,
+        "branch": branch,
+        "worktree_path_hash": worktree_path_hash,
+        "worktree_created": False,
+        "raw_source_omitted": True,
+        "raw_patch_omitted": True,
+        "raw_test_log_omitted": True,
+        "token_omitted": True,
+    }
+    evidence_hash = stable_hash(evidence_manifest)
+    preview = {
+        "provider": "agentops-commander",
+        "operation": "coding_evidence_record",
+        "ok": True,
+        "dry_run": not confirm_record,
+        "task_id": task_id,
+        "run_id": run_dict["run_id"],
+        "project_id": project_id,
+        "plan_id": plan_id,
+        "lane_id": lane_id,
+        "evidence_hash": evidence_hash,
+        "artifact_types": list(COMMANDER_CODING_EVIDENCE_ARTIFACT_TYPES.values()),
+        "test_status": test_status,
+        "verifier_status": verifier_status,
+        "merge_gate_status": merge_gate_status,
+        "changed_files": changed_files,
+        "verification_commands": verification_commands,
+        "collection": collection,
+        "safety": {
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "worktree_created": False,
+            "patch_created": False,
+            "raw_source_omitted": True,
+            "raw_patch_omitted": True,
+            "raw_test_log_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+    if not confirm_record:
+        return {
+            **preview,
+            "requires": {"confirm_record": True},
+            "next_action": f"agentops commander coding-evidence --task-id {shlex.quote(task_id)} --confirm-record",
+        }, 200
+
+    now = now_iso()
+    workspace_summary = redact_text(
+        body.get("workspace_summary")
+        or f"Coding workspace contract recorded for branch {branch}; worktree_path_hash={worktree_path_hash}; actual worktree creation remains explicit.",
+        360,
+    )
+    artifact_specs = [
+        ("workspace", "Worktree Workspace Contract", workspace_summary),
+        ("patch_manifest", "Patch Manifest", patch_summary),
+        ("test_log", "Test Evidence", test_summary),
+        ("verifier_report", "Verifier Report", verifier_summary),
+        ("merge_gate_receipt", "Merge Gate Receipt", merge_summary),
+    ]
+    artifacts = []
+    for kind, title, summary in artifact_specs:
+        artifact_type = COMMANDER_CODING_EVIDENCE_ARTIFACT_TYPES[kind]
+        artifact_id = stable_id(f"art_cmd_{kind}", task_id, run_dict["run_id"])
+        row = {
+            "artifact_id": artifact_id,
+            "task_id": task_id,
+            "run_id": run_dict["run_id"],
+            "artifact_type": artifact_type,
+            "title": f"{title}: {lane_id}",
+            "uri": f"commander-evidence://{task_id}/{run_dict['run_id']}/{kind}/{evidence_hash[:16]}",
+            "summary": redact_text(f"{summary} evidence_hash={evidence_hash[:16]}; raw source/patch/log omitted.", 700),
+            "created_at": now,
+        }
+        before = conn.execute("SELECT * FROM artifacts WHERE artifact_id=?", (artifact_id,)).fetchone()
+        conn.execute(
+            """INSERT OR REPLACE INTO artifacts(artifact_id,task_id,run_id,artifact_type,title,uri,summary,created_at)
+            VALUES(:artifact_id,:task_id,:run_id,:artifact_type,:title,:uri,:summary,:created_at)""",
+            row,
+        )
+        audit(conn, "system", "agentops-commander", "commander.coding_evidence_artifact", "artifacts", artifact_id, dict(before) if before else None, row, {
+            "task_id": task_id,
+            "run_id": run_dict["run_id"],
+            "artifact_type": artifact_type,
+            "evidence_hash": evidence_hash,
+            "raw_source_omitted": True,
+            "raw_patch_omitted": True,
+            "token_omitted": True,
+        })
+        artifacts.append(row)
+
+    passed = test_status == "pass" and verifier_status == "pass" and merge_gate_status in {"pending_human_approval", "ready"}
+    rubric = {
+        "patch_manifest_recorded": True,
+        "test_status": test_status,
+        "verifier_status": verifier_status,
+        "merge_gate_status": merge_gate_status,
+        "raw_source_omitted": True,
+        "raw_patch_omitted": True,
+        "live_execution_performed": False,
+    }
+    evaluation = {
+        "evaluation_id": stable_id("eval_cmd_coding_evidence", task_id, run_dict["run_id"]),
+        "task_id": task_id,
+        "run_id": run_dict["run_id"],
+        "agent_id": run_dict["agent_id"],
+        "evaluator_type": "rule",
+        "score": 1.0 if passed else 0.62 if "warn" in {test_status, verifier_status} else 0.25,
+        "pass_fail": "pass" if passed else "fail",
+        "rubric_json": json.dumps(rubric, ensure_ascii=False, sort_keys=True),
+        "notes": redact_text(f"Commander coding evidence checkpoint: test={test_status}, verifier={verifier_status}, merge_gate={merge_gate_status}.", 500),
+        "created_at": now,
+    }
+    upsert_evaluation(conn, evaluation, "agentops-commander")
+    runtime_event(
+        conn,
+        "rtc_agent_gateway_local",
+        "commander.coding_evidence_recorded",
+        "completed" if passed else "warn",
+        run_id=run_dict["run_id"],
+        task_id=task_id,
+        agent_id=run_dict["agent_id"],
+        input_summary=f"Commander coding evidence checkpoint for {task_id}.",
+        output_summary=f"Recorded patch/test/verifier/merge evidence for {lane_id}; hash={evidence_hash[:16]}.",
+        raw_payload_hash=evidence_hash,
+    )
+    after_task = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+    after_package = commander_work_package_from_task(conn, after_task or task)
+    audit(conn, "user", body.get("actor_id") or "usr_founder", "commander.coding_evidence_record", "tasks", task_id, before_package, after_package, {
+        "run_id": run_dict["run_id"],
+        "artifact_ids": [item["artifact_id"] for item in artifacts],
+        "evaluation_id": evaluation["evaluation_id"],
+        "evidence_hash": evidence_hash,
+        "raw_source_omitted": True,
+        "raw_patch_omitted": True,
+        "token_omitted": True,
+    })
+    conn.commit()
+    return {
+        **preview,
+        "dry_run": False,
+        "artifacts": artifacts,
+        "artifact_ids": [item["artifact_id"] for item in artifacts],
+        "evaluation": evaluation,
+        "evaluation_id": evaluation["evaluation_id"],
+        "work_package": after_package,
+        "safety": {
+            **preview["safety"],
+            "ledger_mutated": True,
+        },
+    }, 201
 
 
 def submit_commander_work_package_dispatch_jobs(conn: sqlite3.Connection, body: dict, headers=None) -> tuple[dict, int]:
@@ -23927,6 +24528,21 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(payload, status)
             if path == "/api/commander/work-packages/synthesis/promote":
                 payload, status = commander_promote_synthesis(conn, body, self.headers)
+                return self.send_json(payload, status)
+            if path.startswith("/api/commander/work-packages/") and path.endswith("/coding-workspace/cleanup"):
+                task_id = path.split("/")[-3]
+                payload, status = commander_cleanup_coding_workspace(conn, task_id, body, self.headers)
+                conn.commit()
+                return self.send_json(payload, status)
+            if path.startswith("/api/commander/work-packages/") and path.endswith("/coding-workspace"):
+                task_id = path.split("/")[-2]
+                payload, status = commander_prepare_coding_workspace(conn, task_id, body, self.headers)
+                conn.commit()
+                return self.send_json(payload, status)
+            if path.startswith("/api/commander/work-packages/") and path.endswith("/coding-evidence"):
+                task_id = path.split("/")[-2]
+                payload, status = commander_record_coding_evidence(conn, task_id, body, self.headers)
+                conn.commit()
                 return self.send_json(payload, status)
             if path.startswith("/api/commander/work-packages/") and path.endswith("/dispatch"):
                 task_id = path.split("/")[-2]
