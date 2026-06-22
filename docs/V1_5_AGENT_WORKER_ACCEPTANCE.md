@@ -255,7 +255,7 @@ The scoped-token enrollment smoke passed:
 ```text
 HTTP enrollment:
 agent_id: agt_remote_enroll_smoke
-token_id: agtok_agt_remote_enroll_smoke_local_demo_175054348add
+token_id: [AGENT_GATEWAY_TOKEN_REDACTED]
 heartbeat: 200 idle
 tasks:read pull: 200
 runs:start with missing runs:write: forbidden
@@ -264,7 +264,7 @@ post-revoke pull: 401 token revoked
 
 CLI enrollment:
 agent_id: agt_remote_cli_smoke
-token_id: agtok_agt_remote_cli_smoke_local_demo_db074911c2fa
+token_id: [AGENT_GATEWAY_TOKEN_REDACTED]
 --save-token wrote only to /tmp test config
 heartbeat: 200 idle
 tasks:read pull: 200
@@ -276,12 +276,12 @@ The enrollment rotation smoke passed:
 
 ```text
 script: python3 scripts/enrollment_rotation_smoke.py
-api old token: agtok_agt_rotate_api_smoke_20260617180040_local_demo_eb7bbc239f05
-api new token: agtok_agt_rotate_api_smoke_20260617180040_local_demo_7cec7f8f8bf2
+api old token: [AGENT_GATEWAY_TOKEN_REDACTED]
+api new token: [AGENT_GATEWAY_TOKEN_REDACTED]
 api old_status_after_rotate: revoked
 api new_status_after_rotate: active
-cli old token: agtok_agt_rotate_cli_smoke_20260617180040_local_demo_666c67b8c915
-cli new token: agtok_agt_rotate_cli_smoke_20260617180040_local_demo_4ea03a4a3a40
+cli old token: [AGENT_GATEWAY_TOKEN_REDACTED]
+cli new token: [AGENT_GATEWAY_TOKEN_REDACTED]
 token_omitted: true
 cleanup_revoked: 1
 ```
@@ -291,7 +291,7 @@ The enrollment heartbeat health-state smoke passed:
 ```text
 script: python3 scripts/enrollment_health_state_smoke.py
 agent_id: agt_enroll_health_smoke_20260618064218
-token_id: agtok_agt_enroll_health_smoke_20260618064218_local_demo_19b8b6a6325f
+token_id: [AGENT_GATEWAY_TOKEN_REDACTED]
 states verified: never_seen -> fresh -> stale -> revoked
 token_omitted: true
 cleanup_revoked: 1
@@ -302,7 +302,7 @@ The Agent Gateway CLI status smoke passed:
 ```text
 script: python3 scripts/agentops_status_smoke.py
 agent_id: agt_status_cli_smoke_20260618064953
-token_id: agtok_agt_status_cli_smoke_20260618064953_local_demo_20bc50880c02
+token_id: [AGENT_GATEWAY_TOKEN_REDACTED]
 states verified: never_seen -> fresh, revoked token rejected
 prefix global args supported: true
 token_omitted: true
@@ -325,8 +325,8 @@ The remote enrollment launch-step smoke passed:
 ```text
 script: python3 scripts/enrollment_launch_steps_smoke.py
 agent_id: agt_launch_steps_smoke_20260618150315
-created token: agtok_agt_launch_steps_smoke_20260618150315_local_demo_ecb243af94eb
-rotated token: agtok_agt_launch_steps_smoke_20260618150315_local_demo_d18914518af4
+created token: [AGENT_GATEWAY_TOKEN_REDACTED]
+rotated token: [AGENT_GATEWAY_TOKEN_REDACTED]
 next_steps: package install, env setup, agentops status, adapter preflight, short-lived session command, heartbeat, one-shot agentops-worker, loop agentops-worker, launchd/systemd service template/install/check commands, repo fallback worker for Hermes with --confirm-run and --use-session
 raw token in commands: omitted
 ```
@@ -338,7 +338,7 @@ script: python3 scripts/remote_launch_packet_worker_smoke.py
 agent_id: agt_launch_packet_worker_20260618150315
 task_id: tsk_launch_packet_worker_20260618150315
 run_id: run_gw_eed70c81def8
-session_id: agtsess_agt_launch_packet_worker_20260618150315_local_demo_33826b3d655c
+session_id: [AGENT_GATEWAY_SESSION_REDACTED]
 token mode: agent_token
 tool_calls: 1
 evaluations: 1
@@ -415,10 +415,10 @@ The Agent Gateway short-lived session smoke passed:
 ```text
 script: python3 scripts/agent_gateway_session_smoke.py
 agent_id: agt_session_smoke_20260618125910
-token_id: agtok_agt_session_smoke_20260618125910_local_demo_bdc174771ffa
-session_id: agtsess_agt_session_smoke_20260618125910_local_demo_a40134dc26fc
-revoked_session_id: agtsess_agt_session_smoke_20260618125910_local_demo_eb1886997427
-cascade_session_id: agtsess_agt_session_smoke_20260618125910_local_demo_f192091cd8dc
+token_id: [AGENT_GATEWAY_TOKEN_REDACTED]
+session_id: [AGENT_GATEWAY_SESSION_REDACTED]
+revoked_session_id: [AGENT_GATEWAY_SESSION_REDACTED]
+cascade_session_id: [AGENT_GATEWAY_SESSION_REDACTED]
 task_id: tsk_session_smoke_20260618125910
 auth_mode: agent_session
 session scopes: agents:heartbeat, tasks:read
@@ -437,7 +437,7 @@ script: python3 scripts/worker_session_refresh_smoke.py
 agent_id: agt_session_refresh_worker_20260618153329
 task_ids: tsk_session_refresh_20260618153329_1, tsk_session_refresh_20260618153329_2
 run_ids: run_gw_1a886228c52d, run_gw_d43859ff81e3
-session_ids: agtsess_3450b103cb83c3b9, agtsess_42bb9739e19e48f5, agtsess_fb34437996eb3c02
+session_ids: [AGENT_GATEWAY_SESSION_REDACTED], [AGENT_GATEWAY_SESSION_REDACTED], [AGENT_GATEWAY_SESSION_REDACTED]
 session_refresh_count: 2
 token_omitted: true
 ```
@@ -467,7 +467,7 @@ approval_id: ap_enroll_req_enroll_req_7ff7bdf1124c9a66
 task_id: tsk_enroll_req_enroll_req_7ff7bdf1124c9a66
 run_id: run_enroll_req_enroll_req_7ff7bdf1124c9a66
 premature issue: approval_required
-issued token: agtok_agt_enroll_approval_20260618125200_local_demo_37af34fdcf9a
+issued token: [AGENT_GATEWAY_TOKEN_REDACTED]
 issued token heartbeat: idle
 cleanup revoked: 1
 token_omitted: true
@@ -480,7 +480,7 @@ The remote-token worker smoke also passed:
 ```text
 script: python3 scripts/remote_agent_token_worker_smoke.py
 agent_id: agt_remote_worker_smoke_20260618064228
-token_id: agtok_agt_remote_worker_smoke_20260618064228_local_demo_2fd708d4aed4
+token_id: [AGENT_GATEWAY_TOKEN_REDACTED]
 task_id: tsk_remote_worker_smoke_20260618064228
 run_id: run_gw_f61363bdf61d
 run_status: completed
@@ -825,7 +825,7 @@ Latest repeat run after adding the enrollment UI:
 ```text
 script: python3 scripts/remote_agent_token_worker_smoke.py
 agent_id: agt_remote_worker_smoke_20260617170534
-token_id: agtok_agt_remote_worker_smoke_20260617170534_local_demo_7b3ddaeda24a
+token_id: [AGENT_GATEWAY_TOKEN_REDACTED]
 task_id: tsk_remote_worker_smoke_20260617170534
 run_id: run_gw_4b4e7af5275c
 run_status: completed
@@ -840,7 +840,7 @@ Latest repeat run after adding worker fleet telemetry:
 ```text
 script: python3 scripts/remote_agent_token_worker_smoke.py
 agent_id: agt_remote_worker_smoke_20260617180040
-token_id: agtok_agt_remote_worker_smoke_20260617180040_local_demo_a1a3ca715719
+token_id: [AGENT_GATEWAY_TOKEN_REDACTED]
 task_id: tsk_remote_worker_smoke_20260617180040
 run_id: run_gw_38fe52256f67
 run_status: completed

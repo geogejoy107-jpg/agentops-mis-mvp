@@ -8,6 +8,13 @@ AgentOps MIS is the local control plane for a small AI workforce. It does not re
 - Agents use the Agent Gateway CLI/API/MCP path for task execution, readback, plans, tool evidence, evaluations, audit, and memory proposals.
 - MIS stores structured state, short summaries, hashes, IDs, and reviewable records.
 - MIS must not store raw secrets, full private transcripts, arbitrary raw prompts, or raw model responses by default.
+- Open-source tools may be adopted for storage reliability, retrieval, CI, secret scanning, SBOMs, Git isolation, protocol adapters, and visual references.
+- Open-source methods may be adapted for spec workflows, repo maps, human-in-the-loop checkpoints, policy vocabulary, and coding-agent work packages.
+- MIS authority objects, including workspace, agent, task, run, tool call, approval, prepared action, memory, evaluation, artifact, audit, and customer delivery state, must remain first-party AgentOps MIS code.
+
+See `docs/OPEN_SOURCE_ADOPTION_BOUNDARY_SPEC.md` before adding any framework,
+runtime, visualizer, agent system, policy engine, retrieval system, or workflow
+dependency.
 
 ## First-Class Objects
 

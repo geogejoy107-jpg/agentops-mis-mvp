@@ -225,6 +225,15 @@ has since closed or partially closed several items on the development branch:
   client transport, model prompts use redacted task summaries, and
   `scripts/worker_secret_boundary_smoke.py` verifies fake task/env/URL secrets
   plus the Gateway token do not appear in worker output or ledger readback.
+- Release secret scanning is now local and deterministic through
+  `scripts/secret_scan_smoke.py`, which scans tracked files for token-like
+  credentials and allows only narrow fake-token smoke fixtures.
+- Open-source adoption is now a documented project boundary:
+  `docs/OPEN_SOURCE_ADOPTION_BOUNDARY_SPEC.md` separates direct tool adoption
+  from reference-only method adaptation and first-party MIS authority modules.
+  Root `PROJECT_SPEC.md`, `AGENT_WORKFLOW.md`, and the v1.5 closure spec link to
+  it so future framework/runtime work preserves the MIS ledger, approval,
+  workspace scope, memory, delivery, and audit authority model.
 - Non-local/shared deployment, collaborator exact matching, knowledge scope
   policy/redaction, SQLite WAL/busy-timeout pragmas, deterministic CI, and
   customer delivery-board evidence links now have targeted checks in the merge

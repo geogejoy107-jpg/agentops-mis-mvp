@@ -5,6 +5,7 @@
 
 ## 1. Branch control
 
+- [x] Open-source adoption boundary is captured as a project rule. `PROJECT_SPEC.md`, `AGENT_WORKFLOW.md`, and `docs/V1_5_EIGHT_PRODUCT_CLOSURE_SPEC.md` point to `docs/OPEN_SOURCE_ADOPTION_BOUNDARY_SPEC.md`, which separates direct tool adoption, reference-only method adaptation, and first-party MIS authority modules.
 - [ ] Confirm the intended development branch HEAD.
 - [ ] Freeze a release-candidate SHA.
 - [ ] Pause unrelated feature work during hardening.
@@ -128,6 +129,7 @@ python3 scripts/knowledge_retrieval_quality_smoke.py
 ```bash
 python3 scripts/redaction_fuzz_smoke.py
 python3 scripts/redaction_policy_smoke.py
+python3 scripts/secret_scan_smoke.py
 python3 scripts/security_production_readiness_smoke.py
 python3 scripts/production_security_warning_ui_smoke.py
 python3 scripts/pixel_office_visualizer_boundary_smoke.py
@@ -411,6 +413,7 @@ Suggested deterministic suite:
 python3 -m py_compile server.py agentops_mis_cli/*.py scripts/*.py
 python3 scripts/demo_acceptance.py --start-server
 python3 scripts/local_readiness_smoke.py
+python3 scripts/secret_scan_smoke.py
 python3 scripts/agent_work_method_block_smoke.py
 python3 scripts/agentops_cli_install_smoke.py
 python3 scripts/agentops_pip_install_smoke.py
@@ -533,7 +536,7 @@ Optional live runtime checks occur only after preflight and explicit human confi
 - [ ] Test command list and summary.
 - [ ] Performance and retrieval baseline.
 - [ ] Migration and rollback result.
-- [ ] Security readiness and secret scan.
+- [x] Security readiness and secret scan. Guarded by `scripts/security_production_readiness_smoke.py` plus `scripts/secret_scan_smoke.py`, which scans tracked files for token-like credentials while allowing only narrow fake-token smoke fixtures.
 - [ ] License/provenance/SBOM.
 - [ ] Plan, task, run, artifact and review IDs for safe closure.
 - [ ] Optional protected live-runtime IDs.

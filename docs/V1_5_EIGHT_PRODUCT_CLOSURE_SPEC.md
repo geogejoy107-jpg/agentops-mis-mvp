@@ -34,6 +34,15 @@ normal customer task can be dispatched through the machine-facing contract and
 then become visible in the human-facing ledger, approvals, evaluations, audit,
 and artifact views.
 
+Open-source projects can accelerate the tool layer but cannot replace the MIS
+authority layer. v1.5 follows `docs/OPEN_SOURCE_ADOPTION_BOUNDARY_SPEC.md`:
+SQLite, GitHub Actions, FTS5, secret scanners, SBOM tooling, Git worktrees and
+protocol SDKs may be adopted directly; Spec Kit, Aider, LangGraph, OPA/Cedar,
+SWE-agent, Agentless, Mem0/Zep/Letta and virtual-office projects are
+reference-only unless wrapped behind Agent Gateway/runtime/connector boundaries.
+Agent Plan, Run, Tool Call, Approval Wall, Workspace Scope, Memory Governance,
+Customer Delivery and Audit remain first-party MIS modules.
+
 v1.5 also makes the human operator role explicit as a commander-style async
 management loop. The commander does not need to hold a single synchronous
 request open while Hermes, OpenClaw, or a remote worker finishes. Instead, the
@@ -382,7 +391,7 @@ Acceptance evidence:
 - `python3 scripts/enrollment_launch_steps_smoke.py` verified create/rotate launch packets omit raw tokens and include status/session/worker commands.
 - `python3 scripts/remote_launch_packet_worker_smoke.py` verified the returned launch packet environment can run a scoped worker through a short-lived session and write run/tool/evaluation ledger evidence:
   - run `run_gw_eed70c81def8`
-  - session `agtsess_agt_launch_packet_worker_20260618150315_local_demo_33826b3d655c`
+  - session `[AGENT_GATEWAY_SESSION_REDACTED]`
 - `python3 scripts/enrollment_rotation_smoke.py` verified API and CLI rotation with redacted one-time token output.
 - `python3 scripts/enrollment_health_state_smoke.py` verified the remote enrollment lifecycle `never_seen -> fresh -> stale -> revoked`.
 - `python3 scripts/workspace_isolation_smoke.py` verified:
@@ -408,7 +417,7 @@ Acceptance evidence:
 - `python3 scripts/worker_session_refresh_smoke.py` verified loop-mode short-lived session refresh:
   - worker `agt_session_refresh_worker_20260618153329` processed two tasks,
   - runs `run_gw_1a886228c52d` and `run_gw_d43859ff81e3` completed,
-  - sessions refreshed from `agtsess_3450b103cb83c3b9` through `agtsess_fb34437996eb3c02`,
+  - sessions refreshed from `[AGENT_GATEWAY_SESSION_REDACTED]` through `[AGENT_GATEWAY_SESSION_REDACTED]`,
   - `session_refresh_count=2`,
   - raw token output remained omitted.
 - `python3 scripts/worker_remote_fleet_status_smoke.py` verified `agentops worker status` shows a remote worker through `never_seen -> fresh -> stale`, counts active sessions, and omits raw token/session identifiers.

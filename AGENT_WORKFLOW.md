@@ -15,6 +15,7 @@ Before code, architecture, project planning, or priority changes:
 5. Verify the exact GitHub repository, branch, and commit.
 6. Read `AGENTS.md`, `PROJECT_SPEC.md`, this workflow, `BASE_INDEX.md`, relevant docs, and task acceptance criteria.
 7. Search the existing implementation and project ledger before proposing a parallel path.
+8. If using an external runtime, framework, UI reference, retrieval system, policy engine, or CI/security tool, read `docs/OPEN_SOURCE_ADOPTION_BOUNDARY_SPEC.md` and state which authority boundary remains first-party MIS code.
 
 Required preflight output:
 
@@ -49,6 +50,7 @@ If branch or commit cannot be verified, mark it `Unknown` and do not infer curre
 4. COMPARE
    Compare the proposed work with approved decisions, active backlog, base constraints, runtime boundaries, security rules, and current implementation.
    Classify any durable new item as `duplicate_of`, `updates`, `supersedes`, `conflicts_with`, or genuinely new.
+   If borrowing from open source, classify the borrowing as direct tool adoption, reference-only method adaptation, or forbidden authority transfer.
 
 5. EXECUTE
    Work through Agent Gateway CLI/API where possible. Browser UI is for human supervision, not normal agent execution.
@@ -111,6 +113,25 @@ No canonical project-state change.
 ## Clean Repo Rule
 
 Do not commit generated plans, FTS index data, temporary databases, raw runtime logs, raw prompts, raw responses, tokens, cache directories, or unreviewed customer/private content.
+
+## Open-Source Adoption Rule
+
+Open-source projects may support tools, protocols, retrieval, CI, scanning,
+SBOM, Git isolation, UI reference, or adapter work. They must not become the
+source of truth for MIS objects or approvals. Before integrating a new external
+project, record:
+
+```text
+Reference:
+Borrowed idea:
+First-party MIS module touched:
+Authority boundary preserved:
+Verification:
+```
+
+If the dependency would own workspace, task, run, approval, prepared action,
+memory, evaluation, artifact, audit, delivery, or identity state, reject it or
+wrap it as a runtime/connector adapter.
 
 ## Required Agent Plan Fields
 
