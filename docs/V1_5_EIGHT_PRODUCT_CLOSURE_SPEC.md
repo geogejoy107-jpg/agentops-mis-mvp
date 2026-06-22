@@ -729,6 +729,7 @@ python3 scripts/agentops_pip_install_smoke.py
 python3 scripts/agentops_worker_package_smoke.py
 python3 scripts/agentops_doctor_smoke.py
 python3 scripts/agentops_worker_status_smoke.py
+python3 scripts/v1_5_product_closure_evidence_smoke.py
 python3 scripts/agentops_worker_daemon_cli_smoke.py
 python3 scripts/agentops_status_smoke.py
 python3 scripts/remote_agent_token_worker_smoke.py

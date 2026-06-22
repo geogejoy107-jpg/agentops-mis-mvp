@@ -65,6 +65,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "v1_5_product_closure_evidence",
+        "command": "python3 scripts/v1_5_product_closure_evidence_smoke.py",
+        "summary": "Static evidence matrix for the eight v1.5 product-closure items.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "external_connector_runtime_inventory",
         "command": "python3 scripts/external_connector_runtime_inventory_smoke.py",
         "summary": "High-risk external connector/runtime prepared-action inventory and guard coverage.",
