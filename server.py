@@ -21286,6 +21286,183 @@ def operator_runtime_doctor(conn: sqlite3.Connection, headers, qs=None, auth_ctx
     }
 
 
+def operator_execution_mode(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) -> dict:
+    qs = qs or {}
+    adapter = coerce_choice((qs.get("adapter") or ["mock"])[0], {"mock", "hermes", "openclaw"}, "mock")
+    confirm_run = str((qs.get("confirm_run") or ["false"])[0]).lower() in {"1", "true", "yes", "y"}
+    limit = bounded_int((qs.get("limit") or ["8"])[0], 8, 1, 20)
+    effective_headers = headers
+    if agent_gateway_is_bound_auth(auth_ctx):
+        effective_headers = dict(headers)
+        effective_headers["X-AgentOps-Workspace-Id"] = auth_ctx.get("workspace_id") or "local-demo"
+        effective_headers["X-AgentOps-Agent-Id"] = auth_ctx.get("agent_id") or ""
+    workspace_id = normalize_workspace_id(
+        (auth_ctx or {}).get("workspace_id")
+        or effective_headers.get("X-AgentOps-Workspace-Id")
+        or "local-demo"
+    )
+    doctor = operator_runtime_doctor(conn, headers, {"limit": [str(limit)]}, auth_ctx)
+    readiness = worker_adapter_readiness(conn, refresh=False)
+    adapters = readiness.get("adapters") or {}
+    selected = adapters.get(adapter) or {}
+    doctor_summary = doctor.get("summary") or {}
+
+    def table_count(table: str, where: str = "", params=()) -> int:
+        exists = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
+        if not exists:
+            return 0
+        sql = f"SELECT COUNT(*) FROM {table}"
+        if where:
+            sql += f" WHERE {where}"
+        return scalar_count(conn, sql, params)
+
+    def table_has_column(table: str, column: str) -> bool:
+        exists = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
+        if not exists:
+            return False
+        return any(str(row[1]) == column for row in conn.execute(f"PRAGMA table_info({table})").fetchall())
+
+    workflow_job_status_filter = "status IN ('queued','running','submitted','planned')"
+    if table_has_column("workflow_jobs", "workspace_id"):
+        active_jobs = table_count("workflow_jobs", f"{workflow_job_status_filter} AND workspace_id=?", (workspace_id,))
+    else:
+        active_jobs = table_count("workflow_jobs", workflow_job_status_filter)
+    if table_has_column("approvals", "workspace_id"):
+        pending_approvals = table_count("approvals", "decision='pending' AND COALESCE(workspace_id,'local-demo')=?", (workspace_id,))
+    else:
+        pending_approvals = table_count("approvals", "decision='pending'")
+    readiness_value = str(selected.get("readiness") or ("ready" if adapter == "mock" else "unknown"))
+    selected_blocked = adapter != "mock" and readiness_value in {"unavailable", "blocked"}
+    live_confirm_required = adapter in {"hermes", "openclaw"}
+    live_confirm_missing = live_confirm_required and not confirm_run
+    if selected_blocked:
+        status = "blocked"
+        mode = "adapter_route_blocked"
+        selected_path = "blocked_before_dispatch"
+    elif live_confirm_missing:
+        status = "attention"
+        mode = "live_confirmation_required"
+        selected_path = "waiting_for_confirm_run"
+    elif adapter == "mock":
+        status = "planned"
+        mode = "dry_run_or_mock"
+        selected_path = "safe_mock_worker"
+    else:
+        status = "ready"
+        mode = "live_confirmed"
+        selected_path = "live_worker_dispatch_allowed"
+
+    commands = {
+        "execution_mode": f"agentops operator execution-mode --adapter {adapter}{' --confirm-run' if confirm_run else ''}",
+        "worker_readiness": "agentops worker readiness",
+        "runtime_doctor": "agentops operator runtime-doctor --limit 8",
+        "review_queue": "agentops review queue --limit 20",
+    }
+    return {
+        "provider": "agentops-operator",
+        "operation": "operator_execution_mode",
+        "status": status,
+        "workspace_id": workspace_id,
+        "adapter": adapter,
+        "mode": mode,
+        "selected_path": selected_path,
+        "summary": {
+            "adapter": adapter,
+            "adapter_readiness": readiness_value,
+            "trust_status": selected.get("trust_status") or "unknown",
+            "selected_path": selected_path,
+            "live_confirm_required": live_confirm_required,
+            "confirm_run": confirm_run,
+            "confirm_run_wall": "pass" if not live_confirm_missing else "attention",
+            "prepared_action_wall": "pass" if adapter in (doctor_summary.get("requires_prepared_action") or []) else "planned",
+            "pending_approvals": pending_approvals,
+            "active_workflow_jobs": active_jobs,
+            "runtime_doctor_status": doctor.get("status"),
+            "blocked_gates": doctor_summary.get("blocked_gates") or [],
+            "attention_gates": doctor_summary.get("attention_gates") or [],
+            "recommended_adapter": doctor_summary.get("recommended_adapter") or "mock",
+        },
+        "selected_route": {
+            "adapter": adapter,
+            "readiness": readiness_value,
+            "trust_status": selected.get("trust_status") or "unknown",
+            "target_resource": selected.get("target_resource"),
+            "recommended_action": selected.get("recommended_action") or commands["worker_readiness"],
+            "requires_confirm_run": bool(selected.get("requires_confirm_run")) if adapter != "mock" else False,
+            "requires_prepared_action": adapter in (doctor_summary.get("requires_prepared_action") or []),
+            "token_omitted": True,
+        },
+        "gates": [
+            {
+                "id": "selected_adapter_route",
+                "label": "Selected adapter route",
+                "status": "blocked" if selected_blocked else "pass" if readiness_value in {"ready", "review_required"} or adapter == "mock" else "attention",
+                "detail": f"{adapter} readiness={readiness_value} trust={selected.get('trust_status') or 'unknown'}",
+                "next_action": selected.get("recommended_action") or commands["worker_readiness"],
+                "token_omitted": True,
+            },
+            {
+                "id": "confirm_run_wall",
+                "label": "Confirm-run wall",
+                "status": "attention" if live_confirm_missing else "pass",
+                "detail": "Hermes/OpenClaw live dispatch requires explicit confirm_run." if live_confirm_required else "Mock path does not require live confirmation.",
+                "next_action": commands["execution_mode"] if live_confirm_missing else commands["worker_readiness"],
+                "token_omitted": True,
+            },
+            {
+                "id": "prepared_action_wall",
+                "label": "Prepared-action wall",
+                "status": "pass" if adapter in (doctor_summary.get("requires_prepared_action") or []) else "planned",
+                "detail": "Opaque external writes route through prepared actions before provider calls." if adapter != "mock" else "Mock path has no external side effect.",
+                "next_action": "agentops approval list --decision pending --limit 20",
+                "token_omitted": True,
+            },
+            {
+                "id": "approval_waiting",
+                "label": "Pending approvals",
+                "status": "attention" if pending_approvals else "pass",
+                "detail": f"{pending_approvals} pending approval(s) in workspace {workspace_id}.",
+                "next_action": commands["review_queue"],
+                "token_omitted": True,
+            },
+            {
+                "id": "async_jobs",
+                "label": "Active workflow jobs",
+                "status": "running" if active_jobs else "pass",
+                "detail": f"{active_jobs} active workflow job(s).",
+                "next_action": "agentops workflow jobs --limit 20",
+                "token_omitted": True,
+            },
+        ],
+        "commands": commands,
+        "sources": {
+            "runtime_doctor": {
+                "status": doctor.get("status"),
+                "operation": doctor.get("operation"),
+                "summary": doctor_summary,
+                "token_omitted": True,
+            },
+            "adapter_readiness": {
+                "status": readiness.get("status"),
+                "summary": readiness.get("summary") or {},
+                "token_omitted": True,
+            },
+        },
+        "contract": "read-only execution-mode read model for UI, CLI, and agents; it does not run adapters, start daemons, create tasks, write approvals, or mutate ledgers",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_executes_shell": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+
+
 def operator_command_center(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) -> dict:
     qs = qs or {}
     limit = bounded_int((qs.get("limit") or ["12"])[0], 12, 1, 30)
@@ -22910,6 +23087,25 @@ class Handler(BaseHTTPRequestHandler):
                     qs,
                     self.headers,
                     lambda: operator_runtime_doctor(conn, self.headers, qs, auth_ctx),
+                    auth_ctx,
+                )
+                conn.rollback()
+                return self.send_json(payload)
+            if path == "/api/operator/execution-mode":
+                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                if auth_error:
+                    conn.rollback()
+                    return self.send_json(auth_error, agent_gateway_error_status(auth_error))
+                if agent_gateway_is_bound_auth(auth_ctx):
+                    requested_header_workspace = normalize_workspace_id(self.headers.get("X-AgentOps-Workspace-Id") or auth_ctx["workspace_id"])
+                    if requested_header_workspace != auth_ctx["workspace_id"]:
+                        conn.rollback()
+                        return self.send_json({"error": "forbidden", "message": "Agent token cannot use another workspace header."}, 403)
+                payload = cached_read_model(
+                    "operator_execution_mode",
+                    qs,
+                    self.headers,
+                    lambda: operator_execution_mode(conn, self.headers, qs, auth_ctx),
                     auth_ctx,
                 )
                 conn.rollback()

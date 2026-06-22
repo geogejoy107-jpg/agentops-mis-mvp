@@ -433,6 +433,17 @@ execution, and Action Queue receipts. It requires `tasks:read` for supplied
 Agent Gateway tokens/sessions and never starts runtimes, executes tasks, mutates
 ledgers/connectors, or exposes tokens/raw prompts/raw responses.
 
+`GET /api/operator/execution-mode` is the read-only dispatch-mode projection
+used by UI, CLI operators, and external agents before choosing a worker path.
+It accepts `adapter=mock|hermes|openclaw` and optional `confirm_run=true`, then
+returns the selected path (`dry_run_or_mock`, `live_confirmation_required`,
+`live_confirmed`, or `adapter_route_blocked`), selected adapter readiness,
+confirm-run wall, prepared-action wall, pending approval count, active async
+workflow job count, and copyable next commands. It reuses runtime-doctor and
+adapter-readiness evidence, requires `tasks:read` for supplied Agent Gateway
+tokens/sessions, and never starts adapters, creates tasks, writes approvals, or
+mutates ledgers.
+
 `GET /api/operator/loop-audit` is the read-only Agent Work Method Block audit.
 It turns `READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD`
 into seven machine-checkable gates using the existing knowledge index, Agent

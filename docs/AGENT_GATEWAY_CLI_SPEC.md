@@ -477,6 +477,23 @@ receipt recording. It never starts runtimes, executes tasks, mutates ledgers or
 connector rows, or exposes tokens. Supplied Agent Gateway tokens/sessions must
 carry `tasks:read` and remain workspace-bound.
 
+### `agentops operator execution-mode`
+
+Reads the current dispatch mode before a human or agent starts a customer task:
+
+```bash
+agentops operator execution-mode --adapter mock
+agentops operator execution-mode --adapter hermes
+agentops operator execution-mode --adapter hermes --confirm-run
+```
+
+Maps to `GET /api/operator/execution-mode`. The command is read-only and
+returns the selected path, adapter readiness/trust state, confirm-run wall,
+prepared-action wall, pending approvals, active async jobs, and copyable next
+commands. It is the CLI/API counterpart to the `/workspace/agents` execution
+mode strip. It does not run Hermes/OpenClaw, create tasks, approve actions,
+start daemons, or mutate the ledger.
+
 ### `agentops approval prepared-action`
 
 Creates and resumes the durable Approval Wall primitive for exact tool/action

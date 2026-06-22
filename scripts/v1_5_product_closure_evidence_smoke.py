@@ -171,6 +171,7 @@ def main() -> int:
             docs=["docs/PIXEL_OPERATING_MAP_SPEC.md", "docs/DEMO_VIDEO_SCRIPT.md"],
             scripts=[
                 "scripts/operator_runtime_doctor_smoke.py",
+                "scripts/operator_execution_mode_smoke.py",
                 "scripts/operator_action_queue_ui_smoke.py",
                 "scripts/operator_advance_loop_smoke.py",
                 "scripts/ai_employees_responsiveness_smoke.py",
@@ -178,8 +179,8 @@ def main() -> int:
                 "scripts/real_runtime_ui_confirm_smoke.py",
             ],
             source_markers={
-                "server.py": ["/api/operator/runtime-doctor", "operator_runtime_doctor"],
-                "agentops_mis_cli/agentops.py": ["operator_runtime_doctor", "runtime-doctor"],
+                "server.py": ["/api/operator/runtime-doctor", "/api/operator/execution-mode", "operator_runtime_doctor", "operator_execution_mode"],
+                "agentops_mis_cli/agentops.py": ["operator_runtime_doctor", "operator_execution_mode", "runtime-doctor", "execution-mode"],
                 "ui/start-building-app/src/app/components/pages/AIEmployees.tsx": ["operator_loop_launch_packet", "operator_runtime_doctor", "receipt_state", "Worker Fleet", "operatorHealthLoopControl"],
                 "ui/start-building-app/src/app/data/liveApi.ts": ["loadOperatorLoopLaunchPacket", "loadOperatorRuntimeDoctor", "loadWorkerStatus", "loop_control"],
             },

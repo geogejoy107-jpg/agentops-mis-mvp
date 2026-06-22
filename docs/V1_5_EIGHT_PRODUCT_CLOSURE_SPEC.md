@@ -553,6 +553,11 @@ Current v1.5 implementation:
 - `/workspace/agents` also surfaces local readiness, adapter route readiness,
   async workflow jobs, stuck workflow-job recovery, and the async integration
   inbox for commander review of work that returns at different speeds.
+- `/workspace/agents`, `GET /api/operator/execution-mode`, and
+  `agentops operator execution-mode` share a read-only execution-mode contract:
+  selected adapter path, dry-run/mock vs live-confirmed vs confirmation-missing
+  vs adapter-blocked state, confirm-run wall, prepared-action wall, pending
+  approval count, active async jobs, and copyable next commands.
 - `/workspace/approvals` reads live approvals from the backend and can approve/reject through the real API.
 - `/admin/toolcalls` reads live tool-call evidence from the backend instead of mock data.
 - `/admin/tasks/:id` shows delivery artifacts and links related runs to their Run Detail pages.
@@ -579,6 +584,8 @@ Acceptance evidence:
 - `GET /api/tool-calls` returned 6928 live tool-call rows, including `artifact.delivery_summary`.
 - `GET /api/tasks/tsk_kb_bot_20260617185442_06` returned delivery artifact `art_kb_bot_delivery_20260617185442`.
 - `python3 scripts/approval_decision_side_effect_smoke.py` verified approve and reject status propagation.
+- `python3 scripts/operator_execution_mode_smoke.py` verifies the execution-mode
+  API and CLI are scoped, read-only, non-mutating, and redacted.
 
 Remaining product work:
 
