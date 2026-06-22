@@ -20,6 +20,7 @@ human/admin APIs:
 | Audit list | `repo_list_workspace_audit` | `GET /api/audit` | `python3 scripts/storage_boundary_sqlite_smoke.py` |
 | Workflow job list/detail/stuck recovery | `repo_list_workspace_workflow_jobs`, `repo_get_workspace_workflow_job`, `repo_list_workspace_stuck_workflow_jobs` | `GET /api/workflows/jobs`, `GET /api/workflows/jobs/:job_id`, `GET /api/workflows/jobs/stuck`, mark-failed lookup | `python3 scripts/storage_boundary_sqlite_smoke.py` |
 | Workflow job write/update | `repo_upsert_workflow_job`, `repo_update_workflow_job` | async template/worker job submit, adapter-readiness rejection, background running/completed/failed transitions, operator mark-failed | `python3 scripts/storage_boundary_sqlite_smoke.py` |
+| Agent Plan / plan-evidence writes | `repo_upsert_agent_plan`, `repo_upsert_plan_evidence_manifest`, `repo_update_plan_evidence_manifest` | Agent Gateway plan create, plan-evidence manifest create, manifest verification persistence | `python3 scripts/storage_boundary_sqlite_smoke.py` |
 | Agent Gateway enrollment/session admin reads | `repo_list_gateway_enrollments`, `repo_list_gateway_sessions` | `GET /api/agent-gateway/enrollments`, `GET /api/agent-gateway/sessions` | `python3 scripts/storage_boundary_sqlite_smoke.py` |
 | Agent Gateway task/run reads | `repo_pull_agent_gateway_tasks`, `repo_list_agent_gateway_tasks`, `repo_get_agent_gateway_task`, `repo_list_agent_gateway_runs`, `repo_get_agent_gateway_run` | `GET /api/agent-gateway/tasks/pull`, `GET /api/agent-gateway/tasks`, `GET /api/agent-gateway/tasks/:task_id`, `GET /api/agent-gateway/runs`, `GET /api/agent-gateway/runs/:run_id` | `python3 scripts/storage_boundary_sqlite_smoke.py` |
 | Agent Gateway artifact/approval/memory reads | `repo_list_agent_gateway_artifacts`, `repo_list_agent_gateway_approvals`, `repo_list_agent_gateway_memories` | `GET /api/agent-gateway/artifacts`, `GET /api/agent-gateway/approvals`, `GET /api/agent-gateway/memories` | `python3 scripts/storage_boundary_sqlite_smoke.py` |
@@ -35,7 +36,7 @@ match behavior before Postgres is introduced.
 
 | Candidate | Why next | Required proof before Postgres |
 | --- | --- | --- |
-| Remaining plan/action/review write repositories | Postgres parity still needs Agent Plans, prepared actions and review decisions centralized | Existing workflow smokes plus isolated write helper smoke |
+| Remaining action/review write repositories | Postgres parity still needs prepared actions and review decisions centralized | Existing workflow smokes plus isolated write helper smoke |
 | Postgres adapter contract | SQLite helpers now cover core ledger and evidence writes; next step is a second adapter exercising the same helper contract | SQLite smoke parity plus Postgres container smoke with identical fixtures |
 
 ## Postgres Parity Rule

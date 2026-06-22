@@ -45,6 +45,8 @@ def main() -> int:
     write_tool_call = "tc_storage_write"
     write_runtime_event = "rte_storage_write"
     write_audit = "aud_storage_write"
+    write_plan = "plan_storage_write"
+    write_manifest = "pem_storage_write"
     write_approval = "ap_storage_write"
     write_eval = "eval_storage_write"
     write_artifact = "art_storage_write"
@@ -465,6 +467,65 @@ def main() -> int:
             require(before_memory and memory_outcome == "updated", f"memory write helper update failed: {memory_outcome}")
             require(server.repo_get_workspace_memory(conn, workspace_a, write_memory)["confidence"] == 0.91, "memory write helper did not persist update")
 
+            write_plan_row = {
+                "plan_id": write_plan,
+                "workspace_id": workspace_a,
+                "task_id": write_task,
+                "run_id": write_run,
+                "agent_id": agent_a,
+                "task_understanding": "Storage boundary plan covers repo write helper evidence.",
+                "referenced_specs_json": json.dumps(["docs/STORAGE_BOUNDARY_MAP.md"], ensure_ascii=False),
+                "referenced_memories_json": json.dumps([write_memory], ensure_ascii=False),
+                "referenced_bases_json": json.dumps(["base_local_tasks"], ensure_ascii=False),
+                "proposed_files_to_change_json": json.dumps(["server.py", "scripts/storage_boundary_sqlite_smoke.py"], ensure_ascii=False),
+                "risk_level": "medium",
+                "approval_required": 0,
+                "execution_steps_json": json.dumps(["create", "record", "verify"], ensure_ascii=False),
+                "verification_plan": "Run storage boundary smoke.",
+                "rollback_plan": "Revert storage-boundary helper changes.",
+                "status": "submitted",
+                "created_at": write_now,
+                "updated_at": write_now,
+            }
+            before_plan, plan_outcome = server.repo_upsert_agent_plan(conn, dict(write_plan_row))
+            require(before_plan is None and plan_outcome == "created", f"agent plan write helper create failed: {plan_outcome}")
+            write_plan_row["verification_plan"] = "Run storage boundary smoke and plan evidence verification."
+            write_plan_row["updated_at"] = server.now_iso()
+            before_plan, plan_outcome = server.repo_upsert_agent_plan(conn, dict(write_plan_row))
+            require(before_plan and plan_outcome == "updated", f"agent plan write helper update failed: {plan_outcome}")
+            plan_row = conn.execute("SELECT * FROM agent_plans WHERE plan_id=?", (write_plan,)).fetchone()
+            require(server.verify_agent_plan_row(plan_row)["pass"] is True, "agent plan write helper did not persist a verifiable plan")
+
+            write_manifest_row = {
+                "manifest_id": write_manifest,
+                "workspace_id": workspace_a,
+                "plan_id": write_plan,
+                "task_id": write_task,
+                "run_id": write_run,
+                "agent_id": agent_a,
+                "mismatch_policy": "block",
+                "expected_steps_json": json.dumps(["create", "record", "verify"], ensure_ascii=False),
+                "tool_call_ids_json": json.dumps([write_tool_call], ensure_ascii=False),
+                "evaluation_ids_json": json.dumps([write_eval], ensure_ascii=False),
+                "artifact_ids_json": json.dumps([write_artifact], ensure_ascii=False),
+                "audit_ids_json": json.dumps([write_audit], ensure_ascii=False),
+                "status": "submitted",
+                "verification_json": "{}",
+                "created_at": write_now,
+                "updated_at": write_now,
+            }
+            before_manifest, manifest_outcome = server.repo_upsert_plan_evidence_manifest(conn, dict(write_manifest_row))
+            require(before_manifest is None and manifest_outcome == "created", f"plan evidence write helper create failed: {manifest_outcome}")
+            manifest_row = conn.execute("SELECT * FROM plan_evidence_manifests WHERE manifest_id=?", (write_manifest,)).fetchone()
+            manifest_verification = server.verify_plan_evidence_manifest_row(conn, manifest_row)
+            require(manifest_verification["status"] == "verified", f"plan evidence verification failed: {manifest_verification}")
+            _before_manifest, after_manifest, manifest_update = server.repo_update_plan_evidence_manifest(conn, write_manifest, {
+                "status": manifest_verification["status"],
+                "verification_json": json.dumps(manifest_verification, ensure_ascii=False),
+                "updated_at": server.now_iso(),
+            })
+            require(after_manifest and manifest_update == "updated" and after_manifest["status"] == "verified", f"plan evidence update helper failed: {manifest_update}")
+
             memory_id_a = memory_a["memory"]["memory_id"]
             memory_id_b = memory_b["memory"]["memory_id"]
             org_memory_id_a = org_memory_a["memory"]["memory_id"]
@@ -549,6 +610,9 @@ def main() -> int:
                 "repo_list_workspace_stuck_workflow_jobs",
                 "repo_upsert_workflow_job",
                 "repo_update_workflow_job",
+                "repo_upsert_agent_plan",
+                "repo_upsert_plan_evidence_manifest",
+                "repo_update_plan_evidence_manifest",
                 "repo_list_gateway_enrollments",
                 "repo_list_gateway_sessions",
                 "repo_pull_agent_gateway_tasks",
@@ -580,6 +644,8 @@ def main() -> int:
             "write_tool_call": write_tool_call,
             "write_runtime_event": write_runtime_event,
             "write_audit": write_audit,
+            "write_agent_plan": write_plan,
+            "write_plan_evidence_manifest": write_manifest,
             "write_approval": write_approval,
             "write_evaluation": write_eval,
             "write_artifact": write_artifact,

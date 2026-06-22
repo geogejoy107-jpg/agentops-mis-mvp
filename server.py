@@ -3162,6 +3162,77 @@ def repo_update_workflow_job(conn: sqlite3.Connection, job_id: str, updates: dic
     return before, after, outcome
 
 
+def repo_upsert_agent_plan(conn: sqlite3.Connection, row: dict, allow_update: bool = True) -> tuple[sqlite3.Row | None, str]:
+    row["workspace_id"] = normalize_workspace_id(row.get("workspace_id") or "local-demo")
+    before = conn.execute("SELECT * FROM agent_plans WHERE plan_id=?", (row["plan_id"],)).fetchone()
+    if before:
+        if not allow_update or row_unchanged(before, row, {"created_at", "updated_at"}):
+            return before, "unchanged"
+        conn.execute(
+            """UPDATE agent_plans
+            SET workspace_id=:workspace_id, task_id=:task_id, run_id=:run_id, agent_id=:agent_id,
+                task_understanding=:task_understanding, referenced_specs_json=:referenced_specs_json,
+                referenced_memories_json=:referenced_memories_json, referenced_bases_json=:referenced_bases_json,
+                proposed_files_to_change_json=:proposed_files_to_change_json, risk_level=:risk_level,
+                approval_required=:approval_required, execution_steps_json=:execution_steps_json,
+                verification_plan=:verification_plan, rollback_plan=:rollback_plan, status=:status,
+                updated_at=:updated_at
+            WHERE plan_id=:plan_id""",
+            row,
+        )
+        return before, "updated"
+    conn.execute(
+        """INSERT INTO agent_plans(plan_id,workspace_id,task_id,run_id,agent_id,task_understanding,referenced_specs_json,
+        referenced_memories_json,referenced_bases_json,proposed_files_to_change_json,risk_level,approval_required,
+        execution_steps_json,verification_plan,rollback_plan,status,created_at,updated_at)
+        VALUES(:plan_id,:workspace_id,:task_id,:run_id,:agent_id,:task_understanding,:referenced_specs_json,
+        :referenced_memories_json,:referenced_bases_json,:proposed_files_to_change_json,:risk_level,:approval_required,
+        :execution_steps_json,:verification_plan,:rollback_plan,:status,:created_at,:updated_at)""",
+        row,
+    )
+    return before, "created"
+
+
+def repo_upsert_plan_evidence_manifest(conn: sqlite3.Connection, row: dict, allow_update: bool = True) -> tuple[sqlite3.Row | None, str]:
+    row["workspace_id"] = normalize_workspace_id(row.get("workspace_id") or "local-demo")
+    before = conn.execute("SELECT * FROM plan_evidence_manifests WHERE manifest_id=?", (row["manifest_id"],)).fetchone()
+    if before:
+        if not allow_update or row_unchanged(before, row, {"created_at", "updated_at"}):
+            return before, "unchanged"
+        conn.execute(
+            """UPDATE plan_evidence_manifests
+            SET workspace_id=:workspace_id, plan_id=:plan_id, task_id=:task_id, run_id=:run_id, agent_id=:agent_id,
+                mismatch_policy=:mismatch_policy, expected_steps_json=:expected_steps_json,
+                tool_call_ids_json=:tool_call_ids_json, evaluation_ids_json=:evaluation_ids_json,
+                artifact_ids_json=:artifact_ids_json, audit_ids_json=:audit_ids_json, status=:status,
+                verification_json=:verification_json, updated_at=:updated_at
+            WHERE manifest_id=:manifest_id""",
+            row,
+        )
+        return before, "updated"
+    conn.execute(
+        """INSERT INTO plan_evidence_manifests(manifest_id,workspace_id,plan_id,task_id,run_id,agent_id,mismatch_policy,
+        expected_steps_json,tool_call_ids_json,evaluation_ids_json,artifact_ids_json,audit_ids_json,status,verification_json,created_at,updated_at)
+        VALUES(:manifest_id,:workspace_id,:plan_id,:task_id,:run_id,:agent_id,:mismatch_policy,
+        :expected_steps_json,:tool_call_ids_json,:evaluation_ids_json,:artifact_ids_json,:audit_ids_json,:status,:verification_json,:created_at,:updated_at)""",
+        row,
+    )
+    return before, "created"
+
+
+def repo_update_plan_evidence_manifest(conn: sqlite3.Connection, manifest_id: str, updates: dict) -> tuple[sqlite3.Row | None, sqlite3.Row | None, str]:
+    before = conn.execute("SELECT * FROM plan_evidence_manifests WHERE manifest_id=?", (manifest_id,)).fetchone()
+    if not before:
+        return None, None, "missing"
+    row = dict(before)
+    row.update(updates)
+    row["manifest_id"] = manifest_id
+    row["workspace_id"] = normalize_workspace_id(row.get("workspace_id") or "local-demo")
+    _, outcome = repo_upsert_plan_evidence_manifest(conn, row)
+    after = conn.execute("SELECT * FROM plan_evidence_manifests WHERE manifest_id=?", (manifest_id,)).fetchone()
+    return before, after, outcome
+
+
 def repo_list_gateway_enrollments(conn: sqlite3.Connection, workspace_id: str | None = None, limit: int = 200):
     where = ""
     params: list = []
@@ -4711,16 +4782,8 @@ def agent_gateway_create_agent_plan(conn: sqlite3.Connection, body) -> tuple[dic
         "created_at": now_iso(),
         "updated_at": now_iso(),
     }
-    conn.execute(
-        """INSERT INTO agent_plans(plan_id,workspace_id,task_id,run_id,agent_id,task_understanding,referenced_specs_json,
-        referenced_memories_json,referenced_bases_json,proposed_files_to_change_json,risk_level,approval_required,
-        execution_steps_json,verification_plan,rollback_plan,status,created_at,updated_at)
-        VALUES(:plan_id,:workspace_id,:task_id,:run_id,:agent_id,:task_understanding,:referenced_specs_json,
-        :referenced_memories_json,:referenced_bases_json,:proposed_files_to_change_json,:risk_level,:approval_required,
-        :execution_steps_json,:verification_plan,:rollback_plan,:status,:created_at,:updated_at)""",
-        row,
-    )
-    audit(conn, "agent", agent_id, "agent_gateway.agent_plan_create", "agent_plans", row["plan_id"], None, row, {"raw_omitted": True})
+    before_plan, _plan_outcome = repo_upsert_agent_plan(conn, row)
+    audit(conn, "agent", agent_id, "agent_gateway.agent_plan_create", "agent_plans", row["plan_id"], dict(before_plan) if before_plan else None, row, {"raw_omitted": True})
     runtime_event(conn, "rtc_agent_gateway_local", "agent_plan.create", "completed", run_id=run_id, task_id=task_id, agent_id=agent_id, output_summary=understanding)
     return {"agent_plan": row, "token_omitted": True}, 201
 
@@ -4899,10 +4962,11 @@ def verify_plan_evidence_manifest_row(conn: sqlite3.Connection, manifest: sqlite
 
 
 def persist_plan_evidence_verification(conn: sqlite3.Connection, manifest_id: str, verification: dict) -> None:
-    conn.execute(
-        "UPDATE plan_evidence_manifests SET status=?, verification_json=?, updated_at=? WHERE manifest_id=?",
-        (verification["status"], json.dumps(verification, ensure_ascii=False), now_iso(), manifest_id),
-    )
+    repo_update_plan_evidence_manifest(conn, manifest_id, {
+        "status": verification["status"],
+        "verification_json": json.dumps(verification, ensure_ascii=False),
+        "updated_at": now_iso(),
+    })
 
 
 def verify_plan_evidence_manifest(conn: sqlite3.Connection, manifest_id: str, headers=None, auth_ctx=None) -> tuple[dict, int]:
@@ -5078,14 +5142,8 @@ def agent_gateway_create_plan_evidence_manifest(conn: sqlite3.Connection, body) 
         "created_at": now_iso(),
         "updated_at": now_iso(),
     }
-    conn.execute(
-        """INSERT INTO plan_evidence_manifests(manifest_id,workspace_id,plan_id,task_id,run_id,agent_id,mismatch_policy,
-        expected_steps_json,tool_call_ids_json,evaluation_ids_json,artifact_ids_json,audit_ids_json,status,verification_json,created_at,updated_at)
-        VALUES(:manifest_id,:workspace_id,:plan_id,:task_id,:run_id,:agent_id,:mismatch_policy,
-        :expected_steps_json,:tool_call_ids_json,:evaluation_ids_json,:artifact_ids_json,:audit_ids_json,:status,:verification_json,:created_at,:updated_at)""",
-        row,
-    )
-    audit(conn, "agent", row["agent_id"], "agent_gateway.plan_evidence_manifest_create", "plan_evidence_manifests", row["manifest_id"], None, row, {"raw_omitted": True})
+    before_manifest, _manifest_outcome = repo_upsert_plan_evidence_manifest(conn, row)
+    audit(conn, "agent", row["agent_id"], "agent_gateway.plan_evidence_manifest_create", "plan_evidence_manifests", row["manifest_id"], dict(before_manifest) if before_manifest else None, row, {"raw_omitted": True})
     runtime_event(conn, "rtc_agent_gateway_local", "plan_evidence_manifest.create", "completed", run_id=run_id, task_id=task_id, agent_id=row["agent_id"], output_summary=f"Plan evidence manifest {row['manifest_id']} submitted.")
     verification = verify_plan_evidence_manifest_row(conn, row) if body.get("verify_now", True) is not False else None
     if verification:
