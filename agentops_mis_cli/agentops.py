@@ -323,6 +323,15 @@ def cmd_demo_readiness(args, client: AgentOpsClient) -> dict:
     return client.get("/api/demo/readiness")
 
 
+def cmd_command_center_overview(args, client: AgentOpsClient) -> dict:
+    return client.get("/api/command-center/overview", query={
+        "limit": args.limit,
+        "project_id": args.project_id or None,
+        "threshold_sec": args.threshold_sec,
+        "refresh_cache": "true" if args.refresh_cache else None,
+    })
+
+
 def cmd_operator_action_plan(args, client: AgentOpsClient) -> dict:
     return client.get("/api/operator/action-plan", query={"limit": args.limit})
 
@@ -459,6 +468,10 @@ def cmd_operator_loop_self_check(args, client: AgentOpsClient) -> dict:
 
 def cmd_operator_health(args, client: AgentOpsClient) -> dict:
     return client.get("/api/operator/health", query={"limit": args.limit, "loop_id": args.loop_id or None})
+
+
+def cmd_operator_command_center(args, client: AgentOpsClient) -> dict:
+    return client.get("/api/operator/command-center", query={"limit": args.limit, "project_id": args.project_id or None})
 
 
 def cmd_operator_intake_checklist(args, client: AgentOpsClient) -> dict:
@@ -2242,6 +2255,15 @@ def build_parser() -> argparse.ArgumentParser:
     demo_readiness = demo_sub.add_parser("readiness", help="Show the canonical v1.5 classroom recording path readiness.")
     demo_readiness.set_defaults(handler="demo_readiness")
 
+    command_center = sub.add_parser("command-center", help="Stable read-only Command Center BFF for human UI and agent debugging.")
+    command_center_sub = command_center.add_subparsers(dest="action", required=True)
+    command_center_overview = command_center_sub.add_parser("overview", help="Aggregate projects, blocked runs, approvals, deliveries, stale workers, and next actions.")
+    command_center_overview.add_argument("--project-id", default=None)
+    command_center_overview.add_argument("--limit", type=int, default=8)
+    command_center_overview.add_argument("--threshold-sec", type=int, default=900)
+    command_center_overview.add_argument("--refresh-cache", action="store_true")
+    command_center_overview.set_defaults(handler="command_center_overview")
+
     operator = sub.add_parser("operator", help="Read-only operator command-center plans.")
     operator_sub = operator.add_subparsers(dest="action", required=True)
     operator_plan = operator_sub.add_parser("action-plan", help="Show the prioritized next safe CLI/UI actions.")
@@ -2304,6 +2326,10 @@ def build_parser() -> argparse.ArgumentParser:
     operator_health.add_argument("--loop-id", default=None)
     operator_health.add_argument("--limit", type=int, default=12)
     operator_health.set_defaults(handler="operator_health")
+    operator_command_center = operator_sub.add_parser("command-center", help="Read the unified operator command-center BFF for projects, blockers, approvals, deliveries, stale workers, and next actions.")
+    operator_command_center.add_argument("--project-id", default=None)
+    operator_command_center.add_argument("--limit", type=int, default=12)
+    operator_command_center.set_defaults(handler="operator_command_center")
     operator_intake = operator_sub.add_parser("intake-checklist", help="Show read-only pre-intake gates for planned/backlog tasks.")
     operator_intake.add_argument("--limit", type=int, default=12)
     operator_intake.set_defaults(handler="operator_intake_checklist")
@@ -3156,6 +3182,7 @@ HANDLERS = {
     "doctor": cmd_doctor,
     "local_readiness": cmd_local_readiness,
     "demo_readiness": cmd_demo_readiness,
+    "command_center_overview": cmd_command_center_overview,
     "operator_action_plan": cmd_operator_action_plan,
     "operator_action_receipts": cmd_operator_action_receipts,
     "operator_record_action_receipt": cmd_operator_record_action_receipt,
@@ -3168,6 +3195,7 @@ HANDLERS = {
     "operator_advance_loop": cmd_operator_advance_loop,
     "operator_advance_loop_policy": cmd_operator_advance_loop_policy,
     "operator_health": cmd_operator_health,
+    "operator_command_center": cmd_operator_command_center,
     "operator_intake_checklist": cmd_operator_intake_checklist,
     "operator_loop_launch_packet": cmd_operator_loop_launch_packet,
     "operator_remediate_evidence_gap": cmd_operator_remediate_evidence_gap,

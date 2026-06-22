@@ -87,6 +87,7 @@ The packet includes the canonical command manifest used for release review:
 - `python3 scripts/commander_repo_map_smoke.py`
 - `python3 scripts/commander_coding_project_template_smoke.py`
 - `python3 scripts/commander_coding_workspace_smoke.py`
+- `python3 scripts/operator_command_center_smoke.py`
 - `python3 scripts/commander_work_package_plan_smoke.py`
 - `python3 scripts/commander_work_package_dispatch_smoke.py`
 - `python3 scripts/local_coding_project_template_smoke.py`

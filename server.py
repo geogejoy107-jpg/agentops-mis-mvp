@@ -14979,6 +14979,16 @@ def commander_project_board(conn: sqlite3.Connection, headers) -> dict:
     }
 
 
+
+def command_center_overview(conn: sqlite3.Connection, headers, qs=None, auth_ctx: dict | None = None) -> dict:
+    """Compatibility alias for the canonical operator command-center BFF."""
+    payload = jsonable_clone(operator_command_center(conn, headers, qs, auth_ctx))
+    payload["alias_operation"] = "command_center_overview"
+    payload["canonical_operation"] = payload.get("operation")
+    payload["canonical_endpoint"] = "/api/operator/command-center"
+    return payload
+
+
 COMMANDER_DEFAULT_WORK_PACKAGE_LANES = [
     {
         "lane_id": "strategy",
@@ -22380,6 +22390,354 @@ def operator_health(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) -
     }
 
 
+def operator_command_center(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) -> dict:
+    qs = qs or {}
+    limit = bounded_int((qs.get("limit") or ["12"])[0], 12, 1, 30)
+    project_filter = commander_safe_text((qs.get("project_id") or [""])[0], 120)
+    effective_headers = headers
+    if agent_gateway_is_bound_auth(auth_ctx):
+        effective_headers = dict(headers)
+        effective_headers["X-AgentOps-Workspace-Id"] = auth_ctx.get("workspace_id") or "local-demo"
+        effective_headers["X-AgentOps-Agent-Id"] = auth_ctx.get("agent_id") or ""
+    workspace_id = normalize_workspace_id(effective_headers.get("X-AgentOps-Workspace-Id") or "local-demo")
+
+    action_plan = operator_action_plan(conn, effective_headers, {"limit": [str(limit)]})
+    action_plan_summary = action_plan.get("summary") or {}
+    action_plan_actions = action_plan.get("actions") or []
+    worker = worker_status(conn)
+    worker_health = worker.get("fleet_health") or {}
+    review = human_review_queue(conn, limit=max(limit, 12))
+    review_summary = review.get("summary") or {}
+    delivery = customer_delivery_board(conn, limit=max(limit, 8))
+    delivery_summary = delivery.get("summary") or {}
+    commander_qs = {"limit": [str(max(limit, 12))]}
+    if project_filter:
+        commander_qs["project_id"] = [project_filter]
+    commander = commander_work_packages_readback(conn, commander_qs, effective_headers)
+    commander_summary = commander.get("summary") or {}
+    commander_packages = commander.get("work_packages") or []
+
+    blocked_run_rows = rows_to_dicts(conn.execute(
+        """SELECT r.run_id, r.task_id, r.agent_id, r.runtime_type, r.status,
+                  r.error_type, r.error_message, r.started_at, r.ended_at, r.created_at,
+                  t.title AS task_title, t.priority AS task_priority, t.risk_level AS task_risk_level
+           FROM runs r
+           LEFT JOIN tasks t ON t.task_id=r.task_id
+           WHERE COALESCE(r.workspace_id,t.workspace_id,'local-demo')=?
+             AND r.status IN ('failed','blocked','waiting_approval')
+           ORDER BY COALESCE(r.ended_at,r.created_at,r.started_at) DESC
+           LIMIT ?""",
+        (workspace_id, limit),
+    ).fetchall())
+    blocked_runs = [
+        {
+            "run_id": row.get("run_id"),
+            "task_id": row.get("task_id"),
+            "agent_id": row.get("agent_id"),
+            "runtime_type": row.get("runtime_type"),
+            "status": row.get("status"),
+            "title": commander_safe_text(row.get("task_title") or row.get("task_id"), 180),
+            "priority": row.get("task_priority"),
+            "risk_level": row.get("task_risk_level"),
+            "error_type": row.get("error_type"),
+            "error_summary": redact_text(row.get("error_message") or "", 220),
+            "created_at": row.get("created_at"),
+            "next_action": f"agentops run get --run-id {shlex.quote(str(row.get('run_id') or ''))}",
+            "token_omitted": True,
+        }
+        for row in blocked_run_rows
+    ]
+
+    pending_approval_rows = rows_to_dicts(conn.execute(
+        """SELECT ap.approval_id, ap.task_id, ap.run_id, ap.tool_call_id,
+                  ap.requested_by_agent_id, ap.decision, ap.reason, ap.created_at, ap.expires_at,
+                  t.title AS task_title
+           FROM approvals ap
+           LEFT JOIN runs r ON r.run_id=ap.run_id
+           LEFT JOIN tasks t ON t.task_id=COALESCE(ap.task_id,r.task_id)
+           WHERE COALESCE(t.workspace_id,r.workspace_id,'local-demo')=?
+             AND ap.decision='pending'
+           ORDER BY ap.created_at DESC
+           LIMIT ?""",
+        (workspace_id, limit),
+    ).fetchall())
+    pending_approvals = [
+        {
+            "approval_id": row.get("approval_id"),
+            "task_id": row.get("task_id"),
+            "run_id": row.get("run_id"),
+            "tool_call_id": row.get("tool_call_id"),
+            "requested_by_agent_id": row.get("requested_by_agent_id"),
+            "decision": row.get("decision"),
+            "title": commander_safe_text(row.get("task_title") or row.get("reason") or "Pending approval", 180),
+            "reason_summary": redact_text(row.get("reason") or "", 260),
+            "created_at": row.get("created_at"),
+            "expires_at": row.get("expires_at"),
+            "next_action": f"agentops approval inspect --approval-id {shlex.quote(str(row.get('approval_id') or ''))}",
+            "token_omitted": True,
+        }
+        for row in pending_approval_rows
+    ]
+
+    deliveries = delivery.get("deliveries") or []
+    delivery_focus = [
+        item for item in deliveries
+        if item.get("status") in {"waiting_approval", "needs_attention", "in_progress", "ready"}
+    ][:limit]
+    commander_gaps = []
+    for package in commander_packages:
+        coding_gate = package.get("coding_evidence_gate") or {}
+        localization_gate = package.get("localization_gate") or {}
+        latest_run = package.get("latest_run") or {}
+        gate_status = str(coding_gate.get("status") or "missing")
+        localization_status = str(localization_gate.get("status") or "missing")
+        if gate_status == "recorded" and localization_status == "recorded":
+            continue
+        if localization_status != "recorded":
+            next_action = f"agentops commander packages --project-id {shlex.quote(str(package.get('project_id') or ''))} --limit 8"
+            gap_type = "missing_localization"
+        elif not latest_run.get("run_id"):
+            next_action = f"agentops commander dispatch-package --task-id {shlex.quote(str(package.get('task_id') or ''))} --adapter mock"
+            gap_type = "run_required"
+        elif gate_status != "recorded":
+            next_action = f"agentops commander coding-evidence --task-id {shlex.quote(str(package.get('task_id') or ''))} --run-id {shlex.quote(str(latest_run.get('run_id') or ''))} --confirm-record"
+            gap_type = "coding_evidence_required"
+        else:
+            next_action = package.get("recommended_action") or "agentops commander packages --limit 8"
+            gap_type = "attention"
+        commander_gaps.append({
+            "task_id": package.get("task_id"),
+            "project_id": package.get("project_id"),
+            "plan_id": package.get("plan_id"),
+            "lane_id": package.get("lane_id"),
+            "title": package.get("title"),
+            "package_status": package.get("package_status"),
+            "gap_type": gap_type,
+            "localization_status": localization_status,
+            "coding_evidence_status": gate_status,
+            "recorded_coding_artifact_types": coding_gate.get("recorded_artifact_types") or [],
+            "required_coding_artifact_types": coding_gate.get("artifact_types") or [],
+            "latest_run_id": latest_run.get("run_id"),
+            "next_action": next_action,
+            "raw_source_omitted": True,
+            "raw_patch_omitted": True,
+            "token_omitted": True,
+        })
+
+    project_map: dict[str, dict] = {}
+
+    def project_entry(project_id: str, source: str) -> dict:
+        key = commander_safe_text(project_id or "unknown", 120)
+        entry = project_map.setdefault(key, {
+            "project_id": key,
+            "sources": [],
+            "commander_packages": 0,
+            "commander_ready": 0,
+            "commander_blocked": 0,
+            "coding_evidence_recorded": 0,
+            "coding_evidence_missing_or_partial": 0,
+            "deliveries": 0,
+            "pending_approvals": 0,
+            "next_action": None,
+            "token_omitted": True,
+        })
+        if source not in entry["sources"]:
+            entry["sources"].append(source)
+        return entry
+
+    for package in commander_packages:
+        entry = project_entry(str(package.get("project_id") or "unknown"), "commander")
+        entry["commander_packages"] += 1
+        if package.get("package_status") == "ready_for_review":
+            entry["commander_ready"] += 1
+        if package.get("package_status") == "blocked":
+            entry["commander_blocked"] += 1
+        if ((package.get("coding_evidence_gate") or {}).get("status") == "recorded"):
+            entry["coding_evidence_recorded"] += 1
+        else:
+            entry["coding_evidence_missing_or_partial"] += 1
+        entry["next_action"] = entry.get("next_action") or package.get("recommended_action")
+    for item in deliveries:
+        project_id = str(item.get("project_id") or "unknown")
+        entry = project_entry(project_id, "customer_delivery")
+        entry["deliveries"] += 1
+        if item.get("status") == "waiting_approval":
+            entry["pending_approvals"] += 1
+        entry["next_action"] = entry.get("next_action") or item.get("next_action")
+
+    stale_worker_refs = []
+    for row in (worker.get("stuck_tasks") or [])[:limit]:
+        stale_worker_refs.append({
+            "kind": "stuck_task",
+            "task_id": row.get("task_id"),
+            "owner_agent_id": row.get("owner_agent_id"),
+            "status": row.get("status"),
+            "title": commander_safe_text(row.get("title") or row.get("task_id"), 180),
+            "next_action": "agentops worker status",
+            "token_omitted": True,
+        })
+    for row in (worker.get("stuck_workflow_job_refs") or [])[:limit]:
+        stale_worker_refs.append({
+            "kind": "stuck_workflow_job",
+            "job_id": row.get("job_id"),
+            "workflow_type": row.get("workflow_type"),
+            "status": row.get("status"),
+            "age_sec": row.get("age_sec"),
+            "stuck_reason": row.get("stuck_reason"),
+            "next_action": f"agentops workflow jobs --limit {limit}",
+            "token_omitted": True,
+        })
+
+    next_actions: list[dict] = []
+
+    def add_next_action(source: str, command: str | None, *, title: str = "", priority: int = 100, verify_command: str | None = None, evidence: dict | None = None) -> None:
+        command = str(command or "").strip()
+        if not command:
+            return
+        if any(item.get("command") == command for item in next_actions):
+            return
+        next_actions.append({
+            "action_id": stable_id("cmd_center_action", workspace_id, source, command)[-18:],
+            "source": source,
+            "title": redact_text(title or source, 160),
+            "priority": int(priority),
+            "command": redact_text(command, 500),
+            "verify_command": redact_text(verify_command or "agentops operator command-center --limit 12", 500),
+            "evidence": evidence or {},
+            "receipt_required": True,
+            "token_omitted": True,
+        })
+
+    for item in action_plan_actions[:limit]:
+        add_next_action(
+            f"operator_action_plan:{item.get('lane') or 'general'}",
+            item.get("command"),
+            title=item.get("title") or "Operator action",
+            priority=int(item.get("priority") or 100),
+            verify_command=item.get("verify_command"),
+            evidence={"source_action_id": item.get("action_id"), "receipt_status": item.get("receipt_status")},
+        )
+    for gap in commander_gaps[:limit]:
+        add_next_action(
+            f"commander_gap:{gap.get('gap_type')}",
+            gap.get("next_action"),
+            title=f"Commander {gap.get('gap_type')}",
+            priority=128 if project_filter else 96,
+            verify_command="agentops operator command-center --limit 12",
+            evidence={"task_id": gap.get("task_id"), "project_id": gap.get("project_id"), "coding_evidence_status": gap.get("coding_evidence_status")},
+        )
+    for item in stale_worker_refs[:limit]:
+        add_next_action(
+            f"worker:{item.get('kind')}",
+            item.get("next_action"),
+            title=f"Worker {item.get('kind')}",
+            priority=80,
+            verify_command="agentops worker status",
+            evidence={key: item.get(key) for key in ("task_id", "job_id", "status") if item.get(key)},
+        )
+    for item in pending_approvals[:limit]:
+        add_next_action(
+            "approval",
+            item.get("next_action"),
+            title="Pending approval",
+            priority=75,
+            verify_command="agentops review queue --limit 20",
+            evidence={"approval_id": item.get("approval_id"), "task_id": item.get("task_id"), "run_id": item.get("run_id")},
+        )
+    for item in delivery_focus[:limit]:
+        add_next_action(
+            "customer_delivery",
+            item.get("next_action"),
+            title="Customer delivery",
+            priority=70,
+            verify_command="agentops workflow delivery-board --limit 12",
+            evidence={"delivery_id": item.get("delivery_id"), "project_id": item.get("project_id"), "status": item.get("status")},
+        )
+
+    next_actions = sorted(next_actions, key=lambda item: int(item.get("priority") or 0), reverse=True)[:limit]
+    blocked_count = len(blocked_runs) + int(action_plan_summary.get("blocked") or 0)
+    attention_count = len(commander_gaps) + len(stale_worker_refs) + len(pending_approvals)
+    status = "blocked" if blocked_count else "attention" if attention_count or next_actions else "ready"
+    project_rows = sorted(project_map.values(), key=lambda item: (item.get("coding_evidence_missing_or_partial", 0), item.get("commander_blocked", 0), item.get("pending_approvals", 0)), reverse=True)[:limit]
+    return {
+        "provider": "agentops-operator",
+        "operation": "operator_command_center",
+        "status": status,
+        "workspace_id": workspace_id,
+        "summary": {
+            "projects": len(project_rows),
+            "commander_packages": len(commander_packages),
+            "commander_ready": len([item for item in commander_packages if item.get("package_status") == "ready_for_review"]),
+            "commander_blocked": len([item for item in commander_packages if item.get("package_status") == "blocked"]),
+            "commander_coding_evidence_recorded": int((commander_summary.get("coding_evidence") or {}).get("recorded") or 0),
+            "commander_coding_evidence_missing": int((commander_summary.get("coding_evidence") or {}).get("missing") or 0),
+            "commander_coding_evidence_partial": int((commander_summary.get("coding_evidence") or {}).get("partial") or 0),
+            "blocked_runs": len(blocked_runs),
+            "pending_approvals": len(pending_approvals),
+            "review_items_total": int(review_summary.get("review_items_total") or len(review.get("review_items") or [])),
+            "deliveries": int(delivery_summary.get("deliveries") or len(deliveries)),
+            "deliveries_waiting_approval": int(delivery_summary.get("waiting_approval") or 0),
+            "stale_worker_refs": len(stale_worker_refs),
+            "operator_actions": int(action_plan_summary.get("actions") or len(action_plan_actions)),
+            "next_actions": len(next_actions),
+        },
+        "projects": project_rows,
+        "commander": {
+            "summary": commander_summary,
+            "packages": commander_packages[:limit],
+            "coding_evidence_gaps": commander_gaps[:limit],
+            "recommended_next_actions": commander.get("recommended_next_actions") or [],
+            "raw_source_omitted": True,
+            "raw_patch_omitted": True,
+            "token_omitted": True,
+        },
+        "blocked_runs": blocked_runs,
+        "approvals": {
+            "summary": review_summary,
+            "pending": pending_approvals,
+            "next_actions": review.get("next_actions") or [],
+        },
+        "deliveries": {
+            "summary": delivery_summary,
+            "items": delivery_focus,
+            "next_actions": delivery.get("next_actions") or [],
+        },
+        "workers": {
+            "status": worker.get("status"),
+            "fleet_health": worker_health,
+            "running_workers": worker.get("running_workers", 0),
+            "stuck_worker_tasks": worker.get("stuck_worker_tasks", 0),
+            "stuck_workflow_jobs": worker.get("stuck_workflow_jobs", 0),
+            "stale_refs": stale_worker_refs[:limit],
+            "next_actions": ((worker_health.get("recommended_actions") or []) + ["agentops worker status"])[:8],
+        },
+        "operator_action_plan": {
+            "status": action_plan.get("status"),
+            "summary": action_plan_summary,
+            "actions": action_plan_actions[:limit],
+            "receipt_coverage": action_plan.get("receipt_coverage"),
+        },
+        "next_actions": next_actions,
+        "contract": "read-only command-center BFF for operator UI/CLI; aggregates projects, blocked runs, approvals, deliveries, stale workers, Commander coding gates, and next actions without executing commands or mutating ledgers",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "task_created": False,
+            "run_created": False,
+            "worktree_created": False,
+            "live_execution_performed": False,
+            "server_shell_execution": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "raw_source_omitted": True,
+            "raw_patch_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+
+
 def request_base_url(headers=None) -> str | None:
     host = headers.get("Host") if headers else ""
     return f"http://{host}" if host else None
@@ -23680,6 +24038,25 @@ class Handler(BaseHTTPRequestHandler):
                 payload = local_readiness(conn, self.headers)
                 conn.commit()
                 return self.send_json(payload)
+            if path == "/api/command-center/overview":
+                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                if auth_error:
+                    conn.rollback()
+                    return self.send_json(auth_error, agent_gateway_error_status(auth_error))
+                if agent_gateway_is_bound_auth(auth_ctx):
+                    requested_header_workspace = normalize_workspace_id(self.headers.get("X-AgentOps-Workspace-Id") or auth_ctx["workspace_id"])
+                    if requested_header_workspace != auth_ctx["workspace_id"]:
+                        conn.rollback()
+                        return self.send_json({"error": "forbidden", "message": "Agent token cannot use another workspace header."}, 403)
+                payload = cached_read_model(
+                    "command_center_overview",
+                    qs,
+                    self.headers,
+                    lambda: command_center_overview(conn, self.headers, qs, auth_ctx),
+                    auth_ctx,
+                )
+                conn.rollback()
+                return self.send_json(payload)
             if path == "/api/operator/action-plan":
                 payload = cached_read_model(
                     "operator_action_plan",
@@ -23717,6 +24094,25 @@ class Handler(BaseHTTPRequestHandler):
                     qs,
                     self.headers,
                     lambda: operator_health(conn, self.headers, qs, auth_ctx),
+                    auth_ctx,
+                )
+                conn.rollback()
+                return self.send_json(payload)
+            if path == "/api/operator/command-center":
+                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                if auth_error:
+                    conn.rollback()
+                    return self.send_json(auth_error, agent_gateway_error_status(auth_error))
+                if agent_gateway_is_bound_auth(auth_ctx):
+                    requested_header_workspace = normalize_workspace_id(self.headers.get("X-AgentOps-Workspace-Id") or auth_ctx["workspace_id"])
+                    if requested_header_workspace != auth_ctx["workspace_id"]:
+                        conn.rollback()
+                        return self.send_json({"error": "forbidden", "message": "Agent token cannot use another workspace header."}, 403)
+                payload = cached_read_model(
+                    "operator_command_center",
+                    qs,
+                    self.headers,
+                    lambda: operator_command_center(conn, self.headers, qs, auth_ctx),
                     auth_ctx,
                 )
                 conn.rollback()
@@ -24519,43 +24915,53 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/commander/work-packages/plan":
                 payload, status = commander_plan_work_packages(conn, body, self.headers)
                 conn.commit()
+                clear_read_model_cache()
                 return self.send_json(payload, status)
             if path == "/api/commander/work-packages/dispatch-batch":
                 payload, status = submit_commander_work_package_dispatch_jobs(conn, body, self.headers)
+                clear_read_model_cache()
                 return self.send_json(payload, status)
             if path == "/api/commander/work-packages/synthesize":
                 payload, status = commander_synthesize_work_packages(conn, body, self.headers)
+                clear_read_model_cache()
                 return self.send_json(payload, status)
             if path == "/api/commander/work-packages/synthesis/promote":
                 payload, status = commander_promote_synthesis(conn, body, self.headers)
+                clear_read_model_cache()
                 return self.send_json(payload, status)
             if path.startswith("/api/commander/work-packages/") and path.endswith("/coding-workspace/cleanup"):
                 task_id = path.split("/")[-3]
                 payload, status = commander_cleanup_coding_workspace(conn, task_id, body, self.headers)
                 conn.commit()
+                clear_read_model_cache()
                 return self.send_json(payload, status)
             if path.startswith("/api/commander/work-packages/") and path.endswith("/coding-workspace"):
                 task_id = path.split("/")[-2]
                 payload, status = commander_prepare_coding_workspace(conn, task_id, body, self.headers)
                 conn.commit()
+                clear_read_model_cache()
                 return self.send_json(payload, status)
             if path.startswith("/api/commander/work-packages/") and path.endswith("/coding-evidence"):
                 task_id = path.split("/")[-2]
                 payload, status = commander_record_coding_evidence(conn, task_id, body, self.headers)
                 conn.commit()
+                clear_read_model_cache()
                 return self.send_json(payload, status)
             if path.startswith("/api/commander/work-packages/") and path.endswith("/dispatch"):
                 task_id = path.split("/")[-2]
                 payload, status = commander_dispatch_work_package(conn, task_id, body, self.headers)
                 conn.commit()
+                clear_read_model_cache()
                 return self.send_json(payload, status)
             if path == "/api/operator/execution-evidence/remediation-task":
                 payload, status = operator_execution_evidence_remediation_task(conn, body, self.headers)
                 conn.commit()
+                clear_read_model_cache()
                 return self.send_json(payload, status)
             if path == "/api/operator/execution-evidence/close-gap":
                 payload, status = operator_close_execution_evidence_gap(conn, body, self.headers)
                 conn.commit()
+                clear_read_model_cache()
                 return self.send_json(payload, status)
             if path == "/api/operator/action-receipts":
                 payload, status = record_operator_action_receipt(conn, body, self.headers)

@@ -137,6 +137,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "operator_command_center",
+        "command": "python3 scripts/operator_command_center_smoke.py",
+        "summary": "Unified operator command-center BFF covers projects, blockers, approvals, deliveries, stale workers, Commander coding gates, and prioritized next actions.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "commander_work_package_plan",
         "command": "python3 scripts/commander_work_package_plan_smoke.py",
         "summary": "Commander work-package planning creates task-bound repo-map localization artifacts without live execution.",

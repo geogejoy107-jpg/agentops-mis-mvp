@@ -383,6 +383,18 @@ Fixed live runtime probes use the same Approval Wall path. OpenClaw
 wait for approval, verify the fixed prompt hash, and then consume the prepared
 action only on exact resume.
 
+`GET /api/operator/command-center` is the stable read-only command-center BFF
+for `/workspace/agents`, CLI operators, Codex, Hermes and OpenClaw supervisors.
+`GET /api/command-center/overview` is a compatibility alias that returns the
+same canonical read model. It aggregates active projects, blocked runs, pending
+approvals, customer deliveries, stale worker references, Commander coding
+evidence gates and prioritized next actions into one response. It never starts
+workers, creates tasks, writes receipts, creates worktrees, merges, pushes,
+approves gates or returns raw prompts, raw model responses, raw source, raw
+patches, raw logs, or credentials.
+`GET /api/command-center/overview` is a compatibility alias that returns the
+same canonical payload with alias metadata.
+
 `GET /api/operator/action-plan` includes a read-only `execution_evidence`
 source. It audits recent completed or failed runs for missing plan bindings,
 missing/unverified plan-evidence manifests, and missing tool, evaluation,

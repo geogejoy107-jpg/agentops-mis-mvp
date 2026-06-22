@@ -1433,6 +1433,26 @@ Commander work-package description contract, so they can be read with
 dispatch-package`, batched, and synthesized through the normal Commander loop.
 Reruns still require the explicit `agentops eval run-cases` path.
 
+### `agentops operator command-center`
+
+Returns the stable operator command-center BFF as JSON.
+
+```bash
+agentops command-center overview --limit 12
+agentops operator command-center --limit 12
+agentops operator command-center --project-id proj_local_coding --limit 8
+```
+
+Maps to `GET /api/operator/command-center`. `agentops command-center overview`
+is a product-facing alias for the same canonical operator BFF. This is the
+read-only supervisor view for humans, Codex, Hermes, OpenClaw and remote
+agents: projects, blocked runs, pending approvals, customer deliveries, stale
+worker references, Commander coding evidence gates, and prioritized next
+actions in one response. It reports safety flags including `read_only:true`,
+`ledger_mutated:false`, `worktree_created:false`,
+`live_execution_performed:false`, raw prompt/response omission, raw source/patch
+omission, and `token_omitted:true`.
+
 ### `agentops operator action-plan`
 
 Returns the prioritized operator command-center plan as JSON. It merges the
