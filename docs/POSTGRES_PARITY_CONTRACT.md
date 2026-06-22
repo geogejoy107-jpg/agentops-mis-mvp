@@ -218,27 +218,30 @@ Current local evidence on `codex/commercial-migration-closed-loop`:
   writes remain disabled at this gate.
 - `postgres_http_write_task_parity_v1`,
   `postgres_http_gateway_execution_start_write_v1`, and
-  `postgres_http_gateway_evidence_write_v1`, and
-  `postgres_http_gateway_plan_evidence_write_v1` passed against
-  `postgres:16-alpine`
+  `postgres_http_gateway_evidence_write_v1`,
+  `postgres_http_gateway_plan_evidence_write_v1`, and
+  `postgres_http_gateway_audit_write_v1` passed against `postgres:16-alpine`
   with a temporary psycopg target: read-only mode still returned
   `503 postgres_read_only_backend` for `POST /api/tasks` and
   scoped Agent Gateway task create/claim/run-start/tool/evaluation/artifact/
-  Agent Plan/plan-evidence routes; explicit
+  Agent Plan/plan-evidence/audit routes; explicit
   `AGENTOPS_POSTGRES_WRITE_HTTP=1` mode allowed only those task,
-  execution-start, execution-evidence, and plan-evidence routes, created
+  execution-start, execution-evidence, plan-evidence, and run/task-bound audit
+  routes, created
   `tsk_pg_http_write_task` and scoped Gateway task `tsk_pg_gateway_write_task`,
   claimed the Gateway task, started `run_pg_gateway_write_start`, wrote
   `tc_pg_gateway_write_evidence`, `eval_pg_gateway_write_evidence`, and
   `art_pg_gateway_write_evidence`, created `plan_pg_gateway_write`, submitted
-  verified manifest `pem_pg_gateway_write`, read task and run back through
-  HTTP, persisted runtime/audit rows in Postgres, rejected absent Gateway token
-  at `401`, rejected missing `tasks:create`, missing `tasks:claim`, missing
+  verified manifest `pem_pg_gateway_write`, emitted run-bound audit action
+  `agent_gateway.postgres_audit_write`, read task and run back through HTTP,
+  persisted runtime/audit rows in Postgres, rejected absent Gateway token at
+  `401`, rejected missing `tasks:create`, missing `tasks:claim`, missing
   `runs:write`, missing `toolcalls:write`, missing `evaluations:submit`,
-  missing `artifacts:write`, missing `agent_plans:write`, and missing
-  `plan_evidence:write` at `403`, rejected body/header cross-workspace,
-  cross-agent, same-workspace intruder, and manifest task/run binding mismatch
-  Gateway requests at `403`, kept
+  missing `artifacts:write`, missing `agent_plans:write`, missing
+  `plan_evidence:write`, and missing `audit:write` at `403`, rejected
+  body/header cross-workspace, cross-agent, same-workspace intruder, manifest
+  task/run binding mismatch, audit task/run mismatch, and intruder audit without
+  `run_id` Gateway requests at `403`, kept
   `POST /api/agent-gateway/approvals/request` and `POST /api/agents` blocked at
   `503`, kept `free_local_dependencies=[]`, and did not fall back to SQLite.
 - Source install packaging includes `agentops_mis_storage.postgres`; importing
@@ -250,7 +253,7 @@ Postgres parity is not complete until the adapter boundary:
 
 - routes more `repo_*` helper flows through the same shared fixture pattern;
 - proves Postgres write helpers before widening any routed Postgres write
-  routes beyond the explicit task/execution/evidence/plan write allowlist;
+  routes beyond the explicit task/execution/evidence/plan/audit write allowlist;
 - keeps write routes disabled until an explicit routed write-adapter smoke
   proves the small route surface that will be enabled;
 - keeps backend selection fail-closed so Postgres configuration cannot silently

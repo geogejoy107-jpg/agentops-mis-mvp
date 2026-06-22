@@ -136,7 +136,8 @@ Must be true:
 - Postgres write helpers must match SQLite outcomes and snapshots before any
   routed HTTP/CLI write surface is enabled.
 - The first routed Postgres HTTP writes are explicit task, execution-start,
-  execution-evidence, and plan-evidence allowlist routes behind
+  execution-evidence, plan-evidence, and run/task-bound audit allowlist routes
+  behind
   `AGENTOPS_POSTGRES_WRITE_HTTP=1`:
   `POST /api/tasks`, scoped `POST /api/agent-gateway/tasks`, scoped
   `POST /api/agent-gateway/tasks/:task_id/claim`, scoped
@@ -145,15 +146,16 @@ Must be true:
   `POST /api/agent-gateway/artifacts`, and scoped
   `POST /api/agent-gateway/evaluations/submit`, scoped
   `POST /api/agent-gateway/agent-plans`, and scoped
-  `POST /api/agent-gateway/plan-evidence-manifests`; read-only mode must still
-  block all of them, the allowlisted writes must persist task/run/tool/
-  evaluation/artifact/Agent Plan/plan-evidence/runtime/audit evidence in
+  `POST /api/agent-gateway/plan-evidence-manifests`, and scoped
+  `POST /api/agent-gateway/audit`; read-only mode must still block all of them,
+  the allowlisted writes must persist task/run/tool/evaluation/artifact/Agent
+  Plan/plan-evidence/audit/runtime evidence in
   Postgres, scoped Gateway writes must reject absent tokens, missing scopes,
   body/header cross-workspace, cross-agent, same-workspace intruder attempts,
-  and manifest binding mismatches, and broader mutation routes such as Gateway
-  approval requests, memories, audit writes, live-runtime heartbeat/daemon
-  control, and admin mutations must remain blocked until each has a dedicated
-  smoke.
+  manifest binding mismatches, and audit entity/run/task mismatches, and broader
+  mutation routes such as Gateway approval requests, memories, knowledge index,
+  heartbeat, live-runtime heartbeat/daemon control, and admin mutations must
+  remain blocked until each has a dedicated smoke.
 - Verification includes local acceptance against a temporary SQLite database
   before any Postgres work starts:
 

@@ -51,6 +51,7 @@ STORAGE_BACKEND = os.environ.get("AGENTOPS_STORAGE_BACKEND", "sqlite").strip().l
 POSTGRES_HTTP_WRITE_ALLOWED_ROUTES = {
     ("POST", "/api/agent-gateway/artifacts"),
     ("POST", "/api/agent-gateway/agent-plans"),
+    ("POST", "/api/agent-gateway/audit"),
     ("POST", "/api/agent-gateway/evaluations/submit"),
     ("POST", "/api/agent-gateway/plan-evidence-manifests"),
     ("POST", "/api/agent-gateway/runs/start"),
@@ -357,6 +358,7 @@ def storage_backend_status(headers=None) -> dict:
                 "postgres_http_gateway_execution_start_write_v1",
                 "postgres_http_gateway_evidence_write_v1",
                 "postgres_http_gateway_plan_evidence_write_v1",
+                "postgres_http_gateway_audit_write_v1",
             ] if write_http else ["postgres_http_read_parity_v1"],
         }
     return {
@@ -404,6 +406,7 @@ def postgres_read_only_write_block(method: str, path: str) -> dict:
             "postgres_http_gateway_execution_start_write_v1",
             "postgres_http_gateway_evidence_write_v1",
             "postgres_http_gateway_plan_evidence_write_v1",
+            "postgres_http_gateway_audit_write_v1",
         ],
     }
 
@@ -5937,19 +5940,41 @@ def agent_gateway_record_artifact(conn, body) -> tuple[dict, int]:
 
 
 def agent_gateway_emit_audit(conn, body) -> tuple[dict, int]:
-    agent_id = body.get("agent_id") or "agent-gateway"
-    if body.get("run_id"):
-        ident = agent_gateway_identity({}, body)
-        _run, access_error = ensure_run_access(conn, body["run_id"], ident)
-        if access_error:
-            return access_error
+    ident = agent_gateway_identity({}, body)
+    agent_id = ident["agent_id"] or body.get("agent_id") or "agent-gateway"
     entity_type = body.get("entity_type") or "agent_gateway"
     entity_id = body.get("entity_id") or body.get("run_id") or agent_id
+    run = None
+    if body.get("run_id"):
+        run, access_error = ensure_run_access(conn, body["run_id"], ident)
+        if access_error:
+            return access_error
+        if body.get("task_id") and run["task_id"] and body.get("task_id") != run["task_id"]:
+            return {"error": "forbidden", "message": "Audit task_id must match the referenced run."}, 403
+    elif entity_type == "runs":
+        run, access_error = ensure_run_access(conn, entity_id, ident)
+        if access_error:
+            return access_error
+    elif entity_type == "tasks":
+        task = conn.execute("SELECT * FROM tasks WHERE task_id=?", (entity_id,)).fetchone()
+        if not task:
+            return {"error": "task not found"}, 404
+        actual_workspace = row_workspace(task)
+        if actual_workspace != ident["workspace_id"]:
+            return workspace_forbidden("task", entity_id, ident["workspace_id"], actual_workspace)
+        if ident.get("agent_id") and not agent_can_access_task(task, ident["agent_id"]):
+            return {"error": "forbidden", "message": f"Task {entity_id} is assigned to another agent.", "owner_agent_id": task["owner_agent_id"]}, 403
     action = body.get("action") or "agent_gateway.audit_emit"
-    metadata = safe_json_metadata(body.get("metadata") or {})
+    raw_metadata = body.get("metadata") if isinstance(body.get("metadata"), dict) else {}
+    metadata = safe_json_metadata({
+        **raw_metadata,
+        "workspace_id": ident["workspace_id"],
+        "agent_id": agent_id,
+        "raw_omitted": True,
+    })
     audit(conn, "agent", agent_id, redact_text(action, 160), redact_text(entity_type, 80), redact_text(entity_id, 160), None, safe_json_metadata(body.get("after") or {"status": "emitted"}), metadata)
-    runtime_event(conn, "rtc_agent_gateway_local", "audit.emit", "completed", run_id=body.get("run_id"), task_id=body.get("task_id"), agent_id=agent_id, output_summary=f"Audit emitted: {redact_text(action, 120)}")
-    return {"emitted": True, "entity_type": entity_type, "entity_id": entity_id}, 201
+    runtime_event(conn, "rtc_agent_gateway_local", "audit.emit", "completed", run_id=body.get("run_id"), task_id=body.get("task_id") or (run["task_id"] if run else None), agent_id=agent_id, output_summary=f"Audit emitted: {redact_text(action, 120)}")
+    return {"emitted": True, "entity_type": entity_type, "entity_id": entity_id, "token_omitted": True}, 201
 
 
 def openclaw_probe_prompt() -> str:
