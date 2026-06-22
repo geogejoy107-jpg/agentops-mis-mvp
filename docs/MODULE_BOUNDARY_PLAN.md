@@ -855,6 +855,39 @@ python3 scripts/run_start_plan_gate_smoke.py --base-url http://127.0.0.1:8787
 python3 scripts/agent_plan_integrity_smoke.py --base-url http://127.0.0.1:8787
 ```
 
+### Slice 29: Run-Start Binding Comparison
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/agent_plans.py`
+
+Moved out of `server.py`:
+
+- Run-start existing-run binding comparison
+- Expected workspace/task/agent/Agent Plan/hash projection
+- Actual existing-run binding projection
+- Rebind mismatch list and token-omission proof
+
+Still owned by `server.py`:
+
+- HTTP routes
+- existing run lookup
+- route-level rebind-blocked audit writes
+- run row construction and upsert
+- task/agent state updates
+- runtime events, audit logs and commits
+- response status-code selection
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/run_start_plan_gate_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/agent_plan_integrity_smoke.py --base-url http://127.0.0.1:8787
+```
+
 ## Next Candidate Slices
 
 - Continue P1-05 with small smoke-backed strangler slices only; prefer pure

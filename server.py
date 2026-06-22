@@ -79,6 +79,7 @@ from agentops_mis_core.agent_plans import (
     build_agent_plan_verification_failed_response,
     build_run_start_rebind_forbidden_response,
     build_run_start_success_response,
+    compare_run_start_binding,
     compute_agent_plan_hash,
     load_json_list_field,
     plan_ref_path,
@@ -7396,20 +7397,21 @@ def agent_gateway_start_run(conn, body) -> tuple[dict, int]:
     run_id = body.get("run_id") or new_id("run_gw")
     existing_run = conn.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
     if existing_run:
-        expected = {
-            "workspace_id": ident["workspace_id"],
-            "task_id": task_id,
-            "agent_id": agent_id,
-            "agent_plan_id": plan_binding["plan_id"],
-            "plan_hash": plan_binding["plan_hash"],
-        }
-        actual = {key: existing_run[key] for key in expected}
-        mismatches = [key for key, value in expected.items() if actual.get(key) != value]
+        binding_comparison = compare_run_start_binding(
+            existing_run,
+            workspace_id=ident["workspace_id"],
+            task_id=task_id,
+            agent_id=agent_id,
+            plan_binding=plan_binding,
+        )
+        mismatches = binding_comparison["mismatches"]
         if mismatches:
             audit(conn, "agent", agent_id, "agent_gateway.run_start_rebind_blocked", "runs", run_id, dict(existing_run), dict(existing_run), {
                 "requested_agent_plan_id": plan_binding["plan_id"],
                 "requested_plan_hash": plan_binding["plan_hash"],
                 "mismatches": mismatches,
+                "binding_expected": binding_comparison["expected"],
+                "binding_actual": binding_comparison["actual"],
                 "token_omitted": True,
             })
             return build_run_start_rebind_forbidden_response(

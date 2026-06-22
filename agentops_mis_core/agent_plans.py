@@ -416,6 +416,30 @@ def build_run_start_rebind_forbidden_response(
     }
 
 
+def compare_run_start_binding(
+    existing_run: Any,
+    *,
+    workspace_id: Any,
+    task_id: Any,
+    agent_id: Any,
+    plan_binding: dict[str, Any],
+) -> dict[str, Any]:
+    expected = {
+        "workspace_id": workspace_id,
+        "task_id": task_id,
+        "agent_id": agent_id,
+        "agent_plan_id": plan_binding["plan_id"],
+        "plan_hash": plan_binding["plan_hash"],
+    }
+    actual = {key: row_field(existing_run, key) for key in expected}
+    return {
+        "expected": expected,
+        "actual": actual,
+        "mismatches": [key for key, value in expected.items() if actual.get(key) != value],
+        "token_omitted": True,
+    }
+
+
 def build_run_start_success_response(*, run: Any, outcome: Any, plan_binding: dict[str, Any]) -> dict[str, Any]:
     verification = plan_binding.get("verification") or {}
     return {
