@@ -36,6 +36,7 @@ from urllib.error import HTTPError, URLError
 
 from agentops_mis_core.approval_wall import (
     approval_wall_recommended_actions,
+    build_prepared_action_approval_decision_response,
     build_prepared_action_blocked_response,
     build_prepared_action_get_response,
     build_prepared_action_hash_mismatch_response,
@@ -24248,7 +24249,11 @@ class Handler(BaseHTTPRequestHandler):
             audit(conn, "user", "usr_founder", f"approval_wall.prepared_action_{decision}", "prepared_actions", prepared_action["action_id"], dict(prepared_action), dict(action_after), {"approval_id": approval_id, "action_hash": prepared_action["action_hash"], "resume_required": decision == "approved", "token_omitted": True})
             audit(conn, "user", "usr_founder", f"approval.{decision}", "approvals", approval_id, dict(before), dict(after), {"prepared_action_id": prepared_action["action_id"], "action_hash": prepared_action["action_hash"], "run_task_status_unchanged": decision == "approved", "token_omitted": True})
             conn.commit()
-            return self.send_json({"approval": dict(after), "prepared_action": prepared_action_public(action_after), "resume_required": decision == "approved", "token_omitted": True})
+            return self.send_json(build_prepared_action_approval_decision_response(
+                approval=after,
+                prepared_action=action_after,
+                decision=decision,
+            ))
         agent_plan_decision, agent_plan_error = apply_agent_plan_approval_decision(conn, before, decision)
         if agent_plan_error:
             payload, status = agent_plan_error

@@ -14,6 +14,7 @@ if str(ROOT) not in sys.path:
 
 from agentops_mis_core.approval_wall import (
     approval_wall_recommended_actions,
+    build_prepared_action_approval_decision_response,
     build_prepared_action_blocked_response,
     build_prepared_action_agent_forbidden_response,
     build_prepared_action_get_response,
@@ -179,6 +180,7 @@ SERVER_OPERATOR_COMMAND_CENTER_IMPORTS = {
 }
 EXTRACTED_APPROVAL_WALL_HELPERS = {
     "approval_wall_recommended_actions",
+    "build_prepared_action_approval_decision_response",
     "build_prepared_action_agent_forbidden_response",
     "build_prepared_action_blocked_response",
     "build_prepared_action_get_response",
@@ -205,6 +207,7 @@ EXTRACTED_APPROVAL_WALL_HELPERS = {
 }
 SERVER_APPROVAL_WALL_IMPORTS = {
     "approval_wall_recommended_actions",
+    "build_prepared_action_approval_decision_response",
     "build_prepared_action_blocked_response",
     "build_prepared_action_get_response",
     "build_prepared_action_hash_mismatch_response",
@@ -632,6 +635,11 @@ def main() -> int:
         "operation": "prepared_action_prepare",
         "outcome": "created",
     })
+    approval_decision_response = build_prepared_action_approval_decision_response(
+        approval={"approval_id": "ap_pa_smoke", "decision": "approved"},
+        prepared_action={**prepared_row, "status": "approved"},
+        decision="approved",
+    )
     require(missing_gate and missing_gate.get("error") == "external_publish_prepared_action_required", "resume gate missing-id error failed", failures)
     require(pending_gate and pending_gate.get("error") == "approval_required", "resume gate approval-required error failed", failures)
     require(mismatch_gate and mismatch_gate.get("error") == "prepared_action_request_mismatch" and "operation" in mismatch_gate.get("mismatched_fields", []), "resume gate mismatch error failed", failures)
@@ -655,6 +663,9 @@ def main() -> int:
     require((prepare_response_fields.get("approval_wall") or {}).get("outcome") == "created", "prepare response approval wall outcome failed", failures)
     require((prepare_response_fields.get("approval_wall") or {}).get("token_omitted") is True, "prepare response omission proof missing", failures)
     require("approval prepared-action resume --action-id pa_smoke" in prepare_response_fields.get("next_action", ""), "prepare response next action failed", failures)
+    require(approval_decision_response.get("resume_required") is True, "approval decision response resume-required flag failed", failures)
+    require((approval_decision_response.get("prepared_action") or {}).get("status") == "approved", "approval decision response prepared action failed", failures)
+    require(approval_decision_response.get("token_omitted") is True, "approval decision response omission proof missing", failures)
     runtime_waiting_payload = runtime_probe_prepared_action_required_payload(
         prepared={
             "run_id": "run_runtime_probe_smoke",

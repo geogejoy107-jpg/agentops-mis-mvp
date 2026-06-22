@@ -444,6 +444,38 @@ python3 scripts/prepared_action_approval_wall_smoke.py --base-url http://127.0.0
 python3 scripts/high_risk_toolcall_prepared_action_gate_smoke.py --base-url http://127.0.0.1:8787
 ```
 
+### Slice 16: Prepared-Action Approval Decision Response Helper
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/approval_wall.py`
+
+Moved out of `server.py`:
+
+- prepared-action approval decision response projection
+- `resume_required` decision flag for approved prepared actions
+- public prepared-action projection and token-omission proof on approval
+  decision responses
+
+Still owned by `server.py`:
+
+- HTTP routes
+- approval decision state transitions
+- prepared-action status updates
+- linked tool/run/task state updates
+- runtime events, audit logs and commits
+- hash-mismatch audit writes before blocked approval responses
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/prepared_action_approval_wall_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/approval_decision_side_effect_smoke.py --base-url http://127.0.0.1:8787
+```
+
 ## Next Candidate Slices
 
 - Continue P1-05 with small smoke-backed strangler slices only; prefer pure

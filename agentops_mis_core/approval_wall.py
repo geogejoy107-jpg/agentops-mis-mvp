@@ -283,6 +283,20 @@ def build_prepared_action_prepare_response_fields(prepared: Any) -> dict[str, An
     }
 
 
+def build_prepared_action_approval_decision_response(
+    *,
+    approval: Any,
+    prepared_action: Any,
+    decision: str,
+) -> dict[str, Any]:
+    return {
+        "approval": dict(approval) if approval is not None else None,
+        "prepared_action": prepared_action_public(prepared_action),
+        "resume_required": decision == "approved",
+        "token_omitted": True,
+    }
+
+
 def build_prepared_action_blocked_response(
     *,
     base: dict[str, Any],
