@@ -552,22 +552,36 @@ def verify_dispatch_template_run_success(next_base: str, entitlement_path: Path,
     execution_evidence = report.get("execution_evidence") or {}
     require((execution_evidence.get("agent_plans") or 0) >= 1, f"Created project report has no Agent Plan evidence: {execution_evidence}")
     require((execution_evidence.get("verified_plan_evidence_manifests") or 0) >= 1, f"Created project report has no verified plan evidence: {execution_evidence}")
+    manifest_ids = execution_evidence.get("verified_manifest_ids") or execution_evidence.get("manifest_ids") or []
+    require(bool(manifest_ids), f"Created project report did not expose manifest ids: {execution_evidence}")
     report_target = next_base.rstrip("/") + f"/workspace/customer-projects/{project_id}/report"
     report_goto = playwright(env, "goto", report_target)
     require(report_goto.returncode == 0, f"Playwright goto failed for created project report: {report_goto.stderr or report_goto.stdout}")
     report_snapshot = wait_for_snapshot_text(
         env,
         f"/workspace/customer-projects/{project_id}/report",
-        lambda text: "Agent Plan evidence" in text and "Verified Evidence" in text,
+        lambda text: "Agent Plan evidence" in text and "Verified Evidence" in text and "Open evidence" in text,
         "created project report page to render Agent Plan evidence",
         timeout_sec=12,
     )
     require("verified" in report_snapshot, "Created project report page did not show verified plan evidence")
+    manifest_id = str(manifest_ids[0])
+    evidence_goto = playwright(env, "goto", next_base.rstrip("/") + f"/workspace/evidence/{manifest_id}")
+    require(evidence_goto.returncode == 0, f"Playwright goto failed for evidence drilldown: {evidence_goto.stderr or evidence_goto.stdout}")
+    evidence_snapshot = wait_for_snapshot_text(
+        env,
+        f"/workspace/evidence/{manifest_id}",
+        lambda text: "Evidence Drilldown" in text and "Manifest verification" in text and "Run graph" in text,
+        "evidence drilldown page to render verification and run graph",
+        timeout_sec=12,
+    )
+    require("pass" in evidence_snapshot and "Token omitted" in evidence_snapshot, "Evidence drilldown did not show verification pass and token omission")
     serialized = json.dumps(report, ensure_ascii=False)
     require(not leaked_secret(serialized), "Created project report leaked token-like material")
     return {
         "button_ref": button_ref,
         "created_project_id": project_id,
+        "evidence_manifest_id": manifest_id,
         "project_count_before": len(before_ids),
         "project_count_after": len(after_ids),
         "artifact_id": report.get("artifact_id"),

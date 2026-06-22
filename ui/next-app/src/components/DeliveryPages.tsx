@@ -227,6 +227,9 @@ export function CustomerProjectReportParityPage({
                   <div className="rowActions">
                     <span className={statusClass(manifest.status || "unknown")}>{manifest.status || "unknown"}</span>
                     <span className="metaPill">{manifest.mismatch_policy || "policy"}</span>
+                    {manifest.manifest_id ? (
+                      <Link className="miniButton" href={`/workspace/evidence/${encodeURIComponent(manifest.manifest_id)}`}>Open evidence</Link>
+                    ) : null}
                   </div>
                 </div>
               )) : <p className="empty">No plan evidence manifests loaded.</p>}

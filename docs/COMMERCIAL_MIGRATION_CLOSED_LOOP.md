@@ -155,13 +155,15 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   entitlement fixture to `pro_workspace`, clicks the same Next.js dispatch path
   again, verifies a customer project and report artifact are created, opens the
   created project report page, verifies visible Agent Plan / plan-evidence
-  status, and checks for token-like leakage.
+  status, opens a manifest evidence drilldown page, verifies read-only
+  verification/run-graph evidence, and checks for token-like leakage.
 
 - First migration artifact:
   - `ui/next-app/app/workspace/page.tsx`
   - `ui/next-app/app/workspace/agents/page.tsx`
   - `ui/next-app/app/workspace/dispatch/page.tsx`
   - `ui/next-app/app/workspace/dispatch/template-run/route.ts`
+  - `ui/next-app/app/workspace/evidence/[manifestId]/page.tsx`
   - `ui/next-app/app/workspace/tasks/page.tsx`
   - `ui/next-app/app/workspace/runs/page.tsx`
   - `ui/next-app/app/workspace/approvals/page.tsx`
@@ -281,6 +283,9 @@ Initial status:
   steps while keeping the external-upload step approval-gated.
 - The Next.js delivery report must render that contract visibly as Agent Plan
   evidence, not only rely on hidden JSON or backend-only smoke assertions.
+- The Next.js evidence drilldown must remain read-only and load through Agent
+  Gateway read APIs for plan-evidence manifest verification, Agent Plan
+  verification, and run graph readback.
 - Smoke: `python3 scripts/commercial_entitlements_smoke.py`
 
 ### WP2: Production Safety Contract

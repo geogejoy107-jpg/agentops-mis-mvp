@@ -5,7 +5,11 @@ import type {
   CustomerProjectIndexPayload,
   CustomerProjectReportPayload,
   CustomerTaskTemplateListPayload,
+  EvidenceDrilldownPayload,
+  AgentPlanVerifyPayload,
   MemorySummary,
+  PlanEvidenceVerifyPayload,
+  RunGraphPayload,
 } from "./mis";
 
 const TARGET_BASE = process.env.AGENTOPS_API_BASE || "http://127.0.0.1:8765/api";
@@ -78,5 +82,20 @@ export async function loadServerCustomerTaskTemplates(): Promise<ServerLoadResul
     return { data: await serverMisJson<CustomerTaskTemplateListPayload>("/workflows/customer-task-templates"), error: null };
   } catch (err) {
     return { data: { templates: [] }, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export async function loadServerEvidenceDrilldown(manifestId: string): Promise<ServerLoadResult<EvidenceDrilldownPayload>> {
+  try {
+    const manifest = await serverMisJson<PlanEvidenceVerifyPayload>(`/agent-gateway/plan-evidence-manifests/${encodeURIComponent(manifestId)}/verify`);
+    const planId = manifest.manifest?.plan_id;
+    const runId = manifest.manifest?.run_id;
+    const [plan, runGraph] = await Promise.all([
+      planId ? serverMisJson<AgentPlanVerifyPayload>(`/agent-gateway/agent-plans/${encodeURIComponent(planId)}/verify`) : Promise.resolve(null),
+      runId ? serverMisJson<RunGraphPayload>(`/agent-gateway/runs/${encodeURIComponent(runId)}/graph`) : Promise.resolve(null),
+    ]);
+    return { data: { manifest, plan, runGraph }, error: null };
+  } catch (err) {
+    return { data: { manifest: null, plan: null, runGraph: null }, error: err instanceof Error ? err.message : String(err) };
   }
 }

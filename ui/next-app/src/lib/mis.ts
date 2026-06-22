@@ -342,6 +342,90 @@ export type CustomerTaskTemplateListPayload = {
   safe_defaults?: Record<string, unknown>;
 };
 
+export type PlanEvidenceManifest = {
+  manifest_id?: string;
+  workspace_id?: string;
+  plan_id?: string;
+  task_id?: string;
+  run_id?: string;
+  agent_id?: string;
+  mismatch_policy?: string;
+  status?: string;
+  verification_json?: string;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type AgentPlanPayload = {
+  plan_id?: string;
+  workspace_id?: string;
+  task_id?: string;
+  run_id?: string | null;
+  agent_id?: string;
+  task_understanding?: string;
+  risk_level?: string;
+  approval_required?: boolean | number;
+  verification_plan?: string | null;
+  rollback_plan?: string | null;
+  status?: string;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type VerificationCheck = {
+  id?: string;
+  ok?: boolean;
+  message?: string;
+};
+
+export type VerificationPayload = {
+  pass?: boolean;
+  checks?: VerificationCheck[];
+  failed_checks?: VerificationCheck[];
+  summary?: Record<string, unknown>;
+  token_omitted?: boolean;
+};
+
+export type PlanEvidenceVerifyPayload = {
+  provider?: string;
+  operation?: string;
+  manifest?: PlanEvidenceManifest;
+  verification?: VerificationPayload;
+  token_omitted?: boolean;
+  error?: string;
+};
+
+export type AgentPlanVerifyPayload = {
+  provider?: string;
+  operation?: string;
+  plan_id?: string;
+  agent_plan?: AgentPlanPayload;
+  verification?: VerificationPayload;
+  token_omitted?: boolean;
+  error?: string;
+};
+
+export type RunGraphPayload = {
+  provider?: string;
+  operation?: string;
+  run?: RunSummary;
+  task?: TaskSummary;
+  tool_calls?: unknown[];
+  evaluations?: unknown[];
+  artifacts?: unknown[];
+  approvals?: unknown[];
+  audit_logs?: unknown[];
+  runtime_events?: unknown[];
+  token_omitted?: boolean;
+  error?: string;
+};
+
+export type EvidenceDrilldownPayload = {
+  manifest: PlanEvidenceVerifyPayload | null;
+  plan: AgentPlanVerifyPayload | null;
+  runGraph: RunGraphPayload | null;
+};
+
 export type AgentControlSnapshot = {
   agents: AgentSummary[];
   security: SecurityReadinessSummary;
