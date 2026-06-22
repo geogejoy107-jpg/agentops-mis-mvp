@@ -164,7 +164,7 @@ jobs:
           python3 server.py --host 127.0.0.1 --port 8787 > "$RUNNER_TEMP/ui-v2-server.log" 2>&1 &
           echo "$!" > "$RUNNER_TEMP/ui-v2-server.pid"
           for attempt in $(seq 1 60); do
-            if curl -fsS http://127.0.0.1:8787/api/health >/dev/null; then
+            if curl -fsS http://127.0.0.1:8787/api/agent-gateway/status >/dev/null; then
               exit 0
             fi
             sleep 1
