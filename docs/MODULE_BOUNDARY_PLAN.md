@@ -444,7 +444,7 @@ python3 scripts/prepared_action_approval_wall_smoke.py --base-url http://127.0.0
 python3 scripts/high_risk_toolcall_prepared_action_gate_smoke.py --base-url http://127.0.0.1:8787
 ```
 
-### Slice 16: Prepared-Action Approval Decision Response Helper
+### Slice 16: Prepared-Action Decision Projection Helper
 
 Status: implemented
 
@@ -454,9 +454,9 @@ Boundary:
 
 Moved out of `server.py`:
 
-- prepared-action approval decision response projection
+- prepared-action decision response projection
 - `resume_required` decision flag for approved prepared actions
-- public prepared-action projection and token-omission proof on approval
+- public prepared-action projection and token-omission proof on prepared-action
   decision responses
 
 Still owned by `server.py`:

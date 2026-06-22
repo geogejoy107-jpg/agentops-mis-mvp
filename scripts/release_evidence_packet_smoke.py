@@ -73,7 +73,7 @@ TEST_COMMANDS = [
     {
         "id": "module_boundary",
         "command": "python3 scripts/module_boundary_smoke.py",
-        "summary": "P1-05 strangler boundary gate for extracted runtime capability, connector registry/refresh projection, trust state, read-model cache, Approval Wall resume/waiting/route blocked/access/prepare-response/approval-decision/resume-success/provider-result gates, worker fleet, Commander and Operator command-center aggregation helpers.",
+        "summary": "P1-05 strangler boundary gate for extracted runtime capability, connector registry/refresh projection, trust state, read-model cache, Approval Wall resume/waiting/route blocked/access/prepare-response/prepared-action-decision/resume-success/provider-result gates, worker fleet, Commander and Operator command-center aggregation helpers.",
         "ci_step": "Offline safety smokes",
     },
     {
