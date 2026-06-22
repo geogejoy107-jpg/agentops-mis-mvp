@@ -28,6 +28,7 @@ def main() -> int:
     required_files = [
         NEXT_APP / "app" / "layout.tsx",
         NEXT_APP / "app" / "workspace" / "page.tsx",
+        NEXT_APP / "app" / "workspace" / "agents" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "tasks" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "runs" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "approvals" / "page.tsx",
@@ -35,6 +36,7 @@ def main() -> int:
         NEXT_APP / "app" / "workspace" / "audit" / "page.tsx",
         NEXT_APP / "app" / "api" / "mis" / "[...path]" / "route.ts",
         NEXT_APP / "src" / "components" / "AppFrame.tsx",
+        NEXT_APP / "src" / "components" / "AgentsParityPage.tsx",
         NEXT_APP / "src" / "components" / "LedgerPages.tsx",
         NEXT_APP / "src" / "components" / "GovernancePages.tsx",
         NEXT_APP / "src" / "components" / "WorkspaceDashboard.tsx",
@@ -47,6 +49,7 @@ def main() -> int:
 
     route_text = read_text(NEXT_APP / "app" / "api" / "mis" / "[...path]" / "route.ts")
     app_frame_text = read_text(NEXT_APP / "src" / "components" / "AppFrame.tsx")
+    agents_page_text = read_text(NEXT_APP / "src" / "components" / "AgentsParityPage.tsx")
     ledger_pages_text = read_text(NEXT_APP / "src" / "components" / "LedgerPages.tsx")
     governance_pages_text = read_text(NEXT_APP / "src" / "components" / "GovernancePages.tsx")
     dashboard_text = read_text(NEXT_APP / "src" / "components" / "WorkspaceDashboard.tsx")
@@ -59,10 +62,14 @@ def main() -> int:
     require("/dashboard/metrics" in lib_text, "workspace parity data must include dashboard metrics")
     require("/tasks" in lib_text and "/runs" in lib_text and "/approvals" in lib_text, "workspace parity data misses core ledgers")
     require("/memories" in lib_text and "/audit?limit=120" in lib_text, "governance parity data misses memory or audit ledgers")
+    require("/workers/status" in lib_text and "/workers/adapter-readiness" in lib_text, "agent-control parity data misses worker readiness")
+    require("/security/production-readiness" in lib_text, "agent-control parity data misses production readiness")
     require("/approvals/${encodeURIComponent(id)}/${decision}" in lib_text, "approval decision parity action is missing")
     require("/memories/${encodeURIComponent(id)}/${decision}" in lib_text, "memory decision parity action is missing")
     require("/workspace/tasks" in app_frame_text and "/workspace/runs" in app_frame_text, "Next.js nav must expose task and run parity routes")
     require("/workspace/memory" in app_frame_text and "/workspace/audit" in app_frame_text, "Next.js nav must expose governance parity routes")
+    require("/workspace/agents" in app_frame_text, "Next.js nav must expose agents parity route")
+    require("loadAgentControlSnapshot" in agents_page_text and "Production security" in agents_page_text, "agents parity page must expose safety/readiness control plane")
     require("TasksParityPage" in ledger_pages_text and "RunsParityPage" in ledger_pages_text, "ledger parity pages are missing")
     require("ApprovalsParityPage" in ledger_pages_text and "decideApproval" in ledger_pages_text, "approval parity page must expose decision action")
     require("MemoryParityPage" in governance_pages_text and "decideMemory" in governance_pages_text, "memory parity page must expose review action")
@@ -74,6 +81,7 @@ def main() -> int:
         "next_app": str(NEXT_APP.relative_to(ROOT)),
         "routes": [
             "/workspace",
+            "/workspace/agents",
             "/workspace/tasks",
             "/workspace/runs",
             "/workspace/approvals",

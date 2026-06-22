@@ -18,15 +18,17 @@ default provider is `http://127.0.0.1:8765/api`.
 ## Parity Slices
 
 - App Router route: `/workspace`
+- App Router route: `/workspace/agents`
 - App Router route: `/workspace/tasks`
 - App Router route: `/workspace/runs`
 - App Router route: `/workspace/approvals`
 - App Router route: `/workspace/memory`
 - App Router route: `/workspace/audit`
 - Runtime API proxy: `/api/mis/[...path]`
-- Live data contract: dashboard metrics, tasks, runs, approvals, memories, audit
+- Live data contract: dashboard metrics, agents, production readiness, worker readiness, tasks, runs, approvals, memories, audit
 - Canonical predecessors:
   - `ui/start-building-app/src/app/components/pages/WorkspaceHome.tsx`
+  - `ui/start-building-app/src/app/components/pages/AIEmployees.tsx`
   - `ui/start-building-app/src/app/components/pages/MyTasks.tsx`
   - `ui/start-building-app/src/app/components/pages/RunLedger.tsx`
   - `ui/start-building-app/src/app/components/pages/ApprovalsInbox.tsx`

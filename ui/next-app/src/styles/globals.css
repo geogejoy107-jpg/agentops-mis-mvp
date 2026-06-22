@@ -198,6 +198,10 @@ h2 {
   font-size: 24px;
 }
 
+.metricText {
+  overflow-wrap: anywhere;
+}
+
 .grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -217,6 +221,10 @@ h2 {
   display: grid;
   gap: 8px;
   margin-top: 12px;
+}
+
+.list.compact {
+  gap: 7px;
 }
 
 .row {
@@ -453,6 +461,48 @@ h2 {
 
 .miniButton:disabled {
   opacity: 0.55;
+}
+
+.proofStrip,
+.miniMetrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 12px;
+}
+
+.proofStrip span,
+.miniMetrics span {
+  min-height: 26px;
+  padding: 5px 7px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.miniMetrics strong {
+  color: var(--text);
+}
+
+.adapterGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.adapterCard {
+  display: grid;
+  gap: 10px;
+  min-height: 136px;
+  padding: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  background: var(--panel-strong);
+}
+
+.adapterCard strong,
+.adapterCard span {
+  display: block;
 }
 
 .memoryRow {

@@ -76,6 +76,110 @@ export type AuditSummary = {
   created_at?: string;
 };
 
+export type AgentSummary = {
+  agent_id: string;
+  name: string;
+  role?: string;
+  runtime_type?: string;
+  model_provider?: string;
+  model_name?: string;
+  status?: string;
+  permission_level?: string;
+  budget_limit_usd?: number;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type ReadinessGate = {
+  id?: string;
+  label?: string;
+  status?: string;
+  ok?: boolean;
+  detail?: string;
+  summary?: string;
+  next_action?: string;
+  action?: string;
+};
+
+export type SecurityReadinessSummary = {
+  provider?: string;
+  status?: string;
+  production_ready?: boolean;
+  production_requested?: boolean;
+  auth_mode?: string;
+  contract?: string;
+  gates?: ReadinessGate[];
+  next_actions?: string[];
+  safety?: {
+    read_only?: boolean;
+    live_execution_performed?: boolean;
+    token_omitted?: boolean;
+    raw_prompt_omitted?: boolean;
+  };
+};
+
+export type WorkerStatusSummary = {
+  provider?: string;
+  status?: string;
+  worker_count?: number;
+  running_workers?: number;
+  recent_completed_runs?: number;
+  pending_worker_tasks?: number;
+  stuck_worker_tasks?: number;
+  remote_worker_count?: number;
+  active_remote_enrollments?: number;
+  fresh_remote_enrollments?: number;
+  stale_remote_enrollments?: number;
+  active_remote_sessions?: number;
+  fleet_health?: {
+    overall?: string;
+    contract?: string;
+    gates?: ReadinessGate[];
+    recommended_actions?: string[];
+    token_omitted?: boolean;
+  };
+  daemons?: { adapter?: string; running?: boolean; status?: string; worker_status?: string }[];
+  adapter_readiness?: {
+    recommended_adapter?: string;
+    ready_adapters?: string[];
+    live_ready_adapters?: string[];
+    unavailable_adapters?: string[];
+    blocked_adapters?: string[];
+  };
+};
+
+export type WorkerAdapterReadinessSummary = {
+  provider?: string;
+  status?: string;
+  contract?: string;
+  summary?: {
+    recommended_adapter?: string;
+    ready_adapters?: string[];
+    live_ready_adapters?: string[];
+    unavailable_adapters?: string[];
+    blocked_adapters?: string[];
+    review_required_adapters?: string[];
+  };
+  adapters?: Record<string, {
+    adapter?: string;
+    ok?: boolean;
+    readiness?: string;
+    trust_status?: string;
+    requires_confirm_run?: boolean;
+    recommended_action?: string;
+    token_omitted?: boolean;
+  }>;
+  live_execution_performed?: boolean;
+  token_omitted?: boolean;
+};
+
+export type AgentControlSnapshot = {
+  agents: AgentSummary[];
+  security: SecurityReadinessSummary;
+  workerStatus: WorkerStatusSummary;
+  adapterReadiness: WorkerAdapterReadinessSummary;
+};
+
 export type WorkspaceSnapshot = {
   metrics: DashboardMetrics;
   tasks: TaskSummary[];
@@ -142,4 +246,30 @@ export async function decideMemory(id: string, decision: "approve" | "reject"): 
 
 export async function loadAudit(): Promise<AuditSummary[]> {
   return misJson<AuditSummary[]>("/audit?limit=120");
+}
+
+export async function loadAgents(): Promise<AgentSummary[]> {
+  return misJson<AgentSummary[]>("/agents");
+}
+
+export async function loadSecurityProductionReadiness(): Promise<SecurityReadinessSummary> {
+  return misJson<SecurityReadinessSummary>("/security/production-readiness");
+}
+
+export async function loadWorkerStatus(): Promise<WorkerStatusSummary> {
+  return misJson<WorkerStatusSummary>("/workers/status");
+}
+
+export async function loadWorkerAdapterReadiness(): Promise<WorkerAdapterReadinessSummary> {
+  return misJson<WorkerAdapterReadinessSummary>("/workers/adapter-readiness");
+}
+
+export async function loadAgentControlSnapshot(): Promise<AgentControlSnapshot> {
+  const [agents, security, workerStatus, adapterReadiness] = await Promise.all([
+    loadAgents(),
+    loadSecurityProductionReadiness(),
+    loadWorkerStatus(),
+    loadWorkerAdapterReadiness(),
+  ]);
+  return { agents, security, workerStatus, adapterReadiness };
 }
