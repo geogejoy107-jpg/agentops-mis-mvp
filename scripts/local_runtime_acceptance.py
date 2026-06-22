@@ -204,7 +204,7 @@ def main() -> int:
     capture("GET /api/integrations/openclaw/status", lambda: request_json("GET", args.base_url, "/api/integrations/openclaw/status"))
     capture("POST /api/integrations/openclaw/import", lambda: request_json("POST", args.base_url, "/api/integrations/openclaw/import", {}))
     if args.live_openclaw:
-        capture("POST /api/integrations/openclaw/probe live", lambda: request_json("POST", args.base_url, "/api/integrations/openclaw/probe", {}))
+        capture("POST /api/integrations/openclaw/probe live", lambda: run_prepared_runtime_probe(args.base_url, "/api/integrations/openclaw/probe"))
     capture("GET /api/integrations/hermes/status", lambda: request_json("GET", args.base_url, "/api/integrations/hermes/status"))
     if args.require_hermes_api:
         capture("Hermes default API models", lambda: assert_hermes_api_available(evidence["GET /api/integrations/hermes/status"]))
@@ -220,9 +220,9 @@ def main() -> int:
 
     if args.live_openclaw:
         probe = evidence.get("POST /api/integrations/openclaw/probe live", {})
-        if not probe.get("probe", {}).get("ok"):
+        if not (probe.get("ok") and probe.get("dry_run") is False):
             ok = False
-            checks.append(fail("OpenClaw live probe did not return ok=true."))
+            checks.append(fail("OpenClaw live probe did not complete as a prepared real run."))
     if args.live_agnesfallback:
         probe = evidence.get("POST /api/integrations/hermes/cli-probe live", {})
         if not (probe.get("ok") and probe.get("dry_run") is False):

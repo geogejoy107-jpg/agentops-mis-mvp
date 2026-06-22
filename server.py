@@ -42,9 +42,9 @@ RUNTIME_DIR = Path(os.environ.get("AGENTOPS_RUNTIME_DIR") or (ROOT / ".agentops_
 WORKER_RUNTIME_DIR = RUNTIME_DIR / "workers"
 PREPARED_ACTION_SNAPSHOT_DIR = RUNTIME_DIR / "prepared_action_snapshots"
 KNOWLEDGE_DIR = ROOT / "knowledge"
-OPENCLAW_HOME = Path.home() / ".openclaw"
+OPENCLAW_HOME = Path(os.environ.get("OPENCLAW_HOME") or (Path.home() / ".openclaw"))
 HERMES_HOME = Path.home() / ".hermes"
-OPENCLAW_BIN = Path("/opt/homebrew/bin/openclaw")
+OPENCLAW_BIN = Path(os.environ.get("OPENCLAW_BIN") or "/opt/homebrew/bin/openclaw")
 DEFAULT_ENTITLEMENTS_PATH = ROOT / "config" / "entitlements.local.json"
 
 RISKY_TOOLS = {
@@ -5737,7 +5737,12 @@ def agent_gateway_emit_audit(conn, body) -> tuple[dict, int]:
     return {"emitted": True, "entity_type": entity_type, "entity_id": entity_id}, 201
 
 
-def run_openclaw_probe(conn) -> dict:
+def openclaw_probe_prompt() -> str:
+    return "请只回复 OPENCLAW_MIS_PROBE_OK"
+
+
+def ensure_openclaw_probe_agent_task(conn, body: dict | None = None, task_status: str = "planned") -> tuple[str, str, str, str]:
+    body = body or {}
     for connector in runtime_connector_rows():
         if connector["runtime_connector_id"] == "rtc_openclaw_local":
             upsert_runtime_connector(conn, connector)
@@ -5764,15 +5769,16 @@ def run_openclaw_probe(conn) -> dict:
         "created_at": now_iso(),
         "updated_at": now_iso(),
     }, "openclaw-probe")
-    task_id = "tsk_openclaw_manual_probe"
+    task_id = body.get("task_id") or "tsk_openclaw_manual_probe"
     upsert_task(conn, {
         "task_id": task_id,
+        "workspace_id": normalize_workspace_id(body.get("workspace_id") or "local-demo"),
         "title": "OpenClaw manual live probe",
-        "description": "Manual probe that asks OpenClaw main agent to return a fixed health marker.",
-        "requester_id": "usr_founder",
+        "description": "Approval-gated fixed OpenClaw probe. Full prompt and raw response are not stored.",
+        "requester_id": body.get("requester_id") or "usr_founder",
         "owner_agent_id": agent_id,
         "collaborator_agent_ids": json.dumps([], ensure_ascii=False),
-        "status": "running",
+        "status": task_status,
         "priority": "high",
         "due_date": None,
         "acceptance_criteria": "OpenClaw returns OPENCLAW_MIS_PROBE_OK.",
@@ -5781,48 +5787,226 @@ def run_openclaw_probe(conn) -> dict:
         "created_at": now_iso(),
         "updated_at": now_iso(),
     }, "openclaw-probe")
-    started = now_iso()
-    probe = {"ok": False, "error": None}
-    if not OPENCLAW_BIN.exists():
-        probe["error"] = f"missing {OPENCLAW_BIN}"
-    else:
-        try:
-            proc = subprocess.run(
-                [str(OPENCLAW_BIN), "agent", "--agent", "main", "-m", "请只回复 OPENCLAW_MIS_PROBE_OK", "--timeout", "180", "--json"],
-                capture_output=True, text=True, timeout=210, check=False,
-            )
-            payload = json.loads(proc.stdout) if proc.stdout else {}
-            meta = (payload.get("result") or {}).get("meta") or {}
-            visible = meta.get("finalAssistantVisibleText") or (((payload.get("result") or {}).get("payloads") or [{}])[0].get("text"))
-            agent_meta = meta.get("agentMeta") or {}
-            probe.update({
-                "ok": proc.returncode == 0 and visible == "OPENCLAW_MIS_PROBE_OK",
-                "run_id": payload.get("runId"),
-                "visible": visible,
-                "duration_ms": meta.get("durationMs"),
-                "provider": agent_meta.get("provider"),
-                "model": agent_meta.get("model"),
-                "usage": agent_meta.get("usage") or {},
-            })
-            if not probe["ok"]:
-                probe["error"] = redact_text(proc.stderr or visible or "probe failed", 200)
-        except Exception as exc:
-            probe["error"] = redact_text(str(exc), 200)
-    run_id = stable_id("run_oc_probe", dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d%H%M%S"))
-    usage = probe.get("usage") or {}
-    row = {
+    return agent_id, task_id, provider, model_name
+
+
+def openclaw_probe_args(prompt_hash: str) -> dict:
+    return {
+        "binary_path": str(OPENCLAW_BIN),
+        "agent": "main",
+        "timeout_seconds": 180,
+        "json": True,
+        "prompt_hash": prompt_hash,
+        "raw_prompt_omitted": True,
+    }
+
+
+def openclaw_prepare_probe(conn, body: dict, prompt_hash: str) -> tuple[dict, int]:
+    agent_id, task_id, provider, model_name = ensure_openclaw_probe_agent_task(conn, body, "waiting_approval")
+    now = now_iso()
+    run_id = body.get("run_id") or stable_id("run_oc_probe", prompt_hash[:16], now)
+    tool_call_id = body.get("tool_call_id") or stable_id("tc_oc_probe", run_id)
+    approval_id = body.get("approval_id") or stable_id("ap_oc_probe", run_id)
+    prepared_action_id = body.get("prepared_action_id") or stable_id("pact_oc_probe", run_id, prompt_hash[:16])
+    args = openclaw_probe_args(prompt_hash)
+    repo_upsert_run(conn, {
         "run_id": run_id,
+        "workspace_id": normalize_workspace_id(body.get("workspace_id") or "local-demo"),
         "task_id": task_id,
         "agent_id": agent_id,
+        "runtime_type": "openclaw",
+        "status": "waiting_approval",
+        "started_at": now,
+        "ended_at": None,
+        "duration_ms": None,
+        "input_summary": f"Prepare OpenClaw fixed probe prompt_hash={prompt_hash[:16]}",
+        "output_summary": None,
+        "model_provider": provider,
+        "model_name": model_name,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "reasoning_tokens": 0,
+        "cost_usd": 0.0,
+        "error_type": None,
+        "error_message": None,
+        "trace_id": None,
+        "parent_run_id": body.get("parent_run_id"),
+        "delegation_id": "openclaw:main",
+        "approval_required": 1,
+        "created_at": now,
+    })
+    repo_upsert_tool_call(conn, {
+        "tool_call_id": tool_call_id,
+        "run_id": run_id,
+        "agent_id": agent_id,
+        "tool_name": "openclaw.main.fixed_probe",
+        "tool_version": "v1",
+        "tool_category": "custom",
+        "normalized_args_json": json.dumps(args, ensure_ascii=False, sort_keys=True),
+        "target_resource": "openclaw://agent/main/fixed-probe",
+        "risk_level": "high",
+        "status": "waiting_approval",
+        "result_summary": "Prepared OpenClaw probe is waiting for explicit approval.",
+        "side_effect_id": None,
+        "started_at": now,
+        "ended_at": None,
+        "created_at": now,
+    })
+    repo_upsert_approval(conn, {
+        "approval_id": approval_id,
+        "task_id": task_id,
+        "run_id": run_id,
+        "tool_call_id": tool_call_id,
+        "requested_by_agent_id": agent_id,
+        "approver_user_id": body.get("approver_user_id") or "usr_founder",
+        "decision": "pending",
+        "reason": f"Approve exact-resume OpenClaw fixed probe prompt_hash={prompt_hash[:16]}.",
+        "expires_at": (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=1)).isoformat(),
+        "created_at": now,
+        "decided_at": None,
+    })
+    repo_upsert_prepared_action(conn, {
+        "prepared_action_id": prepared_action_id,
+        "workspace_id": normalize_workspace_id(body.get("workspace_id") or "local-demo"),
+        "task_id": task_id,
+        "run_id": run_id,
+        "tool_call_id": tool_call_id,
+        "approval_id": approval_id,
+        "requested_by_agent_id": agent_id,
+        "action_type": "runtime.openclaw_probe",
+        "provider": "openclaw",
+        "target_resource": "openclaw://agent/main/fixed-probe",
+        "normalized_args_json": json.dumps(args, ensure_ascii=False, sort_keys=True),
+        "args_hash": None,
+        "snapshot_ref": "fixed-prompt://openclaw-main-probe",
+        "snapshot_hash": prompt_hash,
+        "status": "waiting_approval",
+        "result_json": "{}",
+        "created_at": now,
+        "updated_at": now,
+        "approved_at": None,
+        "consumed_at": None,
+    })
+    runtime_event(conn, "rtc_openclaw_local", "agent_probe.prepared", "waiting_approval", run_id=run_id, task_id=task_id, agent_id=agent_id, input_summary=f"OpenClaw probe prepared prompt_hash={prompt_hash[:16]}", raw_payload_hash=prompt_hash)
+    audit(conn, "system", "openclaw-probe", "runtime.openclaw_probe.prepared_action_created", "prepared_actions", prepared_action_id, None, {"status": "waiting_approval"}, {"approval_id": approval_id, "prompt_hash": prompt_hash, "provider_call_performed": False, "raw_prompt_omitted": True})
+    conn.commit()
+    return {
+        "provider": "openclaw",
+        "mode": "fixed_probe",
+        "dry_run": False,
+        "ok": False,
+        "requires_approval": True,
+        "provider_call_performed": False,
+        "prepared_action_id": prepared_action_id,
+        "approval_id": approval_id,
+        "task_id": task_id,
+        "run_id": run_id,
+        "tool_call_id": tool_call_id,
+        "prompt_hash": prompt_hash,
+        "token_omitted": True,
+        "raw_prompt_omitted": True,
+    }, 202
+
+
+def openclaw_execute_probe(stored_args: dict, prompt: str) -> dict:
+    probe = {"ok": False, "error": None}
+    binary_path = Path(stored_args.get("binary_path") or str(OPENCLAW_BIN))
+    if not binary_path.exists():
+        probe["error"] = f"missing {binary_path}"
+        return probe
+    try:
+        proc = subprocess.run(
+            [
+                str(binary_path),
+                "agent",
+                "--agent",
+                stored_args.get("agent") or "main",
+                "-m",
+                prompt,
+                "--timeout",
+                str(int(stored_args.get("timeout_seconds") or 180)),
+                "--json",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=int(stored_args.get("timeout_seconds") or 180) + 30,
+            check=False,
+        )
+        payload = json.loads(proc.stdout) if proc.stdout else {}
+        meta = (payload.get("result") or {}).get("meta") or {}
+        visible = meta.get("finalAssistantVisibleText") or (((payload.get("result") or {}).get("payloads") or [{}])[0].get("text"))
+        agent_meta = meta.get("agentMeta") or {}
+        response_hash = stable_hash({
+            "stdout": proc.stdout,
+            "stderr": proc.stderr,
+            "returncode": proc.returncode,
+        })
+        probe.update({
+            "ok": proc.returncode == 0 and visible == "OPENCLAW_MIS_PROBE_OK",
+            "run_id": payload.get("runId"),
+            "visible": redact_text(visible or "", 200),
+            "duration_ms": meta.get("durationMs"),
+            "provider": agent_meta.get("provider"),
+            "model": agent_meta.get("model"),
+            "usage": agent_meta.get("usage") or {},
+            "response_hash": response_hash,
+            "raw_response_omitted": True,
+        })
+        if not probe["ok"]:
+            probe["error"] = redact_text(proc.stderr or visible or "probe failed", 200)
+    except Exception as exc:
+        probe["error"] = redact_text(str(exc), 200)
+    return probe
+
+
+def openclaw_resume_probe(conn, body: dict, prompt: str, prompt_hash: str) -> tuple[dict, int]:
+    prepared_action_id = body.get("prepared_action_id")
+    action = conn.execute("SELECT * FROM prepared_actions WHERE prepared_action_id=?", (prepared_action_id,)).fetchone()
+    if not action or action["provider"] != "openclaw" or action["action_type"] != "runtime.openclaw_probe":
+        return {"provider": "openclaw", "created": False, "error": "prepared_action_not_found", "prepared_action_id": prepared_action_id, "token_omitted": True}, 404
+    if action["status"] == "consumed":
+        return {"provider": "openclaw", "created": False, "error": "prepared_action_already_consumed", "prepared_action_id": prepared_action_id, "token_omitted": True}, 409
+    if action["status"] in {"rejected", "expired", "canceled"}:
+        return {"provider": "openclaw", "created": False, "error": f"prepared_action_{action['status']}", "prepared_action_id": prepared_action_id, "token_omitted": True}, 409
+    if not approval_is_approved(conn, action["approval_id"]):
+        return {"provider": "openclaw", "created": False, "error": "approval_required", "prepared_action_id": prepared_action_id, "approval_id": action["approval_id"], "token_omitted": True}, 428
+    supplied_prompt_hash = body.get("prompt_hash")
+    if action["snapshot_hash"] != prompt_hash or (supplied_prompt_hash and supplied_prompt_hash != action["snapshot_hash"]):
+        return {
+            "provider": "openclaw",
+            "created": False,
+            "error": "prepared_action_prompt_hash_mismatch",
+            "prepared_action_id": prepared_action_id,
+            "expected_prompt_hash": action["snapshot_hash"],
+            "current_prompt_hash": supplied_prompt_hash or prompt_hash,
+            "token_omitted": True,
+            "raw_prompt_omitted": True,
+        }, 409
+    try:
+        stored_args = json.loads(action["normalized_args_json"] or "{}")
+    except json.JSONDecodeError:
+        stored_args = {}
+    if prepared_action_args_hash(json.dumps(stored_args, ensure_ascii=False, sort_keys=True)) != action["args_hash"]:
+        return {"provider": "openclaw", "created": False, "error": "prepared_action_args_mismatch", "prepared_action_id": prepared_action_id, "token_omitted": True}, 409
+    if action["status"] != "approved":
+        _before_action, action, _outcome = repo_update_prepared_action_status(conn, prepared_action_id, "approved")
+    started = now_iso()
+    probe = openclaw_execute_probe(stored_args, prompt)
+    usage = probe.get("usage") or {}
+    row = {
+        "run_id": action["run_id"],
+        "workspace_id": action["workspace_id"],
+        "task_id": action["task_id"],
+        "agent_id": action["requested_by_agent_id"],
         "runtime_type": "openclaw",
         "status": "completed" if probe["ok"] else "failed",
         "started_at": started,
         "ended_at": now_iso(),
         "duration_ms": parse_ms(probe.get("duration_ms")),
-        "input_summary": "Manual OpenClaw live probe.",
+        "input_summary": f"OpenClaw fixed probe prompt_hash={prompt_hash[:16]}",
         "output_summary": "OpenClaw returned OPENCLAW_MIS_PROBE_OK." if probe["ok"] else "OpenClaw probe failed.",
-        "model_provider": probe.get("provider") or provider,
-        "model_name": probe.get("model") or model_name,
+        "model_provider": probe.get("provider") or "openclaw",
+        "model_name": probe.get("model") or "openclaw",
         "input_tokens": int(usage.get("input") or usage.get("input_tokens") or 0),
         "output_tokens": int(usage.get("output") or usage.get("output_tokens") or 0),
         "reasoning_tokens": int(usage.get("reasoning_tokens") or 0),
@@ -5830,16 +6014,74 @@ def run_openclaw_probe(conn) -> dict:
         "error_type": None if probe["ok"] else "OpenClawProbeFailed",
         "error_message": probe.get("error"),
         "trace_id": probe.get("run_id"),
-        "parent_run_id": None,
-        "delegation_id": None,
-        "approval_required": 0,
+        "parent_run_id": body.get("parent_run_id"),
+        "delegation_id": "openclaw:main",
+        "approval_required": 0 if probe["ok"] else 1,
         "created_at": started,
     }
-    upsert_run(conn, row, "openclaw-probe", {"manual_probe": True})
+    repo_upsert_run(conn, row)
+    repo_update_tool_call_status(conn, action["tool_call_id"], "completed" if probe["ok"] else "failed")
+    conn.execute(
+        "UPDATE tool_calls SET result_summary=?, side_effect_id=?, ended_at=? WHERE tool_call_id=?",
+        (row["output_summary"], f"openclaw-response-hash:{probe.get('response_hash', '')[:16]}" if probe.get("response_hash") else None, row["ended_at"], action["tool_call_id"]),
+    )
+    conn.execute("UPDATE tasks SET status=?, updated_at=? WHERE task_id=?", ("completed" if probe["ok"] else "failed", now_iso(), action["task_id"]))
+    if probe["ok"]:
+        _before_action, after_action, _action_outcome = repo_update_prepared_action_status(conn, prepared_action_id, "consumed", result_json={"response_hash": probe.get("response_hash"), "raw_response_omitted": True})
+    else:
+        after_action = action
     upsert_evaluation(conn, quality_gate_for_run(row), "openclaw-probe")
-    runtime_event(conn, "rtc_openclaw_local", "agent_probe", "completed" if probe["ok"] else "failed", run_id=run_id, task_id=task_id, agent_id=agent_id, model_name=row["model_name"], latency_ms=row["duration_ms"], output_summary=probe.get("visible"), error_message=probe.get("error"), raw_payload_hash=stable_hash({"trace_id": probe.get("run_id"), "visible": probe.get("visible"), "error": probe.get("error")}))
-    audit(conn, "system", "openclaw-probe", "runtime.openclaw_probe", "runs", run_id, None, {"status": row["status"]}, {"manual_probe": True, "trace_id": probe.get("run_id")})
-    return {"provider": "openclaw", "probe": probe, "run_id": run_id}
+    runtime_event(conn, "rtc_openclaw_local", "agent_probe.resume", "completed" if probe["ok"] else "failed", run_id=action["run_id"], task_id=action["task_id"], agent_id=action["requested_by_agent_id"], model_name=row["model_name"], latency_ms=row["duration_ms"], output_summary=probe.get("visible"), error_message=probe.get("error"), raw_payload_hash=probe.get("response_hash") or prompt_hash)
+    audit(conn, "system", "openclaw-probe", "runtime.openclaw_probe.resume", "runs", action["run_id"], None, {"status": row["status"]}, {"prompt_hash": prompt_hash, "prepared_action_id": prepared_action_id, "provider_call_performed": True, "raw_prompt_omitted": True, "raw_response_omitted": True})
+    conn.commit()
+    return {
+        "provider": "openclaw",
+        "mode": "fixed_probe",
+        "dry_run": False,
+        "ok": probe["ok"],
+        "created": probe["ok"],
+        "probe": probe,
+        "prepared_action_id": prepared_action_id,
+        "prepared_action_status": after_action["status"] if after_action else action["status"],
+        "run_id": action["run_id"],
+        "task_id": action["task_id"],
+        "tool_call_id": action["tool_call_id"],
+        "duration_ms": row["duration_ms"],
+        "prompt_hash": prompt_hash,
+        "output_summary": row["output_summary"],
+        "error": probe.get("error"),
+        "provider_call_performed": True,
+        "token_omitted": True,
+        "raw_prompt_omitted": True,
+        "raw_response_omitted": True,
+    }, 201 if probe["ok"] else 200
+
+
+def run_openclaw_probe(conn, body: dict | None = None) -> tuple[dict, int]:
+    body = body or {}
+    prompt = openclaw_probe_prompt()
+    prompt_hash = stable_hash(prompt)
+    refresh_runtime_connectors(conn)
+    plan = {
+        "provider": "openclaw",
+        "mode": "fixed_probe",
+        "dry_run": True,
+        "would_run": [str(OPENCLAW_BIN), "agent", "--agent", "main", "-m", "[FIXED_SAFE_PROMPT]", "--timeout", "180", "--json"],
+        "prompt_hash": prompt_hash,
+        "requires": {"confirm_run": True, "openclaw_binary_exists": True},
+        "note": "Only the fixed safe probe is enabled here. Arbitrary OpenClaw prompts remain disabled.",
+        "raw_prompt_omitted": True,
+    }
+    if body.get("prepared_action_id"):
+        return openclaw_resume_probe(conn, body, prompt, prompt_hash)
+    confirm = bool(body.get("confirm_run"))
+    if not (confirm and OPENCLAW_BIN.exists()):
+        ensure_openclaw_probe_agent_task(conn, body, "planned")
+        runtime_event(conn, "rtc_openclaw_local", "agent_probe_dry_run", "planned", prompt_hash=prompt_hash, input_summary="OpenClaw fixed probe dry-run.")
+        audit(conn, "system", "openclaw-probe", "runtime.openclaw_probe.dry_run", "runtime_connectors", "rtc_openclaw_local", None, plan, {"confirm_run": confirm, "openclaw_binary_exists": OPENCLAW_BIN.exists()})
+        conn.commit()
+        return plan, 201
+    return openclaw_prepare_probe(conn, body, prompt_hash)
 
 
 def hermes_status() -> dict:
@@ -12965,9 +13207,8 @@ class Handler(BaseHTTPRequestHandler):
                 conn.commit()
                 return self.send_json(result, 201)
             if path == "/api/integrations/openclaw/probe":
-                result = run_openclaw_probe(conn)
-                conn.commit()
-                return self.send_json(result, 201)
+                payload, status = run_openclaw_probe(conn, body)
+                return self.send_json(payload, status)
             if path == "/api/integrations/hermes/probe":
                 result = run_hermes_probe(conn)
                 conn.commit()
