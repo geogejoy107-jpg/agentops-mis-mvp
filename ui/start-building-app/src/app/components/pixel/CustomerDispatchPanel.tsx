@@ -84,6 +84,41 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
   const [liveRuntimeConfirmed, setLiveRuntimeConfirmed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const liveAdapterConfirmMissing = workerAdapter !== "mock" && !liveRuntimeConfirmed;
+  const customerDispatchMode = workerAdapter === "mock"
+    ? {
+      key: "mock_ledger_write",
+      label: zh ? "Mock 真写账本" : "Mock ledger write",
+      body: zh
+        ? "不会调用 Hermes/OpenClaw，但会创建真实任务、run、tool/eval/audit 证据。"
+        : "Does not call Hermes/OpenClaw, but creates real task, run, tool/eval/audit evidence.",
+      tone: "success",
+    }
+    : liveRuntimeConfirmed
+      ? {
+        key: "real_runtime_confirmed",
+        label: zh ? "真实 runtime 已确认" : "Real runtime confirmed",
+        body: zh
+          ? "下一次确认操作会调用本地 Hermes/OpenClaw adapter，并把摘要、hash 和证据写回 MIS。"
+          : "The next confirmed action will call the local Hermes/OpenClaw adapter and write summary, hash and evidence back to MIS.",
+        tone: "live",
+      }
+      : {
+        key: "real_runtime_gated",
+        label: zh ? "真实 runtime 锁定中" : "Real runtime gated",
+        body: zh
+          ? "Hermes/OpenClaw 需要先勾选显式确认；未确认前只能安全预演或 mock 写账本。"
+          : "Hermes/OpenClaw require the explicit confirmation checkbox; until then use dry-run or mock ledger writes.",
+        tone: "warning",
+      };
+  const safeDryRunLabel = zh ? "safe_dry_run：只做安全预演" : "safe_dry_run: preview only";
+  const approvalPreparedActionLabel = zh ? "approval_prepared_action：外部写入需审批后精确恢复" : "approval_prepared_action: external writes require approval before exact resume";
+  const resultLedgerState = result?.dry_run
+    ? safeDryRunLabel
+    : (result?.reason || "").includes("prepared_action") || (result?.evidence?.approvals || 0) > 0
+      ? approvalPreparedActionLabel
+      : workerAdapter === "mock"
+        ? (zh ? "mock_ledger_write：已写入本地账本证据" : "mock_ledger_write: local ledger evidence written")
+        : (zh ? "real_runtime_confirmed：真实 adapter 结果已入账" : "real_runtime_confirmed: real adapter result entered ledger");
 
   useEffect(() => {
     const next = DEFAULT_COPY[locale];
@@ -519,6 +554,28 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
           />
           {zh ? "我确认将运行真实 Hermes/OpenClaw adapter 并写入账本证据" : "I confirm this may run a real Hermes/OpenClaw adapter and write ledger evidence"}
         </label>
+        <div
+          className="basis-full rounded p-2 text-[10px] leading-relaxed"
+          style={{
+            background: customerDispatchMode.tone === "warning"
+              ? "rgba(251,191,36,0.10)"
+              : customerDispatchMode.tone === "live"
+                ? "rgba(34,211,238,0.10)"
+                : "rgba(42,157,143,0.10)",
+            color: "var(--mis-text)",
+            border: customerDispatchMode.tone === "warning"
+              ? "1px solid rgba(251,191,36,0.24)"
+              : customerDispatchMode.tone === "live"
+                ? "1px solid rgba(34,211,238,0.24)"
+                : "1px solid rgba(42,157,143,0.24)",
+          }}
+        >
+          <div className="font-semibold" style={{ color: customerDispatchMode.tone === "warning" ? "#FBBF24" : customerDispatchMode.tone === "live" ? "var(--mis-cyan)" : "var(--mis-success)" }}>
+            {customerDispatchMode.key} · {customerDispatchMode.label}
+          </div>
+          <div className="mt-1" style={{ color: "var(--mis-muted)" }}>{customerDispatchMode.body}</div>
+          <div className="mt-1" style={{ color: "var(--mis-dim)" }}>{safeDryRunLabel} · {approvalPreparedActionLabel}</div>
+        </div>
         <button
           type="button"
           onClick={() => runWorkerTask(false)}
@@ -658,7 +715,7 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
             <div className="space-y-1">
               <div>
                 <span style={{ color: "var(--mis-muted)" }}>{zh ? "结果：" : "Result: "}</span>
-                {result.dry_run ? (zh ? "安全预演已记录" : "Dry-run recorded") : result.ok ? (zh ? "真实运行完成" : "Real run completed") : (zh ? "运行失败" : "Run failed")}
+                {result.ok ? resultLedgerState : (zh ? "运行失败" : "Run failed")}
               </div>
               <div><span style={{ color: "var(--mis-muted)" }}>{zh ? "任务：" : "Task: "}</span>{result.task_id}</div>
               {result.run_id && <div><span style={{ color: "var(--mis-muted)" }}>{zh ? "运行：" : "Run: "}</span>{result.run_id}</div>}

@@ -44,6 +44,13 @@ def main() -> int:
         "customer_async_worker_gate": "disabled={jobBusy || !title.trim() || liveAdapterConfirmMissing}",
         "customer_async_template_gate": "disabled={templateJobBusy || !selectedTemplateId || liveAdapterConfirmMissing}",
         "customer_real_run_gate": "disabled={busy || !title.trim() || liveAdapterConfirmMissing}",
+        "customer_dispatch_mode_key": "customerDispatchMode.key",
+        "customer_mode_safe_dry_run": "safe_dry_run",
+        "customer_mode_mock_ledger_write": "mock_ledger_write",
+        "customer_mode_real_runtime_gated": "real_runtime_gated",
+        "customer_mode_real_runtime_confirmed": "real_runtime_confirmed",
+        "customer_mode_approval_prepared_action": "approval_prepared_action",
+        "customer_result_ledger_state": "resultLedgerState",
     }
     source_bundle = f"{ai}\n{customer}"
     for label, marker in expected_markers.items():
