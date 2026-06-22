@@ -220,6 +220,9 @@ def validate_plan(payload: dict, label: str, failures: list[str], limit: int) ->
     operator_health_summary = operator_health_source.get("summary") or {}
     for key in ["components", "risks", "ready", "blocked", "attention", "review_items_total"]:
         require(isinstance(operator_health_summary.get(key), int), f"{label} operator health summary.{key} missing: {operator_health_summary}", failures)
+    require(operator_health_summary.get("local_ui_write_guard_status") in {"pass", "warn", "fail", "unknown"}, f"{label} operator health write guard status missing: {operator_health_summary}", failures)
+    operator_health_components = operator_health_source.get("components") or []
+    require(any(item.get("id") == "local_ui_write_guard" for item in operator_health_components), f"{label} operator health missing local write guard component: {operator_health_components}", failures)
     operator_health_safety = operator_health_source.get("safety") or {}
     require(operator_health_safety.get("read_only") is True, f"{label} operator health read_only missing: {operator_health_safety}", failures)
     require(operator_health_safety.get("ledger_mutated") is False, f"{label} operator health must not mutate ledger: {operator_health_safety}", failures)

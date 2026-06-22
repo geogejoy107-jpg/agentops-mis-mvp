@@ -141,7 +141,7 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
     require(safety.get("live_execution_performed") is False, f"{label} live execution flag wrong: {safety}", failures)
     require(safety.get("server_shell_execution") is False, f"{label} server shell flag wrong: {safety}", failures)
     gates = payload.get("gates") or {}
-    for gate_id in ["policy_contract", "advance_boundary", "receipt_coverage", "receipt_evaluations", "audit_ledger", "handoff_health"]:
+    for gate_id in ["policy_contract", "advance_boundary", "receipt_coverage", "receipt_evaluations", "audit_ledger", "local_ui_write_guard", "handoff_health"]:
         require(gate_id in gates, f"{label} missing gate {gate_id}: {gates}", failures)
     policy_gate = gates.get("policy_contract") or {}
     require(policy_gate.get("status") == "pass", f"{label} policy gate should pass: {policy_gate}", failures)
@@ -154,6 +154,12 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
     require(int(audit_gate.get("receipt_audit_rows") or 0) >= 1, f"{label} receipt audit count missing: {audit_gate}", failures)
     require(int(audit_gate.get("evaluation_audit_rows") or 0) >= 1, f"{label} evaluation audit count missing: {audit_gate}", failures)
     require(audit_gate.get("tamper_chain_present") is True, f"{label} tamper chain proof missing: {audit_gate}", failures)
+    write_guard = gates.get("local_ui_write_guard") or {}
+    require(write_guard.get("status") in {"pass", "attention", "blocked"}, f"{label} write guard status wrong: {write_guard}", failures)
+    require(write_guard.get("gate_status") in {"pass", "warn", "fail", "unknown"}, f"{label} write guard gate status wrong: {write_guard}", failures)
+    require(write_guard.get("next_action"), f"{label} write guard next action missing: {write_guard}", failures)
+    summary = payload.get("summary") or {}
+    require(summary.get("local_ui_write_guard_status") == write_guard.get("gate_status"), f"{label} write guard summary mismatch: {summary} {write_guard}", failures)
     decisions = payload.get("policy_decisions") or []
     denied = next((item for item in decisions if item.get("id") == "deny_memory_approval"), {})
     require(((denied.get("decision") or {}).get("allowed") is False), f"{label} denied decision missing: {decisions}", failures)

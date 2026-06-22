@@ -1278,6 +1278,7 @@ export function AIEmployees() {
   const policyContractGate = loopSelfCheckGates.policy_contract || {};
   const receiptEvaluationGate = loopSelfCheckGates.receipt_evaluations || {};
   const auditLedgerGate = loopSelfCheckGates.audit_ledger || {};
+  const localWriteGuardSelfCheckGate = loopSelfCheckGates.local_ui_write_guard || {};
   const loopSelfCheckGateSummaries = [
     {
       id: "policy_contract",
@@ -1296,6 +1297,12 @@ export function AIEmployees() {
       label: copy.auditLedger,
       status: loopSelfCheckGateStatus("audit_ledger"),
       detail: `${Number(auditLedgerGate.receipt_audit_rows ?? 0)} receipts · ${Number(auditLedgerGate.evaluation_audit_rows ?? 0)} evals`,
+    },
+    {
+      id: "local_ui_write_guard",
+      label: copy.localWriteGuard,
+      status: loopSelfCheckGateStatus("local_ui_write_guard"),
+      detail: `${String(localWriteGuardSelfCheckGate.gate_status || "unknown")} · shared:${String(localWriteGuardSelfCheckGate.production_requested ?? false)}`,
     },
   ];
   const advanceLoopRaw = (

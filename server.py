@@ -4788,6 +4788,114 @@ def row_field(row: sqlite3.Row | dict | None, field: str, default=None):
         return row.get(field, default) if hasattr(row, "get") else default
 
 
+def plan_ref_is_safe_relative_path(ref: str) -> bool:
+    value = str(ref or "").strip()
+    if not value or value.startswith(("http://", "https://", "file://", "~")):
+        return False
+    path = Path(value)
+    return not path.is_absolute() and ".." not in path.parts
+
+
+def plan_ref_path(ref: str) -> Path | None:
+    if not plan_ref_is_safe_relative_path(ref):
+        return None
+    try:
+        resolved = (ROOT / ref).resolve(strict=False)
+        root_resolved = ROOT.resolve(strict=True)
+    except Exception:
+        return None
+    try:
+        resolved.relative_to(root_resolved)
+    except ValueError:
+        return None
+    return resolved
+
+
+def resolve_agent_plan_spec_authority(refs: list) -> dict:
+    readable: list[dict] = []
+    missing: list[str] = []
+    unsafe: list[str] = []
+    for item in refs:
+        ref = str(item or "").strip()
+        if not ref:
+            continue
+        path = plan_ref_path(ref)
+        if not path:
+            unsafe.append(ref)
+            continue
+        if path.exists() and path.is_file():
+            readable.append({"ref": ref, "path": str(path.relative_to(ROOT.resolve(strict=True))), "bytes": path.stat().st_size})
+        else:
+            missing.append(ref)
+    return {
+        "ok": bool(readable) and not missing and not unsafe,
+        "readable": readable,
+        "missing": missing,
+        "unsafe": unsafe,
+        "message": "Referenced specs must be readable files inside the repository.",
+        "token_omitted": True,
+    }
+
+
+def resolve_agent_plan_base_authority(conn: sqlite3.Connection | None, refs: list) -> dict:
+    table_bases: list[dict] = []
+    file_bases: list[dict] = []
+    virtual_bases: list[dict] = []
+    missing: list[str] = []
+    unsafe: list[str] = []
+    allowed_virtual = {"agent_gateway_ledger", "agentops_mis.db"}
+    for item in refs:
+        ref = str(item or "").strip()
+        if not ref:
+            continue
+        if ref in allowed_virtual:
+            virtual_bases.append({"ref": ref, "type": "internal_ledger"})
+            continue
+        base = conn.execute("SELECT base_id, provider, category, mode, status FROM bases WHERE base_id=?", (ref,)).fetchone() if conn is not None else None
+        if base:
+            table_bases.append(dict(base))
+            continue
+        path = plan_ref_path(ref)
+        if not path:
+            unsafe.append(ref)
+            continue
+        if path.exists() and path.is_file():
+            file_bases.append({"ref": ref, "path": str(path.relative_to(ROOT.resolve(strict=True))), "bytes": path.stat().st_size})
+        else:
+            missing.append(ref)
+    return {
+        "ok": bool(table_bases or file_bases or virtual_bases) and not missing and not unsafe,
+        "table_bases": table_bases,
+        "file_bases": file_bases,
+        "virtual_bases": virtual_bases,
+        "missing": missing,
+        "unsafe": unsafe,
+        "message": "Referenced bases must exist in the bases table, as readable repository base specs, or as explicit internal ledger bases.",
+        "token_omitted": True,
+    }
+
+
+def resolve_agent_plan_file_scope(refs: list) -> dict:
+    scoped: list[dict] = []
+    unsafe: list[str] = []
+    for item in refs:
+        ref = str(item or "").strip()
+        if not ref:
+            continue
+        path = plan_ref_path(ref)
+        if not path:
+            unsafe.append(ref)
+            continue
+        scoped.append({"ref": ref, "path": str(path.relative_to(ROOT.resolve(strict=True))), "exists": path.exists()})
+    return {
+        "ok": not unsafe,
+        "scoped": scoped,
+        "unsafe": unsafe,
+        "message": "Proposed file changes must stay inside the repository and use relative paths.",
+        "token_omitted": True,
+    }
+
+
 def agent_plan_contract(row: sqlite3.Row | dict) -> dict:
     return {
         "workspace_id": row_field(row, "workspace_id"),
@@ -4875,17 +4983,20 @@ def verify_agent_plan_row(row: sqlite3.Row | dict, conn: sqlite3.Connection | No
     steps = load_json_list_field(row, "execution_steps_json")
     risk = row["risk_level"]
     approval_required = bool(row["approval_required"])
+    spec_authority = resolve_agent_plan_spec_authority(specs)
     memory_authority = resolve_agent_plan_memory_authority(conn, row, memories)
+    base_authority = resolve_agent_plan_base_authority(conn, bases)
+    file_scope = resolve_agent_plan_file_scope(files)
     checks = [
-        {"id": "read_specs", "ok": bool(specs), "message": "Plan references specs or workflow docs."},
+        {"id": "read_specs", "ok": bool(specs) and bool(spec_authority.get("ok")), "message": "Plan references readable specs or workflow docs.", "details": spec_authority},
         {"id": "retrieve_memory", "ok": bool(memories), "message": "Plan references memory, knowledge, or failure-case context."},
         {"id": "memory_authority", "ok": bool(memory_authority.get("ok")), "message": "Referenced memory ids exist and are approved before acting as authority.", "details": memory_authority},
-        {"id": "compare_bases", "ok": bool(bases), "message": "Plan references base constraints or reusable foundations."},
+        {"id": "compare_bases", "ok": bool(bases) and bool(base_authority.get("ok")), "message": "Plan references existing base constraints or reusable foundations.", "details": base_authority},
         {"id": "execution_steps", "ok": len(steps) >= 3, "message": "Plan includes concrete execution steps."},
         {"id": "verification_plan", "ok": bool(str(row["verification_plan"] or "").strip()), "message": "Plan includes verification path."},
         {"id": "rollback_plan", "ok": bool(str(row["rollback_plan"] or "").strip()), "message": "Plan includes rollback path."},
         {"id": "risk_gate", "ok": risk not in {"high", "critical"} or approval_required, "message": "High/critical risk requires approval."},
-        {"id": "file_scope", "ok": bool(files) or risk == "low", "message": "Non-low work names proposed files or surfaces."},
+        {"id": "file_scope", "ok": (bool(files) or risk == "low") and bool(file_scope.get("ok")), "message": "Non-low work names proposed files or surfaces inside the repository.", "details": file_scope},
     ]
     failed = [check for check in checks if not check["ok"]]
     plan_hash = row_field(row, "plan_hash") or compute_agent_plan_hash(row)
@@ -4896,13 +5007,16 @@ def verify_agent_plan_row(row: sqlite3.Row | dict, conn: sqlite3.Connection | No
         "failed_checks": failed,
         "summary": {
             "referenced_specs": len(specs),
+            "readable_spec_refs": len(spec_authority.get("readable") or []),
             "referenced_memories": len(memories),
             "approved_memory_refs": len(memory_authority.get("approved") or []),
             "non_authoritative_memory_refs": len(memory_authority.get("non_authoritative") or []),
             "missing_memory_refs": len(memory_authority.get("missing") or []),
             "knowledge_context_refs": len(memory_authority.get("knowledge_context") or []),
             "referenced_bases": len(bases),
+            "resolved_base_refs": len((base_authority.get("table_bases") or []) + (base_authority.get("file_bases") or []) + (base_authority.get("virtual_bases") or [])),
             "proposed_files_to_change": len(files),
+            "scoped_file_refs": len(file_scope.get("scoped") or []),
             "execution_steps": len(steps),
             "risk_level": risk,
             "approval_required": approval_required,
@@ -15425,6 +15539,8 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
     dispatch_evidence = operator_dispatch_evidence_lane(conn, workspace_id, limit=max(limit, 8))
     local_readiness_snapshot = local_readiness(conn, headers)
     security_readiness_snapshot = security_production_readiness(conn, headers)
+    security_gates = security_readiness_snapshot.get("gates") or []
+    local_write_guard_gate = next((gate for gate in security_gates if gate.get("id") == "local_ui_write_guard"), {})
     action_receipts = list_operator_action_receipts(conn, {"limit": [str(max(limit, 8))], "workspace_id": [workspace_id]}, headers)
     action_receipt_summary = action_receipts.get("summary") or {}
     receipt_failure_memory = operator_receipt_failure_memory_lane(conn, workspace_id, min_failures=2, limit=max(limit, 8))
@@ -15713,6 +15829,26 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
                 "status": security_readiness_snapshot.get("status"),
                 "auth_mode": security_readiness_snapshot.get("auth_mode"),
                 "production_ready": bool(security_readiness_snapshot.get("production_ready")),
+            },
+        },
+        {
+            "id": "local_ui_write_guard",
+            "title": "Inspect local UI/API write guard",
+            "status": normalized_operator_status(str(local_write_guard_gate.get("status") or "unknown")),
+            "command": "agentops security production-readiness",
+            "summary": (
+                f"Local write guard status={local_write_guard_gate.get('status') or 'unknown'}; "
+                f"{local_write_guard_gate.get('detail') or 'shared/production browser writes must be admin-gated'}"
+            ),
+            "priority": 97,
+            "ui_route": "/workspace/agents",
+            "evidence": {
+                "gate_id": local_write_guard_gate.get("id") or "local_ui_write_guard",
+                "status": local_write_guard_gate.get("status") or "unknown",
+                "ok": bool(local_write_guard_gate.get("ok")),
+                "detail": local_write_guard_gate.get("detail"),
+                "next_action": local_write_guard_gate.get("next_action"),
+                "production_requested": bool(security_readiness_snapshot.get("production_requested")),
             },
         },
         {
@@ -16059,6 +16195,7 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             "security_status": security_readiness_snapshot.get("status"),
             "worker_fleet_status": fleet.get("status"),
             "review_items_total": review_items_total,
+            "local_ui_write_guard_status": local_write_guard_gate.get("status") or "unknown",
         },
         "components": operator_health_components,
         "contract": "non-recursive operator health recovery source embedded in action-plan; full health score remains available through operator health",
@@ -17086,6 +17223,11 @@ def operator_loop_self_check(conn: sqlite3.Connection, headers, qs=None, auth_ct
     receipt_state = handoff.get("receipt_state") or {}
     receipt_coverage = receipt_state.get("coverage") or {}
     workspace_id = normalize_workspace_id(handoff.get("workspace_id") or effective_headers.get("X-AgentOps-Workspace-Id") or "local-demo")
+    security = security_production_readiness(conn, effective_headers)
+    security_gates = security.get("gates") or []
+    local_write_guard_gate = next((gate for gate in security_gates if gate.get("id") == "local_ui_write_guard"), {})
+    local_write_guard_status = str(local_write_guard_gate.get("status") or "unknown")
+    local_write_guard_ok = local_write_guard_status == "pass"
 
     receipt_audit_rows = operator_action_receipt_rows(conn, workspace_id, max(limit, 12))
     receipt_ids = [str(item.get("receipt_id")) for item in receipt_audit_rows if item.get("receipt_id")]
@@ -17181,6 +17323,14 @@ def operator_loop_self_check(conn: sqlite3.Connection, headers, qs=None, auth_ct
             "tamper_chain_present": tamper_chain_present,
             "evaluated_receipts": evaluated_receipts,
         },
+        "local_ui_write_guard": {
+            "status": "pass" if local_write_guard_ok else "blocked" if local_write_guard_status == "fail" else "attention",
+            "gate_status": local_write_guard_status,
+            "ok": bool(local_write_guard_gate.get("ok")),
+            "detail": local_write_guard_gate.get("detail") or "local_ui_write_guard missing from security readiness",
+            "next_action": local_write_guard_gate.get("next_action") or "agentops security production-readiness",
+            "production_requested": bool(security.get("production_requested")),
+        },
         "handoff_health": {
             "status": loop_health.get("status") or "unknown",
             "score": int(loop_health.get("score") or 0),
@@ -17200,6 +17350,8 @@ def operator_loop_self_check(conn: sqlite3.Connection, headers, qs=None, auth_ct
     ]
     if loop_health.get("next_action"):
         next_actions.append(str(loop_health.get("next_action")))
+    if not local_write_guard_ok:
+        next_actions.append("agentops security production-readiness")
     return {
         "provider": "agentops-operator",
         "operation": "operator_loop_self_check",
@@ -17221,6 +17373,7 @@ def operator_loop_self_check(conn: sqlite3.Connection, headers, qs=None, auth_ct
             "evaluation_audit_rows": evaluation_audit_count,
             "policy_id": policy.get("policy_id"),
             "policy_version": policy.get("policy_version"),
+            "local_ui_write_guard_status": local_write_guard_status,
         },
         "gates": gate_checks,
         "policy_decisions": policy_decisions,
@@ -17268,6 +17421,8 @@ def operator_health(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) -
     handoff = operator_handoff(conn, effective_headers, {"limit": [str(limit)], "loop_id": [loop_id]} if loop_id else {"limit": [str(limit)]}, auth_ctx)
     local = local_readiness(conn, effective_headers)
     security = security_production_readiness(conn, effective_headers)
+    security_gates = security.get("gates") or []
+    local_write_guard_gate = next((gate for gate in security_gates if gate.get("id") == "local_ui_write_guard"), {})
     worker = worker_status(conn)
     review = human_review_queue(conn, limit)
     action_plan_source = ((handoff.get("sources") or {}).get("action_plan") or {})
@@ -17335,6 +17490,18 @@ def operator_health(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) -
             "weight": 15,
             "summary": f"auth_mode={security.get('auth_mode') or 'unknown'} production_ready={bool(security.get('production_ready'))}",
             "next_action": (security.get("next_actions") or ["agentops security production-readiness"])[0],
+        },
+        {
+            "id": "local_ui_write_guard",
+            "label": "Local UI/API write guard",
+            "status": component_status(local_write_guard_gate.get("status")),
+            "score": score_for(local_write_guard_gate.get("status"), 5),
+            "weight": 5,
+            "summary": (
+                f"status={local_write_guard_gate.get('status') or 'unknown'} "
+                f"ok={bool(local_write_guard_gate.get('ok'))}"
+            ),
+            "next_action": "agentops security production-readiness",
         },
         {
             "id": "worker_fleet",
@@ -17441,6 +17608,7 @@ def operator_health(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) -
             "loop_health_score": int(loop_health.get("score") or 0),
             "worker_fleet_status": worker_health.get("overall") or worker.get("status"),
             "security_status": security.get("status"),
+            "local_ui_write_guard_status": local_write_guard_gate.get("status") or "unknown",
             "local_readiness_status": local.get("status"),
         },
         "components": components,
@@ -17460,6 +17628,12 @@ def operator_health(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) -
                 "status": security.get("status"),
                 "auth_mode": security.get("auth_mode"),
                 "production_ready": security.get("production_ready"),
+            },
+            "local_ui_write_guard": {
+                "status": local_write_guard_gate.get("status") or "unknown",
+                "ok": bool(local_write_guard_gate.get("ok")),
+                "detail": local_write_guard_gate.get("detail"),
+                "next_action": local_write_guard_gate.get("next_action"),
             },
             "worker_status": {
                 "status": worker.get("status"),

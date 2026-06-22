@@ -242,6 +242,74 @@ def main() -> int:
     require(approved_verification.get("pass") is True, f"approved memory should verify as authority: {approved_verify_payload}", failures)
     require(int(approved_summary.get("approved_memory_refs") or 0) >= 1, f"approved memory count missing: {approved_summary}", failures)
 
+    negative_cases = [
+        {
+            "label": "missing_spec",
+            "task_understanding": "Reference a missing spec to prove verifier blocks unreadable spec authority.",
+            "referenced_specs": "docs/DOES_NOT_EXIST_AGENT_PLAN_SPEC.md",
+            "referenced_bases": "base_local_tasks",
+            "proposed_files": "server.py",
+            "expected_failed_check": "read_specs",
+        },
+        {
+            "label": "missing_base",
+            "task_understanding": "Reference a missing base to prove verifier blocks unknown base authority.",
+            "referenced_specs": "PROJECT_SPEC.md,AGENT_WORKFLOW.md",
+            "referenced_bases": "base_missing_agent_plan_integrity",
+            "proposed_files": "server.py",
+            "expected_failed_check": "compare_bases",
+        },
+        {
+            "label": "unsafe_file_scope",
+            "task_understanding": "Reference an unsafe file path to prove verifier blocks path escape.",
+            "referenced_specs": "PROJECT_SPEC.md,AGENT_WORKFLOW.md",
+            "referenced_bases": "base_local_tasks",
+            "proposed_files": "../outside-agentops.py",
+            "expected_failed_check": "file_scope",
+        },
+    ]
+    negative_results: dict[str, list[str]] = {}
+    for case in negative_cases:
+        bad_plan = run([
+            "agent-plan",
+            "create",
+            "--agent-id",
+            agent_id,
+            "--task-id",
+            task_id,
+            "--task-understanding",
+            case["task_understanding"],
+            "--referenced-specs",
+            case["referenced_specs"],
+            "--referenced-memories",
+            str(candidate_memory_id),
+            "--referenced-bases",
+            case["referenced_bases"],
+            "--proposed-files-to-change",
+            case["proposed_files"],
+            "--risk",
+            "medium",
+            "--execution-steps",
+            "READ,PLAN,VERIFY",
+            "--verification-plan",
+            f"{case['label']} must fail verification.",
+            "--rollback-plan",
+            "Fix references before execution.",
+        ], args.base_url, agent_id)
+        outputs.extend([bad_plan.stdout, bad_plan.stderr])
+        bad_payload = load_json(bad_plan)
+        bad_plan_id = (bad_payload.get("agent_plan") or {}).get("plan_id")
+        require(bad_plan.returncode == 0 and bool(bad_plan_id), f"{case['label']} plan create failed unexpectedly: {bad_plan.stderr or bad_plan.stdout}", failures)
+        bad_verify = run(["agent-plan", "verify", "--plan-id", str(bad_plan_id)], args.base_url, agent_id)
+        outputs.extend([bad_verify.stdout, bad_verify.stderr])
+        bad_verify_payload = load_json(bad_verify)
+        bad_verification = bad_verify_payload.get("verification") or {}
+        bad_failed_ids = {check.get("id") for check in bad_verification.get("failed_checks") or []}
+        negative_results[case["label"]] = sorted(str(item) for item in bad_failed_ids)
+        require(bad_verify.returncode == 0, f"{case['label']} verify command failed: {bad_verify.stderr or bad_verify.stdout}", failures)
+        require(bad_verification.get("pass") is False, f"{case['label']} should fail verification: {bad_verify_payload}", failures)
+        require(case["expected_failed_check"] in bad_failed_ids, f"{case['label']} missing {case['expected_failed_check']} failure: {bad_verify_payload}", failures)
+
     created = run([
         "agent-plan",
         "create",
@@ -299,6 +367,7 @@ def main() -> int:
         "self_approved_rejected": rejected_status == 400,
         "candidate_memory_rejected": "memory_authority" in failed_ids,
         "approved_memory_verified": bool((approved_verify_payload.get("verification") or {}).get("pass")),
+        "negative_reference_results": negative_results,
         "plan_hash": plan_hash,
         "verification_result_hash": verified_plan.get("verification_result_hash"),
         "failures": failures,

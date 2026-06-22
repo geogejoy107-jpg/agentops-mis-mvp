@@ -26,10 +26,10 @@ git diff --check main...codex/agent-gateway-kb-demo
 - [ ] Plan transitions are append-only and audited.
 - [x] Plan has an immutable hash/version.
 - [x] Verification result has a hash and timestamp.
-- [ ] Every referenced spec exists and is readable.
-- [ ] Every referenced base exists.
+- [x] Every referenced spec exists and is readable.
+- [x] Every referenced base exists.
 - [x] Every referenced memory exists, is visible and has an allowed review status.
-- [ ] Proposed files stay inside the allowed workspace/repository.
+- [x] Proposed files stay inside the allowed workspace/repository.
 - [x] Real run links an `agent_plan_id`.
 - [x] Run Agent/task/workspace match the plan.
 - [x] Superseded, changed, or alternate plans cannot authorize/rebind execution.
@@ -117,7 +117,7 @@ python3 scripts/security_production_readiness_smoke.py
 - [x] Non-loopback binding requires admin authentication.
 - [x] Production/shared mode rejects `local_dev_no_token`.
 - [x] Browser/local write APIs are protected in shared mode.
-- [x] `security production-readiness` exposes `local_ui_write_guard`, and `/workspace/agents` renders it as a visible pre-loop safety gate.
+- [x] `security production-readiness` exposes `local_ui_write_guard`, `/workspace/agents` renders it in both Production Security and Pre-advance self-check, and operator health/action-plan/loop-self-check include it as a receipt-governed readiness signal.
 - [x] `agentops doctor` blocks unsafe shared deployment.
 - [x] README and runbook state the same rule.
 

@@ -106,7 +106,7 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
     require(0 <= int(payload.get("score") or 0) <= 100, f"{label} score out of range: {payload}", failures)
     require(isinstance(payload.get("components") or [], list), f"{label} components missing: {payload}", failures)
     component_ids = {item.get("id") for item in payload.get("components") or []}
-    for required_id in ["loop_health", "local_readiness", "security_readiness", "worker_fleet", "review_queue", "operator_action_plan"]:
+    for required_id in ["loop_health", "local_readiness", "security_readiness", "local_ui_write_guard", "worker_fleet", "review_queue", "operator_action_plan"]:
         require(required_id in component_ids, f"{label} missing component {required_id}: {component_ids}", failures)
     require(isinstance(payload.get("risks") or [], list), f"{label} risks missing: {payload}", failures)
     for risk in payload.get("risks") or []:
@@ -118,8 +118,11 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
         require(risk.get("receipt_required") is True, f"{label} risk receipt flag missing: {risk}", failures)
     require(isinstance(payload.get("next_actions") or [], list), f"{label} next actions missing: {payload}", failures)
     sources = payload.get("sources") or {}
-    for key in ["handoff", "local_readiness", "security_readiness", "worker_status", "review_queue"]:
+    for key in ["handoff", "local_readiness", "security_readiness", "local_ui_write_guard", "worker_status", "review_queue"]:
         require(key in sources, f"{label} source {key} missing: {sources}", failures)
+    write_guard = sources.get("local_ui_write_guard") or {}
+    require(write_guard.get("status") in {"pass", "warn", "fail", "unknown"}, f"{label} write guard source status wrong: {write_guard}", failures)
+    require(isinstance(write_guard.get("ok"), bool), f"{label} write guard source ok missing: {write_guard}", failures)
     auth = payload.get("auth") or {}
     require(auth.get("mode") in {"local_dev_no_token", "global_api_key", "agent_token", "agent_session"}, f"{label} auth mode wrong: {auth}", failures)
     require(auth.get("required_scope") == "tasks:read", f"{label} auth required scope wrong: {auth}", failures)
