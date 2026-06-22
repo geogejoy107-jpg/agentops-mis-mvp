@@ -41,20 +41,64 @@ Still owned by `server.py`:
 
 - HTTP routes
 - runtime health probing
-- trust updates and audit/runtime event writes
+- trust update route and audit/runtime event writes
+
+### Slice 2: Runtime Connector Trust State
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_runtime/trust.py`
+
+Moved out of `server.py`:
+
+- trust status normalization
+- trust update request shaping
+- runtime connector trust read helper
+- runtime connector trust state update SQL helper
+
+Still owned by `server.py`:
+
+- HTTP trust route
+- runtime connector refresh orchestration
+- runtime events
+- audit-log writes
+
+### Slice 3: Read-Model Cache
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/read_model_cache.py`
+
+Moved out of `server.py`:
+
+- read-model cache key construction
+- short-TTL in-memory hit/miss/bypass behavior
+- cache pruning and max-size enforcement
+- cache response metadata shaping
+
+Still owned by `server.py`:
+
+- endpoint selection
+- auth and workspace policy checks before cached producer calls
+- write-route cache invalidation points
+- read-model producers backed by SQLite queries
 
 Verification:
 
 ```bash
 python3 scripts/module_boundary_smoke.py
+python3 scripts/read_model_cache_smoke.py
 python3 scripts/runtime_capability_manifest_smoke.py --base-url http://127.0.0.1:8787
 python3 scripts/worker_adapter_readiness_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/runtime_connector_trust_smoke.py --base-url http://127.0.0.1:8787
 ```
 
 ## Next Candidate Slices
 
-- Read-model cache helpers.
-- Runtime connector trust update service.
 - Worker fleet status/readiness aggregation.
 - Commander work-package read models.
 - Approval Wall prepared-action helpers.

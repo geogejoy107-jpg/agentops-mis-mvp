@@ -41,7 +41,7 @@ SECRET_PATTERNS = [
 ]
 
 REQUIRED_CI_COMMANDS = [
-    "python3 -m py_compile server.py agentops_mis_cli/*.py agentops_mis_runtime/*.py scripts/*.py",
+    "python3 -m py_compile server.py agentops_mis_cli/*.py agentops_mis_core/*.py agentops_mis_runtime/*.py scripts/*.py",
     "git diff --check",
     "python3 scripts/release_branch_control_smoke.py",
     "python3 scripts/release_freeze_protocol_smoke.py",

@@ -486,7 +486,7 @@ click cannot silently stop/start a live adapter.
 Use these lightweight checks before a demo or customer handoff:
 
 ```bash
-python3 -m py_compile server.py agentops_mis_cli/*.py agentops_mis_runtime/*.py scripts/*.py
+python3 -m py_compile server.py agentops_mis_cli/*.py agentops_mis_core/*.py agentops_mis_runtime/*.py scripts/*.py
 python3 scripts/agentops_worker_preflight_smoke.py
 python3 scripts/worker_adapter_readiness_smoke.py
 python3 scripts/customer_worker_adapter_not_ready_smoke.py

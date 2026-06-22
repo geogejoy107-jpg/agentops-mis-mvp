@@ -44,7 +44,7 @@ jobs:
       - name: Syntax and diff checks
         run: |
           set -euo pipefail
-          python3 -m py_compile server.py agentops_mis_cli/*.py agentops_mis_runtime/*.py scripts/*.py
+          python3 -m py_compile server.py agentops_mis_cli/*.py agentops_mis_core/*.py agentops_mis_runtime/*.py scripts/*.py
           git diff --check
 
       - name: Offline safety smokes
@@ -64,6 +64,7 @@ jobs:
           python3 scripts/merge_readiness_status_smoke.py
           python3 scripts/v1_5_product_closure_evidence_smoke.py
           python3 scripts/module_boundary_smoke.py
+          python3 scripts/read_model_cache_smoke.py
           python3 scripts/open_source_adoption_boundary_smoke.py
           python3 scripts/external_connector_runtime_inventory_smoke.py
           python3 scripts/secret_scan_smoke.py

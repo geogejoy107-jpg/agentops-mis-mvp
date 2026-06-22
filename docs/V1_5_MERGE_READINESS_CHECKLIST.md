@@ -247,10 +247,14 @@ coverage for every external side-effect path.
   Runtime connector capability policy now lives in
   `agentops_mis_runtime/capabilities.py`, and runtime connector config/registry
   rows plus the upsert helper now live in `agentops_mis_runtime/connectors.py`;
-  `server.py` keeps HTTP routes, health probing, trust updates and
-  audit/runtime event writes. Guarded by
+  runtime connector trust state helpers now live in
+  `agentops_mis_runtime/trust.py`; read-model cache behavior now lives in
+  `agentops_mis_core/read_model_cache.py`; `server.py` keeps HTTP routes,
+  health probing, refresh orchestration, trust-route runtime events, audit
+  writes, endpoint auth checks and read-model producers.
+  Guarded by
   `scripts/module_boundary_smoke.py`, `docs/MODULE_BOUNDARY_PLAN.md`, and the
-  existing runtime capability/readiness smokes.
+  existing runtime capability/readiness/trust plus read-model cache smokes.
 
 Agent Gateway tool-call recording now also rejects high/critical external
 side-effect intents unless `prepare_action=true` is used. The KB bot demo's
@@ -454,7 +458,7 @@ diff-check
 Suggested deterministic suite:
 
 ```bash
-python3 -m py_compile server.py agentops_mis_cli/*.py agentops_mis_runtime/*.py scripts/*.py
+python3 -m py_compile server.py agentops_mis_cli/*.py agentops_mis_core/*.py agentops_mis_runtime/*.py scripts/*.py
 python3 scripts/demo_acceptance.py --start-server
 python3 scripts/local_readiness_smoke.py
 python3 scripts/secret_scan_smoke.py

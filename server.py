@@ -34,6 +34,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
+from agentops_mis_core.read_model_cache import ReadModelCache
 from agentops_mis_cli.advance_loop_policy import advance_loop_command_policy, advance_loop_policy_summary
 from agentops_mis_cli.redaction import redact_full_text as shared_redact_full_text
 from agentops_mis_cli.redaction import redact_text as shared_redact_text
@@ -47,6 +48,10 @@ from agentops_mis_runtime.connectors import (
     hermes_runtime_config,
     runtime_connector_rows,
     upsert_runtime_connector,
+)
+from agentops_mis_runtime.trust import (
+    apply_runtime_connector_trust_update,
+    runtime_connector_trust,
 )
 
 ROOT = Path(__file__).resolve().parent
@@ -62,8 +67,7 @@ HERMES_HOME = Path.home() / ".hermes"
 OPENCLAW_BIN = Path("/opt/homebrew/bin/openclaw")
 READ_MODEL_CACHE_TTL_SEC = float(os.environ.get("AGENTOPS_READ_MODEL_CACHE_TTL_SEC", "2"))
 READ_MODEL_CACHE_MAX_ITEMS = int(os.environ.get("AGENTOPS_READ_MODEL_CACHE_MAX_ITEMS", "96"))
-READ_MODEL_CACHE: dict[str, dict] = {}
-READ_MODEL_CACHE_LOCK = threading.Lock()
+READ_MODEL_CACHE = ReadModelCache(ttl_sec=READ_MODEL_CACHE_TTL_SEC, max_items=READ_MODEL_CACHE_MAX_ITEMS)
 
 RISKY_TOOLS = {
     "shell.exec",
@@ -251,82 +255,19 @@ def jsonable_clone(value):
 
 
 def read_model_cache_key(name: str, qs: dict, headers, auth_ctx: dict | None = None) -> str:
-    cache_qs = {
-        str(key): [str(item) for item in values]
-        for key, values in sorted((qs or {}).items())
-        if str(key) not in {"_", "bypass_cache", "refresh_cache"}
-    }
-    header_workspace = normalize_workspace_id(headers.get("X-AgentOps-Workspace-Id") or "local-demo")
-    auth_profile = {
-        "mode": (auth_ctx or {}).get("mode") or "local_dev_no_token",
-        "workspace_id": normalize_workspace_id((auth_ctx or {}).get("workspace_id") or header_workspace),
-        "agent_id": str((auth_ctx or {}).get("agent_id") or headers.get("X-AgentOps-Agent-Id") or ""),
-        "scopes": sorted(str(scope) for scope in ((auth_ctx or {}).get("scopes") or [])),
-        "bound": agent_gateway_is_bound_auth(auth_ctx),
-    }
-    token_ref = (auth_ctx or {}).get("session_id") or (auth_ctx or {}).get("token_id")
-    if token_ref:
-        auth_profile["credential_ref_hash"] = stable_hash(str(token_ref))[:16]
-    return stable_hash({"name": name, "qs": cache_qs, "auth": auth_profile})
+    return READ_MODEL_CACHE.cache_key(name, qs, headers, auth_ctx)
 
 
 def prune_read_model_cache(now: float) -> None:
-    expired = [key for key, entry in READ_MODEL_CACHE.items() if float(entry.get("expires_at") or 0) <= now]
-    for key in expired:
-        READ_MODEL_CACHE.pop(key, None)
-    while len(READ_MODEL_CACHE) > READ_MODEL_CACHE_MAX_ITEMS:
-        oldest = min(READ_MODEL_CACHE.items(), key=lambda item: float(item[1].get("created_at") or 0))[0]
-        READ_MODEL_CACHE.pop(oldest, None)
+    READ_MODEL_CACHE.prune(now)
 
 
 def clear_read_model_cache() -> None:
-    with READ_MODEL_CACHE_LOCK:
-        READ_MODEL_CACHE.clear()
+    READ_MODEL_CACHE.clear()
 
 
 def cached_read_model(name: str, qs: dict, headers, producer, auth_ctx: dict | None = None) -> dict:
-    ttl = max(0.0, READ_MODEL_CACHE_TTL_SEC)
-    bypass = ttl <= 0 or qs_bool(qs, "bypass_cache", False) or qs_bool(qs, "refresh_cache", False)
-    key = read_model_cache_key(name, qs, headers, auth_ctx)
-    now = time.time()
-    if not bypass:
-        with READ_MODEL_CACHE_LOCK:
-            entry = READ_MODEL_CACHE.get(key)
-            if entry and float(entry.get("expires_at") or 0) > now:
-                payload = jsonable_clone(entry["payload"])
-                age_ms = int((now - float(entry.get("created_at") or now)) * 1000)
-                payload["read_model_cache"] = {
-                    "name": name,
-                    "status": "hit",
-                    "ttl_ms": int(ttl * 1000),
-                    "age_ms": max(0, age_ms),
-                    "expires_in_ms": max(0, int((float(entry["expires_at"]) - now) * 1000)),
-                    "key_hash": key[:16],
-                    "token_omitted": True,
-                }
-                return payload
-
-    payload = jsonable_clone(producer())
-    status = "bypass" if bypass else "miss"
-    if not bypass:
-        with READ_MODEL_CACHE_LOCK:
-            prune_read_model_cache(now)
-            READ_MODEL_CACHE[key] = {
-                "payload": jsonable_clone(payload),
-                "created_at": now,
-                "expires_at": now + ttl,
-                "name": name,
-            }
-    payload["read_model_cache"] = {
-        "name": name,
-        "status": status,
-        "ttl_ms": int(ttl * 1000),
-        "age_ms": 0,
-        "expires_in_ms": 0 if bypass else int(ttl * 1000),
-        "key_hash": key[:16],
-        "token_omitted": True,
-    }
-    return payload
+    return READ_MODEL_CACHE.cached(name, qs, headers, producer, auth_ctx)
 
 
 def ledger_page_response(conn: sqlite3.Connection, *, operation: str, item_key: str, table: str, order_by: str, qs: dict, where: str = "", params: list | None = None, default_limit: int | None = None, max_limit: int = 500):
@@ -1460,33 +1401,21 @@ def ensure_v121_reference_data(conn: sqlite3.Connection):
             )
 
 
-def runtime_connector_trust(conn, connector_id: str | None, refresh: bool = True) -> dict | None:
-    if not connector_id:
-        return None
-    if refresh:
-        refresh_runtime_connectors(conn)
-    row = conn.execute("SELECT * FROM runtime_connectors WHERE runtime_connector_id=?", (connector_id,)).fetchone()
-    return dict(row) if row else None
-
-
 def update_runtime_connector_trust(conn, connector_id: str, body: dict) -> tuple[dict, int]:
-    refresh_runtime_connectors(conn)
-    before = conn.execute("SELECT * FROM runtime_connectors WHERE runtime_connector_id=?", (connector_id,)).fetchone()
-    if not before:
-        return {"error": "not_found", "message": f"Runtime connector {connector_id} was not found."}, 404
-    trust_status = coerce_choice(body.get("trust_status") or body.get("status"), {"trusted", "review_required", "blocked"}, "review_required")
-    trust_note = redact_text(body.get("trust_note") or body.get("note") or f"Runtime connector marked {trust_status}.", 300)
     now = now_iso()
-    conn.execute(
-        """UPDATE runtime_connectors
-        SET trust_status=?, trust_note=?, trust_updated_at=?, updated_at=?
-        WHERE runtime_connector_id=?""",
-        (trust_status, trust_note, now, now, connector_id),
+    update = apply_runtime_connector_trust_update(
+        conn,
+        connector_id,
+        body,
+        now=now,
+        redact_text=redact_text,
+        refresh_connectors=refresh_runtime_connectors,
     )
-    after = conn.execute("SELECT * FROM runtime_connectors WHERE runtime_connector_id=?", (connector_id,)).fetchone()
-    runtime_event(conn, connector_id, "runtime_connector.trust_update", trust_status, output_summary=trust_note)
-    audit(conn, "user", "usr_founder", "runtime_connector.trust_update", "runtime_connectors", connector_id, dict(before), dict(after), {"trust_status": trust_status, "raw_secret_omitted": True})
-    return {"connector": dict(after), "token_omitted": True}, 200
+    if not update:
+        return {"error": "not_found", "message": f"Runtime connector {connector_id} was not found."}, 404
+    runtime_event(conn, connector_id, "runtime_connector.trust_update", update["trust_status"], output_summary=update["trust_note"])
+    audit(conn, "user", "usr_founder", "runtime_connector.trust_update", "runtime_connectors", connector_id, update["before"], update["after"], {"trust_status": update["trust_status"], "raw_secret_omitted": True})
+    return {"connector": update["after"], "token_omitted": True}, 200
 
 
 def runtime_event(conn, connector_id, event_type, status, **kwargs):
@@ -10995,7 +10924,7 @@ def customer_task_templates() -> list[dict]:
                     "risk_level": "medium",
                     "scope": "implementation patch, touched-file manifest, raw-source omission proof, rollback notes",
                     "avoid_scope": "do not execute external writes, merge, push, or store raw source bodies in MIS",
-                    "verification": ["git diff --check", "python3 -m py_compile server.py agentops_mis_cli/*.py agentops_mis_runtime/*.py scripts/*.py"],
+                    "verification": ["git diff --check", "python3 -m py_compile server.py agentops_mis_cli/*.py agentops_mis_core/*.py agentops_mis_runtime/*.py scripts/*.py"],
                 },
                 {
                     "lane_id": "verify",
@@ -11343,7 +11272,7 @@ def submit_customer_task_template_job(conn, body: dict) -> tuple[dict, int]:
     confirm_run = bool(body.get("confirm_run"))
     if adapter in {"hermes", "openclaw"} and confirm_run:
         connector_id = runtime_connector_for_adapter(adapter)
-        connector_trust = runtime_connector_trust(conn, connector_id)
+        connector_trust = runtime_connector_trust(conn, connector_id, refresh_connectors=refresh_runtime_connectors)
         adapter_readiness = (worker_adapter_readiness(conn).get("adapters") or {}).get(adapter) or {}
         should_reject = (
             (connector_trust and connector_trust.get("trust_status") == "blocked")
@@ -11466,7 +11395,7 @@ def submit_customer_worker_task_job(conn, body: dict) -> tuple[dict, int]:
     confirm_run = bool(body.get("confirm_run"))
     if adapter in {"hermes", "openclaw"} and confirm_run:
         connector_id = runtime_connector_for_adapter(adapter)
-        connector_trust = runtime_connector_trust(conn, connector_id)
+        connector_trust = runtime_connector_trust(conn, connector_id, refresh_connectors=refresh_runtime_connectors)
         adapter_readiness = (worker_adapter_readiness(conn).get("adapters") or {}).get(adapter) or {}
         should_reject = (
             (connector_trust and connector_trust.get("trust_status") == "blocked")
@@ -13737,7 +13666,7 @@ def worker_adapter_readiness(conn, refresh: bool = True) -> dict:
 
     def trust_for(adapter: str) -> dict:
         connector_id = runtime_connector_for_adapter(adapter)
-        trust = runtime_connector_trust(conn, connector_id, refresh=refresh) if connector_id else None
+        trust = runtime_connector_trust(conn, connector_id, refresh=refresh, refresh_connectors=refresh_runtime_connectors) if connector_id else None
         manifest = {}
         if trust and trust.get("capability_manifest_json"):
             try:
@@ -14748,7 +14677,7 @@ COMMANDER_DEFAULT_WORK_PACKAGE_LANES = [
         "risk_level": "medium",
         "scope": "bounded code/docs changes required by the accepted work package",
         "avoid_scope": "do not touch unrelated UI/backend surfaces or local databases",
-        "verification": ["python3 -m py_compile server.py agentops_mis_cli/*.py agentops_mis_runtime/*.py scripts/*.py", "git diff --check"],
+        "verification": ["python3 -m py_compile server.py agentops_mis_cli/*.py agentops_mis_core/*.py agentops_mis_runtime/*.py scripts/*.py", "git diff --check"],
     },
     {
         "lane_id": "qa",
@@ -14904,7 +14833,7 @@ def commander_coding_project_template(qs=None, headers=None) -> dict:
             "id": "tests_pass",
             "required": True,
             "authority": "evaluations",
-            "command": "python3 -m py_compile server.py agentops_mis_cli/*.py agentops_mis_runtime/*.py scripts/*.py && git diff --check",
+            "command": "python3 -m py_compile server.py agentops_mis_cli/*.py agentops_mis_core/*.py agentops_mis_runtime/*.py scripts/*.py && git diff --check",
             "pass_condition": "verifier records passing syntax and diff hygiene evidence",
         },
         {
@@ -16125,7 +16054,7 @@ def commander_record_coding_evidence(conn: sqlite3.Connection, task_id: str, bod
             "git status --short --branch",
             "git diff --name-only",
             "git diff --check",
-            "python3 -m py_compile server.py agentops_mis_cli/*.py agentops_mis_runtime/*.py scripts/*.py",
+            "python3 -m py_compile server.py agentops_mis_cli/*.py agentops_mis_core/*.py agentops_mis_runtime/*.py scripts/*.py",
             *verification_commands,
         ][:12]
         if not body.get("test_status"):
@@ -22839,7 +22768,7 @@ def run_customer_worker_task_workflow(conn, body: dict) -> tuple[dict, int]:
     call_id = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d%H%M%S%f")
     worker_agent_id = body.get("worker_agent_id") or stable_id("agt_customer_worker", adapter, call_id, uuid.uuid4().hex[:8])
     connector_id = runtime_connector_for_adapter(adapter)
-    connector_trust = runtime_connector_trust(conn, connector_id)
+    connector_trust = runtime_connector_trust(conn, connector_id, refresh_connectors=refresh_runtime_connectors)
     adapter_readiness = (worker_adapter_readiness(conn).get("adapters") or {}).get(adapter) or {}
     manifest_governance = ((adapter_readiness.get("capability_manifest") or {}).get("governance") or {})
     if adapter in {"hermes", "openclaw"} and confirm_run and connector_trust and connector_trust.get("trust_status") == "blocked":

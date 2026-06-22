@@ -460,6 +460,6 @@ python3 scripts/commander_work_package_dispatch_smoke.py
 AGENTOPS_BASE_URL=http://127.0.0.1:8787 python3 scripts/local_coding_project_template_smoke.py
 python3 scripts/commander_work_package_batch_dispatch_smoke.py
 python3 scripts/commander_work_package_synthesis_smoke.py
-python3 -m py_compile server.py agentops_mis_cli/*.py agentops_mis_runtime/*.py scripts/*.py
+python3 -m py_compile server.py agentops_mis_cli/*.py agentops_mis_core/*.py agentops_mis_runtime/*.py scripts/*.py
 cd ui/start-building-app && npm run build
 ```

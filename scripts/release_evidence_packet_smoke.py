@@ -30,7 +30,7 @@ SECRET_PATTERNS = [
 TEST_COMMANDS = [
     {
         "id": "syntax_diff",
-        "command": "python3 -m py_compile server.py agentops_mis_cli/*.py agentops_mis_runtime/*.py scripts/*.py && git diff --check",
+        "command": "python3 -m py_compile server.py agentops_mis_cli/*.py agentops_mis_core/*.py agentops_mis_runtime/*.py scripts/*.py && git diff --check",
         "summary": "Python syntax, CLI/script importability and whitespace diff hygiene.",
         "ci_step": "Syntax and diff checks",
     },
@@ -73,7 +73,13 @@ TEST_COMMANDS = [
     {
         "id": "module_boundary",
         "command": "python3 scripts/module_boundary_smoke.py",
-        "summary": "P1-05 strangler boundary gate for extracted runtime capability policy and connector registry helpers.",
+        "summary": "P1-05 strangler boundary gate for extracted runtime capability, connector registry, trust state and read-model cache helpers.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
+        "id": "read_model_cache",
+        "command": "python3 scripts/read_model_cache_smoke.py",
+        "summary": "Read-model cache scoped keying, hit/miss/bypass behavior, ledger read-only proof and token omission.",
         "ci_step": "Offline safety smokes",
     },
     {
@@ -406,7 +412,7 @@ def validate_test_commands(ci_text: str, failures: list[str]) -> list[dict[str, 
             for path in scripts:
                 require(path.relative_to(ROOT).as_posix() in ci_text, f"CI workflow does not run {path.relative_to(ROOT)}", failures)
         elif "py_compile" in command:
-            require("python3 -m py_compile server.py agentops_mis_cli/*.py agentops_mis_runtime/*.py scripts/*.py" in ci_text, "CI workflow missing py_compile command", failures)
+            require("python3 -m py_compile server.py agentops_mis_cli/*.py agentops_mis_core/*.py agentops_mis_runtime/*.py scripts/*.py" in ci_text, "CI workflow missing py_compile command", failures)
             require("git diff --check" in ci_text, "CI workflow missing git diff --check", failures)
         elif "npm run build" in command:
             require("npm run build" in ci_text and "ui/start-building-app" in ci_text, "CI workflow missing UI build command", failures)

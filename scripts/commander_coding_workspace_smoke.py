@@ -180,7 +180,7 @@ def main() -> int:
                     "risk_level": "medium",
                     "scope": "coding worktree, patch manifest, test log, verifier report, merge gate receipt",
                     "avoid_scope": "do not merge, push, store raw patch, or execute live runtime",
-                    "verification": ["git diff --check", "python3 -m py_compile server.py agentops_mis_cli/*.py agentops_mis_runtime/*.py scripts/*.py"],
+                    "verification": ["git diff --check", "python3 -m py_compile server.py agentops_mis_cli/*.py agentops_mis_core/*.py agentops_mis_runtime/*.py scripts/*.py"],
                 }],
             })
             transcripts.append(json.dumps(created, ensure_ascii=False))

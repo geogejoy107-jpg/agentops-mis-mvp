@@ -93,7 +93,7 @@ Useful checks:
 
 ```bash
 git diff --check
-python3 -m py_compile server.py agentops_mis_cli/*.py agentops_mis_runtime/*.py scripts/*.py
+python3 -m py_compile server.py agentops_mis_cli/*.py agentops_mis_core/*.py agentops_mis_runtime/*.py scripts/*.py
 python3 scripts/worker_adapter_readiness_smoke.py
 python3 scripts/agentops_worker_status_smoke.py
 python3 scripts/agentops_doctor_smoke.py
