@@ -1,0 +1,125 @@
+name: Pixel Office Screenshots
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/pixel-office-screenshots.yml"
+      - "ui/start-building-app/src/app/components/pages/PixelOffice.tsx"
+      - "ui/start-building-app/src/app/components/pixel/**"
+      - "ui/start-building-app/scripts/capture-pixel-office-screenshots.mjs"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pixel-office-screenshots-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  capture:
+    name: Capture Pixel Office screenshots
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      AGENTOPS_DB_PATH: /tmp/agentops_pixel_screenshot.db
+      AGENTOPS_HOST: 127.0.0.1
+      AGENTOPS_PORT: "8787"
+      AGENTOPS_BASE_URL: http://127.0.0.1:8787
+      AGENTOPS_DEPLOYMENT_MODE: local
+      HERMES_ALLOW_REAL_RUN: "false"
+      HERMES_REQUIRE_CONFIRM_RUN: "true"
+      DIFY_ALLOW_REAL_UPLOAD: "false"
+      PIXEL_OFFICE_BASE_URL: http://127.0.0.1:4173
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: ui/start-building-app/package-lock.json
+
+      - name: Install UI and screenshot tooling
+        working-directory: ui/start-building-app
+        run: |
+          set -euo pipefail
+          npm ci
+          npm install --no-save --package-lock=false playwright@1.52.0
+          npx playwright install --with-deps chromium
+
+      - name: Start local MIS server
+        run: |
+          set -euo pipefail
+          python3 server.py --host 127.0.0.1 --port 8787 > "$RUNNER_TEMP/pixel-office-server.log" 2>&1 &
+          echo "$!" > "$RUNNER_TEMP/pixel-office-server.pid"
+          for attempt in $(seq 1 60); do
+            if curl -fsS "$AGENTOPS_BASE_URL/api/agent-gateway/status" >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/pixel-office-server.log"
+          exit 1
+
+      - name: Start Vite UI
+        working-directory: ui/start-building-app
+        run: |
+          set -euo pipefail
+          npm run dev -- --host 127.0.0.1 --port 4173 > "$RUNNER_TEMP/pixel-office-vite.log" 2>&1 &
+          echo "$!" > "$RUNNER_TEMP/pixel-office-vite.pid"
+          for attempt in $(seq 1 60); do
+            if curl -fsS "$PIXEL_OFFICE_BASE_URL/workspace/pixel-office" >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/pixel-office-vite.log"
+          exit 1
+
+      - name: Capture screenshots
+        working-directory: ui/start-building-app
+        env:
+          PIXEL_OFFICE_SCREENSHOT_DIR: ${{ runner.temp }}/pixel-office-screenshots
+        run: |
+          set -euo pipefail
+          node scripts/capture-pixel-office-screenshots.mjs
+          test -s "$PIXEL_OFFICE_SCREENSHOT_DIR/pixel-office-harvest-commons.png"
+          test -s "$PIXEL_OFFICE_SCREENSHOT_DIR/pixel-office-orbital-deck.png"
+          test -s "$PIXEL_OFFICE_SCREENSHOT_DIR/pixel-office-theme-gallery.png"
+
+      - name: Upload screenshot artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pixel-office-screenshots
+          path: ${{ runner.temp }}/pixel-office-screenshots
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Stop local processes
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/pixel-office-vite.pid" ]; then
+            kill "$(cat "$RUNNER_TEMP/pixel-office-vite.pid")" 2>/dev/null || true
+          fi
+          if [ -f "$RUNNER_TEMP/pixel-office-server.pid" ]; then
+            kill "$(cat "$RUNNER_TEMP/pixel-office-server.pid")" 2>/dev/null || true
+          fi
+
+      - name: Upload capture logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pixel-office-screenshot-logs
+          path: |
+            ${{ runner.temp }}/pixel-office-server.log
+            ${{ runner.temp }}/pixel-office-vite.log
+          if-no-files-found: ignore
