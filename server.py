@@ -77,6 +77,7 @@ from agentops_mis_core.agent_plans import (
     build_agent_plan_status_transition_required_response,
     build_agent_plan_verification,
     build_agent_plan_verification_failed_response,
+    build_run_start_rebind_forbidden_response,
     compute_agent_plan_hash,
     load_json_list_field,
     plan_ref_path,
@@ -7410,17 +7411,13 @@ def agent_gateway_start_run(conn, body) -> tuple[dict, int]:
                 "mismatches": mismatches,
                 "token_omitted": True,
             })
-            return {
-                "error": "run_start_rebind_forbidden",
-                "message": "Existing runs cannot be rebound to a different workspace, task, agent, agent_plan_id, or plan_hash.",
-                "run_id": run_id,
-                "existing_agent_plan_id": existing_run["agent_plan_id"],
-                "existing_plan_hash": existing_run["plan_hash"],
-                "requested_agent_plan_id": plan_binding["plan_id"],
-                "requested_plan_hash": plan_binding["plan_hash"],
-                "mismatches": mismatches,
-                "token_omitted": True,
-            }, 409
+            return build_run_start_rebind_forbidden_response(
+                existing_run,
+                run_id=run_id,
+                requested_agent_plan_id=plan_binding["plan_id"],
+                requested_plan_hash=plan_binding["plan_hash"],
+                mismatches=mismatches,
+            ), 409
     row = {
         "run_id": run_id,
         "workspace_id": ident["workspace_id"],

@@ -257,7 +257,8 @@ coverage for every external side-effect path.
   next-action helpers now live in
   `agentops_mis_core/approval_wall.py`; Agent Plan approval-decision,
   create-status, bound-approval-forbidden, transition-error, run-start gate,
-  contract, hash, path-scope, verification-result, pending-approval and approval-run helpers now live in
+  run-start rebind, contract, hash, path-scope, verification-result,
+  pending-approval and approval-run helpers now live in
   `agentops_mis_core/agent_plans.py`; worker status/fleet lane/health
   aggregation now lives in `agentops_mis_core/worker_fleet.py`; Commander
   work-package status/action/readback summary and project-board gate aggregation
@@ -269,9 +270,9 @@ coverage for every external side-effect path.
   repo-local daemon/process reads, provider calls and side-effect id
   construction, Approval Wall exact-once resume invocation/writes,
   route-level hash-mismatch audit writes, Agent Plan DB-backed memory/base
-  checks, run-start plan lookup/matching/approval/hash checks, stable approval
-  run ids/timestamps, verification persistence/status transitions and Commander
-  write workflows.
+  checks, run-start plan lookup/matching/approval/hash checks, rebind mismatch
+  calculation/audit writes, stable approval run ids/timestamps, verification
+  persistence/status transitions and Commander write workflows.
   Guarded by
   `scripts/module_boundary_smoke.py`, `docs/MODULE_BOUNDARY_PLAN.md`, and the
   existing runtime capability/readiness/trust plus read-model cache and worker

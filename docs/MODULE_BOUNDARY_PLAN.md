@@ -792,6 +792,37 @@ python3 scripts/agent_plan_integrity_smoke.py --base-url http://127.0.0.1:8787
 python3 scripts/run_start_plan_gate_smoke.py --base-url http://127.0.0.1:8787
 ```
 
+### Slice 27: Run-Start Rebind Response Projection
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/agent_plans.py`
+
+Moved out of `server.py`:
+
+- Run-start rebind-forbidden response projection
+- Existing/requested Agent Plan id and plan hash readback fields
+- Rebind mismatch list and token-omission proof
+
+Still owned by `server.py`:
+
+- HTTP routes
+- existing run lookup
+- expected/actual binding comparison
+- mismatch calculation
+- rebind-blocked audit writes
+- run insertion, runtime events, audit logs and commits
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/run_start_plan_gate_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/agent_plan_integrity_smoke.py --base-url http://127.0.0.1:8787
+```
+
 ## Next Candidate Slices
 
 - Continue P1-05 with small smoke-backed strangler slices only; prefer pure

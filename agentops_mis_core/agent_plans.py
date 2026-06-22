@@ -393,3 +393,24 @@ def build_agent_plan_run_hash_mismatch_response(*, plan_id: Any, stored_plan_has
         "current_plan_hash": current_plan_hash,
         "token_omitted": True,
     }
+
+
+def build_run_start_rebind_forbidden_response(
+    existing_run: Any,
+    *,
+    run_id: Any,
+    requested_agent_plan_id: Any,
+    requested_plan_hash: Any,
+    mismatches: list[str],
+) -> dict[str, Any]:
+    return {
+        "error": "run_start_rebind_forbidden",
+        "message": "Existing runs cannot be rebound to a different workspace, task, agent, agent_plan_id, or plan_hash.",
+        "run_id": run_id,
+        "existing_agent_plan_id": row_field(existing_run, "agent_plan_id"),
+        "existing_plan_hash": row_field(existing_run, "plan_hash"),
+        "requested_agent_plan_id": requested_agent_plan_id,
+        "requested_plan_hash": requested_plan_hash,
+        "mismatches": mismatches,
+        "token_omitted": True,
+    }
