@@ -317,3 +317,7 @@ liveApi.ts                        > 2.2k lines
 - `agentops operator loop-audit` 的 RECORD evidence 必须包含 handoff、
   self-check、advance preview 和 `advance-loop --confirm-advance` readback
   来源，避免控制推荐只存在于 CLI 输出而不进入审计视图。
+- `/workspace/agents` 的 Operator Command Center 必须把
+  `operatorHealth.control_summary` / `operatorHealth.loop_control` 作为一等
+  可视化证据展示，包括当前 selected gate、control mode、human/receipt
+  requirement、readback source 和 post-receipt cache refresh 状态。

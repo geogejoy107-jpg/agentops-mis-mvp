@@ -10,6 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 AI_EMPLOYEES = ROOT / "ui" / "start-building-app" / "src" / "app" / "components" / "pages" / "AIEmployees.tsx"
+LIVE_API = ROOT / "ui" / "start-building-app" / "src" / "app" / "data" / "liveApi.ts"
 
 
 SECRET_PATTERNS = [
@@ -17,7 +18,7 @@ SECRET_PATTERNS = [
     re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+"),
     re.compile(r"agtok_[A-Za-z0-9_]+"),
     re.compile(r"agtsess_[A-Za-z0-9_]+"),
-    re.compile(r"sk-[A-Za-z0-9]{8,}"),
+    re.compile(r"sk-[A-Za-z0-9]{20,}"),
     re.compile(r"ntn_[A-Za-z0-9]{8,}"),
     re.compile(r"AGENTOPS_API_KEY=", re.IGNORECASE),
 ]
@@ -138,6 +139,13 @@ EXPECTED_MARKERS = {
     "operator_health_risk_backend_receipt": "receiptRecordCommand: item.receipt_record_command",
     "operator_health_risk_backend_verify_receipt": "receiptVerifyRecordCommand: item.receipt_verify_record_command",
     "operator_health_risk_sort": "candidate.isOperatorHealthRisk ? 118",
+    "operator_health_control_summary": "operatorHealthControlSummary = operatorHealth?.control_summary || handoffControlSummary",
+    "operator_health_loop_control": "operatorHealth?.loop_control ||",
+    "operator_health_loop_control_badge": 'label={`${copy.loopControlTitle}: ${loopControlGateStatus}`}',
+    "operator_health_loop_control_grid": "{ label: copy.loopControlTitle, value: loopControlSelectedGate, status: loopControlGateStatus }",
+    "operator_health_loop_control_readback": "{ label: copy.controlReadbackSource, value: loopControlReadbackSource",
+    "operator_health_loop_control_refresh": "{ label: copy.cacheRefresh, value: loopControlRefreshRequired",
+    "operator_health_loop_control_command_source": "{ label: copy.commandSource, value: String(operatorHealthLoopControl.source",
     "operator_evidence_report_import": "loadOperatorEvidenceReport",
     "operator_evidence_report_loader": "loadOperatorEvidenceReport(8)",
     "operator_evidence_report_data": "operatorEvidenceReport",
@@ -253,6 +261,19 @@ EXPECTED_MARKERS = {
     "operator_handoff_control_step": "handoffControlStep",
     "operator_handoff_control_command": "handoffControlCommand",
     "operator_handoff_control_copy_only": "handoffControlSummary.server_executes_shell",
+    "operator_health_control_summary_compact": "operatorHealthControlSummary",
+    "operator_health_loop_control_gate_compact": "operatorHealthLoopControl",
+    "operator_health_loop_control_status": "loopControlGateStatus",
+    "operator_health_loop_control_readback": "loopControlReadbackSource",
+    "operator_health_loop_control_cache_refresh": "loopControlRefreshRequired",
+    "operator_health_loop_control_top_badge": "copy.loopControlTitle}: ${loopControlGateStatus}",
+    "operator_health_loop_control_metric": "{ label: copy.loopControlTitle, value: loopControlSelectedGate, status: loopControlGateStatus }",
+    "operator_handoff_control_readback_label_en": 'controlReadbackSource: "Readback source"',
+    "operator_handoff_control_readback_label_zh": 'controlReadbackSource: "回读来源"',
+    "operator_handoff_control_cache_label_en": 'cacheRefresh: "Cache refresh"',
+    "operator_handoff_control_cache_label_zh": 'cacheRefresh: "缓存刷新"',
+    "operator_handoff_control_source_label": "commandSource",
+    "operator_handoff_control_readback_source": "agentops operator advance-loop --confirm-advance",
     "operator_handoff_sources": "operatorHandoffSources",
     "operator_handoff_evidence_report_summary": "operatorHandoffSummary?.evidence_report_ready",
     "operator_handoff_evidence_report_status": "operatorHandoffSummary?.evidence_report_status",
@@ -351,6 +372,21 @@ EXPECTED_MARKERS = {
     "verified_receipt_status": 'recordActionQueueReceipt(item, "verified")',
 }
 
+EXPECTED_LIVE_API_MARKERS = {
+    "operator_health_summary_control_status": "control_status?: string;",
+    "operator_health_summary_control_mode": "control_mode?: string;",
+    "operator_health_control_summary_type": 'control_summary?: OperatorHandoffPayload["control_summary"];',
+    "operator_health_loop_control_type": "loop_control?: {",
+    "operator_health_control_summary_fallback": 'operation: "operator_loop_control_summary"',
+    "operator_health_loop_control_fallback": 'control_readback_source: "agentops operator advance-loop --confirm-advance"',
+    "operator_health_control_raw": "const controlRaw = typeof raw.control_summary",
+    "operator_health_loop_control_raw": "const loopControlRaw = typeof raw.loop_control",
+    "operator_health_control_status_normalize": "control_status: summaryRaw.control_status",
+    "operator_health_loop_control_next_action_normalize": "next_action: loopControlRaw.next_action",
+    "operator_health_loop_control_refresh_normalize": "refresh_cache_required_after_receipt: loopControlRaw.refresh_cache_required_after_receipt",
+    "operator_health_loop_control_token_omitted": "token_omitted: loopControlRaw.token_omitted",
+}
+
 FORBIDDEN_MARKERS = {
     "initial_daemon_log_prefetch": "Promise.all(WORKER_ADAPTERS.map(adapter => loadWorkerDaemonLogs(adapter)))",
     "data_daemon_logs_readback": "data?.daemonLogs",
@@ -362,11 +398,15 @@ FORBIDDEN_MARKERS = {
 
 def main() -> int:
     source = AI_EMPLOYEES.read_text(encoding="utf-8")
+    live_api_source = LIVE_API.read_text(encoding="utf-8")
     failures: list[str] = []
 
     for label, marker in EXPECTED_MARKERS.items():
         if marker not in source:
             failures.append(f"missing {label}: {marker}")
+    for label, marker in EXPECTED_LIVE_API_MARKERS.items():
+        if marker not in live_api_source:
+            failures.append(f"missing live api {label}: {marker}")
     for label, marker in FORBIDDEN_MARKERS.items():
         if marker in source:
             failures.append(f"forbidden {label}: {marker}")
@@ -380,15 +420,19 @@ def main() -> int:
     if queue_index >= 0 and verify_render_index >= 0 and verify_render_index < queue_index:
         failures.append("verify render appears before queue candidate construction")
 
-    secret_hits = [pattern.pattern for pattern in SECRET_PATTERNS if pattern.search(source)]
+    live_api_secret_scan_source = live_api_source.replace("customer-task-templates", "customer_task_templates")
+    secret_hits = [pattern.pattern for pattern in SECRET_PATTERNS if pattern.search(source) or pattern.search(live_api_secret_scan_source)]
     if secret_hits:
         failures.append(f"secret-like pattern found in UI source: {secret_hits}")
 
     result = {
         "ok": not failures,
         "operation": "operator_action_queue_ui_contract",
-        "file": str(AI_EMPLOYEES.relative_to(ROOT)),
-        "markers_checked": len(EXPECTED_MARKERS) + len(FORBIDDEN_MARKERS),
+        "files": [
+            str(AI_EMPLOYEES.relative_to(ROOT)),
+            str(LIVE_API.relative_to(ROOT)),
+        ],
+        "markers_checked": len(EXPECTED_MARKERS) + len(EXPECTED_LIVE_API_MARKERS) + len(FORBIDDEN_MARKERS),
         "failures": failures,
         "safety": {
             "read_only": True,

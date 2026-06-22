@@ -670,6 +670,9 @@ export function AIEmployees() {
       loopControlSummary: "Next safe control step derived from execution-chain status, receipt proof, and bounded runner policy.",
       recommendedStep: "Recommended step",
       controlMode: "Control mode",
+      controlReadbackSource: "Readback source",
+      cacheRefresh: "Cache refresh",
+      commandSource: "Command source",
       humanRequired: "Human required",
       evaluationContract: "Evaluation contract",
       auditContract: "Audit contract",
@@ -1151,6 +1154,9 @@ export function AIEmployees() {
       loopControlSummary: "由执行链状态、收据证明和受限 runner 策略推导出的下一步安全控制动作。",
       recommendedStep: "推荐步骤",
       controlMode: "控制模式",
+      controlReadbackSource: "回读来源",
+      cacheRefresh: "缓存刷新",
+      commandSource: "命令来源",
       humanRequired: "需要人工",
       evaluationContract: "评估契约",
       auditContract: "审计契约",
@@ -1892,6 +1898,25 @@ export function AIEmployees() {
   const handoffControlCommand = String(handoffControlSummary?.next_command || handoffControlStep.command || "");
   const handoffControlVerifyCommand = String(handoffControlSummary?.verify_command || handoffControlStep.verify_command || "");
   const handoffControlReceiptCommand = String(handoffControlSummary?.receipt_command || handoffControlStep.receipt_command || "");
+  const operatorHealthControlSummary = operatorHealth?.control_summary || handoffControlSummary;
+  const operatorHealthLoopControl = (
+    operatorHealth?.loop_control ||
+    operatorHandoff?.loop_health?.gates?.loop_control ||
+    operatorLoopSelfCheck?.gates?.loop_control ||
+    {}
+  ) as Record<string, unknown>;
+  const loopControlGateStatus = String(operatorHealthLoopControl.status || operatorHealthControlSummary?.status || "unknown");
+  const loopControlGateMode = String(operatorHealthLoopControl.mode || operatorHealthControlSummary?.mode || "unknown");
+  const loopControlSelectedGate = String(operatorHealthLoopControl.selected_gate || operatorHealthControlSummary?.selected_gate || "—");
+  const loopControlNextAction = String(operatorHealthLoopControl.next_action || operatorHealthControlSummary?.next_command || "");
+  const loopControlVerifyAction = String(operatorHealthLoopControl.verify_command || operatorHealthControlSummary?.verify_command || "");
+  const loopControlReceiptAction = String(operatorHealthLoopControl.receipt_command || operatorHealthControlSummary?.receipt_command || "");
+  const loopControlReadbackSource = String(operatorHealthLoopControl.control_readback_source || "agentops operator advance-loop --confirm-advance");
+  const loopControlRefreshRequired = Boolean(operatorHealthLoopControl.refresh_cache_required_after_receipt);
+  const loopControlCopyOnly = operatorHealthLoopControl.copy_only === undefined ? Boolean(operatorHealthControlSummary?.copy_only) : Boolean(operatorHealthLoopControl.copy_only);
+  const loopControlServerShell = Boolean(operatorHealthLoopControl.server_executes_shell || operatorHealthLoopControl.server_shell_execution || operatorHealthControlSummary?.server_executes_shell);
+  const loopControlRequiresHuman = operatorHealthLoopControl.requires_human === undefined ? Boolean(operatorHealthControlSummary?.requires_human) : Boolean(operatorHealthLoopControl.requires_human);
+  const loopControlRequiresReceipt = operatorHealthLoopControl.requires_receipt === undefined ? Boolean(operatorHealthControlSummary?.requires_receipt) : Boolean(operatorHealthLoopControl.requires_receipt);
   const operatorHandoffSources = operatorHandoff?.sources || {};
   const operatorHandoffJson = operatorHandoff ? JSON.stringify({
     summary: operatorHandoff.summary,
@@ -3549,6 +3574,17 @@ export function AIEmployees() {
                 {copy.operatorHealthSummary} · {copy.healthScore}: {operatorHealth.score}/100 · {copy.healthRisks}: {operatorHealth.risks.length}
               </p>
             )}
+            {operatorHealthControlSummary && (
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                <StatusBadge status={loopControlGateStatus} label={`${copy.loopControlTitle}: ${loopControlGateStatus}`} />
+                <StatusBadge status={loopControlServerShell ? "blocked" : "pass"} label={loopControlCopyOnly ? copy.readOnlyProof : "server shell"} />
+                <StatusBadge status={loopControlRequiresHuman ? "attention" : "pass"} label={`${copy.humanRequired}: ${loopControlRequiresHuman ? copy.yes : copy.no}`} />
+                <StatusBadge status={loopControlRequiresReceipt ? "attention" : "pass"} label={`${copy.receiptProof}: ${loopControlRequiresReceipt ? copy.receiptNeeded : copy.verifiedReceipts}`} />
+                <span className="text-[10px] px-2 py-1 rounded max-w-full truncate" style={{ color: "var(--mis-muted)", background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                  {copy.controlMode}: {loopControlGateMode} · {copy.recommendedStep}: {loopControlSelectedGate}
+                </span>
+              </div>
+            )}
             {fleetHealth?.contract && (
               <p className="text-[10px] mt-1 max-w-3xl" style={{ color: "var(--mis-muted)" }}>
                 {copy.contract}: {fleetHealth.contract}
@@ -3561,9 +3597,10 @@ export function AIEmployees() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 mt-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-7 gap-3 mt-4">
           {[
             { label: copy.operatorHealthTitle, value: `${operatorHealth?.score ?? 0}/100`, status: operatorHealth?.status || "unknown" },
+            { label: copy.loopControlTitle, value: loopControlSelectedGate, status: loopControlGateStatus },
             { label: copy.overallFleetHealth, value: fleetHealth?.overall || workerStatus?.status || "—", status: fleetHealth?.overall || workerStatus?.status || "unknown" },
             { label: copy.daemonStatus, value: `${runningDaemons}/${workerStatus?.daemons?.length ?? 0}`, status: runningDaemons > 0 ? "running" : "ready" },
             { label: copy.pendingTasks, value: workerStatus?.pending_worker_tasks ?? "—", status: (workerStatus?.pending_worker_tasks || 0) > 0 ? "planned" : "pass" },
@@ -4285,6 +4322,22 @@ export function AIEmployees() {
                           {handoffControlSummary.requires_human ? copy.confirmRequired : copy.readyReason}: {String(handoffControlStep.reason || handoffControlSummary.selected_status)}
                         </div>
                       )}
+                      <div className="grid grid-cols-2 xl:grid-cols-4 gap-1.5 mt-2">
+                        {[
+                          { label: copy.controlReadbackSource, value: loopControlReadbackSource, status: loopControlReadbackSource.includes("advance-loop") ? "pass" : "attention" },
+                          { label: copy.cacheRefresh, value: loopControlRefreshRequired ? copy.yes : copy.no, status: loopControlRefreshRequired ? "attention" : "pass" },
+                          { label: copy.commandSource, value: String(operatorHealthLoopControl.source || "operator_handoff.control_summary"), status: "pass" },
+                          { label: copy.receiptProof, value: loopControlRequiresReceipt ? copy.receiptNeeded : copy.verifiedReceipts, status: loopControlRequiresReceipt ? "attention" : "pass" },
+                        ].map((item) => (
+                          <div key={item.label} className="rounded px-2 py-1" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                            <div className="text-[8px]" style={{ color: "var(--mis-muted)" }}>{item.label}</div>
+                            <div className="flex items-center justify-between gap-1 mt-0.5">
+                              <div className="text-[9px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{item.value}</div>
+                              <StatusBadge status={item.status} />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                     <div className="flex flex-wrap gap-1 shrink-0">
                       {handoffControlCommand && (

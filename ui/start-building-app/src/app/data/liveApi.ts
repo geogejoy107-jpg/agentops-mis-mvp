@@ -1889,8 +1889,34 @@ export interface OperatorHealthPayload {
     worker_fleet_status?: string;
     security_status?: string;
     local_readiness_status?: string;
+    control_status?: string;
+    control_mode?: string;
+    control_selected_gate?: string | null;
+    control_requires_human?: boolean;
+    control_requires_receipt?: boolean;
   };
   components: OperatorHealthComponent[];
+  control_summary?: OperatorHandoffPayload["control_summary"];
+  loop_control?: {
+    status: string;
+    source?: string;
+    mode?: string;
+    recommended_step?: string;
+    recommended_step_status?: string;
+    selected_gate?: string | null;
+    selected_status?: string | null;
+    next_action?: string | null;
+    verify_command?: string | null;
+    receipt_command?: string | null;
+    requires_human?: boolean;
+    requires_receipt?: boolean;
+    copy_only?: boolean;
+    server_executes_shell?: boolean;
+    server_shell_execution?: boolean;
+    refresh_cache_required_after_receipt?: boolean;
+    control_readback_source?: string;
+    token_omitted?: boolean;
+  };
   risks: {
     id: string;
     severity: string;
@@ -5310,6 +5336,29 @@ export async function loadOperatorHealth(limit = 12, loopId = ""): Promise<Opera
     loop_id: loopId || null,
     summary: {},
     components: [],
+    control_summary: {
+      operation: "operator_loop_control_summary",
+      status: "unavailable",
+      mode: "read_only_copy",
+      recommended_step: {},
+      next_command: null,
+      verify_command: null,
+      receipt_command: null,
+      requires_human: false,
+      requires_receipt: false,
+      server_executes_shell: false,
+      copy_only: true,
+      token_omitted: true,
+    },
+    loop_control: {
+      status: "unknown",
+      mode: "read_only_copy",
+      next_action: "agentops operator handoff --limit 12",
+      copy_only: true,
+      server_executes_shell: false,
+      control_readback_source: "agentops operator advance-loop --confirm-advance",
+      token_omitted: true,
+    },
     risks: [],
     next_actions: ["agentops operator health --limit 12"],
     sources: {},
@@ -5334,6 +5383,8 @@ export async function loadOperatorHealth(limit = 12, loopId = ""): Promise<Opera
   const summaryRaw = typeof raw.summary === "object" && raw.summary !== null ? raw.summary as Record<string, unknown> : {};
   const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
   const authRaw = typeof raw.auth === "object" && raw.auth !== null ? raw.auth as Record<string, unknown> : {};
+  const controlRaw = typeof raw.control_summary === "object" && raw.control_summary !== null ? raw.control_summary as Record<string, unknown> : {};
+  const loopControlRaw = typeof raw.loop_control === "object" && raw.loop_control !== null ? raw.loop_control as Record<string, unknown> : {};
   return {
     provider: String(raw.provider || "agentops-operator"),
     operation: String(raw.operation || "operator_health"),
@@ -5352,6 +5403,11 @@ export async function loadOperatorHealth(limit = 12, loopId = ""): Promise<Opera
       worker_fleet_status: summaryRaw.worker_fleet_status ? String(summaryRaw.worker_fleet_status) : undefined,
       security_status: summaryRaw.security_status ? String(summaryRaw.security_status) : undefined,
       local_readiness_status: summaryRaw.local_readiness_status ? String(summaryRaw.local_readiness_status) : undefined,
+      control_status: summaryRaw.control_status ? String(summaryRaw.control_status) : undefined,
+      control_mode: summaryRaw.control_mode ? String(summaryRaw.control_mode) : undefined,
+      control_selected_gate: summaryRaw.control_selected_gate ? String(summaryRaw.control_selected_gate) : null,
+      control_requires_human: summaryRaw.control_requires_human === undefined ? undefined : boolValue(summaryRaw.control_requires_human),
+      control_requires_receipt: summaryRaw.control_requires_receipt === undefined ? undefined : boolValue(summaryRaw.control_requires_receipt),
     },
     components: asArray<Record<string, unknown>>(raw.components).map((item) => ({
       id: String(item.id || ""),
@@ -5362,6 +5418,45 @@ export async function loadOperatorHealth(limit = 12, loopId = ""): Promise<Opera
       summary: item.summary ? String(item.summary) : undefined,
       next_action: item.next_action ? String(item.next_action) : undefined,
     })).filter((item) => item.id),
+    control_summary: {
+      operation: String(controlRaw.operation || "operator_loop_control_summary"),
+      status: String(controlRaw.status || "unknown"),
+      mode: controlRaw.mode ? String(controlRaw.mode) : undefined,
+      loop_id: controlRaw.loop_id ? String(controlRaw.loop_id) : null,
+      recommended_step: typeof controlRaw.recommended_step === "object" && controlRaw.recommended_step !== null ? controlRaw.recommended_step as Record<string, unknown> : {},
+      next_command: controlRaw.next_command ? String(controlRaw.next_command) : null,
+      verify_command: controlRaw.verify_command ? String(controlRaw.verify_command) : null,
+      receipt_command: controlRaw.receipt_command ? String(controlRaw.receipt_command) : null,
+      requires_human: controlRaw.requires_human === undefined ? undefined : boolValue(controlRaw.requires_human),
+      requires_receipt: controlRaw.requires_receipt === undefined ? undefined : boolValue(controlRaw.requires_receipt),
+      server_executes_shell: controlRaw.server_executes_shell === undefined ? undefined : boolValue(controlRaw.server_executes_shell),
+      copy_only: controlRaw.copy_only === undefined ? undefined : boolValue(controlRaw.copy_only),
+      step_counts: typeof controlRaw.step_counts === "object" && controlRaw.step_counts !== null ? controlRaw.step_counts as Record<string, number> : {},
+      selected_gate: controlRaw.selected_gate ? String(controlRaw.selected_gate) : null,
+      selected_status: controlRaw.selected_status ? String(controlRaw.selected_status) : null,
+      policy_id: controlRaw.policy_id ? String(controlRaw.policy_id) : undefined,
+      token_omitted: controlRaw.token_omitted === undefined ? undefined : boolValue(controlRaw.token_omitted),
+    },
+    loop_control: {
+      status: String(loopControlRaw.status || "unknown"),
+      source: loopControlRaw.source ? String(loopControlRaw.source) : undefined,
+      mode: loopControlRaw.mode ? String(loopControlRaw.mode) : undefined,
+      recommended_step: loopControlRaw.recommended_step ? String(loopControlRaw.recommended_step) : undefined,
+      recommended_step_status: loopControlRaw.recommended_step_status ? String(loopControlRaw.recommended_step_status) : undefined,
+      selected_gate: loopControlRaw.selected_gate ? String(loopControlRaw.selected_gate) : null,
+      selected_status: loopControlRaw.selected_status ? String(loopControlRaw.selected_status) : null,
+      next_action: loopControlRaw.next_action ? String(loopControlRaw.next_action) : null,
+      verify_command: loopControlRaw.verify_command ? String(loopControlRaw.verify_command) : null,
+      receipt_command: loopControlRaw.receipt_command ? String(loopControlRaw.receipt_command) : null,
+      requires_human: loopControlRaw.requires_human === undefined ? undefined : boolValue(loopControlRaw.requires_human),
+      requires_receipt: loopControlRaw.requires_receipt === undefined ? undefined : boolValue(loopControlRaw.requires_receipt),
+      copy_only: loopControlRaw.copy_only === undefined ? undefined : boolValue(loopControlRaw.copy_only),
+      server_executes_shell: loopControlRaw.server_executes_shell === undefined ? undefined : boolValue(loopControlRaw.server_executes_shell),
+      server_shell_execution: loopControlRaw.server_shell_execution === undefined ? undefined : boolValue(loopControlRaw.server_shell_execution),
+      refresh_cache_required_after_receipt: loopControlRaw.refresh_cache_required_after_receipt === undefined ? undefined : boolValue(loopControlRaw.refresh_cache_required_after_receipt),
+      control_readback_source: loopControlRaw.control_readback_source ? String(loopControlRaw.control_readback_source) : undefined,
+      token_omitted: loopControlRaw.token_omitted === undefined ? undefined : boolValue(loopControlRaw.token_omitted),
+    },
     risks: asArray<Record<string, unknown>>(raw.risks).map((item) => ({
       id: String(item.id || ""),
       severity: String(item.severity || "attention"),
