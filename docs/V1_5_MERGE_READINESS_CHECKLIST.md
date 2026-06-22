@@ -247,13 +247,17 @@ coverage for every external side-effect path.
   Runtime connector capability policy now lives in
   `agentops_mis_runtime/capabilities.py`, and runtime connector config/registry
   rows plus the upsert helper now live in `agentops_mis_runtime/connectors.py`;
+  runtime connector health snapshot to row-status projection now also lives in
+  `agentops_mis_runtime/connectors.py`;
   runtime connector trust state helpers now live in
   `agentops_mis_runtime/trust.py`; read-model cache behavior now lives in
   `agentops_mis_core/read_model_cache.py`; worker status/fleet lane/health
-  aggregation now lives in `agentops_mis_core/worker_fleet.py`; `server.py`
+  aggregation now lives in `agentops_mis_core/worker_fleet.py`; Commander
+  work-package status/action/readback summary aggregation now lives in
+  `agentops_mis_core/commander_work_packages.py`; `server.py`
   keeps HTTP routes, health probing, refresh orchestration, trust-route runtime
-  events, audit writes, endpoint auth checks, read-model producers and
-  repo-local daemon/process reads.
+  events, audit writes, endpoint auth checks, read-model producers,
+  repo-local daemon/process reads and Commander write workflows.
   Guarded by
   `scripts/module_boundary_smoke.py`, `docs/MODULE_BOUNDARY_PLAN.md`, and the
   existing runtime capability/readiness/trust plus read-model cache and worker

@@ -157,6 +157,38 @@ def runtime_connector_rows() -> list[dict]:
     return rows
 
 
+def runtime_connector_refresh_rows(status: dict | None = None, *, now: str | None = None) -> list[dict]:
+    """Return connector rows updated with a server-supplied health snapshot.
+
+    The server still owns collecting Hermes/Agnesfallback health and persisting
+    rows. This helper only applies the deterministic row-status projection.
+    """
+    rows = runtime_connector_rows()
+    if not status:
+        return rows
+    health_at = now or now_iso()
+    default_gateway = status.get("default_gateway") or {}
+    agnesfallback = status.get("agnesfallback") or {}
+    for row in rows:
+        connector_id = row.get("runtime_connector_id")
+        if connector_id == "rtc_hermes_default_gateway":
+            listening = bool(default_gateway.get("api_server_listening"))
+            row["status"] = "available" if listening else "unavailable"
+            row["last_health_at"] = health_at
+            row["last_error"] = default_gateway.get("last_error")
+        elif connector_id == "rtc_agnesfallback_cli":
+            binary_exists = bool(agnesfallback.get("binary_exists"))
+            row["status"] = "available" if binary_exists else "unavailable"
+            row["last_health_at"] = health_at
+            row["last_error"] = None if binary_exists else "AGNESFALLBACK_BIN not found."
+        elif connector_id == "rtc_agnesfallback_openai_api":
+            api_listening = bool(agnesfallback.get("api_server_listening"))
+            row["status"] = "available" if api_listening else "unavailable"
+            row["last_health_at"] = health_at
+            row["last_error"] = None if api_listening else "Agnesfallback OpenAI-compatible API is not listening."
+    return rows
+
+
 def upsert_runtime_connector(conn, row: dict) -> None:
     before = conn.execute("SELECT * FROM runtime_connectors WHERE runtime_connector_id=?", (row["runtime_connector_id"],)).fetchone()
     if before:

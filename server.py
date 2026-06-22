@@ -34,6 +34,11 @@ from urllib.parse import parse_qs, unquote, urlparse
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
+from agentops_mis_core.commander_work_packages import (
+    build_commander_work_packages_readback,
+    commander_work_package_next_action,
+    commander_work_package_status,
+)
 from agentops_mis_core.read_model_cache import ReadModelCache
 from agentops_mis_core.worker_fleet import (
     build_worker_fleet_view,
@@ -50,6 +55,7 @@ from agentops_mis_runtime.connectors import (
     agnesfallback_cli_command,
     agnesfallback_config,
     hermes_runtime_config,
+    runtime_connector_refresh_rows,
     runtime_connector_rows,
     upsert_runtime_connector,
 )
@@ -9617,19 +9623,7 @@ def hermes_status() -> dict:
 
 def refresh_runtime_connectors(conn, status: dict | None = None):
     status = status or hermes_status()
-    for row in runtime_connector_rows():
-        if row["runtime_connector_id"] == "rtc_hermes_default_gateway":
-            row["status"] = "available" if status["default_gateway"]["api_server_listening"] else "unavailable"
-            row["last_health_at"] = now_iso()
-            row["last_error"] = status["default_gateway"]["last_error"]
-        elif row["runtime_connector_id"] == "rtc_agnesfallback_cli":
-            row["status"] = "available" if status["agnesfallback"]["binary_exists"] else "unavailable"
-            row["last_health_at"] = now_iso()
-            row["last_error"] = None if status["agnesfallback"]["binary_exists"] else "AGNESFALLBACK_BIN not found."
-        elif row["runtime_connector_id"] == "rtc_agnesfallback_openai_api":
-            row["status"] = "available" if status["agnesfallback"]["api_server_listening"] else "unavailable"
-            row["last_health_at"] = now_iso()
-            row["last_error"] = None if status["agnesfallback"]["api_server_listening"] else "Agnesfallback OpenAI-compatible API is not listening."
+    for row in runtime_connector_refresh_rows(status, now=now_iso()):
         upsert_runtime_connector(conn, row)
 
 
@@ -15020,32 +15014,6 @@ def commander_plan_id_from_task(task_id: str, description: str) -> str:
     return commander_safe_text(match.group(1), 120) if match else ""
 
 
-def commander_work_package_status(task: dict, latest_run: dict | None, evidence: dict) -> str:
-    if task.get("status") in {"failed", "blocked", "canceled"}:
-        return "blocked"
-    if task.get("status") in {"running", "waiting_approval"}:
-        return "still_running"
-    if task.get("status") == "completed":
-        return "ready_for_review" if (evidence.get("evaluations") or evidence.get("artifacts") or evidence.get("tool_calls")) else "needs_evidence"
-    if latest_run and latest_run.get("status") in {"failed", "blocked"}:
-        return "blocked"
-    return "planned"
-
-
-def commander_work_package_next_action(item: dict) -> str:
-    status = item.get("package_status")
-    if status == "planned":
-        return f"agentops commander dispatch-package --task-id {item.get('task_id')} --adapter mock"
-    if status == "still_running":
-        run_id = item.get("latest_run", {}).get("run_id") if item.get("latest_run") else ""
-        return f"agentops run get --run-id {run_id}" if run_id else "agentops commander inbox --bucket still_running"
-    if status == "ready_for_review":
-        return f"agentops task get --task-id {item.get('task_id')}"
-    if status == "blocked":
-        return "agentops commander inbox --bucket blocked --limit 5"
-    return "agentops commander board"
-
-
 def commander_work_package_from_task(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
     task = dict(row)
     description = task.get("description") or ""
@@ -15146,75 +15114,16 @@ def commander_work_packages_readback(conn: sqlite3.Connection, qs=None, headers=
     params.append(limit)
     rows = conn.execute(sql, params).fetchall()
     packages = [commander_work_package_from_task(conn, row) for row in rows]
-    if status_filter and status_filter != "all":
-        packages = [item for item in packages if item.get("package_status") == status_filter or item.get("status") == status_filter]
-    counts: dict[str, int] = {}
-    for item in packages:
-        key = item.get("package_status") or "unknown"
-        counts[key] = counts.get(key, 0) + 1
-    project_counts: dict[str, int] = {}
-    for item in packages:
-        key = item.get("project_id") or "unknown"
-        project_counts[key] = project_counts.get(key, 0) + 1
-    localization_recorded = sum(1 for item in packages if ((item.get("localization_gate") or {}).get("status") == "recorded"))
-    coding_recorded = sum(1 for item in packages if ((item.get("coding_evidence_gate") or {}).get("status") == "recorded"))
-    coding_partial = sum(1 for item in packages if ((item.get("coding_evidence_gate") or {}).get("status") == "partial"))
-    next_actions = []
-    for item in packages:
-        action = item.get("recommended_action")
-        if action and action not in next_actions:
-            next_actions.append(action)
-    if not next_actions:
-        next_actions = ["agentops commander plan --goal \"Describe the customer project\" --confirm-create"]
-    return {
-        "provider": "agentops-commander",
-        "operation": "work_packages_readback",
-        "status": "ready" if packages else "empty",
-        "workspace_id": workspace_id,
-        "filter": {
-            "project_id": project_id or None,
-            "plan_id": plan_id or None,
-            "status": status_filter,
-            "limit": limit,
-        },
-        "summary": {
-            "total": len(packages),
-            "by_status": counts,
-            "by_project": project_counts,
-            "localization": {
-                "artifact_type": COMMANDER_LOCALIZATION_ARTIFACT_TYPE,
-                "recorded": localization_recorded,
-                "missing": max(len(packages) - localization_recorded, 0),
-                "coverage_percent": round((localization_recorded / len(packages)) * 100, 1) if packages else 100.0,
-                "raw_content_omitted": True,
-                "snippets_omitted": True,
-                "token_omitted": True,
-            },
-            "coding_evidence": {
-                "artifact_types": list(COMMANDER_CODING_EVIDENCE_ARTIFACT_TYPES.values()),
-                "recorded": coding_recorded,
-                "partial": coding_partial,
-                "missing": max(len(packages) - coding_recorded - coding_partial, 0),
-                "coverage_percent": round((coding_recorded / len(packages)) * 100, 1) if packages else 100.0,
-                "raw_source_omitted": True,
-                "raw_patch_omitted": True,
-                "token_omitted": True,
-            },
-        },
-        "work_packages": packages,
-        "recommended_next_actions": next_actions[:8],
-        "safety": {
-            "read_only": True,
-            "ledger_mutated": False,
-            "task_created": False,
-            "run_created": False,
-            "live_execution_performed": False,
-            "token_omitted": True,
-            "raw_prompt_omitted": True,
-        },
-        "token_omitted": True,
-        "live_execution_performed": False,
-    }
+    return build_commander_work_packages_readback(
+        packages=packages,
+        workspace_id=workspace_id,
+        project_id=project_id,
+        plan_id=plan_id,
+        status_filter=status_filter,
+        limit=limit,
+        localization_artifact_type=COMMANDER_LOCALIZATION_ARTIFACT_TYPE,
+        coding_evidence_artifact_types=list(COMMANDER_CODING_EVIDENCE_ARTIFACT_TYPES.values()),
+    )
 
 
 def commander_dispatch_work_package(conn: sqlite3.Connection, task_id: str, body: dict, headers=None) -> tuple[dict, int]:

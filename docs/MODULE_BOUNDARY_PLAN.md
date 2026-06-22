@@ -111,6 +111,51 @@ Still owned by `server.py`:
 - runtime adapter readiness and Hermes/OpenClaw/OpenClaw-bin probing
 - fleet hygiene mutations, task release, enrollment revoke, runtime events and audit writes
 
+### Slice 5: Runtime Connector Refresh Projection
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_runtime/connectors.py`
+
+Moved out of `server.py`:
+
+- deterministic runtime connector health snapshot to row-status projection
+- Hermes default gateway availability/error projection
+- Agnesfallback CLI and OpenAI-compatible API availability/error projection
+- refresh health timestamp assignment for connector rows
+
+Still owned by `server.py`:
+
+- collecting Hermes/Agnesfallback health snapshots
+- HTTP runtime connector routes
+- SQLite upsert orchestration
+- trust update route, runtime events and audit writes
+- worker adapter readiness and live runtime gates
+
+### Slice 6: Commander Work-Package Read Models
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/commander_work_packages.py`
+
+Moved out of `server.py`:
+
+- Commander work-package status classification
+- Commander work-package recommended-action selection
+- work-package readback status/project/localization/coding-evidence summaries
+- read-only safety metadata and next-action aggregation for package readback
+
+Still owned by `server.py`:
+
+- HTTP routes
+- SQLite task/run/artifact/evidence queries
+- task description parsing and safe text redaction
+- work-package planning, dispatch, coding workspace, evidence recording and synthesis writes
+
 Verification:
 
 ```bash
@@ -121,12 +166,13 @@ python3 scripts/worker_adapter_readiness_smoke.py --base-url http://127.0.0.1:87
 python3 scripts/runtime_connector_trust_smoke.py --base-url http://127.0.0.1:8787
 python3 scripts/agentops_worker_status_smoke.py
 python3 scripts/agentops_worker_fleet_smoke.py --base-url http://127.0.0.1:8787
+python3 scripts/commander_work_package_plan_smoke.py
+python3 scripts/commander_work_package_dispatch_smoke.py
 ```
 
 ## Next Candidate Slices
 
-- Commander work-package read models.
 - Approval Wall prepared-action helpers.
-- Runtime connector refresh orchestration.
+- Commander project-board integration gate aggregation.
 
 Each candidate must be extracted in a separate, smoke-backed slice.

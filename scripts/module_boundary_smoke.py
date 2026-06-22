@@ -13,6 +13,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from agentops_mis_core.read_model_cache import ReadModelCache
+from agentops_mis_core.commander_work_packages import (
+    build_commander_work_packages_readback,
+    commander_work_package_next_action,
+    commander_work_package_status,
+)
 from agentops_mis_core.worker_fleet import (
     build_worker_fleet_view,
     build_worker_status_payload,
@@ -25,6 +30,7 @@ from agentops_mis_runtime.capabilities import (
     runtime_connector_public_row,
 )
 from agentops_mis_runtime.connectors import (
+    runtime_connector_refresh_rows,
     runtime_connector_rows,
     upsert_runtime_connector,
 )
@@ -40,6 +46,7 @@ CAPABILITIES = ROOT / "agentops_mis_runtime" / "capabilities.py"
 CONNECTORS = ROOT / "agentops_mis_runtime" / "connectors.py"
 TRUST = ROOT / "agentops_mis_runtime" / "trust.py"
 READ_MODEL_CACHE = ROOT / "agentops_mis_core" / "read_model_cache.py"
+COMMANDER_WORK_PACKAGES = ROOT / "agentops_mis_core" / "commander_work_packages.py"
 WORKER_FLEET = ROOT / "agentops_mis_core" / "worker_fleet.py"
 BACKLOG = ROOT / "docs" / "project" / "BACKLOG.md"
 PLAN = ROOT / "docs" / "MODULE_BOUNDARY_PLAN.md"
@@ -75,6 +82,7 @@ EXTRACTED_CONNECTOR_HELPERS = {
     "hermes_runtime_config",
     "agnesfallback_config",
     "agnesfallback_cli_command",
+    "runtime_connector_refresh_rows",
     "runtime_connector_rows",
     "upsert_runtime_connector",
 }
@@ -103,6 +111,16 @@ EXTRACTED_WORKER_FLEET_HELPERS = {
 SERVER_WORKER_FLEET_IMPORTS = {
     "build_worker_fleet_view",
     "build_worker_status_payload",
+}
+EXTRACTED_COMMANDER_WORK_PACKAGE_HELPERS = {
+    "build_commander_work_packages_readback",
+    "commander_work_package_next_action",
+    "commander_work_package_status",
+}
+SERVER_COMMANDER_WORK_PACKAGE_IMPORTS = {
+    "build_commander_work_packages_readback",
+    "commander_work_package_next_action",
+    "commander_work_package_status",
 }
 
 
@@ -151,13 +169,16 @@ def main() -> int:
     require(CONNECTORS.exists(), "runtime connector registry module missing", failures)
     require(TRUST.exists(), "runtime connector trust module missing", failures)
     require(READ_MODEL_CACHE.exists(), "read model cache core module missing", failures)
+    require(COMMANDER_WORK_PACKAGES.exists(), "commander work packages core module missing", failures)
     require(WORKER_FLEET.exists(), "worker fleet core module missing", failures)
     require("from agentops_mis_core.read_model_cache import ReadModelCache" in server_text, "server.py must import read model cache core module", failures)
+    require("from agentops_mis_core.commander_work_packages import" in server_text, "server.py must import commander work packages core module", failures)
     require("from agentops_mis_core.worker_fleet import" in server_text, "server.py must import worker fleet core module", failures)
     require("from agentops_mis_runtime.capabilities import" in server_text, "server.py must import runtime capability module", failures)
     require("from agentops_mis_runtime.connectors import" in server_text, "server.py must import runtime connector registry module", failures)
     require("from agentops_mis_runtime.trust import" in server_text, "server.py must import runtime connector trust module", failures)
     server_functions = function_names(SERVER)
+    commander_work_package_functions = function_names(COMMANDER_WORK_PACKAGES) if COMMANDER_WORK_PACKAGES.exists() else set()
     worker_fleet_functions = function_names(WORKER_FLEET) if WORKER_FLEET.exists() else set()
     for helper in sorted(EXTRACTED_HELPERS):
         require(helper not in server_functions, f"server.py still defines {helper}", failures)
@@ -168,6 +189,9 @@ def main() -> int:
     for helper in sorted(EXTRACTED_WORKER_FLEET_HELPERS):
         require(helper not in server_functions, f"server.py still defines {helper}", failures)
         require(helper in worker_fleet_functions, f"worker fleet module missing {helper}", failures)
+    for helper in sorted(EXTRACTED_COMMANDER_WORK_PACKAGE_HELPERS):
+        require(helper not in server_functions, f"server.py still defines {helper}", failures)
+        require(helper in commander_work_package_functions, f"commander work packages module missing {helper}", failures)
     require("worker_adapter_readiness" in server_functions, "worker_adapter_readiness must remain server-owned for runtime probing", failures)
     require("worker_adapter_readiness" not in worker_fleet_functions, "worker fleet module must not own runtime adapter probing", failures)
     for helper, sources in imported_symbol_sources(SERVER, SERVER_CAPABILITY_IMPORTS).items():
@@ -178,11 +202,14 @@ def main() -> int:
         require(sources == {"agentops_mis_runtime.trust"}, f"{helper} imported from wrong or multiple modules: {sorted(sources)}", failures)
     for helper, sources in imported_symbol_sources(SERVER, SERVER_WORKER_FLEET_IMPORTS).items():
         require(sources == {"agentops_mis_core.worker_fleet"}, f"{helper} imported from wrong or multiple modules: {sorted(sources)}", failures)
+    for helper, sources in imported_symbol_sources(SERVER, SERVER_COMMANDER_WORK_PACKAGE_IMPORTS).items():
+        require(sources == {"agentops_mis_core.commander_work_packages"}, f"{helper} imported from wrong or multiple modules: {sorted(sources)}", failures)
 
     imports = imported_modules(CAPABILITIES)
     connector_imports = imported_modules(CONNECTORS) if CONNECTORS.exists() else set()
     trust_imports = imported_modules(TRUST) if TRUST.exists() else set()
     read_model_cache_imports = imported_modules(READ_MODEL_CACHE) if READ_MODEL_CACHE.exists() else set()
+    commander_work_package_imports = imported_modules(COMMANDER_WORK_PACKAGES) if COMMANDER_WORK_PACKAGES.exists() else set()
     worker_fleet_imports = imported_modules(WORKER_FLEET) if WORKER_FLEET.exists() else set()
     forbidden = sorted(module for module in imports if module in FORBIDDEN_RUNTIME_MODULE_IMPORTS)
     require(not forbidden, f"runtime capability module imports forbidden app/runtime dependencies: {forbidden}", failures)
@@ -196,9 +223,13 @@ def main() -> int:
     cache_forbidden = sorted(module for module in read_model_cache_imports if module in {"sqlite3", "subprocess", "http.server", "urllib.request"})
     require(not cache_forbidden, f"read model cache module imports forbidden app/runtime dependencies: {cache_forbidden}", failures)
     require("server" not in read_model_cache_imports, "read model cache module must not import server module", failures)
+    commander_work_package_forbidden = sorted(module for module in commander_work_package_imports if module in {"sqlite3", "subprocess", "http.server", "urllib.request"})
+    require(not commander_work_package_forbidden, f"commander work packages module imports forbidden app/runtime dependencies: {commander_work_package_forbidden}", failures)
+    require("server" not in commander_work_package_imports, "commander work packages module must not import server module", failures)
     worker_fleet_forbidden = sorted(module for module in worker_fleet_imports if module in {"sqlite3", "subprocess", "http.server", "urllib.request"})
     require(not worker_fleet_forbidden, f"worker fleet module imports forbidden app/runtime dependencies: {worker_fleet_forbidden}", failures)
     require("server" not in worker_fleet_imports, "worker fleet module must not import server module", failures)
+    require('"rtc_hermes_default_gateway"' not in server_text[server_text.find("def refresh_runtime_connectors"):server_text.find("def run_hermes_probe")], "server.py refresh_runtime_connectors still owns connector-specific refresh policy", failures)
     for marker in sorted(READ_MODEL_CACHE_FORBIDDEN_SERVER_MARKERS):
         require(marker not in server_text, f"server.py still contains read-model cache implementation marker: {marker}", failures)
     require('"status": "hit"' in read_model_cache_text, "read model cache module missing hit metadata", failures)
@@ -224,6 +255,21 @@ def main() -> int:
     connector_ids = {row.get("runtime_connector_id") for row in connector_rows}
     require({"rtc_agent_gateway_local", "rtc_openclaw_local", "rtc_hermes_default_gateway", "rtc_agnesfallback_cli", "rtc_agnesfallback_openai_api"}.issubset(connector_ids), f"runtime connector rows missing expected IDs: {sorted(connector_ids)}", failures)
     require(all(row.get("capability_manifest_json") and row.get("capability_policy_hash") for row in connector_rows), "runtime connector rows missing manifest/hash", failures)
+    refreshed_rows = runtime_connector_refresh_rows({
+        "default_gateway": {
+            "api_server_listening": False,
+            "last_error": "Hermes API gateway is not listening.",
+        },
+        "agnesfallback": {
+            "binary_exists": True,
+            "api_server_listening": False,
+        },
+    }, now="2026-06-22T00:00:00+00:00")
+    refreshed_by_id = {row.get("runtime_connector_id"): row for row in refreshed_rows}
+    require(refreshed_by_id["rtc_hermes_default_gateway"]["status"] == "unavailable", "Hermes refresh status projection failed", failures)
+    require(refreshed_by_id["rtc_agnesfallback_cli"]["status"] == "available", "Agnesfallback CLI refresh status projection failed", failures)
+    require(refreshed_by_id["rtc_agnesfallback_openai_api"]["status"] == "unavailable", "Agnesfallback API refresh status projection failed", failures)
+    require(refreshed_by_id["rtc_hermes_default_gateway"]["last_health_at"] == "2026-06-22T00:00:00+00:00", "runtime connector refresh health timestamp failed", failures)
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     try:
@@ -355,6 +401,35 @@ def main() -> int:
     require(fleet_view.get("safety", {}).get("read_only") is True, "worker fleet view must remain read-only", failures)
     require(all(lane.get("token_omitted") is True and lane.get("session_id_omitted") is True for lane in fleet_view.get("lanes", [])), "worker fleet lanes missing omission proof", failures)
     require(health.get("recommended_actions"), "worker fleet health missing recommended actions", failures)
+    planned_task = {"task_id": "tsk_cmd_smoke_strategy", "status": "planned"}
+    completed_task = {"task_id": "tsk_cmd_smoke_qa", "status": "completed"}
+    require(commander_work_package_status(planned_task, None, {}) == "planned", "commander planned package status failed", failures)
+    require(commander_work_package_status(completed_task, None, {"artifacts": 1}) == "ready_for_review", "commander ready-for-review status failed", failures)
+    commander_item = {
+        "task_id": "tsk_cmd_smoke_strategy",
+        "project_id": "proj_cmd_smoke",
+        "status": "planned",
+        "package_status": "planned",
+        "localization_gate": {"status": "recorded"},
+        "coding_evidence_gate": {"status": "partial"},
+        "recommended_action": commander_work_package_next_action({"task_id": "tsk_cmd_smoke_strategy", "package_status": "planned"}),
+    }
+    commander_readback = build_commander_work_packages_readback(
+        packages=[commander_item],
+        workspace_id="local-demo",
+        project_id="proj_cmd_smoke",
+        plan_id="cmdplan_smoke",
+        status_filter="planned",
+        limit=5,
+        localization_artifact_type="commander_repo_map_localization",
+        coding_evidence_artifact_types=["commander_patch_manifest", "commander_test_log"],
+    )
+    require(commander_readback.get("operation") == "work_packages_readback", "commander readback operation mismatch", failures)
+    require(commander_readback.get("summary", {}).get("total") == 1, "commander readback summary total failed", failures)
+    require((commander_readback.get("summary", {}).get("localization") or {}).get("coverage_percent") == 100.0, "commander localization coverage failed", failures)
+    require((commander_readback.get("summary", {}).get("coding_evidence") or {}).get("partial") == 1, "commander coding evidence summary failed", failures)
+    require(commander_readback.get("safety", {}).get("read_only") is True, "commander readback must stay read-only", failures)
+    require(commander_readback.get("recommended_next_actions"), "commander readback missing next actions", failures)
 
     command = "python3 scripts/module_boundary_smoke.py"
     require(command in ci_text, "module boundary smoke missing from CI", failures)
@@ -364,18 +439,20 @@ def main() -> int:
     require("agentops_mis_runtime/connectors.py" in plan_text, "module boundary plan missing runtime connector module", failures)
     require("agentops_mis_runtime/trust.py" in plan_text, "module boundary plan missing runtime trust module", failures)
     require("agentops_mis_core/read_model_cache.py" in plan_text, "module boundary plan missing read model cache module", failures)
+    require("agentops_mis_core/commander_work_packages.py" in plan_text, "module boundary plan missing commander work packages module", failures)
     require("agentops_mis_core/worker_fleet.py" in plan_text, "module boundary plan missing worker fleet module", failures)
 
     output = {
         "ok": not failures,
         "operation": "module_boundary_smoke",
-        "boundary": "agentops_mis_runtime.capabilities+connectors+trust + agentops_mis_core.read_model_cache+worker_fleet",
+        "boundary": "agentops_mis_runtime.capabilities+connectors+trust + agentops_mis_core.read_model_cache+commander_work_packages+worker_fleet",
         "server_line_count": len(server_text.splitlines()),
         "module_imports": {
             "capabilities": sorted(imports),
             "connectors": sorted(connector_imports),
             "trust": sorted(trust_imports),
             "read_model_cache": sorted(read_model_cache_imports),
+            "commander_work_packages": sorted(commander_work_package_imports),
             "worker_fleet": sorted(worker_fleet_imports),
         },
         "live_execution_performed": False,
