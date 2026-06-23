@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import argparse
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -34,12 +35,16 @@ def load_json(proc: subprocess.CompletedProcess[str]) -> dict:
         return {}
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Smoke-test agentops doctor for local and scoped-token contexts.")
+    parser.add_argument("--base-url", default=os.environ.get("AGENTOPS_BASE_URL", "http://127.0.0.1:8787"))
+    args = parser.parse_args(argv)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
     agent_id = f"agt_doctor_smoke_{stamp}"
     with tempfile.TemporaryDirectory(prefix="agentops-doctor-") as tmp:
         env = os.environ.copy()
         env["AGENTOPS_CONFIG"] = str(Path(tmp) / "config.json")
+        env["AGENTOPS_BASE_URL"] = args.base_url
         env.pop("AGENTOPS_API_KEY", None)
         env.pop("AGENTOPS_AGENT_ID", None)
 
@@ -102,6 +107,7 @@ def main() -> int:
         )
         print(json.dumps({
             "ok": ok,
+            "base_url": args.base_url,
             "agent_id": agent_id,
             "token_id": token_id,
             "local_doctor_returncode": local_doctor.returncode,
