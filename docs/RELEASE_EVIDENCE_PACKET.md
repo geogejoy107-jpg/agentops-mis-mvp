@@ -152,10 +152,15 @@ Hermes/OpenClaw. Mock-only evidence must be described as CI/offline fallback,
 not as product-level completion.
 
 Server-backed commands, including
-`python3 scripts/local_coding_project_template_smoke.py`, require a running
-AgentOps MIS server selected by `AGENTOPS_BASE_URL`. The GitHub Actions backend
-suite starts an isolated `127.0.0.1:8787` server with a temporary SQLite
-database and live Hermes/OpenClaw/Dify/Notion disabled before running them.
+`python3 scripts/local_coding_project_template_smoke.py`,
+`python3 scripts/enrollment_launch_steps_smoke.py --base-url "$AGENTOPS_BASE_URL"`,
+and `python3 scripts/remote_launch_packet_worker_smoke.py --base-url "$AGENTOPS_BASE_URL"`,
+require a running AgentOps MIS server selected by `AGENTOPS_BASE_URL`. The
+GitHub Actions backend suite starts an isolated `127.0.0.1:8787` server with a
+temporary SQLite database and live Hermes/OpenClaw/Dify/Notion disabled before
+running them. The enrollment/remote-worker smokes prove that launch packets
+contain preview-first service-control commands, omit raw tokens, mint
+short-lived sessions, and can write scoped worker evidence.
 
 ### Clean-Machine RC
 

@@ -283,6 +283,18 @@ TEST_COMMANDS = [
         "ci_step": "Server-backed smoke suite",
     },
     {
+        "id": "enrollment_launch_steps",
+        "command": "python3 scripts/enrollment_launch_steps_smoke.py --base-url \"$AGENTOPS_BASE_URL\"",
+        "summary": "Enrollment create/rotate launch packets omit raw tokens and include installable worker, short-lived session, service-template/install/check and preview-first service-control commands.",
+        "ci_step": "Server-backed smoke suite",
+    },
+    {
+        "id": "remote_launch_packet_worker",
+        "command": "python3 scripts/remote_launch_packet_worker_smoke.py --base-url \"$AGENTOPS_BASE_URL\"",
+        "summary": "Remote launch packet environment can mint a short-lived session, run a scoped worker, and write run/tool/evaluation ledger evidence without token leakage.",
+        "ci_step": "Server-backed smoke suite",
+    },
+    {
         "id": "worker_fleet_hygiene",
         "command": "python3 scripts/worker_fleet_hygiene_smoke.py --base-url \"$AGENTOPS_BASE_URL\"",
         "summary": "Worker fleet hygiene can plan/apply stuck-task release and stale-enrollment revocation without leaking token IDs.",
