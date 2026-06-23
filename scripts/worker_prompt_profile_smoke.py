@@ -15,6 +15,7 @@ if str(ROOT) not in sys.path:
 from agentops_mis_cli.worker import build_task_prompt_bundle  # noqa: E402
 
 WORKER = ROOT / "agentops_mis_cli" / "worker.py"
+APPROVAL_WALL = ROOT / "agentops_mis_core" / "approval_wall.py"
 
 SECRET_PATTERNS = [
     re.compile(r"Authorization:", re.IGNORECASE),
@@ -92,6 +93,7 @@ def main() -> int:
         prompt_hash_markers += prompt.count("profile_hash=")
 
     worker_source = WORKER.read_text(encoding="utf-8")
+    approval_wall_source = APPROVAL_WALL.read_text(encoding="utf-8")
     source_markers = [
         "PROMPT_PROFILE_VERSION",
         "select_task_prompt_profile",
@@ -107,6 +109,8 @@ def main() -> int:
     ]
     for marker in source_markers:
         require(marker in worker_source, f"worker source missing marker: {marker}", failures)
+    for marker in ["prompt_profile_id", "prompt_profile_version", "prompt_profile_hash"]:
+        require(marker in approval_wall_source, f"approval wall safe metadata missing marker: {marker}", failures)
     require(worker_source.count('"prompt_profile_id": result.prompt_profile_id') >= 3, "tool/eval/audit profile metadata not wired from AdapterResult", failures)
     require(worker_source.count('"prompt_profile_id": prompt_profile.get("profile_id")') >= 2, "external-write prepared-action profile metadata missing", failures)
     require(prompt_hash_markers == len(cases), f"profile hash should appear once per generated prompt: {prompt_hash_markers}", failures)
@@ -118,6 +122,7 @@ def main() -> int:
         "ok": not failures,
         "profile_ids": profile_ids,
         "profile_count": len(set(profile_ids.values())),
+        "approval_wall_profile_metadata_safe": all(marker in approval_wall_source for marker in ["prompt_profile_id", "prompt_profile_version", "prompt_profile_hash"]),
         "source_markers_checked": len(source_markers),
         "failures": failures,
         "safety": {
