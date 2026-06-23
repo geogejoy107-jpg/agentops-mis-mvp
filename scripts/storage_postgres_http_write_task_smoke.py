@@ -54,6 +54,15 @@ GATEWAY_MEMORY_MISMATCH_ID = "mem_pg_gateway_mismatch"
 GATEWAY_APPROVED_MEMORY_ID = "mem_pg_gateway_approved_existing"
 GATEWAY_CROSS_WORKSPACE_MEMORY_ID = "mem_pg_gateway_cross_workspace_existing"
 GATEWAY_OTHER_AGENT_MEMORY_ID = "mem_pg_gateway_other_agent_existing"
+GATEWAY_APPROVAL_ID = "ap_pg_gateway_write"
+GATEWAY_READ_ONLY_APPROVAL_ID = "ap_pg_gateway_read_only_blocked"
+GATEWAY_NO_TOKEN_APPROVAL_ID = "ap_pg_gateway_no_token"
+GATEWAY_APPROVAL_MISMATCH_ID = "ap_pg_gateway_mismatch"
+GATEWAY_APPROVED_APPROVAL_ID = "ap_pg_gateway_approved_existing"
+GATEWAY_APPROVED_APPROVAL_TASK_ID = "tsk_pg_gateway_approved_approval_existing"
+GATEWAY_APPROVED_APPROVAL_RUN_ID = "run_pg_gateway_approved_approval_existing"
+GATEWAY_APPROVED_APPROVAL_TOOL_ID = "tc_pg_gateway_approved_approval_existing"
+GATEWAY_OTHER_RUN_TOOL_ID = "tc_pg_gateway_other_run_existing"
 GATEWAY_AUDIT_ACTION = "agent_gateway.postgres_audit_write"
 GATEWAY_READ_ONLY_AUDIT_ACTION = "agent_gateway.postgres_audit_read_only_blocked"
 GATEWAY_READ_ONLY_TASK_ID = "tsk_pg_gateway_read_only_blocked"
@@ -74,7 +83,6 @@ GATEWAY_NO_TOKEN_PLAN_ID = "plan_pg_gateway_no_token"
 GATEWAY_NO_TOKEN_MEMORY_ID = "mem_pg_gateway_no_token"
 GATEWAY_MISMATCH_MANIFEST_ID = "pem_pg_gateway_mismatch"
 GATEWAY_AUDIT_MISMATCH_TASK_ID = "tsk_pg_gateway_audit_wrong_task"
-GATEWAY_BLOCKED_APPROVAL_ID = "ap_pg_gateway_should_block"
 SMOKE_API_KEY = "postgres_write_smoke_required_api_key"
 
 
@@ -197,6 +205,99 @@ def seed_reference_rows(adapter: PostgresAdapter) -> None:
                 "updated_at": now,
             },
         )
+    adapter.execute(
+        """INSERT INTO tasks(task_id,workspace_id,title,description,requester_id,owner_agent_id,collaborator_agent_ids,status,priority,due_date,acceptance_criteria,risk_level,budget_limit_usd,created_at,updated_at)
+        VALUES(:task_id,:workspace_id,:title,:description,:requester_id,:owner_agent_id,:collaborator_agent_ids,:status,:priority,:due_date,:acceptance_criteria,:risk_level,:budget_limit_usd,:created_at,:updated_at)""",
+        {
+            "task_id": GATEWAY_APPROVED_APPROVAL_TASK_ID,
+            "workspace_id": GATEWAY_WORKSPACE_ID,
+            "title": "Seeded approved approval overwrite guard",
+            "description": "Existing approved approval must not be reset by approval request scope.",
+            "requester_id": "usr_customer_demo",
+            "owner_agent_id": GATEWAY_AGENT_ID,
+            "collaborator_agent_ids": "[]",
+            "status": "waiting_approval",
+            "priority": "high",
+            "due_date": None,
+            "acceptance_criteria": "Existing approval remains approved.",
+            "risk_level": "high",
+            "budget_limit_usd": 1.0,
+            "created_at": now,
+            "updated_at": now,
+        },
+    )
+    adapter.execute(
+        """INSERT INTO runs(run_id,workspace_id,task_id,agent_id,runtime_type,status,started_at,ended_at,duration_ms,input_summary,output_summary,model_provider,model_name,input_tokens,output_tokens,reasoning_tokens,cost_usd,error_type,error_message,trace_id,parent_run_id,delegation_id,approval_required,created_at)
+        VALUES(:run_id,:workspace_id,:task_id,:agent_id,:runtime_type,:status,:started_at,:ended_at,:duration_ms,:input_summary,:output_summary,:model_provider,:model_name,:input_tokens,:output_tokens,:reasoning_tokens,:cost_usd,:error_type,:error_message,:trace_id,:parent_run_id,:delegation_id,:approval_required,:created_at)""",
+        {
+            "run_id": GATEWAY_APPROVED_APPROVAL_RUN_ID,
+            "workspace_id": GATEWAY_WORKSPACE_ID,
+            "task_id": GATEWAY_APPROVED_APPROVAL_TASK_ID,
+            "agent_id": GATEWAY_AGENT_ID,
+            "runtime_type": "mock",
+            "status": "waiting_approval",
+            "started_at": now,
+            "ended_at": None,
+            "duration_ms": None,
+            "input_summary": "Seeded run for approval overwrite guard.",
+            "output_summary": None,
+            "model_provider": "mock",
+            "model_name": "mock-model",
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "reasoning_tokens": 0,
+            "cost_usd": 0,
+            "error_type": None,
+            "error_message": None,
+            "trace_id": "trace_pg_gateway_approved_approval",
+            "parent_run_id": None,
+            "delegation_id": None,
+            "approval_required": 1,
+            "created_at": now,
+        },
+    )
+    for tool_call_id, run_id in [
+        (GATEWAY_APPROVED_APPROVAL_TOOL_ID, GATEWAY_APPROVED_APPROVAL_RUN_ID),
+        (GATEWAY_OTHER_RUN_TOOL_ID, GATEWAY_APPROVED_APPROVAL_RUN_ID),
+    ]:
+        adapter.execute(
+            """INSERT INTO tool_calls(tool_call_id,run_id,agent_id,tool_name,tool_version,tool_category,normalized_args_json,target_resource,risk_level,status,result_summary,side_effect_id,started_at,ended_at,created_at)
+            VALUES(:tool_call_id,:run_id,:agent_id,:tool_name,:tool_version,:tool_category,:normalized_args_json,:target_resource,:risk_level,:status,:result_summary,:side_effect_id,:started_at,:ended_at,:created_at)""",
+            {
+                "tool_call_id": tool_call_id,
+                "run_id": run_id,
+                "agent_id": GATEWAY_AGENT_ID,
+                "tool_name": "postgres.gateway_approval_seed",
+                "tool_version": "v1",
+                "tool_category": "custom",
+                "normalized_args_json": json.dumps({"raw_omitted": True}, ensure_ascii=False),
+                "target_resource": None,
+                "risk_level": "high",
+                "status": "waiting_approval",
+                "result_summary": "Seeded approval guard tool call.",
+                "side_effect_id": None,
+                "started_at": now,
+                "ended_at": None,
+                "created_at": now,
+            },
+        )
+    adapter.execute(
+        """INSERT INTO approvals(approval_id,task_id,run_id,tool_call_id,requested_by_agent_id,approver_user_id,decision,reason,expires_at,created_at,decided_at)
+        VALUES(:approval_id,:task_id,:run_id,:tool_call_id,:requested_by_agent_id,:approver_user_id,:decision,:reason,:expires_at,:created_at,:decided_at)""",
+        {
+            "approval_id": GATEWAY_APPROVED_APPROVAL_ID,
+            "task_id": GATEWAY_APPROVED_APPROVAL_TASK_ID,
+            "run_id": GATEWAY_APPROVED_APPROVAL_RUN_ID,
+            "tool_call_id": GATEWAY_APPROVED_APPROVAL_TOOL_ID,
+            "requested_by_agent_id": GATEWAY_AGENT_ID,
+            "approver_user_id": "usr_founder",
+            "decision": "approved",
+            "reason": "Seeded approved approval must remain immutable to request scope.",
+            "expires_at": "2026-06-24T05:00:00+00:00",
+            "created_at": now,
+            "decided_at": now,
+        },
+    )
     adapter.commit()
 
 
@@ -321,6 +422,25 @@ def gateway_plan_evidence_body(manifest_id: str, *, plan_id: str = GATEWAY_PLAN_
         "artifact_ids": [GATEWAY_ARTIFACT_ID],
         "verify_now": True,
     }
+
+
+def gateway_approval_body(
+    approval_id: str,
+    *,
+    run_id: str = GATEWAY_RUN_ID,
+    task_id: str = GATEWAY_TASK_ID,
+    tool_call_id: str | None = GATEWAY_TOOL_CALL_ID,
+    reason: str = "Postgres Gateway approval request write proof.",
+) -> dict:
+    body = {
+        "approval_id": approval_id,
+        "run_id": run_id,
+        "task_id": task_id,
+        "reason": reason,
+    }
+    if tool_call_id is not None:
+        body["tool_call_id"] = tool_call_id
+    return body
 
 
 def gateway_audit_body(action: str = GATEWAY_AUDIT_ACTION, *, task_id: str = GATEWAY_TASK_ID, run_id: str = GATEWAY_RUN_ID) -> dict:
@@ -454,6 +574,7 @@ def main() -> int:
                     "agent_plans:write",
                     "plan_evidence:write",
                     "memories:propose",
+                    "approvals:request",
                     "audit:write",
                 ],
             )
@@ -481,6 +602,7 @@ def main() -> int:
                     "agent_plans:write",
                     "plan_evidence:write",
                     "memories:propose",
+                    "approvals:request",
                     "audit:write",
                 ],
             )
@@ -563,6 +685,16 @@ def main() -> int:
                     GATEWAY_READ_ONLY_MEMORY_ID,
                     run_id=GATEWAY_READ_ONLY_RUN_ID,
                     task_id=GATEWAY_READ_ONLY_CLAIM_TASK_ID,
+                ),
+            )
+            gateway_approval_blocked_status, gateway_approval_blocked_payload = request_json_with_token(
+                f"{read_only_base}/api/agent-gateway/approvals/request",
+                token=gateway_token,
+                body=gateway_approval_body(
+                    GATEWAY_READ_ONLY_APPROVAL_ID,
+                    run_id=GATEWAY_READ_ONLY_RUN_ID,
+                    task_id=GATEWAY_READ_ONLY_CLAIM_TASK_ID,
+                    tool_call_id=GATEWAY_READ_ONLY_TOOL_CALL_ID,
                 ),
             )
             gateway_audit_blocked_status, gateway_audit_blocked_payload = request_json_with_token(
@@ -812,6 +944,62 @@ def main() -> int:
                 token=gateway_token,
                 body=gateway_memory_body(GATEWAY_MEMORY_ID),
             )
+            gateway_missing_approval_scope_status, gateway_missing_approval_scope_payload = request_json_with_token(
+                f"{write_base}/api/agent-gateway/approvals/request",
+                token=gateway_observer_token,
+                body=gateway_approval_body(f"{GATEWAY_APPROVAL_ID}_missing_scope"),
+            )
+            gateway_approval_cross_workspace_body = gateway_approval_body(f"{GATEWAY_APPROVAL_ID}_cross_workspace")
+            gateway_approval_cross_workspace_body["workspace_id"] = "other-workspace"
+            gateway_approval_cross_workspace_status, gateway_approval_cross_workspace_payload = request_json_with_token(
+                f"{write_base}/api/agent-gateway/approvals/request",
+                token=gateway_token,
+                body=gateway_approval_cross_workspace_body,
+            )
+            gateway_approval_header_workspace_status, gateway_approval_header_workspace_payload = request_json_with_token(
+                f"{write_base}/api/agent-gateway/approvals/request",
+                token=gateway_token,
+                body=gateway_approval_body(f"{GATEWAY_APPROVAL_ID}_header_workspace"),
+                extra_headers={"X-AgentOps-Workspace-Id": "other-workspace"},
+            )
+            gateway_approval_no_token_status, gateway_approval_no_token_payload = request_json(
+                f"{write_base}/api/agent-gateway/approvals/request",
+                method="POST",
+                body=gateway_approval_body(GATEWAY_NO_TOKEN_APPROVAL_ID),
+            )
+            gateway_approval_mismatch_status, gateway_approval_mismatch_payload = request_json_with_token(
+                f"{write_base}/api/agent-gateway/approvals/request",
+                token=gateway_token,
+                body=gateway_approval_body(GATEWAY_APPROVAL_MISMATCH_ID, task_id=GATEWAY_AUDIT_MISMATCH_TASK_ID),
+            )
+            gateway_approval_tool_mismatch_status, gateway_approval_tool_mismatch_payload = request_json_with_token(
+                f"{write_base}/api/agent-gateway/approvals/request",
+                token=gateway_token,
+                body=gateway_approval_body(f"{GATEWAY_APPROVAL_ID}_tool_mismatch", tool_call_id=GATEWAY_OTHER_RUN_TOOL_ID),
+            )
+            gateway_approval_approved_overwrite_status, gateway_approval_approved_overwrite_payload = request_json_with_token(
+                f"{write_base}/api/agent-gateway/approvals/request",
+                token=gateway_token,
+                body=gateway_approval_body(
+                    GATEWAY_APPROVED_APPROVAL_ID,
+                    run_id=GATEWAY_APPROVED_APPROVAL_RUN_ID,
+                    task_id=GATEWAY_APPROVED_APPROVAL_TASK_ID,
+                    tool_call_id=GATEWAY_APPROVED_APPROVAL_TOOL_ID,
+                ),
+            )
+            gateway_approval_other_agent_status, gateway_approval_other_agent_payload = request_json_with_token(
+                f"{write_base}/api/agent-gateway/approvals/request",
+                token=gateway_token,
+                body={
+                    **gateway_approval_body(f"{GATEWAY_APPROVAL_ID}_other_agent"),
+                    "requested_by_agent_id": GATEWAY_OTHER_AGENT_ID,
+                },
+            )
+            gateway_approval_write_status, gateway_approval_write_payload = request_json_with_token(
+                f"{write_base}/api/agent-gateway/approvals/request",
+                token=gateway_token,
+                body=gateway_approval_body(GATEWAY_APPROVAL_ID),
+            )
             gateway_missing_audit_scope_status, gateway_missing_audit_scope_payload = request_json_with_token(
                 f"{write_base}/api/agent-gateway/audit",
                 token=gateway_observer_token,
@@ -885,6 +1073,11 @@ def main() -> int:
                 token=gateway_intruder_token,
                 body=gateway_memory_body(f"{GATEWAY_MEMORY_ID}_intruder"),
             )
+            gateway_intruder_approval_status, gateway_intruder_approval_payload = request_json_with_token(
+                f"{write_base}/api/agent-gateway/approvals/request",
+                token=gateway_intruder_token,
+                body=gateway_approval_body(f"{GATEWAY_APPROVAL_ID}_intruder"),
+            )
             gateway_intruder_audit_status, gateway_intruder_audit_payload = request_json_with_token(
                 f"{write_base}/api/agent-gateway/audit",
                 token=gateway_intruder_token,
@@ -907,14 +1100,10 @@ def main() -> int:
                 method="POST",
                 body={"agent_id": BLOCKED_AGENT_ID, "name": "Should stay blocked"},
             )
-            gateway_approval_block_status, gateway_approval_block_payload = request_json_with_token(
-                f"{write_base}/api/agent-gateway/approvals/request",
+            gateway_knowledge_block_status, gateway_knowledge_block_payload = request_json_with_token(
+                f"{write_base}/api/agent-gateway/knowledge/index",
                 token=gateway_token,
-                body={
-                    "approval_id": GATEWAY_BLOCKED_APPROVAL_ID,
-                    "run_id": GATEWAY_RUN_ID,
-                    "reason": "Approval writes remain outside this Postgres allowlist slice.",
-                },
+                body={"rebuild": False},
             )
             stop_server(proc)
             proc = None
@@ -932,6 +1121,7 @@ def main() -> int:
             gateway_read_only_plan_row = adapter.fetchone("SELECT * FROM agent_plans WHERE plan_id=?", [GATEWAY_READ_ONLY_PLAN_ID])
             gateway_read_only_manifest_row = adapter.fetchone("SELECT * FROM plan_evidence_manifests WHERE manifest_id=?", [GATEWAY_READ_ONLY_MANIFEST_ID])
             gateway_read_only_memory_row = adapter.fetchone("SELECT * FROM memories WHERE memory_id=?", [GATEWAY_READ_ONLY_MEMORY_ID])
+            gateway_read_only_approval_row = adapter.fetchone("SELECT * FROM approvals WHERE approval_id=?", [GATEWAY_READ_ONLY_APPROVAL_ID])
             gateway_read_only_audit_row = adapter.fetchone("SELECT * FROM audit_logs WHERE action=?", [GATEWAY_READ_ONLY_AUDIT_ACTION])
             gateway_missing_scope_task_row = adapter.fetchone("SELECT * FROM tasks WHERE task_id=?", [GATEWAY_MISSING_SCOPE_TASK_ID])
             gateway_cross_workspace_task_row = adapter.fetchone("SELECT * FROM tasks WHERE task_id=?", [GATEWAY_CROSS_WORKSPACE_TASK_ID])
@@ -966,6 +1156,16 @@ def main() -> int:
             gateway_approved_memory_row = adapter.fetchone("SELECT * FROM memories WHERE memory_id=?", [GATEWAY_APPROVED_MEMORY_ID])
             gateway_cross_workspace_memory_row = adapter.fetchone("SELECT * FROM memories WHERE memory_id=?", [GATEWAY_CROSS_WORKSPACE_MEMORY_ID])
             gateway_other_agent_memory_row = adapter.fetchone("SELECT * FROM memories WHERE memory_id=?", [GATEWAY_OTHER_AGENT_MEMORY_ID])
+            gateway_approval_row = adapter.fetchone("SELECT * FROM approvals WHERE approval_id=?", [GATEWAY_APPROVAL_ID])
+            gateway_missing_approval_row = adapter.fetchone("SELECT * FROM approvals WHERE approval_id=?", [f"{GATEWAY_APPROVAL_ID}_missing_scope"])
+            gateway_approval_cross_workspace_row = adapter.fetchone("SELECT * FROM approvals WHERE approval_id=?", [f"{GATEWAY_APPROVAL_ID}_cross_workspace"])
+            gateway_approval_header_workspace_row = adapter.fetchone("SELECT * FROM approvals WHERE approval_id=?", [f"{GATEWAY_APPROVAL_ID}_header_workspace"])
+            gateway_approval_no_token_row = adapter.fetchone("SELECT * FROM approvals WHERE approval_id=?", [GATEWAY_NO_TOKEN_APPROVAL_ID])
+            gateway_approval_mismatch_row = adapter.fetchone("SELECT * FROM approvals WHERE approval_id=?", [GATEWAY_APPROVAL_MISMATCH_ID])
+            gateway_approval_tool_mismatch_row = adapter.fetchone("SELECT * FROM approvals WHERE approval_id=?", [f"{GATEWAY_APPROVAL_ID}_tool_mismatch"])
+            gateway_approved_approval_row = adapter.fetchone("SELECT * FROM approvals WHERE approval_id=?", [GATEWAY_APPROVED_APPROVAL_ID])
+            gateway_approval_other_agent_row = adapter.fetchone("SELECT * FROM approvals WHERE approval_id=?", [f"{GATEWAY_APPROVAL_ID}_other_agent"])
+            gateway_intruder_approval_row = adapter.fetchone("SELECT * FROM approvals WHERE approval_id=?", [f"{GATEWAY_APPROVAL_ID}_intruder"])
             gateway_audit_cross_workspace_row = adapter.fetchone("SELECT * FROM audit_logs WHERE action=?", [f"{GATEWAY_AUDIT_ACTION}.cross_workspace"])
             gateway_audit_no_token_row = adapter.fetchone("SELECT * FROM audit_logs WHERE action=?", [f"{GATEWAY_AUDIT_ACTION}.no_token"])
             gateway_audit_mismatch_row = adapter.fetchone("SELECT * FROM audit_logs WHERE action=?", [f"{GATEWAY_AUDIT_ACTION}.mismatch"])
@@ -977,7 +1177,6 @@ def main() -> int:
             gateway_intruder_memory_row = adapter.fetchone("SELECT * FROM memories WHERE memory_id=?", [f"{GATEWAY_MEMORY_ID}_intruder"])
             gateway_intruder_audit_row = adapter.fetchone("SELECT * FROM audit_logs WHERE action=?", [f"{GATEWAY_AUDIT_ACTION}.intruder"])
             gateway_intruder_audit_no_run_row = adapter.fetchone("SELECT * FROM audit_logs WHERE action=?", [f"{GATEWAY_AUDIT_ACTION}.intruder_no_run"])
-            gateway_blocked_approval_row = adapter.fetchone("SELECT * FROM approvals WHERE approval_id=?", [GATEWAY_BLOCKED_APPROVAL_ID])
             runtime_event_count = adapter.fetchone("SELECT COUNT(*) AS c FROM runtime_events WHERE task_id=?", [TASK_ID])["c"]
             audit_count = adapter.fetchone("SELECT COUNT(*) AS c FROM audit_logs WHERE entity_type=? AND entity_id=?", ["tasks", TASK_ID])["c"]
             gateway_runtime_event_count = adapter.fetchone("SELECT COUNT(*) AS c FROM runtime_events WHERE task_id=?", [GATEWAY_TASK_ID])["c"]
@@ -994,6 +1193,10 @@ def main() -> int:
             gateway_manifest_audit_count = adapter.fetchone("SELECT COUNT(*) AS c FROM audit_logs WHERE entity_type=? AND entity_id=?", ["plan_evidence_manifests", GATEWAY_MANIFEST_ID])["c"]
             gateway_memory_runtime_event_count = adapter.fetchone("SELECT COUNT(*) AS c FROM runtime_events WHERE task_id=? AND event_type=?", [GATEWAY_TASK_ID, "memory.propose"])["c"]
             gateway_memory_audit_count = adapter.fetchone("SELECT COUNT(*) AS c FROM audit_logs WHERE entity_type=? AND entity_id=?", ["memories", GATEWAY_MEMORY_ID])["c"]
+            gateway_approval_runtime_event_count = adapter.fetchone("SELECT COUNT(*) AS c FROM runtime_events WHERE run_id=? AND event_type=?", [GATEWAY_RUN_ID, "approval.request"])["c"]
+            gateway_approval_audit_count = adapter.fetchone("SELECT COUNT(*) AS c FROM audit_logs WHERE entity_type=? AND entity_id=?", ["approvals", GATEWAY_APPROVAL_ID])["c"]
+            gateway_approval_run_wait_audit_count = adapter.fetchone("SELECT COUNT(*) AS c FROM audit_logs WHERE entity_type=? AND entity_id=? AND action=?", ["runs", GATEWAY_RUN_ID, "agent_gateway.run_waiting_approval"])["c"]
+            gateway_approval_task_wait_audit_count = adapter.fetchone("SELECT COUNT(*) AS c FROM audit_logs WHERE entity_type=? AND entity_id=? AND action=?", ["tasks", GATEWAY_TASK_ID, "agent_gateway.task_waiting_approval"])["c"]
             gateway_audit_runtime_event_count = adapter.fetchone("SELECT COUNT(*) AS c FROM runtime_events WHERE run_id=? AND event_type=?", [GATEWAY_RUN_ID, "audit.emit"])["c"]
             gateway_token_last_used = adapter.fetchone("SELECT last_used_at FROM agent_gateway_tokens WHERE token_id=?", ["agtok_pg_gateway_write"])
 
@@ -1020,6 +1223,8 @@ def main() -> int:
                 failures.append(f"gateway_read_only_manifest_block_mismatch:{gateway_manifest_blocked_status}:{gateway_manifest_blocked_payload}")
             if gateway_memory_blocked_status != 503 or gateway_memory_blocked_payload.get("error") != "postgres_read_only_backend":
                 failures.append(f"gateway_read_only_memory_block_mismatch:{gateway_memory_blocked_status}:{gateway_memory_blocked_payload}")
+            if gateway_approval_blocked_status != 503 or gateway_approval_blocked_payload.get("error") != "postgres_read_only_backend":
+                failures.append(f"gateway_read_only_approval_block_mismatch:{gateway_approval_blocked_status}:{gateway_approval_blocked_payload}")
             if gateway_audit_blocked_status != 503 or gateway_audit_blocked_payload.get("error") != "postgres_read_only_backend":
                 failures.append(f"gateway_read_only_audit_block_mismatch:{gateway_audit_blocked_status}:{gateway_audit_blocked_payload}")
             if blocked_task_row:
@@ -1036,6 +1241,8 @@ def main() -> int:
                 failures.append("read_only_plan_write_created_row")
             if gateway_read_only_memory_row:
                 failures.append("read_only_memory_write_created_row")
+            if gateway_read_only_approval_row:
+                failures.append("read_only_approval_write_created_row")
             if gateway_read_only_audit_row:
                 failures.append("read_only_audit_write_created_row")
             if write_status_code != 200 or write_backend.get("mode") != "experimental_write_http" or write_backend.get("writes_allowed") is not True:
@@ -1118,6 +1325,24 @@ def main() -> int:
                 failures.append(f"gateway_memory_other_agent_overwrite_not_blocked:{gateway_memory_other_agent_overwrite_status}:{gateway_memory_other_agent_overwrite_payload}")
             if gateway_memory_write_status != 201 or (gateway_memory_write_payload.get("memory") or {}).get("memory_id") != GATEWAY_MEMORY_ID:
                 failures.append(f"gateway_memory_write_mismatch:{gateway_memory_write_status}:{gateway_memory_write_payload}")
+            if gateway_missing_approval_scope_status != 403 or "approvals:request" not in json.dumps(gateway_missing_approval_scope_payload, ensure_ascii=False):
+                failures.append(f"gateway_missing_approval_scope_mismatch:{gateway_missing_approval_scope_status}:{gateway_missing_approval_scope_payload}")
+            if gateway_approval_cross_workspace_status != 403 or "workspace" not in json.dumps(gateway_approval_cross_workspace_payload, ensure_ascii=False).lower():
+                failures.append(f"gateway_approval_cross_workspace_mismatch:{gateway_approval_cross_workspace_status}:{gateway_approval_cross_workspace_payload}")
+            if gateway_approval_header_workspace_status != 403 or "workspace" not in json.dumps(gateway_approval_header_workspace_payload, ensure_ascii=False).lower():
+                failures.append(f"gateway_approval_header_workspace_mismatch:{gateway_approval_header_workspace_status}:{gateway_approval_header_workspace_payload}")
+            if gateway_approval_no_token_status != 401 or "token" not in json.dumps(gateway_approval_no_token_payload, ensure_ascii=False).lower():
+                failures.append(f"gateway_approval_no_token_mismatch:{gateway_approval_no_token_status}:{gateway_approval_no_token_payload}")
+            if gateway_approval_mismatch_status != 403 or "task_id" not in json.dumps(gateway_approval_mismatch_payload, ensure_ascii=False):
+                failures.append(f"gateway_approval_mismatch_not_blocked:{gateway_approval_mismatch_status}:{gateway_approval_mismatch_payload}")
+            if gateway_approval_tool_mismatch_status != 403 or "tool_call_id" not in json.dumps(gateway_approval_tool_mismatch_payload, ensure_ascii=False):
+                failures.append(f"gateway_approval_tool_mismatch_not_blocked:{gateway_approval_tool_mismatch_status}:{gateway_approval_tool_mismatch_payload}")
+            if gateway_approval_approved_overwrite_status != 403 or "pending" not in json.dumps(gateway_approval_approved_overwrite_payload, ensure_ascii=False).lower():
+                failures.append(f"gateway_approval_approved_overwrite_not_blocked:{gateway_approval_approved_overwrite_status}:{gateway_approval_approved_overwrite_payload}")
+            if gateway_approval_other_agent_status != 403 or "another agent" not in json.dumps(gateway_approval_other_agent_payload, ensure_ascii=False).lower():
+                failures.append(f"gateway_approval_other_agent_mismatch:{gateway_approval_other_agent_status}:{gateway_approval_other_agent_payload}")
+            if gateway_approval_write_status != 201 or (gateway_approval_write_payload.get("approval") or {}).get("approval_id") != GATEWAY_APPROVAL_ID:
+                failures.append(f"gateway_approval_write_mismatch:{gateway_approval_write_status}:{gateway_approval_write_payload}")
             if gateway_missing_audit_scope_status != 403 or "audit:write" not in json.dumps(gateway_missing_audit_scope_payload, ensure_ascii=False):
                 failures.append(f"gateway_missing_audit_scope_mismatch:{gateway_missing_audit_scope_status}:{gateway_missing_audit_scope_payload}")
             if gateway_audit_cross_workspace_status != 403 or "workspace" not in json.dumps(gateway_audit_cross_workspace_payload, ensure_ascii=False).lower():
@@ -1140,6 +1365,8 @@ def main() -> int:
                 failures.append(f"gateway_intruder_manifest_mismatch:{gateway_intruder_manifest_status}:{gateway_intruder_manifest_payload}")
             if gateway_intruder_memory_status != 403 or "another agent" not in json.dumps(gateway_intruder_memory_payload, ensure_ascii=False).lower():
                 failures.append(f"gateway_intruder_memory_mismatch:{gateway_intruder_memory_status}:{gateway_intruder_memory_payload}")
+            if gateway_intruder_approval_status != 403 or "another agent" not in json.dumps(gateway_intruder_approval_payload, ensure_ascii=False).lower():
+                failures.append(f"gateway_intruder_approval_mismatch:{gateway_intruder_approval_status}:{gateway_intruder_approval_payload}")
             if gateway_intruder_audit_status != 403 or "another agent" not in json.dumps(gateway_intruder_audit_payload, ensure_ascii=False).lower():
                 failures.append(f"gateway_intruder_audit_mismatch:{gateway_intruder_audit_status}:{gateway_intruder_audit_payload}")
             if gateway_intruder_audit_no_run_status != 403 or "another agent" not in json.dumps(gateway_intruder_audit_no_run_payload, ensure_ascii=False).lower():
@@ -1150,12 +1377,10 @@ def main() -> int:
                 failures.append(f"gateway_run_readback_mismatch:{gateway_run_readback_status}:{gateway_run_readback_payload}")
             if agent_block_status != 503 or agent_block_payload.get("error") != "postgres_read_only_backend":
                 failures.append(f"non_allowlisted_write_not_blocked:{agent_block_status}:{agent_block_payload}")
-            if gateway_approval_block_status != 503 or gateway_approval_block_payload.get("error") != "postgres_read_only_backend":
-                failures.append(f"gateway_non_allowlisted_write_not_blocked:{gateway_approval_block_status}:{gateway_approval_block_payload}")
+            if gateway_knowledge_block_status != 503 or gateway_knowledge_block_payload.get("error") != "postgres_read_only_backend":
+                failures.append(f"gateway_non_allowlisted_write_not_blocked:{gateway_knowledge_block_status}:{gateway_knowledge_block_payload}")
             if blocked_agent_row:
                 failures.append("non_allowlisted_agent_write_created_row")
-            if gateway_blocked_approval_row:
-                failures.append("non_allowlisted_gateway_approval_created_row")
             if not task_row or task_row.get("workspace_id") != WORKSPACE_ID or task_row.get("owner_agent_id") != AGENT_ID:
                 failures.append(f"postgres_task_row_mismatch:{task_row}")
             if int(runtime_event_count or 0) < 1:
@@ -1186,6 +1411,10 @@ def main() -> int:
                 failures.append(f"postgres_gateway_cross_workspace_memory_overwritten:{gateway_cross_workspace_memory_row}")
             if not gateway_other_agent_memory_row or gateway_other_agent_memory_row.get("agent_id") != GATEWAY_OTHER_AGENT_ID or gateway_other_agent_memory_row.get("task_id") is not None:
                 failures.append(f"postgres_gateway_other_agent_memory_overwritten:{gateway_other_agent_memory_row}")
+            if gateway_missing_approval_row or gateway_approval_cross_workspace_row or gateway_approval_header_workspace_row or gateway_approval_no_token_row or gateway_approval_mismatch_row or gateway_approval_tool_mismatch_row or gateway_approval_other_agent_row:
+                failures.append("postgres_gateway_rejected_approval_created_row")
+            if not gateway_approved_approval_row or gateway_approved_approval_row.get("decision") != "approved" or gateway_approved_approval_row.get("decided_at") is None:
+                failures.append(f"postgres_gateway_approved_approval_overwritten:{gateway_approved_approval_row}")
             if gateway_audit_cross_workspace_row or gateway_audit_no_token_row or gateway_audit_mismatch_row:
                 failures.append("postgres_gateway_rejected_audit_created_row")
             if gateway_intruder_tool_row or gateway_intruder_eval_row or gateway_intruder_artifact_row:
@@ -1194,6 +1423,8 @@ def main() -> int:
                 failures.append("postgres_gateway_intruder_plan_created_row")
             if gateway_intruder_memory_row:
                 failures.append("postgres_gateway_intruder_memory_created_row")
+            if gateway_intruder_approval_row:
+                failures.append("postgres_gateway_intruder_approval_created_row")
             if gateway_intruder_audit_row:
                 failures.append("postgres_gateway_intruder_audit_created_row")
             if gateway_intruder_audit_no_run_row:
@@ -1212,6 +1443,8 @@ def main() -> int:
                 failures.append(f"postgres_gateway_manifest_row_mismatch:{gateway_manifest_row}")
             if not gateway_memory_row or gateway_memory_row.get("workspace_id") != GATEWAY_WORKSPACE_ID or gateway_memory_row.get("task_id") != GATEWAY_TASK_ID or gateway_memory_row.get("agent_id") != GATEWAY_AGENT_ID or gateway_memory_row.get("review_status") != "candidate":
                 failures.append(f"postgres_gateway_memory_row_mismatch:{gateway_memory_row}")
+            if not gateway_approval_row or gateway_approval_row.get("run_id") != GATEWAY_RUN_ID or gateway_approval_row.get("task_id") != GATEWAY_TASK_ID or gateway_approval_row.get("tool_call_id") != GATEWAY_TOOL_CALL_ID or gateway_approval_row.get("requested_by_agent_id") != GATEWAY_AGENT_ID or gateway_approval_row.get("decision") != "pending":
+                failures.append(f"postgres_gateway_approval_row_mismatch:{gateway_approval_row}")
             audit_metadata = {}
             if gateway_audit_row:
                 try:
@@ -1222,8 +1455,10 @@ def main() -> int:
                 failures.append(f"postgres_gateway_audit_row_mismatch:{gateway_audit_row}")
             if audit_metadata.get("workspace_id") != GATEWAY_WORKSPACE_ID or audit_metadata.get("raw_omitted") is not True or not gateway_audit_row.get("tamper_chain_hash"):
                 failures.append(f"postgres_gateway_audit_metadata_mismatch:{audit_metadata}")
-            if not gateway_task_row or gateway_task_row.get("status") != "running":
-                failures.append(f"postgres_gateway_claim_did_not_mark_task_running:{gateway_task_row}")
+            if not gateway_task_row or gateway_task_row.get("status") != "waiting_approval":
+                failures.append(f"postgres_gateway_approval_did_not_mark_task_waiting:{gateway_task_row}")
+            if not gateway_run_row or gateway_run_row.get("status") != "waiting_approval" or int(gateway_run_row.get("approval_required") or 0) != 1:
+                failures.append(f"postgres_gateway_approval_did_not_mark_run_waiting:{gateway_run_row}")
             if int(gateway_runtime_event_count or 0) < 1:
                 failures.append("postgres_gateway_runtime_event_missing")
             if int(gateway_audit_count or 0) < 1:
@@ -1252,6 +1487,14 @@ def main() -> int:
                 failures.append("postgres_gateway_memory_runtime_event_missing")
             if int(gateway_memory_audit_count or 0) < 1:
                 failures.append("postgres_gateway_memory_audit_missing")
+            if int(gateway_approval_runtime_event_count or 0) < 1:
+                failures.append("postgres_gateway_approval_runtime_event_missing")
+            if int(gateway_approval_audit_count or 0) < 1:
+                failures.append("postgres_gateway_approval_audit_missing")
+            if int(gateway_approval_run_wait_audit_count or 0) < 1:
+                failures.append("postgres_gateway_approval_run_wait_audit_missing")
+            if int(gateway_approval_task_wait_audit_count or 0) < 1:
+                failures.append("postgres_gateway_approval_task_wait_audit_missing")
             if int(gateway_audit_runtime_event_count or 0) < 1:
                 failures.append("postgres_gateway_audit_runtime_event_missing")
             if not (gateway_token_last_used or {}).get("last_used_at"):
@@ -1271,6 +1514,7 @@ def main() -> int:
                     gateway_plan_blocked_payload,
                     gateway_manifest_blocked_payload,
                     gateway_memory_blocked_payload,
+                    gateway_approval_blocked_payload,
                     gateway_audit_blocked_payload,
                     gateway_cross_workspace_payload,
                     gateway_header_workspace_payload,
@@ -1301,6 +1545,15 @@ def main() -> int:
                     gateway_memory_existing_cross_workspace_payload,
                     gateway_memory_other_agent_overwrite_payload,
                     gateway_memory_write_payload,
+                    gateway_missing_approval_scope_payload,
+                    gateway_approval_cross_workspace_payload,
+                    gateway_approval_header_workspace_payload,
+                    gateway_approval_no_token_payload,
+                    gateway_approval_mismatch_payload,
+                    gateway_approval_tool_mismatch_payload,
+                    gateway_approval_approved_overwrite_payload,
+                    gateway_approval_other_agent_payload,
+                    gateway_approval_write_payload,
                     gateway_missing_audit_scope_payload,
                     gateway_audit_cross_workspace_payload,
                     gateway_audit_no_token_payload,
@@ -1314,10 +1567,11 @@ def main() -> int:
                     gateway_intruder_plan_payload,
                     gateway_intruder_manifest_payload,
                     gateway_intruder_memory_payload,
+                    gateway_intruder_approval_payload,
                     gateway_intruder_audit_payload,
                     gateway_intruder_audit_no_run_payload,
                     agent_block_payload,
-                    gateway_approval_block_payload,
+                    gateway_knowledge_block_payload,
                 ],
                 ensure_ascii=False,
                 sort_keys=True,
@@ -1335,6 +1589,7 @@ def main() -> int:
                     "postgres_http_gateway_execution_start_write_v1",
                     "postgres_http_gateway_evidence_write_v1",
                     "postgres_http_gateway_plan_evidence_write_v1",
+                    "postgres_http_gateway_approval_write_v1",
                     "postgres_http_gateway_audit_write_v1",
                     "postgres_http_gateway_memory_write_v1",
                 ],
@@ -1355,6 +1610,7 @@ def main() -> int:
                 "gateway_read_only_plan_block_status": gateway_plan_blocked_status,
                 "gateway_read_only_manifest_block_status": gateway_manifest_blocked_status,
                 "gateway_read_only_memory_block_status": gateway_memory_blocked_status,
+                "gateway_read_only_approval_block_status": gateway_approval_blocked_status,
                 "gateway_read_only_audit_block_status": gateway_audit_blocked_status,
                 "gateway_missing_scope_status": gateway_missing_scope_status,
                 "gateway_missing_claim_scope_status": gateway_missing_claim_scope_status,
@@ -1365,17 +1621,21 @@ def main() -> int:
                 "gateway_missing_plan_scope_status": gateway_missing_plan_scope_status,
                 "gateway_missing_manifest_scope_status": gateway_missing_manifest_scope_status,
                 "gateway_missing_memory_scope_status": gateway_missing_memory_scope_status,
+                "gateway_missing_approval_scope_status": gateway_missing_approval_scope_status,
                 "gateway_missing_audit_scope_status": gateway_missing_audit_scope_status,
                 "gateway_cross_workspace_status": gateway_cross_workspace_status,
                 "gateway_plan_cross_workspace_status": gateway_plan_cross_workspace_status,
                 "gateway_memory_cross_workspace_status": gateway_memory_cross_workspace_status,
                 "gateway_memory_header_workspace_status": gateway_memory_header_workspace_status,
+                "gateway_approval_cross_workspace_status": gateway_approval_cross_workspace_status,
+                "gateway_approval_header_workspace_status": gateway_approval_header_workspace_status,
                 "gateway_audit_cross_workspace_status": gateway_audit_cross_workspace_status,
                 "gateway_header_workspace_status": gateway_header_workspace_status,
                 "gateway_other_agent_status": gateway_other_agent_status,
                 "gateway_no_token_status": gateway_no_token_status,
                 "gateway_plan_no_token_status": gateway_plan_no_token_status,
                 "gateway_memory_no_token_status": gateway_memory_no_token_status,
+                "gateway_approval_no_token_status": gateway_approval_no_token_status,
                 "gateway_audit_no_token_status": gateway_audit_no_token_status,
                 "gateway_task_create_status": gateway_create_status,
                 "gateway_claim_status": gateway_claim_status,
@@ -1391,6 +1651,11 @@ def main() -> int:
                 "gateway_memory_existing_cross_workspace_status": gateway_memory_existing_cross_workspace_status,
                 "gateway_memory_other_agent_overwrite_status": gateway_memory_other_agent_overwrite_status,
                 "gateway_memory_write_status": gateway_memory_write_status,
+                "gateway_approval_mismatch_status": gateway_approval_mismatch_status,
+                "gateway_approval_tool_mismatch_status": gateway_approval_tool_mismatch_status,
+                "gateway_approval_approved_overwrite_status": gateway_approval_approved_overwrite_status,
+                "gateway_approval_other_agent_status": gateway_approval_other_agent_status,
+                "gateway_approval_write_status": gateway_approval_write_status,
                 "gateway_audit_mismatch_status": gateway_audit_mismatch_status,
                 "gateway_audit_write_status": gateway_audit_write_status,
                 "gateway_intruder_claim_status": gateway_intruder_claim_status,
@@ -1401,12 +1666,13 @@ def main() -> int:
                 "gateway_intruder_plan_status": gateway_intruder_plan_status,
                 "gateway_intruder_manifest_status": gateway_intruder_manifest_status,
                 "gateway_intruder_memory_status": gateway_intruder_memory_status,
+                "gateway_intruder_approval_status": gateway_intruder_approval_status,
                 "gateway_intruder_audit_status": gateway_intruder_audit_status,
                 "gateway_intruder_audit_no_run_status": gateway_intruder_audit_no_run_status,
                 "gateway_task_readback_status": gateway_readback_status,
                 "gateway_run_readback_status": gateway_run_readback_status,
                 "non_allowlisted_write_status": agent_block_status,
-                "gateway_non_allowlisted_write_status": gateway_approval_block_status,
+                "gateway_non_allowlisted_write_status": gateway_knowledge_block_status,
                 "task_id": TASK_ID,
                 "gateway_task_id": GATEWAY_TASK_ID,
                 "gateway_run_id": GATEWAY_RUN_ID,
@@ -1416,6 +1682,7 @@ def main() -> int:
                 "gateway_plan_id": GATEWAY_PLAN_ID,
                 "gateway_manifest_id": GATEWAY_MANIFEST_ID,
                 "gateway_memory_id": GATEWAY_MEMORY_ID,
+                "gateway_approval_id": GATEWAY_APPROVAL_ID,
                 "gateway_manifest_status": gateway_manifest.get("status"),
                 "gateway_manifest_verification_pass": bool(gateway_manifest_verification.get("pass")),
                 "gateway_audit_action": GATEWAY_AUDIT_ACTION,
@@ -1437,6 +1704,10 @@ def main() -> int:
                 "gateway_manifest_audit_count": int(gateway_manifest_audit_count or 0),
                 "gateway_memory_runtime_event_count": int(gateway_memory_runtime_event_count or 0),
                 "gateway_memory_audit_count": int(gateway_memory_audit_count or 0),
+                "gateway_approval_runtime_event_count": int(gateway_approval_runtime_event_count or 0),
+                "gateway_approval_audit_count": int(gateway_approval_audit_count or 0),
+                "gateway_approval_run_wait_audit_count": int(gateway_approval_run_wait_audit_count or 0),
+                "gateway_approval_task_wait_audit_count": int(gateway_approval_task_wait_audit_count or 0),
                 "gateway_audit_runtime_event_count": int(gateway_audit_runtime_event_count or 0),
                 "gateway_token_last_used": bool((gateway_token_last_used or {}).get("last_used_at")),
                 "free_local_dependencies": [],

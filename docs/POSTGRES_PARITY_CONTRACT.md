@@ -47,16 +47,16 @@ and snapshots, and keeps HTTP/CLI writes fail-closed until a routed write
 adapter is explicitly proven. The eleventh layer is the first routed write
 contract, `postgres_http_write_task_parity_v1`, which keeps Postgres HTTP
 writes blocked by default, then enables only explicit task, execution-start,
-evidence, plan, memory-candidate, and audit
+evidence, plan, memory-candidate, approval-request, and audit
 allowlist routes under `AGENTOPS_POSTGRES_WRITE_HTTP=1`: `POST /api/tasks`,
 scoped `POST /api/agent-gateway/tasks`, scoped
 `POST /api/agent-gateway/tasks/:task_id/claim`, scoped
 `POST /api/agent-gateway/runs/start`, scoped Gateway tool/evaluation/artifact
 evidence, Agent Plan, plan-evidence manifest, memory proposal, and run/task
-audit routes. It proves task, run, evidence, plan, memory, runtime event, and
-audit rows persist in Postgres while missing scopes, cross-workspace,
-cross-agent, same-workspace intruder, memory overwrite, and non-allowlisted
-writes still fail closed.
+approval/audit routes. It proves task, run, evidence, plan, memory, approval,
+runtime event, and audit rows persist in Postgres while missing scopes,
+cross-workspace, cross-agent, same-workspace intruder, memory overwrite,
+approval overwrite, and non-allowlisted writes still fail closed.
 
 All layers are intentionally derived from `server.SCHEMA_SQL`, because
 `server.py` is still the executable schema authority for the dependency-free
@@ -148,17 +148,18 @@ control, and still does not enable any HTTP/CLI writes. The eleventh command
 starts the actual Postgres-backed server twice: first to confirm read-only
 HTTP still blocks `POST /api/tasks`, `POST /api/agent-gateway/tasks`, scoped
 task claim, run start, tool/evaluation/artifact evidence, Agent Plan,
-plan-evidence, memory proposal, and audit routes, then with
+plan-evidence, memory proposal, approval request, and audit routes, then with
 `AGENTOPS_POSTGRES_WRITE_HTTP=1` to create one human/API task and one scoped
 Agent Gateway task, claim that task, start one run, write evidence, submit a
-plan, verify a plan-evidence manifest, propose a candidate memory, and emit
-run/task-bound audit through the explicit allowlist. It reads the task/run back,
+plan, verify a plan-evidence manifest, propose a candidate memory, create a
+pending approval request, and emit run/task-bound audit through the explicit
+allowlist. It reads the task/run back,
 proves runtime/audit evidence persisted, rejects missing/absent Gateway tokens,
 rejects missing `tasks:create` / `tasks:claim` / `runs:write` /
-`memories:propose`, rejects body/header cross-workspace, cross-agent,
-same-workspace intruder, memory overwrite, and task/run mismatch requests, and
-proves broader Gateway writes such as approval requests remain blocked. The
-final command
+`memories:propose` / `approvals:request`, rejects body/header cross-workspace,
+cross-agent, same-workspace intruder, memory overwrite, approval overwrite,
+task/tool/requester mismatch, and task/run mismatch requests, and proves broader
+Gateway writes such as knowledge indexing remain blocked. The final command
 proves the broader current SQLite helper behavior that Postgres must match.
 
 When Docker is unavailable on a local machine, use the non-authoritative
@@ -227,33 +228,37 @@ Current local evidence on `codex/commercial-migration-closed-loop`:
   `postgres_http_gateway_execution_start_write_v1`,
   `postgres_http_gateway_evidence_write_v1`,
   `postgres_http_gateway_plan_evidence_write_v1`,
+  `postgres_http_gateway_approval_write_v1`,
   `postgres_http_gateway_audit_write_v1`, and
   `postgres_http_gateway_memory_write_v1` passed against `postgres:16-alpine`
   with a temporary psycopg target: read-only mode still returned
   `503 postgres_read_only_backend` for `POST /api/tasks` and
   scoped Agent Gateway task create/claim/run-start/tool/evaluation/artifact/
-  Agent Plan/plan-evidence/memory/audit routes; explicit
+  Agent Plan/plan-evidence/memory/approval/audit routes; explicit
   `AGENTOPS_POSTGRES_WRITE_HTTP=1` mode allowed only those task,
-  execution-start, execution-evidence, plan-evidence, memory-candidate, and
-  run/task-bound audit routes, created
+  execution-start, execution-evidence, plan-evidence, memory-candidate,
+  approval-request, and run/task-bound audit routes, created
   `tsk_pg_http_write_task` and scoped Gateway task `tsk_pg_gateway_write_task`,
   claimed the Gateway task, started `run_pg_gateway_write_start`, wrote
   `tc_pg_gateway_write_evidence`, `eval_pg_gateway_write_evidence`, and
   `art_pg_gateway_write_evidence`, created `plan_pg_gateway_write`, submitted
   verified manifest `pem_pg_gateway_write`, proposed candidate memory
-  `mem_pg_gateway_write`, emitted run-bound audit action
+  `mem_pg_gateway_write`, created pending approval `ap_pg_gateway_write`, moved
+  the run/task to `waiting_approval`, emitted run-bound audit action
   `agent_gateway.postgres_audit_write`, read task and run back through HTTP,
   persisted runtime/audit rows in Postgres, rejected absent Gateway token at
   `401`, rejected missing `tasks:create`, missing `tasks:claim`, missing
   `runs:write`, missing `toolcalls:write`, missing `evaluations:submit`,
   missing `artifacts:write`, missing `agent_plans:write`, missing
-  `plan_evidence:write`, missing `memories:propose`, and missing `audit:write`
-  at `403`, rejected body/header cross-workspace, cross-agent, same-workspace
-  intruder, manifest task/run binding mismatch, memory task/run mismatch,
-  approved/cross-workspace/other-agent memory overwrite, audit task/run
-  mismatch, and intruder audit without `run_id` Gateway requests at `403`, kept
-  `POST /api/agent-gateway/approvals/request` and `POST /api/agents` blocked at
-  `503`, kept `free_local_dependencies=[]`, and did not fall back to SQLite.
+  `plan_evidence:write`, missing `memories:propose`, missing
+  `approvals:request`, and missing `audit:write` at `403`, rejected body/header
+  cross-workspace, cross-agent, same-workspace intruder, manifest task/run
+  binding mismatch, memory task/run mismatch, approved/cross-workspace/other-agent
+  memory overwrite, approval task/tool/requester mismatch, approved approval
+  overwrite, audit task/run mismatch, and intruder audit without `run_id`
+  Gateway requests at `403`, kept `POST /api/agent-gateway/knowledge/index` and
+  `POST /api/agents` blocked at `503`, kept `free_local_dependencies=[]`, and
+  did not fall back to SQLite.
 - Source install packaging includes `agentops_mis_storage.postgres`; importing
   the module and translating SQL does not require psycopg.
 
@@ -263,8 +268,8 @@ Postgres parity is not complete until the adapter boundary:
 
 - routes more `repo_*` helper flows through the same shared fixture pattern;
 - proves Postgres write helpers before widening any routed Postgres write
-  routes beyond the explicit task/execution/evidence/plan/memory/audit write
-  allowlist;
+  routes beyond the explicit task/execution/evidence/plan/memory/approval/audit
+  write allowlist;
 - keeps write routes disabled until an explicit routed write-adapter smoke
   proves the small route surface that will be enabled;
 - keeps backend selection fail-closed so Postgres configuration cannot silently

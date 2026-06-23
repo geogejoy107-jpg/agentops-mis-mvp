@@ -51,6 +51,7 @@ STORAGE_BACKEND = os.environ.get("AGENTOPS_STORAGE_BACKEND", "sqlite").strip().l
 POSTGRES_HTTP_WRITE_ALLOWED_ROUTES = {
     ("POST", "/api/agent-gateway/artifacts"),
     ("POST", "/api/agent-gateway/agent-plans"),
+    ("POST", "/api/agent-gateway/approvals/request"),
     ("POST", "/api/agent-gateway/audit"),
     ("POST", "/api/agent-gateway/evaluations/submit"),
     ("POST", "/api/agent-gateway/memories/propose"),
@@ -359,6 +360,7 @@ def storage_backend_status(headers=None) -> dict:
                 "postgres_http_gateway_execution_start_write_v1",
                 "postgres_http_gateway_evidence_write_v1",
                 "postgres_http_gateway_plan_evidence_write_v1",
+                "postgres_http_gateway_approval_write_v1",
                 "postgres_http_gateway_audit_write_v1",
                 "postgres_http_gateway_memory_write_v1",
             ] if write_http else ["postgres_http_read_parity_v1"],
@@ -408,6 +410,7 @@ def postgres_read_only_write_block(method: str, path: str) -> dict:
             "postgres_http_gateway_execution_start_write_v1",
             "postgres_http_gateway_evidence_write_v1",
             "postgres_http_gateway_plan_evidence_write_v1",
+            "postgres_http_gateway_approval_write_v1",
             "postgres_http_gateway_audit_write_v1",
             "postgres_http_gateway_memory_write_v1",
         ],
@@ -5811,23 +5814,45 @@ def agent_gateway_request_approval(conn, body) -> tuple[dict, int]:
     run, access_error = ensure_run_access(conn, run_id, ident)
     if access_error:
         return access_error
+    task = conn.execute("SELECT * FROM tasks WHERE task_id=?", (run["task_id"],)).fetchone()
+    if not task:
+        return {"error": "task not found"}, 404
+    if run["status"] in {"completed", "failed", "blocked", "canceled"}:
+        return {"error": "conflict", "message": f"Run {run_id} cannot request approval from terminal status {run['status']}.", "status": run["status"]}, 409
+    if task["status"] in {"completed", "failed", "blocked", "canceled"}:
+        return {"error": "conflict", "message": f"Task {run['task_id']} cannot request approval from terminal status {task['status']}.", "status": task["status"]}, 409
     approval_id = body.get("approval_id") or new_id("ap_gw")
     tool_call_id = body.get("tool_call_id")
+    requested_by_agent_id = body.get("requested_by_agent_id") or body.get("agent_id") or run["agent_id"]
+    if requested_by_agent_id != run["agent_id"]:
+        return {"error": "forbidden", "message": "Approval requester must match the target run agent."}, 403
     if body.get("task_id") and body.get("task_id") != run["task_id"]:
         return {"error": "forbidden", "message": "Approval task_id must match the target run."}, 403
     if tool_call_id:
-        tool_call = conn.execute("SELECT run_id FROM tool_calls WHERE tool_call_id=?", (tool_call_id,)).fetchone()
+        tool_call = conn.execute("SELECT * FROM tool_calls WHERE tool_call_id=?", (tool_call_id,)).fetchone()
         if not tool_call:
             return {"error": "tool call not found"}, 404
         if tool_call["run_id"] != run_id:
             return {"error": "forbidden", "message": "Approval tool_call_id must belong to the target run."}, 403
+        if tool_call["agent_id"] != run["agent_id"]:
+            return {"error": "forbidden", "message": "Approval tool_call_id must belong to the target run agent."}, 403
+    existing = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (approval_id,)).fetchone()
+    if existing:
+        if existing["run_id"] != run_id or existing["task_id"] != run["task_id"]:
+            return {"error": "forbidden", "message": "Approval id is already bound to another run or task."}, 403
+        if (existing["tool_call_id"] or None) != (tool_call_id or None):
+            return {"error": "forbidden", "message": "Approval tool_call_id must match the existing pending approval."}, 403
+        if existing["requested_by_agent_id"] != requested_by_agent_id:
+            return {"error": "forbidden", "message": "Approval requester must match the existing pending approval."}, 403
+        if existing["decision"] != "pending":
+            return {"error": "forbidden", "message": "Agent token can only update pending approvals."}, 403
     reason = redact_text(body.get("reason") or "Agent requested approval for an external or high-risk action.", 260)
     row = {
         "approval_id": approval_id,
         "task_id": run["task_id"],
         "run_id": run_id,
         "tool_call_id": tool_call_id,
-        "requested_by_agent_id": body.get("requested_by_agent_id") or body.get("agent_id") or run["agent_id"],
+        "requested_by_agent_id": requested_by_agent_id,
         "approver_user_id": body.get("approver_user_id") or "usr_founder",
         "decision": "pending",
         "reason": reason,
@@ -5835,12 +5860,18 @@ def agent_gateway_request_approval(conn, body) -> tuple[dict, int]:
         "created_at": now_iso(),
         "decided_at": None,
     }
-    before_approval, _approval_outcome = repo_upsert_approval(conn, row)
+    before_approval, approval_outcome = repo_upsert_approval(conn, row)
+    run_before = dict(run)
+    task_before = dict(task)
     conn.execute("UPDATE runs SET approval_required=1, status='waiting_approval' WHERE run_id=?", (run_id,))
     conn.execute("UPDATE tasks SET status='waiting_approval', updated_at=? WHERE task_id=?", (now_iso(), row["task_id"]))
+    run_after = conn.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
+    task_after = conn.execute("SELECT * FROM tasks WHERE task_id=?", (row["task_id"],)).fetchone()
     runtime_event(conn, "rtc_agent_gateway_local", "approval.request", "waiting_approval", run_id=run_id, task_id=row["task_id"], agent_id=row["requested_by_agent_id"], output_summary=reason)
-    audit(conn, "agent", row["requested_by_agent_id"], "agent_gateway.approval_request", "approvals", approval_id, dict(before_approval) if before_approval else None, row, {"raw_omitted": True})
-    return {"approval": row}, 201
+    audit(conn, "agent", row["requested_by_agent_id"], "agent_gateway.approval_request", "approvals", approval_id, dict(before_approval) if before_approval else None, row, {"workspace_id": ident["workspace_id"], "run_id": run_id, "task_id": row["task_id"], "raw_omitted": True})
+    audit(conn, "agent", row["requested_by_agent_id"], "agent_gateway.run_waiting_approval", "runs", run_id, run_before, dict(run_after) if run_after else None, {"approval_id": approval_id, "workspace_id": ident["workspace_id"]})
+    audit(conn, "agent", row["requested_by_agent_id"], "agent_gateway.task_waiting_approval", "tasks", row["task_id"], task_before, dict(task_after) if task_after else None, {"approval_id": approval_id, "workspace_id": ident["workspace_id"]})
+    return {"approval": row, "outcome": approval_outcome}, 201 if approval_outcome == "created" else 200
 
 
 def agent_gateway_memory_propose(conn, body) -> tuple[dict, int]:
