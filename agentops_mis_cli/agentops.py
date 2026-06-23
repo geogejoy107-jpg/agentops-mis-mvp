@@ -1966,6 +1966,21 @@ def cmd_workflow_job_mark_failed(args, client: AgentOpsClient) -> dict:
     )
 
 
+def cmd_workflow_recover_job(args, client: AgentOpsClient) -> dict:
+    payload = {
+        "mode": args.mode,
+        "reason": args.reason,
+        "task_id": args.task_id,
+        "adapter": args.adapter,
+        "actor_id": args.actor_id,
+        "confirm_recover": bool(args.confirm_recover),
+        "record_receipt": bool(args.record_receipt),
+        "confirm_run": bool(args.confirm_run),
+        "hermes_timeout": args.hermes_timeout,
+    }
+    return client.post(f"/api/workflows/jobs/{args.job_id}/recover", payload)
+
+
 def cmd_workflow_run_task(args, client: AgentOpsClient) -> dict:
     from . import worker as worker_mod
 
@@ -3224,6 +3239,18 @@ def build_parser() -> argparse.ArgumentParser:
     job_mark_failed.add_argument("--reason", default="Operator marked stale workflow job as failed.")
     job_mark_failed.add_argument("--actor-id", default="usr_operator")
     job_mark_failed.set_defaults(handler="workflow_job_mark_failed")
+    recover_job = workflow_sub.add_parser("recover-job", help="Preview or execute receipt-backed workflow job recovery.")
+    recover_job.add_argument("--job-id", required=True)
+    recover_job.add_argument("--mode", choices=["mark-failed", "retry"], default="mark-failed")
+    recover_job.add_argument("--reason", default="workflow job recovery requested by operator.")
+    recover_job.add_argument("--task-id", default=None, help="Required for retry when the failed job has no result_task_id.")
+    recover_job.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default=None)
+    recover_job.add_argument("--actor-id", default="usr_operator")
+    recover_job.add_argument("--confirm-recover", action="store_true", help="Actually perform recovery. Omitted means preview only.")
+    recover_job.add_argument("--record-receipt", action="store_true", help="Record an operator action receipt after confirmed recovery.")
+    recover_job.add_argument("--confirm-run", action="store_true", help="Required for Hermes/OpenClaw retry dispatch.")
+    recover_job.add_argument("--hermes-timeout", type=int, default=300)
+    recover_job.set_defaults(handler="workflow_recover_job")
     customer_worker = workflow_sub.add_parser("customer-worker-task", help="Dispatch a customer task through the AgentOps worker loop.")
     customer_worker.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
     customer_worker.add_argument("--confirm-run", action="store_true", help="Required for Hermes/OpenClaw live execution.")
@@ -3531,6 +3558,7 @@ HANDLERS = {
     "workflow_job_status": cmd_workflow_job_status,
     "workflow_stuck_jobs": cmd_workflow_stuck_jobs,
     "workflow_job_mark_failed": cmd_workflow_job_mark_failed,
+    "workflow_recover_job": cmd_workflow_recover_job,
     "workflow_customer_worker_task": cmd_workflow_customer_worker_task,
     "workflow_run_task": cmd_workflow_run_task,
     "worker_status": cmd_worker_status,

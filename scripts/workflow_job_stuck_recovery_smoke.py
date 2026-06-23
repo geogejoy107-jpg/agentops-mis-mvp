@@ -86,6 +86,13 @@ def insert_stale_job(db_path: Path, job_id: str) -> None:
         conn.commit()
 
 
+def job_status(base_url: str, job_id: str) -> dict:
+    proc = run_cli(base_url, ["workflow", "job-status", "--job-id", job_id])
+    payload = load_json(proc)
+    require(proc.returncode == 0, f"job-status failed: {proc.stderr or proc.stdout}")
+    return payload.get("job") or {}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Smoke-test stale workflow job recovery.")
     parser.add_argument("--base-url", default=os.environ.get("AGENTOPS_BASE_URL", "http://127.0.0.1:8787"))
@@ -126,19 +133,45 @@ def main() -> int:
     require("--source operator.workflow_job_recovery" in (mark_action.get("receipt_record_command") or ""), f"workflow recovery receipt source missing: {mark_action}")
     require("--status verified" in (mark_action.get("receipt_verify_record_command") or ""), f"workflow recovery verify receipt command missing: {mark_action}")
 
-    marked = run_cli(args.base_url, [
+    recover_preview = run_cli(args.base_url, [
         "workflow",
-        "job-mark-failed",
+        "recover-job",
         "--job-id",
         job_id,
+        "--mode",
+        "mark-failed",
         "--reason",
         "workflow job stuck recovery smoke",
     ])
+    recover_preview_payload = load_json(recover_preview)
+    require(recover_preview.returncode == 0, f"recover-job preview failed: {recover_preview.stderr or recover_preview.stdout}")
+    require(recover_preview_payload.get("dry_run") is True, f"recover-job preview should be dry-run: {recover_preview_payload}")
+    preview_action_command = str(recover_preview_payload.get("action_command") or "")
+    require(preview_action_command.startswith("agentops workflow job-mark-failed --job-id "), f"recover-job action command missing: {recover_preview_payload}")
+    require(job_id in preview_action_command, f"recover-job action command does not target job: {recover_preview_payload}")
+    require(recover_preview_payload.get("verify_command") == mark_action.get("verify_command"), f"recover-job verify command mismatch: {recover_preview_payload}")
+    require((recover_preview_payload.get("safety") or {}).get("ledger_mutated") is False, f"recover-job preview mutated ledger: {recover_preview_payload}")
+
+    marked = run_cli(args.base_url, [
+        "workflow",
+        "recover-job",
+        "--job-id",
+        job_id,
+        "--mode",
+        "mark-failed",
+        "--reason",
+        "workflow job stuck recovery smoke",
+        "--confirm-recover",
+        "--record-receipt",
+    ])
     marked_payload = load_json(marked)
-    job = marked_payload.get("job") or {}
-    require(marked.returncode == 0, f"job-mark-failed failed: {marked.stderr or marked.stdout}")
+    recovery = marked_payload.get("recovery") or {}
+    job = recovery.get("job") or {}
+    require(marked.returncode == 0, f"recover-job confirm failed: {marked.stderr or marked.stdout}")
     require(marked_payload.get("ok") is True, f"mark failed not ok: {marked_payload}")
-    require(marked_payload.get("marked_failed") is True, f"mark flag missing: {marked_payload}")
+    require(recovery.get("marked_failed") is True, f"mark flag missing: {marked_payload}")
+    require((marked_payload.get("safety") or {}).get("ledger_mutated") is True, f"recover-job confirm should mutate ledger: {marked_payload}")
+    require((marked_payload.get("receipt") or {}).get("status") == "verified", f"recover-job receipt missing: {marked_payload}")
     require(job.get("status") == "failed", f"job status mismatch: {job}")
     require(job.get("error_message") == "workflow job stuck recovery smoke", f"job reason mismatch: {job}")
 
@@ -147,22 +180,76 @@ def main() -> int:
     remaining_ids = {item.get("job_id") for item in (relisted_payload.get("stuck_jobs") or [])}
     require(job_id not in remaining_ids, f"marked job still appears stuck: {remaining_ids}")
 
+    recover_job_id = f"wfjob_recover_smoke_{stamp()}"
+    insert_stale_job(db_path, recover_job_id)
+    preview = run_cli(args.base_url, [
+        "workflow",
+        "recover-job",
+        "--job-id",
+        recover_job_id,
+        "--mode",
+        "mark-failed",
+        "--reason",
+        "workflow recover-job preview smoke",
+    ])
+    preview_payload = load_json(preview)
+    require(preview.returncode == 0, f"recover-job preview failed: {preview.stderr or preview.stdout}")
+    require(preview_payload.get("operation") == "workflow_job_recover", f"recover preview operation mismatch: {preview_payload}")
+    require(preview_payload.get("ok") is True, f"recover preview should be ok: {preview_payload}")
+    require(preview_payload.get("dry_run") is True, f"recover preview should be dry-run: {preview_payload}")
+    require(preview_payload.get("safety", {}).get("ledger_mutated") is False, f"recover preview mutated ledger: {preview_payload}")
+    require(preview_payload.get("action_command", "").startswith("agentops workflow job-mark-failed --job-id "), f"recover preview action missing: {preview_payload}")
+    preview_job = job_status(args.base_url, recover_job_id)
+    require(preview_job.get("status") == "running", f"recover preview changed job status: {preview_job}")
+
+    recovered = run_cli(args.base_url, [
+        "workflow",
+        "recover-job",
+        "--job-id",
+        recover_job_id,
+        "--mode",
+        "mark-failed",
+        "--reason",
+        "workflow recover-job confirmed smoke",
+        "--confirm-recover",
+        "--record-receipt",
+    ])
+    recovered_payload = load_json(recovered)
+    recovered_job = (recovered_payload.get("recovery") or {}).get("job") or {}
+    recovered_receipt = recovered_payload.get("receipt") or {}
+    require(recovered.returncode == 0, f"recover-job confirmed failed: {recovered.stderr or recovered.stdout}")
+    require(recovered_payload.get("ok") is True, f"recover confirmed not ok: {recovered_payload}")
+    require(recovered_payload.get("dry_run") is False, f"recover confirmed should not be dry-run: {recovered_payload}")
+    require(recovered_job.get("status") == "failed", f"recover confirmed job status mismatch: {recovered_payload}")
+    require(recovered_receipt.get("status") == "verified", f"recover receipt missing/invalid: {recovered_payload}")
+    require(recovered_receipt.get("source") == "operator.workflow_job_recovery", f"recover receipt source mismatch: {recovered_payload}")
+    require(recovered_payload.get("safety", {}).get("ledger_mutated") is True, f"recover confirmed ledger flag missing: {recovered_payload}")
+
     combined = "\n".join([
         listed.stdout,
         listed.stderr,
         action_plan.stdout,
         action_plan.stderr,
+        recover_preview.stdout,
+        recover_preview.stderr,
         marked.stdout,
         marked.stderr,
         relisted.stdout,
         relisted.stderr,
+        preview.stdout,
+        preview.stderr,
+        recovered.stdout,
+        recovered.stderr,
     ])
     require(not secret_leaked(combined), "workflow stuck recovery output leaked token-like material")
     print(json.dumps({
         "ok": True,
         "job_id": job_id,
+        "recover_job_id": recover_job_id,
         "listed": True,
         "marked_failed": True,
+        "recover_preview_dry_run": True,
+        "recover_receipt_status": recovered_receipt.get("status"),
         "final_status": job.get("status"),
         "secret_leaked": False,
     }, ensure_ascii=False, indent=2, sort_keys=True))

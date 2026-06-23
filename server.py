@@ -10638,6 +10638,139 @@ def mark_workflow_job_failed(conn, job_id: str, body: dict) -> tuple[dict, int]:
     return workflow_job_mark_failed_response(after, job_id), 200
 
 
+def recover_workflow_job(conn, job_id: str, body: dict, headers=None) -> tuple[dict, int]:
+    headers = headers or {}
+    workspace_id = normalize_workspace_id(body.get("workspace_id") or headers.get("X-AgentOps-Workspace-Id") or "local-demo")
+    job_id = redact_text(job_id, 120)
+    row = conn.execute("SELECT * FROM workflow_jobs WHERE job_id=?", (job_id,)).fetchone()
+    if not row:
+        return {"error": "not found", "job_id": job_id, "token_omitted": True}, 404
+    job = workflow_job_public(row) or {}
+    mode = coerce_choice(body.get("mode"), {"mark-failed", "retry"}, "mark-failed")
+    actor_id = redact_text(body.get("actor_id") or "usr_operator", 120)
+    confirm_recover = bool(body.get("confirm_recover") or body.get("confirm"))
+    record_receipt = bool(body.get("record_receipt"))
+    action_id = f"workflow_job_recovery:{job_id}:{'mark_failed' if mode == 'mark-failed' else 'retry'}"
+    receipt_source = "operator.workflow_job_recovery"
+    receipt_result_summary = f"Workflow job {job_id} recovery {mode} completed."
+    recovery_payload: dict = {}
+    recovery_status = 200
+    new_job_id = None
+
+    if mode == "mark-failed":
+        reason = redact_text(body.get("reason") or "workflow job exceeded async threshold; operator recovery from recover-job", 300)
+        action_command = (
+            "agentops workflow job-mark-failed "
+            f"--job-id {shlex.quote(job_id)} "
+            f"--reason {shlex.quote(reason)}"
+        )
+        verify_command = f"agentops workflow job-status --job-id {shlex.quote(job_id)}"
+        action_signature = stable_id("op_action_sig", "workflow_job_recovery", workspace_id, job_id, "mark_failed")[-18:]
+        recovery_request = {"reason": reason, "actor_id": actor_id, "workspace_id": workspace_id}
+        receipt_result_summary = f"Workflow job {job_id} marked failed after recover-job review."
+        if confirm_recover:
+            recovery_payload, recovery_status = mark_workflow_job_failed(conn, job_id, recovery_request)
+    else:
+        task_id = redact_text(body.get("task_id") or job.get("result_task_id") or "", 120)
+        if not task_id:
+            return {
+                "provider": "agentops-workflow-job",
+                "operation": "workflow_job_recover",
+                "ok": False,
+                "mode": mode,
+                "job_id": job_id,
+                "reason": "task_id_required_for_retry",
+                "job": job,
+                "token_omitted": True,
+            }, 400
+        adapter = coerce_choice(body.get("adapter") or job.get("adapter"), {"mock", "hermes", "openclaw"}, "mock")
+        confirm_run = bool(body.get("confirm_run"))
+        command_parts = [
+            "agentops", "commander", "dispatch-batch",
+            "--task-id", task_id,
+            "--status", "all",
+            "--limit", "1",
+            "--adapter", adapter,
+        ]
+        if adapter in {"hermes", "openclaw"} and confirm_run:
+            command_parts.append("--confirm-run")
+        action_command = " ".join(shlex.quote(part) for part in command_parts)
+        verify_command = "agentops workflow jobs --status queued,running,completed,failed --limit 20"
+        action_signature = stable_id("op_action_sig", "workflow_job_recovery", workspace_id, job_id, "retry", task_id, adapter)[-18:]
+        dispatch_body = {
+            "workspace_id": workspace_id,
+            "task_ids": [task_id],
+            "status": "all",
+            "limit": 1,
+            "adapter": adapter,
+            "confirm_run": confirm_run,
+            "hermes_timeout": body.get("hermes_timeout") or 300,
+            "base_url": body.get("base_url") or body.get("_base_url") or request_base_url(headers),
+        }
+        receipt_result_summary = f"Workflow job {job_id} retry was queued or safely rejected with evidence."
+        if confirm_recover:
+            recovery_payload, recovery_status = submit_commander_work_package_dispatch_jobs(conn, dispatch_body, headers)
+            new_job_id = next((item for item in (recovery_payload.get("job_ids") or []) if item), None) if isinstance(recovery_payload, dict) else None
+            if new_job_id:
+                verify_command = f"agentops workflow job-status --job-id {shlex.quote(str(new_job_id))} --wait"
+
+    preview = {
+        "provider": "agentops-workflow-job",
+        "operation": "workflow_job_recover",
+        "ok": bool((not confirm_recover) or 200 <= int(recovery_status) < 300),
+        "dry_run": not confirm_recover,
+        "mode": mode,
+        "job_id": job_id,
+        "new_job_id": new_job_id,
+        "job": job,
+        "action_id": action_id,
+        "action_signature": action_signature,
+        "action_command": action_command,
+        "verify_command": verify_command,
+        "receipt_source": receipt_source,
+        "receipt_result_summary": receipt_result_summary,
+        "record_receipt_requested": record_receipt,
+        "receipt": None,
+        "recovery": recovery_payload if confirm_recover else None,
+        "next_actions": [action_command] if not confirm_recover else [verify_command, "agentops operator action-plan --limit 20"],
+        "safety": {
+            "read_only": not confirm_recover,
+            "ledger_mutated": bool(confirm_recover and 200 <= int(recovery_status) < 300),
+            "live_execution_performed": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+    if not confirm_recover:
+        preview["requires"] = {"confirm_recover": True}
+        return preview, 200
+
+    if record_receipt:
+        receipt_status = "verified" if 200 <= int(recovery_status) < 300 else "failed"
+        receipt_payload, receipt_http_status = record_operator_action_receipt(conn, {
+            "workspace_id": workspace_id,
+            "actor_id": actor_id,
+            "action_command": action_command,
+            "verify_command": verify_command,
+            "action_id": action_id,
+            "action_signature": action_signature,
+            "status": receipt_status,
+            "source": receipt_source,
+            "result_summary": receipt_result_summary,
+        }, headers)
+        preview["receipt"] = receipt_payload.get("receipt") if isinstance(receipt_payload, dict) else None
+        preview["receipt_status"] = receipt_status
+        preview["receipt_http_status"] = receipt_http_status
+        preview["safety"]["ledger_mutated"] = True
+    if not (200 <= int(recovery_status) < 300):
+        preview["ok"] = False
+        return preview, recovery_status
+    return preview, 200
+
+
 def run_workflow_job_background(job_id: str, body: dict) -> None:
     started = now_iso()
     try:
@@ -24934,6 +25067,13 @@ class Handler(BaseHTTPRequestHandler):
             if path.startswith("/api/workflows/jobs/") and path.endswith("/mark-failed"):
                 job_id = path.split("/")[-2]
                 payload, status = mark_workflow_job_failed(conn, job_id, body)
+                return self.send_json(payload, status)
+            if path.startswith("/api/workflows/jobs/") and path.endswith("/recover"):
+                job_id = path.split("/")[-2]
+                body.setdefault("_base_url", request_base_url(self.headers) or "http://127.0.0.1:8787")
+                payload, status = recover_workflow_job(conn, job_id, body, self.headers)
+                conn.commit()
+                clear_read_model_cache()
                 return self.send_json(payload, status)
             if path.startswith("/api/workflows/customer-projects/") and path.endswith("/report-artifact"):
                 project_id = path.split("/")[-2]
