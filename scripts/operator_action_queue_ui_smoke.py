@@ -51,6 +51,24 @@ EXPECTED_MARKERS = {
     "loop_launch_control_summary": "loopLaunchControlSummary",
     "loop_launch_control_title_en": 'loopControlTitle: "Loop control"',
     "loop_launch_control_title_zh": 'loopControlTitle: "Loop 控制"',
+    "operator_loop_control_import": "loadOperatorLoopControl",
+    "operator_loop_control_loader": 'id: "operator_loop_control", load: async () => ({ operatorLoopControl: await loadOperatorLoopControl(8) })',
+    "operator_loop_control_core_panel": '"operator_loop_control",',
+    "operator_loop_control_type": "OperatorLoopControlPayload",
+    "operator_loop_control_payload": "operatorLoopControl",
+    "operator_loop_control_panel_badge": 'panelStatusBadge("operator_loop_control")',
+    "operator_loop_control_panel_refresh": 'panelRefreshButton("operator_loop_control")',
+    "operator_loop_control_panel_diagnostics": 'panelDiagnosticsButton("operator_loop_control")',
+    "operator_loop_control_panel_receipt": 'panelReceiptButton("operator_loop_control")',
+    "operator_loop_control_direct_summary": "directLoopControlSummary = operatorLoopControl?.control_summary",
+    "operator_loop_control_direct_source": 'source: "operator_loop_control"',
+    "operator_loop_control_direct_next_command": "directLoopControlNextCommand",
+    "operator_loop_control_direct_verify_command": "directLoopControlVerifyCommand",
+    "operator_loop_control_direct_receipt_command": "directLoopControlReceiptCommand",
+    "operator_loop_control_preview_command": "directLoopControlPreviewCommand",
+    "operator_loop_control_fast_readback": "agentops operator advance-loop --fast-control --confirm-advance",
+    "operator_loop_control_safety_read_only": "operatorLoopControl.safety.read_only",
+    "operator_loop_control_live_execution_proof": "operatorLoopControl.safety.live_execution_performed",
     "loop_launch_recommended_step": "loopLaunchRecommendedStep",
     "loop_launch_recommended_command": "loopLaunchRecommendedCommand",
     "loop_launch_control_copy_only": "loopLaunchControlSummary.server_executes_shell",
@@ -139,10 +157,10 @@ EXPECTED_MARKERS = {
     "operator_health_risk_backend_receipt": "receiptRecordCommand: item.receipt_record_command",
     "operator_health_risk_backend_verify_receipt": "receiptVerifyRecordCommand: item.receipt_verify_record_command",
     "operator_health_risk_sort": "candidate.isOperatorHealthRisk ? 118",
-    "operator_health_control_summary": "operatorHealthControlSummary = operatorHealth?.control_summary || handoffControlSummary",
-    "operator_health_loop_control": "operatorHealth?.loop_control ||",
+    "operator_health_control_summary": "operatorHealthControlSummary = directLoopControlSummary || operatorHealth?.control_summary || handoffControlSummary",
+    "operator_health_loop_control": "operatorLoopControl ? {",
     "operator_health_loop_control_badge": 'label={`${copy.loopControlTitle}: ${loopControlGateStatus}`}',
-    "operator_health_loop_control_grid": "{ label: copy.loopControlTitle, value: loopControlSelectedGate, status: loopControlGateStatus }",
+    "operator_health_loop_control_grid": "{ label: copy.loopControlTitle, value: loopControlSelectedGate, status: operatorLoopControl?.status || loopControlGateStatus }",
     "operator_health_loop_control_readback": "{ label: copy.controlReadbackSource, value: loopControlReadbackSource",
     "operator_health_loop_control_refresh": "{ label: copy.cacheRefresh, value: loopControlRefreshRequired",
     "operator_health_loop_control_command_source": "{ label: copy.commandSource, value: String(operatorHealthLoopControl.source",
@@ -298,7 +316,7 @@ EXPECTED_MARKERS = {
     "action_receipt_control_readback_summary_hash": "operatorActionReceipts.summary.latest_control_readback_hash",
     "operator_health_loop_control_cache_refresh": "loopControlRefreshRequired",
     "operator_health_loop_control_top_badge": "copy.loopControlTitle}: ${loopControlGateStatus}",
-    "operator_health_loop_control_metric": "{ label: copy.loopControlTitle, value: loopControlSelectedGate, status: loopControlGateStatus }",
+    "operator_health_loop_control_metric": "{ label: copy.loopControlTitle, value: loopControlSelectedGate, status: operatorLoopControl?.status || loopControlGateStatus }",
     "operator_command_center_import": "loadOperatorCommandCenter",
     "operator_command_center_loader": 'id: "operator_command_center", load: async () => ({ operatorCommandCenter: await loadOperatorCommandCenter(12) })',
     "operator_command_center_type": "OperatorCommandCenterPayload",
@@ -432,6 +450,8 @@ EXPECTED_MARKERS = {
 }
 
 EXPECTED_LIVE_API_MARKERS = {
+    "operator_loop_control_api_loader": "export async function loadOperatorLoopControl",
+    "operator_loop_control_api_endpoint": "`/operator/loop-control?",
     "operator_runtime_doctor_payload_type": "export interface OperatorRuntimeDoctorPayload",
     "operator_runtime_doctor_loader_fn": "export async function loadOperatorRuntimeDoctor",
     "operator_runtime_doctor_endpoint": "/operator/runtime-doctor?${params.toString()}",
@@ -491,6 +511,10 @@ def main() -> int:
     for label, marker in EXPECTED_LIVE_API_MARKERS.items():
         if marker not in live_api_source:
             failures.append(f"missing live api {label}: {marker}")
+    if live_api_source.count("export async function loadOperatorLoopControl") != 1:
+        failures.append("loadOperatorLoopControl must have exactly one implementation")
+    if live_api_source.count("export interface OperatorLoopControlPayload") != 1:
+        failures.append("OperatorLoopControlPayload must have exactly one interface")
     for label, marker in FORBIDDEN_MARKERS.items():
         if marker in source:
             failures.append(f"forbidden {label}: {marker}")

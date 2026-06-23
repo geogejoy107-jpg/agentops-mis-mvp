@@ -1944,6 +1944,35 @@ export interface OperatorLoopLaunchPacketPayload {
   live_execution_performed?: boolean;
 }
 
+export interface OperatorLoopControlPayload {
+  provider: string;
+  operation: string;
+  status: string;
+  workspace_id: string;
+  loop_id?: string | null;
+  summary: Record<string, number | string | boolean | null | undefined>;
+  next_actions: string[];
+  work_order: {
+    advance_loop?: Record<string, unknown>;
+    commands: string[];
+    token_omitted?: boolean;
+  };
+  control_summary?: OperatorHandoffPayload["control_summary"];
+  sources?: Record<string, unknown>;
+  contract?: string;
+  safety: {
+    read_only: boolean;
+    ledger_mutated: boolean;
+    live_execution_performed: boolean;
+    server_executes_shell?: boolean;
+    raw_prompt_omitted: boolean;
+    raw_response_omitted: boolean;
+    token_omitted: boolean;
+  };
+  token_omitted?: boolean;
+  live_execution_performed?: boolean;
+}
+
 export interface OperatorHealthComponent {
   id: string;
   label: string;
@@ -5454,6 +5483,108 @@ export async function loadOperatorHandoff(limit = 12, loopId = ""): Promise<Oper
     },
     token_omitted: boolValue(raw.token_omitted),
     live_execution_performed: boolValue(raw.live_execution_performed),
+  };
+}
+
+export async function loadOperatorLoopControl(limit = 8, loopId = ""): Promise<OperatorLoopControlPayload> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (loopId) params.set("loop_id", loopId);
+  const raw = await optionalApiJson<Record<string, unknown>>(`/operator/loop-control?${params.toString()}`, {
+    provider: "agentops-operator",
+    operation: "operator_loop_control",
+    status: "unavailable",
+    workspace_id: "local-demo",
+    loop_id: loopId || null,
+    summary: {},
+    next_actions: [`agentops operator loop-control --limit ${limit}`],
+    work_order: {
+      advance_loop: {
+        preview_command: `agentops operator advance-loop --fast-control --limit ${limit}`,
+        status: "unavailable",
+        token_omitted: true,
+      },
+      commands: [`agentops operator loop-control --limit ${limit}`],
+      token_omitted: true,
+    },
+    control_summary: {
+      operation: "operator_loop_control_summary",
+      status: "unavailable",
+      mode: "read_only_copy",
+      recommended_step: {},
+      next_command: `agentops operator loop-control --limit ${limit}`,
+      verify_command: `agentops operator loop-control --limit ${limit}`,
+      receipt_command: null,
+      requires_human: false,
+      requires_receipt: false,
+      server_executes_shell: false,
+      copy_only: true,
+      step_counts: {},
+      selected_gate: null,
+      selected_status: null,
+      policy_id: "advance_loop_local_bounded_v1",
+      token_omitted: true,
+    },
+    sources: {},
+    contract: "lightweight read-only loop control fallback",
+    safety: {
+      read_only: true,
+      ledger_mutated: false,
+      live_execution_performed: false,
+      raw_prompt_omitted: true,
+      raw_response_omitted: true,
+      token_omitted: true,
+    },
+    token_omitted: true,
+    live_execution_performed: false,
+  });
+  const summaryRaw = typeof raw.summary === "object" && raw.summary !== null ? raw.summary as Record<string, unknown> : {};
+  const workOrderRaw = typeof raw.work_order === "object" && raw.work_order !== null ? raw.work_order as Record<string, unknown> : {};
+  const controlRaw = typeof raw.control_summary === "object" && raw.control_summary !== null ? raw.control_summary as Record<string, unknown> : {};
+  const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
+  return {
+    provider: String(raw.provider || "agentops-operator"),
+    operation: String(raw.operation || "operator_loop_control"),
+    status: String(raw.status || "unknown"),
+    workspace_id: String(raw.workspace_id || "local-demo"),
+    loop_id: raw.loop_id ? String(raw.loop_id) : null,
+    summary: summaryRaw as Record<string, number | string | boolean | null | undefined>,
+    next_actions: asArray<unknown>(raw.next_actions).map(String).filter(Boolean),
+    work_order: {
+      advance_loop: typeof workOrderRaw.advance_loop === "object" && workOrderRaw.advance_loop !== null ? workOrderRaw.advance_loop as Record<string, unknown> : undefined,
+      commands: asArray<unknown>(workOrderRaw.commands).map(String).filter(Boolean),
+      token_omitted: workOrderRaw.token_omitted === undefined ? undefined : boolValue(workOrderRaw.token_omitted),
+    },
+    control_summary: {
+      operation: String(controlRaw.operation || "operator_loop_control_summary"),
+      status: String(controlRaw.status || "unknown"),
+      mode: controlRaw.mode ? String(controlRaw.mode) : undefined,
+      loop_id: controlRaw.loop_id ? String(controlRaw.loop_id) : null,
+      recommended_step: typeof controlRaw.recommended_step === "object" && controlRaw.recommended_step !== null ? controlRaw.recommended_step as Record<string, unknown> : {},
+      next_command: controlRaw.next_command ? String(controlRaw.next_command) : null,
+      verify_command: controlRaw.verify_command ? String(controlRaw.verify_command) : null,
+      receipt_command: controlRaw.receipt_command ? String(controlRaw.receipt_command) : null,
+      requires_human: controlRaw.requires_human === undefined ? undefined : boolValue(controlRaw.requires_human),
+      requires_receipt: controlRaw.requires_receipt === undefined ? undefined : boolValue(controlRaw.requires_receipt),
+      server_executes_shell: controlRaw.server_executes_shell === undefined ? undefined : boolValue(controlRaw.server_executes_shell),
+      copy_only: controlRaw.copy_only === undefined ? undefined : boolValue(controlRaw.copy_only),
+      step_counts: typeof controlRaw.step_counts === "object" && controlRaw.step_counts !== null ? controlRaw.step_counts as Record<string, number> : {},
+      selected_gate: controlRaw.selected_gate ? String(controlRaw.selected_gate) : null,
+      selected_status: controlRaw.selected_status ? String(controlRaw.selected_status) : null,
+      policy_id: controlRaw.policy_id ? String(controlRaw.policy_id) : undefined,
+      token_omitted: controlRaw.token_omitted === undefined ? undefined : boolValue(controlRaw.token_omitted),
+    },
+    sources: typeof raw.sources === "object" && raw.sources !== null ? raw.sources as Record<string, unknown> : undefined,
+    contract: raw.contract ? String(raw.contract) : undefined,
+    safety: {
+      read_only: boolValue(safetyRaw.read_only),
+      ledger_mutated: boolValue(safetyRaw.ledger_mutated),
+      live_execution_performed: boolValue(safetyRaw.live_execution_performed),
+      raw_prompt_omitted: boolValue(safetyRaw.raw_prompt_omitted),
+      raw_response_omitted: boolValue(safetyRaw.raw_response_omitted),
+      token_omitted: boolValue(safetyRaw.token_omitted),
+    },
+    token_omitted: raw.token_omitted === undefined ? undefined : boolValue(raw.token_omitted),
+    live_execution_performed: raw.live_execution_performed === undefined ? undefined : boolValue(raw.live_execution_performed),
   };
 }
 

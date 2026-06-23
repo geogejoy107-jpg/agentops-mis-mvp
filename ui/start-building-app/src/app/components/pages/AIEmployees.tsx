@@ -31,6 +31,7 @@ import {
   loadOperatorExecutionMode,
   loadOperatorHandoff,
   loadOperatorHealth,
+  loadOperatorLoopControl,
   loadOperatorLoopLaunchPacket,
   loadOperatorLoopAudit,
   loadOperatorLoopSelfCheck,
@@ -80,6 +81,7 @@ import {
   type OperatorExecutionModePayload,
   type OperatorHandoffPayload,
   type OperatorHealthPayload,
+  type OperatorLoopControlPayload,
   type OperatorLoopLaunchPacketPayload,
   type OperatorLoopAuditPayload,
   type OperatorLoopSelfCheckPayload,
@@ -154,6 +156,7 @@ type AIEmployeesLiveData = {
   [key: string]: unknown;
   operatorCommandCenter?: OperatorCommandCenterPayload;
   operatorExecutionMode?: OperatorExecutionModePayload;
+  operatorLoopControl?: OperatorLoopControlPayload;
   operatorRuntimeDoctor?: OperatorRuntimeDoctorPayload;
   executionModeAdapter?: WorkerAdapterName;
   executionModeConfirmRun?: boolean;
@@ -191,6 +194,7 @@ const AI_EMPLOYEES_PANEL_LOADERS: AIEmployeesPanelLoader[] = [
   { id: "local_readiness", load: async () => ({ localReadiness: await loadLocalReadiness() }) },
   { id: "operator_runtime_doctor", load: async () => ({ operatorRuntimeDoctor: await loadOperatorRuntimeDoctor(8) }) },
   { id: "operator_execution_mode", load: async (context) => ({ operatorExecutionMode: await loadOperatorExecutionMode(context.executionModeAdapter || "mock", Boolean(context.executionModeConfirmRun), 8) }) },
+  { id: "operator_loop_control", load: async () => ({ operatorLoopControl: await loadOperatorLoopControl(8) }) },
   { id: "operator_command_center", load: async () => ({ operatorCommandCenter: await loadOperatorCommandCenter(12) }) },
   { id: "operator_action_plan", load: async () => ({ operatorActionPlan: await loadOperatorActionPlan(12) }) },
   { id: "operator_action_receipts", load: async () => ({ operatorActionReceipts: await loadOperatorActionReceipts(8) }) },
@@ -217,6 +221,7 @@ const AI_EMPLOYEES_CORE_PANEL_IDS = new Set([
   "local_readiness",
   "operator_runtime_doctor",
   "operator_execution_mode",
+  "operator_loop_control",
   "operator_command_center",
   "operator_action_plan",
   "operator_evidence_report",
@@ -519,6 +524,7 @@ export function AIEmployees() {
   const operatorLoopAudit = data?.operatorLoopAudit as OperatorLoopAuditPayload | undefined;
   const operatorHandoff = data?.operatorHandoff as OperatorHandoffPayload | undefined;
   const operatorHealth = data?.operatorHealth as OperatorHealthPayload | undefined;
+  const operatorLoopControl = data?.operatorLoopControl as OperatorLoopControlPayload | undefined;
   const operatorLoopSelfCheck = data?.operatorLoopSelfCheck as OperatorLoopSelfCheckPayload | undefined;
   const operatorCommandCenterSummary = operatorCommandCenter?.summary;
   const operatorCommandCenterActions = operatorCommandCenter?.next_actions || [];
@@ -2070,8 +2076,44 @@ export function AIEmployees() {
   const handoffControlCommand = String(handoffControlSummary?.next_command || handoffControlStep.command || "");
   const handoffControlVerifyCommand = String(handoffControlSummary?.verify_command || handoffControlStep.verify_command || "");
   const handoffControlReceiptCommand = String(handoffControlSummary?.receipt_command || handoffControlStep.receipt_command || "");
-  const operatorHealthControlSummary = operatorHealth?.control_summary || handoffControlSummary;
+  const directLoopControlSummary = operatorLoopControl?.control_summary;
+  const operatorHealthControlSummary = directLoopControlSummary || operatorHealth?.control_summary || handoffControlSummary;
+  const directLoopControlStep = directLoopControlSummary?.recommended_step || {};
+  const directLoopControlNextCommand = String(directLoopControlSummary?.next_command || directLoopControlStep.command || operatorLoopControl?.next_actions?.[0] || operatorLoopControl?.work_order?.commands?.[0] || "");
+  const directLoopControlVerifyCommand = String(directLoopControlSummary?.verify_command || directLoopControlStep.verify_command || "");
+  const directLoopControlReceiptCommand = String(directLoopControlSummary?.receipt_command || directLoopControlStep.receipt_command || "");
+  const directLoopControlAdvance = (
+    operatorLoopControl?.work_order?.advance_loop &&
+    typeof operatorLoopControl.work_order.advance_loop === "object"
+      ? operatorLoopControl.work_order.advance_loop
+      : {}
+  ) as Record<string, unknown>;
+  const directLoopControlSelectedItem = (
+    directLoopControlAdvance.selected_item &&
+    typeof directLoopControlAdvance.selected_item === "object"
+      ? directLoopControlAdvance.selected_item
+      : {}
+  ) as Record<string, unknown>;
+  const directLoopControlPreviewCommand = String(directLoopControlAdvance.preview_command || directLoopControlNextCommand || "agentops operator loop-control --limit 8");
   const operatorHealthLoopControl = (
+    operatorLoopControl ? {
+      status: operatorLoopControl.status || directLoopControlSummary?.status || "unknown",
+      source: "operator_loop_control",
+      mode: directLoopControlSummary?.mode,
+      recommended_step: directLoopControlStep.label || directLoopControlStep.step_id,
+      recommended_step_status: directLoopControlStep.status || directLoopControlSelectedItem.gate_status,
+      selected_gate: directLoopControlSummary?.selected_gate || directLoopControlStep.selected_gate || directLoopControlSelectedItem.gate_id,
+      selected_status: directLoopControlSummary?.selected_status || directLoopControlSelectedItem.gate_status,
+      next_action: directLoopControlNextCommand,
+      verify_command: directLoopControlVerifyCommand,
+      receipt_command: directLoopControlReceiptCommand,
+      requires_human: directLoopControlSummary?.requires_human,
+      requires_receipt: directLoopControlSummary?.requires_receipt,
+      copy_only: directLoopControlSummary?.copy_only !== false,
+      server_executes_shell: Boolean(directLoopControlSummary?.server_executes_shell || operatorLoopControl.safety.server_executes_shell),
+      control_readback_source: "agentops operator advance-loop --fast-control --confirm-advance",
+      token_omitted: operatorLoopControl.token_omitted,
+    } :
     operatorHealth?.loop_control ||
     operatorHandoff?.loop_health?.gates?.loop_control ||
     operatorLoopSelfCheck?.gates?.loop_control ||
@@ -3800,7 +3842,12 @@ export function AIEmployees() {
               <Activity size={14} style={{ color: "var(--mis-cyan)" }} />
               <h2 className="text-sm font-semibold" style={{ color: "var(--mis-text)" }}>{copy.commandCenterTitle}</h2>
               <StatusBadge status={operatorCommandCenter?.status || operatorHealth?.status || fleetHealth?.overall || workerStatus?.status || "unknown"} />
+              <StatusBadge status={operatorLoopControl?.status || "unknown"} label={`${copy.loopControlTitle}: ${operatorLoopControl?.status || "unknown"}`} />
               <StatusBadge status={operatorRuntimeDoctor?.status || "unknown"} label={`${copy.runtimeDoctorTitle}: ${operatorRuntimeDoctor?.status || "unknown"}`} />
+              {panelStatusBadge("operator_loop_control")}
+              {panelRefreshButton("operator_loop_control")}
+              {panelDiagnosticsButton("operator_loop_control")}
+              {panelReceiptButton("operator_loop_control")}
               {panelStatusBadge("operator_runtime_doctor")}
               {panelRefreshButton("operator_runtime_doctor")}
               {panelDiagnosticsButton("operator_runtime_doctor")}
@@ -3821,8 +3868,14 @@ export function AIEmployees() {
               </p>
             )}
             {panelEvidenceLine("operator_command_center")}
+            {panelEvidenceLine("operator_loop_control")}
             {panelEvidenceLine("operator_runtime_doctor")}
             {panelEvidenceLine("worker_status")}
+            {operatorLoopControl && (
+              <p className="text-[10px] mt-1 max-w-3xl" style={{ color: "var(--mis-muted)" }}>
+                {copy.loopControlSummary} · {copy.verifiedReceipts}: {Number(operatorLoopControl.summary.verified_receipts ?? 0)} · {copy.nextSafeCommand}: {directLoopControlNextCommand || directLoopControlPreviewCommand}
+              </p>
+            )}
             {operatorRuntimeDoctor && (
               <p className="text-[10px] mt-1 max-w-3xl" style={{ color: "var(--mis-muted)" }}>
                 {copy.runtimeDoctorSummary} · {copy.recommendedAdapter}: {runtimeDoctorSummary?.recommended_adapter || "mock"} · {copy.runtimeDoctorGates}: {runtimeDoctorBlockedGates.length} blocked / {runtimeDoctorAttentionGates.length} attention
@@ -3859,10 +3912,10 @@ export function AIEmployees() {
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-9 gap-3 mt-4">
           {[
             { label: copy.operatorCommandCenterTitle, value: operatorCommandCenterSummary?.next_actions ?? operatorCommandCenterActions.length, status: operatorCommandCenter?.status || "unknown" },
+            { label: copy.loopControlTitle, value: loopControlSelectedGate, status: operatorLoopControl?.status || loopControlGateStatus },
             { label: copy.runtimeDoctorTitle, value: runtimeDoctorSummary?.evidence_chain_status || operatorRuntimeDoctor?.status || "—", status: operatorRuntimeDoctor?.status || "unknown" },
             { label: copy.operatorHealthTitle, value: `${operatorHealth?.score ?? 0}/100`, status: operatorHealth?.status || "unknown" },
             { label: copy.commandCenterCodingGaps, value: operatorCommandCenterCodingGapCount, status: operatorCommandCenterCodingGapCount > 0 ? "attention" : "pass" },
-            { label: copy.loopControlTitle, value: loopControlSelectedGate, status: loopControlGateStatus },
             { label: copy.overallFleetHealth, value: fleetHealth?.overall || workerStatus?.status || "—", status: fleetHealth?.overall || workerStatus?.status || "unknown" },
             { label: copy.daemonStatus, value: `${runningDaemons}/${workerStatus?.daemons?.length ?? 0}`, status: runningDaemons > 0 ? "running" : "ready" },
             { label: copy.pendingTasks, value: workerStatus?.pending_worker_tasks ?? "—", status: (workerStatus?.pending_worker_tasks || 0) > 0 ? "planned" : "pass" },
@@ -3878,6 +3931,66 @@ export function AIEmployees() {
             </div>
           ))}
         </div>
+
+        {operatorLoopControl && (
+          <div className="rounded-lg p-3 mt-4" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+            <div className="flex flex-col xl:flex-row xl:items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Activity size={13} style={{ color: "var(--mis-cyan)" }} />
+                  <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.loopControlTitle}</div>
+                  <StatusBadge status={operatorLoopControl.status || "unknown"} />
+                  <StatusBadge status={operatorLoopControl.safety.read_only && !operatorLoopControl.safety.ledger_mutated ? "pass" : "attention"} label={operatorLoopControl.safety.read_only ? copy.readOnlyProof : copy.statusAttention} />
+                  <StatusBadge status={operatorLoopControl.safety.live_execution_performed ? "blocked" : "pass"} label={operatorLoopControl.safety.live_execution_performed ? "live executed" : copy.liveExecutionProof} />
+                  <StatusBadge status={loopControlServerShell ? "blocked" : "pass"} label={loopControlServerShell ? "server shell" : "copy-only"} />
+                  {panelStatusBadge("operator_loop_control")}
+                  {panelRefreshButton("operator_loop_control")}
+                  {panelDiagnosticsButton("operator_loop_control")}
+                  {panelReceiptButton("operator_loop_control")}
+                </div>
+                <p className="text-[10px] mt-1 max-w-4xl" style={{ color: "var(--mis-dim)" }}>{copy.loopControlSummary}</p>
+                {operatorLoopControl.contract && (
+                  <p className="text-[10px] mt-1 max-w-4xl truncate" style={{ color: "var(--mis-muted)" }}>{copy.contract}: {operatorLoopControl.contract}</p>
+                )}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-2">
+                  {[
+                    { label: copy.recommendedStep, value: String(directLoopControlStep.label || directLoopControlStep.step_id || loopControlSelectedGate || "—"), status: loopControlGateStatus },
+                    { label: copy.controlMode, value: loopControlGateMode, status: loopControlCopyOnly ? "pass" : "attention" },
+                    { label: copy.humanRequired, value: loopControlRequiresHuman ? copy.yes : copy.no, status: loopControlRequiresHuman ? "attention" : "pass" },
+                    { label: copy.receiptProof, value: loopControlRequiresReceipt ? copy.receiptNeeded : copy.verifiedReceipts, status: loopControlRequiresReceipt ? "attention" : "pass" },
+                  ].map((item) => (
+                    <div key={item.label} className="rounded px-2 py-1" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                      <div className="text-[8px]" style={{ color: "var(--mis-muted)" }}>{item.label}</div>
+                      <div className="flex items-center justify-between gap-1 mt-0.5">
+                        <div className="text-[9px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{item.value}</div>
+                        <StatusBadge status={item.status} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="flex flex-wrap xl:justify-end gap-1.5 shrink-0">
+                {[
+                  { label: copy.nextSafeCommand, command: directLoopControlNextCommand || directLoopControlPreviewCommand, color: "var(--mis-cyan)" },
+                  { label: copy.verifyAfterAction, command: directLoopControlVerifyCommand, color: "var(--mis-success)" },
+                  { label: copy.copyReceiptCommand, command: directLoopControlReceiptCommand, color: "var(--mis-warning)" },
+                  { label: copy.previewAdvanceLoop, command: directLoopControlPreviewCommand, color: "var(--mis-cyan)" },
+                ].filter(item => item.command).map((item) => (
+                  <button
+                    key={`${item.label}:${item.command}`}
+                    onClick={() => void copyIntakeCommand(item.command)}
+                    className="inline-flex items-center gap-1 text-[9px] px-2 py-1 rounded max-w-full"
+                    style={{ color: item.color, background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}
+                    title={item.command}
+                  >
+                    <Copy size={10} />
+                    <span className="truncate max-w-[132px]">{copiedIntakeCommand === item.command ? copy.copiedCommand : item.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="rounded-lg p-3 mt-4" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
           <div className="flex flex-col xl:flex-row xl:items-start justify-between gap-3">
