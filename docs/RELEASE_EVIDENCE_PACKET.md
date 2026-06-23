@@ -136,6 +136,7 @@ The packet includes the canonical command manifest used for release review:
 - `python3 scripts/operator_execution_mode_smoke.py`
 - `python3 scripts/runtime_capability_manifest_smoke.py --base-url "$AGENTOPS_BASE_URL"`
 - `python3 scripts/runtime_connector_trust_smoke.py --base-url "$AGENTOPS_BASE_URL"`
+- `python3 scripts/runtime_connector_trust_ui_smoke.py`
 - `python3 scripts/worker_fleet_hygiene_smoke.py --base-url "$AGENTOPS_BASE_URL"`
 - `python3 scripts/prepared_action_approval_wall_smoke.py --base-url "$AGENTOPS_BASE_URL"`
 - `python3 scripts/high_risk_toolcall_prepared_action_gate_smoke.py --base-url "$AGENTOPS_BASE_URL"`

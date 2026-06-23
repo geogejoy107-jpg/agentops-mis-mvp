@@ -411,6 +411,12 @@ TEST_COMMANDS = [
         "ci_step": "Server-backed smoke suite",
     },
     {
+        "id": "runtime_connector_trust_ui",
+        "command": "python3 scripts/runtime_connector_trust_ui_smoke.py",
+        "summary": "Runtime connector trust UI explains trusted/review/blocked operator impact, live worker gate readback and audit refs.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "enrollment_launch_steps",
         "command": "python3 scripts/enrollment_launch_steps_smoke.py --base-url \"$AGENTOPS_BASE_URL\"",
         "summary": "Enrollment create/rotate launch packets omit raw tokens and include installable worker, start-check/method-gate contract, short-lived session, service-template/install/check and preview-first service-control commands.",

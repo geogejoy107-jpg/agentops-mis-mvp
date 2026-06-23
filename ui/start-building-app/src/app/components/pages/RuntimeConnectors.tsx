@@ -36,6 +36,13 @@ export function RuntimeConnectors() {
       trustSummary: "Controls whether live adapters are trusted, require review, or are blocked before customer worker execution.",
       updatingTrust: "Updating...",
       trustUpdated: "Trust policy updated",
+      trustImpact: "Trust impact",
+      liveWorkerGate: "Live worker gate",
+      operatorReadback: "Operator readback",
+      auditRefs: "Audit refs",
+      trustedImpact: "Confirmed live worker runs may proceed after the normal confirm/prepared-action gates pass.",
+      reviewImpact: "Operators should review this connector before confirmed live worker runs; use dry-run or approval-gated paths until reviewed.",
+      blockedImpact: "Confirmed live customer-worker execution is blocked before adapter invocation. No live run should be created while blocked.",
       capabilityManifest: "Capability Manifest",
       policyHash: "Policy hash",
       observation: "Observation",
@@ -64,6 +71,13 @@ export function RuntimeConnectors() {
       trustSummary: "控制 live adapter 在客户 worker 执行前是可信、需复核，还是被阻止。",
       updatingTrust: "正在更新...",
       trustUpdated: "信任策略已更新",
+      trustImpact: "信任影响",
+      liveWorkerGate: "Live worker Gate",
+      operatorReadback: "操作员回读",
+      auditRefs: "审计引用",
+      trustedImpact: "确认后的真实 worker run 可以在常规确认 / prepared-action gate 通过后继续执行。",
+      reviewImpact: "操作员应先复核此连接器；复核前使用 dry-run 或审批式路径。",
+      blockedImpact: "确认后的客户 worker 真实执行会在调用 adapter 前被阻断；blocked 状态下不应创建 live run。",
       capabilityManifest: "能力清单",
       policyHash: "策略哈希",
       observation: "观测级别",
@@ -90,6 +104,12 @@ export function RuntimeConnectors() {
       { label: copy.trustPolicy, value: String(capabilities.trust_policy || connector.trust_status || "—") },
       { label: copy.commercial, value: connector.commercial_readiness || String(manifest.commercial_readiness || "—") },
     ];
+  };
+
+  const trustImpact = (status?: string) => {
+    if (status === "blocked") return copy.blockedImpact;
+    if (status === "review_required") return copy.reviewImpact;
+    return copy.trustedImpact;
   };
 
   const changeTrust = async (connectorId: string, trustStatus: "trusted" | "review_required" | "blocked") => {
@@ -188,6 +208,24 @@ export function RuntimeConnectors() {
                       {trustAction === `${connector.connector_id}:${item.status}` ? copy.updatingTrust : item.label}
                     </button>
                   ))}
+                </div>
+                <div
+                  data-testid="runtime-connector-trust-impact"
+                  className="rounded px-3 py-2 mt-3"
+                  style={{
+                    background: connector.trust_status === "blocked" ? "rgba(248,113,113,0.08)" : connector.trust_status === "review_required" ? "rgba(251,191,36,0.08)" : "var(--mis-bg)",
+                    border: connector.trust_status === "blocked" ? "1px solid rgba(248,113,113,0.18)" : connector.trust_status === "review_required" ? "1px solid rgba(251,191,36,0.18)" : "1px solid var(--mis-border)",
+                  }}
+                >
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-[9px] uppercase" style={{ color: "var(--mis-muted)" }}>{copy.trustImpact}</span>
+                    <StatusBadge status={connector.trust_status === "blocked" ? "blocked" : connector.trust_status === "review_required" ? "attention" : "pass"} label={`${copy.liveWorkerGate}: ${connector.trust_status || "trusted"}`} />
+                    <StatusBadge status="pass" label={`${copy.operatorReadback}: ${connector.connector_id}`} />
+                    <StatusBadge status={connectorAuditLogs.some(log => log.entity_id === connector.connector_id) ? "ready" : "planned"} label={`${copy.auditRefs}: ${connectorAuditLogs.filter(log => log.entity_id === connector.connector_id).length}`} />
+                  </div>
+                  <div className="text-[10px] mt-2" style={{ color: "var(--mis-muted)" }}>
+                    {trustImpact(connector.trust_status)}
+                  </div>
                 </div>
               </div>
               <div className="rounded-lg p-3 mt-3" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>

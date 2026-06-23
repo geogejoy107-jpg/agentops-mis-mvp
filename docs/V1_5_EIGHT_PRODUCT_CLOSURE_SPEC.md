@@ -280,6 +280,11 @@ Acceptance evidence:
   - OpenClaw customer worker live execution returned `runtime_connector_trust_blocked`
   - blocked task `tsk_customer_worker_trust_blocked_30651ba025db2763`
   - restored `rtc_openclaw_local` to `trusted`.
+- Runtime connector trust UI smoke:
+  - `python3 scripts/runtime_connector_trust_ui_smoke.py`
+  - `/admin/connectors` shows trusted/review/blocked operator impact,
+  - live worker gate readback includes connector id and trust status,
+  - connector-specific audit refs are visible next to the trust controls.
 - Runtime capability manifest smoke:
   - `python3 scripts/runtime_capability_manifest_smoke.py --base-url http://127.0.0.1:8787`
   - verifies Agent Gateway, OpenClaw, Hermes, Agnesfallback CLI and Agnesfallback API connector manifests through both API and CLI readback;
@@ -306,7 +311,7 @@ Acceptance evidence:
 
 Remaining product work:
 
-- Rich runtime trust policy beyond the current trusted/review/blocked MVP.
+- Rich runtime trust policy remains future work beyond the current trusted/review/blocked impact/readback controls.
 - Prompt profile v1 is ledger-visible; future work can add customer-editable
   profile policies and per-template profile overrides.
 - Generalize the same prepared-action entry gate to every high-risk
