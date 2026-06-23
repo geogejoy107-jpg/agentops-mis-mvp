@@ -13579,6 +13579,9 @@ def commander_project_board(conn: sqlite3.Connection, headers) -> dict:
     readiness, worker = safe_commander_readiness_snapshot(conn, headers)
     adapter_payload = worker_adapter_readiness(conn, refresh=False)
     conn.rollback()
+    workspace_id = normalize_workspace_id(headers.get("X-AgentOps-Workspace-Id") or "local-demo")
+    live_acceptance = live_acceptance_readiness(conn, workspace_id)
+    live_acceptance_summary = live_acceptance.get("summary") or {}
 
     task_counts = status_counts(conn, "tasks", VALID_TASK_STATUSES)
     run_counts = status_counts(conn, "runs")
@@ -13649,6 +13652,8 @@ def commander_project_board(conn: sqlite3.Connection, headers) -> dict:
         synthesis_lifecycle=synthesis_lifecycle,
         adapter_status=adapter_payload.get("status") or "unknown",
         adapter_summary=adapter_summary,
+        live_acceptance_status=live_acceptance.get("status") or "unknown",
+        live_acceptance_summary=live_acceptance_summary,
     )
     recommended_next_actions = commander_project_board_next_actions(integration_gates, readiness.get("next_actions") or [])
     board_status = commander_project_board_status(integration_gates)
@@ -13658,7 +13663,7 @@ def commander_project_board(conn: sqlite3.Connection, headers) -> dict:
         "status": board_status,
         "token_omitted": True,
         "live_execution_performed": False,
-        "workspace_id": normalize_workspace_id(headers.get("X-AgentOps-Workspace-Id") or "local-demo"),
+        "workspace_id": workspace_id,
         "local_readiness": {
             "status": readiness.get("status") or "unknown",
             "ok": bool(readiness.get("ok")) if "ok" in readiness else None,
@@ -13685,8 +13690,32 @@ def commander_project_board(conn: sqlite3.Connection, headers) -> dict:
             "synthesis_artifacts": synthesis_summary.get("synthesis_artifacts", 0),
             "synthesis_pending_reviews": synthesis_summary.get("pending_reviews", 0),
             "synthesis_promoted_deliveries": synthesis_summary.get("promoted_delivery_artifacts", 0),
+            "live_acceptance_fresh": live_acceptance_summary.get("fresh", 0),
+            "live_acceptance_latest_failed": live_acceptance_summary.get("latest_failed", 0),
+            "live_acceptance_latest_incomplete": live_acceptance_summary.get("latest_incomplete", 0),
+            "live_acceptance_missing": live_acceptance_summary.get("missing", 0),
+            "live_acceptance_stale": live_acceptance_summary.get("stale", 0),
         },
         "synthesis_lifecycle": synthesis_lifecycle,
+        "live_acceptance": {
+            "status": live_acceptance.get("status") or "unknown",
+            "summary": live_acceptance_summary,
+            "adapters": {
+                adapter: {
+                    "status": item.get("status"),
+                    "ok": item.get("ok"),
+                    "latest_attempt": item.get("latest_attempt"),
+                    "latest_passing": item.get("latest_passing"),
+                    "active_attempt": item.get("active_attempt"),
+                    "next_action": item.get("next_action"),
+                    "token_omitted": True,
+                }
+                for adapter, item in (live_acceptance.get("adapters") or {}).items()
+            },
+            "safety": live_acceptance.get("safety") or {},
+            "token_omitted": True,
+            "live_execution_performed": False,
+        },
         "recent_artifacts": recent_artifact_rows,
         "stuck_workflow_jobs": [{
             "job_id": job.get("job_id"),

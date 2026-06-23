@@ -1449,9 +1449,11 @@ def main() -> int:
         synthesis_lifecycle={"status": "promotion_available", "summary": {"synthesis_artifacts": 1, "pending_reviews": 0, "promoted_delivery_artifacts": 0}, "next_actions": ["agentops commander promote-synthesis --artifact-id art_smoke"]},
         adapter_status="ready",
         adapter_summary={"recommended_adapter": "mock", "ready_adapters": ["mock"]},
+        live_acceptance_status="attention",
+        live_acceptance_summary={"fresh": 1, "latest_failed": 0, "latest_incomplete": 1, "missing": 0, "stale": 0},
     )
     commander_gate_ids = {gate.get("id") for gate in commander_gates}
-    require({"evidence_chain", "worker_fleet_health", "approvals_pending", "memory_review", "synthesis_lifecycle", "adapter_readiness"}.issubset(commander_gate_ids), "commander project-board gates missing expected IDs", failures)
+    require({"evidence_chain", "worker_fleet_health", "approvals_pending", "memory_review", "synthesis_lifecycle", "adapter_readiness", "live_acceptance_freshness"}.issubset(commander_gate_ids), "commander project-board gates missing expected IDs", failures)
     require(commander_project_board_status(commander_gates) == "attention", "commander project-board status aggregation failed", failures)
     commander_board_actions = commander_project_board_next_actions(commander_gates, ["agentops local readiness"])
     require("agentops local readiness" in commander_board_actions, "commander project-board readiness next action merge failed", failures)

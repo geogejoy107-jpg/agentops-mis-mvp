@@ -163,8 +163,21 @@ def build_commander_project_board_gates(
     synthesis_lifecycle: dict[str, Any],
     adapter_status: str,
     adapter_summary: dict[str, Any],
+    live_acceptance_status: str,
+    live_acceptance_summary: dict[str, Any],
 ) -> list[dict[str, Any]]:
     synthesis_summary = synthesis_lifecycle.get("summary") or {}
+    live_fresh = int(live_acceptance_summary.get("fresh") or 0)
+    live_failed = int(live_acceptance_summary.get("latest_failed") or 0)
+    live_incomplete = int(live_acceptance_summary.get("latest_incomplete") or 0)
+    live_missing = int(live_acceptance_summary.get("missing") or 0)
+    live_stale = int(live_acceptance_summary.get("stale") or 0)
+    if live_acceptance_status == "ready":
+        live_gate_status = "pass"
+    elif live_failed:
+        live_gate_status = "fail"
+    else:
+        live_gate_status = "warn"
     return [
         {
             "id": "evidence_chain",
@@ -210,6 +223,15 @@ def build_commander_project_board_gates(
             "status": "pass" if adapter_status == "ready" else "warn" if adapter_status == "degraded" else "fail",
             "summary": f"recommended_adapter={adapter_summary.get('recommended_adapter') or 'unknown'}; ready={','.join(adapter_summary.get('ready_adapters') or []) or 'none'}",
             "next_action": "agentops worker readiness",
+        },
+        {
+            "id": "live_acceptance_freshness",
+            "status": live_gate_status,
+            "summary": (
+                f"{live_fresh} fresh, {live_failed} latest failed, "
+                f"{live_incomplete} in flight/incomplete, {live_stale} stale, {live_missing} missing"
+            ),
+            "next_action": "agentops operator live-acceptance --limit 8",
         },
     ]
 

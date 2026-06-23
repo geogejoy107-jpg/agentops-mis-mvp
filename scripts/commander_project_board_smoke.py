@@ -97,14 +97,33 @@ def validate(payload: dict) -> None:
     counts = payload.get("counts") or {}
     require(isinstance(counts.get("tasks_by_status"), dict), "tasks_by_status missing")
     require(isinstance(counts.get("runs_by_status"), dict), "runs_by_status missing")
-    for key in ["pending_approvals", "active_workflow_jobs", "stuck_workflow_jobs", "recent_artifacts", "memory_candidates", "synthesis_artifacts", "synthesis_pending_reviews", "synthesis_promoted_deliveries"]:
+    for key in [
+        "pending_approvals",
+        "active_workflow_jobs",
+        "stuck_workflow_jobs",
+        "recent_artifacts",
+        "memory_candidates",
+        "synthesis_artifacts",
+        "synthesis_pending_reviews",
+        "synthesis_promoted_deliveries",
+        "live_acceptance_fresh",
+        "live_acceptance_latest_failed",
+        "live_acceptance_latest_incomplete",
+        "live_acceptance_missing",
+        "live_acceptance_stale",
+    ]:
         require(isinstance(counts.get(key), int), f"count {key} missing")
     gate_ids = {gate.get("id") for gate in payload.get("integration_gates") or []}
-    for gate_id in {"evidence_chain", "worker_fleet_health", "approvals_pending", "memory_review", "synthesis_lifecycle", "adapter_readiness"}:
+    for gate_id in {"evidence_chain", "worker_fleet_health", "approvals_pending", "memory_review", "synthesis_lifecycle", "adapter_readiness", "live_acceptance_freshness"}:
         require(gate_id in gate_ids, f"missing integration gate {gate_id}")
     lifecycle = payload.get("synthesis_lifecycle") or {}
     require(lifecycle.get("status") in {"empty", "created", "review_pending", "promotion_available", "promoted"}, f"bad synthesis lifecycle: {lifecycle}")
     require((lifecycle.get("safety") or {}).get("read_only") is True, f"synthesis lifecycle not read-only: {lifecycle}")
+    live_acceptance = payload.get("live_acceptance") or {}
+    require(live_acceptance.get("status") in {"ready", "attention"}, f"bad live acceptance status: {live_acceptance}")
+    require((live_acceptance.get("safety") or {}).get("read_only") is True, f"live acceptance not read-only: {live_acceptance}")
+    require(live_acceptance.get("live_execution_performed") is False, f"live acceptance should not execute runtime: {live_acceptance}")
+    require(isinstance(live_acceptance.get("adapters"), dict), f"live acceptance adapters missing: {live_acceptance}")
     require(payload.get("recommended_next_actions"), "recommended_next_actions must be nonempty")
     require(isinstance(payload.get("recent_work_packages"), list), "recent_work_packages must be a list")
 

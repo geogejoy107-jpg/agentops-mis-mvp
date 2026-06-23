@@ -306,6 +306,10 @@ def build_task_prompt(task: dict) -> str:
     risk = redact_text(task.get("risk_level") or "medium", 40)
     return (
         "你是 AgentOps MIS 的本地 AI worker。请根据下面的任务摘要给出可交付结果。\n"
+        "执行边界：本次调用是 ledger_summary_only 摘要通道，不是工具执行通道。"
+        "不要调用终端、shell、浏览器、文件系统、MIS/API、外部工具或发布/上传/部署目标；"
+        "不要声称已经执行了这些动作。"
+        "如果任务需要这些动作，只能把它们列为下一步验证/执行建议，交给 MIS 账本流程处理。\n"
         "约束：不要请求外部凭证；不要输出隐藏推理；如果任务信息不足，给出可执行的下一步和缺口。"
         "请用中文，返回 3-6 条要点。\n\n"
         f"任务标题：{title}\n"

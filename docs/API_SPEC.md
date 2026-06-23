@@ -144,6 +144,11 @@ prepared actions.
 Worker-created `agent_worker.<adapter>` tool calls consume the same manifest:
 Hermes/OpenClaw record at least a medium risk floor plus observation and
 commercial restriction metadata instead of being treated as always low risk.
+The live worker prompt also keeps Hermes/OpenClaw in the same
+`ledger_summary_only` boundary: the model turn must not call terminal/shell,
+browser, filesystem, MIS/API, external tools, or publish/upload/deploy targets.
+If those actions are needed, the model returns them as next-step
+recommendations for the MIS ledger path to execute and verify.
 
 Runtime-internal events can now be ingested when a runtime or adapter can expose
 them:

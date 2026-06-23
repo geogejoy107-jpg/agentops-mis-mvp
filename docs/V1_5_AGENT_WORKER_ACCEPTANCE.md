@@ -1469,6 +1469,14 @@ Hermes acceptance now also supports `--hermes-max-tokens` /
 `4096`. This lets live customer-worker acceptance stay bounded enough for loop
 supervision while still returning a usable Chinese delivery summary.
 
+Hermes/OpenClaw customer-worker prompts now explicitly declare the
+`ledger_summary_only` execution boundary. The model turn must not call
+terminal/shell, browser, filesystem, MIS/API, external tools, or
+publish/upload/deploy targets, and must not claim those actions were performed.
+When such actions are needed, the runtime should return them as next-step
+recommendations for the MIS Agent Gateway / approval / evidence path to execute
+and verify.
+
 Hermes transient disconnect handling is now covered at the customer-worker
 workflow boundary. The worker already had retry support; the customer-worker
 sync path now forwards `adapter_max_attempts` and `adapter_retry_delay_sec` to
