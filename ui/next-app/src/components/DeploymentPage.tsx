@@ -72,8 +72,11 @@ export function DeploymentParityPage({
 }>) {
   const evidence = local.evidence || {};
   const docs = local.docs || [];
+  const deploymentChecks = local.deployment_checks || {};
   const docIds = new Set(docs.filter((doc) => doc.exists).map((doc) => doc.id));
-  const backupDocsReady = ["customer_local_deployment_runbook", "local_backup_utility", "local_backup_smoke"].every((id) => docIds.has(id));
+  const backupDocsReady = ["customer_local_deployment_runbook", "local_backup_utility", "local_backup_smoke", "byoc_deployment_acceptance_smoke"].every((id) => docIds.has(id));
+  const signedAuditExportReady = deploymentChecks.signed_audit_export_utility === true && deploymentChecks.signed_audit_export_contract === true;
+  const recoveryDrillReady = deploymentChecks.byoc_deployment_acceptance_smoke === true && deploymentChecks.signed_export_tamper_detection === true;
   const byocCapabilities = ["postgres_adapter", "sso_hooks", "signed_audit_exports", "custom_connector_sdk"];
   const byocEnabled = byocCapabilities.filter((capability) => entitlements.capabilities?.[capability]).length;
   const retentionGate = gateFor(entitlements, "longer_audit_retention");
@@ -99,13 +102,14 @@ export function DeploymentParityPage({
         <div className="banner error" key={error}>Deployment source unavailable: {error}</div>
       ))}
 
-      <section className="metrics six">
+      <section className="metrics">
         {[
           ["Local readiness", local.status || "unknown"],
           ["Production", security.status || "unknown"],
           ["Storage", `${storage.active_backend || "unknown"} / ${storage.selected_backend || "unknown"}`],
           ["BYOC caps", `${byocEnabled}/${byocCapabilities.length}`],
-          ["Backup docs", backupDocsReady ? "ready" : "attention"],
+          ["Recovery drill", recoveryDrillReady ? "ready" : "attention"],
+          ["Signed export", signedAuditExportReady ? "ready" : "attention"],
           ["Token omitted", boolText(local.token_omitted !== false && security.token_omitted !== false)],
         ].map(([label, value]) => (
           <div className="metric compactMetric" key={String(label)}>
@@ -139,10 +143,14 @@ export function DeploymentParityPage({
             <span>runbook {boolText(docIds.has("customer_local_deployment_runbook"))}</span>
             <span>utility {boolText(docIds.has("local_backup_utility"))}</span>
             <span>smoke {boolText(docIds.has("local_backup_smoke"))}</span>
+            <span>recovery drill {boolText(recoveryDrillReady)}</span>
+            <span>pre-restore copy {boolText(deploymentChecks.overwrite_creates_pre_restore_copy)}</span>
+            <span>signed export {boolText(signedAuditExportReady)}</span>
+            <span>tamper check {boolText(deploymentChecks.signed_export_tamper_detection)}</span>
             <span>raw rows printed false</span>
           </div>
           <p className="subtle">
-            Backup restore remains CLI-confirmed; the browser surface only reports readiness, integrity, and omission contracts.
+            Backup restore remains CLI-confirmed; signed audit export requires a customer key and keeps raw metadata omitted.
           </p>
         </div>
       </section>

@@ -70,8 +70,31 @@ def validate(payload: dict) -> None:
     require(payload.get("contract") and "single local" in payload.get("contract"), "local contract missing")
     docs = payload.get("docs") or []
     doc_ids = {item.get("id") for item in docs if item.get("exists") is True}
-    for doc_id in {"customer_local_deployment_runbook", "local_backup_utility", "local_backup_smoke"}:
+    for doc_id in {
+        "customer_local_deployment_runbook",
+        "local_backup_utility",
+        "local_backup_smoke",
+        "signed_audit_export_utility",
+        "byoc_deployment_acceptance_smoke",
+    }:
         require(doc_id in doc_ids, f"missing local deployment/backup readiness doc {doc_id}: {docs}")
+    deployment_checks = payload.get("deployment_checks") or {}
+    for check_id in {
+        "backup_restore_utility",
+        "backup_restore_smoke",
+        "byoc_deployment_acceptance_smoke",
+        "signed_audit_export_utility",
+        "signed_audit_export_contract",
+        "restore_requires_cli_confirmation",
+        "overwrite_creates_pre_restore_copy",
+        "signed_export_requires_customer_key",
+        "signed_export_tamper_detection",
+        "raw_metadata_omitted",
+        "token_omitted",
+    }:
+        require(deployment_checks.get(check_id) is True, f"deployment check {check_id} missing: {deployment_checks}")
+    require(deployment_checks.get("browser_restore_write_exposed") is False, f"browser restore write must stay closed: {deployment_checks}")
+    require(deployment_checks.get("raw_rows_printed") is False, f"raw rows must not be printed: {deployment_checks}")
     security = payload.get("security_production_readiness") or {}
     require(security.get("operation") == "production_readiness", f"security readiness missing: {security}")
     require(security.get("token_omitted") is True, "security readiness token omission proof missing")

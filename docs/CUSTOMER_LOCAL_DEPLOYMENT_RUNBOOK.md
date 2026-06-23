@@ -163,11 +163,34 @@ If overwriting a target, pass `--overwrite`; the tool creates a
 The backup utility prints counts, hashes, and integrity status only. It does not
 print table rows, prompts, raw responses, or token material.
 
+## Signed Audit Export
+
+Enterprise/BYOC audit export requires a customer-controlled signing key. Missing
+key fails closed and does not write an export:
+
+```bash
+export AGENTOPS_AUDIT_EXPORT_KEY="<customer-controlled-signing-key>"
+python3 scripts/agentops_signed_audit_export.py export \
+  --output .agentops_runtime/audit_exports/agentops-audit.signed.json
+```
+
+Verify an export before handing it to a customer auditor:
+
+```bash
+python3 scripts/agentops_signed_audit_export.py verify \
+  --export .agentops_runtime/audit_exports/agentops-audit.signed.json
+```
+
+The export signs a manifest plus hash-only audit rows. It omits raw
+`metadata_json`, prompts, responses, token values, and the signing key. Tampering
+with the row payload must fail verification.
+
 ## Acceptance Before Handoff
 
 ```bash
 python3 -m py_compile server.py scripts/*.py agentops_mis_cli/*.py
 python3 scripts/agentops_local_backup_smoke.py
+python3 scripts/byoc_deployment_acceptance_smoke.py
 python3 scripts/enrollment_policy_preview_smoke.py
 python3 scripts/agentops_worker_restart_smoke.py
 python3 scripts/v1_5_demo_readiness_smoke.py --base-url http://127.0.0.1:8787
@@ -180,5 +203,7 @@ Expected state:
 - `demo_ready=true`.
 - Local product acceptance passes without live execution.
 - Backup smoke creates and restores an isolated temp DB only.
+- BYOC deployment smoke verifies restore confirmation, overwrite safety copy,
+  signed audit export, and tamper detection in an isolated temp DB only.
 - UI `/workspace/agents` shows readiness, customer dispatch, fleet hygiene,
   daemon restart, enrollment policy, and remote agent controls.

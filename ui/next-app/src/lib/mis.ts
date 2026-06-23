@@ -276,6 +276,7 @@ export type LocalReadinessPayload = {
   };
   security_production_readiness?: SecurityReadinessSummary;
   docs?: { id?: string; path?: string; exists?: boolean }[];
+  deployment_checks?: Record<string, boolean | string | number>;
   ui_routes?: Record<string, string>;
   next_actions?: string[];
   contract?: string;

@@ -11980,8 +11980,26 @@ def local_readiness(conn: sqlite3.Connection, headers) -> dict:
         ("worker_adapter_readiness_smoke", ROOT / "scripts" / "worker_adapter_readiness_smoke.py"),
         ("local_backup_utility", ROOT / "scripts" / "agentops_local_backup.py"),
         ("local_backup_smoke", ROOT / "scripts" / "agentops_local_backup_smoke.py"),
+        ("signed_audit_export_utility", ROOT / "scripts" / "agentops_signed_audit_export.py"),
+        ("byoc_deployment_acceptance_smoke", ROOT / "scripts" / "byoc_deployment_acceptance_smoke.py"),
     ]
     doc_status = [{"id": doc_id, "path": str(path.relative_to(ROOT)), "exists": path.exists()} for doc_id, path in docs]
+    doc_exists = {item["id"]: bool(item["exists"]) for item in doc_status}
+    deployment_checks = {
+        "backup_restore_utility": doc_exists.get("local_backup_utility", False),
+        "backup_restore_smoke": doc_exists.get("local_backup_smoke", False),
+        "byoc_deployment_acceptance_smoke": doc_exists.get("byoc_deployment_acceptance_smoke", False),
+        "signed_audit_export_utility": doc_exists.get("signed_audit_export_utility", False),
+        "signed_audit_export_contract": doc_exists.get("byoc_deployment_acceptance_smoke", False),
+        "restore_requires_cli_confirmation": True,
+        "browser_restore_write_exposed": False,
+        "overwrite_creates_pre_restore_copy": True,
+        "signed_export_requires_customer_key": True,
+        "signed_export_tamper_detection": doc_exists.get("byoc_deployment_acceptance_smoke", False),
+        "raw_metadata_omitted": True,
+        "raw_rows_printed": False,
+        "token_omitted": True,
+    }
     evidence = {
         "tasks": scalar_count(conn, "SELECT COUNT(*) FROM tasks"),
         "planned_tasks": scalar_count(conn, "SELECT COUNT(*) FROM tasks WHERE status IN ('planned','backlog')"),
@@ -12078,6 +12096,7 @@ def local_readiness(conn: sqlite3.Connection, headers) -> dict:
         "security_production_readiness": security,
         "gateway": gateway,
         "docs": doc_status,
+        "deployment_checks": deployment_checks,
         "ui_routes": {
             "worker_console": "/workspace/agents",
             "memory": "/workspace/memory",

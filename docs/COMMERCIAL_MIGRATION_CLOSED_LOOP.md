@@ -422,6 +422,11 @@ Must be true:
   evidence, retention/export gates, SSO hooks, and private connector policy
   through read-only MIS proxy loaders; restore remains CLI-confirmed and is not
   exposed as a browser write.
+- `byoc_deployment_acceptance_v1` runs a local isolated recovery and audit
+  export drill: backup create/verify/restore, restore confirmation guard,
+  overwrite safety copy, signed audit export with a customer key, raw metadata
+  omission, and tamper detection. Verify with
+  `python3 scripts/byoc_deployment_acceptance_smoke.py`.
 - Postgres adapter and migrations pass the same core ledger acceptance used for
   SQLite.
 - Runtime connectors remain policy-gated and do not store raw secrets, raw

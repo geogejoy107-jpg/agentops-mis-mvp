@@ -626,6 +626,25 @@ def main() -> int:
             "Postgres-backed Agent Gateway CLI/API write parity smoke uses actual agentops commands for scoped task, run, heartbeat, evidence, Agent Plan, plan-evidence, memory, approval, audit, and completion heartbeat writes while checking fail-closed CLI guards",
         ),
         check(
+            "byoc_deployment_acceptance_surface_exists",
+            file_contains("docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md", "byoc_deployment_acceptance_v1")
+            and file_contains("docs/CUSTOMER_LOCAL_DEPLOYMENT_RUNBOOK.md", "agentops_signed_audit_export.py")
+            and file_contains("docs/CUSTOMER_LOCAL_DEPLOYMENT_RUNBOOK.md", "byoc_deployment_acceptance_smoke.py")
+            and file_contains("scripts/byoc_deployment_acceptance_smoke.py", "byoc_deployment_acceptance_v1")
+            and file_contains("scripts/byoc_deployment_acceptance_smoke.py", "signed_audit_export")
+            and file_contains("scripts/byoc_deployment_acceptance_smoke.py", "tamper_detected")
+            and file_contains("scripts/agentops_signed_audit_export.py", "signed_audit_export_v1")
+            and file_contains("scripts/agentops_signed_audit_export.py", "signing_key_required")
+            and file_contains("scripts/local_readiness_smoke.py", "byoc_deployment_acceptance_smoke")
+            and file_contains("server.py", "deployment_checks")
+            and file_contains("server.py", "signed_export_tamper_detection")
+            and file_contains("ui/next-app/src/components/DeploymentPage.tsx", "Recovery drill")
+            and file_contains("ui/next-app/src/components/DeploymentPage.tsx", "Signed export")
+            and (ROOT / "scripts" / "agentops_signed_audit_export.py").exists()
+            and (ROOT / "scripts" / "byoc_deployment_acceptance_smoke.py").exists(),
+            "Gate 5 BYOC deployment acceptance covers backup/restore confirmation, pre-restore safety copy, signed audit export key requirement, tamper detection, raw metadata omission, and Next.js deployment readiness",
+        ),
+        check(
             "blocked_generated_or_runtime_artifacts_absent",
             not blocked_paths,
             "blocked_paths=" + json.dumps(blocked_paths, ensure_ascii=False),
@@ -709,6 +728,7 @@ def main() -> int:
             "verify": [
                 "Postgres container parity smoke",
                 "Postgres ledger acceptance",
+                "python3 scripts/byoc_deployment_acceptance_smoke.py",
                 "backup/restore and signed export checks",
             ],
         },
