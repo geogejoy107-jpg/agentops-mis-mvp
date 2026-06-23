@@ -129,6 +129,26 @@ def validate(payload: dict, adapter: str) -> None:
     require(review_snapshot.get("summary_omitted") is True, f"loop driver review summary omission proof missing: {loop_driver}")
     require(review_snapshot.get("raw_content_omitted") is True, f"loop driver review raw omission proof missing: {loop_driver}")
     require(all(item.get("summary_omitted") is True and item.get("token_omitted") is True for item in (review_snapshot.get("items") or [])), f"loop driver review items should be compact: {loop_driver}")
+    acceptance_packet = payload.get("acceptance_packet") or {}
+    packet_decision = acceptance_packet.get("decision") or {}
+    packet_commands = acceptance_packet.get("commands") or {}
+    packet_summary = acceptance_packet.get("summary") or {}
+    require(acceptance_packet.get("operation") == "operator_local_loop_acceptance_packet", f"acceptance packet missing: {acceptance_packet}")
+    require(acceptance_packet.get("adapter") == adapter, f"acceptance packet adapter mismatch: {acceptance_packet}")
+    require(acceptance_packet.get("status") == payload.get("status"), f"acceptance status mismatch: {acceptance_packet}")
+    require((acceptance_packet.get("safety") or {}).get("read_only") is True, f"acceptance read-only proof missing: {acceptance_packet}")
+    require((acceptance_packet.get("safety") or {}).get("ledger_mutated") is False, f"acceptance ledger proof missing: {acceptance_packet}")
+    require((acceptance_packet.get("safety") or {}).get("server_executes_shell") is False, f"acceptance server shell proof missing: {acceptance_packet}")
+    require(packet_decision.get("agent_plan_required") is True, f"acceptance agent-plan gate missing: {acceptance_packet}")
+    require(packet_decision.get("knowledge_search_required") is True, f"acceptance knowledge gate missing: {acceptance_packet}")
+    require(packet_decision.get("base_compare_required") is True, f"acceptance base gate missing: {acceptance_packet}")
+    require(packet_decision.get("receipt_required") is True, f"acceptance receipt gate missing: {acceptance_packet}")
+    require(isinstance(packet_summary.get("attention_gates"), list), f"acceptance attention gates missing: {acceptance_packet}")
+    require(str(packet_commands.get("start_check") or "").startswith(f"agentops operator start-check --adapter {adapter}"), f"acceptance start-check command missing: {acceptance_packet}")
+    require(str(packet_commands.get("loop_driver_preview") or "").startswith(f"agentops operator loop-driver --adapter {adapter}"), f"acceptance loop-driver preview missing: {acceptance_packet}")
+    require("--confirm-loop" in str(packet_commands.get("loop_driver_confirm") or ""), f"acceptance confirm-loop missing: {acceptance_packet}")
+    require(str(packet_commands.get("review_queue") or "").startswith("agentops review queue"), f"acceptance review command missing: {acceptance_packet}")
+    require(packet_commands.get("receipt_readback") == "agentops operator action-receipts --limit 20", f"acceptance receipt readback missing: {acceptance_packet}")
     next_commands = payload.get("next_commands") or []
     require(any("operator loop-launch-packet" in command for command in next_commands), f"launch command missing: {next_commands}")
     require(any("operator loop-driver" in command for command in next_commands), f"loop-driver command missing: {next_commands}")
@@ -137,6 +157,9 @@ def validate(payload: dict, adapter: str) -> None:
         summary = payload.get("summary") or {}
         require(summary.get("requires_confirm_run") is True, f"live adapter confirm proof missing: {summary}")
         require(any("--confirm-loop" in command for command in next_commands), f"confirm loop command missing: {next_commands}")
+        require(packet_decision.get("live_dispatch_requires_confirm_run") is True, f"acceptance confirm-run wall missing: {acceptance_packet}")
+        require(str(packet_commands.get("execution_mode_confirm") or "").endswith("--confirm-run"), f"acceptance execution-mode confirm missing: {acceptance_packet}")
+        require(str(packet_commands.get("live_product_readiness") or "").endswith(f"--require-adapter {adapter}"), f"acceptance live readiness command missing: {acceptance_packet}")
 
 
 def main() -> int:

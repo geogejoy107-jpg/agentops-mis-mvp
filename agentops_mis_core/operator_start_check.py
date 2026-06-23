@@ -294,3 +294,156 @@ def compact_start_check_launch_brief(
         "token_omitted": True,
         "live_execution_performed": False,
     }
+
+
+def operator_start_check_acceptance_packet(
+    *,
+    status: str,
+    adapter: str,
+    workspace_id: str,
+    task_id: str | None = None,
+    agent_id: str | None = None,
+    gates: list[dict[str, Any]] | None = None,
+    worker_connection_policy: dict[str, Any] | None = None,
+    adapter_readiness: dict[str, Any] | None = None,
+    runtime_doctor: dict[str, Any] | None = None,
+    launch_brief: dict[str, Any] | None = None,
+    loop_driver_entry: dict[str, Any] | None = None,
+    local_run_path: dict[str, Any] | None = None,
+    live_product_readiness: dict[str, Any] | None = None,
+    next_commands: list[str] | None = None,
+) -> dict[str, Any]:
+    gate_items = gates or []
+    launch = launch_brief or {}
+    loop_driver = loop_driver_entry or {}
+    local_path = local_run_path or {}
+    worker_policy = worker_connection_policy or {}
+    adapter_state = adapter_readiness or {}
+    doctor = runtime_doctor or {}
+    live_product = live_product_readiness or {}
+    commands = [str(command or "").strip() for command in (next_commands or []) if str(command or "").strip()]
+    blocked_gates = [gate for gate in gate_items if gate.get("status") == "blocked"]
+    attention_gates = [gate for gate in gate_items if gate.get("status") == "attention" or gate.get("ok") is False]
+    loop_commands = loop_driver.get("commands") if isinstance(loop_driver.get("commands"), dict) else {}
+    launch_summary = launch.get("summary") if isinstance(launch.get("summary"), dict) else {}
+    review_snapshot = loop_driver.get("review_snapshot") if isinstance(loop_driver.get("review_snapshot"), dict) else {}
+    review_summary = review_snapshot.get("summary") if isinstance(review_snapshot.get("summary"), dict) else {}
+    local_steps = local_path.get("steps") if isinstance(local_path.get("steps"), list) else []
+    required_ledgers = launch_summary.get("required_ledgers") if isinstance(launch_summary.get("required_ledgers"), list) else []
+    receipt_required = (
+        bool(launch_summary.get("requires_receipt", False))
+        or "operator_action_receipts" in required_ledgers
+        or "operator_action_evaluations" in required_ledgers
+    )
+    live_required = adapter in {"hermes", "openclaw"}
+    live_ready = not live_required or bool(live_product.get("product_readiness_proof"))
+    preview_allowed = not blocked_gates
+    confirm_loop_allowed = preview_allowed and (loop_driver.get("safety") or {}).get("server_executes_shell") is False
+    live_dispatch_allowed = adapter == "mock" or (live_ready and adapter_state.get("requires_confirm_run") is True)
+
+    def command_for(needle: str, fallback: str | None = None) -> str | None:
+        for command in commands:
+            if needle in command:
+                return command
+        return fallback
+
+    return {
+        "operation": "operator_local_loop_acceptance_packet",
+        "status": status,
+        "adapter": adapter,
+        "workspace_id": workspace_id,
+        "task_id": task_id or None,
+        "agent_id": agent_id or None,
+        "audience": ["codex", "hermes", "openclaw"],
+        "decision": {
+            "can_preview_loop": preview_allowed,
+            "can_confirm_bounded_loop": confirm_loop_allowed,
+            "live_dispatch_allowed": live_dispatch_allowed,
+            "live_dispatch_requires_confirm_run": live_required,
+            "human_review_required": bool(review_summary.get("review_items_total") or review_summary.get("pending_approvals")),
+            "memory_review_required": "memory_review" in required_ledgers,
+            "agent_plan_required": True,
+            "knowledge_search_required": True,
+            "base_compare_required": True,
+            "receipt_required": receipt_required,
+        },
+        "summary": {
+            "blocked_gates": [gate.get("id") for gate in blocked_gates],
+            "attention_gates": [gate.get("id") for gate in attention_gates],
+            "review_items_total": int(review_summary.get("review_items_total") or 0),
+            "pending_approvals": int(review_summary.get("pending_approvals") or 0),
+            "memory_candidates": int(review_summary.get("memory_candidates") or 0),
+            "required_ledgers": required_ledgers,
+            "local_run_path_steps": len(local_steps),
+            "service_control_preview": bool(local_path.get("service_control_preview")),
+            "runtime_doctor_status": doctor.get("status"),
+            "adapter_readiness": adapter_state.get("readiness"),
+            "live_product_readiness": None if not live_required else live_ready,
+        },
+        "commands": {
+            "start_check": f"agentops operator start-check --adapter {adapter} --limit 8",
+            "local_readiness": command_for("local readiness", "agentops local readiness"),
+            "worker_readiness": command_for("worker readiness", "agentops worker readiness"),
+            "adapter_preflight": command_for("worker preflight", f"agentops worker preflight --adapter {adapter}"),
+            "runtime_doctor": command_for("operator runtime-doctor", "agentops operator runtime-doctor --limit 8"),
+            "loop_launch_brief": command_for("operator loop-launch-packet", f"agentops operator loop-launch-packet --brief --adapter {adapter} --limit 8"),
+            "loop_driver_preview": loop_commands.get("preview") or command_for("operator loop-driver"),
+            "loop_driver_confirm": loop_commands.get("confirm_loop"),
+            "review_queue": loop_commands.get("review_queue") or command_for("review queue", "agentops review queue --limit 20"),
+            "execution_mode_preview": f"agentops operator execution-mode --adapter {adapter}",
+            "execution_mode_confirm": f"agentops operator execution-mode --adapter {adapter} --confirm-run" if live_required else None,
+            "live_product_readiness": f"agentops operator live-product-readiness --require-adapter {adapter}" if live_required else None,
+            "live_dispatch_template": launch.get("live_run_command") if live_required else None,
+            "receipt_readback": command_for("operator action-receipts", "agentops operator action-receipts --limit 20"),
+        },
+        "gate_readback": [
+            {
+                "id": gate.get("id"),
+                "status": gate.get("status"),
+                "ok": bool(gate.get("ok")),
+                "next_action": _safe_text(gate.get("next_action") or "", 500),
+                "token_omitted": True,
+            }
+            for gate in gate_items
+        ],
+        "sources": {
+            "worker_connection_policy": {
+                "status": worker_policy.get("status") or worker_policy.get("mode") or worker_policy.get("schema"),
+                "server_executes_shell": worker_policy.get("server_executes_shell"),
+                "token_omitted": True,
+            },
+            "adapter_readiness": adapter_state,
+            "runtime_doctor": {
+                "status": doctor.get("status"),
+                "token_omitted": True,
+            },
+            "launch_brief": {
+                "status": launch.get("status"),
+                "operation": launch.get("operation"),
+                "token_omitted": True,
+            },
+            "loop_driver_entry": {
+                "status": loop_driver.get("status"),
+                "operation": loop_driver.get("operation"),
+                "token_omitted": True,
+            },
+            "local_run_path": {
+                "status": local_path.get("status"),
+                "operation": local_path.get("operation"),
+                "token_omitted": True,
+            },
+        },
+        "contract": "single read-only acceptance packet for local Hermes/OpenClaw/Codex loop intake; it is copy-only and does not start runtimes, confirm live dispatch, approve reviews, write memories, mutate ledgers, or execute shell on the server",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_executes_shell": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "raw_content_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }

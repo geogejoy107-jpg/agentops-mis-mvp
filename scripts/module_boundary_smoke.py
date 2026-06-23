@@ -102,6 +102,7 @@ from agentops_mis_core.operator_start_check import (
     compact_start_check_loop_driver_entry,
     compact_start_check_launch_brief,
     compact_start_check_local_run_path,
+    operator_start_check_acceptance_packet,
     operator_start_check_gate,
 )
 from agentops_mis_core.operator_loop_control import (
@@ -305,12 +306,14 @@ EXTRACTED_OPERATOR_START_CHECK_HELPERS = {
     "compact_start_check_loop_driver_entry",
     "compact_start_check_launch_brief",
     "compact_start_check_local_run_path",
+    "operator_start_check_acceptance_packet",
     "operator_start_check_gate",
 }
 SERVER_OPERATOR_START_CHECK_IMPORTS = {
     "compact_start_check_loop_driver_entry",
     "compact_start_check_launch_brief",
     "compact_start_check_local_run_path",
+    "operator_start_check_acceptance_packet",
     "operator_start_check_gate",
 }
 EXTRACTED_OPERATOR_LOOP_CONTROL_HELPERS = {
@@ -1806,6 +1809,40 @@ def main() -> int:
     require(((loop_driver_entry.get("review_snapshot") or {}).get("summary") or {}).get("pending_approvals") == 1, "operator start-check loop-driver review summary failed", failures)
     require((loop_driver_entry.get("safety") or {}).get("server_executes_shell") is False, "operator start-check loop-driver server-shell proof failed", failures)
     require(all(item.get("summary_omitted") is True for item in ((loop_driver_entry.get("review_snapshot") or {}).get("items") or [])), "operator start-check loop-driver item omission failed", failures)
+    acceptance_packet = operator_start_check_acceptance_packet(
+        status="attention",
+        adapter="hermes",
+        workspace_id="local-demo",
+        task_id="tsk_smoke",
+        agent_id="agt_smoke",
+        gates=[
+            operator_start_check_gate("runtime_doctor", label="Runtime doctor", ok=True, command="agentops operator runtime-doctor --limit 8"),
+            operator_start_check_gate("live_product_readiness", label="Live product readiness", ok=False, command="agentops operator live-product-readiness --require-adapter hermes"),
+        ],
+        worker_connection_policy={"schema": "agentops-worker-connection-policy-v1", "server_executes_shell": False},
+        adapter_readiness={"adapter": "hermes", "readiness": "review_required", "requires_confirm_run": True, "token_omitted": True},
+        runtime_doctor={"status": "attention"},
+        launch_brief=launch_brief,
+        loop_driver_entry=loop_driver_entry,
+        local_run_path=local_run_path,
+        live_product_readiness={"product_readiness_proof": False},
+        next_commands=[
+            "agentops local readiness",
+            "agentops worker readiness",
+            "agentops operator runtime-doctor --limit 8",
+            "agentops operator loop-launch-packet --brief --adapter hermes --limit 8",
+            (loop_driver_entry.get("commands") or {}).get("preview"),
+            (loop_driver_entry.get("commands") or {}).get("confirm_loop"),
+            "agentops review queue --limit 20",
+            "agentops operator action-receipts --limit 20",
+        ],
+    )
+    require(acceptance_packet.get("operation") == "operator_local_loop_acceptance_packet", "operator start-check acceptance packet operation failed", failures)
+    require((acceptance_packet.get("decision") or {}).get("can_confirm_bounded_loop") is True, "operator start-check acceptance packet loop decision failed", failures)
+    require((acceptance_packet.get("decision") or {}).get("live_dispatch_allowed") is False, "operator start-check acceptance packet live dispatch gate failed", failures)
+    require((acceptance_packet.get("commands") or {}).get("loop_driver_confirm") and "--confirm-loop" in str((acceptance_packet.get("commands") or {}).get("loop_driver_confirm")), "operator start-check acceptance packet confirm command failed", failures)
+    require((acceptance_packet.get("commands") or {}).get("execution_mode_confirm") == "agentops operator execution-mode --adapter hermes --confirm-run", "operator start-check acceptance packet execution-mode command failed", failures)
+    require((acceptance_packet.get("safety") or {}).get("server_executes_shell") is False, "operator start-check acceptance packet server-shell proof failed", failures)
     loop_control = operator_loop_control_summary_from_handoff(
         {
             "status": "attention",

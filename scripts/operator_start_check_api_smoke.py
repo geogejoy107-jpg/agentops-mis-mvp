@@ -161,6 +161,26 @@ def validate_payload(payload: dict, adapter: str, failures: list[str]) -> None:
     require(review_snapshot.get("summary_omitted") is True, f"{adapter} review summary omission proof missing: {loop_driver}", failures)
     require(review_snapshot.get("raw_content_omitted") is True, f"{adapter} review raw omission proof missing: {loop_driver}", failures)
     require(all(item.get("summary_omitted") is True and item.get("token_omitted") is True for item in (review_snapshot.get("items") or [])), f"{adapter} review items should be compact: {loop_driver}", failures)
+    acceptance_packet = payload.get("acceptance_packet") or {}
+    packet_decision = acceptance_packet.get("decision") or {}
+    packet_commands = acceptance_packet.get("commands") or {}
+    packet_summary = acceptance_packet.get("summary") or {}
+    require(acceptance_packet.get("operation") == "operator_local_loop_acceptance_packet", f"{adapter} acceptance packet missing: {acceptance_packet}", failures)
+    require(acceptance_packet.get("adapter") == adapter, f"{adapter} acceptance packet adapter mismatch: {acceptance_packet}", failures)
+    require(acceptance_packet.get("status") == payload.get("status"), f"{adapter} acceptance status mismatch: {acceptance_packet}", failures)
+    require((acceptance_packet.get("safety") or {}).get("read_only") is True, f"{adapter} acceptance read-only proof missing: {acceptance_packet}", failures)
+    require((acceptance_packet.get("safety") or {}).get("ledger_mutated") is False, f"{adapter} acceptance ledger proof missing: {acceptance_packet}", failures)
+    require((acceptance_packet.get("safety") or {}).get("server_executes_shell") is False, f"{adapter} acceptance server-shell proof missing: {acceptance_packet}", failures)
+    require(packet_decision.get("agent_plan_required") is True, f"{adapter} acceptance agent-plan gate missing: {acceptance_packet}", failures)
+    require(packet_decision.get("knowledge_search_required") is True, f"{adapter} acceptance knowledge gate missing: {acceptance_packet}", failures)
+    require(packet_decision.get("base_compare_required") is True, f"{adapter} acceptance base gate missing: {acceptance_packet}", failures)
+    require(packet_decision.get("receipt_required") is True, f"{adapter} acceptance receipt gate missing: {acceptance_packet}", failures)
+    require(isinstance(packet_summary.get("attention_gates"), list), f"{adapter} acceptance attention gates missing: {acceptance_packet}", failures)
+    require(str(packet_commands.get("start_check") or "").startswith(f"agentops operator start-check --adapter {adapter}"), f"{adapter} acceptance start-check command missing: {acceptance_packet}", failures)
+    require(str(packet_commands.get("loop_driver_preview") or "").startswith(f"agentops operator loop-driver --adapter {adapter}"), f"{adapter} acceptance loop-driver preview missing: {acceptance_packet}", failures)
+    require("--confirm-loop" in str(packet_commands.get("loop_driver_confirm") or ""), f"{adapter} acceptance confirm-loop missing: {acceptance_packet}", failures)
+    require(str(packet_commands.get("review_queue") or "").startswith("agentops review queue"), f"{adapter} acceptance review command missing: {acceptance_packet}", failures)
+    require(packet_commands.get("receipt_readback") == "agentops operator action-receipts --limit 20", f"{adapter} acceptance receipt readback missing: {acceptance_packet}", failures)
     commands = payload.get("next_commands") or []
     require(any("operator loop-launch-packet" in str(command) for command in commands), f"{adapter} launch command missing: {commands}", failures)
     require(any("operator loop-driver" in str(command) for command in commands), f"{adapter} loop-driver command missing: {commands}", failures)
@@ -169,6 +189,9 @@ def validate_payload(payload: dict, adapter: str, failures: list[str]) -> None:
         summary = payload.get("summary") or {}
         require(summary.get("requires_confirm_run") is True, f"{adapter} confirm-run proof missing: {summary}", failures)
         require(any("--confirm-loop" in str(command) for command in commands), f"{adapter} confirm-loop command missing: {commands}", failures)
+        require(packet_decision.get("live_dispatch_requires_confirm_run") is True, f"{adapter} acceptance confirm-run wall missing: {acceptance_packet}", failures)
+        require(str(packet_commands.get("execution_mode_confirm") or "").endswith("--confirm-run"), f"{adapter} acceptance execution-mode confirm missing: {acceptance_packet}", failures)
+        require(str(packet_commands.get("live_product_readiness") or "").endswith(f"--require-adapter {adapter}"), f"{adapter} acceptance live readiness command missing: {acceptance_packet}", failures)
         live = payload.get("live_product_readiness") or {}
         require(live.get("operation") == "operator_live_product_readiness", f"{adapter} live readiness readback missing: {live}", failures)
 

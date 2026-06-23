@@ -128,6 +128,7 @@ from agentops_mis_core.operator_start_check import (
     compact_start_check_loop_driver_entry,
     compact_start_check_launch_brief,
     compact_start_check_local_run_path,
+    operator_start_check_acceptance_packet,
     operator_start_check_gate,
 )
 from agentops_mis_core.read_model_cache import ReadModelCache
@@ -22779,6 +22780,32 @@ def operator_start_check(conn: sqlite3.Connection, headers, qs=None, auth_ctx=No
         command = str(command or "").strip()
         if command and command not in deduped_commands:
             deduped_commands.append(command)
+    start_check_commands = deduped_commands[:16]
+    start_check_adapter_readiness = {
+        "adapter": adapter,
+        "readiness": adapter_readiness,
+        "ok": bool(adapter_item.get("ok")) if adapter != "mock" else True,
+        "requires_confirm_run": bool(adapter_item.get("requires_confirm_run")) or adapter in {"hermes", "openclaw"},
+        "recommended_action": adapter_item.get("recommended_action"),
+        "remediation": adapter_item.get("remediation"),
+        "token_omitted": True,
+    }
+    acceptance_packet = operator_start_check_acceptance_packet(
+        status=status,
+        adapter=adapter,
+        workspace_id=workspace_id,
+        task_id=task_id or None,
+        agent_id=requested_agent_id or None,
+        gates=gates,
+        worker_connection_policy=worker_policy,
+        adapter_readiness=start_check_adapter_readiness,
+        runtime_doctor=runtime_doctor,
+        launch_brief=launch_brief,
+        loop_driver_entry=loop_driver_entry,
+        local_run_path=local_run_path,
+        live_product_readiness=live_product,
+        next_commands=start_check_commands,
+    )
 
     return {
         "provider": "agentops-operator",
@@ -22803,18 +22830,12 @@ def operator_start_check(conn: sqlite3.Connection, headers, qs=None, auth_ctx=No
             "service_control_preview": bool(service_step),
             "live_product_readiness": None if live_product is None else bool(live_product.get("product_readiness_proof")),
             "requires_confirm_run": adapter in {"hermes", "openclaw"},
+            "acceptance_packet_status": acceptance_packet.get("status"),
+            "can_confirm_bounded_loop": (acceptance_packet.get("decision") or {}).get("can_confirm_bounded_loop"),
         },
         "gates": gates,
         "worker_connection_policy": worker_policy,
-        "adapter_readiness": {
-            "adapter": adapter,
-            "readiness": adapter_readiness,
-            "ok": bool(adapter_item.get("ok")) if adapter != "mock" else True,
-            "requires_confirm_run": bool(adapter_item.get("requires_confirm_run")) or adapter in {"hermes", "openclaw"},
-            "recommended_action": adapter_item.get("recommended_action"),
-            "remediation": adapter_item.get("remediation"),
-            "token_omitted": True,
-        },
+        "adapter_readiness": start_check_adapter_readiness,
         "runtime_doctor": {
             "status": runtime_doctor.get("status"),
             "summary": runtime_doctor.get("summary") if isinstance(runtime_doctor.get("summary"), dict) else {},
@@ -22825,7 +22846,8 @@ def operator_start_check(conn: sqlite3.Connection, headers, qs=None, auth_ctx=No
         "loop_driver_entry": loop_driver_entry,
         "local_run_path": local_run_path,
         "live_product_readiness": live_product,
-        "next_commands": deduped_commands[:16],
+        "acceptance_packet": acceptance_packet,
+        "next_commands": start_check_commands,
         "auth": {
             "mode": (auth_ctx or {}).get("mode") or "unknown",
             "required_scope": "tasks:read",

@@ -45,9 +45,15 @@ agentops operator loop-launch-packet --brief --adapter openclaw --limit 8
 `GET /api/operator/start-check`, so Hermes/OpenClaw/Codex can use either the
 CLI or the local MIS HTTP API. It merges local readiness, worker readiness,
 runtime doctor, live product proof, compact launch brief, `local_run_path`, and
-service-control preview into one copy-only packet. It may return `attention`
-while binaries, credentials, or live proof are missing, but it still gives the
-next safe command without running shell on the server or mutating ledgers.
+service-control preview into one copy-only packet. Its `acceptance_packet`
+field is the machine-readable loop intake decision: `can_preview_loop`,
+`can_confirm_bounded_loop`, `live_dispatch_requires_confirm_run`, review
+pressure, required ledgers, receipt/readback requirements, and the exact
+copyable commands for start-check, runtime doctor, loop-driver preview/confirm,
+execution-mode confirmation, live-product readiness, and receipt readback. It
+may return `attention` while binaries, credentials, reviews, or live proof are
+missing, but it still gives the next safe command without running shell on the
+server or mutating ledgers.
 
 The brief is the preferred handoff payload when Codex wants Hermes or OpenClaw
 to continue a supervised loop without reading the full launch packet. It keeps

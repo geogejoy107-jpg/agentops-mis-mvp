@@ -1305,6 +1305,36 @@ python3 scripts/operator_action_receipts_cli_smoke.py
 python3 scripts/operator_action_plan_smoke.py --base-url "$AGENTOPS_BASE_URL"
 ```
 
+### Slice 43: Operator Start-Check Acceptance Packet Projection
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/operator_start_check.py`
+
+Moved out of `server.py`:
+
+- local loop acceptance-packet projection
+- start-check gate readback compaction
+- copy-only command map for Hermes/OpenClaw/Codex intake
+- loop preview/confirm/live-dispatch decision summary
+
+Still owned by `server.py`:
+
+- HTTP route
+- SQLite/local-readiness/runtime-doctor/live-product/readback producers
+- adapter readiness and human-review queue reads
+- final start-check response assembly
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/operator_start_check_api_smoke.py
+python3 scripts/operator_start_check_smoke.py --base-url "$AGENTOPS_BASE_URL" --adapter hermes --adapter openclaw
+```
+
 ## Next Candidate Slices
 
 - Continue P1-05 with small smoke-backed strangler slices only; prefer pure
