@@ -1627,7 +1627,7 @@ Hermes artifact: art_customer_worker_task_run_gw_ee70f20c021c
 Hermes approval: ap_customer_worker_delivery_run_gw_ee70f20c021c
 Hermes plan: plan_a1c439e073775da1
 Hermes manifest: pem_daf7d404a2e9024b
-Hermes evidence: tool_calls 1, evaluations 1, runtime_events 14, audit_logs 12, artifacts 2, memories 2, approvals 1, plan_evidence_manifests 1
+Hermes evidence: tool_calls 1, evaluations 1, runtime_events 14, audit_logs 7, artifacts 2, memories 2, approvals 1, plan_evidence_manifests 1
 
 OpenClaw run: run_gw_4a58476b7d09
 OpenClaw task: tsk_worker_ui_openclaw_20260623062652_7e64b47f
@@ -1635,7 +1635,7 @@ OpenClaw artifact: art_customer_worker_task_run_gw_4a58476b7d09
 OpenClaw approval: ap_customer_worker_delivery_run_gw_4a58476b7d09
 OpenClaw plan: plan_9dd24ddbffbd74a2
 OpenClaw manifest: pem_1e63d0f6dcd96bf5
-OpenClaw evidence: tool_calls 1, evaluations 1, runtime_events 14, audit_logs 12, artifacts 2, memories 2, approvals 1, plan_evidence_manifests 1
+OpenClaw evidence: tool_calls 1, evaluations 1, runtime_events 14, audit_logs 7, artifacts 2, memories 2, approvals 1, plan_evidence_manifests 1
 
 CLI readback:
 AGENTOPS_BASE_URL=http://127.0.0.1:8787 ./scripts/agentops run get --run-id run_gw_ee70f20c021c
