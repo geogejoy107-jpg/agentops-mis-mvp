@@ -1612,6 +1612,54 @@ OpenClaw manifest: pem_35d37a327c3115e5
 OpenClaw evidence: tool_calls 1, evaluations 1, runtime_events 14, audit_logs 12, artifacts 2, memories 2, approvals 1
 ```
 
+## 2026-06-23 Real Hermes/OpenClaw Product Acceptance
+
+Latest local live product-readiness run used the normal customer worker
+workflow against the running local MIS server. This was not a mock path and not
+a dry-run path.
+
+```text
+script: python3 scripts/customer_worker_real_runtime_acceptance.py --base-url http://127.0.0.1:8787 --confirm-live --adapter hermes --adapter openclaw --request-timeout 900 --hermes-timeout 480
+
+Hermes run: run_gw_ee70f20c021c
+Hermes task: tsk_worker_ui_hermes_20260623062626_2fc8c2b3
+Hermes artifact: art_customer_worker_task_run_gw_ee70f20c021c
+Hermes approval: ap_customer_worker_delivery_run_gw_ee70f20c021c
+Hermes plan: plan_a1c439e073775da1
+Hermes manifest: pem_daf7d404a2e9024b
+Hermes evidence: tool_calls 1, evaluations 1, runtime_events 14, audit_logs 12, artifacts 2, memories 2, approvals 1, plan_evidence_manifests 1
+
+OpenClaw run: run_gw_4a58476b7d09
+OpenClaw task: tsk_worker_ui_openclaw_20260623062652_7e64b47f
+OpenClaw artifact: art_customer_worker_task_run_gw_4a58476b7d09
+OpenClaw approval: ap_customer_worker_delivery_run_gw_4a58476b7d09
+OpenClaw plan: plan_9dd24ddbffbd74a2
+OpenClaw manifest: pem_1e63d0f6dcd96bf5
+OpenClaw evidence: tool_calls 1, evaluations 1, runtime_events 14, audit_logs 12, artifacts 2, memories 2, approvals 1, plan_evidence_manifests 1
+
+CLI readback:
+AGENTOPS_BASE_URL=http://127.0.0.1:8787 ./scripts/agentops run get --run-id run_gw_ee70f20c021c
+AGENTOPS_BASE_URL=http://127.0.0.1:8787 ./scripts/agentops artifact list --run-id run_gw_ee70f20c021c
+AGENTOPS_BASE_URL=http://127.0.0.1:8787 ./scripts/agentops run graph --run-id run_gw_ee70f20c021c
+AGENTOPS_BASE_URL=http://127.0.0.1:8787 ./scripts/agentops run get --run-id run_gw_4a58476b7d09
+AGENTOPS_BASE_URL=http://127.0.0.1:8787 ./scripts/agentops artifact list --run-id run_gw_4a58476b7d09
+AGENTOPS_BASE_URL=http://127.0.0.1:8787 ./scripts/agentops run graph --run-id run_gw_4a58476b7d09
+```
+
+Safety observations:
+
+- Both adapters returned `ok:true` from the live acceptance script.
+- Both runs are ledger `completed` runs with rule evaluations passing.
+- Both created customer delivery approvals before treating output as accepted
+  delivery.
+- CLI readback showed `token_omitted:true`.
+- Ledger rows store summaries and hashes/evidence; raw prompt, raw response,
+  credentials, private messages, and full transcripts are not documented here.
+- Hermes/OpenClaw remain `ledger_summary_only` and
+  `restricted_until_runtime_tool_events` for commercial claims until runtime
+  internal tool events are ingested or high-risk actions are routed through
+  prepared actions.
+
 ## 2026-06-22 Remote Worker Scope Baseline
 
 The worker now writes `agent_plan`, `plan_evidence_manifest`, `artifact`,

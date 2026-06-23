@@ -58,6 +58,11 @@ def main() -> int:
         "lane_latest_job": "lane.latest_workflow_job",
         "job_result_run_link": "lane.latest_workflow_job.result_run_id",
         "job_result_artifact": "lane.latest_workflow_job.result_artifact_id",
+        "team_board_dispatch_button": 'data-testid="commander-team-board-dispatch-batch"',
+        "team_board_queue_readback": "commanderLastQueueBoard",
+        "batch_dispatch_result_state": "lastCommanderBatch",
+        "batch_after_queue_active": "commanderLastQueueBoard.summary.active_workflow_jobs",
+        "batch_jobs_created": "lastCommanderBatch?.safety.jobs_created",
         "fallback_action_rows": "commanderActionRows",
         "scoped_refresh": "refresh({ commanderProject: nextProject })",
     }
@@ -71,6 +76,11 @@ def main() -> int:
         "active_job_ids_type": "active_workflow_job_task_ids: string[];",
         "failed_job_ids_type": "failed_workflow_job_task_ids: string[];",
         "latest_workflow_job_parse": "latestWorkflowJob",
+        "batch_dispatch_endpoint": "/commander/work-packages/dispatch-batch",
+        "batch_after_queue_type": "team_board_after_queue?: CommanderTeamBoardPayload | null;",
+        "batch_after_queue_parse": "team_board_after_queue: parseCommanderTeamBoardPayload(raw.team_board_after_queue",
+        "team_board_reusable_parser": "function parseCommanderTeamBoardPayload",
+        "project_board_shared_parser": "team_board: parseCommanderTeamBoardPayload(raw.team_board",
         "read_only_safety": "read_only: boolValue(teamSafetyRaw.read_only)",
         "live_execution_false_fallback": "live_execution_performed: false",
     }
@@ -81,6 +91,8 @@ def main() -> int:
     require("commanderTeamBoard.lanes.slice(0, 8)" in board_block, "team board should render scoped lanes, not only global package rows", failures)
     require("latestWorkflowJob" in board_block, "team board should surface latest workflow job status", failures)
     require("result_artifact_id" in board_block, "team board should surface workflow delivery artifact evidence", failures)
+    require("dispatchCommanderPlannedBatch()" in board_block, "team board should expose a batch dispatch control", failures)
+    require("commanderLastQueueBoard" in board_block, "team board should render after-queue readback evidence", failures)
     require("loadCommanderProjectBoard({ project_id: nextProject.projectId" in ai, "confirmed planner create should reload scoped project board", failures)
     require("loadCommanderWorkPackages({ project_id: nextProject.projectId" in ai, "confirmed planner create should reload scoped work packages", failures)
     require("team_board: null" in project_loader, "project board fallback should be safe/null when unavailable", failures)

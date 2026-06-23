@@ -69,6 +69,7 @@ import {
   type AgentGatewayEnrollmentPolicyPreview,
   type AgentGatewayEnrollmentRequestResult,
   type CommanderProjectBoardPayload,
+  type CommanderWorkPackageDispatchBatchPayload,
   type CommanderWorkPackagePlanPayload,
   type CommanderSynthesisPromotionPayload,
   type CustomerDeliveryBoardPayload,
@@ -314,6 +315,7 @@ export function AIEmployees() {
   const [commanderPlannerError, setCommanderPlannerError] = useState<string | null>(null);
   const [commanderPlannerResult, setCommanderPlannerResult] = useState<CommanderWorkPackagePlanPayload | null>(null);
   const [activeCommanderProject, setActiveCommanderProject] = useState<{ projectId: string; planId: string } | null>(null);
+  const [lastCommanderBatch, setLastCommanderBatch] = useState<CommanderWorkPackageDispatchBatchPayload | null>(null);
   const [lastSynthesis, setLastSynthesis] = useState<{ artifactId: string; approvalId?: string | null } | null>(null);
   const [synthesisPromotion, setSynthesisPromotion] = useState<CommanderSynthesisPromotionPayload | null>(null);
   const [commanderPlannerForm, setCommanderPlannerForm] = useState({
@@ -615,6 +617,7 @@ export function AIEmployees() {
   const commanderProjectBoard = data?.commanderProjectBoard as CommanderProjectBoardPayload | undefined;
   const commanderTeamBoard = commanderProjectBoard?.team_board || null;
   const commanderTeamLanes = commanderTeamBoard?.lanes || [];
+  const commanderLastQueueBoard = lastCommanderBatch?.team_board_after_queue || null;
   const commanderPackageRows = commanderWorkPackages?.work_packages || [];
   const commanderActionRows = commanderTeamLanes.length ? commanderTeamLanes : commanderPackageRows;
   const commanderPlannedPackageCount = commanderActionRows.filter(pkg => pkg.package_status === "planned" || pkg.status === "planned").length;
@@ -895,6 +898,11 @@ export function AIEmployees() {
       failedWorkflowJobs: "Failed jobs",
       completedWorkflowJobs: "Completed jobs",
       latestWorkflowJob: "Latest job",
+      queueReadback: "Queue readback",
+      jobsCreated: "Jobs created",
+      afterQueueActive: "After queue active",
+      afterQueueFailed: "After queue failed",
+      afterQueueCompleted: "After queue completed",
       persistedPackages: "Persisted packages",
       packageReadback: "Package readback",
       packageStatus: "Package status",
@@ -1416,6 +1424,11 @@ export function AIEmployees() {
       failedWorkflowJobs: "失败 Job",
       completedWorkflowJobs: "完成 Job",
       latestWorkflowJob: "最新 Job",
+      queueReadback: "排队读回",
+      jobsCreated: "已创建 Job",
+      afterQueueActive: "排队后活跃",
+      afterQueueFailed: "排队后失败",
+      afterQueueCompleted: "排队后完成",
       persistedPackages: "持久化工作包",
       packageReadback: "工作包读回",
       packageStatus: "工作包状态",
@@ -2615,12 +2628,24 @@ export function AIEmployees() {
     setDispatchResult(null);
     try {
       const result = await dispatchCommanderWorkPackageBatch({
+        project_id: commanderTeamBoard?.project_id || activeCommanderProject?.projectId || undefined,
+        plan_id: commanderTeamBoard?.plan_id || activeCommanderProject?.planId || undefined,
         task_ids: plannedTaskIds,
         adapter: "mock",
         status: "planned",
         limit: plannedTaskIds.length,
       });
+      setLastCommanderBatch(result);
       setDispatchResult(`${copy.dispatchBatchMock}: ${result.ok ? "queued" : result.reason || "failed"} · ${result.job_ids.length} jobs`);
+      if (result.team_board_after_queue) {
+        setData((current) => current ? {
+          ...current,
+          commanderProjectBoard: current.commanderProjectBoard ? {
+            ...(current.commanderProjectBoard as CommanderProjectBoardPayload),
+            team_board: result.team_board_after_queue,
+          } : current.commanderProjectBoard,
+        } : current);
+      }
       await refresh();
     } catch (err) {
       setDispatchResult(err instanceof Error ? err.message : String(err));
@@ -3468,6 +3493,35 @@ export function AIEmployees() {
                     </div>
                   </div>
                 ))}
+              </div>
+            </div>
+
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-2 mt-3 rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+              <div className="min-w-0">
+                <div className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.queueReadback}</div>
+                <div className="text-[10px] mt-1 truncate" style={{ color: "var(--mis-muted)" }}>
+                  {lastCommanderBatch ? `${lastCommanderBatch.status || lastCommanderBatch.reason || "queued"} · ${lastCommanderBatch.job_ids.length} jobs · ${lastCommanderBatch.filter?.project_id || commanderTeamBoard.project_id || "project"}` : commanderTeamBoard.next_actions[0] || copy.dispatchBatchMock}
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-1.5 lg:justify-end">
+                {commanderLastQueueBoard && (
+                  <>
+                    <StatusBadge status={lastCommanderBatch?.safety.ledger_mutated ? "attention" : "pass"} label={`${copy.jobsCreated}: ${lastCommanderBatch?.safety.jobs_created ?? lastCommanderBatch?.job_ids.length ?? 0}`} />
+                    <StatusBadge status={commanderLastQueueBoard.summary.active_workflow_jobs > 0 ? "running" : "pass"} label={`${copy.afterQueueActive}: ${commanderLastQueueBoard.summary.active_workflow_jobs}`} />
+                    <StatusBadge status={commanderLastQueueBoard.summary.failed_workflow_jobs > 0 ? "blocked" : "pass"} label={`${copy.afterQueueFailed}: ${commanderLastQueueBoard.summary.failed_workflow_jobs}`} />
+                    <StatusBadge status={(commanderLastQueueBoard.summary.workflow_job_counts.completed || 0) > 0 ? "completed" : "planned"} label={`${copy.afterQueueCompleted}: ${commanderLastQueueBoard.summary.workflow_job_counts.completed || 0}`} />
+                  </>
+                )}
+                <button
+                  data-testid="commander-team-board-dispatch-batch"
+                  onClick={() => void dispatchCommanderPlannedBatch()}
+                  disabled={Boolean(dispatching) || commanderPlannedPackageCount === 0}
+                  className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded disabled:opacity-50"
+                  style={{ background: "rgba(45,212,191,0.10)", color: "var(--mis-success)", border: "1px solid rgba(45,212,191,0.18)" }}
+                >
+                  {dispatching === "commander-batch-mock" ? <RefreshCw size={10} /> : <Play size={10} />}
+                  {dispatching === "commander-batch-mock" ? copy.dispatching : `${copy.dispatchBatchMock} (${commanderPlannedPackageCount})`}
+                </button>
               </div>
             </div>
 

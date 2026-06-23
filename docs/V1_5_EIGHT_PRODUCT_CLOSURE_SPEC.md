@@ -243,6 +243,11 @@ Acceptance evidence:
   - Hermes completed `run_gw_f7fe3a78cadb` from task `tsk_worker_ui_hermes_20260621114203_9e6cc64a`.
   - The local ledger shows completed status plus tool/evaluation/audit/artifact evidence for both runs.
   - These are real live run IDs, not hard-coded fixtures; docs cite IDs and counts only, without raw prompts, raw responses, credentials, or private transcripts.
+- Latest normal customer-worker live acceptance on 2026-06-23:
+  - `python3 scripts/customer_worker_real_runtime_acceptance.py --base-url http://127.0.0.1:8787 --confirm-live --adapter hermes --adapter openclaw --request-timeout 900 --hermes-timeout 480`
+  - Hermes completed `run_gw_ee70f20c021c` from task `tsk_worker_ui_hermes_20260623062626_2fc8c2b3`, with artifact `art_customer_worker_task_run_gw_ee70f20c021c`, approval `ap_customer_worker_delivery_run_gw_ee70f20c021c`, plan `plan_a1c439e073775da1`, and manifest `pem_daf7d404a2e9024b`.
+  - OpenClaw completed `run_gw_4a58476b7d09` from task `tsk_worker_ui_openclaw_20260623062652_7e64b47f`, with artifact `art_customer_worker_task_run_gw_4a58476b7d09`, approval `ap_customer_worker_delivery_run_gw_4a58476b7d09`, plan `plan_9dd24ddbffbd74a2`, and manifest `pem_1e63d0f6dcd96bf5`.
+  - Both runs wrote tool_calls 1, evaluations 1, runtime_events 14, audit_logs 12, artifacts 2, memories 2, approvals 1, and plan_evidence_manifests 1, and CLI readback showed `token_omitted:true`.
 - Generic customer worker governance closure on 2026-06-20:
   - Mock completed `run_gw_161d789c4469`.
   - Hermes completed `run_gw_5d998a53e469`.

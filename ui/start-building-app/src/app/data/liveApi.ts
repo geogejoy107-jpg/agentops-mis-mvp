@@ -1051,6 +1051,7 @@ export interface CommanderWorkPackageDispatchBatchPayload {
     status?: string;
     limit?: number;
   };
+  team_board_after_queue?: CommanderTeamBoardPayload | null;
   safety: {
     ledger_mutated: boolean;
     jobs_created: number;
@@ -1087,6 +1088,91 @@ export interface CommanderWorkPackageSynthesisPayload {
   };
   token_omitted: boolean;
   live_execution_performed: boolean;
+}
+
+function parseCommanderTeamBoardPayload(team: unknown, fallbackWorkspaceId = "local-demo"): CommanderTeamBoardPayload | null {
+  if (typeof team !== "object" || team === null) return null;
+  const teamRaw = team as Record<string, unknown>;
+  const summaryRaw = typeof teamRaw.summary === "object" && teamRaw.summary !== null ? teamRaw.summary as Record<string, unknown> : {};
+  const teamSafetyRaw = typeof teamRaw.safety === "object" && teamRaw.safety !== null ? teamRaw.safety as Record<string, unknown> : {};
+  return {
+    status: String(teamRaw.status || "unknown"),
+    workspace_id: String(teamRaw.workspace_id || fallbackWorkspaceId || "local-demo"),
+    project_id: teamRaw.project_id ? String(teamRaw.project_id) : null,
+    plan_id: teamRaw.plan_id ? String(teamRaw.plan_id) : null,
+    summary: {
+      total_lanes: numberValue(summaryRaw.total_lanes, 0),
+      status_counts: numberRecord(summaryRaw.status_counts),
+      owner_counts: numberRecord(summaryRaw.owner_counts),
+      ready_for_review: numberValue(summaryRaw.ready_for_review, 0),
+      blocked: numberValue(summaryRaw.blocked, 0),
+      missing_coding_evidence: numberValue(summaryRaw.missing_coding_evidence, 0),
+      dependency_edges: numberValue(summaryRaw.dependency_edges, 0),
+      workflow_job_counts: numberRecord(summaryRaw.workflow_job_counts),
+      active_workflow_jobs: numberValue(summaryRaw.active_workflow_jobs, 0),
+      failed_workflow_jobs: numberValue(summaryRaw.failed_workflow_jobs, 0),
+    },
+    lanes: asArray<Record<string, unknown>>(teamRaw.lanes).map((lane) => {
+      const latestRun = typeof lane.latest_run === "object" && lane.latest_run !== null ? lane.latest_run as Record<string, unknown> : null;
+      const latestWorkflowJob = typeof lane.latest_workflow_job === "object" && lane.latest_workflow_job !== null ? lane.latest_workflow_job as Record<string, unknown> : null;
+      return {
+        task_id: String(lane.task_id || ""),
+        lane_id: String(lane.lane_id || ""),
+        title: String(lane.title || "Untitled lane"),
+        owner_agent_id: String(lane.owner_agent_id || ""),
+        collaborator_agent_ids: asArray<unknown>(lane.collaborator_agent_ids).map(String),
+        status: String(lane.status || "unknown"),
+        package_status: String(lane.package_status || lane.status || "unknown"),
+        priority: String(lane.priority || "medium"),
+        risk_level: String(lane.risk_level || "medium"),
+        dependencies: asArray<unknown>(lane.dependencies).map(String),
+        dependency_count: numberValue(lane.dependency_count, 0),
+        latest_run: latestRun ? {
+          run_id: latestRun.run_id ? String(latestRun.run_id) : undefined,
+          status: latestRun.status ? String(latestRun.status) : undefined,
+          created_at: latestRun.created_at ? String(latestRun.created_at) : undefined,
+        } : null,
+        latest_workflow_job: latestWorkflowJob ? {
+          job_id: latestWorkflowJob.job_id ? String(latestWorkflowJob.job_id) : undefined,
+          workflow_type: latestWorkflowJob.workflow_type ? String(latestWorkflowJob.workflow_type) : undefined,
+          status: latestWorkflowJob.status ? String(latestWorkflowJob.status) : undefined,
+          adapter: latestWorkflowJob.adapter ? String(latestWorkflowJob.adapter) : undefined,
+          confirm_run: boolValue(latestWorkflowJob.confirm_run),
+          result_run_id: latestWorkflowJob.result_run_id ? String(latestWorkflowJob.result_run_id) : null,
+          result_artifact_id: latestWorkflowJob.result_artifact_id ? String(latestWorkflowJob.result_artifact_id) : null,
+          created_at: latestWorkflowJob.created_at ? String(latestWorkflowJob.created_at) : undefined,
+          started_at: latestWorkflowJob.started_at ? String(latestWorkflowJob.started_at) : null,
+          completed_at: latestWorkflowJob.completed_at ? String(latestWorkflowJob.completed_at) : null,
+          updated_at: latestWorkflowJob.updated_at ? String(latestWorkflowJob.updated_at) : undefined,
+        } : null,
+        evidence_counts: numberRecord(lane.evidence_counts),
+        localization_gate: typeof lane.localization_gate === "object" && lane.localization_gate !== null ? lane.localization_gate as Record<string, unknown> : {},
+        coding_evidence_gate: typeof lane.coding_evidence_gate === "object" && lane.coding_evidence_gate !== null ? lane.coding_evidence_gate as Record<string, unknown> : {},
+        recommended_action: lane.recommended_action ? String(lane.recommended_action) : undefined,
+      };
+    }),
+    dependency_edges: asArray<Record<string, unknown>>(teamRaw.dependency_edges).map((edge) => ({
+      from_task_id: String(edge.from_task_id || ""),
+      to_task_id: String(edge.to_task_id || ""),
+      known_in_board: boolValue(edge.known_in_board),
+    })),
+    ready_for_review_task_ids: asArray<unknown>(teamRaw.ready_for_review_task_ids).map(String),
+    blocked_task_ids: asArray<unknown>(teamRaw.blocked_task_ids).map(String),
+    missing_coding_evidence_task_ids: asArray<unknown>(teamRaw.missing_coding_evidence_task_ids).map(String),
+    active_workflow_job_task_ids: asArray<unknown>(teamRaw.active_workflow_job_task_ids).map(String),
+    failed_workflow_job_task_ids: asArray<unknown>(teamRaw.failed_workflow_job_task_ids).map(String),
+    next_actions: asArray<unknown>(teamRaw.next_actions).map(String).filter(Boolean),
+    safety: {
+      read_only: boolValue(teamSafetyRaw.read_only),
+      ledger_mutated: boolValue(teamSafetyRaw.ledger_mutated),
+      live_execution_performed: boolValue(teamSafetyRaw.live_execution_performed),
+      token_omitted: boolValue(teamSafetyRaw.token_omitted),
+      raw_prompt_omitted: boolValue(teamSafetyRaw.raw_prompt_omitted),
+      raw_source_omitted: boolValue(teamSafetyRaw.raw_source_omitted),
+    },
+    token_omitted: boolValue(teamRaw.token_omitted),
+    live_execution_performed: boolValue(teamRaw.live_execution_performed),
+  };
 }
 
 export interface CommanderSynthesisPromotionPayload {
@@ -4195,90 +4281,6 @@ export async function loadCommanderProjectBoard(options: {
   });
   const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
   const filterRaw = typeof raw.team_board_filter === "object" && raw.team_board_filter !== null ? raw.team_board_filter as Record<string, unknown> : {};
-  const teamRaw = typeof raw.team_board === "object" && raw.team_board !== null ? raw.team_board as Record<string, unknown> : null;
-  const parseTeamBoard = (team: Record<string, unknown> | null): CommanderTeamBoardPayload | null => {
-    if (!team) return null;
-    const summaryRaw = typeof team.summary === "object" && team.summary !== null ? team.summary as Record<string, unknown> : {};
-    const teamSafetyRaw = typeof team.safety === "object" && team.safety !== null ? team.safety as Record<string, unknown> : {};
-    return {
-      status: String(team.status || "unknown"),
-      workspace_id: String(team.workspace_id || raw.workspace_id || "local-demo"),
-      project_id: team.project_id ? String(team.project_id) : null,
-      plan_id: team.plan_id ? String(team.plan_id) : null,
-      summary: {
-        total_lanes: numberValue(summaryRaw.total_lanes, 0),
-        status_counts: numberRecord(summaryRaw.status_counts),
-        owner_counts: numberRecord(summaryRaw.owner_counts),
-        ready_for_review: numberValue(summaryRaw.ready_for_review, 0),
-        blocked: numberValue(summaryRaw.blocked, 0),
-        missing_coding_evidence: numberValue(summaryRaw.missing_coding_evidence, 0),
-        dependency_edges: numberValue(summaryRaw.dependency_edges, 0),
-        workflow_job_counts: numberRecord(summaryRaw.workflow_job_counts),
-        active_workflow_jobs: numberValue(summaryRaw.active_workflow_jobs, 0),
-        failed_workflow_jobs: numberValue(summaryRaw.failed_workflow_jobs, 0),
-      },
-      lanes: asArray<Record<string, unknown>>(team.lanes).map((lane) => {
-        const latestRun = typeof lane.latest_run === "object" && lane.latest_run !== null ? lane.latest_run as Record<string, unknown> : null;
-        const latestWorkflowJob = typeof lane.latest_workflow_job === "object" && lane.latest_workflow_job !== null ? lane.latest_workflow_job as Record<string, unknown> : null;
-        return {
-          task_id: String(lane.task_id || ""),
-          lane_id: String(lane.lane_id || ""),
-          title: String(lane.title || "Untitled lane"),
-          owner_agent_id: String(lane.owner_agent_id || ""),
-          collaborator_agent_ids: asArray<unknown>(lane.collaborator_agent_ids).map(String),
-          status: String(lane.status || "unknown"),
-          package_status: String(lane.package_status || lane.status || "unknown"),
-          priority: String(lane.priority || "medium"),
-          risk_level: String(lane.risk_level || "medium"),
-          dependencies: asArray<unknown>(lane.dependencies).map(String),
-          dependency_count: numberValue(lane.dependency_count, 0),
-          latest_run: latestRun ? {
-            run_id: latestRun.run_id ? String(latestRun.run_id) : undefined,
-            status: latestRun.status ? String(latestRun.status) : undefined,
-            created_at: latestRun.created_at ? String(latestRun.created_at) : undefined,
-          } : null,
-          latest_workflow_job: latestWorkflowJob ? {
-            job_id: latestWorkflowJob.job_id ? String(latestWorkflowJob.job_id) : undefined,
-            workflow_type: latestWorkflowJob.workflow_type ? String(latestWorkflowJob.workflow_type) : undefined,
-            status: latestWorkflowJob.status ? String(latestWorkflowJob.status) : undefined,
-            adapter: latestWorkflowJob.adapter ? String(latestWorkflowJob.adapter) : undefined,
-            confirm_run: boolValue(latestWorkflowJob.confirm_run),
-            result_run_id: latestWorkflowJob.result_run_id ? String(latestWorkflowJob.result_run_id) : null,
-            result_artifact_id: latestWorkflowJob.result_artifact_id ? String(latestWorkflowJob.result_artifact_id) : null,
-            created_at: latestWorkflowJob.created_at ? String(latestWorkflowJob.created_at) : undefined,
-            started_at: latestWorkflowJob.started_at ? String(latestWorkflowJob.started_at) : null,
-            completed_at: latestWorkflowJob.completed_at ? String(latestWorkflowJob.completed_at) : null,
-            updated_at: latestWorkflowJob.updated_at ? String(latestWorkflowJob.updated_at) : undefined,
-          } : null,
-          evidence_counts: numberRecord(lane.evidence_counts),
-          localization_gate: typeof lane.localization_gate === "object" && lane.localization_gate !== null ? lane.localization_gate as Record<string, unknown> : {},
-          coding_evidence_gate: typeof lane.coding_evidence_gate === "object" && lane.coding_evidence_gate !== null ? lane.coding_evidence_gate as Record<string, unknown> : {},
-          recommended_action: lane.recommended_action ? String(lane.recommended_action) : undefined,
-        };
-      }),
-      dependency_edges: asArray<Record<string, unknown>>(team.dependency_edges).map((edge) => ({
-        from_task_id: String(edge.from_task_id || ""),
-        to_task_id: String(edge.to_task_id || ""),
-        known_in_board: boolValue(edge.known_in_board),
-      })),
-      ready_for_review_task_ids: asArray<unknown>(team.ready_for_review_task_ids).map(String),
-      blocked_task_ids: asArray<unknown>(team.blocked_task_ids).map(String),
-      missing_coding_evidence_task_ids: asArray<unknown>(team.missing_coding_evidence_task_ids).map(String),
-      active_workflow_job_task_ids: asArray<unknown>(team.active_workflow_job_task_ids).map(String),
-      failed_workflow_job_task_ids: asArray<unknown>(team.failed_workflow_job_task_ids).map(String),
-      next_actions: asArray<unknown>(team.next_actions).map(String).filter(Boolean),
-      safety: {
-        read_only: boolValue(teamSafetyRaw.read_only),
-        ledger_mutated: boolValue(teamSafetyRaw.ledger_mutated),
-        live_execution_performed: boolValue(teamSafetyRaw.live_execution_performed),
-        token_omitted: boolValue(teamSafetyRaw.token_omitted),
-        raw_prompt_omitted: boolValue(teamSafetyRaw.raw_prompt_omitted),
-        raw_source_omitted: boolValue(teamSafetyRaw.raw_source_omitted),
-      },
-      token_omitted: boolValue(team.token_omitted),
-      live_execution_performed: boolValue(team.live_execution_performed),
-    };
-  };
   const summaryRaw = typeof raw.team_work_packages_summary === "object" && raw.team_work_packages_summary !== null ? raw.team_work_packages_summary as Record<string, unknown> : null;
   return {
     provider: String(raw.provider || "agentops-commander"),
@@ -4286,7 +4288,7 @@ export async function loadCommanderProjectBoard(options: {
     status: String(raw.status || "unknown"),
     workspace_id: String(raw.workspace_id || "local-demo"),
     counts: typeof raw.counts === "object" && raw.counts !== null ? raw.counts as Record<string, unknown> : {},
-    team_board: parseTeamBoard(teamRaw),
+    team_board: parseCommanderTeamBoardPayload(raw.team_board, String(raw.workspace_id || "local-demo")),
     team_board_filter: {
       project_id: filterRaw.project_id ? String(filterRaw.project_id) : null,
       plan_id: filterRaw.plan_id ? String(filterRaw.plan_id) : null,
@@ -4444,6 +4446,7 @@ export async function dispatchCommanderWorkPackageBatch(input: {
       status: filterRaw.status ? String(filterRaw.status) : undefined,
       limit: filterRaw.limit === undefined ? undefined : numberValue(filterRaw.limit, input.limit || 5),
     },
+    team_board_after_queue: parseCommanderTeamBoardPayload(raw.team_board_after_queue, "local-demo"),
     safety: {
       ledger_mutated: boolValue(safetyRaw.ledger_mutated),
       jobs_created: numberValue(safetyRaw.jobs_created, 0),
