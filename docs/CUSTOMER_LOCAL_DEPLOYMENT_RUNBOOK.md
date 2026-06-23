@@ -43,6 +43,11 @@ agentops worker status
 agentops security production-readiness
 ```
 
+`agentops local readiness` also returns a `local_run_path`: a copy-only sequence
+for booting MIS, selecting a worker adapter, starting the worker, dispatching a
+customer task, and verifying ledger evidence. These are operator commands; the
+server reports them but does not execute shell commands.
+
 `agentops doctor` is fail-closed for unsafe shared/production targets: it exits
 with code `2` when `AGENTOPS_DEPLOYMENT_MODE=production|shared|hosted` or the
 target is non-loopback and no Gateway token is configured. It still prints

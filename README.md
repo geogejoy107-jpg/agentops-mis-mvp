@@ -287,7 +287,7 @@ Workspace isolation smoke 会验证：token 绑定 workspace A 后，只能 pull
 - `./scripts/agentops commander plan --goal "..."` 可把一个客户/项目目标预览拆成多条 AI 团队工作包；加 `--confirm-create` 后才写入 planned MIS tasks，并记录 commander runtime/audit evidence。`./scripts/agentops commander packages` 可读回持久化工作包状态、最新 run 和 evidence counts。浏览器入口在 `/workspace/agents` 的 Commander Work Package Planner，详见 `docs/COMMANDER_WORK_PACKAGE_PLANNER.md`。
 - `./scripts/agentops worker status` 可从命令行查看 worker fleet、daemon、pending task 和 stuck task 状态。
 - `./scripts/agentops worker hygiene` 默认只读，会列出 stuck worker tasks 和超过阈值仍 never-seen 的 enrollment；只有加 `--apply --confirm-cleanup` 才释放任务、吊销 stale token，并写入 audit/runtime evidence。
-- `./scripts/agentops local readiness` 可查看单机开源版闭环体检：Agent Gateway、worker route、memory/knowledge、approval、task->run->tool/eval/audit/artifact 证据、runbook 是否齐备。它只读，不启动 worker、不拉任务、不触发 Hermes/OpenClaw live runtime。
+- `./scripts/agentops local readiness` 可查看单机开源版闭环体检：Agent Gateway、worker route、memory/knowledge、approval、task->run->tool/eval/audit/artifact 证据、runbook 是否齐备。它只读，不启动 worker、不拉任务、不触发 Hermes/OpenClaw live runtime。返回里的 `local_run_path` 会给出可复制的启动、预检、worker、派活和验收命令；这些命令只展示给操作者复制执行，server 不会代替用户执行 shell。
 - `./scripts/agentops worker preflight --adapter mock|hermes|openclaw` 可从主 CLI 执行只读 Gateway/adapter 预检，不拉任务、不写账本、不触发 live runtime。
 - `./scripts/agentops worker start|stop|logs` 可从命令行控制本地 worker daemon；Hermes/OpenClaw start 必须显式 `--confirm-run`。
 - `./scripts/agentops enrollment revoke --agent-id agt_remote_builder` 可吊销该 agent 的 active token。
