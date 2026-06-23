@@ -18038,6 +18038,7 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
             "intake gates are not blocked for the selected task",
             "targeted task checks pass and failed evidence remains visible",
             "plan_evidence_manifest verifies against tool/evaluation/artifact/audit rows",
+            "run/task memory candidates are recorded and reviewed before delivery closure",
             "operator loop-audit reports no loop-local blocked gates",
             "Action Queue receipt is recorded and evaluated when a bounded advance action is used",
             "no raw prompt, raw response, customer body, token, or credential is exposed",
@@ -18050,6 +18051,8 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
             "evaluations",
             "artifacts",
             "audit_logs",
+            "memories",
+            "memory_review",
             "operator_action_receipts",
             "operator_action_evaluations",
         ],
@@ -20972,6 +20975,10 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
     evidence_report_attention = int(evidence_report_summary.get("attention") or 0)
     evidence_report_missing_manifests = int(evidence_report_summary.get("missing_plan_evidence_manifests") or 0)
     evidence_report_pending_approvals = int(evidence_report_summary.get("pending_approvals") or 0)
+    evidence_report_memory_reviews = int(evidence_report_summary.get("memory_reviews") or 0)
+    evidence_report_memory_review_ready = int(evidence_report_summary.get("memory_review_ready") or 0)
+    evidence_report_missing_memory_reviews = int(evidence_report_summary.get("missing_memory_reviews") or 0)
+    evidence_report_pending_memory_reviews = int(evidence_report_summary.get("pending_memory_reviews") or 0)
     receipt_rows = operator_action_receipt_rows(conn, workspace_id, 200)
     execution_evidence_gaps = ((action_plan.get("execution_evidence") or {}).get("gaps") or [])
     execution_gap_by_run = {str(item.get("run_id")): item for item in execution_evidence_gaps if item.get("run_id")}
@@ -21609,6 +21616,8 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
         loop_health_risks.append({"id": "run_evidence_blocked", "severity": "blocked", "count": evidence_report_blocked, "next_action": (evidence_report_work_order.get("next_actions") or ["agentops operator evidence-report --limit 8"])[0]})
     elif evidence_report_attention or evidence_report_missing_manifests or evidence_report_pending_approvals:
         loop_health_risks.append({"id": "run_evidence_attention", "severity": "attention", "count": evidence_report_attention + evidence_report_missing_manifests + evidence_report_pending_approvals, "next_action": (evidence_report_work_order.get("next_actions") or ["agentops operator evidence-report --limit 8"])[0]})
+    if evidence_report_missing_memory_reviews or evidence_report_pending_memory_reviews:
+        loop_health_risks.append({"id": "run_memory_review_attention", "severity": "attention", "count": evidence_report_missing_memory_reviews + evidence_report_pending_memory_reviews, "next_action": (evidence_report_work_order.get("next_actions") or ["agentops operator evidence-report --limit 8"])[0]})
     if remediation_workflow_blocked:
         loop_health_risks.append({"id": "evidence_remediation_workflow_blocked", "severity": "blocked", "count": remediation_workflow_blocked, "next_action": (remediation_chain.get("next_actions") or ["agentops operator handoff --limit 12"])[0]})
     elif remediation_workflow_ready or remediation_workflow_receipt_missing:
@@ -21707,7 +21716,7 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
             "next_action": (receipt_failure_work_order.get("next_actions") or receipt_failure_memory.get("next_actions") or ["agentops operator receipt-failure-memories --min-failures 2 --limit 8"])[0],
         },
         "evidence_report": {
-            "status": "blocked" if evidence_report_blocked else "attention" if evidence_report_attention or evidence_report_missing_manifests or evidence_report_pending_approvals else "pass",
+            "status": "blocked" if evidence_report_blocked else "attention" if evidence_report_attention or evidence_report_missing_manifests or evidence_report_pending_approvals or evidence_report_missing_memory_reviews or evidence_report_pending_memory_reviews else "pass",
             "runs": int(evidence_report_summary.get("runs") or 0),
             "ready": int(evidence_report_summary.get("ready") or 0),
             "attention": evidence_report_attention,
@@ -21715,6 +21724,10 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
             "verified_plan_evidence_manifests": int(evidence_report_summary.get("verified_plan_evidence_manifests") or 0),
             "missing_plan_evidence_manifests": evidence_report_missing_manifests,
             "pending_approvals": evidence_report_pending_approvals,
+            "memory_reviews": evidence_report_memory_reviews,
+            "memory_review_ready": evidence_report_memory_review_ready,
+            "missing_memory_reviews": evidence_report_missing_memory_reviews,
+            "pending_memory_reviews": evidence_report_pending_memory_reviews,
             "next_action": (evidence_report_work_order.get("next_actions") or ["agentops operator evidence-report --limit 8"])[0],
         },
         "workflow_job_recovery": {
@@ -21826,6 +21839,10 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
             "evidence_report_blocked": evidence_report_blocked,
             "evidence_report_missing_plan_evidence_manifests": evidence_report_missing_manifests,
             "evidence_report_pending_approvals": evidence_report_pending_approvals,
+            "evidence_report_memory_reviews": evidence_report_memory_reviews,
+            "evidence_report_memory_review_ready": evidence_report_memory_review_ready,
+            "evidence_report_missing_memory_reviews": evidence_report_missing_memory_reviews,
+            "evidence_report_pending_memory_reviews": evidence_report_pending_memory_reviews,
             "loop_package_items": len(action_package_items),
             "operator_actions": len(action_plan_actions),
             "receipt_required": receipt_coverage.get("required", 0),

@@ -175,11 +175,12 @@ def validate_packet(payload: dict, label: str, task_id: str, agent_id: str, fail
     require(evaluation_contract.get("operation") == "loop_evaluation_contract", f"{label} evaluation contract missing: {evaluation_contract}", failures)
     require(evaluation_contract.get("status") in {"ready", "attention", "blocked", "unknown"}, f"{label} evaluation status wrong: {evaluation_contract}", failures)
     require(evaluation_contract.get("token_omitted") is True, f"{label} evaluation token omission missing: {evaluation_contract}", failures)
-    for ledger in ["agent_plans", "plan_evidence_manifests", "tool_calls", "evaluations", "artifacts", "audit_logs", "operator_action_receipts", "operator_action_evaluations"]:
+    for ledger in ["agent_plans", "plan_evidence_manifests", "tool_calls", "evaluations", "artifacts", "audit_logs", "memories", "memory_review", "operator_action_receipts", "operator_action_evaluations"]:
         require(ledger in (evaluation_contract.get("required_ledgers") or []), f"{label} evaluation required ledger missing {ledger}: {evaluation_contract}", failures)
     criteria = "\n".join(evaluation_contract.get("minimum_exit_criteria") or [])
     require("Agent Plan verifies" in criteria, f"{label} evaluation criteria missing plan verify: {criteria}", failures)
     require("plan_evidence_manifest" in criteria, f"{label} evaluation criteria missing manifest: {criteria}", failures)
+    require("memory candidates" in criteria, f"{label} evaluation criteria missing memory review gate: {criteria}", failures)
     audit_contract = payload.get("audit_contract") or {}
     require(audit_contract.get("operation") == "loop_audit_contract", f"{label} audit contract missing: {audit_contract}", failures)
     require(audit_contract.get("tamper_chain_required") is True, f"{label} tamper chain requirement missing: {audit_contract}", failures)

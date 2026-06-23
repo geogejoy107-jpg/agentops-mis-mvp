@@ -105,6 +105,9 @@ def validate(payload: dict, adapter: str) -> None:
     launch_brief = payload.get("launch_brief") or {}
     require(launch_brief.get("operation") == "operator_loop_launch_brief", f"launch brief missing: {launch_brief}")
     require((launch_brief.get("safety") or {}).get("read_only") is True, f"launch brief read-only proof missing: {launch_brief}")
+    required_ledgers = ((launch_brief.get("summary") or {}).get("required_ledgers") or [])
+    require("memories" in required_ledgers, f"launch brief missing memories ledger: {launch_brief}")
+    require("memory_review" in required_ledgers, f"launch brief missing memory review gate: {launch_brief}")
     next_commands = payload.get("next_commands") or []
     require(any("operator loop-launch-packet" in command for command in next_commands), f"launch command missing: {next_commands}")
     if adapter in {"hermes", "openclaw"}:

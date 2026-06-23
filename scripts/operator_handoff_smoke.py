@@ -141,6 +141,10 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
         "receipt_failure_memory_failed_receipts",
         "receipt_failure_memory_existing_candidates",
         "receipt_failure_memory_work_items",
+        "evidence_report_memory_reviews",
+        "evidence_report_memory_review_ready",
+        "evidence_report_missing_memory_reviews",
+        "evidence_report_pending_memory_reviews",
         "advance_loop_work_items",
     ]:
         require(isinstance(summary.get(key), int), f"{label} summary.{key} missing: {summary}", failures)
@@ -153,6 +157,22 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
     require(receipt_failure_gate.get("status") in {"pass", "attention"}, f"{label} receipt failure memory gate missing: {receipt_failure_gate}", failures)
     for key in ["candidates", "failed_receipts", "existing_candidates", "work_items"]:
         require(isinstance(receipt_failure_gate.get(key), int), f"{label} receipt failure memory gate {key} missing: {receipt_failure_gate}", failures)
+    evidence_report_gate = loop_health_gates.get("evidence_report") or {}
+    require(evidence_report_gate.get("status") in {"pass", "attention", "blocked"}, f"{label} evidence report gate missing: {evidence_report_gate}", failures)
+    for key in [
+        "runs",
+        "ready",
+        "attention",
+        "blocked",
+        "verified_plan_evidence_manifests",
+        "missing_plan_evidence_manifests",
+        "pending_approvals",
+        "memory_reviews",
+        "memory_review_ready",
+        "missing_memory_reviews",
+        "pending_memory_reviews",
+    ]:
+        require(isinstance(evidence_report_gate.get(key), int), f"{label} evidence report gate {key} missing: {evidence_report_gate}", failures)
     remediation_workflow_gate = loop_health_gates.get("evidence_remediation_workflow") or {}
     require(
         remediation_workflow_gate.get("status") in {"pass", "attention", "blocked"},
@@ -197,6 +217,8 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
     require(evidence_work_order.get("status") in {"ready", "attention", "blocked", "unavailable", "unknown"}, f"{label} evidence report status wrong: {evidence_work_order}", failures)
     require(isinstance(evidence_work_order.get("action_signature"), str), f"{label} evidence report action signature missing: {evidence_work_order}", failures)
     require(isinstance((evidence_work_order.get("summary") or {}).get("runs"), int), f"{label} evidence report summary missing: {evidence_work_order}", failures)
+    for key in ["memory_reviews", "memory_review_ready", "missing_memory_reviews", "pending_memory_reviews"]:
+        require(isinstance((evidence_work_order.get("summary") or {}).get(key), int), f"{label} evidence report summary {key} missing: {evidence_work_order}", failures)
     require(isinstance(evidence_work_order.get("runs") or [], list), f"{label} evidence report runs missing: {evidence_work_order}", failures)
     require(isinstance(evidence_work_order.get("next_actions") or [], list), f"{label} evidence report next_actions missing: {evidence_work_order}", failures)
     evidence_safety = evidence_work_order.get("safety") or {}

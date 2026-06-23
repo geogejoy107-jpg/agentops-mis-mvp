@@ -361,6 +361,11 @@ The RECORD gate evidence also includes `receipt_failure_memory_*` counters from
 the action-plan learning lane, so repeated failed recovery receipts are visible
 as memory-review work instead of disappearing after the receipt evaluation
 fails.
+Operator handoff and launch packets also surface run-level memory review as
+first-class RECORD evidence: `required_ledgers` includes `memories` and
+`memory_review`, while the evidence-report gate exposes
+`memory_reviews`, `memory_review_ready`, `missing_memory_reviews`, and
+`pending_memory_reviews` for Hermes/OpenClaw/Codex before delivery closure.
 It also includes an `action_package` section: each non-passing gate gets a
 copyable `action_command`, a scoped `verify_command`, a preview-only
 `receipt_record_command`, and a confirmed `receipt_verify_record_command`.
