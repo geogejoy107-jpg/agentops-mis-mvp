@@ -25864,6 +25864,7 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     return self.send_json({"error": "unknown agent gateway endpoint"}, 404)
                 conn.commit()
+                clear_read_model_cache()
                 return self.send_json(payload, status)
             local_write_auth_error = local_ui_write_auth_error(self.headers)
             if local_write_auth_error:
@@ -26355,6 +26356,7 @@ class Handler(BaseHTTPRequestHandler):
         after = conn.execute("SELECT * FROM memories WHERE memory_id=?", (memory_id,)).fetchone()
         audit(conn, "user", "usr_founder", f"memory.{status}", "memories", memory_id, dict(before), dict(after), {})
         conn.commit()
+        clear_read_model_cache()
         return self.send_json(dict(after))
 
     def review_evaluation_case(self, conn, case_id, status):

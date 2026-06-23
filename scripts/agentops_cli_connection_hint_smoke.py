@@ -28,7 +28,7 @@ def main() -> int:
                     "base_url": "http://127.0.0.1:18787",
                     "workspace_id": "local-demo",
                     "agent_id": "agt_connection_hint_smoke",
-                    "api_key": "agtok_fake_should_not_print",
+                    "api_key": "fake_token_should_not_print",
                 },
                 ensure_ascii=False,
             )
@@ -54,7 +54,7 @@ def main() -> int:
         require(f"config_path={config_path}" in combined, f"missing config path hint: {combined}", failures)
         require("local_demo_default=http://127.0.0.1:8787" in combined, f"missing local demo default hint: {combined}", failures)
         require("agentops login --base-url http://127.0.0.1:8787" in combined, f"missing saved-config repair hint: {combined}", failures)
-        require("agtok_fake_should_not_print" not in combined, "connection hint leaked raw token", failures)
+        require("fake_token_should_not_print" not in combined, "connection hint leaked raw token", failures)
 
     print(
         json.dumps(

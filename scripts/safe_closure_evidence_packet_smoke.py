@@ -147,6 +147,12 @@ def db_one(db_path: Path, sql: str, params: tuple = ()) -> dict:
         return dict(row) if row else {}
 
 
+def db_rows(db_path: Path, sql: str, params: tuple = ()) -> list[dict]:
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        return [dict(row) for row in conn.execute(sql, params).fetchall()]
+
+
 def db_count(db_path: Path, sql: str, params: tuple = ()) -> int:
     with sqlite3.connect(db_path) as conn:
         row = conn.execute(sql, params).fetchone()
@@ -428,6 +434,19 @@ def main() -> int:
             delivery_decision = (delivery_approved.get("approval") or delivery_approved).get("decision")
             require(status == 200 and delivery_decision == "approved", f"delivery approval failed: {status} {delivery_approved}", failures)
 
+            candidate_memories = db_rows(
+                db_path,
+                "SELECT memory_id FROM memories WHERE review_status='candidate' AND (task_id=? OR source_ref=?) ORDER BY created_at",
+                (task_id, run_id),
+            )
+            for memory in candidate_memories:
+                memory_id = str(memory.get("memory_id") or "")
+                if not memory_id:
+                    continue
+                status, memory_approved, raw = http_json("POST", base_url, f"/api/memories/{memory_id}/approve", {})
+                outputs.append(raw)
+                require(status == 200 and memory_approved.get("review_status") == "approved", f"memory approval failed: {status} {memory_approved}", failures)
+
             status, report, raw = http_json("GET", base_url, f"/api/operator/evidence-report?workspace_id={workspace_id}&run_id={run_id}&limit=5")
             outputs.append(raw)
             report_item = (report.get("runs") or [{}])[0]
@@ -446,6 +465,7 @@ def main() -> int:
                 "tool_calls": db_count(db_path, "SELECT COUNT(*) FROM tool_calls WHERE tool_call_id=? AND run_id=?", (tool_id, run_id)),
                 "evaluations": db_count(db_path, "SELECT COUNT(*) FROM evaluations WHERE evaluation_id=? AND run_id=?", (evaluation_id, run_id)),
                 "artifacts": db_count(db_path, "SELECT COUNT(*) FROM artifacts WHERE artifact_id=? AND run_id=?", (artifact_id, run_id)),
+                "approved_memories": db_count(db_path, "SELECT COUNT(*) FROM memories WHERE review_status='approved' AND (task_id=? OR source_ref=?)", (task_id, run_id)),
                 "approvals": db_count(db_path, "SELECT COUNT(*) FROM approvals WHERE approval_id IN (?,?)", (plan_approval_id, delivery_approval_id)),
                 "audit_logs_for_packet": db_count(
                     db_path,
