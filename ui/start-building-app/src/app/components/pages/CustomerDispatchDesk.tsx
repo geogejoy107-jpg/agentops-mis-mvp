@@ -21,6 +21,8 @@ export function CustomerDispatchDesk() {
       safetyBody: "Mock worker writes real ledger evidence; Hermes/OpenClaw live calls require confirm_run and prepared-action approval for external writes.",
       operatorTitle: "Operator handoff",
       operatorBody: "Agents keep using CLI/API/MCP. This browser page is for customers and admins to submit, watch, approve and inspect the work.",
+      modeTitle: "Execution mode legend",
+      modeBody: "Dry-run previews safely; mock worker writes real MIS ledger evidence; live Hermes/OpenClaw requires explicit confirmation; external writes wait at the approval wall.",
     },
     zh: {
       title: "派活台",
@@ -36,6 +38,8 @@ export function CustomerDispatchDesk() {
       safetyBody: "Mock worker 会真实写账本；Hermes/OpenClaw 真实调用必须 confirm_run，外部写入还要 prepared-action 审批。",
       operatorTitle: "执行交接",
       operatorBody: "Agent 仍然走 CLI/API/MCP；浏览器页面服务客户和管理员，用来提交、观察、审批和追溯工作。",
+      modeTitle: "执行模式说明",
+      modeBody: "安全预演只生成计划；Mock worker 会真实写 MIS 账本；Hermes/OpenClaw 真实运行需要显式确认；外部写入必须停在审批墙。",
     },
   });
 
@@ -91,6 +95,31 @@ export function CustomerDispatchDesk() {
             <p className="mt-1 text-[11px] leading-relaxed" style={{ color: "var(--mis-dim)" }}>{item.body}</p>
           </div>
         ))}
+      </section>
+
+      <section
+        data-testid="dispatch-mode-strip"
+        className="rounded-lg p-3"
+        style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}
+      >
+        <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <div className="text-xs font-semibold" style={{ color: "var(--mis-text)" }}>{copy.modeTitle}</div>
+            <p className="mt-1 text-[11px] leading-relaxed" style={{ color: "var(--mis-dim)" }}>{copy.modeBody}</p>
+          </div>
+          <div className="flex flex-wrap gap-1.5 text-[10px]">
+            {[
+              { label: locale === "zh" ? "安全预演" : "Dry-run", color: "var(--mis-muted)" },
+              { label: locale === "zh" ? "Mock 真写账本" : "Mock ledger write", color: "var(--mis-success)" },
+              { label: "Hermes/OpenClaw confirm_run", color: "var(--mis-cyan)" },
+              { label: locale === "zh" ? "审批墙" : "Approval wall", color: "#FBBF24" },
+            ].map((item) => (
+              <span key={item.label} className="rounded px-2 py-1" style={{ background: "rgba(148,163,184,0.10)", color: item.color, border: "1px solid rgba(148,163,184,0.16)" }}>
+                {item.label}
+              </span>
+            ))}
+          </div>
+        </div>
       </section>
 
       {loading && <p className="text-xs" style={{ color: "var(--mis-muted)" }}>{copy.loading}</p>}
