@@ -88,6 +88,7 @@ def smoke(base_url: str, stamp: str) -> dict:
         steps = created.get("next_steps") or {}
         require(token and token_id, "create response missing one-time token")
         text = launch_text(steps)
+        command_text = launch_text({key: value for key, value in steps.items() if key != "notes"})
         require(token not in text, "raw token leaked into launch packet")
         require(steps.get("adapter") == "mock", f"launch packet adapter mismatch: {steps}")
         require("agentops status" in text and "agentops-worker" in text, f"launch packet missing product commands: {steps}")
@@ -95,6 +96,10 @@ def smoke(base_url: str, stamp: str) -> dict:
         require("service-template --manager launchd" in text and "service-template --manager systemd" in text, f"launch packet missing service template commands: {steps}")
         require("service-install --manager launchd" in text and "service-install --manager systemd" in text, f"launch packet missing service install commands: {steps}")
         require("service-check --manager launchd" in text and "service-check --manager systemd" in text, f"launch packet missing service check commands: {steps}")
+        for manager in ("launchd", "systemd"):
+            for action in ("load", "unload", "restart"):
+                require(f"service-control --manager {manager} --action {action}" in text, f"launch packet missing {manager} service-control {action} preview command: {steps}")
+        require("--confirm-control" not in command_text, f"launch packet should not default to mutating service-control commands: {steps}")
         require("scripts/agent_worker.py" in text, f"launch packet missing repo fallback commands: {steps}")
         require("agentops session create" in text and "--use-session" in text, f"launch packet missing short-lived session path: {steps}")
         for flag in (

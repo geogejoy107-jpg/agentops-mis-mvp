@@ -908,7 +908,7 @@ Implemented and verified:
 - Agent Gateway status surfaced in `/workspace/agents`.
 - Operator readiness strip surfaced in `/workspace/agents`.
 - Remote enrollment launch packet surfaced in `/workspace/agents` after token creation/rotation.
-- Remote enrollment launch packet worker path now uses the installable `agentops-worker` command, read-only adapter preflight, dry-run-by-default service file installation, read-only service diagnostics, and short-lived sessions before task processing; repo-local `scripts/agent_worker.py` is shown only as a fallback. Long-running worker setup can render, write, and check launchd/systemd templates, but service loading/restart remains manual.
+- Remote enrollment launch packet worker path now uses the installable `agentops-worker` command, read-only adapter preflight, dry-run-by-default service file installation, read-only service diagnostics, preview-first service control, and short-lived sessions before task processing; repo-local `scripts/agent_worker.py` is shown only as a fallback. Long-running worker setup can render, write, check, and preview load/unload/restart for launchd/systemd templates, while actual service mutation remains explicit operator-confirmed BYOC behavior through `--confirm-control`.
 - Loop-mode workers can refresh short-lived sessions before expiry while continuing to process tasks.
 - Remote enrollment UI.
 - Token revocation.

@@ -41,6 +41,7 @@ def assert_safe_launch_steps(payload: dict, expected_adapter: str) -> dict:
     require(token, "response did not include one-time token")
     require(steps, "response did not include next_steps")
     text = json.dumps(steps, ensure_ascii=False)
+    command_text = json.dumps({key: value for key, value in steps.items() if key != "notes"}, ensure_ascii=False)
     require(token not in text, "raw token leaked into next_steps")
     require("<paste one-time token here>" in text, "next_steps should use a token placeholder")
     require("agentops status" in text, "next_steps missing agentops status")
@@ -54,6 +55,13 @@ def assert_safe_launch_steps(payload: dict, expected_adapter: str) -> dict:
     require("service-install --manager systemd" in text, "next_steps missing systemd service install command")
     require("service-check --manager launchd" in text, "next_steps missing launchd service check command")
     require("service-check --manager systemd" in text, "next_steps missing systemd service check command")
+    for manager in ("launchd", "systemd"):
+        for action in ("load", "unload", "restart"):
+            require(
+                f"service-control --manager {manager} --action {action}" in text,
+                f"next_steps missing {manager} service-control {action} preview command",
+            )
+    require("--confirm-control" not in command_text, "next_steps must not default to mutating service-control commands")
     require("scripts/agent_worker.py" in text, "next_steps missing repo fallback worker command")
     require("--use-session" in text, "worker launch command should mint a short-lived session")
     for flag in (
