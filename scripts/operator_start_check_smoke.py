@@ -84,6 +84,7 @@ def validate(payload: dict, adapter: str) -> None:
         "adapter_preflight",
         "runtime_doctor",
         "loop_launch_brief",
+        "loop_driver_entry",
         "local_run_path",
         "agent_plan_boundary",
         "live_product_readiness",
@@ -108,11 +109,34 @@ def validate(payload: dict, adapter: str) -> None:
     required_ledgers = ((launch_brief.get("summary") or {}).get("required_ledgers") or [])
     require("memories" in required_ledgers, f"launch brief missing memories ledger: {launch_brief}")
     require("memory_review" in required_ledgers, f"launch brief missing memory review gate: {launch_brief}")
+    loop_driver = payload.get("loop_driver_entry") or {}
+    loop_commands = loop_driver.get("commands") or {}
+    review_snapshot = loop_driver.get("review_snapshot") or {}
+    review_summary = review_snapshot.get("summary") or {}
+    require(loop_driver.get("operation") == "operator_start_check_loop_driver_entry", f"loop driver entry missing: {loop_driver}")
+    require((loop_driver.get("safety") or {}).get("read_only") is True, f"loop driver entry read-only proof missing: {loop_driver}")
+    require((loop_driver.get("safety") or {}).get("ledger_mutated") is False, f"loop driver entry mutated ledger: {loop_driver}")
+    require((loop_driver.get("safety") or {}).get("server_executes_shell") is False, f"loop driver entry server shell proof missing: {loop_driver}")
+    require(str(loop_commands.get("preview") or "").startswith(f"agentops operator loop-driver --adapter {adapter}"), f"loop driver preview command missing: {loop_driver}")
+    require(str(loop_commands.get("confirm_loop") or "").startswith(f"agentops operator loop-driver --adapter {adapter}"), f"loop driver confirm command missing: {loop_driver}")
+    require("--confirm-loop" in str(loop_commands.get("confirm_loop") or ""), f"loop driver confirm flag missing: {loop_driver}")
+    require(str(loop_commands.get("review_queue") or "").startswith("agentops review queue"), f"loop driver review command missing: {loop_driver}")
+    require(review_snapshot.get("operation") == "loop_driver_record_review_snapshot", f"loop driver review snapshot missing: {loop_driver}")
+    require((review_snapshot.get("safety") or {}).get("read_only") is True, f"loop driver review snapshot read-only proof missing: {loop_driver}")
+    require((review_snapshot.get("safety") or {}).get("ledger_mutated") is False, f"loop driver review snapshot mutated ledger: {loop_driver}")
+    for key in ["review_items_total", "returned_items", "pending_approvals", "memory_candidates"]:
+        require(isinstance(review_summary.get(key), int), f"loop driver review summary {key} missing: {loop_driver}")
+    require(review_snapshot.get("summary_omitted") is True, f"loop driver review summary omission proof missing: {loop_driver}")
+    require(review_snapshot.get("raw_content_omitted") is True, f"loop driver review raw omission proof missing: {loop_driver}")
+    require(all(item.get("summary_omitted") is True and item.get("token_omitted") is True for item in (review_snapshot.get("items") or [])), f"loop driver review items should be compact: {loop_driver}")
     next_commands = payload.get("next_commands") or []
     require(any("operator loop-launch-packet" in command for command in next_commands), f"launch command missing: {next_commands}")
+    require(any("operator loop-driver" in command for command in next_commands), f"loop-driver command missing: {next_commands}")
+    require(any("review queue" in command for command in next_commands), f"review queue command missing: {next_commands}")
     if adapter in {"hermes", "openclaw"}:
         summary = payload.get("summary") or {}
         require(summary.get("requires_confirm_run") is True, f"live adapter confirm proof missing: {summary}")
+        require(any("--confirm-loop" in command for command in next_commands), f"confirm loop command missing: {next_commands}")
 
 
 def main() -> int:

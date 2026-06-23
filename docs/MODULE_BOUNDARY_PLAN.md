@@ -1208,6 +1208,39 @@ python3 scripts/operator_handoff_smoke.py --base-url "$AGENTOPS_BASE_URL"
 python3 scripts/operator_start_check_smoke.py --base-url "$AGENTOPS_BASE_URL" --adapter hermes --adapter openclaw
 ```
 
+### Slice 40: Operator Start-Check Projection
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/operator_start_check.py`
+
+Moved out of `server.py`:
+
+- start-check gate row projection
+- compact local run path projection
+- compact Agent Work Method launch brief projection for start-check responses
+- compact loop-driver entry and RECORD review snapshot projection
+
+Still owned by `server.py`:
+
+- HTTP routes
+- query/header/auth normalization
+- local readiness, worker readiness, runtime doctor, launch packet, and live
+  acceptance read orchestration
+- adapter readiness and worker policy inputs
+- final start-check response assembly and safety contract fields
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/operator_start_check_api_smoke.py
+python3 scripts/operator_start_check_smoke.py --base-url "$AGENTOPS_BASE_URL" --adapter hermes --adapter openclaw
+python3 scripts/operator_runtime_doctor_smoke.py --base-url "$AGENTOPS_BASE_URL"
+```
+
 ## Next Candidate Slices
 
 - Continue P1-05 with small smoke-backed strangler slices only; prefer pure

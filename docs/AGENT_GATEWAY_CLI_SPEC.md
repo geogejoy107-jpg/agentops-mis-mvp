@@ -574,14 +574,18 @@ agentops operator start-check --adapter hermes --task-id tsk_123 --agent-id agt_
 This is the recommended first command before an agent accepts or advances local
 work. The CLI maps to `GET /api/operator/start-check`, the canonical MIS read
 model that composes `/api/local/readiness`, `/api/workers/adapter-readiness`,
-`operator runtime-doctor`, live product-readiness evidence, and
-`operator loop-launch-packet --brief`.
+`operator runtime-doctor`, live product-readiness evidence,
+`operator loop-launch-packet --brief`, and the bounded `operator loop-driver`
+entry.
 The result exposes gates for local MIS readiness, the worker connection policy,
 adapter preflight, runtime doctor, Agent Work Method launch brief, compact
-`local_run_path`, service-control preview, Agent Plan boundary, and live ledger
-product proof. It also returns copyable next commands for readiness, preflight,
-runtime doctor, launch brief, bounded advance, confirmed live dispatch, and
-task/run/evidence readback.
+`loop_driver_entry`, `local_run_path`, service-control preview, Agent Plan
+boundary, and live ledger product proof. `loop_driver_entry` returns copyable
+preview, `--confirm-loop`, review queue, and verify commands plus a compact
+RECORD review snapshot with raw item summaries/content omitted. It also returns
+copyable next commands for readiness, preflight, runtime doctor, launch brief,
+bounded loop-driver preview/confirmation, bounded advance, confirmed live
+dispatch, and task/run/evidence readback.
 
 `start-check` does not start Hermes/OpenClaw, execute shell from the server,
 create tasks, mutate ledgers, write connector rows, or print raw prompts,

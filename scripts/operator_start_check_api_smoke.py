@@ -121,6 +121,7 @@ def validate_payload(payload: dict, adapter: str, failures: list[str]) -> None:
         "adapter_preflight",
         "runtime_doctor",
         "loop_launch_brief",
+        "loop_driver_entry",
         "local_run_path",
         "agent_plan_boundary",
         "live_product_readiness",
@@ -140,11 +141,34 @@ def validate_payload(payload: dict, adapter: str, failures: list[str]) -> None:
     launch_brief = payload.get("launch_brief") or {}
     require(launch_brief.get("operation") == "operator_loop_launch_brief", f"{adapter} launch brief missing: {launch_brief}", failures)
     require((launch_brief.get("safety") or {}).get("read_only") is True, f"{adapter} launch brief read-only proof missing: {launch_brief}", failures)
+    loop_driver = payload.get("loop_driver_entry") or {}
+    loop_commands = loop_driver.get("commands") or {}
+    review_snapshot = loop_driver.get("review_snapshot") or {}
+    review_summary = review_snapshot.get("summary") or {}
+    require(loop_driver.get("operation") == "operator_start_check_loop_driver_entry", f"{adapter} loop driver entry missing: {loop_driver}", failures)
+    require((loop_driver.get("safety") or {}).get("read_only") is True, f"{adapter} loop driver entry read-only proof missing: {loop_driver}", failures)
+    require((loop_driver.get("safety") or {}).get("ledger_mutated") is False, f"{adapter} loop driver entry mutated ledger: {loop_driver}", failures)
+    require((loop_driver.get("safety") or {}).get("server_executes_shell") is False, f"{adapter} loop driver entry server shell proof missing: {loop_driver}", failures)
+    require(str(loop_commands.get("preview") or "").startswith(f"agentops operator loop-driver --adapter {adapter}"), f"{adapter} loop driver preview missing: {loop_driver}", failures)
+    require(str(loop_commands.get("confirm_loop") or "").startswith(f"agentops operator loop-driver --adapter {adapter}"), f"{adapter} loop driver confirm missing: {loop_driver}", failures)
+    require("--confirm-loop" in str(loop_commands.get("confirm_loop") or ""), f"{adapter} loop driver confirm flag missing: {loop_driver}", failures)
+    require(str(loop_commands.get("review_queue") or "").startswith("agentops review queue"), f"{adapter} loop driver review command missing: {loop_driver}", failures)
+    require(review_snapshot.get("operation") == "loop_driver_record_review_snapshot", f"{adapter} review snapshot missing: {loop_driver}", failures)
+    require((review_snapshot.get("safety") or {}).get("read_only") is True, f"{adapter} review snapshot read-only proof missing: {loop_driver}", failures)
+    require((review_snapshot.get("safety") or {}).get("ledger_mutated") is False, f"{adapter} review snapshot mutated ledger: {loop_driver}", failures)
+    for key in ["review_items_total", "returned_items", "pending_approvals", "memory_candidates"]:
+        require(isinstance(review_summary.get(key), int), f"{adapter} review summary {key} missing: {loop_driver}", failures)
+    require(review_snapshot.get("summary_omitted") is True, f"{adapter} review summary omission proof missing: {loop_driver}", failures)
+    require(review_snapshot.get("raw_content_omitted") is True, f"{adapter} review raw omission proof missing: {loop_driver}", failures)
+    require(all(item.get("summary_omitted") is True and item.get("token_omitted") is True for item in (review_snapshot.get("items") or [])), f"{adapter} review items should be compact: {loop_driver}", failures)
     commands = payload.get("next_commands") or []
     require(any("operator loop-launch-packet" in str(command) for command in commands), f"{adapter} launch command missing: {commands}", failures)
+    require(any("operator loop-driver" in str(command) for command in commands), f"{adapter} loop-driver command missing: {commands}", failures)
+    require(any("review queue" in str(command) for command in commands), f"{adapter} review queue command missing: {commands}", failures)
     if adapter in {"hermes", "openclaw"}:
         summary = payload.get("summary") or {}
         require(summary.get("requires_confirm_run") is True, f"{adapter} confirm-run proof missing: {summary}", failures)
+        require(any("--confirm-loop" in str(command) for command in commands), f"{adapter} confirm-loop command missing: {commands}", failures)
         live = payload.get("live_product_readiness") or {}
         require(live.get("operation") == "operator_live_product_readiness", f"{adapter} live readiness readback missing: {live}", failures)
 

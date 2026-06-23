@@ -114,6 +114,12 @@ from agentops_mis_core.operator_evidence import (
     operator_evidence_report_summary,
     operator_run_evidence_status,
 )
+from agentops_mis_core.operator_start_check import (
+    compact_start_check_loop_driver_entry,
+    compact_start_check_launch_brief,
+    compact_start_check_local_run_path,
+    operator_start_check_gate,
+)
 from agentops_mis_core.read_model_cache import ReadModelCache
 from agentops_mis_core.worker_fleet import (
     build_worker_remote_fleet_summary,
@@ -22703,176 +22709,6 @@ def operator_runtime_doctor(conn: sqlite3.Connection, headers, qs=None, auth_ctx
     }
 
 
-def operator_start_check_gate(
-    gate_id: str,
-    *,
-    label: str,
-    ok: bool,
-    status: str | None = None,
-    detail: str | None = None,
-    command: str | None = None,
-) -> dict:
-    return {
-        "id": gate_id,
-        "label": label,
-        "ok": bool(ok),
-        "status": status or ("pass" if ok else "attention"),
-        "detail": detail,
-        "next_action": command,
-        "token_omitted": True,
-    }
-
-
-def compact_start_check_local_run_path(local: dict) -> dict:
-    steps = local.get("local_run_path") if isinstance(local.get("local_run_path"), list) else []
-    compact_steps = []
-    for step in steps[:8]:
-        if not isinstance(step, dict):
-            continue
-        compact_steps.append({
-            "step_id": step.get("step_id"),
-            "phase": step.get("phase"),
-            "status": step.get("status"),
-            "adapter": step.get("adapter"),
-            "command": step.get("command"),
-            "verify_command": step.get("verify_command"),
-            "confirm_required": bool(step.get("confirm_required")),
-            "writes_ledger": bool(step.get("writes_ledger")),
-            "live_execution": bool(step.get("live_execution")),
-            "service_control_preview": bool(step.get("service_control_preview")),
-            "copy_only": step.get("copy_only", True) is not False,
-            "server_executes_shell": bool(step.get("server_executes_shell")),
-            "token_omitted": step.get("token_omitted", True) is not False,
-        })
-    service_step = next((step for step in compact_steps if step.get("step_id") == "preview_worker_service_control"), None)
-    commands = [str(step.get("command") or "").strip() for step in compact_steps if str(step.get("command") or "").strip()]
-    summary = local.get("summary") if isinstance(local.get("summary"), dict) else {}
-    return {
-        "operation": "local_run_path_compact",
-        "source_operation": local.get("operation") or "local_readiness",
-        "status": local.get("status"),
-        "recommended_adapter": summary.get("recommended_adapter"),
-        "steps": compact_steps,
-        "commands": commands,
-        "service_control_preview": service_step,
-        "contract": "copy-only local boot/readiness/worker/service/dispatch/verify path; commands are for the operator or agent shell to copy, not for server-side shell execution",
-        "safety": {
-            "read_only": True,
-            "ledger_mutated": False,
-            "live_execution_performed": False,
-            "server_executes_shell": False,
-            "token_omitted": True,
-        },
-        "token_omitted": True,
-    }
-
-
-def compact_start_check_launch_brief(packet: dict, *, adapter: str, local_run_path: dict) -> dict:
-    summary = packet.get("summary") if isinstance(packet.get("summary"), dict) else {}
-    control = packet.get("control_summary") if isinstance(packet.get("control_summary"), dict) else {}
-    recommended = control.get("recommended_step") if isinstance(control.get("recommended_step"), dict) else {}
-    safety = packet.get("safety") if isinstance(packet.get("safety"), dict) else {}
-    audit = packet.get("audit_contract") if isinstance(packet.get("audit_contract"), dict) else {}
-    evaluation = packet.get("evaluation_contract") if isinstance(packet.get("evaluation_contract"), dict) else {}
-    agent_plan_draft = packet.get("agent_plan_draft") if isinstance(packet.get("agent_plan_draft"), dict) else {}
-    chain = packet.get("execution_chain") if isinstance(packet.get("execution_chain"), list) else []
-    compact_chain = []
-    for item in chain[:8]:
-        if not isinstance(item, dict):
-            continue
-        compact_chain.append({
-            "step_id": item.get("step_id"),
-            "phase": item.get("phase"),
-            "label": item.get("label"),
-            "status": item.get("step_status"),
-            "next_safe_command": item.get("next_safe_command") or item.get("command"),
-            "verify_command": item.get("verify_command"),
-            "receipt_command": item.get("receipt_command"),
-            "confirm_required": bool(item.get("confirm_required")),
-            "receipt_required": bool(item.get("receipt_required")),
-            "source": item.get("source"),
-            "token_omitted": item.get("token_omitted", True) is not False,
-        })
-    adapter_command = f"agentops worker preflight --adapter {adapter}"
-    live_run_command = (
-        "agentops workflow run-task "
-        f"--adapter {adapter} "
-        "--confirm-run "
-        f"--worker-agent-id <{adapter}_agent_id> "
-        "--title '<task title>' "
-        "--description '<task description>'"
-    ) if adapter in {"hermes", "openclaw"} else (
-        "agentops workflow run-task "
-        "--adapter mock "
-        "--worker-agent-id <mock_agent_id> "
-        "--title '<task title>' "
-        "--description '<task description>'"
-    )
-    readback_commands = [
-        "agentops task get --task-id <task_id>",
-        "agentops run get --run-id <run_id>",
-        "agentops plan-evidence list --run-id <run_id>",
-        "agentops operator loop-audit --limit 20",
-        "agentops operator action-receipts --limit 20",
-    ]
-    return {
-        "operation": "operator_loop_launch_brief",
-        "source_operation": packet.get("operation", "operator_loop_launch_packet"),
-        "status": packet.get("status", "unknown"),
-        "workspace_id": packet.get("workspace_id"),
-        "task_id": packet.get("task_id"),
-        "agent_id": packet.get("agent_id"),
-        "adapter": adapter,
-        "method": packet.get("method"),
-        "summary": {
-            "handoff_mode": summary.get("handoff_mode"),
-            "control_status": control.get("status") or summary.get("control_status"),
-            "control_mode": control.get("mode") or summary.get("control_mode"),
-            "recommended_step": recommended.get("step_id") or summary.get("recommended_step"),
-            "recommended_label": recommended.get("label"),
-            "requires_human": bool(control.get("requires_human")),
-            "requires_receipt": bool(control.get("requires_receipt")),
-            "execution_chain_steps": len(chain),
-            "blocking_steps": control.get("blocking_steps") or [],
-            "attention_steps": control.get("attention_steps") or [],
-            "required_ledgers": evaluation.get("required_ledgers") or [],
-            "agent_plan_risk": agent_plan_draft.get("risk_level"),
-            "agent_plan_approval_required": bool(agent_plan_draft.get("approval_required")),
-            "local_readiness_status": local_run_path.get("status"),
-            "local_run_path_steps": len(local_run_path.get("steps") or []),
-            "local_run_path_recommended_adapter": local_run_path.get("recommended_adapter"),
-            "service_control_preview": bool(local_run_path.get("service_control_preview")),
-        },
-        "next_command": control.get("next_command") or recommended.get("command"),
-        "verify_command": control.get("verify_command") or recommended.get("verify_command"),
-        "receipt_command": control.get("receipt_command") or recommended.get("receipt_command"),
-        "adapter_preflight_command": adapter_command,
-        "live_run_command": live_run_command,
-        "readback_commands": readback_commands,
-        "runtime_doctor_command": "agentops operator runtime-doctor --limit 8",
-        "local_run_path": local_run_path,
-        "execution_chain": compact_chain,
-        "policy": {
-            "policy_id": control.get("policy_id") or (audit.get("bounded_runner") or {}).get("policy_id"),
-            "server_executes_shell": bool(control.get("server_executes_shell") or (audit.get("bounded_runner") or {}).get("server_executes_shell")),
-            "live_execution_requires_confirm_run": adapter in {"hermes", "openclaw"},
-            "external_writes_require_prepared_action": adapter in {"hermes", "openclaw"},
-            "copy_only": control.get("copy_only", True) is not False,
-        },
-        "safety": {
-            "read_only": bool(safety.get("read_only", True)),
-            "ledger_mutated": bool(safety.get("ledger_mutated")),
-            "live_execution_performed": bool(safety.get("live_execution_performed")),
-            "server_executes_shell": False,
-            "raw_prompt_omitted": bool(safety.get("raw_prompt_omitted", True)),
-            "raw_response_omitted": bool(safety.get("raw_response_omitted", True)),
-            "token_omitted": bool(safety.get("token_omitted", True)),
-        },
-        "token_omitted": True,
-        "live_execution_performed": False,
-    }
-
-
 def operator_start_check(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) -> dict:
     qs = qs or {}
     adapter = coerce_choice((qs.get("adapter") or ["mock"])[0], {"mock", "hermes", "openclaw"}, "mock")
@@ -22926,6 +22762,20 @@ def operator_start_check(conn: sqlite3.Connection, headers, qs=None, auth_ctx=No
     )
     local_run_path = compact_start_check_local_run_path(local)
     launch_brief = compact_start_check_launch_brief(launch_packet, adapter=adapter, local_run_path=local_run_path)
+    loop_driver_review = human_review_queue(
+        conn,
+        limit=min(max(int(limit or 8), 1), 8),
+        ident={"workspace_id": workspace_id or "local-demo", "agent_id": requested_agent_id or ""},
+        auth_ctx=auth_ctx,
+    )
+    loop_driver_entry = compact_start_check_loop_driver_entry(
+        loop_driver_review,
+        adapter=adapter,
+        limit=limit,
+        loop_id=loop_id or None,
+        task_id=task_id or None,
+        agent_id=requested_agent_id or None,
+    )
     live_acceptance = live_acceptance_readiness(conn, workspace_id, freshness_hours=freshness_hours, limit=limit)
     live_item = (live_acceptance.get("adapters") or {}).get(adapter) if adapter in {"hermes", "openclaw"} else None
     live_product = None
@@ -23035,6 +22885,17 @@ def operator_start_check(conn: sqlite3.Connection, headers, qs=None, auth_ctx=No
             command=f"agentops operator loop-launch-packet --brief --adapter {adapter} --limit {limit}",
         ),
         operator_start_check_gate(
+            "loop_driver_entry",
+            label="Bounded loop driver entry",
+            ok=loop_driver_entry.get("operation") == "operator_start_check_loop_driver_entry" and (loop_driver_entry.get("safety") or {}).get("server_executes_shell") is False,
+            status="pass" if loop_driver_entry.get("status") in {"ready", "attention"} else "blocked",
+            detail=(
+                f"review_items={((loop_driver_entry.get('review_snapshot') or {}).get('summary') or {}).get('review_items_total', 0)}; "
+                f"pending_approvals={((loop_driver_entry.get('review_snapshot') or {}).get('summary') or {}).get('pending_approvals', 0)}"
+            ),
+            command=(loop_driver_entry.get("commands") or {}).get("preview"),
+        ),
+        operator_start_check_gate(
             "local_run_path",
             label="Local run path",
             ok=bool(local_steps) and (local_run_path.get("safety") or {}).get("server_executes_shell") is False,
@@ -23070,10 +22931,16 @@ def operator_start_check(conn: sqlite3.Connection, headers, qs=None, auth_ctx=No
         f"agentops worker preflight --adapter {adapter}",
         "agentops operator runtime-doctor --limit 8",
         f"agentops operator loop-launch-packet --brief --adapter {adapter} --limit {limit}",
+        (loop_driver_entry.get("commands") or {}).get("preview"),
+        (loop_driver_entry.get("commands") or {}).get("review_queue"),
         "agentops operator advance-loop --fast-control --limit 8",
     ]
     if adapter in {"hermes", "openclaw"}:
-        next_commands.extend([f"agentops operator live-product-readiness --require-adapter {adapter}", launch_brief.get("live_run_command")])
+        next_commands.extend([
+            (loop_driver_entry.get("commands") or {}).get("confirm_loop"),
+            f"agentops operator live-product-readiness --require-adapter {adapter}",
+            launch_brief.get("live_run_command"),
+        ])
     next_commands.extend(launch_brief.get("readback_commands") or [])
     deduped_commands = []
     for command in next_commands:
@@ -23096,6 +22963,10 @@ def operator_start_check(conn: sqlite3.Connection, headers, qs=None, auth_ctx=No
             "launch_brief_status": launch_brief.get("status"),
             "control_status": launch_summary.get("control_status"),
             "recommended_step": launch_summary.get("recommended_step"),
+            "loop_driver_status": loop_driver_entry.get("status"),
+            "loop_driver_review_items_total": ((loop_driver_entry.get("review_snapshot") or {}).get("summary") or {}).get("review_items_total", 0),
+            "loop_driver_pending_approvals": ((loop_driver_entry.get("review_snapshot") or {}).get("summary") or {}).get("pending_approvals", 0),
+            "loop_driver_memory_candidates": ((loop_driver_entry.get("review_snapshot") or {}).get("summary") or {}).get("memory_candidates", 0),
             "local_run_path_steps": len(local_steps),
             "service_control_preview": bool(service_step),
             "live_product_readiness": None if live_product is None else bool(live_product.get("product_readiness_proof")),
@@ -23119,6 +22990,7 @@ def operator_start_check(conn: sqlite3.Connection, headers, qs=None, auth_ctx=No
             "token_omitted": True,
         },
         "launch_brief": launch_brief,
+        "loop_driver_entry": loop_driver_entry,
         "local_run_path": local_run_path,
         "live_product_readiness": live_product,
         "next_commands": deduped_commands[:16],
@@ -23129,7 +23001,7 @@ def operator_start_check(conn: sqlite3.Connection, headers, qs=None, auth_ctx=No
             "agent_id": (auth_ctx or {}).get("agent_id") or requested_agent_id or None,
             "token_omitted": True,
         },
-        "contract": "read-only pre-task start check for Hermes/OpenClaw/Codex; aggregates local readiness, adapter readiness, runtime doctor, live ledger proof, launch brief, local run path, service-control preview, and evidence boundaries without starting runtimes, executing shell, mutating ledgers, or exposing raw prompts/responses/tokens",
+        "contract": "read-only pre-task start check for Hermes/OpenClaw/Codex; aggregates local readiness, adapter readiness, runtime doctor, live ledger proof, launch brief, bounded loop-driver entry, local run path, service-control preview, and evidence boundaries without starting runtimes, executing shell, mutating ledgers, or exposing raw prompts/responses/tokens",
         "safety": {
             "read_only": True,
             "ledger_mutated": False,
