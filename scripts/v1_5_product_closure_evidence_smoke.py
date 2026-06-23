@@ -275,6 +275,9 @@ def main() -> int:
     live_readiness_command = "python3 scripts/v1_5_live_product_readiness_smoke.py --require-adapter hermes --require-adapter openclaw"
     require(live_readiness_command in release_text, "release evidence packet missing live product-readiness proof command", failures)
     require(live_readiness_command not in ci_text, "live product-readiness proof must remain manual-live and out of CI", failures)
+    current_code_command = "python3 scripts/v1_5_current_code_product_evidence.py --base-url http://127.0.0.1:<current-code-port> --db-path /tmp/<current-code-agentops>.db --confirm-live"
+    require(current_code_command in release_text, "release evidence packet missing current-code product evidence command", failures)
+    require(current_code_command not in ci_text, "current-code live product evidence must remain manual-live and out of CI", failures)
 
     output = json.dumps({"operation": "v1_5_product_closure_evidence", "ok": not failures, "evidence_class": "static_ci_matrix", "product_readiness_proof": False, "items": items, "failures": failures, "safety": {"read_only": True, "ledger_mutated": False, "live_execution_performed": False, "token_omitted": True}}, ensure_ascii=False, indent=2)
     require(not any(pattern.search(output) for pattern in SECRET_PATTERNS), "evidence output leaked token-like material", failures)

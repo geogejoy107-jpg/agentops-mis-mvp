@@ -78,6 +78,13 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "v1_5_current_code_product_evidence",
+        "command": "python3 scripts/v1_5_current_code_product_evidence.py --base-url http://127.0.0.1:<current-code-port> --db-path /tmp/<current-code-agentops>.db --confirm-live",
+        "summary": "Manual current-code product evidence orchestrator: rebuilds knowledge, runs Commander synthesis, executes confirmed Hermes/OpenClaw customer-worker acceptance, verifies live readiness readback, exercises remote/scoped worker fallback, and finishes with non-live local acceptance.",
+        "ci_step": "manual-live-local",
+        "manual_only": True,
+    },
+    {
         "id": "customer_worker_real_runtime_acceptance",
         "command": "python3 scripts/customer_worker_real_runtime_acceptance.py --confirm-live --adapter hermes --adapter openclaw",
         "summary": "Manual live product-readiness dogfood gate for real Hermes/OpenClaw customer-worker execution; intentionally excluded from CI.",
