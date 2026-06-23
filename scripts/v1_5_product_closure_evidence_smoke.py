@@ -202,10 +202,15 @@ def main() -> int:
                 "scripts/customer_task_template_smoke.py",
                 "scripts/customer_project_report_smoke.py",
                 "scripts/customer_delivery_boundary_smoke.py",
+                "scripts/customer_dispatch_desk_ui_smoke.py",
                 "scripts/task_detail_evidence_ui_smoke.py",
             ],
             source_markers={
                 "server.py": ["/api/workflows/customer-task-templates", "/api/workflows/customer-projects", "report-artifact"],
+                "ui/start-building-app/src/app/App.tsx": ["CustomerDispatchDesk", "/workspace/dispatch"],
+                "ui/start-building-app/src/app/components/layout/Sidebar.tsx": ["dispatchDesk", "/workspace/dispatch", "派活台"],
+                "ui/start-building-app/src/app/components/pages/WorkspaceHome.tsx": ["/workspace/dispatch", "Dispatch customer task"],
+                "ui/start-building-app/src/app/components/pages/CustomerDispatchDesk.tsx": ["CustomerDispatchPanel", "loadAgents(metrics)", "loadDashboard()", "confirm_run", "prepared-action"],
                 "ui/start-building-app/src/app/components/pages/PixelOffice.tsx": ["CustomerDispatchPanel"],
                 "ui/start-building-app/src/app/components/pages/TaskDetail.tsx": ["Delivery Evidence Summary", "交付证据摘要", "evidenceCounts"],
                 "ui/start-building-app/src/app/components/pixel/CustomerDispatchPanel.tsx": [

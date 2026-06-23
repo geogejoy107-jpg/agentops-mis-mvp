@@ -231,6 +231,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "customer_dispatch_desk_ui",
+        "command": "python3 scripts/customer_dispatch_desk_ui_smoke.py",
+        "summary": "First-class customer Dispatch Desk route, navigation, live workflow API wiring, template/worker dispatch controls, delivery board and explicit live-confirm/prepared-action safety language.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "commander_team_board_ui",
         "command": "python3 scripts/commander_team_board_ui_smoke.py",
         "summary": "AI Employees renders the scoped Commander team board with workflow-job evidence and safe project-board readback.",

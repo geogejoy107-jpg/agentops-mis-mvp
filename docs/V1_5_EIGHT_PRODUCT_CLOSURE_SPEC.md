@@ -620,10 +620,13 @@ Acceptance evidence:
 - `python3 scripts/worker_console_ui_smoke.py` verifies `/workspace/workers`,
   sidebar/home entry points, live Worker API wiring, dispatch/daemon controls,
   ledger links, and the live-confirm safety wall.
+- `python3 scripts/customer_dispatch_desk_ui_smoke.py` verifies
+  `/workspace/dispatch`, sidebar/home entry points, live workflow API wiring,
+  template/worker dispatch controls, delivery board visibility, and the
+  live-confirm/prepared-action safety language.
 
 Remaining product work:
 
-- Better customer-facing task submission flow.
 - Further polish for live/dry-run/approval state indicators across all
   customer-facing task flows.
 
@@ -675,6 +678,11 @@ Current v1.5 implementation:
 - Pixel Office can persist the generated customer project report back into the MIS ledger through the `Archive report to ledger` / `归档报告到账本` action.
 - The report link routes to `/workspace/customer-projects/:project_id/report`, a customer-facing page that renders report metrics, safety boundaries, ledger ids, and markdown content instead of raw JSON.
 - Reports can list recent customer projects through `GET /api/workflows/customer-projects`, so users can return to previous delivery reports and archive status.
+- `/workspace/dispatch` is the first-class customer task intake page: it loads
+  live agents through `loadDashboard()` + `loadAgents(metrics)`, reuses the
+  `CustomerDispatchPanel`, links back to Pixel Office and Worker Console, and
+  explains the CLI/API/MCP agent boundary plus Hermes/OpenClaw `confirm_run`
+  and prepared-action gates.
 - The same worker loop is now used for product dogfooding: Hermes/OpenClaw reviewed AgentOps MIS itself from a customer/one-person-company owner perspective and wrote run/tool/evaluation evidence.
 - Task creation now returns a clear `400 owner_agent_not_found` when an administrator assigns work to an unregistered agent, instead of surfacing a database foreign-key failure.
 
@@ -701,6 +709,12 @@ Acceptance evidence:
   - final run: `run_gw_cfde4c4822b1`
   - delivery artifact: `art_kb_bot_delivery_20260618154535`
   - pending external-upload approval: `ap_gw_956174266d1a`
+- Customer Dispatch Desk UI smoke:
+  `python3 scripts/customer_dispatch_desk_ui_smoke.py`
+  - route: `/workspace/dispatch`
+  - static-only safety proof: no live execution, no token material
+  - verifies live workflow API markers and explicit real-runtime confirmation
+    boundaries.
 - Customer template workflow CLI smoke:
   `python3 scripts/agentops_workflow_template_cli_smoke.py`
   - commands: `agentops workflow templates`, `agentops workflow run-template`
@@ -848,6 +862,7 @@ python3 scripts/local_coding_project_template_smoke.py
 python3 scripts/commander_work_package_plan_smoke.py
 python3 scripts/commander_work_package_dispatch_smoke.py
 python3 scripts/operator_action_queue_ui_smoke.py
+python3 scripts/customer_dispatch_desk_ui_smoke.py
 python3 scripts/operator_advance_loop_smoke.py
 python3 scripts/operator_loop_control_smoke.py
 cd ui/start-building-app && npm run build
