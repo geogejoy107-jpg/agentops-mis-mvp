@@ -554,6 +554,36 @@ manifest. It exits non-zero with JSON next actions when proof is missing. It is
 read-only: no runtime calls, no task creation, no ledger mutation, no raw
 prompt/response, and no token output.
 
+### `agentops operator start-check`
+
+Reads the pre-task local loop start check for Hermes, OpenClaw, Codex, or a mock
+worker:
+
+```bash
+agentops operator start-check --adapter mock --limit 8
+agentops operator start-check --adapter hermes --limit 8
+agentops operator start-check --adapter openclaw --limit 8
+agentops operator start-check --adapter hermes --task-id tsk_123 --agent-id agt_worker
+```
+
+This is the recommended first command before an agent accepts or advances local
+work. It is a CLI-only read model that composes `/api/local/readiness`,
+`/api/workers/adapter-readiness`, `operator runtime-doctor`,
+`operator live-product-readiness`, and `operator loop-launch-packet --brief`.
+The result exposes gates for local MIS readiness, the worker connection policy,
+adapter preflight, runtime doctor, Agent Work Method launch brief, compact
+`local_run_path`, service-control preview, Agent Plan boundary, and live ledger
+product proof. It also returns copyable next commands for readiness, preflight,
+runtime doctor, launch brief, bounded advance, confirmed live dispatch, and
+task/run/evidence readback.
+
+`start-check` does not start Hermes/OpenClaw, execute shell from the server,
+create tasks, mutate ledgers, write connector rows, or print raw prompts,
+responses, snippets, API keys, worker tokens, or session tokens. For
+Hermes/OpenClaw it may report `status=attention` when adapter binaries,
+credentials, or fresh live product proof are missing; that is still useful loop
+input rather than a failed CLI call.
+
 ### `agentops operator execution-mode`
 
 Reads the current dispatch mode before a human or agent starts a customer task:
@@ -1835,6 +1865,22 @@ Maps to `GET /api/operator/intake-checklist`. This is read-only and reports
 `missing_base_reference` without starting workers or writing ledger rows. Ready
 rows point to `agentops task pull --enforce-intake` so worker execution uses the
 same gate decision as the operator console.
+
+```bash
+agentops operator start-check --adapter mock --limit 8
+agentops operator start-check --adapter hermes --limit 8
+agentops operator start-check --adapter openclaw --limit 8
+```
+
+This is the pre-task local loop start check for Codex, Hermes, OpenClaw, or a
+remote operator. It is CLI-only and read-only: it aggregates `agentops local
+readiness`, `agentops worker readiness`, `operator runtime-doctor`,
+`operator loop-launch-packet --brief`, worker connection policy, local run path,
+service-control preview, and live product-readiness readback for the selected
+adapter. It does not start workers, call runtimes, execute shell commands,
+mutate ledgers, or expose tokens/raw prompts/raw responses. Use it immediately
+before handing a task to a local or remote agent so the agent sees the current
+copyable boot/readiness/preflight/launch/verify commands in one payload.
 
 ```bash
 agentops operator loop-launch-packet --task-id tsk_123 --agent-id agt_worker --limit 8

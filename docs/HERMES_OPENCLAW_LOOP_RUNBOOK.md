@@ -30,14 +30,23 @@ The loop harness lets Codex ask Hermes and OpenClaw for alternating proposals, c
 Quick loop-control brief for a live local adapter:
 
 ```bash
+agentops operator start-check --adapter hermes --limit 8
 agentops worker preflight --adapter hermes
 agentops operator live-acceptance --limit 8
 agentops operator loop-launch-packet --brief --adapter hermes --limit 8
 
+agentops operator start-check --adapter openclaw --limit 8
 agentops worker preflight --adapter openclaw
 agentops operator live-acceptance --limit 8
 agentops operator loop-launch-packet --brief --adapter openclaw --limit 8
 ```
+
+`start-check` is the preferred first read for a local loop. It merges local
+readiness, worker readiness, runtime doctor, live product proof, compact launch
+brief, `local_run_path`, and service-control preview into one copy-only packet
+for Hermes/OpenClaw/Codex. It may return `attention` while binaries,
+credentials, or live proof are missing, but it still gives the next safe command
+without running shell on the server or mutating ledgers.
 
 The brief is the preferred handoff payload when Codex wants Hermes or OpenClaw
 to continue a supervised loop without reading the full launch packet. It keeps
