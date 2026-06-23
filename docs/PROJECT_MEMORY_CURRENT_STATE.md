@@ -302,7 +302,30 @@ liveApi.ts                        > 2.2k lines
 9. 不以状态改成 completed 代替真实执行证据；
 10. 不以文档中的历史通过记录代替当前 HEAD 的 CI。
 
-## 13. Loop Control 最新契约
+## 13. 异步并行执行硬约束
+
+Added: 2026-06-23
+
+用户已经多次纠正：AgentOps MIS 快速产品交付不能串行等待。后续 Codex、
+子代理和自动续跑必须把异步并行当成执行要求，而不是风格偏好。
+
+- MUST 把 CI、浏览器构建、live runtime、长命令和子代理工作拆成
+  asynchronous lanes；启动预计超过 60 秒的 lane 后，立刻推进另一条安全
+  可验证的实现、验证、文档或集成 lane。
+- MUST 在实质性产品交付期间维护 compact commander board，写清 running
+  lanes、merged results、blockers 和 next lane；任何有意等待前都要说明
+  为什么没有独立安全 lane 可推进。
+- MUST 不等齐所有子代理、不为了整洁批量关闭子代理、不把 CI/live runtime
+  等待当成主线停顿理由；慢 lane 结果回来后再合并。
+- MUST 把子代理容量限制看成调度约束，而不是阻塞；开不了子代理时继续主线
+  最高价值 slice，并记录稍后补跑的 lane。
+- MUST 在 context compaction、heartbeat resume 和跨天续跑后保留这套
+  lane board，不重新退回串行等待。
+
+工作区根规则已写入 `/Users/wuji/Documents/MIS/AGENTS.md`；当前仓库详细执行
+规则仍以 `AGENTS.md` 第 5 节为准。
+
+## 14. Loop Control 最新契约
 
 - `agentops operator advance-loop --confirm-advance` 的 `control_readback`
   仍是一次推进的前后读回执；确认路径必须请求
