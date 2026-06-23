@@ -22,7 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 CLI = ROOT / "scripts" / "agentops"
-from agentops_mis_core.operator_start_check import compact_runtime_current_code_gate
+from agentops_mis_core.operator_start_check import compact_runtime_current_code_gate, operator_agent_loop_packet
 SECRET_PATTERNS = [
     re.compile(r"Authorization:", re.IGNORECASE),
     re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+"),
@@ -296,6 +296,22 @@ def main() -> int:
         missing_runtime_gate = compact_runtime_current_code_gate({})
         require(missing_runtime_gate.get("ok") is False, f"missing runtime signal must fail closed: {missing_runtime_gate}")
         require(missing_runtime_gate.get("status") == "unknown", f"missing runtime signal status should be unknown: {missing_runtime_gate}")
+        missing_launch_current_code = operator_agent_loop_packet(
+            adapter="hermes",
+            max_steps=1,
+            acceptance_gate={
+                "decision": {"can_confirm_bounded_loop": True, "current_code_ok": True},
+                "commands": {"loop_driver_confirm": "agentops operator loop-driver --adapter hermes --confirm-loop"},
+                "safety": {"server_executes_shell": False},
+                "status": "ready",
+            },
+            adapter_readiness={"readiness": "ready", "commands": {"adapter_preflight": "agentops worker preflight --adapter hermes"}},
+            launch_brief={"operation": "operator_loop_launch_brief", "local_run_path": {}},
+            review_snapshot={"summary": {}, "status": "ready"},
+            confirm_loop=False,
+        )
+        require(missing_launch_current_code.get("ready_to_confirm_loop") is False, f"agent loop packet must fail closed without launch current-code proof: {missing_launch_current_code}")
+        require((missing_launch_current_code.get("gates") or {}).get("current_code") == "blocked", f"agent loop packet current-code gate should block without proof: {missing_launch_current_code}")
         with tempfile.TemporaryDirectory(prefix="agentops-start-check-") as tmp:
             db_path = Path(tmp) / "agentops_mis.db"
             port = free_port()

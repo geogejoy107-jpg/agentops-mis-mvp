@@ -163,10 +163,11 @@ def operator_agent_loop_packet(
         or current_code_gate.get("command")
         or "agentops local readiness --require-current-code"
     )
-    current_code_ok = acceptance_decision.get("current_code_ok") is not False and current_code_gate.get("ok") is not False
+    current_code_ok = acceptance_decision.get("current_code_ok") is True and current_code_gate.get("ok") is True
     review_summary = review_snapshot.get("summary") if isinstance(review_snapshot.get("summary"), dict) else {}
     can_confirm = (
-        acceptance_decision.get("can_confirm_bounded_loop") is True
+        current_code_ok
+        and acceptance_decision.get("can_confirm_bounded_loop") is True
         and acceptance_safety.get("server_executes_shell") is False
     )
     review_attention = bool(
@@ -669,10 +670,10 @@ def operator_start_check_acceptance_packet(
         or "operator_action_evaluations" in required_ledgers
     )
     live_required = adapter in {"hermes", "openclaw"}
-    current_code_ok = local_current_code_gate.get("ok") is not False
+    current_code_ok = local_current_code_gate.get("ok") is True
     live_ready = not live_required or bool(live_product.get("product_readiness_proof"))
     preview_allowed = not blocked_gates
-    confirm_loop_allowed = preview_allowed and (loop_driver.get("safety") or {}).get("server_executes_shell") is False
+    confirm_loop_allowed = current_code_ok and preview_allowed and (loop_driver.get("safety") or {}).get("server_executes_shell") is False
     live_dispatch_allowed = current_code_ok and (adapter == "mock" or (live_ready and adapter_state.get("requires_confirm_run") is True))
 
     def command_for(needle: str, fallback: str | None = None) -> str | None:
