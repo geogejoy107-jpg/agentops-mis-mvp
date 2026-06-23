@@ -53,10 +53,10 @@ route retirement:
 ## Current Important Gaps
 
 - Pixel Office is only partially represented in Next.js. Next currently proves
-  template entitlement dispatch, mock-only customer-worker dispatch, and
-  mock-only async customer-worker job status readback, but Vite remains
-  canonical for the visual map, local brief, live runtime execution, and richer
-  owner dispatch workflow.
+  a read-only Pixel Operating Map, template entitlement dispatch, mock-only
+  customer-worker dispatch, and mock-only async customer-worker job status
+  readback, but Vite remains canonical for local brief, live runtime execution,
+  richer owner dispatch workflow, and final visual route retirement evidence.
 - Worker console is only partially represented in Next.js. Next is read-only for
   production safety and readiness; Vite remains canonical for local worker
   start/stop/restart, task release, remote enrollment mutation, and detailed
@@ -138,6 +138,7 @@ cd ui/next-app && npm run build
 python3 scripts/nextjs_agent_gateway_task_proxy_smoke.py
 python3 scripts/nextjs_agent_gateway_cli_worker_dogfood_smoke.py
 python3 scripts/nextjs_worker_dispatch_once_smoke.py
+python3 scripts/nextjs_pixel_office_floor_smoke.py
 python3 scripts/nextjs_customer_worker_dispatch_smoke.py
 python3 scripts/nextjs_customer_worker_async_job_smoke.py
 python3 scripts/nextjs_worker_stuck_release_smoke.py
@@ -174,6 +175,13 @@ ledger, then proves `POST /api/mis/workers/local/dispatch-once` and the Next
 persist task/run/plan-evidence proof, read the completed task back without
 token leakage, and reject non-mock proxy/form dispatch before upstream
 execution with `mock_only_next_parity`.
+
+`python3 scripts/nextjs_pixel_office_floor_smoke.py`
+(`nextjs_pixel_office_floor_v1`) starts isolated MIS API and Next.js servers,
+opens `/workspace/pixel-office`, verifies the read-only Pixel Operating Map,
+commercial-safe geometry, no-Star-Office asset boundary, live-runtime-disabled
+proof, core zone routing links, and live MIS proxy readback for agents, tasks,
+and runs without token leakage.
 
 `python3 scripts/nextjs_customer_worker_dispatch_smoke.py`
 (`nextjs_customer_worker_dispatch_v1`) starts isolated MIS API and Next.js

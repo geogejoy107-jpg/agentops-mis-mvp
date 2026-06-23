@@ -14,6 +14,7 @@
         "nextjs_agent_gateway_task_proxy_v1",
         "nextjs_agent_gateway_cli_worker_dogfood_v1",
         "nextjs_worker_dispatch_once_v1",
+        "nextjs_pixel_office_floor_v1",
         "nextjs_customer_worker_dispatch_v1",
         "nextjs_customer_worker_async_job_v1",
         "nextjs_worker_stuck_release_v1",
@@ -84,13 +85,14 @@
     },
     {
       "id": "pixel_office_and_dispatch",
-      "capability": "Pixel Office map plus customer task/template dispatch; Next currently proves isolated Pro template dispatch plus mock-only customer-worker dispatch with task/run/artifact/approval/plan-evidence readback.",
+      "capability": "Pixel Office map plus customer task/template dispatch; Next currently proves a read-only Pixel Operating Map, isolated Pro template dispatch, and mock-only customer-worker dispatch with task/run/artifact/approval/plan-evidence readback.",
       "status": "partial",
       "gate4_required": true,
       "vite_routes": [
         "/workspace/pixel-office"
       ],
       "next_routes": [
+        "/workspace/pixel-office",
         "/workspace/dispatch",
         "/workspace/dispatch/template-run",
         "/workspace/dispatch/customer-worker",
@@ -116,9 +118,11 @@
       ],
       "next_files": [
         "ui/next-app/app/workspace/dispatch/page.tsx",
+        "ui/next-app/app/workspace/pixel-office/page.tsx",
         "ui/next-app/app/workspace/dispatch/template-run/route.ts",
         "ui/next-app/app/workspace/dispatch/customer-worker/route.ts",
         "ui/next-app/app/workspace/dispatch/customer-worker-job/route.ts",
+        "ui/next-app/src/components/PixelOfficePage.tsx",
         "ui/next-app/src/components/DispatchPage.tsx",
         "ui/next-app/src/lib/mis.ts",
         "ui/next-app/src/lib/misServer.ts"
@@ -126,12 +130,13 @@
       "evidence_commands": [
         "python3 scripts/vite_playwright_snapshot_smoke.py",
         "python3 scripts/nextjs_playwright_snapshot_smoke.py",
+        "python3 scripts/nextjs_pixel_office_floor_smoke.py",
         "python3 scripts/nextjs_customer_worker_dispatch_smoke.py",
         "python3 scripts/nextjs_customer_worker_async_job_smoke.py",
         "python3 scripts/nextjs_parity_smoke.py"
       ],
       "retirement_allowed": false,
-      "retirement_gate": "Next currently proves Free Local blocking, isolated Pro template entitlement dispatch, mock-only customer-worker dispatch, and mock-only async customer-worker job submission/status readback with delivery approval and verified plan-evidence; it still lacks the full Pixel map, live runtime execution, and local-brief controls."
+      "retirement_gate": "Next currently proves read-only Pixel Operating Map parity, Free Local blocking, isolated Pro template entitlement dispatch, mock-only customer-worker dispatch, and mock-only async customer-worker job submission/status readback with delivery approval and verified plan-evidence; it still lacks live runtime execution, local-brief controls, richer owner dispatch workflow, and explicit visual route retirement evidence."
     },
     {
       "id": "task_list",

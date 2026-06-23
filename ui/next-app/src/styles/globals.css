@@ -660,6 +660,100 @@ h2 {
   min-width: 0;
 }
 
+.pixelMapShell {
+  position: relative;
+  min-height: 560px;
+  margin-top: 14px;
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: linear-gradient(135deg, rgba(13, 17, 24, 0.98), rgba(18, 24, 33, 0.98));
+}
+
+.pixelGrid {
+  position: absolute;
+  inset: 0;
+  opacity: 0.8;
+  background-image:
+    linear-gradient(rgba(148, 163, 184, 0.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.06) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+.pixelZone,
+.pixelAgentDot {
+  position: absolute;
+  z-index: 2;
+}
+
+.pixelZone {
+  display: grid;
+  align-content: space-between;
+  min-width: 84px;
+  min-height: 54px;
+  padding: 9px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(18, 24, 33, 0.92);
+  color: var(--text);
+}
+
+.pixelZone:hover {
+  border-color: rgba(34, 211, 238, 0.5);
+}
+
+.pixelZone strong,
+.pixelZone span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pixelZone strong {
+  font-size: 12px;
+}
+
+.pixelZone span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.pixelZone.cyan {
+  border-color: rgba(34, 211, 238, 0.32);
+}
+
+.pixelZone.green {
+  border-color: rgba(52, 211, 153, 0.32);
+}
+
+.pixelZone.amber {
+  border-color: rgba(251, 191, 36, 0.36);
+}
+
+.pixelZone.red {
+  border-color: rgba(251, 113, 133, 0.36);
+}
+
+.pixelZone.purple {
+  border-color: rgba(168, 85, 247, 0.36);
+}
+
+.pixelZone.slate {
+  border-color: rgba(148, 163, 184, 0.22);
+}
+
+.pixelAgentDot {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border: 1px solid rgba(34, 211, 238, 0.55);
+  background: #0d1118;
+  color: var(--cyan);
+  font-size: 11px;
+  font-weight: 800;
+  box-shadow: 0 0 0 2px rgba(10, 13, 18, 0.82);
+}
+
 .subHeader {
   display: flex;
   align-items: center;
@@ -733,6 +827,15 @@ h2 {
 
   .wideField {
     grid-column: span 1;
+  }
+
+  .pixelMapShell {
+    min-height: 720px;
+  }
+
+  .pixelZone {
+    min-width: 72px;
+    padding: 7px;
   }
 
   .row strong {

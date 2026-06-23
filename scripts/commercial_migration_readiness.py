@@ -311,6 +311,16 @@ def main() -> int:
             and file_contains("scripts/nextjs_worker_dispatch_once_smoke.py", "mock_only_next_parity")
             and file_contains("ui/next-app/app/api/mis/[...path]/route.ts", "isCustomerWorkerWorkflowPath")
             and file_contains("ui/next-app/app/api/mis/[...path]/route.ts", "customer_worker_mock_only_next_parity")
+            and file_contains("ui/next-app/app/workspace/pixel-office/page.tsx", "PixelOfficeParityPage")
+            and file_contains("ui/next-app/src/components/PixelOfficePage.tsx", "Pixel Operating Map")
+            and file_contains("ui/next-app/src/components/PixelOfficePage.tsx", "commercial-safe geometry")
+            and file_contains("ui/next-app/src/components/PixelOfficePage.tsx", "live runtime disabled")
+            and file_contains("ui/next-app/src/components/AppFrame.tsx", "/workspace/pixel-office")
+            and file_contains("ui/next-app/src/lib/misServer.ts", "loadServerDashboardMetrics")
+            and file_contains("ui/next-app/src/lib/misServer.ts", "loadServerAgents")
+            and file_contains("scripts/nextjs_pixel_office_floor_smoke.py", "nextjs_pixel_office_floor_v1")
+            and file_contains("scripts/nextjs_pixel_office_floor_smoke.py", "/workspace/pixel-office")
+            and file_contains("docs/UI_API_PARITY_MATRIX.json", "nextjs_pixel_office_floor_v1")
             and file_contains("ui/next-app/app/workspace/dispatch/customer-worker/route.ts", "/workflows/customer-worker-task")
             and file_contains("ui/next-app/app/workspace/dispatch/customer-worker/route.ts", "customer_worker_mock_only_next_parity")
             and file_contains("ui/next-app/src/components/DispatchPage.tsx", "Customer worker dispatch")
@@ -341,12 +351,14 @@ def main() -> int:
             and file_contains("scripts/nextjs_enrollment_request_smoke.py", "/api/mis/agent-gateway/enrollment/request")
             and file_contains("scripts/nextjs_enrollment_request_smoke.py", "enrollment_token_issue_not_allowed_next_parity")
             and file_contains("docs/UI_API_PARITY_MATRIX.json", "nextjs_worker_dispatch_once_v1")
+            and file_contains("docs/UI_API_PARITY_MATRIX.json", "nextjs_pixel_office_floor_v1")
             and file_contains("docs/UI_API_PARITY_MATRIX.json", "nextjs_customer_worker_dispatch_v1")
             and file_contains("docs/UI_API_PARITY_MATRIX.json", "nextjs_customer_worker_async_job_v1")
             and file_contains("docs/UI_API_PARITY_MATRIX.json", "nextjs_worker_stuck_release_v1")
             and file_contains("docs/UI_API_PARITY_MATRIX.json", "nextjs_worker_daemon_control_v1")
             and file_contains("docs/UI_API_PARITY_MATRIX.json", "nextjs_enrollment_request_v1")
             and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "verify_dispatch_template_run_success")
+            and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "/workspace/pixel-office")
             and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", 'write_entitlement_fixture(entitlement_path, "pro_workspace")')
             and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "Customer project started")
             and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", 'counts.get("tasks") == 6')
@@ -359,6 +371,7 @@ def main() -> int:
             and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "Task Detail")
             and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "leaked_secret")
             and (ROOT / "ui" / "next-app" / "app" / "workspace" / "tool-calls" / "page.tsx").exists()
+            and (ROOT / "ui" / "next-app" / "app" / "workspace" / "pixel-office" / "page.tsx").exists()
             and (ROOT / "ui" / "next-app" / "app" / "workspace" / "agents" / "[agentId]" / "page.tsx").exists()
             and (ROOT / "ui" / "next-app" / "app" / "workspace" / "agents" / "dispatch-once" / "route.ts").exists()
             and (ROOT / "ui" / "next-app" / "app" / "workspace" / "dispatch" / "customer-worker" / "route.ts").exists()
@@ -375,13 +388,14 @@ def main() -> int:
             and (ROOT / "scripts" / "nextjs_agent_gateway_task_proxy_smoke.py").exists()
             and (ROOT / "scripts" / "nextjs_agent_gateway_cli_worker_dogfood_smoke.py").exists()
             and (ROOT / "scripts" / "nextjs_worker_dispatch_once_smoke.py").exists()
+            and (ROOT / "scripts" / "nextjs_pixel_office_floor_smoke.py").exists()
             and (ROOT / "scripts" / "nextjs_customer_worker_dispatch_smoke.py").exists()
             and (ROOT / "scripts" / "nextjs_customer_worker_async_job_smoke.py").exists()
             and (ROOT / "scripts" / "nextjs_worker_stuck_release_smoke.py").exists()
             and (ROOT / "scripts" / "nextjs_worker_daemon_control_smoke.py").exists()
             and (ROOT / "scripts" / "nextjs_enrollment_request_smoke.py").exists()
             and (ROOT / "scripts" / "nextjs_playwright_snapshot_smoke.py").exists(),
-            "parallel Next.js App Router track has API proxy, Gateway task-create proxy, CLI worker dogfood proof through the Next proxy, worker mock dispatch, mock-only customer-worker dispatch, mock-only async customer-worker job status readback, mock daemon controls, stuck release, approval-gated enrollment request with raw-token issue blocked, workspace/storage/tool-call/evaluation/runtime-connector/Notion external-base/agent-detail data contracts, deployment storage gate, and browser snapshot smoke including an isolated Pro template dispatch that creates the six-task KB bot package, six run rows, report artifact, six Agent Plans, and five verified manifests",
+            "parallel Next.js App Router track has API proxy, Gateway task-create proxy, CLI worker dogfood proof through the Next proxy, read-only Pixel Operating Map parity, worker mock dispatch, mock-only customer-worker dispatch, mock-only async customer-worker job status readback, mock daemon controls, stuck release, approval-gated enrollment request with raw-token issue blocked, workspace/storage/tool-call/evaluation/runtime-connector/Notion external-base/agent-detail data contracts, deployment storage gate, and browser snapshot smoke including an isolated Pro template dispatch that creates the six-task KB bot package, six run rows, report artifact, six Agent Plans, and five verified manifests",
         ),
         check(
             "vite_browser_snapshot_surface_exists",
@@ -869,6 +883,7 @@ def main() -> int:
                 "python3 scripts/nextjs_agent_gateway_task_proxy_smoke.py",
                 "python3 scripts/nextjs_agent_gateway_cli_worker_dogfood_smoke.py",
                 "python3 scripts/nextjs_worker_dispatch_once_smoke.py",
+                "python3 scripts/nextjs_pixel_office_floor_smoke.py",
                 "python3 scripts/nextjs_customer_worker_dispatch_smoke.py",
                 "python3 scripts/nextjs_customer_worker_async_job_smoke.py",
                 "python3 scripts/nextjs_worker_stuck_release_smoke.py",

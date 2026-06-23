@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Activity, BarChart3, BookOpen, Bot, Brain, ClipboardCheck, ClipboardList, Database, History, KeyRound, LockKeyhole, Plug, Send, ServerCog, ShieldCheck, Workflow, Wrench } from "lucide-react";
+import { Activity, BarChart3, BookOpen, Bot, Brain, ClipboardCheck, ClipboardList, Database, History, KeyRound, LockKeyhole, Map, Plug, Send, ServerCog, ShieldCheck, Workflow, Wrench } from "lucide-react";
 
 const navItems = [
   { href: "/workspace", label: "Workspace", icon: Activity },
@@ -10,6 +10,7 @@ const navItems = [
   { href: "/workspace/commercial", label: "Commercial", icon: LockKeyhole },
   { href: "/workspace/governance", label: "Governance", icon: KeyRound },
   { href: "/workspace/deployment", label: "Deployment", icon: ServerCog },
+  { href: "/workspace/pixel-office", label: "Pixel Office", icon: Map },
   { href: "/workspace/dispatch", label: "Dispatch", icon: Send },
   { href: "/workspace/tasks", label: "Tasks", icon: ClipboardList },
   { href: "/workspace/runs", label: "Runs", icon: Workflow },

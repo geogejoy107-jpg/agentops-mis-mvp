@@ -37,6 +37,7 @@ def main() -> int:
         NEXT_APP / "app" / "workspace" / "commercial" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "governance" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "deployment" / "page.tsx",
+        NEXT_APP / "app" / "workspace" / "pixel-office" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "dispatch" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "dispatch" / "template-run" / "route.ts",
         NEXT_APP / "app" / "workspace" / "dispatch" / "customer-worker" / "route.ts",
@@ -70,6 +71,7 @@ def main() -> int:
         NEXT_APP / "src" / "components" / "CommercialPage.tsx",
         NEXT_APP / "src" / "components" / "GovernancePage.tsx",
         NEXT_APP / "src" / "components" / "DeploymentPage.tsx",
+        NEXT_APP / "src" / "components" / "PixelOfficePage.tsx",
         NEXT_APP / "src" / "components" / "DispatchPage.tsx",
         NEXT_APP / "src" / "components" / "EvidencePage.tsx",
         NEXT_APP / "src" / "components" / "LedgerDetailPages.tsx",
@@ -91,6 +93,7 @@ def main() -> int:
         ROOT / "scripts" / "nextjs_agent_gateway_task_proxy_smoke.py",
         ROOT / "scripts" / "nextjs_agent_gateway_cli_worker_dogfood_smoke.py",
         ROOT / "scripts" / "nextjs_worker_dispatch_once_smoke.py",
+        ROOT / "scripts" / "nextjs_pixel_office_floor_smoke.py",
         ROOT / "scripts" / "nextjs_customer_worker_dispatch_smoke.py",
         ROOT / "scripts" / "nextjs_customer_worker_async_job_smoke.py",
         ROOT / "scripts" / "nextjs_worker_stuck_release_smoke.py",
@@ -127,6 +130,7 @@ def main() -> int:
     commercial_page_text = read_text(NEXT_APP / "src" / "components" / "CommercialPage.tsx")
     governance_page_text = read_text(NEXT_APP / "src" / "components" / "GovernancePage.tsx")
     deployment_page_text = read_text(NEXT_APP / "src" / "components" / "DeploymentPage.tsx")
+    pixel_office_page_text = read_text(NEXT_APP / "src" / "components" / "PixelOfficePage.tsx")
     dispatch_page_text = read_text(NEXT_APP / "src" / "components" / "DispatchPage.tsx")
     evidence_page_text = read_text(NEXT_APP / "src" / "components" / "EvidencePage.tsx")
     ledger_detail_pages_text = read_text(NEXT_APP / "src" / "components" / "LedgerDetailPages.tsx")
@@ -145,6 +149,7 @@ def main() -> int:
     gateway_task_proxy_smoke_text = read_text(ROOT / "scripts" / "nextjs_agent_gateway_task_proxy_smoke.py")
     gateway_cli_worker_dogfood_smoke_text = read_text(ROOT / "scripts" / "nextjs_agent_gateway_cli_worker_dogfood_smoke.py")
     worker_dispatch_smoke_text = read_text(ROOT / "scripts" / "nextjs_worker_dispatch_once_smoke.py")
+    pixel_office_floor_smoke_text = read_text(ROOT / "scripts" / "nextjs_pixel_office_floor_smoke.py")
     customer_worker_dispatch_smoke_text = read_text(ROOT / "scripts" / "nextjs_customer_worker_dispatch_smoke.py")
     customer_worker_async_job_smoke_text = read_text(ROOT / "scripts" / "nextjs_customer_worker_async_job_smoke.py")
     worker_release_smoke_text = read_text(ROOT / "scripts" / "nextjs_worker_stuck_release_smoke.py")
@@ -181,6 +186,9 @@ def main() -> int:
     require("/workspace/agents/dispatch-once" in worker_dispatch_smoke_text, "Next worker dispatch smoke must exercise the form fallback route")
     require("AGENTOPS_BASE_URL" in worker_dispatch_smoke_text, "Next worker dispatch smoke must isolate the worker subprocess base URL")
     require("non_mock_proxy_status" in worker_dispatch_smoke_text and "mock_only_next_parity" in worker_dispatch_smoke_text, "Next worker dispatch smoke must prove non-mock proxy and form dispatch fail closed")
+    require("nextjs_pixel_office_floor_v1" in pixel_office_floor_smoke_text, "Next Pixel Office floor smoke contract is missing")
+    require("/workspace/pixel-office" in pixel_office_floor_smoke_text, "Next Pixel Office smoke must exercise the App Router page")
+    require("commercial-safe geometry" in pixel_office_floor_smoke_text and "live runtime disabled" in pixel_office_floor_smoke_text, "Next Pixel Office smoke must prove read-only safe map evidence")
     require("nextjs_customer_worker_dispatch_v1" in customer_worker_dispatch_smoke_text, "Next customer-worker dispatch smoke contract is missing")
     require("/api/mis/workflows/customer-worker-task" in customer_worker_dispatch_smoke_text, "Next customer-worker dispatch smoke must exercise the /api/mis workflow proxy route")
     require("/workspace/dispatch/customer-worker" in customer_worker_dispatch_smoke_text, "Next customer-worker dispatch smoke must exercise the dispatch form fallback route")
@@ -295,6 +303,10 @@ def main() -> int:
     require("Recovery drill" in deployment_page_text and "Signed export" in deployment_page_text and "signed audit export requires a customer key" in deployment_page_text, "deployment parity page must expose recovery drill and signed audit export readiness")
     require("deployment_checks" in lib_text and "signed_audit_export_contract" in deployment_page_text and "signed_export_tamper_detection" in deployment_page_text, "deployment parity page must consume local deployment checks")
     require("Storage backend migration gate" in deployment_page_text and "writes allowed" in deployment_page_text and "fallback" in deployment_page_text, "deployment parity page must expose storage backend migration gates")
+    require("PixelOfficeParityPage" in pixel_office_page_text and "Pixel Operating Map" in pixel_office_page_text, "pixel office parity page must render the operating map")
+    require("commercial-safe geometry" in pixel_office_page_text and "no Star Office assets" in pixel_office_page_text and "live runtime disabled" in pixel_office_page_text, "pixel office parity page must expose asset and live-runtime boundaries")
+    require("loadServerDashboardMetrics" in server_lib_text and "loadServerAgents" in server_lib_text and "loadServerTasks" in server_lib_text and "loadServerRuns" in server_lib_text, "pixel office server loaders are missing")
+    require("/workspace/pixel-office" in app_frame_text, "Next.js nav must expose Pixel Office parity route")
     require("audit_retention_policy_v1" in deployment_page_text and "delete performed" in deployment_page_text and "raw rows omitted" in deployment_page_text, "deployment parity page must expose read-only retention policy proof")
     require("/audit/retention-policy" in server_lib_text and "loadServerAuditRetentionPolicy" in server_lib_text, "deployment parity page must directly load audit retention policy")
     require("loadServerAuditRetentionPolicy" in read_text(NEXT_APP / "app" / "workspace" / "deployment" / "page.tsx"), "deployment page must request audit retention policy in parallel")
@@ -375,6 +387,7 @@ def main() -> int:
             "/workspace/commercial",
             "/workspace/governance",
             "/workspace/deployment",
+            "/workspace/pixel-office",
             "/workspace/dispatch",
             "/workspace/dispatch/customer-worker",
             "/workspace/dispatch/customer-worker-job",
@@ -401,6 +414,7 @@ def main() -> int:
             "nextjs_agent_gateway_task_proxy_v1",
             "nextjs_agent_gateway_cli_worker_dogfood_v1",
             "nextjs_worker_dispatch_once_v1",
+            "nextjs_pixel_office_floor_v1",
             "nextjs_customer_worker_dispatch_v1",
             "nextjs_customer_worker_async_job_v1",
             "nextjs_worker_stuck_release_v1",

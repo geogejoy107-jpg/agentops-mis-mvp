@@ -3,11 +3,13 @@ import type {
   AuditRetentionControlsPayload,
   AuditRetentionPolicyPayload,
   AgentGatewaySessionsPayload,
+  AgentSummary,
   CommercialEntitlementStatus,
   CustomerDeliveryBoardPayload,
   CustomerProjectIndexPayload,
   CustomerProjectReportPayload,
   CustomerTaskTemplateListPayload,
+  DashboardMetrics,
   DeploymentReadinessPayload,
   EnterpriseControlsPayload,
   EvidenceDrilldownPayload,
@@ -21,8 +23,10 @@ import type {
   SecurityReadinessSummary,
   StorageBackendStatus,
   TaskDetailPayload,
+  TaskSummary,
   WorkerStatusSummary,
   AuditSummary,
+  RunSummary,
   WorkflowJobListPayload,
 } from "./mis";
 
@@ -46,6 +50,38 @@ async function serverMisJson<T>(path: string): Promise<T> {
 export async function loadServerApprovals(): Promise<ServerLoadResult<ApprovalSummary[]>> {
   try {
     return { data: await serverMisJson<ApprovalSummary[]>("/approvals"), error: null };
+  } catch (err) {
+    return { data: [], error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export async function loadServerDashboardMetrics(): Promise<ServerLoadResult<DashboardMetrics>> {
+  try {
+    return { data: await serverMisJson<DashboardMetrics>("/dashboard/metrics"), error: null };
+  } catch (err) {
+    return { data: {}, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export async function loadServerAgents(): Promise<ServerLoadResult<AgentSummary[]>> {
+  try {
+    return { data: await serverMisJson<AgentSummary[]>("/agents"), error: null };
+  } catch (err) {
+    return { data: [], error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export async function loadServerTasks(): Promise<ServerLoadResult<TaskSummary[]>> {
+  try {
+    return { data: await serverMisJson<TaskSummary[]>("/tasks"), error: null };
+  } catch (err) {
+    return { data: [], error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export async function loadServerRuns(): Promise<ServerLoadResult<RunSummary[]>> {
+  try {
+    return { data: await serverMisJson<RunSummary[]>("/runs"), error: null };
   } catch (err) {
     return { data: [], error: err instanceof Error ? err.message : String(err) };
   }
