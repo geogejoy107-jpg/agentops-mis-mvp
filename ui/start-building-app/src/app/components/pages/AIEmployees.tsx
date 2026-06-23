@@ -801,6 +801,9 @@ export function AIEmployees() {
       loopDriverAgentPacket: "Agent loop packet",
       loopDriverAgentPacketSummary: "Live start-check projection for each adapter: current phase, safety gates, and next copy command.",
       methodGates: "Method gates",
+      localLoopAdmission: "Local loop admission",
+      firstSafeCommands: "First safe commands",
+      confirmCommands: "Confirm commands",
       currentPhase: "Current phase",
       readyToConfirmLoop: "Ready to confirm",
       phase: "Phase",
@@ -1194,6 +1197,9 @@ export function AIEmployees() {
       envSetup: "Environment",
       installCommand: "Install",
       verifyCommand: "Verify",
+      startCheckCommand: "Start check",
+      loopLaunchBriefCommand: "Launch brief",
+      methodGateContract: "Method gates",
       preflightCommand: "Preflight",
       sessionCommand: "Mint session",
       heartbeatCommand: "Heartbeat",
@@ -1346,6 +1352,9 @@ export function AIEmployees() {
       loopDriverAgentPacket: "Agent Loop 机器包",
       loopDriverAgentPacketSummary: "每个 adapter 的 start-check 实时投影：当前阶段、安全闸和下一条可复制命令。",
       methodGates: "方法 Gate",
+      localLoopAdmission: "本地 Loop 准入包",
+      firstSafeCommands: "先执行命令",
+      confirmCommands: "需确认命令",
       currentPhase: "当前阶段",
       readyToConfirmLoop: "可确认推进",
       phase: "阶段",
@@ -1739,6 +1748,9 @@ export function AIEmployees() {
       envSetup: "环境变量",
       installCommand: "安装",
       verifyCommand: "自检",
+      startCheckCommand: "启动检查",
+      loopLaunchBriefCommand: "启动简报",
+      methodGateContract: "方法 Gate",
       preflightCommand: "预检",
       sessionCommand: "换取短期 Session",
       heartbeatCommand: "心跳",
@@ -4419,7 +4431,18 @@ export function AIEmployees() {
                         <span className="text-[8px]" style={{ color: "var(--mis-muted)" }}>{copy.loopDriverAgentPacketSummary}</span>
                       </div>
                       <div className="grid grid-cols-1 lg:grid-cols-2 gap-1.5 mt-1.5">
-                        {loopDriverPacketItems.map((packet) => (
+                        {loopDriverPacketItems.map((packet) => {
+                          const startCheck = operatorLoopDriverPackets?.start_checks?.[packet.adapter];
+                          const admissionPacket = (startCheck?.local_loop_admission_packet || {}) as Record<string, unknown>;
+                          const admission = (typeof admissionPacket.admission === "object" && admissionPacket.admission !== null ? admissionPacket.admission : {}) as Record<string, unknown>;
+                          const admissionSafety = (typeof admissionPacket.safety === "object" && admissionPacket.safety !== null ? admissionPacket.safety : {}) as Record<string, unknown>;
+                          const firstSafeCommands = Array.isArray(admissionPacket.first_safe_commands)
+                            ? admissionPacket.first_safe_commands.map(String).filter(Boolean).slice(0, 4)
+                            : [];
+                          const confirmRequiredCommands = Array.isArray(admissionPacket.confirm_required_commands)
+                            ? admissionPacket.confirm_required_commands.map(String).filter(Boolean).slice(0, 4)
+                            : [];
+                          return (
                           <div key={`loop-driver-packet:${packet.adapter}`} className="rounded p-1.5 min-w-0" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
                             <div className="flex flex-wrap items-center justify-between gap-1">
                               <div className="text-[8px] font-semibold uppercase" style={{ color: "var(--mis-text)" }}>{packet.adapter}</div>
@@ -4447,6 +4470,53 @@ export function AIEmployees() {
                                 </button>
                               ))}
                             </div>
+                            {admissionPacket.operation === "operator_local_loop_admission_packet" && (
+                              <div className="mt-1.5 pt-1.5" style={{ borderTop: "1px solid var(--mis-border)" }}>
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                  <div className="text-[8px] font-semibold" style={{ color: "var(--mis-muted)" }}>{copy.localLoopAdmission}</div>
+                                  <StatusBadge status={admission.can_confirm_bounded_loop ? "pass" : "attention"} label={`${copy.readyToConfirmLoop}: ${String(Boolean(admission.can_confirm_bounded_loop))}`} />
+                                  <StatusBadge status={admissionSafety.server_executes_shell ? "blocked" : "pass"} label={admissionSafety.server_executes_shell ? "server shell" : "copy-only"} />
+                                </div>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 mt-1">
+                                  <div className="min-w-0">
+                                    <div className="text-[8px] mb-0.5" style={{ color: "var(--mis-muted)" }}>{copy.firstSafeCommands}</div>
+                                    <div className="flex flex-col gap-1">
+                                      {firstSafeCommands.map((command, index) => (
+                                        <button
+                                          key={`${packet.adapter}:admission:first:${index}:${command}`}
+                                          type="button"
+                                          onClick={() => void copyIntakeCommand(command)}
+                                          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-left"
+                                          style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)", color: "var(--mis-text)" }}
+                                          title={command}
+                                        >
+                                          <Copy size={8} />
+                                          <span className="truncate text-[8px]">{command}</span>
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+                                  <div className="min-w-0">
+                                    <div className="text-[8px] mb-0.5" style={{ color: "var(--mis-muted)" }}>{copy.confirmCommands}</div>
+                                    <div className="flex flex-col gap-1">
+                                      {confirmRequiredCommands.map((command, index) => (
+                                        <button
+                                          key={`${packet.adapter}:admission:confirm:${index}:${command}`}
+                                          type="button"
+                                          onClick={() => void copyIntakeCommand(command)}
+                                          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-left"
+                                          style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)", color: "var(--mis-warning)" }}
+                                          title={command}
+                                        >
+                                          <Copy size={8} />
+                                          <span className="truncate text-[8px]">{command}</span>
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
                             {(packet.method_gates || []).length > 0 && (
                               <div className="mt-1.5 pt-1.5" style={{ borderTop: "1px solid var(--mis-border)" }}>
                                 <div className="text-[8px] font-semibold mb-1" style={{ color: "var(--mis-muted)" }}>{copy.methodGates}</div>
@@ -4481,7 +4551,8 @@ export function AIEmployees() {
                               </div>
                             )}
                           </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
                   )}
@@ -7893,6 +7964,8 @@ export function AIEmployees() {
                     {[
                       { label: copy.installCommand, value: createdToken.next_steps.install || "" },
                       { label: copy.verifyCommand, value: createdToken.next_steps.verify },
+                      { label: copy.startCheckCommand, value: createdToken.next_steps.start_check || "" },
+                      { label: copy.loopLaunchBriefCommand, value: createdToken.next_steps.loop_launch_brief || "" },
                       { label: copy.preflightCommand, value: createdToken.next_steps.preflight || "" },
                       { label: copy.sessionCommand, value: createdToken.next_steps.session || "" },
                       { label: copy.heartbeatCommand, value: createdToken.next_steps.heartbeat },
@@ -7909,6 +7982,14 @@ export function AIEmployees() {
                         </code>
                       </div>
                     ))}
+                    {createdToken.next_steps.method_gate_contract && (
+                      <div>
+                        <div className="text-[10px] mb-1" style={{ color: "var(--mis-muted)" }}>{copy.methodGateContract}</div>
+                        <code className="block rounded px-2 py-1 text-[10px] break-all" style={{ background: "var(--mis-surface2)", color: "var(--mis-cyan)", border: "1px solid var(--mis-border)" }}>
+                          {(createdToken.next_steps.method_gate_contract.required_gates || []).join(" -> ")}
+                        </code>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>

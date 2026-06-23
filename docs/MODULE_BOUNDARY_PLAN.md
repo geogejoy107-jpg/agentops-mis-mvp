@@ -1400,6 +1400,39 @@ python3 scripts/operator_start_check_smoke.py --base-url "$AGENTOPS_BASE_URL" --
 python3 scripts/operator_loop_driver_smoke.py
 ```
 
+### Slice 46: Operator Local Loop Admission Packet Projection
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/operator_start_check.py`
+
+Moved out of server-only start-check assembly:
+
+- local loop admission projection for agent callers
+- Method Block gate ids and phase command compaction
+- worker-start, service-control preview, customer-worker dispatch, and ledger-verify command grouping
+- first-safe-command and confirm-required-command projection
+- copy-only/read-only/no-server-shell/token-omission proof
+
+Still owned by `server.py`:
+
+- HTTP route
+- SQLite/local-readiness/runtime-doctor/live-product/readback producers
+- remote enrollment token creation and launch-step assembly
+- final start-check response assembly
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/operator_start_check_api_smoke.py
+python3 scripts/operator_start_check_smoke.py --base-url "$AGENTOPS_BASE_URL" --adapter hermes --adapter openclaw
+python3 scripts/enrollment_launch_steps_smoke.py --base-url "$AGENTOPS_BASE_URL"
+python3 scripts/remote_launch_packet_worker_smoke.py --base-url "$AGENTOPS_BASE_URL"
+```
+
 ## Next Candidate Slices
 
 - Continue P1-05 with small smoke-backed strangler slices only; prefer pure

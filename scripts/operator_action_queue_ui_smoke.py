@@ -85,6 +85,12 @@ EXPECTED_MARKERS = {
     "operator_loop_driver_packet_title_zh": 'loopDriverAgentPacket: "Agent Loop 机器包"',
     "operator_loop_driver_method_gates_label_en": 'methodGates: "Method gates"',
     "operator_loop_driver_method_gates_label_zh": 'methodGates: "方法 Gate"',
+    "operator_loop_driver_admission_label_en": 'localLoopAdmission: "Local loop admission"',
+    "operator_loop_driver_admission_label_zh": 'localLoopAdmission: "本地 Loop 准入包"',
+    "operator_loop_driver_admission_render": "local_loop_admission_packet",
+    "operator_loop_driver_admission_first_safe": "admissionPacket.first_safe_commands",
+    "operator_loop_driver_admission_confirm_required": "admissionPacket.confirm_required_commands",
+    "operator_loop_driver_admission_service_shell": "admissionSafety.server_executes_shell",
     "operator_loop_driver_packet_current_phase": "packet.current_phase",
     "operator_loop_driver_packet_ready": "packet.ready_to_confirm_loop",
     "operator_loop_driver_packet_method_gates_render": "packet.method_gates || []",
@@ -94,6 +100,9 @@ EXPECTED_MARKERS = {
     "operator_loop_driver_packet_method_gates_title": "copy.methodGates",
     "operator_loop_driver_packet_method_gates_render": "packet.method_gates || []",
     "operator_loop_driver_packet_method_gate_copy": "copyIntakeCommand(String(gate.command",
+    "remote_enrollment_start_check_label_en": 'startCheckCommand: "Start check"',
+    "remote_enrollment_start_check_label_zh": 'startCheckCommand: "启动检查"',
+    "remote_enrollment_method_gate_render": "createdToken.next_steps.method_gate_contract.required_gates",
     "operator_loop_driver_packet_server_shell": "operatorLoopDriverPackets?.safety.server_executes_shell",
     "operator_loop_driver_packet_panel_badge": 'panelStatusBadge("operator_loop_driver_packets")',
     "operator_loop_driver_packet_panel_refresh": 'panelRefreshButton("operator_loop_driver_packets")',
@@ -584,8 +593,14 @@ EXPECTED_LIVE_API_MARKERS = {
     "operator_loop_driver_packets_server_shell": "server_executes_shell: packets.some",
     "operator_loop_driver_packet_method_gate_type": "method_gates?: {",
     "operator_loop_driver_packet_phase_commands_type": "phase_commands?: Record<string, string | null | undefined>",
+    "operator_start_check_local_loop_admission_type": "local_loop_admission_packet: Record<string, unknown>",
+    "operator_start_check_local_loop_admission_fallback": 'operation: "operator_local_loop_admission_packet"',
+    "operator_start_check_local_loop_admission_normalize": "local_loop_admission_packet: typeof raw.local_loop_admission_packet",
     "operator_loop_driver_agent_packet_method_gates": "method_gates: asArray<Record<string, unknown>>(raw.method_gates)",
     "operator_loop_driver_agent_packet_phase_commands": "phase_commands: Object.fromEntries(Object.entries(phaseCommandsRaw)",
+    "remote_enrollment_start_check_type": "start_check?: string;",
+    "remote_enrollment_loop_launch_brief_type": "loop_launch_brief?: string;",
+    "remote_enrollment_method_gate_contract_type": "method_gate_contract?: {",
 }
 
 EXPECTED_SERVER_MARKERS = {
@@ -601,6 +616,11 @@ EXPECTED_SERVER_MARKERS = {
     "local_run_path_service_control_preview": '"service_control_preview": True',
     "operator_start_check_agent_loop_packet": '"agent_loop_packet": agent_loop_packet',
     "operator_start_check_agent_loop_packet_builder": "operator_agent_loop_packet(",
+    "operator_start_check_admission_packet": '"local_loop_admission_packet": local_loop_admission_packet',
+    "operator_start_check_admission_packet_builder": "operator_local_loop_admission_packet(",
+    "remote_enrollment_start_check": '"start_check": start_check',
+    "remote_enrollment_method_gate_contract": '"method_gate_contract": method_gate_contract',
+    "remote_enrollment_method_gate_safety": '"server_executes_shell": False',
 }
 
 FORBIDDEN_MARKERS = {

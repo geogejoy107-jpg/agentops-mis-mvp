@@ -453,11 +453,15 @@ work. It accepts `adapter=mock|hermes|openclaw`, `limit=<n>`, optional
 worker adapter readiness, the worker connection policy, runtime doctor,
 live-product ledger proof, a compact Agent Work Method launch brief,
 `loop_driver_entry`, `local_run_path`, service-control preview, Agent Plan
-boundary, and copyable next commands into one machine-readable packet.
+boundary, `agent_loop_packet`, `local_loop_admission_packet`, and copyable next
+commands into one machine-readable packet.
 `loop_driver_entry` exposes copy-only loop-driver preview, `--confirm-loop`,
 review queue, and receipt/evidence commands plus a compact RECORD review
 snapshot with approval/memory/review counts and raw item summaries/content
-omitted. It requires `tasks:read` for supplied Agent Gateway tokens/sessions
+omitted. `local_loop_admission_packet` binds Method Block gates to the local
+worker-start command, service-control preview, customer-worker dispatch
+template, ledger verification, first safe commands, and confirm-required
+commands. It requires `tasks:read` for supplied Agent Gateway tokens/sessions
 and never starts runtimes, executes server shell, creates tasks, mutates
 ledgers/connectors, or exposes tokens/raw prompts/raw responses.
 

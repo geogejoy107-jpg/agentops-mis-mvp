@@ -107,6 +107,7 @@ from agentops_mis_core.operator_start_check import (
     compact_start_check_launch_brief,
     compact_start_check_local_run_path,
     operator_agent_loop_packet,
+    operator_local_loop_admission_packet,
     operator_start_check_acceptance_packet,
     operator_start_check_gate,
 )
@@ -313,6 +314,7 @@ EXTRACTED_OPERATOR_START_CHECK_HELPERS = {
     "compact_start_check_launch_brief",
     "compact_start_check_local_run_path",
     "operator_agent_loop_packet",
+    "operator_local_loop_admission_packet",
     "operator_start_check_acceptance_packet",
     "operator_start_check_gate",
 }
@@ -321,6 +323,7 @@ SERVER_OPERATOR_START_CHECK_IMPORTS = {
     "compact_start_check_launch_brief",
     "compact_start_check_local_run_path",
     "operator_agent_loop_packet",
+    "operator_local_loop_admission_packet",
     "operator_start_check_acceptance_packet",
     "operator_start_check_gate",
 }
@@ -1871,6 +1874,31 @@ def main() -> int:
     require((acceptance_packet.get("commands") or {}).get("loop_driver_confirm") and "--confirm-loop" in str((acceptance_packet.get("commands") or {}).get("loop_driver_confirm")), "operator start-check acceptance packet confirm command failed", failures)
     require((acceptance_packet.get("commands") or {}).get("execution_mode_confirm") == "agentops operator execution-mode --adapter hermes --confirm-run", "operator start-check acceptance packet execution-mode command failed", failures)
     require((acceptance_packet.get("safety") or {}).get("server_executes_shell") is False, "operator start-check acceptance packet server-shell proof failed", failures)
+    agent_loop_packet = operator_agent_loop_packet(
+        adapter="hermes",
+        max_steps=3,
+        acceptance_gate=acceptance_packet,
+        adapter_readiness={"adapter": "hermes", "readiness": "review_required", "requires_confirm_run": True, "token_omitted": True},
+        launch_brief=launch_brief,
+        review_snapshot=(loop_driver_entry.get("review_snapshot") or {}),
+        confirm_loop=False,
+    )
+    admission_packet = operator_local_loop_admission_packet(
+        status="attention",
+        adapter="hermes",
+        workspace_id="local-demo",
+        task_id="tsk_smoke",
+        agent_id="agt_smoke",
+        acceptance_packet=acceptance_packet,
+        agent_loop_packet=agent_loop_packet,
+        local_run_path=local_run_path,
+        adapter_readiness={"adapter": "hermes", "readiness": "review_required", "requires_confirm_run": True, "token_omitted": True},
+        loop_driver_entry=loop_driver_entry,
+    )
+    require(admission_packet.get("operation") == "operator_local_loop_admission_packet", "operator local loop admission operation failed", failures)
+    require((admission_packet.get("admission") or {}).get("method_gate_count") >= 8, "operator local loop admission method gates failed", failures)
+    require(((admission_packet.get("local_deployment") or {}).get("service_control_preview") or {}).get("preview_only") is True, "operator local loop admission service preview failed", failures)
+    require((admission_packet.get("safety") or {}).get("server_executes_shell") is False, "operator local loop admission server-shell proof failed", failures)
     loop_control = operator_loop_control_summary_from_handoff(
         {
             "status": "attention",

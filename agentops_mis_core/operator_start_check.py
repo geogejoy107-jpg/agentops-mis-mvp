@@ -684,3 +684,159 @@ def operator_start_check_acceptance_packet(
         "token_omitted": True,
         "live_execution_performed": False,
     }
+
+
+def operator_local_loop_admission_packet(
+    *,
+    status: str,
+    adapter: str,
+    workspace_id: str,
+    acceptance_packet: dict[str, Any],
+    agent_loop_packet: dict[str, Any],
+    local_run_path: dict[str, Any],
+    adapter_readiness: dict[str, Any],
+    loop_driver_entry: dict[str, Any],
+    task_id: str | None = None,
+    agent_id: str | None = None,
+) -> dict[str, Any]:
+    """Build the single local loop admission readback for agent callers."""
+    decision = acceptance_packet.get("decision") if isinstance(acceptance_packet.get("decision"), dict) else {}
+    acceptance_commands = acceptance_packet.get("commands") if isinstance(acceptance_packet.get("commands"), dict) else {}
+    agent_commands = agent_loop_packet.get("commands") if isinstance(agent_loop_packet.get("commands"), dict) else {}
+    phase_commands = agent_loop_packet.get("phase_commands") if isinstance(agent_loop_packet.get("phase_commands"), dict) else {}
+    method_gates = agent_loop_packet.get("method_gates") if isinstance(agent_loop_packet.get("method_gates"), list) else []
+    method_gate_ids = [str(gate.get("id")) for gate in method_gates if isinstance(gate, dict) and gate.get("id")]
+    local_steps = local_run_path.get("steps") if isinstance(local_run_path.get("steps"), list) else []
+    service_step = local_run_path.get("service_control_preview") if isinstance(local_run_path.get("service_control_preview"), dict) else {}
+    loop_commands = loop_driver_entry.get("commands") if isinstance(loop_driver_entry.get("commands"), dict) else {}
+
+    def step_by_id(step_id: str) -> dict[str, Any]:
+        for step in local_steps:
+            if isinstance(step, dict) and step.get("step_id") == step_id:
+                return step
+        return {}
+
+    start_worker_step = step_by_id("start_selected_worker")
+    dispatch_step = step_by_id("dispatch_customer_task")
+    verify_step = step_by_id("verify_ledger_evidence")
+    acceptance_step = step_by_id("prove_live_product_readiness")
+    blocked_gates = (acceptance_packet.get("summary") or {}).get("blocked_gates") if isinstance(acceptance_packet.get("summary"), dict) else []
+    attention_gates = (acceptance_packet.get("summary") or {}).get("attention_gates") if isinstance(acceptance_packet.get("summary"), dict) else []
+    can_preview = decision.get("can_preview_loop") is True
+    can_confirm_loop = decision.get("can_confirm_bounded_loop") is True
+    live_required = adapter in {"hermes", "openclaw"}
+    service_command = service_step.get("command") if service_step else None
+    service_verify = service_step.get("verify_command") if service_step else None
+    start_worker_command = start_worker_step.get("command")
+    dispatch_command = dispatch_step.get("command") or acceptance_commands.get("live_dispatch_template")
+    first_safe_commands = [
+        acceptance_commands.get("start_check"),
+        agent_commands.get("agent_plan_create"),
+        agent_commands.get("knowledge_search"),
+        agent_commands.get("base_reference"),
+        acceptance_commands.get("adapter_preflight"),
+        acceptance_commands.get("runtime_doctor"),
+        loop_commands.get("preview") or agent_commands.get("preview_loop"),
+        service_verify,
+        acceptance_commands.get("receipt_readback"),
+    ]
+    confirm_commands = [
+        loop_commands.get("confirm_loop") if can_confirm_loop else None,
+        start_worker_command,
+        service_command,
+        dispatch_command,
+        acceptance_step.get("command"),
+    ]
+    return {
+        "operation": "operator_local_loop_admission_packet",
+        "status": status,
+        "adapter": adapter,
+        "workspace_id": workspace_id,
+        "task_id": task_id or None,
+        "agent_id": agent_id or None,
+        "admission": {
+            "can_preview_loop": can_preview,
+            "can_confirm_bounded_loop": can_confirm_loop,
+            "can_start_worker": bool(start_worker_command) and (not live_required or "--confirm-run" in str(start_worker_command)),
+            "can_preview_service_control": bool(service_command) and service_step.get("service_control_preview") is True,
+            "live_dispatch_allowed": decision.get("live_dispatch_allowed") is True,
+            "live_dispatch_requires_confirm_run": bool(live_required),
+            "method_gate_count": len(method_gate_ids),
+            "blocked_gates": blocked_gates if isinstance(blocked_gates, list) else [],
+            "attention_gates": attention_gates if isinstance(attention_gates, list) else [],
+        },
+        "required_method_gates": method_gate_ids,
+        "phase_commands": {
+            str(key): value
+            for key, value in phase_commands.items()
+            if str(key) in {"read", "plan", "retrieve", "compare", "preflight", "execute", "verify", "record"}
+        },
+        "local_deployment": {
+            "worker_start": {
+                "command": start_worker_command,
+                "verify_command": start_worker_step.get("verify_command"),
+                "confirm_required": bool(start_worker_step.get("confirm_required")),
+                "live_execution": bool(start_worker_step.get("live_execution")),
+                "server_executes_shell": bool(start_worker_step.get("server_executes_shell")),
+                "token_omitted": True,
+            },
+            "service_control_preview": {
+                "command": service_command,
+                "verify_command": service_verify,
+                "confirm_required": bool(service_step.get("confirm_required")) if service_step else False,
+                "preview_only": bool(service_step.get("service_control_preview")) if service_step else False,
+                "live_execution": bool(service_step.get("live_execution")) if service_step else False,
+                "server_executes_shell": bool(service_step.get("server_executes_shell")) if service_step else False,
+                "token_omitted": True,
+            },
+            "customer_worker_dispatch": {
+                "command": dispatch_command,
+                "verify_command": dispatch_step.get("verify_command"),
+                "confirm_required": bool(dispatch_step.get("confirm_required")) or live_required,
+                "writes_ledger": bool(dispatch_step.get("writes_ledger")),
+                "live_execution": bool(dispatch_step.get("live_execution")) or live_required,
+                "requires_confirm_run_flag": live_required,
+                "token_omitted": True,
+            },
+            "ledger_verify": {
+                "command": verify_step.get("command") or agent_commands.get("verify_loop"),
+                "verify_command": verify_step.get("verify_command") or agent_commands.get("receipt_readback"),
+                "token_omitted": True,
+            },
+        },
+        "commands": {
+            "read_start_check": acceptance_commands.get("start_check"),
+            "preview_loop": loop_commands.get("preview") or agent_commands.get("preview_loop"),
+            "confirm_loop": loop_commands.get("confirm_loop") if can_confirm_loop else None,
+            "worker_start": start_worker_command,
+            "service_check": service_verify,
+            "service_control_preview": service_command,
+            "customer_worker_dispatch": dispatch_command,
+            "live_acceptance": acceptance_step.get("command") or acceptance_commands.get("live_product_readiness"),
+            "receipt_readback": acceptance_commands.get("receipt_readback") or agent_commands.get("receipt_readback"),
+            "review_queue": acceptance_commands.get("review_queue") or agent_commands.get("review_queue"),
+        },
+        "first_safe_commands": [command for command in (_safe_text(item, 700) for item in first_safe_commands) if command],
+        "confirm_required_commands": [command for command in (_safe_text(item, 700) for item in confirm_commands) if command],
+        "sources": {
+            "acceptance_packet": acceptance_packet.get("operation"),
+            "agent_loop_packet": agent_loop_packet.get("operation"),
+            "local_run_path": local_run_path.get("operation"),
+            "adapter_readiness": adapter_readiness.get("readiness"),
+            "loop_driver_entry": loop_driver_entry.get("operation"),
+            "token_omitted": True,
+        },
+        "contract": "single copy-only local loop admission packet for Hermes/OpenClaw/Codex; it combines method gates, local deployment previews, worker start, service-control preview, dispatch template, and ledger verification without executing shell or live work on the server",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_executes_shell": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "raw_content_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }

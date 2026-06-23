@@ -133,6 +133,7 @@ from agentops_mis_core.operator_start_check import (
     compact_start_check_launch_brief,
     compact_start_check_local_run_path,
     operator_agent_loop_packet,
+    operator_local_loop_admission_packet,
     operator_start_check_acceptance_packet,
     operator_start_check_gate,
 )
@@ -2971,6 +2972,42 @@ def agent_gateway_launch_steps(agent_id: str, workspace_id: str, runtime_type: s
     run_once = f"agentops-worker --once --adapter {adapter}{confirm_flag} --use-session --session-ttl-sec 900"
     worker_loop_flags = "--use-session --session-ttl-sec 900 --session-refresh-margin-sec 60 --poll-interval 5 --idle-backoff-max 30 --error-backoff-max 30 --backoff-factor 2 --adapter-max-attempts 1 --adapter-retry-delay-sec 1 --max-tasks 0 --continue-on-error --max-errors 5 --write-state --jsonl-log"
     run_loop = f"agentops-worker --adapter {adapter}{confirm_flag} {worker_loop_flags}"
+    start_check = f"agentops operator start-check --adapter {adapter} --limit 8 --agent-id {shlex.quote(safe_agent_id)}"
+    loop_launch_brief = f"agentops operator loop-launch-packet --brief --adapter {adapter} --limit 8 --agent-id {shlex.quote(safe_agent_id)}"
+    method_gate_contract = {
+        "operation": "remote_worker_method_gate_contract",
+        "source": "agent_gateway_enrollment_launch_steps",
+        "adapter": adapter,
+        "method": "READ -> PLAN -> RETRIEVE -> COMPARE -> PREFLIGHT -> EXECUTE -> VERIFY -> RECORD",
+        "first_read": start_check,
+        "phase_commands": {
+            "read": start_check,
+            "plan": "agentops agent-plan create --help",
+            "retrieve": "agentops knowledge search --query '<task terms>'",
+            "compare": "agentops commander repo-map --query '<task terms>'",
+            "preflight": f"agentops-worker preflight --adapter {adapter} --base-url {shlex.quote(base_url)} --workspace-id {shlex.quote(safe_workspace_id)} --agent-id {shlex.quote(safe_agent_id)}",
+            "execute": run_once,
+            "verify": "agentops operator live-product-readiness --require-adapter hermes --require-adapter openclaw" if adapter in {"hermes", "openclaw"} else "agentops run list --limit 5",
+            "record": "agentops review queue --limit 20",
+        },
+        "required_gates": [
+            "read_start_check",
+            "plan_agent_plan",
+            "retrieve_knowledge",
+            "compare_base_reference",
+            "preflight_adapter",
+            "execute_bounded_worker",
+            "verify_ledger",
+            "record_memory_candidate",
+        ],
+        "safety": {
+            "copy_only": True,
+            "server_executes_shell": False,
+            "live_execution_requires_confirm_run": adapter in {"hermes", "openclaw"},
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
     template_args = (
         f"--adapter {adapter}{confirm_flag} "
         f"--base-url {shlex.quote(base_url)} "
@@ -2986,6 +3023,9 @@ def agent_gateway_launch_steps(agent_id: str, workspace_id: str, runtime_type: s
         "install": "python3 -m pip install .",
         "env": env,
         "verify": "agentops status",
+        "start_check": start_check,
+        "loop_launch_brief": loop_launch_brief,
+        "method_gate_contract": method_gate_contract,
         "preflight": f"agentops-worker preflight --adapter {adapter} --base-url {shlex.quote(base_url)} --workspace-id {shlex.quote(safe_workspace_id)} --agent-id {shlex.quote(safe_agent_id)}",
         "heartbeat": "agentops agent heartbeat --status idle --summary 'remote worker connected'",
         "session": "agentops session create --ttl-sec 900 --save-session",
@@ -3011,6 +3051,7 @@ def agent_gateway_launch_steps(agent_id: str, workspace_id: str, runtime_type: s
             "Do not commit AGENTOPS_API_KEY or paste it into issue trackers.",
             "Install the source package on the agent machine first; the product command is agentops-worker.",
             "Use agentops status before pulling tasks.",
+            "Use agentops operator start-check before worker preflight so remote agents see the same Method Block gates as the local operator console.",
             "Use agentops-worker preflight before a live worker loop; it checks adapter readiness without executing a task.",
             "Worker launch commands mint a short-lived session before processing tasks; the enrollment token should remain local and revocable.",
             "Service template commands render launchd/systemd files with a token placeholder; replace it only on the agent machine.",
@@ -22800,6 +22841,18 @@ def operator_start_check(conn: sqlite3.Connection, headers, qs=None, auth_ctx=No
         review_snapshot=(loop_driver_entry.get("review_snapshot") or {}),
         confirm_loop=False,
     )
+    local_loop_admission_packet = operator_local_loop_admission_packet(
+        status=status,
+        adapter=adapter,
+        workspace_id=workspace_id,
+        task_id=task_id or None,
+        agent_id=requested_agent_id or None,
+        acceptance_packet=acceptance_packet,
+        agent_loop_packet=agent_loop_packet,
+        local_run_path=local_run_path,
+        adapter_readiness=start_check_adapter_readiness,
+        loop_driver_entry=loop_driver_entry,
+    )
 
     return {
         "provider": "agentops-operator",
@@ -22842,6 +22895,7 @@ def operator_start_check(conn: sqlite3.Connection, headers, qs=None, auth_ctx=No
         "live_product_readiness": live_product,
         "acceptance_packet": acceptance_packet,
         "agent_loop_packet": agent_loop_packet,
+        "local_loop_admission_packet": local_loop_admission_packet,
         "next_commands": start_check_commands,
         "auth": {
             "mode": (auth_ctx or {}).get("mode") or "unknown",

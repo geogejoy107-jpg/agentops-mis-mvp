@@ -2242,6 +2242,7 @@ export interface OperatorStartCheckPayload {
   summary: Record<string, unknown>;
   loop_driver_entry: Record<string, unknown>;
   acceptance_packet: Record<string, unknown>;
+  local_loop_admission_packet: Record<string, unknown>;
   agent_loop_packet?: OperatorLoopDriverAgentPacketPayload;
   next_commands: string[];
   safety: {
@@ -2923,10 +2924,28 @@ export interface AgentGatewayEnrollmentCreateResult {
     agent_id: string;
     workspace_id: string;
     adapter: string;
-    install?: string;
-    env: string[];
-    verify: string;
-    preflight?: string;
+	    install?: string;
+	    env: string[];
+	    verify: string;
+	    start_check?: string;
+	    loop_launch_brief?: string;
+	    method_gate_contract?: {
+	      operation?: string;
+	      source?: string;
+	      adapter?: string;
+	      method?: string;
+	      first_read?: string;
+	      phase_commands?: Record<string, string | null | undefined>;
+	      required_gates?: string[];
+	      safety?: {
+	        copy_only?: boolean;
+	        server_executes_shell?: boolean;
+	        live_execution_requires_confirm_run?: boolean;
+	        token_omitted?: boolean;
+	      };
+	      token_omitted?: boolean;
+	    };
+	    preflight?: string;
     session?: string;
     heartbeat: string;
     run_once: string;
@@ -6307,6 +6326,33 @@ export async function loadOperatorStartCheck(adapter: OperatorStartCheckAdapter 
     summary: {},
     loop_driver_entry: {},
     acceptance_packet: {},
+    local_loop_admission_packet: {
+      operation: "operator_local_loop_admission_packet",
+      status: "unavailable",
+      adapter,
+      admission: {
+        can_preview_loop: false,
+        can_confirm_bounded_loop: false,
+        live_dispatch_requires_confirm_run: adapter === "hermes" || adapter === "openclaw",
+        method_gate_count: 0,
+      },
+      required_method_gates: [],
+      phase_commands: {},
+      commands: {
+        read_start_check: `agentops operator start-check --adapter ${adapter} --limit ${limit}`,
+      },
+      first_safe_commands: [`agentops operator start-check --adapter ${adapter} --limit ${limit}`],
+      confirm_required_commands: [],
+      safety: {
+        read_only: true,
+        ledger_mutated: false,
+        live_execution_performed: false,
+        server_executes_shell: false,
+        token_omitted: true,
+      },
+      token_omitted: true,
+      live_execution_performed: false,
+    },
     agent_loop_packet: {
       operation: "operator_loop_driver_agent_loop_packet",
       adapter,
@@ -6367,6 +6413,7 @@ export async function loadOperatorStartCheck(adapter: OperatorStartCheckAdapter 
     summary: typeof raw.summary === "object" && raw.summary !== null ? raw.summary as Record<string, unknown> : {},
     loop_driver_entry: typeof raw.loop_driver_entry === "object" && raw.loop_driver_entry !== null ? raw.loop_driver_entry as Record<string, unknown> : {},
     acceptance_packet: typeof raw.acceptance_packet === "object" && raw.acceptance_packet !== null ? raw.acceptance_packet as Record<string, unknown> : {},
+    local_loop_admission_packet: typeof raw.local_loop_admission_packet === "object" && raw.local_loop_admission_packet !== null ? raw.local_loop_admission_packet as Record<string, unknown> : {},
     agent_loop_packet: packet,
     next_commands: asArray<unknown>(raw.next_commands).map(String).filter(Boolean),
     safety: {

@@ -586,10 +586,13 @@ RECORD review snapshot with raw item summaries/content omitted. The same
 response now includes `agent_loop_packet`, a machine-readable
 READ/PLAN/RETRIEVE/COMPARE/PREFLIGHT/EXECUTE/VERIFY/RECORD command packet, so
 agents using the API can follow the same phased loop contract as the CLI
-`operator loop-driver` without scraping prose. It also returns copyable next
-commands for readiness, preflight, runtime doctor, launch brief, bounded
-loop-driver preview/confirmation, bounded advance, confirmed live dispatch, and
-task/run/evidence readback.
+`operator loop-driver` without scraping prose. The same response also includes
+`local_loop_admission_packet`, which binds those gates to the local worker-start
+command, service-control preview, customer-worker dispatch template, ledger
+verification, first safe commands, and confirm-required commands. It also
+returns copyable next commands for readiness, preflight, runtime doctor, launch
+brief, bounded loop-driver preview/confirmation, bounded advance, confirmed live
+dispatch, and task/run/evidence readback.
 
 `start-check` does not start Hermes/OpenClaw, execute shell from the server,
 create tasks, mutate ledgers, write connector rows, or print raw prompts,
@@ -1897,6 +1900,19 @@ call runtimes, execute shell commands, mutate ledgers, or expose tokens/raw
 prompts/raw responses. Use it immediately before handing a task to a local or
 remote agent so the agent sees the current copyable
 boot/readiness/preflight/launch/verify commands in one payload.
+
+The response includes two machine-facing gate packets:
+
+- `agent_loop_packet`: phase commands and Method Block gates for READ, PLAN,
+  RETRIEVE, COMPARE, PREFLIGHT, EXECUTE, VERIFY, and RECORD.
+- `local_loop_admission_packet`: a compact admission readback that binds those
+  gates to worker start, service-control preview, customer-worker dispatch, and
+  ledger verification commands while preserving `server_executes_shell:false`.
+
+Agent Gateway enrollment `next_steps` mirrors this for remote machines with
+`start_check`, `loop_launch_brief`, and `method_gate_contract`, so a newly
+enrolled worker can run start-check before preflight without relying on the
+browser UI.
 
 ```bash
 agentops operator loop-launch-packet --task-id tsk_123 --agent-id agt_worker --limit 8

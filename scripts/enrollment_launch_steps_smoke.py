@@ -45,6 +45,8 @@ def assert_safe_launch_steps(payload: dict, expected_adapter: str) -> dict:
     require(token not in text, "raw token leaked into next_steps")
     require("<paste one-time token here>" in text, "next_steps should use a token placeholder")
     require("agentops status" in text, "next_steps missing agentops status")
+    require("agentops operator start-check" in text, "next_steps missing operator start-check command")
+    require("agentops operator loop-launch-packet --brief" in text, "next_steps missing loop-launch brief command")
     require("agentops-worker preflight" in text, "next_steps missing worker preflight command")
     require("agentops session create" in text, "next_steps missing short-lived session command")
     require("python3 -m pip install ." in text, "next_steps missing package install command")
@@ -76,6 +78,15 @@ def assert_safe_launch_steps(payload: dict, expected_adapter: str) -> dict:
     ):
         require(flag in text, f"next_steps missing explicit remote loop policy flag {flag}: {steps}")
     require(steps.get("adapter") == expected_adapter, f"next_steps adapter mismatch: {steps}")
+    method_contract = steps.get("method_gate_contract") or {}
+    require(method_contract.get("operation") == "remote_worker_method_gate_contract", f"method gate contract missing: {steps}")
+    require(method_contract.get("first_read") == steps.get("start_check"), f"method gate first_read should match start_check: {steps}")
+    require((method_contract.get("safety") or {}).get("server_executes_shell") is False, f"method gate contract must be copy-only: {method_contract}")
+    require((method_contract.get("safety") or {}).get("token_omitted") is True, f"method gate contract token proof missing: {method_contract}")
+    required_gates = set(method_contract.get("required_gates") or [])
+    require({"read_start_check", "plan_agent_plan", "retrieve_knowledge", "compare_base_reference", "preflight_adapter", "execute_bounded_worker", "verify_ledger", "record_memory_candidate"}.issubset(required_gates), f"method gate list incomplete: {method_contract}")
+    phase_commands = method_contract.get("phase_commands") or {}
+    require({"read", "plan", "retrieve", "compare", "preflight", "execute", "verify", "record"}.issubset(set(phase_commands)), f"method phase command map incomplete: {method_contract}")
     if expected_adapter in {"hermes", "openclaw"}:
         require("--confirm-run" in text, f"{expected_adapter} launch commands must include --confirm-run: {steps}")
     else:

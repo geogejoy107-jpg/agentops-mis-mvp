@@ -206,6 +206,26 @@ def validate_payload(payload: dict, adapter: str, failures: list[str]) -> None:
     require((agent_loop_packet.get("safety") or {}).get("ledger_mutated") is False, f"{adapter} agent loop ledger proof missing: {agent_loop_packet}", failures)
     require((agent_loop_packet.get("safety") or {}).get("server_executes_shell") is False, f"{adapter} agent loop server-shell proof missing: {agent_loop_packet}", failures)
     require(agent_loop_packet.get("live_execution_performed") is False, f"{adapter} agent loop live proof missing: {agent_loop_packet}", failures)
+    admission_packet = payload.get("local_loop_admission_packet") or {}
+    admission = admission_packet.get("admission") or {}
+    deployment = admission_packet.get("local_deployment") or {}
+    service_preview = deployment.get("service_control_preview") or {}
+    worker_start = deployment.get("worker_start") or {}
+    customer_dispatch = deployment.get("customer_worker_dispatch") or {}
+    admission_commands = admission_packet.get("commands") or {}
+    require(admission_packet.get("operation") == "operator_local_loop_admission_packet", f"{adapter} admission packet missing: {admission_packet}", failures)
+    require(admission_packet.get("adapter") == adapter, f"{adapter} admission adapter mismatch: {admission_packet}", failures)
+    require(admission.get("method_gate_count") >= 8, f"{adapter} admission method gates missing: {admission_packet}", failures)
+    require(set(method_gate_ids).issubset(set(admission_packet.get("required_method_gates") or [])), f"{adapter} admission gate ids mismatch: {admission_packet}", failures)
+    require({"read", "plan", "retrieve", "compare", "preflight", "execute", "verify", "record"}.issubset(set(admission_packet.get("phase_commands") or {})), f"{adapter} admission phase commands missing: {admission_packet}", failures)
+    require(service_preview.get("preview_only") is True, f"{adapter} service-control preview proof missing: {admission_packet}", failures)
+    require(service_preview.get("server_executes_shell") is False, f"{adapter} service-control server-shell proof missing: {admission_packet}", failures)
+    require(str(admission_commands.get("service_check") or "").startswith("agentops worker service-check"), f"{adapter} service-check command missing: {admission_packet}", failures)
+    require(str(admission_commands.get("preview_loop") or "").startswith(f"agentops operator loop-driver --adapter {adapter}"), f"{adapter} admission preview command missing: {admission_packet}", failures)
+    require((admission_packet.get("safety") or {}).get("read_only") is True, f"{adapter} admission read-only proof missing: {admission_packet}", failures)
+    require((admission_packet.get("safety") or {}).get("ledger_mutated") is False, f"{adapter} admission ledger proof missing: {admission_packet}", failures)
+    require((admission_packet.get("safety") or {}).get("server_executes_shell") is False, f"{adapter} admission server-shell proof missing: {admission_packet}", failures)
+    require(admission_packet.get("live_execution_performed") is False, f"{adapter} admission live proof missing: {admission_packet}", failures)
     commands = payload.get("next_commands") or []
     require(any("operator loop-launch-packet" in str(command) for command in commands), f"{adapter} launch command missing: {commands}", failures)
     require(any("operator loop-driver" in str(command) for command in commands), f"{adapter} loop-driver command missing: {commands}", failures)
@@ -217,6 +237,10 @@ def validate_payload(payload: dict, adapter: str, failures: list[str]) -> None:
         require(packet_decision.get("live_dispatch_requires_confirm_run") is True, f"{adapter} acceptance confirm-run wall missing: {acceptance_packet}", failures)
         require(str(packet_commands.get("execution_mode_confirm") or "").endswith("--confirm-run"), f"{adapter} acceptance execution-mode confirm missing: {acceptance_packet}", failures)
         require(str(packet_commands.get("live_product_readiness") or "").endswith(f"--require-adapter {adapter}"), f"{adapter} acceptance live readiness command missing: {acceptance_packet}", failures)
+        require(admission.get("live_dispatch_requires_confirm_run") is True, f"{adapter} admission confirm wall missing: {admission_packet}", failures)
+        require("--confirm-run" in str(worker_start.get("command") or ""), f"{adapter} admission worker start confirm missing: {admission_packet}", failures)
+        require(customer_dispatch.get("requires_confirm_run_flag") is True, f"{adapter} admission dispatch confirm missing: {admission_packet}", failures)
+        require("--confirm-run" in str(customer_dispatch.get("command") or ""), f"{adapter} admission dispatch command confirm missing: {admission_packet}", failures)
         live = payload.get("live_product_readiness") or {}
         require(live.get("operation") == "operator_live_product_readiness", f"{adapter} live readiness readback missing: {live}", failures)
 

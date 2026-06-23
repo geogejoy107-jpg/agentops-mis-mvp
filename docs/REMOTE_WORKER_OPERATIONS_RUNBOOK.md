@@ -120,10 +120,19 @@ export AGENTOPS_API_KEY="<paste one-time token here>"
 
 agentops doctor
 agentops status
+agentops operator start-check --adapter mock --limit 8
 agentops agent heartbeat --status idle --summary "remote worker ready"
 agentops worker preflight --adapter mock
 agentops-worker --once --adapter mock --use-session --session-ttl-sec 900
 ```
+
+Enrollment responses include this command as `next_steps.start_check` plus
+`next_steps.method_gate_contract`. Run it before worker preflight so the remote
+worker sees the same Method Block gates as the local operator console:
+`read_start_check`, `plan_agent_plan`, `retrieve_knowledge`,
+`compare_base_reference`, `preflight_adapter`, `execute_bounded_worker`,
+`verify_ledger`, and `record_memory_candidate`. The packet is copy-only and
+omits the raw enrollment token.
 
 For a long-running remote loop:
 

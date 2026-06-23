@@ -93,7 +93,7 @@ TEST_COMMANDS = [
     {
         "id": "module_boundary",
         "command": "python3 scripts/module_boundary_smoke.py",
-        "summary": "P1-05 strangler boundary gate for extracted runtime capability, connector registry/refresh projection, trust state, read-model cache, Approval Wall resume/waiting/route blocked/access/prepare-response/prepared-action-decision/high-risk-toolcall-required/risky-tool-registry/external-side-effect-intent/resume-success/provider-result gates, Agent Plan approval-decision/create-status/bound-approval/transition-error/run-start gate/rebind/success response projections, run-start binding comparison plus contract/hash/path-scope/verification-result/pending-approval/approval-run helpers, Agent Gateway run-heartbeat update projection, Evaluation Case public projections, worker fleet remote/session/hygiene projections, workflow-job public/list/stuck/recovery response projections, Commander and Operator command-center aggregation helpers, Operator evidence-report memory/status/summary projection, Operator start-check gate/local-run-path/launch-brief/loop-driver-entry/acceptance-packet/agent-loop-packet projections, Operator loop-control summary/gate projection, and Operator receipt/evaluation/control-readback public projection.",
+        "summary": "P1-05 strangler boundary gate for extracted runtime capability, connector registry/refresh projection, trust state, read-model cache, Approval Wall resume/waiting/route blocked/access/prepare-response/prepared-action-decision/high-risk-toolcall-required/risky-tool-registry/external-side-effect-intent/resume-success/provider-result gates, Agent Plan approval-decision/create-status/bound-approval/transition-error/run-start gate/rebind/success response projections, run-start binding comparison plus contract/hash/path-scope/verification-result/pending-approval/approval-run helpers, Agent Gateway run-heartbeat update projection, Evaluation Case public projections, worker fleet remote/session/hygiene projections, workflow-job public/list/stuck/recovery response projections, Commander and Operator command-center aggregation helpers, Operator evidence-report memory/status/summary projection, Operator start-check gate/local-run-path/launch-brief/loop-driver-entry/acceptance-packet/agent-loop-packet/local-loop-admission projections, Operator loop-control summary/gate projection, and Operator receipt/evaluation/control-readback public projection.",
         "ci_step": "Offline safety smokes",
     },
     {
@@ -273,7 +273,7 @@ TEST_COMMANDS = [
     {
         "id": "operator_start_check_api",
         "command": "python3 scripts/operator_start_check_api_smoke.py",
-        "summary": "Server-backed pre-task start-check API for mock/Hermes/OpenClaw that composes local readiness, worker policy, runtime doctor, launch brief, local run path and live-ledger proof without live execution or ledger mutation.",
+        "summary": "Server-backed pre-task start-check API for mock/Hermes/OpenClaw that composes local readiness, worker policy, runtime doctor, launch brief, local run path, agent loop packet, local loop admission, and live-ledger proof without live execution or ledger mutation.",
         "ci_step": "Server-backed smoke suite",
     },
     {
@@ -297,7 +297,7 @@ TEST_COMMANDS = [
     {
         "id": "enrollment_launch_steps",
         "command": "python3 scripts/enrollment_launch_steps_smoke.py --base-url \"$AGENTOPS_BASE_URL\"",
-        "summary": "Enrollment create/rotate launch packets omit raw tokens and include installable worker, short-lived session, service-template/install/check and preview-first service-control commands.",
+        "summary": "Enrollment create/rotate launch packets omit raw tokens and include installable worker, start-check/method-gate contract, short-lived session, service-template/install/check and preview-first service-control commands.",
         "ci_step": "Server-backed smoke suite",
     },
     {
