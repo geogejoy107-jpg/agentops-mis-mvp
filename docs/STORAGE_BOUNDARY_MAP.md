@@ -33,6 +33,7 @@ human/admin APIs:
 | Dify upload prepared-action integration | `dify_prepare_upload_text`, `dify_resume_upload_text`, `dify_upload_args` | `POST /api/integrations/dify/upload-text` when `confirm_upload` is true | `python3 scripts/dify_upload_prepared_action_smoke.py` |
 | Hermes run-task prepared-action integration | `hermes_prepare_run_task`, `hermes_resume_run_task`, `hermes_run_task_args` | `POST /api/integrations/hermes/run-task` when `confirm_run` is true | `python3 scripts/hermes_run_task_prepared_action_smoke.py` |
 | Agnesfallback fixed-probe prepared-action integration | `agnesfallback_prepare_probe`, `agnesfallback_resume_probe`, `agnesfallback_probe_args` | `POST /api/integrations/hermes/cli-probe`, `POST /api/integrations/hermes/chat-completion-probe` when `confirm_run` is true | `python3 scripts/agnesfallback_probe_prepared_action_smoke.py` |
+| Local brief prepared-action integration | `prepare_local_ai_brief`, `resume_local_ai_brief`, `local_ai_brief_args` | `POST /api/workflows/local-brief` when `confirm_run` is true | `python3 scripts/local_brief_prepared_action_smoke.py` |
 | OpenClaw fixed-probe prepared-action integration | `openclaw_prepare_probe`, `openclaw_resume_probe`, `openclaw_probe_args` | `POST /api/integrations/openclaw/probe` when `confirm_run` is true | `python3 scripts/openclaw_probe_prepared_action_smoke.py` |
 | Customer-worker external-write prepared-action integration | `prepare_customer_worker_external_write`, `resume_customer_worker_external_write`, `customer_worker_external_write_args` | `POST /api/workflows/customer-worker-task`, `POST /api/workflows/customer-worker-task/submit` when `adapter` is Hermes/OpenClaw and `confirm_run` is true | `python3 scripts/customer_worker_prepared_action_smoke.py` |
 | Postgres parity pre-container contract | generated Postgres-compatible DDL and placeholder translation contract from `server.SCHEMA_SQL` | future Postgres adapter using the same helper contract as SQLite | `python3 scripts/storage_postgres_contract_smoke.py` |
@@ -56,7 +57,7 @@ match behavior before Postgres is introduced.
 
 | Candidate | Why next | Required proof before Postgres |
 | --- | --- | --- |
-| Prepared-action route integration audit | Notion export, Dify upload, Hermes default run-task, Agnesfallback fixed probes, OpenClaw fixed probe, and customer-worker external writes are covered; future external side-effect routes must be added here before Postgres parity claims | Connector/runtime smokes that prove no provider call before approval and exact one-shot resume after approval |
+| Prepared-action route integration audit | Notion export, Dify upload, Hermes default run-task, Agnesfallback fixed probes, local brief, OpenClaw fixed probe, and customer-worker external writes are covered; future external side-effect routes must be added here before Postgres parity claims | Connector/runtime smokes that prove no provider call before approval and exact one-shot resume after approval |
 | Postgres adapter contract | SQLite helpers now cover core ledger/evidence writes, schema/container parity passes, representative helper SQL translation is locked, and optional psycopg execution is proven | Python Postgres adapter smoke with identical storage-boundary fixtures and response-shape comparison |
 
 ## Postgres Parity Rule

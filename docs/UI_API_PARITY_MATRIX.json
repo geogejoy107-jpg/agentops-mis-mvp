@@ -15,6 +15,7 @@
         "nextjs_agent_gateway_cli_worker_dogfood_v1",
         "nextjs_worker_dispatch_once_v1",
         "nextjs_pixel_office_floor_v1",
+        "local_brief_prepared_action_v1",
         "nextjs_local_brief_v1",
         "nextjs_customer_worker_dispatch_v1",
         "nextjs_customer_worker_async_job_v1",
@@ -86,7 +87,7 @@
     },
     {
       "id": "pixel_office_and_dispatch",
-      "capability": "Pixel Office map plus local brief controls plus customer task/template dispatch; Next currently proves a read-only Pixel Operating Map, dry-run local brief controls with live confirmation blocked, isolated Pro template dispatch, and mock-only customer-worker dispatch with task/run/artifact/approval/plan-evidence readback.",
+      "capability": "Pixel Office map plus local brief controls plus customer task/template dispatch; Next currently proves a read-only Pixel Operating Map, local-brief prepared-action exact resume with approval before live Agnesfallback execution, isolated Pro template dispatch, and mock-only customer-worker dispatch with task/run/artifact/approval/plan-evidence readback.",
       "status": "partial",
       "gate4_required": true,
       "vite_routes": [
@@ -135,13 +136,14 @@
         "python3 scripts/vite_playwright_snapshot_smoke.py",
         "python3 scripts/nextjs_playwright_snapshot_smoke.py",
         "python3 scripts/nextjs_pixel_office_floor_smoke.py",
+        "python3 scripts/local_brief_prepared_action_smoke.py",
         "python3 scripts/nextjs_local_brief_smoke.py",
         "python3 scripts/nextjs_customer_worker_dispatch_smoke.py",
         "python3 scripts/nextjs_customer_worker_async_job_smoke.py",
         "python3 scripts/nextjs_parity_smoke.py"
       ],
       "retirement_allowed": false,
-      "retirement_gate": "Next currently proves read-only Pixel Operating Map parity, local-brief dry-run controls with live confirmation blocked, Free Local blocking, isolated Pro template entitlement dispatch, mock-only customer-worker dispatch, and mock-only async customer-worker job submission/status readback with delivery approval and verified plan-evidence; it still lacks live local-brief execution, richer owner dispatch workflow, and explicit visual route retirement evidence."
+      "retirement_gate": "Next currently proves read-only Pixel Operating Map parity, local-brief prepared-action exact resume with approval-required, hash-mismatch, consume, and replay guards, Free Local blocking, isolated Pro template entitlement dispatch, mock-only customer-worker dispatch, and mock-only async customer-worker job submission/status readback with delivery approval and verified plan-evidence; it still lacks richer owner dispatch workflow and explicit visual route retirement evidence."
     },
     {
       "id": "task_list",
@@ -884,7 +886,7 @@
         "POST /api/mis/agent-gateway/enrollment/create -> AGENTOPS_API_BASE blocked before upstream by enrollment_token_issue_not_allowed_next_parity",
         "POST /api/mis/workflows/customer-worker-task -> AGENTOPS_API_BASE/workflows/customer-worker-task with mock-only guard",
         "POST /api/mis/workflows/customer-worker-task/submit -> AGENTOPS_API_BASE/workflows/customer-worker-task/submit with mock-only guard",
-        "POST /api/mis/workflows/local-brief -> AGENTOPS_API_BASE/workflows/local-brief with confirm_run live guard"
+        "POST /api/mis/workflows/local-brief -> AGENTOPS_API_BASE/workflows/local-brief with prepared-action exact-resume guard"
       ],
       "vite_files": [],
       "next_files": [

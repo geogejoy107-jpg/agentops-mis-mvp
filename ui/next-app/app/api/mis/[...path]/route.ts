@@ -196,10 +196,6 @@ function localBriefGuard(body: Buffer | undefined) {
     if (!parsed || typeof parsed !== "object") {
       return { ok: false, status: 400, error: "invalid_json" };
     }
-    const input = parsed as { confirm_run?: unknown };
-    if (input.confirm_run) {
-      return { ok: false, status: 403, error: "local_brief_live_not_allowed_next_parity" };
-    }
     return { ok: true, status: 200, error: "" };
   } catch {
     return { ok: false, status: 400, error: "invalid_json" };
@@ -402,6 +398,7 @@ async function proxy(request: NextRequest, context: RouteContext) {
         dry_run: true,
         error: guard.error,
         live_execution_performed: false,
+        prepared_action_required: true,
         token_omitted: true,
       }, { status: guard.status, headers: { "Cache-Control": "no-store" } });
     }

@@ -317,18 +317,23 @@ def main() -> int:
             and file_contains("ui/next-app/src/components/PixelOfficePage.tsx", "/workspace/pixel-office/local-brief")
             and file_contains("ui/next-app/src/components/PixelOfficePage.tsx", "commercial-safe geometry")
             and file_contains("ui/next-app/src/components/PixelOfficePage.tsx", "live runtime disabled")
+            and file_contains("ui/next-app/src/components/PixelOfficePage.tsx", "live brief approval-gated")
+            and file_contains("ui/next-app/src/components/PixelOfficePage.tsx", "Resume approved brief")
             and file_contains("ui/next-app/app/api/mis/[...path]/route.ts", "isLocalBriefPath")
-            and file_contains("ui/next-app/app/api/mis/[...path]/route.ts", "local_brief_live_not_allowed_next_parity")
+            and file_contains("ui/next-app/app/api/mis/[...path]/route.ts", "prepared_action_required")
             and file_contains("ui/next-app/app/workspace/pixel-office/local-brief/route.ts", "/workflows/local-brief")
-            and file_contains("ui/next-app/app/workspace/pixel-office/local-brief/route.ts", "local_brief_live_not_allowed_next_parity")
+            and file_contains("ui/next-app/app/workspace/pixel-office/local-brief/route.ts", "prepared_action_id")
+            and file_contains("ui/next-app/app/workspace/pixel-office/local-brief/route.ts", "approval_required")
             and file_contains("ui/next-app/src/components/AppFrame.tsx", "/workspace/pixel-office")
             and file_contains("ui/next-app/src/lib/misServer.ts", "loadServerDashboardMetrics")
             and file_contains("ui/next-app/src/lib/misServer.ts", "loadServerAgents")
             and file_contains("scripts/nextjs_pixel_office_floor_smoke.py", "nextjs_pixel_office_floor_v1")
             and file_contains("scripts/nextjs_pixel_office_floor_smoke.py", "/workspace/pixel-office")
+            and file_contains("scripts/local_brief_prepared_action_smoke.py", "local_brief_prepared_action_v1")
             and file_contains("scripts/nextjs_local_brief_smoke.py", "nextjs_local_brief_v1")
             and file_contains("scripts/nextjs_local_brief_smoke.py", "/api/mis/workflows/local-brief")
             and file_contains("scripts/nextjs_local_brief_smoke.py", "/workspace/pixel-office/local-brief")
+            and file_contains("scripts/nextjs_local_brief_smoke.py", "prepared_action_exact_resume")
             and file_contains("docs/UI_API_PARITY_MATRIX.json", "nextjs_pixel_office_floor_v1")
             and file_contains("docs/UI_API_PARITY_MATRIX.json", "nextjs_local_brief_v1")
             and file_contains("ui/next-app/app/workspace/dispatch/customer-worker/route.ts", "/workflows/customer-worker-task")
@@ -401,6 +406,7 @@ def main() -> int:
             and (ROOT / "scripts" / "nextjs_agent_gateway_cli_worker_dogfood_smoke.py").exists()
             and (ROOT / "scripts" / "nextjs_worker_dispatch_once_smoke.py").exists()
             and (ROOT / "scripts" / "nextjs_pixel_office_floor_smoke.py").exists()
+            and (ROOT / "scripts" / "local_brief_prepared_action_smoke.py").exists()
             and (ROOT / "scripts" / "nextjs_local_brief_smoke.py").exists()
             and (ROOT / "scripts" / "nextjs_customer_worker_dispatch_smoke.py").exists()
             and (ROOT / "scripts" / "nextjs_customer_worker_async_job_smoke.py").exists()
@@ -408,7 +414,7 @@ def main() -> int:
             and (ROOT / "scripts" / "nextjs_worker_daemon_control_smoke.py").exists()
             and (ROOT / "scripts" / "nextjs_enrollment_request_smoke.py").exists()
             and (ROOT / "scripts" / "nextjs_playwright_snapshot_smoke.py").exists(),
-            "parallel Next.js App Router track has API proxy, Gateway task-create proxy, CLI worker dogfood proof through the Next proxy, read-only Pixel Operating Map parity, local brief dry-run controls with live confirmation blocked, worker mock dispatch, mock-only customer-worker dispatch, mock-only async customer-worker job status readback, mock daemon controls, stuck release, approval-gated enrollment request with raw-token issue blocked, workspace/storage/tool-call/evaluation/runtime-connector/Notion external-base/agent-detail data contracts, deployment storage gate, and browser snapshot smoke including an isolated Pro template dispatch that creates the six-task KB bot package, six run rows, report artifact, six Agent Plans, and five verified manifests",
+            "parallel Next.js App Router track has API proxy, Gateway task-create proxy, CLI worker dogfood proof through the Next proxy, read-only Pixel Operating Map parity, local brief prepared-action exact resume with approval/hash/replay guards, worker mock dispatch, mock-only customer-worker dispatch, mock-only async customer-worker job status readback, mock daemon controls, stuck release, approval-gated enrollment request with raw-token issue blocked, workspace/storage/tool-call/evaluation/runtime-connector/Notion external-base/agent-detail data contracts, deployment storage gate, and browser snapshot smoke including an isolated Pro template dispatch that creates the six-task KB bot package, six run rows, report artifact, six Agent Plans, and five verified manifests",
         ),
         check(
             "vite_browser_snapshot_surface_exists",
@@ -897,6 +903,7 @@ def main() -> int:
                 "python3 scripts/nextjs_agent_gateway_cli_worker_dogfood_smoke.py",
                 "python3 scripts/nextjs_worker_dispatch_once_smoke.py",
                 "python3 scripts/nextjs_pixel_office_floor_smoke.py",
+                "python3 scripts/local_brief_prepared_action_smoke.py",
                 "python3 scripts/nextjs_local_brief_smoke.py",
                 "python3 scripts/nextjs_customer_worker_dispatch_smoke.py",
                 "python3 scripts/nextjs_customer_worker_async_job_smoke.py",

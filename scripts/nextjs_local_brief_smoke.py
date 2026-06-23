@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -34,6 +36,29 @@ from nextjs_playwright_snapshot_smoke import (  # noqa: E402
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise AssertionError(message)
+
+
+def write_fake_cli(path: Path) -> None:
+    path.write_text(
+        """#!/usr/bin/env python3
+import os
+import sys
+from pathlib import Path
+log_path = Path(os.environ["AGNESFALLBACK_FAKE_LOG"])
+prompt = sys.argv[sys.argv.index("-z") + 1] if "-z" in sys.argv else ""
+with log_path.open("a", encoding="utf-8") as handle:
+    handle.write(f"called prompt_chars={len(prompt)}\\n")
+print("本地简报已生成：NEXT_LOCAL_BRIEF_OK")
+""",
+        encoding="utf-8",
+    )
+    path.chmod(path.stat().st_mode | stat.S_IXUSR)
+
+
+def cli_call_count(log_path: Path) -> int:
+    if not log_path.exists():
+        return 0
+    return len([line for line in log_path.read_text(encoding="utf-8").splitlines() if line.strip()])
 
 
 def http_json_status(method: str, url: str, payload: dict[str, Any] | None = None) -> tuple[int, Any]:
@@ -105,6 +130,20 @@ def assert_dry_run_result(label: str, payload: Any) -> tuple[str, str]:
     return str(payload["prompt_hash"]), str(payload["state_hash"])
 
 
+def assert_prepared_result(label: str, payload: Any) -> tuple[str, str, str, str]:
+    require(isinstance(payload, dict), f"{label} payload is not object: {payload}")
+    require(payload.get("provider") == "agnesfallback", f"{label} wrong provider: {payload}")
+    require(payload.get("workflow") == "local_ai_brief", f"{label} wrong workflow: {payload}")
+    require(payload.get("dry_run") is False, f"{label} should be a prepared live action: {payload}")
+    require(payload.get("requires_approval") is True, f"{label} missing approval requirement: {payload}")
+    require(payload.get("provider_call_performed") is False, f"{label} called provider before approval: {payload}")
+    require(payload.get("prepared_action_id") and payload.get("approval_id"), f"{label} missing approval ids: {payload}")
+    require(payload.get("prompt_hash") and payload.get("state_hash"), f"{label} missing hashes: {payload}")
+    require(payload.get("raw_prompt_omitted") is True, f"{label} did not omit raw prompt: {payload}")
+    require("prompt" not in payload and "JSON 状态" not in json.dumps(payload, ensure_ascii=False), f"{label} leaked prompt body: {payload}")
+    return str(payload["prepared_action_id"]), str(payload["approval_id"]), str(payload["prompt_hash"]), str(payload["state_hash"])
+
+
 def main() -> int:
     if run(["bash", "-lc", "command -v npx >/dev/null 2>&1"]).returncode != 0:
         print(json.dumps({"ok": False, "contract": CONTRACT_ID, "error": "npx is required"}, indent=2), file=sys.stderr)
@@ -119,16 +158,30 @@ def main() -> int:
 
     try:
         with tempfile.TemporaryDirectory(prefix="agentops-next-local-brief-") as tmp:
-            db_path = str(Path(tmp) / "agentops.db")
+            tmp_path = Path(tmp)
+            db_path = str(tmp_path / "agentops.db")
+            runtime_dir = tmp_path / "runtime"
+            fake_cli = tmp_path / "agnesfallback"
+            fake_cli_log = tmp_path / "agnesfallback-cli.log"
+            runtime_dir.mkdir(parents=True, exist_ok=True)
+            write_fake_cli(fake_cli)
             reset_env = os.environ.copy()
             reset_env.pop("AGENTOPS_API_KEY", None)
             reset_env["AGENTOPS_DB_PATH"] = db_path
+            reset_env["AGENTOPS_RUNTIME_DIR"] = str(runtime_dir)
+            reset_env["HERMES_ALLOW_REAL_RUN"] = "true"
+            reset_env["AGNESFALLBACK_BIN"] = str(fake_cli)
+            reset_env["AGNESFALLBACK_FAKE_LOG"] = str(fake_cli_log)
             reset = run(["python3", "server.py", "--host", "127.0.0.1", "--port", str(api_port), "--reset"], env=reset_env, timeout=30)
             require(reset.returncode == 0, f"seed reset failed: {reset.stderr or reset.stdout}")
 
             api_env = os.environ.copy()
             api_env.pop("AGENTOPS_API_KEY", None)
             api_env["AGENTOPS_DB_PATH"] = db_path
+            api_env["AGENTOPS_RUNTIME_DIR"] = str(runtime_dir)
+            api_env["HERMES_ALLOW_REAL_RUN"] = "true"
+            api_env["AGNESFALLBACK_BIN"] = str(fake_cli)
+            api_env["AGNESFALLBACK_FAKE_LOG"] = str(fake_cli_log)
             api_proc = start_process(["python3", "server.py", "--host", "127.0.0.1", "--port", str(api_port)], cwd=ROOT, env=api_env)
             processes.append(api_proc)
             wait_http(f"{api_base}/api/dashboard/metrics")
@@ -140,17 +193,57 @@ def main() -> int:
             processes.append(next_proc)
             wait_http(f"{next_base}/workspace/pixel-office")
 
-            before_block_audit = audit_count(api_base)
-            block_status, block_payload = http_json_status(
+            prepare_status, prepare_payload = http_json_status(
                 "POST",
                 f"{next_base}/api/mis/workflows/local-brief",
                 {"confirm_run": True},
             )
-            transcripts.append(block_payload)
-            require(block_status == 403, f"live local brief proxy did not fail closed: {block_status} {block_payload}")
-            require(block_payload.get("error") == "local_brief_live_not_allowed_next_parity", f"wrong local brief proxy error: {block_payload}")
-            require(block_payload.get("live_execution_performed") is False, f"live local brief proxy missing no-live proof: {block_payload}")
-            require(audit_count(api_base) == before_block_audit, "blocked live local brief proxy mutated audit ledger")
+            transcripts.append(prepare_payload)
+            require(prepare_status == 202, f"live local brief proxy should prepare approval action: {prepare_status} {prepare_payload}")
+            prepared_action_id, approval_id, prepared_prompt_hash, prepared_state_hash = assert_prepared_result("proxy prepare", prepare_payload)
+            require(cli_call_count(fake_cli_log) == 0, "fake CLI called during Next proxy prepare")
+
+            premature_status, premature_payload = http_json_status(
+                "POST",
+                f"{next_base}/api/mis/workflows/local-brief",
+                {"confirm_run": True, "prepared_action_id": prepared_action_id, "prompt_hash": prepared_prompt_hash, "state_hash": prepared_state_hash},
+            )
+            transcripts.append(premature_payload)
+            require(premature_status == 428 and premature_payload.get("error") == "approval_required", f"premature proxy resume should require approval: {premature_status} {premature_payload}")
+            require(cli_call_count(fake_cli_log) == 0, "fake CLI called during premature proxy resume")
+
+            approved_status, approved_payload = http_json_status("POST", f"{api_base}/api/approvals/{approval_id}/approve", {})
+            transcripts.append(approved_payload)
+            require(approved_status == 200 and approved_payload.get("decision") == "approved", f"approval failed: {approved_status} {approved_payload}")
+            require(cli_call_count(fake_cli_log) == 0, "fake CLI called during local brief approval")
+
+            mismatch_status, mismatch_payload = http_json_status(
+                "POST",
+                f"{next_base}/api/mis/workflows/local-brief",
+                {"confirm_run": True, "prepared_action_id": prepared_action_id, "prompt_hash": "bad-prompt-hash", "state_hash": prepared_state_hash},
+            )
+            transcripts.append(mismatch_payload)
+            require(mismatch_status == 409 and mismatch_payload.get("error") == "prepared_action_prompt_hash_mismatch", f"hash mismatch should be blocked: {mismatch_status} {mismatch_payload}")
+            require(cli_call_count(fake_cli_log) == 0, "fake CLI called during proxy hash mismatch")
+
+            resumed_status, resumed_payload = http_json_status(
+                "POST",
+                f"{next_base}/api/mis/workflows/local-brief",
+                {"confirm_run": True, "prepared_action_id": prepared_action_id, "prompt_hash": prepared_prompt_hash, "state_hash": prepared_state_hash},
+            )
+            transcripts.append(resumed_payload)
+            require(resumed_status == 201 and resumed_payload.get("ok") is True, f"proxy resume should run once: {resumed_status} {resumed_payload}")
+            require(resumed_payload.get("prepared_action_status") == "consumed", f"proxy resume did not consume action: {resumed_payload}")
+            require(cli_call_count(fake_cli_log) == 1, "fake CLI should be called exactly once after proxy resume")
+
+            replay_status, replay_payload = http_json_status(
+                "POST",
+                f"{next_base}/api/mis/workflows/local-brief",
+                {"confirm_run": True, "prepared_action_id": prepared_action_id, "prompt_hash": prepared_prompt_hash, "state_hash": prepared_state_hash},
+            )
+            transcripts.append(replay_payload)
+            require(replay_status == 409 and replay_payload.get("error") == "prepared_action_already_consumed", f"proxy replay should be blocked: {replay_status} {replay_payload}")
+            require(cli_call_count(fake_cli_log) == 1, "fake CLI called during proxy replay")
 
             dry_status, dry_payload = http_json_status(
                 "POST",
@@ -161,17 +254,44 @@ def main() -> int:
             require(dry_status == 201, f"dry-run local brief proxy returned {dry_status}: {dry_payload}")
             proxy_prompt_hash, proxy_state_hash = assert_dry_run_result("proxy dry-run", dry_payload)
 
-            form_block_before_audit = audit_count(api_base)
-            form_block_status, form_block_location = post_form_no_redirect(
+            form_prepare_status, form_prepare_location = post_form_no_redirect(
                 f"{next_base}/workspace/pixel-office/local-brief",
                 {"confirm_run": "true"},
             )
-            transcripts.append(form_block_location)
-            require(form_block_status == 303, f"live local brief form did not redirect: {form_block_status} {form_block_location}")
-            form_block_query = urllib.parse.parse_qs(urllib.parse.urlparse(form_block_location).query)
-            require(form_block_query.get("local_brief_status") == ["blocked"], f"live local brief form did not report blocked: {form_block_location}")
-            require(form_block_query.get("local_brief_error") == ["local_brief_live_not_allowed_next_parity"], f"live local brief form wrong error: {form_block_location}")
-            require(audit_count(api_base) == form_block_before_audit, "blocked live local brief form mutated audit ledger")
+            transcripts.append(form_prepare_location)
+            require(form_prepare_status == 303, f"live local brief form did not redirect after prepare: {form_prepare_status} {form_prepare_location}")
+            form_prepare_query = urllib.parse.parse_qs(urllib.parse.urlparse(form_prepare_location).query)
+            require(form_prepare_query.get("local_brief_status") == ["waiting_approval"], f"live local brief form did not report waiting approval: {form_prepare_location}")
+            form_prepared_action_id = (form_prepare_query.get("local_brief_prepared_action_id") or [""])[0]
+            form_approval_id = (form_prepare_query.get("local_brief_approval_id") or [""])[0]
+            form_prompt_hash = (form_prepare_query.get("local_brief_prompt_hash") or [""])[0]
+            form_state_hash = (form_prepare_query.get("local_brief_state_hash") or [""])[0]
+            require(form_prepared_action_id and form_approval_id and form_prompt_hash and form_state_hash, f"form prepare missing ids/hashes: {form_prepare_location}")
+            require(cli_call_count(fake_cli_log) == 1, "fake CLI called during form prepare")
+
+            prepared_page_status, prepared_page_html = http_text_status(absolute_location(next_base, form_prepare_location))
+            require(prepared_page_status == 200, f"prepared feedback page failed: {prepared_page_status}")
+            require("Local brief prepared action waiting approval" in prepared_page_html and "Resume approved brief" in prepared_page_html, "prepared feedback page missing approval/resume controls")
+
+            form_approved_status, form_approved_payload = http_json_status("POST", f"{api_base}/api/approvals/{form_approval_id}/approve", {})
+            transcripts.append(form_approved_payload)
+            require(form_approved_status == 200 and form_approved_payload.get("decision") == "approved", f"form approval failed: {form_approved_status} {form_approved_payload}")
+
+            form_resume_status, form_resume_location = post_form_no_redirect(
+                f"{next_base}/workspace/pixel-office/local-brief",
+                {
+                    "confirm_run": "true",
+                    "prepared_action_id": form_prepared_action_id,
+                    "prompt_hash": form_prompt_hash,
+                    "state_hash": form_state_hash,
+                },
+            )
+            transcripts.append(form_resume_location)
+            require(form_resume_status == 303, f"form resume did not redirect: {form_resume_status} {form_resume_location}")
+            form_resume_query = urllib.parse.parse_qs(urllib.parse.urlparse(form_resume_location).query)
+            require(form_resume_query.get("local_brief_status") == ["live_run"], f"form resume did not report live run: {form_resume_location}")
+            require((form_resume_query.get("local_brief_prepared_status") or [""])[0] == "consumed", f"form resume did not consume prepared action: {form_resume_location}")
+            require(cli_call_count(fake_cli_log) == 2, "fake CLI should be called once for proxy resume and once for form resume")
 
             form_status, form_location = post_form_no_redirect(
                 f"{next_base}/workspace/pixel-office/local-brief",
@@ -193,7 +313,7 @@ def main() -> int:
                 "Local brief dry-run recorded",
                 form_prompt_hash[:16],
                 form_state_hash[:16],
-                "live brief blocked",
+                "live brief approval-gated",
             ]
             missing = [item for item in expected if item not in page_html]
             require(not missing, f"Pixel Office local brief page missed {missing}")
@@ -209,12 +329,16 @@ def main() -> int:
                 "next_base": next_base,
                 "proxy_route": "/api/mis/workflows/local-brief",
                 "form_route": "/workspace/pixel-office/local-brief",
-                "blocked_error": "local_brief_live_not_allowed_next_parity",
+                "approval_gate": "prepared_action_exact_resume",
                 "proxy_prompt_hash": proxy_prompt_hash,
                 "proxy_state_hash": proxy_state_hash,
+                "prepared_action_id": prepared_action_id,
+                "approval_id": approval_id,
+                "form_prepared_action_id": form_prepared_action_id,
                 "form_prompt_hash": form_prompt_hash,
                 "form_state_hash": form_state_hash,
-                "live_execution_performed": False,
+                "live_execution_performed": True,
+                "provider_call_count": cli_call_count(fake_cli_log),
                 "secret_leaked": False,
             }, ensure_ascii=False, indent=2, sort_keys=True))
             return 0

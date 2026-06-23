@@ -53,11 +53,11 @@ route retirement:
 ## Current Important Gaps
 
 - Pixel Office is only partially represented in Next.js. Next currently proves
-  a read-only Pixel Operating Map, local-brief dry-run controls with live
-  confirmation blocked, template entitlement dispatch, mock-only customer-worker
-  dispatch, and mock-only async customer-worker job status readback, but Vite
-  and CLI/prepared-action gates remain canonical for live local-brief execution,
-  richer owner dispatch workflow, and final visual route retirement evidence.
+  a read-only Pixel Operating Map, local-brief prepared-action exact resume with
+  approval before live Agnesfallback execution, template entitlement dispatch,
+  mock-only customer-worker dispatch, and mock-only async customer-worker job
+  status readback, but Vite remains canonical for the richer owner dispatch
+  workflow and final visual route retirement evidence.
 - Worker console is only partially represented in Next.js. Next is read-only for
   production safety and readiness; Vite remains canonical for local worker
   start/stop/restart, task release, remote enrollment mutation, and detailed
@@ -140,6 +140,7 @@ python3 scripts/nextjs_agent_gateway_task_proxy_smoke.py
 python3 scripts/nextjs_agent_gateway_cli_worker_dogfood_smoke.py
 python3 scripts/nextjs_worker_dispatch_once_smoke.py
 python3 scripts/nextjs_pixel_office_floor_smoke.py
+python3 scripts/local_brief_prepared_action_smoke.py
 python3 scripts/nextjs_local_brief_smoke.py
 python3 scripts/nextjs_customer_worker_dispatch_smoke.py
 python3 scripts/nextjs_customer_worker_async_job_smoke.py
@@ -188,10 +189,18 @@ and runs without token leakage.
 `python3 scripts/nextjs_local_brief_smoke.py` (`nextjs_local_brief_v1`) starts
 isolated MIS API and Next.js servers, proves the Next
 `/api/mis/workflows/local-brief` proxy allows dry-run local brief plans with
-prompt/state hashes and no prompt body, blocks `confirm_run:true` before
-upstream mutation with `local_brief_live_not_allowed_next_parity`, and proves
-the `/workspace/pixel-office/local-brief` form fallback reports dry-run and
-blocked states without token leakage.
+prompt/state hashes and no prompt body, prepares approval-bound live actions
+without calling Agnesfallback, requires approval before resume, blocks hash
+mismatch and replay, consumes the prepared action after one live fake-provider
+call, and proves the `/workspace/pixel-office/local-brief` form fallback
+reports dry-run, waiting-approval, and live-run states without token leakage.
+
+`python3 scripts/local_brief_prepared_action_smoke.py`
+(`local_brief_prepared_action_v1`) locks the backend contract directly:
+confirmed local brief creates `prepared_actions`, `approvals`, run/tool evidence
+and a structured state snapshot under `AGENTOPS_RUNTIME_DIR`; approval alone
+does not call the provider; exact resume calls Agnesfallback once, stores only
+summary/hash evidence, and replay is blocked.
 
 `python3 scripts/nextjs_customer_worker_dispatch_smoke.py`
 (`nextjs_customer_worker_dispatch_v1`) starts isolated MIS API and Next.js

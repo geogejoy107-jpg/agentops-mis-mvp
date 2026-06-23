@@ -35,6 +35,11 @@ type PixelOfficeFeedback = {
   localBriefAgentsTotal?: string;
   localBriefPendingApprovals?: string;
   localBriefRecentRealRuns?: string;
+  localBriefPreparedActionId?: string;
+  localBriefApprovalId?: string;
+  localBriefPreparedStatus?: string;
+  localBriefRunId?: string;
+  localBriefArtifactId?: string;
 };
 
 function countWhere<T>(rows: T[], predicate: (row: T) => boolean) {
@@ -168,12 +173,17 @@ export function PixelOfficeParityPage({
           Local brief dry-run recorded: prompt {feedback.localBriefPromptHash?.slice(0, 16) || "hash omitted"} · state {feedback.localBriefStateHash?.slice(0, 16) || "hash omitted"}
         </div>
       ) : null}
-      {feedback?.localBriefStatus === "blocked" ? (
+      {feedback?.localBriefStatus === "waiting_approval" ? (
         <div className="banner warn">
-          <strong>Local brief live run blocked:</strong> {feedback.localBriefError || "local_brief_live_not_allowed_next_parity"}
+          <strong>Local brief prepared action waiting approval:</strong> {feedback.localBriefApprovalId || "approval id omitted"}
         </div>
       ) : null}
-      {feedback?.localBriefStatus === "failed" ? <div className="banner error">Local brief dry-run failed: {feedback.localBriefError || "unknown"}</div> : null}
+      {feedback?.localBriefStatus === "live_run" ? (
+        <div className="banner success">
+          Local brief live run recorded: run {feedback.localBriefRunId || "run id omitted"} · prepared action {feedback.localBriefPreparedStatus || "consumed"}
+        </div>
+      ) : null}
+      {feedback?.localBriefStatus === "failed" ? <div className="banner error">Local brief action failed: {feedback.localBriefError || "unknown"}</div> : null}
 
       <section className="metrics">
         <div className="metric compactMetric"><Map className="metricIcon" size={18} /><span>mapped rooms</span><strong>{zones.length}</strong></div>
@@ -230,12 +240,12 @@ export function PixelOfficeParityPage({
       <section className="panel wide">
         <div className="panelHeader">
           <h2><FileText size={14} /> Local brief controls</h2>
-          <span>dry-run only</span>
+          <span>prepared-action gated</span>
         </div>
         <div className="proofStrip">
           <span>workflow local_ai_brief</span>
           <span>dry-run allowed</span>
-          <span>live brief blocked</span>
+          <span>live brief approval-gated</span>
           <span>prompt body omitted</span>
           <span>token omitted true</span>
         </div>
@@ -250,20 +260,32 @@ export function PixelOfficeParityPage({
           </div>
           <div>
             <p className="subtle">
-              Confirmed local brief execution stays outside the Next parity path until the live prepared-action gate is explicitly wired.
+              Confirmed local brief execution prepares an approval-bound action first; Agnesfallback is not called until an approved exact resume.
             </p>
             <form className="buttonRow" method="post" action="/workspace/pixel-office/local-brief">
               <input type="hidden" name="confirm_run" value="true" />
-              <button className="miniButton bad" type="submit"><ShieldCheck size={13} /> Check live gate</button>
+              <button className="miniButton bad" type="submit"><ShieldCheck size={13} /> Prepare live brief</button>
             </form>
+            {feedback?.localBriefPreparedActionId ? (
+              <form className="buttonRow" method="post" action="/workspace/pixel-office/local-brief">
+                <input type="hidden" name="confirm_run" value="true" />
+                <input type="hidden" name="prepared_action_id" value={feedback.localBriefPreparedActionId} />
+                <input type="hidden" name="prompt_hash" value={feedback.localBriefPromptHash || ""} />
+                <input type="hidden" name="state_hash" value={feedback.localBriefStateHash || ""} />
+                <button className="miniButton good" type="submit"><Activity size={13} /> Resume approved brief</button>
+              </form>
+            ) : null}
           </div>
         </div>
         <div className="proofStrip">
           <span>prompt {feedback?.localBriefPromptHash?.slice(0, 16) || "none"}</span>
           <span>state {feedback?.localBriefStateHash?.slice(0, 16) || "none"}</span>
+          <span>prepared {feedback?.localBriefPreparedActionId?.slice(0, 18) || "none"}</span>
+          <span>approval {feedback?.localBriefApprovalId?.slice(0, 18) || "none"}</span>
           <span>agents {feedback?.localBriefAgentsTotal || metrics.agents_total || agents.length}</span>
           <span>pending approvals {feedback?.localBriefPendingApprovals || metrics.pending_approvals || 0}</span>
-          <span>recent real runs {feedback?.localBriefRecentRealRuns || "0"}</span>
+          <span>run {feedback?.localBriefRunId?.slice(0, 18) || "none"}</span>
+          <span>artifact {feedback?.localBriefArtifactId?.slice(0, 18) || "none"}</span>
         </div>
       </section>
 

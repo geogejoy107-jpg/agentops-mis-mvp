@@ -24,6 +24,7 @@ python3 scripts/nextjs_agent_gateway_task_proxy_smoke.py
 python3 scripts/nextjs_agent_gateway_cli_worker_dogfood_smoke.py
 python3 scripts/nextjs_worker_dispatch_once_smoke.py
 python3 scripts/nextjs_pixel_office_floor_smoke.py
+python3 scripts/local_brief_prepared_action_smoke.py
 python3 scripts/nextjs_local_brief_smoke.py
 python3 scripts/nextjs_customer_worker_dispatch_smoke.py
 python3 scripts/nextjs_customer_worker_async_job_smoke.py
@@ -85,9 +86,9 @@ memory review actions through the Next.js UI, verifies the state change through
 - Local brief contract: the Next Pixel Office route can dry-run
   `POST /api/mis/workflows/local-brief` through the MIS proxy and the
   `/workspace/pixel-office/local-brief` form fallback. It records prompt/state
-  hashes and structured preview only, blocks `confirm_run:true` with
-  `local_brief_live_not_allowed_next_parity`, and does not expose prompt bodies
-  or token-like material.
+  hashes and structured preview only, prepares approval-bound live actions
+  without calling Agnesfallback, requires approval before resume, blocks hash
+  mismatch/replay, and does not expose prompt bodies or token-like material.
 - Customer-worker dispatch contract: the Next dispatch page can run one safe
   mock `POST /api/mis/workflows/customer-worker-task` through the MIS proxy and
   the `/workspace/dispatch/customer-worker` form fallback, read task/run/artifact
@@ -124,7 +125,7 @@ memory review actions through the Next.js UI, verifies the state change through
 - Interaction contract: approval review and memory review write through the Next.js UI, with client fetch plus Next form fallback routes, then refresh from the MIS API proxy
 - Ledger detail contract: task/run detail routes are read-only, load through the MIS API proxy, and expose linked evidence rows plus token omission state
 - Customer delivery contract: reports and customer project report pages load from the MIS API, surface Agent Plan / plan-evidence status, link to a read-only evidence drilldown, and report archive writes through a Next form fallback route before refreshing the report artifact evidence
-- Dispatch contract: customer task templates and commercial entitlement gates load from the MIS API; template execution uses a Next form fallback and must surface Free Local `report_templates` blocking without creating a project, then create a ledger-backed project/report artifact when an isolated `pro_workspace` entitlement fixture is active. The dispatch page also supports mock-only customer-worker task execution and mock-only async job submission/status readback with delivery approval and plan-evidence proof. Pixel Office map parity and local-brief dry-run controls live at `/workspace/pixel-office`; live runtime execution remains canonical in Vite/CLI prepared-action gates until later Gate 4 slices.
+- Dispatch contract: customer task templates and commercial entitlement gates load from the MIS API; template execution uses a Next form fallback and must surface Free Local `report_templates` blocking without creating a project, then create a ledger-backed project/report artifact when an isolated `pro_workspace` entitlement fixture is active. The dispatch page also supports mock-only customer-worker task execution and mock-only async job submission/status readback with delivery approval and plan-evidence proof. Pixel Office map parity and local-brief prepared-action controls live at `/workspace/pixel-office`; richer owner workflow remains canonical in Vite until later Gate 4 slices.
 - Canonical predecessors:
   - `ui/start-building-app/src/app/components/pages/WorkspaceHome.tsx`
   - `ui/start-building-app/src/app/components/pages/AIEmployees.tsx`

@@ -58,6 +58,11 @@ export default async function PixelOfficePage({ searchParams }: PageProps) {
         localBriefAgentsTotal: one(params.local_brief_agents_total),
         localBriefPendingApprovals: one(params.local_brief_pending_approvals),
         localBriefRecentRealRuns: one(params.local_brief_recent_real_runs),
+        localBriefPreparedActionId: one(params.local_brief_prepared_action_id),
+        localBriefApprovalId: one(params.local_brief_approval_id),
+        localBriefPreparedStatus: one(params.local_brief_prepared_status),
+        localBriefRunId: one(params.local_brief_run_id),
+        localBriefArtifactId: one(params.local_brief_artifact_id),
       }}
     />
   );

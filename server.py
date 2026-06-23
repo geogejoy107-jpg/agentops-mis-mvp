@@ -7436,8 +7436,9 @@ def agnesfallback_chat_completion_probe(conn, body: dict) -> tuple[dict, int]:
     return agnesfallback_probe(conn, body, "api")
 
 
-def ensure_local_ai_brief_agent_task(conn):
+def ensure_local_ai_brief_agent_task(conn, body: dict | None = None, task_status: str = "planned"):
     now = now_iso()
+    body = body or {}
     agent_id = "agt_local_ai_brief"
     upsert_agent(conn, {
         "agent_id": agent_id,
@@ -7455,15 +7456,16 @@ def ensure_local_ai_brief_agent_task(conn):
         "created_at": now,
         "updated_at": now,
     }, "local-ai-workflow")
-    task_id = "tsk_local_ai_daily_brief"
+    task_id = body.get("task_id") or "tsk_local_ai_daily_brief"
     upsert_task(conn, {
         "task_id": task_id,
+        "workspace_id": normalize_workspace_id(body.get("workspace_id") or "local-demo"),
         "title": "Generate local AgentOps MIS work brief",
         "description": "Generate a useful local project/ops brief from structured MIS counts and recent sanitized ledger summaries.",
-        "requester_id": "usr_founder",
+        "requester_id": body.get("requester_id") or "usr_founder",
         "owner_agent_id": agent_id,
         "collaborator_agent_ids": json.dumps([], ensure_ascii=False),
-        "status": "planned",
+        "status": task_status,
         "priority": "high",
         "due_date": None,
         "acceptance_criteria": "Brief identifies real capabilities, demo/mock boundaries, next actions, and risks; output is recorded in the ledger.",
@@ -7531,7 +7533,7 @@ def local_ai_brief_state(conn) -> dict:
 
 
 def build_local_ai_brief_prompt(state: dict) -> str:
-    payload = json.dumps(state, ensure_ascii=False, indent=2, default=str)
+    payload = json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True, default=str)
     return (
         "你是 AgentOps MIS 的本地运营助理。请只基于下面 JSON 结构化状态，生成一份中文工作简报。"
         "不要编造外部事实，不要提到没有证据的能力。控制在 8 条以内，要求有真实用途。\n\n"
@@ -7545,13 +7547,337 @@ def build_local_ai_brief_prompt(state: dict) -> str:
     )
 
 
-def run_local_ai_brief(conn, body: dict) -> dict:
+def local_ai_brief_args(prompt_hash: str, state_hash: str, snapshot_hash: str, body: dict) -> dict:
+    return {
+        "workflow_type": "local_ai_brief",
+        "prompt_hash": prompt_hash,
+        "state_hash": state_hash,
+        "snapshot_hash": snapshot_hash,
+        "source": redact_text(body.get("source") or "local_ai_brief", 120),
+        "raw_prompt_omitted": True,
+        "raw_state_snapshot_is_structured": True,
+    }
+
+
+def write_local_ai_brief_state_snapshot(prepared_action_id: str, state: dict) -> tuple[str, str]:
+    content = json.dumps(state, ensure_ascii=False, sort_keys=True, indent=2, default=str)
+    return write_prepared_action_snapshot(prepared_action_id, content)
+
+
+def read_local_ai_brief_state_snapshot(action) -> tuple[dict | None, str | None]:
+    content, content_hash = read_prepared_action_snapshot(action["snapshot_ref"], action["snapshot_hash"])
+    if not content:
+        return None, content_hash
+    try:
+        state = json.loads(content)
+    except json.JSONDecodeError:
+        return None, content_hash
+    return state, content_hash
+
+
+def prepare_local_ai_brief(conn, body: dict, agnes: dict, state: dict, prompt_hash: str, state_hash: str) -> tuple[dict, int]:
+    now = now_iso()
+    agent_id, task_id = ensure_local_ai_brief_agent_task(conn, body, "waiting_approval")
+    run_id = body.get("run_id") or stable_id("run_local_ai_brief_prepared", task_id, prompt_hash[:16], state_hash[:16])
+    tool_call_id = body.get("tool_call_id") or stable_id("tc_local_ai_brief_prepared", run_id)
+    approval_id = body.get("approval_id") or stable_id("ap_local_ai_brief_prepared", run_id)
+    prepared_action_id = body.get("prepared_action_id") or stable_id("pact_local_ai_brief", run_id, prompt_hash[:16])
+    snapshot_ref, snapshot_hash = write_local_ai_brief_state_snapshot(prepared_action_id, state)
+    args = local_ai_brief_args(prompt_hash, state_hash, snapshot_hash, body)
+    workspace_id = normalize_workspace_id(body.get("workspace_id") or "local-demo")
+    repo_upsert_run(conn, {
+        "run_id": run_id,
+        "workspace_id": workspace_id,
+        "task_id": task_id,
+        "agent_id": agent_id,
+        "runtime_type": "hermes",
+        "status": "waiting_approval",
+        "started_at": now,
+        "ended_at": None,
+        "duration_ms": None,
+        "input_summary": f"Prepare local AI brief prompt_hash={prompt_hash[:16]} state_hash={state_hash[:16]}",
+        "output_summary": None,
+        "model_provider": "agnesfallback",
+        "model_name": "agnesfallback",
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "reasoning_tokens": 0,
+        "cost_usd": 0.0,
+        "error_type": None,
+        "error_message": None,
+        "trace_id": body.get("trace_id"),
+        "parent_run_id": body.get("parent_run_id"),
+        "delegation_id": "agnesfallback:local-ai-brief",
+        "approval_required": 1,
+        "created_at": now,
+    })
+    repo_upsert_tool_call(conn, {
+        "tool_call_id": tool_call_id,
+        "run_id": run_id,
+        "agent_id": agent_id,
+        "tool_name": "agnesfallback.local_ai_brief",
+        "tool_version": "v1",
+        "tool_category": "custom",
+        "normalized_args_json": json.dumps(args, ensure_ascii=False, sort_keys=True),
+        "target_resource": "agnesfallback://cli/local-ai-brief",
+        "risk_level": "high",
+        "status": "waiting_approval",
+        "result_summary": "Prepared local AI brief is waiting for explicit approval.",
+        "side_effect_id": None,
+        "started_at": now,
+        "ended_at": None,
+        "created_at": now,
+    })
+    repo_upsert_approval(conn, {
+        "approval_id": approval_id,
+        "task_id": task_id,
+        "run_id": run_id,
+        "tool_call_id": tool_call_id,
+        "requested_by_agent_id": agent_id,
+        "approver_user_id": body.get("approver_user_id") or "usr_founder",
+        "decision": "pending",
+        "reason": f"Approve exact-resume local AI brief prompt_hash={prompt_hash[:16]} state_hash={state_hash[:16]}.",
+        "expires_at": (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=1)).isoformat(),
+        "created_at": now,
+        "decided_at": None,
+    })
+    repo_upsert_prepared_action(conn, {
+        "prepared_action_id": prepared_action_id,
+        "workspace_id": workspace_id,
+        "task_id": task_id,
+        "run_id": run_id,
+        "tool_call_id": tool_call_id,
+        "approval_id": approval_id,
+        "requested_by_agent_id": agent_id,
+        "action_type": "workflow.local_ai_brief",
+        "provider": "agnesfallback",
+        "target_resource": "agnesfallback://cli/local-ai-brief",
+        "normalized_args_json": json.dumps(args, ensure_ascii=False, sort_keys=True),
+        "args_hash": None,
+        "snapshot_ref": snapshot_ref,
+        "snapshot_hash": snapshot_hash,
+        "status": "waiting_approval",
+        "result_json": "{}",
+        "created_at": now,
+        "updated_at": now,
+        "approved_at": None,
+        "consumed_at": None,
+    })
+    runtime_event(conn, "rtc_agnesfallback_cli", "local_ai_brief.prepared", "waiting_approval", run_id=run_id, task_id=task_id, agent_id=agent_id, prompt_hash=prompt_hash, input_summary=f"Local AI brief prepared state_hash={state_hash[:16]}", raw_payload_hash=snapshot_hash)
+    audit(conn, "system", "local-ai-workflow", "workflow.local_ai_brief.prepared_action_created", "prepared_actions", prepared_action_id, None, {"status": "waiting_approval"}, {"approval_id": approval_id, "prompt_hash": prompt_hash, "state_hash": state_hash, "snapshot_hash": snapshot_hash, "provider_call_performed": False, "raw_prompt_omitted": True})
+    conn.commit()
+    return {
+        "provider": "agnesfallback",
+        "workflow": "local_ai_brief",
+        "dry_run": False,
+        "ok": False,
+        "requires_approval": True,
+        "provider_call_performed": False,
+        "prepared_action_id": prepared_action_id,
+        "approval_id": approval_id,
+        "task_id": task_id,
+        "run_id": run_id,
+        "tool_call_id": tool_call_id,
+        "prompt_hash": prompt_hash,
+        "state_hash": state_hash,
+        "snapshot_hash": snapshot_hash,
+        "state_preview": {
+            "agents_total": state["metrics"]["agents_total"],
+            "pending_approvals": state["metrics"]["pending_approvals"],
+            "openclaw_cron_runs": state["metrics"]["openclaw_import"]["cron_runs"],
+            "recent_real_runs": len(state["latest_real_runtime_runs"]),
+        },
+        "token_omitted": True,
+        "raw_prompt_omitted": True,
+        "raw_state_snapshot_is_structured": True,
+    }, 202
+
+
+def resume_local_ai_brief(conn, body: dict, cfg: dict, agnes: dict) -> tuple[dict, int]:
+    prepared_action_id = body.get("prepared_action_id")
+    action = conn.execute("SELECT * FROM prepared_actions WHERE prepared_action_id=?", (prepared_action_id,)).fetchone()
+    if not action or action["provider"] != "agnesfallback" or action["action_type"] != "workflow.local_ai_brief":
+        return {"provider": "agnesfallback", "workflow": "local_ai_brief", "ok": False, "error": "prepared_action_not_found", "prepared_action_id": prepared_action_id, "token_omitted": True}, 404
+    if action["status"] == "consumed":
+        return {"provider": "agnesfallback", "workflow": "local_ai_brief", "ok": False, "error": "prepared_action_already_consumed", "prepared_action_id": prepared_action_id, "token_omitted": True}, 409
+    if action["status"] in {"rejected", "expired", "canceled"}:
+        return {"provider": "agnesfallback", "workflow": "local_ai_brief", "ok": False, "error": f"prepared_action_{action['status']}", "prepared_action_id": prepared_action_id, "token_omitted": True}, 409
+    if not approval_is_approved(conn, action["approval_id"]):
+        return {"provider": "agnesfallback", "workflow": "local_ai_brief", "ok": False, "error": "approval_required", "prepared_action_id": prepared_action_id, "approval_id": action["approval_id"], "token_omitted": True}, 428
+    state, snapshot_hash = read_local_ai_brief_state_snapshot(action)
+    if not state:
+        return {
+            "provider": "agnesfallback",
+            "workflow": "local_ai_brief",
+            "ok": False,
+            "error": "prepared_action_snapshot_missing",
+            "prepared_action_id": prepared_action_id,
+            "expected_snapshot_hash": action["snapshot_hash"],
+            "current_snapshot_hash": snapshot_hash,
+            "token_omitted": True,
+            "raw_prompt_omitted": True,
+        }, 409
+    prompt = build_local_ai_brief_prompt(state)
+    prompt_hash = stable_hash(prompt)
+    state_hash = stable_hash(state)
+    try:
+        stored_args = json.loads(action["normalized_args_json"] or "{}")
+    except json.JSONDecodeError:
+        stored_args = {}
+    if action["snapshot_hash"] != snapshot_hash or stored_args.get("prompt_hash") != prompt_hash or stored_args.get("state_hash") != state_hash:
+        return {
+            "provider": "agnesfallback",
+            "workflow": "local_ai_brief",
+            "ok": False,
+            "error": "prepared_action_snapshot_mismatch",
+            "prepared_action_id": prepared_action_id,
+            "expected_prompt_hash": stored_args.get("prompt_hash"),
+            "current_prompt_hash": prompt_hash,
+            "expected_state_hash": stored_args.get("state_hash"),
+            "current_state_hash": state_hash,
+            "token_omitted": True,
+            "raw_prompt_omitted": True,
+        }, 409
+    supplied_prompt_hash = body.get("prompt_hash")
+    if supplied_prompt_hash and supplied_prompt_hash != prompt_hash:
+        return {
+            "provider": "agnesfallback",
+            "workflow": "local_ai_brief",
+            "ok": False,
+            "error": "prepared_action_prompt_hash_mismatch",
+            "prepared_action_id": prepared_action_id,
+            "expected_prompt_hash": prompt_hash,
+            "current_prompt_hash": supplied_prompt_hash,
+            "token_omitted": True,
+            "raw_prompt_omitted": True,
+        }, 409
+    supplied_state_hash = body.get("state_hash")
+    if supplied_state_hash and supplied_state_hash != state_hash:
+        return {
+            "provider": "agnesfallback",
+            "workflow": "local_ai_brief",
+            "ok": False,
+            "error": "prepared_action_state_hash_mismatch",
+            "prepared_action_id": prepared_action_id,
+            "expected_state_hash": state_hash,
+            "current_state_hash": supplied_state_hash,
+            "token_omitted": True,
+            "raw_prompt_omitted": True,
+        }, 409
+    if prepared_action_args_hash(json.dumps(stored_args, ensure_ascii=False, sort_keys=True)) != action["args_hash"]:
+        return {"provider": "agnesfallback", "workflow": "local_ai_brief", "ok": False, "error": "prepared_action_args_mismatch", "prepared_action_id": prepared_action_id, "token_omitted": True}, 409
+    if not cfg["allow_real_run"]:
+        return {
+            "provider": "agnesfallback",
+            "workflow": "local_ai_brief",
+            "ok": False,
+            "error": "local_ai_brief_live_run_not_configured",
+            "prepared_action_id": prepared_action_id,
+            "requires": {"HERMES_ALLOW_REAL_RUN": True, "confirm_run": True},
+            "token_omitted": True,
+            "raw_prompt_omitted": True,
+        }, 409
+    if action["status"] != "approved":
+        _before_action, action, _outcome = repo_update_prepared_action_status(conn, prepared_action_id, "approved")
+    started_iso = now_iso()
+    started = dt.datetime.now(dt.timezone.utc)
+    ok = False
+    visible = None
+    error = None
+    try:
+        proc = subprocess.run(agnesfallback_cli_command(agnes, prompt), capture_output=True, text=True, timeout=180, check=False)
+        visible = redact_text((proc.stdout or "").strip(), 1600)
+        ok = proc.returncode == 0 and bool(visible)
+        if not ok:
+            error = redact_text(proc.stderr or visible or f"exit={proc.returncode}", 300)
+    except Exception as exc:
+        error = redact_text(str(exc), 300)
+
+    duration = int((dt.datetime.now(dt.timezone.utc) - started).total_seconds() * 1000)
+    row = {
+        "run_id": action["run_id"],
+        "workspace_id": action["workspace_id"],
+        "task_id": action["task_id"],
+        "agent_id": action["requested_by_agent_id"],
+        "runtime_type": "hermes",
+        "status": "completed" if ok else "failed",
+        "started_at": started_iso,
+        "ended_at": now_iso(),
+        "duration_ms": duration,
+        "input_summary": f"Local MIS structured-state brief prompt_hash={prompt_hash[:16]} state_hash={state_hash[:16]}",
+        "output_summary": visible if ok else "Local AI brief generation failed.",
+        "model_provider": "agnesfallback",
+        "model_name": "agnesfallback",
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "reasoning_tokens": 0,
+        "cost_usd": 0.0,
+        "error_type": None if ok else "LocalAiBriefFailed",
+        "error_message": error,
+        "trace_id": body.get("trace_id"),
+        "parent_run_id": body.get("parent_run_id"),
+        "delegation_id": "agnesfallback:local-ai-brief",
+        "approval_required": 0 if ok else 1,
+        "created_at": started_iso,
+    }
+    repo_upsert_run(conn, row)
+    repo_update_tool_call_status(conn, action["tool_call_id"], "completed" if ok else "failed")
+    conn.execute(
+        "UPDATE tool_calls SET result_summary=?, side_effect_id=?, ended_at=? WHERE tool_call_id=?",
+        (row["output_summary"], f"local-ai-brief:{prompt_hash[:16]}", row["ended_at"], action["tool_call_id"]),
+    )
+    upsert_evaluation(conn, quality_gate_for_run(row), "local-ai-workflow")
+    runtime_event(conn, "rtc_agnesfallback_cli", "local_ai_brief.resume", "completed" if ok else "failed", run_id=action["run_id"], task_id=action["task_id"], agent_id=action["requested_by_agent_id"], model_name="agnesfallback", latency_ms=duration, prompt_hash=prompt_hash, input_summary=f"Structured MIS state_hash={state_hash[:16]}", output_summary=visible, error_message=error, raw_payload_hash=stable_hash({"visible": visible, "error": error, "state_hash": state_hash}))
+    artifact_id = stable_id("art_local_ai_brief", action["run_id"])
+    if ok:
+        repo_upsert_artifact(conn, {
+            "artifact_id": artifact_id,
+            "task_id": action["task_id"],
+            "run_id": action["run_id"],
+            "artifact_type": "report",
+            "title": "Local AI Work Brief",
+            "uri": f"run://{action['run_id']}",
+            "summary": visible,
+            "created_at": now_iso(),
+        })
+        _before_action, after_action, _action_outcome = repo_update_prepared_action_status(conn, prepared_action_id, "consumed", result_json={"artifact_id": artifact_id, "output_hash": stable_hash(visible or ""), "raw_response_omitted": True})
+    else:
+        after_action = action
+    conn.execute("UPDATE tasks SET status=?, updated_at=? WHERE task_id=?", ("completed" if ok else "blocked", now_iso(), action["task_id"]))
+    audit(conn, "system", "local-ai-workflow", "workflow.local_ai_brief.resume", "runs", action["run_id"], None, {"status": row["status"], "artifact_id": artifact_id if ok else None}, {"prompt_hash": prompt_hash, "state_hash": state_hash, "prepared_action_id": prepared_action_id, "provider_call_performed": True, "raw_prompt_omitted": True, "raw_response_omitted": True})
+    conn.commit()
+    return {
+        "provider": "agnesfallback",
+        "workflow": "local_ai_brief",
+        "dry_run": False,
+        "ok": ok,
+        "prepared_action_id": prepared_action_id,
+        "prepared_action_status": after_action["status"] if after_action else action["status"],
+        "run_id": action["run_id"],
+        "task_id": action["task_id"],
+        "tool_call_id": action["tool_call_id"],
+        "artifact_id": artifact_id if ok else None,
+        "duration_ms": duration,
+        "prompt_hash": prompt_hash,
+        "state_hash": state_hash,
+        "output_summary": row["output_summary"],
+        "error": error,
+        "provider_call_performed": True,
+        "token_omitted": True,
+        "raw_prompt_omitted": True,
+        "raw_response_omitted": True,
+    }, 201 if ok else 200
+
+
+def run_local_ai_brief(conn, body: dict) -> tuple[dict, int]:
     cfg = hermes_runtime_config()
     agnes = agnesfallback_config()
     connector_id = "rtc_agnesfallback_cli"
     confirm = bool(body.get("confirm_run"))
     refresh_runtime_connectors(conn)
-    agent_id, task_id = ensure_local_ai_brief_agent_task(conn)
+    if body.get("prepared_action_id"):
+        return resume_local_ai_brief(conn, body, cfg, agnes)
+    agent_id, task_id = ensure_local_ai_brief_agent_task(conn, body)
     state = local_ai_brief_state(conn)
     prompt = build_local_ai_brief_prompt(state)
     prompt_hash = stable_hash(prompt)
@@ -7576,68 +7902,8 @@ def run_local_ai_brief(conn, body: dict) -> dict:
         runtime_event(conn, connector_id, "local_ai_brief_dry_run", "planned", task_id=task_id, agent_id=agent_id, prompt_hash=prompt_hash, input_summary=f"Local AI brief dry-run state_hash={state_hash[:16]}")
         audit(conn, "system", "local-ai-workflow", "workflow.local_ai_brief.dry_run", "tasks", task_id, None, plan, {"confirm_run": confirm, "state_hash": state_hash})
         conn.commit()
-        return plan
-
-    started_iso = now_iso()
-    started = dt.datetime.now(dt.timezone.utc)
-    ok = False
-    visible = None
-    error = None
-    try:
-        proc = subprocess.run(agnesfallback_cli_command(agnes, prompt), capture_output=True, text=True, timeout=180, check=False)
-        visible = redact_text((proc.stdout or "").strip(), 1600)
-        ok = proc.returncode == 0 and bool(visible)
-        if not ok:
-            error = redact_text(proc.stderr or visible or f"exit={proc.returncode}", 300)
-    except Exception as exc:
-        error = redact_text(str(exc), 300)
-
-    duration = int((dt.datetime.now(dt.timezone.utc) - started).total_seconds() * 1000)
-    run_id = stable_id("run_local_ai_brief", dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d%H%M%S"))
-    row = {
-        "run_id": run_id,
-        "task_id": task_id,
-        "agent_id": agent_id,
-        "runtime_type": "hermes",
-        "status": "completed" if ok else "failed",
-        "started_at": started_iso,
-        "ended_at": now_iso(),
-        "duration_ms": duration,
-        "input_summary": f"Local MIS structured-state brief prompt_hash={prompt_hash[:16]} state_hash={state_hash[:16]}",
-        "output_summary": visible if ok else "Local AI brief generation failed.",
-        "model_provider": "agnesfallback",
-        "model_name": "agnesfallback",
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "reasoning_tokens": 0,
-        "cost_usd": 0.0,
-        "error_type": None if ok else "LocalAiBriefFailed",
-        "error_message": error,
-        "trace_id": None,
-        "parent_run_id": None,
-        "delegation_id": "agnesfallback:local-ai-brief",
-        "approval_required": 0,
-        "created_at": started_iso,
-    }
-    upsert_run(conn, row, "local-ai-workflow", {"prompt_hash": prompt_hash, "state_hash": state_hash, "confirmed": True})
-    upsert_evaluation(conn, quality_gate_for_run(row), "local-ai-workflow")
-    runtime_event(conn, connector_id, "local_ai_brief", "completed" if ok else "failed", run_id=run_id, task_id=task_id, agent_id=agent_id, model_name="agnesfallback", latency_ms=duration, prompt_hash=prompt_hash, input_summary=f"Structured MIS state_hash={state_hash[:16]}", output_summary=visible, error_message=error, raw_payload_hash=stable_hash({"visible": visible, "error": error, "state_hash": state_hash}))
-    artifact_id = stable_id("art_local_ai_brief", run_id)
-    if ok:
-        repo_upsert_artifact(conn, {
-            "artifact_id": artifact_id,
-            "task_id": task_id,
-            "run_id": run_id,
-            "artifact_type": "report",
-            "title": "Local AI Work Brief",
-            "uri": f"run://{run_id}",
-            "summary": visible,
-            "created_at": now_iso(),
-        })
-    conn.execute("UPDATE tasks SET status=?, updated_at=? WHERE task_id=?", ("completed" if ok else "blocked", now_iso(), task_id))
-    audit(conn, "system", "local-ai-workflow", "workflow.local_ai_brief", "runs", run_id, None, {"status": row["status"], "artifact_id": artifact_id if ok else None}, {"prompt_hash": prompt_hash, "state_hash": state_hash, "confirmed": True})
-    conn.commit()
-    return {"provider": "agnesfallback", "workflow": "local_ai_brief", "dry_run": False, "ok": ok, "run_id": run_id, "task_id": task_id, "artifact_id": artifact_id if ok else None, "duration_ms": duration, "output_summary": row["output_summary"], "error": error}
+        return plan, 201
+    return prepare_local_ai_brief(conn, body, agnes, state, prompt_hash, state_hash)
 
 
 def ensure_customer_task_runner(conn):
@@ -14541,7 +14807,8 @@ class Handler(BaseHTTPRequestHandler):
                 conn.commit()
                 return self.send_json({"created": True})
             if path == "/api/workflows/local-brief":
-                return self.send_json(run_local_ai_brief(conn, body), 201)
+                payload, status = run_local_ai_brief(conn, body)
+                return self.send_json(payload, status)
             if path == "/api/workflows/customer-task":
                 return self.send_json(run_customer_task_workflow(conn, body), 201)
             if path == "/api/workflows/customer-worker-task":

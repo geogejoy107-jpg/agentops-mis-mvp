@@ -234,6 +234,7 @@ python3 scripts/nextjs_agent_gateway_task_proxy_smoke.py
 python3 scripts/nextjs_agent_gateway_cli_worker_dogfood_smoke.py
 python3 scripts/nextjs_worker_dispatch_once_smoke.py
 python3 scripts/nextjs_pixel_office_floor_smoke.py
+python3 scripts/local_brief_prepared_action_smoke.py
 python3 scripts/nextjs_local_brief_smoke.py
 python3 scripts/nextjs_customer_worker_dispatch_smoke.py
 python3 scripts/nextjs_customer_worker_async_job_smoke.py
@@ -259,9 +260,17 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   starts isolated MIS API and Next.js servers, proves the Next
   `/api/mis/workflows/local-brief` proxy and
   `/workspace/pixel-office/local-brief` fallback expose dry-run local brief
-  controls while blocking `confirm_run:true` with
-  `local_brief_live_not_allowed_next_parity`, avoiding prompt body, token, or
-  blocked-live audit mutation.
+  controls plus prepared-action live controls: prepare creates approval-bound
+  evidence without calling Agnesfallback, premature resume returns
+  `approval_required`, hash mismatch and replay are blocked, and approved exact
+  resume consumes the action after one provider call while avoiding prompt body,
+  token, or raw response leakage.
+
+  `python3 scripts/local_brief_prepared_action_smoke.py`
+  (`local_brief_prepared_action_v1`) locks the backend local-brief approval
+  wall: a safe structured state snapshot is stored under `AGENTOPS_RUNTIME_DIR`,
+  approval alone performs no provider call, exact resume writes run/artifact
+  evidence, and replay stays fail-closed.
 
   `python3 scripts/nextjs_customer_worker_dispatch_smoke.py`
   (`nextjs_customer_worker_dispatch_v1`) starts isolated MIS API and Next.js
@@ -450,6 +459,7 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   - `scripts/nextjs_agent_gateway_cli_worker_dogfood_smoke.py`
   - `scripts/nextjs_worker_dispatch_once_smoke.py`
   - `scripts/nextjs_pixel_office_floor_smoke.py`
+  - `scripts/local_brief_prepared_action_smoke.py`
   - `scripts/nextjs_local_brief_smoke.py`
   - `scripts/nextjs_customer_worker_dispatch_smoke.py`
   - `scripts/nextjs_customer_worker_async_job_smoke.py`
