@@ -62,7 +62,6 @@ def db_fingerprint(db_path: Path) -> dict | None:
             ("memories", "updated_at"),
             ("approvals", "decided_at"),
             ("audit_logs", "created_at"),
-            ("runtime_connectors", "updated_at"),
             ("agent_gateway_tokens", "last_used_at"),
             ("agent_gateway_sessions", "last_used_at"),
         ]
@@ -78,6 +77,10 @@ def db_fingerprint(db_path: Path) -> dict | None:
                 f"SELECT COUNT(*) AS count, COALESCE(MAX({timestamp_col}), '') AS max_ts FROM {table}"
             ).fetchone()
             result[table] = {"count": int(row["count"] or 0), "max_ts": row["max_ts"] or ""}
+        runtime_connectors = conn.execute(
+            "SELECT COUNT(*) AS count FROM runtime_connectors"
+        ).fetchone()
+        result["runtime_connectors"] = {"count": int(runtime_connectors["count"] or 0)}
         return result
     finally:
         conn.close()
