@@ -49,6 +49,11 @@ GATEWAY_EVALUATION_ID = "eval_pg_gateway_write_evidence"
 GATEWAY_ARTIFACT_ID = "art_pg_gateway_write_evidence"
 GATEWAY_PLAN_ID = "plan_pg_gateway_write"
 GATEWAY_MANIFEST_ID = "pem_pg_gateway_write"
+GATEWAY_MEMORY_ID = "mem_pg_gateway_write"
+GATEWAY_MEMORY_MISMATCH_ID = "mem_pg_gateway_mismatch"
+GATEWAY_APPROVED_MEMORY_ID = "mem_pg_gateway_approved_existing"
+GATEWAY_CROSS_WORKSPACE_MEMORY_ID = "mem_pg_gateway_cross_workspace_existing"
+GATEWAY_OTHER_AGENT_MEMORY_ID = "mem_pg_gateway_other_agent_existing"
 GATEWAY_AUDIT_ACTION = "agent_gateway.postgres_audit_write"
 GATEWAY_READ_ONLY_AUDIT_ACTION = "agent_gateway.postgres_audit_read_only_blocked"
 GATEWAY_READ_ONLY_TASK_ID = "tsk_pg_gateway_read_only_blocked"
@@ -58,6 +63,7 @@ GATEWAY_READ_ONLY_TOOL_CALL_ID = "tc_pg_gateway_read_only_blocked"
 GATEWAY_READ_ONLY_ARTIFACT_ID = "art_pg_gateway_read_only_blocked"
 GATEWAY_READ_ONLY_PLAN_ID = "plan_pg_gateway_read_only_blocked"
 GATEWAY_READ_ONLY_MANIFEST_ID = "pem_pg_gateway_read_only_blocked"
+GATEWAY_READ_ONLY_MEMORY_ID = "mem_pg_gateway_read_only_blocked"
 GATEWAY_MISSING_SCOPE_TASK_ID = "tsk_pg_gateway_missing_scope"
 GATEWAY_CROSS_WORKSPACE_TASK_ID = "tsk_pg_gateway_cross_workspace"
 GATEWAY_CROSS_WORKSPACE_PLAN_ID = "plan_pg_gateway_cross_workspace"
@@ -65,6 +71,7 @@ GATEWAY_HEADER_WORKSPACE_TASK_ID = "tsk_pg_gateway_header_workspace"
 GATEWAY_OTHER_AGENT_TASK_ID = "tsk_pg_gateway_other_agent"
 GATEWAY_NO_TOKEN_TASK_ID = "tsk_pg_gateway_no_token"
 GATEWAY_NO_TOKEN_PLAN_ID = "plan_pg_gateway_no_token"
+GATEWAY_NO_TOKEN_MEMORY_ID = "mem_pg_gateway_no_token"
 GATEWAY_MISMATCH_MANIFEST_ID = "pem_pg_gateway_mismatch"
 GATEWAY_AUDIT_MISMATCH_TASK_ID = "tsk_pg_gateway_audit_wrong_task"
 GATEWAY_BLOCKED_APPROVAL_ID = "ap_pg_gateway_should_block"
@@ -161,6 +168,35 @@ def seed_reference_rows(adapter: PostgresAdapter) -> None:
             "updated_at": now,
         },
     )
+    for memory_id, workspace_id, agent_id, review_status in [
+        (GATEWAY_APPROVED_MEMORY_ID, GATEWAY_WORKSPACE_ID, GATEWAY_AGENT_ID, "approved"),
+        (GATEWAY_CROSS_WORKSPACE_MEMORY_ID, "other-workspace", GATEWAY_AGENT_ID, "candidate"),
+        (GATEWAY_OTHER_AGENT_MEMORY_ID, GATEWAY_WORKSPACE_ID, GATEWAY_OTHER_AGENT_ID, "candidate"),
+    ]:
+        adapter.execute(
+            """INSERT INTO memories(memory_id,workspace_id,scope,memory_type,canonical_text,source_type,source_ref,project_id,task_id,agent_id,confidence,review_status,owner_user_id,ttl_review_due_at,supersedes_memory_id,access_tags,created_at,updated_at)
+            VALUES(:memory_id,:workspace_id,:scope,:memory_type,:canonical_text,:source_type,:source_ref,:project_id,:task_id,:agent_id,:confidence,:review_status,:owner_user_id,:ttl_review_due_at,:supersedes_memory_id,:access_tags,:created_at,:updated_at)""",
+            {
+                "memory_id": memory_id,
+                "workspace_id": workspace_id,
+                "scope": "project",
+                "memory_type": "agent_lesson",
+                "canonical_text": f"Seeded {review_status} memory must not be overwritten by propose scope.",
+                "source_type": "manual",
+                "source_ref": "seeded-postgres-write-smoke",
+                "project_id": "proj_mvp",
+                "task_id": None,
+                "agent_id": agent_id,
+                "confidence": 0.9,
+                "review_status": review_status,
+                "owner_user_id": "usr_founder",
+                "ttl_review_due_at": "2026-07-23T05:00:00+00:00",
+                "supersedes_memory_id": None,
+                "access_tags": json.dumps(["agent-gateway", "seeded"], ensure_ascii=False),
+                "created_at": now,
+                "updated_at": now,
+            },
+        )
     adapter.commit()
 
 
@@ -302,6 +338,21 @@ def gateway_audit_body(action: str = GATEWAY_AUDIT_ACTION, *, task_id: str = GAT
     }
 
 
+def gateway_memory_body(memory_id: str, *, task_id: str = GATEWAY_TASK_ID, run_id: str = GATEWAY_RUN_ID) -> dict:
+    return {
+        "memory_id": memory_id,
+        "run_id": run_id,
+        "task_id": task_id,
+        "scope": "project",
+        "memory_type": "agent_lesson",
+        "canonical_text": "Postgres Gateway memory candidate write proof with raw prompt omitted.",
+        "source_type": "run_log",
+        "source_ref": run_id,
+        "confidence": 0.88,
+        "access_tags": ["agent-gateway", "postgres-write-proof"],
+    }
+
+
 def request_json_with_token(url: str, *, token: str, method: str = "POST", body: dict | None = None, extra_headers: dict | None = None) -> tuple[int, dict]:
     data = None
     headers = {"Authorization": f"Bearer {token}"}
@@ -402,6 +453,7 @@ def main() -> int:
                     "evaluations:submit",
                     "agent_plans:write",
                     "plan_evidence:write",
+                    "memories:propose",
                     "audit:write",
                 ],
             )
@@ -428,6 +480,7 @@ def main() -> int:
                     "evaluations:submit",
                     "agent_plans:write",
                     "plan_evidence:write",
+                    "memories:propose",
                     "audit:write",
                 ],
             )
@@ -501,6 +554,15 @@ def main() -> int:
                     GATEWAY_READ_ONLY_MANIFEST_ID,
                     plan_id=GATEWAY_READ_ONLY_PLAN_ID,
                     run_id=GATEWAY_READ_ONLY_RUN_ID,
+                ),
+            )
+            gateway_memory_blocked_status, gateway_memory_blocked_payload = request_json_with_token(
+                f"{read_only_base}/api/agent-gateway/memories/propose",
+                token=gateway_token,
+                body=gateway_memory_body(
+                    GATEWAY_READ_ONLY_MEMORY_ID,
+                    run_id=GATEWAY_READ_ONLY_RUN_ID,
+                    task_id=GATEWAY_READ_ONLY_CLAIM_TASK_ID,
                 ),
             )
             gateway_audit_blocked_status, gateway_audit_blocked_payload = request_json_with_token(
@@ -702,6 +764,54 @@ def main() -> int:
                 token=gateway_token,
                 body=gateway_plan_evidence_body(GATEWAY_MANIFEST_ID),
             )
+            gateway_missing_memory_scope_status, gateway_missing_memory_scope_payload = request_json_with_token(
+                f"{write_base}/api/agent-gateway/memories/propose",
+                token=gateway_observer_token,
+                body=gateway_memory_body(f"{GATEWAY_MEMORY_ID}_missing_scope"),
+            )
+            gateway_memory_cross_workspace_body = gateway_memory_body(f"{GATEWAY_MEMORY_ID}_cross_workspace")
+            gateway_memory_cross_workspace_body["workspace_id"] = "other-workspace"
+            gateway_memory_cross_workspace_status, gateway_memory_cross_workspace_payload = request_json_with_token(
+                f"{write_base}/api/agent-gateway/memories/propose",
+                token=gateway_token,
+                body=gateway_memory_cross_workspace_body,
+            )
+            gateway_memory_header_workspace_status, gateway_memory_header_workspace_payload = request_json_with_token(
+                f"{write_base}/api/agent-gateway/memories/propose",
+                token=gateway_token,
+                body=gateway_memory_body(f"{GATEWAY_MEMORY_ID}_header_workspace"),
+                extra_headers={"X-AgentOps-Workspace-Id": "other-workspace"},
+            )
+            gateway_memory_no_token_status, gateway_memory_no_token_payload = request_json(
+                f"{write_base}/api/agent-gateway/memories/propose",
+                method="POST",
+                body=gateway_memory_body(GATEWAY_NO_TOKEN_MEMORY_ID),
+            )
+            gateway_memory_mismatch_status, gateway_memory_mismatch_payload = request_json_with_token(
+                f"{write_base}/api/agent-gateway/memories/propose",
+                token=gateway_token,
+                body=gateway_memory_body(GATEWAY_MEMORY_MISMATCH_ID, task_id=GATEWAY_AUDIT_MISMATCH_TASK_ID),
+            )
+            gateway_memory_approved_overwrite_status, gateway_memory_approved_overwrite_payload = request_json_with_token(
+                f"{write_base}/api/agent-gateway/memories/propose",
+                token=gateway_token,
+                body=gateway_memory_body(GATEWAY_APPROVED_MEMORY_ID),
+            )
+            gateway_memory_existing_cross_workspace_status, gateway_memory_existing_cross_workspace_payload = request_json_with_token(
+                f"{write_base}/api/agent-gateway/memories/propose",
+                token=gateway_token,
+                body=gateway_memory_body(GATEWAY_CROSS_WORKSPACE_MEMORY_ID),
+            )
+            gateway_memory_other_agent_overwrite_status, gateway_memory_other_agent_overwrite_payload = request_json_with_token(
+                f"{write_base}/api/agent-gateway/memories/propose",
+                token=gateway_token,
+                body=gateway_memory_body(GATEWAY_OTHER_AGENT_MEMORY_ID),
+            )
+            gateway_memory_write_status, gateway_memory_write_payload = request_json_with_token(
+                f"{write_base}/api/agent-gateway/memories/propose",
+                token=gateway_token,
+                body=gateway_memory_body(GATEWAY_MEMORY_ID),
+            )
             gateway_missing_audit_scope_status, gateway_missing_audit_scope_payload = request_json_with_token(
                 f"{write_base}/api/agent-gateway/audit",
                 token=gateway_observer_token,
@@ -770,6 +880,11 @@ def main() -> int:
                 token=gateway_intruder_token,
                 body=gateway_plan_evidence_body(f"{GATEWAY_MANIFEST_ID}_intruder"),
             )
+            gateway_intruder_memory_status, gateway_intruder_memory_payload = request_json_with_token(
+                f"{write_base}/api/agent-gateway/memories/propose",
+                token=gateway_intruder_token,
+                body=gateway_memory_body(f"{GATEWAY_MEMORY_ID}_intruder"),
+            )
             gateway_intruder_audit_status, gateway_intruder_audit_payload = request_json_with_token(
                 f"{write_base}/api/agent-gateway/audit",
                 token=gateway_intruder_token,
@@ -816,6 +931,7 @@ def main() -> int:
             gateway_read_only_artifact_row = adapter.fetchone("SELECT * FROM artifacts WHERE artifact_id=?", [GATEWAY_READ_ONLY_ARTIFACT_ID])
             gateway_read_only_plan_row = adapter.fetchone("SELECT * FROM agent_plans WHERE plan_id=?", [GATEWAY_READ_ONLY_PLAN_ID])
             gateway_read_only_manifest_row = adapter.fetchone("SELECT * FROM plan_evidence_manifests WHERE manifest_id=?", [GATEWAY_READ_ONLY_MANIFEST_ID])
+            gateway_read_only_memory_row = adapter.fetchone("SELECT * FROM memories WHERE memory_id=?", [GATEWAY_READ_ONLY_MEMORY_ID])
             gateway_read_only_audit_row = adapter.fetchone("SELECT * FROM audit_logs WHERE action=?", [GATEWAY_READ_ONLY_AUDIT_ACTION])
             gateway_missing_scope_task_row = adapter.fetchone("SELECT * FROM tasks WHERE task_id=?", [GATEWAY_MISSING_SCOPE_TASK_ID])
             gateway_cross_workspace_task_row = adapter.fetchone("SELECT * FROM tasks WHERE task_id=?", [GATEWAY_CROSS_WORKSPACE_TASK_ID])
@@ -841,6 +957,15 @@ def main() -> int:
             gateway_missing_manifest_row = adapter.fetchone("SELECT * FROM plan_evidence_manifests WHERE manifest_id=?", [f"{GATEWAY_MANIFEST_ID}_missing_scope"])
             gateway_missing_audit_scope_row = adapter.fetchone("SELECT * FROM audit_logs WHERE action=?", [f"{GATEWAY_AUDIT_ACTION}.missing_scope"])
             gateway_mismatch_manifest_row = adapter.fetchone("SELECT * FROM plan_evidence_manifests WHERE manifest_id=?", [GATEWAY_MISMATCH_MANIFEST_ID])
+            gateway_memory_row = adapter.fetchone("SELECT * FROM memories WHERE memory_id=?", [GATEWAY_MEMORY_ID])
+            gateway_missing_memory_row = adapter.fetchone("SELECT * FROM memories WHERE memory_id=?", [f"{GATEWAY_MEMORY_ID}_missing_scope"])
+            gateway_memory_cross_workspace_row = adapter.fetchone("SELECT * FROM memories WHERE memory_id=?", [f"{GATEWAY_MEMORY_ID}_cross_workspace"])
+            gateway_memory_header_workspace_row = adapter.fetchone("SELECT * FROM memories WHERE memory_id=?", [f"{GATEWAY_MEMORY_ID}_header_workspace"])
+            gateway_memory_no_token_row = adapter.fetchone("SELECT * FROM memories WHERE memory_id=?", [GATEWAY_NO_TOKEN_MEMORY_ID])
+            gateway_memory_mismatch_row = adapter.fetchone("SELECT * FROM memories WHERE memory_id=?", [GATEWAY_MEMORY_MISMATCH_ID])
+            gateway_approved_memory_row = adapter.fetchone("SELECT * FROM memories WHERE memory_id=?", [GATEWAY_APPROVED_MEMORY_ID])
+            gateway_cross_workspace_memory_row = adapter.fetchone("SELECT * FROM memories WHERE memory_id=?", [GATEWAY_CROSS_WORKSPACE_MEMORY_ID])
+            gateway_other_agent_memory_row = adapter.fetchone("SELECT * FROM memories WHERE memory_id=?", [GATEWAY_OTHER_AGENT_MEMORY_ID])
             gateway_audit_cross_workspace_row = adapter.fetchone("SELECT * FROM audit_logs WHERE action=?", [f"{GATEWAY_AUDIT_ACTION}.cross_workspace"])
             gateway_audit_no_token_row = adapter.fetchone("SELECT * FROM audit_logs WHERE action=?", [f"{GATEWAY_AUDIT_ACTION}.no_token"])
             gateway_audit_mismatch_row = adapter.fetchone("SELECT * FROM audit_logs WHERE action=?", [f"{GATEWAY_AUDIT_ACTION}.mismatch"])
@@ -849,6 +974,7 @@ def main() -> int:
             gateway_intruder_artifact_row = adapter.fetchone("SELECT * FROM artifacts WHERE artifact_id=?", [f"{GATEWAY_ARTIFACT_ID}_intruder"])
             gateway_intruder_plan_row = adapter.fetchone("SELECT * FROM agent_plans WHERE plan_id=?", [f"{GATEWAY_PLAN_ID}_intruder"])
             gateway_intruder_manifest_row = adapter.fetchone("SELECT * FROM plan_evidence_manifests WHERE manifest_id=?", [f"{GATEWAY_MANIFEST_ID}_intruder"])
+            gateway_intruder_memory_row = adapter.fetchone("SELECT * FROM memories WHERE memory_id=?", [f"{GATEWAY_MEMORY_ID}_intruder"])
             gateway_intruder_audit_row = adapter.fetchone("SELECT * FROM audit_logs WHERE action=?", [f"{GATEWAY_AUDIT_ACTION}.intruder"])
             gateway_intruder_audit_no_run_row = adapter.fetchone("SELECT * FROM audit_logs WHERE action=?", [f"{GATEWAY_AUDIT_ACTION}.intruder_no_run"])
             gateway_blocked_approval_row = adapter.fetchone("SELECT * FROM approvals WHERE approval_id=?", [GATEWAY_BLOCKED_APPROVAL_ID])
@@ -866,6 +992,8 @@ def main() -> int:
             gateway_plan_audit_count = adapter.fetchone("SELECT COUNT(*) AS c FROM audit_logs WHERE entity_type=? AND entity_id=?", ["agent_plans", GATEWAY_PLAN_ID])["c"]
             gateway_manifest_runtime_event_count = adapter.fetchone("SELECT COUNT(*) AS c FROM runtime_events WHERE run_id=? AND event_type=?", [GATEWAY_RUN_ID, "plan_evidence_manifest.create"])["c"]
             gateway_manifest_audit_count = adapter.fetchone("SELECT COUNT(*) AS c FROM audit_logs WHERE entity_type=? AND entity_id=?", ["plan_evidence_manifests", GATEWAY_MANIFEST_ID])["c"]
+            gateway_memory_runtime_event_count = adapter.fetchone("SELECT COUNT(*) AS c FROM runtime_events WHERE task_id=? AND event_type=?", [GATEWAY_TASK_ID, "memory.propose"])["c"]
+            gateway_memory_audit_count = adapter.fetchone("SELECT COUNT(*) AS c FROM audit_logs WHERE entity_type=? AND entity_id=?", ["memories", GATEWAY_MEMORY_ID])["c"]
             gateway_audit_runtime_event_count = adapter.fetchone("SELECT COUNT(*) AS c FROM runtime_events WHERE run_id=? AND event_type=?", [GATEWAY_RUN_ID, "audit.emit"])["c"]
             gateway_token_last_used = adapter.fetchone("SELECT last_used_at FROM agent_gateway_tokens WHERE token_id=?", ["agtok_pg_gateway_write"])
 
@@ -890,6 +1018,8 @@ def main() -> int:
                 failures.append(f"gateway_read_only_plan_block_mismatch:{gateway_plan_blocked_status}:{gateway_plan_blocked_payload}")
             if gateway_manifest_blocked_status != 503 or gateway_manifest_blocked_payload.get("error") != "postgres_read_only_backend":
                 failures.append(f"gateway_read_only_manifest_block_mismatch:{gateway_manifest_blocked_status}:{gateway_manifest_blocked_payload}")
+            if gateway_memory_blocked_status != 503 or gateway_memory_blocked_payload.get("error") != "postgres_read_only_backend":
+                failures.append(f"gateway_read_only_memory_block_mismatch:{gateway_memory_blocked_status}:{gateway_memory_blocked_payload}")
             if gateway_audit_blocked_status != 503 or gateway_audit_blocked_payload.get("error") != "postgres_read_only_backend":
                 failures.append(f"gateway_read_only_audit_block_mismatch:{gateway_audit_blocked_status}:{gateway_audit_blocked_payload}")
             if blocked_task_row:
@@ -904,6 +1034,8 @@ def main() -> int:
                 failures.append("read_only_evidence_write_created_row")
             if gateway_read_only_plan_row or gateway_read_only_manifest_row:
                 failures.append("read_only_plan_write_created_row")
+            if gateway_read_only_memory_row:
+                failures.append("read_only_memory_write_created_row")
             if gateway_read_only_audit_row:
                 failures.append("read_only_audit_write_created_row")
             if write_status_code != 200 or write_backend.get("mode") != "experimental_write_http" or write_backend.get("writes_allowed") is not True:
@@ -968,6 +1100,24 @@ def main() -> int:
             gateway_manifest_verification = gateway_manifest_write_payload.get("verification") or {}
             if gateway_manifest_write_status != 201 or gateway_manifest.get("manifest_id") != GATEWAY_MANIFEST_ID or gateway_manifest_verification.get("pass") is not True:
                 failures.append(f"gateway_manifest_write_mismatch:{gateway_manifest_write_status}:{gateway_manifest_write_payload}")
+            if gateway_missing_memory_scope_status != 403 or "memories:propose" not in json.dumps(gateway_missing_memory_scope_payload, ensure_ascii=False):
+                failures.append(f"gateway_missing_memory_scope_mismatch:{gateway_missing_memory_scope_status}:{gateway_missing_memory_scope_payload}")
+            if gateway_memory_cross_workspace_status != 403 or "workspace" not in json.dumps(gateway_memory_cross_workspace_payload, ensure_ascii=False).lower():
+                failures.append(f"gateway_memory_cross_workspace_mismatch:{gateway_memory_cross_workspace_status}:{gateway_memory_cross_workspace_payload}")
+            if gateway_memory_header_workspace_status != 403 or "workspace" not in json.dumps(gateway_memory_header_workspace_payload, ensure_ascii=False).lower():
+                failures.append(f"gateway_memory_header_workspace_mismatch:{gateway_memory_header_workspace_status}:{gateway_memory_header_workspace_payload}")
+            if gateway_memory_no_token_status != 401 or "token" not in json.dumps(gateway_memory_no_token_payload, ensure_ascii=False).lower():
+                failures.append(f"gateway_memory_no_token_mismatch:{gateway_memory_no_token_status}:{gateway_memory_no_token_payload}")
+            if gateway_memory_mismatch_status != 403 or "task_id" not in json.dumps(gateway_memory_mismatch_payload, ensure_ascii=False):
+                failures.append(f"gateway_memory_mismatch_not_blocked:{gateway_memory_mismatch_status}:{gateway_memory_mismatch_payload}")
+            if gateway_memory_approved_overwrite_status != 403 or "candidate" not in json.dumps(gateway_memory_approved_overwrite_payload, ensure_ascii=False).lower():
+                failures.append(f"gateway_memory_approved_overwrite_not_blocked:{gateway_memory_approved_overwrite_status}:{gateway_memory_approved_overwrite_payload}")
+            if gateway_memory_existing_cross_workspace_status != 403 or "workspace" not in json.dumps(gateway_memory_existing_cross_workspace_payload, ensure_ascii=False).lower():
+                failures.append(f"gateway_memory_existing_cross_workspace_not_blocked:{gateway_memory_existing_cross_workspace_status}:{gateway_memory_existing_cross_workspace_payload}")
+            if gateway_memory_other_agent_overwrite_status != 403 or "another agent" not in json.dumps(gateway_memory_other_agent_overwrite_payload, ensure_ascii=False).lower():
+                failures.append(f"gateway_memory_other_agent_overwrite_not_blocked:{gateway_memory_other_agent_overwrite_status}:{gateway_memory_other_agent_overwrite_payload}")
+            if gateway_memory_write_status != 201 or (gateway_memory_write_payload.get("memory") or {}).get("memory_id") != GATEWAY_MEMORY_ID:
+                failures.append(f"gateway_memory_write_mismatch:{gateway_memory_write_status}:{gateway_memory_write_payload}")
             if gateway_missing_audit_scope_status != 403 or "audit:write" not in json.dumps(gateway_missing_audit_scope_payload, ensure_ascii=False):
                 failures.append(f"gateway_missing_audit_scope_mismatch:{gateway_missing_audit_scope_status}:{gateway_missing_audit_scope_payload}")
             if gateway_audit_cross_workspace_status != 403 or "workspace" not in json.dumps(gateway_audit_cross_workspace_payload, ensure_ascii=False).lower():
@@ -988,6 +1138,8 @@ def main() -> int:
                 failures.append(f"gateway_intruder_plan_mismatch:{gateway_intruder_plan_status}:{gateway_intruder_plan_payload}")
             if gateway_intruder_manifest_status != 403 or "another agent" not in json.dumps(gateway_intruder_manifest_payload, ensure_ascii=False).lower():
                 failures.append(f"gateway_intruder_manifest_mismatch:{gateway_intruder_manifest_status}:{gateway_intruder_manifest_payload}")
+            if gateway_intruder_memory_status != 403 or "another agent" not in json.dumps(gateway_intruder_memory_payload, ensure_ascii=False).lower():
+                failures.append(f"gateway_intruder_memory_mismatch:{gateway_intruder_memory_status}:{gateway_intruder_memory_payload}")
             if gateway_intruder_audit_status != 403 or "another agent" not in json.dumps(gateway_intruder_audit_payload, ensure_ascii=False).lower():
                 failures.append(f"gateway_intruder_audit_mismatch:{gateway_intruder_audit_status}:{gateway_intruder_audit_payload}")
             if gateway_intruder_audit_no_run_status != 403 or "another agent" not in json.dumps(gateway_intruder_audit_no_run_payload, ensure_ascii=False).lower():
@@ -1026,12 +1178,22 @@ def main() -> int:
                 failures.append("postgres_gateway_missing_scope_audit_created_row")
             if gateway_cross_workspace_plan_row or gateway_no_token_plan_row or gateway_mismatch_manifest_row:
                 failures.append("postgres_gateway_rejected_plan_created_row")
+            if gateway_missing_memory_row or gateway_memory_cross_workspace_row or gateway_memory_header_workspace_row or gateway_memory_no_token_row or gateway_memory_mismatch_row:
+                failures.append("postgres_gateway_rejected_memory_created_row")
+            if not gateway_approved_memory_row or gateway_approved_memory_row.get("review_status") != "approved" or gateway_approved_memory_row.get("task_id") is not None:
+                failures.append(f"postgres_gateway_approved_memory_overwritten:{gateway_approved_memory_row}")
+            if not gateway_cross_workspace_memory_row or gateway_cross_workspace_memory_row.get("workspace_id") != "other-workspace" or gateway_cross_workspace_memory_row.get("task_id") is not None:
+                failures.append(f"postgres_gateway_cross_workspace_memory_overwritten:{gateway_cross_workspace_memory_row}")
+            if not gateway_other_agent_memory_row or gateway_other_agent_memory_row.get("agent_id") != GATEWAY_OTHER_AGENT_ID or gateway_other_agent_memory_row.get("task_id") is not None:
+                failures.append(f"postgres_gateway_other_agent_memory_overwritten:{gateway_other_agent_memory_row}")
             if gateway_audit_cross_workspace_row or gateway_audit_no_token_row or gateway_audit_mismatch_row:
                 failures.append("postgres_gateway_rejected_audit_created_row")
             if gateway_intruder_tool_row or gateway_intruder_eval_row or gateway_intruder_artifact_row:
                 failures.append("postgres_gateway_intruder_evidence_created_row")
             if gateway_intruder_plan_row or gateway_intruder_manifest_row:
                 failures.append("postgres_gateway_intruder_plan_created_row")
+            if gateway_intruder_memory_row:
+                failures.append("postgres_gateway_intruder_memory_created_row")
             if gateway_intruder_audit_row:
                 failures.append("postgres_gateway_intruder_audit_created_row")
             if gateway_intruder_audit_no_run_row:
@@ -1048,6 +1210,8 @@ def main() -> int:
                 failures.append(f"postgres_gateway_plan_row_mismatch:{gateway_plan_row}")
             if not gateway_manifest_row or gateway_manifest_row.get("run_id") != GATEWAY_RUN_ID or gateway_manifest_row.get("plan_id") != GATEWAY_PLAN_ID or gateway_manifest_row.get("status") != "verified":
                 failures.append(f"postgres_gateway_manifest_row_mismatch:{gateway_manifest_row}")
+            if not gateway_memory_row or gateway_memory_row.get("workspace_id") != GATEWAY_WORKSPACE_ID or gateway_memory_row.get("task_id") != GATEWAY_TASK_ID or gateway_memory_row.get("agent_id") != GATEWAY_AGENT_ID or gateway_memory_row.get("review_status") != "candidate":
+                failures.append(f"postgres_gateway_memory_row_mismatch:{gateway_memory_row}")
             audit_metadata = {}
             if gateway_audit_row:
                 try:
@@ -1084,6 +1248,10 @@ def main() -> int:
                 failures.append("postgres_gateway_manifest_runtime_event_missing")
             if int(gateway_manifest_audit_count or 0) < 1:
                 failures.append("postgres_gateway_manifest_audit_missing")
+            if int(gateway_memory_runtime_event_count or 0) < 1:
+                failures.append("postgres_gateway_memory_runtime_event_missing")
+            if int(gateway_memory_audit_count or 0) < 1:
+                failures.append("postgres_gateway_memory_audit_missing")
             if int(gateway_audit_runtime_event_count or 0) < 1:
                 failures.append("postgres_gateway_audit_runtime_event_missing")
             if not (gateway_token_last_used or {}).get("last_used_at"):
@@ -1102,6 +1270,7 @@ def main() -> int:
                     gateway_artifact_blocked_payload,
                     gateway_plan_blocked_payload,
                     gateway_manifest_blocked_payload,
+                    gateway_memory_blocked_payload,
                     gateway_audit_blocked_payload,
                     gateway_cross_workspace_payload,
                     gateway_header_workspace_payload,
@@ -1123,6 +1292,15 @@ def main() -> int:
                     gateway_manifest_mismatch_payload,
                     gateway_missing_manifest_scope_payload,
                     gateway_manifest_write_payload,
+                    gateway_missing_memory_scope_payload,
+                    gateway_memory_cross_workspace_payload,
+                    gateway_memory_header_workspace_payload,
+                    gateway_memory_no_token_payload,
+                    gateway_memory_mismatch_payload,
+                    gateway_memory_approved_overwrite_payload,
+                    gateway_memory_existing_cross_workspace_payload,
+                    gateway_memory_other_agent_overwrite_payload,
+                    gateway_memory_write_payload,
                     gateway_missing_audit_scope_payload,
                     gateway_audit_cross_workspace_payload,
                     gateway_audit_no_token_payload,
@@ -1135,6 +1313,7 @@ def main() -> int:
                     gateway_intruder_artifact_payload,
                     gateway_intruder_plan_payload,
                     gateway_intruder_manifest_payload,
+                    gateway_intruder_memory_payload,
                     gateway_intruder_audit_payload,
                     gateway_intruder_audit_no_run_payload,
                     agent_block_payload,
@@ -1157,6 +1336,7 @@ def main() -> int:
                     "postgres_http_gateway_evidence_write_v1",
                     "postgres_http_gateway_plan_evidence_write_v1",
                     "postgres_http_gateway_audit_write_v1",
+                    "postgres_http_gateway_memory_write_v1",
                 ],
                 "image": args.image,
                 "driver_status": driver_status,
@@ -1174,6 +1354,7 @@ def main() -> int:
                 "gateway_read_only_artifact_block_status": gateway_artifact_blocked_status,
                 "gateway_read_only_plan_block_status": gateway_plan_blocked_status,
                 "gateway_read_only_manifest_block_status": gateway_manifest_blocked_status,
+                "gateway_read_only_memory_block_status": gateway_memory_blocked_status,
                 "gateway_read_only_audit_block_status": gateway_audit_blocked_status,
                 "gateway_missing_scope_status": gateway_missing_scope_status,
                 "gateway_missing_claim_scope_status": gateway_missing_claim_scope_status,
@@ -1183,14 +1364,18 @@ def main() -> int:
                 "gateway_missing_artifact_scope_status": gateway_missing_artifact_scope_status,
                 "gateway_missing_plan_scope_status": gateway_missing_plan_scope_status,
                 "gateway_missing_manifest_scope_status": gateway_missing_manifest_scope_status,
+                "gateway_missing_memory_scope_status": gateway_missing_memory_scope_status,
                 "gateway_missing_audit_scope_status": gateway_missing_audit_scope_status,
                 "gateway_cross_workspace_status": gateway_cross_workspace_status,
                 "gateway_plan_cross_workspace_status": gateway_plan_cross_workspace_status,
+                "gateway_memory_cross_workspace_status": gateway_memory_cross_workspace_status,
+                "gateway_memory_header_workspace_status": gateway_memory_header_workspace_status,
                 "gateway_audit_cross_workspace_status": gateway_audit_cross_workspace_status,
                 "gateway_header_workspace_status": gateway_header_workspace_status,
                 "gateway_other_agent_status": gateway_other_agent_status,
                 "gateway_no_token_status": gateway_no_token_status,
                 "gateway_plan_no_token_status": gateway_plan_no_token_status,
+                "gateway_memory_no_token_status": gateway_memory_no_token_status,
                 "gateway_audit_no_token_status": gateway_audit_no_token_status,
                 "gateway_task_create_status": gateway_create_status,
                 "gateway_claim_status": gateway_claim_status,
@@ -1201,6 +1386,11 @@ def main() -> int:
                 "gateway_plan_write_status": gateway_plan_write_status,
                 "gateway_manifest_mismatch_status": gateway_manifest_mismatch_status,
                 "gateway_manifest_write_status": gateway_manifest_write_status,
+                "gateway_memory_mismatch_status": gateway_memory_mismatch_status,
+                "gateway_memory_approved_overwrite_status": gateway_memory_approved_overwrite_status,
+                "gateway_memory_existing_cross_workspace_status": gateway_memory_existing_cross_workspace_status,
+                "gateway_memory_other_agent_overwrite_status": gateway_memory_other_agent_overwrite_status,
+                "gateway_memory_write_status": gateway_memory_write_status,
                 "gateway_audit_mismatch_status": gateway_audit_mismatch_status,
                 "gateway_audit_write_status": gateway_audit_write_status,
                 "gateway_intruder_claim_status": gateway_intruder_claim_status,
@@ -1210,6 +1400,7 @@ def main() -> int:
                 "gateway_intruder_artifact_status": gateway_intruder_artifact_status,
                 "gateway_intruder_plan_status": gateway_intruder_plan_status,
                 "gateway_intruder_manifest_status": gateway_intruder_manifest_status,
+                "gateway_intruder_memory_status": gateway_intruder_memory_status,
                 "gateway_intruder_audit_status": gateway_intruder_audit_status,
                 "gateway_intruder_audit_no_run_status": gateway_intruder_audit_no_run_status,
                 "gateway_task_readback_status": gateway_readback_status,
@@ -1224,6 +1415,7 @@ def main() -> int:
                 "gateway_artifact_id": GATEWAY_ARTIFACT_ID,
                 "gateway_plan_id": GATEWAY_PLAN_ID,
                 "gateway_manifest_id": GATEWAY_MANIFEST_ID,
+                "gateway_memory_id": GATEWAY_MEMORY_ID,
                 "gateway_manifest_status": gateway_manifest.get("status"),
                 "gateway_manifest_verification_pass": bool(gateway_manifest_verification.get("pass")),
                 "gateway_audit_action": GATEWAY_AUDIT_ACTION,
@@ -1243,6 +1435,8 @@ def main() -> int:
                 "gateway_plan_audit_count": int(gateway_plan_audit_count or 0),
                 "gateway_manifest_runtime_event_count": int(gateway_manifest_runtime_event_count or 0),
                 "gateway_manifest_audit_count": int(gateway_manifest_audit_count or 0),
+                "gateway_memory_runtime_event_count": int(gateway_memory_runtime_event_count or 0),
+                "gateway_memory_audit_count": int(gateway_memory_audit_count or 0),
                 "gateway_audit_runtime_event_count": int(gateway_audit_runtime_event_count or 0),
                 "gateway_token_last_used": bool((gateway_token_last_used or {}).get("last_used_at")),
                 "free_local_dependencies": [],

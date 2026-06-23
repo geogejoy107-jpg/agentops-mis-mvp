@@ -53,6 +53,7 @@ POSTGRES_HTTP_WRITE_ALLOWED_ROUTES = {
     ("POST", "/api/agent-gateway/agent-plans"),
     ("POST", "/api/agent-gateway/audit"),
     ("POST", "/api/agent-gateway/evaluations/submit"),
+    ("POST", "/api/agent-gateway/memories/propose"),
     ("POST", "/api/agent-gateway/plan-evidence-manifests"),
     ("POST", "/api/agent-gateway/runs/start"),
     ("POST", "/api/agent-gateway/tasks"),
@@ -359,6 +360,7 @@ def storage_backend_status(headers=None) -> dict:
                 "postgres_http_gateway_evidence_write_v1",
                 "postgres_http_gateway_plan_evidence_write_v1",
                 "postgres_http_gateway_audit_write_v1",
+                "postgres_http_gateway_memory_write_v1",
             ] if write_http else ["postgres_http_read_parity_v1"],
         }
     return {
@@ -407,6 +409,7 @@ def postgres_read_only_write_block(method: str, path: str) -> dict:
             "postgres_http_gateway_evidence_write_v1",
             "postgres_http_gateway_plan_evidence_write_v1",
             "postgres_http_gateway_audit_write_v1",
+            "postgres_http_gateway_memory_write_v1",
         ],
     }
 
@@ -2365,12 +2368,12 @@ def upsert_evaluation(conn, row: dict, actor_id="adapter-import") -> str:
     return outcome
 
 
-def upsert_memory_candidate(conn, row: dict, actor_id="adapter-import") -> str:
+def upsert_memory_candidate(conn, row: dict, actor_id="adapter-import", audit_metadata=None) -> str:
     before, outcome = repo_upsert_memory_candidate(conn, row, allow_update=actor_id != "openclaw-import")
     if outcome == "unchanged":
         return outcome
     action = "memory.update" if before else "memory.propose"
-    audit(conn, "system", actor_id, action, "memories", row["memory_id"], dict(before) if before else None, row, {})
+    audit(conn, "system", actor_id, action, "memories", row["memory_id"], dict(before) if before else None, row, audit_metadata or {})
     return outcome
 
 
@@ -5843,20 +5846,44 @@ def agent_gateway_request_approval(conn, body) -> tuple[dict, int]:
 def agent_gateway_memory_propose(conn, body) -> tuple[dict, int]:
     agent_id = body.get("agent_id")
     task_id = body.get("task_id")
+    run_id = body.get("run_id")
     text = body.get("canonical_text") or body.get("text")
     if not agent_id or not text:
         return {"error": "agent_id and canonical_text are required"}, 400
     ident = agent_gateway_identity({}, body)
-    if body.get("run_id"):
-        _run, access_error = ensure_run_access(conn, body["run_id"], ident)
+    if run_id:
+        run, access_error = ensure_run_access(conn, run_id, ident)
         if access_error:
             return access_error
+        if task_id and task_id != run["task_id"]:
+            return {"error": "forbidden", "message": "Memory task_id must match the target run."}, 403
+        task_id = task_id or run["task_id"]
     elif task_id:
         task = conn.execute("SELECT * FROM tasks WHERE task_id=?", (task_id,)).fetchone()
-        if task and row_workspace(task) != ident["workspace_id"]:
+        if not task:
+            return {"error": "task not found"}, 404
+        if row_workspace(task) != ident["workspace_id"]:
             return workspace_forbidden("task", task_id, ident["workspace_id"], row_workspace(task))
+        if ident.get("agent_id") and task["owner_agent_id"] != ident["agent_id"]:
+            return {"error": "forbidden", "message": "Agent token cannot write another agent's task memory."}, 403
     ensure_gateway_agent(conn, agent_id, runtime_type=body.get("runtime_type"))
     memory_id = body.get("memory_id") or stable_id("mem_gw", agent_id, task_id or "project", stable_hash(text)[:12])
+    existing = conn.execute("SELECT * FROM memories WHERE memory_id=?", (memory_id,)).fetchone()
+    if existing:
+        existing_workspace = row_workspace(existing)
+        if existing_workspace != ident["workspace_id"]:
+            return workspace_forbidden("memory", memory_id, ident["workspace_id"], existing_workspace)
+        if existing["review_status"] != "candidate":
+            return {"error": "forbidden", "message": "Agent token can only update candidate memories."}, 403
+        if existing["agent_id"] and existing["agent_id"] != agent_id:
+            return {"error": "forbidden", "message": "Agent token cannot update another agent's memory."}, 403
+        if (existing["task_id"] or None) != (task_id or None):
+            return {"error": "forbidden", "message": "Memory task_id must match the existing candidate."}, 403
+    try:
+        confidence = float(body.get("confidence") if body.get("confidence") is not None else 0.72)
+    except (TypeError, ValueError):
+        return {"error": "invalid confidence"}, 400
+    confidence = max(0.0, min(confidence, 1.0))
     row = {
         "memory_id": memory_id,
         "workspace_id": ident["workspace_id"],
@@ -5864,11 +5891,11 @@ def agent_gateway_memory_propose(conn, body) -> tuple[dict, int]:
         "memory_type": coerce_choice(body.get("memory_type"), {"policy", "sop", "decision", "commitment", "risk", "failure_case", "project_context", "customer_preference", "agent_lesson", "artifact_summary"}, "artifact_summary"),
         "canonical_text": redact_text(text, 360),
         "source_type": coerce_choice(body.get("source_type"), {"chat", "email", "meeting", "github", "notion", "run_log", "manual"}, "run_log"),
-        "source_ref": redact_text(body.get("source_ref") or body.get("run_id") or "agent-gateway", 200),
+        "source_ref": redact_text(body.get("source_ref") or run_id or "agent-gateway", 200),
         "project_id": body.get("project_id") or "proj_mvp",
         "task_id": task_id,
         "agent_id": agent_id,
-        "confidence": float(body.get("confidence") or 0.72),
+        "confidence": confidence,
         "review_status": "candidate",
         "owner_user_id": body.get("owner_user_id") or "usr_founder",
         "ttl_review_due_at": body.get("ttl_review_due_at") or (dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=30)).isoformat(),
@@ -5877,8 +5904,8 @@ def agent_gateway_memory_propose(conn, body) -> tuple[dict, int]:
         "created_at": now_iso(),
         "updated_at": now_iso(),
     }
-    outcome = upsert_memory_candidate(conn, row, "agent-gateway")
-    runtime_event(conn, "rtc_agent_gateway_local", "memory.propose", "completed", task_id=task_id, agent_id=agent_id, output_summary=row["canonical_text"])
+    outcome = upsert_memory_candidate(conn, row, "agent-gateway", {"workspace_id": ident["workspace_id"], "run_id": run_id, "task_id": task_id, "raw_omitted": True})
+    runtime_event(conn, "rtc_agent_gateway_local", "memory.propose", "completed", run_id=run_id, task_id=task_id, agent_id=agent_id, output_summary=row["canonical_text"])
     return {"memory": row, "outcome": outcome}, 201 if outcome == "created" else 200
 
 
