@@ -1272,6 +1272,39 @@ python3 scripts/operator_handoff_smoke.py --base-url "$AGENTOPS_BASE_URL"
 python3 scripts/operator_loop_launch_packet_smoke.py --base-url "$AGENTOPS_BASE_URL"
 ```
 
+### Slice 42: Operator Receipt Projection
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/operator_receipts.py`
+
+Moved out of `server.py`:
+
+- operator action receipt public projection
+- operator action evaluation public projection
+- operator control-readback public projection
+- receipt source classification for required control readback
+
+Still owned by `server.py`:
+
+- HTTP routes
+- SQLite receipt/evaluation/readback row reads and writes
+- runtime event and audit insertion
+- receipt status validation and stable hash/id construction
+- control-readback sanitization
+- final receipt list/record/readback response assembly
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/operator_action_receipt_smoke.py
+python3 scripts/operator_action_receipts_cli_smoke.py
+python3 scripts/operator_action_plan_smoke.py --base-url "$AGENTOPS_BASE_URL"
+```
+
 ## Next Candidate Slices
 
 - Continue P1-05 with small smoke-backed strangler slices only; prefer pure

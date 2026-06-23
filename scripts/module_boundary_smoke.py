@@ -108,6 +108,12 @@ from agentops_mis_core.operator_loop_control import (
     operator_loop_control_gate,
     operator_loop_control_summary_from_handoff,
 )
+from agentops_mis_core.operator_receipts import (
+    operator_action_evaluation_public,
+    operator_action_receipt_public,
+    operator_control_readback_public,
+    operator_receipt_requires_control_readback,
+)
 from agentops_mis_core.worker_fleet import (
     build_worker_remote_fleet_summary,
     build_worker_fleet_hygiene_plan,
@@ -160,6 +166,7 @@ OPERATOR_COMMAND_CENTER = ROOT / "agentops_mis_core" / "operator_command_center.
 OPERATOR_EVIDENCE = ROOT / "agentops_mis_core" / "operator_evidence.py"
 OPERATOR_START_CHECK = ROOT / "agentops_mis_core" / "operator_start_check.py"
 OPERATOR_LOOP_CONTROL = ROOT / "agentops_mis_core" / "operator_loop_control.py"
+OPERATOR_RECEIPTS = ROOT / "agentops_mis_core" / "operator_receipts.py"
 WORKER_FLEET = ROOT / "agentops_mis_core" / "worker_fleet.py"
 WORKFLOW_JOBS = ROOT / "agentops_mis_core" / "workflow_jobs.py"
 BACKLOG = ROOT / "docs" / "project" / "BACKLOG.md"
@@ -313,6 +320,18 @@ EXTRACTED_OPERATOR_LOOP_CONTROL_HELPERS = {
 SERVER_OPERATOR_LOOP_CONTROL_IMPORTS = {
     "operator_loop_control_gate",
     "operator_loop_control_summary_from_handoff",
+}
+EXTRACTED_OPERATOR_RECEIPT_HELPERS = {
+    "operator_action_evaluation_public",
+    "operator_action_receipt_public",
+    "operator_control_readback_public",
+    "operator_receipt_requires_control_readback",
+}
+SERVER_OPERATOR_RECEIPT_IMPORTS = {
+    "operator_action_evaluation_public",
+    "operator_action_receipt_public",
+    "operator_control_readback_public",
+    "operator_receipt_requires_control_readback",
 }
 EXTRACTED_APPROVAL_WALL_HELPERS = {
     "approval_wall_recommended_actions",
@@ -492,6 +511,7 @@ def main() -> int:
     require(OPERATOR_EVIDENCE.exists(), "operator evidence core module missing", failures)
     require(OPERATOR_START_CHECK.exists(), "operator start-check core module missing", failures)
     require(OPERATOR_LOOP_CONTROL.exists(), "operator loop-control core module missing", failures)
+    require(OPERATOR_RECEIPTS.exists(), "operator receipts core module missing", failures)
     require(WORKER_FLEET.exists(), "worker fleet core module missing", failures)
     require(WORKFLOW_JOBS.exists(), "workflow jobs core module missing", failures)
     require("from agentops_mis_core.approval_wall import" in server_text, "server.py must import approval wall core module", failures)
@@ -503,6 +523,7 @@ def main() -> int:
     require("from agentops_mis_core.operator_evidence import" in server_text, "server.py must import operator evidence core module", failures)
     require("from agentops_mis_core.operator_start_check import" in server_text, "server.py must import operator start-check core module", failures)
     require("from agentops_mis_core.operator_loop_control import" in server_text, "server.py must import operator loop-control core module", failures)
+    require("from agentops_mis_core.operator_receipts import" in server_text, "server.py must import operator receipts core module", failures)
     require("from agentops_mis_core.worker_fleet import" in server_text, "server.py must import worker fleet core module", failures)
     require("from agentops_mis_core.workflow_jobs import" in server_text, "server.py must import workflow jobs core module", failures)
     require("from agentops_mis_runtime.capabilities import" in server_text, "server.py must import runtime capability module", failures)
@@ -517,6 +538,7 @@ def main() -> int:
     operator_evidence_functions = function_names(OPERATOR_EVIDENCE) if OPERATOR_EVIDENCE.exists() else set()
     operator_start_check_functions = function_names(OPERATOR_START_CHECK) if OPERATOR_START_CHECK.exists() else set()
     operator_loop_control_functions = function_names(OPERATOR_LOOP_CONTROL) if OPERATOR_LOOP_CONTROL.exists() else set()
+    operator_receipt_functions = function_names(OPERATOR_RECEIPTS) if OPERATOR_RECEIPTS.exists() else set()
     worker_fleet_functions = function_names(WORKER_FLEET) if WORKER_FLEET.exists() else set()
     workflow_job_functions = function_names(WORKFLOW_JOBS) if WORKFLOW_JOBS.exists() else set()
     for helper in sorted(EXTRACTED_HELPERS):
@@ -546,6 +568,9 @@ def main() -> int:
     for helper in sorted(EXTRACTED_OPERATOR_LOOP_CONTROL_HELPERS):
         require(helper not in server_functions, f"server.py still defines {helper}", failures)
         require(helper in operator_loop_control_functions, f"operator loop-control module missing {helper}", failures)
+    for helper in sorted(EXTRACTED_OPERATOR_RECEIPT_HELPERS):
+        require(helper not in server_functions, f"server.py still defines {helper}", failures)
+        require(helper in operator_receipt_functions, f"operator receipts module missing {helper}", failures)
     for helper in sorted(EXTRACTED_APPROVAL_WALL_HELPERS):
         require(helper not in server_functions, f"server.py still defines {helper}", failures)
         require(helper in approval_wall_functions, f"approval wall module missing {helper}", failures)
@@ -579,6 +604,8 @@ def main() -> int:
         require(sources == {"agentops_mis_core.operator_start_check"}, f"{helper} imported from wrong or multiple modules: {sorted(sources)}", failures)
     for helper, sources in imported_symbol_sources(SERVER, SERVER_OPERATOR_LOOP_CONTROL_IMPORTS).items():
         require(sources == {"agentops_mis_core.operator_loop_control"}, f"{helper} imported from wrong or multiple modules: {sorted(sources)}", failures)
+    for helper, sources in imported_symbol_sources(SERVER, SERVER_OPERATOR_RECEIPT_IMPORTS).items():
+        require(sources == {"agentops_mis_core.operator_receipts"}, f"{helper} imported from wrong or multiple modules: {sorted(sources)}", failures)
     for helper, sources in imported_symbol_sources(SERVER, SERVER_APPROVAL_WALL_IMPORTS).items():
         require(sources == {"agentops_mis_core.approval_wall"}, f"{helper} imported from wrong or multiple modules: {sorted(sources)}", failures)
     for helper, sources in imported_symbol_sources(SERVER, SERVER_AGENT_PLAN_IMPORTS).items():
@@ -598,6 +625,7 @@ def main() -> int:
     operator_evidence_imports = imported_modules(OPERATOR_EVIDENCE) if OPERATOR_EVIDENCE.exists() else set()
     operator_start_check_imports = imported_modules(OPERATOR_START_CHECK) if OPERATOR_START_CHECK.exists() else set()
     operator_loop_control_imports = imported_modules(OPERATOR_LOOP_CONTROL) if OPERATOR_LOOP_CONTROL.exists() else set()
+    operator_receipt_imports = imported_modules(OPERATOR_RECEIPTS) if OPERATOR_RECEIPTS.exists() else set()
     worker_fleet_imports = imported_modules(WORKER_FLEET) if WORKER_FLEET.exists() else set()
     workflow_job_imports = imported_modules(WORKFLOW_JOBS) if WORKFLOW_JOBS.exists() else set()
     forbidden = sorted(module for module in imports if module in FORBIDDEN_RUNTIME_MODULE_IMPORTS)
@@ -636,6 +664,9 @@ def main() -> int:
     operator_loop_control_forbidden = sorted(module for module in operator_loop_control_imports if module in {"sqlite3", "subprocess", "http.server", "urllib.request"})
     require(not operator_loop_control_forbidden, f"operator loop-control module imports forbidden app/runtime dependencies: {operator_loop_control_forbidden}", failures)
     require("server" not in operator_loop_control_imports, "operator loop-control module must not import server module", failures)
+    operator_receipt_forbidden = sorted(module for module in operator_receipt_imports if module in {"sqlite3", "subprocess", "http.server", "urllib.request"})
+    require(not operator_receipt_forbidden, f"operator receipts module imports forbidden app/runtime dependencies: {operator_receipt_forbidden}", failures)
+    require("server" not in operator_receipt_imports, "operator receipts module must not import server module", failures)
     worker_fleet_forbidden = sorted(module for module in worker_fleet_imports if module in {"sqlite3", "subprocess", "http.server", "urllib.request"})
     require(not worker_fleet_forbidden, f"worker fleet module imports forbidden app/runtime dependencies: {worker_fleet_forbidden}", failures)
     require("server" not in worker_fleet_imports, "worker fleet module must not import server module", failures)
@@ -1814,6 +1845,62 @@ def main() -> int:
     require(ready_loop_control.get("status") == "ready", "operator loop-control ready status failed", failures)
     require(ready_loop_control.get("mode") == "read_only_copy", "operator loop-control ready mode failed", failures)
     require(ready_loop_control.get("requires_human") is False, "operator loop-control ready human flag failed", failures)
+    receipt_public = operator_action_receipt_public({
+        "audit_id": "audit_receipt_smoke",
+        "actor_id": "usr_smoke",
+        "entity_id": "oar_smoke",
+        "metadata_json": json.dumps({
+            "workspace_id": "local-demo",
+            "status": "verified",
+            "source": "advance_loop:runtime_doctor",
+            "action_id": "action_smoke",
+            "action_signature": "sig_receipt_smoke",
+            "action_command": "agentops operator runtime-doctor",
+            "action_hash": "hash_action_smoke",
+            "verify_command": "agentops operator loop-control",
+            "verify_hash": "hash_verify_smoke",
+            "result_summary": "Receipt verified.",
+        }, sort_keys=True),
+        "tamper_chain_hash": "tamper_receipt_smoke",
+        "created_at": "2026-06-23T00:00:00+00:00",
+    })
+    evaluation_public = operator_action_evaluation_public({
+        "evaluation_id": "oae_smoke",
+        "receipt_id": "oar_smoke",
+        "workspace_id": "local-demo",
+        "action_id": "action_smoke",
+        "action_signature": "sig_receipt_smoke",
+        "action_hash": "hash_action_smoke",
+        "verify_hash": "hash_verify_smoke",
+        "source": "advance_loop:runtime_doctor",
+        "evaluator_type": "rule",
+        "score": "1.0",
+        "pass_fail": "pass",
+        "rubric_json": '{"token_omitted": true, "receipt_status": "verified"}',
+        "notes": "Verified.",
+        "created_at": "2026-06-23T00:00:01+00:00",
+    })
+    readback_public = operator_control_readback_public({
+        "entity_id": "oar_smoke",
+        "metadata_json": json.dumps({
+            "readback_id": "ocr_smoke",
+            "receipt_id": "oar_smoke",
+            "workspace_id": "local-demo",
+            "action_id": "action_smoke",
+            "action_signature": "sig_receipt_smoke",
+            "source": "operator.action_queue_control_readback",
+            "control_readback": {"before": {"selected_gate": "runtime_doctor"}, "after": {"selected_gate": "none"}},
+        }, sort_keys=True),
+        "tamper_chain_hash": "tamper_readback_smoke",
+        "created_at": "2026-06-23T00:00:02+00:00",
+    })
+    require(receipt_public.get("receipt_id") == "oar_smoke", "operator receipt public id failed", failures)
+    require(receipt_public.get("status") == "verified" and receipt_public.get("token_omitted") is True, "operator receipt public status/omission failed", failures)
+    require(operator_receipt_requires_control_readback(receipt_public) is True, "operator receipt control-readback requirement failed", failures)
+    require(operator_receipt_requires_control_readback({"source": "operator_action_queue"}) is False, "operator receipt control-readback false-positive failed", failures)
+    require(evaluation_public and evaluation_public.get("score") == 1.0 and (evaluation_public.get("rubric") or {}).get("receipt_status") == "verified", "operator receipt evaluation projection failed", failures)
+    require(readback_public and readback_public.get("readback_id") == "ocr_smoke" and readback_public.get("tamper_chain_hash") == "tamper_readback_smoke", "operator control readback projection failed", failures)
+    require(((readback_public.get("control_readback") or {}).get("before") or {}).get("selected_gate") == "runtime_doctor", "operator control readback payload projection failed", failures)
 
     command = "python3 scripts/module_boundary_smoke.py"
     require(command in ci_text, "module boundary smoke missing from CI", failures)
@@ -1830,13 +1917,14 @@ def main() -> int:
     require("agentops_mis_core/operator_evidence.py" in plan_text, "module boundary plan missing operator evidence module", failures)
     require("agentops_mis_core/operator_start_check.py" in plan_text, "module boundary plan missing operator start-check module", failures)
     require("agentops_mis_core/operator_loop_control.py" in plan_text, "module boundary plan missing operator loop-control module", failures)
+    require("agentops_mis_core/operator_receipts.py" in plan_text, "module boundary plan missing operator receipts module", failures)
     require("agentops_mis_core/worker_fleet.py" in plan_text, "module boundary plan missing worker fleet module", failures)
     require("agentops_mis_core/workflow_jobs.py" in plan_text, "module boundary plan missing workflow jobs module", failures)
 
     output = {
         "ok": not failures,
         "operation": "module_boundary_smoke",
-        "boundary": "agentops_mis_runtime.capabilities+connectors+trust + agentops_mis_core.read_model_cache+approval_wall+agent_plans+gateway_runs+commander_work_packages+operator_command_center+operator_evidence+operator_start_check+operator_loop_control+worker_fleet+workflow_jobs",
+        "boundary": "agentops_mis_runtime.capabilities+connectors+trust + agentops_mis_core.read_model_cache+approval_wall+agent_plans+gateway_runs+commander_work_packages+operator_command_center+operator_evidence+operator_start_check+operator_loop_control+operator_receipts+worker_fleet+workflow_jobs",
         "server_line_count": len(server_text.splitlines()),
         "module_imports": {
             "capabilities": sorted(imports),
@@ -1851,6 +1939,7 @@ def main() -> int:
             "operator_evidence": sorted(operator_evidence_imports),
             "operator_start_check": sorted(operator_start_check_imports),
             "operator_loop_control": sorted(operator_loop_control_imports),
+            "operator_receipts": sorted(operator_receipt_imports),
             "worker_fleet": sorted(worker_fleet_imports),
             "workflow_jobs": sorted(workflow_job_imports),
         },
