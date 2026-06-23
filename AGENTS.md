@@ -75,6 +75,7 @@ New ideas start as `Inbox` or `Proposed`. Only human-reviewed `Approved` or veri
 - Do not batch-close or parallel-close subagents for tidiness. Close only when resource limits require it, and never make cleanup the critical path while coding/verification can continue.
 - In AgentOps MIS fast mode, use subagents, parallel reads/checks, background commands, and independent verification lanes as execution accelerators, not just audit helpers. If a subagent is slow or unavailable, keep the main thread moving on the highest-value safe slice and merge late results when they arrive.
 - Before any intentional wait in substantial product work, state the lane board and the concrete reason no independent safe lane can proceed.
+- If a resume, context compaction, or long tool output leaves the thread idle, recover by inspecting active lanes, advancing one independent safe slice, and polling/merging pending lanes afterward.
 - Do not let an Agent self-approve its own high-risk plan.
 - Keep plan, run, tool, approval, artifact, evaluation, and audit evidence linked.
 - Preserve workspace, scope, redaction, confirm-run, and external-write boundaries.
