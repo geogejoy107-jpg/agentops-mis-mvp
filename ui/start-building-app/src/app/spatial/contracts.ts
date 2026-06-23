@@ -46,6 +46,42 @@ export type SpatialEntityStatus =
 
 export type SpatialRisk = "low" | "medium" | "high" | "critical";
 
+export type SpatialAgentGlyphArchetype =
+  | "bridge"
+  | "spark"
+  | "forge"
+  | "fork"
+  | "lattice"
+  | "orbit"
+  | "archive"
+  | "shield"
+  | "pulse"
+  | "prism"
+  | "portal"
+  | "stack";
+
+export type SpatialAgentPaletteSlot =
+  | "azure"
+  | "violet"
+  | "amber"
+  | "coral"
+  | "mint"
+  | "rose"
+  | "indigo"
+  | "lime"
+  | "sky"
+  | "orange"
+  | "slate"
+  | "gold";
+
+export interface SpatialAgentVisualIdentity {
+  schemaVersion: "spatial-agent-identity/v0";
+  archetype: SpatialAgentGlyphArchetype;
+  palette: SpatialAgentPaletteSlot;
+  seed: number;
+  variant: 0 | 1 | 2;
+}
+
 export type SpatialAssetProvenance =
   | "first_party"
   | "generated_first_party"
@@ -174,6 +210,15 @@ export interface ArtKitManifest {
     lightingLanguage: string;
     animationLanguage: string;
   };
+  agentIdentityGrammar: {
+    schemaVersion: "spatial-agent-identity/v0";
+    strategy: "archetype-palette-seed";
+    archetypes: SpatialAgentGlyphArchetype[];
+    paletteSlots: SpatialAgentPaletteSlot[];
+    glyphGrid: SpatialGridSize;
+    statusChannel: "separate";
+    riskChannel: "separate";
+  };
   requiredAgentAnimations: string[];
   assetSlots: ArtKitAssetSlot[];
 }
@@ -199,6 +244,7 @@ export interface SpatialEntity {
   nodeId: string;
   targetNodeId?: string;
   authorityRef: SpatialAuthorityRef;
+  visualIdentity?: SpatialAgentVisualIdentity;
   activity?: string;
   metadata?: Record<string, string | number | boolean | null>;
 }
