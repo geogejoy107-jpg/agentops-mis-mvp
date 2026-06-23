@@ -64,6 +64,10 @@ function isCustomerWorkerWorkflowPath(path: string[]) {
   ].includes(path.join("/"));
 }
 
+function isLocalBriefPath(path: string[]) {
+  return path.join("/") === "workflows/local-brief";
+}
+
 function isWorkerReleasePath(path: string[]) {
   return path.join("/") === "workers/tasks/release";
 }
@@ -179,6 +183,22 @@ function workerDaemonGuard(path: string[], body: Buffer | undefined) {
       if (!Number.isFinite(maxErrors) || maxErrors < 1 || maxErrors > 20) {
         return { ok: false, status: 400, error: "max_errors_invalid" };
       }
+    }
+    return { ok: true, status: 200, error: "" };
+  } catch {
+    return { ok: false, status: 400, error: "invalid_json" };
+  }
+}
+
+function localBriefGuard(body: Buffer | undefined) {
+  try {
+    const parsed = parseJsonBody(body);
+    if (!parsed || typeof parsed !== "object") {
+      return { ok: false, status: 400, error: "invalid_json" };
+    }
+    const input = parsed as { confirm_run?: unknown };
+    if (input.confirm_run) {
+      return { ok: false, status: 403, error: "local_brief_live_not_allowed_next_parity" };
     }
     return { ok: true, status: 200, error: "" };
   } catch {
@@ -371,6 +391,19 @@ async function proxy(request: NextRequest, context: RouteContext) {
         live_execution_performed: false,
         token_omitted: true,
       }, { status: 403, headers: { "Cache-Control": "no-store" } });
+    }
+  }
+  if (request.method === "POST" && isLocalBriefPath(path)) {
+    const guard = localBriefGuard(body);
+    if (!guard.ok) {
+      return NextResponse.json({
+        ok: false,
+        workflow: "local_ai_brief",
+        dry_run: true,
+        error: guard.error,
+        live_execution_performed: false,
+        token_omitted: true,
+      }, { status: guard.status, headers: { "Cache-Control": "no-store" } });
     }
   }
   if (request.method === "POST" && isWorkerReleasePath(path)) {

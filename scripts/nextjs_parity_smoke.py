@@ -38,6 +38,7 @@ def main() -> int:
         NEXT_APP / "app" / "workspace" / "governance" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "deployment" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "pixel-office" / "page.tsx",
+        NEXT_APP / "app" / "workspace" / "pixel-office" / "local-brief" / "route.ts",
         NEXT_APP / "app" / "workspace" / "dispatch" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "dispatch" / "template-run" / "route.ts",
         NEXT_APP / "app" / "workspace" / "dispatch" / "customer-worker" / "route.ts",
@@ -94,6 +95,7 @@ def main() -> int:
         ROOT / "scripts" / "nextjs_agent_gateway_cli_worker_dogfood_smoke.py",
         ROOT / "scripts" / "nextjs_worker_dispatch_once_smoke.py",
         ROOT / "scripts" / "nextjs_pixel_office_floor_smoke.py",
+        ROOT / "scripts" / "nextjs_local_brief_smoke.py",
         ROOT / "scripts" / "nextjs_customer_worker_dispatch_smoke.py",
         ROOT / "scripts" / "nextjs_customer_worker_async_job_smoke.py",
         ROOT / "scripts" / "nextjs_worker_stuck_release_smoke.py",
@@ -115,6 +117,7 @@ def main() -> int:
     dispatch_route_text = read_text(NEXT_APP / "app" / "workspace" / "dispatch" / "template-run" / "route.ts")
     customer_worker_dispatch_route_text = read_text(NEXT_APP / "app" / "workspace" / "dispatch" / "customer-worker" / "route.ts")
     customer_worker_job_route_text = read_text(NEXT_APP / "app" / "workspace" / "dispatch" / "customer-worker-job" / "route.ts")
+    local_brief_route_text = read_text(NEXT_APP / "app" / "workspace" / "pixel-office" / "local-brief" / "route.ts")
     connector_trust_route_text = read_text(NEXT_APP / "app" / "workspace" / "connectors" / "trust" / "route.ts")
     notion_export_route_text = read_text(NEXT_APP / "app" / "workspace" / "external-bases" / "notion" / "export" / "route.ts")
     agents_dispatch_route_text = read_text(NEXT_APP / "app" / "workspace" / "agents" / "dispatch-once" / "route.ts")
@@ -150,6 +153,7 @@ def main() -> int:
     gateway_cli_worker_dogfood_smoke_text = read_text(ROOT / "scripts" / "nextjs_agent_gateway_cli_worker_dogfood_smoke.py")
     worker_dispatch_smoke_text = read_text(ROOT / "scripts" / "nextjs_worker_dispatch_once_smoke.py")
     pixel_office_floor_smoke_text = read_text(ROOT / "scripts" / "nextjs_pixel_office_floor_smoke.py")
+    local_brief_smoke_text = read_text(ROOT / "scripts" / "nextjs_local_brief_smoke.py")
     customer_worker_dispatch_smoke_text = read_text(ROOT / "scripts" / "nextjs_customer_worker_dispatch_smoke.py")
     customer_worker_async_job_smoke_text = read_text(ROOT / "scripts" / "nextjs_customer_worker_async_job_smoke.py")
     worker_release_smoke_text = read_text(ROOT / "scripts" / "nextjs_worker_stuck_release_smoke.py")
@@ -168,6 +172,7 @@ def main() -> int:
     require("AGENTOPS_API_BASE" in route_text, "API proxy must be configurable with AGENTOPS_API_BASE")
     require("mock_only_next_parity" in route_text and "isWorkerDispatchPath" in route_text, "API proxy must fail closed for non-mock worker dispatch")
     require("customer_worker_mock_only_next_parity" in route_text and "isCustomerWorkerWorkflowPath" in route_text, "API proxy must fail closed for non-mock customer-worker dispatch")
+    require("local_brief_live_not_allowed_next_parity" in route_text and "isLocalBriefPath" in route_text, "API proxy must fail closed for live local brief confirmation")
     require("force_release_not_allowed_next_parity" in route_text and "isWorkerReleasePath" in route_text, "API proxy must fail closed for force worker task release")
     require("mock_daemon_only_next_parity" in route_text and "isWorkerDaemonPath" in route_text, "API proxy must fail closed for non-mock worker daemon controls")
     require("live_worker_daemon_not_allowed_next_parity" in route_text, "API proxy must fail closed for confirm/live worker daemon controls")
@@ -189,6 +194,10 @@ def main() -> int:
     require("nextjs_pixel_office_floor_v1" in pixel_office_floor_smoke_text, "Next Pixel Office floor smoke contract is missing")
     require("/workspace/pixel-office" in pixel_office_floor_smoke_text, "Next Pixel Office smoke must exercise the App Router page")
     require("commercial-safe geometry" in pixel_office_floor_smoke_text and "live runtime disabled" in pixel_office_floor_smoke_text, "Next Pixel Office smoke must prove read-only safe map evidence")
+    require("nextjs_local_brief_v1" in local_brief_smoke_text, "Next local brief smoke contract is missing")
+    require("/api/mis/workflows/local-brief" in local_brief_smoke_text, "Next local brief smoke must exercise the /api/mis proxy route")
+    require("/workspace/pixel-office/local-brief" in local_brief_smoke_text, "Next local brief smoke must exercise the form fallback route")
+    require("local_brief_live_not_allowed_next_parity" in local_brief_smoke_text, "Next local brief smoke must prove live confirmation fails closed")
     require("nextjs_customer_worker_dispatch_v1" in customer_worker_dispatch_smoke_text, "Next customer-worker dispatch smoke contract is missing")
     require("/api/mis/workflows/customer-worker-task" in customer_worker_dispatch_smoke_text, "Next customer-worker dispatch smoke must exercise the /api/mis workflow proxy route")
     require("/workspace/dispatch/customer-worker" in customer_worker_dispatch_smoke_text, "Next customer-worker dispatch smoke must exercise the dispatch form fallback route")
@@ -251,6 +260,7 @@ def main() -> int:
     require("/workflows/customer-task-templates/run" in dispatch_route_text and "entitlement_required" in dispatch_route_text, "dispatch template fallback must preserve entitlement blocking")
     require("/workflows/customer-worker-task" in customer_worker_dispatch_route_text and "customer_worker_mock_only_next_parity" in customer_worker_dispatch_route_text, "customer-worker dispatch fallback must preserve mock-only blocking")
     require("/workflows/customer-worker-task/submit" in customer_worker_job_route_text and "customer_worker_mock_only_next_parity" in customer_worker_job_route_text, "customer-worker async fallback must preserve mock-only blocking")
+    require("/workflows/local-brief" in local_brief_route_text and "local_brief_live_not_allowed_next_parity" in local_brief_route_text, "local brief form fallback must preserve dry-run-only blocking")
     require("Customer worker dispatch" in dispatch_page_text and "/workspace/dispatch/customer-worker" in dispatch_page_text, "dispatch parity page must expose customer-worker dispatch form")
     require("Async worker jobs" in dispatch_page_text and "/workspace/dispatch/customer-worker-job" in dispatch_page_text, "dispatch parity page must expose async customer-worker job form")
     require("/workflows/jobs?limit=" in server_lib_text and "loadServerWorkflowJobs" in server_lib_text, "server-side dispatch loaders must include workflow job readback")
@@ -305,6 +315,7 @@ def main() -> int:
     require("Storage backend migration gate" in deployment_page_text and "writes allowed" in deployment_page_text and "fallback" in deployment_page_text, "deployment parity page must expose storage backend migration gates")
     require("PixelOfficeParityPage" in pixel_office_page_text and "Pixel Operating Map" in pixel_office_page_text, "pixel office parity page must render the operating map")
     require("commercial-safe geometry" in pixel_office_page_text and "no Star Office assets" in pixel_office_page_text and "live runtime disabled" in pixel_office_page_text, "pixel office parity page must expose asset and live-runtime boundaries")
+    require("Local brief controls" in pixel_office_page_text and "/workspace/pixel-office/local-brief" in pixel_office_page_text and "live brief blocked" in pixel_office_page_text, "pixel office parity page must expose local brief dry-run controls and live gate")
     require("loadServerDashboardMetrics" in server_lib_text and "loadServerAgents" in server_lib_text and "loadServerTasks" in server_lib_text and "loadServerRuns" in server_lib_text, "pixel office server loaders are missing")
     require("/workspace/pixel-office" in app_frame_text, "Next.js nav must expose Pixel Office parity route")
     require("audit_retention_policy_v1" in deployment_page_text and "delete performed" in deployment_page_text and "raw rows omitted" in deployment_page_text, "deployment parity page must expose read-only retention policy proof")
@@ -388,6 +399,7 @@ def main() -> int:
             "/workspace/governance",
             "/workspace/deployment",
             "/workspace/pixel-office",
+            "/workspace/pixel-office/local-brief",
             "/workspace/dispatch",
             "/workspace/dispatch/customer-worker",
             "/workspace/dispatch/customer-worker-job",
@@ -415,6 +427,7 @@ def main() -> int:
             "nextjs_agent_gateway_cli_worker_dogfood_v1",
             "nextjs_worker_dispatch_once_v1",
             "nextjs_pixel_office_floor_v1",
+            "nextjs_local_brief_v1",
             "nextjs_customer_worker_dispatch_v1",
             "nextjs_customer_worker_async_job_v1",
             "nextjs_worker_stuck_release_v1",

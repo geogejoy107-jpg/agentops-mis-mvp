@@ -237,6 +237,10 @@ h2 {
   margin-top: 14px;
 }
 
+.tightGrid {
+  gap: 10px;
+}
+
 .panel {
   padding: 14px;
 }
@@ -512,6 +516,13 @@ h2 {
 
 .miniButton:disabled {
   opacity: 0.55;
+}
+
+.buttonRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 10px;
 }
 
 .proofStrip,

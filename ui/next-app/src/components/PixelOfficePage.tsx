@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Activity, Bot, ClipboardList, Database, KeyRound, Map, Plug, ShieldCheck, Workflow } from "lucide-react";
+import { Activity, Bot, ClipboardList, Database, FileText, KeyRound, Map, Plug, ShieldCheck, Workflow } from "lucide-react";
 import { AppFrame } from "./AppFrame";
 import type { AgentSummary, ApprovalSummary, AuditSummary, DashboardMetrics, MemorySummary, RunSummary, TaskSummary } from "@/lib/mis";
 
@@ -25,6 +25,16 @@ type PixelAgent = {
   status: string;
   route: string;
   zoneId: string;
+};
+
+type PixelOfficeFeedback = {
+  localBriefStatus?: string;
+  localBriefError?: string;
+  localBriefPromptHash?: string;
+  localBriefStateHash?: string;
+  localBriefAgentsTotal?: string;
+  localBriefPendingApprovals?: string;
+  localBriefRecentRealRuns?: string;
 };
 
 function countWhere<T>(rows: T[], predicate: (row: T) => boolean) {
@@ -119,6 +129,7 @@ export function PixelOfficeParityPage({
   memories,
   audit,
   errors,
+  feedback,
 }: Readonly<{
   metrics: DashboardMetrics;
   agents: AgentSummary[];
@@ -128,6 +139,7 @@ export function PixelOfficeParityPage({
   memories: MemorySummary[];
   audit: AuditSummary[];
   errors: Record<string, string | null>;
+  feedback?: PixelOfficeFeedback;
 }>) {
   const zones = buildZones({ metrics, agents, tasks, runs, approvals, memories, audit });
   const pixelAgents = buildAgents(agents, tasks, runs, approvals, memories);
@@ -151,6 +163,17 @@ export function PixelOfficeParityPage({
           Partial Pixel Office readback: {activeErrors.map(([key, value]) => `${key}: ${value}`).join(" | ")}
         </div>
       ) : null}
+      {feedback?.localBriefStatus === "dry_run" ? (
+        <div className="banner success">
+          Local brief dry-run recorded: prompt {feedback.localBriefPromptHash?.slice(0, 16) || "hash omitted"} · state {feedback.localBriefStateHash?.slice(0, 16) || "hash omitted"}
+        </div>
+      ) : null}
+      {feedback?.localBriefStatus === "blocked" ? (
+        <div className="banner warn">
+          <strong>Local brief live run blocked:</strong> {feedback.localBriefError || "local_brief_live_not_allowed_next_parity"}
+        </div>
+      ) : null}
+      {feedback?.localBriefStatus === "failed" ? <div className="banner error">Local brief dry-run failed: {feedback.localBriefError || "unknown"}</div> : null}
 
       <section className="metrics">
         <div className="metric compactMetric"><Map className="metricIcon" size={18} /><span>mapped rooms</span><strong>{zones.length}</strong></div>
@@ -201,6 +224,46 @@ export function PixelOfficeParityPage({
               </Link>
             );
           })}
+        </div>
+      </section>
+
+      <section className="panel wide">
+        <div className="panelHeader">
+          <h2><FileText size={14} /> Local brief controls</h2>
+          <span>dry-run only</span>
+        </div>
+        <div className="proofStrip">
+          <span>workflow local_ai_brief</span>
+          <span>dry-run allowed</span>
+          <span>live brief blocked</span>
+          <span>prompt body omitted</span>
+          <span>token omitted true</span>
+        </div>
+        <div className="grid tightGrid">
+          <div>
+            <p className="subtle">
+              Dry-run local brief records structured MIS state hashes and an audit/runtime event without sending a prompt to Agnesfallback.
+            </p>
+            <form className="buttonRow" method="post" action="/workspace/pixel-office/local-brief">
+              <button className="miniButton good" type="submit"><FileText size={13} /> Run dry-run brief</button>
+            </form>
+          </div>
+          <div>
+            <p className="subtle">
+              Confirmed local brief execution stays outside the Next parity path until the live prepared-action gate is explicitly wired.
+            </p>
+            <form className="buttonRow" method="post" action="/workspace/pixel-office/local-brief">
+              <input type="hidden" name="confirm_run" value="true" />
+              <button className="miniButton bad" type="submit"><ShieldCheck size={13} /> Check live gate</button>
+            </form>
+          </div>
+        </div>
+        <div className="proofStrip">
+          <span>prompt {feedback?.localBriefPromptHash?.slice(0, 16) || "none"}</span>
+          <span>state {feedback?.localBriefStateHash?.slice(0, 16) || "none"}</span>
+          <span>agents {feedback?.localBriefAgentsTotal || metrics.agents_total || agents.length}</span>
+          <span>pending approvals {feedback?.localBriefPendingApprovals || metrics.pending_approvals || 0}</span>
+          <span>recent real runs {feedback?.localBriefRecentRealRuns || "0"}</span>
         </div>
       </section>
 

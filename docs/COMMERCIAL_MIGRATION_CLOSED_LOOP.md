@@ -234,6 +234,7 @@ python3 scripts/nextjs_agent_gateway_task_proxy_smoke.py
 python3 scripts/nextjs_agent_gateway_cli_worker_dogfood_smoke.py
 python3 scripts/nextjs_worker_dispatch_once_smoke.py
 python3 scripts/nextjs_pixel_office_floor_smoke.py
+python3 scripts/nextjs_local_brief_smoke.py
 python3 scripts/nextjs_customer_worker_dispatch_smoke.py
 python3 scripts/nextjs_customer_worker_async_job_smoke.py
 python3 scripts/nextjs_worker_stuck_release_smoke.py
@@ -253,6 +254,14 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   dashboard/agent/task/run/approval/memory/audit read models, exposes
   commercial-safe geometry/no-Star-Office/live-runtime-disabled proof, links
   zones into formal Next ledgers, and leaks no token-like material.
+
+  `python3 scripts/nextjs_local_brief_smoke.py` (`nextjs_local_brief_v1`)
+  starts isolated MIS API and Next.js servers, proves the Next
+  `/api/mis/workflows/local-brief` proxy and
+  `/workspace/pixel-office/local-brief` fallback expose dry-run local brief
+  controls while blocking `confirm_run:true` with
+  `local_brief_live_not_allowed_next_parity`, avoiding prompt body, token, or
+  blocked-live audit mutation.
 
   `python3 scripts/nextjs_customer_worker_dispatch_smoke.py`
   (`nextjs_customer_worker_dispatch_v1`) starts isolated MIS API and Next.js
@@ -391,6 +400,7 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   - `ui/next-app/app/workspace/governance/page.tsx`
   - `ui/next-app/app/workspace/deployment/page.tsx`
   - `ui/next-app/app/workspace/pixel-office/page.tsx`
+  - `ui/next-app/app/workspace/pixel-office/local-brief/route.ts`
   - `ui/next-app/app/workspace/dispatch/page.tsx`
   - `ui/next-app/app/workspace/dispatch/template-run/route.ts`
   - `ui/next-app/app/workspace/evidence/[manifestId]/page.tsx`
@@ -440,6 +450,7 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   - `scripts/nextjs_agent_gateway_cli_worker_dogfood_smoke.py`
   - `scripts/nextjs_worker_dispatch_once_smoke.py`
   - `scripts/nextjs_pixel_office_floor_smoke.py`
+  - `scripts/nextjs_local_brief_smoke.py`
   - `scripts/nextjs_customer_worker_dispatch_smoke.py`
   - `scripts/nextjs_customer_worker_async_job_smoke.py`
   - `scripts/nextjs_worker_stuck_release_smoke.py`
