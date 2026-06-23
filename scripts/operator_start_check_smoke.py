@@ -97,7 +97,7 @@ def validate(payload: dict, adapter: str) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Verify operator start-check CLI aggregate.")
     parser.add_argument("--base-url", default=os.environ.get("AGENTOPS_BASE_URL", "http://127.0.0.1:8787"))
-    parser.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], action="append", default=["mock"])
+    parser.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], action="append", default=None)
     args = parser.parse_args()
     outputs: list[str] = []
     try:
@@ -106,7 +106,7 @@ def main() -> int:
             env["AGENTOPS_CONFIG"] = str(Path(tmp) / "config.json")
             env.pop("AGENTOPS_API_KEY", None)
             checked = []
-            for adapter in args.adapter:
+            for adapter in (args.adapter or ["mock"]):
                 proc = run_start_check(args.base_url, adapter, env)
                 outputs.extend([proc.stdout, proc.stderr])
                 require(proc.returncode == 0, f"operator start-check failed for {adapter}: {proc.stderr or proc.stdout}")
