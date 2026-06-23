@@ -259,7 +259,7 @@ Acceptance evidence:
   - The local ledger shows completed status plus tool/evaluation/audit/artifact evidence for both runs.
   - These are real live run IDs, not hard-coded fixtures; docs cite IDs and counts only, without raw prompts, raw responses, credentials, or private transcripts.
 - Latest normal customer-worker live acceptance on 2026-06-23:
-  - Current-code combined evidence command: `python3 scripts/v1_5_current_code_product_evidence.py --base-url http://127.0.0.1:<current-code-port> --db-path /tmp/<current-code-agentops>.db --confirm-live`
+  - Current-code combined evidence command: `python3 scripts/v1_5_current_code_product_evidence.py --base-url http://127.0.0.1:<current-code-port> --db-path /tmp/<current-code-agentops>.db --confirm-live`; this covers knowledge indexing, Commander synthesis, real Hermes/OpenClaw customer-worker runs, live readiness readback, remote/scoped worker mock fallback, and final non-live local acceptance.
   - `python3 scripts/customer_worker_real_runtime_acceptance.py --base-url http://127.0.0.1:8787 --confirm-live --adapter hermes --adapter openclaw --request-timeout 900 --hermes-timeout 480`
   - `python3 scripts/v1_5_live_product_readiness_smoke.py --require-adapter hermes --require-adapter openclaw`
   - Hermes completed `run_gw_ee70f20c021c` from task `tsk_worker_ui_hermes_20260623062626_2fc8c2b3`, with artifact `art_customer_worker_task_run_gw_ee70f20c021c`, approval `ap_customer_worker_delivery_run_gw_ee70f20c021c`, plan `plan_a1c439e073775da1`, and manifest `pem_daf7d404a2e9024b`.

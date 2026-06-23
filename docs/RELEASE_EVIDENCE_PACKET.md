@@ -158,6 +158,10 @@ python3 scripts/v1_5_live_product_readiness_smoke.py \
 
 Canonical combined current-code proof command:
 `python3 scripts/v1_5_current_code_product_evidence.py --base-url http://127.0.0.1:<current-code-port> --db-path /tmp/<current-code-agentops>.db --confirm-live`.
+This command rebuilds knowledge evidence, runs Commander synthesis, executes
+confirmed Hermes/OpenClaw customer-worker acceptance, verifies live readback,
+exercises the remote/scoped worker mock fallback with short-lived session
+launch-packet evidence, and finishes with non-live local acceptance.
 
 Canonical read-only proof command:
 `python3 scripts/v1_5_live_product_readiness_smoke.py --require-adapter hermes --require-adapter openclaw`.

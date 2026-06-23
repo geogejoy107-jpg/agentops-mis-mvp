@@ -123,6 +123,41 @@ def compact_step_payload(name: str, payload: dict[str, Any]) -> dict[str, Any]:
                 for item in payload.get("adapters") or []
             ],
         }
+    if name == "remote_worker_acceptance":
+        remote = payload.get("remote_worker_path") or payload.get("remote_path") or {}
+        def command_token_omitted(item: dict[str, Any]) -> bool | None:
+            if "token_omitted" in item:
+                return item.get("token_omitted") is True
+            if "token_leaked" in item:
+                return item.get("token_leaked") is False
+            return None
+
+        return {
+            "ok": payload.get("ok"),
+            "evidence_class": payload.get("evidence_class"),
+            "product_readiness_proof": payload.get("product_readiness_proof"),
+            "remote_path": {
+                "doctor": remote.get("doctor"),
+                "worker_status": remote.get("worker_status"),
+                "worker_readiness": remote.get("worker_readiness"),
+                "mock_preflight": remote.get("mock_preflight"),
+                "enrollment_token_path": remote.get("enrollment_token_path"),
+                "session_path": remote.get("session_path"),
+                "mock_adapter_only": remote.get("mock_adapter_only"),
+            },
+            "commands": [
+                {
+                    "name": item.get("name"),
+                    "ok": item.get("ok"),
+                    "run_id": item.get("run_id"),
+                    "adapter": item.get("adapter"),
+                    "session_path": item.get("session_path"),
+                    "token_omitted": command_token_omitted(item),
+                }
+                for item in payload.get("commands") or []
+            ],
+            "token_omitted": payload.get("token_omitted") is True or payload.get("token_leaked") is False,
+        }
     if name == "non_live_local_acceptance":
         return {
             "ok": payload.get("ok"),
@@ -152,6 +187,7 @@ def main() -> int:
     parser.add_argument("--confirm-live", action="store_true", help="Run real local Hermes/OpenClaw acceptance.")
     parser.add_argument("--skip-knowledge-index", action="store_true")
     parser.add_argument("--skip-commander-synthesis", action="store_true")
+    parser.add_argument("--skip-remote-worker", action="store_true")
     parser.add_argument("--skip-live", action="store_true")
     parser.add_argument("--timeout", type=int, default=900)
     parser.add_argument("--hermes-timeout", type=int, default=600)
@@ -238,6 +274,12 @@ def main() -> int:
                     "skipped": True,
                     "reason": "confirm_live_required",
                 })
+        if not args.skip_remote_worker:
+            record_step(
+                "remote_worker_acceptance",
+                ["python3", "scripts/remote_worker_product_acceptance.py", "--base-url", base_url],
+                args.timeout,
+            )
         record_step("non_live_local_acceptance", ["python3", "scripts/v1_5_local_product_acceptance.py", "--base-url", base_url], 180)
         after = compact_readiness(http_get_json(base_url, "/api/local/readiness"))
     except Exception as exc:
