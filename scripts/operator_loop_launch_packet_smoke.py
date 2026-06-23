@@ -257,6 +257,30 @@ def validate_packet(payload: dict, label: str, task_id: str, agent_id: str, fail
     require(operator_control.get("token_omitted") is True and handoff_source.get("token_omitted") is True, f"{label} control source token omission missing: {sources}", failures)
 
 
+def validate_brief(payload: dict, label: str, task_id: str, agent_id: str, adapter: str, failures: list[str]) -> None:
+    require(payload.get("operation") == "operator_loop_launch_brief", f"{label} brief operation mismatch: {payload}", failures)
+    require(payload.get("source_operation") == "operator_loop_launch_packet", f"{label} source operation mismatch: {payload}", failures)
+    require(payload.get("task_id") == task_id, f"{label} task mismatch: {payload.get('task_id')} != {task_id}", failures)
+    require(payload.get("agent_id") == agent_id, f"{label} agent mismatch: {payload.get('agent_id')} != {agent_id}", failures)
+    require(payload.get("adapter") == adapter, f"{label} adapter mismatch: {payload}", failures)
+    require(payload.get("token_omitted") is True, f"{label} token omission missing: {payload}", failures)
+    safety = payload.get("safety") or {}
+    require(safety.get("read_only") is True, f"{label} read_only missing: {safety}", failures)
+    require(safety.get("ledger_mutated") is False, f"{label} should not mutate ledger: {safety}", failures)
+    require(safety.get("live_execution_performed") is False, f"{label} should not execute live work: {safety}", failures)
+    policy = payload.get("policy") or {}
+    require(policy.get("server_executes_shell") is False, f"{label} server shell boundary missing: {policy}", failures)
+    require(policy.get("copy_only") is True, f"{label} copy-only boundary missing: {policy}", failures)
+    require(policy.get("live_execution_requires_confirm_run") is True, f"{label} live confirmation guidance missing: {policy}", failures)
+    require(policy.get("external_writes_require_prepared_action") is True, f"{label} prepared-action guidance missing: {policy}", failures)
+    require(payload.get("adapter_preflight_command") == f"agentops worker preflight --adapter {adapter}", f"{label} adapter preflight command missing: {payload}", failures)
+    require("agentops operator loop-control --limit 8" in (payload.get("commands") or []), f"{label} loop-control command missing: {payload}", failures)
+    require("agentops operator advance-loop --fast-control --limit 8" in (payload.get("commands") or []), f"{label} fast advance command missing: {payload}", failures)
+    chain = payload.get("execution_chain") or []
+    require(isinstance(chain, list) and bool(chain), f"{label} compact execution chain missing: {payload}", failures)
+    require(any(isinstance(item, dict) and item.get("next_safe_command") for item in chain), f"{label} compact chain lacks next_safe_command: {chain}", failures)
+
+
 def main() -> int:
     failures: list[str] = []
     outputs: list[str] = []
@@ -326,6 +350,15 @@ def main() -> int:
             cli_payload = load_json(cli_proc.stdout)
             require(cli_proc.returncode == 0, f"CLI launch packet failed: {cli_proc.stderr or cli_proc.stdout}", failures)
             validate_packet(cli_payload, "cli", task_id, agent_id, failures)
+            brief_cli = run_cli(
+                base_url,
+                ["operator", "loop-launch-packet", "--task-id", task_id, "--agent-id", agent_id, "--limit", "8", "--query", "Agent Work Method Block", "--brief", "--adapter", "hermes"],
+                env,
+            )
+            outputs.extend([brief_cli.stdout, brief_cli.stderr])
+            brief_payload = load_json(brief_cli.stdout)
+            require(brief_cli.returncode == 0, f"Brief CLI launch packet failed: {brief_cli.stderr or brief_cli.stdout}", failures)
+            validate_brief(brief_payload, "cli_brief", task_id, agent_id, "hermes", failures)
             full_status, full_payload = http_json(
                 base_url,
                 "/api/operator/loop-launch-packet",

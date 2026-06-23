@@ -505,7 +505,7 @@ def cmd_operator_intake_checklist(args, client: AgentOpsClient) -> dict:
 
 
 def cmd_operator_loop_launch_packet(args, client: AgentOpsClient) -> dict:
-    return client.get(
+    payload = client.get(
         "/api/operator/loop-launch-packet",
         query={
             "limit": args.limit,
@@ -516,6 +516,95 @@ def cmd_operator_loop_launch_packet(args, client: AgentOpsClient) -> dict:
             "full_handoff": "true" if args.full_handoff else None,
         },
     )
+    if args.brief:
+        return compact_loop_launch_packet(payload, adapter=args.adapter)
+    return payload
+
+
+def compact_loop_launch_packet(payload: dict, *, adapter: str) -> dict:
+    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    control = payload.get("control_summary") if isinstance(payload.get("control_summary"), dict) else {}
+    recommended = control.get("recommended_step") if isinstance(control.get("recommended_step"), dict) else {}
+    safety = payload.get("safety") if isinstance(payload.get("safety"), dict) else {}
+    evaluation = payload.get("evaluation_contract") if isinstance(payload.get("evaluation_contract"), dict) else {}
+    audit = payload.get("audit_contract") if isinstance(payload.get("audit_contract"), dict) else {}
+    agent_plan_draft = payload.get("agent_plan_draft") if isinstance(payload.get("agent_plan_draft"), dict) else {}
+    chain = payload.get("execution_chain") if isinstance(payload.get("execution_chain"), list) else []
+    compact_chain = []
+    for item in chain:
+        if not isinstance(item, dict):
+            continue
+        compact_chain.append({
+            "step_id": item.get("step_id"),
+            "phase": item.get("phase"),
+            "label": item.get("label"),
+            "status": item.get("step_status"),
+            "next_safe_command": item.get("next_safe_command") or item.get("command"),
+            "verify_command": item.get("verify_command"),
+            "receipt_command": item.get("receipt_command"),
+            "confirm_required": bool(item.get("confirm_required")),
+            "receipt_required": bool(item.get("receipt_required")),
+            "source": item.get("source"),
+            "token_omitted": item.get("token_omitted", True),
+        })
+    adapter_command = f"agentops worker preflight --adapter {adapter}"
+    return {
+        "provider": payload.get("provider", "agentops-operator"),
+        "operation": "operator_loop_launch_brief",
+        "source_operation": payload.get("operation", "operator_loop_launch_packet"),
+        "status": payload.get("status", "unknown"),
+        "workspace_id": payload.get("workspace_id"),
+        "task_id": payload.get("task_id"),
+        "agent_id": payload.get("agent_id"),
+        "adapter": adapter,
+        "method": payload.get("method"),
+        "summary": {
+            "handoff_mode": summary.get("handoff_mode"),
+            "control_status": control.get("status") or summary.get("control_status"),
+            "control_mode": control.get("mode") or summary.get("control_mode"),
+            "recommended_step": recommended.get("step_id") or summary.get("recommended_step"),
+            "recommended_label": recommended.get("label"),
+            "requires_human": bool(control.get("requires_human")),
+            "requires_receipt": bool(control.get("requires_receipt")),
+            "execution_chain_steps": len(compact_chain),
+            "blocking_steps": control.get("blocking_steps") or [],
+            "attention_steps": control.get("attention_steps") or [],
+            "required_ledgers": evaluation.get("required_ledgers") or [],
+            "agent_plan_risk": agent_plan_draft.get("risk_level"),
+            "agent_plan_approval_required": bool(agent_plan_draft.get("approval_required")),
+        },
+        "next_command": control.get("next_command") or recommended.get("command"),
+        "verify_command": control.get("verify_command") or recommended.get("verify_command"),
+        "receipt_command": control.get("receipt_command") or recommended.get("receipt_command"),
+        "adapter_preflight_command": adapter_command,
+        "runtime_doctor_command": "agentops operator runtime-doctor --limit 8",
+        "execution_chain": compact_chain,
+        "policy": {
+            "policy_id": control.get("policy_id") or (audit.get("bounded_runner") or {}).get("policy_id"),
+            "server_executes_shell": bool(control.get("server_executes_shell") or (audit.get("bounded_runner") or {}).get("server_executes_shell")),
+            "live_execution_requires_confirm_run": adapter in {"hermes", "openclaw"},
+            "external_writes_require_prepared_action": adapter in {"hermes", "openclaw"},
+            "copy_only": control.get("copy_only", True) is not False,
+        },
+        "safety": {
+            "read_only": bool(safety.get("read_only", True)),
+            "ledger_mutated": bool(safety.get("ledger_mutated")),
+            "live_execution_performed": bool(safety.get("live_execution_performed")),
+            "raw_prompt_omitted": bool(safety.get("raw_prompt_omitted", True)),
+            "raw_response_omitted": bool(safety.get("raw_response_omitted", True)),
+            "token_omitted": bool(safety.get("token_omitted", True)),
+        },
+        "commands": [
+            adapter_command,
+            "agentops operator loop-control --limit 8",
+            "agentops operator advance-loop --fast-control --limit 8",
+            "agentops operator loop-audit --limit 20",
+            "agentops operator action-receipts --limit 20",
+        ],
+        "contract": "compact copy-only launch brief for Hermes/OpenClaw/Codex; derived from loop-launch-packet without mutating ledgers, executing runtimes, or exposing raw prompts/responses/tokens",
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
 
 
 def cmd_operator_advance_loop_policy(args, client: AgentOpsClient) -> dict:
@@ -2409,6 +2498,8 @@ def build_parser() -> argparse.ArgumentParser:
     operator_launch.add_argument("--query", default="READ PLAN RETRIEVE COMPARE VERIFY RECORD")
     operator_launch.add_argument("--handoff-mode", choices=["lightweight", "full"], default="lightweight", help="Use lightweight loop-control by default; choose full for deeper operator handoff diagnostics.")
     operator_launch.add_argument("--full-handoff", action="store_true", help="Shortcut for --handoff-mode full.")
+    operator_launch.add_argument("--brief", action="store_true", help="Return a compact copy-only launch brief for Hermes/OpenClaw/Codex instead of the full packet.")
+    operator_launch.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock", help="Adapter context to include in --brief preflight and live-confirmation guidance.")
     operator_launch.set_defaults(handler="operator_loop_launch_packet")
     evidence_gap = operator_sub.add_parser("remediate-evidence-gap", help="Preview or create a Commander package for a run execution-evidence gap.")
     evidence_gap.add_argument("--run-id", required=True)

@@ -27,6 +27,33 @@ The loop harness lets Codex ask Hermes and OpenClaw for alternating proposals, c
 
 ## Commands
 
+Quick loop-control brief for a live local adapter:
+
+```bash
+agentops worker preflight --adapter hermes
+agentops operator loop-launch-packet --brief --adapter hermes --limit 8
+
+agentops worker preflight --adapter openclaw
+agentops operator loop-launch-packet --brief --adapter openclaw --limit 8
+```
+
+The brief is the preferred handoff payload when Codex wants Hermes or OpenClaw
+to continue a supervised loop without reading the full launch packet. It keeps
+only the adapter preflight command, current next/verify/receipt commands,
+compact execution-chain state, bounded-runner policy id, confirmation and
+prepared-action guidance, and read-only/token-omission proof. The agent should
+copy commands locally; the server never executes shell from the brief.
+
+Bounded one-step advance:
+
+```bash
+agentops operator loop-control --limit 8
+agentops operator advance-loop --fast-control --limit 8
+agentops operator advance-loop --fast-control --limit 8 --confirm-advance
+agentops operator action-receipts --limit 20
+agentops operator loop-audit --limit 20
+```
+
 Dry-run two rounds:
 
 ```bash

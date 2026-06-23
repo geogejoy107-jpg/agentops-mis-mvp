@@ -1759,6 +1759,8 @@ same gate decision as the operator console.
 
 ```bash
 agentops operator loop-launch-packet --task-id tsk_123 --agent-id agt_worker --limit 8
+agentops operator loop-launch-packet --task-id tsk_123 --agent-id agt_worker --brief --adapter hermes
+agentops operator loop-launch-packet --task-id tsk_123 --agent-id agt_worker --brief --adapter openclaw
 agentops operator loop-launch-packet --task-id tsk_123 --agent-id agt_worker --handoff-mode full
 ```
 
@@ -1775,6 +1777,12 @@ control source while newer agents can branch on `summary.handoff_mode`.
 On large local ledgers, full handoff may be slow; prefer the default lightweight
 mode for normal loops, or pair full mode with a low `--limit` / higher
 `--request-timeout` for deliberate diagnostics.
+CLI `--brief` keeps the server/API contract unchanged but emits a compact
+copy-only `operator_loop_launch_brief` for live local agents. The brief includes
+the adapter preflight command, the current next/verify/receipt commands, compact
+execution-chain rows, confirmation/prepared-action guidance for Hermes/OpenClaw,
+and the same read-only/token-omission safety proof without printing the full
+launch packet.
 It emits commands for loop self-check, knowledge search, commander repo-map
 localization, plan creation/verification, intake comparison, enforced task
 pull, loop verification, plan-evidence binding, evidence reporting, Action
