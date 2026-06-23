@@ -175,6 +175,22 @@ def main() -> int:
     require(job.get("status") == "failed", f"job status mismatch: {job}")
     require(job.get("error_message") == "workflow job stuck recovery smoke", f"job reason mismatch: {job}")
 
+    direct_job_id = f"wfjob_direct_mark_smoke_{stamp()}"
+    insert_stale_job(db_path, direct_job_id)
+    direct_marked = run_cli(args.base_url, [
+        "workflow",
+        "job-mark-failed",
+        "--job-id",
+        direct_job_id,
+        "--reason",
+        "workflow job direct mark-failed smoke",
+    ])
+    direct_marked_payload = load_json(direct_marked)
+    direct_job = direct_marked_payload.get("job") or {}
+    require(direct_marked.returncode == 0, f"direct job-mark-failed failed: {direct_marked.stderr or direct_marked.stdout}")
+    require(direct_marked_payload.get("marked_failed") is True, f"direct mark flag missing: {direct_marked_payload}")
+    require(direct_job.get("status") == "failed", f"direct job status mismatch: {direct_job}")
+
     relisted = run_cli(args.base_url, ["workflow", "stuck-jobs", "--threshold-sec", "30", "--limit", "20"])
     relisted_payload = load_json(relisted)
     remaining_ids = {item.get("job_id") for item in (relisted_payload.get("stuck_jobs") or [])}
@@ -234,6 +250,8 @@ def main() -> int:
         recover_preview.stderr,
         marked.stdout,
         marked.stderr,
+        direct_marked.stdout,
+        direct_marked.stderr,
         relisted.stdout,
         relisted.stderr,
         preview.stdout,
@@ -245,6 +263,7 @@ def main() -> int:
     print(json.dumps({
         "ok": True,
         "job_id": job_id,
+        "direct_job_id": direct_job_id,
         "recover_job_id": recover_job_id,
         "listed": True,
         "marked_failed": True,
