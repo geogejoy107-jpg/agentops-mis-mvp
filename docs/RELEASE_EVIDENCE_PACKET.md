@@ -99,6 +99,7 @@ The packet includes the canonical command manifest used for release review:
 - `python3 scripts/ai_employees_responsiveness_smoke.py`
 - `python3 scripts/operator_action_queue_ui_smoke.py`
 - `python3 scripts/operator_advance_loop_smoke.py`
+- `python3 scripts/operator_loop_control_smoke.py`
 - `python3 scripts/task_detail_evidence_ui_smoke.py`
 - `python3 scripts/security_production_readiness_smoke.py --base-url "$AGENTOPS_BASE_URL"`
 - `python3 scripts/operator_runtime_doctor_smoke.py`

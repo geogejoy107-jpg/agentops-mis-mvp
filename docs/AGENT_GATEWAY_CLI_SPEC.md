@@ -368,6 +368,33 @@ repeatable loop work order after each audit pass.
 It recommends explicit next commands but does not create runs, approvals,
 memories, audit rows, or live adapter work.
 
+### `agentops operator loop-control`
+
+Reads the lightweight loop-control next step for real local ledgers:
+
+```bash
+agentops operator loop-control --limit 8
+agentops operator loop-control --loop-id loop_smoke_api_123 --limit 8
+agentops operator advance-loop --fast-control --limit 8
+```
+
+Maps to `GET /api/operator/loop-control`. This is the fast control-plane
+read model for Hermes, OpenClaw, Codex, and a human supervisor before they
+enter the heavier `handoff`/`loop-audit` diagnostics. It samples bounded ledger
+counts, recent Action Queue receipts, optional `loop://...` artifacts, loop
+memory-review state, and the shared bounded-runner policy. It does not call
+`operator handoff`, `operator action-plan`, or `operator evidence-report`, so it
+stays responsive on large local demo ledgers.
+
+When a loop id is provided, it chooses the next safe RECORD/VERIFY action for
+that loop: review existing pending memory/approvals, propose a `loop_record`
+memory candidate, or inspect blocked evidence. Without a loop id, it selects
+the lightweight `runtime-doctor` first check. `advance-loop --fast-control`
+uses this same read model, runs at most one allowlisted local command after
+`--confirm-advance`, then records the normal Action Queue receipt and
+control-readback evidence. Memory approval/rejection, live runtimes, workflow
+dispatch, worker lifecycle, and external writes remain denied by policy.
+
 ### `agentops operator handoff`
 
 Packages the current operator state for handoff between a human operator,
@@ -1760,12 +1787,17 @@ gates, create memories, or mutate ledgers.
 
 ```bash
 agentops operator advance-loop --loop-id loop_123 --limit 10
+agentops operator advance-loop --fast-control --limit 8
 agentops operator advance-loop --loop-id loop_123 --limit 10 --confirm-advance
 agentops operator advance-loop-policy
+agentops operator loop-control --limit 8
 ```
 
 Reads `GET /api/operator/handoff` and selects the first non-passing loop action
 whose `agentops ...` command is allowed by the local bounded-runner policy.
+`--fast-control` reads `GET /api/operator/loop-control` instead of the full
+handoff packet, so local agents can advance one bounded read-only diagnostic or
+record step without waiting on the heavier aggregate read models.
 Without `--confirm-advance` it is preview-only. With confirmation it executes
 exactly one local allowlisted action, runs the paired verify command, and records
 an Action Queue receipt as `verified` or `failed`. Confirmed runs also return
@@ -1791,6 +1823,9 @@ and other commands that require an explicit human or dedicated confirmation path
 `advance-loop-policy` is read-only and returns the current policy id/version,
 allowlisted commands, denied namespaces/actions/flags, and sample decisions so
 operators and UI can show exactly why a command can or cannot be auto-advanced.
+`operator loop-control` is read-only and returns the lightweight copy-only
+selected item, preview command, confirm command, bounded evidence counts, and
+policy id for fast local loop steering.
 `operator handoff` exposes the same `work_order.advance_loop` preview/confirm
 commands, and `/workspace/agents` renders copy buttons for those local CLI
 commands without letting the browser or server execute shell.

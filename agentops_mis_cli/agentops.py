@@ -450,6 +450,10 @@ def cmd_operator_loop_audit(args, client: AgentOpsClient) -> dict:
     return client.get("/api/operator/loop-audit", query={"limit": args.limit, "loop_id": args.loop_id or None})
 
 
+def cmd_operator_loop_control(args, client: AgentOpsClient) -> dict:
+    return client.get("/api/operator/loop-control", query={"limit": args.limit, "loop_id": args.loop_id or None})
+
+
 def cmd_operator_evidence_report(args, client: AgentOpsClient) -> dict:
     return client.get("/api/operator/evidence-report", query={
         "limit": args.limit,
@@ -587,6 +591,13 @@ def run_bounded_agentops_command(command: str, client: AgentOpsClient, *, timeou
 
 def select_advance_loop_item(handoff: dict) -> dict:
     work_order = handoff.get("work_order") or {}
+    advance_loop = work_order.get("advance_loop") or {}
+    selected = advance_loop.get("selected_item") or {}
+    command = str(selected.get("action_command") or "").strip()
+    if command:
+        policy = advance_loop_command_policy(command, phase="action")
+        if policy.get("allowed"):
+            return {**selected, "advance_policy": policy}
     evidence_work_order = work_order.get("evidence_report") or {}
     evidence_status = str(evidence_work_order.get("status") or "").lower()
     evidence_receipt_state = evidence_work_order.get("receipt_state") or {}
@@ -691,7 +702,8 @@ def compact_loop_control(payload: dict) -> dict:
 
 
 def cmd_operator_advance_loop(args, client: AgentOpsClient) -> dict:
-    handoff = client.get("/api/operator/handoff", query={"limit": args.limit, "loop_id": args.loop_id or None})
+    control_endpoint = "/api/operator/loop-control" if args.fast_control else "/api/operator/handoff"
+    handoff = client.get(control_endpoint, query={"limit": args.limit, "loop_id": args.loop_id or None})
     before_control = compact_loop_control(handoff)
     selected = select_advance_loop_item(handoff)
     policy_summary = advance_loop_policy_summary()
@@ -811,16 +823,20 @@ def cmd_operator_advance_loop(args, client: AgentOpsClient) -> dict:
     }
     receipt = client.post("/api/operator/action-receipts", receipt_payload)
     refresh_query = {"limit": args.limit, "loop_id": args.loop_id or None, "refresh_cache": "true"}
-    after_handoff = client.get("/api/operator/handoff", query=refresh_query)
-    after_self_check = client.get("/api/operator/loop-self-check", query=refresh_query)
+    if args.fast_control:
+        after_handoff = client.get("/api/operator/loop-control", query=refresh_query)
+        after_self_check = after_handoff
+    else:
+        after_handoff = client.get("/api/operator/handoff", query=refresh_query)
+        after_self_check = client.get("/api/operator/loop-self-check", query=refresh_query)
     control_readback = {
         "before": before_control,
         "after": compact_loop_control(after_handoff),
         "after_self_check": compact_loop_control(after_self_check),
         "refresh_cache_requested": True,
         "cache_bypassed": (
-            ((after_handoff.get("read_model_cache") or {}).get("status") == "bypass")
-            and ((after_self_check.get("read_model_cache") or {}).get("status") == "bypass")
+            ((after_handoff.get("read_model_cache") or {}).get("status") in {"bypass", "not_cached"})
+            and ((after_self_check.get("read_model_cache") or {}).get("status") in {"bypass", "not_cached"})
         ),
         "token_omitted": True,
     }
@@ -838,6 +854,7 @@ def cmd_operator_advance_loop(args, client: AgentOpsClient) -> dict:
         "provider": "agentops-operator",
         "operation": "operator_advance_loop",
         "status": "advanced" if succeeded else "failed",
+        "control_source": "loop_control" if args.fast_control else "handoff",
         "advanced": True,
         "confirm_advance": True,
         "preview": preview,
@@ -2335,6 +2352,10 @@ def build_parser() -> argparse.ArgumentParser:
     operator_loop.add_argument("--loop-id", default=None)
     operator_loop.add_argument("--limit", type=int, default=12)
     operator_loop.set_defaults(handler="operator_loop_audit")
+    operator_loop_control_parser = operator_sub.add_parser("loop-control", help="Read the lightweight loop-control next step for real local ledgers.")
+    operator_loop_control_parser.add_argument("--loop-id", default=None)
+    operator_loop_control_parser.add_argument("--limit", type=int, default=8)
+    operator_loop_control_parser.set_defaults(handler="operator_loop_control")
     operator_evidence = operator_sub.add_parser("evidence-report", help="Read a run-by-run evidence report across Agent Plans, approvals, manifests, and ledger rows.")
     operator_evidence.add_argument("--run-id", default=None)
     operator_evidence.add_argument("--task-id", default=None)
@@ -2353,6 +2374,7 @@ def build_parser() -> argparse.ArgumentParser:
     operator_advance.add_argument("--limit", type=int, default=12)
     operator_advance.add_argument("--timeout", type=int, default=90)
     operator_advance.add_argument("--actor-id", default="usr_founder")
+    operator_advance.add_argument("--fast-control", action="store_true", help="Use lightweight loop-control readback instead of full handoff.")
     operator_advance.add_argument("--confirm-advance", action="store_true", help="Execute exactly one allowlisted local agentops action and record its receipt.")
     operator_advance.set_defaults(handler="operator_advance_loop")
     operator_advance_policy = operator_sub.add_parser("advance-loop-policy", help="Read the bounded advance-loop policy.")
@@ -3241,6 +3263,7 @@ HANDLERS = {
     "operator_receipt_failure_memories": cmd_operator_receipt_failure_memories,
     "operator_propose_receipt_failure_memory": cmd_operator_propose_receipt_failure_memory,
     "operator_loop_audit": cmd_operator_loop_audit,
+    "operator_loop_control": cmd_operator_loop_control,
     "operator_evidence_report": cmd_operator_evidence_report,
     "operator_handoff": cmd_operator_handoff,
     "operator_loop_self_check": cmd_operator_loop_self_check,

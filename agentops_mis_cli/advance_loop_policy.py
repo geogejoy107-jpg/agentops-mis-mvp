@@ -22,9 +22,12 @@ DENIED_WORKER_ACTIONS = {"start", "stop", "restart", "release-stuck"}
 DENIED_OPERATOR_ACTIONS = {"close-evidence-gap", "propose-receipt-failure-memory"}
 ALLOWED_READ_COMMANDS = {
     ("operator", "loop-audit"),
+    ("operator", "loop-control"),
     ("operator", "action-plan"),
     ("operator", "handoff"),
     ("operator", "health"),
+    ("operator", "runtime-doctor"),
+    ("operator", "execution-mode"),
     ("operator", "evidence-report"),
     ("operator", "intake-checklist"),
     ("operator", "remediate-evidence-gap"),

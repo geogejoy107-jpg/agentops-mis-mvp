@@ -204,6 +204,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "operator_loop_control",
+        "command": "python3 scripts/operator_loop_control_smoke.py",
+        "summary": "Lightweight read-only loop-control API/CLI plus fast advance-loop readback for real local ledgers.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "task_detail_evidence_ui",
         "command": "python3 scripts/task_detail_evidence_ui_smoke.py",
         "summary": "Task detail page exposes delivery evidence state, latest run and approval links.",

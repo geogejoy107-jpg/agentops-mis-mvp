@@ -251,6 +251,9 @@ def main() -> int:
     advance_loop_command = "python3 scripts/operator_advance_loop_smoke.py"
     require(advance_loop_command in release_text, "release evidence packet missing operator advance-loop smoke", failures)
     require(advance_loop_command in ci_text, "CI workflow missing operator advance-loop smoke", failures)
+    loop_control_command = "python3 scripts/operator_loop_control_smoke.py"
+    require(loop_control_command in release_text, "release evidence packet missing operator loop-control smoke", failures)
+    require(loop_control_command in ci_text, "CI workflow missing operator loop-control smoke", failures)
     runtime_doctor_command = "python3 scripts/operator_runtime_doctor_smoke.py"
     require(runtime_doctor_command in release_text, "release evidence packet missing operator runtime-doctor smoke", failures)
     require(runtime_doctor_command in ci_text, "CI workflow missing operator runtime-doctor smoke", failures)

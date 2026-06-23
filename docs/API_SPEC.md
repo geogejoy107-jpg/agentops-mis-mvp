@@ -444,6 +444,20 @@ adapter-readiness evidence, requires `tasks:read` for supplied Agent Gateway
 tokens/sessions, and never starts adapters, creates tasks, writes approvals, or
 mutates ledgers.
 
+`GET /api/operator/loop-control` is the lightweight, read-only next-step control
+projection for real local ledgers. It accepts optional `loop_id=<id>` and
+`limit=<n>`, samples bounded counts, recent Action Queue receipt coverage, and
+optional `loop://...` readback counts, then returns a copy-only
+`work_order.advance_loop.selected_item` with preview/confirm commands for
+`agentops operator advance-loop --fast-control`. Unscoped calls select
+`operator runtime-doctor` as the first local readiness check; scoped `loop_id`
+calls select the next safe loop RECORD/VERIFY action, including a review-queue
+step or a reviewable `memory propose --type loop_record` command. It is
+deliberately cheaper than full `operator handoff`: it does not call handoff,
+action-plan, evidence report, workers, runtimes, or shell commands; it requires
+`tasks:read` for Agent Gateway tokens/sessions and never mutates ledgers or
+exposes tokens/raw prompts/raw responses.
+
 `GET /api/operator/loop-audit` is the read-only Agent Work Method Block audit.
 It turns `READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD`
 into seven machine-checkable gates using the existing knowledge index, Agent

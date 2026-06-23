@@ -19508,6 +19508,208 @@ def operator_loop_control_summary_from_handoff(advance_loop: dict, loop_health: 
     }
 
 
+def operator_loop_control(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) -> dict:
+    qs = qs or {}
+    limit = bounded_int((qs.get("limit") or ["8"])[0], 8, 1, 20)
+    loop_id = redact_text((qs.get("loop_id") or [""])[0], 120)
+    workspace_id = normalize_workspace_id(
+        (auth_ctx or {}).get("workspace_id")
+        or headers.get("X-AgentOps-Workspace-Id")
+        or (qs.get("workspace_id") or ["local-demo"])[0]
+    )
+    loop_arg = f" --loop-id {shlex.quote(loop_id)}" if loop_id else ""
+    base_preview_args = ["agentops", "operator", "advance-loop", "--fast-control", "--limit", str(limit)]
+    if loop_id:
+        base_preview_args.extend(["--loop-id", loop_id])
+    preview_command = " ".join(shlex.quote(str(part)) for part in base_preview_args)
+    confirm_command = " ".join(shlex.quote(str(part)) for part in [*base_preview_args, "--confirm-advance"])
+    policy = advance_loop_policy_summary()
+
+    counts = {
+        "knowledge_documents": scalar_count(conn, "SELECT COUNT(*) FROM knowledge_documents"),
+        "verified_agent_plans": scalar_count(conn, "SELECT COUNT(*) FROM agent_plans WHERE COALESCE(workspace_id,'local-demo')=? AND verified_at IS NOT NULL", (workspace_id,)),
+        "plan_bound_runs": scalar_count(conn, "SELECT COUNT(*) FROM runs WHERE COALESCE(workspace_id,'local-demo')=? AND agent_plan_id IS NOT NULL AND plan_hash IS NOT NULL", (workspace_id,)),
+        "verified_plan_evidence_manifests": scalar_count(conn, "SELECT COUNT(*) FROM plan_evidence_manifests WHERE COALESCE(workspace_id,'local-demo')=? AND status='verified'", (workspace_id,)),
+        "pending_approvals": scalar_count(conn, "SELECT COUNT(*) FROM approvals WHERE COALESCE(decision,'pending')='pending'"),
+        "memory_candidates": scalar_count(conn, "SELECT COUNT(*) FROM memories WHERE COALESCE(review_status,'candidate')='candidate'"),
+        "approved_memories": scalar_count(conn, "SELECT COUNT(*) FROM memories WHERE review_status='approved'"),
+        "audit_logs": scalar_count(conn, "SELECT COUNT(*) FROM audit_logs"),
+    }
+    receipt_rows = operator_action_receipt_rows(conn, workspace_id, min(max(limit * 6, 24), 120))
+    receipt_verified = len([row for row in receipt_rows if row.get("status") == "verified"])
+    receipt_failed = len([row for row in receipt_rows if row.get("status") == "failed"])
+    selected_item: dict | None = None
+    loop_counts = {
+        "loop_runs": 0,
+        "loop_tasks": 0,
+        "loop_artifacts": 0,
+        "loop_verified_agent_plans": 0,
+        "loop_verified_plan_evidence_manifests": 0,
+        "loop_blocked_plan_evidence_manifests": 0,
+        "loop_memory_candidates": 0,
+        "loop_approved_memories": 0,
+        "loop_pending_approvals": 0,
+    }
+
+    if loop_id:
+        artifacts = rows_to_dicts(conn.execute(
+            """SELECT artifact_id, task_id, run_id, artifact_type, title, uri, created_at
+               FROM artifacts
+               WHERE uri=? OR uri LIKE ?
+               ORDER BY created_at DESC
+               LIMIT ?""",
+            (f"loop://{loop_id}", f"loop://{loop_id}/%", limit),
+        ).fetchall())
+        run_ids = sorted({str(row.get("run_id")) for row in artifacts if row.get("run_id")})
+        task_ids = sorted({str(row.get("task_id")) for row in artifacts if row.get("task_id")})
+        loop_counts["loop_artifacts"] = len(artifacts)
+        if run_ids:
+            placeholders = ",".join("?" for _ in run_ids)
+            loop_counts["loop_runs"] = scalar_count(conn, f"SELECT COUNT(*) FROM runs WHERE run_id IN ({placeholders})", run_ids)
+            loop_counts["loop_verified_plan_evidence_manifests"] = scalar_count(conn, f"SELECT COUNT(*) FROM plan_evidence_manifests WHERE run_id IN ({placeholders}) AND status='verified'", run_ids)
+            loop_counts["loop_blocked_plan_evidence_manifests"] = scalar_count(conn, f"SELECT COUNT(*) FROM plan_evidence_manifests WHERE run_id IN ({placeholders}) AND status='blocked'", run_ids)
+            loop_counts["loop_pending_approvals"] = scalar_count(conn, f"SELECT COUNT(*) FROM approvals WHERE COALESCE(decision,'pending')='pending' AND run_id IN ({placeholders})", run_ids)
+            loop_counts["loop_verified_agent_plans"] = scalar_count(conn, f"SELECT COUNT(*) FROM agent_plans WHERE run_id IN ({placeholders}) AND verified_at IS NOT NULL", run_ids)
+        if task_ids:
+            placeholders = ",".join("?" for _ in task_ids)
+            loop_counts["loop_tasks"] = scalar_count(conn, f"SELECT COUNT(*) FROM tasks WHERE task_id IN ({placeholders})", task_ids)
+            loop_counts["loop_memory_candidates"] = scalar_count(conn, f"SELECT COUNT(*) FROM memories WHERE review_status='candidate' AND (source_ref=? OR task_id IN ({placeholders}))", [f"loop://{loop_id}", *task_ids])
+            loop_counts["loop_approved_memories"] = scalar_count(conn, f"SELECT COUNT(*) FROM memories WHERE review_status='approved' AND (source_ref=? OR task_id IN ({placeholders}))", [f"loop://{loop_id}", *task_ids])
+        else:
+            loop_counts["loop_memory_candidates"] = scalar_count(conn, "SELECT COUNT(*) FROM memories WHERE review_status='candidate' AND source_ref=?", (f"loop://{loop_id}",))
+            loop_counts["loop_approved_memories"] = scalar_count(conn, "SELECT COUNT(*) FROM memories WHERE review_status='approved' AND source_ref=?", (f"loop://{loop_id}",))
+        if loop_counts["loop_runs"] == 0:
+            action_command = f"agentops operator runtime-doctor --loop-id {shlex.quote(loop_id)} --limit {limit}"
+            gate_id = "loop_readback"
+            gate_label = "Loop readback missing"
+            gate_status = "attention"
+            source = "operator_loop_control.loop_readback"
+            verify_command = f"agentops operator loop-control{loop_arg} --limit {limit}"
+        elif loop_counts["loop_blocked_plan_evidence_manifests"] > 0:
+            action_command = f"agentops operator loop-audit{loop_arg} --limit {limit}"
+            gate_id = "verify"
+            gate_label = "Blocked loop evidence"
+            gate_status = "blocked"
+            source = "operator_loop_control.verify"
+            verify_command = f"agentops operator loop-control{loop_arg} --limit {limit}"
+        elif loop_counts["loop_pending_approvals"] or loop_counts["loop_memory_candidates"]:
+            action_command = "agentops review queue --limit 20"
+            gate_id = "record_review"
+            gate_label = "Loop review queue"
+            gate_status = "attention"
+            source = "operator_loop_control.record"
+            verify_command = f"agentops operator loop-control{loop_arg} --limit {limit}"
+        elif loop_counts["loop_approved_memories"] == 0:
+            text = f"Loop {loop_id} completed with plan/evidence/audit readback; review this loop_record before treating it as durable memory."
+            action_command = (
+                "agentops memory propose "
+                "--agent-id agt_operator "
+                f"--source-ref {shlex.quote('loop://' + loop_id)} "
+                "--scope project "
+                "--type loop_record "
+                f"--text {shlex.quote(text)}"
+            )
+            gate_id = "record"
+            gate_label = "Propose loop record memory"
+            gate_status = "attention"
+            source = "operator_loop_control.record"
+            verify_command = f"agentops operator loop-control{loop_arg} --limit {limit}"
+        else:
+            action_command = ""
+            gate_id = None
+            gate_label = None
+            gate_status = None
+            source = "operator_loop_control.ready"
+            verify_command = None
+    else:
+        action_command = f"agentops operator runtime-doctor --limit {limit}"
+        gate_id = "runtime_doctor"
+        gate_label = "Local runtime first check"
+        gate_status = "attention" if counts["pending_approvals"] or counts["memory_candidates"] else "ready"
+        source = "operator_loop_control.runtime_doctor"
+        verify_command = f"agentops operator loop-control --limit {limit}"
+
+    if action_command:
+        action_signature = stable_id("loop_control_action_sig", workspace_id, loop_id or "global", gate_id, action_command)[-18:]
+        selected_item = {
+            "package_id": stable_id("loop_control_package", workspace_id, loop_id or "global", gate_id, action_command)[-18:],
+            "action_id": stable_id("loop_control_action", workspace_id, loop_id or "global", gate_id, action_command)[-18:],
+            "action_signature": action_signature,
+            "gate_id": gate_id,
+            "gate_label": gate_label,
+            "gate_status": gate_status,
+            "source": source,
+            "action_command": action_command,
+            "verify_command": verify_command,
+            "receipt_source": f"loop_control:{gate_id}",
+            "evidence": {**counts, **loop_counts, "recent_receipts": len(receipt_rows), "verified_receipts": receipt_verified, "failed_receipts": receipt_failed},
+            "token_omitted": True,
+        }
+
+    advance_loop = {
+        "operation": "advance_loop_work_order",
+        "status": "attention" if selected_item else "empty",
+        "summary": {
+            "items": 1 if selected_item else 0,
+            "selected_gate": (selected_item or {}).get("gate_id"),
+            "selected_status": (selected_item or {}).get("gate_status"),
+            "loop_scoped": bool(loop_id),
+            "policy_id": policy.get("policy_id"),
+            "policy_version": policy.get("policy_version"),
+            "source": "lightweight_loop_control",
+        },
+        "selected_item": selected_item,
+        "preview_command": preview_command,
+        "confirm_command": confirm_command,
+        "next_actions": [preview_command, confirm_command] if selected_item else [preview_command],
+        "policy": policy,
+        "contract": "lightweight copy-only control work order; it uses bounded counts and never calls handoff/action-plan/evidence-report",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_shell_execution": False,
+            "confirm_required": bool(selected_item),
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
+    control_summary = operator_loop_control_summary_from_handoff(advance_loop, {"status": "attention" if selected_item else "ready"}, loop_id=loop_id or None)
+    status = "attention" if selected_item else "ready"
+    return {
+        "provider": "agentops-operator",
+        "operation": "operator_loop_control",
+        "status": status,
+        "workspace_id": workspace_id,
+        "loop_id": loop_id or None,
+        "summary": {
+            **counts,
+            **loop_counts,
+            "recent_receipts": len(receipt_rows),
+            "verified_receipts": receipt_verified,
+            "failed_receipts": receipt_failed,
+            "control_status": control_summary.get("status"),
+            "control_mode": control_summary.get("mode"),
+            "control_selected_gate": control_summary.get("selected_gate"),
+        },
+        "work_order": {"advance_loop": advance_loop, "token_omitted": True},
+        "control_summary": control_summary,
+        "next_actions": advance_loop["next_actions"],
+        "contract": "lightweight read-only loop control for real local ledgers; use operator handoff/loop-audit for deep diagnostics after the first check",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
+        "read_model_cache": {"status": "not_cached", "reason": "lightweight direct control read"},
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+
+
 def operator_loop_control_gate(control_summary: dict, *, source: str = "operator_handoff.control_summary") -> dict:
     recommended_step = control_summary.get("recommended_step") or {}
     status = str(control_summary.get("status") or "unknown")
@@ -23042,6 +23244,19 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(payload)
             if path == "/api/operator/loop-audit":
                 payload = operator_loop_audit(conn, self.headers, qs)
+                conn.rollback()
+                return self.send_json(payload)
+            if path == "/api/operator/loop-control":
+                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                if auth_error:
+                    conn.rollback()
+                    return self.send_json(auth_error, agent_gateway_error_status(auth_error))
+                if agent_gateway_is_bound_auth(auth_ctx):
+                    requested_header_workspace = normalize_workspace_id(self.headers.get("X-AgentOps-Workspace-Id") or auth_ctx["workspace_id"])
+                    if requested_header_workspace != auth_ctx["workspace_id"]:
+                        conn.rollback()
+                        return self.send_json({"error": "forbidden", "message": "Agent token cannot use another workspace header."}, 403)
+                payload = operator_loop_control(conn, self.headers, qs, auth_ctx)
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/operator/evidence-report":

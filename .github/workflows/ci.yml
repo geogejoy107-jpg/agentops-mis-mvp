@@ -83,6 +83,7 @@ jobs:
           python3 scripts/startup_security_guard_smoke.py
           python3 scripts/operator_loop_audit_closed_loop_smoke.py
           python3 scripts/operator_advance_loop_smoke.py
+          python3 scripts/operator_loop_control_smoke.py
 
       - name: Start isolated local server
         run: |
