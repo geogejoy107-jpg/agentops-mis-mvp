@@ -80,6 +80,24 @@ agentops operator action-receipts --limit 20
 agentops operator loop-audit --limit 20
 ```
 
+Bounded local loop-driver for Hermes/OpenClaw:
+
+```bash
+agentops operator loop-driver --adapter hermes --max-steps 3 --limit 8
+agentops operator loop-driver --adapter hermes --max-steps 3 --limit 8 --confirm-loop
+
+agentops operator loop-driver --adapter openclaw --max-steps 3 --limit 8
+agentops operator loop-driver --adapter openclaw --max-steps 3 --limit 8 --confirm-loop
+```
+
+`loop-driver` is the local copy-only wrapper for repeated loop progress. Without
+`--confirm-loop` it only returns the compact launch brief and proposed safe
+commands. With `--confirm-loop`, it re-reads the brief before each step, calls
+`advance-loop --fast-control --confirm-advance`, records the control readback
+and action receipt evidence, and stops at the bounded `--max-steps` cap. It
+does not grant live runtime execution, workflow dispatch, approvals, or server
+shell execution; Hermes/OpenClaw still copy and run explicit local commands.
+
 Workflow-job recovery from the shared Action Queue:
 
 ```bash

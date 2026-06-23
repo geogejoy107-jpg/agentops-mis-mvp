@@ -787,6 +787,10 @@ export function AIEmployees() {
       advanceLoopSummary: "Copy the local CLI runner that advances one allowlisted loop action, verifies it, and records a receipt.",
       previewAdvanceLoop: "Preview advance",
       confirmAdvanceLoop: "Confirm CLI",
+      loopDriverTitle: "Hermes/OpenClaw loop driver",
+      loopDriverSummary: "Copy the bounded local loop wrapper: preview is read-only; confirm advances allowlisted steps with receipts and control readback.",
+      previewLoopDriver: "Preview loop",
+      confirmLoopDriver: "Confirm loop",
       advanceLoopPolicyLabel: "Policy",
       advanceLoopPolicy: "Local CLI only; no approvals, live runs, workflow dispatch, or server shell execution.",
       handoffSources: "Sources",
@@ -1316,6 +1320,10 @@ export function AIEmployees() {
       advanceLoopSummary: "复制本地 CLI runner：只推进一个 allowlist loop 动作、验收并记录收据。",
       previewAdvanceLoop: "预览推进",
       confirmAdvanceLoop: "确认 CLI",
+      loopDriverTitle: "Hermes/OpenClaw Loop Driver",
+      loopDriverSummary: "复制受限本地 loop wrapper：预览只读；确认后只推进 allowlist 步骤，并写入收据和控制回读。",
+      previewLoopDriver: "预览 Loop",
+      confirmLoopDriver: "确认 Loop",
       advanceLoopPolicyLabel: "策略",
       advanceLoopPolicy: "仅本地 CLI；不审批、不 live run、不调度 workflow、不让服务端执行 shell。",
       handoffSources: "来源",
@@ -2123,6 +2131,17 @@ export function AIEmployees() {
   const advanceLoopPolicyRaw = typeof advanceLoopRaw.policy === "object" && advanceLoopRaw.policy !== null ? advanceLoopRaw.policy as Record<string, unknown> : {};
   const advanceLoopPreviewCommand = String(advanceLoopRaw.preview_command || "agentops operator advance-loop --limit 12");
   const advanceLoopConfirmCommand = String(advanceLoopRaw.confirm_command || `${advanceLoopPreviewCommand} --confirm-advance`);
+  const loopDriverPreviewCommands = [
+    "agentops operator loop-driver --adapter hermes --max-steps 3 --limit 8",
+    "agentops operator loop-driver --adapter openclaw --max-steps 3 --limit 8",
+  ];
+  const loopDriverConfirmCommands = loopDriverPreviewCommands.map(command => `${command} --confirm-loop`);
+  const loopDriverCommands = [
+    { label: `Hermes ${copy.previewLoopDriver}`, command: loopDriverPreviewCommands[0], color: "var(--mis-cyan)" },
+    { label: `OpenClaw ${copy.previewLoopDriver}`, command: loopDriverPreviewCommands[1], color: "var(--mis-cyan)" },
+    { label: `Hermes ${copy.confirmLoopDriver}`, command: loopDriverConfirmCommands[0], color: "var(--mis-warning)" },
+    { label: `OpenClaw ${copy.confirmLoopDriver}`, command: loopDriverConfirmCommands[1], color: "var(--mis-warning)" },
+  ];
   const advanceLoopSelectedGate = String(advanceLoopSummaryRaw.selected_gate || "—");
   const advanceLoopSelectedStatus = String(advanceLoopSummaryRaw.selected_status || advanceLoopRaw.status || "unknown");
   const advanceLoopServerShell = Boolean(advanceLoopPolicyRaw.server_executes_shell);
@@ -4300,24 +4319,49 @@ export function AIEmployees() {
                   ))}
                 </div>
               </div>
-              <div className="flex flex-wrap xl:justify-end gap-1.5 shrink-0">
-                {[
-                  { label: copy.nextSafeCommand, command: directLoopControlNextCommand || directLoopControlPreviewCommand, color: "var(--mis-cyan)" },
-                  { label: copy.verifyAfterAction, command: directLoopControlVerifyCommand, color: "var(--mis-success)" },
-                  { label: copy.copyReceiptCommand, command: directLoopControlReceiptCommand, color: "var(--mis-warning)" },
-                  { label: copy.previewAdvanceLoop, command: directLoopControlPreviewCommand, color: "var(--mis-cyan)" },
-                ].filter(item => item.command).map((item) => (
-                  <button
-                    key={`${item.label}:${item.command}`}
-                    onClick={() => void copyIntakeCommand(item.command)}
-                    className="inline-flex items-center gap-1 text-[9px] px-2 py-1 rounded max-w-full"
-                    style={{ color: item.color, background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}
-                    title={item.command}
-                  >
-                    <Copy size={10} />
-                    <span className="truncate max-w-[132px]">{copiedIntakeCommand === item.command ? copy.copiedCommand : item.label}</span>
-                  </button>
-                ))}
+              <div className="flex flex-col gap-2 shrink-0 xl:max-w-[520px]">
+                <div className="flex flex-wrap xl:justify-end gap-1.5">
+                  {[
+                    { label: copy.nextSafeCommand, command: directLoopControlNextCommand || directLoopControlPreviewCommand, color: "var(--mis-cyan)" },
+                    { label: copy.verifyAfterAction, command: directLoopControlVerifyCommand, color: "var(--mis-success)" },
+                    { label: copy.copyReceiptCommand, command: directLoopControlReceiptCommand, color: "var(--mis-warning)" },
+                    { label: copy.previewAdvanceLoop, command: directLoopControlPreviewCommand, color: "var(--mis-cyan)" },
+                  ].filter(item => item.command).map((item) => (
+                    <button
+                      key={`${item.label}:${item.command}`}
+                      onClick={() => void copyIntakeCommand(item.command)}
+                      className="inline-flex items-center gap-1 text-[9px] px-2 py-1 rounded max-w-full"
+                      style={{ color: item.color, background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}
+                      title={item.command}
+                    >
+                      <Copy size={10} />
+                      <span className="truncate max-w-[132px]">{copiedIntakeCommand === item.command ? copy.copiedCommand : item.label}</span>
+                    </button>
+                  ))}
+                </div>
+                <div className="rounded px-2 py-1.5" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Terminal size={11} style={{ color: "var(--mis-cyan)" }} />
+                    <div className="text-[9px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.loopDriverTitle}</div>
+                    <StatusBadge status="pass" label="local CLI" />
+                    <StatusBadge status="pass" label="copy-only" />
+                  </div>
+                  <div className="text-[8px] mt-1 line-clamp-2" style={{ color: "var(--mis-muted)" }}>{copy.loopDriverSummary}</div>
+                  <div className="flex flex-wrap gap-1 mt-1.5">
+                    {loopDriverCommands.map((item) => (
+                      <button
+                        key={`${item.label}:${item.command}`}
+                        onClick={() => void copyIntakeCommand(item.command)}
+                        className="inline-flex items-center gap-1 text-[8px] px-1.5 py-0.5 rounded max-w-full"
+                        style={{ color: item.color, background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}
+                        title={item.command}
+                      >
+                        <Copy size={8} />
+                        <span className="truncate max-w-[132px]">{copiedIntakeCommand === item.command ? copy.copiedCommand : item.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
             </div>
           </div>
