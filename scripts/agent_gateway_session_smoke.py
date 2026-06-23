@@ -119,9 +119,21 @@ def smoke(base_url: str, stamp: str) -> dict:
         status, listed = http_json("GET", base_url, "/api/agent-gateway/sessions")
         require(status == 200, f"session list failed: {status} {listed}")
         session_rows = listed.get("sessions", [])
-        listed_ids = {item.get("session_id") for item in session_rows}
-        require({session_id, revoke_session_id, cascade_session_id, expire_session_id}.issubset(listed_ids), f"session list missing ids: {listed_ids}")
+        listed_refs = {item.get("session_ref") for item in session_rows}
+        expected_refs = {
+            safe_ref("session_ref", session_id),
+            safe_ref("session_ref", revoke_session_id),
+            safe_ref("session_ref", cascade_session_id),
+            safe_ref("session_ref", expire_session_id),
+        }
+        require(expected_refs.issubset(listed_refs), f"session list missing refs: {listed_refs}")
         require(all("session_hash" not in item for item in session_rows), "session list leaked session_hash")
+        require(all(item.get("session_id_omitted") is True for item in session_rows), f"session list missing omission proof: {session_rows}")
+        listed_serialized = json.dumps(listed, ensure_ascii=False)
+        require(all("session_id" not in item for item in session_rows), f"session list leaked session_id field: {listed}")
+        require(all("parent_token_id" not in item for item in session_rows), f"session list leaked parent_token_id field: {listed}")
+        require(session_id not in listed_serialized, f"session list leaked raw session id: {listed}")
+        require(token_id not in listed_serialized, f"session list leaked raw parent token id: {listed}")
 
         status, revoked = http_json("POST", base_url, "/api/agent-gateway/session/revoke", {"session_id": revoke_session_id})
         require(status == 200, f"session revoke failed: {status} {revoked}")

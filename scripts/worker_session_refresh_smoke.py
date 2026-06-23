@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import urllib.error
@@ -44,6 +46,13 @@ def require(condition: bool, message: str) -> None:
         raise AssertionError(message)
 
 
+def safe_ref(prefix: str, raw: str) -> str:
+    slug = re.sub(r"[^a-zA-Z0-9_]+", "_", raw or "").strip("_").lower()
+    if slug and len(slug) <= 64:
+        return f"{prefix}_{slug}"[-12:]
+    return f"{prefix}_{hashlib.sha256((raw or '').encode('utf-8')).hexdigest()[:16]}"[-12:]
+
+
 def create_task(base_url: str, agent_id: str, task_id: str, index: int) -> None:
     status, payload = http_json("POST", base_url, "/api/tasks", {
         "task_id": task_id,
@@ -57,6 +66,13 @@ def create_task(base_url: str, agent_id: str, task_id: str, index: int) -> None:
         "acceptance_criteria": "Worker must complete the task with run/tool/evaluation ledger evidence.",
     })
     require(status == 201, f"task create failed: {status} {payload}")
+
+
+def ensure_knowledge_index(base_url: str) -> dict:
+    status, payload = http_json("POST", base_url, "/api/knowledge/index", {"rebuild": False})
+    require(status == 200, f"knowledge index failed: {status} {payload}")
+    require(int(payload.get("indexed") or 0) > 0, f"knowledge index did not index documents: {payload}")
+    return payload
 
 
 def run_worker(base_url: str, agent_id: str, token: str) -> dict:
@@ -139,6 +155,8 @@ def smoke(base_url: str, stamp: str) -> dict:
         token_id = created.get("token_id")
         require(token and token_id, f"created enrollment missing one-time token: {created}")
 
+        knowledge_index = ensure_knowledge_index(base_url)
+
         task_ids = [f"tsk_session_refresh_{stamp}_{idx}" for idx in (1, 2)]
         for idx, task_id in enumerate(task_ids, start=1):
             create_task(base_url, agent_id, task_id, idx)
@@ -158,15 +176,26 @@ def smoke(base_url: str, stamp: str) -> dict:
         status, sessions_payload = http_json("GET", base_url, "/api/agent-gateway/sessions")
         require(status == 200, f"session list failed: {status} {sessions_payload}")
         serialized = json.dumps(sessions_payload, ensure_ascii=False)
+        listed_sessions = sessions_payload.get("sessions") or []
+        listed_session_refs = {item.get("session_ref") for item in listed_sessions}
+        expected_session_refs = {safe_ref("session_ref", session_id) for session_id in session_ids}
+        require(expected_session_refs.issubset(listed_session_refs), f"session listing missing refreshed refs: {sessions_payload}")
         require("session_hash" not in serialized and token not in serialized, "session listing leaked secret material")
+        require(not any(item.get("session_id") for item in listed_sessions), f"session listing leaked raw session id: {sessions_payload}")
+        require(not any(item.get("parent_token_id") for item in listed_sessions), f"session listing leaked raw parent token id: {sessions_payload}")
+        require(all(item.get("session_id_omitted") is True for item in listed_sessions), f"session listing missing omission proof: {sessions_payload}")
+        require(all(item.get("parent_token_ref") for item in listed_sessions), f"session listing missing parent token refs: {sessions_payload}")
+        require(not any(session_id in serialized for session_id in session_ids), f"session listing leaked raw refreshed session ids: {sessions_payload}")
+        require(token_id not in serialized, f"session listing leaked raw parent token id: {sessions_payload}")
 
         return {
             "agent_id": agent_id,
             "task_ids": task_ids,
             "run_ids": run_ids,
-            "token_id": token_id,
-            "session_ids": session_ids,
+            "token_ref": safe_ref("token_ref", token_id),
+            "session_refs": sorted(expected_session_refs),
             "session_refresh_count": worker.get("state", {}).get("session_refresh_count"),
+            "knowledge_indexed": knowledge_index.get("indexed"),
             "token_omitted": True,
         }
     finally:

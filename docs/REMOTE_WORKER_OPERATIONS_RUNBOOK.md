@@ -536,6 +536,11 @@ Gateway status readback uses the same boundary: token/session-authenticated
 `agentops status` and `GET /api/agent-gateway/status` return safe
 `token_ref`, `session_ref`, and `parent_token_ref` values plus omission flags,
 never raw enrollment token ids or raw short-lived session ids.
+Session inventory follows that readback boundary too: `agentops session list`
+and `GET /api/agent-gateway/sessions` expose safe `session_ref` and
+`parent_token_ref` values only. Keep the one-time creation `session_id` locally
+if a specific-session revoke is required, or use `agentops session revoke
+--agent-id <agent_id>` for bulk active-session cleanup.
 
 For a local supervised worker daemon, restart is a first-class operator action:
 

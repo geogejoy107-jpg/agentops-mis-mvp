@@ -143,6 +143,7 @@ from agentops_mis_core.worker_fleet import (
     build_worker_fleet_hygiene_plan,
     build_worker_fleet_view,
     build_worker_status_payload,
+    public_remote_session,
     public_worker_enrollment_error,
     public_worker_revoked_enrollment,
 )
@@ -3518,6 +3519,10 @@ def agent_gateway_session_rows(conn) -> list[dict]:
         row.pop("scopes_json", None)
         row["session_state"] = agent_gateway_session_state(row, now_dt)
     return rows
+
+
+def agent_gateway_public_session_rows(conn) -> list[dict]:
+    return [public_remote_session(row) for row in agent_gateway_session_rows(conn)]
 
 
 def worker_remote_fleet_summary(conn) -> dict:
@@ -26065,7 +26070,13 @@ class Handler(BaseHTTPRequestHandler):
                 auth_error = agent_gateway_admin_auth_error(self.headers)
                 if auth_error:
                     return self.send_json(auth_error, 401)
-                return self.send_json({"sessions": agent_gateway_session_rows(conn), "valid_scopes": sorted(VALID_AGENT_GATEWAY_SCOPES), "token_omitted": True})
+                return self.send_json({
+                    "sessions": agent_gateway_public_session_rows(conn),
+                    "valid_scopes": sorted(VALID_AGENT_GATEWAY_SCOPES),
+                    "token_omitted": True,
+                    "session_id_omitted": True,
+                    "parent_token_id_omitted": True,
+                })
             if path == "/api/agent-gateway/tasks/pull":
                 auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
                 if auth_error:

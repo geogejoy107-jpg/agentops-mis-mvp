@@ -1455,6 +1455,9 @@ agentops session list
 ```
 
 Maps to `GET /api/agent-gateway/sessions`. The response omits `session_hash` and raw token values.
+It also omits raw session IDs and parent token IDs: operators get
+`session_ref`, `parent_token_ref`, `session_id_omitted:true`, and
+`parent_token_id_omitted:true` for readback correlation.
 
 ### `agentops session revoke`
 
@@ -1464,6 +1467,10 @@ Revokes one short-lived session or all active sessions for one agent.
 agentops session revoke --session-id agtsess_...
 agentops session revoke --agent-id agt_remote_builder
 ```
+
+The raw `session_id` is only shown at session creation time for local
+management flows; list/readback outputs are refs-only. Operators can use
+`--agent-id` for bulk active-session revocation without retaining raw IDs.
 
 Maps to `POST /api/agent-gateway/session/revoke` and writes runtime/audit evidence.
 The public response reports safe `session_refs` only and includes
@@ -2346,7 +2353,7 @@ Current implementation:
 - Session tokens inherit agent/workspace bindings and a subset of parent scopes.
 - Session tokens cannot mint replacement sessions.
 - Session-token auth rechecks the parent enrollment on every request. If the parent token is revoked, expired, missing, or no longer matches the session binding, the session fails closed.
-- `GET /api/agent-gateway/sessions` lists session metadata without `session_hash` or raw token values.
+- `GET /api/agent-gateway/sessions` lists session metadata with safe refs only; it omits `session_hash`, raw token values, raw session ids, and raw parent token ids.
 - `POST /api/agent-gateway/session/revoke` revokes one session or all active sessions for an agent.
 - Revoking an enrollment token also revokes active child sessions.
 - `GET /api/agent-gateway/enrollments` reports heartbeat freshness.
