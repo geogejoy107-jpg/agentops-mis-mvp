@@ -1721,6 +1721,8 @@ def main() -> int:
                 "plan_evidence_manifest": {"manifest_id": "pem_smoke", "verification_pass": True},
                 "approvals": {"pending": 0},
                 "memory_review": {"status": "reviewed", "total": 1, "pending_review": 0},
+                "worker_knowledge_retrieval": {"applicable": True, "status": "ready"},
+                "worker_runtime_summary": {"applicable": True, "status": "ready"},
                 "agent_plan": {"approval_required": True, "approval_decision": "approved"},
             },
             {
@@ -1728,6 +1730,8 @@ def main() -> int:
                 "plan_evidence_manifest": {},
                 "approvals": {"pending": 1},
                 "memory_review": {"status": "pending_review", "total": 1, "pending_review": 1},
+                "worker_knowledge_retrieval": {"applicable": True, "status": "unavailable"},
+                "worker_runtime_summary": {"applicable": True, "status": "missing"},
                 "agent_plan": {"approval_required": False},
             },
         ],
@@ -1736,6 +1740,11 @@ def main() -> int:
     require(evidence_summary.get("runs") == 2 and evidence_summary.get("ready") == 1, "operator evidence report summary counts failed", failures)
     require(evidence_summary.get("missing_plan_evidence_manifests") == 1, "operator evidence report manifest summary failed", failures)
     require(evidence_summary.get("pending_memory_reviews") == 1, "operator evidence report memory summary failed", failures)
+    require(evidence_summary.get("worker_runs") == 2, "operator evidence report worker run summary failed", failures)
+    require(evidence_summary.get("worker_knowledge_retrieval_ready") == 1, "operator evidence report worker knowledge ready summary failed", failures)
+    require(evidence_summary.get("worker_knowledge_retrieval_unavailable") == 1, "operator evidence report worker knowledge unavailable summary failed", failures)
+    require(evidence_summary.get("worker_runtime_summary_ready") == 1, "operator evidence report worker runtime summary ready count failed", failures)
+    require(evidence_summary.get("worker_runtime_summary_missing") == 1, "operator evidence report worker runtime summary missing count failed", failures)
     require(operator_evidence_report_status(evidence_summary) == "attention", "operator evidence report status failed", failures)
     start_gate = operator_start_check_gate(
         "adapter_preflight",
