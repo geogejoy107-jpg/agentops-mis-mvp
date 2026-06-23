@@ -54,8 +54,10 @@ POSTGRES_HTTP_WRITE_ALLOWED_ROUTES = {
     ("POST", "/api/agent-gateway/approvals/request"),
     ("POST", "/api/agent-gateway/audit"),
     ("POST", "/api/agent-gateway/evaluations/submit"),
+    ("POST", "/api/agent-gateway/heartbeat"),
     ("POST", "/api/agent-gateway/memories/propose"),
     ("POST", "/api/agent-gateway/plan-evidence-manifests"),
+    ("POST", "/api/agent-gateway/runs/:run_id/heartbeat"),
     ("POST", "/api/agent-gateway/runs/start"),
     ("POST", "/api/agent-gateway/tasks"),
     ("POST", "/api/agent-gateway/tasks/:task_id/claim"),
@@ -362,6 +364,8 @@ def storage_backend_status(headers=None) -> dict:
                 "postgres_http_gateway_plan_evidence_write_v1",
                 "postgres_http_gateway_approval_write_v1",
                 "postgres_http_gateway_audit_write_v1",
+                "postgres_http_gateway_heartbeat_write_v1",
+                "postgres_http_gateway_run_heartbeat_write_v1",
                 "postgres_http_gateway_memory_write_v1",
             ] if write_http else ["postgres_http_read_parity_v1"],
         }
@@ -412,6 +416,8 @@ def postgres_read_only_write_block(method: str, path: str) -> dict:
             "postgres_http_gateway_plan_evidence_write_v1",
             "postgres_http_gateway_approval_write_v1",
             "postgres_http_gateway_audit_write_v1",
+            "postgres_http_gateway_heartbeat_write_v1",
+            "postgres_http_gateway_run_heartbeat_write_v1",
             "postgres_http_gateway_memory_write_v1",
         ],
     }
@@ -423,6 +429,10 @@ def postgres_write_route_key(method: str, path: str) -> tuple[str, str]:
         middle = path[len("/api/agent-gateway/tasks/"):-len("/claim")].strip("/")
         if middle and "/" not in middle:
             return normalized_method, "/api/agent-gateway/tasks/:task_id/claim"
+    if normalized_method == "POST" and path.startswith("/api/agent-gateway/runs/") and path.endswith("/heartbeat"):
+        middle = path[len("/api/agent-gateway/runs/"):-len("/heartbeat")].strip("/")
+        if middle and "/" not in middle:
+            return normalized_method, "/api/agent-gateway/runs/:run_id/heartbeat"
     return normalized_method, path
 
 
@@ -5732,10 +5742,28 @@ def agent_gateway_start_run(conn, body) -> tuple[dict, int]:
 
 def agent_gateway_run_heartbeat(conn, run_id: str, body) -> tuple[dict, int]:
     ident = agent_gateway_identity({}, body)
+    if not ident.get("agent_id"):
+        return {"error": "forbidden", "message": "Run heartbeat requires an agent identity."}, 403
     before, access_error = ensure_run_access(conn, run_id, ident)
     if access_error:
         return access_error
+    task = conn.execute("SELECT * FROM tasks WHERE task_id=?", (before["task_id"],)).fetchone()
+    if not task:
+        return {"error": "task not found"}, 404
+    if row_workspace(task) != row_workspace(before):
+        return {
+            "error": "forbidden",
+            "message": "Run heartbeat task workspace must match the target run workspace.",
+        }, 403
+    if body.get("task_id") and body.get("task_id") != before["task_id"]:
+        return {"error": "forbidden", "message": "Run heartbeat task_id must match the target run."}, 403
     status = coerce_choice(body.get("status"), {"running", "completed", "failed", "blocked", "waiting_approval"}, before["status"])
+    if before["status"] in {"completed", "failed", "blocked"} and status != before["status"]:
+        return {
+            "error": "conflict",
+            "message": f"Run {run_id} is terminal and cannot be moved from {before['status']} to {status} by heartbeat.",
+            "status": before["status"],
+        }, 409
     ended_at = body.get("ended_at")
     if status in {"completed", "failed", "blocked"} and not ended_at:
         ended_at = now_iso()

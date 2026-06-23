@@ -136,12 +136,14 @@ Must be true:
 - Postgres write helpers must match SQLite outcomes and snapshots before any
   routed HTTP/CLI write surface is enabled.
 - The first routed Postgres HTTP writes are explicit task, execution-start,
-  execution-evidence, plan-evidence, memory-candidate, approval-request, and
-  run/task-bound audit allowlist routes behind
+  agent/run heartbeat, execution-evidence, plan-evidence, memory-candidate,
+  approval-request, and run/task-bound audit allowlist routes behind
   `AGENTOPS_POSTGRES_WRITE_HTTP=1`:
   `POST /api/tasks`, scoped `POST /api/agent-gateway/tasks`, scoped
   `POST /api/agent-gateway/tasks/:task_id/claim`, scoped
   `POST /api/agent-gateway/runs/start`, scoped
+  `POST /api/agent-gateway/heartbeat`, scoped
+  `POST /api/agent-gateway/runs/:run_id/heartbeat`, scoped
   `POST /api/agent-gateway/tool-calls`, scoped
   `POST /api/agent-gateway/artifacts`, scoped
   `POST /api/agent-gateway/evaluations/submit`, scoped
@@ -150,15 +152,15 @@ Must be true:
   `POST /api/agent-gateway/memories/propose`, scoped
   `POST /api/agent-gateway/approvals/request`, and scoped
   `POST /api/agent-gateway/audit`; read-only mode must still block all of them,
-  the allowlisted writes must persist task/run/tool/evaluation/artifact/Agent
+  the allowlisted writes must persist task/run/heartbeat/tool/evaluation/artifact/Agent
   Plan/plan-evidence/memory/approval/audit/runtime evidence in
   Postgres, scoped Gateway writes must reject absent tokens, missing scopes,
   body/header cross-workspace, cross-agent, same-workspace intruder attempts,
-  memory overwrite attempts,
+  run heartbeat task mismatches, terminal run revival, memory overwrite attempts,
   manifest binding mismatches, approval task/tool/requester mismatches,
   approved approval overwrite attempts, and audit entity/run/task mismatches,
   and broader mutation routes such as memory review decisions, knowledge index,
-  heartbeat, live-runtime heartbeat/daemon control, and admin mutations must
+  live-runtime heartbeat/daemon control, and admin mutations must
   remain blocked until each has a dedicated smoke.
 - Verification includes local acceptance against a temporary SQLite database
   before any Postgres work starts:

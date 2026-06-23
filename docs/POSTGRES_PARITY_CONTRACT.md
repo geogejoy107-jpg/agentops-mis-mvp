@@ -47,16 +47,18 @@ and snapshots, and keeps HTTP/CLI writes fail-closed until a routed write
 adapter is explicitly proven. The eleventh layer is the first routed write
 contract, `postgres_http_write_task_parity_v1`, which keeps Postgres HTTP
 writes blocked by default, then enables only explicit task, execution-start,
-evidence, plan, memory-candidate, approval-request, and audit
+agent/run heartbeat, evidence, plan, memory-candidate, approval-request, and audit
 allowlist routes under `AGENTOPS_POSTGRES_WRITE_HTTP=1`: `POST /api/tasks`,
 scoped `POST /api/agent-gateway/tasks`, scoped
 `POST /api/agent-gateway/tasks/:task_id/claim`, scoped
-`POST /api/agent-gateway/runs/start`, scoped Gateway tool/evaluation/artifact
-evidence, Agent Plan, plan-evidence manifest, memory proposal, and run/task
-approval/audit routes. It proves task, run, evidence, plan, memory, approval,
-runtime event, and audit rows persist in Postgres while missing scopes,
-cross-workspace, cross-agent, same-workspace intruder, memory overwrite,
-approval overwrite, and non-allowlisted writes still fail closed.
+`POST /api/agent-gateway/runs/start`, scoped `POST /api/agent-gateway/heartbeat`,
+scoped `POST /api/agent-gateway/runs/:run_id/heartbeat`, scoped Gateway
+tool/evaluation/artifact evidence, Agent Plan, plan-evidence manifest, memory
+proposal, and run/task approval/audit routes. It proves task, run, heartbeat,
+evidence, plan, memory, approval, runtime event, and audit rows persist in
+Postgres while missing scopes, cross-workspace, cross-agent, same-workspace
+intruder, terminal run revival, memory overwrite, approval overwrite, and
+non-allowlisted writes still fail closed.
 
 All layers are intentionally derived from `server.SCHEMA_SQL`, because
 `server.py` is still the executable schema authority for the dependency-free
@@ -226,6 +228,8 @@ Current local evidence on `codex/commercial-migration-closed-loop`:
   writes remain disabled at this gate.
 - `postgres_http_write_task_parity_v1`,
   `postgres_http_gateway_execution_start_write_v1`,
+  `postgres_http_gateway_heartbeat_write_v1`,
+  `postgres_http_gateway_run_heartbeat_write_v1`,
   `postgres_http_gateway_evidence_write_v1`,
   `postgres_http_gateway_plan_evidence_write_v1`,
   `postgres_http_gateway_approval_write_v1`,
@@ -234,12 +238,14 @@ Current local evidence on `codex/commercial-migration-closed-loop`:
   with a temporary psycopg target: read-only mode still returned
   `503 postgres_read_only_backend` for `POST /api/tasks` and
   scoped Agent Gateway task create/claim/run-start/tool/evaluation/artifact/
-  Agent Plan/plan-evidence/memory/approval/audit routes; explicit
+  heartbeat/Agent Plan/plan-evidence/memory/approval/audit routes; explicit
   `AGENTOPS_POSTGRES_WRITE_HTTP=1` mode allowed only those task,
-  execution-start, execution-evidence, plan-evidence, memory-candidate,
-  approval-request, and run/task-bound audit routes, created
+  execution-start, heartbeat, execution-evidence, plan-evidence,
+  memory-candidate, approval-request, and run/task-bound audit routes, created
   `tsk_pg_http_write_task` and scoped Gateway task `tsk_pg_gateway_write_task`,
-  claimed the Gateway task, started `run_pg_gateway_write_start`, wrote
+  claimed the Gateway task, started `run_pg_gateway_write_start`, updated agent
+  heartbeat state and token `last_heartbeat_at`, wrote a run heartbeat for
+  `run_pg_gateway_write_start`, wrote
   `tc_pg_gateway_write_evidence`, `eval_pg_gateway_write_evidence`, and
   `art_pg_gateway_write_evidence`, created `plan_pg_gateway_write`, submitted
   verified manifest `pem_pg_gateway_write`, proposed candidate memory
@@ -247,13 +253,14 @@ Current local evidence on `codex/commercial-migration-closed-loop`:
   the run/task to `waiting_approval`, emitted run-bound audit action
   `agent_gateway.postgres_audit_write`, read task and run back through HTTP,
   persisted runtime/audit rows in Postgres, rejected absent Gateway token at
-  `401`, rejected missing `tasks:create`, missing `tasks:claim`, missing
-  `runs:write`, missing `toolcalls:write`, missing `evaluations:submit`,
+  `401`, rejected missing `agents:heartbeat`, missing `tasks:create`, missing
+  `tasks:claim`, missing `runs:write`, missing `toolcalls:write`, missing `evaluations:submit`,
   missing `artifacts:write`, missing `agent_plans:write`, missing
   `plan_evidence:write`, missing `memories:propose`, missing
   `approvals:request`, and missing `audit:write` at `403`, rejected body/header
-  cross-workspace, cross-agent, same-workspace intruder, manifest task/run
-  binding mismatch, memory task/run mismatch, approved/cross-workspace/other-agent
+  cross-workspace, cross-agent, same-workspace intruder, run heartbeat task
+  mismatch, terminal run revival, manifest task/run binding mismatch,
+  memory task/run mismatch, approved/cross-workspace/other-agent
   memory overwrite, approval task/tool/requester mismatch, approved approval
   overwrite, audit task/run mismatch, and intruder audit without `run_id`
   Gateway requests at `403`, kept `POST /api/agent-gateway/knowledge/index` and

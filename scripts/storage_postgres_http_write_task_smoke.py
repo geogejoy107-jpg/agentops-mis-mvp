@@ -38,6 +38,7 @@ TASK_ID = "tsk_pg_http_write_task"
 BLOCKED_TASK_ID = "tsk_pg_http_write_blocked"
 BLOCKED_AGENT_ID = "agt_pg_http_write_blocked"
 GATEWAY_WORKSPACE_ID = "ws_pg_gateway_write"
+GATEWAY_TOKEN_ID = "tok_pg_gateway_write"
 GATEWAY_AGENT_ID = "agt_pg_gateway_write"
 GATEWAY_OBSERVER_AGENT_ID = "agt_pg_gateway_observer"
 GATEWAY_OTHER_AGENT_ID = "agt_pg_gateway_other"
@@ -73,6 +74,8 @@ GATEWAY_READ_ONLY_ARTIFACT_ID = "art_pg_gateway_read_only_blocked"
 GATEWAY_READ_ONLY_PLAN_ID = "plan_pg_gateway_read_only_blocked"
 GATEWAY_READ_ONLY_MANIFEST_ID = "pem_pg_gateway_read_only_blocked"
 GATEWAY_READ_ONLY_MEMORY_ID = "mem_pg_gateway_read_only_blocked"
+GATEWAY_READ_ONLY_HEARTBEAT_AGENT_ID = "agt_pg_gateway_read_only_heartbeat_blocked"
+GATEWAY_READ_ONLY_RUN_HEARTBEAT_ID = "run_pg_gateway_read_only_heartbeat_blocked"
 GATEWAY_MISSING_SCOPE_TASK_ID = "tsk_pg_gateway_missing_scope"
 GATEWAY_CROSS_WORKSPACE_TASK_ID = "tsk_pg_gateway_cross_workspace"
 GATEWAY_CROSS_WORKSPACE_PLAN_ID = "plan_pg_gateway_cross_workspace"
@@ -83,6 +86,8 @@ GATEWAY_NO_TOKEN_PLAN_ID = "plan_pg_gateway_no_token"
 GATEWAY_NO_TOKEN_MEMORY_ID = "mem_pg_gateway_no_token"
 GATEWAY_MISMATCH_MANIFEST_ID = "pem_pg_gateway_mismatch"
 GATEWAY_AUDIT_MISMATCH_TASK_ID = "tsk_pg_gateway_audit_wrong_task"
+GATEWAY_TERMINAL_HEARTBEAT_TASK_ID = "tsk_pg_gateway_terminal_heartbeat"
+GATEWAY_TERMINAL_HEARTBEAT_RUN_ID = "run_pg_gateway_terminal_heartbeat"
 SMOKE_API_KEY = "postgres_write_smoke_required_api_key"
 
 
@@ -298,6 +303,57 @@ def seed_reference_rows(adapter: PostgresAdapter) -> None:
             "decided_at": now,
         },
     )
+    adapter.execute(
+        """INSERT INTO tasks(task_id,workspace_id,title,description,requester_id,owner_agent_id,collaborator_agent_ids,status,priority,due_date,acceptance_criteria,risk_level,budget_limit_usd,created_at,updated_at)
+        VALUES(:task_id,:workspace_id,:title,:description,:requester_id,:owner_agent_id,:collaborator_agent_ids,:status,:priority,:due_date,:acceptance_criteria,:risk_level,:budget_limit_usd,:created_at,:updated_at)""",
+        {
+            "task_id": GATEWAY_TERMINAL_HEARTBEAT_TASK_ID,
+            "workspace_id": GATEWAY_WORKSPACE_ID,
+            "title": "Seeded terminal heartbeat guard task",
+            "description": "Terminal run heartbeat must not revive this completed run.",
+            "requester_id": "usr_customer_demo",
+            "owner_agent_id": GATEWAY_AGENT_ID,
+            "collaborator_agent_ids": "[]",
+            "status": "completed",
+            "priority": "high",
+            "due_date": None,
+            "acceptance_criteria": "Completed runs stay terminal under heartbeat.",
+            "risk_level": "low",
+            "budget_limit_usd": 1.0,
+            "created_at": now,
+            "updated_at": now,
+        },
+    )
+    adapter.execute(
+        """INSERT INTO runs(run_id,workspace_id,task_id,agent_id,runtime_type,status,started_at,ended_at,duration_ms,input_summary,output_summary,model_provider,model_name,input_tokens,output_tokens,reasoning_tokens,cost_usd,error_type,error_message,trace_id,parent_run_id,delegation_id,approval_required,created_at)
+        VALUES(:run_id,:workspace_id,:task_id,:agent_id,:runtime_type,:status,:started_at,:ended_at,:duration_ms,:input_summary,:output_summary,:model_provider,:model_name,:input_tokens,:output_tokens,:reasoning_tokens,:cost_usd,:error_type,:error_message,:trace_id,:parent_run_id,:delegation_id,:approval_required,:created_at)""",
+        {
+            "run_id": GATEWAY_TERMINAL_HEARTBEAT_RUN_ID,
+            "workspace_id": GATEWAY_WORKSPACE_ID,
+            "task_id": GATEWAY_TERMINAL_HEARTBEAT_TASK_ID,
+            "agent_id": GATEWAY_AGENT_ID,
+            "runtime_type": "mock",
+            "status": "completed",
+            "started_at": now,
+            "ended_at": now,
+            "duration_ms": 1200,
+            "input_summary": "Seeded terminal run heartbeat guard.",
+            "output_summary": "Already completed and immutable to heartbeat revival.",
+            "model_provider": "mock",
+            "model_name": "mock-model",
+            "input_tokens": 0,
+            "output_tokens": 3,
+            "reasoning_tokens": 0,
+            "cost_usd": 0,
+            "error_type": None,
+            "error_message": None,
+            "trace_id": "trace_pg_gateway_terminal_heartbeat",
+            "parent_run_id": None,
+            "delegation_id": None,
+            "approval_required": 0,
+            "created_at": now,
+        },
+    )
     adapter.commit()
 
 
@@ -316,7 +372,7 @@ def seed_gateway_token(adapter: PostgresAdapter, *, token_id: str, raw_token: st
             "label": "Postgres HTTP Gateway write smoke",
             "heartbeat_timeout_sec": 60,
             "created_at": now,
-            "expires_at": "2026-06-23T05:01:00+00:00",
+            "expires_at": "2026-07-23T05:01:00+00:00",
             "revoked_at": None,
             "last_used_at": None,
             "last_heartbeat_at": None,
@@ -559,7 +615,7 @@ def main() -> int:
             gateway_intruder_token = "agtok_pg_intruder_" + container_smoke.secrets.token_urlsafe(18)
             seed_gateway_token(
                 adapter,
-                token_id="agtok_pg_gateway_write",
+                token_id=GATEWAY_TOKEN_ID,
                 raw_token=gateway_token,
                 agent_id=GATEWAY_AGENT_ID,
                 workspace_id=GATEWAY_WORKSPACE_ID,
@@ -567,6 +623,7 @@ def main() -> int:
                     "tasks:create",
                     "tasks:read",
                     "tasks:claim",
+                    "agents:heartbeat",
                     "runs:write",
                     "toolcalls:write",
                     "artifacts:write",
@@ -595,6 +652,7 @@ def main() -> int:
                 scopes=[
                     "tasks:read",
                     "tasks:claim",
+                    "agents:heartbeat",
                     "runs:write",
                     "toolcalls:write",
                     "artifacts:write",
@@ -697,6 +755,24 @@ def main() -> int:
                     tool_call_id=GATEWAY_READ_ONLY_TOOL_CALL_ID,
                 ),
             )
+            gateway_heartbeat_blocked_status, gateway_heartbeat_blocked_payload = request_json_with_token(
+                f"{read_only_base}/api/agent-gateway/heartbeat",
+                token=gateway_token,
+                body={
+                    "agent_id": GATEWAY_READ_ONLY_HEARTBEAT_AGENT_ID,
+                    "status": "running",
+                    "summary": "This heartbeat must not persist in read-only Postgres mode.",
+                },
+            )
+            gateway_run_heartbeat_blocked_status, gateway_run_heartbeat_blocked_payload = request_json_with_token(
+                f"{read_only_base}/api/agent-gateway/runs/{GATEWAY_READ_ONLY_RUN_HEARTBEAT_ID}/heartbeat",
+                token=gateway_token,
+                body={
+                    "task_id": GATEWAY_READ_ONLY_CLAIM_TASK_ID,
+                    "status": "running",
+                    "output_summary": "This run heartbeat must not persist in read-only Postgres mode.",
+                },
+            )
             gateway_audit_blocked_status, gateway_audit_blocked_payload = request_json_with_token(
                 f"{read_only_base}/api/agent-gateway/audit",
                 token=gateway_token,
@@ -711,6 +787,46 @@ def main() -> int:
             write_status_code, write_backend = wait_json(f"{write_base}/api/storage/backend-status", proc, secret=pg_auth)
             create_status, create_payload = request_json(f"{write_base}/api/tasks", method="POST", body=task_body(TASK_ID))
             readback_status, readback_payload = request_json(f"{write_base}/api/tasks/{TASK_ID}?workspace_id={WORKSPACE_ID}")
+            gateway_missing_heartbeat_scope_status, gateway_missing_heartbeat_scope_payload = request_json_with_token(
+                f"{write_base}/api/agent-gateway/heartbeat",
+                token=gateway_observer_token,
+                body={"status": "running", "summary": "Missing agents:heartbeat scope must be rejected."},
+            )
+            gateway_heartbeat_cross_workspace_status, gateway_heartbeat_cross_workspace_payload = request_json_with_token(
+                f"{write_base}/api/agent-gateway/heartbeat",
+                token=gateway_token,
+                body={"workspace_id": "other-workspace", "status": "running"},
+            )
+            gateway_heartbeat_header_workspace_status, gateway_heartbeat_header_workspace_payload = request_json_with_token(
+                f"{write_base}/api/agent-gateway/heartbeat",
+                token=gateway_token,
+                body={"status": "running"},
+                extra_headers={"X-AgentOps-Workspace-Id": "other-workspace"},
+            )
+            gateway_heartbeat_other_agent_status, gateway_heartbeat_other_agent_payload = request_json_with_token(
+                f"{write_base}/api/agent-gateway/heartbeat",
+                token=gateway_token,
+                body={"agent_id": GATEWAY_OTHER_AGENT_ID, "status": "running"},
+            )
+            gateway_heartbeat_intruder_status, gateway_heartbeat_intruder_payload = request_json_with_token(
+                f"{write_base}/api/agent-gateway/heartbeat",
+                token=gateway_intruder_token,
+                body={"agent_id": GATEWAY_AGENT_ID, "status": "running"},
+            )
+            gateway_heartbeat_no_token_status, gateway_heartbeat_no_token_payload = request_json(
+                f"{write_base}/api/agent-gateway/heartbeat",
+                method="POST",
+                body={"agent_id": GATEWAY_AGENT_ID, "status": "running"},
+            )
+            gateway_heartbeat_write_status, gateway_heartbeat_write_payload = request_json_with_token(
+                f"{write_base}/api/agent-gateway/heartbeat",
+                token=gateway_token,
+                body={
+                    "status": "running",
+                    "runtime_type": "mock",
+                    "summary": "Postgres Gateway agent heartbeat write proof.",
+                },
+            )
             gateway_missing_scope_status, gateway_missing_scope_payload = request_json_with_token(
                 f"{write_base}/api/agent-gateway/tasks",
                 token=gateway_observer_token,
@@ -769,6 +885,84 @@ def main() -> int:
                     "task_id": GATEWAY_TASK_ID,
                     "runtime_type": "mock",
                     "input_summary": "Postgres Agent Gateway run start write proof.",
+                },
+            )
+            gateway_missing_run_heartbeat_scope_status, gateway_missing_run_heartbeat_scope_payload = request_json_with_token(
+                f"{write_base}/api/agent-gateway/runs/{GATEWAY_RUN_ID}/heartbeat",
+                token=gateway_observer_token,
+                body={
+                    "task_id": GATEWAY_TASK_ID,
+                    "status": "running",
+                    "output_summary": "Missing runs:write scope must be rejected.",
+                },
+            )
+            gateway_run_heartbeat_no_token_status, gateway_run_heartbeat_no_token_payload = request_json(
+                f"{write_base}/api/agent-gateway/runs/{GATEWAY_RUN_ID}/heartbeat",
+                method="POST",
+                body={
+                    "task_id": GATEWAY_TASK_ID,
+                    "agent_id": GATEWAY_AGENT_ID,
+                    "status": "running",
+                    "output_summary": "No token run heartbeat must be rejected.",
+                },
+            )
+            gateway_run_heartbeat_cross_workspace_status, gateway_run_heartbeat_cross_workspace_payload = request_json_with_token(
+                f"{write_base}/api/agent-gateway/runs/{GATEWAY_RUN_ID}/heartbeat",
+                token=gateway_token,
+                body={
+                    "workspace_id": "other-workspace",
+                    "task_id": GATEWAY_TASK_ID,
+                    "status": "running",
+                    "output_summary": "Cross-workspace run heartbeat must be rejected.",
+                },
+            )
+            gateway_run_heartbeat_header_workspace_status, gateway_run_heartbeat_header_workspace_payload = request_json_with_token(
+                f"{write_base}/api/agent-gateway/runs/{GATEWAY_RUN_ID}/heartbeat",
+                token=gateway_token,
+                body={
+                    "task_id": GATEWAY_TASK_ID,
+                    "status": "running",
+                    "output_summary": "Cross-workspace header run heartbeat must be rejected.",
+                },
+                extra_headers={"X-AgentOps-Workspace-Id": "other-workspace"},
+            )
+            gateway_run_heartbeat_task_mismatch_status, gateway_run_heartbeat_task_mismatch_payload = request_json_with_token(
+                f"{write_base}/api/agent-gateway/runs/{GATEWAY_RUN_ID}/heartbeat",
+                token=gateway_token,
+                body={
+                    "task_id": GATEWAY_AUDIT_MISMATCH_TASK_ID,
+                    "status": "running",
+                    "output_summary": "Task mismatch must be rejected.",
+                },
+            )
+            gateway_run_heartbeat_intruder_status, gateway_run_heartbeat_intruder_payload = request_json_with_token(
+                f"{write_base}/api/agent-gateway/runs/{GATEWAY_RUN_ID}/heartbeat",
+                token=gateway_intruder_token,
+                body={
+                    "task_id": GATEWAY_TASK_ID,
+                    "status": "running",
+                    "output_summary": "Intruder run heartbeat must be rejected.",
+                },
+            )
+            gateway_run_heartbeat_terminal_revival_status, gateway_run_heartbeat_terminal_revival_payload = request_json_with_token(
+                f"{write_base}/api/agent-gateway/runs/{GATEWAY_TERMINAL_HEARTBEAT_RUN_ID}/heartbeat",
+                token=gateway_token,
+                body={
+                    "task_id": GATEWAY_TERMINAL_HEARTBEAT_TASK_ID,
+                    "status": "running",
+                    "output_summary": "Terminal run must not be revived by heartbeat.",
+                },
+            )
+            gateway_run_heartbeat_write_status, gateway_run_heartbeat_write_payload = request_json_with_token(
+                f"{write_base}/api/agent-gateway/runs/{GATEWAY_RUN_ID}/heartbeat",
+                token=gateway_token,
+                body={
+                    "task_id": GATEWAY_TASK_ID,
+                    "status": "running",
+                    "duration_ms": 2345,
+                    "output_tokens": 17,
+                    "cost_usd": 0.0123,
+                    "output_summary": "Postgres Gateway run heartbeat write proof.",
                 },
             )
             gateway_intruder_claim_status, gateway_intruder_claim_payload = request_json_with_token(
@@ -1122,6 +1316,7 @@ def main() -> int:
             gateway_read_only_manifest_row = adapter.fetchone("SELECT * FROM plan_evidence_manifests WHERE manifest_id=?", [GATEWAY_READ_ONLY_MANIFEST_ID])
             gateway_read_only_memory_row = adapter.fetchone("SELECT * FROM memories WHERE memory_id=?", [GATEWAY_READ_ONLY_MEMORY_ID])
             gateway_read_only_approval_row = adapter.fetchone("SELECT * FROM approvals WHERE approval_id=?", [GATEWAY_READ_ONLY_APPROVAL_ID])
+            gateway_read_only_heartbeat_agent_row = adapter.fetchone("SELECT * FROM agents WHERE agent_id=?", [GATEWAY_READ_ONLY_HEARTBEAT_AGENT_ID])
             gateway_read_only_audit_row = adapter.fetchone("SELECT * FROM audit_logs WHERE action=?", [GATEWAY_READ_ONLY_AUDIT_ACTION])
             gateway_missing_scope_task_row = adapter.fetchone("SELECT * FROM tasks WHERE task_id=?", [GATEWAY_MISSING_SCOPE_TASK_ID])
             gateway_cross_workspace_task_row = adapter.fetchone("SELECT * FROM tasks WHERE task_id=?", [GATEWAY_CROSS_WORKSPACE_TASK_ID])
@@ -1132,6 +1327,8 @@ def main() -> int:
             gateway_no_token_plan_row = adapter.fetchone("SELECT * FROM agent_plans WHERE plan_id=?", [GATEWAY_NO_TOKEN_PLAN_ID])
             blocked_agent_row = adapter.fetchone("SELECT * FROM agents WHERE agent_id=?", [BLOCKED_AGENT_ID])
             gateway_run_row = adapter.fetchone("SELECT * FROM runs WHERE run_id=?", [GATEWAY_RUN_ID])
+            gateway_heartbeat_agent_row = adapter.fetchone("SELECT * FROM agents WHERE agent_id=?", [GATEWAY_AGENT_ID])
+            gateway_terminal_heartbeat_run_row = adapter.fetchone("SELECT * FROM runs WHERE run_id=?", [GATEWAY_TERMINAL_HEARTBEAT_RUN_ID])
             gateway_missing_run_scope_row = adapter.fetchone("SELECT * FROM runs WHERE run_id=?", [f"{GATEWAY_RUN_ID}_missing_scope"])
             gateway_intruder_run_row = adapter.fetchone("SELECT * FROM runs WHERE run_id=?", [f"{GATEWAY_RUN_ID}_intruder"])
             gateway_tool_row = adapter.fetchone("SELECT * FROM tool_calls WHERE tool_call_id=?", [GATEWAY_TOOL_CALL_ID])
@@ -1183,6 +1380,10 @@ def main() -> int:
             gateway_audit_count = adapter.fetchone("SELECT COUNT(*) AS c FROM audit_logs WHERE entity_type=? AND entity_id=?", ["tasks", GATEWAY_TASK_ID])["c"]
             gateway_run_runtime_event_count = adapter.fetchone("SELECT COUNT(*) AS c FROM runtime_events WHERE run_id=?", [GATEWAY_RUN_ID])["c"]
             gateway_run_audit_count = adapter.fetchone("SELECT COUNT(*) AS c FROM audit_logs WHERE entity_type=? AND entity_id=?", ["runs", GATEWAY_RUN_ID])["c"]
+            gateway_heartbeat_runtime_event_count = adapter.fetchone("SELECT COUNT(*) AS c FROM runtime_events WHERE agent_id=? AND event_type=?", [GATEWAY_AGENT_ID, "agent.heartbeat"])["c"]
+            gateway_heartbeat_audit_count = adapter.fetchone("SELECT COUNT(*) AS c FROM audit_logs WHERE entity_type=? AND entity_id=? AND action=?", ["agents", GATEWAY_AGENT_ID, "agent_gateway.heartbeat"])["c"]
+            gateway_run_heartbeat_runtime_event_count = adapter.fetchone("SELECT COUNT(*) AS c FROM runtime_events WHERE run_id=? AND event_type=?", [GATEWAY_RUN_ID, "run.heartbeat"])["c"]
+            gateway_run_heartbeat_audit_count = adapter.fetchone("SELECT COUNT(*) AS c FROM audit_logs WHERE entity_type=? AND entity_id=? AND action=?", ["runs", GATEWAY_RUN_ID, "agent_gateway.run_heartbeat"])["c"]
             gateway_tool_runtime_event_count = adapter.fetchone("SELECT COUNT(*) AS c FROM runtime_events WHERE run_id=? AND event_type=?", [GATEWAY_RUN_ID, "tool_call.record"])["c"]
             gateway_eval_runtime_event_count = adapter.fetchone("SELECT COUNT(*) AS c FROM runtime_events WHERE run_id=? AND event_type=?", [GATEWAY_RUN_ID, "evaluation.submit"])["c"]
             gateway_artifact_runtime_event_count = adapter.fetchone("SELECT COUNT(*) AS c FROM runtime_events WHERE run_id=? AND event_type=?", [GATEWAY_RUN_ID, "artifact.record"])["c"]
@@ -1198,7 +1399,7 @@ def main() -> int:
             gateway_approval_run_wait_audit_count = adapter.fetchone("SELECT COUNT(*) AS c FROM audit_logs WHERE entity_type=? AND entity_id=? AND action=?", ["runs", GATEWAY_RUN_ID, "agent_gateway.run_waiting_approval"])["c"]
             gateway_approval_task_wait_audit_count = adapter.fetchone("SELECT COUNT(*) AS c FROM audit_logs WHERE entity_type=? AND entity_id=? AND action=?", ["tasks", GATEWAY_TASK_ID, "agent_gateway.task_waiting_approval"])["c"]
             gateway_audit_runtime_event_count = adapter.fetchone("SELECT COUNT(*) AS c FROM runtime_events WHERE run_id=? AND event_type=?", [GATEWAY_RUN_ID, "audit.emit"])["c"]
-            gateway_token_last_used = adapter.fetchone("SELECT last_used_at FROM agent_gateway_tokens WHERE token_id=?", ["agtok_pg_gateway_write"])
+            gateway_token_last_used = adapter.fetchone("SELECT last_used_at,last_heartbeat_at FROM agent_gateway_tokens WHERE token_id=?", [GATEWAY_TOKEN_ID])
 
             failures: list[str] = []
             if read_only_status_code != 200 or read_only_backend.get("mode") != "read_only_http" or read_only_backend.get("writes_allowed") is not False:
@@ -1225,6 +1426,10 @@ def main() -> int:
                 failures.append(f"gateway_read_only_memory_block_mismatch:{gateway_memory_blocked_status}:{gateway_memory_blocked_payload}")
             if gateway_approval_blocked_status != 503 or gateway_approval_blocked_payload.get("error") != "postgres_read_only_backend":
                 failures.append(f"gateway_read_only_approval_block_mismatch:{gateway_approval_blocked_status}:{gateway_approval_blocked_payload}")
+            if gateway_heartbeat_blocked_status != 503 or gateway_heartbeat_blocked_payload.get("error") != "postgres_read_only_backend":
+                failures.append(f"gateway_read_only_heartbeat_block_mismatch:{gateway_heartbeat_blocked_status}:{gateway_heartbeat_blocked_payload}")
+            if gateway_run_heartbeat_blocked_status != 503 or gateway_run_heartbeat_blocked_payload.get("error") != "postgres_read_only_backend":
+                failures.append(f"gateway_read_only_run_heartbeat_block_mismatch:{gateway_run_heartbeat_blocked_status}:{gateway_run_heartbeat_blocked_payload}")
             if gateway_audit_blocked_status != 503 or gateway_audit_blocked_payload.get("error") != "postgres_read_only_backend":
                 failures.append(f"gateway_read_only_audit_block_mismatch:{gateway_audit_blocked_status}:{gateway_audit_blocked_payload}")
             if blocked_task_row:
@@ -1243,6 +1448,8 @@ def main() -> int:
                 failures.append("read_only_memory_write_created_row")
             if gateway_read_only_approval_row:
                 failures.append("read_only_approval_write_created_row")
+            if gateway_read_only_heartbeat_agent_row:
+                failures.append("read_only_heartbeat_created_agent_row")
             if gateway_read_only_audit_row:
                 failures.append("read_only_audit_write_created_row")
             if write_status_code != 200 or write_backend.get("mode") != "experimental_write_http" or write_backend.get("writes_allowed") is not True:
@@ -1251,6 +1458,20 @@ def main() -> int:
                 failures.append(f"task_create_payload_mismatch:{create_status}:{create_payload}")
             if readback_status != 200 or readback_payload.get("task", {}).get("task_id") != TASK_ID:
                 failures.append(f"task_readback_mismatch:{readback_status}:{readback_payload}")
+            if gateway_missing_heartbeat_scope_status != 403 or "agents:heartbeat" not in json.dumps(gateway_missing_heartbeat_scope_payload, ensure_ascii=False):
+                failures.append(f"gateway_missing_heartbeat_scope_mismatch:{gateway_missing_heartbeat_scope_status}:{gateway_missing_heartbeat_scope_payload}")
+            if gateway_heartbeat_cross_workspace_status != 403 or "workspace" not in json.dumps(gateway_heartbeat_cross_workspace_payload, ensure_ascii=False).lower():
+                failures.append(f"gateway_heartbeat_cross_workspace_mismatch:{gateway_heartbeat_cross_workspace_status}:{gateway_heartbeat_cross_workspace_payload}")
+            if gateway_heartbeat_header_workspace_status != 403 or "workspace" not in json.dumps(gateway_heartbeat_header_workspace_payload, ensure_ascii=False).lower():
+                failures.append(f"gateway_heartbeat_header_workspace_mismatch:{gateway_heartbeat_header_workspace_status}:{gateway_heartbeat_header_workspace_payload}")
+            if gateway_heartbeat_other_agent_status != 403 or "another agent" not in json.dumps(gateway_heartbeat_other_agent_payload, ensure_ascii=False).lower():
+                failures.append(f"gateway_heartbeat_other_agent_mismatch:{gateway_heartbeat_other_agent_status}:{gateway_heartbeat_other_agent_payload}")
+            if gateway_heartbeat_intruder_status != 403 or "another agent" not in json.dumps(gateway_heartbeat_intruder_payload, ensure_ascii=False).lower():
+                failures.append(f"gateway_heartbeat_intruder_mismatch:{gateway_heartbeat_intruder_status}:{gateway_heartbeat_intruder_payload}")
+            if gateway_heartbeat_no_token_status != 401 or "token" not in json.dumps(gateway_heartbeat_no_token_payload, ensure_ascii=False).lower():
+                failures.append(f"gateway_heartbeat_no_token_mismatch:{gateway_heartbeat_no_token_status}:{gateway_heartbeat_no_token_payload}")
+            if gateway_heartbeat_write_status != 200 or gateway_heartbeat_write_payload.get("agent_id") != GATEWAY_AGENT_ID or gateway_heartbeat_write_payload.get("status") != "running":
+                failures.append(f"gateway_heartbeat_write_mismatch:{gateway_heartbeat_write_status}:{gateway_heartbeat_write_payload}")
             if gateway_missing_scope_status != 403 or "tasks:create" not in json.dumps(gateway_missing_scope_payload, ensure_ascii=False):
                 failures.append(f"gateway_missing_scope_mismatch:{gateway_missing_scope_status}:{gateway_missing_scope_payload}")
             if gateway_cross_workspace_status != 403 or "workspace" not in json.dumps(gateway_cross_workspace_payload, ensure_ascii=False).lower():
@@ -1275,6 +1496,23 @@ def main() -> int:
             gateway_run = gateway_run_start_payload.get("run") or {}
             if gateway_run_start_status != 201 or gateway_run.get("run_id") != GATEWAY_RUN_ID or gateway_run.get("workspace_id") != GATEWAY_WORKSPACE_ID:
                 failures.append(f"gateway_run_start_payload_mismatch:{gateway_run_start_status}:{gateway_run_start_payload}")
+            if gateway_missing_run_heartbeat_scope_status != 403 or "runs:write" not in json.dumps(gateway_missing_run_heartbeat_scope_payload, ensure_ascii=False):
+                failures.append(f"gateway_missing_run_heartbeat_scope_mismatch:{gateway_missing_run_heartbeat_scope_status}:{gateway_missing_run_heartbeat_scope_payload}")
+            if gateway_run_heartbeat_no_token_status != 401 or "token" not in json.dumps(gateway_run_heartbeat_no_token_payload, ensure_ascii=False).lower():
+                failures.append(f"gateway_run_heartbeat_no_token_mismatch:{gateway_run_heartbeat_no_token_status}:{gateway_run_heartbeat_no_token_payload}")
+            if gateway_run_heartbeat_cross_workspace_status != 403 or "workspace" not in json.dumps(gateway_run_heartbeat_cross_workspace_payload, ensure_ascii=False).lower():
+                failures.append(f"gateway_run_heartbeat_cross_workspace_mismatch:{gateway_run_heartbeat_cross_workspace_status}:{gateway_run_heartbeat_cross_workspace_payload}")
+            if gateway_run_heartbeat_header_workspace_status != 403 or "workspace" not in json.dumps(gateway_run_heartbeat_header_workspace_payload, ensure_ascii=False).lower():
+                failures.append(f"gateway_run_heartbeat_header_workspace_mismatch:{gateway_run_heartbeat_header_workspace_status}:{gateway_run_heartbeat_header_workspace_payload}")
+            if gateway_run_heartbeat_task_mismatch_status != 403 or "task_id" not in json.dumps(gateway_run_heartbeat_task_mismatch_payload, ensure_ascii=False):
+                failures.append(f"gateway_run_heartbeat_task_mismatch_not_blocked:{gateway_run_heartbeat_task_mismatch_status}:{gateway_run_heartbeat_task_mismatch_payload}")
+            if gateway_run_heartbeat_intruder_status != 403 or "another agent" not in json.dumps(gateway_run_heartbeat_intruder_payload, ensure_ascii=False).lower():
+                failures.append(f"gateway_run_heartbeat_intruder_mismatch:{gateway_run_heartbeat_intruder_status}:{gateway_run_heartbeat_intruder_payload}")
+            if gateway_run_heartbeat_terminal_revival_status != 409 or "terminal" not in json.dumps(gateway_run_heartbeat_terminal_revival_payload, ensure_ascii=False).lower():
+                failures.append(f"gateway_run_heartbeat_terminal_revival_not_blocked:{gateway_run_heartbeat_terminal_revival_status}:{gateway_run_heartbeat_terminal_revival_payload}")
+            gateway_run_heartbeat = gateway_run_heartbeat_write_payload.get("run") or {}
+            if gateway_run_heartbeat_write_status != 200 or gateway_run_heartbeat.get("run_id") != GATEWAY_RUN_ID or gateway_run_heartbeat.get("status") != "running" or gateway_run_heartbeat.get("output_summary") != "Postgres Gateway run heartbeat write proof.":
+                failures.append(f"gateway_run_heartbeat_write_mismatch:{gateway_run_heartbeat_write_status}:{gateway_run_heartbeat_write_payload}")
             if gateway_intruder_claim_status != 403 or "another agent" not in json.dumps(gateway_intruder_claim_payload, ensure_ascii=False).lower():
                 failures.append(f"gateway_intruder_claim_mismatch:{gateway_intruder_claim_status}:{gateway_intruder_claim_payload}")
             if gateway_intruder_run_status != 403 or "another agent" not in json.dumps(gateway_intruder_run_payload, ensure_ascii=False).lower():
@@ -1431,6 +1669,12 @@ def main() -> int:
                 failures.append("postgres_gateway_intruder_audit_no_run_created_row")
             if not gateway_run_row or gateway_run_row.get("workspace_id") != GATEWAY_WORKSPACE_ID or gateway_run_row.get("task_id") != GATEWAY_TASK_ID or gateway_run_row.get("agent_id") != GATEWAY_AGENT_ID:
                 failures.append(f"postgres_gateway_run_row_mismatch:{gateway_run_row}")
+            elif gateway_run_row.get("output_summary") != "Postgres Gateway run heartbeat write proof." or int(gateway_run_row.get("duration_ms") or 0) != 2345 or int(gateway_run_row.get("output_tokens") or 0) != 17:
+                failures.append(f"postgres_gateway_run_heartbeat_fields_mismatch:{gateway_run_row}")
+            if not gateway_heartbeat_agent_row or gateway_heartbeat_agent_row.get("status") != "running":
+                failures.append(f"postgres_gateway_heartbeat_agent_row_mismatch:{gateway_heartbeat_agent_row}")
+            if not gateway_terminal_heartbeat_run_row or gateway_terminal_heartbeat_run_row.get("status") != "completed" or gateway_terminal_heartbeat_run_row.get("output_summary") != "Already completed and immutable to heartbeat revival.":
+                failures.append(f"postgres_gateway_terminal_heartbeat_overwritten:{gateway_terminal_heartbeat_run_row}")
             if not gateway_tool_row or gateway_tool_row.get("run_id") != GATEWAY_RUN_ID or gateway_tool_row.get("agent_id") != GATEWAY_AGENT_ID:
                 failures.append(f"postgres_gateway_tool_row_mismatch:{gateway_tool_row}")
             if not gateway_eval_row or gateway_eval_row.get("run_id") != GATEWAY_RUN_ID or gateway_eval_row.get("task_id") != GATEWAY_TASK_ID:
@@ -1467,6 +1711,14 @@ def main() -> int:
                 failures.append("postgres_gateway_run_runtime_event_missing")
             if int(gateway_run_audit_count or 0) < 1:
                 failures.append("postgres_gateway_run_audit_missing")
+            if int(gateway_heartbeat_runtime_event_count or 0) < 1:
+                failures.append("postgres_gateway_heartbeat_runtime_event_missing")
+            if int(gateway_heartbeat_audit_count or 0) < 1:
+                failures.append("postgres_gateway_heartbeat_audit_missing")
+            if int(gateway_run_heartbeat_runtime_event_count or 0) < 1:
+                failures.append("postgres_gateway_run_heartbeat_runtime_event_missing")
+            if int(gateway_run_heartbeat_audit_count or 0) < 1:
+                failures.append("postgres_gateway_run_heartbeat_audit_missing")
             if int(gateway_tool_runtime_event_count or 0) < 1:
                 failures.append("postgres_gateway_tool_runtime_event_missing")
             if int(gateway_eval_runtime_event_count or 0) < 1:
@@ -1499,13 +1751,24 @@ def main() -> int:
                 failures.append("postgres_gateway_audit_runtime_event_missing")
             if not (gateway_token_last_used or {}).get("last_used_at"):
                 failures.append("postgres_gateway_token_last_used_not_updated")
+            if not (gateway_token_last_used or {}).get("last_heartbeat_at"):
+                failures.append("postgres_gateway_token_last_heartbeat_not_updated")
             transcript = json.dumps(
                 [
                     blocked_payload,
                     gateway_blocked_payload,
                     gateway_claim_blocked_payload,
                     gateway_run_start_blocked_payload,
+                    gateway_heartbeat_blocked_payload,
+                    gateway_run_heartbeat_blocked_payload,
                     gateway_missing_scope_payload,
+                    gateway_missing_heartbeat_scope_payload,
+                    gateway_heartbeat_cross_workspace_payload,
+                    gateway_heartbeat_header_workspace_payload,
+                    gateway_heartbeat_other_agent_payload,
+                    gateway_heartbeat_intruder_payload,
+                    gateway_heartbeat_no_token_payload,
+                    gateway_heartbeat_write_payload,
                     gateway_missing_claim_scope_payload,
                     gateway_missing_run_scope_payload,
                     gateway_tool_blocked_payload,
@@ -1523,6 +1786,14 @@ def main() -> int:
                     gateway_create_payload,
                     gateway_claim_payload,
                     gateway_run_start_payload,
+                    gateway_missing_run_heartbeat_scope_payload,
+                    gateway_run_heartbeat_no_token_payload,
+                    gateway_run_heartbeat_cross_workspace_payload,
+                    gateway_run_heartbeat_header_workspace_payload,
+                    gateway_run_heartbeat_task_mismatch_payload,
+                    gateway_run_heartbeat_intruder_payload,
+                    gateway_run_heartbeat_terminal_revival_payload,
+                    gateway_run_heartbeat_write_payload,
                     gateway_missing_tool_scope_payload,
                     gateway_tool_write_payload,
                     gateway_missing_eval_scope_payload,
@@ -1591,6 +1862,8 @@ def main() -> int:
                     "postgres_http_gateway_plan_evidence_write_v1",
                     "postgres_http_gateway_approval_write_v1",
                     "postgres_http_gateway_audit_write_v1",
+                    "postgres_http_gateway_heartbeat_write_v1",
+                    "postgres_http_gateway_run_heartbeat_write_v1",
                     "postgres_http_gateway_memory_write_v1",
                 ],
                 "image": args.image,
@@ -1611,10 +1884,14 @@ def main() -> int:
                 "gateway_read_only_manifest_block_status": gateway_manifest_blocked_status,
                 "gateway_read_only_memory_block_status": gateway_memory_blocked_status,
                 "gateway_read_only_approval_block_status": gateway_approval_blocked_status,
+                "gateway_read_only_heartbeat_block_status": gateway_heartbeat_blocked_status,
+                "gateway_read_only_run_heartbeat_block_status": gateway_run_heartbeat_blocked_status,
                 "gateway_read_only_audit_block_status": gateway_audit_blocked_status,
+                "gateway_missing_heartbeat_scope_status": gateway_missing_heartbeat_scope_status,
                 "gateway_missing_scope_status": gateway_missing_scope_status,
                 "gateway_missing_claim_scope_status": gateway_missing_claim_scope_status,
                 "gateway_missing_run_scope_status": gateway_missing_run_scope_status,
+                "gateway_missing_run_heartbeat_scope_status": gateway_missing_run_heartbeat_scope_status,
                 "gateway_missing_tool_scope_status": gateway_missing_tool_scope_status,
                 "gateway_missing_eval_scope_status": gateway_missing_eval_scope_status,
                 "gateway_missing_artifact_scope_status": gateway_missing_artifact_scope_status,
@@ -1630,9 +1907,17 @@ def main() -> int:
                 "gateway_approval_cross_workspace_status": gateway_approval_cross_workspace_status,
                 "gateway_approval_header_workspace_status": gateway_approval_header_workspace_status,
                 "gateway_audit_cross_workspace_status": gateway_audit_cross_workspace_status,
+                "gateway_heartbeat_cross_workspace_status": gateway_heartbeat_cross_workspace_status,
+                "gateway_heartbeat_header_workspace_status": gateway_heartbeat_header_workspace_status,
+                "gateway_run_heartbeat_cross_workspace_status": gateway_run_heartbeat_cross_workspace_status,
+                "gateway_run_heartbeat_header_workspace_status": gateway_run_heartbeat_header_workspace_status,
                 "gateway_header_workspace_status": gateway_header_workspace_status,
                 "gateway_other_agent_status": gateway_other_agent_status,
+                "gateway_heartbeat_other_agent_status": gateway_heartbeat_other_agent_status,
+                "gateway_heartbeat_intruder_status": gateway_heartbeat_intruder_status,
                 "gateway_no_token_status": gateway_no_token_status,
+                "gateway_heartbeat_no_token_status": gateway_heartbeat_no_token_status,
+                "gateway_run_heartbeat_no_token_status": gateway_run_heartbeat_no_token_status,
                 "gateway_plan_no_token_status": gateway_plan_no_token_status,
                 "gateway_memory_no_token_status": gateway_memory_no_token_status,
                 "gateway_approval_no_token_status": gateway_approval_no_token_status,
@@ -1640,6 +1925,11 @@ def main() -> int:
                 "gateway_task_create_status": gateway_create_status,
                 "gateway_claim_status": gateway_claim_status,
                 "gateway_run_start_status": gateway_run_start_status,
+                "gateway_heartbeat_write_status": gateway_heartbeat_write_status,
+                "gateway_run_heartbeat_task_mismatch_status": gateway_run_heartbeat_task_mismatch_status,
+                "gateway_run_heartbeat_intruder_status": gateway_run_heartbeat_intruder_status,
+                "gateway_run_heartbeat_terminal_revival_status": gateway_run_heartbeat_terminal_revival_status,
+                "gateway_run_heartbeat_write_status": gateway_run_heartbeat_write_status,
                 "gateway_tool_write_status": gateway_tool_write_status,
                 "gateway_eval_write_status": gateway_eval_write_status,
                 "gateway_artifact_write_status": gateway_artifact_write_status,
@@ -1694,6 +1984,10 @@ def main() -> int:
                 "gateway_audit_count": int(gateway_audit_count or 0),
                 "gateway_run_runtime_event_count": int(gateway_run_runtime_event_count or 0),
                 "gateway_run_audit_count": int(gateway_run_audit_count or 0),
+                "gateway_heartbeat_runtime_event_count": int(gateway_heartbeat_runtime_event_count or 0),
+                "gateway_heartbeat_audit_count": int(gateway_heartbeat_audit_count or 0),
+                "gateway_run_heartbeat_runtime_event_count": int(gateway_run_heartbeat_runtime_event_count or 0),
+                "gateway_run_heartbeat_audit_count": int(gateway_run_heartbeat_audit_count or 0),
                 "gateway_tool_runtime_event_count": int(gateway_tool_runtime_event_count or 0),
                 "gateway_eval_runtime_event_count": int(gateway_eval_runtime_event_count or 0),
                 "gateway_artifact_runtime_event_count": int(gateway_artifact_runtime_event_count or 0),
@@ -1710,6 +2004,7 @@ def main() -> int:
                 "gateway_approval_task_wait_audit_count": int(gateway_approval_task_wait_audit_count or 0),
                 "gateway_audit_runtime_event_count": int(gateway_audit_runtime_event_count or 0),
                 "gateway_token_last_used": bool((gateway_token_last_used or {}).get("last_used_at")),
+                "gateway_token_last_heartbeat": bool((gateway_token_last_used or {}).get("last_heartbeat_at")),
                 "free_local_dependencies": [],
                 "fallback_performed": False,
                 "token_omitted": True,

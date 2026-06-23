@@ -118,8 +118,22 @@ def main() -> int:
                     "risk_level": "low",
                 })
                 require(status == 201, f"task create failed: {status} {payload}")
-            run_a = server.start_mock_run(conn, {"task_id": task_a, "agent_id": agent_a})["run_id"]
-            run_b = server.start_mock_run(conn, {"task_id": task_b, "agent_id": agent_b})["run_id"]
+            run_a_payload, status = server.agent_gateway_start_run(conn, {
+                "workspace_id": workspace_a,
+                "task_id": task_a,
+                "agent_id": agent_a,
+                "input_summary": "Storage boundary running run A.",
+            })
+            require(status == 201, f"run A start failed: {status} {run_a_payload}")
+            run_b_payload, status = server.agent_gateway_start_run(conn, {
+                "workspace_id": workspace_b,
+                "task_id": task_b,
+                "agent_id": agent_b,
+                "input_summary": "Storage boundary running run B.",
+            })
+            require(status == 201, f"run B start failed: {status} {run_b_payload}")
+            run_a = run_a_payload["run"]["run_id"]
+            run_b = run_b_payload["run"]["run_id"]
             approval_a, status = server.agent_gateway_request_approval(conn, {
                 "workspace_id": workspace_a,
                 "agent_id": agent_a,
