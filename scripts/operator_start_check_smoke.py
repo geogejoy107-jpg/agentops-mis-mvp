@@ -10,6 +10,9 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from urllib.error import HTTPError
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -44,6 +47,21 @@ def run_start_check(base_url: str, adapter: str, env: dict[str, str]) -> subproc
         timeout=60,
         check=False,
     )
+
+
+def http_json(base_url: str, path: str, query: dict[str, str] | None = None) -> tuple[int, dict]:
+    suffix = f"?{urlencode(query or {})}" if query else ""
+    req = Request(base_url.rstrip("/") + path + suffix, headers={"Accept": "application/json"})
+    try:
+        with urlopen(req, timeout=45) as res:
+            raw = res.read().decode("utf-8")
+            return res.status, json.loads(raw) if raw else {}
+    except HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        try:
+            return exc.code, json.loads(raw)
+        except Exception:
+            return exc.code, {"raw": raw}
 
 
 def validate(payload: dict, adapter: str) -> None:
@@ -107,12 +125,18 @@ def main() -> int:
             env.pop("AGENTOPS_API_KEY", None)
             checked = []
             for adapter in (args.adapter or ["mock"]):
+                api_status, api_payload = http_json(args.base_url, "/api/operator/start-check", {"adapter": adapter, "limit": "4"})
+                outputs.append(json.dumps(api_payload, ensure_ascii=False))
+                require(api_status == 200, f"operator start-check API failed for {adapter}: {api_status} {api_payload}")
+                validate(api_payload, adapter)
                 proc = run_start_check(args.base_url, adapter, env)
                 outputs.extend([proc.stdout, proc.stderr])
                 require(proc.returncode == 0, f"operator start-check failed for {adapter}: {proc.stderr or proc.stdout}")
                 payload = json.loads(proc.stdout)
                 validate(payload, adapter)
-                checked.append({"adapter": adapter, "status": payload.get("status")})
+                require(payload.get("operation") == api_payload.get("operation"), f"CLI/API operation mismatch for {adapter}")
+                require(payload.get("adapter") == api_payload.get("adapter"), f"CLI/API adapter mismatch for {adapter}")
+                checked.append({"adapter": adapter, "api_status": api_payload.get("status"), "cli_status": payload.get("status")})
         require(not leaked_secret("\n".join(outputs)), "operator start-check leaked token-like material")
         print(json.dumps({
             "ok": True,

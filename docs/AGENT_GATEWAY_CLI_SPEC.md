@@ -567,9 +567,10 @@ agentops operator start-check --adapter hermes --task-id tsk_123 --agent-id agt_
 ```
 
 This is the recommended first command before an agent accepts or advances local
-work. It is a CLI-only read model that composes `/api/local/readiness`,
-`/api/workers/adapter-readiness`, `operator runtime-doctor`,
-`operator live-product-readiness`, and `operator loop-launch-packet --brief`.
+work. The CLI maps to `GET /api/operator/start-check`, the canonical MIS read
+model that composes `/api/local/readiness`, `/api/workers/adapter-readiness`,
+`operator runtime-doctor`, live product-readiness evidence, and
+`operator loop-launch-packet --brief`.
 The result exposes gates for local MIS readiness, the worker connection policy,
 adapter preflight, runtime doctor, Agent Work Method launch brief, compact
 `local_run_path`, service-control preview, Agent Plan boundary, and live ledger
@@ -579,7 +580,8 @@ task/run/evidence readback.
 
 `start-check` does not start Hermes/OpenClaw, execute shell from the server,
 create tasks, mutate ledgers, write connector rows, or print raw prompts,
-responses, snippets, API keys, worker tokens, or session tokens. For
+responses, snippets, API keys, worker tokens, or session tokens. Supplied Agent
+Gateway tokens/sessions require `tasks:read` and remain workspace-bound. For
 Hermes/OpenClaw it may report `status=attention` when adapter binaries,
 credentials, or fresh live product proof are missing; that is still useful loop
 input rather than a failed CLI call.
@@ -1873,14 +1875,15 @@ agentops operator start-check --adapter openclaw --limit 8
 ```
 
 This is the pre-task local loop start check for Codex, Hermes, OpenClaw, or a
-remote operator. It is CLI-only and read-only: it aggregates `agentops local
-readiness`, `agentops worker readiness`, `operator runtime-doctor`,
-`operator loop-launch-packet --brief`, worker connection policy, local run path,
-service-control preview, and live product-readiness readback for the selected
-adapter. It does not start workers, call runtimes, execute shell commands,
-mutate ledgers, or expose tokens/raw prompts/raw responses. Use it immediately
-before handing a task to a local or remote agent so the agent sees the current
-copyable boot/readiness/preflight/launch/verify commands in one payload.
+remote operator. It reads `GET /api/operator/start-check` and stays read-only:
+it aggregates `agentops local readiness`, `agentops worker readiness`,
+`operator runtime-doctor`, `operator loop-launch-packet --brief`, worker
+connection policy, local run path, service-control preview, and live
+product-readiness readback for the selected adapter. It does not start workers,
+call runtimes, execute shell commands, mutate ledgers, or expose tokens/raw
+prompts/raw responses. Use it immediately before handing a task to a local or
+remote agent so the agent sees the current copyable
+boot/readiness/preflight/launch/verify commands in one payload.
 
 ```bash
 agentops operator loop-launch-packet --task-id tsk_123 --agent-id agt_worker --limit 8

@@ -22656,6 +22656,447 @@ def operator_runtime_doctor(conn: sqlite3.Connection, headers, qs=None, auth_ctx
     }
 
 
+def operator_start_check_gate(
+    gate_id: str,
+    *,
+    label: str,
+    ok: bool,
+    status: str | None = None,
+    detail: str | None = None,
+    command: str | None = None,
+) -> dict:
+    return {
+        "id": gate_id,
+        "label": label,
+        "ok": bool(ok),
+        "status": status or ("pass" if ok else "attention"),
+        "detail": detail,
+        "next_action": command,
+        "token_omitted": True,
+    }
+
+
+def compact_start_check_local_run_path(local: dict) -> dict:
+    steps = local.get("local_run_path") if isinstance(local.get("local_run_path"), list) else []
+    compact_steps = []
+    for step in steps[:8]:
+        if not isinstance(step, dict):
+            continue
+        compact_steps.append({
+            "step_id": step.get("step_id"),
+            "phase": step.get("phase"),
+            "status": step.get("status"),
+            "adapter": step.get("adapter"),
+            "command": step.get("command"),
+            "verify_command": step.get("verify_command"),
+            "confirm_required": bool(step.get("confirm_required")),
+            "writes_ledger": bool(step.get("writes_ledger")),
+            "live_execution": bool(step.get("live_execution")),
+            "service_control_preview": bool(step.get("service_control_preview")),
+            "copy_only": step.get("copy_only", True) is not False,
+            "server_executes_shell": bool(step.get("server_executes_shell")),
+            "token_omitted": step.get("token_omitted", True) is not False,
+        })
+    service_step = next((step for step in compact_steps if step.get("step_id") == "preview_worker_service_control"), None)
+    commands = [str(step.get("command") or "").strip() for step in compact_steps if str(step.get("command") or "").strip()]
+    summary = local.get("summary") if isinstance(local.get("summary"), dict) else {}
+    return {
+        "operation": "local_run_path_compact",
+        "source_operation": local.get("operation") or "local_readiness",
+        "status": local.get("status"),
+        "recommended_adapter": summary.get("recommended_adapter"),
+        "steps": compact_steps,
+        "commands": commands,
+        "service_control_preview": service_step,
+        "contract": "copy-only local boot/readiness/worker/service/dispatch/verify path; commands are for the operator or agent shell to copy, not for server-side shell execution",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_executes_shell": False,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
+
+
+def compact_start_check_launch_brief(packet: dict, *, adapter: str, local_run_path: dict) -> dict:
+    summary = packet.get("summary") if isinstance(packet.get("summary"), dict) else {}
+    control = packet.get("control_summary") if isinstance(packet.get("control_summary"), dict) else {}
+    recommended = control.get("recommended_step") if isinstance(control.get("recommended_step"), dict) else {}
+    safety = packet.get("safety") if isinstance(packet.get("safety"), dict) else {}
+    audit = packet.get("audit_contract") if isinstance(packet.get("audit_contract"), dict) else {}
+    evaluation = packet.get("evaluation_contract") if isinstance(packet.get("evaluation_contract"), dict) else {}
+    agent_plan_draft = packet.get("agent_plan_draft") if isinstance(packet.get("agent_plan_draft"), dict) else {}
+    chain = packet.get("execution_chain") if isinstance(packet.get("execution_chain"), list) else []
+    compact_chain = []
+    for item in chain[:8]:
+        if not isinstance(item, dict):
+            continue
+        compact_chain.append({
+            "step_id": item.get("step_id"),
+            "phase": item.get("phase"),
+            "label": item.get("label"),
+            "status": item.get("step_status"),
+            "next_safe_command": item.get("next_safe_command") or item.get("command"),
+            "verify_command": item.get("verify_command"),
+            "receipt_command": item.get("receipt_command"),
+            "confirm_required": bool(item.get("confirm_required")),
+            "receipt_required": bool(item.get("receipt_required")),
+            "source": item.get("source"),
+            "token_omitted": item.get("token_omitted", True) is not False,
+        })
+    adapter_command = f"agentops worker preflight --adapter {adapter}"
+    live_run_command = (
+        "agentops workflow run-task "
+        f"--adapter {adapter} "
+        "--confirm-run "
+        f"--worker-agent-id <{adapter}_agent_id> "
+        "--title '<task title>' "
+        "--description '<task description>'"
+    ) if adapter in {"hermes", "openclaw"} else (
+        "agentops workflow run-task "
+        "--adapter mock "
+        "--worker-agent-id <mock_agent_id> "
+        "--title '<task title>' "
+        "--description '<task description>'"
+    )
+    readback_commands = [
+        "agentops task get --task-id <task_id>",
+        "agentops run get --run-id <run_id>",
+        "agentops plan-evidence list --run-id <run_id>",
+        "agentops operator loop-audit --limit 20",
+        "agentops operator action-receipts --limit 20",
+    ]
+    return {
+        "operation": "operator_loop_launch_brief",
+        "source_operation": packet.get("operation", "operator_loop_launch_packet"),
+        "status": packet.get("status", "unknown"),
+        "workspace_id": packet.get("workspace_id"),
+        "task_id": packet.get("task_id"),
+        "agent_id": packet.get("agent_id"),
+        "adapter": adapter,
+        "method": packet.get("method"),
+        "summary": {
+            "handoff_mode": summary.get("handoff_mode"),
+            "control_status": control.get("status") or summary.get("control_status"),
+            "control_mode": control.get("mode") or summary.get("control_mode"),
+            "recommended_step": recommended.get("step_id") or summary.get("recommended_step"),
+            "recommended_label": recommended.get("label"),
+            "requires_human": bool(control.get("requires_human")),
+            "requires_receipt": bool(control.get("requires_receipt")),
+            "execution_chain_steps": len(chain),
+            "blocking_steps": control.get("blocking_steps") or [],
+            "attention_steps": control.get("attention_steps") or [],
+            "required_ledgers": evaluation.get("required_ledgers") or [],
+            "agent_plan_risk": agent_plan_draft.get("risk_level"),
+            "agent_plan_approval_required": bool(agent_plan_draft.get("approval_required")),
+            "local_readiness_status": local_run_path.get("status"),
+            "local_run_path_steps": len(local_run_path.get("steps") or []),
+            "local_run_path_recommended_adapter": local_run_path.get("recommended_adapter"),
+            "service_control_preview": bool(local_run_path.get("service_control_preview")),
+        },
+        "next_command": control.get("next_command") or recommended.get("command"),
+        "verify_command": control.get("verify_command") or recommended.get("verify_command"),
+        "receipt_command": control.get("receipt_command") or recommended.get("receipt_command"),
+        "adapter_preflight_command": adapter_command,
+        "live_run_command": live_run_command,
+        "readback_commands": readback_commands,
+        "runtime_doctor_command": "agentops operator runtime-doctor --limit 8",
+        "local_run_path": local_run_path,
+        "execution_chain": compact_chain,
+        "policy": {
+            "policy_id": control.get("policy_id") or (audit.get("bounded_runner") or {}).get("policy_id"),
+            "server_executes_shell": bool(control.get("server_executes_shell") or (audit.get("bounded_runner") or {}).get("server_executes_shell")),
+            "live_execution_requires_confirm_run": adapter in {"hermes", "openclaw"},
+            "external_writes_require_prepared_action": adapter in {"hermes", "openclaw"},
+            "copy_only": control.get("copy_only", True) is not False,
+        },
+        "safety": {
+            "read_only": bool(safety.get("read_only", True)),
+            "ledger_mutated": bool(safety.get("ledger_mutated")),
+            "live_execution_performed": bool(safety.get("live_execution_performed")),
+            "server_executes_shell": False,
+            "raw_prompt_omitted": bool(safety.get("raw_prompt_omitted", True)),
+            "raw_response_omitted": bool(safety.get("raw_response_omitted", True)),
+            "token_omitted": bool(safety.get("token_omitted", True)),
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+
+
+def operator_start_check(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) -> dict:
+    qs = qs or {}
+    adapter = coerce_choice((qs.get("adapter") or ["mock"])[0], {"mock", "hermes", "openclaw"}, "mock")
+    limit = bounded_int((qs.get("limit") or ["8"])[0], 8, 1, 20)
+    freshness_hours = bounded_int((qs.get("freshness_hours") or ["72"])[0], 72, 1, 720)
+    loop_id = redact_text((qs.get("loop_id") or [""])[0], 120)
+    task_id = redact_text((qs.get("task_id") or [""])[0], 160)
+    requested_agent_id = redact_text((qs.get("agent_id") or [""])[0], 120)
+    query = redact_text((qs.get("q") or qs.get("query") or ["READ PLAN RETRIEVE COMPARE VERIFY RECORD"])[0], 240)
+    handoff_mode = str((qs.get("handoff_mode") or ["lightweight"])[0] or "lightweight").strip().lower()
+    if str((qs.get("full_handoff") or [""])[0]).strip().lower() in {"1", "true", "yes", "on"}:
+        handoff_mode = "full"
+    handoff_mode = "full" if handoff_mode == "full" else "lightweight"
+
+    effective_headers = headers
+    if agent_gateway_is_bound_auth(auth_ctx):
+        effective_headers = dict(headers)
+        effective_headers["X-AgentOps-Workspace-Id"] = auth_ctx.get("workspace_id") or "local-demo"
+        effective_headers["X-AgentOps-Agent-Id"] = auth_ctx.get("agent_id") or ""
+    workspace_id = normalize_workspace_id(
+        (auth_ctx or {}).get("workspace_id")
+        or effective_headers.get("X-AgentOps-Workspace-Id")
+        or "local-demo"
+    )
+    if not requested_agent_id:
+        requested_agent_id = redact_text((auth_ctx or {}).get("agent_id") or effective_headers.get("X-AgentOps-Agent-Id") or "", 120)
+
+    local = local_readiness(conn, effective_headers, refresh_runtime=False)
+    worker_readiness = worker_adapter_readiness(conn, refresh=False)
+    runtime_doctor_qs = {"limit": [str(limit)], "loop_id": [loop_id] if loop_id else []}
+    if qs.get("base_url"):
+        runtime_doctor_qs["base_url"] = qs.get("base_url")
+    runtime_doctor = operator_runtime_doctor(
+        conn,
+        effective_headers,
+        runtime_doctor_qs,
+        auth_ctx,
+    )
+    launch_packet = operator_loop_launch_packet(
+        conn,
+        effective_headers,
+        {
+            "limit": [str(limit)],
+            "task_id": [task_id] if task_id else [],
+            "agent_id": [requested_agent_id] if requested_agent_id else [],
+            "q": [query],
+            "handoff_mode": [handoff_mode],
+            "full_handoff": ["true"] if handoff_mode == "full" else [],
+        },
+        auth_ctx,
+    )
+    local_run_path = compact_start_check_local_run_path(local)
+    launch_brief = compact_start_check_launch_brief(launch_packet, adapter=adapter, local_run_path=local_run_path)
+    live_acceptance = live_acceptance_readiness(conn, workspace_id, freshness_hours=freshness_hours, limit=limit)
+    live_item = (live_acceptance.get("adapters") or {}).get(adapter) if adapter in {"hermes", "openclaw"} else None
+    live_product = None
+    if adapter in {"hermes", "openclaw"}:
+        live_product_ok = isinstance(live_item, dict) and live_item.get("status") == "fresh" and live_item.get("ok") is True
+        live_product = {
+            "provider": "agentops-operator",
+            "operation": "operator_live_product_readiness",
+            "ok": live_product_ok,
+            "product_readiness_proof": live_product_ok,
+            "evidence_class": "manual_live_ledger_readback",
+            "workspace_id": workspace_id,
+            "freshness_hours": freshness_hours,
+            "required_adapters": [adapter],
+            "live_acceptance_status": live_acceptance.get("status"),
+            "adapters": [{
+                "adapter": adapter,
+                "status": (live_item or {}).get("status") if isinstance(live_item, dict) else "missing",
+                "run_id": ((live_item or {}).get("latest_passing") or {}).get("run_id") if isinstance(live_item, dict) else None,
+                "task_id": ((live_item or {}).get("latest_passing") or {}).get("task_id") if isinstance(live_item, dict) else None,
+                "artifact_id": ((live_item or {}).get("latest_passing") or {}).get("artifact_id") if isinstance(live_item, dict) else None,
+                "token_omitted": True,
+            }],
+            "failures": [] if live_product_ok else [f"{adapter}: fresh live product evidence missing"],
+            "next_actions": [] if live_product_ok else [
+                f"agentops operator live-product-readiness --require-adapter {adapter}",
+                f"python3 scripts/customer_worker_real_runtime_acceptance.py --confirm-live --adapter {adapter} --hermes-max-tokens 512",
+            ],
+            "safety": {
+                "read_only": True,
+                "ledger_mutated": False,
+                "live_execution_performed": False,
+                "server_executes_shell": False,
+                "raw_prompt_omitted": True,
+                "raw_response_omitted": True,
+                "token_omitted": True,
+            },
+            "token_omitted": True,
+        }
+
+    adapters = worker_readiness.get("adapters") if isinstance(worker_readiness.get("adapters"), dict) else {}
+    adapter_item = adapters.get(adapter) if isinstance(adapters.get(adapter), dict) else {}
+    adapter_readiness = str(adapter_item.get("readiness") or ("ready" if adapter == "mock" else "unknown"))
+    worker_policy = worker_readiness.get("worker_connection_policy") if isinstance(worker_readiness.get("worker_connection_policy"), dict) else {}
+    if not worker_policy:
+        worker_policy = {
+            "source": "adapter_readiness",
+            "status": "not_reported",
+            "copy_only": True,
+            "server_executes_shell": False,
+            "token_omitted": True,
+        }
+    else:
+        worker_policy = dict(worker_policy)
+        worker_policy_safety = worker_policy.get("safety") if isinstance(worker_policy.get("safety"), dict) else {}
+        worker_policy.setdefault("server_executes_shell", worker_policy_safety.get("server_executes_shell", False))
+        worker_policy.setdefault("token_omitted", bool(
+            worker_policy_safety.get("token_omitted") is True
+            or (worker_policy.get("session") or {}).get("token_omitted") is True
+        ))
+    worker_policy_safety = worker_policy.get("safety") if isinstance(worker_policy.get("safety"), dict) else {}
+    worker_policy_server_shell = worker_policy.get("server_executes_shell") if "server_executes_shell" in worker_policy else worker_policy_safety.get("server_executes_shell")
+    worker_policy_token_omitted = worker_policy.get("token_omitted") if "token_omitted" in worker_policy else worker_policy_safety.get("token_omitted", True)
+    local_summary = local.get("summary") if isinstance(local.get("summary"), dict) else {}
+    local_steps = local_run_path.get("steps") if isinstance(local_run_path.get("steps"), list) else []
+    service_step = local_run_path.get("service_control_preview") if isinstance(local_run_path.get("service_control_preview"), dict) else None
+    launch_summary = launch_brief.get("summary") if isinstance(launch_brief.get("summary"), dict) else {}
+    live_ok = True if adapter == "mock" else bool(live_product and live_product.get("product_readiness_proof") is True)
+
+    gates = [
+        operator_start_check_gate(
+            "local_readiness",
+            label="Local MIS readiness",
+            ok=local.get("operation") == "local_readiness" and local.get("live_execution_performed") is False,
+            status="pass" if local.get("status") in {"ready", "attention"} else "blocked",
+            detail=f"local status={local.get('status')}; recommended_adapter={local_summary.get('recommended_adapter')}",
+            command="agentops local readiness",
+        ),
+        operator_start_check_gate(
+            "worker_connection_policy",
+            label="Worker connection policy",
+            ok=worker_policy_server_shell is False and worker_policy_token_omitted is not False,
+            detail=f"status={worker_policy.get('status') or worker_policy.get('mode') or worker_policy.get('schema') or 'reported'}; server_executes_shell={worker_policy_server_shell}",
+            command="agentops worker readiness",
+        ),
+        operator_start_check_gate(
+            "adapter_preflight",
+            label=f"{adapter} adapter preflight",
+            ok=adapter == "mock" or adapter_readiness in {"ready", "review_required"},
+            status="pass" if adapter == "mock" or adapter_readiness in {"ready", "review_required"} else "attention",
+            detail=f"readiness={adapter_readiness}; connector_id={adapter_item.get('connector_id')}",
+            command=f"agentops worker preflight --adapter {adapter}",
+        ),
+        operator_start_check_gate(
+            "runtime_doctor",
+            label="Runtime doctor",
+            ok=runtime_doctor.get("operation") == "operator_runtime_doctor" and runtime_doctor.get("live_execution_performed") is False,
+            status="pass" if runtime_doctor.get("status") in {"ready", "attention"} else "blocked",
+            detail=f"doctor status={runtime_doctor.get('status')}",
+            command="agentops operator runtime-doctor --limit 8",
+        ),
+        operator_start_check_gate(
+            "loop_launch_brief",
+            label="Agent Work Method launch brief",
+            ok=launch_brief.get("operation") == "operator_loop_launch_brief" and launch_brief.get("live_execution_performed") is False,
+            detail=f"control={launch_brief.get('status')}; local_steps={len(local_steps)}",
+            command=f"agentops operator loop-launch-packet --brief --adapter {adapter} --limit {limit}",
+        ),
+        operator_start_check_gate(
+            "local_run_path",
+            label="Local run path",
+            ok=bool(local_steps) and (local_run_path.get("safety") or {}).get("server_executes_shell") is False,
+            detail=f"steps={len(local_steps)}; service_control_preview={bool(service_step)}",
+            command="agentops local readiness",
+        ),
+        operator_start_check_gate(
+            "agent_plan_boundary",
+            label="Agent Plan boundary",
+            ok=bool(launch_summary.get("agent_plan_risk")) and (launch_brief.get("safety") or {}).get("token_omitted") is True,
+            detail=f"risk={launch_summary.get('agent_plan_risk')}; approval_required={launch_summary.get('agent_plan_approval_required')}",
+            command="agentops agent-plan create --task-id <task_id> ... && agentops agent-plan verify --plan-id <plan_id>",
+        ),
+        operator_start_check_gate(
+            "live_product_readiness",
+            label="Live product readiness",
+            ok=live_ok,
+            status="pass" if live_ok else "attention",
+            detail="not required for mock" if adapter == "mock" else f"product_readiness_proof={bool(live_product and live_product.get('product_readiness_proof'))}",
+            command="agentops local readiness" if adapter == "mock" else f"agentops operator live-product-readiness --require-adapter {adapter}",
+        ),
+    ]
+    if any(gate.get("status") == "blocked" for gate in gates):
+        status = "blocked"
+    elif any(gate.get("status") == "attention" or not gate.get("ok") for gate in gates):
+        status = "attention"
+    else:
+        status = "ready"
+
+    next_commands = [
+        "agentops local readiness",
+        "agentops worker readiness",
+        f"agentops worker preflight --adapter {adapter}",
+        "agentops operator runtime-doctor --limit 8",
+        f"agentops operator loop-launch-packet --brief --adapter {adapter} --limit {limit}",
+        "agentops operator advance-loop --fast-control --limit 8",
+    ]
+    if adapter in {"hermes", "openclaw"}:
+        next_commands.extend([f"agentops operator live-product-readiness --require-adapter {adapter}", launch_brief.get("live_run_command")])
+    next_commands.extend(launch_brief.get("readback_commands") or [])
+    deduped_commands = []
+    for command in next_commands:
+        command = str(command or "").strip()
+        if command and command not in deduped_commands:
+            deduped_commands.append(command)
+
+    return {
+        "provider": "agentops-operator",
+        "operation": "operator_start_check",
+        "status": status,
+        "adapter": adapter,
+        "workspace_id": workspace_id,
+        "task_id": task_id or None,
+        "agent_id": requested_agent_id or None,
+        "summary": {
+            "local_readiness_status": local.get("status"),
+            "runtime_doctor_status": runtime_doctor.get("status"),
+            "adapter_readiness": adapter_readiness,
+            "launch_brief_status": launch_brief.get("status"),
+            "control_status": launch_summary.get("control_status"),
+            "recommended_step": launch_summary.get("recommended_step"),
+            "local_run_path_steps": len(local_steps),
+            "service_control_preview": bool(service_step),
+            "live_product_readiness": None if live_product is None else bool(live_product.get("product_readiness_proof")),
+            "requires_confirm_run": adapter in {"hermes", "openclaw"},
+        },
+        "gates": gates,
+        "worker_connection_policy": worker_policy,
+        "adapter_readiness": {
+            "adapter": adapter,
+            "readiness": adapter_readiness,
+            "ok": bool(adapter_item.get("ok")) if adapter != "mock" else True,
+            "requires_confirm_run": bool(adapter_item.get("requires_confirm_run")) or adapter in {"hermes", "openclaw"},
+            "recommended_action": adapter_item.get("recommended_action"),
+            "remediation": adapter_item.get("remediation"),
+            "token_omitted": True,
+        },
+        "runtime_doctor": {
+            "status": runtime_doctor.get("status"),
+            "summary": runtime_doctor.get("summary") if isinstance(runtime_doctor.get("summary"), dict) else {},
+            "commands": runtime_doctor.get("commands") if isinstance(runtime_doctor.get("commands"), dict) else {},
+            "token_omitted": True,
+        },
+        "launch_brief": launch_brief,
+        "local_run_path": local_run_path,
+        "live_product_readiness": live_product,
+        "next_commands": deduped_commands[:16],
+        "auth": {
+            "mode": (auth_ctx or {}).get("mode") or "unknown",
+            "required_scope": "tasks:read",
+            "workspace_id": workspace_id,
+            "agent_id": (auth_ctx or {}).get("agent_id") or requested_agent_id or None,
+            "token_omitted": True,
+        },
+        "contract": "read-only pre-task start check for Hermes/OpenClaw/Codex; aggregates local readiness, adapter readiness, runtime doctor, live ledger proof, launch brief, local run path, service-control preview, and evidence boundaries without starting runtimes, executing shell, mutating ledgers, or exposing raw prompts/responses/tokens",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_executes_shell": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+
+
 def operator_execution_mode(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) -> dict:
     qs = qs or {}
     adapter = coerce_choice((qs.get("adapter") or ["mock"])[0], {"mock", "hermes", "openclaw"}, "mock")
@@ -24523,6 +24964,25 @@ class Handler(BaseHTTPRequestHandler):
                     qs,
                     self.headers,
                     lambda: operator_runtime_doctor(conn, self.headers, qs, auth_ctx),
+                    auth_ctx,
+                )
+                conn.rollback()
+                return self.send_json(payload)
+            if path == "/api/operator/start-check":
+                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "tasks:read")
+                if auth_error:
+                    conn.rollback()
+                    return self.send_json(auth_error, agent_gateway_error_status(auth_error))
+                if agent_gateway_is_bound_auth(auth_ctx):
+                    requested_header_workspace = normalize_workspace_id(self.headers.get("X-AgentOps-Workspace-Id") or auth_ctx["workspace_id"])
+                    if requested_header_workspace != auth_ctx["workspace_id"]:
+                        conn.rollback()
+                        return self.send_json({"error": "forbidden", "message": "Agent token cannot use another workspace header."}, 403)
+                payload = cached_read_model(
+                    "operator_start_check",
+                    qs,
+                    self.headers,
+                    lambda: operator_start_check(conn, self.headers, qs, auth_ctx),
                     auth_ctx,
                 )
                 conn.rollback()

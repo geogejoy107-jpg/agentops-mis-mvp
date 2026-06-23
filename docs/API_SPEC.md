@@ -445,6 +445,19 @@ execution, and Action Queue receipts. It requires `tasks:read` for supplied
 Agent Gateway tokens/sessions and never starts runtimes, executes tasks, mutates
 ledgers/connectors, or exposes tokens/raw prompts/raw responses.
 
+`GET /api/operator/start-check` is the recommended pre-task read model for
+Codex, Hermes, OpenClaw, and remote Agents before they accept or advance local
+work. It accepts `adapter=mock|hermes|openclaw`, `limit=<n>`, optional
+`task_id`, `agent_id`, `q`, `handoff_mode=lightweight|full`,
+`full_handoff=true`, and `freshness_hours=<n>`. It composes local readiness,
+worker adapter readiness, the worker connection policy, runtime doctor,
+live-product ledger proof, a compact Agent Work Method launch brief,
+`local_run_path`, service-control preview, Agent Plan boundary, and copyable
+next commands into one machine-readable packet. It requires `tasks:read` for
+supplied Agent Gateway tokens/sessions and never starts runtimes, executes
+server shell, creates tasks, mutates ledgers/connectors, or exposes tokens/raw
+prompts/raw responses.
+
 `GET /api/operator/live-acceptance` is the read-only Hermes/OpenClaw live
 customer-worker acceptance freshness projection. It samples recent local worker
 runs per adapter, including in-flight `agt_customer_worker_*` attempts before a

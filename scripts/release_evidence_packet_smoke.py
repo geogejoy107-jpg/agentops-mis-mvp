@@ -259,6 +259,18 @@ TEST_COMMANDS = [
         "ci_step": "Server-backed smoke suite",
     },
     {
+        "id": "operator_start_check_api",
+        "command": "python3 scripts/operator_start_check_api_smoke.py",
+        "summary": "Server-backed pre-task start-check API for mock/Hermes/OpenClaw that composes local readiness, worker policy, runtime doctor, launch brief, local run path and live-ledger proof without live execution or ledger mutation.",
+        "ci_step": "Server-backed smoke suite",
+    },
+    {
+        "id": "operator_start_check_cli",
+        "command": "python3 scripts/operator_start_check_smoke.py --base-url $AGENTOPS_BASE_URL --adapter hermes --adapter openclaw",
+        "summary": "CLI/API parity smoke for the pre-task start-check command used before local Hermes/OpenClaw/Codex loop work.",
+        "ci_step": "Server-backed smoke suite",
+    },
+    {
         "id": "operator_execution_mode",
         "command": "python3 scripts/operator_execution_mode_smoke.py",
         "summary": "Server-backed execution-mode read model for UI/CLI/agents covering adapter route, confirm-run wall, prepared-action wall, approvals and async jobs without live execution or ledger mutation.",
@@ -515,7 +527,8 @@ def validate_docs(checklist: str, packet_doc: str, ci_text: str, failures: list[
     for phrase in required_packet_phrases:
         require(phrase in packet_doc, f"release evidence packet doc missing phrase: {phrase}", failures)
     for item in TEST_COMMANDS:
-        require(item["command"] in packet_doc, f"release evidence packet doc missing canonical command: {item['command']}", failures)
+        canonical_command = str(item["command"]).replace('\\"', '"')
+        require(canonical_command in packet_doc, f"release evidence packet doc missing canonical command: {canonical_command}", failures)
 
     checklist_requirements = [
         "- [x] Exact RC SHA.",

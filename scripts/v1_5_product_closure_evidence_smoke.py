@@ -172,6 +172,8 @@ def main() -> int:
             docs=["docs/PIXEL_OPERATING_MAP_SPEC.md", "docs/DEMO_VIDEO_SCRIPT.md"],
             scripts=[
                 "scripts/operator_runtime_doctor_smoke.py",
+                "scripts/operator_start_check_api_smoke.py",
+                "scripts/operator_start_check_smoke.py",
                 "scripts/operator_execution_mode_smoke.py",
                 "scripts/operator_loop_launch_packet_smoke.py",
                 "scripts/operator_action_queue_ui_smoke.py",
@@ -182,8 +184,8 @@ def main() -> int:
                 "scripts/real_runtime_ui_confirm_smoke.py",
             ],
             source_markers={
-                "server.py": ["/api/operator/runtime-doctor", "/api/operator/execution-mode", "operator_runtime_doctor", "operator_execution_mode"],
-                "agentops_mis_cli/agentops.py": ["operator_runtime_doctor", "operator_execution_mode", "runtime-doctor", "execution-mode"],
+                "server.py": ["/api/operator/runtime-doctor", "/api/operator/start-check", "/api/operator/execution-mode", "operator_runtime_doctor", "operator_start_check", "operator_execution_mode"],
+                "agentops_mis_cli/agentops.py": ["operator_runtime_doctor", "operator_start_check", "operator_execution_mode", "runtime-doctor", "start-check", "execution-mode"],
                 "ui/start-building-app/src/app/components/pages/AIEmployees.tsx": ["operator_loop_launch_packet", "operator_runtime_doctor", "operatorExecutionMode", "receipt_state", "Worker Fleet", "operatorHealthLoopControl", "commander-team-board"],
                 "ui/start-building-app/src/app/data/liveApi.ts": ["loadOperatorLoopLaunchPacket", "loadOperatorRuntimeDoctor", "loadOperatorExecutionMode", "loadWorkerStatus", "loop_control", "loadCommanderProjectBoard"],
             },
@@ -264,6 +266,12 @@ def main() -> int:
     runtime_doctor_command = "python3 scripts/operator_runtime_doctor_smoke.py"
     require(runtime_doctor_command in release_text, "release evidence packet missing operator runtime-doctor smoke", failures)
     require(runtime_doctor_command in ci_text, "CI workflow missing operator runtime-doctor smoke", failures)
+    start_check_api_command = "python3 scripts/operator_start_check_api_smoke.py"
+    require(start_check_api_command in release_text, "release evidence packet missing operator start-check API smoke", failures)
+    require(start_check_api_command in ci_text, "CI workflow missing operator start-check API smoke", failures)
+    start_check_cli_markers = ["python3 scripts/operator_start_check_smoke.py", "--adapter hermes", "--adapter openclaw"]
+    require(has_all(release_text, start_check_cli_markers), "release evidence packet missing operator start-check CLI/API smoke", failures)
+    require(has_all(ci_text, start_check_cli_markers), "CI workflow missing operator start-check CLI/API smoke", failures)
     live_readiness_command = "python3 scripts/v1_5_live_product_readiness_smoke.py --require-adapter hermes --require-adapter openclaw"
     require(live_readiness_command in release_text, "release evidence packet missing live product-readiness proof command", failures)
     require(live_readiness_command not in ci_text, "live product-readiness proof must remain manual-live and out of CI", failures)
