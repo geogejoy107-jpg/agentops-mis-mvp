@@ -79,6 +79,7 @@ jobs:
           python3 scripts/operator_command_center_smoke.py
           python3 scripts/ai_employees_responsiveness_smoke.py
           python3 scripts/operator_action_queue_ui_smoke.py
+          python3 scripts/commander_team_board_ui_smoke.py
           python3 scripts/task_detail_evidence_ui_smoke.py
           python3 scripts/startup_security_guard_smoke.py
           python3 scripts/operator_loop_audit_closed_loop_smoke.py

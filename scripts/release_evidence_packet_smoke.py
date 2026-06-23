@@ -198,6 +198,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "commander_team_board_ui",
+        "command": "python3 scripts/commander_team_board_ui_smoke.py",
+        "summary": "AI Employees renders the scoped Commander team board with workflow-job evidence and safe project-board readback.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "operator_advance_loop",
         "command": "python3 scripts/operator_advance_loop_smoke.py",
         "summary": "Bounded advance-loop runner records receipts plus persisted control readback evidence.",
