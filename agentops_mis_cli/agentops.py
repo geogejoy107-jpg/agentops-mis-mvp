@@ -1040,10 +1040,69 @@ def fetch_loop_launch_brief(args, client: AgentOpsClient) -> dict:
     return compact_loop_launch_packet(payload, adapter=args.adapter)
 
 
+def fetch_loop_driver_review_snapshot(args, client: AgentOpsClient) -> dict:
+    limit = min(max(int(getattr(args, "limit", 8) or 8), 1), 20)
+    payload = client.get("/api/agent-gateway/review/queue", query={"limit": min(limit, 8)})
+    summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    review_items = payload.get("review_items") if isinstance(payload.get("review_items"), list) else []
+    compact_items = []
+    for item in review_items[: min(limit, 5)]:
+        compact_items.append({
+            "item_id": item.get("item_id"),
+            "item_type": item.get("item_type"),
+            "kind": item.get("kind"),
+            "status": item.get("status"),
+            "priority": item.get("priority"),
+            "task_id": item.get("task_id"),
+            "run_id": item.get("run_id"),
+            "approval_id": item.get("approval_id"),
+            "memory_id": item.get("memory_id"),
+            "next_action": redact_text(item.get("next_action") or item.get("cli_action") or "", 500),
+            "summary_omitted": True,
+            "raw_content_omitted": True,
+            "token_omitted": True,
+        })
+    pending_approvals = int(summary.get("pending_approvals") or 0)
+    memory_candidates = int(summary.get("memory_candidates") or 0)
+    review_items_total = int(summary.get("review_items_total") or len(review_items))
+    next_actions = [
+        action
+        for action in (payload.get("next_actions") or [])
+        if isinstance(action, str) and action.strip()
+    ]
+    return {
+        "operation": "loop_driver_record_review_snapshot",
+        "status": "attention" if review_items_total or pending_approvals or memory_candidates else "ready",
+        "summary": {
+            "review_items_total": review_items_total,
+            "returned_items": int(summary.get("returned_items") or len(review_items)),
+            "pending_approvals": pending_approvals,
+            "memory_candidates": memory_candidates,
+            "retrieved_pending_approvals": int(summary.get("retrieved_pending_approvals") or 0),
+            "retrieved_memory_candidates": int(summary.get("retrieved_memory_candidates") or 0),
+        },
+        "items": compact_items,
+        "next_action": next_actions[0] if next_actions else "agentops review queue --limit 20",
+        "review_command": "agentops review queue --limit 20",
+        "contract": "read-only RECORD snapshot for loop-driver; exposes review pressure and memory candidates without approving, rejecting, promoting, or storing raw content",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "raw_content_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
+
+
 def cmd_operator_loop_driver(args, client: AgentOpsClient) -> dict:
     max_steps = min(max(int(args.max_steps or 1), 1), 5)
     adapter_readiness = fetch_loop_driver_adapter_readiness(args, client)
     initial_brief = fetch_loop_launch_brief(args, client)
+    initial_review_snapshot = fetch_loop_driver_review_snapshot(args, client)
     policy = advance_loop_policy_summary()
     if not args.confirm_loop:
         return {
@@ -1055,8 +1114,10 @@ def cmd_operator_loop_driver(args, client: AgentOpsClient) -> dict:
             "max_steps": max_steps,
             "adapter_readiness": adapter_readiness,
             "initial_brief": initial_brief,
+            "record_review_snapshot": initial_review_snapshot,
             "next_actions": [
                 f"agentops worker preflight --adapter {args.adapter}",
+                initial_review_snapshot.get("review_command") or "agentops review queue --limit 20",
                 "agentops operator loop-driver --confirm-loop --max-steps "
                 f"{max_steps} --adapter {args.adapter} --limit {args.limit}"
             ],
@@ -1094,6 +1155,7 @@ def cmd_operator_loop_driver(args, client: AgentOpsClient) -> dict:
         advance_result = cmd_operator_advance_loop(advance_args, client)
         after_readiness = fetch_loop_driver_adapter_readiness(args, client)
         after_brief = fetch_loop_launch_brief(args, client)
+        after_review_snapshot = fetch_loop_driver_review_snapshot(args, client)
         compact_advance = compact_advance_loop_result(advance_result)
         step = {
             "step": index + 1,
@@ -1116,6 +1178,7 @@ def cmd_operator_loop_driver(args, client: AgentOpsClient) -> dict:
                 "workflow_job_recovery_status": (after_brief.get("summary") or {}).get("workflow_job_recovery_status"),
                 "token_omitted": True,
             },
+            "record_review_snapshot": after_review_snapshot,
             "token_omitted": True,
         }
         steps.append(step)
@@ -1130,6 +1193,7 @@ def cmd_operator_loop_driver(args, client: AgentOpsClient) -> dict:
 
     final_adapter_readiness = fetch_loop_driver_adapter_readiness(args, client)
     final_brief = fetch_loop_launch_brief(args, client)
+    final_review_snapshot = fetch_loop_driver_review_snapshot(args, client)
     failed = [step for step in steps if (step.get("advance") or {}).get("status") in {"failed", "blocked"}]
     advanced = [step for step in steps if (step.get("advance") or {}).get("advanced")]
     return {
@@ -1144,13 +1208,15 @@ def cmd_operator_loop_driver(args, client: AgentOpsClient) -> dict:
         "steps": steps,
         "adapter_readiness": final_adapter_readiness,
         "final_brief": final_brief,
+        "initial_record_review_snapshot": initial_review_snapshot,
+        "record_review_snapshot": final_review_snapshot,
         "policy": {
             **policy,
             "driver_max_steps": 5,
             "server_executes_shell": False,
             "adapter_preflight_required_before_live_run": args.adapter in {"hermes", "openclaw"},
         },
-        "contract": "bounded local agent loop driver for Hermes/OpenClaw/Codex; each step re-reads the launch brief, delegates execution to advance-loop allowlist policy, records receipts/control-readback, and never runs live/workflow/approval commands",
+        "contract": "bounded local agent loop driver for Hermes/OpenClaw/Codex; each step re-reads the launch brief, delegates execution to advance-loop allowlist policy, records receipts/control-readback, surfaces a read-only RECORD review snapshot, and never runs live/workflow/approval commands",
         "safety": {
             "read_only": False,
             "ledger_mutated": bool(advanced),

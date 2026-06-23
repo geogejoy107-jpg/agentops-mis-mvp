@@ -144,12 +144,20 @@ def main() -> int:
             require((preview_payload.get("safety") or {}).get("ledger_mutated") is False, f"preview mutated ledger: {preview_payload}", failures)
             require(before_preview == after_preview, f"preview fingerprint changed: {before_preview} -> {after_preview}", failures)
             initial_brief = preview_payload.get("initial_brief") or {}
+            preview_review = preview_payload.get("record_review_snapshot") or {}
             preview_readiness = preview_payload.get("adapter_readiness") or {}
             preview_readiness_commands = preview_readiness.get("commands") or {}
             preview_gate = preview_readiness.get("gate") or {}
             preview_remediation = preview_readiness.get("remediation") or {}
             require(initial_brief.get("operation") == "operator_loop_launch_brief", f"initial brief missing: {initial_brief}", failures)
             require((initial_brief.get("policy") or {}).get("server_executes_shell") is False, f"brief server shell boundary missing: {initial_brief}", failures)
+            require(preview_review.get("operation") == "loop_driver_record_review_snapshot", f"preview record review snapshot missing: {preview_review}", failures)
+            require((preview_review.get("safety") or {}).get("read_only") is True, f"preview record review should be read-only: {preview_review}", failures)
+            require((preview_review.get("safety") or {}).get("ledger_mutated") is False, f"preview record review mutated ledger: {preview_review}", failures)
+            for key in ["review_items_total", "returned_items", "pending_approvals", "memory_candidates"]:
+                require(isinstance((preview_review.get("summary") or {}).get(key), int), f"preview record review summary {key} missing: {preview_review}", failures)
+            require(str(preview_review.get("review_command") or "").startswith("agentops review queue"), f"preview review command missing: {preview_review}", failures)
+            require(all(item.get("summary_omitted") is True and item.get("token_omitted") is True for item in (preview_review.get("items") or [])), f"preview review items should be compact/redacted: {preview_review}", failures)
             require(preview_readiness.get("operation") == "operator_loop_driver_adapter_readiness", f"preview readiness missing: {preview_readiness}", failures)
             require(preview_readiness.get("adapter") == "hermes", f"preview readiness adapter mismatch: {preview_readiness}", failures)
             require((preview_readiness.get("safety") or {}).get("read_only") is True, f"preview readiness should be read-only: {preview_readiness}", failures)
@@ -181,18 +189,29 @@ def main() -> int:
             require((final_readiness.get("safety") or {}).get("live_execution_performed") is False, f"confirm readiness live execution boundary missing: {final_readiness}", failures)
             require(any("openclaw" in str(command.get("command") or "") for command in (final_remediation.get("commands") or [])), f"confirm remediation commands missing openclaw: {final_readiness}", failures)
             steps = confirmed_payload.get("steps") or []
+            final_review = confirmed_payload.get("record_review_snapshot") or {}
+            initial_review = confirmed_payload.get("initial_record_review_snapshot") or {}
             require(1 <= len(steps) <= 2, f"unexpected step count: {confirmed_payload}", failures)
             require(after_confirm["operator_action_receipts"] >= before_confirm["operator_action_receipts"] + 1, f"receipt count did not increase: {before_confirm} -> {after_confirm}", failures)
+            require(initial_review.get("operation") == "loop_driver_record_review_snapshot", f"confirm initial review snapshot missing: {confirmed_payload}", failures)
+            require(final_review.get("operation") == "loop_driver_record_review_snapshot", f"confirm final review snapshot missing: {confirmed_payload}", failures)
+            require((final_review.get("safety") or {}).get("read_only") is True, f"confirm final review should be read-only: {final_review}", failures)
+            for key in ["review_items_total", "returned_items", "pending_approvals", "memory_candidates"]:
+                require(isinstance((final_review.get("summary") or {}).get(key), int), f"confirm final review summary {key} missing: {final_review}", failures)
+            require(str(final_review.get("review_command") or "").startswith("agentops review queue"), f"confirm final review command missing: {final_review}", failures)
             for step in steps:
                 advance = step.get("advance") or {}
                 before_readiness = step.get("adapter_readiness_before") or {}
                 after_readiness = step.get("adapter_readiness_after") or {}
+                step_review = step.get("record_review_snapshot") or {}
                 require(advance.get("operation") == "operator_advance_loop", f"step advance missing: {step}", failures)
                 require(str(advance.get("action_command") or "").startswith("agentops "), f"step action command missing: {step}", failures)
                 require(advance.get("receipt_status") in {"verified", "failed", None}, f"step receipt status wrong: {step}", failures)
                 require(before_readiness.get("adapter") == "openclaw", f"step before readiness missing: {step}", failures)
                 require(after_readiness.get("adapter") == "openclaw", f"step after readiness missing: {step}", failures)
                 require((before_readiness.get("safety") or {}).get("server_executes_shell") is False, f"step readiness server shell boundary missing: {step}", failures)
+                require(step_review.get("operation") == "loop_driver_record_review_snapshot", f"step review snapshot missing: {step}", failures)
+                require((step_review.get("safety") or {}).get("ledger_mutated") is False, f"step review snapshot should not mutate ledger: {step}", failures)
                 require(step.get("token_omitted") is True, f"step token omission missing: {step}", failures)
             final_brief = confirmed_payload.get("final_brief") or {}
             require(final_brief.get("operation") == "operator_loop_launch_brief", f"final brief missing: {final_brief}", failures)

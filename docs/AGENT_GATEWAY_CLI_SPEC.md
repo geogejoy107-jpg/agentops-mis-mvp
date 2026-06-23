@@ -1995,13 +1995,17 @@ preview mode reads the compact launch brief and policy without writing ledgers;
 preview mode also reads `agentops worker readiness` into an
 `adapter_readiness` gate with the selected adapter's trust/readiness state,
 checks, `agentops worker preflight --adapter ...` command, and live-dispatch
-blockers. Confirmed mode runs up to five
+blockers. It also returns `record_review_snapshot`, a compact read-only RECORD
+view from the review queue with pending approval, memory candidate, returned
+item, and next review command counts; item summaries and raw content are
+omitted. Confirmed mode runs up to five
 `advance-loop --fast-control --confirm-advance` steps, re-reading adapter
 readiness and the launch brief before each step and relying on the existing
-allowlist, receipts, and control-readback path. The readiness gate is read-only
-evidence, not authorization: it does not create a new server shell execution
-surface and still refuses live/workflow/approval/external-write commands through
-the bounded-runner policy.
+allowlist, receipts, and control-readback path, then refreshes the same
+`record_review_snapshot` after each step. The readiness and review gates are
+read-only evidence, not authorization: they do not create a new server shell
+execution surface and still refuse live/workflow/approval/external-write
+commands through the bounded-runner policy.
 
 ```bash
 agentops operator remediate-evidence-gap --run-id run_123
