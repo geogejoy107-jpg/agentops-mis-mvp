@@ -158,6 +158,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "worker_knowledge_evidence_consumption",
+        "command": "python3 scripts/worker_knowledge_evidence_consumption_smoke.py",
+        "summary": "Agent worker consumes compact Knowledge Retrieval Evidence before adapter execution and records only packet/query hashes, retrieval ids, paths, source hashes and metrics in MIS evidence.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "commander_repo_map",
         "command": "python3 scripts/commander_repo_map_smoke.py",
         "summary": "Commander repo-map localization returns deterministic file/symbol candidates with provenance and redacted snippets.",
@@ -251,6 +257,12 @@ TEST_COMMANDS = [
         "id": "operator_live_product_readiness",
         "command": "python3 scripts/operator_live_product_readiness_smoke.py",
         "summary": "CLI product-readiness proof reads fresh Hermes/OpenClaw live ledger evidence and fails closed without calling runtimes.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
+        "id": "local_runtime_identity",
+        "command": "python3 scripts/local_runtime_identity_smoke.py",
+        "summary": "Local MIS runtime identity proves the connected server process is current with backend source and supports strict CLI fail-closed checks.",
         "ci_step": "Offline safety smokes",
     },
     {

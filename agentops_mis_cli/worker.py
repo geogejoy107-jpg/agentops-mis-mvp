@@ -304,6 +304,19 @@ def build_task_prompt(task: dict) -> str:
     description = redact_text(task.get("description"), 900)
     acceptance = redact_text(task.get("acceptance_criteria"), 500)
     risk = redact_text(task.get("risk_level") or "medium", 40)
+    knowledge = task.get("_knowledge_retrieval_evidence") or {}
+    knowledge_paths = [redact_text(path, 120) for path in (knowledge.get("paths") or [])[:5]]
+    knowledge_metrics = knowledge.get("metrics") or {}
+    knowledge_context = (
+        "项目知识检索证据："
+        f"status={redact_text(knowledge.get('packet_status') or knowledge.get('status') or 'unavailable', 60)}; "
+        f"packet_hash={redact_text(knowledge.get('packet_hash'), 80)}; "
+        f"query_hash={redact_text(knowledge.get('query_hash'), 80)}; "
+        f"recall_at_5={knowledge_metrics.get('recall_at_5')}; "
+        f"mrr={knowledge_metrics.get('mrr')}; "
+        f"paths={', '.join(knowledge_paths) if knowledge_paths else 'none'}; "
+        "raw_query/snippet/content/prompt/response/token omitted.\n"
+    )
     return (
         "你是 AgentOps MIS 的本地 AI worker。请根据下面的任务摘要给出可交付结果。\n"
         "执行边界：本次调用是 ledger_summary_only 摘要通道，不是工具执行通道。"
@@ -316,6 +329,7 @@ def build_task_prompt(task: dict) -> str:
         f"任务风险：{risk}\n"
         f"任务描述：{description}\n"
         f"验收标准：{acceptance}\n"
+        f"{knowledge_context}"
     )
 
 
@@ -712,8 +726,112 @@ def register_worker(client: AgentOpsClient, adapter: str):
     })
 
 
-def create_worker_agent_plan(client: AgentOpsClient, task: dict, args) -> dict:
+def unique_values(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        item = str(value or "").strip()
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        result.append(item)
+    return result
+
+
+def build_worker_knowledge_query(task: dict) -> str:
+    return "READ PLAN RETRIEVE COMPARE EXECUTE VERIFY RECORD method block Agent Gateway worker"
+
+
+def fetch_worker_knowledge_evidence(client: AgentOpsClient, task: dict) -> dict:
+    query = build_worker_knowledge_query(task)
+    try:
+        packet = client.get("/api/agent-gateway/knowledge/evidence-packet", {
+            "q": query,
+            "limit": 5,
+            "baseline_limit": 5,
+        })
+        return compact_worker_knowledge_evidence(packet)
+    except Exception as exc:
+        return {
+            "operation": "worker_knowledge_retrieval_evidence",
+            "status": "unavailable",
+            "reason": redact_text(str(exc), 220),
+            "packet_hash": stable_hash({"status": "unavailable", "query_hash": stable_hash(query)}),
+            "query_hash": stable_hash(query),
+            "query_omitted": True,
+            "knowledge_retrieval_evidence_consumed": False,
+            "results": [],
+            "retrieval_ids": [],
+            "paths": [],
+            "source_hashes": [],
+            "metrics": {},
+            "raw_content_omitted": True,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        }
+
+
+def compact_worker_knowledge_evidence(packet: dict) -> dict:
+    primary = packet.get("primary_search") or {}
+    rows = []
+    for row in (primary.get("results") or [])[:5]:
+        rows.append({
+            "retrieval_id": row.get("retrieval_id"),
+            "doc_id": row.get("doc_id"),
+            "chunk_id": row.get("chunk_id"),
+            "path": row.get("path"),
+            "chunk_heading_path": row.get("chunk_heading_path"),
+            "source_hash": row.get("source_hash"),
+            "rank": row.get("rank"),
+            "snippet_omitted": True,
+            "content_summary_omitted": True,
+            "raw_content_omitted": True,
+            "raw_prompt_omitted": True,
+            "token_omitted": True,
+        })
+    core = {
+        "operation": "worker_knowledge_retrieval_evidence",
+        "packet_operation": packet.get("operation"),
+        "packet_status": packet.get("status"),
+        "query_hash": packet.get("query_hash"),
+        "query_omitted": True,
+        "metrics": packet.get("metrics") or {},
+        "result_count": len(rows),
+        "retrieval_ids": [row.get("retrieval_id") for row in rows if row.get("retrieval_id")],
+        "paths": [row.get("path") for row in rows if row.get("path")],
+        "source_hashes": [row.get("source_hash") for row in rows if row.get("source_hash")],
+        "results": rows,
+        "raw_content_omitted": True,
+        "raw_prompt_omitted": True,
+        "raw_response_omitted": True,
+        "token_omitted": True,
+    }
+    core["packet_hash"] = stable_hash({
+        "packet_operation": core["packet_operation"],
+        "packet_status": core["packet_status"],
+        "query_hash": core["query_hash"],
+        "metrics": core["metrics"],
+        "results": rows,
+    })
+    core["knowledge_retrieval_evidence_consumed"] = bool(rows)
+    return core
+
+
+def create_worker_agent_plan(client: AgentOpsClient, task: dict, args, knowledge_evidence: dict | None = None) -> dict:
     risk = task.get("risk_level") or "medium"
+    knowledge_evidence = knowledge_evidence or {}
+    retrieved_paths = [path for path in (knowledge_evidence.get("paths") or []) if isinstance(path, str)]
+    referenced_specs = unique_values([
+        "PROJECT_SPEC.md",
+        "AGENT_WORKFLOW.md",
+        "docs/AGENT_WORK_METHOD_BLOCK.md",
+        *[path for path in retrieved_paths if path.endswith(".md") and not path.startswith("knowledge/")],
+    ])[:8]
+    referenced_memories = unique_values([
+        "knowledge/shared/common_failures.md",
+        *retrieved_paths,
+    ])[:8]
     payload = {
         "workspace_id": client.workspace_id,
         "agent_id": client.agent_id,
@@ -722,14 +840,17 @@ def create_worker_agent_plan(client: AgentOpsClient, task: dict, args) -> dict:
             f"Process task '{redact_text(task.get('title'), 120)}' through the {args.adapter} worker adapter, "
             "write run/tool/evaluation/artifact/audit evidence, then bind the result to this plan."
         ),
-        "referenced_specs": ["PROJECT_SPEC.md", "AGENT_WORKFLOW.md", "docs/AGENT_WORK_METHOD_BLOCK.md"],
-        "referenced_memories": ["knowledge/shared/common_failures.md"],
+        "referenced_specs": referenced_specs,
+        "referenced_memories": referenced_memories,
         "referenced_bases": ["base_local_tasks", "base_local_memory"],
         "proposed_files_to_change": ["agentops-worker-runtime", f"adapter:{args.adapter}"],
         "risk_level": risk,
         "approval_required": risk in {"high", "critical"},
         "execution_steps": ["READ", "PLAN", "RETRIEVE", "COMPARE", "EXECUTE", "VERIFY", "RECORD"],
-        "verification_plan": "Agent worker must submit tool, evaluation, artifact, audit and plan_evidence_manifest evidence.",
+        "verification_plan": (
+            "Agent worker must consume knowledge retrieval evidence before execution and submit tool, "
+            "evaluation, artifact, audit and plan_evidence_manifest evidence."
+        ),
         "rollback_plan": "Mark the run failed/blocked and leave the manifest blocked if execution evidence is incomplete.",
         "status": "submitted",
     }
@@ -795,7 +916,10 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
         "agent_id": client.agent_id,
         "runtime_type": args.adapter,
     })
-    plan_payload = create_worker_agent_plan(client, task, args)
+    knowledge_evidence = fetch_worker_knowledge_evidence(client, task)
+    task = dict(task)
+    task["_knowledge_retrieval_evidence"] = knowledge_evidence
+    plan_payload = create_worker_agent_plan(client, task, args, knowledge_evidence)
     plan_id = (plan_payload.get("agent_plan") or {}).get("plan_id")
     if not plan_id:
         raise RuntimeError("agent plan create did not return plan_id")
@@ -845,6 +969,22 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
             "commercial_readiness": capability.get("commercial_readiness"),
             "requires_prepared_action_for_external_write": capability.get("requires_prepared_action_for_external_write"),
             "hermes_max_tokens": args.hermes_max_tokens if args.adapter == "hermes" else None,
+            "knowledge_retrieval_evidence_consumed": bool(knowledge_evidence.get("knowledge_retrieval_evidence_consumed")),
+            "knowledge_retrieval_packet_hash": knowledge_evidence.get("packet_hash"),
+            "knowledge_retrieval_query_hash": knowledge_evidence.get("query_hash"),
+            "knowledge_retrieval_status": knowledge_evidence.get("packet_status") or knowledge_evidence.get("status"),
+            "knowledge_retrieval_ids": knowledge_evidence.get("retrieval_ids") or [],
+            "knowledge_retrieval_paths": knowledge_evidence.get("paths") or [],
+            "knowledge_retrieval_source_hashes": knowledge_evidence.get("source_hashes") or [],
+            "knowledge_retrieval_metrics": knowledge_evidence.get("metrics") or {},
+            "knowledge_retrieval_omissions": {
+                "query_omitted": True,
+                "snippet_omitted": True,
+                "raw_content_omitted": True,
+                "raw_prompt_omitted": True,
+                "raw_response_omitted": True,
+                "token_omitted": True,
+            },
             "raw_omitted": True,
             **secret_boundary,
         },
@@ -882,6 +1022,19 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
             "effective_risk_level": tool_risk,
             "commercial_readiness": capability.get("commercial_readiness"),
             "requires_prepared_action_for_external_write": capability.get("requires_prepared_action_for_external_write"),
+            "knowledge_retrieval_evidence_consumed": bool(knowledge_evidence.get("knowledge_retrieval_evidence_consumed")),
+            "knowledge_retrieval_packet_hash": knowledge_evidence.get("packet_hash"),
+            "knowledge_retrieval_query_hash": knowledge_evidence.get("query_hash"),
+            "knowledge_retrieval_status": knowledge_evidence.get("packet_status") or knowledge_evidence.get("status"),
+            "knowledge_retrieval_metrics": knowledge_evidence.get("metrics") or {},
+            "knowledge_retrieval_omissions": {
+                "query_omitted": True,
+                "snippet_omitted": True,
+                "raw_content_omitted": True,
+                "raw_prompt_omitted": True,
+                "raw_response_omitted": True,
+                "token_omitted": True,
+            },
             **secret_boundary,
         },
         "notes": "Worker adapter loop completed." if result.ok else f"Worker adapter loop failed: {result.error_type}",
@@ -902,6 +1055,7 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
             "adapter": args.adapter,
             "summary": result.output_summary,
             "ok": result.ok,
+            "knowledge_retrieval_packet_hash": knowledge_evidence.get("packet_hash"),
         }),
     })
     artifact_id = (artifact_payload.get("artifact") or {}).get("artifact_id")
@@ -939,6 +1093,21 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
             "effective_risk_level": tool_risk,
             "commercial_readiness": capability.get("commercial_readiness"),
             "requires_prepared_action_for_external_write": capability.get("requires_prepared_action_for_external_write"),
+            "knowledge_retrieval_evidence_consumed": bool(knowledge_evidence.get("knowledge_retrieval_evidence_consumed")),
+            "knowledge_retrieval_packet_hash": knowledge_evidence.get("packet_hash"),
+            "knowledge_retrieval_query_hash": knowledge_evidence.get("query_hash"),
+            "knowledge_retrieval_status": knowledge_evidence.get("packet_status") or knowledge_evidence.get("status"),
+            "knowledge_retrieval_ids": knowledge_evidence.get("retrieval_ids") or [],
+            "knowledge_retrieval_paths": knowledge_evidence.get("paths") or [],
+            "knowledge_retrieval_source_hashes": knowledge_evidence.get("source_hashes") or [],
+            "knowledge_retrieval_omissions": {
+                "query_omitted": True,
+                "snippet_omitted": True,
+                "raw_content_omitted": True,
+                "raw_prompt_omitted": True,
+                "raw_response_omitted": True,
+                "token_omitted": True,
+            },
             **secret_boundary,
         },
     })
@@ -965,6 +1134,22 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
         "attempt_count": result.attempt_count,
         "output_summary": result.output_summary,
         "error_type": result.error_type,
+        "knowledge_retrieval_evidence": {
+            "consumed": bool(knowledge_evidence.get("knowledge_retrieval_evidence_consumed")),
+            "packet_hash": knowledge_evidence.get("packet_hash"),
+            "query_hash": knowledge_evidence.get("query_hash"),
+            "status": knowledge_evidence.get("packet_status") or knowledge_evidence.get("status"),
+            "result_count": knowledge_evidence.get("result_count") or 0,
+            "retrieval_ids": knowledge_evidence.get("retrieval_ids") or [],
+            "paths": knowledge_evidence.get("paths") or [],
+            "source_hashes": knowledge_evidence.get("source_hashes") or [],
+            "query_omitted": True,
+            "snippet_omitted": True,
+            "raw_content_omitted": True,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
         "secret_boundary": secret_boundary,
     }
 

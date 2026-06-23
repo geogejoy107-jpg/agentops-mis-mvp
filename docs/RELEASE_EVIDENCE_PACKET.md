@@ -93,6 +93,7 @@ The packet includes the canonical command manifest used for release review:
 - `python3 scripts/public_claims_release_gate_smoke.py`
 - `python3 scripts/migration_rollback_smoke.py`
 - `python3 scripts/knowledge_retrieval_quality_smoke.py`
+- `python3 scripts/worker_knowledge_evidence_consumption_smoke.py`
 - `python3 scripts/commander_repo_map_smoke.py`
 - `python3 scripts/commander_coding_project_template_smoke.py`
 - `python3 scripts/commander_coding_workspace_smoke.py`
@@ -109,6 +110,7 @@ The packet includes the canonical command manifest used for release review:
 - `python3 scripts/operator_loop_launch_packet_smoke.py`
 - `python3 scripts/operator_evidence_report_smoke.py`
 - `python3 scripts/operator_live_product_readiness_smoke.py`
+- `python3 scripts/local_runtime_identity_smoke.py`
 - `python3 scripts/agentops_cli_connection_hint_smoke.py`
 - `python3 scripts/task_detail_evidence_ui_smoke.py`
 - `python3 scripts/security_production_readiness_smoke.py --base-url "$AGENTOPS_BASE_URL"`

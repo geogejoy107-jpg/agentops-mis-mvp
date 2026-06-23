@@ -145,6 +145,53 @@ def cli_host_is_loopback(url: str) -> bool:
     return host.endswith(".localhost")
 
 
+def cli_git_head() -> str:
+    root = Path(__file__).resolve().parents[1]
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+        )
+    except Exception:
+        return ""
+    return proc.stdout.strip() if proc.returncode == 0 else ""
+
+
+def add_current_code_check(payload: dict, args) -> dict:
+    require_current = bool(getattr(args, "require_current_code", False))
+    expected_head = str(getattr(args, "expect_head_sha", "") or "").strip()
+    if require_current and not expected_head:
+        expected_head = cli_git_head()
+    if not require_current and not expected_head:
+        return payload
+    runtime = payload.get("running_instance")
+    if not isinstance(runtime, dict):
+        runtime = ((payload.get("gateway") or {}).get("running_instance") if isinstance(payload.get("gateway"), dict) else {}) or {}
+    server_head = str(runtime.get("git_head_sha") or "")
+    source_current = runtime.get("current") is True or runtime.get("status") == "current"
+    head_matches = bool(expected_head and server_head and server_head.startswith(expected_head)) if expected_head else True
+    ok = bool(runtime) and source_current and head_matches
+    payload["local_code_check"] = {
+        "operation": "local_code_check",
+        "ok": ok,
+        "status": "ready" if ok else "blocked",
+        "require_current_code": require_current,
+        "expected_head_sha": expected_head,
+        "server_head_sha": server_head,
+        "server_status": runtime.get("status") or "missing",
+        "server_started_after_source_mtime": runtime.get("server_started_after_source_mtime"),
+        "next_action": "restart the local MIS process from the current checkout, then rerun agentops local readiness --require-current-code",
+        "token_omitted": True,
+    }
+    if not ok:
+        payload["_exit_code"] = 2
+    return payload
+
+
 class AgentOpsClient:
     def __init__(self, context: dict):
         self.base_url = context["base_url"].rstrip("/")
@@ -222,7 +269,7 @@ def cmd_login(args) -> dict:
 
 
 def cmd_status(args, client: AgentOpsClient) -> dict:
-    return client.get("/api/agent-gateway/status")
+    return add_current_code_check(client.get("/api/agent-gateway/status"), args)
 
 
 def cmd_doctor(args, client: AgentOpsClient) -> dict:
@@ -333,7 +380,7 @@ def cmd_doctor(args, client: AgentOpsClient) -> dict:
 
 
 def cmd_local_readiness(args, client: AgentOpsClient) -> dict:
-    return client.get("/api/local/readiness")
+    return add_current_code_check(client.get("/api/local/readiness"), args)
 
 
 def cmd_demo_readiness(args, client: AgentOpsClient) -> dict:
@@ -3276,6 +3323,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     status = sub.add_parser("status", help="Check Agent Gateway connectivity and safe auth metadata.")
     add_global_args(status, suppress_defaults=True)
+    status.add_argument("--require-current-code", action="store_true", help="Fail if the connected MIS process is older than backend source files.")
+    status.add_argument("--expect-head-sha", default="", help="Fail if the connected MIS process reports a different git HEAD.")
     status.set_defaults(handler="status")
 
     doctor = sub.add_parser("doctor", help="Diagnose local/remote agent CLI setup without printing secrets.")
@@ -3285,6 +3334,8 @@ def build_parser() -> argparse.ArgumentParser:
     local = sub.add_parser("local", help="Single-workspace local readiness commands.")
     local_sub = local.add_subparsers(dest="action", required=True)
     local_readiness = local_sub.add_parser("readiness", help="Show end-to-end local MIS readiness and evidence closure.")
+    local_readiness.add_argument("--require-current-code", action="store_true", help="Fail if the connected MIS process is older than backend source files.")
+    local_readiness.add_argument("--expect-head-sha", default="", help="Fail if the connected MIS process reports a different git HEAD.")
     local_readiness.set_defaults(handler="local_readiness")
 
     demo = sub.add_parser("demo", help="Read-only demo and recording readiness commands.")

@@ -137,6 +137,15 @@ evidence counts, local runbook/doc presence, UI routes, and recommended next
 actions. It is the preferred first check before a local demo or after changing
 worker/gateway code.
 
+Use `--require-current-code` before handing work to Hermes/OpenClaw/Codex. The
+CLI fails closed when the connected MIS process is older than backend source
+files or, with `--expect-head-sha`, when it reports a different git HEAD:
+
+```bash
+agentops status --require-current-code
+agentops local readiness --require-current-code --expect-head-sha "$(git rev-parse HEAD)"
+```
+
 ### `agentops knowledge evidence-packet`
 
 Returns a read-only retrieval evidence packet for agents and operators. It uses
@@ -144,6 +153,14 @@ the existing Markdown/SQLite FTS knowledge index and reports retrieval IDs,
 document/chunk IDs, headings, source hashes, visibility, and baseline
 Recall@5/MRR/p95 metrics without returning raw snippets, raw content, raw
 prompts, raw responses, or tokens.
+
+`agentops-worker` now consumes this packet before adapter execution. The worker
+uses a static method-block query, folds only compact packet/query hashes,
+retrieval IDs, paths, source hashes, and metrics into the Agent Plan, prompt
+hash input, tool-call args, evaluation rubric, and audit metadata, and keeps raw
+query/snippet/content/prompt/response/token omitted. If the worker token lacks
+`knowledge:read`, the worker records an `unavailable` compact status instead of
+blocking unrelated task execution.
 
 ```bash
 agentops knowledge evidence-packet "Agent Gateway CLI commands" --limit 5

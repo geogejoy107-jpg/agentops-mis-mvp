@@ -74,6 +74,7 @@ jobs:
           python3 scripts/public_claims_release_gate_smoke.py
           python3 scripts/approval_semantics_boundary_smoke.py
           python3 scripts/knowledge_retrieval_quality_smoke.py
+          python3 scripts/worker_knowledge_evidence_consumption_smoke.py
           python3 scripts/commander_repo_map_smoke.py
           python3 scripts/commander_coding_project_template_smoke.py
           python3 scripts/commander_coding_workspace_smoke.py
@@ -91,6 +92,7 @@ jobs:
           python3 scripts/operator_live_product_readiness_smoke.py
           python3 scripts/agentops_worker_service_check_smoke.py
           python3 scripts/agentops_worker_service_control_smoke.py
+          python3 scripts/local_runtime_identity_smoke.py
           python3 scripts/agentops_cli_connection_hint_smoke.py
           python3 scripts/worker_log_rotation_smoke.py
 

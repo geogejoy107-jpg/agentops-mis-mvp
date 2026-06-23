@@ -136,6 +136,14 @@ def validate(payload: dict) -> None:
     for gate_id in {"agent_gateway", "worker_fleet", "production_security", "adapter_route", "knowledge_memory", "evidence_chain", "commander_synthesis_loop", "runbook"}:
         require(gate_id in gate_ids, f"missing gate {gate_id}: {payload}")
     require("live_acceptance_freshness" in gate_ids, f"missing live acceptance gate: {payload}")
+    instance_gate = next((gate for gate in gates if gate.get("id") == "running_instance_freshness"), {})
+    require(instance_gate.get("ok") is True, f"running instance freshness gate should pass: {instance_gate}")
+    require("require-current-code" in (instance_gate.get("next_action") or ""), f"running instance gate should route strict CLI: {instance_gate}")
+    running_instance = payload.get("running_instance") or {}
+    require(running_instance.get("operation") == "running_instance_identity", f"running instance identity missing: {running_instance}")
+    require(running_instance.get("status") == "current", f"running instance should be current: {running_instance}")
+    require(running_instance.get("server_started_after_source_mtime") is True, f"running instance source freshness missing: {running_instance}")
+    require((running_instance.get("safety") or {}).get("read_only") is True, f"running instance identity must be read-only: {running_instance}")
     evidence = payload.get("evidence") or {}
     for key in ["tasks", "runs", "tool_calls", "evaluations", "audit_logs", "artifacts", "memories", "approvals", "closed_loop_runs"]:
         require(isinstance(evidence.get(key), int), f"missing evidence count {key}: {evidence}")

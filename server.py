@@ -176,6 +176,8 @@ from agentops_mis_runtime.trust import (
 
 ROOT = Path(__file__).resolve().parent
 DB_PATH = Path(os.environ.get("AGENTOPS_DB_PATH") or (ROOT / "agentops_mis.db"))
+SERVER_STARTED_AT = dt.datetime.now(dt.timezone.utc)
+SERVER_STARTED_AT_EPOCH = time.time()
 SQLITE_SCHEMA_BASELINE_ID = "2026-06-22-v1.5-sqlite-reliability"
 STATIC_DIR = ROOT / "static"
 ARTIFACTS_DIR = ROOT / "artifacts"
@@ -222,6 +224,76 @@ def new_id(prefix: str) -> str:
 def stable_hash(value) -> str:
     raw = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def local_git_value(args: list[str], timeout: int = 3) -> str:
+    try:
+        proc = subprocess.run(
+            ["git", *args],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except Exception:
+        return ""
+    if proc.returncode != 0:
+        return ""
+    return proc.stdout.strip()
+
+
+def runtime_source_paths() -> list[Path]:
+    paths = [ROOT / "server.py"]
+    for folder in [ROOT / "agentops_mis_core", ROOT / "agentops_mis_runtime"]:
+        if folder.exists():
+            paths.extend(sorted(folder.glob("*.py")))
+    return [path for path in paths if path.exists()]
+
+
+def running_instance_identity() -> dict:
+    source_paths = runtime_source_paths()
+    latest_mtime = 0.0
+    latest_source = ""
+    for path in source_paths:
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            continue
+        if mtime >= latest_mtime:
+            latest_mtime = mtime
+            latest_source = str(path.relative_to(ROOT))
+    git_head = local_git_value(["rev-parse", "HEAD"])
+    git_branch = local_git_value(["rev-parse", "--abbrev-ref", "HEAD"])
+    git_status = local_git_value(["status", "--porcelain"])
+    source_fresh = SERVER_STARTED_AT_EPOCH + 1.0 >= latest_mtime if latest_mtime else True
+    status = "current" if source_fresh else "stale_process"
+    return {
+        "operation": "running_instance_identity",
+        "status": status,
+        "current": status == "current",
+        "server_pid": os.getpid(),
+        "server_started_at": SERVER_STARTED_AT.isoformat(),
+        "server_started_epoch": round(SERVER_STARTED_AT_EPOCH, 3),
+        "latest_source_path": latest_source,
+        "latest_source_mtime": dt.datetime.fromtimestamp(latest_mtime, dt.timezone.utc).isoformat() if latest_mtime else None,
+        "latest_source_mtime_epoch": round(latest_mtime, 3) if latest_mtime else None,
+        "server_started_after_source_mtime": source_fresh,
+        "git_head_sha": git_head,
+        "git_head_short": git_head[:12] if git_head else "",
+        "git_branch": git_branch,
+        "git_dirty_entries": len([line for line in git_status.splitlines() if line.strip()]),
+        "repo_root": str(ROOT),
+        "contract": "read-only local runtime identity for agents/operators; verifies the running server process is newer than backend source files and reports git metadata without secrets",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "external_network": False,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
 
 
 def stable_id(prefix: str, *parts) -> str:
@@ -3469,6 +3541,7 @@ def agent_gateway_status(conn, headers) -> tuple[dict, int]:
             "workspace_id": normalize_workspace_id(auth_ctx.get("workspace_id") or "local-demo"),
             "scopes": auth_ctx.get("scopes") or [],
         },
+        "running_instance": running_instance_identity(),
         "valid_scopes": sorted(VALID_AGENT_GATEWAY_SCOPES),
         "token_omitted": True,
     }
@@ -17580,6 +17653,7 @@ def live_acceptance_readiness(conn: sqlite3.Connection, workspace_id: str = "loc
 
 def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = True) -> dict:
     gateway, gateway_status_code = agent_gateway_status(conn, headers)
+    running_instance = running_instance_identity()
     security = security_production_readiness(conn, headers)
     worker = worker_status(conn, refresh_runtime=refresh_runtime)
     adapter_summary = worker.get("adapter_readiness") or {}
@@ -17647,6 +17721,9 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
         "knowledge_retrieval_mrr": knowledge_evidence_metrics.get("mrr"),
         "knowledge_retrieval_p95_ms": knowledge_evidence_metrics.get("p95_ms"),
         "knowledge_retrieval_fallback_queries": knowledge_evidence_metrics.get("fallback_queries"),
+        "running_instance_current": bool(running_instance.get("current")),
+        "running_instance_git_head": running_instance.get("git_head_sha"),
+        "running_instance_git_dirty_entries": int(running_instance.get("git_dirty_entries") or 0),
     }
     evidence["has_task_run_tool_eval_audit_artifact_chain"] = evidence["closed_loop_runs"] > 0
     evidence["has_indexed_knowledge"] = evidence["knowledge_documents"] > 0 or evidence["knowledge_chunks"] > 0
@@ -17661,6 +17738,18 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
             "status": gateway.get("status") or gateway.get("error") or "unknown",
             "detail": gateway.get("message") or (gateway.get("auth") or {}).get("mode") or "ready",
             "next_action": "agentops status",
+        },
+        {
+            "id": "running_instance_freshness",
+            "label": "Running MIS process matches current backend source",
+            "ok": running_instance.get("current") is True,
+            "status": running_instance.get("status") or "unknown",
+            "detail": (
+                f"pid={running_instance.get('server_pid')}; "
+                f"head={running_instance.get('git_head_short') or 'unknown'}; "
+                f"latest_source={running_instance.get('latest_source_path') or 'unknown'}"
+            ),
+            "next_action": "agentops local readiness --require-current-code",
         },
         {
             "id": "worker_fleet",
@@ -17743,7 +17832,7 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
             "next_action": "open docs/REMOTE_WORKER_OPERATIONS_RUNBOOK.md",
         },
     ]
-    blockers = [gate for gate in gates if not gate["ok"] and gate["id"] in {"agent_gateway", "worker_fleet", "adapter_route", "runbook"}]
+    blockers = [gate for gate in gates if not gate["ok"] and gate["id"] in {"agent_gateway", "running_instance_freshness", "worker_fleet", "adapter_route", "runbook"}]
     warnings = [gate for gate in gates if not gate["ok"] and gate not in blockers]
     overall = "blocked" if blockers else "attention" if warnings else "ready"
     gate_by_id = {gate["id"]: gate for gate in gates}
@@ -18015,6 +18104,7 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
         "commander_synthesis_lifecycle": synthesis_lifecycle,
         "live_acceptance_readiness": live_acceptance,
         "knowledge_retrieval_evidence": knowledge_evidence,
+        "running_instance": running_instance,
         "gateway": gateway,
         "docs": doc_status,
         "local_run_path": local_run_path,
