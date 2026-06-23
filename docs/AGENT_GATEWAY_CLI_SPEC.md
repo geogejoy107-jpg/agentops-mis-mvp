@@ -110,7 +110,7 @@ It reports:
 - Agent Gateway status and token omission proof;
 - worker provider status, worker count, running workers, pending tasks, and stuck tasks;
 - setup hints for missing token, missing agent id, rejected token, or stuck worker recovery.
-- `local_demo_probe`, which checks the local demo default without switching targets, so a stale config can report that `AGENTOPS_BASE_URL=... agentops status` or `agentops login --base-url ...` would repair the operator/agent CLI path.
+- `local_demo_probe`, which checks the local demo default without switching targets, including current-code status, so a stale config can report whether `AGENTOPS_BASE_URL=... agentops status`, `agentops login --base-url ...`, or a process restart would repair the operator/agent CLI path.
 
 ```bash
 agentops doctor

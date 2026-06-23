@@ -193,7 +193,7 @@ def add_current_code_check(payload: dict, args) -> dict:
     return payload
 
 
-def local_demo_default_probe(target_base_url: str = "", timeout: float = 0.8) -> dict:
+def local_demo_default_probe(target_base_url: str = "", timeout: float = 2.0) -> dict:
     probe_url = LOCAL_DEMO_DEFAULT_URL.rstrip("/")
     same_as_target = bool(target_base_url) and target_base_url.rstrip("/") == probe_url
     result = {
@@ -204,7 +204,11 @@ def local_demo_default_probe(target_base_url: str = "", timeout: float = 0.8) ->
         "ready": False,
         "status": "unknown",
         "status_code": None,
+        "current_code_ok": None,
+        "current_code_status": "unknown",
+        "running_instance_current": None,
         "command": f"AGENTOPS_BASE_URL={probe_url} agentops status",
+        "current_code_command": f"AGENTOPS_BASE_URL={probe_url} agentops local readiness --require-current-code",
         "repair_command": f"agentops login --base-url {probe_url}",
         "token_omitted": True,
     }
@@ -222,6 +226,25 @@ def local_demo_default_probe(target_base_url: str = "", timeout: float = 0.8) ->
                 "status": payload.get("status") or "reachable",
                 "status_code": res.status,
             })
+        try:
+            req = Request(probe_url + "/api/local/readiness", headers={"Accept": "application/json"})
+            with urlopen(req, timeout=timeout) as readiness_res:
+                raw = readiness_res.read().decode("utf-8")
+                readiness = json.loads(raw) if raw else {}
+                runtime = readiness.get("running_instance") if isinstance(readiness.get("running_instance"), dict) else {}
+                local_code = readiness.get("local_code_check") if isinstance(readiness.get("local_code_check"), dict) else {}
+                current_code_ok = (
+                    runtime.get("current") is True
+                    or runtime.get("status") == "current"
+                    or local_code.get("ok") is True
+                )
+                result.update({
+                    "current_code_ok": current_code_ok,
+                    "current_code_status": runtime.get("status") or local_code.get("status") or "unknown",
+                    "running_instance_current": runtime.get("current") if "current" in runtime else None,
+                })
+        except (HTTPError, URLError, OSError, TimeoutError, json.JSONDecodeError):
+            pass
     except HTTPError as exc:
         result.update({
             "reachable": True,
@@ -247,10 +270,12 @@ class AgentOpsClient:
         source = self.sources.get("base_url") or "unknown"
         default_probe = local_demo_default_probe(self.base_url)
         probe_status = "ready" if default_probe.get("ready") else default_probe.get("status", "unknown")
+        current_code_status = default_probe.get("current_code_status") or "unknown"
         hint = (
             f"base_url_source={source}; config_path={CONFIG_PATH}; "
             f"local_demo_default={LOCAL_DEMO_DEFAULT_URL}; "
             f"local_demo_probe={probe_status}; "
+            f"local_demo_current_code={current_code_status}; "
             f"try: AGENTOPS_BASE_URL={LOCAL_DEMO_DEFAULT_URL} agentops status"
         )
         if source == "config":
@@ -385,7 +410,11 @@ def cmd_doctor(args, client: AgentOpsClient) -> dict:
     if workers and workers.get("stuck_worker_tasks", 0):
         setup_hints.append("Stuck worker tasks detected. Run agentops worker stuck and agentops worker release after review.")
     if not gateway and local_probe.get("ready"):
-        setup_hints.append(f"Configured base URL is unreachable, but local demo default is ready. Use AGENTOPS_BASE_URL={local_probe.get('base_url')} or run agentops login --base-url {local_probe.get('base_url')}.")
+        current_status = local_probe.get("current_code_status") or "unknown"
+        if local_probe.get("current_code_ok") is True:
+            setup_hints.append(f"Configured base URL is unreachable, but local demo default is ready and current-code status is {current_status}. Use AGENTOPS_BASE_URL={local_probe.get('base_url')} or run agentops login --base-url {local_probe.get('base_url')}.")
+        else:
+            setup_hints.append(f"Configured base URL is unreachable, and local demo default is reachable but current-code status is {current_status}. Run {local_probe.get('current_code_command')} before handing work to Hermes/OpenClaw/Codex.")
 
     deployment_safety = {
         "deployment_mode": mode,

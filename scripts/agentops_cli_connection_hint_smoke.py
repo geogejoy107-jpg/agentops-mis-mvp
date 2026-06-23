@@ -32,16 +32,29 @@ class ProbeHandler(BaseHTTPRequestHandler):
         return
 
     def do_GET(self) -> None:  # noqa: N802 - stdlib hook
-        if self.path != "/api/agent-gateway/status":
+        if self.path == "/api/local/readiness":
+            payload = {
+                "operation": "local_readiness",
+                "status": "attention",
+                "running_instance": {
+                    "current": True,
+                    "status": "current",
+                    "git_head_short": "probehead",
+                    "server_started_after_source_mtime": True,
+                },
+                "token_omitted": True,
+            }
+        elif self.path == "/api/agent-gateway/status":
+            payload = {
+                "provider": "agent_gateway",
+                "status": "ready",
+                "auth": {"mode": "local_dev_no_token", "authenticated": False},
+                "token_omitted": True,
+            }
+        else:
             self.send_response(404)
             self.end_headers()
             return
-        payload = {
-            "provider": "agent_gateway",
-            "status": "ready",
-            "auth": {"mode": "local_dev_no_token", "authenticated": False},
-            "token_omitted": True,
-        }
         raw = json.dumps(payload).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
@@ -92,6 +105,7 @@ def main() -> int:
         require(f"config_path={config_path}" in combined, f"missing config path hint: {combined}", failures)
         require(f"local_demo_default={probe_url}" in combined, f"missing local demo default hint: {combined}", failures)
         require("local_demo_probe=ready" in combined, f"missing ready local demo probe hint: {combined}", failures)
+        require("local_demo_current_code=current" in combined, f"missing current-code local demo hint: {combined}", failures)
         require(f"AGENTOPS_BASE_URL={probe_url} agentops status" in combined, f"missing env override repair hint: {combined}", failures)
         require(f"agentops login --base-url {probe_url}" in combined, f"missing saved-config repair hint: {combined}", failures)
         require("fake_token_should_not_print" not in combined, "connection hint leaked raw token", failures)
@@ -112,6 +126,7 @@ def main() -> int:
         require(doctor.returncode == 0, f"doctor should stay diagnostic in local mode: rc={doctor.returncode} stderr={doctor.stderr}", failures)
         require(doctor_payload.get("ok") is False, f"doctor should report stale configured target as not ok: {doctor_payload}", failures)
         require(doctor_probe.get("ready") is True and doctor_probe.get("base_url") == probe_url, f"doctor local default probe missing: {doctor_payload}", failures)
+        require(doctor_probe.get("current_code_ok") is True and doctor_probe.get("current_code_status") == "current", f"doctor current-code probe missing: {doctor_payload}", failures)
         require(any("local demo default is ready" in str(item) for item in (doctor_payload.get("setup_hints") or [])), f"doctor repair hint missing: {doctor_payload}", failures)
         require("fake_token_should_not_print" not in doctor.stdout and "fake_token_should_not_print" not in doctor.stderr, "doctor leaked raw token", failures)
         probe_server.shutdown()
@@ -127,6 +142,7 @@ def main() -> int:
                     "base_url_source hint",
                     "local demo default hint",
                     "local demo readiness probe",
+                    "local demo current-code probe",
                     "saved config repair hint",
                     "doctor stale-config probe",
                     "token omission",
