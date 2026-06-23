@@ -363,6 +363,12 @@ TEST_COMMANDS = [
         "ci_step": "Server-backed smoke suite",
     },
     {
+        "id": "delivery_approval_manifest_gate",
+        "command": "python3 scripts/delivery_approval_manifest_gate_smoke.py",
+        "summary": "Customer delivery approval fails closed until a verified plan-evidence manifest exists, then surfaces the manifest on the delivery board.",
+        "ci_step": "Server-backed smoke suite",
+    },
+    {
         "id": "protected_live_runtime_ids",
         "command": "python3 scripts/protected_live_runtime_ids_smoke.py",
         "summary": "Protected planned-task, connector, prepared-action and approval IDs without pre-approval live calls.",

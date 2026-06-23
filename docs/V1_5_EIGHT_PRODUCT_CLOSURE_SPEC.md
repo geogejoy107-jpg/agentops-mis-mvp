@@ -773,6 +773,16 @@ Acceptance evidence:
   - delivery artifact remains `art_kb_bot_delivery_20260618180442453801`
   - report artifact writes `runtime_events` and `audit_logs` with raw report omitted and content hash stored
   - concurrent report/report-artifact smokes passed after changing KB bot project IDs from second-level to microsecond-level timestamps
+- Delivery approval manifest gate smoke:
+  `python3 scripts/delivery_approval_manifest_gate_smoke.py`
+  - starts an isolated local MIS server and SQLite database;
+  - proves customer delivery approval returns
+    `verified_plan_evidence_manifest_required` before a verified manifest
+    exists;
+  - records tool/evaluation/artifact evidence, creates a verified
+    `plan_evidence_manifest`, then approves the delivery review;
+  - confirms the customer delivery board surfaces the verified manifest and
+    omits token-like material.
 - Pixel Office report-archive UI build: `cd ui/start-building-app && npm run build`
 - Customer report page UI build: `cd ui/start-building-app && npm run build`
 - Customer project index smoke: `python3 scripts/customer_project_index_smoke.py`

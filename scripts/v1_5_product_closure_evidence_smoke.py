@@ -202,6 +202,7 @@ def main() -> int:
                 "scripts/customer_task_template_smoke.py",
                 "scripts/customer_project_report_smoke.py",
                 "scripts/customer_delivery_boundary_smoke.py",
+                "scripts/delivery_approval_manifest_gate_smoke.py",
                 "scripts/customer_dispatch_desk_ui_smoke.py",
                 "scripts/task_detail_evidence_ui_smoke.py",
             ],

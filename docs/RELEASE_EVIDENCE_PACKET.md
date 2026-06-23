@@ -126,6 +126,7 @@ The packet includes the canonical command manifest used for release review:
 - `python3 scripts/worker_fleet_hygiene_smoke.py --base-url "$AGENTOPS_BASE_URL"`
 - `python3 scripts/agent_gateway_knowledge_scope_smoke.py`
 - `python3 scripts/safe_closure_evidence_packet_smoke.py`
+- `python3 scripts/delivery_approval_manifest_gate_smoke.py`
 - `python3 scripts/protected_live_runtime_ids_smoke.py`
 - `cd ui/start-building-app && npm ci && npm run build`
 
