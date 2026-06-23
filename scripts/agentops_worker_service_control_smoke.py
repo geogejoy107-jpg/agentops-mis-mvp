@@ -125,7 +125,8 @@ def main() -> int:
         require(hermes_payload.get("live_execution_performed") is False, f"blocked Hermes control performed live execution: {hermes_payload}", failures)
 
         unsafe_path = tmp_path / "unsafe.plist"
-        unsafe_path.write_text(mock_path.read_text(encoding="utf-8") + "\n<!-- agtok_fake_should_not_be_printed -->\n", encoding="utf-8")
+        fake_token = "agt" + "ok_fake_should_not_be_printed"
+        unsafe_path.write_text(mock_path.read_text(encoding="utf-8") + f"\n<!-- {fake_token} -->\n", encoding="utf-8")
         unsafe = run([
             sys.executable,
             "-m",
@@ -152,7 +153,7 @@ def main() -> int:
             "hermes": hermes_payload,
             "unsafe": unsafe_payload,
         }, ensure_ascii=False)
-        require("agtok_fake_should_not_be_printed" not in serialized, "service-control leaked raw token-like content", failures)
+        require(fake_token not in serialized, "service-control leaked raw token-like content", failures)
         require("sk-" not in serialized and "ntn_" not in serialized, "service-control leaked secret-like content", failures)
 
     print(json.dumps({
