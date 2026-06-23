@@ -106,12 +106,12 @@ def db_fingerprint(db_path: Path) -> dict | None:
         conn.close()
 
 
-def create_enrollment(base_url: str, workspace_id: str, agent_id: str) -> tuple[str, str]:
+def create_enrollment(base_url: str, workspace_id: str, agent_id: str, runtime_type: str = "mock") -> tuple[str, str]:
     status, created, _raw = http_json(base_url, "POST", "/api/agent-gateway/enrollment/create", {
         "workspace_id": workspace_id,
         "agent_id": agent_id,
         "name": f"Task Intake {agent_id}",
-        "runtime_type": "mock",
+        "runtime_type": runtime_type,
         "scopes": ["agents:heartbeat", "tasks:read", "agent_plans:read", "agent_plans:write", "audit:write"],
         "ttl_days": 1,
         "heartbeat_timeout_sec": 60,
@@ -176,16 +176,22 @@ def main() -> int:
     stamp = now_stamp()
     workspace_id = "local-demo"
     agent_id = f"agt_task_intake_{stamp}"
+    hermes_agent_id = f"agt_task_intake_hermes_{stamp}"
     ready_task_id = f"tsk_task_intake_ready_{stamp}"
     blocked_task_id = f"tsk_task_intake_blocked_{stamp}"
-    token_id = None
+    hermes_task_id = f"tsk_task_intake_hermes_{stamp}"
+    token_ids: list[str] = []
     outputs: list[str] = []
     failures: list[str] = []
 
     try:
         token, token_id = create_enrollment(base_url, workspace_id, agent_id)
+        token_ids.append(token_id)
+        _hermes_token, hermes_token_id = create_enrollment(base_url, workspace_id, hermes_agent_id, runtime_type="hermes")
+        token_ids.append(hermes_token_id)
         create_task(base_url, workspace_id, ready_task_id, agent_id, "Task intake ready fixture")
         create_task(base_url, workspace_id, blocked_task_id, agent_id, "Task intake blocked fixture")
+        create_task(base_url, workspace_id, hermes_task_id, hermes_agent_id, "Hermes task intake Method Block fixture")
         plan_id = create_verified_plan(base_url, workspace_id, token, agent_id, ready_task_id, outputs)
 
         before = db_fingerprint(db_path)
@@ -196,10 +202,21 @@ def main() -> int:
         require((payload.get("safety") or {}).get("read_only") is True, f"intake should be read-only: {payload}", failures)
         ready_item = find_item(payload, ready_task_id)
         blocked_item = find_item(payload, blocked_task_id)
+        hermes_item = find_item(payload, hermes_task_id)
         require(ready_item.get("severity") == "ready", f"ready task not ready: {ready_item}", failures)
         require(ready_item.get("plan_id") == plan_id, f"ready task plan missing: {ready_item}", failures)
         require(blocked_item.get("severity") == "blocked", f"blocked task not blocked: {blocked_item}", failures)
         require("agent_plan" in set(blocked_item.get("failed_gate_ids") or []), f"blocked task did not fail agent_plan gate: {blocked_item}", failures)
+        require(hermes_item.get("severity") == "blocked", f"Hermes task without plan should be blocked: {hermes_item}", failures)
+        require(hermes_item.get("assigned_adapter") == "hermes", f"Hermes task adapter missing: {hermes_item}", failures)
+        hermes_admission = hermes_item.get("local_loop_admission_packet") or {}
+        hermes_dispatch = ((hermes_admission.get("local_deployment") or {}).get("customer_worker_dispatch") or {})
+        require("local_loop_admission_packet" not in set(hermes_item.get("failed_gate_ids") or []), f"Hermes Method Block gate should pass when packet is present: {hermes_item}", failures)
+        require(hermes_admission.get("operation") == "task_intake_local_loop_admission_packet", f"Hermes admission packet missing: {hermes_admission}", failures)
+        require(hermes_admission.get("ok") is True, f"Hermes admission packet not ok: {hermes_admission}", failures)
+        require("--confirm-run" in str(hermes_dispatch.get("command") or ""), f"Hermes dispatch missing confirm-run: {hermes_admission}", failures)
+        require((hermes_admission.get("safety") or {}).get("server_executes_shell") is False, f"Hermes admission server-shell proof missing: {hermes_admission}", failures)
+        require((payload.get("summary") or {}).get("missing_local_loop_admission") == 0, f"summary should show no missing Method Block admission: {payload.get('summary')}", failures)
 
         status, action_plan, raw = http_json(base_url, "GET", "/api/operator/action-plan", query={"limit": 30})
         outputs.append(raw)
@@ -217,6 +234,7 @@ def main() -> int:
             require(proc.returncode == 0, f"CLI intake failed: {proc.stderr or proc.stdout}", failures)
             require(find_item(cli_payload, ready_task_id).get("severity") == "ready", f"CLI ready task mismatch: {cli_payload}", failures)
             require(find_item(cli_payload, blocked_task_id).get("severity") == "blocked", f"CLI blocked task mismatch: {cli_payload}", failures)
+            require((find_item(cli_payload, hermes_task_id).get("local_loop_admission_packet") or {}).get("ok") is True, f"CLI Hermes admission missing: {cli_payload}", failures)
 
             status, start_gate, raw = http_json(base_url, "POST", "/api/workers/local/start", {
                 "adapter": "mock",
@@ -267,6 +285,16 @@ def main() -> int:
                 f"enforced pull did not return blocked task evidence: {blocked_pull}",
                 failures,
             )
+            proc = run_cli(base_url, ["task", "pull", "--agent-id", hermes_agent_id, "--task-id", hermes_task_id, "--status", "planned", "--limit", "5", "--enforce-intake"], env)
+            outputs.extend([proc.stdout, proc.stderr])
+            hermes_pull = load_json(proc)
+            hermes_pull_ids = {item.get("task_id") for item in hermes_pull.get("tasks") or []}
+            hermes_blocked = next((item for item in ((hermes_pull.get("intake") or {}).get("blocked_tasks") or []) if item.get("task_id") == hermes_task_id), {})
+            require(proc.returncode == 0, f"CLI Hermes pull failed: {proc.stderr or proc.stdout}", failures)
+            require(hermes_task_id not in hermes_pull_ids, f"Hermes task without plan leaked through enforced intake: {hermes_pull}", failures)
+            require((hermes_blocked.get("local_loop_admission_packet") or {}).get("ok") is True, f"Hermes blocked pull missing admission packet: {hermes_pull}", failures)
+            require("agent_plan" in set(hermes_blocked.get("failed_gate_ids") or []), f"Hermes blocked pull should still fail plan gate: {hermes_pull}", failures)
+            require("local_loop_admission_packet" not in set(hermes_blocked.get("failed_gate_ids") or []), f"Hermes Method Block admission should not be failed: {hermes_pull}", failures)
 
         after = db_fingerprint(db_path)
         if before is not None and after is not None:
@@ -278,8 +306,10 @@ def main() -> int:
             "ok": not failures,
             "workspace_id": workspace_id,
             "agent_id": agent_id,
+            "hermes_agent_id": hermes_agent_id,
             "ready_task_id": ready_task_id,
             "blocked_task_id": blocked_task_id,
+            "hermes_task_id": hermes_task_id,
             "plan_id": plan_id,
             "read_only": before == after_reads if before is not None and after_reads is not None else None,
             "pull_entity_stable": all(before.get(table) == after.get(table) for table in ("tasks", "agent_plans")) if before is not None and after is not None else None,
@@ -288,7 +318,7 @@ def main() -> int:
         }, ensure_ascii=False, indent=2, sort_keys=True))
         return 0 if not failures else 1
     finally:
-        if token_id:
+        for token_id in token_ids:
             http_json(base_url, "POST", "/api/agent-gateway/enrollment/revoke", {"token_id": token_id})
 
 

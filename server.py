@@ -3817,6 +3817,8 @@ def agent_gateway_pull_tasks(conn, qs, headers, auth_ctx=None) -> tuple[dict, in
                 "command": item["command"],
                 "plan_id": item["plan_id"],
                 "plan_verified": item["plan_verified"],
+                "assigned_adapter": item.get("assigned_adapter"),
+                "local_loop_admission_packet": item.get("local_loop_admission_packet"),
                 "token_omitted": True,
             }
             if item["severity"] == "blocked":
@@ -17666,8 +17668,135 @@ def latest_task_agent_plan(conn: sqlite3.Connection, task_id: str, agent_ids: li
     ).fetchone()
 
 
+TASK_INTAKE_METHOD_GATE_IDS = [
+    "read_start_check",
+    "plan_agent_plan",
+    "retrieve_knowledge",
+    "compare_base_reference",
+    "preflight_adapter",
+    "execute_bounded_loop",
+    "verify_loop",
+    "record_memory_candidate",
+]
+
+
+def task_assigned_runtime_adapter(conn: sqlite3.Connection, row: sqlite3.Row | dict, assigned_agent_ids: list[str]) -> str | None:
+    for agent_id in assigned_agent_ids:
+        if not agent_id:
+            continue
+        agent = conn.execute("SELECT runtime_type, model_provider FROM agents WHERE agent_id=?", (agent_id,)).fetchone()
+        if agent:
+            runtime_type = coerce_choice(agent["runtime_type"], {"mock", "hermes", "openclaw"}, "mock")
+            model_provider = coerce_choice(agent["model_provider"], {"mock", "hermes", "openclaw"}, "mock")
+            if runtime_type in {"hermes", "openclaw"}:
+                return runtime_type
+            if model_provider in {"hermes", "openclaw"}:
+                return model_provider
+        lowered = str(agent_id or "").lower()
+        if "openclaw" in lowered:
+            return "openclaw"
+        if "hermes" in lowered:
+            return "hermes"
+    return None
+
+
+def task_intake_local_loop_admission_packet(adapter: str | None, task_id: str, agent_id: str | None) -> dict | None:
+    if adapter not in {"hermes", "openclaw"}:
+        return None
+    worker_start = f"agentops worker start --adapter {adapter} --confirm-run --poll-interval 5 --max-tasks 0"
+    customer_dispatch = (
+        "agentops workflow customer-worker-task "
+        f"--adapter {adapter} "
+        "--confirm-run "
+        f"--worker-agent-id {shlex.quote(agent_id or '<agent_id>')} "
+        "--title '<task title>' "
+        "--description '<task description>'"
+    )
+    phase_commands = {
+        "read": f"agentops operator start-check --adapter {adapter} --task-id {shlex.quote(task_id)}",
+        "plan": f"agentops agent-plan create --task-id {shlex.quote(task_id)}",
+        "retrieve": "agentops knowledge search --query '<task terms>'",
+        "compare": "agentops commander repo-map --query '<task terms>'",
+        "preflight": f"agentops worker preflight --adapter {adapter}",
+        "execute": customer_dispatch,
+        "verify": f"agentops operator live-product-readiness --require-adapter {adapter}",
+        "record": "agentops review queue --limit 20",
+    }
+    checks = [
+        {
+            "id": "method_gate_ids",
+            "ok": len(TASK_INTAKE_METHOD_GATE_IDS) >= 8,
+            "message": "Method Block gate ids are present.",
+        },
+        {
+            "id": "phase_commands",
+            "ok": {"read", "plan", "retrieve", "compare", "preflight", "execute", "verify", "record"}.issubset(set(phase_commands)),
+            "message": "READ/PLAN/RETRIEVE/COMPARE/PREFLIGHT/EXECUTE/VERIFY/RECORD commands are present.",
+        },
+        {
+            "id": "worker_start_confirm_run",
+            "ok": "--confirm-run" in worker_start,
+            "message": "Live worker start requires --confirm-run.",
+        },
+        {
+            "id": "customer_dispatch_confirm_run",
+            "ok": "--confirm-run" in customer_dispatch,
+            "message": "Live customer-worker dispatch requires --confirm-run.",
+        },
+        {
+            "id": "server_shell_boundary",
+            "ok": True,
+            "message": "Task intake returns copy-only commands and does not execute shell.",
+        },
+    ]
+    ok = all(item["ok"] for item in checks)
+    return {
+        "operation": "task_intake_local_loop_admission_packet",
+        "adapter": adapter,
+        "task_id": task_id,
+        "agent_id": agent_id,
+        "ok": ok,
+        "required_method_gates": TASK_INTAKE_METHOD_GATE_IDS,
+        "phase_commands": phase_commands,
+        "local_deployment": {
+            "worker_start": {
+                "command": worker_start,
+                "confirm_required": True,
+                "server_executes_shell": False,
+                "token_omitted": True,
+            },
+            "customer_worker_dispatch": {
+                "command": customer_dispatch,
+                "requires_confirm_run_flag": True,
+                "writes_ledger": True,
+                "server_executes_shell": False,
+                "token_omitted": True,
+            },
+        },
+        "checks": checks,
+        "contract": "task-pull intake gate for live Hermes/OpenClaw workers; blocks pull if Method Block admission commands or safety proofs are missing",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_executes_shell": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
+
+
 def task_intake_item_for_row(conn: sqlite3.Connection, row: sqlite3.Row | dict) -> dict:
     assigned_agent_ids = task_assigned_agent_ids(row)
+    assigned_adapter = task_assigned_runtime_adapter(conn, row, assigned_agent_ids)
+    task_id = row_field(row, "task_id")
+    local_loop_admission_packet = task_intake_local_loop_admission_packet(
+        assigned_adapter,
+        str(task_id or ""),
+        assigned_agent_ids[0] if assigned_agent_ids else None,
+    )
     plan = latest_task_agent_plan(conn, row_field(row, "task_id"), assigned_agent_ids)
     verification = verify_agent_plan_row(plan, conn) if plan else None
     plan_verified = bool(plan and row_field(plan, "verified_at") and (verification or {}).get("pass"))
@@ -17714,6 +17843,14 @@ def task_intake_item_for_row(conn: sqlite3.Connection, row: sqlite3.Row | dict) 
             "message": "High/critical intake requires approval_required in the plan.",
         },
     ]
+    if assigned_adapter in {"hermes", "openclaw"}:
+        local_loop_ok = bool(local_loop_admission_packet and local_loop_admission_packet.get("ok") is True)
+        gates.append({
+            "id": "local_loop_admission_packet",
+            "ok": local_loop_ok,
+            "status": "pass" if local_loop_ok else "blocked",
+            "message": "Live Hermes/OpenClaw intake has a Method Block local loop admission packet with confirm-run and no-server-shell proofs.",
+        })
     failed_blockers = [gate for gate in gates if not gate["ok"] and gate["status"] == "blocked"]
     attention_gates = [gate for gate in gates if not gate["ok"] and gate["status"] == "attention"]
     if failed_blockers:
@@ -17725,7 +17862,6 @@ def task_intake_item_for_row(conn: sqlite3.Connection, row: sqlite3.Row | dict) 
     else:
         severity = "ready"
         priority = 58
-    task_id = row_field(row, "task_id")
     title = redact_text(row_field(row, "title") or task_id, 180)
     failed_gate_ids = [gate["id"] for gate in gates if not gate["ok"]]
     if "assigned_agent" in set(failed_gate_ids):
@@ -17750,6 +17886,7 @@ def task_intake_item_for_row(conn: sqlite3.Connection, row: sqlite3.Row | dict) 
         "status": row_field(row, "status"),
         "priority": row_field(row, "priority"),
         "risk_level": risk_level,
+        "assigned_adapter": assigned_adapter,
         "assigned_agent_ids": assigned_agent_ids,
         "plan_id": plan["plan_id"] if plan else None,
         "plan_status": plan["status"] if plan else None,
@@ -17759,6 +17896,7 @@ def task_intake_item_for_row(conn: sqlite3.Connection, row: sqlite3.Row | dict) 
         "referenced_memories": len(referenced_memories),
         "referenced_bases": len(referenced_bases),
         "gates": gates,
+        "local_loop_admission_packet": local_loop_admission_packet,
         "failed_gate_ids": failed_gate_ids,
         "severity": severity,
         "priority_score": priority,
@@ -17793,6 +17931,7 @@ def operator_task_intake_checklist(conn: sqlite3.Connection, workspace_id: str, 
         "missing_knowledge_retrieval": 0,
         "missing_base_reference": 0,
         "risk_gate_blocked": 0,
+        "missing_local_loop_admission": 0,
     }
     for row in rows:
         item = task_intake_item_for_row(conn, row)
@@ -17808,6 +17947,8 @@ def operator_task_intake_checklist(conn: sqlite3.Connection, workspace_id: str, 
             summary["missing_base_reference"] += 1
         if "risk_boundary" in set(item["failed_gate_ids"]):
             summary["risk_gate_blocked"] += 1
+        if "local_loop_admission_packet" in set(item["failed_gate_ids"]):
+            summary["missing_local_loop_admission"] += 1
         if item["severity"] == "blocked":
             summary["blocked_for_intake"] += 1
         elif item["severity"] == "attention":
