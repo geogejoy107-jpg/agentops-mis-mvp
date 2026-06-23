@@ -141,6 +141,11 @@ customer-usefulness claims require current manual live evidence when local
 Hermes/OpenClaw are available and authorized:
 
 ```bash
+python3 scripts/v1_5_current_code_product_evidence.py \
+  --base-url http://127.0.0.1:<current-code-port> \
+  --db-path /tmp/<current-code-agentops>.db \
+  --confirm-live
+
 python3 scripts/customer_worker_real_runtime_acceptance.py \
   --confirm-live \
   --adapter hermes \
@@ -151,13 +156,21 @@ python3 scripts/v1_5_live_product_readiness_smoke.py \
   --require-adapter openclaw
 ```
 
-Canonical read-only proof command: `python3 scripts/v1_5_live_product_readiness_smoke.py --require-adapter hermes --require-adapter openclaw`.
+Canonical combined current-code proof command:
+`python3 scripts/v1_5_current_code_product_evidence.py --base-url http://127.0.0.1:<current-code-port> --db-path /tmp/<current-code-agentops>.db --confirm-live`.
+
+Canonical read-only proof command:
+`python3 scripts/v1_5_live_product_readiness_smoke.py --require-adapter hermes --require-adapter openclaw`.
 
 The release note or handoff must cite the resulting Hermes/OpenClaw run IDs and
 artifact IDs. The read-only live product-readiness smoke must report
 `product_readiness_proof:true`; it only reads the MIS ledger and does not call
 Hermes/OpenClaw. Mock-only evidence must be described as CI/offline fallback,
 not as product-level completion.
+
+When the current-code server uses an isolated SQLite database, pass the matching
+`--db-path`; some server-backed smokes verify ledger rows directly and will read
+the default repo DB otherwise.
 
 Server-backed commands, including
 `python3 scripts/local_coding_project_template_smoke.py`,
