@@ -63,6 +63,8 @@ def start_server(db_path: Path, port: int, log_path: Path) -> subprocess.Popen:
     env = os.environ.copy()
     env["AGENTOPS_DB_PATH"] = str(db_path)
     env["AGENTOPS_SKIP_SEED_EXPORTS"] = "1"
+    fake_key = "sk-" + "LOOPDRIVERSECRET123"
+    env["HERMES_GATEWAY_URL"] = f"http://127.0.0.1:9/v1?api_key={fake_key}"
     log_fh = log_path.open("w", encoding="utf-8")
     proc = subprocess.Popen(
         [sys.executable, "server.py", "--host", "127.0.0.1", "--port", str(port), "--reset", "--serve"],
@@ -142,8 +144,17 @@ def main() -> int:
             require((preview_payload.get("safety") or {}).get("ledger_mutated") is False, f"preview mutated ledger: {preview_payload}", failures)
             require(before_preview == after_preview, f"preview fingerprint changed: {before_preview} -> {after_preview}", failures)
             initial_brief = preview_payload.get("initial_brief") or {}
+            preview_readiness = preview_payload.get("adapter_readiness") or {}
+            preview_readiness_commands = preview_readiness.get("commands") or {}
+            preview_gate = preview_readiness.get("gate") or {}
             require(initial_brief.get("operation") == "operator_loop_launch_brief", f"initial brief missing: {initial_brief}", failures)
             require((initial_brief.get("policy") or {}).get("server_executes_shell") is False, f"brief server shell boundary missing: {initial_brief}", failures)
+            require(preview_readiness.get("operation") == "operator_loop_driver_adapter_readiness", f"preview readiness missing: {preview_readiness}", failures)
+            require(preview_readiness.get("adapter") == "hermes", f"preview readiness adapter mismatch: {preview_readiness}", failures)
+            require((preview_readiness.get("safety") or {}).get("read_only") is True, f"preview readiness should be read-only: {preview_readiness}", failures)
+            require(preview_readiness_commands.get("adapter_preflight") == "agentops worker preflight --adapter hermes", f"preview preflight command missing: {preview_readiness}", failures)
+            require(preview_gate.get("loop_control_may_continue") is True, f"preview loop-control gate missing: {preview_readiness}", failures)
+            require("agentops worker preflight --adapter hermes" in (preview_payload.get("next_actions") or []), f"preview next actions missing preflight: {preview_payload}", failures)
 
             before_confirm = fingerprint(db_path)
             confirmed = run_cli(
@@ -159,18 +170,28 @@ def main() -> int:
             require(confirmed_payload.get("status") in {"advanced", "empty"}, f"confirm status mismatch: {confirmed_payload}", failures)
             require((confirmed_payload.get("safety") or {}).get("live_execution_performed") is False, f"confirm should not run live work: {confirmed_payload}", failures)
             require((confirmed_payload.get("safety") or {}).get("server_executes_shell") is False, f"server shell boundary missing: {confirmed_payload}", failures)
+            final_readiness = confirmed_payload.get("adapter_readiness") or {}
+            require(final_readiness.get("operation") == "operator_loop_driver_adapter_readiness", f"confirm readiness missing: {final_readiness}", failures)
+            require(final_readiness.get("adapter") == "openclaw", f"confirm readiness adapter mismatch: {final_readiness}", failures)
+            require((final_readiness.get("safety") or {}).get("live_execution_performed") is False, f"confirm readiness live execution boundary missing: {final_readiness}", failures)
             steps = confirmed_payload.get("steps") or []
             require(1 <= len(steps) <= 2, f"unexpected step count: {confirmed_payload}", failures)
             require(after_confirm["operator_action_receipts"] >= before_confirm["operator_action_receipts"] + 1, f"receipt count did not increase: {before_confirm} -> {after_confirm}", failures)
             for step in steps:
                 advance = step.get("advance") or {}
+                before_readiness = step.get("adapter_readiness_before") or {}
+                after_readiness = step.get("adapter_readiness_after") or {}
                 require(advance.get("operation") == "operator_advance_loop", f"step advance missing: {step}", failures)
                 require(str(advance.get("action_command") or "").startswith("agentops "), f"step action command missing: {step}", failures)
                 require(advance.get("receipt_status") in {"verified", "failed", None}, f"step receipt status wrong: {step}", failures)
+                require(before_readiness.get("adapter") == "openclaw", f"step before readiness missing: {step}", failures)
+                require(after_readiness.get("adapter") == "openclaw", f"step after readiness missing: {step}", failures)
+                require((before_readiness.get("safety") or {}).get("server_executes_shell") is False, f"step readiness server shell boundary missing: {step}", failures)
                 require(step.get("token_omitted") is True, f"step token omission missing: {step}", failures)
             final_brief = confirmed_payload.get("final_brief") or {}
             require(final_brief.get("operation") == "operator_loop_launch_brief", f"final brief missing: {final_brief}", failures)
             require((confirmed_payload.get("policy") or {}).get("policy_id") == "advance_loop_local_bounded_v1", f"policy missing: {confirmed_payload}", failures)
+            require((confirmed_payload.get("policy") or {}).get("adapter_preflight_required_before_live_run") is True, f"adapter preflight policy missing: {confirmed_payload}", failures)
         finally:
             stop_server(proc)
     combined = "\n".join(outputs)

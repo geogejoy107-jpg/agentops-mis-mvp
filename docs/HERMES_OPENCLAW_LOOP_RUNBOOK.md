@@ -92,11 +92,16 @@ agentops operator loop-driver --adapter openclaw --max-steps 3 --limit 8 --confi
 
 `loop-driver` is the local copy-only wrapper for repeated loop progress. Without
 `--confirm-loop` it only returns the compact launch brief and proposed safe
-commands. With `--confirm-loop`, it re-reads the brief before each step, calls
-`advance-loop --fast-control --confirm-advance`, records the control readback
-and action receipt evidence, and stops at the bounded `--max-steps` cap. It
-does not grant live runtime execution, workflow dispatch, approvals, or server
-shell execution; Hermes/OpenClaw still copy and run explicit local commands.
+commands plus an `adapter_readiness` gate derived from `agentops worker
+readiness`, including the exact `agentops worker preflight --adapter ...`
+command, adapter trust/readiness state, checks, and live-dispatch blockers.
+With `--confirm-loop`, it re-reads adapter readiness and the launch brief before
+each step, calls `advance-loop --fast-control --confirm-advance`, records the
+control readback and action receipt evidence, and stops at the bounded
+`--max-steps` cap. Readiness gates do not grant live runtime execution,
+workflow dispatch, approvals, or server shell execution; Hermes/OpenClaw still
+copy and run explicit local commands, and live worker dispatch still requires
+`--confirm-run` plus any prepared-action approval required by the task.
 
 Workflow-job recovery from the shared Action Queue:
 

@@ -534,6 +534,25 @@ command for each adapter. It never calls Hermes/OpenClaw, creates tasks, starts
 workers, mutates ledgers, or exposes raw prompts, raw responses, credentials, or
 tokens.
 
+### `agentops operator live-product-readiness`
+
+Returns the operator-facing product-readiness proof from fresh Hermes/OpenClaw
+ledger evidence:
+
+```bash
+agentops operator live-product-readiness
+agentops operator live-product-readiness --require-adapter hermes --require-adapter openclaw
+```
+
+This command reads `/api/operator/live-acceptance` plus `/api/local/readiness`
+and collapses them into `product_readiness_proof`. It exits `0` only when every
+required live adapter has a fresh completed customer-worker run with matching
+tool-call, passing evaluation, runtime event, audit log, customer-worker
+artifact, memory candidate, delivery approval, and verified plan-evidence
+manifest. It exits non-zero with JSON next actions when proof is missing. It is
+read-only: no runtime calls, no task creation, no ledger mutation, no raw
+prompt/response, and no token output.
+
 ### `agentops operator execution-mode`
 
 Reads the current dispatch mode before a human or agent starts a customer task:
@@ -1896,11 +1915,16 @@ commands, and `/workspace/agents` renders copy buttons for those local CLI
 commands without letting the browser or server execute shell.
 `operator loop-driver` is the local CLI loop wrapper for Hermes/OpenClaw/Codex:
 preview mode reads the compact launch brief and policy without writing ledgers;
-confirmed mode runs up to five `advance-loop --fast-control --confirm-advance`
-steps, re-reading the launch brief before each step and relying on the existing
-allowlist, receipts, and control-readback path. It does not create a new server
-shell execution surface and still refuses live/workflow/approval/external-write
-commands through the bounded-runner policy.
+preview mode also reads `agentops worker readiness` into an
+`adapter_readiness` gate with the selected adapter's trust/readiness state,
+checks, `agentops worker preflight --adapter ...` command, and live-dispatch
+blockers. Confirmed mode runs up to five
+`advance-loop --fast-control --confirm-advance` steps, re-reading adapter
+readiness and the launch brief before each step and relying on the existing
+allowlist, receipts, and control-readback path. The readiness gate is read-only
+evidence, not authorization: it does not create a new server shell execution
+surface and still refuses live/workflow/approval/external-write commands through
+the bounded-runner policy.
 
 ```bash
 agentops operator remediate-evidence-gap --run-id run_123

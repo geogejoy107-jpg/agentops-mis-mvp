@@ -235,6 +235,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "operator_live_product_readiness",
+        "command": "python3 scripts/operator_live_product_readiness_smoke.py",
+        "summary": "CLI product-readiness proof reads fresh Hermes/OpenClaw live ledger evidence and fails closed without calling runtimes.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "task_detail_evidence_ui",
         "command": "python3 scripts/task_detail_evidence_ui_smoke.py",
         "summary": "Task detail page exposes delivery evidence state, latest run and approval links.",
