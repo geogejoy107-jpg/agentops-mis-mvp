@@ -749,6 +749,7 @@ export interface LocalRunPathStep {
   confirm_required: boolean;
   writes_ledger: boolean;
   live_execution: boolean;
+  service_control_preview?: boolean;
   copy_only?: boolean;
   server_executes_shell?: boolean;
   token_omitted?: boolean;
@@ -4126,6 +4127,7 @@ export async function loadLocalReadiness(): Promise<LocalReadinessPayload> {
     confirm_required: boolValue(step.confirm_required),
     writes_ledger: boolValue(step.writes_ledger),
     live_execution: boolValue(step.live_execution),
+    service_control_preview: step.service_control_preview === undefined ? undefined : boolValue(step.service_control_preview),
     copy_only: step.copy_only === undefined ? undefined : boolValue(step.copy_only),
     server_executes_shell: step.server_executes_shell === undefined ? undefined : boolValue(step.server_executes_shell),
     token_omitted: step.token_omitted === undefined ? undefined : boolValue(step.token_omitted),

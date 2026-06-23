@@ -5,8 +5,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import socket
 import subprocess
 import sys
+import tempfile
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -14,6 +17,56 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "scripts" / "agentops"
+
+
+def free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def wait_for_server(base_url: str, timeout: float = 45.0) -> None:
+    deadline = time.time() + timeout
+    last_error = ""
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(base_url.rstrip("/") + "/api/dashboard/metrics", timeout=1.0) as resp:
+                if resp.status == 200:
+                    return
+        except Exception as exc:
+            last_error = str(exc)
+            time.sleep(0.25)
+    raise RuntimeError(f"server did not become ready: {last_error}")
+
+
+def start_isolated_server(db_path: Path, port: int, log_path: Path) -> subprocess.Popen:
+    env = os.environ.copy()
+    env["AGENTOPS_DB_PATH"] = str(db_path)
+    env["AGENTOPS_SKIP_SEED_EXPORTS"] = "1"
+    log_fh = log_path.open("w", encoding="utf-8")
+    proc = subprocess.Popen(
+        [sys.executable, "server.py", "--host", "127.0.0.1", "--port", str(port), "--reset", "--serve"],
+        cwd=ROOT,
+        env=env,
+        stdout=log_fh,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    proc._agentops_log_fh = log_fh  # type: ignore[attr-defined]
+    return proc
+
+
+def stop_isolated_server(proc: subprocess.Popen) -> None:
+    if proc.poll() is None:
+        proc.terminate()
+        try:
+            proc.wait(timeout=8)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
+    log_fh = getattr(proc, "_agentops_log_fh", None)
+    if log_fh:
+        log_fh.close()
 
 
 def http_json(base_url: str, path: str) -> tuple[int, dict]:
@@ -115,16 +168,13 @@ def validate(payload: dict) -> None:
     require(security.get("live_execution_performed") is False, "security readiness must not execute live work")
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description="Verify AgentOps MIS local readiness closure.")
-    parser.add_argument("--base-url", default=os.environ.get("AGENTOPS_BASE_URL", "http://127.0.0.1:8787"))
-    args = parser.parse_args()
+def run_checks(base_url: str) -> int:
     try:
-        status_code, api_payload = http_json(args.base_url, "/api/local/readiness")
+        status_code, api_payload = http_json(base_url, "/api/local/readiness")
         require(status_code == 200, f"local readiness API failed: {status_code} {api_payload}")
         validate(api_payload)
 
-        proc = run_cli(args.base_url)
+        proc = run_cli(base_url)
         require(proc.returncode == 0, f"CLI local readiness failed: {proc.stderr or proc.stdout}")
         require(not leaked_secret(proc.stdout + proc.stderr), "CLI local readiness leaked token-like material")
         cli_payload = json.loads(proc.stdout)
@@ -144,6 +194,25 @@ def main() -> int:
     except Exception as exc:
         print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True), file=sys.stderr)
         return 1
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Verify AgentOps MIS local readiness closure.")
+    parser.add_argument("--base-url", default=os.environ.get("AGENTOPS_BASE_URL", "http://127.0.0.1:8787"))
+    parser.add_argument("--isolated-fixture", action="store_true", help="Run against a temporary server and SQLite database.")
+    args = parser.parse_args()
+    if args.isolated_fixture:
+        with tempfile.TemporaryDirectory(prefix="agentops-local-readiness-") as tmp:
+            tmp_path = Path(tmp)
+            port = free_port()
+            base_url = f"http://127.0.0.1:{port}"
+            proc = start_isolated_server(tmp_path / "agentops_mis.db", port, tmp_path / "server.log")
+            try:
+                wait_for_server(base_url)
+                return run_checks(base_url)
+            finally:
+                stop_isolated_server(proc)
+    return run_checks(args.base_url)
 
 
 if __name__ == "__main__":

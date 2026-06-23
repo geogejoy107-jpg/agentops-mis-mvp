@@ -641,6 +641,7 @@ export function AIEmployees() {
   const localEvidence = localReadiness?.evidence;
   const localReadinessActions = localReadiness?.next_actions || [];
   const localRunPath = localReadiness?.local_run_path || [];
+  const localServiceControlStep = localRunPath.find(step => step.service_control_preview || step.step_id === "preview_worker_service_control");
   const synthesisLifecycle = localReadiness?.commander_synthesis_lifecycle;
   const synthesisLifecycleActions = synthesisLifecycle?.next_actions || [];
   const localReadinessGates = localReadiness?.gates || [];
@@ -908,6 +909,10 @@ export function AIEmployees() {
       localReadinessOverall: "Overall status",
       localRunPathTitle: "Local run path",
       localRunPathSummary: "Boot MIS, select Hermes/OpenClaw or mock, start a worker, preview service control, dispatch work, and verify ledger evidence.",
+      serviceControlPreviewTitle: "Service-control preview",
+      serviceControlPreviewSummary: "Preview launchd/systemd control from MIS, then verify with service-check before any confirmed OS mutation.",
+      serviceCheckCommand: "Service check",
+      servicePreviewCommand: "Preview control",
       evidenceChains: "Evidence chains",
       memoryApprovalCounts: "Memory / approvals",
       safetyProof: "Safety proof",
@@ -1463,6 +1468,10 @@ export function AIEmployees() {
       localReadinessOverall: "整体状态",
       localRunPathTitle: "本地运行路径",
       localRunPathSummary: "启动 MIS，选择 Hermes/OpenClaw 或 mock，启动 worker，预览服务控制，分派任务，并验收账本证据。",
+      serviceControlPreviewTitle: "服务控制预览",
+      serviceControlPreviewSummary: "先从 MIS 复制 launchd/systemd 控制预览，再用 service-check 验证，确认前不改变本机服务状态。",
+      serviceCheckCommand: "服务自检",
+      servicePreviewCommand: "预览控制",
       evidenceChains: "证据闭环",
       memoryApprovalCounts: "记忆 / 审批",
       safetyProof: "安全证明",
@@ -6380,6 +6389,52 @@ export function AIEmployees() {
               ))}
             </div>
           </div>
+
+          {localServiceControlStep && (
+            <div className="rounded p-2 mt-3" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+              <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Power size={12} style={{ color: "var(--mis-cyan)" }} />
+                    <div className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.serviceControlPreviewTitle}</div>
+                    <StatusBadge status={localServiceControlStep.status || "preview"} />
+                    <StatusBadge status={localServiceControlStep.server_executes_shell === false ? "pass" : "blocked"} label={localServiceControlStep.server_executes_shell === false ? "no server shell" : "server shell"} />
+                    <StatusBadge status={localServiceControlStep.writes_ledger ? "blocked" : "pass"} label={localServiceControlStep.writes_ledger ? "ledger write" : "no ledger write"} />
+                  </div>
+                  <div className="text-[9px] mt-1 line-clamp-2" style={{ color: "var(--mis-dim)" }}>
+                    {localServiceControlStep.detail || copy.serviceControlPreviewSummary}
+                  </div>
+                </div>
+                <StatusBadge status={localServiceControlStep.confirm_required ? "attention" : "pass"} label={localServiceControlStep.confirm_required ? copy.confirmRequired : "preview-only"} />
+              </div>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 mt-2">
+                <button
+                  type="button"
+                  onClick={() => void copyIntakeCommand(localServiceControlStep.command)}
+                  className="flex items-center gap-1 rounded px-2 py-1 text-left min-w-0"
+                  style={{ color: "var(--mis-text)", background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}
+                  title={localServiceControlStep.command}
+                >
+                  <Copy size={9} />
+                  <span className="text-[9px] font-semibold shrink-0">{copy.servicePreviewCommand}</span>
+                  <span className="text-[8px] truncate" style={{ color: "var(--mis-muted)" }}>{copiedIntakeCommand === localServiceControlStep.command ? copy.copiedCommand : localServiceControlStep.command}</span>
+                </button>
+                {localServiceControlStep.verify_command && (
+                  <button
+                    type="button"
+                    onClick={() => void copyIntakeCommand(String(localServiceControlStep.verify_command))}
+                    className="flex items-center gap-1 rounded px-2 py-1 text-left min-w-0"
+                    style={{ color: "var(--mis-text)", background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}
+                    title={String(localServiceControlStep.verify_command)}
+                  >
+                    <Copy size={9} />
+                    <span className="text-[9px] font-semibold shrink-0">{copy.serviceCheckCommand}</span>
+                    <span className="text-[8px] truncate" style={{ color: "var(--mis-muted)" }}>{copiedIntakeCommand === localServiceControlStep.verify_command ? copy.copiedCommand : localServiceControlStep.verify_command}</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
 
           {localRunPath.length > 0 && (
             <div className="mt-3 rounded p-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
