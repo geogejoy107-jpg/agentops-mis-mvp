@@ -82,6 +82,25 @@ def http_json(base_url: str, path: str) -> tuple[int, dict]:
         return exc.code, body
 
 
+def http_post_json(base_url: str, path: str, payload: dict) -> tuple[int, dict]:
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        base_url.rstrip("/") + path,
+        data=data,
+        headers={"Accept": "application/json", "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            return resp.status, json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        try:
+            body = json.loads(exc.read().decode("utf-8"))
+        except Exception:
+            body = {"error": exc.reason}
+        return exc.code, body
+
+
 def run_cli(base_url: str) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env.pop("AGENTOPS_API_KEY", None)
@@ -175,11 +194,71 @@ def validate(payload: dict) -> None:
     require(security.get("live_execution_performed") is False, "security readiness must not execute live work")
 
 
-def run_checks(base_url: str) -> int:
+def exercise_service_control_receipt_readback(base_url: str, payload: dict) -> dict:
+    local_run_path = payload.get("local_run_path") or []
+    service_step = next((step for step in local_run_path if step.get("step_id") == "preview_worker_service_control"), {})
+    receipt_status, receipt_payload = http_post_json(base_url, "/api/operator/action-receipts", {
+        "action_command": service_step.get("command"),
+        "verify_command": service_step.get("verify_command"),
+        "action_id": service_step.get("step_id"),
+        "action_signature": service_step.get("action_signature"),
+        "source": service_step.get("source") or "local_readiness.service_control_preview",
+        "status": "verified",
+        "result_summary": "Worker service-control preview inspected and service-check reviewed.",
+    })
+    require(receipt_status == 201, f"service-control receipt record failed: {receipt_status} {receipt_payload}")
+    receipt = receipt_payload.get("receipt") or {}
+    receipt_id = receipt.get("receipt_id")
+    require(str(receipt_id or ""), f"service-control receipt id missing: {receipt_payload}")
+    require(receipt.get("status") == "verified", f"service-control receipt should be verified: {receipt}")
+    require(receipt.get("source") == "local_readiness.service_control_preview", f"service-control source mismatch: {receipt}")
+    readback_status, readback_payload = http_post_json(base_url, "/api/operator/action-receipts/control-readback", {
+        "receipt_id": receipt_id,
+        "source": "local_readiness.service_control_preview.control_readback",
+        "control_readback": {
+            "before": {
+                "step_id": service_step.get("step_id"),
+                "status": service_step.get("status"),
+                "service_control_preview": True,
+            },
+            "after": {
+                "verify_command": service_step.get("verify_command"),
+                "service_check_expected": True,
+                "confirmed_os_mutation": False,
+            },
+            "self_check": {
+                "copy_only": True,
+                "server_executes_shell": False,
+                "live_execution_performed": False,
+                "token_omitted": True,
+            },
+            "cache": {
+                "refresh_cache_required_after_receipt": True,
+            },
+            "token_omitted": True,
+        },
+    })
+    require(readback_status == 201, f"service-control readback record failed: {readback_status} {readback_payload}")
+    status_code, reread_payload = http_json(base_url, "/api/local/readiness")
+    require(status_code == 200, f"local readiness reread failed: {status_code} {reread_payload}")
+    validate(reread_payload)
+    updated_step = next((step for step in (reread_payload.get("local_run_path") or []) if step.get("step_id") == "preview_worker_service_control"), {})
+    receipt_state = updated_step.get("receipt_state") or {}
+    require(receipt_state.get("verified") is True, f"service-control receipt not read back as verified: {updated_step}")
+    require(receipt_state.get("control_readback_attached") is True, f"service-control control readback not attached: {updated_step}")
+    require(str(receipt_state.get("control_readback_hash") or ""), f"service-control control readback hash missing: {updated_step}")
+    return reread_payload
+
+
+def run_checks(base_url: str, *, exercise_writeback: bool = False) -> int:
     try:
         status_code, api_payload = http_json(base_url, "/api/local/readiness")
         require(status_code == 200, f"local readiness API failed: {status_code} {api_payload}")
         validate(api_payload)
+        receipt_readback_exercised = False
+        if exercise_writeback:
+            api_payload = exercise_service_control_receipt_readback(base_url, api_payload)
+            receipt_readback_exercised = True
 
         proc = run_cli(base_url)
         require(proc.returncode == 0, f"CLI local readiness failed: {proc.stderr or proc.stdout}")
@@ -194,6 +273,7 @@ def run_checks(base_url: str) -> int:
             "gate_count": len(api_payload.get("gates") or []),
             "closed_loop_runs": (api_payload.get("evidence") or {}).get("closed_loop_runs"),
             "recommended_adapter": (api_payload.get("adapter_readiness") or {}).get("recommended_adapter"),
+            "service_control_receipt_readback_exercised": receipt_readback_exercised,
             "secret_leaked": False,
         }
         print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
@@ -216,7 +296,7 @@ def main() -> int:
             proc = start_isolated_server(tmp_path / "agentops_mis.db", port, tmp_path / "server.log")
             try:
                 wait_for_server(base_url)
-                return run_checks(base_url)
+                return run_checks(base_url, exercise_writeback=True)
             finally:
                 stop_isolated_server(proc)
     return run_checks(args.base_url)
