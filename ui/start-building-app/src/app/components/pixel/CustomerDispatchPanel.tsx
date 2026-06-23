@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
-import { Archive, CheckCircle2, ClipboardCheck, Clock3, Loader2, Play, RefreshCw, ShieldCheck } from "lucide-react";
+import { Archive, CheckCircle2, ClipboardCheck, Clock3, Copy, Loader2, Play, RefreshCw, ShieldCheck } from "lucide-react";
 import type { Agent } from "../../data/mockData";
 import {
   loadWorkflowJobs,
   loadCustomerTaskTemplates,
+  loadOperatorExecutionMode,
   persistCustomerProjectReportArtifact,
   runCustomerTaskTemplateWorkflow,
   runCustomerTaskWorkflow,
@@ -15,6 +16,7 @@ import {
   type CustomerProjectReportArtifactResult,
   type CustomerTaskWorkflowResult,
   type KbBotProjectWorkflowResult,
+  type OperatorExecutionModePayload,
   type WorkflowJob,
 } from "../../data/liveApi";
 import type { PixelLocale } from "./pixelModel";
@@ -79,6 +81,8 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
   const [reportArtifact, setReportArtifact] = useState<CustomerProjectReportArtifactResult | null>(null);
   const [workflowJobs, setWorkflowJobs] = useState<WorkflowJob[]>([]);
   const [templates, setTemplates] = useState<CustomerTaskTemplate[]>([]);
+  const [executionMode, setExecutionMode] = useState<OperatorExecutionModePayload | null>(null);
+  const [copiedExecutionCommand, setCopiedExecutionCommand] = useState(false);
   const [selectedTemplateId, setSelectedTemplateId] = useState("tpl_customer_kb_qa_bot");
   const [workerAdapter, setWorkerAdapter] = useState<(typeof workerAdapters)[number]>("hermes");
   const [liveRuntimeConfirmed, setLiveRuntimeConfirmed] = useState(false);
@@ -110,6 +114,16 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
           : "Hermes/OpenClaw require the explicit confirmation checkbox; until then use dry-run or mock ledger writes.",
         tone: "warning",
       };
+  const executionModeSummary = executionMode?.summary;
+  const executionModeCommand = executionMode?.commands?.execution_mode || `agentops operator execution-mode --adapter ${workerAdapter}${liveRuntimeConfirmed ? " --confirm-run" : ""}`;
+  const executionModeStatus = executionMode?.status || (liveAdapterConfirmMissing ? "attention" : workerAdapter === "mock" ? "planned" : "ready");
+  const executionModeRoute = executionMode?.selected_route;
+  const executionModePath = executionMode?.selected_path || executionModeSummary?.selected_path || customerDispatchMode.key;
+  const copyExecutionModeCommand = async () => {
+    await navigator.clipboard?.writeText(executionModeCommand);
+    setCopiedExecutionCommand(true);
+    window.setTimeout(() => setCopiedExecutionCommand(false), 1400);
+  };
   const safeDryRunLabel = zh ? "safe_dry_run：只做安全预演" : "safe_dry_run: preview only";
   const approvalPreparedActionLabel = zh ? "approval_prepared_action：外部写入需审批后精确恢复" : "approval_prepared_action: external writes require approval before exact resume";
   const resultLedgerState = result?.dry_run
@@ -154,6 +168,20 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
   useEffect(() => {
     void refreshWorkflowJobs().catch(() => setWorkflowJobs([]));
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    loadOperatorExecutionMode(workerAdapter, liveRuntimeConfirmed, 8)
+      .then((payload) => {
+        if (!cancelled) setExecutionMode(payload);
+      })
+      .catch(() => {
+        if (!cancelled) setExecutionMode(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [workerAdapter, liveRuntimeConfirmed]);
 
   const selectedTemplate = useMemo(
     () => templates.find((template) => template.template_id === selectedTemplateId),
@@ -575,6 +603,54 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
           </div>
           <div className="mt-1" style={{ color: "var(--mis-muted)" }}>{customerDispatchMode.body}</div>
           <div className="mt-1" style={{ color: "var(--mis-dim)" }}>{safeDryRunLabel} · {approvalPreparedActionLabel}</div>
+        </div>
+        <div
+          data-testid="pixel-customer-execution-mode"
+          className="basis-full rounded p-2 text-[10px] leading-relaxed"
+          style={{
+            background: executionModeStatus === "blocked"
+              ? "rgba(248,113,113,0.08)"
+              : executionModeStatus === "attention"
+                ? "rgba(251,191,36,0.08)"
+                : "rgba(34,211,238,0.08)",
+            color: "var(--mis-text)",
+            border: executionModeStatus === "blocked"
+              ? "1px solid rgba(248,113,113,0.22)"
+              : executionModeStatus === "attention"
+                ? "1px solid rgba(251,191,36,0.24)"
+                : "1px solid rgba(34,211,238,0.22)",
+          }}
+        >
+          <div className="flex flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2 font-semibold">
+                <ShieldCheck size={12} style={{ color: executionModeStatus === "attention" ? "#FBBF24" : "var(--mis-cyan)" }} />
+                <span>{zh ? "后端执行模式" : "Backend execution mode"}</span>
+                <span className="rounded px-1.5 py-0.5" style={{ background: "rgba(148,163,184,0.12)", color: "var(--mis-dim)" }}>{executionModeStatus}</span>
+                <span className="rounded px-1.5 py-0.5" style={{ background: "rgba(42,157,143,0.12)", color: "var(--mis-success)" }}>
+                  {executionMode?.safety?.read_only ? (zh ? "只读" : "read-only") : (zh ? "需检查" : "check")}
+                </span>
+              </div>
+              <div className="mt-1 truncate" style={{ color: "var(--mis-muted)" }}>
+                {workerAdapter} · {executionModePath} · {executionModeRoute?.readiness || executionModeSummary?.adapter_readiness || "unknown"} · {executionModeRoute?.trust_status || executionModeSummary?.trust_status || "trust:unknown"}
+              </div>
+              <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1" style={{ color: "var(--mis-dim)" }}>
+                <span>{zh ? "确认墙" : "confirm wall"}: {executionModeSummary?.confirm_run_wall || (liveAdapterConfirmMissing ? "attention" : "pass")}</span>
+                <span>{zh ? "审批墙" : "approval wall"}: {executionModeSummary?.prepared_action_wall || "planned"}</span>
+                <span>{zh ? "待审批" : "pending approvals"}: {executionModeSummary?.pending_approvals ?? 0}</span>
+                <span>{zh ? "异步 Job" : "async jobs"}: {executionModeSummary?.active_workflow_jobs ?? workflowJobs.length}</span>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => void copyExecutionModeCommand()}
+              className="inline-flex shrink-0 items-center gap-1.5 rounded px-2 py-1 text-[10px]"
+              style={{ background: "rgba(34,211,238,0.10)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.22)" }}
+            >
+              <Copy size={11} />
+              {copiedExecutionCommand ? (zh ? "已复制" : "Copied") : (zh ? "复制命令" : "Copy command")}
+            </button>
+          </div>
         </div>
         <button
           type="button"

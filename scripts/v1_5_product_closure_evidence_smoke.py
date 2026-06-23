@@ -203,6 +203,8 @@ def main() -> int:
                 "ui/start-building-app/src/app/components/pages/TaskDetail.tsx": ["Delivery Evidence Summary", "交付证据摘要", "evidenceCounts"],
                 "ui/start-building-app/src/app/components/pixel/CustomerDispatchPanel.tsx": [
                     "loadCustomerTaskTemplates",
+                    "loadOperatorExecutionMode",
+                    "pixel-customer-execution-mode",
                     "runCustomerTaskTemplateWorkflow",
                     "submitCustomerTaskTemplateJob",
                 ],
