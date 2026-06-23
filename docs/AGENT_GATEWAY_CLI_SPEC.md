@@ -1772,6 +1772,9 @@ or `--full-handoff` switches the packet to deeper `operator handoff`
 diagnostics. The payload exposes `sources.operator_control` and a
 backward-compatible `sources.handoff` alias so older agents still find the
 control source while newer agents can branch on `summary.handoff_mode`.
+On large local ledgers, full handoff may be slow; prefer the default lightweight
+mode for normal loops, or pair full mode with a low `--limit` / higher
+`--request-timeout` for deliberate diagnostics.
 It emits commands for loop self-check, knowledge search, commander repo-map
 localization, plan creation/verification, intake comparison, enforced task
 pull, loop verification, plan-evidence binding, evidence reporting, Action
