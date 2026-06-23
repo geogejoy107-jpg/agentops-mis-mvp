@@ -1434,7 +1434,7 @@ export function AIEmployees() {
       afterQueueCompleted: "排队后完成",
       retryWorkflowJob: "重试 Job",
       retryingWorkflowJob: "正在重试...",
-      markLaneJobFailed: "标记 Job failed",
+      markLaneJobFailed: "标记 Job 失败",
       persistedPackages: "持久化工作包",
       packageReadback: "工作包读回",
       packageStatus: "工作包状态",
