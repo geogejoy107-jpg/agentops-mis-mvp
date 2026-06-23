@@ -85,9 +85,11 @@ def create_verified_plan(base_url: str, agent_id: str, task_id: str) -> str:
     return str(plan_id)
 
 
-def smoke(base_url: str, stamp: str) -> dict:
-    agent_id = f"agt_worker_stuck_{stamp}"
-    task_id = f"tsk_worker_stuck_{stamp}"
+def smoke(base_url: str, stamp: str, *, customer_worker: bool = False) -> dict:
+    agent_prefix = "agt_customer_worker_stuck" if customer_worker else "agt_worker_stuck"
+    task_prefix = "tsk_customer_worker_stuck" if customer_worker else "tsk_worker_stuck"
+    agent_id = f"{agent_prefix}_{stamp}"
+    task_id = f"{task_prefix}_{stamp}"
     token_id = None
     try:
         status, created = http_json("POST", base_url, "/api/agent-gateway/enrollment/create", {
@@ -150,6 +152,7 @@ def smoke(base_url: str, stamp: str) -> dict:
             "agent_id": agent_id,
             "task_id": task_id,
             "run_id": run_id,
+            "customer_worker": customer_worker,
             "released_runs": released.get("released_runs", []),
             "task_status_after": task_after.get("status"),
             "run_status_after": released_run.get("status"),
@@ -164,7 +167,15 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Verify stuck worker task recovery.")
     parser.add_argument("--base-url", default="http://127.0.0.1:8787")
     args = parser.parse_args(argv)
-    result = {"ok": True, "base_url": args.base_url, "smoke": smoke(args.base_url, now_stamp())}
+    first_stamp = now_stamp()
+    result = {
+        "ok": True,
+        "base_url": args.base_url,
+        "smokes": [
+            smoke(args.base_url, first_stamp),
+            smoke(args.base_url, f"{first_stamp}_customer", customer_worker=True),
+        ],
+    }
     print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
     return 0
 

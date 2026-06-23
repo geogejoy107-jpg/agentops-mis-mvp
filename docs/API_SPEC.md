@@ -442,13 +442,18 @@ ledgers/connectors, or exposes tokens/raw prompts/raw responses.
 
 `GET /api/operator/live-acceptance` is the read-only Hermes/OpenClaw live
 customer-worker acceptance freshness projection. It samples recent local worker
-runs per adapter and checks tool calls, evaluations, runtime events, audit logs,
-artifacts, memory candidates, approvals, and verified plan-evidence manifests.
-Each adapter returns `fresh`, `stale`, `missing`, `latest_failed`, or
-`latest_incomplete` plus a manual `customer_worker_real_runtime_acceptance.py
---confirm-live` command. It requires `tasks:read` for supplied Agent Gateway
-tokens/sessions and never calls runtimes, starts workers, creates tasks, mutates
-ledgers, or exposes tokens/raw prompts/raw responses.
+runs per adapter, including in-flight `agt_customer_worker_*` attempts before a
+delivery artifact exists, and checks tool calls, evaluations, runtime events,
+audit logs, artifacts, memory candidates, approvals, and verified
+plan-evidence manifests. Each adapter returns `fresh`, `stale`, `missing`,
+`latest_failed`, or `latest_incomplete`, with `latest_attempt`,
+`latest_passing`, optional `active_attempt`, and a manual
+`customer_worker_real_runtime_acceptance.py --confirm-live ... --hermes-max-tokens 512`
+command. Active attempts are visible for scheduling and duplicate-run
+avoidance, but they do not pass readiness until the run is completed and the
+delivery artifact/evidence chain exists. It requires `tasks:read` for supplied
+Agent Gateway tokens/sessions and never calls runtimes, starts workers, creates
+tasks, mutates ledgers, or exposes tokens/raw prompts/raw responses.
 
 `GET /api/operator/execution-mode` is the read-only dispatch-mode projection
 used by UI, CLI operators, and external agents before choosing a worker path.

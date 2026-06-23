@@ -1855,6 +1855,7 @@ def cmd_workflow_customer_worker_task(args, client: AgentOpsClient) -> dict:
         "selected_agent_ids": args.selected_agent_id or [],
         "worker_agent_id": args.worker_agent_id,
         "hermes_timeout": args.hermes_timeout,
+        "hermes_max_tokens": args.hermes_max_tokens,
         "adapter_max_attempts": args.adapter_max_attempts,
         "adapter_retry_delay_sec": args.adapter_retry_delay_sec,
         "external_write_intent": bool(args.external_write_intent),
@@ -2054,6 +2055,8 @@ def cmd_workflow_run_task(args, client: AgentOpsClient) -> dict:
         worker_argv.extend(["--hermes-gateway-url", args.hermes_gateway_url])
     if args.hermes_timeout is not None:
         worker_argv.extend(["--hermes-timeout", str(args.hermes_timeout)])
+    if args.hermes_max_tokens is not None:
+        worker_argv.extend(["--hermes-max-tokens", str(args.hermes_max_tokens)])
     if args.openclaw_bin:
         worker_argv.extend(["--openclaw-bin", args.openclaw_bin])
     if args.openclaw_timeout is not None:
@@ -3226,6 +3229,7 @@ def build_parser() -> argparse.ArgumentParser:
     customer_worker.add_argument("--selected-agent-id", action="append", default=None, help="Optional business agent id to record as selected context. Repeatable.")
     customer_worker.add_argument("--worker-agent-id", default=None, help="Optional exact worker agent id. Defaults to a unique id per dispatch.")
     customer_worker.add_argument("--hermes-timeout", type=int, default=300)
+    customer_worker.add_argument("--hermes-max-tokens", type=int, default=int(os.environ.get("HERMES_MAX_TOKENS", "512")))
     customer_worker.add_argument("--adapter-max-attempts", type=int, default=None, help="Maximum live adapter attempts for retryable failures.")
     customer_worker.add_argument("--adapter-retry-delay-sec", type=float, default=None, help="Delay between retryable live adapter attempts.")
     customer_worker.add_argument("--external-write-intent", action="store_true", help="Declare that the live runtime task intends to publish/upload/write to an external target; opaque runtimes will create a prepared action instead of running immediately.")
@@ -3254,6 +3258,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_task.add_argument("--adapter-retry-delay-sec", type=float, default=1.0)
     run_task.add_argument("--hermes-gateway-url", default=os.environ.get("HERMES_GATEWAY_URL", "http://127.0.0.1:8642"))
     run_task.add_argument("--hermes-timeout", type=int, default=300)
+    run_task.add_argument("--hermes-max-tokens", type=int, default=int(os.environ.get("HERMES_MAX_TOKENS", "512")))
     run_task.add_argument("--openclaw-bin", default=os.environ.get("OPENCLAW_BIN", "/opt/homebrew/bin/openclaw"))
     run_task.add_argument("--openclaw-timeout", type=int, default=180)
     run_task.set_defaults(handler="workflow_run_task")

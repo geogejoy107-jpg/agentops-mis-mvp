@@ -520,14 +520,19 @@ agentops operator live-acceptance --freshness-hours 72 --limit 8
 
 Maps to `GET /api/operator/live-acceptance`. The command anchors on recent
 `customer_worker_result` delivery artifacts for local Hermes/OpenClaw customer
-worker runs, then checks the same run for matching adapter tool-call,
-evaluation, runtime-event, audit, memory, approval, and verified
+worker runs and also surfaces active `agt_customer_worker_*` worker attempts
+before their artifact exists. It checks the same run for matching adapter
+tool-call, evaluation, runtime-event, audit, memory, approval, and verified
 plan-evidence-manifest evidence. It returns adapter status as `fresh`, `stale`,
-`missing`, `latest_failed`, or `latest_incomplete`, plus the latest artifact and
-manifest ids when present. It also returns the manual
-`customer_worker_real_runtime_acceptance.py --confirm-live` command for each
-adapter. It never calls Hermes/OpenClaw, creates tasks, starts workers, mutates
-ledgers, or exposes raw prompts, raw responses, credentials, or tokens.
+`missing`, `latest_failed`, or `latest_incomplete`, plus `latest_attempt`,
+`latest_passing`, `active_attempt`, artifact ids, and manifest ids when
+present. Active attempts are visible for operators but never count as passing
+until the run is completed and the delivery artifact/evidence chain exists. It
+also returns the manual
+`customer_worker_real_runtime_acceptance.py --confirm-live ... --hermes-max-tokens 512`
+command for each adapter. It never calls Hermes/OpenClaw, creates tasks, starts
+workers, mutates ledgers, or exposes raw prompts, raw responses, credentials, or
+tokens.
 
 ### `agentops operator execution-mode`
 
@@ -954,11 +959,18 @@ Hermes/OpenClaw live execution still requires explicit confirmation:
 
 ```bash
 agentops workflow customer-worker-task \
-  --adapter openclaw \
+  --adapter hermes \
   --confirm-run \
+  --hermes-timeout 600 \
+  --hermes-max-tokens 512 \
   --title "Optimize AgentOps MIS customer workspace" \
-  --description "Use local OpenClaw to produce product recommendations."
+  --description "Use local Hermes to produce product recommendations."
 ```
+
+For Hermes, `--hermes-timeout` bounds the local gateway request and
+`--hermes-max-tokens` caps the OpenAI-compatible completion budget. The default
+max-token cap is `HERMES_MAX_TOKENS` or `512`, clamped between `64` and `4096`,
+which keeps acceptance runs from drifting into long unbounded summaries.
 
 Confirmed Hermes/OpenClaw tasks that intend to publish, upload, deploy, send,
 or otherwise write to an external target must declare the external-write
@@ -1086,11 +1098,13 @@ Hermes/OpenClaw live execution still requires explicit confirmation:
 
 ```bash
 agentops workflow run-task \
-  --adapter openclaw \
+  --adapter hermes \
   --confirm-run \
-  --worker-agent-id agt_openclaw_builder \
+  --worker-agent-id agt_hermes_builder \
+  --hermes-timeout 600 \
+  --hermes-max-tokens 512 \
   --title "Optimize AgentOps MIS customer workspace" \
-  --description "Use local OpenClaw to produce product recommendations."
+  --description "Use local Hermes to produce product recommendations."
 ```
 
 The command returns JSON with `task_id`, `run_id`, `run_status`,

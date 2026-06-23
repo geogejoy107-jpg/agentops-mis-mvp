@@ -41,6 +41,7 @@ DEFAULT_WORKSPACE_ID = "local-demo"
 DEFAULT_AGENT_ID = "agt_worker_local"
 DEFAULT_HERMES_GATEWAY_URL = "http://127.0.0.1:8642"
 DEFAULT_HERMES_MODEL = "hermes-agent"
+DEFAULT_HERMES_MAX_TOKENS = int(os.environ.get("HERMES_MAX_TOKENS", "512"))
 DEFAULT_OPENCLAW_BIN = "/opt/homebrew/bin/openclaw"
 WORKER_SECRET_BOUNDARY_VERSION = "trusted_worker_client_v1"
 
@@ -350,7 +351,7 @@ def execute_mock(task: dict, attempt: int = 1, fail_before_success: int = 0) -> 
     )
 
 
-def execute_hermes(task: dict, gateway_url: str, model: str, timeout: int, confirm_run: bool) -> AdapterResult:
+def execute_hermes(task: dict, gateway_url: str, model: str, timeout: int, confirm_run: bool, max_tokens: int) -> AdapterResult:
     prompt = build_task_prompt(task)
     if not confirm_run:
         return AdapterResult(
@@ -366,6 +367,7 @@ def execute_hermes(task: dict, gateway_url: str, model: str, timeout: int, confi
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0,
+        "max_tokens": min(max(int(max_tokens or DEFAULT_HERMES_MAX_TOKENS), 64), 4096),
     }
     started = time.time()
     try:
@@ -459,7 +461,7 @@ def execute_adapter_once(task: dict, args, attempt: int) -> AdapterResult:
     if args.adapter == "mock":
         return execute_mock(task, attempt=attempt, fail_before_success=args.mock_failures_before_success)
     if args.adapter == "hermes":
-        return execute_hermes(task, args.hermes_gateway_url, args.hermes_model, args.hermes_timeout, args.confirm_run)
+        return execute_hermes(task, args.hermes_gateway_url, args.hermes_model, args.hermes_timeout, args.confirm_run, args.hermes_max_tokens)
     if args.adapter == "openclaw":
         return execute_openclaw(task, args.openclaw_bin, args.openclaw_agent, args.openclaw_timeout, args.confirm_run)
     raise RuntimeError(f"unknown adapter: {args.adapter}")
@@ -838,6 +840,7 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
             "effective_risk_level": tool_risk,
             "commercial_readiness": capability.get("commercial_readiness"),
             "requires_prepared_action_for_external_write": capability.get("requires_prepared_action_for_external_write"),
+            "hermes_max_tokens": args.hermes_max_tokens if args.adapter == "hermes" else None,
             "raw_omitted": True,
             **secret_boundary,
         },
@@ -990,6 +993,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--hermes-gateway-url", default=os.environ.get("HERMES_GATEWAY_URL", DEFAULT_HERMES_GATEWAY_URL))
     parser.add_argument("--hermes-model", default=os.environ.get("HERMES_MODEL", DEFAULT_HERMES_MODEL))
     parser.add_argument("--hermes-timeout", type=int, default=int(os.environ.get("HERMES_TIMEOUT", "180")))
+    parser.add_argument("--hermes-max-tokens", type=int, default=DEFAULT_HERMES_MAX_TOKENS)
     parser.add_argument("--openclaw-bin", default=os.environ.get("OPENCLAW_BIN", DEFAULT_OPENCLAW_BIN))
     parser.add_argument("--openclaw-agent", default=os.environ.get("OPENCLAW_AGENT", "main"))
     parser.add_argument("--openclaw-timeout", type=int, default=int(os.environ.get("OPENCLAW_TIMEOUT", "180")))

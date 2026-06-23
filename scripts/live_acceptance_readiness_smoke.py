@@ -67,9 +67,11 @@ def add_attempt(
     eval_pass: bool,
     manifest_status: str,
     include_artifact: bool = True,
+    ended_hours_delta: float | None = None,
 ) -> dict:
     agent_id = seed_identity(conn, workspace_id, adapter, suffix)
     created_at = iso(hours_delta)
+    ended_at = iso(ended_hours_delta if ended_hours_delta is not None else hours_delta) if run_status != "running" else None
     task_id = f"tsk_{workspace_id}_{adapter}_{suffix}"
     run_id = f"run_{workspace_id}_{adapter}_{suffix}"
     plan_id = f"plan_{workspace_id}_{adapter}_{suffix}"
@@ -143,7 +145,7 @@ def add_attempt(
             adapter,
             run_status,
             created_at,
-            created_at if run_status != "running" else None,
+            ended_at,
             1000,
             "Fixture input summary.",
             "Fixture output summary.",
@@ -338,11 +340,13 @@ def main() -> int:
             require((stale.get("adapters") or {}).get("openclaw", {}).get("status") == "stale", f"stale classification failed: {stale}", failures)
 
             add_attempt(conn, workspace_id="ws_fresh", adapter="openclaw", suffix="fresh_pass", hours_delta=-1, run_status="completed", tool_status="completed", eval_pass=True, manifest_status="verified")
+            add_attempt(conn, workspace_id="ws_fresh", adapter="openclaw", suffix="old_released_after_fresh", hours_delta=-2, ended_hours_delta=-0.1, run_status="blocked", tool_status="failed", eval_pass=False, manifest_status="blocked", include_artifact=False)
             add_attempt(conn, workspace_id="ws_fresh", adapter="hermes", suffix="fresh_pass", hours_delta=-1, run_status="completed", tool_status="completed", eval_pass=True, manifest_status="verified")
             fresh = server.live_acceptance_readiness(conn, "ws_fresh", freshness_hours=72)
             require(fresh.get("status") == "ready", f"fresh ready classification failed: {fresh}", failures)
             require((fresh.get("summary") or {}).get("fresh") == 2, f"fresh summary failed: {fresh}", failures)
             require((fresh.get("adapters") or {}).get("openclaw", {}).get("latest_passing", {}).get("artifact_id"), f"fresh artifact id missing: {fresh}", failures)
+            require((fresh.get("adapters") or {}).get("openclaw", {}).get("latest_attempt", {}).get("run_id", "").endswith("fresh_pass"), f"attempt ordering should use started_at, not late release time: {fresh}", failures)
             require((fresh.get("adapters") or {}).get("hermes", {}).get("latest_passing", {}).get("plan_evidence_manifest_id"), f"fresh manifest id missing: {fresh}", failures)
 
             add_attempt(conn, workspace_id="ws_latest_failed", adapter="openclaw", suffix="fresh_pass", hours_delta=-1, run_status="completed", tool_status="completed", eval_pass=True, manifest_status="verified")
@@ -355,7 +359,23 @@ def main() -> int:
             incomplete = server.live_acceptance_readiness(conn, "ws_incomplete", freshness_hours=72)
             require((incomplete.get("adapters") or {}).get("hermes", {}).get("status") == "latest_incomplete", f"latest_incomplete classification failed: {incomplete}", failures)
 
-            serialized = json.dumps([missing, stale, fresh, failed, incomplete], ensure_ascii=False)
+            add_attempt(conn, workspace_id="ws_in_flight", adapter="hermes", suffix="running_no_artifact", hours_delta=-0.1, run_status="running", tool_status="completed", eval_pass=True, manifest_status="verified", include_artifact=False)
+            in_flight = server.live_acceptance_readiness(conn, "ws_in_flight", freshness_hours=72)
+            hermes_in_flight = (in_flight.get("adapters") or {}).get("hermes", {})
+            require(hermes_in_flight.get("status") == "latest_incomplete", f"in-flight classification failed: {in_flight}", failures)
+            require((hermes_in_flight.get("active_attempt") or {}).get("active") is True, f"in-flight active attempt missing: {in_flight}", failures)
+            require((hermes_in_flight.get("active_attempt") or {}).get("artifact_id") is None, f"in-flight attempt should not require artifact yet: {in_flight}", failures)
+            require((hermes_in_flight.get("active_attempt") or {}).get("pass") is False, f"in-flight attempt should not pass without artifact: {in_flight}", failures)
+
+            add_attempt(conn, workspace_id="ws_released_old", adapter="openclaw", suffix="fresh_pass", hours_delta=-0.2, run_status="completed", tool_status="completed", eval_pass=True, manifest_status="verified")
+            released_old = add_attempt(conn, workspace_id="ws_released_old", adapter="openclaw", suffix="released_old", hours_delta=-2, run_status="blocked", tool_status="failed", eval_pass=False, manifest_status="blocked", include_artifact=False)
+            conn.execute("UPDATE runs SET ended_at=?, error_type=?, error_message=? WHERE run_id=?", (iso(0), "WorkerTaskReleased", "Released after a stale process was reviewed.", released_old["run_id"]))
+            released_projection = server.live_acceptance_readiness(conn, "ws_released_old", freshness_hours=72)
+            released_openclaw = (released_projection.get("adapters") or {}).get("openclaw", {})
+            require(released_openclaw.get("status") == "fresh", f"old released no-artifact run should not override newer fresh pass: {released_projection}", failures)
+            require((released_openclaw.get("latest_attempt") or {}).get("run_id") == "run_ws_released_old_openclaw_fresh_pass", f"fresh pass should remain latest attempt by attempt time: {released_projection}", failures)
+
+            serialized = json.dumps([missing, stale, fresh, failed, incomplete, in_flight, released_projection], ensure_ascii=False)
             require("token_omitted" in serialized, "token omission proof missing", failures)
             require("你是 AgentOps MIS 的本地 AI worker" not in serialized, "raw prompt material should not appear", failures)
 
@@ -363,7 +383,7 @@ def main() -> int:
         "ok": not failures,
         "operation": "live_acceptance_readiness_smoke",
         "failures": failures,
-        "classifications": ["missing", "stale", "fresh", "latest_failed", "latest_incomplete"],
+        "classifications": ["missing", "stale", "fresh", "latest_failed", "latest_incomplete", "in_flight", "released_old"],
         "safety": {
             "isolated_db": True,
             "live_execution_performed": False,

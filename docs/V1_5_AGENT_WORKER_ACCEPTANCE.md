@@ -1463,6 +1463,12 @@ Hermes live execution also exposed a fixed 180s HTTP timeout. The worker now
 supports `--hermes-timeout` / `HERMES_TIMEOUT`, and the customer worker workflow
 passes a 300s Hermes timeout for live dogfood runs.
 
+Hermes acceptance now also supports `--hermes-max-tokens` /
+`HERMES_MAX_TOKENS`. The worker sends this as the OpenAI-compatible
+`max_tokens` field, defaults to `512`, and clamps the value between `64` and
+`4096`. This lets live customer-worker acceptance stay bounded enough for loop
+supervision while still returning a usable Chinese delivery summary.
+
 Hermes transient disconnect handling is now covered at the customer-worker
 workflow boundary. The worker already had retry support; the customer-worker
 sync path now forwards `adapter_max_attempts` and `adapter_retry_delay_sec` to
@@ -1487,6 +1493,12 @@ tool args: attempt_count=2, max_attempts=2, retry_history recorded
 This is CI regression evidence for the real Hermes adapter path, not a
 replacement for `customer_worker_real_runtime_acceptance.py --confirm-live`
 against the local Hermes/OpenClaw runtimes.
+
+`agentops operator live-acceptance` is the read-only live proof gate. It now
+surfaces `active_attempt` for in-flight `agt_customer_worker_*` Hermes/OpenClaw
+runs before the customer delivery artifact exists, but only marks an adapter
+`fresh` after the run is completed and tool/evaluation/runtime/audit/artifact/
+memory/approval/plan-evidence evidence all line up.
 
 ## What This Proves
 

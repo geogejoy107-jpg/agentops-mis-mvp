@@ -75,6 +75,7 @@ def run_adapter(args: argparse.Namespace, adapter: str) -> dict:
         "priority": "high",
         "risk_level": "low",
         "hermes_timeout": args.hermes_timeout,
+        "hermes_max_tokens": args.hermes_max_tokens,
     }
     status, result = http_json("POST", args.base_url, "/api/workflows/customer-worker-task", payload, args.request_timeout)
     evidence = result.get("evidence") or {}
@@ -117,6 +118,7 @@ def main() -> int:
     parser.add_argument("--adapter", action="append", choices=["hermes", "openclaw"], default=None)
     parser.add_argument("--request-timeout", type=int, default=720)
     parser.add_argument("--hermes-timeout", type=int, default=420)
+    parser.add_argument("--hermes-max-tokens", type=int, default=int(os.environ.get("HERMES_MAX_TOKENS", "512")))
     parser.add_argument("--confirm-live", action="store_true", help="Required: this calls real local Hermes/OpenClaw runtimes.")
     args = parser.parse_args()
     adapters = args.adapter or ["hermes", "openclaw"]

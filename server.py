@@ -12784,7 +12784,12 @@ def worker_stuck_tasks(conn, threshold_sec: int = 900, limit: int = 25) -> list[
     cutoff = now_dt - dt.timedelta(seconds=threshold_sec)
     tasks = rows_to_dicts(conn.execute(
         """SELECT * FROM tasks
-        WHERE status='running' AND (owner_agent_id LIKE 'agt_worker_%' OR owner_agent_id LIKE 'agt_remote_%' OR owner_agent_id LIKE 'agt_launch_%')
+        WHERE status='running' AND (
+            owner_agent_id LIKE 'agt_worker_%'
+            OR owner_agent_id LIKE 'agt_remote_%'
+            OR owner_agent_id LIKE 'agt_launch_%'
+            OR owner_agent_id LIKE 'agt_customer_worker_%'
+        )
         ORDER BY updated_at ASC LIMIT ?""",
         (limit,),
     ).fetchall())
@@ -13208,7 +13213,7 @@ def demo_readiness(conn: sqlite3.Connection, headers) -> dict:
             "id": "live_acceptance_freshness",
             "label": "Hermes/OpenClaw live acceptance freshness",
             "route": "/workspace/agents",
-            "command": "python3 scripts/customer_worker_real_runtime_acceptance.py --base-url http://127.0.0.1:8787 --confirm-live --adapter hermes --adapter openclaw",
+            "command": "python3 scripts/customer_worker_real_runtime_acceptance.py --base-url http://127.0.0.1:8787 --confirm-live --adapter hermes --adapter openclaw --hermes-max-tokens 512",
             "status": live_acceptance.get("status") or "unknown",
             "ok": live_acceptance.get("status") == "ready",
             "detail": (
@@ -16679,28 +16684,36 @@ def live_acceptance_readiness(conn: sqlite3.Connection, workspace_id: str = "loc
                         ORDER BY pem.created_at DESC
                         LIMIT 1) AS plan_evidence_manifest_id,
                       COALESCE(
-                        r.ended_at,
-                        r.started_at,
                         (SELECT a.created_at
                            FROM artifacts a
                           WHERE a.run_id=r.run_id AND a.artifact_type='customer_worker_result'
                           ORDER BY a.created_at DESC
                           LIMIT 1),
+                        r.started_at,
+                        r.ended_at,
                         r.created_at
-                      ) AS checked_at
+                      ) AS checked_at,
+                      COALESCE(r.started_at, r.created_at) AS attempt_at
                FROM runs r
                LEFT JOIN tasks t ON t.task_id=r.task_id
                WHERE COALESCE(r.workspace_id,t.workspace_id,'local-demo')=?
                  AND r.runtime_type=?
-                 AND EXISTS (
-                    SELECT 1
-                      FROM artifacts a
-                     WHERE a.run_id=r.run_id
-                       AND a.artifact_type='customer_worker_result'
+                 AND (
+                    EXISTS (
+                        SELECT 1
+                          FROM artifacts a
+                         WHERE a.run_id=r.run_id
+                           AND a.artifact_type='customer_worker_result'
+                    )
+                    OR (
+                        r.agent_id LIKE 'agt_customer_worker_%'
+                        AND r.delegation_id LIKE ?
+                        AND r.status IN ('running','waiting_approval','failed','blocked')
+                    )
                  )
-               ORDER BY checked_at DESC
+               ORDER BY attempt_at DESC
                LIMIT ?""",
-            (workspace_id, adapter, limit),
+            (workspace_id, adapter, f"worker:{adapter}:%", limit),
         ).fetchall())
         attempts = []
         passing = None
@@ -16722,7 +16735,9 @@ def live_acceptance_readiness(conn: sqlite3.Connection, workspace_id: str = "loc
                 "started_at": row.get("started_at"),
                 "ended_at": row.get("ended_at"),
                 "checked_at": row.get("checked_at"),
+                "attempt_at": row.get("attempt_at"),
                 "age_hours": age_hours,
+                "active": row.get("status") == "running",
                 "error_type": row.get("error_type"),
                 "error_summary": redact_text(row.get("error_message"), 220) if row.get("error_message") else None,
                 "evidence": evidence,
@@ -16751,9 +16766,10 @@ def live_acceptance_readiness(conn: sqlite3.Connection, workspace_id: str = "loc
             "freshness_hours": freshness_hours,
             "latest_attempt": latest,
             "latest_passing": passing,
+            "active_attempt": next((item for item in attempts if item.get("active")), None),
             "recent_attempts": attempts[:3],
             "next_action": (
-                f"python3 scripts/customer_worker_real_runtime_acceptance.py --confirm-live --adapter {adapter} --request-timeout 720 --hermes-timeout 600"
+                f"python3 scripts/customer_worker_real_runtime_acceptance.py --confirm-live --adapter {adapter} --request-timeout 720 --hermes-timeout 600 --hermes-max-tokens 512"
             ),
             "token_omitted": True,
         }
@@ -16908,7 +16924,7 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
                 f"{live_summary.get('latest_failed', 0)} latest failed, "
                 f"{live_summary.get('missing', 0)} missing"
             ),
-            "next_action": "python3 scripts/customer_worker_real_runtime_acceptance.py --base-url http://127.0.0.1:8787 --confirm-live --adapter hermes --adapter openclaw",
+            "next_action": "python3 scripts/customer_worker_real_runtime_acceptance.py --base-url http://127.0.0.1:8787 --confirm-live --adapter hermes --adapter openclaw --hermes-max-tokens 512",
         },
         {
             "id": "runbook",
@@ -22385,6 +22401,7 @@ def dispatch_local_worker_once(conn, body: dict) -> dict:
         adapter_retry_delay_float = 0.0
     if adapter == "hermes":
         hermes_timeout = int(body.get("hermes_timeout") or os.environ.get("HERMES_TIMEOUT", "300"))
+        hermes_max_tokens = int(body.get("hermes_max_tokens") or os.environ.get("HERMES_MAX_TOKENS", "512"))
         retry_budget = int((adapter_max_attempts_int * hermes_timeout) + (max(adapter_max_attempts_int - 1, 0) * adapter_retry_delay_float) + 80)
         worker_timeout = max(retry_budget, worker_timeout)
         cmd.extend([
@@ -22392,6 +22409,8 @@ def dispatch_local_worker_once(conn, body: dict) -> dict:
             os.environ.get("HERMES_GATEWAY_URL", "http://127.0.0.1:8642"),
             "--hermes-timeout",
             str(hermes_timeout),
+            "--hermes-max-tokens",
+            str(hermes_max_tokens),
         ])
     if adapter_max_attempts is not None:
         cmd.extend(["--adapter-max-attempts", str(adapter_max_attempts)])
@@ -22414,6 +22433,40 @@ def dispatch_local_worker_once(conn, body: dict) -> dict:
     duration = int((dt.datetime.now(dt.timezone.utc) - started).total_seconds() * 1000)
     result_item = ((parsed.get("results") or [{}])[0] or {}) if isinstance(parsed, dict) else {}
     run_id = result_item.get("run_id")
+    if not run_id:
+        recovered = conn.execute(
+            """SELECT run_id FROM runs
+            WHERE task_id=? AND agent_id=?
+            ORDER BY COALESCE(started_at, created_at) DESC
+            LIMIT 1""",
+            (task_id, agent_id),
+        ).fetchone()
+        if recovered:
+            run_id = recovered["run_id"]
+            if not ok:
+                failure_summary = redact_text(error or "Worker process exited without a structured result.", 260)
+                ended_at = now_iso()
+                conn.execute(
+                    """UPDATE runs
+                    SET status='failed', ended_at=?, error_type=?, error_message=?, output_summary=?
+                    WHERE run_id=? AND status IN ('planned','running')""",
+                    (ended_at, "WorkerProcessFailed", failure_summary, failure_summary, run_id),
+                )
+                conn.execute(
+                    "UPDATE tasks SET status='failed', updated_at=? WHERE task_id=? AND status IN ('planned','running')",
+                    (ended_at, task_id),
+                )
+                runtime_event(
+                    conn,
+                    "rtc_agent_gateway_local",
+                    "worker.dispatch_process_failed",
+                    "failed",
+                    run_id=run_id,
+                    task_id=task_id,
+                    agent_id=agent_id,
+                    output_summary=failure_summary,
+                    raw_payload_hash=stable_hash({"task_id": task_id, "run_id": run_id, "adapter": adapter, "error": failure_summary}),
+                )
     plan_id = result_item.get("plan_id") or result_item.get("agent_plan_id")
     manifest_id = result_item.get("plan_evidence_manifest_id")
     evidence = worker_dispatch_evidence_summary(conn, task_id, run_id, plan_id, manifest_id)

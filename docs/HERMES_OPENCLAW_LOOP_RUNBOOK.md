@@ -51,6 +51,25 @@ and evidence counts, so the next agent can distinguish a closed loop lane from
 a model-only summary. The agent should copy commands locally; the server never
 executes shell from the brief.
 
+For real customer-worker acceptance, prefer the read-only freshness gate before
+starting another live lane:
+
+```bash
+agentops operator live-acceptance --limit 8
+python3 scripts/customer_worker_real_runtime_acceptance.py \
+  --confirm-live \
+  --adapter hermes \
+  --request-timeout 720 \
+  --hermes-timeout 600 \
+  --hermes-max-tokens 512
+```
+
+`live-acceptance` exposes `active_attempt` for in-flight
+`agt_customer_worker_*` runs so Codex/OpenClaw/Hermes do not accidentally launch
+duplicate local work. Active attempts are scheduling evidence only; the adapter
+is not `fresh` until the run completes and the plan/tool/evaluation/runtime/
+audit/artifact/memory/approval evidence chain verifies.
+
 Bounded one-step advance:
 
 ```bash
