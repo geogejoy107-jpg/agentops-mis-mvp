@@ -149,6 +149,22 @@ def validate(payload: dict, adapter: str) -> None:
     require("--confirm-loop" in str(packet_commands.get("loop_driver_confirm") or ""), f"acceptance confirm-loop missing: {acceptance_packet}")
     require(str(packet_commands.get("review_queue") or "").startswith("agentops review queue"), f"acceptance review command missing: {acceptance_packet}")
     require(packet_commands.get("receipt_readback") == "agentops operator action-receipts --limit 20", f"acceptance receipt readback missing: {acceptance_packet}")
+    agent_loop_packet = payload.get("agent_loop_packet") or {}
+    agent_loop_commands = agent_loop_packet.get("commands") or {}
+    agent_loop_phases = {item.get("phase") for item in (agent_loop_packet.get("phases") or [])}
+    require(agent_loop_packet.get("operation") == "operator_loop_driver_agent_loop_packet", f"agent loop packet missing: {agent_loop_packet}")
+    require(agent_loop_packet.get("adapter") == adapter, f"agent loop packet adapter mismatch: {agent_loop_packet}")
+    require(agent_loop_packet.get("current_phase") in {"preview", "blocked"}, f"agent loop phase mismatch: {agent_loop_packet}")
+    require({"read", "plan", "retrieve", "compare", "preflight", "execute", "verify", "record"}.issubset(agent_loop_phases), f"agent loop phases missing: {agent_loop_packet}")
+    require(str(agent_loop_commands.get("start_check") or "").startswith(f"agentops operator start-check --adapter {adapter}"), f"agent loop start-check missing: {agent_loop_packet}")
+    require(str(agent_loop_commands.get("preview_loop") or "").startswith(f"agentops operator loop-driver --adapter {adapter}"), f"agent loop preview missing: {agent_loop_packet}")
+    require("--confirm-loop" in str(agent_loop_commands.get("confirm_loop") or ""), f"agent loop confirm missing: {agent_loop_packet}")
+    require(str(agent_loop_commands.get("adapter_preflight") or "").endswith(f"--adapter {adapter}"), f"agent loop preflight missing: {agent_loop_packet}")
+    require(str(agent_loop_commands.get("review_queue") or "").startswith("agentops review queue"), f"agent loop review missing: {agent_loop_packet}")
+    require((agent_loop_packet.get("safety") or {}).get("read_only") is True, f"agent loop read-only proof missing: {agent_loop_packet}")
+    require((agent_loop_packet.get("safety") or {}).get("ledger_mutated") is False, f"agent loop ledger proof missing: {agent_loop_packet}")
+    require((agent_loop_packet.get("safety") or {}).get("server_executes_shell") is False, f"agent loop server shell proof missing: {agent_loop_packet}")
+    require(agent_loop_packet.get("live_execution_performed") is False, f"agent loop live proof missing: {agent_loop_packet}")
     next_commands = payload.get("next_commands") or []
     require(any("operator loop-launch-packet" in command for command in next_commands), f"launch command missing: {next_commands}")
     require(any("operator loop-driver" in command for command in next_commands), f"loop-driver command missing: {next_commands}")

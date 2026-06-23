@@ -33,6 +33,7 @@ import {
   loadOperatorHandoff,
   loadOperatorHealth,
   loadOperatorLoopControl,
+  loadOperatorLoopDriverPackets,
   loadOperatorLoopLaunchPacket,
   loadOperatorLoopAudit,
   loadOperatorLoopSelfCheck,
@@ -85,6 +86,7 @@ import {
   type OperatorHandoffPayload,
   type OperatorHealthPayload,
   type OperatorLoopControlPayload,
+  type OperatorLoopDriverPacketsPayload,
   type OperatorLoopLaunchPacketPayload,
   type OperatorLoopAuditPayload,
   type OperatorLoopSelfCheckPayload,
@@ -161,6 +163,7 @@ type AIEmployeesLiveData = {
   operatorCommandCenter?: OperatorCommandCenterPayload;
   operatorExecutionMode?: OperatorExecutionModePayload;
   operatorLoopControl?: OperatorLoopControlPayload;
+  operatorLoopDriverPackets?: OperatorLoopDriverPacketsPayload;
   operatorRuntimeDoctor?: OperatorRuntimeDoctorPayload;
   executionModeAdapter?: WorkerAdapterName;
   executionModeConfirmRun?: boolean;
@@ -201,6 +204,7 @@ const AI_EMPLOYEES_PANEL_LOADERS: AIEmployeesPanelLoader[] = [
   { id: "operator_runtime_doctor", load: async () => ({ operatorRuntimeDoctor: await loadOperatorRuntimeDoctor(8) }) },
   { id: "operator_execution_mode", load: async (context) => ({ operatorExecutionMode: await loadOperatorExecutionMode(context.executionModeAdapter || "mock", Boolean(context.executionModeConfirmRun), 8) }) },
   { id: "operator_loop_control", load: async () => ({ operatorLoopControl: await loadOperatorLoopControl(8) }) },
+  { id: "operator_loop_driver_packets", load: async () => ({ operatorLoopDriverPackets: await loadOperatorLoopDriverPackets(8) }) },
   { id: "operator_command_center", load: async () => ({ operatorCommandCenter: await loadOperatorCommandCenter(12) }) },
   { id: "operator_action_plan", load: async () => ({ operatorActionPlan: await loadOperatorActionPlan(12) }) },
   { id: "operator_action_receipts", load: async () => ({ operatorActionReceipts: await loadOperatorActionReceipts(8) }) },
@@ -538,6 +542,7 @@ export function AIEmployees() {
   const operatorRuntimeDoctor = data?.operatorRuntimeDoctor as OperatorRuntimeDoctorPayload | undefined;
   const operatorExecutionMode = data?.operatorExecutionMode as OperatorExecutionModePayload | undefined;
   const operatorLoopAudit = data?.operatorLoopAudit as OperatorLoopAuditPayload | undefined;
+  const operatorLoopDriverPackets = data?.operatorLoopDriverPackets as OperatorLoopDriverPacketsPayload | undefined;
   const operatorHandoff = data?.operatorHandoff as OperatorHandoffPayload | undefined;
   const operatorHealth = data?.operatorHealth as OperatorHealthPayload | undefined;
   const operatorLoopControl = data?.operatorLoopControl as OperatorLoopControlPayload | undefined;
@@ -793,6 +798,12 @@ export function AIEmployees() {
       confirmAdvanceLoop: "Confirm CLI",
       loopDriverTitle: "Hermes/OpenClaw loop driver",
       loopDriverSummary: "Copy the bounded local loop wrapper: preview is read-only; confirm advances allowlisted steps with receipts and control readback.",
+      loopDriverAgentPacket: "Agent loop packet",
+      loopDriverAgentPacketSummary: "Live start-check projection for each adapter: current phase, safety gates, and next copy command.",
+      currentPhase: "Current phase",
+      readyToConfirmLoop: "Ready to confirm",
+      phase: "Phase",
+      command: "Command",
       previewLoopDriver: "Preview loop",
       confirmLoopDriver: "Confirm loop",
       advanceLoopPolicyLabel: "Policy",
@@ -1331,6 +1342,12 @@ export function AIEmployees() {
       confirmAdvanceLoop: "确认 CLI",
       loopDriverTitle: "Hermes/OpenClaw Loop Driver",
       loopDriverSummary: "复制受限本地 loop wrapper：预览只读；确认后只推进 allowlist 步骤，并写入收据和控制回读。",
+      loopDriverAgentPacket: "Agent Loop 机器包",
+      loopDriverAgentPacketSummary: "每个 adapter 的 start-check 实时投影：当前阶段、安全闸和下一条可复制命令。",
+      currentPhase: "当前阶段",
+      readyToConfirmLoop: "可确认推进",
+      phase: "阶段",
+      command: "命令",
       previewLoopDriver: "预览 Loop",
       confirmLoopDriver: "确认 Loop",
       advanceLoopPolicyLabel: "策略",
@@ -2159,6 +2176,16 @@ export function AIEmployees() {
     { label: `Hermes ${copy.confirmLoopDriver}`, command: loopDriverConfirmCommands[0], color: "var(--mis-warning)" },
     { label: `OpenClaw ${copy.confirmLoopDriver}`, command: loopDriverConfirmCommands[1], color: "var(--mis-warning)" },
   ];
+  const loopDriverPacketItems = operatorLoopDriverPackets?.packets || [];
+  const loopDriverPacketCommandItems = loopDriverPacketItems.flatMap((packet) => {
+    const adapterLabel = packet.adapter === "openclaw" ? "OpenClaw" : packet.adapter === "hermes" ? "Hermes" : packet.adapter;
+    return [
+      { label: `${adapterLabel} start-check`, command: packet.commands.start_check || "", color: "var(--mis-success)" },
+      { label: `${adapterLabel} ${copy.previewLoopDriver}`, command: packet.commands.preview_loop || "", color: "var(--mis-cyan)" },
+      { label: `${adapterLabel} ${copy.confirmLoopDriver}`, command: packet.commands.confirm_loop || "", color: "var(--mis-warning)" },
+    ].filter(item => item.command);
+  });
+  const loopDriverVisibleCommands = loopDriverPacketCommandItems.length ? loopDriverPacketCommandItems : loopDriverCommands;
   const advanceLoopSelectedGate = String(advanceLoopSummaryRaw.selected_gate || "—");
   const advanceLoopSelectedStatus = String(advanceLoopSummaryRaw.selected_status || advanceLoopRaw.status || "unknown");
   const advanceLoopServerShell = Boolean(advanceLoopPolicyRaw.server_executes_shell);
@@ -4360,12 +4387,17 @@ export function AIEmployees() {
                   <div className="flex flex-wrap items-center gap-2">
                     <Terminal size={11} style={{ color: "var(--mis-cyan)" }} />
                     <div className="text-[9px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.loopDriverTitle}</div>
+                    <StatusBadge status={operatorLoopDriverPackets?.status || "pass"} />
                     <StatusBadge status="pass" label="local CLI" />
-                    <StatusBadge status="pass" label="copy-only" />
+                    <StatusBadge status={operatorLoopDriverPackets?.safety.server_executes_shell ? "blocked" : "pass"} label={operatorLoopDriverPackets?.safety.server_executes_shell ? "server shell" : "copy-only"} />
+                    {panelStatusBadge("operator_loop_driver_packets")}
+                    {panelRefreshButton("operator_loop_driver_packets")}
+                    {panelDiagnosticsButton("operator_loop_driver_packets")}
+                    {panelReceiptButton("operator_loop_driver_packets")}
                   </div>
                   <div className="text-[8px] mt-1 line-clamp-2" style={{ color: "var(--mis-muted)" }}>{copy.loopDriverSummary}</div>
                   <div className="flex flex-wrap gap-1 mt-1.5">
-                    {loopDriverCommands.map((item) => (
+                    {loopDriverVisibleCommands.map((item) => (
                       <button
                         key={`${item.label}:${item.command}`}
                         onClick={() => void copyIntakeCommand(item.command)}
@@ -4378,6 +4410,46 @@ export function AIEmployees() {
                       </button>
                     ))}
                   </div>
+                  {loopDriverPacketItems.length > 0 && (
+                    <div className="mt-2 pt-2" style={{ borderTop: "1px solid var(--mis-border)" }}>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <div className="text-[8px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.loopDriverAgentPacket}</div>
+                        <span className="text-[8px]" style={{ color: "var(--mis-muted)" }}>{copy.loopDriverAgentPacketSummary}</span>
+                      </div>
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-1.5 mt-1.5">
+                        {loopDriverPacketItems.map((packet) => (
+                          <div key={`loop-driver-packet:${packet.adapter}`} className="rounded p-1.5 min-w-0" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                            <div className="flex flex-wrap items-center justify-between gap-1">
+                              <div className="text-[8px] font-semibold uppercase" style={{ color: "var(--mis-text)" }}>{packet.adapter}</div>
+                              <div className="flex flex-wrap gap-1">
+                                <StatusBadge status={packet.current_phase === "blocked" ? "blocked" : "pass"} label={`${copy.currentPhase}: ${packet.current_phase}`} />
+                                <StatusBadge status={packet.ready_to_confirm_loop ? "pass" : "attention"} label={`${copy.readyToConfirmLoop}: ${String(packet.ready_to_confirm_loop)}`} />
+                              </div>
+                            </div>
+                            <div className="grid grid-cols-2 gap-1 mt-1">
+                              {packet.phases.slice(0, 8).map((phase) => (
+                                <button
+                                  key={`${packet.adapter}:${phase.phase}`}
+                                  type="button"
+                                  disabled={!phase.command}
+                                  onClick={() => phase.command && void copyIntakeCommand(String(phase.command))}
+                                  className="flex items-center justify-between gap-1 rounded px-1.5 py-0.5 text-left disabled:opacity-60"
+                                  style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)", color: "var(--mis-text)" }}
+                                  title={phase.command || `${copy.phase}: ${phase.phase}`}
+                                >
+                                  <span className="truncate text-[8px]">{phase.phase}</span>
+                                  <span className="inline-flex items-center gap-1 shrink-0 text-[8px]" style={{ color: phase.command ? "var(--mis-cyan)" : "var(--mis-muted)" }}>
+                                    {phase.command && <Copy size={8} />}
+                                    {phase.status}
+                                  </span>
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

@@ -582,10 +582,14 @@ adapter preflight, runtime doctor, Agent Work Method launch brief, compact
 `loop_driver_entry`, `local_run_path`, service-control preview, Agent Plan
 boundary, and live ledger product proof. `loop_driver_entry` returns copyable
 preview, `--confirm-loop`, review queue, and verify commands plus a compact
-RECORD review snapshot with raw item summaries/content omitted. It also returns
-copyable next commands for readiness, preflight, runtime doctor, launch brief,
-bounded loop-driver preview/confirmation, bounded advance, confirmed live
-dispatch, and task/run/evidence readback.
+RECORD review snapshot with raw item summaries/content omitted. The same
+response now includes `agent_loop_packet`, a machine-readable
+READ/PLAN/RETRIEVE/COMPARE/PREFLIGHT/EXECUTE/VERIFY/RECORD command packet, so
+agents using the API can follow the same phased loop contract as the CLI
+`operator loop-driver` without scraping prose. It also returns copyable next
+commands for readiness, preflight, runtime doctor, launch brief, bounded
+loop-driver preview/confirmation, bounded advance, confirmed live dispatch, and
+task/run/evidence readback.
 
 `start-check` does not start Hermes/OpenClaw, execute shell from the server,
 create tasks, mutate ledgers, write connector rows, or print raw prompts,
@@ -1997,9 +2001,9 @@ commands without letting the browser or server execute shell.
 `operator loop-driver` is the local CLI loop wrapper for Hermes/OpenClaw/Codex:
 preview mode reads `operator start-check` into an `acceptance_gate`, then reads
 the compact launch brief and policy without writing ledgers. It also returns
-`agent_loop_packet`, a machine-readable READ/PLAN/RETRIEVE/COMPARE/EXECUTE/
-VERIFY/RECORD command packet with acceptance, preflight, confirm-loop, verify,
-receipt, audit, and review commands for Hermes/OpenClaw/Codex;
+`agent_loop_packet`, a machine-readable READ/PLAN/RETRIEVE/COMPARE/PREFLIGHT/
+EXECUTE/VERIFY/RECORD command packet with acceptance, preflight, confirm-loop,
+verify, receipt, audit, and review commands for Hermes/OpenClaw/Codex;
 preview mode also reads `agentops worker readiness` into an
 `adapter_readiness` gate with the selected adapter's trust/readiness state,
 checks, `agentops worker preflight --adapter ...` command, and live-dispatch

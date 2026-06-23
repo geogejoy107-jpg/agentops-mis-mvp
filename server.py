@@ -132,6 +132,7 @@ from agentops_mis_core.operator_start_check import (
     compact_start_check_loop_driver_entry,
     compact_start_check_launch_brief,
     compact_start_check_local_run_path,
+    operator_agent_loop_packet,
     operator_start_check_acceptance_packet,
     operator_start_check_gate,
 )
@@ -22790,6 +22791,15 @@ def operator_start_check(conn: sqlite3.Connection, headers, qs=None, auth_ctx=No
         live_product_readiness=live_product,
         next_commands=start_check_commands,
     )
+    agent_loop_packet = operator_agent_loop_packet(
+        adapter=adapter,
+        max_steps=3,
+        acceptance_gate=acceptance_packet,
+        adapter_readiness=start_check_adapter_readiness,
+        launch_brief=launch_brief,
+        review_snapshot=(loop_driver_entry.get("review_snapshot") or {}),
+        confirm_loop=False,
+    )
 
     return {
         "provider": "agentops-operator",
@@ -22831,6 +22841,7 @@ def operator_start_check(conn: sqlite3.Connection, headers, qs=None, auth_ctx=No
         "local_run_path": local_run_path,
         "live_product_readiness": live_product,
         "acceptance_packet": acceptance_packet,
+        "agent_loop_packet": agent_loop_packet,
         "next_commands": start_check_commands,
         "auth": {
             "mode": (auth_ctx or {}).get("mode") or "unknown",

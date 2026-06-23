@@ -106,6 +106,7 @@ from agentops_mis_core.operator_start_check import (
     compact_start_check_loop_driver_entry,
     compact_start_check_launch_brief,
     compact_start_check_local_run_path,
+    operator_agent_loop_packet,
     operator_start_check_acceptance_packet,
     operator_start_check_gate,
 )
@@ -311,6 +312,7 @@ EXTRACTED_OPERATOR_START_CHECK_HELPERS = {
     "compact_start_check_loop_driver_entry",
     "compact_start_check_launch_brief",
     "compact_start_check_local_run_path",
+    "operator_agent_loop_packet",
     "operator_start_check_acceptance_packet",
     "operator_start_check_gate",
 }
@@ -318,6 +320,7 @@ SERVER_OPERATOR_START_CHECK_IMPORTS = {
     "compact_start_check_loop_driver_entry",
     "compact_start_check_launch_brief",
     "compact_start_check_local_run_path",
+    "operator_agent_loop_packet",
     "operator_start_check_acceptance_packet",
     "operator_start_check_gate",
 }

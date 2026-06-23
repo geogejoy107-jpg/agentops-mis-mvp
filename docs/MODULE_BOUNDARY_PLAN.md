@@ -1363,6 +1363,43 @@ python3 scripts/module_boundary_smoke.py
 python3 scripts/evaluation_case_candidate_smoke.py
 ```
 
+### Slice 45: Operator Agent Loop Packet Projection
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/operator_start_check.py`
+
+Moved out of CLI/server-only paths:
+
+- machine-readable READ/PLAN/RETRIEVE/COMPARE/PREFLIGHT/EXECUTE/VERIFY/RECORD agent loop packet projection
+- confirm-loop readiness and current phase selection
+- copy-only start-check, preflight, verify, receipt, audit, and review command map
+- token/raw-content/live-execution/server-shell omission proof
+
+Still owned by `server.py`:
+
+- HTTP route
+- SQLite/local-readiness/runtime-doctor/live-product/readback producers
+- adapter readiness and human-review queue reads
+- final start-check response assembly
+
+Still owned by `agentops_mis_cli/agentops.py`:
+
+- CLI argument parsing and HTTP calls
+- bounded loop-driver orchestration
+- advance-loop invocation and final CLI response assembly
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/operator_start_check_api_smoke.py
+python3 scripts/operator_start_check_smoke.py --base-url "$AGENTOPS_BASE_URL" --adapter hermes --adapter openclaw
+python3 scripts/operator_loop_driver_smoke.py
+```
+
 ## Next Candidate Slices
 
 - Continue P1-05 with small smoke-backed strangler slices only; prefer pure

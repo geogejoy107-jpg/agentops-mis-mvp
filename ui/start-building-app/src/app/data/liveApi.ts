@@ -2186,6 +2186,82 @@ export interface OperatorLoopLaunchPacketPayload {
   live_execution_performed?: boolean;
 }
 
+export type OperatorStartCheckAdapter = "mock" | "hermes" | "openclaw";
+
+export interface OperatorLoopDriverAgentPacketPayload {
+  operation: string;
+  adapter: string;
+  current_phase: string;
+  ready_to_confirm_loop: boolean;
+  max_steps?: number;
+  steps_advanced?: number;
+  stop_reason?: string | null;
+  phases: {
+    phase: string;
+    status: string;
+    command?: string | null;
+    description?: string;
+    confirm_required?: boolean;
+    token_omitted?: boolean;
+  }[];
+  commands: Record<string, string | null | undefined>;
+  gates: Record<string, unknown>;
+  contract?: string;
+  safety: {
+    read_only: boolean;
+    ledger_mutated: boolean;
+    live_execution_performed: boolean;
+    server_executes_shell: boolean;
+    raw_prompt_omitted: boolean;
+    raw_response_omitted: boolean;
+    raw_content_omitted?: boolean;
+    token_omitted: boolean;
+  };
+  token_omitted?: boolean;
+  live_execution_performed?: boolean;
+}
+
+export interface OperatorStartCheckPayload {
+  provider: string;
+  operation: string;
+  status: string;
+  adapter: string;
+  workspace_id: string;
+  summary: Record<string, unknown>;
+  loop_driver_entry: Record<string, unknown>;
+  acceptance_packet: Record<string, unknown>;
+  agent_loop_packet?: OperatorLoopDriverAgentPacketPayload;
+  next_commands: string[];
+  safety: {
+    read_only: boolean;
+    ledger_mutated: boolean;
+    live_execution_performed: boolean;
+    server_executes_shell?: boolean;
+    raw_prompt_omitted: boolean;
+    raw_response_omitted: boolean;
+    token_omitted: boolean;
+  };
+  token_omitted?: boolean;
+  live_execution_performed?: boolean;
+}
+
+export interface OperatorLoopDriverPacketsPayload {
+  provider: string;
+  operation: string;
+  status: string;
+  packets: OperatorLoopDriverAgentPacketPayload[];
+  start_checks: Record<string, OperatorStartCheckPayload>;
+  safety: {
+    read_only: boolean;
+    ledger_mutated: boolean;
+    live_execution_performed: boolean;
+    server_executes_shell: boolean;
+    token_omitted: boolean;
+  };
+  token_omitted?: boolean;
+  live_execution_performed?: boolean;
+}
+
 export interface OperatorLoopControlPayload {
   provider: string;
   operation: string;
@@ -6148,6 +6224,152 @@ export async function loadOperatorLoopLaunchPacket(limit = 8, query = "Agent Wor
     },
     token_omitted: raw.token_omitted === undefined ? undefined : boolValue(raw.token_omitted),
     live_execution_performed: raw.live_execution_performed === undefined ? undefined : boolValue(raw.live_execution_performed),
+  };
+}
+
+function normalizeOperatorLoopDriverAgentPacket(rawValue: unknown, adapter: string, limit = 8): OperatorLoopDriverAgentPacketPayload {
+  const raw = typeof rawValue === "object" && rawValue !== null ? rawValue as Record<string, unknown> : {};
+  const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
+  const commandsRaw = typeof raw.commands === "object" && raw.commands !== null ? raw.commands as Record<string, unknown> : {};
+  return {
+    operation: String(raw.operation || "operator_loop_driver_agent_loop_packet"),
+    adapter: String(raw.adapter || adapter),
+    current_phase: String(raw.current_phase || "unknown"),
+    ready_to_confirm_loop: boolValue(raw.ready_to_confirm_loop),
+    max_steps: raw.max_steps === undefined ? undefined : numberValue(raw.max_steps, 0),
+    steps_advanced: raw.steps_advanced === undefined ? undefined : numberValue(raw.steps_advanced, 0),
+    stop_reason: raw.stop_reason === undefined || raw.stop_reason === null ? null : String(raw.stop_reason),
+    phases: asArray<Record<string, unknown>>(raw.phases).map((phase) => ({
+      phase: String(phase.phase || ""),
+      status: String(phase.status || "unknown"),
+      command: phase.command === undefined || phase.command === null ? null : String(phase.command),
+      description: phase.description ? String(phase.description) : undefined,
+      confirm_required: phase.confirm_required === undefined ? undefined : boolValue(phase.confirm_required),
+      token_omitted: phase.token_omitted === undefined ? undefined : boolValue(phase.token_omitted),
+    })).filter((phase) => phase.phase),
+    commands: Object.fromEntries(Object.entries(commandsRaw).map(([key, value]) => [
+      key,
+      value === undefined || value === null ? null : String(value),
+    ])) as Record<string, string | null | undefined>,
+    gates: typeof raw.gates === "object" && raw.gates !== null ? raw.gates as Record<string, unknown> : {},
+    contract: raw.contract ? String(raw.contract) : undefined,
+    safety: {
+      read_only: safetyRaw.read_only === undefined ? true : boolValue(safetyRaw.read_only),
+      ledger_mutated: boolValue(safetyRaw.ledger_mutated),
+      live_execution_performed: boolValue(safetyRaw.live_execution_performed),
+      server_executes_shell: boolValue(safetyRaw.server_executes_shell),
+      raw_prompt_omitted: safetyRaw.raw_prompt_omitted === undefined ? true : boolValue(safetyRaw.raw_prompt_omitted),
+      raw_response_omitted: safetyRaw.raw_response_omitted === undefined ? true : boolValue(safetyRaw.raw_response_omitted),
+      raw_content_omitted: safetyRaw.raw_content_omitted === undefined ? undefined : boolValue(safetyRaw.raw_content_omitted),
+      token_omitted: safetyRaw.token_omitted === undefined ? true : boolValue(safetyRaw.token_omitted),
+    },
+    token_omitted: raw.token_omitted === undefined ? undefined : boolValue(raw.token_omitted),
+    live_execution_performed: raw.live_execution_performed === undefined ? undefined : boolValue(raw.live_execution_performed),
+  };
+}
+
+export async function loadOperatorStartCheck(adapter: OperatorStartCheckAdapter = "mock", limit = 8): Promise<OperatorStartCheckPayload> {
+  const params = new URLSearchParams({ adapter, limit: String(limit) });
+  const raw = await optionalApiJson<Record<string, unknown>>(`/operator/start-check?${params.toString()}`, {
+    provider: "agentops-operator",
+    operation: "operator_start_check",
+    status: "unavailable",
+    adapter,
+    workspace_id: "local-demo",
+    summary: {},
+    loop_driver_entry: {},
+    acceptance_packet: {},
+    agent_loop_packet: {
+      operation: "operator_loop_driver_agent_loop_packet",
+      adapter,
+      current_phase: "unavailable",
+      ready_to_confirm_loop: false,
+      max_steps: 3,
+      steps_advanced: 0,
+      stop_reason: null,
+      phases: [],
+      commands: {
+        start_check: `agentops operator start-check --adapter ${adapter} --limit ${limit}`,
+        preview_loop: `agentops operator loop-driver --adapter ${adapter} --max-steps 3 --limit ${limit}`,
+        confirm_loop: null,
+      },
+      gates: {},
+      safety: {
+        read_only: true,
+        ledger_mutated: false,
+        live_execution_performed: false,
+        server_executes_shell: false,
+        raw_prompt_omitted: true,
+        raw_response_omitted: true,
+        raw_content_omitted: true,
+        token_omitted: true,
+      },
+      token_omitted: true,
+      live_execution_performed: false,
+    },
+    next_commands: [],
+    safety: {
+      read_only: true,
+      ledger_mutated: false,
+      live_execution_performed: false,
+      server_executes_shell: false,
+      raw_prompt_omitted: true,
+      raw_response_omitted: true,
+      token_omitted: true,
+    },
+    token_omitted: true,
+    live_execution_performed: false,
+  });
+  const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
+  const packet = normalizeOperatorLoopDriverAgentPacket(raw.agent_loop_packet, adapter, limit);
+  return {
+    provider: String(raw.provider || "agentops-operator"),
+    operation: String(raw.operation || "operator_start_check"),
+    status: String(raw.status || "unknown"),
+    adapter: String(raw.adapter || adapter),
+    workspace_id: String(raw.workspace_id || "local-demo"),
+    summary: typeof raw.summary === "object" && raw.summary !== null ? raw.summary as Record<string, unknown> : {},
+    loop_driver_entry: typeof raw.loop_driver_entry === "object" && raw.loop_driver_entry !== null ? raw.loop_driver_entry as Record<string, unknown> : {},
+    acceptance_packet: typeof raw.acceptance_packet === "object" && raw.acceptance_packet !== null ? raw.acceptance_packet as Record<string, unknown> : {},
+    agent_loop_packet: packet,
+    next_commands: asArray<unknown>(raw.next_commands).map(String).filter(Boolean),
+    safety: {
+      read_only: safetyRaw.read_only === undefined ? true : boolValue(safetyRaw.read_only),
+      ledger_mutated: boolValue(safetyRaw.ledger_mutated),
+      live_execution_performed: boolValue(safetyRaw.live_execution_performed),
+      server_executes_shell: safetyRaw.server_executes_shell === undefined ? undefined : boolValue(safetyRaw.server_executes_shell),
+      raw_prompt_omitted: safetyRaw.raw_prompt_omitted === undefined ? true : boolValue(safetyRaw.raw_prompt_omitted),
+      raw_response_omitted: safetyRaw.raw_response_omitted === undefined ? true : boolValue(safetyRaw.raw_response_omitted),
+      token_omitted: safetyRaw.token_omitted === undefined ? true : boolValue(safetyRaw.token_omitted),
+    },
+    token_omitted: raw.token_omitted === undefined ? undefined : boolValue(raw.token_omitted),
+    live_execution_performed: raw.live_execution_performed === undefined ? undefined : boolValue(raw.live_execution_performed),
+  };
+}
+
+export async function loadOperatorLoopDriverPackets(limit = 8): Promise<OperatorLoopDriverPacketsPayload> {
+  const adapters: OperatorStartCheckAdapter[] = ["hermes", "openclaw"];
+  const startChecks = await Promise.all(adapters.map((adapter) => loadOperatorStartCheck(adapter, limit)));
+  const packets = startChecks
+    .map((check, index) => check.agent_loop_packet || normalizeOperatorLoopDriverAgentPacket(undefined, adapters[index], limit))
+    .filter((packet) => packet.operation === "operator_loop_driver_agent_loop_packet");
+  const startCheckMap = Object.fromEntries(startChecks.map((check) => [check.adapter, check])) as Record<string, OperatorStartCheckPayload>;
+  const hasAttention = startChecks.some((check) => check.status !== "ready" && check.status !== "pass");
+  return {
+    provider: "agentops-operator",
+    operation: "operator_loop_driver_packets",
+    status: hasAttention ? "attention" : "ready",
+    packets,
+    start_checks: startCheckMap,
+    safety: {
+      read_only: true,
+      ledger_mutated: false,
+      live_execution_performed: false,
+      server_executes_shell: packets.some((packet) => packet.safety.server_executes_shell),
+      token_omitted: true,
+    },
+    token_omitted: true,
+    live_execution_performed: false,
   };
 }
 

@@ -28,6 +28,7 @@ from urllib.request import Request, urlopen
 
 from agentops_mis_cli.advance_loop_policy import advance_loop_command_policy, advance_loop_policy_summary
 from agentops_mis_cli.redaction import redact_text
+from agentops_mis_core.operator_start_check import operator_agent_loop_packet
 
 
 DEFAULT_BASE_URL = "http://127.0.0.1:8787"
@@ -1194,157 +1195,13 @@ def fetch_loop_driver_review_snapshot(args, client: AgentOpsClient) -> dict:
     }
 
 
-def build_loop_driver_agent_loop_packet(
-    *,
-    adapter: str,
-    max_steps: int,
-    acceptance_gate: dict,
-    adapter_readiness: dict,
-    launch_brief: dict,
-    review_snapshot: dict,
-    confirm_loop: bool,
-    stop_reason: str | None = None,
-    steps_advanced: int = 0,
-) -> dict:
-    acceptance_decision = acceptance_gate.get("decision") if isinstance(acceptance_gate.get("decision"), dict) else {}
-    acceptance_commands = acceptance_gate.get("commands") if isinstance(acceptance_gate.get("commands"), dict) else {}
-    acceptance_safety = acceptance_gate.get("safety") if isinstance(acceptance_gate.get("safety"), dict) else {}
-    readiness_commands = adapter_readiness.get("commands") if isinstance(adapter_readiness.get("commands"), dict) else {}
-    launch_commands = launch_brief.get("commands") if isinstance(launch_brief.get("commands"), dict) else {}
-    launch_summary = launch_brief.get("summary") if isinstance(launch_brief.get("summary"), dict) else {}
-    review_summary = review_snapshot.get("summary") if isinstance(review_snapshot.get("summary"), dict) else {}
-    can_confirm = acceptance_decision.get("can_confirm_bounded_loop") is True and acceptance_safety.get("server_executes_shell") is False
-    review_attention = bool(
-        int(review_summary.get("review_items_total") or 0)
-        or int(review_summary.get("pending_approvals") or 0)
-        or int(review_summary.get("memory_candidates") or 0)
-    )
-    if not can_confirm:
-        current_phase = "blocked"
-    elif confirm_loop:
-        current_phase = "record" if steps_advanced else "execute"
-    else:
-        current_phase = "preview"
-    confirm_command = (
-        acceptance_commands.get("loop_driver_confirm")
-        or "agentops operator loop-driver --confirm-loop --max-steps "
-        f"{max_steps} --adapter {adapter}"
-    )
-    preview_command = (
-        acceptance_commands.get("loop_driver_preview")
-        or f"agentops operator loop-driver --adapter {adapter} --max-steps {max_steps}"
-    )
-    verify_command = launch_brief.get("verify_command") or "agentops operator loop-control --limit 8"
-    receipt_command = launch_brief.get("receipt_command") or "agentops operator action-receipts --limit 20"
-    phases = [
-        {
-            "phase": "read",
-            "status": "ready",
-            "command": acceptance_commands.get("start_check") or f"agentops operator start-check --adapter {adapter} --limit 8",
-            "description": "read start-check acceptance packet before local loop work",
-            "token_omitted": True,
-        },
-        {
-            "phase": "plan",
-            "status": "ready",
-            "command": launch_commands.get("agent_plan_create") or "agentops agent-plan create --help",
-            "description": "create or inspect task-bound Agent Plan before live work",
-            "token_omitted": True,
-        },
-        {
-            "phase": "retrieve",
-            "status": "ready",
-            "command": launch_commands.get("knowledge_search") or "agentops knowledge search --query '<task terms>'",
-            "description": "retrieve project knowledge and repo context",
-            "token_omitted": True,
-        },
-        {
-            "phase": "compare",
-            "status": "ready",
-            "command": launch_commands.get("repo_map") or "agentops commander repo-map --query '<task terms>'",
-            "description": "compare proposed files against repo map and base references",
-            "token_omitted": True,
-        },
-        {
-            "phase": "preflight",
-            "status": adapter_readiness.get("status") or "unknown",
-            "command": readiness_commands.get("adapter_preflight") or f"agentops worker preflight --adapter {adapter}",
-            "description": "check adapter readiness before any live dispatch",
-            "token_omitted": True,
-        },
-        {
-            "phase": "execute",
-            "status": "ready" if can_confirm else "blocked",
-            "command": confirm_command,
-            "description": "run bounded local advance-loop steps only after acceptance gate passes",
-            "confirm_required": True,
-            "token_omitted": True,
-        },
-        {
-            "phase": "verify",
-            "status": "ready",
-            "command": verify_command,
-            "description": "verify loop-control state after bounded execution",
-            "token_omitted": True,
-        },
-        {
-            "phase": "record",
-            "status": "attention" if review_attention else "ready",
-            "command": review_snapshot.get("review_command") or "agentops review queue --limit 20",
-            "description": "review pending RECORD items without approving or storing raw content",
-            "token_omitted": True,
-        },
-    ]
-    return {
-        "operation": "operator_loop_driver_agent_loop_packet",
-        "adapter": adapter,
-        "current_phase": current_phase,
-        "ready_to_confirm_loop": can_confirm,
-        "max_steps": max_steps,
-        "steps_advanced": int(steps_advanced or 0),
-        "stop_reason": stop_reason,
-        "phases": phases,
-        "commands": {
-            "start_check": acceptance_commands.get("start_check") or f"agentops operator start-check --adapter {adapter} --limit 8",
-            "preview_loop": preview_command,
-            "confirm_loop": confirm_command if can_confirm else None,
-            "adapter_preflight": readiness_commands.get("adapter_preflight") or f"agentops worker preflight --adapter {adapter}",
-            "verify_loop": verify_command,
-            "receipt_readback": receipt_command,
-            "loop_audit": "agentops operator loop-audit --limit 20",
-            "review_queue": review_snapshot.get("review_command") or "agentops review queue --limit 20",
-        },
-        "gates": {
-            "acceptance": acceptance_gate.get("status"),
-            "adapter_readiness": adapter_readiness.get("status"),
-            "launch_brief": launch_brief.get("status"),
-            "record_review": review_snapshot.get("status"),
-            "control_status": launch_summary.get("control_status"),
-            "server_executes_shell": acceptance_safety.get("server_executes_shell") is True,
-        },
-        "contract": "machine-readable READ/PLAN/RETRIEVE/COMPARE/EXECUTE/VERIFY/RECORD loop packet for Hermes/OpenClaw/Codex; commands are copy-only and live dispatch still requires explicit confirm-run/prepared-action gates",
-        "safety": {
-            "read_only": True,
-            "ledger_mutated": False,
-            "live_execution_performed": False,
-            "server_executes_shell": False,
-            "raw_prompt_omitted": True,
-            "raw_response_omitted": True,
-            "raw_content_omitted": True,
-            "token_omitted": True,
-        },
-        "token_omitted": True,
-        "live_execution_performed": False,
-    }
-
-
 def cmd_operator_loop_driver(args, client: AgentOpsClient) -> dict:
     max_steps = min(max(int(args.max_steps or 1), 1), 5)
     initial_acceptance_gate = fetch_loop_driver_acceptance_gate(args, client)
     adapter_readiness = fetch_loop_driver_adapter_readiness(args, client)
     initial_brief = fetch_loop_launch_brief(args, client)
     initial_review_snapshot = fetch_loop_driver_review_snapshot(args, client)
-    initial_agent_loop_packet = build_loop_driver_agent_loop_packet(
+    initial_agent_loop_packet = operator_agent_loop_packet(
         adapter=args.adapter,
         max_steps=max_steps,
         acceptance_gate=initial_acceptance_gate,
@@ -1401,7 +1258,7 @@ def cmd_operator_loop_driver(args, client: AgentOpsClient) -> dict:
         final_adapter_readiness = fetch_loop_driver_adapter_readiness(args, client)
         final_brief = fetch_loop_launch_brief(args, client)
         final_review_snapshot = fetch_loop_driver_review_snapshot(args, client)
-        final_agent_loop_packet = build_loop_driver_agent_loop_packet(
+        final_agent_loop_packet = operator_agent_loop_packet(
             adapter=args.adapter,
             max_steps=max_steps,
             acceptance_gate=initial_acceptance_gate,
@@ -1509,7 +1366,7 @@ def cmd_operator_loop_driver(args, client: AgentOpsClient) -> dict:
     final_review_snapshot = fetch_loop_driver_review_snapshot(args, client)
     failed = [step for step in steps if (step.get("advance") or {}).get("status") in {"failed", "blocked"}]
     advanced = [step for step in steps if (step.get("advance") or {}).get("advanced")]
-    final_agent_loop_packet = build_loop_driver_agent_loop_packet(
+    final_agent_loop_packet = operator_agent_loop_packet(
         adapter=args.adapter,
         max_steps=max_steps,
         acceptance_gate=final_acceptance_gate,
