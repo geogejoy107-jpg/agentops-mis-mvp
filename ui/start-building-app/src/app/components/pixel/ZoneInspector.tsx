@@ -1,6 +1,9 @@
-import { ArrowRight, Bot, ExternalLink, MapPin } from "lucide-react";
+import { ArrowRight, ExternalLink, MapPin } from "lucide-react";
 import { RiskBadge } from "../shared/RiskBadge";
 import { StatusBadge } from "../shared/StatusBadge";
+import { AgentGlyphGrammarPreview } from "./AgentGlyphGrammarPreview";
+import { AgentGlyphRoster } from "./AgentGlyphRoster";
+import { SimpleAgentGlyph } from "./SimpleAgentGlyph";
 import type { PixelAgent, PixelLocale, PixelMetrics, PixelTaskCard, PixelZoneDefinition } from "./pixelModel";
 import { PIXEL_ZONE_BY_ID, statusDisplay, taskGroupDisplay, zoneDisplay } from "./pixelModel";
 
@@ -32,7 +35,7 @@ export function ZoneInspector({
   const zoneTasks = focusZone.id === "task_hall" ? taskCards.slice(0, 5) : [];
 
   return (
-    <aside className="rounded-lg p-4 h-full" style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}>
+    <aside className="h-full rounded-lg p-4" style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-[10px] uppercase tracking-wide" style={{ color: "var(--mis-muted)" }}>
@@ -49,8 +52,8 @@ export function ZoneInspector({
         <button
           type="button"
           onClick={() => onOpenRoute(selectedAgent?.routeToDetail || focusZone.route)}
-          className="shrink-0 rounded px-2.5 py-1.5 text-[11px] inline-flex items-center gap-1.5"
-          style={{ background: "rgba(34,211,238,0.10)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.25)" }}
+          className="inline-flex shrink-0 items-center gap-1.5 rounded px-2.5 py-1.5 text-[11px]"
+          style={{ background: "rgba(34,211,238,.1)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,.25)" }}
         >
           {zh ? "打开" : "Open"}
           <ExternalLink size={12} />
@@ -58,11 +61,21 @@ export function ZoneInspector({
       </div>
 
       {selectedAgent && (
-        <section className="mt-4 rounded p-3" style={{ background: "var(--mis-surface2)", border: "1px solid rgba(34,211,238,0.14)" }}>
+        <section className="mt-4 rounded p-3" style={{ background: "var(--mis-surface2)", border: "1px solid rgba(34,211,238,.14)" }}>
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 text-xs" style={{ color: "var(--mis-text)" }}>
-              <Bot size={14} style={{ color: "var(--mis-cyan)" }} />
-              {zh ? "代理状态" : "Agent state"}
+              <SimpleAgentGlyph
+                id={selectedAgent.id}
+                name={selectedAgent.name}
+                role={selectedAgent.role}
+                runtime={selectedAgent.runtime}
+                size={24}
+                status={selectedAgent.status}
+                risk={selectedAgent.risk}
+                selected
+                label={`${selectedAgent.name} · ${selectedAgent.role}`}
+              />
+              {zh ? "Agent 状态" : "Agent state"}
             </div>
             <RiskBadge risk={selectedAgent.risk} label={zh ? ({ low: "低", medium: "中", high: "高", critical: "严重" }[selectedAgent.risk]) : undefined} />
           </div>
@@ -88,8 +101,8 @@ export function ZoneInspector({
             <button
               type="button"
               onClick={() => onOpenRoute(`/admin/runs/${selectedAgent.latestRunId}`)}
-              className="mt-3 w-full rounded px-2.5 py-1.5 text-[11px] inline-flex items-center justify-between"
-              style={{ background: "rgba(2,6,23,0.45)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.18)" }}
+              className="mt-3 inline-flex w-full items-center justify-between rounded px-2.5 py-1.5 text-[11px]"
+              style={{ background: "rgba(2,6,23,.45)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,.18)" }}
             >
               {zh ? "最新运行" : "Latest run"} {selectedAgent.latestRunId}
               <ArrowRight size={12} />
@@ -100,7 +113,7 @@ export function ZoneInspector({
 
       <section className="mt-4 grid grid-cols-2 gap-2">
         {[
-          { label: zh ? "代理" : "Agents", value: metrics.totalAgents },
+          { label: zh ? "Agent" : "Agents", value: metrics.totalAgents },
           { label: zh ? "运行" : "Runs", value: metrics.totalRuns },
           { label: zh ? "审批" : "Approvals", value: metrics.pendingApprovals },
           { label: zh ? "故障" : "Incidents", value: metrics.failedRuns + metrics.blockedTasks },
@@ -113,37 +126,26 @@ export function ZoneInspector({
       </section>
 
       <section className="mt-4">
-        <div className="flex items-center justify-between mb-2">
-          <h3 className="text-xs font-semibold" style={{ color: "var(--mis-text)" }}>{zh ? "本区域代理" : "Agents in this zone"}</h3>
-          <span className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{zoneAgents.length}</span>
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <h3 className="text-xs font-semibold" style={{ color: "var(--mis-text)" }}>{zh ? "Agent 身份栏" : "Agent identity rail"}</h3>
+          <span className="text-[10px]" style={{ color: "var(--mis-muted)" }}>
+            {zh ? `本区 ${zoneAgents.length} / 全部 ${agents.length}` : `${zoneAgents.length} here / ${agents.length} total`}
+          </span>
         </div>
-        <div className="space-y-2 max-h-48 overflow-auto pr-1">
-          {zoneAgents.length === 0 && (
-            <p className="rounded p-2 text-[11px]" style={{ color: "var(--mis-muted)", background: "var(--mis-surface2)" }}>
-              {zh ? "当前没有代理映射到这里。可以点击其他区域或刷新实时状态。" : "No agent is currently mapped here. Click another zone or refresh live state."}
-            </p>
-          )}
-          {zoneAgents.map((agent) => (
-            <button
-              key={agent.id}
-              type="button"
-              onClick={() => onOpenRoute(agent.routeToDetail || "/workspace/agents")}
-              className="w-full rounded p-2 text-left hover:opacity-80"
-              style={{ background: "var(--mis-surface2)", border: "1px solid rgba(148,163,184,0.12)" }}
-            >
-              <div className="flex items-center justify-between gap-2">
-                <span className="truncate text-[11px] font-medium" style={{ color: "var(--mis-text)" }}>{agent.name}</span>
-                <StatusBadge status={agent.status} label={statusDisplay(agent.status, locale)} />
-              </div>
-              <div className="mt-1 truncate text-[10px]" style={{ color: "var(--mis-muted)" }}>{agent.taskTitle || agent.runtime}</div>
-            </button>
-          ))}
+        <AgentGlyphRoster
+          agents={agents}
+          selectedAgentId={selectedAgent?.id}
+          onOpenAgent={(agent) => onOpenRoute(agent.routeToDetail || "/workspace/agents")}
+          locale={locale}
+        />
+        <div className="mt-2">
+          <AgentGlyphGrammarPreview locale={locale} />
         </div>
       </section>
 
       {zoneTasks.length > 0 && (
         <section className="mt-4">
-          <h3 className="text-xs font-semibold mb-2" style={{ color: "var(--mis-text)" }}>{zh ? "派活大厅任务卡" : "Task Hall cards"}</h3>
+          <h3 className="mb-2 text-xs font-semibold" style={{ color: "var(--mis-text)" }}>{zh ? "派活大厅任务卡" : "Task Hall cards"}</h3>
           <div className="space-y-2">
             {zoneTasks.map((task) => (
               <button
@@ -151,7 +153,7 @@ export function ZoneInspector({
                 type="button"
                 onClick={() => onOpenRoute(task.route)}
                 className="w-full rounded p-2 text-left hover:opacity-80"
-                style={{ background: "var(--mis-surface2)", border: "1px solid rgba(46,134,171,0.16)" }}
+                style={{ background: "var(--mis-surface2)", border: "1px solid rgba(46,134,171,.16)" }}
               >
                 <div className="flex items-center justify-between gap-2">
                   <span className="truncate text-[11px]" style={{ color: "var(--mis-text)" }}>{task.title}</span>
@@ -164,7 +166,7 @@ export function ZoneInspector({
         </section>
       )}
 
-      <section className="mt-4 rounded p-3" style={{ background: "rgba(2,6,23,0.36)", border: "1px solid rgba(148,163,184,0.14)" }}>
+      <section className="mt-4 rounded p-3" style={{ background: "rgba(2,6,23,.36)", border: "1px solid rgba(148,163,184,.14)" }}>
         <div className="text-[10px] uppercase tracking-wide" style={{ color: "var(--mis-muted)" }}>{zh ? "权威边界" : "Authority boundary"}</div>
         <p className="mt-1 text-[11px] leading-relaxed" style={{ color: "var(--mis-dim)" }}>
           {zh ? "地图只负责可视化 MIS 状态。运行、工具、审批、记忆和审计仍以正式账本为准。" : "This map only visualizes MIS state. Formal ledgers remain the source of truth for runs, tools, approvals, memory and audit."}
