@@ -433,7 +433,10 @@ Must be true:
   production security, storage backend, backup/restore, signed audit export,
   retention, SSO/private connector gates, and omission contracts without
   executing live work, restoring a database, or printing secrets. Verify with
-  `python3 scripts/deployment_readiness_smoke.py`.
+  `python3 scripts/deployment_readiness_smoke.py --configured-retention-fixture`;
+  this configured mode proves the deployment verdict sees ready retention
+  controls from a temporary legal-hold registry while other BYOC gates may
+  remain attention/gated.
 - `audit_retention_policy_v1` exposes a read-only audit retention policy
   preview through `GET /api/audit/retention-policy` and
   `agentops audit retention-policy`. It proves policy source, retention-day

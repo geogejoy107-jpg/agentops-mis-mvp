@@ -209,7 +209,7 @@ with the row payload must fail verification.
 python3 -m py_compile server.py scripts/*.py agentops_mis_cli/*.py
 python3 scripts/audit_retention_policy_smoke.py
 python3 scripts/audit_retention_controls_smoke.py --configured-fixture
-python3 scripts/deployment_readiness_smoke.py
+python3 scripts/deployment_readiness_smoke.py --configured-retention-fixture
 python3 scripts/agentops_local_backup_smoke.py
 python3 scripts/byoc_deployment_acceptance_smoke.py
 python3 scripts/enrollment_policy_preview_smoke.py

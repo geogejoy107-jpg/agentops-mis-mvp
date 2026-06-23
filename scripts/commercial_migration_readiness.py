@@ -654,6 +654,17 @@ def main() -> int:
             and file_contains("scripts/deployment_readiness_smoke.py", "deployment_readiness_v1")
             and file_contains("scripts/deployment_readiness_smoke.py", "audit_retention_policy_v1")
             and file_contains("scripts/deployment_readiness_smoke.py", "audit_retention_controls_v1")
+            and file_contains("scripts/deployment_readiness_smoke.py", "--configured-retention-fixture")
+            and file_contains("scripts/deployment_readiness_smoke.py", "validate_configured_retention")
+            and file_contains("scripts/deployment_readiness_smoke.py", "AGENTOPS_RETENTION_CONTROLS_PATH")
+            and file_contains("scripts/deployment_readiness_smoke.py", "pro_workspace")
+            and file_contains("scripts/deployment_readiness_smoke.py", "legal_hold_registry_configured")
+            and file_contains("scripts/deployment_readiness_smoke.py", "active_legal_holds")
+            and file_contains("scripts/deployment_readiness_smoke.py", "cleanup_approval_required")
+            and file_contains("scripts/deployment_readiness_smoke.py", "legal_hold_required_before_cleanup")
+            and file_contains("scripts/deployment_readiness_smoke.py", "cleanup_endpoint_exposed")
+            and file_contains("scripts/deployment_readiness_smoke.py", "destructive_cleanup_supported")
+            and file_contains("scripts/deployment_readiness_smoke.py", "db_dump_hash")
             and file_contains("scripts/deployment_readiness_smoke.py", "agentops-deployment")
             and file_contains("scripts/audit_retention_policy_smoke.py", "audit_retention_policy_v1")
             and file_contains("scripts/audit_retention_policy_smoke.py", "delete_performed")
@@ -770,7 +781,7 @@ def main() -> int:
                 "Postgres ledger acceptance",
                 "python3 scripts/audit_retention_policy_smoke.py",
                 "python3 scripts/audit_retention_controls_smoke.py --configured-fixture",
-                "python3 scripts/deployment_readiness_smoke.py",
+                "python3 scripts/deployment_readiness_smoke.py --configured-retention-fixture",
                 "python3 scripts/byoc_deployment_acceptance_smoke.py",
                 "backup/restore and signed export checks",
             ],
