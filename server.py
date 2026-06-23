@@ -12704,7 +12704,63 @@ def worker_daemon_status(include_log: bool = False) -> list[dict]:
     return [read_worker_daemon(adapter, include_log=include_log) for adapter in ("mock", "hermes", "openclaw")]
 
 
-def worker_intake_start_gate(conn, agent_id: str, workspace_id: str = "local-demo", status_filters: list[str] | None = None, limit: int = 25) -> dict:
+def worker_loop_admission_summary(items: list[dict], adapter: str | None = None, agent_id: str | None = None) -> dict:
+    live_items = [item for item in items if item.get("assigned_adapter") in {"hermes", "openclaw"}]
+    packets = [
+        item.get("local_loop_admission_packet")
+        for item in live_items
+        if isinstance(item.get("local_loop_admission_packet"), dict)
+    ]
+    passed_packets = [packet for packet in packets if packet.get("ok") is True]
+    missing_items = [
+        item
+        for item in live_items
+        if "local_loop_admission_packet" in set(item.get("failed_gate_ids") or [])
+    ]
+    live_adapters = sorted({str(item.get("assigned_adapter")) for item in live_items if item.get("assigned_adapter")})
+    requested_adapter = coerce_choice(adapter, {"mock", "hermes", "openclaw"}, "mock") if adapter else None
+    next_safe_commands: list[str] = []
+    if requested_adapter in {"hermes", "openclaw"}:
+        quoted_agent = shlex.quote(agent_id or f"agt_worker_daemon_{requested_adapter}")
+        next_safe_commands.append(
+            f"agentops operator start-check --adapter {requested_adapter} --agent-id {quoted_agent}"
+        )
+        next_safe_commands.append(
+            f"agentops worker preflight --adapter {requested_adapter}"
+        )
+    for packet in packets[:3]:
+        deployment = packet.get("local_deployment") or {}
+        worker_start = (deployment.get("worker_start") or {}).get("command")
+        if worker_start:
+            next_safe_commands.append(worker_start)
+        phase_commands = packet.get("phase_commands") or {}
+        read_command = phase_commands.get("read")
+        if read_command:
+            next_safe_commands.append(read_command)
+    deduped_commands = list(dict.fromkeys(next_safe_commands))
+    return {
+        "operation": "worker_loop_admission_summary",
+        "adapter": requested_adapter,
+        "agent_id": agent_id,
+        "live_adapter_tasks_checked": len(live_items),
+        "live_adapters": live_adapters,
+        "passed_local_loop_admission": len(passed_packets),
+        "missing_local_loop_admission": len(missing_items),
+        "local_loop_admission_ready": len(missing_items) == 0,
+        "required_method_gates": TASK_INTAKE_METHOD_GATE_IDS,
+        "next_safe_commands": deduped_commands[:6] or ["agentops operator intake-checklist --limit 20"],
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_executes_shell": False,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
+
+
+def worker_intake_start_gate(conn, agent_id: str, workspace_id: str = "local-demo", status_filters: list[str] | None = None, limit: int = 25, adapter: str | None = None) -> dict:
     statuses = status_filters or ["planned"]
     statuses = [coerce_choice(str(status), VALID_TASK_STATUSES, "planned") for status in statuses if status]
     if not statuses:
@@ -12727,6 +12783,7 @@ def worker_intake_start_gate(conn, agent_id: str, workspace_id: str = "local-dem
     blocked = [item for item in items if item["severity"] == "blocked"]
     attention = [item for item in items if item["severity"] == "attention"]
     ready = [item for item in items if item["severity"] == "ready"]
+    loop_admission = worker_loop_admission_summary(items, adapter=adapter, agent_id=agent_id)
     return {
         "provider": "agentops-worker",
         "operation": "worker_intake_start_gate",
@@ -12738,7 +12795,11 @@ def worker_intake_start_gate(conn, agent_id: str, workspace_id: str = "local-dem
             "blocked_for_intake": len(blocked),
             "attention_for_intake": len(attention),
             "ready_for_intake": len(ready),
+            "live_adapter_tasks_checked": loop_admission["live_adapter_tasks_checked"],
+            "passed_local_loop_admission": loop_admission["passed_local_loop_admission"],
+            "missing_local_loop_admission": loop_admission["missing_local_loop_admission"],
         },
+        "local_loop_admission_summary": loop_admission,
         "items": items,
         "blocked_tasks": blocked[:5],
         "next_actions": [item["command"] for item in blocked[:5] if item.get("command")],
@@ -12782,7 +12843,7 @@ def start_local_worker_daemon(conn, body: dict) -> tuple[dict, int]:
     if existing["running"]:
         return {"provider": "agentops-worker", "ok": True, "already_running": True, "daemon": existing}, 200
     enforce_intake = body_bool(body.get("enforce_intake"), True)
-    intake_gate = worker_intake_start_gate(conn, agent_id, body.get("workspace_id") or "local-demo", status_filters=status_filters)
+    intake_gate = worker_intake_start_gate(conn, agent_id, body.get("workspace_id") or "local-demo", status_filters=status_filters, adapter=adapter)
     if enforce_intake and intake_gate["summary"]["blocked_for_intake"] > 0 and not body_bool(body.get("confirm_intake_override")):
         return {
             "provider": "agentops-worker",
@@ -12791,6 +12852,7 @@ def start_local_worker_daemon(conn, body: dict) -> tuple[dict, int]:
             "error": "worker_intake_blocked",
             "message": "Resolve blocked Agent Plan / knowledge intake gates before starting a worker daemon.",
             "task_intake": intake_gate,
+            "local_loop_admission_summary": intake_gate.get("local_loop_admission_summary"),
             "recommended_action": (intake_gate.get("next_actions") or ["agentops operator intake-checklist --limit 20"])[0],
             "token_omitted": True,
         }, 409
@@ -12945,7 +13007,7 @@ def restart_local_worker_daemon(conn, body: dict) -> tuple[dict, int]:
     if not status_filters:
         status_filters = ["planned"]
     enforce_intake = body_bool(body.get("enforce_intake"), True)
-    intake_gate = worker_intake_start_gate(conn, agent_id, body.get("workspace_id") or "local-demo", status_filters=status_filters)
+    intake_gate = worker_intake_start_gate(conn, agent_id, body.get("workspace_id") or "local-demo", status_filters=status_filters, adapter=adapter)
     if enforce_intake and intake_gate["summary"]["blocked_for_intake"] > 0 and not body_bool(body.get("confirm_intake_override")):
         return {
             "provider": "agentops-worker",
@@ -12955,6 +13017,7 @@ def restart_local_worker_daemon(conn, body: dict) -> tuple[dict, int]:
             "message": "Resolve blocked Agent Plan / knowledge intake gates before restarting a worker daemon.",
             "previous": previous,
             "task_intake": intake_gate,
+            "local_loop_admission_summary": intake_gate.get("local_loop_admission_summary"),
             "recommended_action": (intake_gate.get("next_actions") or ["agentops operator intake-checklist --limit 20"])[0],
             "token_omitted": True,
         }, 409
@@ -17703,7 +17766,8 @@ def task_assigned_runtime_adapter(conn: sqlite3.Connection, row: sqlite3.Row | d
 def task_intake_local_loop_admission_packet(adapter: str | None, task_id: str, agent_id: str | None) -> dict | None:
     if adapter not in {"hermes", "openclaw"}:
         return None
-    worker_start = f"agentops worker start --adapter {adapter} --confirm-run --poll-interval 5 --max-tasks 0"
+    quoted_agent = shlex.quote(agent_id or f"agt_worker_daemon_{adapter}")
+    worker_start = f"agentops worker start --adapter {adapter} --agent-id {quoted_agent} --confirm-run --poll-interval 5 --max-tasks 0"
     customer_dispatch = (
         "agentops workflow customer-worker-task "
         f"--adapter {adapter} "

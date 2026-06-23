@@ -11,6 +11,12 @@ import argparse
 import json
 import os
 import re
+import socket
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -21,6 +27,7 @@ TOKEN_PATTERNS = [
     re.compile(r"sk-[A-Za-z0-9]{20,}"),
     re.compile(r"ntn_[A-Za-z0-9]{8,}"),
 ]
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def http_json(method: str, base_url: str, path: str, payload: dict | None = None):
@@ -64,13 +71,60 @@ def require_live_admission_packet(result: dict, adapter: str, failures: list[str
     require(packet.get("token_omitted") is True, f"{adapter} admission token proof missing: {packet}", failures)
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description="Verify customer worker task workflow.")
-    parser.add_argument("--base-url", default=os.environ.get("AGENTOPS_BASE_URL", "http://127.0.0.1:8787"))
-    args = parser.parse_args()
+def free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def wait_for_server(base_url: str, timeout: float = 45.0) -> None:
+    deadline = time.time() + timeout
+    last_error = ""
+    while time.time() < deadline:
+        try:
+            with urlopen(base_url.rstrip("/") + "/api/dashboard/metrics", timeout=1.0) as resp:
+                if resp.status == 200:
+                    return
+        except Exception as exc:
+            last_error = str(exc)
+            time.sleep(0.25)
+    raise RuntimeError(f"server did not become ready: {last_error}")
+
+
+def start_isolated_server(db_path: Path, port: int, log_path: Path) -> subprocess.Popen:
+    env = os.environ.copy()
+    env["AGENTOPS_DB_PATH"] = str(db_path)
+    env["AGENTOPS_SKIP_SEED_EXPORTS"] = "1"
+    log_fh = log_path.open("w", encoding="utf-8")
+    proc = subprocess.Popen(
+        [sys.executable, "server.py", "--host", "127.0.0.1", "--port", str(port), "--reset", "--serve"],
+        cwd=ROOT,
+        env=env,
+        stdout=log_fh,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    proc._agentops_log_fh = log_fh  # type: ignore[attr-defined]
+    return proc
+
+
+def stop_isolated_server(proc: subprocess.Popen) -> None:
+    if proc.poll() is None:
+        proc.terminate()
+        try:
+            proc.wait(timeout=8)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
+    log_fh = getattr(proc, "_agentops_log_fh", None)
+    if log_fh:
+        log_fh.close()
+
+
+def run_checks(base_url: str) -> int:
     failures: list[str] = []
 
-    status, result = http_json("POST", args.base_url, "/api/workflows/customer-worker-task", {
+    status, result = http_json("POST", base_url, "/api/workflows/customer-worker-task", {
         "adapter": "mock",
         "title": "客户侧 Worker 闭环验收",
         "description": "以客户视角创建一个真实可执行的 MIS 任务，并要求本地 worker 写回账本证据。",
@@ -89,7 +143,7 @@ def main() -> int:
     require(bool(result.get("run_id")), f"missing run id: {result}", failures)
     require(bool(result.get("artifact_id")), f"missing artifact id: {result}", failures)
     worker_state = ((result.get("worker_result") or {}).get("state") or {})
-    require(worker_state.get("base_url") == args.base_url.rstrip("/"), f"worker used wrong MIS base_url: {worker_state}", failures)
+    require(worker_state.get("base_url") == base_url.rstrip("/"), f"worker used wrong MIS base_url: {worker_state}", failures)
     require(evidence.get("tool_calls", 0) >= 1, f"missing tool call evidence: {evidence}", failures)
     require(evidence.get("evaluations", 0) >= 1, f"missing evaluation evidence: {evidence}", failures)
     require(evidence.get("runtime_events", 0) >= 1, f"missing runtime event evidence: {evidence}", failures)
@@ -99,17 +153,17 @@ def main() -> int:
     require(evidence.get("approvals", 0) >= 1, f"missing delivery approval evidence: {evidence}", failures)
 
     if result.get("task_id"):
-        status, task_detail = http_json("GET", args.base_url, f"/api/tasks/{result['task_id']}")
+        status, task_detail = http_json("GET", base_url, f"/api/tasks/{result['task_id']}")
         require(status == 200, f"task detail failed: {status} {task_detail}", failures)
         require(any(row.get("artifact_id") == result.get("artifact_id") for row in task_detail.get("artifacts") or []), "task detail missing customer worker artifact", failures)
     if result.get("run_id"):
-        status, run_detail = http_json("GET", args.base_url, f"/api/runs/{result['run_id']}")
+        status, run_detail = http_json("GET", base_url, f"/api/runs/{result['run_id']}")
         require(status == 200, f"run detail failed: {status} {run_detail}", failures)
         require(len(run_detail.get("tool_calls") or []) >= 1, "run detail missing tool call", failures)
         require(len(run_detail.get("evaluations") or []) >= 1, "run detail missing evaluation", failures)
         require(len(run_detail.get("approvals") or []) >= 1, "run detail missing delivery approval", failures)
 
-    status, confirm_gate = http_json("POST", args.base_url, "/api/workflows/customer-worker-task", {
+    status, confirm_gate = http_json("POST", base_url, "/api/workflows/customer-worker-task", {
         "adapter": "hermes",
         "title": "Hermes customer worker confirm gate",
         "description": "This should plan the task but not execute live Hermes without confirmation.",
@@ -138,6 +192,25 @@ def main() -> int:
         "failures": failures,
     }, ensure_ascii=False, indent=2, sort_keys=True))
     return 0 if not failures else 1
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Verify customer worker task workflow.")
+    parser.add_argument("--base-url", default=os.environ.get("AGENTOPS_BASE_URL", "http://127.0.0.1:8787"))
+    parser.add_argument("--isolated-fixture", action="store_true", help="Run against a temporary server and SQLite database.")
+    args = parser.parse_args()
+    if args.isolated_fixture:
+        with tempfile.TemporaryDirectory(prefix="agentops-customer-worker-isolated-") as tmp:
+            tmp_path = Path(tmp)
+            port = free_port()
+            base_url = f"http://127.0.0.1:{port}"
+            proc = start_isolated_server(tmp_path / "agentops_mis.db", port, tmp_path / "server.log")
+            try:
+                wait_for_server(base_url)
+                return run_checks(base_url)
+            finally:
+                stop_isolated_server(proc)
+    return run_checks(args.base_url)
 
 
 if __name__ == "__main__":

@@ -3,13 +3,17 @@
 
 from __future__ import annotations
 
+import argparse
 import datetime as dt
 import json
 import os
 import re
+import socket
 import sqlite3
 import subprocess
+import sys
 import tempfile
+import time
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -106,6 +110,56 @@ def db_fingerprint(db_path: Path) -> dict | None:
         conn.close()
 
 
+def free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def wait_for_server(base_url: str, timeout: float = 45.0) -> None:
+    deadline = time.time() + timeout
+    last_error = ""
+    while time.time() < deadline:
+        try:
+            with urlopen(base_url.rstrip("/") + "/api/dashboard/metrics", timeout=1.0) as resp:
+                if resp.status == 200:
+                    return
+        except Exception as exc:
+            last_error = str(exc)
+            time.sleep(0.25)
+    raise RuntimeError(f"server did not become ready: {last_error}")
+
+
+def start_isolated_server(db_path: Path, port: int, log_path: Path) -> subprocess.Popen:
+    env = os.environ.copy()
+    env["AGENTOPS_DB_PATH"] = str(db_path)
+    env["AGENTOPS_SKIP_SEED_EXPORTS"] = "1"
+    log_fh = log_path.open("w", encoding="utf-8")
+    proc = subprocess.Popen(
+        [sys.executable, "server.py", "--host", "127.0.0.1", "--port", str(port), "--reset", "--serve"],
+        cwd=ROOT,
+        env=env,
+        stdout=log_fh,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    proc._agentops_log_fh = log_fh  # type: ignore[attr-defined]
+    return proc
+
+
+def stop_isolated_server(proc: subprocess.Popen) -> None:
+    if proc.poll() is None:
+        proc.terminate()
+        try:
+            proc.wait(timeout=8)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
+    log_fh = getattr(proc, "_agentops_log_fh", None)
+    if log_fh:
+        log_fh.close()
+
+
 def create_enrollment(base_url: str, workspace_id: str, agent_id: str, runtime_type: str = "mock") -> tuple[str, str]:
     status, created, _raw = http_json(base_url, "POST", "/api/agent-gateway/enrollment/create", {
         "workspace_id": workspace_id,
@@ -170,9 +224,7 @@ def find_item(payload: dict, task_id: str) -> dict:
     return next((item for item in payload.get("items") or [] if item.get("task_id") == task_id), {})
 
 
-def main() -> int:
-    base_url = os.environ.get("AGENTOPS_BASE_URL", "http://127.0.0.1:8787")
-    db_path = Path(os.environ.get("AGENTOPS_DB_PATH") or DEFAULT_DB)
+def run_checks(base_url: str, db_path: Path) -> int:
     stamp = now_stamp()
     workspace_id = "local-demo"
     agent_id = f"agt_task_intake_{stamp}"
@@ -245,6 +297,8 @@ def main() -> int:
             outputs.append(raw)
             require(status == 409, f"worker daemon start should be intake-blocked: {status} {start_gate}", failures)
             require(start_gate.get("error") == "worker_intake_blocked", f"worker start did not report intake block: {start_gate}", failures)
+            require((start_gate.get("task_intake") or {}).get("local_loop_admission_summary"), f"worker start missing loop admission summary: {start_gate}", failures)
+            require((start_gate.get("task_intake") or {}).get("summary", {}).get("missing_local_loop_admission") == 0, f"worker start summary should prove no missing admission: {start_gate}", failures)
             require(
                 blocked_task_id in {item.get("task_id") for item in ((start_gate.get("task_intake") or {}).get("blocked_tasks") or [])},
                 f"worker start block missing blocked task evidence: {start_gate}",
@@ -260,6 +314,44 @@ def main() -> int:
             outputs.append(raw)
             require(status == 409, f"worker daemon restart should be intake-blocked: {status} {restart_gate}", failures)
             require(restart_gate.get("error") == "worker_intake_blocked", f"worker restart did not report intake block: {restart_gate}", failures)
+            require((restart_gate.get("task_intake") or {}).get("local_loop_admission_summary"), f"worker restart missing loop admission summary: {restart_gate}", failures)
+
+            status, hermes_start_gate, raw = http_json(base_url, "POST", "/api/workers/local/start", {
+                "adapter": "hermes",
+                "agent_id": hermes_agent_id,
+                "max_tasks": 1,
+                "confirm_run": True,
+                "enforce_intake": True,
+            })
+            outputs.append(raw)
+            hermes_start_summary = hermes_start_gate.get("local_loop_admission_summary") or {}
+            hermes_start_intake = hermes_start_gate.get("task_intake") or {}
+            hermes_start_blocked = next((item for item in (hermes_start_intake.get("blocked_tasks") or []) if item.get("task_id") == hermes_task_id), {})
+            hermes_worker_start = (((hermes_start_blocked.get("local_loop_admission_packet") or {}).get("local_deployment") or {}).get("worker_start") or {})
+            require(status == 409, f"Hermes worker daemon start should be intake-blocked before live execution: {status} {hermes_start_gate}", failures)
+            require(hermes_start_gate.get("error") == "worker_intake_blocked", f"Hermes worker start did not report intake block: {hermes_start_gate}", failures)
+            require(hermes_start_summary.get("operation") == "worker_loop_admission_summary", f"Hermes start missing admission summary: {hermes_start_gate}", failures)
+            require(hermes_start_summary.get("adapter") == "hermes", f"Hermes start summary adapter mismatch: {hermes_start_summary}", failures)
+            require(hermes_start_summary.get("passed_local_loop_admission") == 1, f"Hermes start summary should count passed admission: {hermes_start_summary}", failures)
+            require(hermes_start_summary.get("missing_local_loop_admission") == 0, f"Hermes start summary should not miss admission: {hermes_start_summary}", failures)
+            require((hermes_start_summary.get("safety") or {}).get("server_executes_shell") is False, f"Hermes start summary shell proof missing: {hermes_start_summary}", failures)
+            require((hermes_start_blocked.get("local_loop_admission_packet") or {}).get("ok") is True, f"Hermes worker start block missing admission packet: {hermes_start_gate}", failures)
+            require("--agent-id" in str(hermes_worker_start.get("command") or ""), f"Hermes worker start command should bind agent id: {hermes_start_gate}", failures)
+            require("--confirm-run" in str(hermes_worker_start.get("command") or ""), f"Hermes worker start command should require confirm-run: {hermes_start_gate}", failures)
+
+            status, hermes_restart_gate, raw = http_json(base_url, "POST", "/api/workers/local/restart", {
+                "adapter": "hermes",
+                "agent_id": hermes_agent_id,
+                "max_tasks": 1,
+                "confirm_run": True,
+                "enforce_intake": True,
+            })
+            outputs.append(raw)
+            hermes_restart_summary = hermes_restart_gate.get("local_loop_admission_summary") or {}
+            require(status == 409, f"Hermes worker daemon restart should be intake-blocked before live execution: {status} {hermes_restart_gate}", failures)
+            require(hermes_restart_gate.get("error") == "worker_intake_blocked", f"Hermes worker restart did not report intake block: {hermes_restart_gate}", failures)
+            require(hermes_restart_summary.get("operation") == "worker_loop_admission_summary", f"Hermes restart missing admission summary: {hermes_restart_gate}", failures)
+            require(hermes_restart_summary.get("passed_local_loop_admission") == 1, f"Hermes restart summary should count passed admission: {hermes_restart_summary}", failures)
 
             after_reads = db_fingerprint(db_path)
             if before is not None and after_reads is not None:
@@ -320,6 +412,27 @@ def main() -> int:
     finally:
         for token_id in token_ids:
             http_json(base_url, "POST", "/api/agent-gateway/enrollment/revoke", {"token_id": token_id})
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--base-url", default=os.environ.get("AGENTOPS_BASE_URL", "http://127.0.0.1:8787"))
+    parser.add_argument("--db-path", default=str(Path(os.environ.get("AGENTOPS_DB_PATH") or DEFAULT_DB)))
+    parser.add_argument("--isolated-fixture", action="store_true", help="Run against a temporary server and SQLite database.")
+    args = parser.parse_args()
+    if args.isolated_fixture:
+        with tempfile.TemporaryDirectory(prefix="agentops-task-intake-isolated-") as tmp:
+            tmp_path = Path(tmp)
+            db_path = tmp_path / "agentops_mis.db"
+            port = free_port()
+            base_url = f"http://127.0.0.1:{port}"
+            proc = start_isolated_server(db_path, port, tmp_path / "server.log")
+            try:
+                wait_for_server(base_url)
+                return run_checks(base_url, db_path)
+            finally:
+                stop_isolated_server(proc)
+    return run_checks(args.base_url, Path(args.db_path))
 
 
 if __name__ == "__main__":
