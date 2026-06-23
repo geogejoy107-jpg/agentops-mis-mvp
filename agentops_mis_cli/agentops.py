@@ -662,11 +662,12 @@ def cmd_operator_loop_launch_packet(args, client: AgentOpsClient) -> dict:
         },
     )
     if args.brief:
-        return compact_loop_launch_packet(payload, adapter=args.adapter)
+        local_readiness = client.get("/api/local/readiness")
+        return compact_loop_launch_packet(payload, adapter=args.adapter, local_readiness=local_readiness)
     return payload
 
 
-def compact_loop_launch_packet(payload: dict, *, adapter: str) -> dict:
+def compact_loop_launch_packet(payload: dict, *, adapter: str, local_readiness: dict | None = None) -> dict:
     summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
     control = payload.get("control_summary") if isinstance(payload.get("control_summary"), dict) else {}
     recommended = control.get("recommended_step") if isinstance(control.get("recommended_step"), dict) else {}
@@ -732,6 +733,29 @@ def compact_loop_launch_packet(payload: dict, *, adapter: str) -> dict:
         "agentops operator loop-audit --limit 20",
         "agentops operator action-receipts --limit 20",
     ]
+    local_readiness = local_readiness if isinstance(local_readiness, dict) else {}
+    local_steps = local_readiness.get("local_run_path") if isinstance(local_readiness.get("local_run_path"), list) else []
+    compact_local_steps = []
+    for step in local_steps[:8]:
+        if not isinstance(step, dict):
+            continue
+        compact_local_steps.append({
+            "step_id": step.get("step_id"),
+            "phase": step.get("phase"),
+            "status": step.get("status"),
+            "adapter": step.get("adapter"),
+            "command": step.get("command"),
+            "verify_command": step.get("verify_command"),
+            "confirm_required": bool(step.get("confirm_required")),
+            "writes_ledger": bool(step.get("writes_ledger")),
+            "live_execution": bool(step.get("live_execution")),
+            "service_control_preview": bool(step.get("service_control_preview")),
+            "copy_only": step.get("copy_only", True) is not False,
+            "server_executes_shell": bool(step.get("server_executes_shell")),
+            "token_omitted": step.get("token_omitted", True) is not False,
+        })
+    service_step = next((step for step in compact_local_steps if step.get("step_id") == "preview_worker_service_control"), {})
+    local_run_path_commands = [str(step.get("command") or "").strip() for step in compact_local_steps if str(step.get("command") or "").strip()]
     return {
         "provider": payload.get("provider", "agentops-operator"),
         "operation": "operator_loop_launch_brief",
@@ -761,6 +785,10 @@ def compact_loop_launch_packet(payload: dict, *, adapter: str) -> dict:
             "workflow_job_recovery_stuck_jobs": workflow_recovery_summary.get("stuck_jobs"),
             "workflow_job_recovery_retryable_failed_jobs": workflow_recovery_summary.get("retryable_failed_jobs"),
             "workflow_job_recovery_receipt_missing": workflow_recovery_summary.get("receipt_missing"),
+            "local_readiness_status": local_readiness.get("status"),
+            "local_run_path_steps": len(compact_local_steps),
+            "local_run_path_recommended_adapter": (local_readiness.get("summary") or {}).get("recommended_adapter") if isinstance(local_readiness.get("summary"), dict) else None,
+            "service_control_preview": bool(service_step),
         },
         "next_command": control.get("next_command") or recommended.get("command"),
         "verify_command": control.get("verify_command") or recommended.get("verify_command"),
@@ -769,6 +797,24 @@ def compact_loop_launch_packet(payload: dict, *, adapter: str) -> dict:
         "live_run_command": live_run_command,
         "readback_commands": readback_commands,
         "runtime_doctor_command": "agentops operator runtime-doctor --limit 8",
+        "local_run_path": {
+            "operation": "local_run_path_compact",
+            "source_operation": local_readiness.get("operation") or "local_readiness",
+            "status": local_readiness.get("status"),
+            "recommended_adapter": (local_readiness.get("summary") or {}).get("recommended_adapter") if isinstance(local_readiness.get("summary"), dict) else None,
+            "steps": compact_local_steps,
+            "commands": local_run_path_commands[:8],
+            "service_control_preview": service_step or None,
+            "contract": "copy-only local boot/readiness/worker/service/dispatch/verify path; commands are for the operator or agent shell to copy, not for server-side shell execution",
+            "safety": {
+                "read_only": True,
+                "ledger_mutated": False,
+                "live_execution_performed": False,
+                "server_executes_shell": False,
+                "token_omitted": True,
+            },
+            "token_omitted": True,
+        },
         "workflow_job_recovery": {
             "operation": workflow_recovery.get("operation"),
             "status": workflow_recovery.get("status"),
@@ -813,6 +859,7 @@ def compact_loop_launch_packet(payload: dict, *, adapter: str) -> dict:
             adapter_command,
             "agentops operator loop-control --limit 8",
             "agentops operator advance-loop --fast-control --limit 8",
+            *local_run_path_commands[:8],
             live_run_command,
             *readback_commands,
             *workflow_recovery_commands[:6],

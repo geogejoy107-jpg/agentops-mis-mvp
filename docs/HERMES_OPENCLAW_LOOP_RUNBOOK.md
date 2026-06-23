@@ -45,7 +45,9 @@ only the adapter preflight command, current next/verify/receipt commands,
 compact execution-chain state, bounded-runner policy id, confirmation and
 prepared-action guidance, an explicit `agentops workflow run-task --adapter ...
 --confirm-run` live command template, readback commands for task/run/manifest
-evidence, and read-only/token-omission proof. `workflow run-task` readback now
+evidence, a compact `local_run_path` with boot/readiness/worker/service-control
+preview/dispatch/ledger/live-acceptance commands, and read-only/token-omission
+proof. `workflow run-task` readback now
 also returns compact `agent_plan` and `plan_evidence` proof with verified flags
 and evidence counts, so the next agent can distinguish a closed loop lane from
 a model-only summary. The agent should copy commands locally; the server never

@@ -97,6 +97,17 @@ def smoke(base_url: str, stamp: str) -> dict:
         require("service-check --manager launchd" in text and "service-check --manager systemd" in text, f"launch packet missing service check commands: {steps}")
         require("scripts/agent_worker.py" in text, f"launch packet missing repo fallback commands: {steps}")
         require("agentops session create" in text and "--use-session" in text, f"launch packet missing short-lived session path: {steps}")
+        for flag in (
+            "--session-refresh-margin-sec 60",
+            "--idle-backoff-max 30",
+            "--error-backoff-max 30",
+            "--backoff-factor 2",
+            "--adapter-max-attempts 1",
+            "--adapter-retry-delay-sec 1",
+            "--continue-on-error",
+            "--max-errors 5",
+        ):
+            require(flag in text, f"launch packet missing explicit remote loop policy flag {flag}: {steps}")
 
         status_status, status_payload = http_json("GET", base_url, "/api/agent-gateway/status", token=token)
         require(status_status == 200, f"token status failed: {status_status} {status_payload}")

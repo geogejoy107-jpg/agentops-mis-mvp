@@ -1553,6 +1553,13 @@ planned MIS task
 - The worker readiness API/CLI now returns adapter route readiness for
   mock/Hermes/OpenClaw without executing live work, so external agents can choose
   a viable route before starting a task.
+- The same readiness API/CLI now returns `worker_connection_policy` with schema
+  `agentops-worker-connection-policy-v1`, making remote worker session refresh
+  and reconnection/backoff policy machine-readable:
+  - session: `--use-session`, ttl 900s, refresh margin 60s, parent token in process memory only;
+  - loop: poll 5s, idle/error backoff max 30s, factor 2;
+  - adapter retry: retryable failures may retry, non-retryable safety gates do not;
+  - daemon: `--continue-on-error`, max errors 5, state/jsonl evidence.
 - The `/workspace/agents` UI now surfaces that route-readiness state for human
   operators without changing the machine-facing execution contract.
 - The same page surfaces selected-adapter readiness inside the customer dispatch

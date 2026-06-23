@@ -288,6 +288,17 @@ def validate_brief(payload: dict, label: str, task_id: str, agent_id: str, adapt
     require("agentops run get --run-id <run_id>" in (payload.get("readback_commands") or []), f"{label} run readback command missing: {payload}", failures)
     require("agentops operator loop-control --limit 8" in (payload.get("commands") or []), f"{label} loop-control command missing: {payload}", failures)
     require("agentops operator advance-loop --fast-control --limit 8" in (payload.get("commands") or []), f"{label} fast advance command missing: {payload}", failures)
+    require(any("agentops local readiness" == str(command) for command in (payload.get("commands") or [])), f"{label} local readiness command missing: {payload}", failures)
+    require(any("service-control" in str(command) for command in (payload.get("commands") or [])), f"{label} service-control preview command missing: {payload}", failures)
+    local_run_path = payload.get("local_run_path") or {}
+    require(local_run_path.get("operation") == "local_run_path_compact", f"{label} local run path missing: {local_run_path}", failures)
+    require(len(local_run_path.get("steps") or []) >= 8, f"{label} local run path too short: {local_run_path}", failures)
+    service_step = local_run_path.get("service_control_preview") or {}
+    require(service_step.get("step_id") == "preview_worker_service_control", f"{label} service-control local step missing: {local_run_path}", failures)
+    require("service-control" in str(service_step.get("command") or ""), f"{label} service-control command wrong: {service_step}", failures)
+    require(service_step.get("server_executes_shell") is False, f"{label} service-control step should not use server shell: {service_step}", failures)
+    require((local_run_path.get("safety") or {}).get("server_executes_shell") is False, f"{label} local run path server-shell boundary missing: {local_run_path}", failures)
+    require((local_run_path.get("safety") or {}).get("live_execution_performed") is False, f"{label} local run path should be read-only in brief: {local_run_path}", failures)
     workflow_recovery = payload.get("workflow_job_recovery") or {}
     require(workflow_recovery.get("operation") == "workflow_job_recovery_work_order", f"{label} workflow recovery brief missing: {workflow_recovery}", failures)
     require(workflow_recovery.get("status") in {"ready", "attention", "blocked"}, f"{label} workflow recovery brief status wrong: {workflow_recovery}", failures)

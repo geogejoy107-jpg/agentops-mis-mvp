@@ -2941,7 +2941,8 @@ def agent_gateway_launch_steps(agent_id: str, workspace_id: str, runtime_type: s
     ]
     confirm_flag = " --confirm-run" if adapter in {"hermes", "openclaw"} else ""
     run_once = f"agentops-worker --once --adapter {adapter}{confirm_flag} --use-session --session-ttl-sec 900"
-    run_loop = f"agentops-worker --adapter {adapter}{confirm_flag} --use-session --session-ttl-sec 900 --poll-interval 5 --max-tasks 0 --continue-on-error --write-state --jsonl-log"
+    worker_loop_flags = "--use-session --session-ttl-sec 900 --session-refresh-margin-sec 60 --poll-interval 5 --idle-backoff-max 30 --error-backoff-max 30 --backoff-factor 2 --adapter-max-attempts 1 --adapter-retry-delay-sec 1 --max-tasks 0 --continue-on-error --max-errors 5 --write-state --jsonl-log"
+    run_loop = f"agentops-worker --adapter {adapter}{confirm_flag} {worker_loop_flags}"
     template_args = (
         f"--adapter {adapter}{confirm_flag} "
         f"--base-url {shlex.quote(base_url)} "
@@ -2971,7 +2972,7 @@ def agent_gateway_launch_steps(agent_id: str, workspace_id: str, runtime_type: s
         "service_check_launchd": f"agentops-worker service-check --manager launchd --adapter {adapter} --agent-id {shlex.quote(safe_agent_id)}",
         "service_check_systemd": f"agentops-worker service-check --manager systemd --adapter {adapter} --agent-id {shlex.quote(safe_agent_id)}",
         "repo_fallback_run_once": f"python3 scripts/agent_worker.py --once --adapter {adapter}{confirm_flag} --use-session --session-ttl-sec 900",
-        "repo_fallback_run_loop": f"python3 scripts/agent_worker.py --adapter {adapter}{confirm_flag} --use-session --session-ttl-sec 900 --poll-interval 5 --max-tasks 0 --continue-on-error --write-state --jsonl-log",
+        "repo_fallback_run_loop": f"python3 scripts/agent_worker.py --adapter {adapter}{confirm_flag} {worker_loop_flags}",
         "notes": [
             "Do not commit AGENTOPS_API_KEY or paste it into issue trackers.",
             "Install the source package on the agent machine first; the product command is agentops-worker.",
@@ -13183,6 +13184,70 @@ def worker_adapter_readiness(conn, refresh: bool = True) -> dict:
     hermes = hermes_status()
     openclaw = openclaw_status()
 
+    def worker_connection_policy() -> dict:
+        adapter_max_attempts = max(int(os.environ.get("AGENTOPS_ADAPTER_MAX_ATTEMPTS", "1") or 1), 1)
+        try:
+            adapter_retry_delay = max(float(os.environ.get("AGENTOPS_ADAPTER_RETRY_DELAY_SEC", "1") or 0), 0.0)
+        except Exception:
+            adapter_retry_delay = 1.0
+        recommended_remote_loop = (
+            "agentops-worker --adapter mock --use-session --session-ttl-sec 900 "
+            "--session-refresh-margin-sec 60 --poll-interval 5 "
+            "--idle-backoff-max 30 --error-backoff-max 30 --backoff-factor 2 "
+            f"--adapter-max-attempts {adapter_max_attempts} --adapter-retry-delay-sec {adapter_retry_delay:g} "
+            "--max-tasks 0 --continue-on-error --max-errors 5 --write-state --jsonl-log"
+        )
+        return {
+            "schema": "agentops-worker-connection-policy-v1",
+            "recommended_remote_loop": recommended_remote_loop,
+            "session": {
+                "use_session_recommended": True,
+                "ttl_sec": 900,
+                "refresh_margin_sec": 60,
+                "parent_enrollment_token_storage": "process_memory_only",
+                "session_token_storage": "process_memory_only",
+                "state_fields": ["session_id", "session_expires_at", "session_refresh_count"],
+                "token_omitted": True,
+            },
+            "loop_backoff": {
+                "poll_interval_sec": 5,
+                "idle_backoff_max_sec": 30,
+                "error_backoff_max_sec": 30,
+                "backoff_factor": 2,
+                "idle_reason": "idle_backoff",
+                "error_reason": "error_backoff",
+                "state_fields": ["consecutive_idle", "consecutive_errors", "last_sleep_sec", "next_sleep_sec", "last_sleep_reason"],
+            },
+            "adapter_retry": {
+                "default_max_attempts": adapter_max_attempts,
+                "default_retry_delay_sec": adapter_retry_delay,
+                "retryable_failures_can_retry": True,
+                "non_retryable_safety_gates_retry": False,
+                "evidence_fields": ["attempt_count", "max_attempts", "retry_history"],
+            },
+            "daemon_resilience": {
+                "continue_on_error": True,
+                "max_errors": 5,
+                "state_written": True,
+                "jsonl_log": True,
+                "os_service_relaunch": "launchd KeepAlive=true or systemd Restart=always when operator installs/loads the generated service template",
+            },
+            "operator_checks": {
+                "readiness": "agentops worker readiness",
+                "status": "agentops worker status",
+                "preflight": "agentops worker preflight --adapter <mock|hermes|openclaw>",
+                "session_refresh_smoke": "python3 scripts/worker_session_refresh_smoke.py --base-url http://127.0.0.1:8787",
+                "adapter_retry_smoke": "python3 scripts/worker_adapter_retry_smoke.py --base-url http://127.0.0.1:8787",
+            },
+            "safety": {
+                "read_only": True,
+                "ledger_mutated": False,
+                "live_execution_performed": False,
+                "server_executes_shell": False,
+                "token_omitted": True,
+            },
+        }
+
     def adapter_remediation(adapter: str, readiness: str, checks: dict, recommended_action: str, target_resource: str | None, last_error: str | None = None) -> dict:
         preflight = f"agentops worker preflight --adapter {adapter}"
         runtime_doctor = "agentops operator runtime-doctor --limit 8"
@@ -13386,6 +13451,7 @@ def worker_adapter_readiness(conn, refresh: bool = True) -> dict:
     return {
         "provider": "agentops-worker",
         "status": summary_status,
+        "worker_connection_policy": worker_connection_policy(),
         "summary": {
             "ready_adapters": ready,
             "live_ready_adapters": live_ready,

@@ -433,6 +433,11 @@ Current v1.5 implementation:
 - `/workspace/agents` now includes an operator readiness strip for self-dogfooding and customer operations. It explains local worker mode, confirmed Hermes/OpenClaw live dispatch, remote agent entry, and stuck-task recovery before the detailed gateway/worker/enrollment panels.
 - New/rotated enrollment responses include a safe `next_steps` launch packet for remote machines: package install, env setup, `agentops status`, `agentops-worker preflight`, heartbeat, one-shot `agentops-worker`, loop `agentops-worker`, launchd/systemd template/install/check commands, and repo-local fallback worker commands. Commands use an API-key placeholder rather than embedding the raw token.
 - Launch-packet worker commands now use `--use-session --session-ttl-sec 900`, so remote workers mint a short-lived session before processing tasks instead of holding the enrollment token in the worker loop.
+- `agentops worker readiness` and `GET /api/workers/adapter-readiness` now
+  expose `worker_connection_policy` (`agentops-worker-connection-policy-v1`):
+  short-lived session refresh defaults, idle/error backoff caps, adapter retry
+  semantics, daemon `continue_on_error` / `max_errors`, state/log fields, and
+  copyable verification commands.
 
 Acceptance evidence:
 
@@ -510,7 +515,6 @@ Acceptance evidence:
 
 Remaining product work:
 
-- Reconnection/backoff policy.
 - Hosted customer enrollment policy UI.
 
 ### 5. MVP Security Boundary

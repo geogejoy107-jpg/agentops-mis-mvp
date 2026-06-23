@@ -56,6 +56,17 @@ def assert_safe_launch_steps(payload: dict, expected_adapter: str) -> dict:
     require("service-check --manager systemd" in text, "next_steps missing systemd service check command")
     require("scripts/agent_worker.py" in text, "next_steps missing repo fallback worker command")
     require("--use-session" in text, "worker launch command should mint a short-lived session")
+    for flag in (
+        "--session-refresh-margin-sec 60",
+        "--idle-backoff-max 30",
+        "--error-backoff-max 30",
+        "--backoff-factor 2",
+        "--adapter-max-attempts 1",
+        "--adapter-retry-delay-sec 1",
+        "--continue-on-error",
+        "--max-errors 5",
+    ):
+        require(flag in text, f"next_steps missing explicit remote loop policy flag {flag}: {steps}")
     require(steps.get("adapter") == expected_adapter, f"next_steps adapter mismatch: {steps}")
     if expected_adapter in {"hermes", "openclaw"}:
         require("--confirm-run" in text, f"{expected_adapter} launch commands must include --confirm-run: {steps}")

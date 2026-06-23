@@ -431,6 +431,12 @@ commands for preflight, runtime doctor, worker start, live task template, and
 ledger verification where relevant. MIS does not execute those commands from
 the server; live Hermes/OpenClaw steps still require `--confirm-run` and any
 prepared-action approval required by the task.
+
+The same response includes `worker_connection_policy` for remote worker loops:
+short-lived session defaults, refresh margin, idle/error backoff caps, adapter
+retry semantics, daemon `continue_on_error` / `max_errors`, state/log fields,
+and copyable verification commands. Remote agents should read this block before
+starting a long-running loop rather than relying on stale local notes.
 Confirmed customer-worker dispatch uses the same readiness signal: when a live
 Hermes/OpenClaw adapter is unavailable or blocked, MIS returns
 `reason: adapter_not_ready` for adapter availability failures or
@@ -546,7 +552,7 @@ The expected proof is:
 
 - `agentops worker preflight` returns JSON and `live_execution_performed=false`.
 - `agentops worker readiness` returns all adapter routes, includes
-  `summary.recommended_adapter`, and still reports
+  `summary.recommended_adapter` plus `worker_connection_policy`, and still reports
   `live_execution_performed=false`.
 - Confirmed customer worker dispatch returns `adapter_not_ready` before live
   execution when a selected Hermes/OpenClaw adapter is unavailable.

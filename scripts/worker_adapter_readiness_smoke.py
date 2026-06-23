@@ -58,6 +58,26 @@ def validate_readiness(payload: dict) -> None:
     require(payload.get("status") in {"ready", "degraded", "blocked"}, f"bad readiness status: {payload}")
     require(payload.get("live_execution_performed") is False, "readiness must not execute live work")
     require(payload.get("token_omitted") is True, "token omission proof missing")
+    connection_policy = payload.get("worker_connection_policy") or {}
+    require(connection_policy.get("schema") == "agentops-worker-connection-policy-v1", f"connection policy missing: {payload}")
+    require((connection_policy.get("safety") or {}).get("read_only") is True, f"connection policy must be read-only: {connection_policy}")
+    require((connection_policy.get("safety") or {}).get("live_execution_performed") is False, f"connection policy executed live work: {connection_policy}")
+    require((connection_policy.get("safety") or {}).get("token_omitted") is True, f"connection policy token proof missing: {connection_policy}")
+    session = connection_policy.get("session") or {}
+    require(session.get("use_session_recommended") is True, f"session policy should recommend short-lived sessions: {connection_policy}")
+    require(session.get("ttl_sec") == 900 and session.get("refresh_margin_sec") == 60, f"session defaults missing: {connection_policy}")
+    require(session.get("parent_enrollment_token_storage") == "process_memory_only", f"parent token storage boundary missing: {connection_policy}")
+    recommended_loop = str(connection_policy.get("recommended_remote_loop") or "")
+    for flag in ("--session-refresh-margin-sec 60", "--idle-backoff-max 30", "--error-backoff-max 30", "--backoff-factor 2", "--adapter-max-attempts 1", "--adapter-retry-delay-sec 1", "--max-errors 5"):
+        require(flag in recommended_loop, f"recommended remote loop missing {flag}: {connection_policy}")
+    loop_backoff = connection_policy.get("loop_backoff") or {}
+    require(loop_backoff.get("idle_reason") == "idle_backoff" and loop_backoff.get("error_reason") == "error_backoff", f"backoff reasons missing: {connection_policy}")
+    require(loop_backoff.get("idle_backoff_max_sec") == 30 and loop_backoff.get("error_backoff_max_sec") == 30, f"backoff caps missing: {connection_policy}")
+    adapter_retry = connection_policy.get("adapter_retry") or {}
+    require(adapter_retry.get("retryable_failures_can_retry") is True, f"retryable failure policy missing: {connection_policy}")
+    require(adapter_retry.get("non_retryable_safety_gates_retry") is False, f"safety gates should not retry: {connection_policy}")
+    daemon_resilience = connection_policy.get("daemon_resilience") or {}
+    require(daemon_resilience.get("continue_on_error") is True and daemon_resilience.get("max_errors") == 5, f"daemon resilience policy missing: {connection_policy}")
     adapters = payload.get("adapters") or {}
     for adapter in ("mock", "hermes", "openclaw"):
         item = adapters.get(adapter) or {}
@@ -118,6 +138,7 @@ def main() -> int:
         result = {
             "ok": True,
             "api_status": api_payload.get("status"),
+            "connection_policy_schema": (api_payload.get("worker_connection_policy") or {}).get("schema"),
             "recommended_adapter": (api_payload.get("summary") or {}).get("recommended_adapter"),
             "ready_adapters": (api_payload.get("summary") or {}).get("ready_adapters"),
             "live_execution_performed": False,

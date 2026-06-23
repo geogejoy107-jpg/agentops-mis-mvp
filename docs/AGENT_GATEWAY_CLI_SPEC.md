@@ -1234,6 +1234,10 @@ The response includes:
 - per-adapter `remediation` with `primary_next_action`, missing local checks,
   copy-only preflight/doctor/start/live-run-template/ledger-proof commands,
   and safety proof
+- `worker_connection_policy`, a read-only
+  `agentops-worker-connection-policy-v1` block covering short-lived session
+  refresh, idle/error backoff, adapter retry, daemon error limits, state/log
+  fields, and copyable verification commands
 - `live_execution_performed:false`
 
 Capability manifests are deliberately conservative. `mock` is
@@ -1254,6 +1258,14 @@ choose a route or see what local setup is missing. Use the per-adapter
 Hermes/OpenClaw worker starts and live task templates keep `--confirm-run`; the
 ledger proof command is `agentops operator live-product-readiness`. Use
 `agentops worker preflight --adapter <name>` when debugging one specific adapter.
+
+Remote workers should use the connection policy instead of hard-coding retry
+behavior from memory. The v1.5 defaults are `--use-session --session-ttl-sec
+900 --session-refresh-margin-sec 60`, `--poll-interval 5`,
+`--idle-backoff-max 30`, `--error-backoff-max 30`, `--backoff-factor 2`,
+`--continue-on-error`, and `--max-errors 5` for long-running loops. Retryable
+adapter failures may retry according to `adapter_retry`; non-retryable safety
+gates such as missing `--confirm-run` must not retry.
 
 ### `agentops worker preflight`
 
@@ -1849,8 +1861,12 @@ copy-only `operator_loop_launch_brief` for live local agents. The brief includes
 the adapter preflight command, the current next/verify/receipt commands, compact
 execution-chain rows, confirmation/prepared-action guidance for Hermes/OpenClaw,
 an explicit `agentops workflow run-task --adapter ... --confirm-run` live command
-template, task/run/manifest readback commands, and the same read-only/token-
-omission safety proof without printing the full launch packet.
+template, task/run/manifest readback commands, a compact `local_run_path` from
+`agentops local readiness` with the service-control preview step, and the same
+read-only/token-omission safety proof without printing the full launch packet.
+The local run path remains copy-only: it exposes boot/readiness/worker/service/
+dispatch/ledger/live-acceptance commands for the operator or agent shell, while
+`server_executes_shell=false` stays part of the safety proof.
 It emits commands for loop self-check, knowledge search, commander repo-map
 localization, plan creation/verification, intake comparison, enforced task
 pull, loop verification, plan-evidence binding, evidence reporting, Action
@@ -2391,7 +2407,8 @@ Remaining future work:
 
 - Hosted customer enrollment policy UI.
 - Hosted multi-tenant isolation and full RBAC.
-- Reconnection backoff policy.
+- Reconnection/backoff policy is exposed through
+  `agentops worker readiness` -> `worker_connection_policy`.
 - mTLS or signed heartbeats for server-side agents.
 
 ## Non-Goals For v1.4
