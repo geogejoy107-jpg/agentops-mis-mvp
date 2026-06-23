@@ -85,6 +85,8 @@ The packet includes the canonical command manifest used for release review:
 - Manual product-readiness gate, intentionally not CI-backed:
   `python3 scripts/customer_worker_real_runtime_acceptance.py --confirm-live --adapter hermes --adapter openclaw`
 - `python3 scripts/customer_worker_hermes_retry_gateway_smoke.py`
+- `python3 scripts/redaction_policy_smoke.py`
+- `python3 scripts/sqlite_pragmas_smoke.py`
 - `python3 scripts/module_boundary_smoke.py`
 - `python3 scripts/read_model_cache_smoke.py`
 - `python3 scripts/open_source_adoption_boundary_smoke.py`
@@ -93,7 +95,11 @@ The packet includes the canonical command manifest used for release review:
 - `python3 scripts/secret_scan_smoke.py`
 - `python3 scripts/license_provenance_smoke.py`
 - `python3 scripts/public_claims_release_gate_smoke.py`
+- `python3 scripts/redaction_fuzz_smoke.py`
+- `python3 scripts/shared_mode_local_write_guard_smoke.py`
+- `python3 scripts/automatic_plan_evidence_workflow_smoke.py`
 - `python3 scripts/migration_rollback_smoke.py`
+- `python3 scripts/approval_semantics_boundary_smoke.py`
 - `python3 scripts/knowledge_retrieval_quality_smoke.py`
 - `python3 scripts/worker_knowledge_evidence_consumption_smoke.py`
 - `python3 scripts/worker_prompt_profile_smoke.py`
@@ -120,15 +126,29 @@ The packet includes the canonical command manifest used for release review:
 - `python3 scripts/task_detail_evidence_ui_smoke.py`
 - `python3 scripts/run_detail_evidence_ui_smoke.py`
 - `python3 scripts/security_production_readiness_smoke.py --base-url "$AGENTOPS_BASE_URL"`
+- `python3 scripts/agentops_doctor_smoke.py`
+- `python3 scripts/agent_plan_integrity_smoke.py --base-url "$AGENTOPS_BASE_URL"`
+- `python3 scripts/run_start_plan_gate_smoke.py --base-url "$AGENTOPS_BASE_URL"`
 - `python3 scripts/operator_runtime_doctor_smoke.py`
 - `python3 scripts/operator_start_check_api_smoke.py`
 - `python3 scripts/operator_start_check_smoke.py --base-url "$AGENTOPS_BASE_URL" --adapter hermes --adapter openclaw`
 - `python3 scripts/operator_execution_mode_smoke.py`
 - `python3 scripts/runtime_capability_manifest_smoke.py --base-url "$AGENTOPS_BASE_URL"`
+- `python3 scripts/runtime_connector_trust_smoke.py --base-url "$AGENTOPS_BASE_URL"`
 - `python3 scripts/worker_fleet_hygiene_smoke.py --base-url "$AGENTOPS_BASE_URL"`
+- `python3 scripts/prepared_action_approval_wall_smoke.py --base-url "$AGENTOPS_BASE_URL"`
+- `python3 scripts/high_risk_toolcall_prepared_action_gate_smoke.py --base-url "$AGENTOPS_BASE_URL"`
+- `python3 scripts/worker_external_write_preflight_gate_smoke.py`
+- `python3 scripts/runtime_probe_prepared_action_gate_smoke.py`
+- `python3 scripts/customer_worker_external_write_gate_smoke.py`
+- `python3 scripts/generic_external_side_effect_gate_smoke.py --base-url "$AGENTOPS_BASE_URL"`
+- `python3 scripts/agent_gateway_runtime_event_smoke.py --base-url "$AGENTOPS_BASE_URL"`
 - `python3 scripts/agent_gateway_knowledge_scope_smoke.py`
+- `python3 scripts/knowledge_scope_policy_smoke.py`
+- `python3 scripts/agent_gateway_reviewable_lists_smoke.py --base-url "$AGENTOPS_BASE_URL"`
 - `python3 scripts/safe_closure_evidence_packet_smoke.py`
 - `python3 scripts/delivery_approval_manifest_gate_smoke.py`
+- `python3 scripts/workspace_isolation_smoke.py --base-url "$AGENTOPS_BASE_URL"`
 - `python3 scripts/protected_live_runtime_ids_smoke.py`
 - `cd ui/start-building-app && npm ci && npm run build`
 

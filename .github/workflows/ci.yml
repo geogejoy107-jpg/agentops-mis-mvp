@@ -72,7 +72,10 @@ jobs:
           python3 scripts/secret_scan_smoke.py
           python3 scripts/license_provenance_smoke.py
           python3 scripts/public_claims_release_gate_smoke.py
+          python3 scripts/redaction_fuzz_smoke.py
+          python3 scripts/shared_mode_local_write_guard_smoke.py
           python3 scripts/approval_semantics_boundary_smoke.py
+          python3 scripts/automatic_plan_evidence_workflow_smoke.py
           python3 scripts/knowledge_retrieval_quality_smoke.py
           python3 scripts/worker_knowledge_evidence_consumption_smoke.py
           python3 scripts/worker_prompt_profile_smoke.py
@@ -141,15 +144,22 @@ jobs:
           python3 scripts/local_coding_project_template_smoke.py
           python3 scripts/operator_health_smoke.py
           python3 scripts/runtime_capability_manifest_smoke.py --base-url "$AGENTOPS_BASE_URL"
+          python3 scripts/runtime_connector_trust_smoke.py --base-url "$AGENTOPS_BASE_URL"
           python3 scripts/worker_adapter_readiness_smoke.py --base-url "$AGENTOPS_BASE_URL"
           python3 scripts/enrollment_launch_steps_smoke.py --base-url "$AGENTOPS_BASE_URL"
           python3 scripts/remote_launch_packet_worker_smoke.py --base-url "$AGENTOPS_BASE_URL"
           python3 scripts/worker_fleet_hygiene_smoke.py --base-url "$AGENTOPS_BASE_URL"
           python3 scripts/worker_secret_boundary_smoke.py --base-url "$AGENTOPS_BASE_URL"
           python3 scripts/prepared_action_approval_wall_smoke.py --base-url "$AGENTOPS_BASE_URL"
+          python3 scripts/high_risk_toolcall_prepared_action_gate_smoke.py --base-url "$AGENTOPS_BASE_URL"
+          python3 scripts/worker_external_write_preflight_gate_smoke.py
+          python3 scripts/runtime_probe_prepared_action_gate_smoke.py
+          python3 scripts/customer_worker_external_write_gate_smoke.py
           python3 scripts/generic_external_side_effect_gate_smoke.py --base-url "$AGENTOPS_BASE_URL"
+          python3 scripts/agent_gateway_runtime_event_smoke.py --base-url "$AGENTOPS_BASE_URL"
           python3 scripts/agent_gateway_scope_matrix_smoke.py --base-url "$AGENTOPS_BASE_URL"
           python3 scripts/agent_gateway_scoped_read_smoke.py
+          python3 scripts/agent_gateway_reviewable_lists_smoke.py --base-url "$AGENTOPS_BASE_URL"
           python3 scripts/knowledge_scope_policy_smoke.py
           python3 scripts/agent_gateway_knowledge_scope_smoke.py
           python3 scripts/task_claim_conflict_smoke.py --base-url "$AGENTOPS_BASE_URL"

@@ -105,6 +105,18 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "redaction_policy",
+        "command": "python3 scripts/redaction_policy_smoke.py",
+        "summary": "Shared redaction policy preserves safe operational evidence while omitting credential-like values.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
+        "id": "sqlite_pragmas",
+        "command": "python3 scripts/sqlite_pragmas_smoke.py",
+        "summary": "SQLite connections enable local reliability pragmas including foreign keys, WAL, busy timeout and synchronous=NORMAL.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "module_boundary",
         "command": "python3 scripts/module_boundary_smoke.py",
         "summary": "P1-05 strangler boundary gate for extracted runtime capability, connector registry/refresh projection, trust state, read-model cache, Approval Wall resume/waiting/route blocked/access/prepare-response/prepared-action-decision/high-risk-toolcall-required/risky-tool-registry/external-side-effect-intent/resume-success/provider-result gates, Agent Plan approval-decision/create-status/bound-approval/transition-error/run-start gate/rebind/success response projections, run-start binding comparison plus contract/hash/path-scope/verification-result/pending-approval/approval-run helpers, Agent Gateway run-heartbeat update projection, Evaluation Case public projections, worker fleet remote/session/hygiene projections, workflow-job public/list/stuck/recovery response projections, Commander and Operator command-center aggregation helpers, Operator evidence-report memory/status/summary projection, Operator start-check gate/local-run-path/launch-brief/loop-driver-entry/acceptance-packet/agent-loop-packet/local-loop-admission projections, Operator loop-control summary/gate projection, and Operator receipt/evaluation/control-readback public projection.",
@@ -153,9 +165,33 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "redaction_fuzz",
+        "command": "python3 scripts/redaction_fuzz_smoke.py",
+        "summary": "Shared redaction contract covers server, CLI and worker redactors against common token/API-key shapes while preserving safe operational IDs.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
+        "id": "shared_mode_local_write_guard",
+        "command": "python3 scripts/shared_mode_local_write_guard_smoke.py",
+        "summary": "Shared/production deployment mode rejects local browser write APIs without admin credentials while keeping Agent Gateway scoped writes separate.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
+        "id": "automatic_plan_evidence_workflow",
+        "command": "python3 scripts/automatic_plan_evidence_workflow_smoke.py",
+        "summary": "Worker/customer-worker paths automatically create, verify and consume plan-evidence manifests before delivery evidence is claimed.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "migration_rollback",
         "command": "python3 scripts/migration_rollback_smoke.py",
         "summary": "SQLite migration preview, backup, restore and rollback evidence.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
+        "id": "approval_semantics_boundary",
+        "command": "python3 scripts/approval_semantics_boundary_smoke.py",
+        "summary": "Approval semantics keep role separation and do not collapse generic ledger approval into exact prepared-action execution claims.",
         "ci_step": "Offline safety smokes",
     },
     {
@@ -315,6 +351,24 @@ TEST_COMMANDS = [
         "ci_step": "Server-backed smoke suite",
     },
     {
+        "id": "agentops_doctor",
+        "command": "python3 scripts/agentops_doctor_smoke.py",
+        "summary": "CLI doctor fails closed for unsafe shared/production targets without configured credentials while omitting token values.",
+        "ci_step": "Server-backed smoke suite",
+    },
+    {
+        "id": "agent_plan_integrity",
+        "command": "python3 scripts/agent_plan_integrity_smoke.py --base-url \"$AGENTOPS_BASE_URL\"",
+        "summary": "Agent Plan hard contract covers hash binding, approval role separation, authority references and execution gate failures.",
+        "ci_step": "Server-backed smoke suite",
+    },
+    {
+        "id": "run_start_plan_gate",
+        "command": "python3 scripts/run_start_plan_gate_smoke.py --base-url \"$AGENTOPS_BASE_URL\"",
+        "summary": "Run start rejects missing, failed, superseded, mismatched or changed Agent Plans and prevents rebinding existing runs.",
+        "ci_step": "Server-backed smoke suite",
+    },
+    {
         "id": "operator_runtime_doctor",
         "command": "python3 scripts/operator_runtime_doctor_smoke.py",
         "summary": "Server-backed local runtime doctor for MIS, Hermes, OpenClaw, Codex supervision, remote Agent fleet, confirm-run walls, prepared-action walls and copyable evidence commands without live execution or ledger mutation.",
@@ -345,6 +399,12 @@ TEST_COMMANDS = [
         "ci_step": "Server-backed smoke suite",
     },
     {
+        "id": "runtime_connector_trust",
+        "command": "python3 scripts/runtime_connector_trust_smoke.py --base-url \"$AGENTOPS_BASE_URL\"",
+        "summary": "Runtime connector trust state can block confirmed live OpenClaw/Hermes customer-worker execution before adapter invocation.",
+        "ci_step": "Server-backed smoke suite",
+    },
+    {
         "id": "enrollment_launch_steps",
         "command": "python3 scripts/enrollment_launch_steps_smoke.py --base-url \"$AGENTOPS_BASE_URL\"",
         "summary": "Enrollment create/rotate launch packets omit raw tokens and include installable worker, start-check/method-gate contract, short-lived session, service-template/install/check and preview-first service-control commands.",
@@ -363,9 +423,63 @@ TEST_COMMANDS = [
         "ci_step": "Server-backed smoke suite",
     },
     {
+        "id": "prepared_action_approval_wall",
+        "command": "python3 scripts/prepared_action_approval_wall_smoke.py --base-url \"$AGENTOPS_BASE_URL\"",
+        "summary": "Prepared-action Approval Wall exact hash, checkpoint, approval, resume and replay safety.",
+        "ci_step": "Server-backed smoke suite",
+    },
+    {
+        "id": "high_risk_toolcall_prepared_action_gate",
+        "command": "python3 scripts/high_risk_toolcall_prepared_action_gate_smoke.py --base-url \"$AGENTOPS_BASE_URL\"",
+        "summary": "High-risk Agent Gateway tool calls fail closed unless recorded as an exact prepared action before approval/resume.",
+        "ci_step": "Server-backed smoke suite",
+    },
+    {
+        "id": "worker_external_write_preflight_gate",
+        "command": "python3 scripts/worker_external_write_preflight_gate_smoke.py",
+        "summary": "Live Hermes/OpenClaw worker tasks with external-write intent pause before adapter execution and create prepared-action approval evidence.",
+        "ci_step": "Server-backed smoke suite",
+    },
+    {
+        "id": "runtime_probe_prepared_action_gate",
+        "command": "python3 scripts/runtime_probe_prepared_action_gate_smoke.py",
+        "summary": "Fixed live runtime probes use the same Approval Wall exact-resume path before calling loopback Hermes/Agnes-compatible gateways.",
+        "ci_step": "Server-backed smoke suite",
+    },
+    {
+        "id": "customer_worker_external_write_gate",
+        "command": "python3 scripts/customer_worker_external_write_gate_smoke.py",
+        "summary": "Opaque confirmed customer-worker live runs that imply external writes create task/run/tool/prepared-action/approval evidence without executing the live runtime.",
+        "ci_step": "Server-backed smoke suite",
+    },
+    {
+        "id": "generic_external_side_effect_gate",
+        "command": "python3 scripts/generic_external_side_effect_gate_smoke.py --base-url \"$AGENTOPS_BASE_URL\"",
+        "summary": "Generic external side-effect detection still blocks direct high-risk writes while allowing safe loopback runtime evidence metadata.",
+        "ci_step": "Server-backed smoke suite",
+    },
+    {
+        "id": "agent_gateway_runtime_event",
+        "command": "python3 scripts/agent_gateway_runtime_event_smoke.py --base-url \"$AGENTOPS_BASE_URL\"",
+        "summary": "Scoped runtime-internal event ingestion records summary/hash evidence and redacts raw runtime payloads.",
+        "ci_step": "Server-backed smoke suite",
+    },
+    {
         "id": "agent_gateway_knowledge_scope",
         "command": "python3 scripts/agent_gateway_knowledge_scope_smoke.py",
         "summary": "Agent Gateway scoped knowledge visibility, provenance and spoof-resistance gate.",
+        "ci_step": "Server-backed smoke suite",
+    },
+    {
+        "id": "knowledge_scope_policy",
+        "command": "python3 scripts/knowledge_scope_policy_smoke.py",
+        "summary": "Knowledge search returns provenance, authority class, visibility proof and redacted snippets under scoped-token visibility.",
+        "ci_step": "Server-backed smoke suite",
+    },
+    {
+        "id": "agent_gateway_reviewable_lists",
+        "command": "python3 scripts/agent_gateway_reviewable_lists_smoke.py --base-url \"$AGENTOPS_BASE_URL\"",
+        "summary": "Scoped Agent Gateway approval and memory review lists respect workspace/token visibility and omit token material.",
         "ci_step": "Server-backed smoke suite",
     },
     {
@@ -378,6 +492,12 @@ TEST_COMMANDS = [
         "id": "delivery_approval_manifest_gate",
         "command": "python3 scripts/delivery_approval_manifest_gate_smoke.py",
         "summary": "Customer delivery approval fails closed until a verified plan-evidence manifest exists, then surfaces the manifest on the delivery board.",
+        "ci_step": "Server-backed smoke suite",
+    },
+    {
+        "id": "workspace_isolation",
+        "command": "python3 scripts/workspace_isolation_smoke.py --base-url \"$AGENTOPS_BASE_URL\"",
+        "summary": "Scoped Agent Gateway tokens cannot cross workspace boundaries by body, query or header spoofing.",
         "ci_step": "Server-backed smoke suite",
     },
     {
