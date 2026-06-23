@@ -59,6 +59,14 @@ completion sync, evidence, plan, memory, approval, runtime event, and audit rows
 persist in Postgres while missing scopes, cross-workspace, cross-agent,
 same-workspace intruder, terminal run revival, memory overwrite, approval overwrite, and
 non-allowlisted writes still fail closed.
+The twelfth layer is `postgres_cli_write_parity_v1`, which drives the same
+scoped Agent Gateway write lane through actual `agentops` CLI commands against
+the Postgres-backed server. It proves read-only CLI writes, missing-scope CLI
+writes, and non-allowlisted CLI mutations fail closed, while scoped CLI
+commands persist task, claim, run-start, agent/run heartbeat, run completion
+heartbeat, tool/evaluation/artifact evidence, Agent Plan, verified
+plan-evidence, memory, approval, audit, runtime-event, and token heartbeat
+evidence in Postgres without falling back to SQLite.
 
 All layers are intentionally derived from `server.SCHEMA_SQL`, because
 `server.py` is still the executable schema authority for the dependency-free
@@ -117,6 +125,7 @@ python3 scripts/storage_postgres_http_read_parity_smoke.py
 python3 scripts/storage_postgres_cli_read_parity_smoke.py
 python3 scripts/storage_postgres_write_helper_parity_smoke.py
 python3 scripts/storage_postgres_http_write_task_smoke.py
+python3 scripts/storage_postgres_cli_write_parity_smoke.py
 python3 scripts/storage_boundary_sqlite_smoke.py
 ```
 
@@ -161,8 +170,14 @@ rejects missing `tasks:create` / `tasks:claim` / `runs:write` /
 `memories:propose` / `approvals:request`, rejects body/header cross-workspace,
 cross-agent, same-workspace intruder, memory overwrite, approval overwrite,
 task/tool/requester mismatch, and task/run mismatch requests, and proves broader
-Gateway writes such as knowledge indexing remain blocked. The final command
-proves the broader current SQLite helper behavior that Postgres must match.
+Gateway writes such as knowledge indexing remain blocked. The twelfth command
+drives the actual `agentops` CLI against the Postgres write server, confirms
+read-only, missing-scope, and non-allowlisted CLI mutations fail closed, then
+persists a scoped agent heartbeat, task create/claim, run start/progress
+heartbeat, run completion heartbeat, tool/evaluation/artifact evidence, Agent
+Plan, verified plan-evidence manifest, memory proposal, approval request, and
+audit emit through the CLI. The final command proves the broader current SQLite
+helper behavior that Postgres must match.
 
 When Docker is unavailable on a local machine, use the non-authoritative
 diagnostic mode only to keep wider readiness checks moving:
@@ -177,6 +192,7 @@ python3 scripts/storage_postgres_http_read_parity_smoke.py --skip-if-unavailable
 python3 scripts/storage_postgres_cli_read_parity_smoke.py --skip-if-unavailable
 python3 scripts/storage_postgres_write_helper_parity_smoke.py --skip-if-unavailable
 python3 scripts/storage_postgres_http_write_task_smoke.py --skip-if-unavailable
+python3 scripts/storage_postgres_cli_write_parity_smoke.py --skip-if-unavailable
 ```
 
 This mode reports `skipped: true`; it is not final BYOC/Postgres evidence.
@@ -268,6 +284,26 @@ Current local evidence on `codex/commercial-migration-closed-loop`:
   Gateway requests at `403`, kept `POST /api/agent-gateway/knowledge/index` and
   `POST /api/agents` blocked at `503`, kept `free_local_dependencies=[]`, and
   did not fall back to SQLite.
+- `postgres_cli_write_parity_v1`,
+  `postgres_cli_gateway_task_write_v1`,
+  `postgres_cli_gateway_execution_start_write_v1`,
+  `postgres_cli_gateway_heartbeat_write_v1`,
+  `postgres_cli_gateway_run_heartbeat_write_v1`,
+  `postgres_cli_gateway_run_completion_heartbeat_write_v1`,
+  `postgres_cli_gateway_evidence_write_v1`,
+  `postgres_cli_gateway_plan_evidence_write_v1`,
+  `postgres_cli_gateway_memory_write_v1`,
+  `postgres_cli_gateway_approval_write_v1`, and
+  `postgres_cli_gateway_audit_write_v1` passed against `postgres:16-alpine`
+  with a temporary psycopg target: actual `agentops` CLI commands wrote agent
+  heartbeat, task create/claim, run start/progress heartbeat, tool call,
+  evaluation, artifact, Agent Plan, verified plan-evidence manifest, memory
+  candidate, audit event, pending approval request, and a separate completion
+  heartbeat that set the run completed, task completed, and agent idle. The
+  smoke also verified read-only CLI task create, missing `tasks:create`, and
+  CLI knowledge index mutations fail closed, token `last_used_at` and
+  `last_heartbeat_at` are recorded, `free_local_dependencies=[]`, no token-like
+  values leak, and no fallback to SQLite occurred.
 - Source install packaging includes `agentops_mis_storage.postgres`; importing
   the module and translating SQL does not require psycopg.
 

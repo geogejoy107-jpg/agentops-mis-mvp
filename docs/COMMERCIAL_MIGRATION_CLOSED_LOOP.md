@@ -162,6 +162,13 @@ Must be true:
   and broader mutation routes such as memory review decisions, knowledge index,
   live-runtime heartbeat/daemon control, and admin mutations must
   remain blocked until each has a dedicated smoke.
+- The first Postgres-backed Agent Gateway CLI/API writes must use the actual
+  `agentops` CLI against the same allowlist, not direct HTTP fixtures only:
+  read-only CLI writes, missing-scope CLI writes, and non-allowlisted CLI
+  mutation commands must fail closed, while scoped CLI commands persist task,
+  run, heartbeat, tool/evaluation/artifact, Agent Plan, verified
+  plan-evidence, memory, approval, audit, and completion heartbeat evidence in
+  Postgres with no token leakage or SQLite fallback.
 - Verification includes local acceptance against a temporary SQLite database
   before any Postgres work starts:
 
@@ -174,6 +181,7 @@ python3 scripts/storage_postgres_http_read_parity_smoke.py
 python3 scripts/storage_postgres_cli_read_parity_smoke.py
 python3 scripts/storage_postgres_write_helper_parity_smoke.py
 python3 scripts/storage_postgres_http_write_task_smoke.py
+python3 scripts/storage_postgres_cli_write_parity_smoke.py
 ```
 
 ### Gate 4: UI/API Parity Before Next.js

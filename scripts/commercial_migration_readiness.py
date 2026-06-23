@@ -593,6 +593,39 @@ def main() -> int:
             "experimental Postgres HTTP task, Agent Gateway task, claim, run-start, agent/run progress and completion heartbeat, tool/eval/artifact evidence, Agent Plan, plan-evidence manifest, memory candidate, approval request, and run-bound audit write routes are explicitly allowlisted, smoke-tested, and documented",
         ),
         check(
+            "postgres_cli_write_parity_surface_exists",
+            file_contains("docs/POSTGRES_PARITY_CONTRACT.md", "postgres_cli_write_parity_v1")
+            and file_contains("docs/STORAGE_BOUNDARY_MAP.md", "storage_postgres_cli_write_parity_smoke.py")
+            and file_contains("docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md", "storage_postgres_cli_write_parity_smoke.py")
+            and file_contains("docs/AGENT_GATEWAY_CLI_SPEC.md", "Postgres CLI write parity helper")
+            and file_contains("scripts/storage_postgres_cli_write_parity_smoke.py", "postgres_cli_write_parity_v1")
+            and file_contains("scripts/storage_postgres_cli_write_parity_smoke.py", "run_cli(")
+            and file_contains("scripts/storage_postgres_cli_write_parity_smoke.py", "http_write.server_env")
+            and file_contains("scripts/storage_postgres_cli_write_parity_smoke.py", "agent_heartbeat")
+            and file_contains("scripts/storage_postgres_cli_write_parity_smoke.py", "task_create")
+            and file_contains("scripts/storage_postgres_cli_write_parity_smoke.py", "task_claim")
+            and file_contains("scripts/storage_postgres_cli_write_parity_smoke.py", "run_start")
+            and file_contains("scripts/storage_postgres_cli_write_parity_smoke.py", "run_heartbeat")
+            and file_contains("scripts/storage_postgres_cli_write_parity_smoke.py", "toolcall_record")
+            and file_contains("scripts/storage_postgres_cli_write_parity_smoke.py", "evaluation_submit")
+            and file_contains("scripts/storage_postgres_cli_write_parity_smoke.py", "artifact_record")
+            and file_contains("scripts/storage_postgres_cli_write_parity_smoke.py", "agent_plan_create")
+            and file_contains("scripts/storage_postgres_cli_write_parity_smoke.py", "plan_evidence_create")
+            and file_contains("scripts/storage_postgres_cli_write_parity_smoke.py", "memory_propose")
+            and file_contains("scripts/storage_postgres_cli_write_parity_smoke.py", "approval_request")
+            and file_contains("scripts/storage_postgres_cli_write_parity_smoke.py", "audit_emit")
+            and file_contains("scripts/storage_postgres_cli_write_parity_smoke.py", "run_completion_heartbeat")
+            and file_contains("scripts/storage_postgres_cli_write_parity_smoke.py", "cli_read_only_task_status")
+            and file_contains("scripts/storage_postgres_cli_write_parity_smoke.py", "cli_missing_scope_status")
+            and file_contains("scripts/storage_postgres_cli_write_parity_smoke.py", "cli_non_allowlisted_write_status")
+            and file_contains("scripts/storage_postgres_cli_write_parity_smoke.py", "postgres_cli_gateway_run_completion_heartbeat_write_v1")
+            and file_contains("scripts/storage_postgres_cli_write_parity_smoke.py", "gateway_manifest_status")
+            and file_contains("scripts/storage_postgres_cli_write_parity_smoke.py", "gateway_token_last_heartbeat")
+            and file_contains("scripts/storage_postgres_cli_write_parity_smoke.py", "gateway_run_completion_heartbeat_audit_count")
+            and (ROOT / "scripts" / "storage_postgres_cli_write_parity_smoke.py").exists(),
+            "Postgres-backed Agent Gateway CLI/API write parity smoke uses actual agentops commands for scoped task, run, heartbeat, evidence, Agent Plan, plan-evidence, memory, approval, audit, and completion heartbeat writes while checking fail-closed CLI guards",
+        ),
+        check(
             "blocked_generated_or_runtime_artifacts_absent",
             not blocked_paths,
             "blocked_paths=" + json.dumps(blocked_paths, ensure_ascii=False),
@@ -643,6 +676,7 @@ def main() -> int:
                 "python3 scripts/storage_postgres_cli_read_parity_smoke.py",
                 "python3 scripts/storage_postgres_write_helper_parity_smoke.py",
                 "python3 scripts/storage_postgres_http_write_task_smoke.py",
+                "python3 scripts/storage_postgres_cli_write_parity_smoke.py",
             ],
         },
         {
