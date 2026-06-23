@@ -6,10 +6,11 @@ import argparse
 import json
 import os
 import re
-import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
+
+from github_ci_evidence import ci_status as shared_ci_status
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -44,6 +45,12 @@ TEST_COMMANDS = [
         "id": "release_freeze_protocol",
         "command": "python3 scripts/release_freeze_protocol_smoke.py",
         "summary": "Hardening freeze protocol, CI-backed release gates and remote required-check evidence.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
+        "id": "github_ci_evidence",
+        "command": "python3 scripts/github_ci_evidence_smoke.py",
+        "summary": "Offline contract for shared GitHub CI evidence parsing and public HTML fallback exact-head safety.",
         "ci_step": "Offline safety smokes",
     },
     {
@@ -391,106 +398,6 @@ def upstream_sync() -> dict[str, int | None]:
     return {"ahead": int(ahead_text), "behind": int(behind_text)}
 
 
-def ci_from_env(head_sha: str) -> dict[str, Any] | None:
-    if os.environ.get("GITHUB_ACTIONS", "").lower() != "true":
-        return None
-    repo = os.environ.get("GITHUB_REPOSITORY", "")
-    run_id = os.environ.get("GITHUB_RUN_ID", "")
-    server_url = os.environ.get("GITHUB_SERVER_URL", "https://github.com")
-    github_sha = os.environ.get("GITHUB_SHA", "")
-    if not repo or not run_id:
-        return None
-    return {
-        "source": "github_actions_env",
-        "status": "in_progress",
-        "conclusion": None,
-        "url": f"{server_url.rstrip('/')}/{repo}/actions/runs/{run_id}",
-        "head_sha": github_sha,
-        "head_matches": github_sha == head_sha,
-        "required_before_ready": True,
-    }
-
-
-def ci_from_gh(head_sha: str, branch: str) -> dict[str, Any]:
-    gh = shutil.which("gh")
-    if not gh:
-        return {
-            "source": "gh_unavailable",
-            "status": "not_available",
-            "conclusion": None,
-            "url": None,
-            "head_sha": None,
-            "head_matches": False,
-            "required_before_ready": True,
-        }
-    proc = run(
-        [
-            gh,
-            "run",
-            "list",
-            "--branch",
-            branch,
-            "--limit",
-            "20",
-            "--json",
-            "databaseId,status,conclusion,url,headSha,workflowName,createdAt,name",
-        ],
-        timeout=15,
-    )
-    if proc.returncode != 0:
-        return {
-            "source": "gh_error",
-            "status": "not_available",
-            "conclusion": None,
-            "url": None,
-            "head_sha": None,
-            "head_matches": False,
-            "required_before_ready": True,
-            "error": redact(proc.stderr or proc.stdout),
-        }
-    try:
-        runs = json.loads(proc.stdout or "[]")
-    except json.JSONDecodeError:
-        return {
-            "source": "gh_parse_error",
-            "status": "not_available",
-            "conclusion": None,
-            "url": None,
-            "head_sha": None,
-            "head_matches": False,
-            "required_before_ready": True,
-        }
-    exact = [item for item in runs if item.get("headSha") == head_sha]
-    if not exact:
-        return {
-            "source": "gh_run_list",
-            "status": "not_found_for_head",
-            "conclusion": None,
-            "url": None,
-            "head_sha": None,
-            "head_matches": False,
-            "recent_runs_checked": len(runs),
-            "required_before_ready": True,
-        }
-    selected = exact[0]
-    conclusion = selected.get("conclusion") or None
-    return {
-        "source": "gh_run_list",
-        "status": selected.get("status") or "unknown",
-        "conclusion": conclusion,
-        "url": selected.get("url"),
-        "head_sha": selected.get("headSha"),
-        "head_matches": True,
-        "workflow": selected.get("workflowName") or selected.get("name"),
-        "created_at": selected.get("createdAt"),
-        "required_before_ready": conclusion != "success",
-    }
-
-
-def ci_status(head_sha: str, branch: str) -> dict[str, Any]:
-    return ci_from_env(head_sha) or ci_from_gh(head_sha, branch)
-
-
 def redact(text: str) -> str:
     redacted = text
     for pattern in SECRET_PATTERNS:
@@ -584,7 +491,7 @@ def main() -> int:
     status = status_entries()
     status_name = release_status(checklist)
     upstream = upstream_sync()
-    ci = ci_status(head_sha, branch)
+    ci = shared_ci_status(ROOT, head_sha, branch, required_before_ready=True)
     tests = validate_test_commands(ci_text, failures)
     validate_docs(checklist, packet_doc, ci_text, failures)
 

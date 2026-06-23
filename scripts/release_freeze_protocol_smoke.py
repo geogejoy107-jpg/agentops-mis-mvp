@@ -19,6 +19,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
+from github_ci_evidence import ci_status as shared_ci_status
+
 
 ROOT = Path(__file__).resolve().parents[1]
 FREEZE_DOC = ROOT / "docs" / "RELEASE_FREEZE_PROTOCOL.md"
@@ -45,6 +47,7 @@ REQUIRED_CI_COMMANDS = [
     "git diff --check",
     "python3 scripts/release_branch_control_smoke.py",
     "python3 scripts/release_freeze_protocol_smoke.py",
+    "python3 scripts/github_ci_evidence_smoke.py",
     "python3 scripts/clean_machine_rc_smoke.py",
     "python3 scripts/release_evidence_packet_smoke.py",
     "python3 scripts/merge_readiness_status_smoke.py",
@@ -120,50 +123,6 @@ def gh_json(args: list[str], *, timeout: int = 15) -> tuple[Any | None, str | No
         return json.loads(proc.stdout or "null"), None
     except json.JSONDecodeError:
         return None, "gh_json_parse_error"
-
-
-def current_ci_status(head_sha: str, branch: str) -> dict[str, Any]:
-    if os.environ.get("GITHUB_ACTIONS", "").lower() == "true":
-        repo = os.environ.get("GITHUB_REPOSITORY", "")
-        run_id = os.environ.get("GITHUB_RUN_ID", "")
-        server_url = os.environ.get("GITHUB_SERVER_URL", "https://github.com")
-        github_sha = os.environ.get("GITHUB_SHA", "")
-        if repo and run_id:
-            return {
-                "source": "github_actions_env",
-                "status": "in_progress",
-                "conclusion": None,
-                "url": f"{server_url.rstrip('/')}/{repo}/actions/runs/{run_id}",
-                "head_sha": github_sha,
-                "head_matches": github_sha == head_sha,
-            }
-    data, error = gh_json([
-        "run",
-        "list",
-        "--branch",
-        branch,
-        "--limit",
-        "20",
-        "--json",
-        "status,conclusion,url,headSha,workflowName,createdAt,name",
-    ])
-    if error:
-        return {"source": "gh_error", "status": "not_available", "conclusion": None, "head_matches": False, "error": error}
-    runs = data if isinstance(data, list) else []
-    exact = [item for item in runs if item.get("headSha") == head_sha]
-    if not exact:
-        return {"source": "gh_run_list", "status": "not_found_for_head", "conclusion": None, "head_matches": False, "recent_runs_checked": len(runs)}
-    selected = exact[0]
-    return {
-        "source": "gh_run_list",
-        "status": selected.get("status") or "unknown",
-        "conclusion": selected.get("conclusion") or None,
-        "url": selected.get("url"),
-        "head_sha": selected.get("headSha"),
-        "head_matches": True,
-        "workflow": selected.get("workflowName") or selected.get("name"),
-        "created_at": selected.get("createdAt"),
-    }
 
 
 def repo_name_with_owner() -> tuple[str | None, str | None]:
@@ -264,7 +223,7 @@ def main() -> int:
     head_sha = git_text(["rev-parse", "HEAD"])
     status = status_entries()
     upstream = upstream_sync()
-    ci = current_ci_status(head_sha, branch)
+    ci = shared_ci_status(ROOT, head_sha, branch)
     green_ci = ci.get("head_matches") is True and ci.get("status") == "completed" and ci.get("conclusion") == "success"
     remote_checks = remote_required_checks()
 

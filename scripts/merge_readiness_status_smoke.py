@@ -12,10 +12,11 @@ import argparse
 import json
 import os
 import re
-import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
+
+from github_ci_evidence import ci_status as shared_ci_status
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -60,69 +61,6 @@ def upstream_sync() -> dict[str, int | None]:
 def git_status_entries() -> list[str]:
     raw = maybe_git_text(["status", "--porcelain"]) or ""
     return [line for line in raw.splitlines() if line.strip()]
-
-
-def ci_from_env(head_sha: str) -> dict[str, Any] | None:
-    if os.environ.get("GITHUB_ACTIONS", "").lower() != "true":
-        return None
-    repo = os.environ.get("GITHUB_REPOSITORY", "")
-    run_id = os.environ.get("GITHUB_RUN_ID", "")
-    server_url = os.environ.get("GITHUB_SERVER_URL", "https://github.com")
-    github_sha = os.environ.get("GITHUB_SHA", "")
-    if not repo or not run_id:
-        return None
-    return {
-        "source": "github_actions_env",
-        "status": "in_progress",
-        "conclusion": None,
-        "url": f"{server_url.rstrip('/')}/{repo}/actions/runs/{run_id}",
-        "head_sha": github_sha,
-        "head_matches": github_sha == head_sha,
-    }
-
-
-def ci_from_gh(head_sha: str, branch: str) -> dict[str, Any]:
-    gh = shutil.which("gh")
-    if not gh:
-        return {"source": "gh_unavailable", "status": "not_available", "conclusion": None, "head_matches": False}
-    proc = run(
-        [
-            gh,
-            "run",
-            "list",
-            "--branch",
-            branch,
-            "--limit",
-            "20",
-            "--json",
-            "status,conclusion,url,headSha,workflowName,createdAt,name",
-        ],
-        timeout=15,
-    )
-    if proc.returncode != 0:
-        return {"source": "gh_error", "status": "not_available", "conclusion": None, "head_matches": False}
-    try:
-        runs = json.loads(proc.stdout or "[]")
-    except json.JSONDecodeError:
-        return {"source": "gh_parse_error", "status": "not_available", "conclusion": None, "head_matches": False}
-    exact = [item for item in runs if item.get("headSha") == head_sha]
-    if not exact:
-        return {"source": "gh_run_list", "status": "not_found_for_head", "conclusion": None, "head_matches": False}
-    selected = exact[0]
-    return {
-        "source": "gh_run_list",
-        "status": selected.get("status") or "unknown",
-        "conclusion": selected.get("conclusion") or None,
-        "url": selected.get("url"),
-        "head_sha": selected.get("headSha"),
-        "head_matches": True,
-        "workflow": selected.get("workflowName") or selected.get("name"),
-        "created_at": selected.get("createdAt"),
-    }
-
-
-def ci_status(head_sha: str, branch: str) -> dict[str, Any]:
-    return ci_from_env(head_sha) or ci_from_gh(head_sha, branch)
 
 
 def current_status_from_header(text: str) -> str:
@@ -178,7 +116,7 @@ def main() -> int:
     required = final_required_items(text)
     status_entries = git_status_entries()
     upstream = upstream_sync()
-    ci = ci_status(head_sha, branch)
+    ci = shared_ci_status(ROOT, head_sha, branch)
     green_ci = ci.get("head_matches") is True and ci.get("status") == "completed" and ci.get("conclusion") == "success"
 
     if not CHECKLIST.exists():

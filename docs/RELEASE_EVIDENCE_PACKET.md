@@ -34,6 +34,9 @@ python3 scripts/merge_readiness_status_smoke.py --require-ready-to-merge
   `GITHUB_REPOSITORY` and `GITHUB_RUN_ID`.
 - Outside CI, the packet may use `gh run list` to find a run for the current
   head SHA.
+- If the GitHub API is unavailable, the packet may use a public GitHub Actions
+  HTML fallback only when the run page contains the full current HEAD SHA and
+  an explicit success status. Short SHA matches are not sufficient.
 - If no current-head run is available, the packet must say so and keep the
   release in local MVP / NOT_READY posture.
 - READY evidence requires current-head CI with status `completed` and conclusion
@@ -72,6 +75,7 @@ The packet includes the canonical command manifest used for release review:
 - `python3 -m py_compile server.py agentops_mis_cli/*.py agentops_mis_core/*.py agentops_mis_runtime/*.py scripts/*.py && git diff --check`
 - `python3 scripts/release_branch_control_smoke.py`
 - `python3 scripts/release_freeze_protocol_smoke.py`
+- `python3 scripts/github_ci_evidence_smoke.py`
 - `python3 scripts/clean_machine_rc_smoke.py`
 - `python3 scripts/release_evidence_packet_smoke.py`
 - `python3 scripts/merge_readiness_status_smoke.py`
