@@ -51,6 +51,16 @@ def require(condition: bool, message: str) -> None:
         raise AssertionError(message)
 
 
+def safe_ref(prefix: str, raw: str) -> str:
+    import hashlib
+    import re
+
+    slug = re.sub(r"[^a-zA-Z0-9_]+", "_", raw or "").strip("_").lower()
+    if slug and len(slug) <= 64:
+        return f"{prefix}_{slug}"[-12:]
+    return f"{prefix}_{hashlib.sha256((raw or '').encode('utf-8')).hexdigest()[:16]}"[-12:]
+
+
 def smoke(base_url: str, stamp: str) -> dict:
     agent_id = f"agt_session_smoke_{stamp}"
     task_id = f"tsk_session_smoke_{stamp}"
@@ -115,7 +125,10 @@ def smoke(base_url: str, stamp: str) -> dict:
 
         status, revoked = http_json("POST", base_url, "/api/agent-gateway/session/revoke", {"session_id": revoke_session_id})
         require(status == 200, f"session revoke failed: {status} {revoked}")
-        require(revoked.get("revoked") == 1 and revoke_session_id in revoked.get("sessions", []), f"session revoke result wrong: {revoked}")
+        require(revoked.get("revoked") == 1, f"session revoke result wrong: {revoked}")
+        require(revoked.get("session_id_omitted") is True, f"session revoke should omit raw session id: {revoked}")
+        require(revoke_session_id not in json.dumps(revoked, ensure_ascii=False), f"session revoke leaked raw session id: {revoked}")
+        require(safe_ref("session_ref", revoke_session_id) in set(revoked.get("session_refs", [])), f"session revoke missing safe ref: {revoked}")
         status, rejected = http_json("POST", base_url, "/api/agent-gateway/heartbeat", {
             "status": "idle",
             "summary": "revoked session heartbeat",
@@ -164,8 +177,14 @@ def smoke(base_url: str, stamp: str) -> dict:
         status, revoke_parent = http_json("POST", base_url, "/api/agent-gateway/enrollment/revoke", {"token_id": token_id})
         require(status == 200, f"enrollment revoke failed: {status} {revoke_parent}")
         require(revoke_parent.get("sessions_revoked", 0) >= 1, f"parent revoke did not cascade to sessions: {revoke_parent}")
-        require(cascade_session_id in revoke_parent.get("sessions", []), f"cascade session missing from revoke result: {revoke_parent}")
-        require(session_id in revoke_parent.get("sessions", []), f"active session missing from parent revoke result: {revoke_parent}")
+        require(revoke_parent.get("token_id_omitted") is True, f"parent revoke should omit raw token ids: {revoke_parent}")
+        require(revoke_parent.get("session_id_omitted") is True, f"parent revoke should omit raw session ids: {revoke_parent}")
+        revoke_parent_serialized = json.dumps(revoke_parent, ensure_ascii=False)
+        require(token_id not in revoke_parent_serialized, f"parent revoke leaked raw token id: {revoke_parent}")
+        require(cascade_session_id not in revoke_parent_serialized, f"parent revoke leaked cascade session id: {revoke_parent}")
+        require(session_id not in revoke_parent_serialized, f"parent revoke leaked active session id: {revoke_parent}")
+        require(safe_ref("session_ref", cascade_session_id) in set(revoke_parent.get("session_refs", [])), f"cascade session ref missing from revoke result: {revoke_parent}")
+        require(safe_ref("session_ref", session_id) in set(revoke_parent.get("session_refs", [])), f"active session ref missing from parent revoke result: {revoke_parent}")
         status, parent_revoked = http_json("POST", base_url, "/api/agent-gateway/heartbeat", {
             "status": "idle",
             "summary": "parent-revoked session heartbeat",

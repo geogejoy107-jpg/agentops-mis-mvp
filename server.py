@@ -3772,7 +3772,20 @@ def agent_gateway_revoke_enrollment(conn, body) -> tuple[dict, int]:
                 audit(conn, "user", "usr_founder", "agent_gateway.session_revoke_cascade", "agent_gateway_sessions", session["session_id"], session, {"status": "revoked", "revoked_at": now}, {"parent_token_id": row["token_id"], "token_omitted": True})
         runtime_event(conn, "rtc_agent_gateway_local", "agent.enrollment.revoke", "completed", agent_id=row["agent_id"], output_summary=f"Revoked token ref {stable_id('token_ref', row['token_id'])[-12:]}.")
         audit(conn, "user", "usr_founder", "agent_gateway.enrollment_revoke", "agent_gateway_tokens", row["token_id"], row, {"status": "revoked", "revoked_at": now}, {"token_omitted": True})
-    return {"revoked": len(before), "changed": len(before) + len(revoked_session_ids), "tokens": [row["token_id"] for row in before], "sessions_revoked": len(revoked_session_ids), "sessions": revoked_session_ids}, 200
+    token_refs = [stable_id("token_ref", row["token_id"])[-12:] for row in before]
+    session_refs = [stable_id("session_ref", session_id)[-12:] for session_id in revoked_session_ids]
+    return {
+        "revoked": len(before),
+        "changed": len(before) + len(revoked_session_ids),
+        "token_refs": token_refs,
+        "tokens": token_refs,
+        "token_id_omitted": True,
+        "sessions_revoked": len(revoked_session_ids),
+        "session_refs": session_refs,
+        "sessions": session_refs,
+        "session_id_omitted": True,
+        "token_omitted": True,
+    }, 200
 
 
 def agent_gateway_revoke_session(conn, body) -> tuple[dict, int]:
@@ -3792,7 +3805,14 @@ def agent_gateway_revoke_session(conn, body) -> tuple[dict, int]:
     for row in before:
         runtime_event(conn, "rtc_agent_gateway_local", "agent.session.revoke", "completed", agent_id=row["agent_id"], output_summary=f"Revoked short-lived session ref {stable_id('session_ref', row['session_id'])[-12:]}.")
         audit(conn, "user", "usr_founder", "agent_gateway.session_revoke", "agent_gateway_sessions", row["session_id"], row, {"status": "revoked", "revoked_at": now}, {"token_omitted": True})
-    return {"revoked": len(before), "sessions": [row["session_id"] for row in before], "token_omitted": True}, 200
+    session_refs = [stable_id("session_ref", row["session_id"])[-12:] for row in before]
+    return {
+        "revoked": len(before),
+        "session_refs": session_refs,
+        "sessions": session_refs,
+        "session_id_omitted": True,
+        "token_omitted": True,
+    }, 200
 
 
 def agent_gateway_rotate_enrollment(conn, body) -> tuple[dict, int]:

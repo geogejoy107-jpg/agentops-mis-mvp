@@ -529,6 +529,9 @@ agentops enrollment rotate --agent-id agt_remote_builder
 ```
 
 Revoking an enrollment also invalidates active child sessions.
+Public revoke output returns counts plus safe token/session refs only; raw
+enrollment token ids, session ids, token hashes, and token values stay out of
+CLI/API output.
 
 For a local supervised worker daemon, restart is a first-class operator action:
 

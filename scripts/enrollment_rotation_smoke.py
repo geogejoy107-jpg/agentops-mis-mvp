@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import json
 import subprocess
 import sys
@@ -96,9 +97,12 @@ def cli_rotation_smoke(base_url: str, stamp: str) -> dict:
     })
     require(create_status == 201, f"CLI create failed: {create_status} {created}")
 
+    env = os.environ.copy()
+    env["AGENTOPS_BASE_URL"] = base_url
     raw = subprocess.check_output(
         ["./scripts/agentops", "enrollment", "rotate", "--token-id", created["token_id"], "--ttl-days", "2"],
         cwd=".",
+        env=env,
         text=True,
     )
     rotated = json.loads(raw)

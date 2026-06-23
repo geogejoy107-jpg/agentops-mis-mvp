@@ -284,6 +284,9 @@ agentops enrollment revoke --token-id agtok_...
 agentops enrollment revoke --agent-id agt_remote_builder
 ```
 
+The revoke response reports counts plus `token_refs`/`session_refs`; it does not
+echo raw enrollment token IDs, raw session IDs, token hashes, or token values.
+
 ### `agentops enrollment rotate`
 
 Revokes an active token and issues a replacement token with the same agent binding and scopes by default. The replacement token is shown once; MIS stores only a hash.
@@ -1460,6 +1463,8 @@ agentops session revoke --agent-id agt_remote_builder
 ```
 
 Maps to `POST /api/agent-gateway/session/revoke` and writes runtime/audit evidence.
+The public response reports safe `session_refs` only and includes
+`session_id_omitted:true`.
 
 ## API Endpoint Proposal
 
