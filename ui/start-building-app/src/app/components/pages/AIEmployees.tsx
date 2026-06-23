@@ -3486,12 +3486,13 @@ export function AIEmployees() {
     }
   };
 
-  const revokeEnrollment = async (tokenId: string) => {
-    setEnrollmentAction(`revoke-${tokenId}`);
+  const revokeEnrollment = async (tokenId?: string, agentId?: string) => {
+    const actionRef = tokenId || agentId || "enrollment";
+    setEnrollmentAction(`revoke-${actionRef}`);
     setEnrollmentResult(null);
     clearIssuedCredential();
     try {
-      const result = await revokeAgentGatewayEnrollment({ token_id: tokenId });
+      const result = await revokeAgentGatewayEnrollment(tokenId ? { token_id: tokenId } : { agent_id: agentId });
       const sessionNote = result.sessions_revoked ? ` · sessions ${result.sessions_revoked}` : "";
       setEnrollmentResult(`revoked: ${result.tokens.join(", ") || result.revoked}${sessionNote}`);
       await refresh();
@@ -3502,12 +3503,13 @@ export function AIEmployees() {
     }
   };
 
-  const revokeSession = async (sessionId: string) => {
-    setEnrollmentAction(`revoke-session-${sessionId}`);
+  const revokeSession = async (sessionId?: string, agentId?: string) => {
+    const actionRef = sessionId || agentId || "session";
+    setEnrollmentAction(`revoke-session-${actionRef}`);
     setEnrollmentResult(null);
     clearIssuedCredential();
     try {
-      const result = await revokeAgentGatewaySession({ session_id: sessionId });
+      const result = await revokeAgentGatewaySession(sessionId ? { session_id: sessionId } : { agent_id: agentId });
       setEnrollmentResult(`session revoked: ${result.sessions.join(", ") || result.revoked}`);
       await refresh();
     } catch (err) {
@@ -3517,13 +3519,15 @@ export function AIEmployees() {
     }
   };
 
-  const rotateEnrollment = async (tokenId: string) => {
-    setEnrollmentAction(`rotate-${tokenId}`);
+  const rotateEnrollment = async (tokenId?: string, agentId?: string) => {
+    const actionRef = tokenId || agentId || "enrollment";
+    setEnrollmentAction(`rotate-${actionRef}`);
     setEnrollmentResult(null);
     clearIssuedCredential();
     try {
       const result = await rotateAgentGatewayEnrollment({
         token_id: tokenId,
+        agent_id: agentId,
         ttl_days: Number(enrollmentForm.ttl_days) || 30,
         heartbeat_timeout_sec: Number(enrollmentForm.heartbeat_timeout_sec) || 300,
       });
@@ -8353,11 +8357,14 @@ export function AIEmployees() {
                 {copy.noEnrollments}
               </div>
             )}
-            {enrollments.slice(0, 6).map((item) => (
-              <div key={item.token_id} className="grid grid-cols-1 xl:grid-cols-[1.2fr_1.1fr_0.9fr_1.3fr_auto] gap-3 items-start xl:items-center rounded-lg px-3 py-2" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+            {enrollments.slice(0, 6).map((item) => {
+              const tokenActionRef = item.token_id || item.agent_id;
+              const tokenDisplayRef = item.token_ref || item.token_id || "—";
+              return (
+              <div key={item.token_ref || item.token_id || `${item.agent_id}-${item.created_at}`} className="grid grid-cols-1 xl:grid-cols-[1.2fr_1.1fr_0.9fr_1.3fr_auto] gap-3 items-start xl:items-center rounded-lg px-3 py-2" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
                 <div className="min-w-0">
                   <div className="text-[11px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{item.agent_id}</div>
-                  <div className="text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>{copy.tokenId}: {item.token_id}</div>
+                  <div className="text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>{copy.tokenId}: {tokenDisplayRef}</div>
                 </div>
                 <div className="flex items-center gap-2 min-w-0">
                   <StatusBadge status={item.status} />
@@ -8380,26 +8387,27 @@ export function AIEmployees() {
                 </div>
                 <div className="flex flex-wrap gap-1.5 justify-start xl:justify-end">
                   <button
-                    onClick={() => rotateEnrollment(item.token_id)}
+                    onClick={() => rotateEnrollment(item.token_id, item.agent_id)}
                     disabled={item.status !== "active" || Boolean(enrollmentAction)}
                     className="flex items-center gap-1 text-[11px] px-2.5 py-1.5 rounded disabled:opacity-40"
                     style={{ background: "rgba(34,211,238,0.1)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.22)" }}
                   >
-                    {enrollmentAction === `rotate-${item.token_id}` ? <RefreshCw size={12} /> : <RotateCw size={12} />}
-                    {enrollmentAction === `rotate-${item.token_id}` ? copy.rotatingToken : copy.rotateToken}
+                    {enrollmentAction === `rotate-${tokenActionRef}` ? <RefreshCw size={12} /> : <RotateCw size={12} />}
+                    {enrollmentAction === `rotate-${tokenActionRef}` ? copy.rotatingToken : copy.rotateToken}
                   </button>
                   <button
-                    onClick={() => revokeEnrollment(item.token_id)}
+                    onClick={() => revokeEnrollment(item.token_id, item.agent_id)}
                     disabled={item.status !== "active" || Boolean(enrollmentAction)}
                     className="flex items-center gap-1 text-[11px] px-2.5 py-1.5 rounded disabled:opacity-40"
                     style={{ background: "rgba(248,113,113,0.1)", color: "#F87171", border: "1px solid rgba(248,113,113,0.22)" }}
                   >
-                    {enrollmentAction === `revoke-${item.token_id}` ? <RefreshCw size={12} /> : <Trash2 size={12} />}
-                    {enrollmentAction === `revoke-${item.token_id}` ? copy.revokingToken : copy.revokeToken}
+                    {enrollmentAction === `revoke-${tokenActionRef}` ? <RefreshCw size={12} /> : <Trash2 size={12} />}
+                    {enrollmentAction === `revoke-${tokenActionRef}` ? copy.revokingToken : copy.revokeToken}
                   </button>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         </div>
 
@@ -8411,11 +8419,14 @@ export function AIEmployees() {
                 {copy.noSessions}
               </div>
             )}
-            {sessions.slice(0, 6).map((item) => (
-              <div key={item.session_id} className="grid grid-cols-1 xl:grid-cols-[1.1fr_1fr_1.1fr_1.3fr_auto] gap-3 items-start xl:items-center rounded-lg px-3 py-2" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+            {sessions.slice(0, 6).map((item) => {
+              const sessionActionRef = item.session_id || item.agent_id;
+              const sessionDisplayRef = item.session_ref || item.session_id || "—";
+              return (
+              <div key={item.session_ref || item.session_id || `${item.agent_id}-${item.created_at}`} className="grid grid-cols-1 xl:grid-cols-[1.1fr_1fr_1.1fr_1.3fr_auto] gap-3 items-start xl:items-center rounded-lg px-3 py-2" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
                 <div className="min-w-0">
                   <div className="text-[11px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{item.agent_id}</div>
-                  <div className="text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>{copy.sessionId}: {item.session_id}</div>
+                  <div className="text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>{copy.sessionId}: {sessionDisplayRef}</div>
                 </div>
                 <div className="flex items-center gap-2 min-w-0">
                   <StatusBadge status={item.session_state} />
@@ -8426,7 +8437,7 @@ export function AIEmployees() {
                 </div>
                 <div className="min-w-0">
                   <div className="text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>
-                    {copy.parentToken}: {item.parent_token_id || "—"}
+                    {copy.parentToken}: {item.parent_token_ref || item.parent_token_id || "—"}
                   </div>
                   <div className="flex flex-wrap gap-1 mt-1">
                     {item.scopes.slice(0, 3).map(scope => (
@@ -8443,17 +8454,18 @@ export function AIEmployees() {
                 </div>
                 <div className="flex justify-start xl:justify-end">
                   <button
-                    onClick={() => revokeSession(item.session_id)}
+                    onClick={() => revokeSession(item.session_id, item.agent_id)}
                     disabled={item.session_state !== "active" || Boolean(enrollmentAction)}
                     className="flex items-center gap-1 text-[11px] px-2.5 py-1.5 rounded disabled:opacity-40"
                     style={{ background: "rgba(248,113,113,0.1)", color: "#F87171", border: "1px solid rgba(248,113,113,0.22)" }}
                   >
-                    {enrollmentAction === `revoke-session-${item.session_id}` ? <RefreshCw size={12} /> : <Trash2 size={12} />}
-                    {enrollmentAction === `revoke-session-${item.session_id}` ? copy.revokingSession : copy.revokeSession}
+                    {enrollmentAction === `revoke-session-${sessionActionRef}` ? <RefreshCw size={12} /> : <Trash2 size={12} />}
+                    {enrollmentAction === `revoke-session-${sessionActionRef}` ? copy.revokingSession : copy.revokeSession}
                   </button>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </div>

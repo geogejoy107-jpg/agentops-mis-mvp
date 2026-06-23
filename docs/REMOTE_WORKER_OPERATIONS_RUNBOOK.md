@@ -541,6 +541,11 @@ and `GET /api/agent-gateway/sessions` expose safe `session_ref` and
 `parent_token_ref` values only. Keep the one-time creation `session_id` locally
 if a specific-session revoke is required, or use `agentops session revoke
 --agent-id <agent_id>` for bulk active-session cleanup.
+Enrollment inventory follows the same pattern: `agentops enrollment list` and
+`GET /api/agent-gateway/enrollments` expose safe `token_ref` values only. Keep
+one-time creation/rotation token IDs locally if exact-token rotation is needed,
+or use `agentops enrollment rotate --agent-id <agent_id>` and
+`agentops enrollment revoke --agent-id <agent_id>` for managed cleanup.
 
 For a local supervised worker daemon, restart is a first-class operator action:
 

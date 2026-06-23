@@ -2798,7 +2798,7 @@ export interface WorkerFleetHygienePayload {
 }
 
 export interface AgentGatewayEnrollment {
-  token_id: string;
+  token_id?: string;
   token_ref?: string;
   token_id_omitted?: boolean;
   workspace_id: string;
@@ -2822,8 +2822,11 @@ export interface AgentGatewayEnrollmentListPayload {
 }
 
 export interface AgentGatewaySession {
-  session_id: string;
+  session_id?: string;
+  session_ref?: string;
+  session_id_omitted?: boolean;
   parent_token_id?: string | null;
+  parent_token_ref?: string | null;
   workspace_id: string;
   agent_id: string;
   scopes: string[];
@@ -7222,7 +7225,7 @@ function normalizeWorkerFleetHealth(row: Record<string, unknown>): WorkerFleetHe
 
 function normalizeAgentGatewayEnrollment(row: Record<string, unknown>): AgentGatewayEnrollment {
   return {
-    token_id: String(row.token_id || ""),
+    token_id: row.token_id ? String(row.token_id) : undefined,
     token_ref: row.token_ref ? String(row.token_ref) : undefined,
     token_id_omitted: row.token_id_omitted === undefined ? undefined : boolValue(row.token_id_omitted),
     workspace_id: String(row.workspace_id || ""),
@@ -7242,8 +7245,11 @@ function normalizeAgentGatewayEnrollment(row: Record<string, unknown>): AgentGat
 
 function normalizeAgentGatewaySession(row: Record<string, unknown>): AgentGatewaySession {
   return {
-    session_id: String(row.session_id || ""),
+    session_id: row.session_id ? String(row.session_id) : undefined,
+    session_ref: row.session_ref ? String(row.session_ref) : undefined,
+    session_id_omitted: row.session_id_omitted === undefined ? undefined : boolValue(row.session_id_omitted),
     parent_token_id: row.parent_token_id ? String(row.parent_token_id) : null,
+    parent_token_ref: row.parent_token_ref ? String(row.parent_token_ref) : null,
     workspace_id: String(row.workspace_id || ""),
     agent_id: String(row.agent_id || ""),
     scopes: parseJsonArray(row.scopes),

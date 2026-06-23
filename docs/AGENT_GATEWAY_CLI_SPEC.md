@@ -262,7 +262,8 @@ Maps to `agent_gateway_enrollment_requests`, `approvals`, `tasks`, `runs`, `audi
 
 ### `agentops enrollment list`
 
-Lists token metadata, status, scopes, expiry, and heartbeat freshness. It never prints token secrets.
+Lists token metadata, status, scopes, expiry, and heartbeat freshness. It never
+prints token secrets or raw enrollment token IDs.
 
 ```bash
 agentops enrollment list
@@ -274,6 +275,11 @@ Heartbeat freshness uses product-facing lifecycle states:
 - `fresh`: token is active and the latest heartbeat is inside the timeout window.
 - `stale`: token is active but the latest heartbeat is older than the timeout window.
 - `revoked`: token is no longer valid and should not be shown as live even if it has old heartbeat data.
+
+List/readback output uses `token_ref` plus `token_id_omitted:true`. The raw
+`token_id` is shown only in create/issue/rotate responses for explicit local
+management flows; operators can use `--agent-id` for bulk revoke or latest
+active-token rotation without retaining raw token IDs.
 
 ### `agentops enrollment revoke`
 
@@ -2356,7 +2362,7 @@ Current implementation:
 - `GET /api/agent-gateway/sessions` lists session metadata with safe refs only; it omits `session_hash`, raw token values, raw session ids, and raw parent token ids.
 - `POST /api/agent-gateway/session/revoke` revokes one session or all active sessions for an agent.
 - Revoking an enrollment token also revokes active child sessions.
-- `GET /api/agent-gateway/enrollments` reports heartbeat freshness.
+- `GET /api/agent-gateway/enrollments` reports heartbeat freshness with safe `token_ref` values and omits raw token ids.
 - Revoked tokens report `heartbeat_state=revoked`, not `fresh` or `stale`.
 
 Current endpoint scope map:

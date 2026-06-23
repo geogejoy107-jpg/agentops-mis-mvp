@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import json
+import re
 import subprocess
 import sys
 import urllib.error
@@ -37,11 +39,19 @@ def require(condition: bool, message: str) -> None:
         raise AssertionError(message)
 
 
+def safe_ref(prefix: str, raw: str) -> str:
+    slug = re.sub(r"[^a-zA-Z0-9_]+", "_", raw or "").strip("_").lower()
+    if slug and len(slug) <= 64:
+        return f"{prefix}_{slug}"[-12:]
+    return f"{prefix}_{hashlib.sha256((raw or '').encode('utf-8')).hexdigest()[:16]}"[-12:]
+
+
 def find_enrollment(enrollments: list[dict], token_id: str) -> dict:
+    token_ref = safe_ref("token_ref", token_id)
     for item in enrollments:
-        if item.get("token_id") == token_id:
+        if item.get("token_ref") == token_ref:
             return item
-    raise AssertionError(f"token not found in enrollment list: {token_id}")
+    raise AssertionError(f"token ref not found in enrollment list: {token_ref}")
 
 
 def api_rotation_smoke(base_url: str, stamp: str) -> dict:
@@ -71,14 +81,17 @@ def api_rotation_smoke(base_url: str, stamp: str) -> dict:
     new = find_enrollment(listed.get("enrollments", []), rotated["token_id"])
     require(old.get("status") == "revoked", f"old token was not revoked: {old}")
     require(new.get("status") == "active", f"new token is not active: {new}")
+    serialized_list = json.dumps(listed, ensure_ascii=False)
+    require(created["token_id"] not in serialized_list and rotated["token_id"] not in serialized_list, f"enrollment list leaked raw token ids: {listed}")
+    require(old.get("token_id_omitted") is True and new.get("token_id_omitted") is True, f"enrollment list missing omission proof: {listed}")
 
     revoke_status, revoked = http_json("POST", base_url, "/api/agent-gateway/enrollment/revoke", {"agent_id": agent_id})
     require(revoke_status == 200, f"cleanup revoke failed: {revoke_status} {revoked}")
 
     return {
         "agent_id": agent_id,
-        "old_token_id": created["token_id"],
-        "new_token_id": rotated["token_id"],
+        "old_token_ref": safe_ref("token_ref", created["token_id"]),
+        "new_token_ref": safe_ref("token_ref", rotated["token_id"]),
         "old_status_after_rotate": old.get("status"),
         "new_status_after_rotate": new.get("status"),
         "token_omitted": True,
@@ -115,8 +128,8 @@ def cli_rotation_smoke(base_url: str, stamp: str) -> dict:
 
     return {
         "agent_id": agent_id,
-        "old_token_id": created["token_id"],
-        "new_token_id": rotated["token_id"],
+        "old_token_ref": safe_ref("token_ref", created["token_id"]),
+        "new_token_ref": safe_ref("token_ref", rotated["token_id"]),
         "rotated": True,
         "token_omitted": True,
         "cleanup_revoked": revoked.get("revoked"),

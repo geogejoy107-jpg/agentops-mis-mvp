@@ -3494,6 +3494,17 @@ def agent_gateway_enrollment_rows(conn) -> list[dict]:
     return rows
 
 
+def agent_gateway_public_enrollment_rows(conn) -> list[dict]:
+    public_rows = []
+    for row in agent_gateway_enrollment_rows(conn):
+        public = dict(row)
+        token_id = public.pop("token_id", None)
+        public["token_ref"] = stable_id("token_ref", token_id)[-12:] if token_id else ""
+        public["token_id_omitted"] = True
+        public_rows.append(public)
+    return public_rows
+
+
 def agent_gateway_session_state(row, now_dt: dt.datetime | None = None) -> str:
     now_dt = now_dt or dt.datetime.now(dt.timezone.utc)
     status = row.get("status") if hasattr(row, "get") else row["status"]
@@ -26065,7 +26076,12 @@ class Handler(BaseHTTPRequestHandler):
                 auth_error = agent_gateway_admin_auth_error(self.headers)
                 if auth_error:
                     return self.send_json(auth_error, 401)
-                return self.send_json({"enrollments": agent_gateway_enrollment_rows(conn), "valid_scopes": sorted(VALID_AGENT_GATEWAY_SCOPES), "token_omitted": True})
+                return self.send_json({
+                    "enrollments": agent_gateway_public_enrollment_rows(conn),
+                    "valid_scopes": sorted(VALID_AGENT_GATEWAY_SCOPES),
+                    "token_omitted": True,
+                    "token_id_omitted": True,
+                })
             if path == "/api/agent-gateway/sessions":
                 auth_error = agent_gateway_admin_auth_error(self.headers)
                 if auth_error:

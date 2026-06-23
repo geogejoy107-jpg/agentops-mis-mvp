@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import socket
@@ -29,6 +30,13 @@ SECRET_PATTERNS = [
 def require(condition: bool, message: str, failures: list[str]) -> None:
     if not condition:
         failures.append(message)
+
+
+def safe_ref(prefix: str, raw: str) -> str:
+    slug = re.sub(r"[^a-zA-Z0-9_]+", "_", raw or "").strip("_").lower()
+    if slug and len(slug) <= 64:
+        return f"{prefix}_{slug}"[-12:]
+    return f"{prefix}_{hashlib.sha256((raw or '').encode('utf-8')).hexdigest()[:16]}"[-12:]
 
 
 def extract_block(text: str, start_marker: str, end_marker: str) -> str:
@@ -126,17 +134,20 @@ def api_contract_smoke(failures: list[str]) -> dict:
             require(status == 200, f"enrollment list failed: {status} {listed}", failures)
             require(listed.get("token_omitted") is True, f"list token_omitted missing: {listed}", failures)
             enrollments = listed.get("enrollments") or []
-            listed_row = next((item for item in enrollments if item.get("token_id") == token_id), {})
-            require(bool(listed_row), f"created token id missing from list: {listed}", failures)
+            token_ref = safe_ref("token_ref", token_id)
+            listed_row = next((item for item in enrollments if item.get("token_ref") == token_ref), {})
+            require(bool(listed_row), f"created token ref missing from list: {listed}", failures)
             require("token" not in listed_row, f"list row exposed raw token field: {listed_row}", failures)
+            require("token_id" not in listed_row, f"list row exposed raw token id field: {listed_row}", failures)
             require("token_hash" not in listed_row, f"list row exposed token_hash field: {listed_row}", failures)
             require(not secret_leaked(list_raw, [raw_token]), "list response leaked a raw token-like value", failures)
+            require(token_id not in list_raw, "list response leaked raw token id", failures)
             redacted_create_raw = create_raw.replace(raw_token, "<redacted-token>") if raw_token else create_raw
             require(not secret_leaked(redacted_create_raw, []), "create response leaked unrelated token-like material", failures)
 
             return {
                 "base_url": base_url,
-                "token_id": token_id,
+                "token_ref": token_ref,
                 "list_token_omitted": listed.get("token_omitted") is True,
                 "raw_token_absent_from_list": not secret_leaked(list_raw, [raw_token]),
                 "temp_db": True,
