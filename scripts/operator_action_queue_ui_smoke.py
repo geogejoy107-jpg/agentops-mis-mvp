@@ -9,6 +9,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+SERVER = ROOT / "server.py"
 AI_EMPLOYEES = ROOT / "ui" / "start-building-app" / "src" / "app" / "components" / "pages" / "AIEmployees.tsx"
 LIVE_API = ROOT / "ui" / "start-building-app" / "src" / "app" / "data" / "liveApi.ts"
 
@@ -546,6 +547,16 @@ EXPECTED_LIVE_API_MARKERS = {
     "operator_action_receipts_control_hash_normalize": "latest_control_readback_hash: summaryRaw.latest_control_readback_hash",
 }
 
+EXPECTED_SERVER_MARKERS = {
+    "local_run_path_payload": '"local_run_path": local_run_path',
+    "local_run_path_copy_only": 'step["copy_only"] = True',
+    "local_run_path_no_server_shell": 'step["server_executes_shell"] = False',
+    "local_run_path_token_omitted": 'step["token_omitted"] = True',
+    "local_run_path_start_candidate": "candidate_start_worker_command",
+    "local_run_path_confirm_run_gate": 'or "--confirm-run" in str(candidate_start_worker_command)',
+    "local_run_path_live_fallback": "--confirm-run --poll-interval 5 --max-tasks 0",
+}
+
 FORBIDDEN_MARKERS = {
     "initial_daemon_log_prefetch": "Promise.all(WORKER_ADAPTERS.map(adapter => loadWorkerDaemonLogs(adapter)))",
     "data_daemon_logs_readback": "data?.daemonLogs",
@@ -556,6 +567,7 @@ FORBIDDEN_MARKERS = {
 
 
 def main() -> int:
+    server_source = SERVER.read_text(encoding="utf-8")
     source = AI_EMPLOYEES.read_text(encoding="utf-8")
     live_api_source = LIVE_API.read_text(encoding="utf-8")
     failures: list[str] = []
@@ -566,6 +578,9 @@ def main() -> int:
     for label, marker in EXPECTED_LIVE_API_MARKERS.items():
         if marker not in live_api_source:
             failures.append(f"missing live api {label}: {marker}")
+    for label, marker in EXPECTED_SERVER_MARKERS.items():
+        if marker not in server_source:
+            failures.append(f"missing server {label}: {marker}")
     if live_api_source.count("export async function loadOperatorLoopControl") != 1:
         failures.append("loadOperatorLoopControl must have exactly one implementation")
     if live_api_source.count("export interface OperatorLoopControlPayload") != 1:
@@ -592,10 +607,11 @@ def main() -> int:
         "ok": not failures,
         "operation": "operator_action_queue_ui_contract",
         "files": [
+            str(SERVER.relative_to(ROOT)),
             str(AI_EMPLOYEES.relative_to(ROOT)),
             str(LIVE_API.relative_to(ROOT)),
         ],
-        "markers_checked": len(EXPECTED_MARKERS) + len(EXPECTED_LIVE_API_MARKERS) + len(FORBIDDEN_MARKERS),
+        "markers_checked": len(EXPECTED_MARKERS) + len(EXPECTED_LIVE_API_MARKERS) + len(EXPECTED_SERVER_MARKERS) + len(FORBIDDEN_MARKERS),
         "failures": failures,
         "safety": {
             "read_only": True,
