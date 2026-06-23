@@ -890,7 +890,11 @@ export function AIEmployees() {
       teamLanes: "Team lanes",
       dependencyEdges: "Dependencies",
       missingCodingEvidence: "Missing coding evidence",
-      readyForReview: "Ready for review",
+      teamReadyForReview: "Ready for review",
+      activeWorkflowJobs: "Active jobs",
+      failedWorkflowJobs: "Failed jobs",
+      completedWorkflowJobs: "Completed jobs",
+      latestWorkflowJob: "Latest job",
       persistedPackages: "Persisted packages",
       packageReadback: "Package readback",
       packageStatus: "Package status",
@@ -1407,7 +1411,11 @@ export function AIEmployees() {
       teamLanes: "团队 lanes",
       dependencyEdges: "依赖边",
       missingCodingEvidence: "缺失编码证据",
-      readyForReview: "待复核",
+      teamReadyForReview: "待复核",
+      activeWorkflowJobs: "活跃 Job",
+      failedWorkflowJobs: "失败 Job",
+      completedWorkflowJobs: "完成 Job",
+      latestWorkflowJob: "最新 Job",
       persistedPackages: "持久化工作包",
       packageReadback: "工作包读回",
       packageStatus: "工作包状态",
@@ -3444,9 +3452,13 @@ export function AIEmployees() {
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 min-w-[280px]">
                 {[
                   { label: copy.teamLanes, value: commanderTeamBoard.summary.total_lanes, status: commanderTeamBoard.summary.total_lanes > 0 ? "pass" : "attention" },
-                  { label: copy.readyForReview, value: commanderTeamBoard.summary.ready_for_review, status: commanderTeamBoard.summary.ready_for_review > 0 ? "attention" : "planned" },
+                  { label: copy.teamReadyForReview, value: commanderTeamBoard.summary.ready_for_review, status: commanderTeamBoard.summary.ready_for_review > 0 ? "attention" : "planned" },
+                  { label: copy.activeWorkflowJobs, value: commanderTeamBoard.summary.active_workflow_jobs, status: commanderTeamBoard.summary.active_workflow_jobs > 0 ? "running" : "pass" },
+                  { label: copy.failedWorkflowJobs, value: commanderTeamBoard.summary.failed_workflow_jobs, status: commanderTeamBoard.summary.failed_workflow_jobs > 0 ? "blocked" : "pass" },
+                  { label: copy.completedWorkflowJobs, value: commanderTeamBoard.summary.workflow_job_counts.completed || 0, status: (commanderTeamBoard.summary.workflow_job_counts.completed || 0) > 0 ? "completed" : "planned" },
                   { label: copy.missingCodingEvidence, value: commanderTeamBoard.summary.missing_coding_evidence, status: commanderTeamBoard.summary.missing_coding_evidence > 0 ? "attention" : "pass" },
                   { label: copy.dependencyEdges, value: commanderTeamBoard.summary.dependency_edges, status: commanderTeamBoard.summary.dependency_edges > 0 ? "planned" : "pass" },
+                  { label: copy.jobType, value: Object.values(commanderTeamBoard.summary.workflow_job_counts).reduce((total, value) => total + value, 0), status: Object.keys(commanderTeamBoard.summary.workflow_job_counts).length > 0 ? "pass" : "planned" },
                 ].map((item) => (
                   <div key={item.label} className="rounded px-2 py-1.5" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
                     <div className="text-[9px] uppercase tracking-wide" style={{ color: "var(--mis-muted)" }}>{item.label}</div>
@@ -3483,12 +3495,33 @@ export function AIEmployees() {
                     ))}
                   </div>
                   <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                    {lane.latest_workflow_job && (
+                      <StatusBadge status={lane.latest_workflow_job.status || "unknown"} label={`${copy.latestWorkflowJob}: ${lane.latest_workflow_job.status || "unknown"}`} />
+                    )}
+                    {lane.latest_workflow_job?.adapter && (
+                      <StatusBadge status={lane.latest_workflow_job.confirm_run ? "attention" : "pass"} label={`${lane.latest_workflow_job.adapter} · ${lane.latest_workflow_job.confirm_run ? "live" : "safe"}`} />
+                    )}
                     <StatusBadge status={String(lane.localization_gate.status || "unknown")} label={`repo ${String(lane.localization_gate.status || "unknown")}`} />
                     <StatusBadge status={String(lane.coding_evidence_gate.status || "unknown")} label={`code ${String(lane.coding_evidence_gate.status || "unknown")}`} />
+                    {lane.latest_workflow_job?.job_id && (
+                      <span className="text-[10px] px-2 py-1 rounded font-mono" style={{ color: "var(--mis-muted)", background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}>
+                        {lane.latest_workflow_job.job_id}
+                      </span>
+                    )}
                     {lane.latest_run?.run_id && (
                       <Link to={`/admin/runs/${lane.latest_run.run_id}`} className="text-[10px] px-2 py-1 rounded" style={{ color: "var(--mis-cyan)", background: "rgba(34,211,238,0.10)", border: "1px solid rgba(34,211,238,0.18)" }}>
                         {lane.latest_run.run_id}
                       </Link>
+                    )}
+                    {lane.latest_workflow_job?.result_run_id && lane.latest_workflow_job.result_run_id !== lane.latest_run?.run_id && (
+                      <Link to={`/admin/runs/${lane.latest_workflow_job.result_run_id}`} className="text-[10px] px-2 py-1 rounded" style={{ color: "var(--mis-success)", background: "rgba(45,212,191,0.10)", border: "1px solid rgba(45,212,191,0.18)" }}>
+                        {copy.runId}
+                      </Link>
+                    )}
+                    {lane.latest_workflow_job?.result_artifact_id && (
+                      <span className="text-[10px] px-2 py-1 rounded font-mono" style={{ color: "var(--mis-warning)", background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.18)" }}>
+                        {copy.artifactId}: {lane.latest_workflow_job.result_artifact_id}
+                      </span>
                     )}
                     <Link to={`/admin/tasks/${lane.task_id}`} className="text-[10px] px-2 py-1 rounded" style={{ color: "var(--mis-purple)", background: "rgba(129,140,248,0.10)", border: "1px solid rgba(129,140,248,0.18)" }}>
                       {copy.openTask}
