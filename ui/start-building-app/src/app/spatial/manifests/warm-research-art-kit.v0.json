@@ -31,6 +31,44 @@
     "lightingLanguage": "Soft morning daylight, warm interior lamps and restrained state glows that never replace text labels.",
     "animationLanguage": "Four-direction stepped movement plus idle, read, type, carry, wait, blocked and complete state actions."
   },
+  "agentIdentityGrammar": {
+    "schemaVersion": "spatial-agent-identity/v0",
+    "strategy": "archetype-palette-seed",
+    "archetypes": [
+      "bridge",
+      "spark",
+      "forge",
+      "fork",
+      "lattice",
+      "orbit",
+      "archive",
+      "shield",
+      "pulse",
+      "prism",
+      "portal",
+      "stack"
+    ],
+    "paletteSlots": [
+      "azure",
+      "violet",
+      "amber",
+      "coral",
+      "mint",
+      "rose",
+      "indigo",
+      "lime",
+      "sky",
+      "orange",
+      "slate",
+      "gold"
+    ],
+    "glyphGrid": {
+      "width": 12,
+      "height": 12
+    },
+    "statusChannel": "separate",
+    "riskChannel": "separate"
+  },
   "requiredAgentAnimations": [
     "idle-north",
     "idle-east",
