@@ -2612,6 +2612,9 @@ def agent_gateway_enrollment_policy_preview(body) -> tuple[dict, int]:
             invalid_scopes.append(scope)
     runtime_type = coerce_choice(body.get("runtime_type") or body.get("runtime"), VALID_RUNTIME_TYPES, "mock")
     workspace_id = normalize_workspace_id(body.get("workspace_id") or "local-demo")
+    mode = deployment_mode()
+    production_requested = production_security_requested()
+    admin_key_configured = bool(os.environ.get("AGENTOPS_ADMIN_KEY", "").strip())
     privileged = [scope for scope in scopes if scope in AGENT_GATEWAY_PRIVILEGED_SCOPES]
     observer_only = bool(scopes) and set(scopes).issubset(AGENT_GATEWAY_OBSERVER_SCOPES)
     worker_writes = [] if observer_only else [scope for scope in scopes if scope in AGENT_GATEWAY_WORKER_ACTION_SCOPES]
@@ -2665,6 +2668,19 @@ def agent_gateway_enrollment_policy_preview(body) -> tuple[dict, int]:
         policy = "custom"
         approval_recommended = True
         recommended_path = "request_approval"
+    if production_requested and risk_level != "blocked":
+        approval_recommended = True
+        if recommended_path == "create_token":
+            recommended_path = "request_approval"
+    direct_create_allowed = risk_level != "blocked" and recommended_path == "create_token" and not production_requested
+    approval_request_required = risk_level != "blocked" and recommended_path == "request_approval"
+    deployment_policy_summary = (
+        "Shared/hosted/production enrollment must use approval request and admin-issued tokens."
+        if production_requested and admin_key_configured
+        else "Shared/hosted/production enrollment is not ready to issue tokens until AGENTOPS_ADMIN_KEY is configured."
+        if production_requested
+        else "Local/demo enrollment can directly create low-risk tokens; privileged or non-local worker scopes still use approval."
+    )
     gates = [
         {
             "id": "valid_scopes",
@@ -2690,6 +2706,12 @@ def agent_gateway_enrollment_policy_preview(body) -> tuple[dict, int]:
             "status": "warn" if approval_recommended else "pass",
             "summary": "Use approval-gated request before issuing this token." if approval_recommended else "Direct token creation is acceptable for this local/low-risk scope set.",
         },
+        {
+            "id": "deployment_policy",
+            "ok": (not production_requested) or admin_key_configured,
+            "status": "warn" if production_requested and admin_key_configured else "fail" if production_requested else "pass",
+            "summary": deployment_policy_summary,
+        },
     ]
     return {
         "provider": "agent_gateway",
@@ -2697,10 +2719,16 @@ def agent_gateway_enrollment_policy_preview(body) -> tuple[dict, int]:
         "status": "blocked" if risk_level == "blocked" else "attention" if approval_recommended or privileged else "ready",
         "workspace_id": workspace_id,
         "runtime_type": runtime_type,
+        "deployment_mode": mode,
+        "production_security_requested": production_requested,
+        "admin_key_configured": admin_key_configured,
         "policy": policy,
         "risk_level": risk_level,
         "approval_recommended": approval_recommended,
         "recommended_path": recommended_path,
+        "direct_create_allowed": direct_create_allowed,
+        "approval_request_required": approval_request_required,
+        "deployment_policy_summary": deployment_policy_summary,
         "scope_count": len(scopes),
         "scopes": scopes,
         "invalid_scopes": invalid_scopes,
@@ -2711,6 +2739,7 @@ def agent_gateway_enrollment_policy_preview(body) -> tuple[dict, int]:
         "next_actions": [action for action in [
             "Fix invalid scopes before creating a token." if invalid_scopes else "",
             "Use agentops enrollment request before issuing this token." if approval_recommended else "Use agentops enrollment create for this low-risk/local scope set.",
+            "Configure AGENTOPS_ADMIN_KEY before issuing hosted/shared tokens." if production_requested and not admin_key_configured else "",
             "Use short-lived sessions for worker loops after enrollment.",
         ] if action],
         "safety": {

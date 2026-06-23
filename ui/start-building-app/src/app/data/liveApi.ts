@@ -3059,10 +3059,16 @@ export interface AgentGatewayEnrollmentPolicyPreview {
   status: string;
   workspace_id: string;
   runtime_type: string;
+  deployment_mode: string;
+  production_security_requested: boolean;
+  admin_key_configured: boolean;
   policy: string;
   risk_level: string;
   approval_recommended: boolean;
   recommended_path: string;
+  direct_create_allowed: boolean;
+  approval_request_required: boolean;
+  deployment_policy_summary: string;
   scope_count: number;
   scopes: string[];
   invalid_scopes: string[];
@@ -7389,10 +7395,16 @@ export async function previewAgentGatewayEnrollmentPolicy(input: {
     status: String(raw.status || "unknown"),
     workspace_id: String(raw.workspace_id || ""),
     runtime_type: String(raw.runtime_type || ""),
+    deployment_mode: String(raw.deployment_mode || "unknown"),
+    production_security_requested: boolValue(raw.production_security_requested),
+    admin_key_configured: boolValue(raw.admin_key_configured),
     policy: String(raw.policy || "custom"),
     risk_level: String(raw.risk_level || "unknown"),
     approval_recommended: boolValue(raw.approval_recommended),
     recommended_path: String(raw.recommended_path || ""),
+    direct_create_allowed: boolValue(raw.direct_create_allowed),
+    approval_request_required: boolValue(raw.approval_request_required),
+    deployment_policy_summary: String(raw.deployment_policy_summary || ""),
     scope_count: numberValue(raw.scope_count, 0),
     scopes: asArray(raw.scopes).map(String),
     invalid_scopes: asArray(raw.invalid_scopes).map(String),

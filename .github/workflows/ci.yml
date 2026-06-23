@@ -64,6 +64,7 @@ jobs:
           python3 scripts/release_evidence_packet_smoke.py
           python3 scripts/merge_readiness_status_smoke.py
           python3 scripts/v1_5_product_closure_evidence_smoke.py
+          python3 scripts/enrollment_hosted_policy_ui_smoke.py
           python3 scripts/customer_worker_hermes_retry_gateway_smoke.py
           python3 scripts/module_boundary_smoke.py
           python3 scripts/read_model_cache_smoke.py

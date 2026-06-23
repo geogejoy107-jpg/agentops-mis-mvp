@@ -1184,10 +1184,15 @@ export function AIEmployees() {
       enrollmentSummary: "Issue scoped tokens for agents running on another laptop or server. The token is shown once; MIS stores only a hash.",
       enrollmentPolicyTitle: "Scope policy preview",
       enrollmentPolicySummary: "Read-only preview before token issue: risk, approval path, privileged scopes, and worker viability.",
+      enrollmentDeploymentPolicy: "Deployment policy",
+      enrollmentDeploymentPolicySummary: "Hosted/shared mode routes remote credentials through approval and admin issue; local mode can direct-create only low-risk observer tokens.",
       riskLevel: "Risk",
       policyType: "Policy",
       approvalPath: "Approval path",
       directCreatePath: "Direct create",
+      directCreateAllowed: "Direct create allowed",
+      approvalRequestRequired: "Approval required",
+      adminKeyConfigured: "Admin key",
       recommendedPath: "Recommended",
       invalidScopes: "Invalid scopes",
       privilegedScopes: "Privileged",
@@ -1751,10 +1756,15 @@ export function AIEmployees() {
       enrollmentSummary: "给运行在另一台电脑或服务器上的 agent 发放带权限范围的 token。token 只显示一次，MIS 只保存 hash。",
       enrollmentPolicyTitle: "Scope 策略预览",
       enrollmentPolicySummary: "发 token 前的只读检查：风险、审批路径、高权限 scope 和 worker 可执行性。",
+      enrollmentDeploymentPolicy: "部署策略",
+      enrollmentDeploymentPolicySummary: "Hosted/共享模式下，远程凭证必须经过审批和管理员发放；本地模式只允许低风险 observer token 直接创建。",
       riskLevel: "风险",
       policyType: "策略",
       approvalPath: "走审批",
       directCreatePath: "直接创建",
+      directCreateAllowed: "可直接创建",
+      approvalRequestRequired: "需要审批",
+      adminKeyConfigured: "Admin key",
       recommendedPath: "推荐路径",
       invalidScopes: "无效 scope",
       privilegedScopes: "高权限",
@@ -3358,6 +3368,7 @@ export function AIEmployees() {
     .split(",")
     .map(item => item.trim())
     .filter(Boolean);
+  const createEnrollmentBlockedByPolicy = Boolean(enrollmentPolicy && !enrollmentPolicy.direct_create_allowed);
 
   useEffect(() => {
     let cancelled = false;
@@ -8117,6 +8128,27 @@ export function AIEmployees() {
                     </div>
                   ))}
                 </div>
+                <div
+                  data-testid="hosted-enrollment-policy-gate"
+                  className="rounded px-2 py-2 mt-3"
+                  style={{
+                    background: enrollmentPolicy.production_security_requested ? "rgba(251,191,36,0.08)" : "var(--mis-bg)",
+                    border: enrollmentPolicy.production_security_requested ? "1px solid rgba(251,191,36,0.18)" : "1px solid var(--mis-border)",
+                  }}
+                >
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <div className="text-[9px] uppercase tracking-wide mr-1" style={{ color: "var(--mis-muted)" }}>
+                      {copy.enrollmentDeploymentPolicy}
+                    </div>
+                    <StatusBadge status={enrollmentPolicy.production_security_requested ? "attention" : "pass"} label={`${copy.deploymentMode}: ${enrollmentPolicy.deployment_mode}`} />
+                    <StatusBadge status={enrollmentPolicy.direct_create_allowed ? "pass" : "attention"} label={`${copy.directCreateAllowed}: ${enrollmentPolicy.direct_create_allowed ? copy.yes : copy.no}`} />
+                    <StatusBadge status={enrollmentPolicy.approval_request_required ? "attention" : "pass"} label={`${copy.approvalRequestRequired}: ${enrollmentPolicy.approval_request_required ? copy.yes : copy.no}`} />
+                    <StatusBadge status={enrollmentPolicy.admin_key_configured ? "pass" : enrollmentPolicy.production_security_requested ? "fail" : "planned"} label={`${copy.adminKeyConfigured}: ${enrollmentPolicy.admin_key_configured ? copy.yes : copy.no}`} />
+                  </div>
+                  <div className="text-[10px] mt-2" style={{ color: "var(--mis-muted)" }}>
+                    {enrollmentPolicy.deployment_policy_summary || copy.enrollmentDeploymentPolicySummary}
+                  </div>
+                </div>
                 <div className="flex flex-wrap gap-1.5 mt-3">
                   {enrollmentPolicy.invalid_scopes.slice(0, 4).map(scope => (
                     <span key={`invalid-${scope}`} className="text-[9px] px-1.5 py-0.5 rounded" style={{ background: "rgba(248,113,113,0.08)", color: "#F87171", border: "1px solid rgba(248,113,113,0.18)" }}>
@@ -8152,9 +8184,10 @@ export function AIEmployees() {
             </button>
             <button
               onClick={createEnrollment}
-              disabled={Boolean(enrollmentAction) || !enrollmentForm.agent_id.trim() || !enrollmentForm.name.trim() || scopeList.length === 0}
+              disabled={Boolean(enrollmentAction) || createEnrollmentBlockedByPolicy || !enrollmentForm.agent_id.trim() || !enrollmentForm.name.trim() || scopeList.length === 0}
               className="w-full flex items-center justify-center gap-1.5 text-[11px] px-3 py-2 rounded disabled:opacity-50"
               style={{ background: "rgba(34,211,238,0.12)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.2)" }}
+              title={createEnrollmentBlockedByPolicy ? copy.enrollmentDeploymentPolicySummary : undefined}
             >
               {enrollmentAction === "create" ? <RefreshCw size={12} /> : <ShieldCheck size={12} />}
               {enrollmentAction === "create" ? copy.creatingToken : copy.createToken}

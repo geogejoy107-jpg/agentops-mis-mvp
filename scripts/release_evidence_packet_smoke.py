@@ -78,6 +78,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "enrollment_hosted_policy_ui",
+        "command": "python3 scripts/enrollment_hosted_policy_ui_smoke.py",
+        "summary": "Deployment-aware Agent Gateway enrollment policy: local low-risk observer direct-create versus hosted/shared approval-gated token issue, plus UI contract.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "v1_5_current_code_product_evidence",
         "command": "python3 scripts/v1_5_current_code_product_evidence.py --base-url http://127.0.0.1:<current-code-port> --db-path /tmp/<current-code-agentops>.db --confirm-live",
         "summary": "Manual current-code product evidence orchestrator: rebuilds knowledge, runs Commander synthesis, executes confirmed Hermes/OpenClaw customer-worker acceptance, verifies live readiness readback, exercises remote/scoped worker fallback, and finishes with non-live local acceptance.",

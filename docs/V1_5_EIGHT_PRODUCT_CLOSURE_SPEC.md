@@ -534,10 +534,14 @@ Acceptance evidence:
   - Local observer scopes are classified as `observer` and can use direct create.
   - Invalid scopes are blocked before token issue.
   - CLI output omits token/session/secret-like strings.
+- `python3 scripts/enrollment_hosted_policy_ui_smoke.py` verifies deployment-aware enrollment policy UI:
+  - local low-risk observer scopes can use direct token creation,
+  - hosted/shared mode forces approval request and admin-issued token flow,
+  - `/workspace/agents` shows the deployment gate and disables direct create when policy blocks it.
 
 Remaining product work:
 
-- Hosted customer enrollment policy UI.
+- Full hosted enrollment administration remains future SaaS work: customer org enrollment pages, token issuance audit review by workspace owner, and production-grade RBAC administration.
 
 ### 5. MVP Security Boundary
 
