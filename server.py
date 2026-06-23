@@ -17210,12 +17210,73 @@ def commander_evidence_counts(conn: sqlite3.Connection, task_id=None, run_id=Non
     return counts
 
 
+def commander_integration_decision(bucket: str, evidence_counts: dict, recommended_action: str) -> dict:
+    evidence_complete = all(
+        int(evidence_counts.get(key) or 0) > 0
+        for key in ("artifacts", "evaluations", "audit_logs")
+    )
+    pending_approval = int(evidence_counts.get("pending_approvals") or 0) > 0
+    if bucket == "ready_for_review":
+        decision = "merge_candidate" if evidence_complete else "needs_evidence_review"
+        status = "attention"
+        reason = (
+            "Worker output has artifact, evaluation and audit evidence; a human commander must review approval state before delivery."
+            if evidence_complete
+            else "Worker output is ready-looking but missing one or more artifact/evaluation/audit evidence rows."
+        )
+        required_review = True
+        can_advance_without_waiting = True
+    elif bucket == "still_running":
+        decision = "continue_running"
+        status = "running"
+        reason = "This lane is still active; review other completed lanes without blocking on it."
+        required_review = False
+        can_advance_without_waiting = True
+    elif bucket == "late_or_stale":
+        decision = "needs_recovery"
+        status = "blocked"
+        reason = "This lane exceeded the async freshness threshold and needs stuck-job or worker recovery before integration."
+        required_review = True
+        can_advance_without_waiting = True
+    elif bucket == "blocked":
+        decision = "needs_recovery"
+        status = "blocked"
+        reason = "This lane has failed or blocked ledger state and needs retry, rejection, reassignment, or a recovery package."
+        required_review = True
+        can_advance_without_waiting = True
+    elif bucket == "needs_memory_review":
+        decision = "needs_memory_review"
+        status = "attention"
+        reason = "A memory candidate must be approved, rejected, superseded, or left out before it becomes durable team context."
+        required_review = True
+        can_advance_without_waiting = True
+    else:
+        decision = "review_required"
+        status = "attention"
+        reason = "Commander review is required before this inbox item affects delivery or project memory."
+        required_review = True
+        can_advance_without_waiting = False
+    return {
+        "decision": decision,
+        "status": status,
+        "reason": reason,
+        "required_review": required_review,
+        "can_advance_without_waiting": can_advance_without_waiting,
+        "evidence_complete": evidence_complete,
+        "pending_approval": pending_approval,
+        "safe_to_auto_apply": False,
+        "ledger_decision_required": required_review,
+        "next_command": recommended_action,
+    }
+
+
 def commander_inbox_item(bucket: str, row: dict, title: str, recommended_action: str, conn: sqlite3.Connection, artifact_id=None) -> dict:
     task_id = row.get("task_id") or row.get("result_task_id")
     run_id = row.get("run_id") or row.get("result_run_id")
     job_id = row.get("job_id")
     artifact_id = artifact_id or row.get("artifact_id") or row.get("result_artifact_id")
     item_id = f"{bucket}:{job_id or run_id or task_id or artifact_id or row.get('memory_id')}"
+    evidence_counts = commander_evidence_counts(conn, task_id=task_id, run_id=run_id, artifact_id=artifact_id)
     return {
         "item_id": item_id,
         "bucket": bucket,
@@ -17228,7 +17289,8 @@ def commander_inbox_item(bucket: str, row: dict, title: str, recommended_action:
         "agent_id": row.get("agent_id"),
         "owner_agent_id": row.get("owner_agent_id") or row.get("agent_id"),
         "age_sec": commander_age_sec(row.get("updated_at"), row.get("started_at"), row.get("created_at")),
-        "evidence_counts": commander_evidence_counts(conn, task_id=task_id, run_id=run_id, artifact_id=artifact_id),
+        "evidence_counts": evidence_counts,
+        "integration_decision": commander_integration_decision(bucket, evidence_counts, recommended_action),
         "recommended_action": recommended_action,
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at") or row.get("completed_at") or row.get("ended_at") or row.get("created_at"),

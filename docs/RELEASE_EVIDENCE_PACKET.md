@@ -111,6 +111,7 @@ The packet includes the canonical command manifest used for release review:
 - `python3 scripts/operator_command_center_smoke.py`
 - `python3 scripts/commander_work_package_plan_smoke.py`
 - `python3 scripts/commander_work_package_dispatch_smoke.py`
+- `python3 scripts/commander_integration_inbox_smoke.py --base-url "$AGENTOPS_BASE_URL" --db-path "$AGENTOPS_DB_PATH"`
 - `python3 scripts/local_coding_project_template_smoke.py`
 - `python3 scripts/ai_employees_responsiveness_smoke.py`
 - `python3 scripts/operator_action_queue_ui_smoke.py`

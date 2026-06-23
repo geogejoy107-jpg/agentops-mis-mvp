@@ -261,6 +261,12 @@ TEST_COMMANDS = [
         "ci_step": "Server-backed smoke suite",
     },
     {
+        "id": "commander_integration_inbox",
+        "command": "python3 scripts/commander_integration_inbox_smoke.py --base-url \"$AGENTOPS_BASE_URL\" --db-path \"$AGENTOPS_DB_PATH\"",
+        "summary": "Commander Integration Inbox returns read-only async-lane review items with structured merge/recovery/memory decisions and no auto-apply behavior.",
+        "ci_step": "Server-backed smoke suite",
+    },
+    {
         "id": "local_coding_project_template",
         "command": "python3 scripts/local_coding_project_template_smoke.py",
         "summary": "Server-backed Local Coding Project template creates Commander packages, previews coding workspace, dispatches mock worker, and records patch/test/verifier/merge evidence.",

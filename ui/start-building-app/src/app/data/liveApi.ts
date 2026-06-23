@@ -824,6 +824,18 @@ export interface IntegrationInboxItem {
   owner_agent_id?: string | null;
   age_sec: number;
   evidence?: Record<string, unknown>;
+  integration_decision?: {
+    decision: string;
+    status: string;
+    reason: string;
+    required_review: boolean;
+    can_advance_without_waiting: boolean;
+    evidence_complete: boolean;
+    pending_approval: boolean;
+    safe_to_auto_apply: boolean;
+    ledger_decision_required: boolean;
+    next_command?: string;
+  };
   recommended_action?: string;
   created_at?: string;
   updated_at?: string;
@@ -4328,6 +4340,20 @@ export async function loadIntegrationInbox(options: IntegrationInboxOptions = {}
         : typeof item.evidence_counts === "object" && item.evidence_counts !== null
           ? item.evidence_counts as Record<string, unknown>
           : undefined,
+      integration_decision: typeof item.integration_decision === "object" && item.integration_decision !== null
+        ? {
+            decision: String((item.integration_decision as Record<string, unknown>).decision || "review_required"),
+            status: String((item.integration_decision as Record<string, unknown>).status || "attention"),
+            reason: String((item.integration_decision as Record<string, unknown>).reason || ""),
+            required_review: boolValue((item.integration_decision as Record<string, unknown>).required_review),
+            can_advance_without_waiting: boolValue((item.integration_decision as Record<string, unknown>).can_advance_without_waiting),
+            evidence_complete: boolValue((item.integration_decision as Record<string, unknown>).evidence_complete),
+            pending_approval: boolValue((item.integration_decision as Record<string, unknown>).pending_approval),
+            safe_to_auto_apply: boolValue((item.integration_decision as Record<string, unknown>).safe_to_auto_apply),
+            ledger_decision_required: boolValue((item.integration_decision as Record<string, unknown>).ledger_decision_required),
+            next_command: (item.integration_decision as Record<string, unknown>).next_command ? String((item.integration_decision as Record<string, unknown>).next_command) : undefined,
+          }
+        : undefined,
       recommended_action: item.recommended_action ? String(item.recommended_action) : undefined,
       created_at: item.created_at ? String(item.created_at) : undefined,
       updated_at: item.updated_at ? String(item.updated_at) : undefined,

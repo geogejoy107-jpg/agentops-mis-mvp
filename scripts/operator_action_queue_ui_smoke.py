@@ -470,6 +470,12 @@ EXPECTED_MARKERS = {
     "close_gap_verify": 'isCloseEvidenceGapCommand(item.command) ? "agentops operator action-plan --limit 20"',
     "fleet_verify": 'verifyAction: "agentops worker status"',
     "integration_inbox_verify": 'verifyAction: "agentops commander inbox --limit 5"',
+    "integration_inbox_decision_render": "integrationDecision = item.integration_decision",
+    "integration_inbox_auto_apply_guard": "integrationDecision.safe_to_auto_apply",
+    "integration_inbox_ledger_decision_label_en": 'integrationLedgerDecision: "Ledger decision"',
+    "integration_inbox_ledger_decision_label_zh": 'integrationLedgerDecision: "账本决策"',
+    "integration_inbox_can_advance_label_en": 'canAdvanceWithoutWaiting: "Can advance without waiting"',
+    "integration_inbox_can_advance_label_zh": 'canAdvanceWithoutWaiting: "可不等待推进"',
     "synthesis_verify": 'verifyAction: "agentops commander board --limit 20"',
     "local_readiness_verify": 'verifyAction: "agentops local readiness"',
     "local_run_path_data": "const localRunPath = localReadiness?.local_run_path || []",
@@ -562,6 +568,8 @@ EXPECTED_MARKERS = {
 }
 
 EXPECTED_LIVE_API_MARKERS = {
+    "integration_inbox_decision_type": "integration_decision?: {",
+    "integration_inbox_decision_parser": "integration_decision: typeof item.integration_decision",
     "worker_daemon_admission_type": "export interface LocalLoopAdmissionSummary",
     "worker_daemon_result_admission": "local_loop_admission_summary?: LocalLoopAdmissionSummary",
     "operator_loop_control_api_loader": "export async function loadOperatorLoopControl",

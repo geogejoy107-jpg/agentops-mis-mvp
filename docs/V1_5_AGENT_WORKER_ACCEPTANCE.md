@@ -79,7 +79,11 @@ runner. The supported management primitives are:
   SQLite reads/count producers, async execution, recovery writes and audit.
 - Async integration inbox: `GET /api/commander/integration-inbox` provides a
   read-only commander queue for returned worker results, running lanes, blocked
-  work, stale work and memory-review items.
+  work, stale work and memory-review items. Each item now includes an
+  `integration_decision` projection such as `merge_candidate`,
+  `continue_running`, `needs_recovery`, or `needs_memory_review`; the projection
+  proves worker output is never auto-applied and records whether a ledger
+  decision is required.
 - CLI/API-first agent execution: humans use browser pages for dispatch,
   supervision, approval, and review; agents execute through Agent Gateway
   CLI/API/MCP and write run/tool/evaluation/audit/artifact evidence.

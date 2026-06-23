@@ -1037,6 +1037,11 @@ export function AIEmployees() {
       itemAge: "Age",
       itemOwner: "Owner",
       itemBucket: "Bucket",
+      integrationDecision: "Decision",
+      integrationReason: "Reason",
+      integrationAutoApply: "Auto-apply",
+      integrationLedgerDecision: "Ledger decision",
+      canAdvanceWithoutWaiting: "Can advance without waiting",
       overallFleetHealth: "Fleet health",
       fleetHygieneTitle: "Fleet hygiene",
       fleetHygieneSummary: "Plan or confirm cleanup for stale running worker tasks, never-seen remote enrollments, and heartbeat-stale enrollments. Cleanup writes audit/runtime evidence and never runs live adapters.",
@@ -1620,6 +1625,11 @@ export function AIEmployees() {
       itemAge: "耗时",
       itemOwner: "负责人",
       itemBucket: "分组",
+      integrationDecision: "集成决策",
+      integrationReason: "原因",
+      integrationAutoApply: "自动应用",
+      integrationLedgerDecision: "账本决策",
+      canAdvanceWithoutWaiting: "可不等待推进",
       overallFleetHealth: "Fleet 健康",
       fleetHygieneTitle: "Fleet 清理",
       fleetHygieneSummary: "为卡住的运行中任务、从未心跳的远程接入、心跳过期的远程接入生成清理计划；确认清理会写入审计/runtime 证据，但不会触发真实 adapter 执行。",
@@ -6842,18 +6852,32 @@ export function AIEmployees() {
               )}
               {integrationInboxItems.slice(0, 5).map((item) => {
                 const primaryRef = item.task_id || item.run_id || item.job_id || item.artifact_id || item.item_id;
+                const integrationDecision = item.integration_decision;
                 return (
                   <div key={item.item_id || primaryRef} className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-3 rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
                     <div className="min-w-0">
                       <div className="flex items-center gap-2 min-w-0">
                         <div className="text-[11px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{item.title}</div>
                         <StatusBadge status={item.status} />
+                        {integrationDecision && <StatusBadge status={integrationDecision.status || "attention"} label={integrationDecision.decision} />}
                       </div>
                       <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1 text-[10px]" style={{ color: "var(--mis-muted)" }}>
                         <span>{copy.itemBucket}: {item.bucket || "—"}</span>
                         <span>{copy.itemAge}: {formatAge(item.age_sec)}</span>
                         <span>{copy.itemOwner}: {item.owner_agent_id || item.agent_id || "—"}</span>
                       </div>
+                      {integrationDecision && (
+                        <div className="mt-1.5 rounded px-2 py-1" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                          <div className="flex flex-wrap gap-1.5">
+                            <StatusBadge status={integrationDecision.safe_to_auto_apply ? "fail" : "pass"} label={`${copy.integrationAutoApply}: ${integrationDecision.safe_to_auto_apply ? copy.yes : copy.no}`} />
+                            <StatusBadge status={integrationDecision.ledger_decision_required ? "attention" : "pass"} label={`${copy.integrationLedgerDecision}: ${integrationDecision.ledger_decision_required ? copy.yes : copy.no}`} />
+                            <StatusBadge status={integrationDecision.can_advance_without_waiting ? "pass" : "attention"} label={copy.canAdvanceWithoutWaiting} />
+                          </div>
+                          <div className="text-[10px] line-clamp-2 mt-1" style={{ color: "var(--mis-dim)" }}>
+                            {copy.integrationReason}: {integrationDecision.reason || "—"}
+                          </div>
+                        </div>
+                      )}
                       {item.recommended_action && (
                         <div className="text-[10px] truncate mt-1" style={{ color: "var(--mis-cyan)" }}>
                           {copy.nextAction}: {item.recommended_action}
