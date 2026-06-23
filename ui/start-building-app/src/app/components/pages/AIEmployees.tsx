@@ -684,6 +684,9 @@ export function AIEmployees() {
   const recommendedAdapter = adapterReadiness?.summary.recommended_adapter || workerStatus?.adapter_readiness?.recommended_adapter || "mock";
   const localRecommendedAdapter = localReadiness?.adapter_readiness?.recommended_adapter || recommendedAdapter;
   const selectedAdapterRoute = adapterReadiness?.adapters?.[customerTaskForm.adapter];
+  const selectedAdapterRemediation = selectedAdapterRoute?.remediation;
+  const selectedAdapterRemediationCommands = (selectedAdapterRemediation?.commands || []).filter(command => command.command).slice(0, 4);
+  const selectedAdapterMissingChecks = selectedAdapterRemediation?.missing || [];
   const selectedAdapterLiveBlocked = customerTaskForm.adapter !== "mock" && ["unavailable", "blocked"].includes(selectedAdapterRoute?.readiness || "");
   const selectedAdapterNeedsLiveConfirm = customerTaskForm.adapter !== "mock";
   const selectedAdapterLiveConfirmMissing = selectedAdapterNeedsLiveConfirm && !liveRuntimeConfirmed;
@@ -1208,6 +1211,9 @@ export function AIEmployees() {
       modeRecoveryBody: "Stale running worker tasks can be released back to planned; linked runs are blocked with audit evidence.",
       adapterRoutesTitle: "Adapter routes",
       adapterRoutesSummary: "Read-only route selection for agent workers before live dispatch.",
+      adapterRemediationTitle: "Setup commands",
+      adapterRemediationSummary: "Copy-only remediation path from worker readiness.",
+      missingChecks: "Missing checks",
       recommendedAdapter: "Recommended",
       trustStatus: "Trust",
       observationLevel: "Observation",
@@ -1741,6 +1747,9 @@ export function AIEmployees() {
       modeRecoveryBody: "卡住的运行中 worker 任务可以释放回 planned；关联 run 会标记 blocked 并留下审计证据。",
       adapterRoutesTitle: "Adapter 路由",
       adapterRoutesSummary: "agent worker 真跑前使用的只读选路状态。",
+      adapterRemediationTitle: "设置命令",
+      adapterRemediationSummary: "来自 worker readiness 的只复制修复路径。",
+      missingChecks: "缺失检查",
       recommendedAdapter: "推荐",
       trustStatus: "信任",
       observationLevel: "观测等级",
@@ -2025,12 +2034,15 @@ export function AIEmployees() {
     const liveReady = item.readiness === "ready" && adapter !== "mock";
     const attention = ["unavailable", "blocked"].includes(item.readiness);
     const checks = item.checks || {};
+    const remediation = item.remediation;
+    const remediationCommands = (remediation?.commands || []).filter(command => command.command).slice(0, 3);
+    const remediationMissing = remediation?.missing || [];
     const checkSummary = adapter === "hermes"
       ? `api=${String(checks.api_listening ?? "—")} · port=${String(checks.api_port ?? "—")}`
       : adapter === "openclaw"
         ? `bin=${String(checks.binary_exists ?? "—")} · agents=${String(checks.agents_count ?? "—")}`
         : "local mock worker";
-    return { item, liveReady, attention, checkSummary };
+    return { item, liveReady, attention, checkSummary, remediation, remediationCommands, remediationMissing };
   });
   const integrationInboxFilters = [
     { bucket: "all", label: copy.inboxAll, count: integrationInboxSummary?.total ?? 0 },
@@ -6522,7 +6534,40 @@ export function AIEmployees() {
               <div className="text-[10px] font-semibold truncate" style={{ color: "var(--mis-cyan)" }}>{selectedAdapterRoute?.commercial_readiness || "—"}</div>
             </div>
           </div>
-          <div className="text-[10px] mt-2 truncate" style={{ color: "var(--mis-cyan)" }}>{copy.nextAction}: {selectedAdapterRoute?.recommended_action || "agentops worker readiness"}</div>
+          <div className="text-[10px] mt-2 truncate" style={{ color: "var(--mis-cyan)" }}>{copy.nextAction}: {selectedAdapterRemediation?.primary_next_action || selectedAdapterRoute?.recommended_action || "agentops worker readiness"}</div>
+          {(selectedAdapterRemediationCommands.length > 0 || selectedAdapterMissingChecks.length > 0) && (
+            <div className="rounded px-2 py-1.5 mt-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="text-[9px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.adapterRemediationTitle}</div>
+                  <div className="text-[8px] mt-0.5 truncate" style={{ color: "var(--mis-muted)" }}>{copy.adapterRemediationSummary}</div>
+                </div>
+                <div className="flex items-center gap-1">
+                  <StatusBadge status={selectedAdapterRemediation?.status || "unknown"} />
+                  <StatusBadge status={selectedAdapterRemediation?.safety?.server_executes_shell === false ? "pass" : "attention"} label={copy.readOnlyProof} />
+                </div>
+              </div>
+              {selectedAdapterMissingChecks.length > 0 && (
+                <div className="text-[8px] mt-1 truncate" style={{ color: "var(--mis-warning)" }}>
+                  {copy.missingChecks}: {selectedAdapterMissingChecks.slice(0, 4).join(", ")}
+                </div>
+              )}
+              <div className="flex flex-wrap gap-1 mt-1.5">
+                {selectedAdapterRemediationCommands.map((command) => (
+                  <button
+                    key={`${customerTaskForm.adapter}:${command.phase}:${command.command}`}
+                    onClick={() => void copyIntakeCommand(String(command.command || ""))}
+                    className="inline-flex items-center gap-1 text-[8px] px-1.5 py-0.5 rounded max-w-full"
+                    style={{ color: command.confirm_required ? "var(--mis-warning)" : "var(--mis-cyan)", background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}
+                    title={String(command.command || "")}
+                  >
+                    <Copy size={8} />
+                    <span className="truncate max-w-[112px]">{copiedIntakeCommand === command.command ? copy.copiedCommand : command.phase || copy.copyCommand}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="text-[10px] mt-3" style={{ color: "var(--mis-muted)" }}>{copy.asyncTaskHint}</div>
@@ -6781,7 +6826,7 @@ export function AIEmployees() {
             <StatusBadge status={adapterReadiness?.status || "unknown"} label={`${copy.recommendedAdapter}: ${recommendedAdapter}`} />
           </div>
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 mt-3">
-            {adapterRouteCards.map(({ item, liveReady, attention, checkSummary }) => (
+            {adapterRouteCards.map(({ item, liveReady, attention, checkSummary, remediation, remediationCommands, remediationMissing }) => (
               <div
                 key={item.adapter}
                 className="rounded px-3 py-2"
@@ -6827,8 +6872,38 @@ export function AIEmployees() {
                   {checkSummary}
                 </div>
                 <div className="text-[10px] mt-1 truncate" style={{ color: "var(--mis-cyan)" }}>
-                  {copy.nextAction}: {item.recommended_action || "agentops worker readiness"}
+                  {copy.nextAction}: {remediation?.primary_next_action || item.recommended_action || "agentops worker readiness"}
                 </div>
+                {(remediationCommands.length > 0 || remediationMissing.length > 0) && (
+                  <div className="rounded px-2 py-1 mt-2" style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-[9px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{copy.adapterRemediationTitle}</div>
+                      <div className="flex items-center gap-1">
+                        <StatusBadge status={remediation?.status || "unknown"} />
+                        <StatusBadge status={remediation?.safety?.server_executes_shell === false ? "pass" : "attention"} label={copy.readOnlyProof} />
+                      </div>
+                    </div>
+                    {remediationMissing.length > 0 && (
+                      <div className="text-[8px] mt-1 truncate" style={{ color: "var(--mis-warning)" }}>
+                        {copy.missingChecks}: {remediationMissing.slice(0, 3).join(", ")}
+                      </div>
+                    )}
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {remediationCommands.map((command) => (
+                        <button
+                          key={`${item.adapter}:${command.phase}:${command.command}`}
+                          onClick={() => void copyIntakeCommand(String(command.command || ""))}
+                          className="inline-flex items-center gap-1 text-[8px] px-1 py-0.5 rounded max-w-full"
+                          style={{ color: command.confirm_required ? "var(--mis-warning)" : "var(--mis-cyan)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}
+                          title={String(command.command || "")}
+                        >
+                          <Copy size={8} />
+                          <span className="truncate max-w-[82px]">{copiedIntakeCommand === command.command ? copy.copiedCommand : command.phase || copy.copyCommand}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {item.last_error && (
                   <div className="text-[10px] mt-1 truncate" style={{ color: "#F87171" }}>
                     {item.last_error}

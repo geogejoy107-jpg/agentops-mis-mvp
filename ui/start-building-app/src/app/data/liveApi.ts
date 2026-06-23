@@ -650,6 +650,25 @@ export interface WorkerAdapterReadinessItem {
   checks?: Record<string, unknown>;
   recommended_action?: string;
   last_error?: string | null;
+  remediation?: {
+    status?: string;
+    primary_next_action?: string;
+    missing?: string[];
+    commands?: Array<{
+      phase?: string;
+      command?: string;
+      mutating?: boolean;
+      confirm_required?: boolean;
+    }>;
+    safety?: {
+      read_only?: boolean;
+      ledger_mutated?: boolean;
+      live_execution_performed?: boolean;
+      server_executes_shell?: boolean;
+      token_omitted?: boolean;
+    };
+    token_omitted?: boolean;
+  };
   token_omitted?: boolean;
 }
 
@@ -6479,6 +6498,9 @@ export async function loadWorkerAdapterReadiness(): Promise<WorkerAdapterReadine
   const adaptersRaw = typeof raw.adapters === "object" && raw.adapters !== null ? raw.adapters as Record<string, unknown> : {};
   const normalizeAdapter = (name: WorkerAdapterName): WorkerAdapterReadinessItem => {
     const item = typeof adaptersRaw[name] === "object" && adaptersRaw[name] !== null ? adaptersRaw[name] as Record<string, unknown> : {};
+    const remediationRaw = typeof item.remediation === "object" && item.remediation !== null ? item.remediation as Record<string, unknown> : {};
+    const remediationSafetyRaw = typeof remediationRaw.safety === "object" && remediationRaw.safety !== null ? remediationRaw.safety as Record<string, unknown> : {};
+    const remediationCommands = asArray<Record<string, unknown>>(remediationRaw.commands);
     return {
       adapter: name,
       ok: boolValue(item.ok),
@@ -6495,6 +6517,25 @@ export async function loadWorkerAdapterReadiness(): Promise<WorkerAdapterReadine
       checks: typeof item.checks === "object" && item.checks !== null ? item.checks as Record<string, unknown> : {},
       recommended_action: item.recommended_action ? String(item.recommended_action) : undefined,
       last_error: item.last_error ? String(item.last_error) : null,
+      remediation: {
+        status: remediationRaw.status ? String(remediationRaw.status) : undefined,
+        primary_next_action: remediationRaw.primary_next_action ? String(remediationRaw.primary_next_action) : undefined,
+        missing: asArray<unknown>(remediationRaw.missing).map(String).filter(Boolean),
+        commands: remediationCommands.map(command => ({
+          phase: command.phase ? String(command.phase) : undefined,
+          command: command.command ? String(command.command) : undefined,
+          mutating: boolValue(command.mutating),
+          confirm_required: boolValue(command.confirm_required),
+        })).filter(command => command.command),
+        safety: {
+          read_only: boolValue(remediationSafetyRaw.read_only),
+          ledger_mutated: boolValue(remediationSafetyRaw.ledger_mutated),
+          live_execution_performed: boolValue(remediationSafetyRaw.live_execution_performed),
+          server_executes_shell: boolValue(remediationSafetyRaw.server_executes_shell),
+          token_omitted: boolValue(remediationSafetyRaw.token_omitted),
+        },
+        token_omitted: boolValue(remediationRaw.token_omitted),
+      },
       token_omitted: boolValue(item.token_omitted),
     };
   };
