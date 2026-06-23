@@ -1586,6 +1586,8 @@ The default path is read-only and reports:
 - running worker tasks that exceeded the stuck threshold;
 - active remote enrollments that have never heartbeated after the enrollment age
   threshold;
+- active remote enrollments whose last heartbeat is stale after the same
+  threshold;
 - safe recommended actions, with `token_omitted:true` and
   `live_execution_performed:false`.
 - stale enrollment rows expose only `token_ref` plus `token_id_omitted:true`;
@@ -1593,8 +1595,9 @@ The default path is read-only and reports:
   responses.
 
 The confirmed apply path releases stale running tasks back to `planned`, blocks
-linked running runs, revokes never-seen enrollments, cascades child sessions, and
-writes runtime/audit evidence. It does not execute Hermes/OpenClaw live work.
+linked running runs, revokes never-seen and heartbeat-stale enrollments,
+cascades child sessions, and writes runtime/audit evidence. It does not execute
+Hermes/OpenClaw live work.
 
 Validated on the local demo server:
 

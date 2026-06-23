@@ -277,7 +277,7 @@ agentops worker release --task-id <task_id> --reason "reviewed stale worker"
 
 For routine demo/customer cleanup, use fleet hygiene first. It is read-only by
 default and requires an explicit confirmation before it releases stale tasks or
-revokes never-seen enrollments:
+revokes never-seen or heartbeat-stale enrollments:
 
 ```bash
 agentops worker hygiene
@@ -483,12 +483,13 @@ gate for agent operators and scripts:
   `agentops worker stuck`, `agentops workflow stuck-jobs`,
   `agentops worker preflight --adapter mock`, or `agentops enrollment list`
 
-`agentops worker hygiene` wraps the two most common fleet recovery actions in a
-safe operator flow. The `GET`/default CLI path only reports stuck worker tasks
-and active enrollments that never heartbeated after the age threshold. The
-confirmed apply path releases those tasks back to `planned`, blocks any linked
-running runs, revokes stale enrollment tokens, cascades active child sessions,
-and writes runtime/audit evidence. It never executes live Hermes/OpenClaw work.
+`agentops worker hygiene` wraps the most common fleet recovery actions in a safe
+operator flow. The `GET`/default CLI path only reports stuck worker tasks,
+active enrollments that never heartbeated after the age threshold, and active
+enrollments whose last heartbeat is older than the same threshold. The confirmed
+apply path releases those tasks back to `planned`, blocks any linked running
+runs, revokes stale enrollment tokens, cascades active child sessions, and writes
+runtime/audit evidence. It never executes live Hermes/OpenClaw work.
 
 Use this before asking a remote OpenClaw/Hermes/Dify-style worker to execute
 work. The browser UI should confirm what happened; the worker should still pull,

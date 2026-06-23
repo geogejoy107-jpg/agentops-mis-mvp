@@ -1028,12 +1028,13 @@ export function AIEmployees() {
       itemBucket: "Bucket",
       overallFleetHealth: "Fleet health",
       fleetHygieneTitle: "Fleet hygiene",
-      fleetHygieneSummary: "Plan or confirm cleanup for stale running worker tasks and never-seen remote enrollments. Cleanup writes audit/runtime evidence and never runs live adapters.",
+      fleetHygieneSummary: "Plan or confirm cleanup for stale running worker tasks, never-seen remote enrollments, and heartbeat-stale enrollments. Cleanup writes audit/runtime evidence and never runs live adapters.",
       hygienePlan: "Plan cleanup",
       hygieneApply: "Confirm cleanup",
       hygieneRunning: "Checking...",
       hygieneActions: "Actions",
       staleNeverSeen: "Never-seen enrollments",
+      staleHeartbeat: "Stale heartbeats",
       releasedTasks: "Released",
       revokedEnrollments: "Revoked",
       hygieneNoActions: "No cleanup needed.",
@@ -1594,12 +1595,13 @@ export function AIEmployees() {
       itemBucket: "分组",
       overallFleetHealth: "Fleet 健康",
       fleetHygieneTitle: "Fleet 清理",
-      fleetHygieneSummary: "为卡住的运行中任务和从未心跳的远程接入生成清理计划；确认清理会写入审计/runtime 证据，但不会触发真实 adapter 执行。",
+      fleetHygieneSummary: "为卡住的运行中任务、从未心跳的远程接入、心跳过期的远程接入生成清理计划；确认清理会写入审计/runtime 证据，但不会触发真实 adapter 执行。",
       hygienePlan: "只读计划",
       hygieneApply: "确认清理",
       hygieneRunning: "检查中...",
       hygieneActions: "可处理项",
       staleNeverSeen: "未连接接入",
+      staleHeartbeat: "心跳过期接入",
       releasedTasks: "已释放",
       revokedEnrollments: "已吊销",
       hygieneNoActions: "暂无需要清理的项目。",
@@ -4951,11 +4953,12 @@ export function AIEmployees() {
               </button>
             </div>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mt-3">
+          <div className="grid grid-cols-2 md:grid-cols-3 2xl:grid-cols-6 gap-2 mt-3">
             {[
               { label: copy.hygieneActions, value: hygieneActionsAvailable, status: hygieneActionsAvailable > 0 ? "attention" : "pass" },
               { label: copy.stuckTasks, value: hygieneSummary?.stuck_tasks ?? 0, status: (hygieneSummary?.stuck_tasks || 0) > 0 ? "blocked" : "pass" },
               { label: copy.staleNeverSeen, value: hygieneSummary?.stale_never_seen_enrollments ?? 0, status: (hygieneSummary?.stale_never_seen_enrollments || 0) > 0 ? "attention" : "pass" },
+              { label: copy.staleHeartbeat, value: hygieneSummary?.stale_heartbeat_enrollments ?? 0, status: (hygieneSummary?.stale_heartbeat_enrollments || 0) > 0 ? "attention" : "pass" },
               { label: copy.releasedTasks, value: hygieneSummary?.released_tasks ?? activeHygiene?.released_tasks?.length ?? 0, status: (hygieneSummary?.released_tasks || 0) > 0 ? "completed" : "planned" },
               { label: copy.revokedEnrollments, value: hygieneSummary?.revoked_enrollments ?? activeHygiene?.revoked_enrollments?.length ?? 0, status: (hygieneSummary?.revoked_enrollments || 0) > 0 ? "completed" : "planned" },
             ].map((item) => (

@@ -2772,6 +2772,7 @@ export interface WorkerFleetHygienePayload {
   summary: {
     stuck_tasks: number;
     stale_never_seen_enrollments: number;
+    stale_heartbeat_enrollments: number;
     actions_available: number;
     released_tasks?: number;
     revoked_enrollments?: number;
@@ -2779,6 +2780,7 @@ export interface WorkerFleetHygienePayload {
   };
   stuck_tasks: StuckWorkerTask[];
   stale_never_seen_enrollments: AgentGatewayEnrollment[];
+  stale_heartbeat_enrollments: AgentGatewayEnrollment[];
   recommended_actions: string[];
   safety: {
     read_only: boolean;
@@ -2797,6 +2799,8 @@ export interface WorkerFleetHygienePayload {
 
 export interface AgentGatewayEnrollment {
   token_id: string;
+  token_ref?: string;
+  token_id_omitted?: boolean;
   workspace_id: string;
   agent_id: string;
   scopes: string[];
@@ -4039,6 +4043,7 @@ function normalizeWorkerFleetHygiene(raw: Record<string, unknown>): WorkerFleetH
     summary: {
       stuck_tasks: numberValue(summaryRaw.stuck_tasks, 0),
       stale_never_seen_enrollments: numberValue(summaryRaw.stale_never_seen_enrollments, 0),
+      stale_heartbeat_enrollments: numberValue(summaryRaw.stale_heartbeat_enrollments, 0),
       actions_available: numberValue(summaryRaw.actions_available, 0),
       released_tasks: summaryRaw.released_tasks === undefined ? undefined : numberValue(summaryRaw.released_tasks, 0),
       revoked_enrollments: summaryRaw.revoked_enrollments === undefined ? undefined : numberValue(summaryRaw.revoked_enrollments, 0),
@@ -4053,6 +4058,7 @@ function normalizeWorkerFleetHygiene(raw: Record<string, unknown>): WorkerFleetH
       stuck_reason: row.stuck_reason ? String(row.stuck_reason) : undefined,
     })),
     stale_never_seen_enrollments: asArray<Record<string, unknown>>(raw.stale_never_seen_enrollments).map(normalizeAgentGatewayEnrollment),
+    stale_heartbeat_enrollments: asArray<Record<string, unknown>>(raw.stale_heartbeat_enrollments).map(normalizeAgentGatewayEnrollment),
     recommended_actions: asArray(raw.recommended_actions).map(String).filter(Boolean),
     safety: {
       read_only: boolValue(safetyRaw.read_only),
@@ -4096,10 +4102,12 @@ export async function loadWorkerFleetHygiene(options: {
     summary: {
       stuck_tasks: 0,
       stale_never_seen_enrollments: 0,
+      stale_heartbeat_enrollments: 0,
       actions_available: 0,
     },
     stuck_tasks: [],
     stale_never_seen_enrollments: [],
+    stale_heartbeat_enrollments: [],
     recommended_actions: [],
     safety: {
       read_only: true,
@@ -7215,6 +7223,8 @@ function normalizeWorkerFleetHealth(row: Record<string, unknown>): WorkerFleetHe
 function normalizeAgentGatewayEnrollment(row: Record<string, unknown>): AgentGatewayEnrollment {
   return {
     token_id: String(row.token_id || ""),
+    token_ref: row.token_ref ? String(row.token_ref) : undefined,
+    token_id_omitted: row.token_id_omitted === undefined ? undefined : boolValue(row.token_id_omitted),
     workspace_id: String(row.workspace_id || ""),
     agent_id: String(row.agent_id || ""),
     scopes: parseJsonArray(row.scopes),

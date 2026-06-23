@@ -57,12 +57,22 @@ def token_like_leaked(payload: object) -> bool:
     return bool(re.search(r"(Authorization:|Bearer |agtok_[A-Za-z0-9_-]{16,}|agtsess_[A-Za-z0-9_-]{16,}|sk-[A-Za-z0-9_-]{16,}|ntn_[A-Za-z0-9_-]{16,})", json.dumps(payload, ensure_ascii=False)))
 
 
-def make_stale(task_id: str, run_id: str, token_id: str) -> None:
+def make_never_seen_stale(task_id: str, run_id: str, token_id: str) -> None:
     stale_at = old_iso()
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute("UPDATE tasks SET updated_at=? WHERE task_id=?", (stale_at, task_id))
         conn.execute("UPDATE runs SET started_at=?, created_at=? WHERE run_id=?", (stale_at, stale_at, run_id))
         conn.execute("UPDATE agent_gateway_tokens SET created_at=?, last_used_at=NULL, last_heartbeat_at=NULL WHERE token_id=?", (stale_at, token_id))
+        conn.commit()
+
+
+def make_heartbeat_stale(token_id: str) -> None:
+    stale_at = old_iso()
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            "UPDATE agent_gateway_tokens SET created_at=?, last_used_at=?, last_heartbeat_at=? WHERE token_id=?",
+            (stale_at, stale_at, stale_at, token_id),
+        )
         conn.commit()
 
 
@@ -94,6 +104,7 @@ def smoke(base_url: str, stamp: str) -> dict:
     agent_id = f"agt_worker_fleet_hygiene_{stamp}"
     task_id = f"tsk_fleet_hygiene_{stamp}"
     token_id = None
+    heartbeat_token_id = None
     try:
         status, created = http_json("POST", base_url, "/api/agent-gateway/enrollment/create", {
             "agent_id": agent_id,
@@ -107,6 +118,24 @@ def smoke(base_url: str, stamp: str) -> dict:
         require(status == 201, f"enrollment create failed: {status} {created}")
         token = created["token"]
         token_id = created["token_id"]
+        heartbeat_agent_id = f"{agent_id}_heartbeat"
+        status, heartbeat_created = http_json("POST", base_url, "/api/agent-gateway/enrollment/create", {
+            "agent_id": heartbeat_agent_id,
+            "name": "Fleet Hygiene Heartbeat Smoke",
+            "runtime_type": "mock",
+            "workspace_id": "local-demo",
+            "scopes": ["agents:heartbeat", "tasks:read", "audit:write"],
+            "ttl_days": 1,
+            "heartbeat_timeout_sec": 60,
+        })
+        require(status == 201, f"heartbeat enrollment create failed: {status} {heartbeat_created}")
+        heartbeat_token = heartbeat_created["token"]
+        heartbeat_token_id = heartbeat_created["token_id"]
+        status, heartbeat = http_json("POST", base_url, "/api/agent-gateway/heartbeat", {
+            "runtime_type": "mock",
+            "status": "idle",
+        }, token=heartbeat_token)
+        require(status == 200, f"heartbeat failed: {status} {heartbeat}")
 
         status, task = http_json("POST", base_url, "/api/tasks", {
             "task_id": task_id,
@@ -129,7 +158,8 @@ def smoke(base_url: str, stamp: str) -> dict:
         run_id = (start.get("run") or {}).get("run_id")
         require(run_id, f"missing run id: {start}")
 
-        make_stale(task_id, run_id, token_id)
+        make_never_seen_stale(task_id, run_id, token_id)
+        make_heartbeat_stale(heartbeat_token_id)
 
         query = {"threshold_sec": 30, "enrollment_age_sec": 0, "limit": 20}
         status, plan = http_json("GET", base_url, "/api/workers/fleet/hygiene", query=query)
@@ -141,6 +171,12 @@ def smoke(base_url: str, stamp: str) -> dict:
         require(any(item.get("token_id_omitted") is True for item in stale_public), f"stale enrollment did not omit token id: {plan}")
         require(not any(item.get("token_id") for item in stale_public), f"stale enrollment leaked token id: {plan}")
         require(bool(token_refs), f"stale enrollment missing token refs: {plan}")
+        stale_heartbeat_public = plan.get("stale_heartbeat_enrollments", [])
+        heartbeat_token_refs = {item.get("token_ref") for item in stale_heartbeat_public}
+        require(any(item.get("token_id_omitted") is True for item in stale_heartbeat_public), f"heartbeat-stale enrollment did not omit token id: {plan}")
+        require(not any(item.get("token_id") for item in stale_heartbeat_public), f"heartbeat-stale enrollment leaked token id: {plan}")
+        require(bool(heartbeat_token_refs), f"heartbeat-stale enrollment missing token refs: {plan}")
+        require(plan.get("summary", {}).get("stale_heartbeat_enrollments", 0) >= 1, f"heartbeat-stale count missing: {plan}")
         require(not token_like_leaked(plan), f"hygiene plan leaked token-like material: {plan}")
 
         status, rejected = http_json("POST", base_url, "/api/workers/fleet/hygiene", {**query, "apply": True})
@@ -153,6 +189,7 @@ def smoke(base_url: str, stamp: str) -> dict:
         revoked_refs = {item.get("token_ref") for item in applied.get("revoked_enrollments", [])}
         require(task_id in released_ids, f"task was not released by hygiene: {applied}")
         require(token_refs & revoked_refs, f"enrollment was not revoked by hygiene: {applied}")
+        require(heartbeat_token_refs & revoked_refs, f"heartbeat-stale enrollment was not revoked by hygiene: {applied}")
         require(not any(item.get("token_id") for item in applied.get("revoked_enrollments", [])), f"applied cleanup leaked token id: {applied}")
         require(not token_like_leaked(applied), f"applied cleanup leaked token-like material: {applied}")
 
@@ -169,9 +206,11 @@ def smoke(base_url: str, stamp: str) -> dict:
             "task_id": task_id,
             "run_id": run_id,
             "token_ref": next(iter(token_refs)) if token_refs else "",
+            "heartbeat_token_ref": next(iter(heartbeat_token_refs)) if heartbeat_token_refs else "",
             "token_id_omitted": True,
             "planned_stuck_tasks": plan.get("summary", {}).get("stuck_tasks"),
             "planned_stale_enrollments": plan.get("summary", {}).get("stale_never_seen_enrollments"),
+            "planned_stale_heartbeat_enrollments": plan.get("summary", {}).get("stale_heartbeat_enrollments"),
             "released_tasks": len(applied.get("released_tasks", [])),
             "revoked_enrollments": len(applied.get("revoked_enrollments", [])),
             "token_omitted": True,
@@ -179,6 +218,8 @@ def smoke(base_url: str, stamp: str) -> dict:
     finally:
         if token_id:
             http_json("POST", base_url, "/api/agent-gateway/enrollment/revoke", {"token_id": token_id})
+        if heartbeat_token_id:
+            http_json("POST", base_url, "/api/agent-gateway/enrollment/revoke", {"token_id": heartbeat_token_id})
 
 
 def main(argv: list[str] | None = None) -> int:

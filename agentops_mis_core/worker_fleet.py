@@ -186,26 +186,33 @@ def build_worker_fleet_hygiene_plan(
     *,
     stuck_tasks: list[dict[str, Any]],
     stale_enrollments: list[dict[str, Any]],
+    stale_heartbeat_enrollments: list[dict[str, Any]] | None = None,
     threshold_sec: int,
     enrollment_age_sec: int,
     apply: bool = False,
 ) -> dict[str, Any]:
+    stale_heartbeat_enrollments = stale_heartbeat_enrollments or []
+    actions_available = len(stuck_tasks) + len(stale_enrollments) + len(stale_heartbeat_enrollments)
     return {
         "provider": "agentops-worker",
         "operation": "fleet_hygiene",
-        "status": "actionable" if stuck_tasks or stale_enrollments else "ready",
+        "status": "actionable" if actions_available else "ready",
         "threshold_sec": threshold_sec,
         "enrollment_age_sec": enrollment_age_sec,
         "summary": {
             "stuck_tasks": len(stuck_tasks),
             "stale_never_seen_enrollments": len(stale_enrollments),
-            "actions_available": len(stuck_tasks) + len(stale_enrollments),
+            "stale_heartbeat_enrollments": len(stale_heartbeat_enrollments),
+            "actions_available": actions_available,
         },
         "stuck_tasks": stuck_tasks,
         "stale_never_seen_enrollments": [public_worker_stale_enrollment(enrollment) for enrollment in stale_enrollments],
+        "stale_heartbeat_enrollments": [
+            public_worker_stale_enrollment(enrollment) for enrollment in stale_heartbeat_enrollments
+        ],
         "recommended_actions": [
             "agentops worker hygiene --apply --confirm-cleanup",
-        ] if stuck_tasks or stale_enrollments else ["agentops worker status"],
+        ] if actions_available else ["agentops worker status"],
         "safety": {
             "read_only": not apply,
             "requires_confirm_cleanup": True,

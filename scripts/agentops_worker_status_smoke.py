@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -34,8 +35,10 @@ def load_json(proc: subprocess.CompletedProcess[str]) -> dict:
 
 
 def leaked_secret(text: str) -> bool:
-    markers = ["AGENTOPS_API_KEY", "Authorization:", "Bearer ", "agtok_", "agtsess_", "sk-", "ntn_"]
-    return any(marker in text for marker in markers)
+    return bool(re.search(
+        r"(AGENTOPS_API_KEY|Authorization:|Bearer |agtok_[A-Za-z0-9_-]{16,}|agtsess_[A-Za-z0-9_-]{16,}|sk-[A-Za-z0-9_-]{16,}|ntn_[A-Za-z0-9_-]{16,})",
+        text,
+    ))
 
 
 def main() -> int:

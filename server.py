@@ -13469,6 +13469,29 @@ def worker_stale_never_seen_enrollments(conn, enrollment_age_sec: int = 900, lim
     return stale
 
 
+def worker_stale_heartbeat_enrollments(conn, heartbeat_age_sec: int = 900, limit: int = 25) -> list[dict]:
+    heartbeat_age_sec = max(int(heartbeat_age_sec or 900), 0)
+    limit = min(max(int(limit or 25), 1), 100)
+    now_dt = dt.datetime.now(dt.timezone.utc)
+    cutoff = now_dt - dt.timedelta(seconds=heartbeat_age_sec)
+    rows = agent_gateway_enrollment_rows(conn)
+    stale: list[dict] = []
+    for row in rows:
+        if row.get("status") != "active" or row.get("heartbeat_state") != "stale":
+            continue
+        heartbeat_at = parse_iso_datetime(row.get("last_heartbeat_at"))
+        age_sec = int((now_dt - heartbeat_at).total_seconds()) if heartbeat_at else 0
+        if heartbeat_at and heartbeat_at <= cutoff:
+            item = dict(row)
+            item["age_sec"] = age_sec
+            item["threshold_sec"] = heartbeat_age_sec
+            item["stale_reason"] = "active_enrollment_heartbeat_stale"
+            stale.append(item)
+        if len(stale) >= limit:
+            break
+    return stale
+
+
 def worker_fleet_hygiene(conn, body: dict | None = None, *, apply: bool = False) -> tuple[dict, int]:
     body = body or {}
     threshold_raw = body.get("threshold_sec")
@@ -13479,9 +13502,11 @@ def worker_fleet_hygiene(conn, body: dict | None = None, *, apply: bool = False)
     limit = min(max(int(limit_raw if limit_raw is not None else 25), 1), 100)
     stuck_tasks = worker_stuck_tasks(conn, threshold_sec, limit)
     stale_enrollments = worker_stale_never_seen_enrollments(conn, enrollment_age_sec, limit)
+    stale_heartbeat_enrollments = worker_stale_heartbeat_enrollments(conn, enrollment_age_sec, limit)
     plan = build_worker_fleet_hygiene_plan(
         stuck_tasks=stuck_tasks,
         stale_enrollments=stale_enrollments,
+        stale_heartbeat_enrollments=stale_heartbeat_enrollments,
         threshold_sec=threshold_sec,
         enrollment_age_sec=enrollment_age_sec,
         apply=apply,
@@ -13505,7 +13530,15 @@ def worker_fleet_hygiene(conn, body: dict | None = None, *, apply: bool = False)
             released.append({"task_id": task["task_id"], "released_runs": payload.get("released_runs", [])})
         else:
             errors.append({"kind": "task_release", "task_id": task.get("task_id"), "status": status, "error": payload})
-    for enrollment in stale_enrollments:
+    enrollments_to_revoke: list[dict] = []
+    seen_token_ids: set[str] = set()
+    for enrollment in [*stale_enrollments, *stale_heartbeat_enrollments]:
+        token_id = enrollment.get("token_id")
+        if not token_id or token_id in seen_token_ids:
+            continue
+        seen_token_ids.add(token_id)
+        enrollments_to_revoke.append(enrollment)
+    for enrollment in enrollments_to_revoke:
         payload, status = agent_gateway_revoke_enrollment(conn, {"token_id": enrollment["token_id"]})
         if status == 200:
             revoked.append(public_worker_revoked_enrollment(enrollment, sessions_revoked=payload.get("sessions_revoked", 0)))
