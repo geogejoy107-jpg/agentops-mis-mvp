@@ -856,6 +856,7 @@ def compact_loop_driver_adapter_readiness(payload: dict, *, adapter: str) -> dic
     adapters = payload.get("adapters") if isinstance(payload.get("adapters"), dict) else {}
     item = adapters.get(adapter) if isinstance(adapters.get(adapter), dict) else {}
     checks = item.get("checks") if isinstance(item.get("checks"), dict) else {}
+    remediation = item.get("remediation") if isinstance(item.get("remediation"), dict) else {}
     readiness = str(item.get("readiness") or "unknown")
     return {
         "operation": "operator_loop_driver_adapter_readiness",
@@ -896,6 +897,29 @@ def compact_loop_driver_adapter_readiness(payload: dict, *, adapter: str) -> dic
             "worker_readiness": "agentops worker readiness",
             "adapter_preflight": f"agentops worker preflight --adapter {adapter}",
             "runtime_doctor": "agentops operator runtime-doctor --limit 8",
+        },
+        "remediation": {
+            "status": remediation.get("status"),
+            "primary_next_action": remediation.get("primary_next_action"),
+            "missing": remediation.get("missing") or [],
+            "commands": [
+                {
+                    "phase": command.get("phase"),
+                    "command": command.get("command"),
+                    "mutating": bool(command.get("mutating")),
+                    "confirm_required": bool(command.get("confirm_required")),
+                }
+                for command in (remediation.get("commands") if isinstance(remediation.get("commands"), list) else [])[:8]
+                if isinstance(command, dict)
+            ],
+            "safety": remediation.get("safety") if isinstance(remediation.get("safety"), dict) else {
+                "read_only": True,
+                "ledger_mutated": False,
+                "live_execution_performed": False,
+                "server_executes_shell": False,
+                "token_omitted": True,
+            },
+            "token_omitted": True,
         },
         "gate": {
             "live_dispatch_ready": readiness in {"ready", "review_required"},

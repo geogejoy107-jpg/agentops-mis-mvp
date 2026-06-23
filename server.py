@@ -13113,6 +13113,79 @@ def worker_adapter_readiness(conn, refresh: bool = True) -> dict:
     hermes = hermes_status()
     openclaw = openclaw_status()
 
+    def adapter_remediation(adapter: str, readiness: str, checks: dict, recommended_action: str, target_resource: str | None, last_error: str | None = None) -> dict:
+        preflight = f"agentops worker preflight --adapter {adapter}"
+        runtime_doctor = "agentops operator runtime-doctor --limit 8"
+        live_product_readiness = "agentops operator live-product-readiness --require-adapter hermes --require-adapter openclaw"
+        if adapter == "mock":
+            commands = [
+                {"phase": "preflight", "command": preflight, "mutating": False, "confirm_required": False},
+                {"phase": "start", "command": "agentops worker start --adapter mock --poll-interval 5 --max-tasks 0", "mutating": True, "confirm_required": False},
+                {"phase": "verify", "command": "agentops worker status", "mutating": False, "confirm_required": False},
+            ]
+            missing = []
+        elif adapter == "hermes":
+            commands = [
+                {"phase": "inspect", "command": "agentops worker readiness", "mutating": False, "confirm_required": False},
+                {"phase": "preflight", "command": preflight, "mutating": False, "confirm_required": False},
+                {"phase": "doctor", "command": runtime_doctor, "mutating": False, "confirm_required": False},
+                {"phase": "start_worker", "command": "agentops worker start --adapter hermes --confirm-run --poll-interval 5 --max-tasks 0", "mutating": True, "confirm_required": True},
+                {"phase": "live_run_template", "command": "agentops workflow run-task --adapter hermes --confirm-run --worker-agent-id <hermes_agent_id> --title '<task title>' --description '<task description>'", "mutating": True, "confirm_required": True},
+                {"phase": "verify_ledger", "command": live_product_readiness, "mutating": False, "confirm_required": False},
+            ]
+            missing = [
+                label for label, ok in [
+                    ("hermes_gateway_listening", checks.get("api_listening")),
+                    ("hermes_config_yaml", checks.get("config_exists")),
+                    ("hermes_auth_json", checks.get("auth_exists")),
+                ]
+                if ok is False
+            ]
+        elif adapter == "openclaw":
+            commands = [
+                {"phase": "inspect", "command": "agentops worker readiness", "mutating": False, "confirm_required": False},
+                {"phase": "preflight", "command": preflight, "mutating": False, "confirm_required": False},
+                {"phase": "doctor", "command": runtime_doctor, "mutating": False, "confirm_required": False},
+                {"phase": "binary_check", "command": "command -v openclaw || test -x /opt/homebrew/bin/openclaw", "mutating": False, "confirm_required": False},
+                {"phase": "start_worker", "command": "agentops worker start --adapter openclaw --confirm-run --poll-interval 5 --max-tasks 0", "mutating": True, "confirm_required": True},
+                {"phase": "live_run_template", "command": "agentops workflow run-task --adapter openclaw --confirm-run --worker-agent-id <openclaw_agent_id> --title '<task title>' --description '<task description>'", "mutating": True, "confirm_required": True},
+                {"phase": "verify_ledger", "command": live_product_readiness, "mutating": False, "confirm_required": False},
+            ]
+            missing = [
+                label for label, ok in [
+                    ("openclaw_binary_exists", checks.get("binary_exists")),
+                    ("openclaw_binary_executable", checks.get("binary_executable")),
+                    ("openclaw_config", checks.get("config_exists")),
+                ]
+                if ok is False
+            ]
+        else:
+            commands = [{"phase": "inspect", "command": "agentops worker readiness", "mutating": False, "confirm_required": False}]
+            missing = []
+        if readiness in {"ready", "review_required"}:
+            primary = recommended_action
+        elif missing:
+            primary = preflight
+        else:
+            primary = recommended_action or preflight
+        return {
+            "status": "ready" if readiness in {"ready", "review_required"} else "action_required",
+            "primary_next_action": primary,
+            "missing": missing,
+            "last_error": redact_text(last_error, 240) if last_error else None,
+            "target_resource": redact_text(target_resource, 240) if target_resource else None,
+            "commands": commands,
+            "contract": "copy-only local remediation guidance; commands are not executed by readiness and live Hermes/OpenClaw paths still require --confirm-run and prepared-action gates",
+            "safety": {
+                "read_only": True,
+                "ledger_mutated": False,
+                "live_execution_performed": False,
+                "server_executes_shell": False,
+                "token_omitted": True,
+            },
+            "token_omitted": True,
+        }
+
     def trust_for(adapter: str) -> dict:
         connector_id = runtime_connector_for_adapter(adapter)
         trust = runtime_connector_trust(conn, connector_id, refresh=refresh, refresh_connectors=refresh_runtime_connectors) if connector_id else None
@@ -13145,6 +13218,8 @@ def worker_adapter_readiness(conn, refresh: bool = True) -> dict:
 
     mock_trust = trust_for("mock")
     mock_readiness, mock_ok = readiness_from_checks(True, mock_trust)
+    mock_checks = {"available": True, "live_execution_performed": False}
+    mock_recommended_action = "agentops workflow run-task --adapter mock"
     adapters["mock"] = {
         "adapter": "mock",
         "ok": mock_ok,
@@ -13158,14 +13233,24 @@ def worker_adapter_readiness(conn, refresh: bool = True) -> dict:
         "commercial_readiness": (mock_trust.get("capability_manifest") or {}).get("commercial_readiness"),
         "requires_confirm_run": False,
         "target_resource": "local://agentops/mock-worker",
-        "checks": {"available": True, "live_execution_performed": False},
-        "recommended_action": "agentops workflow run-task --adapter mock",
+        "checks": mock_checks,
+        "recommended_action": mock_recommended_action,
+        "remediation": adapter_remediation("mock", mock_readiness, mock_checks, mock_recommended_action, "local://agentops/mock-worker"),
         "token_omitted": True,
     }
 
     hermes_trust = trust_for("hermes")
     hermes_available = bool(hermes.get("api_listening"))
     hermes_readiness, hermes_ok = readiness_from_checks(hermes_available, hermes_trust)
+    hermes_checks = {
+        "api_listening": hermes_available,
+        "api_port": hermes.get("api_port"),
+        "config_exists": bool(hermes.get("config_exists")),
+        "auth_exists": bool(hermes.get("auth_exists")),
+        "live_execution_performed": False,
+    }
+    hermes_recommended_action = "agentops worker preflight --adapter hermes" if not hermes_available else "agentops workflow run-task --adapter hermes --confirm-run"
+    hermes_last_error = None if hermes_available else "Hermes API gateway is not listening."
     adapters["hermes"] = {
         "adapter": "hermes",
         "ok": hermes_ok,
@@ -13179,21 +13264,26 @@ def worker_adapter_readiness(conn, refresh: bool = True) -> dict:
         "commercial_readiness": (hermes_trust.get("capability_manifest") or {}).get("commercial_readiness"),
         "requires_confirm_run": True,
         "target_resource": hermes.get("gateway_url"),
-        "checks": {
-            "api_listening": hermes_available,
-            "api_port": hermes.get("api_port"),
-            "config_exists": bool(hermes.get("config_exists")),
-            "auth_exists": bool(hermes.get("auth_exists")),
-            "live_execution_performed": False,
-        },
-        "recommended_action": "agentops worker preflight --adapter hermes" if not hermes_available else "agentops workflow run-task --adapter hermes --confirm-run",
-        "last_error": None if hermes_available else "Hermes API gateway is not listening.",
+        "checks": hermes_checks,
+        "recommended_action": hermes_recommended_action,
+        "last_error": hermes_last_error,
+        "remediation": adapter_remediation("hermes", hermes_readiness, hermes_checks, hermes_recommended_action, hermes.get("gateway_url"), hermes_last_error),
         "token_omitted": True,
     }
 
     openclaw_trust = trust_for("openclaw")
     openclaw_available = bool(openclaw.get("cli_exists")) and os.access(OPENCLAW_BIN, os.X_OK)
     openclaw_readiness, openclaw_ok = readiness_from_checks(openclaw_available, openclaw_trust)
+    openclaw_checks = {
+        "binary_exists": bool(openclaw.get("cli_exists")),
+        "binary_executable": os.access(OPENCLAW_BIN, os.X_OK) if OPENCLAW_BIN.exists() else False,
+        "config_exists": bool(openclaw.get("config_exists")),
+        "agents_count": int(openclaw.get("agents_count") or 0),
+        "cron_jobs_count": int(openclaw.get("cron_jobs_count") or 0),
+        "live_execution_performed": False,
+    }
+    openclaw_recommended_action = "agentops worker preflight --adapter openclaw" if not openclaw_available else "agentops workflow run-task --adapter openclaw --confirm-run"
+    openclaw_last_error = None if openclaw_available else f"OpenClaw binary unavailable at {OPENCLAW_BIN}."
     adapters["openclaw"] = {
         "adapter": "openclaw",
         "ok": openclaw_ok,
@@ -13207,16 +13297,10 @@ def worker_adapter_readiness(conn, refresh: bool = True) -> dict:
         "commercial_readiness": (openclaw_trust.get("capability_manifest") or {}).get("commercial_readiness"),
         "requires_confirm_run": True,
         "target_resource": str(OPENCLAW_BIN),
-        "checks": {
-            "binary_exists": bool(openclaw.get("cli_exists")),
-            "binary_executable": os.access(OPENCLAW_BIN, os.X_OK) if OPENCLAW_BIN.exists() else False,
-            "config_exists": bool(openclaw.get("config_exists")),
-            "agents_count": int(openclaw.get("agents_count") or 0),
-            "cron_jobs_count": int(openclaw.get("cron_jobs_count") or 0),
-            "live_execution_performed": False,
-        },
-        "recommended_action": "agentops worker preflight --adapter openclaw" if not openclaw_available else "agentops workflow run-task --adapter openclaw --confirm-run",
-        "last_error": None if openclaw_available else f"OpenClaw binary unavailable at {OPENCLAW_BIN}.",
+        "checks": openclaw_checks,
+        "recommended_action": openclaw_recommended_action,
+        "last_error": openclaw_last_error,
+        "remediation": adapter_remediation("openclaw", openclaw_readiness, openclaw_checks, openclaw_recommended_action, str(OPENCLAW_BIN), openclaw_last_error),
         "token_omitted": True,
     }
 

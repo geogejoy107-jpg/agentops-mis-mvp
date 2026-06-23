@@ -398,6 +398,11 @@ agentops worker status
 `agentops worker readiness` is the route-selection check. It returns the safe
 readiness for `mock`, `hermes`, and `openclaw`, including runtime connector
 trust status and a recommended adapter. It never executes live runtime work.
+Each adapter also includes a `remediation` block with copy-only operator
+commands for preflight, runtime doctor, worker start, live task template, and
+ledger verification where relevant. MIS does not execute those commands from
+the server; live Hermes/OpenClaw steps still require `--confirm-run` and any
+prepared-action approval required by the task.
 Confirmed customer-worker dispatch uses the same readiness signal: when a live
 Hermes/OpenClaw adapter is unavailable or blocked, MIS returns
 `reason: adapter_not_ready` for adapter availability failures or

@@ -1230,6 +1230,9 @@ The response includes:
 - per-adapter `capability_manifest`, `capability_policy_hash`,
   `observation_level`, `risk_floor`, and `commercial_readiness`
 - per-adapter `recommended_action`
+- per-adapter `remediation` with `primary_next_action`, missing local checks,
+  copy-only preflight/doctor/start/live-run-template/ledger-proof commands,
+  and safety proof
 - `live_execution_performed:false`
 
 Capability manifests are deliberately conservative. `mock` is
@@ -1245,8 +1248,11 @@ prepared-action requirement in tool-call args, evaluation rubric, and audit
 metadata.
 
 Use `agentops worker readiness` when an operator or external agent needs to
-choose a route. Use `agentops worker preflight --adapter <name>` when debugging
-one specific adapter.
+choose a route or see what local setup is missing. Use the per-adapter
+`remediation.commands` in order: inspect/preflight/doctor commands are read-only;
+Hermes/OpenClaw worker starts and live task templates keep `--confirm-run`; the
+ledger proof command is `agentops operator live-product-readiness`. Use
+`agentops worker preflight --adapter <name>` when debugging one specific adapter.
 
 ### `agentops worker preflight`
 

@@ -71,12 +71,23 @@ def validate_readiness(payload: dict) -> None:
         require(item.get("observation_level") in {"structured_ledger", "ledger_summary_only"}, f"{adapter} observation level missing: {item}")
         require(item.get("risk_floor") in {"low", "medium"}, f"{adapter} risk floor missing: {item}")
         require(manifest.get("token_omitted") is True, f"{adapter} manifest token omission proof missing: {manifest}")
+        remediation = item.get("remediation") or {}
+        require(remediation.get("status") in {"ready", "action_required"}, f"{adapter} remediation status missing: {item}")
+        require(bool(remediation.get("primary_next_action")), f"{adapter} remediation primary action missing: {item}")
+        require((remediation.get("safety") or {}).get("read_only") is True, f"{adapter} remediation must be read-only: {item}")
+        require((remediation.get("safety") or {}).get("live_execution_performed") is False, f"{adapter} remediation executed live work: {item}")
+        commands = remediation.get("commands") or []
+        require(any(command.get("phase") == "preflight" for command in commands), f"{adapter} remediation preflight missing: {item}")
+        require(all(command.get("command") for command in commands), f"{adapter} remediation command missing: {item}")
     for adapter in ("hermes", "openclaw"):
         item = adapters.get(adapter) or {}
         require(item.get("observation_level") == "ledger_summary_only", f"{adapter} must disclose summary-only observation: {item}")
         require(item.get("commercial_readiness") == "restricted_until_runtime_tool_events", f"{adapter} commercial restriction missing: {item}")
         governance = ((item.get("capability_manifest") or {}).get("governance") or {})
         require(governance.get("requires_prepared_action_for_external_write") is True, f"{adapter} external write governance missing: {item}")
+        remediation_commands = (item.get("remediation") or {}).get("commands") or []
+        require(any(command.get("confirm_required") is True for command in remediation_commands), f"{adapter} live remediation commands should require confirmation: {item}")
+        require(any("live-product-readiness" in str(command.get("command") or "") for command in remediation_commands), f"{adapter} live proof command missing: {item}")
     summary = payload.get("summary") or {}
     require(summary.get("recommended_adapter") in {"mock", "hermes", "openclaw"}, f"missing recommended adapter: {summary}")
     require("opaque_runtime_adapters" in summary, f"opaque adapter list missing: {summary}")

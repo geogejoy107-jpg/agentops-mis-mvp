@@ -51,6 +51,20 @@ and evidence counts, so the next agent can distinguish a closed loop lane from
 a model-only summary. The agent should copy commands locally; the server never
 executes shell from the brief.
 
+Before starting or advancing a local Hermes/OpenClaw lane, read the structured
+adapter setup guide:
+
+```bash
+agentops worker readiness
+```
+
+Each adapter row now includes `remediation.primary_next_action`, missing local
+checks, and ordered copy-only commands for inspect, preflight, runtime doctor,
+confirmed worker start, confirmed live task template, and final ledger proof via
+`agentops operator live-product-readiness`. The readiness endpoint does not run
+those commands; it only tells Hermes/OpenClaw/Codex exactly which command to
+copy next and which steps still require `--confirm-run`.
+
 For real customer-worker acceptance, prefer the read-only freshness gate before
 starting another live lane:
 

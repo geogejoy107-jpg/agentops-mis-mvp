@@ -147,6 +147,7 @@ def main() -> int:
             preview_readiness = preview_payload.get("adapter_readiness") or {}
             preview_readiness_commands = preview_readiness.get("commands") or {}
             preview_gate = preview_readiness.get("gate") or {}
+            preview_remediation = preview_readiness.get("remediation") or {}
             require(initial_brief.get("operation") == "operator_loop_launch_brief", f"initial brief missing: {initial_brief}", failures)
             require((initial_brief.get("policy") or {}).get("server_executes_shell") is False, f"brief server shell boundary missing: {initial_brief}", failures)
             require(preview_readiness.get("operation") == "operator_loop_driver_adapter_readiness", f"preview readiness missing: {preview_readiness}", failures)
@@ -154,6 +155,9 @@ def main() -> int:
             require((preview_readiness.get("safety") or {}).get("read_only") is True, f"preview readiness should be read-only: {preview_readiness}", failures)
             require(preview_readiness_commands.get("adapter_preflight") == "agentops worker preflight --adapter hermes", f"preview preflight command missing: {preview_readiness}", failures)
             require(preview_gate.get("loop_control_may_continue") is True, f"preview loop-control gate missing: {preview_readiness}", failures)
+            require(preview_remediation.get("status") in {"ready", "action_required"}, f"preview remediation missing: {preview_readiness}", failures)
+            require(any(command.get("phase") == "preflight" for command in (preview_remediation.get("commands") or [])), f"preview remediation preflight missing: {preview_readiness}", failures)
+            require((preview_remediation.get("safety") or {}).get("server_executes_shell") is False, f"preview remediation server shell boundary missing: {preview_readiness}", failures)
             require("agentops worker preflight --adapter hermes" in (preview_payload.get("next_actions") or []), f"preview next actions missing preflight: {preview_payload}", failures)
 
             before_confirm = fingerprint(db_path)
@@ -171,9 +175,11 @@ def main() -> int:
             require((confirmed_payload.get("safety") or {}).get("live_execution_performed") is False, f"confirm should not run live work: {confirmed_payload}", failures)
             require((confirmed_payload.get("safety") or {}).get("server_executes_shell") is False, f"server shell boundary missing: {confirmed_payload}", failures)
             final_readiness = confirmed_payload.get("adapter_readiness") or {}
+            final_remediation = final_readiness.get("remediation") or {}
             require(final_readiness.get("operation") == "operator_loop_driver_adapter_readiness", f"confirm readiness missing: {final_readiness}", failures)
             require(final_readiness.get("adapter") == "openclaw", f"confirm readiness adapter mismatch: {final_readiness}", failures)
             require((final_readiness.get("safety") or {}).get("live_execution_performed") is False, f"confirm readiness live execution boundary missing: {final_readiness}", failures)
+            require(any("openclaw" in str(command.get("command") or "") for command in (final_remediation.get("commands") or [])), f"confirm remediation commands missing openclaw: {final_readiness}", failures)
             steps = confirmed_payload.get("steps") or []
             require(1 <= len(steps) <= 2, f"unexpected step count: {confirmed_payload}", failures)
             require(after_confirm["operator_action_receipts"] >= before_confirm["operator_action_receipts"] + 1, f"receipt count did not increase: {before_confirm} -> {after_confirm}", failures)
