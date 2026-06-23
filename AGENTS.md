@@ -67,7 +67,9 @@ New ideas start as `Inbox` or `Proposed`. Only human-reviewed `Approved` or veri
 
 - Create and verify an Agent Plan before meaningful changes.
 - Manage slow live runtimes, CI, browser builds, and subagent work as asynchronous lanes. Do not sit idle waiting for Hermes/OpenClaw/CI/subagents unless their result is on the immediate critical path; while a lane is running, continue non-overlapping implementation, verification, docs/spec updates, or another independent lane.
+- Treat async lane management as a hard execution requirement, not a style preference. If any command, CI run, live runtime, browser build, or subagent is expected to take more than about 60 seconds, immediately switch to another safe useful lane and poll/merge the slow result later.
 - In fast product-delivery mode, keep a compact commander board of running lanes, merged results, blockers, and next lane. Merge useful completed lane results immediately; do not wait for every subagent/check to finish before continuing safe mainline work.
+- If two or more independent work items exist, start or continue another lane before waiting. Serial waiting is allowed only after recording the concrete blocker or no-safe-lane reason.
 - Do not batch-close or parallel-close subagents for tidiness. Close only when resource limits require it, and never make cleanup the critical path while coding/verification can continue.
 - Do not let an Agent self-approve its own high-risk plan.
 - Keep plan, run, tool, approval, artifact, evaluation, and audit evidence linked.
