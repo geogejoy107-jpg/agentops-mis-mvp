@@ -885,6 +885,7 @@ export interface CommanderWorkPackageReadbackPayload {
       error_type?: string | null;
       error_message?: string | null;
     } | null;
+    latest_workflow_job?: CommanderTeamBoardLane["latest_workflow_job"];
     evidence_counts?: Record<string, number>;
     recommended_action?: string;
     created_at?: string;
@@ -897,6 +898,108 @@ export interface CommanderWorkPackageReadbackPayload {
     task_created: boolean;
     run_created: boolean;
     live_execution_performed: boolean;
+    token_omitted: boolean;
+    raw_prompt_omitted: boolean;
+  };
+  token_omitted: boolean;
+  live_execution_performed: boolean;
+}
+
+export interface CommanderTeamBoardLane {
+  task_id: string;
+  lane_id: string;
+  title: string;
+  owner_agent_id: string;
+  collaborator_agent_ids: string[];
+  status: string;
+  package_status: string;
+  priority: string;
+  risk_level: string;
+  dependencies: string[];
+  dependency_count: number;
+  latest_run?: {
+    run_id?: string;
+    status?: string;
+    created_at?: string;
+  } | null;
+  latest_workflow_job?: {
+    job_id?: string;
+    workflow_type?: string;
+    status?: string;
+    adapter?: string;
+    confirm_run?: boolean;
+    result_run_id?: string | null;
+    result_artifact_id?: string | null;
+    created_at?: string;
+    started_at?: string | null;
+    completed_at?: string | null;
+    updated_at?: string;
+  } | null;
+  evidence_counts: Record<string, number>;
+  localization_gate: Record<string, unknown>;
+  coding_evidence_gate: Record<string, unknown>;
+  recommended_action?: string;
+}
+
+export interface CommanderTeamBoardPayload {
+  status: string;
+  workspace_id: string;
+  project_id?: string | null;
+  plan_id?: string | null;
+  summary: {
+    total_lanes: number;
+    status_counts: Record<string, number>;
+    owner_counts: Record<string, number>;
+    ready_for_review: number;
+    blocked: number;
+    missing_coding_evidence: number;
+    dependency_edges: number;
+    workflow_job_counts: Record<string, number>;
+    active_workflow_jobs: number;
+    failed_workflow_jobs: number;
+  };
+  lanes: CommanderTeamBoardLane[];
+  dependency_edges: { from_task_id: string; to_task_id: string; known_in_board: boolean }[];
+  ready_for_review_task_ids: string[];
+  blocked_task_ids: string[];
+  missing_coding_evidence_task_ids: string[];
+  active_workflow_job_task_ids: string[];
+  failed_workflow_job_task_ids: string[];
+  next_actions: string[];
+  safety: {
+    read_only: boolean;
+    ledger_mutated: boolean;
+    live_execution_performed: boolean;
+    token_omitted: boolean;
+    raw_prompt_omitted: boolean;
+    raw_source_omitted: boolean;
+  };
+  token_omitted: boolean;
+  live_execution_performed: boolean;
+}
+
+export interface CommanderProjectBoardPayload {
+  provider: string;
+  operation: string;
+  status: string;
+  workspace_id: string;
+  counts: Record<string, unknown>;
+  team_board?: CommanderTeamBoardPayload | null;
+  team_board_filter: {
+    project_id?: string | null;
+    plan_id?: string | null;
+    limit: number;
+    applied: boolean;
+  };
+  team_work_packages_summary?: CommanderWorkPackageReadbackPayload["summary"] | null;
+  integration_gates: { id: string; status: string; summary?: string; next_action?: string }[];
+  recommended_next_actions: string[];
+  safety: {
+    read_only: boolean;
+    ledger_mutated: boolean;
+    task_created: boolean;
+    run_created: boolean;
+    job_created: boolean;
     token_omitted: boolean;
     raw_prompt_omitted: boolean;
   };
@@ -4051,6 +4154,163 @@ export async function loadCommanderWorkPackages(options: {
       task_created: boolValue(safetyRaw.task_created),
       run_created: boolValue(safetyRaw.run_created),
       live_execution_performed: boolValue(safetyRaw.live_execution_performed),
+      token_omitted: boolValue(safetyRaw.token_omitted),
+      raw_prompt_omitted: boolValue(safetyRaw.raw_prompt_omitted),
+    },
+    token_omitted: boolValue(raw.token_omitted),
+    live_execution_performed: boolValue(raw.live_execution_performed),
+  };
+}
+
+export async function loadCommanderProjectBoard(options: {
+  project_id?: string;
+  plan_id?: string;
+  limit?: number;
+} = {}): Promise<CommanderProjectBoardPayload> {
+  const params = new URLSearchParams();
+  if (options.project_id) params.set("project_id", options.project_id);
+  if (options.plan_id) params.set("plan_id", options.plan_id);
+  if (options.limit) params.set("limit", String(options.limit));
+  const raw = await optionalApiJson<Record<string, unknown>>(`/commander/project-board${params.toString() ? `?${params}` : ""}`, {
+    provider: "agentops-commander",
+    operation: "project_board",
+    status: "unavailable",
+    workspace_id: "local-demo",
+    counts: {},
+    team_board: null,
+    team_board_filter: { project_id: options.project_id || null, plan_id: options.plan_id || null, limit: options.limit || 25, applied: Boolean(options.project_id || options.plan_id) },
+    integration_gates: [],
+    recommended_next_actions: [],
+    safety: {
+      read_only: true,
+      ledger_mutated: false,
+      task_created: false,
+      run_created: false,
+      job_created: false,
+      token_omitted: true,
+      raw_prompt_omitted: true,
+    },
+    token_omitted: true,
+    live_execution_performed: false,
+  });
+  const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
+  const filterRaw = typeof raw.team_board_filter === "object" && raw.team_board_filter !== null ? raw.team_board_filter as Record<string, unknown> : {};
+  const teamRaw = typeof raw.team_board === "object" && raw.team_board !== null ? raw.team_board as Record<string, unknown> : null;
+  const parseTeamBoard = (team: Record<string, unknown> | null): CommanderTeamBoardPayload | null => {
+    if (!team) return null;
+    const summaryRaw = typeof team.summary === "object" && team.summary !== null ? team.summary as Record<string, unknown> : {};
+    const teamSafetyRaw = typeof team.safety === "object" && team.safety !== null ? team.safety as Record<string, unknown> : {};
+    return {
+      status: String(team.status || "unknown"),
+      workspace_id: String(team.workspace_id || raw.workspace_id || "local-demo"),
+      project_id: team.project_id ? String(team.project_id) : null,
+      plan_id: team.plan_id ? String(team.plan_id) : null,
+      summary: {
+        total_lanes: numberValue(summaryRaw.total_lanes, 0),
+        status_counts: numberRecord(summaryRaw.status_counts),
+        owner_counts: numberRecord(summaryRaw.owner_counts),
+        ready_for_review: numberValue(summaryRaw.ready_for_review, 0),
+        blocked: numberValue(summaryRaw.blocked, 0),
+        missing_coding_evidence: numberValue(summaryRaw.missing_coding_evidence, 0),
+        dependency_edges: numberValue(summaryRaw.dependency_edges, 0),
+        workflow_job_counts: numberRecord(summaryRaw.workflow_job_counts),
+        active_workflow_jobs: numberValue(summaryRaw.active_workflow_jobs, 0),
+        failed_workflow_jobs: numberValue(summaryRaw.failed_workflow_jobs, 0),
+      },
+      lanes: asArray<Record<string, unknown>>(team.lanes).map((lane) => {
+        const latestRun = typeof lane.latest_run === "object" && lane.latest_run !== null ? lane.latest_run as Record<string, unknown> : null;
+        const latestWorkflowJob = typeof lane.latest_workflow_job === "object" && lane.latest_workflow_job !== null ? lane.latest_workflow_job as Record<string, unknown> : null;
+        return {
+          task_id: String(lane.task_id || ""),
+          lane_id: String(lane.lane_id || ""),
+          title: String(lane.title || "Untitled lane"),
+          owner_agent_id: String(lane.owner_agent_id || ""),
+          collaborator_agent_ids: asArray<unknown>(lane.collaborator_agent_ids).map(String),
+          status: String(lane.status || "unknown"),
+          package_status: String(lane.package_status || lane.status || "unknown"),
+          priority: String(lane.priority || "medium"),
+          risk_level: String(lane.risk_level || "medium"),
+          dependencies: asArray<unknown>(lane.dependencies).map(String),
+          dependency_count: numberValue(lane.dependency_count, 0),
+          latest_run: latestRun ? {
+            run_id: latestRun.run_id ? String(latestRun.run_id) : undefined,
+            status: latestRun.status ? String(latestRun.status) : undefined,
+            created_at: latestRun.created_at ? String(latestRun.created_at) : undefined,
+          } : null,
+          latest_workflow_job: latestWorkflowJob ? {
+            job_id: latestWorkflowJob.job_id ? String(latestWorkflowJob.job_id) : undefined,
+            workflow_type: latestWorkflowJob.workflow_type ? String(latestWorkflowJob.workflow_type) : undefined,
+            status: latestWorkflowJob.status ? String(latestWorkflowJob.status) : undefined,
+            adapter: latestWorkflowJob.adapter ? String(latestWorkflowJob.adapter) : undefined,
+            confirm_run: boolValue(latestWorkflowJob.confirm_run),
+            result_run_id: latestWorkflowJob.result_run_id ? String(latestWorkflowJob.result_run_id) : null,
+            result_artifact_id: latestWorkflowJob.result_artifact_id ? String(latestWorkflowJob.result_artifact_id) : null,
+            created_at: latestWorkflowJob.created_at ? String(latestWorkflowJob.created_at) : undefined,
+            started_at: latestWorkflowJob.started_at ? String(latestWorkflowJob.started_at) : null,
+            completed_at: latestWorkflowJob.completed_at ? String(latestWorkflowJob.completed_at) : null,
+            updated_at: latestWorkflowJob.updated_at ? String(latestWorkflowJob.updated_at) : undefined,
+          } : null,
+          evidence_counts: numberRecord(lane.evidence_counts),
+          localization_gate: typeof lane.localization_gate === "object" && lane.localization_gate !== null ? lane.localization_gate as Record<string, unknown> : {},
+          coding_evidence_gate: typeof lane.coding_evidence_gate === "object" && lane.coding_evidence_gate !== null ? lane.coding_evidence_gate as Record<string, unknown> : {},
+          recommended_action: lane.recommended_action ? String(lane.recommended_action) : undefined,
+        };
+      }),
+      dependency_edges: asArray<Record<string, unknown>>(team.dependency_edges).map((edge) => ({
+        from_task_id: String(edge.from_task_id || ""),
+        to_task_id: String(edge.to_task_id || ""),
+        known_in_board: boolValue(edge.known_in_board),
+      })),
+      ready_for_review_task_ids: asArray<unknown>(team.ready_for_review_task_ids).map(String),
+      blocked_task_ids: asArray<unknown>(team.blocked_task_ids).map(String),
+      missing_coding_evidence_task_ids: asArray<unknown>(team.missing_coding_evidence_task_ids).map(String),
+      active_workflow_job_task_ids: asArray<unknown>(team.active_workflow_job_task_ids).map(String),
+      failed_workflow_job_task_ids: asArray<unknown>(team.failed_workflow_job_task_ids).map(String),
+      next_actions: asArray<unknown>(team.next_actions).map(String).filter(Boolean),
+      safety: {
+        read_only: boolValue(teamSafetyRaw.read_only),
+        ledger_mutated: boolValue(teamSafetyRaw.ledger_mutated),
+        live_execution_performed: boolValue(teamSafetyRaw.live_execution_performed),
+        token_omitted: boolValue(teamSafetyRaw.token_omitted),
+        raw_prompt_omitted: boolValue(teamSafetyRaw.raw_prompt_omitted),
+        raw_source_omitted: boolValue(teamSafetyRaw.raw_source_omitted),
+      },
+      token_omitted: boolValue(team.token_omitted),
+      live_execution_performed: boolValue(team.live_execution_performed),
+    };
+  };
+  const summaryRaw = typeof raw.team_work_packages_summary === "object" && raw.team_work_packages_summary !== null ? raw.team_work_packages_summary as Record<string, unknown> : null;
+  return {
+    provider: String(raw.provider || "agentops-commander"),
+    operation: String(raw.operation || "project_board"),
+    status: String(raw.status || "unknown"),
+    workspace_id: String(raw.workspace_id || "local-demo"),
+    counts: typeof raw.counts === "object" && raw.counts !== null ? raw.counts as Record<string, unknown> : {},
+    team_board: parseTeamBoard(teamRaw),
+    team_board_filter: {
+      project_id: filterRaw.project_id ? String(filterRaw.project_id) : null,
+      plan_id: filterRaw.plan_id ? String(filterRaw.plan_id) : null,
+      limit: numberValue(filterRaw.limit, options.limit || 25),
+      applied: boolValue(filterRaw.applied),
+    },
+    team_work_packages_summary: summaryRaw ? {
+      total: numberValue(summaryRaw.total, 0),
+      by_status: numberRecord(summaryRaw.by_status),
+      by_project: numberRecord(summaryRaw.by_project),
+    } : null,
+    integration_gates: asArray<Record<string, unknown>>(raw.integration_gates).map((gate) => ({
+      id: String(gate.id || ""),
+      status: String(gate.status || "unknown"),
+      summary: gate.summary ? String(gate.summary) : undefined,
+      next_action: gate.next_action ? String(gate.next_action) : undefined,
+    })),
+    recommended_next_actions: asArray<unknown>(raw.recommended_next_actions).map(String).filter(Boolean),
+    safety: {
+      read_only: boolValue(safetyRaw.read_only),
+      ledger_mutated: boolValue(safetyRaw.ledger_mutated),
+      task_created: boolValue(safetyRaw.task_created),
+      run_created: boolValue(safetyRaw.run_created),
+      job_created: boolValue(safetyRaw.job_created),
       token_omitted: boolValue(safetyRaw.token_omitted),
       raw_prompt_omitted: boolValue(safetyRaw.raw_prompt_omitted),
     },

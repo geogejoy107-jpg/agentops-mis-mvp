@@ -14479,6 +14479,16 @@ def commander_work_package_from_task(conn: sqlite3.Connection, row: sqlite3.Row)
         (task["task_id"],),
     ).fetchone()
     latest_run = dict(latest_run_row) if latest_run_row else None
+    latest_workflow_job_row = conn.execute(
+        """SELECT job_id, workflow_type, status, adapter, confirm_run, result_task_id, result_run_id,
+                  result_artifact_id, error_message, created_at, started_at, completed_at, updated_at
+        FROM workflow_jobs
+        WHERE result_task_id=? AND workflow_type='commander_work_package_dispatch'
+        ORDER BY updated_at DESC, created_at DESC
+        LIMIT 1""",
+        (task["task_id"],),
+    ).fetchone()
+    latest_workflow_job = dict(latest_workflow_job_row) if latest_workflow_job_row else None
     evidence = commander_evidence_counts(conn, task_id=task["task_id"], run_id=(latest_run or {}).get("run_id"))
     localization_row = conn.execute(
         """SELECT artifact_id, task_id, run_id, artifact_type, title, uri, summary, created_at
@@ -14519,6 +14529,7 @@ def commander_work_package_from_task(conn: sqlite3.Connection, row: sqlite3.Row)
         "verification_commands": commander_extract_verification(description),
         "acceptance_criteria": commander_safe_text(task.get("acceptance_criteria"), 360),
         "latest_run": latest_run,
+        "latest_workflow_job": latest_workflow_job,
         "localization_artifact": localization_artifact,
         "localization_gate": {
             "status": "recorded" if localization_artifact else "missing",
@@ -15415,6 +15426,13 @@ def submit_commander_work_package_dispatch_jobs(conn: sqlite3.Connection, body: 
             "raw_request_omitted": True,
         })
         jobs.append(workflow_job_public(job_row))
+    queued_packages = [commander_work_package_from_task(conn, row) for row in rows]
+    team_board_after_queue = build_commander_team_board(
+        packages=queued_packages,
+        workspace_id=workspace_id,
+        project_id=project_id or None,
+        plan_id=plan_id or None,
+    )
     conn.commit()
 
     for job in jobs:
@@ -15445,6 +15463,7 @@ def submit_commander_work_package_dispatch_jobs(conn: sqlite3.Connection, body: 
         "task_ids": [job.get("result_task_id") for job in jobs],
         "status_urls": [f"/api/workflows/jobs/{job.get('job_id')}" for job in jobs],
         "filter": {"project_id": project_id or None, "plan_id": plan_id or None, "status": status_filter, "limit": limit},
+        "team_board_after_queue": team_board_after_queue,
         "safety": {
             "ledger_mutated": True,
             "jobs_created": len(jobs),

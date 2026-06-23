@@ -20,6 +20,7 @@ import {
   loadCustomerDeliveryBoard,
   loadDashboard,
   loadDemoReadiness,
+  loadCommanderProjectBoard,
   loadCommanderWorkPackages,
   loadHermesOpenClawLoopReadback,
   loadIntegrationInbox,
@@ -67,6 +68,7 @@ import {
   type AgentGatewayEnrollmentCreateResult,
   type AgentGatewayEnrollmentPolicyPreview,
   type AgentGatewayEnrollmentRequestResult,
+  type CommanderProjectBoardPayload,
   type CommanderWorkPackagePlanPayload,
   type CommanderSynthesisPromotionPayload,
   type CustomerDeliveryBoardPayload,
@@ -154,12 +156,15 @@ type AIEmployeesPanelLoadState = {
 
 type AIEmployeesLiveData = {
   [key: string]: unknown;
+  commanderProjectBoard?: CommanderProjectBoardPayload;
   operatorCommandCenter?: OperatorCommandCenterPayload;
   operatorExecutionMode?: OperatorExecutionModePayload;
   operatorLoopControl?: OperatorLoopControlPayload;
   operatorRuntimeDoctor?: OperatorRuntimeDoctorPayload;
   executionModeAdapter?: WorkerAdapterName;
   executionModeConfirmRun?: boolean;
+  activeCommanderProjectId?: string;
+  activeCommanderPlanId?: string;
   panelLoadState?: Record<string, AIEmployeesPanelLoadState>;
 };
 
@@ -203,6 +208,7 @@ const AI_EMPLOYEES_PANEL_LOADERS: AIEmployeesPanelLoader[] = [
   { id: "security_readiness", load: async () => ({ securityReadiness: await loadSecurityProductionReadiness() }) },
   { id: "integration_inbox", load: async (context) => ({ integrationInbox: await loadIntegrationInbox({ bucket: String(context.integrationInboxBucket || "all"), limit: 20 }) }) },
   { id: "commander_work_packages", load: async () => ({ commanderWorkPackages: await loadCommanderWorkPackages({ limit: 8 }) }) },
+  { id: "commander_project_board", load: async (context) => ({ commanderProjectBoard: await loadCommanderProjectBoard({ project_id: String(context.activeCommanderProjectId || ""), plan_id: String(context.activeCommanderPlanId || ""), limit: 12 }) }) },
   { id: "review_queue", load: async () => ({ reviewQueue: await loadReviewQueue(12) }) },
   { id: "customer_delivery_board", load: async () => ({ customerDeliveryBoard: await loadCustomerDeliveryBoard(8) }) },
   { id: "loop_lane_readback", load: async () => ({ loopLaneReadback: await loadHermesOpenClawLoopReadback("", 6) }) },
@@ -307,6 +313,7 @@ export function AIEmployees() {
   const [commanderPlannerBusy, setCommanderPlannerBusy] = useState(false);
   const [commanderPlannerError, setCommanderPlannerError] = useState<string | null>(null);
   const [commanderPlannerResult, setCommanderPlannerResult] = useState<CommanderWorkPackagePlanPayload | null>(null);
+  const [activeCommanderProject, setActiveCommanderProject] = useState<{ projectId: string; planId: string } | null>(null);
   const [lastSynthesis, setLastSynthesis] = useState<{ artifactId: string; approvalId?: string | null } | null>(null);
   const [synthesisPromotion, setSynthesisPromotion] = useState<CommanderSynthesisPromotionPayload | null>(null);
   const [commanderPlannerForm, setCommanderPlannerForm] = useState({
@@ -366,13 +373,14 @@ export function AIEmployees() {
     setCreatedToken(null);
     setIssuedCredentialCopied(false);
   }, []);
-  const refresh = useCallback(async (options?: { preserveIssuedCredential?: boolean }) => {
+  const refresh = useCallback(async (options?: { preserveIssuedCredential?: boolean; commanderProject?: { projectId: string; planId: string } | null }) => {
     if (!options?.preserveIssuedCredential) {
       clearIssuedCredential();
     }
     setLoading(true);
     setError(null);
     setDeferredError(null);
+    const commanderProject = options?.commanderProject === undefined ? activeCommanderProject : options.commanderProject;
     try {
       const coreContext = await loadAIEmployeesPanelSet([
         ...AI_EMPLOYEES_CORE_PANEL_LOADERS,
@@ -381,6 +389,8 @@ export function AIEmployees() {
         integrationInboxBucket,
         executionModeAdapter: customerTaskForm.adapter,
         executionModeConfirmRun: liveRuntimeConfirmed,
+        activeCommanderProjectId: commanderProject?.projectId || "",
+        activeCommanderPlanId: commanderProject?.planId || "",
       });
       setData((current) => ({
         ...(current || {}),
@@ -396,6 +406,8 @@ export function AIEmployees() {
         const deferredContext = await loadAIEmployeesPanelSet(AI_EMPLOYEES_DEFERRED_PANEL_LOADERS, {
           ...coreContext,
           integrationInboxBucket,
+          activeCommanderProjectId: commanderProject?.projectId || "",
+          activeCommanderPlanId: commanderProject?.planId || "",
         });
         const scopedLoopId = latestLoopIdFromReadback(deferredContext.loopLaneReadback as HermesOpenClawLoopReadbackPayload | undefined);
         const scopedContext = await loadAIEmployeesPanelSet(AI_EMPLOYEES_SCOPED_PANEL_LOADERS, {
@@ -429,7 +441,7 @@ export function AIEmployees() {
       setLoading(false);
       setDeferredLoading(false);
     }
-  }, [clearIssuedCredential, customerTaskForm.adapter, integrationInboxBucket, liveRuntimeConfirmed]);
+  }, [activeCommanderProject?.planId, activeCommanderProject?.projectId, clearIssuedCredential, customerTaskForm.adapter, integrationInboxBucket, liveRuntimeConfirmed]);
   useEffect(() => {
     void refresh();
   }, [refresh]);
@@ -448,6 +460,8 @@ export function AIEmployees() {
       scopedLoopId,
       executionModeAdapter: customerTaskForm.adapter,
       executionModeConfirmRun: liveRuntimeConfirmed,
+      activeCommanderProjectId: activeCommanderProject?.projectId || "",
+      activeCommanderPlanId: activeCommanderProject?.planId || "",
     };
     setLocalPanelRefreshing(panelId);
     setData((current) => ({
@@ -489,7 +503,7 @@ export function AIEmployees() {
     } finally {
       setLocalPanelRefreshing((current) => current === panelId ? null : current);
     }
-  }, [clearIssuedCredential, customerTaskForm.adapter, data, integrationInboxBucket, liveRuntimeConfirmed]);
+  }, [activeCommanderProject?.planId, activeCommanderProject?.projectId, clearIssuedCredential, customerTaskForm.adapter, data, integrationInboxBucket, liveRuntimeConfirmed]);
   const loadSelectedDaemonLog = async (adapter = selectedLogAdapter) => {
     setDaemonLogsLoading(true);
     setDaemonLogsError(null);
@@ -598,9 +612,13 @@ export function AIEmployees() {
   const productionSecurityNeedsAttention = productionSecurityStatus !== "ready" || !securityReadiness?.production_ready || localWriteGuardGate?.status !== "pass";
   const integrationInbox = data?.integrationInbox;
   const commanderWorkPackages = data?.commanderWorkPackages;
+  const commanderProjectBoard = data?.commanderProjectBoard as CommanderProjectBoardPayload | undefined;
+  const commanderTeamBoard = commanderProjectBoard?.team_board || null;
+  const commanderTeamLanes = commanderTeamBoard?.lanes || [];
   const commanderPackageRows = commanderWorkPackages?.work_packages || [];
-  const commanderPlannedPackageCount = commanderPackageRows.filter(pkg => pkg.package_status === "planned" || pkg.status === "planned").length;
-  const commanderReadyPackageCount = commanderPackageRows.filter(pkg => pkg.package_status === "ready_for_review").length;
+  const commanderActionRows = commanderTeamLanes.length ? commanderTeamLanes : commanderPackageRows;
+  const commanderPlannedPackageCount = commanderActionRows.filter(pkg => pkg.package_status === "planned" || pkg.status === "planned").length;
+  const commanderReadyPackageCount = commanderActionRows.filter(pkg => pkg.package_status === "ready_for_review").length;
   const reviewQueue = data?.reviewQueue as ReviewQueuePayload | undefined;
   const reviewQueueSummary = reviewQueue?.summary;
   const reviewQueueItems = reviewQueue?.review_items || [];
@@ -867,6 +885,12 @@ export function AIEmployees() {
       plannedPackages: "Planned packages",
       createdPackages: "Created tasks",
       plannerSafety: "Preview is safe",
+      activeTeamBoard: "Active team board",
+      activeTeamBoardSummary: "Project-scoped lanes, owners, dependencies and evidence gates for the current AI-team project.",
+      teamLanes: "Team lanes",
+      dependencyEdges: "Dependencies",
+      missingCodingEvidence: "Missing coding evidence",
+      readyForReview: "Ready for review",
       persistedPackages: "Persisted packages",
       packageReadback: "Package readback",
       packageStatus: "Package status",
@@ -1378,6 +1402,12 @@ export function AIEmployees() {
       plannedPackages: "规划工作包",
       createdPackages: "已创建任务",
       plannerSafety: "预览安全",
+      activeTeamBoard: "当前团队项目板",
+      activeTeamBoardSummary: "按当前项目展示 lanes、负责人、依赖和证据 Gate，避免混进全局最近任务。",
+      teamLanes: "团队 lanes",
+      dependencyEdges: "依赖边",
+      missingCodingEvidence: "缺失编码证据",
+      readyForReview: "待复核",
       persistedPackages: "持久化工作包",
       packageReadback: "工作包读回",
       packageStatus: "工作包状态",
@@ -2516,9 +2546,24 @@ export function AIEmployees() {
         confirm_create: confirmCreate,
       });
       setCommanderPlannerResult(result);
+      const nextProject = result.project_id && result.plan_id ? { projectId: result.project_id, planId: result.plan_id } : null;
+      if (nextProject) {
+        setActiveCommanderProject(nextProject);
+      }
       setDispatchResult(`${result.status}: ${result.created_count || result.planned_count} · ${result.plan_id}`);
       if (confirmCreate) {
-        await refresh();
+        if (nextProject) {
+          const [projectBoard, scopedPackages] = await Promise.all([
+            loadCommanderProjectBoard({ project_id: nextProject.projectId, plan_id: nextProject.planId, limit: 12 }),
+            loadCommanderWorkPackages({ project_id: nextProject.projectId, plan_id: nextProject.planId, limit: 12 }),
+          ]);
+          setData((current) => ({
+            ...(current || {}),
+            commanderProjectBoard: projectBoard,
+            commanderWorkPackages: scopedPackages,
+          }));
+        }
+        await refresh({ commanderProject: nextProject });
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -2549,7 +2594,7 @@ export function AIEmployees() {
   };
 
   const dispatchCommanderPlannedBatch = async () => {
-    const plannedTaskIds = commanderPackageRows
+    const plannedTaskIds = commanderActionRows
       .filter(pkg => pkg.package_status === "planned" || pkg.status === "planned")
       .slice(0, 5)
       .map(pkg => pkg.task_id)
@@ -2577,7 +2622,7 @@ export function AIEmployees() {
   };
 
   const synthesizeCommanderReadyPackages = async () => {
-    const readyTaskIds = commanderPackageRows
+    const readyTaskIds = commanderActionRows
       .filter(pkg => pkg.package_status === "ready_for_review")
       .slice(0, 10)
       .map(pkg => pkg.task_id)
@@ -3371,6 +3416,86 @@ export function AIEmployees() {
                     <Link to={`/admin/tasks/${pkg.task_id}`} className="inline-flex mt-2 text-[10px] px-2 py-1 rounded" style={{ background: "rgba(34,211,238,0.10)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.18)" }}>
                       {copy.openTask}
                     </Link>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {commanderTeamBoard && (
+          <div
+            data-testid="commander-team-board"
+            className="mt-4 rounded-lg p-3"
+            style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}
+          >
+            <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <Activity size={13} style={{ color: "var(--mis-cyan)" }} />
+                  <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.activeTeamBoard}</div>
+                  <StatusBadge status={commanderTeamBoard.status} />
+                </div>
+                <p className="text-[10px] mt-1 max-w-2xl" style={{ color: "var(--mis-muted)" }}>{copy.activeTeamBoardSummary}</p>
+                <div className="text-[10px] mt-1 truncate" style={{ color: "var(--mis-dim)" }}>
+                  {commanderTeamBoard.project_id || activeCommanderProject?.projectId || "project"} · {commanderTeamBoard.plan_id || activeCommanderProject?.planId || "plan"}
+                </div>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 min-w-[280px]">
+                {[
+                  { label: copy.teamLanes, value: commanderTeamBoard.summary.total_lanes, status: commanderTeamBoard.summary.total_lanes > 0 ? "pass" : "attention" },
+                  { label: copy.readyForReview, value: commanderTeamBoard.summary.ready_for_review, status: commanderTeamBoard.summary.ready_for_review > 0 ? "attention" : "planned" },
+                  { label: copy.missingCodingEvidence, value: commanderTeamBoard.summary.missing_coding_evidence, status: commanderTeamBoard.summary.missing_coding_evidence > 0 ? "attention" : "pass" },
+                  { label: copy.dependencyEdges, value: commanderTeamBoard.summary.dependency_edges, status: commanderTeamBoard.summary.dependency_edges > 0 ? "planned" : "pass" },
+                ].map((item) => (
+                  <div key={item.label} className="rounded px-2 py-1.5" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                    <div className="text-[9px] uppercase tracking-wide" style={{ color: "var(--mis-muted)" }}>{item.label}</div>
+                    <div className="flex items-center justify-between gap-2 mt-1">
+                      <span className="text-[13px] font-semibold" style={{ color: "var(--mis-text)" }}>{item.value}</span>
+                      <StatusBadge status={item.status} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-2 mt-3">
+              {commanderTeamBoard.lanes.slice(0, 8).map((lane) => (
+                <div key={lane.task_id} className="rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="text-[11px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{lane.title}</div>
+                      <div className="text-[10px] mt-1 truncate" style={{ color: "var(--mis-muted)" }}>
+                        {lane.owner_agent_id || "agent"} · {lane.lane_id || "lane"} · deps {lane.dependency_count}
+                      </div>
+                    </div>
+                    <StatusBadge status={lane.package_status || lane.status} />
+                  </div>
+                  <div className="grid grid-cols-3 gap-1.5 mt-2">
+                    {[
+                      { label: "tool", value: lane.evidence_counts.tool_calls || 0 },
+                      { label: "eval", value: lane.evidence_counts.evaluations || 0 },
+                      { label: "artifact", value: lane.evidence_counts.artifacts || 0 },
+                    ].map((item) => (
+                      <div key={item.label} className="text-[9px] rounded px-2 py-1" style={{ color: "var(--mis-muted)", background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}>
+                        {item.label}: <span style={{ color: "var(--mis-text)" }}>{item.value}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                    <StatusBadge status={String(lane.localization_gate.status || "unknown")} label={`repo ${String(lane.localization_gate.status || "unknown")}`} />
+                    <StatusBadge status={String(lane.coding_evidence_gate.status || "unknown")} label={`code ${String(lane.coding_evidence_gate.status || "unknown")}`} />
+                    {lane.latest_run?.run_id && (
+                      <Link to={`/admin/runs/${lane.latest_run.run_id}`} className="text-[10px] px-2 py-1 rounded" style={{ color: "var(--mis-cyan)", background: "rgba(34,211,238,0.10)", border: "1px solid rgba(34,211,238,0.18)" }}>
+                        {lane.latest_run.run_id}
+                      </Link>
+                    )}
+                    <Link to={`/admin/tasks/${lane.task_id}`} className="text-[10px] px-2 py-1 rounded" style={{ color: "var(--mis-purple)", background: "rgba(129,140,248,0.10)", border: "1px solid rgba(129,140,248,0.18)" }}>
+                      {copy.openTask}
+                    </Link>
+                  </div>
+                  {lane.recommended_action && (
+                    <div className="text-[10px] mt-2 truncate" style={{ color: "var(--mis-dim)" }}>{lane.recommended_action}</div>
                   )}
                 </div>
               ))}

@@ -158,6 +158,14 @@ def main() -> int:
         require(payload.get("live_execution_performed") is False, "mock batch marked live")
         job_ids = payload.get("job_ids") or []
         require(len(job_ids) == 2, f"expected 2 job ids: {payload}")
+        queued_board = payload.get("team_board_after_queue") or {}
+        require(queued_board.get("status") == "attention", f"queued team board should require attention: {queued_board}")
+        require((queued_board.get("summary") or {}).get("active_workflow_jobs") == 2, f"queued board active job count wrong: {queued_board}")
+        require((queued_board.get("summary") or {}).get("workflow_job_counts", {}).get("queued") == 2, f"queued board job counts wrong: {queued_board}")
+        require((queued_board.get("safety") or {}).get("read_only") is True, f"queued board should be read-only: {queued_board}")
+        queued_lanes = queued_board.get("lanes") or []
+        require(len(queued_lanes) == 2, f"queued board should include dispatched lanes only: {queued_board}")
+        require(all((lane.get("latest_workflow_job") or {}).get("job_id") in job_ids for lane in queued_lanes), f"queued lanes missing latest workflow jobs: {queued_board}")
 
         jobs = [wait_job(job_id) for job_id in job_ids]
         transcripts.append(json.dumps(jobs, ensure_ascii=False))
@@ -181,6 +189,17 @@ def main() -> int:
         require(packages.get(task_ids[0], {}).get("package_status") == "ready_for_review", f"package 0 not ready: {packages.get(task_ids[0])}")
         require(packages.get(task_ids[1], {}).get("package_status") == "ready_for_review", f"package 1 not ready: {packages.get(task_ids[1])}")
         require(packages.get(task_ids[2], {}).get("package_status") == "planned", f"package 2 should remain planned: {packages.get(task_ids[2])}")
+        for task_id in task_ids[:2]:
+            latest_job = (packages.get(task_id, {}).get("latest_workflow_job") or {})
+            require(latest_job.get("status") == "completed", f"{task_id} latest workflow job not completed in readback: {packages.get(task_id)}")
+            require(latest_job.get("result_run_id"), f"{task_id} latest workflow job missing result run: {packages.get(task_id)}")
+
+        board_status, board = http_json("GET", f"/api/commander/project-board?project_id={project_id}&plan_id={plan_id}&limit=10")
+        transcripts.append(json.dumps(board, ensure_ascii=False))
+        require(board_status == 200, f"team board failed: {board_status} {board}")
+        team_board = board.get("team_board") or {}
+        require((team_board.get("summary") or {}).get("workflow_job_counts", {}).get("completed") == 2, f"team board completed job count wrong: {team_board}")
+        require(len(team_board.get("active_workflow_job_task_ids") or []) == 0, f"team board still reports active jobs: {team_board}")
 
         if DEFAULT_DB.exists():
             for task_id in task_ids[:2]:

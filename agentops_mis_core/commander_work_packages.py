@@ -122,6 +122,9 @@ def build_commander_team_board(
     ready_for_review: list[str] = []
     blocked: list[str] = []
     missing_coding_evidence: list[str] = []
+    workflow_job_counts: dict[str, int] = {}
+    active_workflow_jobs: list[str] = []
+    failed_workflow_jobs: list[str] = []
 
     task_ids = {str(item.get("task_id") or "") for item in packages}
     for item in packages:
@@ -144,6 +147,14 @@ def build_commander_team_board(
         if ((item.get("coding_evidence_gate") or {}).get("status") in {"missing", "partial"}):
             missing_coding_evidence.append(task_id)
         latest_run = item.get("latest_run") or {}
+        latest_workflow_job = item.get("latest_workflow_job") or {}
+        workflow_job_status = str(latest_workflow_job.get("status") or "")
+        if workflow_job_status:
+            workflow_job_counts[workflow_job_status] = workflow_job_counts.get(workflow_job_status, 0) + 1
+        if workflow_job_status in {"queued", "running"}:
+            active_workflow_jobs.append(task_id)
+        if workflow_job_status == "failed":
+            failed_workflow_jobs.append(task_id)
         lanes.append({
             "task_id": task_id,
             "lane_id": item.get("lane_id"),
@@ -161,15 +172,28 @@ def build_commander_team_board(
                 "status": latest_run.get("status"),
                 "created_at": latest_run.get("created_at"),
             } if latest_run else None,
+            "latest_workflow_job": {
+                "job_id": latest_workflow_job.get("job_id"),
+                "workflow_type": latest_workflow_job.get("workflow_type"),
+                "status": latest_workflow_job.get("status"),
+                "adapter": latest_workflow_job.get("adapter"),
+                "confirm_run": bool(latest_workflow_job.get("confirm_run")),
+                "result_run_id": latest_workflow_job.get("result_run_id"),
+                "result_artifact_id": latest_workflow_job.get("result_artifact_id"),
+                "created_at": latest_workflow_job.get("created_at"),
+                "started_at": latest_workflow_job.get("started_at"),
+                "completed_at": latest_workflow_job.get("completed_at"),
+                "updated_at": latest_workflow_job.get("updated_at"),
+            } if latest_workflow_job else None,
             "evidence_counts": item.get("evidence_counts") or {},
             "localization_gate": item.get("localization_gate") or {},
             "coding_evidence_gate": item.get("coding_evidence_gate") or {},
             "recommended_action": item.get("recommended_action"),
         })
 
-    if blocked:
+    if blocked or failed_workflow_jobs:
         board_status = "blocked"
-    elif ready_for_review or missing_coding_evidence or status_counts.get("still_running") or status_counts.get("planned"):
+    elif ready_for_review or missing_coding_evidence or active_workflow_jobs or status_counts.get("still_running") or status_counts.get("planned"):
         board_status = "attention"
     else:
         board_status = "ready" if lanes else "empty"
@@ -187,12 +211,17 @@ def build_commander_team_board(
             "blocked": len(blocked),
             "missing_coding_evidence": len(missing_coding_evidence),
             "dependency_edges": len(dependency_edges),
+            "workflow_job_counts": workflow_job_counts,
+            "active_workflow_jobs": len(active_workflow_jobs),
+            "failed_workflow_jobs": len(failed_workflow_jobs),
         },
         "lanes": lanes,
         "dependency_edges": dependency_edges,
         "ready_for_review_task_ids": ready_for_review,
         "blocked_task_ids": blocked,
         "missing_coding_evidence_task_ids": missing_coding_evidence,
+        "active_workflow_job_task_ids": active_workflow_jobs,
+        "failed_workflow_job_task_ids": failed_workflow_jobs,
         "next_actions": commander_work_package_next_actions(packages),
         "safety": {
             "read_only": True,
