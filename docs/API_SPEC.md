@@ -453,7 +453,11 @@ optional `loop://...` readback counts, then returns a copy-only
 `operator runtime-doctor` as the first local readiness check; scoped `loop_id`
 calls select the next safe loop RECORD/VERIFY action, including a review-queue
 step or a reviewable `memory propose --type loop_record` command. It is
-deliberately cheaper than full `operator handoff`: it does not call handoff,
+receipt-aware: once `advance-loop --fast-control` records a verified receipt for
+the unscoped runtime-doctor step, the next unscoped recommendation advances to
+handoff, then action-plan, then review-queue when review pressure exists,
+instead of looping on the same diagnostic. It remains deliberately cheaper than
+full `operator handoff`: it does not call handoff,
 action-plan, evidence report, workers, runtimes, or shell commands; it requires
 `tasks:read` for Agent Gateway tokens/sessions and never mutates ledgers or
 exposes tokens/raw prompts/raw responses.

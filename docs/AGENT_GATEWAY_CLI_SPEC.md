@@ -394,6 +394,10 @@ uses this same read model, runs at most one allowlisted local command after
 `--confirm-advance`, then records the normal Action Queue receipt and
 control-readback evidence. Memory approval/rejection, live runtimes, workflow
 dispatch, worker lifecycle, and external writes remain denied by policy.
+Unscoped control is receipt-aware: a verified runtime-doctor receipt advances
+the next recommendation to `operator handoff`, then `operator action-plan`, then
+`review queue` when review pressure exists, rather than repeatedly selecting the
+same first diagnostic.
 
 ### `agentops operator handoff`
 

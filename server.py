@@ -19538,7 +19538,25 @@ def operator_loop_control(conn: sqlite3.Connection, headers, qs=None, auth_ctx=N
     receipt_rows = operator_action_receipt_rows(conn, workspace_id, min(max(limit * 6, 24), 120))
     receipt_verified = len([row for row in receipt_rows if row.get("status") == "verified"])
     receipt_failed = len([row for row in receipt_rows if row.get("status") == "failed"])
+
+    def has_verified_control_receipt(action_command: str, source: str) -> bool:
+        action_command = action_command.strip()
+        source = source.strip()
+        for receipt in receipt_rows:
+            if receipt.get("status") != "verified":
+                continue
+            if str(receipt.get("action_command") or "").strip() != action_command:
+                continue
+            if source and str(receipt.get("source") or "").strip() != source:
+                continue
+            pass_fail = str(receipt.get("evaluation_pass_fail") or "").strip().lower()
+            if pass_fail and pass_fail != "pass":
+                continue
+            return True
+        return False
+
     selected_item: dict | None = None
+    receipt_source: str | None = None
     loop_counts = {
         "loop_runs": 0,
         "loop_tasks": 0,
@@ -19622,12 +19640,64 @@ def operator_loop_control(conn: sqlite3.Connection, headers, qs=None, auth_ctx=N
             source = "operator_loop_control.ready"
             verify_command = None
     else:
-        action_command = f"agentops operator runtime-doctor --limit {limit}"
-        gate_id = "runtime_doctor"
-        gate_label = "Local runtime first check"
-        gate_status = "attention" if counts["pending_approvals"] or counts["memory_candidates"] else "ready"
-        source = "operator_loop_control.runtime_doctor"
-        verify_command = f"agentops operator loop-control --limit {limit}"
+        control_ladder = [
+            {
+                "gate_id": "runtime_doctor",
+                "gate_label": "Local runtime first check",
+                "gate_status": "attention" if counts["pending_approvals"] or counts["memory_candidates"] else "ready",
+                "source": "operator_loop_control.runtime_doctor",
+                "receipt_source": "loop_control:runtime_doctor",
+                "action_command": f"agentops operator runtime-doctor --limit {limit}",
+            },
+            {
+                "gate_id": "handoff",
+                "gate_label": "Read operator handoff",
+                "gate_status": "attention",
+                "source": "operator_loop_control.handoff",
+                "receipt_source": "loop_control:handoff",
+                "action_command": f"agentops operator handoff --limit {limit}",
+            },
+            {
+                "gate_id": "action_plan",
+                "gate_label": "Read operator action plan",
+                "gate_status": "attention",
+                "source": "operator_loop_control.action_plan",
+                "receipt_source": "loop_control:action_plan",
+                "action_command": f"agentops operator action-plan --limit {limit}",
+            },
+        ]
+        if counts["pending_approvals"] or counts["memory_candidates"]:
+            control_ladder.append({
+                "gate_id": "review_queue",
+                "gate_label": "Inspect review queue",
+                "gate_status": "attention",
+                "source": "operator_loop_control.review_queue",
+                "receipt_source": "loop_control:review_queue",
+                "action_command": "agentops review queue --limit 20",
+            })
+        selected_control = next(
+            (
+                item for item in control_ladder
+                if not has_verified_control_receipt(str(item["action_command"]), str(item["receipt_source"]))
+            ),
+            None,
+        )
+        if selected_control:
+            action_command = str(selected_control["action_command"])
+            gate_id = str(selected_control["gate_id"])
+            gate_label = str(selected_control["gate_label"])
+            gate_status = str(selected_control["gate_status"])
+            source = str(selected_control["source"])
+            receipt_source = str(selected_control["receipt_source"])
+            verify_command = f"agentops operator loop-control --limit {limit}"
+        else:
+            action_command = ""
+            gate_id = None
+            gate_label = None
+            gate_status = None
+            source = "operator_loop_control.ready"
+            receipt_source = None
+            verify_command = None
 
     if action_command:
         action_signature = stable_id("loop_control_action_sig", workspace_id, loop_id or "global", gate_id, action_command)[-18:]
@@ -19641,7 +19711,7 @@ def operator_loop_control(conn: sqlite3.Connection, headers, qs=None, auth_ctx=N
             "source": source,
             "action_command": action_command,
             "verify_command": verify_command,
-            "receipt_source": f"loop_control:{gate_id}",
+            "receipt_source": receipt_source or f"loop_control:{gate_id}",
             "evidence": {**counts, **loop_counts, "recent_receipts": len(receipt_rows), "verified_receipts": receipt_verified, "failed_receipts": receipt_failed},
             "token_omitted": True,
         }

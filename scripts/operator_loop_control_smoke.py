@@ -201,6 +201,11 @@ def main() -> int:
             require(post_confirm["operator_action_receipts"] >= after["operator_action_receipts"] + 1, f"receipt not recorded: {after} -> {post_confirm}", failures)
             require(post_confirm["operator_action_evaluations"] >= after["operator_action_evaluations"] + 1, f"receipt evaluation not recorded: {after} -> {post_confirm}", failures)
             require((confirmed_payload.get("control_readback") or {}).get("cache_bypassed") is True, f"fast control readback missing cache proof: {confirmed_payload}", failures)
+            after_confirm_control = run_cli(["operator", "loop-control", "--limit", "5"], base_url, outputs)
+            after_confirm_payload = load_json(after_confirm_control.stdout)
+            after_confirm_selected = (((after_confirm_payload.get("work_order") or {}).get("advance_loop") or {}).get("selected_item") or {})
+            require(after_confirm_selected.get("gate_id") == "handoff", f"verified runtime-doctor receipt should advance loop-control to handoff: {after_confirm_payload}", failures)
+            require("operator handoff" in (after_confirm_selected.get("action_command") or ""), f"loop-control handoff command missing after verified receipt: {after_confirm_selected}", failures)
             require((confirmed_payload.get("safety") or {}).get("live_execution_performed") is False, f"fast advance performed live execution: {confirmed_payload}", failures)
 
             seed_loop_artifact(db_path, loop_id)
