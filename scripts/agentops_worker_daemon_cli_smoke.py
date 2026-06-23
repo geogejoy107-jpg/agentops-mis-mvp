@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -41,7 +42,16 @@ def require(condition: bool, message: str) -> None:
 
 
 def secret_leaked(text: str) -> bool:
-    return any(marker in text for marker in ["AGENTOPS_API_KEY", "Authorization:", "Bearer ", "agtok_", "agtsess_", "sk-", "ntn_"])
+    patterns = [
+        re.compile(r"AGENTOPS_API_KEY", re.IGNORECASE),
+        re.compile(r"Authorization:", re.IGNORECASE),
+        re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+"),
+        re.compile(r"agtok_[A-Za-z0-9_]+"),
+        re.compile(r"agtsess_[A-Za-z0-9_]+"),
+        re.compile(r"sk-[A-Za-z0-9]{8,}"),
+        re.compile(r"ntn_[A-Za-z0-9]{8,}"),
+    ]
+    return any(pattern.search(text) for pattern in patterns)
 
 
 def main() -> int:

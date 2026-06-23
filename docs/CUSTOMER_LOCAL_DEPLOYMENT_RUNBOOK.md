@@ -101,6 +101,12 @@ agentops worker restart --adapter mock
 agentops worker stop --adapter mock
 ```
 
+Repo-local worker daemon logs rotate on daemon start/restart when the active
+adapter log exceeds `AGENTOPS_WORKER_LOG_MAX_BYTES` (default 2 MiB). Keep up to
+`AGENTOPS_WORKER_LOG_BACKUPS` backups (default 5), or set either value to `0` to
+disable rotation. Installed launchd/systemd service logs still use the host log
+system configured in the service file.
+
 Hermes/OpenClaw require explicit live confirmation:
 
 ```bash

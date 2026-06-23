@@ -71,6 +71,7 @@ New ideas start as `Inbox` or `Proposed`. Only human-reviewed `Approved` or veri
 - In fast product-delivery mode, keep a compact commander board of running lanes, merged results, blockers, and next lane. Merge useful completed lane results immediately; do not wait for every subagent/check to finish before continuing safe mainline work.
 - Make the commander board explicit before any intentional wait during substantial product work, especially when Hermes/OpenClaw, CI, browser, or subagent lanes are running.
 - If two or more independent work items exist, start or continue another lane before waiting. Serial waiting is allowed only after recording the concrete blocker or no-safe-lane reason.
+- Preserve this async execution mode across resumes, context compaction, and heartbeat continuations; resumed threads should continue the active lane board instead of restarting into serial waiting.
 - Do not batch-close or parallel-close subagents for tidiness. Close only when resource limits require it, and never make cleanup the critical path while coding/verification can continue.
 - Do not let an Agent self-approve its own high-risk plan.
 - Keep plan, run, tool, approval, artifact, evaluation, and audit evidence linked.

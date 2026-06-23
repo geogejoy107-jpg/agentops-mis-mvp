@@ -124,6 +124,29 @@ def main() -> int:
         require(any("confirm-run" in item for item in hermes_payload.get("failures") or []), f"confirm-run failure missing: {hermes_payload}", failures)
         require(hermes_payload.get("live_execution_performed") is False, f"blocked Hermes control performed live execution: {hermes_payload}", failures)
 
+        openclaw_path = tmp_path / "local.agentops.worker.agt_service_control_openclaw.plist"
+        openclaw_path.write_text(service_template("agt_service_control_openclaw", adapter="openclaw", confirm_run=False), encoding="utf-8")
+        openclaw = run([
+            sys.executable,
+            "-m",
+            "agentops_mis_cli.worker",
+            "service-control",
+            "--manager",
+            "launchd",
+            "--action",
+            "restart",
+            "--agent-id",
+            "agt_service_control_openclaw",
+            "--adapter",
+            "openclaw",
+            "--service-path",
+            str(openclaw_path),
+        ])
+        openclaw_payload = parse_json(openclaw)
+        require(openclaw.returncode == 1, f"OpenClaw service without --confirm-run should fail: {openclaw_payload}", failures)
+        require(any("confirm-run" in item for item in openclaw_payload.get("failures") or []), f"OpenClaw confirm-run failure missing: {openclaw_payload}", failures)
+        require(openclaw_payload.get("live_execution_performed") is False, f"blocked OpenClaw control performed live execution: {openclaw_payload}", failures)
+
         unsafe_path = tmp_path / "unsafe.plist"
         fake_token = "agt" + "ok_fake_should_not_be_printed"
         unsafe_path.write_text(mock_path.read_text(encoding="utf-8") + f"\n<!-- {fake_token} -->\n", encoding="utf-8")
@@ -151,6 +174,7 @@ def main() -> int:
             "direct": direct_payload,
             "wrapper": wrapper_payload,
             "hermes": hermes_payload,
+            "openclaw": openclaw_payload,
             "unsafe": unsafe_payload,
         }, ensure_ascii=False)
         require(fake_token not in serialized, "service-control leaked raw token-like content", failures)
@@ -161,6 +185,7 @@ def main() -> int:
         "direct_preview_ok": not failures and direct_payload.get("dry_run"),
         "wrapper_preview_ok": not failures and wrapper_payload.get("dry_run"),
         "hermes_confirm_gate_blocked": hermes_payload.get("ok") is False,
+        "openclaw_confirm_gate_blocked": openclaw_payload.get("ok") is False,
         "unsafe_blocked": unsafe_payload.get("ok") is False,
         "failures": failures,
     }, ensure_ascii=False, indent=2, sort_keys=True))

@@ -84,10 +84,14 @@ def validate(payload: dict) -> None:
     require((lifecycle.get("safety") or {}).get("read_only") is True, f"synthesis lifecycle must be read-only: {lifecycle}")
     require(isinstance(payload.get("next_actions"), list), "next_actions must be a list")
     local_run_path = payload.get("local_run_path") or []
-    require(isinstance(local_run_path, list) and len(local_run_path) >= 6, f"local_run_path missing or too short: {local_run_path}")
+    require(isinstance(local_run_path, list) and len(local_run_path) >= 8, f"local_run_path missing or too short: {local_run_path}")
     step_ids = {step.get("step_id") for step in local_run_path}
-    for step_id in {"start_local_stack", "inspect_local_readiness", "select_worker_adapter", "start_selected_worker", "dispatch_customer_task", "verify_ledger_evidence"}:
+    for step_id in {"start_local_stack", "inspect_local_readiness", "select_worker_adapter", "start_selected_worker", "preview_worker_service_control", "dispatch_customer_task", "verify_ledger_evidence", "prove_live_product_readiness"}:
         require(step_id in step_ids, f"missing local run path step {step_id}: {local_run_path}")
+    service_step = next((step for step in local_run_path if step.get("step_id") == "preview_worker_service_control"), {})
+    require("service-control" in service_step.get("command", ""), f"service-control preview command missing: {service_step}")
+    require(service_step.get("service_control_preview") is True, f"service-control preview flag missing: {service_step}")
+    require(service_step.get("mutating") is False and service_step.get("live_execution") is False, f"service-control preview should be non-mutating: {service_step}")
     for step in local_run_path:
         require(step.get("command"), f"local run path step missing command: {step}")
         require(step.get("copy_only") is True, f"local run path step must be copy-only: {step}")

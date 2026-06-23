@@ -879,7 +879,7 @@ export function AIEmployees() {
       localReadinessSummary: "Read-only proof that this local MIS workspace can be operated without leaking tokens or triggering live work.",
       localReadinessOverall: "Overall status",
       localRunPathTitle: "Local run path",
-      localRunPathSummary: "Boot MIS, select Hermes/OpenClaw or mock, start a worker, dispatch work, and verify ledger evidence.",
+      localRunPathSummary: "Boot MIS, select Hermes/OpenClaw or mock, start a worker, preview service control, dispatch work, and verify ledger evidence.",
       evidenceChains: "Evidence chains",
       memoryApprovalCounts: "Memory / approvals",
       safetyProof: "Safety proof",
@@ -1417,7 +1417,7 @@ export function AIEmployees() {
       localReadinessSummary: "只读证明：这个本地 MIS 工作区可运行，同时不泄露 token，也不会触发真实执行。",
       localReadinessOverall: "整体状态",
       localRunPathTitle: "本地运行路径",
-      localRunPathSummary: "启动 MIS，选择 Hermes/OpenClaw 或 mock，启动 worker，分派任务，并验收账本证据。",
+      localRunPathSummary: "启动 MIS，选择 Hermes/OpenClaw 或 mock，启动 worker，预览服务控制，分派任务，并验收账本证据。",
       evidenceChains: "证据闭环",
       memoryApprovalCounts: "记忆 / 审批",
       safetyProof: "安全证明",
@@ -6194,7 +6194,7 @@ export function AIEmployees() {
                 <StatusBadge status={localRunPath.some(step => step.status === "blocked" || step.status === "action_required") ? "attention" : "pass"} label={String(localRunPath.length)} />
               </div>
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 mt-2">
-                {localRunPath.slice(0, 6).map((step) => (
+                {localRunPath.slice(0, 8).map((step) => (
                   <div key={step.step_id} className="rounded px-2 py-1.5 min-w-0" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
                     <div className="flex items-center justify-between gap-2">
                       <div className="min-w-0">

@@ -434,6 +434,7 @@ EXPECTED_MARKERS = {
     "local_run_path_copy_verify": "copyIntakeCommand(String(step.verify_command))",
     "local_run_path_no_server_shell": "step.server_executes_shell === false",
     "local_run_path_confirm_label": "step.confirm_required",
+    "local_run_path_render_eight": "localRunPath.slice(0, 8)",
     "verify_label_en": 'verifyAfterAction: "Verify"',
     "verify_label_zh": 'verifyAfterAction: "验收"',
     "verify_render": "{copy.verifyAfterAction}: {item.verifyAction}",
@@ -555,6 +556,9 @@ EXPECTED_SERVER_MARKERS = {
     "local_run_path_start_candidate": "candidate_start_worker_command",
     "local_run_path_confirm_run_gate": 'or "--confirm-run" in str(candidate_start_worker_command)',
     "local_run_path_live_fallback": "--confirm-run --poll-interval 5 --max-tasks 0",
+    "local_run_path_service_control_command": "service_control_command =",
+    "local_run_path_service_control_step": '"step_id": "preview_worker_service_control"',
+    "local_run_path_service_control_preview": '"service_control_preview": True',
 }
 
 FORBIDDEN_MARKERS = {

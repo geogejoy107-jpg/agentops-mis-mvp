@@ -167,7 +167,7 @@ Remaining product work:
 
 - OS service automatic relaunch is still explicit-operator only. v1.5 now has safe template generation through `agentops-worker service-template`, dry-run-by-default file installation through `agentops-worker service-install`, read-only diagnostics through `agentops-worker service-check`, and preview-first OS service load/unload/restart through `agentops-worker service-control` / `agentops worker service-control`; real launchd/systemd mutation requires `--confirm-control`.
 - Full automatic relaunch after process death.
-- Production log rotation.
+- Full production log management. v1.5 now rotates repo-local worker daemon logs on daemon start/restart using `AGENTOPS_WORKER_LOG_MAX_BYTES` and `AGENTOPS_WORKER_LOG_BACKUPS`; external launchd/systemd service logs still depend on the host log system.
 - Fleet-level worker management.
 
 ### 2. OpenClaw / Hermes Adapter Loop

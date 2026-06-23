@@ -12572,6 +12572,71 @@ def worker_runtime_path(adapter: str, suffix: str) -> Path:
     return WORKER_RUNTIME_DIR / f"{safe}.{suffix}"
 
 
+def worker_log_rotation_config() -> dict:
+    try:
+        max_bytes = int(os.environ.get("AGENTOPS_WORKER_LOG_MAX_BYTES", str(2 * 1024 * 1024)))
+    except Exception:
+        max_bytes = 2 * 1024 * 1024
+    try:
+        backups = int(os.environ.get("AGENTOPS_WORKER_LOG_BACKUPS", "5"))
+    except Exception:
+        backups = 5
+    max_bytes = max(0, min(max_bytes, 100 * 1024 * 1024))
+    backups = max(0, min(backups, 20))
+    return {
+        "max_bytes": max_bytes,
+        "backups": backups,
+        "enabled": bool(max_bytes > 0 and backups > 0),
+        "trigger": "daemon_start",
+    }
+
+
+def rotate_worker_log_if_needed(adapter: str) -> dict:
+    config = worker_log_rotation_config()
+    log_path = worker_runtime_path(adapter, "log")
+    result = {
+        **config,
+        "rotated": False,
+        "log_path": str(log_path),
+        "active_log_only": True,
+        "raw_content_omitted": True,
+        "token_omitted": True,
+    }
+    if not config["enabled"]:
+        result["reason"] = "disabled"
+        return result
+    if not log_path.exists():
+        result["reason"] = "missing"
+        return result
+    try:
+        current_size = log_path.stat().st_size
+        result["current_bytes"] = current_size
+        if current_size <= config["max_bytes"]:
+            result["reason"] = "below_threshold"
+            return result
+        oldest = Path(f"{log_path}.{config['backups']}")
+        if oldest.exists():
+            oldest.unlink()
+        for index in range(config["backups"] - 1, 0, -1):
+            src = Path(f"{log_path}.{index}")
+            dst = Path(f"{log_path}.{index + 1}")
+            if src.exists():
+                src.replace(dst)
+        log_path.replace(Path(f"{log_path}.1"))
+        result.update({
+            "rotated": True,
+            "reason": "size_threshold",
+            "rotated_to": f"{log_path}.1",
+        })
+        return result
+    except Exception as exc:
+        result.update({
+            "reason": "rotation_failed",
+            "error": redact_text(str(exc), 220),
+        })
+        return result
+
+
 def pid_is_alive(pid) -> bool:
     try:
         value = int(pid)
@@ -12638,6 +12703,7 @@ def read_worker_daemon(adapter: str, include_log: bool = False) -> dict:
         "max_tasks": meta.get("max_tasks"),
         "confirm_run": bool(meta.get("confirm_run")),
         "log_path": str(log_path),
+        "log_retention": worker_log_rotation_config(),
         "state_path": str(state_path),
         "worker_status": worker_status,
         "state_updated_at": state.get("updated_at"),
@@ -12796,8 +12862,11 @@ def start_local_worker_daemon(conn, body: dict) -> tuple[dict, int]:
     if adapter == "openclaw":
         cmd.extend(["--openclaw-bin", str(OPENCLAW_BIN), "--openclaw-timeout", str(int(body.get("openclaw_timeout") or 180))])
 
+    log_rotation = rotate_worker_log_if_needed(adapter)
     log_path = worker_runtime_path(adapter, "log")
     with log_path.open("a", encoding="utf-8") as log:
+        if log_rotation.get("rotated"):
+            log.write(f"[{now_iso()}] previous worker log rotated to {log_rotation.get('rotated_to')} ({log_rotation.get('current_bytes')} bytes)\n")
         log.write(f"\n[{now_iso()}] starting {' '.join(shlex.quote(part) for part in cmd)}\n")
         log.flush()
         proc = subprocess.Popen(cmd, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, start_new_session=True, close_fds=True)
@@ -12817,6 +12886,7 @@ def start_local_worker_daemon(conn, body: dict) -> tuple[dict, int]:
         "max_errors": max(int(body.get("max_errors") or 5), 1),
         "state_path": str(worker_runtime_path(adapter, "state.json")),
         "enforce_intake": enforce_intake,
+        "log_rotation": log_rotation,
     }
     worker_runtime_path(adapter, "json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
     runtime_event(conn, "rtc_agent_gateway_local", "worker.daemon.start", "running", agent_id=agent_id, output_summary=f"Started {adapter} local worker daemon pid={proc.pid}.")
@@ -17337,6 +17407,8 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
         if recommended_adapter == "mock" or "--confirm-run" in str(candidate_start_worker_command)
         else fallback_start_worker_command
     )
+    service_control_command = f"agentops worker service-control --manager launchd --action restart --adapter {recommended_adapter} --agent-id agt_worker_daemon_{recommended_adapter}"
+    service_control_verify_command = f"agentops worker service-check --manager launchd --adapter {recommended_adapter} --agent-id agt_worker_daemon_{recommended_adapter}"
     live_dispatch_command = (
         "agentops workflow customer-worker-task --adapter mock --title 'Local readiness demo' --description 'Verify full MIS evidence.'"
         if recommended_adapter == "mock"
@@ -17401,6 +17473,22 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
             "confirm_required": recommended_adapter in {"hermes", "openclaw"},
             "writes_ledger": False,
             "live_execution": recommended_adapter in {"hermes", "openclaw"},
+        },
+        {
+            "step_id": "preview_worker_service_control",
+            "label": f"Preview {recommended_adapter} service control",
+            "phase": "service",
+            "status": "preview",
+            "adapter": recommended_adapter,
+            "command": service_control_command,
+            "verify_command": service_control_verify_command,
+            "route": "/workspace/agents",
+            "detail": "Previews launchd/systemd load/unload/restart for installed workers; add --confirm-control only after local review.",
+            "mutating": False,
+            "confirm_required": True,
+            "writes_ledger": False,
+            "live_execution": False,
+            "service_control_preview": True,
         },
         {
             "step_id": "dispatch_customer_task",
