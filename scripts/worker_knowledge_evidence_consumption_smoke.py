@@ -171,6 +171,7 @@ def main() -> int:
     workspace = f"ws_worker_knowledge_{suffix}"
     agent_id = f"agt_worker_knowledge_{suffix}"
     token_id = None
+    no_knowledge_token_id = None
     proc: subprocess.Popen[str] | None = None
     with tempfile.TemporaryDirectory(prefix="agentops-worker-knowledge-") as tmp:
         db_path = Path(tmp) / "agentops_worker_knowledge.db"
@@ -282,6 +283,29 @@ def main() -> int:
             require(audit_meta.get("knowledge_retrieval_evidence_consumed") is True, f"audit metadata missing consumption proof: {audit_meta}", failures)
             require(bool(audit_meta.get("knowledge_retrieval_packet_hash")), f"audit metadata missing packet hash: {audit_meta}", failures)
 
+            status, evidence_report, raw = http_json(
+                base_url,
+                "/api/operator/evidence-report",
+                workspace=workspace,
+                query={"run_id": run_id, "limit": 5},
+            )
+            outputs.append(raw)
+            report_item = (evidence_report.get("runs") or [{}])[0]
+            report_knowledge = report_item.get("worker_knowledge_retrieval") or {}
+            report_summary = evidence_report.get("summary") or {}
+            report_checks = {item.get("id"): item for item in report_item.get("checks") or []}
+            require(status == 200 and evidence_report.get("operation") == "operator_evidence_report", f"evidence report failed: {status} {evidence_report}", failures)
+            require(report_knowledge.get("status") == "ready", f"evidence report missing worker knowledge readiness: {report_knowledge}", failures)
+            require(report_knowledge.get("consumed_tool_calls") == 1, f"evidence report consumed count wrong: {report_knowledge}", failures)
+            require(bool(report_knowledge.get("packet_hashes")), f"evidence report missing packet hashes: {report_knowledge}", failures)
+            require(bool(report_knowledge.get("query_hashes")), f"evidence report missing query hashes: {report_knowledge}", failures)
+            require(report_knowledge.get("raw_query_omitted") is True, f"evidence report raw query omission missing: {report_knowledge}", failures)
+            require(report_knowledge.get("raw_content_omitted") is True, f"evidence report raw content omission missing: {report_knowledge}", failures)
+            require((report_checks.get("worker_knowledge_retrieval") or {}).get("ok") is True, f"evidence report quality gate did not pass: {report_checks}", failures)
+            require(int(report_summary.get("worker_runs") or 0) >= 1, f"evidence summary missing worker run count: {report_summary}", failures)
+            require(int(report_summary.get("worker_knowledge_retrieval_ready") or 0) >= 1, f"evidence summary missing worker knowledge ready count: {report_summary}", failures)
+            require(int(report_summary.get("worker_knowledge_retrieval_missing") or 0) == 0, f"evidence summary should not report missing worker knowledge: {report_summary}", failures)
+
             referenced_specs = db_json_field(db_path, "SELECT referenced_specs_json FROM agent_plans WHERE plan_id=?", (plan_id,))
             referenced_memories = db_json_field(db_path, "SELECT referenced_memories_json FROM agent_plans WHERE plan_id=?", (plan_id,))
             require(len(referenced_specs) >= 3, f"plan missing referenced specs: {referenced_specs}", failures)
@@ -292,6 +316,8 @@ def main() -> int:
                 "tool_args": tool_args,
                 "rubric": rubric,
                 "audit_meta": audit_meta,
+                "report_knowledge": report_knowledge,
+                "report_summary": report_summary,
             }
             raw_key_hits = forbidden_raw_key_paths(scoped_payload)
             require(not raw_key_hits, f"raw fields leaked in evidence metadata: {raw_key_hits}", failures)
@@ -304,9 +330,120 @@ def main() -> int:
             ])
             leak_labels = secret_leak_labels(leak_scope_text)
             require(not leak_labels, f"worker knowledge evidence smoke leaked token-like material categories: {leak_labels}", failures)
+
+            no_knowledge_agent_id = f"agt_worker_no_knowledge_{suffix}"
+            status, no_knowledge_enrollment, raw = http_json(base_url, "/api/agent-gateway/enrollment/create", "POST", {
+                "workspace_id": workspace,
+                "agent_id": no_knowledge_agent_id,
+                "name": "Worker Missing Knowledge Evidence Gate Smoke",
+                "runtime_type": "mock",
+                "scopes": [
+                    "agents:write",
+                    "agents:heartbeat",
+                    "agent_plans:read",
+                    "agent_plans:write",
+                    "plan_evidence:read",
+                    "plan_evidence:write",
+                    "tasks:create",
+                    "tasks:read",
+                    "tasks:claim",
+                    "runs:write",
+                    "runtime_events:write",
+                    "toolcalls:write",
+                    "artifacts:write",
+                    "memories:propose",
+                    "evaluations:submit",
+                    "audit:write",
+                ],
+                "ttl_days": 1,
+            })
+            require(status == 201, f"no-knowledge enrollment failed: {status} {no_knowledge_enrollment}", failures)
+            no_knowledge_token = no_knowledge_enrollment.get("token")
+            no_knowledge_token_id = no_knowledge_enrollment.get("token_id")
+            require(bool(no_knowledge_token), f"no-knowledge token missing: {no_knowledge_enrollment}", failures)
+
+            status, missing_task, raw = http_json(base_url, "/api/agent-gateway/tasks", "POST", {
+                "workspace_id": workspace,
+                "title": f"Worker missing knowledge evidence task {suffix}",
+                "description": "The worker can execute, but missing knowledge:read scope must fail the knowledge retrieval quality gate.",
+                "acceptance_criteria": "Run/tool/audit evidence is written, while evaluation and operator evidence mark retrieval evidence unavailable.",
+                "risk_level": "medium",
+            }, token=no_knowledge_token, workspace=workspace)
+            outputs.append(raw)
+            missing_task_id = missing_task.get("task_id")
+            require(status == 201 and bool(missing_task_id), f"missing-knowledge task create failed: {status} {missing_task}", failures)
+
+            missing_worker = run_worker(base_url, no_knowledge_token or "", workspace, no_knowledge_agent_id, missing_task_id or "")
+            outputs.extend([missing_worker.stdout, missing_worker.stderr])
+            require(missing_worker.returncode == 0, f"missing-knowledge worker failed: {missing_worker.returncode} {missing_worker.stderr or missing_worker.stdout}", failures)
+            missing_worker_payload = json.loads(missing_worker.stdout or "{}")
+            missing_result = next((row for row in missing_worker_payload.get("results") or [] if row.get("processed")), {})
+            missing_run_id = missing_result.get("run_id")
+            missing_worker_evidence = missing_result.get("knowledge_retrieval_evidence") or {}
+            require(bool(missing_run_id), f"missing-knowledge worker result missing run: {missing_worker_payload}", failures)
+            require(missing_result.get("ok") is True, f"missing-knowledge adapter should still complete: {missing_result}", failures)
+            require(missing_worker_evidence.get("consumed") is False, f"missing-knowledge evidence should not be consumed: {missing_worker_evidence}", failures)
+            require(missing_worker_evidence.get("status") == "unavailable", f"missing-knowledge evidence should be unavailable: {missing_worker_evidence}", failures)
+            require(missing_worker_evidence.get("raw_prompt_omitted") is True, f"missing-knowledge raw prompt omission missing: {missing_worker_evidence}", failures)
+            require(missing_result.get("plan_evidence_pass") is not True, f"missing-knowledge manifest should not pass quality gate: {missing_result}", failures)
+
+            status, missing_run_detail, raw = http_json(base_url, f"/api/runs/{missing_run_id}")
+            outputs.append(raw)
+            require(status == 200, f"missing-knowledge run detail failed: {status} {missing_run_detail}", failures)
+            missing_tool = next((item for item in (missing_run_detail.get("tool_calls") or []) if item.get("tool_name") == "agent_worker.mock"), {})
+            missing_tool_args = parse_json_field(missing_tool.get("normalized_args_json"))
+            missing_eval = (missing_run_detail.get("evaluations") or [{}])[0]
+            missing_rubric = parse_json_field(missing_eval.get("rubric_json") or missing_eval.get("rubric"))
+            require(missing_tool_args.get("knowledge_retrieval_evidence_consumed") is False, f"missing-knowledge tool args should show no consumption: {missing_tool_args}", failures)
+            require(missing_tool_args.get("knowledge_retrieval_status") == "unavailable", f"missing-knowledge tool status should be unavailable: {missing_tool_args}", failures)
+            require(missing_eval.get("pass_fail") == "fail", f"missing-knowledge evaluation should fail: {missing_eval}", failures)
+            require(missing_rubric.get("requires_knowledge_retrieval_evidence") is True, f"missing-knowledge rubric missing required evidence flag: {missing_rubric}", failures)
+            require(missing_rubric.get("knowledge_retrieval_gate_pass") is False, f"missing-knowledge rubric should fail gate: {missing_rubric}", failures)
+            require(missing_rubric.get("knowledge_retrieval_gate_status") == "unavailable", f"missing-knowledge rubric wrong status: {missing_rubric}", failures)
+            require(missing_rubric.get("quality_gate_pass") is False, f"missing-knowledge quality gate should fail: {missing_rubric}", failures)
+
+            status, missing_report, raw = http_json(
+                base_url,
+                "/api/operator/evidence-report",
+                workspace=workspace,
+                query={"run_id": missing_run_id, "limit": 5},
+            )
+            outputs.append(raw)
+            missing_report_item = (missing_report.get("runs") or [{}])[0]
+            missing_report_knowledge = missing_report_item.get("worker_knowledge_retrieval") or {}
+            missing_report_summary = missing_report.get("summary") or {}
+            missing_report_checks = {item.get("id"): item for item in missing_report_item.get("checks") or []}
+            require(status == 200 and missing_report.get("operation") == "operator_evidence_report", f"missing-knowledge evidence report failed: {status} {missing_report}", failures)
+            require(missing_report.get("status") in {"attention", "blocked"}, f"missing-knowledge report should not be ready: {missing_report}", failures)
+            require(missing_report_knowledge.get("status") == "unavailable", f"missing-knowledge report should mark unavailable: {missing_report_knowledge}", failures)
+            require((missing_report_checks.get("worker_knowledge_retrieval") or {}).get("ok") is False, f"missing-knowledge report quality gate should fail: {missing_report_checks}", failures)
+            require(int(missing_report_summary.get("worker_knowledge_retrieval_unavailable") or 0) >= 1, f"missing-knowledge summary missing unavailable count: {missing_report_summary}", failures)
+
+            missing_scoped_payload = {
+                "worker_evidence": missing_worker_evidence,
+                "tool_args": missing_tool_args,
+                "rubric": missing_rubric,
+                "report_knowledge": missing_report_knowledge,
+                "report_summary": missing_report_summary,
+            }
+            missing_raw_key_hits = forbidden_raw_key_paths(missing_scoped_payload)
+            require(not missing_raw_key_hits, f"raw fields leaked in missing-knowledge metadata: {missing_raw_key_hits}", failures)
+            missing_leak_scope_text = "\n".join([
+                missing_worker.stdout,
+                missing_worker.stderr,
+                json.dumps(missing_scoped_payload, ensure_ascii=False),
+                json.dumps(missing_run_detail, ensure_ascii=False),
+            ])
+            missing_leak_labels = secret_leak_labels(missing_leak_scope_text)
+            require(not missing_leak_labels, f"missing-knowledge smoke leaked token-like material categories: {missing_leak_labels}", failures)
         except Exception as exc:
             failures.append(f"unexpected exception: {type(exc).__name__}: {exc}")
         finally:
+            if no_knowledge_token_id:
+                try:
+                    http_json(base_url, "/api/agent-gateway/enrollment/revoke", "POST", {"token_id": no_knowledge_token_id})
+                except Exception:
+                    pass
             if token_id:
                 try:
                     http_json(base_url, "/api/agent-gateway/enrollment/revoke", "POST", {"token_id": token_id})

@@ -750,7 +750,26 @@ def fetch_worker_knowledge_evidence(client: AgentOpsClient, task: dict) -> dict:
             "limit": 5,
             "baseline_limit": 5,
         })
-        return compact_worker_knowledge_evidence(packet)
+        compact = compact_worker_knowledge_evidence(packet)
+        if compact.get("knowledge_retrieval_evidence_consumed"):
+            return compact
+        try:
+            indexed = client.post("/api/agent-gateway/knowledge/index", {"rebuild": False})
+            packet = client.get("/api/agent-gateway/knowledge/evidence-packet", {
+                "q": query,
+                "limit": 5,
+                "baseline_limit": 5,
+            })
+            compact = compact_worker_knowledge_evidence(packet)
+            compact["knowledge_index_attempted"] = True
+            compact["knowledge_index_status"] = indexed.get("status") or indexed.get("operation")
+            compact["knowledge_indexed_documents"] = indexed.get("indexed")
+            return compact
+        except Exception as index_exc:
+            compact["knowledge_index_attempted"] = True
+            compact["knowledge_index_status"] = "unavailable"
+            compact["knowledge_index_error"] = redact_text(str(index_exc), 220)
+            return compact
     except Exception as exc:
         return {
             "operation": "worker_knowledge_retrieval_evidence",
@@ -1002,18 +1021,37 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
         "error_type": result.error_type,
         "error_message": result.error_message,
     })
+    knowledge_gate_pass = bool(knowledge_evidence.get("knowledge_retrieval_evidence_consumed"))
+    knowledge_gate_status = (
+        "pass"
+        if knowledge_gate_pass
+        else "unavailable"
+        if (knowledge_evidence.get("packet_status") or knowledge_evidence.get("status")) == "unavailable"
+        else "missing"
+    )
+    evaluation_pass = bool(result.ok and knowledge_gate_pass)
+    if evaluation_pass:
+        evaluation_notes = "Worker adapter loop completed with compact knowledge retrieval evidence."
+    elif result.ok:
+        evaluation_notes = "Worker adapter loop completed but failed quality gate: knowledge retrieval evidence was unavailable or missing."
+    else:
+        evaluation_notes = f"Worker adapter loop failed: {result.error_type}"
     eval_payload = client.post("/api/agent-gateway/evaluations/submit", {
         "workspace_id": client.workspace_id,
         "run_id": run_id,
         "task_id": task_id,
         "agent_id": client.agent_id,
         "evaluator_type": "rule",
-        "score": 1.0 if result.ok else 0.0,
-        "pass_fail": "pass" if result.ok else "fail",
+        "score": 1.0 if evaluation_pass else 0.0,
+        "pass_fail": "pass" if evaluation_pass else "fail",
         "rubric": {
             "gate": "worker_adapter_loop",
             "adapter": args.adapter,
             "requires_completed_run": True,
+            "requires_knowledge_retrieval_evidence": True,
+            "knowledge_retrieval_gate_pass": knowledge_gate_pass,
+            "knowledge_retrieval_gate_status": knowledge_gate_status,
+            "quality_gate_pass": evaluation_pass,
             "raw_prompt_response_omitted": True,
             "attempt_count": result.attempt_count,
             "max_attempts": result.max_attempts,
@@ -1037,7 +1075,7 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
             },
             **secret_boundary,
         },
-        "notes": "Worker adapter loop completed." if result.ok else f"Worker adapter loop failed: {result.error_type}",
+        "notes": evaluation_notes,
     })
     evaluation_id = (eval_payload.get("evaluation") or {}).get("evaluation_id")
     artifact_payload = client.post("/api/agent-gateway/artifacts", {

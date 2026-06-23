@@ -73,7 +73,7 @@ The current connectors cannot edit ChatGPT Project Instructions. The project own
 - Confirmed the Notion Control Center, Project Ledger, views, seed entries, and Docs SOP exist.
 - Strict release verification has confirmed that PR #1's required checks are green on the exact current HEAD when `merge_readiness_status_smoke.py --require-ready-to-merge` passes.
 - P1-06a Knowledge Retrieval Evidence Packet is guarded by `scripts/knowledge_retrieval_evidence_packet_smoke.py`, `scripts/knowledge_retrieval_quality_smoke.py`, `scripts/agent_gateway_knowledge_scope_smoke.py`, and `scripts/operator_loop_launch_packet_smoke.py`.
-- P1-06b worker consumption evidence is guarded by `scripts/worker_knowledge_evidence_consumption_smoke.py`: `agentops-worker` reads the compact packet before adapter execution, passes safe packet/query hashes into the prompt hash, references retrieved paths in the Agent Plan, and writes only compact retrieval ids/paths/source hashes/metrics into tool/evaluation/audit metadata.
+- P1-06b/P1-06c worker consumption evidence is guarded by `scripts/worker_knowledge_evidence_consumption_smoke.py`: `agentops-worker` reads the compact packet before adapter execution, passes safe packet/query hashes into the prompt hash, references retrieved paths in the Agent Plan, and writes only compact retrieval ids/paths/source hashes/metrics into tool/evaluation/audit metadata. Authorized workers may safely build the local knowledge index and retry packet retrieval; if a worker lacks `knowledge:read` or retrieval is unavailable, the adapter run/tool/audit can still be recorded, but the worker evaluation and plan-evidence quality gate fail and Operator Evidence Report marks worker knowledge retrieval `unavailable`/`attention`.
 
 ## Next Single Action
 

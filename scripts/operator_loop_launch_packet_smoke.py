@@ -290,10 +290,23 @@ def validate_brief(payload: dict, label: str, task_id: str, agent_id: str, adapt
     require("agentops operator loop-control --limit 8" in (payload.get("commands") or []), f"{label} loop-control command missing: {payload}", failures)
     require("agentops operator advance-loop --fast-control --limit 8" in (payload.get("commands") or []), f"{label} fast advance command missing: {payload}", failures)
     require(any("agentops local readiness" == str(command) for command in (payload.get("commands") or [])), f"{label} local readiness command missing: {payload}", failures)
+    require(any("--require-current-code" in str(command) for command in (payload.get("commands") or [])), f"{label} current-code command missing: {payload}", failures)
     require(any("service-control" in str(command) for command in (payload.get("commands") or [])), f"{label} service-control preview command missing: {payload}", failures)
+    summary = payload.get("summary") or {}
+    require(summary.get("current_code_ok") is True, f"{label} current-code summary should be ready: {summary}", failures)
+    require(summary.get("current_code_status") == "current", f"{label} current-code status should be current: {summary}", failures)
     local_run_path = payload.get("local_run_path") or {}
     require(local_run_path.get("operation") == "local_run_path_compact", f"{label} local run path missing: {local_run_path}", failures)
     require(len(local_run_path.get("steps") or []) >= 8, f"{label} local run path too short: {local_run_path}", failures)
+    current_code_gate = local_run_path.get("current_code_gate") or {}
+    require(current_code_gate.get("operation") == "local_current_code_gate", f"{label} current-code gate missing: {local_run_path}", failures)
+    require(current_code_gate.get("ok") is True and current_code_gate.get("current") is True, f"{label} current-code gate should pass: {current_code_gate}", failures)
+    require(current_code_gate.get("status") == "current", f"{label} current-code gate should report current: {current_code_gate}", failures)
+    require("--require-current-code" in str(current_code_gate.get("command") or ""), f"{label} current-code command missing: {current_code_gate}", failures)
+    require("--expect-head-sha" in str(current_code_gate.get("strict_command") or ""), f"{label} strict current-code command missing expected head: {current_code_gate}", failures)
+    require("repo_root" not in current_code_gate, f"{label} current-code gate should not expose repo root: {current_code_gate}", failures)
+    require((current_code_gate.get("safety") or {}).get("read_only") is True, f"{label} current-code gate read-only proof missing: {current_code_gate}", failures)
+    require((current_code_gate.get("safety") or {}).get("server_executes_shell") is False, f"{label} current-code gate server-shell boundary missing: {current_code_gate}", failures)
     service_step = local_run_path.get("service_control_preview") or {}
     require(service_step.get("step_id") == "preview_worker_service_control", f"{label} service-control local step missing: {local_run_path}", failures)
     require("service-control" in str(service_step.get("command") or ""), f"{label} service-control command wrong: {service_step}", failures)

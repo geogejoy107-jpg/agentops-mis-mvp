@@ -167,6 +167,8 @@ def smoke(base_url: str, stamp: str) -> dict:
             "scopes": [
                 "agents:write",
                 "agents:heartbeat",
+                "knowledge:read",
+                "knowledge:write",
                 "agent_plans:read",
                 "agent_plans:write",
                 "plan_evidence:read",

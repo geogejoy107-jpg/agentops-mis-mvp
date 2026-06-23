@@ -6,11 +6,14 @@ import argparse
 import json
 import os
 import re
+import socket
+import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
@@ -26,6 +29,20 @@ SECRET_PATTERNS = [
     re.compile(r"ntn_[A-Za-z0-9_-]{16,}"),
     re.compile(r"AGENTOPS_API_KEY\s*=", re.IGNORECASE),
 ]
+LEDGER_TABLES = [
+    "tasks",
+    "runs",
+    "tool_calls",
+    "runtime_events",
+    "evaluations",
+    "audit_logs",
+    "artifacts",
+    "approvals",
+    "memories",
+    "agent_plans",
+    "plan_evidence_manifests",
+    "workflow_jobs",
+]
 
 
 def require(condition: bool, message: str) -> None:
@@ -35,6 +52,41 @@ def require(condition: bool, message: str) -> None:
 
 def leaked_secret(text: str) -> bool:
     return any(pattern.search(text) for pattern in SECRET_PATTERNS)
+
+
+def free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def wait_ready(base_url: str, proc: subprocess.Popen[str]) -> None:
+    deadline = time.time() + 45
+    last_error = ""
+    while time.time() < deadline:
+        if proc.poll() is not None:
+            raise RuntimeError(f"server exited early with code {proc.returncode}")
+        try:
+            status, payload = http_json(base_url, "/api/local/readiness")
+            if status == 200 and payload.get("operation") == "local_readiness":
+                return
+        except URLError as exc:
+            last_error = str(exc)
+        time.sleep(0.5)
+    raise RuntimeError(f"server did not become ready: {last_error}")
+
+
+def db_counts(db_path: Path) -> dict[str, int]:
+    conn = sqlite3.connect(db_path)
+    try:
+        counts: dict[str, int] = {}
+        for table in LEDGER_TABLES:
+            exists = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
+            if exists:
+                counts[table] = int(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] or 0)
+        return counts
+    finally:
+        conn.close()
 
 
 def run_start_check(base_url: str, adapter: str, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
@@ -81,6 +133,7 @@ def validate(payload: dict, adapter: str) -> None:
     for gate_id in {
         "local_readiness",
         "worker_connection_policy",
+        "current_code_gate",
         "adapter_preflight",
         "runtime_doctor",
         "loop_launch_brief",
@@ -103,9 +156,19 @@ def validate(payload: dict, adapter: str) -> None:
     steps = local_run_path.get("steps") or []
     require(len(steps) >= 8, f"local run path too short: {local_run_path}")
     require((local_run_path.get("safety") or {}).get("server_executes_shell") is False, f"local run path safety missing: {local_run_path}")
+    current_code_gate = local_run_path.get("current_code_gate") or {}
+    require(current_code_gate.get("operation") == "local_current_code_gate", f"current-code gate missing: {local_run_path}")
+    require(current_code_gate.get("ok") is True and current_code_gate.get("current") is True, f"current-code gate should pass: {current_code_gate}")
+    require(current_code_gate.get("status") == "current", f"current-code gate should be current: {current_code_gate}")
+    require("--require-current-code" in str(current_code_gate.get("command") or ""), f"current-code command missing: {current_code_gate}")
+    require("--expect-head-sha" in str(current_code_gate.get("strict_command") or ""), f"strict current-code command missing expected head: {current_code_gate}")
+    require("repo_root" not in current_code_gate, f"current-code gate should not expose repo root: {current_code_gate}")
+    require((current_code_gate.get("safety") or {}).get("read_only") is True, f"current-code read-only proof missing: {current_code_gate}")
+    require((current_code_gate.get("safety") or {}).get("server_executes_shell") is False, f"current-code server-shell boundary missing: {current_code_gate}")
     launch_brief = payload.get("launch_brief") or {}
     require(launch_brief.get("operation") == "operator_loop_launch_brief", f"launch brief missing: {launch_brief}")
     require((launch_brief.get("safety") or {}).get("read_only") is True, f"launch brief read-only proof missing: {launch_brief}")
+    require((launch_brief.get("summary") or {}).get("current_code_ok") is True, f"launch brief current-code proof missing: {launch_brief}")
     required_ledgers = ((launch_brief.get("summary") or {}).get("required_ledgers") or [])
     require("memories" in required_ledgers, f"launch brief missing memories ledger: {launch_brief}")
     require("memory_review" in required_ledgers, f"launch brief missing memory review gate: {launch_brief}")
@@ -140,11 +203,14 @@ def validate(payload: dict, adapter: str) -> None:
     require((acceptance_packet.get("safety") or {}).get("ledger_mutated") is False, f"acceptance ledger proof missing: {acceptance_packet}")
     require((acceptance_packet.get("safety") or {}).get("server_executes_shell") is False, f"acceptance server shell proof missing: {acceptance_packet}")
     require(packet_decision.get("agent_plan_required") is True, f"acceptance agent-plan gate missing: {acceptance_packet}")
+    require(packet_decision.get("current_code_required") is True, f"acceptance current-code requirement missing: {acceptance_packet}")
+    require(packet_decision.get("current_code_ok") is True, f"acceptance current-code proof missing: {acceptance_packet}")
     require(packet_decision.get("knowledge_search_required") is True, f"acceptance knowledge gate missing: {acceptance_packet}")
     require(packet_decision.get("base_compare_required") is True, f"acceptance base gate missing: {acceptance_packet}")
     require(packet_decision.get("receipt_required") is True, f"acceptance receipt gate missing: {acceptance_packet}")
     require(isinstance(packet_summary.get("attention_gates"), list), f"acceptance attention gates missing: {acceptance_packet}")
     require(str(packet_commands.get("start_check") or "").startswith(f"agentops operator start-check --adapter {adapter}"), f"acceptance start-check command missing: {acceptance_packet}")
+    require("--require-current-code" in str(packet_commands.get("current_code_check") or ""), f"acceptance current-code command missing: {acceptance_packet}")
     require(str(packet_commands.get("loop_driver_preview") or "").startswith(f"agentops operator loop-driver --adapter {adapter}"), f"acceptance loop-driver preview missing: {acceptance_packet}")
     require("--confirm-loop" in str(packet_commands.get("loop_driver_confirm") or ""), f"acceptance confirm-loop missing: {acceptance_packet}")
     require(str(packet_commands.get("review_queue") or "").startswith("agentops review queue"), f"acceptance review command missing: {acceptance_packet}")
@@ -160,9 +226,10 @@ def validate(payload: dict, adapter: str) -> None:
     require(agent_loop_packet.get("current_phase") in {"preview", "blocked"}, f"agent loop phase mismatch: {agent_loop_packet}")
     require({"read", "plan", "retrieve", "compare", "preflight", "execute", "verify", "record"}.issubset(agent_loop_phases), f"agent loop phases missing: {agent_loop_packet}")
     require({"read", "plan", "retrieve", "compare", "preflight", "execute", "verify", "record"}.issubset(set(agent_loop_phase_commands)), f"agent loop phase command map missing: {agent_loop_packet}")
-    require({"read_start_check", "plan_agent_plan", "retrieve_knowledge", "compare_base_reference", "preflight_adapter", "execute_bounded_loop", "verify_loop", "record_memory_candidate"}.issubset(method_gate_ids), f"agent loop method gates missing: {agent_loop_packet}")
+    require({"read_start_check", "read_current_code", "plan_agent_plan", "retrieve_knowledge", "compare_base_reference", "preflight_adapter", "execute_bounded_loop", "verify_loop", "record_memory_candidate"}.issubset(method_gate_ids), f"agent loop method gates missing: {agent_loop_packet}")
     require(all(gate.get("token_omitted") is True for gate in method_gates), f"agent loop method gate token proof missing: {agent_loop_packet}")
     require(str(agent_loop_commands.get("start_check") or "").startswith(f"agentops operator start-check --adapter {adapter}"), f"agent loop start-check missing: {agent_loop_packet}")
+    require("--require-current-code" in str(agent_loop_commands.get("current_code_check") or ""), f"agent loop current-code command missing: {agent_loop_packet}")
     require(str(agent_loop_commands.get("agent_plan_create") or "").startswith("agentops agent-plan create"), f"agent loop plan command missing: {agent_loop_packet}")
     require(str(agent_loop_commands.get("knowledge_search") or "").startswith("agentops knowledge search"), f"agent loop knowledge command missing: {agent_loop_packet}")
     require(str(agent_loop_commands.get("base_reference") or "").startswith("agentops commander repo-map"), f"agent loop base-reference command missing: {agent_loop_packet}")
@@ -178,30 +245,35 @@ def validate(payload: dict, adapter: str) -> None:
     admission = admission_packet.get("admission") or {}
     deployment = admission_packet.get("local_deployment") or {}
     service_preview = deployment.get("service_control_preview") or {}
+    admission_current_code = deployment.get("current_code_gate") or {}
     worker_start = deployment.get("worker_start") or {}
     customer_dispatch = deployment.get("customer_worker_dispatch") or {}
     admission_commands = admission_packet.get("commands") or {}
     require(admission_packet.get("operation") == "operator_local_loop_admission_packet", f"admission packet missing: {admission_packet}")
     require(admission_packet.get("adapter") == adapter, f"admission adapter mismatch: {admission_packet}")
     require(admission.get("method_gate_count") >= 8, f"admission method gates missing: {admission_packet}")
+    require(admission.get("current_code_ok") is True, f"admission current-code proof missing: {admission_packet}")
     require(set(method_gate_ids).issubset(set(admission_packet.get("required_method_gates") or [])), f"admission gate ids mismatch: {admission_packet}")
     require({"read", "plan", "retrieve", "compare", "preflight", "execute", "verify", "record"}.issubset(set(admission_packet.get("phase_commands") or {})), f"admission phase commands missing: {admission_packet}")
     require(service_preview.get("preview_only") is True, f"service-control preview proof missing: {admission_packet}")
     require(service_preview.get("server_executes_shell") is False, f"service-control server shell proof missing: {admission_packet}")
     require(str(admission_commands.get("service_check") or "").startswith("agentops worker service-check"), f"service-check command missing: {admission_packet}")
+    require("--require-current-code" in str(admission_commands.get("current_code_check") or ""), f"admission current-code command missing: {admission_packet}")
+    require(admission_current_code.get("operation") == "local_current_code_gate", f"admission current-code deployment proof missing: {admission_packet}")
     require(str(admission_commands.get("preview_loop") or "").startswith(f"agentops operator loop-driver --adapter {adapter}"), f"admission preview command missing: {admission_packet}")
     require((admission_packet.get("safety") or {}).get("read_only") is True, f"admission read-only proof missing: {admission_packet}")
     require((admission_packet.get("safety") or {}).get("ledger_mutated") is False, f"admission ledger proof missing: {admission_packet}")
     require((admission_packet.get("safety") or {}).get("server_executes_shell") is False, f"admission server shell proof missing: {admission_packet}")
     require(admission_packet.get("live_execution_performed") is False, f"admission live proof missing: {admission_packet}")
     next_commands = payload.get("next_commands") or []
-    require(any("operator loop-launch-packet" in command for command in next_commands), f"launch command missing: {next_commands}")
-    require(any("operator loop-driver" in command for command in next_commands), f"loop-driver command missing: {next_commands}")
-    require(any("review queue" in command for command in next_commands), f"review queue command missing: {next_commands}")
+    require(any("--require-current-code" in str(command) for command in next_commands), f"current-code next command missing: {next_commands}")
+    require(any("operator loop-launch-packet" in str(command) for command in next_commands), f"launch command missing: {next_commands}")
+    require(any("operator loop-driver" in str(command) for command in next_commands), f"loop-driver command missing: {next_commands}")
+    require(any("review queue" in str(command) for command in next_commands), f"review queue command missing: {next_commands}")
     if adapter in {"hermes", "openclaw"}:
         summary = payload.get("summary") or {}
         require(summary.get("requires_confirm_run") is True, f"live adapter confirm proof missing: {summary}")
-        require(any("--confirm-loop" in command for command in next_commands), f"confirm loop command missing: {next_commands}")
+        require(any("--confirm-loop" in str(command) for command in next_commands), f"confirm loop command missing: {next_commands}")
         require(packet_decision.get("live_dispatch_requires_confirm_run") is True, f"acceptance confirm-run wall missing: {acceptance_packet}")
         require(str(packet_commands.get("execution_mode_confirm") or "").endswith("--confirm-run"), f"acceptance execution-mode confirm missing: {acceptance_packet}")
         require(str(packet_commands.get("live_product_readiness") or "").endswith(f"--require-adapter {adapter}"), f"acceptance live readiness command missing: {acceptance_packet}")
@@ -219,28 +291,62 @@ def main() -> int:
     outputs: list[str] = []
     try:
         with tempfile.TemporaryDirectory(prefix="agentops-start-check-") as tmp:
+            db_path = Path(tmp) / "agentops_mis.db"
+            port = free_port()
+            default_base_url = parser.get_default("base_url")
+            base_url = args.base_url
+            owns_server = args.base_url == default_base_url
             env = os.environ.copy()
             env["AGENTOPS_CONFIG"] = str(Path(tmp) / "config.json")
+            if owns_server:
+                base_url = f"http://127.0.0.1:{port}"
+                env["AGENTOPS_BASE_URL"] = base_url
+                env["AGENTOPS_DB_PATH"] = str(db_path)
+                env["AGENTOPS_SKIP_SEED_EXPORTS"] = "1"
             env.pop("AGENTOPS_API_KEY", None)
-            checked = []
-            for adapter in (args.adapter or ["mock"]):
-                api_status, api_payload = http_json(args.base_url, "/api/operator/start-check", {"adapter": adapter, "limit": "4"})
-                outputs.append(json.dumps(api_payload, ensure_ascii=False))
-                require(api_status == 200, f"operator start-check API failed for {adapter}: {api_status} {api_payload}")
-                validate(api_payload, adapter)
-                proc = run_start_check(args.base_url, adapter, env)
-                outputs.extend([proc.stdout, proc.stderr])
-                require(proc.returncode == 0, f"operator start-check failed for {adapter}: {proc.stderr or proc.stdout}")
-                payload = json.loads(proc.stdout)
-                validate(payload, adapter)
-                require(payload.get("operation") == api_payload.get("operation"), f"CLI/API operation mismatch for {adapter}")
-                require(payload.get("adapter") == api_payload.get("adapter"), f"CLI/API adapter mismatch for {adapter}")
-                checked.append({"adapter": adapter, "api_status": api_payload.get("status"), "cli_status": payload.get("status")})
+            server_proc: subprocess.Popen[str] | None = None
+            if owns_server:
+                server_proc = subprocess.Popen(
+                    [sys.executable, "server.py", "--host", "127.0.0.1", "--port", str(port), "--reset", "--serve"],
+                    cwd=ROOT,
+                    env=env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+                wait_ready(base_url, server_proc)
+            try:
+                before = db_counts(db_path) if owns_server else {}
+                checked = []
+                for adapter in (args.adapter or ["mock", "hermes", "openclaw"]):
+                    api_status, api_payload = http_json(base_url, "/api/operator/start-check", {"adapter": adapter, "limit": "4"})
+                    outputs.append(json.dumps(api_payload, ensure_ascii=False))
+                    require(api_status == 200, f"operator start-check API failed for {adapter}: {api_status} {api_payload}")
+                    validate(api_payload, adapter)
+                    proc = run_start_check(base_url, adapter, env)
+                    outputs.extend([proc.stdout, proc.stderr])
+                    require(proc.returncode == 0, f"operator start-check failed for {adapter}: {proc.stderr or proc.stdout}")
+                    payload = json.loads(proc.stdout)
+                    validate(payload, adapter)
+                    require(payload.get("operation") == api_payload.get("operation"), f"CLI/API operation mismatch for {adapter}")
+                    require(payload.get("adapter") == api_payload.get("adapter"), f"CLI/API adapter mismatch for {adapter}")
+                    checked.append({"adapter": adapter, "api_status": api_payload.get("status"), "cli_status": payload.get("status")})
+                after = db_counts(db_path) if owns_server else {}
+                require(not owns_server or before == after, f"operator start-check CLI mutated ledger counts: before={before} after={after}")
+            finally:
+                if server_proc is not None:
+                    server_proc.terminate()
+                    try:
+                        server_proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        server_proc.kill()
+                        server_proc.wait(timeout=5)
         require(not leaked_secret("\n".join(outputs)), "operator start-check leaked token-like material")
         print(json.dumps({
             "ok": True,
             "operation": "operator_start_check_smoke",
             "checked": checked,
+            "ledger_mutated": False,
             "secret_leaked": False,
         }, ensure_ascii=False, indent=2, sort_keys=True))
         return 0

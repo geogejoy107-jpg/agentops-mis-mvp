@@ -28,7 +28,7 @@ from urllib.request import Request, urlopen
 
 from agentops_mis_cli.advance_loop_policy import advance_loop_command_policy, advance_loop_policy_summary
 from agentops_mis_cli.redaction import redact_text
-from agentops_mis_core.operator_start_check import operator_agent_loop_packet
+from agentops_mis_core.operator_start_check import compact_start_check_local_run_path, operator_agent_loop_packet
 
 
 DEFAULT_BASE_URL = "http://127.0.0.1:8787"
@@ -816,28 +816,11 @@ def compact_loop_launch_packet(payload: dict, *, adapter: str, local_readiness: 
         "agentops operator action-receipts --limit 20",
     ]
     local_readiness = local_readiness if isinstance(local_readiness, dict) else {}
-    local_steps = local_readiness.get("local_run_path") if isinstance(local_readiness.get("local_run_path"), list) else []
-    compact_local_steps = []
-    for step in local_steps[:8]:
-        if not isinstance(step, dict):
-            continue
-        compact_local_steps.append({
-            "step_id": step.get("step_id"),
-            "phase": step.get("phase"),
-            "status": step.get("status"),
-            "adapter": step.get("adapter"),
-            "command": step.get("command"),
-            "verify_command": step.get("verify_command"),
-            "confirm_required": bool(step.get("confirm_required")),
-            "writes_ledger": bool(step.get("writes_ledger")),
-            "live_execution": bool(step.get("live_execution")),
-            "service_control_preview": bool(step.get("service_control_preview")),
-            "copy_only": step.get("copy_only", True) is not False,
-            "server_executes_shell": bool(step.get("server_executes_shell")),
-            "token_omitted": step.get("token_omitted", True) is not False,
-        })
-    service_step = next((step for step in compact_local_steps if step.get("step_id") == "preview_worker_service_control"), {})
-    local_run_path_commands = [str(step.get("command") or "").strip() for step in compact_local_steps if str(step.get("command") or "").strip()]
+    local_run_path = compact_start_check_local_run_path(local_readiness)
+    compact_local_steps = local_run_path.get("steps") if isinstance(local_run_path.get("steps"), list) else []
+    service_step = local_run_path.get("service_control_preview") if isinstance(local_run_path.get("service_control_preview"), dict) else {}
+    current_code_gate = local_run_path.get("current_code_gate") if isinstance(local_run_path.get("current_code_gate"), dict) else {}
+    local_run_path_commands = local_run_path.get("commands") if isinstance(local_run_path.get("commands"), list) else []
     return {
         "provider": payload.get("provider", "agentops-operator"),
         "operation": "operator_loop_launch_brief",
@@ -868,6 +851,8 @@ def compact_loop_launch_packet(payload: dict, *, adapter: str, local_readiness: 
             "workflow_job_recovery_retryable_failed_jobs": workflow_recovery_summary.get("retryable_failed_jobs"),
             "workflow_job_recovery_receipt_missing": workflow_recovery_summary.get("receipt_missing"),
             "local_readiness_status": local_readiness.get("status"),
+            "current_code_status": current_code_gate.get("status"),
+            "current_code_ok": current_code_gate.get("ok"),
             "local_run_path_steps": len(compact_local_steps),
             "local_run_path_recommended_adapter": (local_readiness.get("summary") or {}).get("recommended_adapter") if isinstance(local_readiness.get("summary"), dict) else None,
             "service_control_preview": bool(service_step),
@@ -879,24 +864,7 @@ def compact_loop_launch_packet(payload: dict, *, adapter: str, local_readiness: 
         "live_run_command": live_run_command,
         "readback_commands": readback_commands,
         "runtime_doctor_command": "agentops operator runtime-doctor --limit 8",
-        "local_run_path": {
-            "operation": "local_run_path_compact",
-            "source_operation": local_readiness.get("operation") or "local_readiness",
-            "status": local_readiness.get("status"),
-            "recommended_adapter": (local_readiness.get("summary") or {}).get("recommended_adapter") if isinstance(local_readiness.get("summary"), dict) else None,
-            "steps": compact_local_steps,
-            "commands": local_run_path_commands[:8],
-            "service_control_preview": service_step or None,
-            "contract": "copy-only local boot/readiness/worker/service/dispatch/verify path; commands are for the operator or agent shell to copy, not for server-side shell execution",
-            "safety": {
-                "read_only": True,
-                "ledger_mutated": False,
-                "live_execution_performed": False,
-                "server_executes_shell": False,
-                "token_omitted": True,
-            },
-            "token_omitted": True,
-        },
+        "local_run_path": local_run_path,
         "workflow_job_recovery": {
             "operation": workflow_recovery.get("operation"),
             "status": workflow_recovery.get("status"),
@@ -4298,7 +4266,7 @@ def build_parser() -> argparse.ArgumentParser:
     enroll_create.add_argument("--name", default="Remote Agent")
     enroll_create.add_argument("--role", default="Remote AI Digital Employee")
     enroll_create.add_argument("--runtime", default="mock")
-    enroll_create.add_argument("--scopes", default="agents:write,agents:heartbeat,knowledge:read,agent_plans:read,agent_plans:write,plan_evidence:read,plan_evidence:write,tasks:create,tasks:read,tasks:claim,runs:write,runtime_events:write,toolcalls:write,artifacts:write,approvals:request,memories:propose,evaluations:submit,audit:write")
+    enroll_create.add_argument("--scopes", default="agents:write,agents:heartbeat,knowledge:read,knowledge:write,agent_plans:read,agent_plans:write,plan_evidence:read,plan_evidence:write,tasks:create,tasks:read,tasks:claim,runs:write,runtime_events:write,toolcalls:write,artifacts:write,approvals:request,memories:propose,evaluations:submit,audit:write")
     enroll_create.add_argument("--ttl-days", type=int, default=30)
     enroll_create.add_argument("--heartbeat-timeout-sec", type=int, default=300)
     enroll_create.add_argument("--label", default="")
@@ -4310,7 +4278,7 @@ def build_parser() -> argparse.ArgumentParser:
     enroll_request.add_argument("--name", default="Remote Agent")
     enroll_request.add_argument("--role", default="Remote AI Digital Employee")
     enroll_request.add_argument("--runtime", default="mock")
-    enroll_request.add_argument("--scopes", default="agents:heartbeat,knowledge:read,agent_plans:read,agent_plans:write,plan_evidence:read,plan_evidence:write,tasks:create,tasks:read,tasks:claim,runs:write,runtime_events:write,toolcalls:write,artifacts:write,memories:propose,evaluations:submit,audit:write")
+    enroll_request.add_argument("--scopes", default="agents:heartbeat,knowledge:read,knowledge:write,agent_plans:read,agent_plans:write,plan_evidence:read,plan_evidence:write,tasks:create,tasks:read,tasks:claim,runs:write,runtime_events:write,toolcalls:write,artifacts:write,memories:propose,evaluations:submit,audit:write")
     enroll_request.add_argument("--reason", default="Remote worker needs scoped access to process assigned MIS tasks.")
     enroll_request.set_defaults(handler="enrollment_request")
 

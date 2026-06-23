@@ -138,9 +138,19 @@ def validate_payload(payload: dict, adapter: str, failures: list[str]) -> None:
     steps = local_run_path.get("steps") or []
     require(len(steps) >= 8, f"{adapter} local run path too short: {local_run_path}", failures)
     require((local_run_path.get("safety") or {}).get("server_executes_shell") is False, f"{adapter} local run path safety missing", failures)
+    current_code_gate = local_run_path.get("current_code_gate") or {}
+    require(current_code_gate.get("operation") == "local_current_code_gate", f"{adapter} current-code gate missing: {local_run_path}", failures)
+    require(current_code_gate.get("ok") is True and current_code_gate.get("current") is True, f"{adapter} current-code gate should pass: {current_code_gate}", failures)
+    require(current_code_gate.get("status") == "current", f"{adapter} current-code gate should be current: {current_code_gate}", failures)
+    require("--require-current-code" in str(current_code_gate.get("command") or ""), f"{adapter} current-code command missing: {current_code_gate}", failures)
+    require("--expect-head-sha" in str(current_code_gate.get("strict_command") or ""), f"{adapter} strict current-code command missing expected head: {current_code_gate}", failures)
+    require("repo_root" not in current_code_gate, f"{adapter} current-code gate should not expose repo root: {current_code_gate}", failures)
+    require((current_code_gate.get("safety") or {}).get("read_only") is True, f"{adapter} current-code read-only proof missing: {current_code_gate}", failures)
+    require((current_code_gate.get("safety") or {}).get("server_executes_shell") is False, f"{adapter} current-code server-shell boundary missing: {current_code_gate}", failures)
     launch_brief = payload.get("launch_brief") or {}
     require(launch_brief.get("operation") == "operator_loop_launch_brief", f"{adapter} launch brief missing: {launch_brief}", failures)
     require((launch_brief.get("safety") or {}).get("read_only") is True, f"{adapter} launch brief read-only proof missing: {launch_brief}", failures)
+    require((launch_brief.get("summary") or {}).get("current_code_ok") is True, f"{adapter} launch brief current-code proof missing: {launch_brief}", failures)
     loop_driver = payload.get("loop_driver_entry") or {}
     loop_commands = loop_driver.get("commands") or {}
     review_snapshot = loop_driver.get("review_snapshot") or {}
@@ -172,11 +182,14 @@ def validate_payload(payload: dict, adapter: str, failures: list[str]) -> None:
     require((acceptance_packet.get("safety") or {}).get("ledger_mutated") is False, f"{adapter} acceptance ledger proof missing: {acceptance_packet}", failures)
     require((acceptance_packet.get("safety") or {}).get("server_executes_shell") is False, f"{adapter} acceptance server-shell proof missing: {acceptance_packet}", failures)
     require(packet_decision.get("agent_plan_required") is True, f"{adapter} acceptance agent-plan gate missing: {acceptance_packet}", failures)
+    require(packet_decision.get("current_code_required") is True, f"{adapter} acceptance current-code requirement missing: {acceptance_packet}", failures)
+    require(packet_decision.get("current_code_ok") is True, f"{adapter} acceptance current-code proof missing: {acceptance_packet}", failures)
     require(packet_decision.get("knowledge_search_required") is True, f"{adapter} acceptance knowledge gate missing: {acceptance_packet}", failures)
     require(packet_decision.get("base_compare_required") is True, f"{adapter} acceptance base gate missing: {acceptance_packet}", failures)
     require(packet_decision.get("receipt_required") is True, f"{adapter} acceptance receipt gate missing: {acceptance_packet}", failures)
     require(isinstance(packet_summary.get("attention_gates"), list), f"{adapter} acceptance attention gates missing: {acceptance_packet}", failures)
     require(str(packet_commands.get("start_check") or "").startswith(f"agentops operator start-check --adapter {adapter}"), f"{adapter} acceptance start-check command missing: {acceptance_packet}", failures)
+    require("--require-current-code" in str(packet_commands.get("current_code_check") or ""), f"{adapter} acceptance current-code command missing: {acceptance_packet}", failures)
     require(str(packet_commands.get("loop_driver_preview") or "").startswith(f"agentops operator loop-driver --adapter {adapter}"), f"{adapter} acceptance loop-driver preview missing: {acceptance_packet}", failures)
     require("--confirm-loop" in str(packet_commands.get("loop_driver_confirm") or ""), f"{adapter} acceptance confirm-loop missing: {acceptance_packet}", failures)
     require(str(packet_commands.get("review_queue") or "").startswith("agentops review queue"), f"{adapter} acceptance review command missing: {acceptance_packet}", failures)
@@ -192,9 +205,10 @@ def validate_payload(payload: dict, adapter: str, failures: list[str]) -> None:
     require(agent_loop_packet.get("current_phase") in {"preview", "blocked"}, f"{adapter} agent loop phase mismatch: {agent_loop_packet}", failures)
     require({"read", "plan", "retrieve", "compare", "preflight", "execute", "verify", "record"}.issubset(agent_loop_phases), f"{adapter} agent loop phases missing: {agent_loop_packet}", failures)
     require({"read", "plan", "retrieve", "compare", "preflight", "execute", "verify", "record"}.issubset(set(agent_loop_phase_commands)), f"{adapter} phase command map missing: {agent_loop_packet}", failures)
-    require({"read_start_check", "plan_agent_plan", "retrieve_knowledge", "compare_base_reference", "preflight_adapter", "execute_bounded_loop", "verify_loop", "record_memory_candidate"}.issubset(method_gate_ids), f"{adapter} method gates missing: {agent_loop_packet}", failures)
+    require({"read_start_check", "read_current_code", "plan_agent_plan", "retrieve_knowledge", "compare_base_reference", "preflight_adapter", "execute_bounded_loop", "verify_loop", "record_memory_candidate"}.issubset(method_gate_ids), f"{adapter} method gates missing: {agent_loop_packet}", failures)
     require(all(gate.get("token_omitted") is True for gate in method_gates), f"{adapter} method gate token proof missing: {agent_loop_packet}", failures)
     require(str(agent_loop_commands.get("start_check") or "").startswith(f"agentops operator start-check --adapter {adapter}"), f"{adapter} agent loop start-check missing: {agent_loop_packet}", failures)
+    require("--require-current-code" in str(agent_loop_commands.get("current_code_check") or ""), f"{adapter} agent loop current-code command missing: {agent_loop_packet}", failures)
     require(str(agent_loop_commands.get("agent_plan_create") or "").startswith("agentops agent-plan create"), f"{adapter} agent loop plan command missing: {agent_loop_packet}", failures)
     require(str(agent_loop_commands.get("knowledge_search") or "").startswith("agentops knowledge search"), f"{adapter} agent loop knowledge command missing: {agent_loop_packet}", failures)
     require(str(agent_loop_commands.get("base_reference") or "").startswith("agentops commander repo-map"), f"{adapter} agent loop base-reference command missing: {agent_loop_packet}", failures)
@@ -209,6 +223,7 @@ def validate_payload(payload: dict, adapter: str, failures: list[str]) -> None:
     admission_packet = payload.get("local_loop_admission_packet") or {}
     admission = admission_packet.get("admission") or {}
     deployment = admission_packet.get("local_deployment") or {}
+    admission_current_code = deployment.get("current_code_gate") or {}
     service_preview = deployment.get("service_control_preview") or {}
     worker_start = deployment.get("worker_start") or {}
     customer_dispatch = deployment.get("customer_worker_dispatch") or {}
@@ -216,17 +231,21 @@ def validate_payload(payload: dict, adapter: str, failures: list[str]) -> None:
     require(admission_packet.get("operation") == "operator_local_loop_admission_packet", f"{adapter} admission packet missing: {admission_packet}", failures)
     require(admission_packet.get("adapter") == adapter, f"{adapter} admission adapter mismatch: {admission_packet}", failures)
     require(admission.get("method_gate_count") >= 8, f"{adapter} admission method gates missing: {admission_packet}", failures)
+    require(admission.get("current_code_ok") is True, f"{adapter} admission current-code proof missing: {admission_packet}", failures)
     require(set(method_gate_ids).issubset(set(admission_packet.get("required_method_gates") or [])), f"{adapter} admission gate ids mismatch: {admission_packet}", failures)
     require({"read", "plan", "retrieve", "compare", "preflight", "execute", "verify", "record"}.issubset(set(admission_packet.get("phase_commands") or {})), f"{adapter} admission phase commands missing: {admission_packet}", failures)
     require(service_preview.get("preview_only") is True, f"{adapter} service-control preview proof missing: {admission_packet}", failures)
     require(service_preview.get("server_executes_shell") is False, f"{adapter} service-control server-shell proof missing: {admission_packet}", failures)
     require(str(admission_commands.get("service_check") or "").startswith("agentops worker service-check"), f"{adapter} service-check command missing: {admission_packet}", failures)
+    require("--require-current-code" in str(admission_commands.get("current_code_check") or ""), f"{adapter} admission current-code command missing: {admission_packet}", failures)
+    require(admission_current_code.get("operation") == "local_current_code_gate", f"{adapter} admission current-code deployment proof missing: {admission_packet}", failures)
     require(str(admission_commands.get("preview_loop") or "").startswith(f"agentops operator loop-driver --adapter {adapter}"), f"{adapter} admission preview command missing: {admission_packet}", failures)
     require((admission_packet.get("safety") or {}).get("read_only") is True, f"{adapter} admission read-only proof missing: {admission_packet}", failures)
     require((admission_packet.get("safety") or {}).get("ledger_mutated") is False, f"{adapter} admission ledger proof missing: {admission_packet}", failures)
     require((admission_packet.get("safety") or {}).get("server_executes_shell") is False, f"{adapter} admission server-shell proof missing: {admission_packet}", failures)
     require(admission_packet.get("live_execution_performed") is False, f"{adapter} admission live proof missing: {admission_packet}", failures)
     commands = payload.get("next_commands") or []
+    require(any("--require-current-code" in str(command) for command in commands), f"{adapter} current-code next command missing: {commands}", failures)
     require(any("operator loop-launch-packet" in str(command) for command in commands), f"{adapter} launch command missing: {commands}", failures)
     require(any("operator loop-driver" in str(command) for command in commands), f"{adapter} loop-driver command missing: {commands}", failures)
     require(any("review queue" in str(command) for command in commands), f"{adapter} review queue command missing: {commands}", failures)

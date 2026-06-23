@@ -2555,6 +2555,8 @@ AGENT_GATEWAY_OBSERVER_SCOPES = {
 AGENT_GATEWAY_WORKER_WRITE_SCOPES = {
     "agent_plans:write",
     "plan_evidence:write",
+    "knowledge:read",
+    "knowledge:write",
     "tasks:create",
     "tasks:claim",
     "runs:write",
@@ -2613,6 +2615,8 @@ def agent_gateway_enrollment_policy_preview(body) -> tuple[dict, int]:
     missing_worker_scopes = [
         scope for scope in [
             "agents:heartbeat",
+            "knowledge:read",
+            "knowledge:write",
             "tasks:read",
             "tasks:claim",
             "runs:write",
@@ -3144,10 +3148,11 @@ def agent_gateway_create_enrollment(conn, body) -> tuple[dict, int]:
     scopes = parse_scope_list(body.get("scopes") or body.get("allowed_scopes") or [
         "agents:write",
         "agents:heartbeat",
-        "knowledge:read",
-        "agent_plans:read",
-        "agent_plans:write",
-        "plan_evidence:read",
+            "knowledge:read",
+            "knowledge:write",
+            "agent_plans:read",
+            "agent_plans:write",
+            "plan_evidence:read",
         "plan_evidence:write",
         "tasks:create",
         "tasks:read",
@@ -3216,10 +3221,11 @@ def agent_gateway_request_enrollment(conn, body) -> tuple[dict, int]:
     runtime_type = coerce_choice(body.get("runtime_type") or body.get("runtime"), VALID_RUNTIME_TYPES, "mock")
     scopes = parse_scope_list(body.get("scopes") or body.get("allowed_scopes") or [
         "agents:heartbeat",
-        "knowledge:read",
-        "agent_plans:read",
-        "agent_plans:write",
-        "plan_evidence:read",
+            "knowledge:read",
+            "knowledge:write",
+            "agent_plans:read",
+            "agent_plans:write",
+            "plan_evidence:read",
         "plan_evidence:write",
         "tasks:create",
         "tasks:read",
@@ -19357,6 +19363,97 @@ def operator_run_memory_review(conn: sqlite3.Connection, run_id: str | None, tas
     return build_operator_run_memory_review(rows)
 
 
+def operator_run_worker_knowledge_retrieval(conn: sqlite3.Connection, run_id: str | None) -> dict:
+    if not run_id:
+        return {
+            "applicable": False,
+            "status": "not_applicable",
+            "worker_tool_calls": 0,
+            "consumed_tool_calls": 0,
+            "token_omitted": True,
+        }
+    rows = conn.execute(
+        """SELECT tool_call_id, tool_name, status, normalized_args_json
+        FROM tool_calls
+        WHERE run_id=? AND tool_name LIKE 'agent_worker.%'
+        ORDER BY created_at DESC""",
+        (run_id,),
+    ).fetchall()
+    items = []
+    for row in rows:
+        try:
+            args = json.loads(row["normalized_args_json"] or "{}")
+        except json.JSONDecodeError:
+            args = {}
+        omissions = args.get("knowledge_retrieval_omissions") if isinstance(args.get("knowledge_retrieval_omissions"), dict) else {}
+        metrics = args.get("knowledge_retrieval_metrics") if isinstance(args.get("knowledge_retrieval_metrics"), dict) else {}
+        item = {
+            "tool_call_id": row["tool_call_id"],
+            "tool_name": row["tool_name"],
+            "tool_status": row["status"],
+            "consumed": bool(args.get("knowledge_retrieval_evidence_consumed")),
+            "packet_hash": args.get("knowledge_retrieval_packet_hash"),
+            "query_hash": args.get("knowledge_retrieval_query_hash"),
+            "retrieval_status": args.get("knowledge_retrieval_status"),
+            "retrieval_ids": args.get("knowledge_retrieval_ids") if isinstance(args.get("knowledge_retrieval_ids"), list) else [],
+            "source_hashes": args.get("knowledge_retrieval_source_hashes") if isinstance(args.get("knowledge_retrieval_source_hashes"), list) else [],
+            "paths": args.get("knowledge_retrieval_paths") if isinstance(args.get("knowledge_retrieval_paths"), list) else [],
+            "metrics": {
+                "recall_at_5": metrics.get("recall_at_5"),
+                "mrr": metrics.get("mrr"),
+                "p95_ms": metrics.get("p95_ms"),
+                "fallback_queries": metrics.get("fallback_queries"),
+            },
+            "omissions": {
+                "query_omitted": omissions.get("query_omitted") is True,
+                "snippet_omitted": omissions.get("snippet_omitted") is True,
+                "raw_content_omitted": omissions.get("raw_content_omitted") is True,
+                "raw_prompt_omitted": omissions.get("raw_prompt_omitted") is True,
+                "raw_response_omitted": omissions.get("raw_response_omitted") is True,
+                "token_omitted": omissions.get("token_omitted") is True,
+            },
+            "token_omitted": True,
+        }
+        items.append(item)
+    applicable = bool(items)
+    ready_items = [
+        item for item in items
+        if item.get("consumed")
+        and item.get("packet_hash")
+        and item.get("query_hash")
+        and all((item.get("omissions") or {}).values())
+    ]
+    unavailable_items = [item for item in items if item.get("retrieval_status") == "unavailable"]
+    status = (
+        "not_applicable"
+        if not applicable
+        else "ready"
+        if ready_items
+        else "unavailable"
+        if unavailable_items
+        else "missing"
+    )
+    return {
+        "applicable": applicable,
+        "status": status,
+        "worker_tool_calls": len(items),
+        "consumed_tool_calls": len(ready_items),
+        "missing_tool_calls": max(len(items) - len(ready_items), 0),
+        "packet_hashes": [item.get("packet_hash") for item in ready_items if item.get("packet_hash")],
+        "query_hashes": [item.get("query_hash") for item in ready_items if item.get("query_hash")],
+        "retrieval_ids": [rid for item in ready_items for rid in (item.get("retrieval_ids") or [])],
+        "source_hashes": [source_hash for item in ready_items for source_hash in (item.get("source_hashes") or [])],
+        "paths": [path for item in ready_items for path in (item.get("paths") or [])],
+        "items": items[:5],
+        "raw_query_omitted": True,
+        "snippet_omitted": True,
+        "raw_content_omitted": True,
+        "raw_prompt_omitted": True,
+        "raw_response_omitted": True,
+        "token_omitted": True,
+    }
+
+
 def operator_run_evidence_item(conn: sqlite3.Connection, run: sqlite3.Row) -> dict:
     run_id = run["run_id"]
     task_id = run["task_id"]
@@ -19374,6 +19471,7 @@ def operator_run_evidence_item(conn: sqlite3.Connection, run: sqlite3.Row) -> di
         (run_id,),
     ).fetchall())
     memory_review = operator_run_memory_review(conn, run_id, task_id)
+    worker_knowledge_retrieval = operator_run_worker_knowledge_retrieval(conn, run_id)
     gap_decision = latest_execution_evidence_gap_decision(conn, run_id)
     checks = [
         {"id": "agent_plan_bound", "ok": bool(run["agent_plan_id"] and run["plan_hash"]), "message": "Run is bound to an Agent Plan and plan_hash."},
@@ -19388,6 +19486,11 @@ def operator_run_evidence_item(conn: sqlite3.Connection, run: sqlite3.Row) -> di
         {"id": "evaluation_evidence", "ok": int(counts.get("evaluations") or 0) > 0, "message": "Run has evaluation evidence."},
         {"id": "artifact_evidence", "ok": int(counts.get("artifacts") or 0) > 0, "message": "Run or task has artifact evidence."},
         {"id": "audit_evidence", "ok": int(counts.get("audit_logs") or 0) > 0, "message": "Run/task chain has audit evidence."},
+        {
+            "id": "worker_knowledge_retrieval",
+            "ok": not worker_knowledge_retrieval.get("applicable") or worker_knowledge_retrieval.get("status") == "ready",
+            "message": "Agent worker runs consume compact knowledge retrieval evidence before adapter execution.",
+        },
         {"id": "memory_review_recorded", "ok": int(memory_review.get("total") or 0) > 0, "message": "Run/task has a memory candidate or reviewed memory row."},
         {"id": "memory_review_resolved", "ok": int(memory_review.get("pending_review") or 0) == 0, "message": "Run/task memory rows are approved/rejected/superseded rather than pending candidate/stale review."},
         {"id": "approval_queue_clear", "ok": not any(item.get("decision") == "pending" for item in approvals), "message": "Run has no pending approval rows."},
@@ -19438,6 +19541,7 @@ def operator_run_evidence_item(conn: sqlite3.Connection, run: sqlite3.Row) -> di
             "verification_pass": bool(manifest_verification and manifest_verification.get("pass")),
             "failed_check_ids": [check.get("id") for check in (manifest_verification or {}).get("failed_checks") or []],
         },
+        "worker_knowledge_retrieval": worker_knowledge_retrieval,
         "memory_review": memory_review,
         "approvals": {
             "count": len(approvals),
@@ -23428,6 +23532,7 @@ def operator_start_check(conn: sqlite3.Connection, headers, qs=None, auth_ctx=No
     local_summary = local.get("summary") if isinstance(local.get("summary"), dict) else {}
     local_steps = local_run_path.get("steps") if isinstance(local_run_path.get("steps"), list) else []
     service_step = local_run_path.get("service_control_preview") if isinstance(local_run_path.get("service_control_preview"), dict) else None
+    current_code_gate = local_run_path.get("current_code_gate") if isinstance(local_run_path.get("current_code_gate"), dict) else {}
     launch_summary = launch_brief.get("summary") if isinstance(launch_brief.get("summary"), dict) else {}
     live_ok = True if adapter == "mock" else bool(live_product and live_product.get("product_readiness_proof") is True)
 
@@ -23446,6 +23551,18 @@ def operator_start_check(conn: sqlite3.Connection, headers, qs=None, auth_ctx=No
             ok=worker_policy_server_shell is False and worker_policy_token_omitted is not False,
             detail=f"status={worker_policy.get('status') or worker_policy.get('mode') or worker_policy.get('schema') or 'reported'}; server_executes_shell={worker_policy_server_shell}",
             command="agentops worker readiness",
+        ),
+        operator_start_check_gate(
+            "current_code_gate",
+            label="Current-code runtime gate",
+            ok=current_code_gate.get("ok") is True,
+            status="pass" if current_code_gate.get("ok") is True else "blocked",
+            detail=(
+                f"server_status={current_code_gate.get('status')}; "
+                f"head={current_code_gate.get('git_head_short') or 'unknown'}; "
+                f"latest_source={current_code_gate.get('latest_source_path') or 'unknown'}"
+            ),
+            command=current_code_gate.get("strict_command") or current_code_gate.get("command") or "agentops local readiness --require-current-code",
         ),
         operator_start_check_gate(
             "adapter_preflight",
@@ -23513,6 +23630,7 @@ def operator_start_check(conn: sqlite3.Connection, headers, qs=None, auth_ctx=No
 
     next_commands = [
         "agentops local readiness",
+        current_code_gate.get("strict_command") or current_code_gate.get("command") or "agentops local readiness --require-current-code",
         "agentops worker readiness",
         f"agentops worker preflight --adapter {adapter}",
         "agentops operator runtime-doctor --limit 8",
@@ -23601,6 +23719,8 @@ def operator_start_check(conn: sqlite3.Connection, headers, qs=None, auth_ctx=No
             "loop_driver_pending_approvals": ((loop_driver_entry.get("review_snapshot") or {}).get("summary") or {}).get("pending_approvals", 0),
             "loop_driver_memory_candidates": ((loop_driver_entry.get("review_snapshot") or {}).get("summary") or {}).get("memory_candidates", 0),
             "local_run_path_steps": len(local_steps),
+            "current_code_status": current_code_gate.get("status"),
+            "current_code_ok": current_code_gate.get("ok"),
             "service_control_preview": bool(service_step),
             "live_product_readiness": None if live_product is None else bool(live_product.get("product_readiness_proof")),
             "requires_confirm_run": adapter in {"hermes", "openclaw"},

@@ -155,8 +155,21 @@ def operator_agent_loop_packet(
     readiness_commands = adapter_readiness.get("commands") if isinstance(adapter_readiness.get("commands"), dict) else {}
     launch_commands = launch_brief.get("commands") if isinstance(launch_brief.get("commands"), dict) else {}
     launch_summary = launch_brief.get("summary") if isinstance(launch_brief.get("summary"), dict) else {}
+    launch_local_path = launch_brief.get("local_run_path") if isinstance(launch_brief.get("local_run_path"), dict) else {}
+    current_code_gate = launch_local_path.get("current_code_gate") if isinstance(launch_local_path.get("current_code_gate"), dict) else {}
+    current_code_command = (
+        acceptance_commands.get("current_code_check")
+        or current_code_gate.get("strict_command")
+        or current_code_gate.get("command")
+        or "agentops local readiness --require-current-code"
+    )
+    current_code_ok = acceptance_decision.get("current_code_ok") is not False and current_code_gate.get("ok") is not False
     review_summary = review_snapshot.get("summary") if isinstance(review_snapshot.get("summary"), dict) else {}
-    can_confirm = acceptance_decision.get("can_confirm_bounded_loop") is True and acceptance_safety.get("server_executes_shell") is False
+    can_confirm = (
+        current_code_ok
+        and acceptance_decision.get("can_confirm_bounded_loop") is True
+        and acceptance_safety.get("server_executes_shell") is False
+    )
     review_attention = bool(
         int(review_summary.get("review_items_total") or 0)
         or int(review_summary.get("pending_approvals") or 0)
@@ -186,6 +199,14 @@ def operator_agent_loop_packet(
             "command": acceptance_commands.get("start_check") or f"agentops operator start-check --adapter {adapter} --limit 8",
             "gate_id": "start_check",
             "description": "read start-check acceptance packet before local loop work",
+            "token_omitted": True,
+        },
+        {
+            "phase": "read",
+            "status": "ready" if current_code_ok else "blocked",
+            "command": current_code_command,
+            "gate_id": "current_code_check",
+            "description": "fail closed when the connected MIS process is older than the current checkout",
             "token_omitted": True,
         },
         {
@@ -257,8 +278,17 @@ def operator_agent_loop_packet(
             "phase": "read",
             "required": True,
             "status": "ready",
-            "command": phase_commands.get("read"),
+            "command": acceptance_commands.get("start_check") or f"agentops operator start-check --adapter {adapter} --limit 8",
             "proof": "operator start-check acceptance packet is the first read before local loop work",
+            "token_omitted": True,
+        },
+        {
+            "id": "read_current_code",
+            "phase": "read",
+            "required": True,
+            "status": "ready" if current_code_ok else "blocked",
+            "command": current_code_command,
+            "proof": "Hermes/OpenClaw/Codex must verify the local MIS process matches current backend source before planning or dispatch",
             "token_omitted": True,
         },
         {
@@ -339,6 +369,7 @@ def operator_agent_loop_packet(
         "method_gates": method_gates,
         "commands": {
             "start_check": acceptance_commands.get("start_check") or f"agentops operator start-check --adapter {adapter} --limit 8",
+            "current_code_check": current_code_command,
             "agent_plan_create": phase_commands.get("plan"),
             "knowledge_search": phase_commands.get("retrieve"),
             "base_reference": phase_commands.get("compare"),
@@ -354,6 +385,7 @@ def operator_agent_loop_packet(
             "acceptance": acceptance_gate.get("status"),
             "adapter_readiness": adapter_readiness.get("status") or adapter_readiness.get("readiness"),
             "launch_brief": launch_brief.get("status"),
+            "current_code": "ready" if current_code_ok else "blocked",
             "record_review": review_snapshot.get("status"),
             "control_status": launch_summary.get("control_status"),
             "server_executes_shell": acceptance_safety.get("server_executes_shell") is True,
@@ -371,6 +403,53 @@ def operator_agent_loop_packet(
         },
         "token_omitted": True,
         "live_execution_performed": False,
+    }
+
+
+def compact_runtime_current_code_gate(local: dict[str, Any]) -> dict[str, Any]:
+    runtime = local.get("running_instance") if isinstance(local.get("running_instance"), dict) else {}
+    readiness_gates = local.get("gates") if isinstance(local.get("gates"), list) else []
+    source_gate = next(
+        (gate for gate in readiness_gates if isinstance(gate, dict) and gate.get("id") == "running_instance_freshness"),
+        {},
+    )
+    git_head = str(runtime.get("git_head_sha") or "")
+    command = _safe_text(source_gate.get("next_action") or "agentops local readiness --require-current-code", 700)
+    strict_command = command
+    if git_head and "--expect-head-sha" not in strict_command:
+        strict_command = f"{strict_command} --expect-head-sha {shlex.quote(git_head)}"
+    has_runtime_signal = bool(runtime or source_gate)
+    current = (
+        True
+        if not has_runtime_signal
+        else source_gate.get("ok") is True or runtime.get("current") is True or runtime.get("status") == "current"
+    )
+    status = runtime.get("status") or source_gate.get("status") or ("current" if current else "unknown")
+    return {
+        "operation": "local_current_code_gate",
+        "id": "running_instance_freshness",
+        "ok": bool(current),
+        "current": bool(current),
+        "status": status,
+        "gate_status": source_gate.get("status") or status,
+        "server_started_after_source_mtime": runtime.get("server_started_after_source_mtime"),
+        "git_head_sha": git_head,
+        "git_head_short": runtime.get("git_head_short") or (git_head[:12] if git_head else ""),
+        "git_branch": runtime.get("git_branch"),
+        "git_dirty_entries": int(runtime.get("git_dirty_entries") or 0),
+        "latest_source_path": runtime.get("latest_source_path"),
+        "command": command,
+        "strict_command": strict_command,
+        "next_action": command,
+        "contract": "read-only preflight gate for local agents; fail closed if the connected MIS process is stale or reports a different git HEAD",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_executes_shell": False,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
     }
 
 
@@ -404,17 +483,21 @@ def compact_start_check_local_run_path(local: dict[str, Any]) -> dict[str, Any]:
             "token_omitted": step.get("token_omitted", True) is not False,
         })
     service_step = next((step for step in compact_steps if step.get("step_id") == "preview_worker_service_control"), None)
-    commands = [
+    current_code_gate = compact_runtime_current_code_gate(local)
+    commands = [str(current_code_gate.get("strict_command") or current_code_gate.get("command") or "").strip()]
+    commands.extend([
         str(step.get("command") or "").strip()
         for step in compact_steps
         if str(step.get("command") or "").strip()
-    ]
+    ])
+    commands = [command for command in dict.fromkeys(commands) if command]
     summary = local.get("summary") if isinstance(local.get("summary"), dict) else {}
     return {
         "operation": "local_run_path_compact",
         "source_operation": local.get("operation") or "local_readiness",
         "status": local.get("status"),
         "recommended_adapter": summary.get("recommended_adapter"),
+        "current_code_gate": current_code_gate,
         "steps": compact_steps,
         "commands": commands,
         "service_control_preview": service_step,
@@ -462,6 +545,8 @@ def compact_start_check_launch_brief(
             "token_omitted": item.get("token_omitted", True) is not False,
         })
     adapter_command = f"agentops worker preflight --adapter {adapter}"
+    current_code_gate = local_run_path.get("current_code_gate") if isinstance(local_run_path.get("current_code_gate"), dict) else {}
+    current_code_command = current_code_gate.get("strict_command") or current_code_gate.get("command") or "agentops local readiness --require-current-code"
     live_run_command = (
         "agentops workflow run-task "
         f"--adapter {adapter} "
@@ -507,6 +592,8 @@ def compact_start_check_launch_brief(
             "agent_plan_risk": agent_plan_draft.get("risk_level"),
             "agent_plan_approval_required": bool(agent_plan_draft.get("approval_required")),
             "local_readiness_status": local_run_path.get("status"),
+            "current_code_status": current_code_gate.get("status"),
+            "current_code_ok": current_code_gate.get("ok"),
             "local_run_path_steps": len(local_run_path.get("steps") or []),
             "local_run_path_recommended_adapter": local_run_path.get("recommended_adapter"),
             "service_control_preview": bool(local_run_path.get("service_control_preview")),
@@ -515,6 +602,7 @@ def compact_start_check_launch_brief(
         "verify_command": control.get("verify_command") or recommended.get("verify_command"),
         "receipt_command": control.get("receipt_command") or recommended.get("receipt_command"),
         "adapter_preflight_command": adapter_command,
+        "current_code_check_command": current_code_command,
         "live_run_command": live_run_command,
         "readback_commands": readback_commands,
         "runtime_doctor_command": "agentops operator runtime-doctor --limit 8",
@@ -562,6 +650,7 @@ def operator_start_check_acceptance_packet(
     launch = launch_brief or {}
     loop_driver = loop_driver_entry or {}
     local_path = local_run_path or {}
+    local_current_code_gate = local_path.get("current_code_gate") if isinstance(local_path.get("current_code_gate"), dict) else {}
     worker_policy = worker_connection_policy or {}
     adapter_state = adapter_readiness or {}
     doctor = runtime_doctor or {}
@@ -581,10 +670,11 @@ def operator_start_check_acceptance_packet(
         or "operator_action_evaluations" in required_ledgers
     )
     live_required = adapter in {"hermes", "openclaw"}
+    current_code_ok = local_current_code_gate.get("ok") is not False
     live_ready = not live_required or bool(live_product.get("product_readiness_proof"))
     preview_allowed = not blocked_gates
-    confirm_loop_allowed = preview_allowed and (loop_driver.get("safety") or {}).get("server_executes_shell") is False
-    live_dispatch_allowed = adapter == "mock" or (live_ready and adapter_state.get("requires_confirm_run") is True)
+    confirm_loop_allowed = current_code_ok and preview_allowed and (loop_driver.get("safety") or {}).get("server_executes_shell") is False
+    live_dispatch_allowed = current_code_ok and (adapter == "mock" or (live_ready and adapter_state.get("requires_confirm_run") is True))
 
     def command_for(needle: str, fallback: str | None = None) -> str | None:
         for command in commands:
@@ -607,6 +697,8 @@ def operator_start_check_acceptance_packet(
             "live_dispatch_requires_confirm_run": live_required,
             "human_review_required": bool(review_summary.get("review_items_total") or review_summary.get("pending_approvals")),
             "memory_review_required": "memory_review" in required_ledgers,
+            "current_code_required": True,
+            "current_code_ok": current_code_ok,
             "agent_plan_required": True,
             "knowledge_search_required": True,
             "base_compare_required": True,
@@ -620,6 +712,8 @@ def operator_start_check_acceptance_packet(
             "memory_candidates": int(review_summary.get("memory_candidates") or 0),
             "required_ledgers": required_ledgers,
             "local_run_path_steps": len(local_steps),
+            "current_code_status": local_current_code_gate.get("status"),
+            "current_code_ok": current_code_ok,
             "service_control_preview": bool(local_path.get("service_control_preview")),
             "runtime_doctor_status": doctor.get("status"),
             "adapter_readiness": adapter_state.get("readiness"),
@@ -627,6 +721,7 @@ def operator_start_check_acceptance_packet(
         },
         "commands": {
             "start_check": f"agentops operator start-check --adapter {adapter} --limit 8",
+            "current_code_check": command_for("require-current-code", local_current_code_gate.get("strict_command") or local_current_code_gate.get("command") or "agentops local readiness --require-current-code"),
             "local_readiness": command_for("local readiness", "agentops local readiness"),
             "worker_readiness": command_for("worker readiness", "agentops worker readiness"),
             "adapter_preflight": command_for("worker preflight", f"agentops worker preflight --adapter {adapter}"),
@@ -675,6 +770,7 @@ def operator_start_check_acceptance_packet(
             "local_run_path": {
                 "status": local_path.get("status"),
                 "operation": local_path.get("operation"),
+                "current_code_gate": local_current_code_gate,
                 "token_omitted": True,
             },
         },
@@ -716,6 +812,13 @@ def operator_local_loop_admission_packet(
     method_gate_ids = [str(gate.get("id")) for gate in method_gates if isinstance(gate, dict) and gate.get("id")]
     local_steps = local_run_path.get("steps") if isinstance(local_run_path.get("steps"), list) else []
     service_step = local_run_path.get("service_control_preview") if isinstance(local_run_path.get("service_control_preview"), dict) else {}
+    current_code_gate = local_run_path.get("current_code_gate") if isinstance(local_run_path.get("current_code_gate"), dict) else {}
+    current_code_command = (
+        acceptance_commands.get("current_code_check")
+        or current_code_gate.get("strict_command")
+        or current_code_gate.get("command")
+        or "agentops local readiness --require-current-code"
+    )
     loop_commands = loop_driver_entry.get("commands") if isinstance(loop_driver_entry.get("commands"), dict) else {}
 
     def step_by_id(step_id: str) -> dict[str, Any]:
@@ -769,6 +872,7 @@ def operator_local_loop_admission_packet(
         dispatch_verify = dispatch_verify or "agentops run list --limit 5"
     first_safe_commands = [
         acceptance_commands.get("start_check"),
+        current_code_command,
         agent_commands.get("agent_plan_create"),
         agent_commands.get("knowledge_search"),
         agent_commands.get("base_reference"),
@@ -795,6 +899,8 @@ def operator_local_loop_admission_packet(
         "admission": {
             "can_preview_loop": can_preview,
             "can_confirm_bounded_loop": can_confirm_loop,
+            "current_code_ok": current_code_gate.get("ok") is True,
+            "current_code_status": current_code_gate.get("status"),
             "can_start_worker": bool(start_worker_command) and (not live_required or "--confirm-run" in str(start_worker_command)),
             "can_preview_service_control": bool(service_command) and service_step.get("service_control_preview") is True,
             "live_dispatch_allowed": decision.get("live_dispatch_allowed") is True,
@@ -810,6 +916,7 @@ def operator_local_loop_admission_packet(
             if str(key) in {"read", "plan", "retrieve", "compare", "preflight", "execute", "verify", "record"}
         },
         "local_deployment": {
+            "current_code_gate": current_code_gate,
             "worker_start": {
                 "command": start_worker_command,
                 "verify_command": start_worker_verify,
@@ -844,6 +951,7 @@ def operator_local_loop_admission_packet(
         },
         "commands": {
             "read_start_check": acceptance_commands.get("start_check"),
+            "current_code_check": current_code_command,
             "preview_loop": loop_commands.get("preview") or agent_commands.get("preview_loop"),
             "confirm_loop": loop_commands.get("confirm_loop") if can_confirm_loop else None,
             "worker_start": start_worker_command,
