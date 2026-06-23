@@ -633,6 +633,7 @@ export function AIEmployees() {
   const loopLaneReadback = data?.loopLaneReadback as HermesOpenClawLoopReadbackPayload | undefined;
   const localEvidence = localReadiness?.evidence;
   const localReadinessActions = localReadiness?.next_actions || [];
+  const localRunPath = localReadiness?.local_run_path || [];
   const synthesisLifecycle = localReadiness?.commander_synthesis_lifecycle;
   const synthesisLifecycleActions = synthesisLifecycle?.next_actions || [];
   const localReadinessGates = localReadiness?.gates || [];
@@ -877,6 +878,8 @@ export function AIEmployees() {
       localReadinessTitle: "Local Readiness",
       localReadinessSummary: "Read-only proof that this local MIS workspace can be operated without leaking tokens or triggering live work.",
       localReadinessOverall: "Overall status",
+      localRunPathTitle: "Local run path",
+      localRunPathSummary: "Boot MIS, select Hermes/OpenClaw or mock, start a worker, dispatch work, and verify ledger evidence.",
       evidenceChains: "Evidence chains",
       memoryApprovalCounts: "Memory / approvals",
       safetyProof: "Safety proof",
@@ -1413,6 +1416,8 @@ export function AIEmployees() {
       localReadinessTitle: "本地就绪",
       localReadinessSummary: "只读证明：这个本地 MIS 工作区可运行，同时不泄露 token，也不会触发真实执行。",
       localReadinessOverall: "整体状态",
+      localRunPathTitle: "本地运行路径",
+      localRunPathSummary: "启动 MIS，选择 Hermes/OpenClaw 或 mock，启动 worker，分派任务，并验收账本证据。",
       evidenceChains: "证据闭环",
       memoryApprovalCounts: "记忆 / 审批",
       safetyProof: "安全证明",
@@ -6175,6 +6180,64 @@ export function AIEmployees() {
               ))}
             </div>
           </div>
+
+          {localRunPath.length > 0 && (
+            <div className="mt-3 rounded p-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <Terminal size={12} style={{ color: "var(--mis-cyan)" }} />
+                    <div className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.localRunPathTitle}</div>
+                  </div>
+                  <p className="text-[9px] mt-1 max-w-3xl" style={{ color: "var(--mis-dim)" }}>{copy.localRunPathSummary}</p>
+                </div>
+                <StatusBadge status={localRunPath.some(step => step.status === "blocked" || step.status === "action_required") ? "attention" : "pass"} label={String(localRunPath.length)} />
+              </div>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 mt-2">
+                {localRunPath.slice(0, 6).map((step) => (
+                  <div key={step.step_id} className="rounded px-2 py-1.5 min-w-0" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="text-[9px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{step.label}</div>
+                        <div className="text-[9px] truncate" style={{ color: "var(--mis-muted)" }}>{step.phase}{step.adapter ? ` · ${step.adapter}` : ""}</div>
+                      </div>
+                      <StatusBadge status={step.status} />
+                    </div>
+                    {step.detail && (
+                      <div className="text-[9px] mt-1 line-clamp-2" style={{ color: "var(--mis-dim)" }}>{step.detail}</div>
+                    )}
+                    <div className="flex flex-wrap gap-1 mt-1.5">
+                      <StatusBadge status={step.copy_only ? "pass" : "attention"} label="copy-only" />
+                      <StatusBadge status={step.server_executes_shell === false ? "pass" : "blocked"} label="no server shell" />
+                      {step.confirm_required && <StatusBadge status="attention" label={copy.confirmRequired} />}
+                      {step.live_execution && <StatusBadge status="attention" label="live" />}
+                      {step.writes_ledger && <StatusBadge status="ready" label="ledger" />}
+                    </div>
+                    <div className="flex flex-wrap gap-1.5 mt-2">
+                      <button
+                        type="button"
+                        onClick={() => void copyIntakeCommand(step.command)}
+                        className="rounded px-2 py-1 text-[9px] font-semibold truncate max-w-full"
+                        style={{ color: "var(--mis-bg)", background: "var(--mis-cyan)", border: "1px solid var(--mis-cyan)" }}
+                      >
+                        {copy.copyActionCommand}
+                      </button>
+                      {step.verify_command && (
+                        <button
+                          type="button"
+                          onClick={() => void copyIntakeCommand(String(step.verify_command))}
+                          className="rounded px-2 py-1 text-[9px] font-semibold truncate max-w-full"
+                          style={{ color: "var(--mis-text)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}
+                        >
+                          {copy.verifyAfterAction}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="rounded-lg p-3 mt-4" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>

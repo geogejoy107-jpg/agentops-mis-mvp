@@ -735,6 +735,25 @@ export interface LocalReadinessEvidence {
   has_approval_flow: boolean;
 }
 
+export interface LocalRunPathStep {
+  step_id: string;
+  label: string;
+  phase: string;
+  status: string;
+  adapter?: string;
+  command: string;
+  verify_command?: string | null;
+  route?: string | null;
+  detail?: string;
+  mutating: boolean;
+  confirm_required: boolean;
+  writes_ledger: boolean;
+  live_execution: boolean;
+  copy_only?: boolean;
+  server_executes_shell?: boolean;
+  token_omitted?: boolean;
+}
+
 export interface CommanderSynthesisLifecyclePayload {
   status: string;
   summary: {
@@ -766,6 +785,7 @@ export interface LocalReadinessPayload {
   gates: LocalReadinessGate[];
   evidence: LocalReadinessEvidence;
   next_actions: string[];
+  local_run_path?: LocalRunPathStep[];
   contract?: string;
   adapter_readiness: WorkerAdapterReadinessSummary;
   commander_synthesis_lifecycle?: CommanderSynthesisLifecyclePayload;
@@ -3954,6 +3974,24 @@ export async function loadLocalReadiness(): Promise<LocalReadinessPayload> {
   const lifecycleSummaryRaw = typeof lifecycleRaw.summary === "object" && lifecycleRaw.summary !== null ? lifecycleRaw.summary as Record<string, unknown> : {};
   const lifecycleSafetyRaw = typeof lifecycleRaw.safety === "object" && lifecycleRaw.safety !== null ? lifecycleRaw.safety as Record<string, unknown> : {};
   const adapterReadiness = typeof raw.adapter_readiness === "object" && raw.adapter_readiness !== null ? raw.adapter_readiness as WorkerAdapterReadinessSummary : {};
+  const localRunPath = asArray<Record<string, unknown>>(raw.local_run_path).map((step) => ({
+    step_id: String(step.step_id || ""),
+    label: String(step.label || step.step_id || ""),
+    phase: String(step.phase || ""),
+    status: String(step.status || "unknown"),
+    adapter: step.adapter ? String(step.adapter) : undefined,
+    command: String(step.command || ""),
+    verify_command: step.verify_command ? String(step.verify_command) : null,
+    route: step.route ? String(step.route) : null,
+    detail: step.detail ? String(step.detail) : undefined,
+    mutating: boolValue(step.mutating),
+    confirm_required: boolValue(step.confirm_required),
+    writes_ledger: boolValue(step.writes_ledger),
+    live_execution: boolValue(step.live_execution),
+    copy_only: step.copy_only === undefined ? undefined : boolValue(step.copy_only),
+    server_executes_shell: step.server_executes_shell === undefined ? undefined : boolValue(step.server_executes_shell),
+    token_omitted: step.token_omitted === undefined ? undefined : boolValue(step.token_omitted),
+  })).filter((step) => step.step_id && step.command);
   return {
     provider: String(raw.provider || "agentops-local"),
     operation: String(raw.operation || "local_readiness"),
@@ -4018,6 +4056,7 @@ export async function loadLocalReadiness(): Promise<LocalReadinessPayload> {
       live_execution_performed: boolValue(lifecycleRaw.live_execution_performed),
     } : undefined,
     next_actions: asArray(raw.next_actions).map(String),
+    local_run_path: localRunPath,
     contract: raw.contract ? String(raw.contract) : undefined,
     token_omitted: boolValue(raw.token_omitted),
     live_execution_performed: boolValue(raw.live_execution_performed),

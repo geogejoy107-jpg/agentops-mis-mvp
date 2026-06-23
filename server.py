@@ -17310,6 +17310,146 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
     blockers = [gate for gate in gates if not gate["ok"] and gate["id"] in {"agent_gateway", "worker_fleet", "adapter_route", "runbook"}]
     warnings = [gate for gate in gates if not gate["ok"] and gate not in blockers]
     overall = "blocked" if blockers else "attention" if warnings else "ready"
+    gate_by_id = {gate["id"]: gate for gate in gates}
+    adapter_routes = adapter_payload.get("adapters") or {}
+    adapter_summary_full = adapter_payload.get("summary") or {}
+    recommended_adapter = adapter_summary_full.get("recommended_adapter") or adapter_summary.get("recommended_adapter") or "mock"
+    if recommended_adapter not in {"mock", "hermes", "openclaw"}:
+        recommended_adapter = "mock"
+    recommended_route = adapter_routes.get(recommended_adapter) or {}
+    recommended_remediation = recommended_route.get("remediation") or {}
+    recommended_commands = recommended_remediation.get("commands") or []
+    candidate_start_worker_command = next(
+        (
+            item.get("command")
+            for item in recommended_commands
+            if item.get("phase") in {"start", "start_worker"} and item.get("command")
+        ),
+        "",
+    )
+    fallback_start_worker_command = (
+        f"agentops worker start --adapter {recommended_adapter} --poll-interval 5 --max-tasks 0"
+        if recommended_adapter == "mock"
+        else f"agentops worker start --adapter {recommended_adapter} --confirm-run --poll-interval 5 --max-tasks 0"
+    )
+    start_worker_command = (
+        candidate_start_worker_command
+        if recommended_adapter == "mock" or "--confirm-run" in str(candidate_start_worker_command)
+        else fallback_start_worker_command
+    )
+    live_dispatch_command = (
+        "agentops workflow customer-worker-task --adapter mock --title 'Local readiness demo' --description 'Verify full MIS evidence.'"
+        if recommended_adapter == "mock"
+        else f"agentops workflow customer-worker-task --adapter {recommended_adapter} --confirm-run --title '<customer task>' --description '<safe task brief>'"
+    )
+    live_acceptance_command = gate_by_id.get("live_acceptance_freshness", {}).get("next_action") or "agentops operator live-product-readiness --require-adapter hermes --require-adapter openclaw"
+    local_run_path = [
+        {
+            "step_id": "start_local_stack",
+            "label": "Start local MIS stack",
+            "phase": "boot",
+            "status": "ready" if gate_by_id.get("agent_gateway", {}).get("ok") else "action_required",
+            "command": "python3 scripts/run_local_stack.py --install-ui",
+            "verify_command": "agentops local readiness",
+            "route": "/workspace/agents",
+            "detail": "Starts the local backend and Vite UI when they are not already listening.",
+            "mutating": True,
+            "confirm_required": False,
+            "writes_ledger": False,
+            "live_execution": False,
+        },
+        {
+            "step_id": "inspect_local_readiness",
+            "label": "Inspect local readiness",
+            "phase": "read",
+            "status": overall,
+            "command": "agentops local readiness",
+            "verify_command": "agentops local readiness",
+            "route": "/workspace/agents",
+            "detail": "Reads Agent Gateway, security, worker, adapter, memory, approval, and evidence-chain gates.",
+            "mutating": False,
+            "confirm_required": False,
+            "writes_ledger": False,
+            "live_execution": False,
+        },
+        {
+            "step_id": "select_worker_adapter",
+            "label": f"Select {recommended_adapter} adapter route",
+            "phase": "route",
+            "status": recommended_route.get("readiness") or adapter_payload.get("status") or "unknown",
+            "adapter": recommended_adapter,
+            "command": "agentops worker readiness",
+            "verify_command": f"agentops worker preflight --adapter {recommended_adapter}",
+            "route": "/workspace/agents",
+            "detail": f"Recommended route is {recommended_adapter}; live adapters keep confirm-run and prepared-action walls.",
+            "mutating": False,
+            "confirm_required": False,
+            "writes_ledger": False,
+            "live_execution": False,
+        },
+        {
+            "step_id": "start_selected_worker",
+            "label": f"Start {recommended_adapter} worker loop",
+            "phase": "worker",
+            "status": recommended_route.get("readiness") if recommended_route.get("readiness") in {"ready", "review_required"} else "action_required",
+            "adapter": recommended_adapter,
+            "command": start_worker_command,
+            "verify_command": "agentops worker status",
+            "route": "/workspace/agents",
+            "detail": "Starts a repo-local supervised worker daemon; Hermes/OpenClaw require explicit --confirm-run.",
+            "mutating": True,
+            "confirm_required": recommended_adapter in {"hermes", "openclaw"},
+            "writes_ledger": False,
+            "live_execution": recommended_adapter in {"hermes", "openclaw"},
+        },
+        {
+            "step_id": "dispatch_customer_task",
+            "label": "Dispatch a customer task",
+            "phase": "execute",
+            "status": "ready" if gate_by_id.get("evidence_chain", {}).get("ok") else "attention",
+            "adapter": recommended_adapter,
+            "command": live_dispatch_command,
+            "verify_command": "agentops operator live-product-readiness --require-adapter hermes --require-adapter openclaw" if recommended_adapter in {"hermes", "openclaw"} else "agentops local readiness",
+            "route": "/workspace/agents",
+            "detail": "Creates normal MIS task/run/tool/eval/audit/artifact evidence through the selected worker path.",
+            "mutating": True,
+            "confirm_required": recommended_adapter in {"hermes", "openclaw"},
+            "writes_ledger": True,
+            "live_execution": recommended_adapter in {"hermes", "openclaw"},
+        },
+        {
+            "step_id": "verify_ledger_evidence",
+            "label": "Verify ledger evidence",
+            "phase": "verify",
+            "status": "ready" if evidence["has_task_run_tool_eval_audit_artifact_chain"] else "attention",
+            "command": "agentops local readiness",
+            "verify_command": "agentops run list --limit 5",
+            "route": "/admin/runs",
+            "detail": "Checks task/run/tool/evaluation/audit/artifact counts and recent closed-loop evidence.",
+            "mutating": False,
+            "confirm_required": False,
+            "writes_ledger": False,
+            "live_execution": False,
+        },
+        {
+            "step_id": "prove_live_product_readiness",
+            "label": "Prove Hermes/OpenClaw freshness",
+            "phase": "acceptance",
+            "status": live_acceptance.get("status") or "unknown",
+            "command": live_acceptance_command,
+            "verify_command": "agentops operator live-product-readiness --require-adapter hermes --require-adapter openclaw",
+            "route": "/workspace/agents",
+            "detail": "Manual live acceptance remains explicit and read back from ledger evidence.",
+            "mutating": True,
+            "confirm_required": True,
+            "writes_ledger": True,
+            "live_execution": True,
+        },
+    ]
+    for step in local_run_path:
+        step["copy_only"] = True
+        step["server_executes_shell"] = False
+        step["token_omitted"] = True
     return {
         "provider": "agentops-local",
         "operation": "local_readiness",
@@ -17325,6 +17465,7 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
         "live_acceptance_readiness": live_acceptance,
         "gateway": gateway,
         "docs": doc_status,
+        "local_run_path": local_run_path,
         "ui_routes": {
             "worker_console": "/workspace/agents",
             "memory": "/workspace/memory",

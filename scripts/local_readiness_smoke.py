@@ -83,6 +83,17 @@ def validate(payload: dict) -> None:
     require(lifecycle.get("status") in {"empty", "created", "review_pending", "promotion_available", "promoted"}, f"bad synthesis lifecycle: {lifecycle}")
     require((lifecycle.get("safety") or {}).get("read_only") is True, f"synthesis lifecycle must be read-only: {lifecycle}")
     require(isinstance(payload.get("next_actions"), list), "next_actions must be a list")
+    local_run_path = payload.get("local_run_path") or []
+    require(isinstance(local_run_path, list) and len(local_run_path) >= 6, f"local_run_path missing or too short: {local_run_path}")
+    step_ids = {step.get("step_id") for step in local_run_path}
+    for step_id in {"start_local_stack", "inspect_local_readiness", "select_worker_adapter", "start_selected_worker", "dispatch_customer_task", "verify_ledger_evidence"}:
+        require(step_id in step_ids, f"missing local run path step {step_id}: {local_run_path}")
+    for step in local_run_path:
+        require(step.get("command"), f"local run path step missing command: {step}")
+        require(step.get("copy_only") is True, f"local run path step must be copy-only: {step}")
+        require(step.get("server_executes_shell") is False, f"local run path must not grant server shell execution: {step}")
+        require(step.get("token_omitted") is True, f"local run path step must omit tokens: {step}")
+        require("Authorization:" not in json.dumps(step), f"local run path leaked auth header: {step}")
     require(payload.get("contract") and "single local" in payload.get("contract"), "local contract missing")
     security = payload.get("security_production_readiness") or {}
     require(security.get("operation") == "production_readiness", f"security readiness missing: {security}")
