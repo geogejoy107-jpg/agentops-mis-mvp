@@ -296,6 +296,18 @@ def main() -> int:
             and file_contains("docs/UI_API_PARITY_MATRIX.json", "nextjs_worker_stuck_release_v1")
             and file_contains("docs/UI_API_PARITY_MATRIX.json", "nextjs_worker_daemon_control_v1")
             and file_contains("docs/UI_API_PARITY_MATRIX.json", "nextjs_enrollment_request_v1")
+            and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "verify_dispatch_template_run_success")
+            and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", 'write_entitlement_fixture(entitlement_path, "pro_workspace")')
+            and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "Customer project started")
+            and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", 'counts.get("tasks") == 6')
+            and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", 'counts.get("runs") == 6')
+            and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", 'execution_evidence.get("agent_plans") == 6')
+            and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", 'execution_evidence.get("verified_plan_evidence_manifests") == 5')
+            and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "report_artifact_id")
+            and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "Evidence Drilldown")
+            and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "Run Detail")
+            and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "Task Detail")
+            and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "leaked_secret")
             and (ROOT / "ui" / "next-app" / "app" / "workspace" / "tool-calls" / "page.tsx").exists()
             and (ROOT / "ui" / "next-app" / "app" / "workspace" / "agents" / "[agentId]" / "page.tsx").exists()
             and (ROOT / "ui" / "next-app" / "app" / "workspace" / "agents" / "dispatch-once" / "route.ts").exists()
@@ -314,7 +326,7 @@ def main() -> int:
             and (ROOT / "scripts" / "nextjs_worker_daemon_control_smoke.py").exists()
             and (ROOT / "scripts" / "nextjs_enrollment_request_smoke.py").exists()
             and (ROOT / "scripts" / "nextjs_playwright_snapshot_smoke.py").exists(),
-            "parallel Next.js App Router track has API proxy, Gateway task-create proxy, worker mock dispatch, mock daemon controls, stuck release, approval-gated enrollment request with raw-token issue blocked, workspace/storage/tool-call/evaluation/runtime-connector/Notion external-base/agent-detail data contracts, deployment storage gate, and browser snapshot smoke",
+            "parallel Next.js App Router track has API proxy, Gateway task-create proxy, worker mock dispatch, mock daemon controls, stuck release, approval-gated enrollment request with raw-token issue blocked, workspace/storage/tool-call/evaluation/runtime-connector/Notion external-base/agent-detail data contracts, deployment storage gate, and browser snapshot smoke including an isolated Pro template dispatch that creates the six-task KB bot package, six run rows, report artifact, six Agent Plans, and five verified manifests",
         ),
         check(
             "vite_browser_snapshot_surface_exists",

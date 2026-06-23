@@ -235,6 +235,8 @@ def run_task(client: AgentOpsClient, workspace_id: str, task_id: str, task: dict
 
     client.post(f"/api/agent-gateway/runs/{run_id}/heartbeat", {
         "workspace_id": workspace_id,
+        "task_id": task_id,
+        "agent_id": agent_id,
         "status": "completed",
         "duration_ms": task.get("duration_ms", 42000),
         "output_summary": task["output_summary"],

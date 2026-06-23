@@ -81,7 +81,7 @@
     },
     {
       "id": "pixel_office_and_dispatch",
-      "capability": "Pixel Office map plus customer task/template dispatch.",
+      "capability": "Pixel Office map plus customer task/template dispatch; Next currently proves isolated Pro template dispatch creates the six-task KB bot package, six runs, report artifact, six Agent Plans, and five verified manifests.",
       "status": "partial",
       "gate4_required": true,
       "vite_routes": [
@@ -120,7 +120,7 @@
         "python3 scripts/nextjs_parity_smoke.py"
       ],
       "retirement_allowed": false,
-      "retirement_gate": "Next currently proves template entitlement dispatch, not the full Pixel map, customer-worker dispatch form, async jobs, or local-brief controls."
+      "retirement_gate": "Next currently proves Free Local blocking plus isolated Pro template entitlement dispatch with six-task KB bot evidence, six run rows, report artifact, six Agent Plans, and five verified manifests, not the full Pixel map, customer-worker dispatch form, async jobs, live runtime execution, or local-brief controls."
     },
     {
       "id": "task_list",
@@ -419,7 +419,7 @@
         "python3 scripts/nextjs_parity_smoke.py"
       ],
       "retirement_allowed": false,
-      "retirement_gate": "Need side-by-side archive and visible evidence parity before Vite report route retirement."
+      "retirement_gate": "Next browser evidence now opens the created report, Agent Plan evidence, manifest drilldown, linked task, and linked run after isolated Pro template dispatch, but Vite route retirement still needs explicit side-by-side archive and visible evidence parity."
     },
     {
       "id": "run_ledger",
@@ -688,7 +688,7 @@
         "python3 scripts/nextjs_parity_smoke.py"
       ],
       "retirement_allowed": false,
-      "retirement_gate": "Next covers template dispatch entitlement, not the full admin template/base-switching surface."
+      "retirement_gate": "Next covers Free Local template dispatch blocking plus isolated Pro template dispatch that creates the six-task KB bot project, six runs, report artifact, six Agent Plans, and five verified manifests; it does not cover the full admin template/base-switching surface."
     },
     {
       "id": "audit",

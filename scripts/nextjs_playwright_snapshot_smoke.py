@@ -804,11 +804,12 @@ def verify_dispatch_template_run_success(next_base: str, entitlement_path: Path,
     require(isinstance(report, dict), f"Created project report did not return an object: {report!r}")
     require(report.get("project_id") == project_id, f"Created project report project mismatch: {report}")
     counts = report.get("counts") or {}
-    require((counts.get("tasks") or 0) >= 1, f"Created project report has no task evidence: {counts}")
+    require(counts.get("tasks") == 6, f"Created project report should have the six-task KB bot package: {counts}")
+    require(counts.get("runs") == 6, f"Created project report should have six run evidence rows: {counts}")
     require(bool(report.get("artifact_id")), f"Created project report has no delivery artifact: {report}")
     execution_evidence = report.get("execution_evidence") or {}
-    require((execution_evidence.get("agent_plans") or 0) >= 1, f"Created project report has no Agent Plan evidence: {execution_evidence}")
-    require((execution_evidence.get("verified_plan_evidence_manifests") or 0) >= 1, f"Created project report has no verified plan evidence: {execution_evidence}")
+    require(execution_evidence.get("agent_plans") == 6, f"Created project report should have one Agent Plan per KB bot task: {execution_evidence}")
+    require(execution_evidence.get("verified_plan_evidence_manifests") == 5, f"Created project report should have five verified manifests; one high-risk upload step remains approval-gated: {execution_evidence}")
     manifest_ids = execution_evidence.get("verified_manifest_ids") or execution_evidence.get("manifest_ids") or []
     require(bool(manifest_ids), f"Created project report did not expose manifest ids: {execution_evidence}")
     recent_manifests = execution_evidence.get("recent_manifests") or []
@@ -1014,6 +1015,7 @@ def main() -> int:
             api_env["AGENTOPS_DB_PATH"] = db_path
             api_env["AGENTOPS_ENTITLEMENTS_PATH"] = str(entitlement_path)
             api_env["AGENTOPS_RETENTION_CONTROLS_PATH"] = str(retention_controls_path)
+            api_env["AGENTOPS_BASE_URL"] = api_base
             api_proc = start_process(["python3", "server.py", "--host", "127.0.0.1", "--port", str(api_port)], cwd=ROOT, env=api_env)
             processes.append(api_proc)
             wait_http(f"{api_base}/api/dashboard/metrics")

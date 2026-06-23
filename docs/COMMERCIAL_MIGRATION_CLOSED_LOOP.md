@@ -288,11 +288,15 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   verifies the Free Local `report_templates` entitlement block, confirms no
   customer project was created by the blocked action, flips an isolated temporary
   entitlement fixture to `pro_workspace`, clicks the same Next.js dispatch path
-  again, verifies a customer project and report artifact are created, opens the
-  created project report page, verifies visible Agent Plan / plan-evidence
-  status, opens a manifest evidence drilldown page, verifies read-only
-  verification/run-graph evidence, opens linked task and run detail pages, and
-  checks for token-like leakage.
+  again, verifies the six-task KB bot customer project, six run ledger rows,
+  `report_artifact_id`, six Agent Plans, and five
+  `verified_plan_evidence_manifests` are created, opens the created project
+  report page, verifies visible Agent Plan / plan-evidence status, opens a
+  manifest evidence drilldown page, verifies read-only verification/run-graph
+  evidence, opens linked task and run detail pages, and checks for token-like
+  leakage. This is isolated mock/offline fixture evidence for the Next.js
+  commercial template path; it is not live Hermes/OpenClaw runtime proof or
+  full BYOC production readiness evidence.
 
   The Next Agent Gateway task proxy smoke starts isolated MIS API and Next.js
   servers with local no-token fallback disabled, then proves
@@ -547,7 +551,8 @@ Initial status:
 - Next.js parity evidence now covers both sides of that gate: Free Local blocks
   `Start template` without creating a project, while an isolated
   `pro_workspace` entitlement fixture allows the same Next.js form fallback to
-  create a ledger-backed customer project and report artifact.
+  create a ledger-backed six-task KB bot customer project, six run ledger rows,
+  a report artifact, six Agent Plans, and five verified plan-evidence manifests.
 - The Next.js commercial parity page must render current edition, capability
   matrix, fail-closed gates, billing-call omission, and token-omission proof
   through the MIS proxy without introducing billing writes.
