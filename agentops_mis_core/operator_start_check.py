@@ -166,8 +166,7 @@ def operator_agent_loop_packet(
     current_code_ok = acceptance_decision.get("current_code_ok") is not False and current_code_gate.get("ok") is not False
     review_summary = review_snapshot.get("summary") if isinstance(review_snapshot.get("summary"), dict) else {}
     can_confirm = (
-        current_code_ok
-        and acceptance_decision.get("can_confirm_bounded_loop") is True
+        acceptance_decision.get("can_confirm_bounded_loop") is True
         and acceptance_safety.get("server_executes_shell") is False
     )
     review_attention = bool(
