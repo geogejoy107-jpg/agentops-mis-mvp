@@ -1748,6 +1748,23 @@ export interface OperatorEvidenceReportRun {
     rejected?: number;
     items?: Record<string, unknown>[];
   };
+  worker_knowledge_retrieval?: {
+    applicable?: boolean;
+    status?: string;
+    worker_tool_calls?: number;
+    consumed_tool_calls?: number;
+    missing_tool_calls?: number;
+    packet_hashes?: string[];
+    query_hashes?: string[];
+    retrieval_ids?: string[];
+    source_hashes?: string[];
+    paths?: string[];
+    raw_query_omitted?: boolean;
+    raw_content_omitted?: boolean;
+    raw_prompt_omitted?: boolean;
+    raw_response_omitted?: boolean;
+    token_omitted?: boolean;
+  };
   gap_decision?: Record<string, unknown> | null;
   recommended_commands: string[];
   token_omitted?: boolean;
@@ -1775,6 +1792,10 @@ export interface OperatorEvidenceReportPayload {
     action_receipts: number;
     verified_action_receipts: number;
     evaluated_action_receipts: number;
+    worker_runs: number;
+    worker_knowledge_retrieval_ready: number;
+    worker_knowledge_retrieval_missing: number;
+    worker_knowledge_retrieval_unavailable: number;
   };
   runs: OperatorEvidenceReportRun[];
   recommended_commands: string[];
@@ -5146,6 +5167,7 @@ export async function loadOperatorEvidenceReport(limit = 8): Promise<OperatorEvi
     const manifestRaw = typeof item.plan_evidence_manifest === "object" && item.plan_evidence_manifest !== null ? item.plan_evidence_manifest as Record<string, unknown> : {};
     const memoryReviewRaw = typeof item.memory_review === "object" && item.memory_review !== null ? item.memory_review as Record<string, unknown> : {};
     const approvalsRaw = typeof item.approvals === "object" && item.approvals !== null ? item.approvals as Record<string, unknown> : {};
+    const workerKnowledgeRaw = typeof item.worker_knowledge_retrieval === "object" && item.worker_knowledge_retrieval !== null ? item.worker_knowledge_retrieval as Record<string, unknown> : {};
     return {
       run_id: String(item.run_id || ""),
       task_id: item.task_id ? String(item.task_id) : null,
@@ -5198,6 +5220,23 @@ export async function loadOperatorEvidenceReport(limit = 8): Promise<OperatorEvi
         rejected: numberValue(approvalsRaw.rejected, 0),
         items: asArray<Record<string, unknown>>(approvalsRaw.items),
       },
+      worker_knowledge_retrieval: {
+        applicable: boolValue(workerKnowledgeRaw.applicable),
+        status: String(workerKnowledgeRaw.status || "not_applicable"),
+        worker_tool_calls: numberValue(workerKnowledgeRaw.worker_tool_calls, 0),
+        consumed_tool_calls: numberValue(workerKnowledgeRaw.consumed_tool_calls, 0),
+        missing_tool_calls: numberValue(workerKnowledgeRaw.missing_tool_calls, 0),
+        packet_hashes: asArray<unknown>(workerKnowledgeRaw.packet_hashes).map(String).filter(Boolean),
+        query_hashes: asArray<unknown>(workerKnowledgeRaw.query_hashes).map(String).filter(Boolean),
+        retrieval_ids: asArray<unknown>(workerKnowledgeRaw.retrieval_ids).map(String).filter(Boolean),
+        source_hashes: asArray<unknown>(workerKnowledgeRaw.source_hashes).map(String).filter(Boolean),
+        paths: asArray<unknown>(workerKnowledgeRaw.paths).map(String).filter(Boolean),
+        raw_query_omitted: boolValue(workerKnowledgeRaw.raw_query_omitted),
+        raw_content_omitted: boolValue(workerKnowledgeRaw.raw_content_omitted),
+        raw_prompt_omitted: boolValue(workerKnowledgeRaw.raw_prompt_omitted),
+        raw_response_omitted: boolValue(workerKnowledgeRaw.raw_response_omitted),
+        token_omitted: boolValue(workerKnowledgeRaw.token_omitted),
+      },
       gap_decision: typeof item.gap_decision === "object" && item.gap_decision !== null ? item.gap_decision as Record<string, unknown> : null,
       recommended_commands: asArray<unknown>(item.recommended_commands).map(String).filter(Boolean),
       token_omitted: item.token_omitted === undefined ? undefined : boolValue(item.token_omitted),
@@ -5225,6 +5264,10 @@ export async function loadOperatorEvidenceReport(limit = 8): Promise<OperatorEvi
       action_receipts: numberValue(summaryRaw.action_receipts, 0),
       verified_action_receipts: numberValue(summaryRaw.verified_action_receipts, 0),
       evaluated_action_receipts: numberValue(summaryRaw.evaluated_action_receipts, 0),
+      worker_runs: numberValue(summaryRaw.worker_runs, 0),
+      worker_knowledge_retrieval_ready: numberValue(summaryRaw.worker_knowledge_retrieval_ready, 0),
+      worker_knowledge_retrieval_missing: numberValue(summaryRaw.worker_knowledge_retrieval_missing, 0),
+      worker_knowledge_retrieval_unavailable: numberValue(summaryRaw.worker_knowledge_retrieval_unavailable, 0),
     },
     runs: asArray<Record<string, unknown>>(raw.runs).map(normalizeReportRun).filter(item => item.run_id),
     recommended_commands: asArray<unknown>(raw.recommended_commands).map(String).filter(Boolean),

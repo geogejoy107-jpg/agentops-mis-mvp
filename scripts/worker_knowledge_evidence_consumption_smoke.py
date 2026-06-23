@@ -238,8 +238,13 @@ def main() -> int:
             status, task, raw = http_json(base_url, "/api/agent-gateway/tasks", "POST", {
                 "workspace_id": workspace,
                 "title": f"Worker knowledge evidence task {suffix}",
-                "description": "The worker must use the project method block and Agent Gateway evidence before writing the run ledger.",
-                "acceptance_criteria": "Tool, evaluation, audit and worker result must include safe knowledge retrieval evidence identifiers.",
+                "description": (
+                    "The worker must use Hermes and OpenClaw Agent Gateway runbook evidence before writing the run ledger. "
+                    "Compare live adapter confirm-run safety, prepared-action wall, and worker task writeback."
+                ),
+                "acceptance_criteria": (
+                    "Tool, evaluation, audit and worker result must include safe task-aware knowledge retrieval evidence identifiers."
+                ),
                 "risk_level": "medium",
             }, token=token, workspace=workspace)
             outputs.append(raw)
@@ -260,6 +265,19 @@ def main() -> int:
             require(bool(worker_evidence.get("query_hash")), f"worker result missing query hash: {worker_evidence}", failures)
             require(worker_evidence.get("query_omitted") is True, f"worker result query should be omitted: {worker_evidence}", failures)
             require(worker_evidence.get("raw_content_omitted") is True, f"worker result raw content should be omitted: {worker_evidence}", failures)
+            task_relevant_path_fragments = [
+                "README.md",
+                "AGENT_WORKFLOW.md",
+                "BASE_INDEX.md",
+                "REMOTE_WORKER_OPERATIONS_RUNBOOK",
+                "AGENT_GATEWAY_CLI_SPEC",
+            ]
+            retrieved_paths = [str(path or "") for path in (worker_evidence.get("paths") or [])]
+            require(
+                any(fragment in path for path in retrieved_paths for fragment in task_relevant_path_fragments),
+                f"task-aware query did not retrieve Hermes/OpenClaw/Gateway runbook/spec paths: {retrieved_paths}",
+                failures,
+            )
 
             status, run_detail, raw = http_json(base_url, f"/api/runs/{run_id}")
             outputs.append(raw)

@@ -750,6 +750,13 @@ export function AIEmployees() {
       evidenceReportSummary: "Run-level delivery evidence matrix across Agent Plan, approval, plan_evidence_manifest, memory review, ledger counts, pending approvals, and action receipts.",
       evidenceReportReady: "Ready runs",
       evidenceReportBlocked: "Blocked runs",
+      workerKnowledge: "Worker knowledge",
+      workerKnowledgeReady: "Knowledge ready",
+      workerKnowledgeMissing: "Knowledge missing",
+      workerKnowledgeUnavailable: "Knowledge unavailable",
+      workerKnowledgePaths: "Knowledge paths",
+      workerKnowledgePacket: "Packet",
+      workerKnowledgeQuery: "Query",
       missingManifests: "Missing manifests",
       verifiedReceipts: "Verified receipts",
       demoReadinessTitle: "Demo readiness",
@@ -1309,6 +1316,13 @@ export function AIEmployees() {
       evidenceReportSummary: "按 run 聚合 Agent Plan、审批、plan_evidence_manifest、记忆评审、账本计数、待审批和动作收据的交付证据矩阵。",
       evidenceReportReady: "就绪 Run",
       evidenceReportBlocked: "阻塞 Run",
+      workerKnowledge: "Worker 知识",
+      workerKnowledgeReady: "知识已就绪",
+      workerKnowledgeMissing: "知识缺失",
+      workerKnowledgeUnavailable: "知识不可用",
+      workerKnowledgePaths: "知识路径",
+      workerKnowledgePacket: "证据包",
+      workerKnowledgeQuery: "查询",
       missingManifests: "缺失清单",
       verifiedReceipts: "已验收收据",
       demoReadinessTitle: "Demo 就绪",
@@ -4795,6 +4809,8 @@ export function AIEmployees() {
               { label: copy.pendingApprovals, value: operatorEvidenceSummary?.pending_approvals ?? 0, status: (operatorEvidenceSummary?.pending_approvals || 0) > 0 ? "attention" : "pass" },
               { label: copy.memoryReview, value: `${operatorEvidenceSummary?.memory_review_ready ?? 0}/${operatorEvidenceSummary?.memory_reviews ?? 0}`, status: ((operatorEvidenceSummary?.missing_memory_reviews || 0) + (operatorEvidenceSummary?.pending_memory_reviews || 0)) > 0 ? "attention" : "pass" },
               { label: copy.verifiedReceipts, value: `${operatorEvidenceSummary?.verified_action_receipts ?? 0}/${operatorEvidenceSummary?.action_receipts ?? 0}`, status: (operatorEvidenceSummary?.verified_action_receipts || 0) > 0 ? "pass" : "planned" },
+              { label: copy.workerKnowledgeReady, value: `${operatorEvidenceSummary?.worker_knowledge_retrieval_ready ?? 0}/${operatorEvidenceSummary?.worker_runs ?? 0}`, status: (operatorEvidenceSummary?.worker_knowledge_retrieval_ready || 0) > 0 ? "pass" : (operatorEvidenceSummary?.worker_runs || 0) > 0 ? "attention" : "planned" },
+              { label: copy.workerKnowledgeMissing, value: (operatorEvidenceSummary?.worker_knowledge_retrieval_missing ?? 0) + (operatorEvidenceSummary?.worker_knowledge_retrieval_unavailable ?? 0), status: ((operatorEvidenceSummary?.worker_knowledge_retrieval_missing || 0) + (operatorEvidenceSummary?.worker_knowledge_retrieval_unavailable || 0)) > 0 ? "blocked" : "pass" },
             ].map((item) => (
               <div key={item.label} className="rounded px-2 py-1" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
                 <div className="text-[9px]" style={{ color: "var(--mis-muted)" }}>{item.label}</div>
@@ -4814,6 +4830,9 @@ export function AIEmployees() {
             {operatorEvidenceTopRuns.map((run) => {
               const counts = run.evidence_counts || {};
               const firstCommand = run.recommended_commands?.[0] || "";
+              const workerKnowledge = run.worker_knowledge_retrieval;
+              const workerKnowledgeStatus = workerKnowledge?.status || "not_applicable";
+              const workerKnowledgeBlocked = workerKnowledgeStatus === "missing" || workerKnowledgeStatus === "unavailable";
               return (
                 <div key={run.run_id} className="rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
                   <div className="flex items-start justify-between gap-2">
@@ -4836,7 +4855,25 @@ export function AIEmployees() {
                         {copy.pendingApprovals}: {run.approvals?.pending}
                       </span>
                     )}
+                    {workerKnowledge?.applicable && (
+                      <span className="text-[9px] px-1.5 py-0.5 rounded" style={{ color: workerKnowledgeBlocked ? "var(--mis-warning)" : "var(--mis-success)", background: workerKnowledgeBlocked ? "rgba(251,191,36,0.08)" : "rgba(45,212,191,0.08)", border: workerKnowledgeBlocked ? "1px solid rgba(251,191,36,0.22)" : "1px solid rgba(45,212,191,0.20)" }}>
+                        {copy.workerKnowledge}: {workerKnowledgeStatus}
+                      </span>
+                    )}
                   </div>
+                  {workerKnowledge?.applicable && (
+                    <div className="mt-2 rounded px-2 py-1" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-[9px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>
+                          {copy.workerKnowledgePaths}: {(workerKnowledge.paths || []).length}
+                        </div>
+                        <StatusBadge status={workerKnowledgeBlocked ? "blocked" : workerKnowledgeStatus === "ready" ? "pass" : "attention"} />
+                      </div>
+                      <div className="text-[9px] mt-0.5 truncate" style={{ color: "var(--mis-muted)" }}>
+                        {copy.workerKnowledgePacket}: {(workerKnowledge.packet_hashes?.[0] || "—").slice(0, 10)} · {copy.workerKnowledgeQuery}: {(workerKnowledge.query_hashes?.[0] || "—").slice(0, 10)}
+                      </div>
+                    </div>
+                  )}
                   <div className="flex items-center justify-between gap-2 mt-2">
                     <div className="text-[9px] truncate" style={{ color: run.failed_check_ids.length ? "var(--mis-warning)" : "var(--mis-muted)" }}>
                       {run.failed_check_ids.length ? `${copy.gateEvidenceGaps}: ${run.failed_check_ids.join(", ")}` : copy.allGatesPassing}

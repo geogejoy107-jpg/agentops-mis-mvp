@@ -738,12 +738,24 @@ def unique_values(values: list[str]) -> list[str]:
     return result
 
 
-def build_worker_knowledge_query(task: dict) -> str:
-    return "READ PLAN RETRIEVE COMPARE EXECUTE VERIFY RECORD method block Agent Gateway worker"
+def build_worker_knowledge_query(task: dict, adapter: str | None = None) -> str:
+    title = redact_text(task.get("title"), 90)
+    description = redact_text(task.get("description"), 220)
+    acceptance = redact_text(task.get("acceptance_criteria"), 160)
+    runtime = redact_text(adapter or task.get("runtime_type") or task.get("model_provider") or "worker", 40)
+    risk = redact_text(task.get("risk_level") or "medium", 32)
+    task_terms = " ".join(part for part in [title, description, acceptance] if part).strip()
+    query = (
+        f"Agent Gateway worker task evidence adapter {runtime} risk {risk}. "
+        f"{task_terms} "
+        "READ PLAN RETRIEVE COMPARE EXECUTE VERIFY RECORD method block "
+        "run ledger tool evaluation audit approval artifact worker adapter"
+    )
+    return redact_text(query, 240)
 
 
-def fetch_worker_knowledge_evidence(client: AgentOpsClient, task: dict) -> dict:
-    query = build_worker_knowledge_query(task)
+def fetch_worker_knowledge_evidence(client: AgentOpsClient, task: dict, adapter: str | None = None) -> dict:
+    query = build_worker_knowledge_query(task, adapter=adapter)
     try:
         packet = client.get("/api/agent-gateway/knowledge/evidence-packet", {
             "q": query,
@@ -935,7 +947,7 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
         "agent_id": client.agent_id,
         "runtime_type": args.adapter,
     })
-    knowledge_evidence = fetch_worker_knowledge_evidence(client, task)
+    knowledge_evidence = fetch_worker_knowledge_evidence(client, task, adapter=args.adapter)
     task = dict(task)
     task["_knowledge_retrieval_evidence"] = knowledge_evidence
     plan_payload = create_worker_agent_plan(client, task, args, knowledge_evidence)
