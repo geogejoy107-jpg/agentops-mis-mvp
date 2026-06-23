@@ -1040,6 +1040,102 @@ def fetch_loop_launch_brief(args, client: AgentOpsClient) -> dict:
     return compact_loop_launch_packet(payload, adapter=args.adapter)
 
 
+def compact_loop_driver_acceptance_gate(payload: dict, *, adapter: str) -> dict:
+    packet = payload.get("acceptance_packet") if isinstance(payload.get("acceptance_packet"), dict) else {}
+    decision = packet.get("decision") if isinstance(packet.get("decision"), dict) else {}
+    summary = packet.get("summary") if isinstance(packet.get("summary"), dict) else {}
+    commands = packet.get("commands") if isinstance(packet.get("commands"), dict) else {}
+    safety = packet.get("safety") if isinstance(packet.get("safety"), dict) else {}
+    bounded_allowed = bool(decision.get("can_confirm_bounded_loop"))
+    live_dispatch_allowed = bool(decision.get("live_dispatch_allowed"))
+    live_dispatch_waiting = adapter in {"hermes", "openclaw"} and not live_dispatch_allowed
+    server_executes_shell = bool(safety.get("server_executes_shell"))
+    stop_reasons = []
+    if not packet:
+        stop_reasons.append("acceptance_packet_missing")
+    if not bounded_allowed:
+        stop_reasons.append("bounded_loop_not_accepted")
+    if server_executes_shell:
+        stop_reasons.append("server_shell_safety_missing")
+    return {
+        "operation": "operator_loop_driver_acceptance_gate",
+        "source_operation": payload.get("operation"),
+        "status": "ready" if bounded_allowed and not server_executes_shell else "blocked",
+        "adapter": adapter,
+        "workspace_id": packet.get("workspace_id") or payload.get("workspace_id"),
+        "task_id": packet.get("task_id") or payload.get("task_id"),
+        "agent_id": packet.get("agent_id") or payload.get("agent_id"),
+        "decision": {
+            "can_preview_loop": bool(decision.get("can_preview_loop")),
+            "can_confirm_bounded_loop": bounded_allowed,
+            "live_dispatch_allowed": live_dispatch_allowed,
+            "live_dispatch_requires_confirm_run": bool(decision.get("live_dispatch_requires_confirm_run")),
+            "human_review_required": bool(decision.get("human_review_required")),
+            "memory_review_required": bool(decision.get("memory_review_required")),
+            "agent_plan_required": decision.get("agent_plan_required") is not False,
+            "knowledge_search_required": decision.get("knowledge_search_required") is not False,
+            "base_compare_required": decision.get("base_compare_required") is not False,
+            "receipt_required": decision.get("receipt_required") is not False,
+        },
+        "summary": {
+            "blocked_gates": summary.get("blocked_gates") or [],
+            "attention_gates": summary.get("attention_gates") or [],
+            "review_items_total": int(summary.get("review_items_total") or 0),
+            "pending_approvals": int(summary.get("pending_approvals") or 0),
+            "memory_candidates": int(summary.get("memory_candidates") or 0),
+            "required_ledgers": summary.get("required_ledgers") or [],
+            "runtime_doctor_status": summary.get("runtime_doctor_status"),
+            "adapter_readiness": summary.get("adapter_readiness"),
+            "live_product_readiness": summary.get("live_product_readiness"),
+        },
+        "commands": {
+            "start_check": commands.get("start_check") or f"agentops operator start-check --adapter {adapter} --limit 8",
+            "loop_driver_preview": commands.get("loop_driver_preview"),
+            "loop_driver_confirm": commands.get("loop_driver_confirm"),
+            "runtime_doctor": commands.get("runtime_doctor"),
+            "review_queue": commands.get("review_queue"),
+            "live_product_readiness": commands.get("live_product_readiness"),
+            "receipt_readback": commands.get("receipt_readback"),
+        },
+        "wait_gates": {
+            "human_review": bool(decision.get("human_review_required")),
+            "live_dispatch": live_dispatch_waiting,
+            "memory_review": bool(decision.get("memory_review_required")),
+        },
+        "stop_reasons": stop_reasons,
+        "contract": "loop-driver must read start-check acceptance_packet before preview and before each confirmed bounded advance; it may only continue bounded advance when can_confirm_bounded_loop is true and safety proves no server shell",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_executes_shell": server_executes_shell,
+            "raw_prompt_omitted": safety.get("raw_prompt_omitted", True) is not False,
+            "raw_response_omitted": safety.get("raw_response_omitted", True) is not False,
+            "raw_content_omitted": safety.get("raw_content_omitted", True) is not False,
+            "token_omitted": safety.get("token_omitted", True) is not False,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+
+
+def fetch_loop_driver_acceptance_gate(args, client: AgentOpsClient) -> dict:
+    payload = client.get(
+        "/api/operator/start-check",
+        query={
+            "adapter": args.adapter,
+            "limit": args.limit,
+            "loop_id": args.loop_id,
+            "task_id": args.task_id,
+            "agent_id": args.agent_id,
+            "q": args.query,
+            "handoff_mode": args.handoff_mode,
+            "full_handoff": "true" if getattr(args, "full_handoff", False) else None,
+        },
+    )
+    return compact_loop_driver_acceptance_gate(payload, adapter=args.adapter)
+
+
 def fetch_loop_driver_review_snapshot(args, client: AgentOpsClient) -> dict:
     limit = min(max(int(getattr(args, "limit", 8) or 8), 1), 20)
     payload = client.get("/api/agent-gateway/review/queue", query={"limit": min(limit, 8)})
@@ -1100,6 +1196,7 @@ def fetch_loop_driver_review_snapshot(args, client: AgentOpsClient) -> dict:
 
 def cmd_operator_loop_driver(args, client: AgentOpsClient) -> dict:
     max_steps = min(max(int(args.max_steps or 1), 1), 5)
+    initial_acceptance_gate = fetch_loop_driver_acceptance_gate(args, client)
     adapter_readiness = fetch_loop_driver_adapter_readiness(args, client)
     initial_brief = fetch_loop_launch_brief(args, client)
     initial_review_snapshot = fetch_loop_driver_review_snapshot(args, client)
@@ -1112,22 +1209,26 @@ def cmd_operator_loop_driver(args, client: AgentOpsClient) -> dict:
             "advanced": False,
             "adapter": args.adapter,
             "max_steps": max_steps,
+            "acceptance_gate": initial_acceptance_gate,
             "adapter_readiness": adapter_readiness,
             "initial_brief": initial_brief,
             "record_review_snapshot": initial_review_snapshot,
             "next_actions": [
+                (initial_acceptance_gate.get("commands") or {}).get("start_check") or f"agentops operator start-check --adapter {args.adapter} --limit {args.limit}",
                 f"agentops worker preflight --adapter {args.adapter}",
                 initial_review_snapshot.get("review_command") or "agentops review queue --limit 20",
-                "agentops operator loop-driver --confirm-loop --max-steps "
-                f"{max_steps} --adapter {args.adapter} --limit {args.limit}"
+                (initial_acceptance_gate.get("commands") or {}).get("loop_driver_confirm")
+                or "agentops operator loop-driver --confirm-loop --max-steps "
+                f"{max_steps} --adapter {args.adapter} --limit {args.limit}",
             ],
             "policy": {
                 **policy,
                 "driver_max_steps": 5,
-                "driver_uses": "operator loop-launch-packet --brief plus operator advance-loop --fast-control --confirm-advance",
+                "driver_uses": "operator start-check acceptance_packet plus operator loop-launch-packet --brief plus operator advance-loop --fast-control --confirm-advance",
+                "acceptance_packet_required_before_confirm_loop": True,
                 "adapter_preflight_required_before_live_run": args.adapter in {"hermes", "openclaw"},
             },
-            "contract": "preview-only agent loop driver; reads the compact launch brief and shows the bounded loop path without executing commands or mutating ledgers",
+            "contract": "preview-only agent loop driver; reads start-check acceptance_packet, compact launch brief, adapter readiness, and review pressure without executing commands or mutating ledgers",
             "safety": {
                 "read_only": True,
                 "ledger_mutated": False,
@@ -1141,7 +1242,50 @@ def cmd_operator_loop_driver(args, client: AgentOpsClient) -> dict:
 
     steps: list[dict] = []
     stop_reason = "max_steps_reached"
+    if (initial_acceptance_gate.get("decision") or {}).get("can_confirm_bounded_loop") is not True or (initial_acceptance_gate.get("safety") or {}).get("server_executes_shell") is not False:
+        stop_reason = "acceptance_gate_blocked"
+        final_adapter_readiness = fetch_loop_driver_adapter_readiness(args, client)
+        final_brief = fetch_loop_launch_brief(args, client)
+        final_review_snapshot = fetch_loop_driver_review_snapshot(args, client)
+        return {
+            "provider": "agentops-operator",
+            "operation": "operator_loop_driver",
+            "status": "blocked",
+            "adapter": args.adapter,
+            "max_steps": max_steps,
+            "steps_attempted": 0,
+            "steps_advanced": 0,
+            "stop_reason": stop_reason,
+            "acceptance_gate": initial_acceptance_gate,
+            "steps": [],
+            "adapter_readiness": final_adapter_readiness,
+            "final_brief": final_brief,
+            "initial_record_review_snapshot": initial_review_snapshot,
+            "record_review_snapshot": final_review_snapshot,
+            "policy": {
+                **policy,
+                "driver_max_steps": 5,
+                "server_executes_shell": False,
+                "acceptance_packet_required_before_confirm_loop": True,
+                "adapter_preflight_required_before_live_run": args.adapter in {"hermes", "openclaw"},
+            },
+            "contract": "bounded local agent loop driver stopped before advance because start-check acceptance_packet did not allow confirm-loop",
+            "safety": {
+                "read_only": True,
+                "ledger_mutated": False,
+                "live_execution_performed": False,
+                "server_executes_shell": False,
+                "raw_output_omitted": True,
+                "token_omitted": True,
+            },
+            "token_omitted": True,
+            "live_execution_performed": False,
+        }
     for index in range(max_steps):
+        before_acceptance_gate = fetch_loop_driver_acceptance_gate(args, client)
+        if (before_acceptance_gate.get("decision") or {}).get("can_confirm_bounded_loop") is not True or (before_acceptance_gate.get("safety") or {}).get("server_executes_shell") is not False:
+            stop_reason = "acceptance_gate_blocked"
+            break
         before_readiness = fetch_loop_driver_adapter_readiness(args, client)
         before_brief = fetch_loop_launch_brief(args, client)
         advance_args = argparse.Namespace(
@@ -1153,12 +1297,14 @@ def cmd_operator_loop_driver(args, client: AgentOpsClient) -> dict:
             confirm_advance=True,
         )
         advance_result = cmd_operator_advance_loop(advance_args, client)
+        after_acceptance_gate = fetch_loop_driver_acceptance_gate(args, client)
         after_readiness = fetch_loop_driver_adapter_readiness(args, client)
         after_brief = fetch_loop_launch_brief(args, client)
         after_review_snapshot = fetch_loop_driver_review_snapshot(args, client)
         compact_advance = compact_advance_loop_result(advance_result)
         step = {
             "step": index + 1,
+            "acceptance_gate_before": before_acceptance_gate,
             "adapter_readiness_before": before_readiness,
             "before": {
                 "status": before_brief.get("status"),
@@ -1169,6 +1315,7 @@ def cmd_operator_loop_driver(args, client: AgentOpsClient) -> dict:
                 "token_omitted": True,
             },
             "advance": compact_advance,
+            "acceptance_gate_after": after_acceptance_gate,
             "adapter_readiness_after": after_readiness,
             "after": {
                 "status": after_brief.get("status"),
@@ -1191,6 +1338,7 @@ def cmd_operator_loop_driver(args, client: AgentOpsClient) -> dict:
             stop_reason = "control_ready"
             break
 
+    final_acceptance_gate = fetch_loop_driver_acceptance_gate(args, client)
     final_adapter_readiness = fetch_loop_driver_adapter_readiness(args, client)
     final_brief = fetch_loop_launch_brief(args, client)
     final_review_snapshot = fetch_loop_driver_review_snapshot(args, client)
@@ -1205,6 +1353,8 @@ def cmd_operator_loop_driver(args, client: AgentOpsClient) -> dict:
         "steps_attempted": len(steps),
         "steps_advanced": len(advanced),
         "stop_reason": stop_reason,
+        "acceptance_gate": final_acceptance_gate,
+        "initial_acceptance_gate": initial_acceptance_gate,
         "steps": steps,
         "adapter_readiness": final_adapter_readiness,
         "final_brief": final_brief,
@@ -1214,9 +1364,10 @@ def cmd_operator_loop_driver(args, client: AgentOpsClient) -> dict:
             **policy,
             "driver_max_steps": 5,
             "server_executes_shell": False,
+            "acceptance_packet_required_before_confirm_loop": True,
             "adapter_preflight_required_before_live_run": args.adapter in {"hermes", "openclaw"},
         },
-        "contract": "bounded local agent loop driver for Hermes/OpenClaw/Codex; each step re-reads the launch brief, delegates execution to advance-loop allowlist policy, records receipts/control-readback, surfaces a read-only RECORD review snapshot, and never runs live/workflow/approval commands",
+        "contract": "bounded local agent loop driver for Hermes/OpenClaw/Codex; each step re-reads start-check acceptance_packet and launch brief, delegates execution to advance-loop allowlist policy only when confirm-loop is accepted, records receipts/control-readback, surfaces a read-only RECORD review snapshot, and never runs live/workflow/approval commands",
         "safety": {
             "read_only": False,
             "ledger_mutated": bool(advanced),

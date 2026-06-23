@@ -93,7 +93,7 @@ TEST_COMMANDS = [
     {
         "id": "module_boundary",
         "command": "python3 scripts/module_boundary_smoke.py",
-        "summary": "P1-05 strangler boundary gate for extracted runtime capability, connector registry/refresh projection, trust state, read-model cache, Approval Wall resume/waiting/route blocked/access/prepare-response/prepared-action-decision/high-risk-toolcall-required/risky-tool-registry/external-side-effect-intent/resume-success/provider-result gates, Agent Plan approval-decision/create-status/bound-approval/transition-error/run-start gate/rebind/success response projections, run-start binding comparison plus contract/hash/path-scope/verification-result/pending-approval/approval-run helpers, Agent Gateway run-heartbeat update projection, worker fleet remote/session/hygiene projections, workflow-job public/list/stuck/recovery response projections, Commander and Operator command-center aggregation helpers, Operator evidence-report memory/status/summary projection, Operator start-check gate/local-run-path/launch-brief/loop-driver-entry/acceptance-packet projections, Operator loop-control summary/gate projection, and Operator receipt/evaluation/control-readback public projection.",
+        "summary": "P1-05 strangler boundary gate for extracted runtime capability, connector registry/refresh projection, trust state, read-model cache, Approval Wall resume/waiting/route blocked/access/prepare-response/prepared-action-decision/high-risk-toolcall-required/risky-tool-registry/external-side-effect-intent/resume-success/provider-result gates, Agent Plan approval-decision/create-status/bound-approval/transition-error/run-start gate/rebind/success response projections, run-start binding comparison plus contract/hash/path-scope/verification-result/pending-approval/approval-run helpers, Agent Gateway run-heartbeat update projection, Evaluation Case public projections, worker fleet remote/session/hygiene projections, workflow-job public/list/stuck/recovery response projections, Commander and Operator command-center aggregation helpers, Operator evidence-report memory/status/summary projection, Operator start-check gate/local-run-path/launch-brief/loop-driver-entry/acceptance-packet projections, Operator loop-control summary/gate projection, and Operator receipt/evaluation/control-readback public projection.",
         "ci_step": "Offline safety smokes",
     },
     {
@@ -225,7 +225,7 @@ TEST_COMMANDS = [
     {
         "id": "operator_loop_driver",
         "command": "python3 scripts/operator_loop_driver_smoke.py",
-        "summary": "Hermes/OpenClaw/Codex loop driver previews compact launch briefs and confirms bounded multi-step advance-loop receipts without live execution.",
+        "summary": "Hermes/OpenClaw/Codex loop driver consumes start-check acceptance gates, previews compact launch briefs, and confirms bounded multi-step advance-loop receipts without live execution.",
         "ci_step": "Offline safety smokes",
     },
     {

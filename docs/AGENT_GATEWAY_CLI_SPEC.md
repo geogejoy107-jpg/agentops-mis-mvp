@@ -1995,7 +1995,8 @@ policy id for fast local loop steering.
 commands, and `/workspace/agents` renders copy buttons for those local CLI
 commands without letting the browser or server execute shell.
 `operator loop-driver` is the local CLI loop wrapper for Hermes/OpenClaw/Codex:
-preview mode reads the compact launch brief and policy without writing ledgers;
+preview mode reads `operator start-check` into an `acceptance_gate`, then reads
+the compact launch brief and policy without writing ledgers;
 preview mode also reads `agentops worker readiness` into an
 `adapter_readiness` gate with the selected adapter's trust/readiness state,
 checks, `agentops worker preflight --adapter ...` command, and live-dispatch
@@ -2003,9 +2004,11 @@ blockers. It also returns `record_review_snapshot`, a compact read-only RECORD
 view from the review queue with pending approval, memory candidate, returned
 item, and next review command counts; item summaries and raw content are
 omitted. Confirmed mode runs up to five
-`advance-loop --fast-control --confirm-advance` steps, re-reading adapter
-readiness and the launch brief before each step and relying on the existing
-allowlist, receipts, and control-readback path, then refreshes the same
+`advance-loop --fast-control --confirm-advance` steps, re-reading the
+start-check acceptance gate, adapter readiness, and the launch brief before each
+step. If `can_confirm_bounded_loop` is false or `server_executes_shell` is not
+false, it stops before advance. Otherwise it relies on the existing allowlist,
+receipts, and control-readback path, then refreshes the same
 `record_review_snapshot` after each step. The readiness and review gates are
 read-only evidence, not authorization: they do not create a new server shell
 execution surface and still refuse live/workflow/approval/external-write

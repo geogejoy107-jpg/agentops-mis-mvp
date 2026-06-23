@@ -76,6 +76,10 @@ from agentops_mis_core.gateway_runs import (
     build_run_heartbeat_update,
     run_heartbeat_terminal_task_status,
 )
+from agentops_mis_core.evaluation_cases import (
+    evaluation_case_candidate_public,
+    evaluation_case_run_public,
+)
 from agentops_mis_core.read_model_cache import ReadModelCache
 from agentops_mis_core.commander_work_packages import (
     build_commander_team_board,
@@ -162,6 +166,7 @@ READ_MODEL_CACHE = ROOT / "agentops_mis_core" / "read_model_cache.py"
 APPROVAL_WALL = ROOT / "agentops_mis_core" / "approval_wall.py"
 AGENT_PLANS = ROOT / "agentops_mis_core" / "agent_plans.py"
 GATEWAY_RUNS = ROOT / "agentops_mis_core" / "gateway_runs.py"
+EVALUATION_CASES = ROOT / "agentops_mis_core" / "evaluation_cases.py"
 COMMANDER_WORK_PACKAGES = ROOT / "agentops_mis_core" / "commander_work_packages.py"
 OPERATOR_COMMAND_CENTER = ROOT / "agentops_mis_core" / "operator_command_center.py"
 OPERATOR_EVIDENCE = ROOT / "agentops_mis_core" / "operator_evidence.py"
@@ -458,6 +463,14 @@ SERVER_GATEWAY_RUN_IMPORTS = {
     "build_run_heartbeat_update",
     "run_heartbeat_terminal_task_status",
 }
+EXTRACTED_EVALUATION_CASE_HELPERS = {
+    "evaluation_case_candidate_public",
+    "evaluation_case_run_public",
+}
+SERVER_EVALUATION_CASE_IMPORTS = {
+    "evaluation_case_candidate_public",
+    "evaluation_case_run_public",
+}
 
 
 def require(condition: bool, message: str, failures: list[str]) -> None:
@@ -509,6 +522,7 @@ def main() -> int:
     require(APPROVAL_WALL.exists(), "approval wall core module missing", failures)
     require(AGENT_PLANS.exists(), "agent plans core module missing", failures)
     require(GATEWAY_RUNS.exists(), "gateway runs core module missing", failures)
+    require(EVALUATION_CASES.exists(), "evaluation cases core module missing", failures)
     require(COMMANDER_WORK_PACKAGES.exists(), "commander work packages core module missing", failures)
     require(OPERATOR_COMMAND_CENTER.exists(), "operator command center core module missing", failures)
     require(OPERATOR_EVIDENCE.exists(), "operator evidence core module missing", failures)
@@ -520,6 +534,7 @@ def main() -> int:
     require("from agentops_mis_core.approval_wall import" in server_text, "server.py must import approval wall core module", failures)
     require("from agentops_mis_core.agent_plans import" in server_text, "server.py must import agent plans core module", failures)
     require("from agentops_mis_core.gateway_runs import" in server_text, "server.py must import gateway runs core module", failures)
+    require("from agentops_mis_core.evaluation_cases import" in server_text, "server.py must import evaluation cases core module", failures)
     require("from agentops_mis_core.read_model_cache import ReadModelCache" in server_text, "server.py must import read model cache core module", failures)
     require("from agentops_mis_core.commander_work_packages import" in server_text, "server.py must import commander work packages core module", failures)
     require("from agentops_mis_core.operator_command_center import" in server_text, "server.py must import operator command center core module", failures)
@@ -536,6 +551,7 @@ def main() -> int:
     approval_wall_functions = function_names(APPROVAL_WALL) if APPROVAL_WALL.exists() else set()
     agent_plan_functions = function_names(AGENT_PLANS) if AGENT_PLANS.exists() else set()
     gateway_run_functions = function_names(GATEWAY_RUNS) if GATEWAY_RUNS.exists() else set()
+    evaluation_case_functions = function_names(EVALUATION_CASES) if EVALUATION_CASES.exists() else set()
     commander_work_package_functions = function_names(COMMANDER_WORK_PACKAGES) if COMMANDER_WORK_PACKAGES.exists() else set()
     operator_command_center_functions = function_names(OPERATOR_COMMAND_CENTER) if OPERATOR_COMMAND_CENTER.exists() else set()
     operator_evidence_functions = function_names(OPERATOR_EVIDENCE) if OPERATOR_EVIDENCE.exists() else set()
@@ -585,6 +601,9 @@ def main() -> int:
     for helper in sorted(EXTRACTED_GATEWAY_RUN_HELPERS):
         require(helper not in server_functions, f"server.py still defines {helper}", failures)
         require(helper in gateway_run_functions, f"gateway runs module missing {helper}", failures)
+    for helper in sorted(EXTRACTED_EVALUATION_CASE_HELPERS):
+        require(helper not in server_functions, f"server.py still defines {helper}", failures)
+        require(helper in evaluation_case_functions, f"evaluation cases module missing {helper}", failures)
     require("worker_adapter_readiness" in server_functions, "worker_adapter_readiness must remain server-owned for runtime probing", failures)
     require("worker_adapter_readiness" not in worker_fleet_functions, "worker fleet module must not own runtime adapter probing", failures)
     for helper, sources in imported_symbol_sources(SERVER, SERVER_CAPABILITY_IMPORTS).items():
@@ -615,6 +634,8 @@ def main() -> int:
         require(sources == {"agentops_mis_core.agent_plans"}, f"{helper} imported from wrong or multiple modules: {sorted(sources)}", failures)
     for helper, sources in imported_symbol_sources(SERVER, SERVER_GATEWAY_RUN_IMPORTS).items():
         require(sources == {"agentops_mis_core.gateway_runs"}, f"{helper} imported from wrong or multiple modules: {sorted(sources)}", failures)
+    for helper, sources in imported_symbol_sources(SERVER, SERVER_EVALUATION_CASE_IMPORTS).items():
+        require(sources == {"agentops_mis_core.evaluation_cases"}, f"{helper} imported from wrong or multiple modules: {sorted(sources)}", failures)
 
     imports = imported_modules(CAPABILITIES)
     connector_imports = imported_modules(CONNECTORS) if CONNECTORS.exists() else set()
@@ -623,6 +644,7 @@ def main() -> int:
     approval_wall_imports = imported_modules(APPROVAL_WALL) if APPROVAL_WALL.exists() else set()
     agent_plan_imports = imported_modules(AGENT_PLANS) if AGENT_PLANS.exists() else set()
     gateway_run_imports = imported_modules(GATEWAY_RUNS) if GATEWAY_RUNS.exists() else set()
+    evaluation_case_imports = imported_modules(EVALUATION_CASES) if EVALUATION_CASES.exists() else set()
     commander_work_package_imports = imported_modules(COMMANDER_WORK_PACKAGES) if COMMANDER_WORK_PACKAGES.exists() else set()
     operator_command_center_imports = imported_modules(OPERATOR_COMMAND_CENTER) if OPERATOR_COMMAND_CENTER.exists() else set()
     operator_evidence_imports = imported_modules(OPERATOR_EVIDENCE) if OPERATOR_EVIDENCE.exists() else set()
@@ -652,6 +674,9 @@ def main() -> int:
     gateway_run_forbidden = sorted(module for module in gateway_run_imports if module in {"sqlite3", "subprocess", "http.server", "urllib.request"})
     require(not gateway_run_forbidden, f"gateway runs module imports forbidden app/runtime dependencies: {gateway_run_forbidden}", failures)
     require("server" not in gateway_run_imports, "gateway runs module must not import server module", failures)
+    evaluation_case_forbidden = sorted(module for module in evaluation_case_imports if module in {"sqlite3", "subprocess", "http.server", "urllib.request"})
+    require(not evaluation_case_forbidden, f"evaluation cases module imports forbidden app/runtime dependencies: {evaluation_case_forbidden}", failures)
+    require("server" not in evaluation_case_imports, "evaluation cases module must not import server module", failures)
     commander_work_package_forbidden = sorted(module for module in commander_work_package_imports if module in {"sqlite3", "subprocess", "http.server", "urllib.request"})
     require(not commander_work_package_forbidden, f"commander work packages module imports forbidden app/runtime dependencies: {commander_work_package_forbidden}", failures)
     require("server" not in commander_work_package_imports, "commander work packages module must not import server module", failures)
@@ -1938,6 +1963,16 @@ def main() -> int:
     require(evaluation_public and evaluation_public.get("score") == 1.0 and (evaluation_public.get("rubric") or {}).get("receipt_status") == "verified", "operator receipt evaluation projection failed", failures)
     require(readback_public and readback_public.get("readback_id") == "ocr_smoke" and readback_public.get("tamper_chain_hash") == "tamper_readback_smoke", "operator control readback projection failed", failures)
     require(((readback_public.get("control_readback") or {}).get("before") or {}).get("selected_gate") == "runtime_doctor", "operator control readback payload projection failed", failures)
+    case_public = evaluation_case_candidate_public({
+        "case_id": "case_smoke",
+        "rubric_json": json.dumps({"quality_gate": "pass"}, ensure_ascii=False, sort_keys=True),
+    })
+    case_run_public = evaluation_case_run_public({
+        "case_run_id": "ecr_smoke",
+        "checks_json": "{not-valid-json",
+    })
+    require(case_public.get("rubric", {}).get("quality_gate") == "pass" and case_public.get("token_omitted") is True, "evaluation case candidate projection failed", failures)
+    require(case_run_public.get("checks") == {} and case_run_public.get("token_omitted") is True, "evaluation case run invalid-json fallback failed", failures)
 
     command = "python3 scripts/module_boundary_smoke.py"
     require(command in ci_text, "module boundary smoke missing from CI", failures)
@@ -1949,6 +1984,7 @@ def main() -> int:
     require("agentops_mis_core/read_model_cache.py" in plan_text, "module boundary plan missing read model cache module", failures)
     require("agentops_mis_core/approval_wall.py" in plan_text, "module boundary plan missing approval wall module", failures)
     require("agentops_mis_core/agent_plans.py" in plan_text, "module boundary plan missing agent plans module", failures)
+    require("agentops_mis_core/evaluation_cases.py" in plan_text, "module boundary plan missing evaluation cases module", failures)
     require("agentops_mis_core/commander_work_packages.py" in plan_text, "module boundary plan missing commander work packages module", failures)
     require("agentops_mis_core/operator_command_center.py" in plan_text, "module boundary plan missing operator command center module", failures)
     require("agentops_mis_core/operator_evidence.py" in plan_text, "module boundary plan missing operator evidence module", failures)
@@ -1961,7 +1997,7 @@ def main() -> int:
     output = {
         "ok": not failures,
         "operation": "module_boundary_smoke",
-        "boundary": "agentops_mis_runtime.capabilities+connectors+trust + agentops_mis_core.read_model_cache+approval_wall+agent_plans+gateway_runs+commander_work_packages+operator_command_center+operator_evidence+operator_start_check+operator_loop_control+operator_receipts+worker_fleet+workflow_jobs",
+        "boundary": "agentops_mis_runtime.capabilities+connectors+trust + agentops_mis_core.read_model_cache+approval_wall+agent_plans+gateway_runs+evaluation_cases+commander_work_packages+operator_command_center+operator_evidence+operator_start_check+operator_loop_control+operator_receipts+worker_fleet+workflow_jobs",
         "server_line_count": len(server_text.splitlines()),
         "module_imports": {
             "capabilities": sorted(imports),
@@ -1971,6 +2007,7 @@ def main() -> int:
             "approval_wall": sorted(approval_wall_imports),
             "agent_plans": sorted(agent_plan_imports),
             "gateway_runs": sorted(gateway_run_imports),
+            "evaluation_cases": sorted(evaluation_case_imports),
             "commander_work_packages": sorted(commander_work_package_imports),
             "operator_command_center": sorted(operator_command_center_imports),
             "operator_evidence": sorted(operator_evidence_imports),

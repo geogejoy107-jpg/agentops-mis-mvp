@@ -146,9 +146,20 @@ def main() -> int:
             initial_brief = preview_payload.get("initial_brief") or {}
             preview_review = preview_payload.get("record_review_snapshot") or {}
             preview_readiness = preview_payload.get("adapter_readiness") or {}
+            preview_acceptance = preview_payload.get("acceptance_gate") or {}
             preview_readiness_commands = preview_readiness.get("commands") or {}
             preview_gate = preview_readiness.get("gate") or {}
             preview_remediation = preview_readiness.get("remediation") or {}
+            preview_acceptance_decision = preview_acceptance.get("decision") or {}
+            preview_acceptance_commands = preview_acceptance.get("commands") or {}
+            require(preview_acceptance.get("operation") == "operator_loop_driver_acceptance_gate", f"preview acceptance gate missing: {preview_payload}", failures)
+            require(preview_acceptance.get("source_operation") == "operator_start_check", f"preview acceptance source mismatch: {preview_acceptance}", failures)
+            require(preview_acceptance_decision.get("can_confirm_bounded_loop") is True, f"preview acceptance confirm gate missing: {preview_acceptance}", failures)
+            require(preview_acceptance_decision.get("live_dispatch_requires_confirm_run") is True, f"preview live confirm wall missing: {preview_acceptance}", failures)
+            require((preview_acceptance.get("wait_gates") or {}).get("live_dispatch") is True, f"preview live wait gate missing: {preview_acceptance}", failures)
+            require(str(preview_acceptance_commands.get("start_check") or "").startswith("agentops operator start-check --adapter hermes"), f"preview start-check command missing: {preview_acceptance}", failures)
+            require("--confirm-loop" in str(preview_acceptance_commands.get("loop_driver_confirm") or ""), f"preview loop confirm command missing: {preview_acceptance}", failures)
+            require((preview_acceptance.get("safety") or {}).get("server_executes_shell") is False, f"preview acceptance server-shell boundary missing: {preview_acceptance}", failures)
             require(initial_brief.get("operation") == "operator_loop_launch_brief", f"initial brief missing: {initial_brief}", failures)
             require((initial_brief.get("policy") or {}).get("server_executes_shell") is False, f"brief server shell boundary missing: {initial_brief}", failures)
             require(preview_review.get("operation") == "loop_driver_record_review_snapshot", f"preview record review snapshot missing: {preview_review}", failures)
@@ -166,6 +177,7 @@ def main() -> int:
             require(preview_remediation.get("status") in {"ready", "action_required"}, f"preview remediation missing: {preview_readiness}", failures)
             require(any(command.get("phase") == "preflight" for command in (preview_remediation.get("commands") or [])), f"preview remediation preflight missing: {preview_readiness}", failures)
             require((preview_remediation.get("safety") or {}).get("server_executes_shell") is False, f"preview remediation server shell boundary missing: {preview_readiness}", failures)
+            require(any("operator start-check --adapter hermes" in str(action) for action in (preview_payload.get("next_actions") or [])), f"preview next actions missing start-check: {preview_payload}", failures)
             require("agentops worker preflight --adapter hermes" in (preview_payload.get("next_actions") or []), f"preview next actions missing preflight: {preview_payload}", failures)
 
             before_confirm = fingerprint(db_path)
@@ -182,6 +194,12 @@ def main() -> int:
             require(confirmed_payload.get("status") in {"advanced", "empty"}, f"confirm status mismatch: {confirmed_payload}", failures)
             require((confirmed_payload.get("safety") or {}).get("live_execution_performed") is False, f"confirm should not run live work: {confirmed_payload}", failures)
             require((confirmed_payload.get("safety") or {}).get("server_executes_shell") is False, f"server shell boundary missing: {confirmed_payload}", failures)
+            initial_acceptance = confirmed_payload.get("initial_acceptance_gate") or {}
+            final_acceptance = confirmed_payload.get("acceptance_gate") or {}
+            require(initial_acceptance.get("operation") == "operator_loop_driver_acceptance_gate", f"confirm initial acceptance missing: {confirmed_payload}", failures)
+            require(final_acceptance.get("operation") == "operator_loop_driver_acceptance_gate", f"confirm final acceptance missing: {confirmed_payload}", failures)
+            require((initial_acceptance.get("decision") or {}).get("can_confirm_bounded_loop") is True, f"confirm initial acceptance should allow bounded loop: {initial_acceptance}", failures)
+            require((final_acceptance.get("safety") or {}).get("server_executes_shell") is False, f"confirm final acceptance server-shell boundary missing: {final_acceptance}", failures)
             final_readiness = confirmed_payload.get("adapter_readiness") or {}
             final_remediation = final_readiness.get("remediation") or {}
             require(final_readiness.get("operation") == "operator_loop_driver_adapter_readiness", f"confirm readiness missing: {final_readiness}", failures)
@@ -201,9 +219,16 @@ def main() -> int:
             require(str(final_review.get("review_command") or "").startswith("agentops review queue"), f"confirm final review command missing: {final_review}", failures)
             for step in steps:
                 advance = step.get("advance") or {}
+                step_acceptance_before = step.get("acceptance_gate_before") or {}
+                step_acceptance_after = step.get("acceptance_gate_after") or {}
                 before_readiness = step.get("adapter_readiness_before") or {}
                 after_readiness = step.get("adapter_readiness_after") or {}
                 step_review = step.get("record_review_snapshot") or {}
+                require(step_acceptance_before.get("operation") == "operator_loop_driver_acceptance_gate", f"step acceptance before missing: {step}", failures)
+                require((step_acceptance_before.get("decision") or {}).get("can_confirm_bounded_loop") is True, f"step acceptance before should allow bounded loop: {step}", failures)
+                require((step_acceptance_before.get("safety") or {}).get("server_executes_shell") is False, f"step acceptance before server shell boundary missing: {step}", failures)
+                require(step_acceptance_after.get("operation") == "operator_loop_driver_acceptance_gate", f"step acceptance after missing: {step}", failures)
+                require((step_acceptance_after.get("safety") or {}).get("server_executes_shell") is False, f"step acceptance after server shell boundary missing: {step}", failures)
                 require(advance.get("operation") == "operator_advance_loop", f"step advance missing: {step}", failures)
                 require(str(advance.get("action_command") or "").startswith("agentops "), f"step action command missing: {step}", failures)
                 require(advance.get("receipt_status") in {"verified", "failed", None}, f"step receipt status wrong: {step}", failures)
@@ -216,6 +241,7 @@ def main() -> int:
             final_brief = confirmed_payload.get("final_brief") or {}
             require(final_brief.get("operation") == "operator_loop_launch_brief", f"final brief missing: {final_brief}", failures)
             require((confirmed_payload.get("policy") or {}).get("policy_id") == "advance_loop_local_bounded_v1", f"policy missing: {confirmed_payload}", failures)
+            require((confirmed_payload.get("policy") or {}).get("acceptance_packet_required_before_confirm_loop") is True, f"acceptance policy missing: {confirmed_payload}", failures)
             require((confirmed_payload.get("policy") or {}).get("adapter_preflight_required_before_live_run") is True, f"adapter preflight policy missing: {confirmed_payload}", failures)
         finally:
             stop_server(proc)

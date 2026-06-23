@@ -1335,6 +1335,34 @@ python3 scripts/operator_start_check_api_smoke.py
 python3 scripts/operator_start_check_smoke.py --base-url "$AGENTOPS_BASE_URL" --adapter hermes --adapter openclaw
 ```
 
+### Slice 44: Evaluation Case Public Projection
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/evaluation_cases.py`
+
+Moved out of `server.py`:
+
+- evaluation case candidate public projection
+- evaluation case run public projection
+- invalid JSON fallback for rubric/checks public fields
+
+Still owned by `server.py`:
+
+- HTTP routes
+- SQLite candidate/run row reads and writes
+- review status transitions, remediation-task creation, runtime/audit writes
+- evaluation-case execution and final route response assembly
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/evaluation_case_candidate_smoke.py
+```
+
 ## Next Candidate Slices
 
 - Continue P1-05 with small smoke-backed strangler slices only; prefer pure

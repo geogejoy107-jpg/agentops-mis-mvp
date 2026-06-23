@@ -93,6 +93,10 @@ from agentops_mis_core.gateway_runs import (
     build_run_heartbeat_update,
     run_heartbeat_terminal_task_status,
 )
+from agentops_mis_core.evaluation_cases import (
+    evaluation_case_candidate_public,
+    evaluation_case_run_public,
+)
 from agentops_mis_core.commander_work_packages import (
     build_commander_team_board,
     build_commander_work_packages_readback,
@@ -7787,26 +7791,6 @@ def agent_gateway_eval_submit(conn, body) -> tuple[dict, int]:
     outcome = upsert_evaluation(conn, row, "agent-gateway")
     runtime_event(conn, "rtc_agent_gateway_local", "evaluation.submit", pass_fail, run_id=run_id, task_id=row["task_id"], agent_id=row["agent_id"], output_summary=row["notes"])
     return {"evaluation": row, "outcome": outcome}, 201 if outcome == "created" else 200
-
-
-def evaluation_case_candidate_public(row) -> dict:
-    data = dict(row)
-    try:
-        data["rubric"] = json.loads(data.get("rubric_json") or "{}")
-    except Exception:
-        data["rubric"] = {}
-    data["token_omitted"] = True
-    return data
-
-
-def evaluation_case_run_public(row) -> dict:
-    data = dict(row)
-    try:
-        data["checks"] = json.loads(data.get("checks_json") or "{}")
-    except Exception:
-        data["checks"] = {}
-    data["token_omitted"] = True
-    return data
 
 
 def list_evaluation_case_candidates(conn: sqlite3.Connection, qs: dict | None = None, headers=None) -> tuple[dict, int]:
