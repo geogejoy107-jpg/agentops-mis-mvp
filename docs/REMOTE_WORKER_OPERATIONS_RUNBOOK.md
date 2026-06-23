@@ -212,7 +212,9 @@ agentops worker service-check \
 The check inspects the service file and OS service status only. It does not
 install, load, unload, restart, or execute the worker. It omits raw service file
 content and fails closed if token-like values such as enrollment/session/API
-tokens are detected in a generated file.
+tokens are detected in a generated file. It also reports whether the installed
+template exposes the expected OS relaunch policy: launchd `KeepAlive=true` or
+systemd `Restart=always` with `RestartSec=5`.
 
 Preview OS service control before mutating launchd/systemd:
 
@@ -553,8 +555,9 @@ The expected proof is:
 - Async template worker submit follows the same live-route gate.
 - `agentops worker service-install` defaults to dry-run and only writes a
   placeholder template when `--confirm-install` is present.
-- `agentops worker service-check` returns JSON, omits raw service content, and
-  detects token-like values without printing them.
+- `agentops worker service-check` returns JSON, omits raw service content,
+  verifies the launchd/systemd relaunch policy, and detects token-like values
+  without printing them.
 - `agentops worker service-control` is preview-only by default, refuses unsafe
   token-like service files, and refuses Hermes/OpenClaw load/restart when the
   service template lacks `--confirm-run`.

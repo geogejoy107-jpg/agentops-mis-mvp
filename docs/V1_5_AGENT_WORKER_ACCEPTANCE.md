@@ -1365,6 +1365,13 @@ failures: []
 read-only launchd/systemd diagnostics for agent machines. The check validates a
 generated worker service template, confirms raw service content is omitted, and
 fails closed when token-like values are present without printing those values.
+It also reports a machine-readable relaunch policy:
+
+```text
+launchd: KeepAlive=true
+systemd: Restart=always, RestartSec=5
+```
+
 It does not install, load, restart, or execute a service.
 
 Latest worker service install smoke:
@@ -1538,7 +1545,7 @@ planned MIS task
 - Dify live sync, Notion live/bidirectional sync, hosted SaaS billing, and
   hosted multi-tenant operations remain excluded from this v1.5 acceptance.
 - The worker does not store full prompts or raw responses.
-- The worker is installable as a Python source package and can render/write/check launchd/systemd templates; it is not yet an npm package, signed binary, or automatic OS service loader/relauncher.
+- The worker is installable as a Python source package and can render/write/check launchd/systemd templates with OS-managed relaunch policy; it is not yet an npm package, signed binary, hosted fleet manager, or automatic OS service loader.
 - The UI/CLI worker status path now supports one-shot dispatch, local daemon start/stop, daemon state counters, daemon backoff state, daemon log tails, recent gateway events, remote enrollment/session health summaries, operator readiness cards, and stuck-task release controls; it is not a production fleet manager.
 - The worker status API/CLI now returns `fleet_health` gates and recommended
   CLI actions, so external agents and operator scripts can reason about whether

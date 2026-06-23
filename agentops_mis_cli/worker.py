@@ -1256,16 +1256,33 @@ def check_service_installation(args) -> dict:
     command_has_worker = "agentops-worker" in content
     adapter_present = args.adapter in content
     use_session_present = "--use-session" in content
+    if args.manager == "launchd":
+        relaunch_policy = {
+            "manager": "launchd",
+            "enabled": "<key>KeepAlive</key>" in content and "<true/>" in content,
+            "policy": "KeepAlive=true",
+            "raw_content_omitted": True,
+        }
+    else:
+        relaunch_policy = {
+            "manager": "systemd",
+            "enabled": bool(re.search(r"(?m)^Restart=always$", content)),
+            "policy": "Restart=always",
+            "restart_sec": "5" if re.search(r"(?m)^RestartSec=5$", content) else None,
+            "raw_content_omitted": True,
+        }
     confirm_gate_ok = args.adapter == "mock" or "--confirm-run" in content
     if args.manager == "launchd":
         service_status = launchd_status(label, args.timeout)
     else:
         unit = service_path.name
         service_status = systemd_status(unit, args.timeout)
-    ok = bool(exists and command_has_worker and adapter_present and use_session_present and confirm_gate_ok and not token_like_detected)
+    ok = bool(exists and command_has_worker and adapter_present and use_session_present and confirm_gate_ok and relaunch_policy["enabled"] and not token_like_detected)
     hints = []
     if not exists:
         hints.append("Render a template with agentops-worker service-template and write it to service_path.")
+    if exists and not relaunch_policy["enabled"]:
+        hints.append("Service file does not expose the expected OS relaunch policy.")
     if token_like_detected:
         hints.append("Replace raw tokens with a local environment-only secret flow; do not commit service files with real tokens.")
     if args.adapter != "mock" and not confirm_gate_ok:
@@ -1287,11 +1304,13 @@ def check_service_installation(args) -> dict:
             "command_has_worker": command_has_worker,
             "adapter_present": adapter_present,
             "use_session_present": use_session_present,
+            "relaunch_policy_ok": relaunch_policy["enabled"],
             "confirm_gate_ok": confirm_gate_ok,
             "placeholder_present": placeholder_present,
             "token_like_detected": token_like_detected,
             "raw_content_omitted": True,
         },
+        "relaunch_policy": relaunch_policy,
         "service_status": service_status,
         "setup_hints": hints,
         "live_execution_performed": False,
