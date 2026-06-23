@@ -390,6 +390,7 @@ def tool_call_has_external_side_effect_intent(
         "knowledge_retrieval_query_hash",
         "knowledge_retrieval_source_hashes",
         "knowledge_retrieval_status",
+        "knowledge_retrieval_task_context",
         "plan_id",
         "prompt_hash",
         "raw_omitted",

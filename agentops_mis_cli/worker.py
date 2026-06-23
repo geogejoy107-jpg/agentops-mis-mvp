@@ -755,23 +755,25 @@ def build_worker_knowledge_query(task: dict, adapter: str | None = None) -> str:
 
 
 def fetch_worker_knowledge_evidence(client: AgentOpsClient, task: dict, adapter: str | None = None) -> dict:
+    task_id = str(task.get("task_id") or "").strip()
     query = build_worker_knowledge_query(task, adapter=adapter)
+    packet_query = {
+        "limit": 5,
+        "baseline_limit": 5,
+        "adapter": adapter,
+    }
+    if task_id:
+        packet_query["task_id"] = task_id
+    else:
+        packet_query["q"] = query
     try:
-        packet = client.get("/api/agent-gateway/knowledge/evidence-packet", {
-            "q": query,
-            "limit": 5,
-            "baseline_limit": 5,
-        })
+        packet = client.get("/api/agent-gateway/knowledge/evidence-packet", packet_query)
         compact = compact_worker_knowledge_evidence(packet)
         if compact.get("knowledge_retrieval_evidence_consumed"):
             return compact
         try:
             indexed = client.post("/api/agent-gateway/knowledge/index", {"rebuild": False})
-            packet = client.get("/api/agent-gateway/knowledge/evidence-packet", {
-                "q": query,
-                "limit": 5,
-                "baseline_limit": 5,
-            })
+            packet = client.get("/api/agent-gateway/knowledge/evidence-packet", packet_query)
             compact = compact_worker_knowledge_evidence(packet)
             compact["knowledge_index_attempted"] = True
             compact["knowledge_index_status"] = indexed.get("status") or indexed.get("operation")
@@ -790,6 +792,13 @@ def fetch_worker_knowledge_evidence(client: AgentOpsClient, task: dict, adapter:
             "packet_hash": stable_hash({"status": "unavailable", "query_hash": stable_hash(query)}),
             "query_hash": stable_hash(query),
             "query_omitted": True,
+            "task_context": {
+                "task_id": task_id or None,
+                "task_found": False,
+                "query_source": "task_id" if task_id else "fallback_query",
+                "task_text_omitted": True,
+                "token_omitted": True,
+            },
             "knowledge_retrieval_evidence_consumed": False,
             "results": [],
             "retrieval_ids": [],
@@ -805,6 +814,7 @@ def fetch_worker_knowledge_evidence(client: AgentOpsClient, task: dict, adapter:
 
 def compact_worker_knowledge_evidence(packet: dict) -> dict:
     primary = packet.get("primary_search") or {}
+    task_context = packet.get("task_context") if isinstance(packet.get("task_context"), dict) else {}
     rows = []
     for row in (primary.get("results") or [])[:5]:
         rows.append({
@@ -825,6 +835,14 @@ def compact_worker_knowledge_evidence(packet: dict) -> dict:
         "operation": "worker_knowledge_retrieval_evidence",
         "packet_operation": packet.get("operation"),
         "packet_status": packet.get("status"),
+        "task_context": {
+            "task_id": task_context.get("task_id"),
+            "task_found": bool(task_context.get("task_found")),
+            "query_source": task_context.get("query_source") or "explicit_query",
+            "source_fields": task_context.get("source_fields") if isinstance(task_context.get("source_fields"), list) else [],
+            "task_text_omitted": task_context.get("task_text_omitted") is not False,
+            "token_omitted": True,
+        },
         "query_hash": packet.get("query_hash"),
         "query_omitted": True,
         "metrics": packet.get("metrics") or {},
@@ -841,6 +859,7 @@ def compact_worker_knowledge_evidence(packet: dict) -> dict:
     core["packet_hash"] = stable_hash({
         "packet_operation": core["packet_operation"],
         "packet_status": core["packet_status"],
+        "task_context": core["task_context"],
         "query_hash": core["query_hash"],
         "metrics": core["metrics"],
         "results": rows,
@@ -1004,6 +1023,7 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
             "knowledge_retrieval_packet_hash": knowledge_evidence.get("packet_hash"),
             "knowledge_retrieval_query_hash": knowledge_evidence.get("query_hash"),
             "knowledge_retrieval_status": knowledge_evidence.get("packet_status") or knowledge_evidence.get("status"),
+            "knowledge_retrieval_task_context": knowledge_evidence.get("task_context") or {},
             "knowledge_retrieval_ids": knowledge_evidence.get("retrieval_ids") or [],
             "knowledge_retrieval_paths": knowledge_evidence.get("paths") or [],
             "knowledge_retrieval_source_hashes": knowledge_evidence.get("source_hashes") or [],
@@ -1076,6 +1096,7 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
             "knowledge_retrieval_packet_hash": knowledge_evidence.get("packet_hash"),
             "knowledge_retrieval_query_hash": knowledge_evidence.get("query_hash"),
             "knowledge_retrieval_status": knowledge_evidence.get("packet_status") or knowledge_evidence.get("status"),
+            "knowledge_retrieval_task_context": knowledge_evidence.get("task_context") or {},
             "knowledge_retrieval_metrics": knowledge_evidence.get("metrics") or {},
             "knowledge_retrieval_omissions": {
                 "query_omitted": True,
@@ -1147,6 +1168,7 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
             "knowledge_retrieval_packet_hash": knowledge_evidence.get("packet_hash"),
             "knowledge_retrieval_query_hash": knowledge_evidence.get("query_hash"),
             "knowledge_retrieval_status": knowledge_evidence.get("packet_status") or knowledge_evidence.get("status"),
+            "knowledge_retrieval_task_context": knowledge_evidence.get("task_context") or {},
             "knowledge_retrieval_ids": knowledge_evidence.get("retrieval_ids") or [],
             "knowledge_retrieval_paths": knowledge_evidence.get("paths") or [],
             "knowledge_retrieval_source_hashes": knowledge_evidence.get("source_hashes") or [],
@@ -1189,6 +1211,7 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
             "packet_hash": knowledge_evidence.get("packet_hash"),
             "query_hash": knowledge_evidence.get("query_hash"),
             "status": knowledge_evidence.get("packet_status") or knowledge_evidence.get("status"),
+            "task_context": knowledge_evidence.get("task_context") or {},
             "result_count": knowledge_evidence.get("result_count") or 0,
             "retrieval_ids": knowledge_evidence.get("retrieval_ids") or [],
             "paths": knowledge_evidence.get("paths") or [],

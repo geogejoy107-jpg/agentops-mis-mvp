@@ -154,15 +154,16 @@ document/chunk IDs, headings, source hashes, visibility, and baseline
 Recall@5/MRR/p95 metrics without returning raw snippets, raw content, raw
 prompts, raw responses, or tokens.
 
-`agentops-worker` now consumes this packet before adapter execution. The worker
-builds a bounded, redacted, task-aware query from task title, description,
-acceptance criteria, risk, adapter/runtime, and the Agent Work Method Block
-anchor. It folds only compact packet/query hashes, retrieval IDs, paths, source
-hashes, and metrics into the Agent Plan, prompt hash input, tool-call args,
-evaluation rubric, and audit metadata, and keeps raw query/snippet/content/
-prompt/response/token omitted. If the worker token lacks `knowledge:read`, the
-worker records an `unavailable` compact status instead of blocking unrelated task
-execution.
+`agentops-worker` now consumes this packet before adapter execution. For normal
+MIS tasks it asks the server for a task-bound packet with `task_id`, so the
+authoritative task-aware query is built in one place. The worker falls back to a
+local redacted query only when no `task_id` is available. It folds only compact
+packet/query hashes, retrieval IDs, paths, source hashes, metrics, and minimal
+task-context omission proof into the Agent Plan, prompt hash input, tool-call
+args, evaluation rubric, and audit metadata, and keeps raw query/snippet/content/
+task text/prompt/response/token omitted. If the worker token lacks
+`knowledge:read`, the worker records an `unavailable` compact status instead of
+blocking unrelated task execution.
 
 ```bash
 agentops knowledge evidence-packet "Agent Gateway CLI commands" --limit 5

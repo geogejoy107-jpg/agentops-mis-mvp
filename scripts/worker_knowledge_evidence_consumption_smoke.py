@@ -265,6 +265,10 @@ def main() -> int:
             require(bool(worker_evidence.get("query_hash")), f"worker result missing query hash: {worker_evidence}", failures)
             require(worker_evidence.get("query_omitted") is True, f"worker result query should be omitted: {worker_evidence}", failures)
             require(worker_evidence.get("raw_content_omitted") is True, f"worker result raw content should be omitted: {worker_evidence}", failures)
+            worker_task_context = worker_evidence.get("task_context") or {}
+            require(worker_task_context.get("task_id") == task_id, f"worker evidence missing task-bound context: {worker_task_context}", failures)
+            require(worker_task_context.get("query_source") == "task_id", f"worker evidence should use task_id packet: {worker_task_context}", failures)
+            require(worker_task_context.get("task_text_omitted") is True, f"worker evidence should omit task text: {worker_task_context}", failures)
             task_relevant_path_fragments = [
                 "README.md",
                 "AGENT_WORKFLOW.md",
@@ -289,9 +293,14 @@ def main() -> int:
             require(tool_args.get("knowledge_retrieval_evidence_consumed") is True, f"tool args missing consumption proof: {tool_args}", failures)
             require(bool(tool_args.get("knowledge_retrieval_packet_hash")), f"tool args missing packet hash: {tool_args}", failures)
             require(bool(tool_args.get("knowledge_retrieval_query_hash")), f"tool args missing query hash: {tool_args}", failures)
+            tool_task_context = tool_args.get("knowledge_retrieval_task_context") or {}
+            require(tool_task_context.get("task_id") == task_id, f"tool args missing task context: {tool_task_context}", failures)
+            require(tool_task_context.get("task_text_omitted") is True, f"tool task context should omit text: {tool_task_context}", failures)
             require((tool_args.get("knowledge_retrieval_omissions") or {}).get("raw_prompt_omitted") is True, f"tool args omission proof missing: {tool_args}", failures)
             require(rubric.get("knowledge_retrieval_evidence_consumed") is True, f"eval rubric missing consumption proof: {rubric}", failures)
             require(bool(rubric.get("knowledge_retrieval_packet_hash")), f"eval rubric missing packet hash: {rubric}", failures)
+            rubric_task_context = rubric.get("knowledge_retrieval_task_context") or {}
+            require(rubric_task_context.get("task_id") == task_id, f"eval rubric missing task context: {rubric_task_context}", failures)
 
             status, audit_page, raw = http_json(base_url, "/api/audit", query={"limit": 120})
             outputs.append(raw)
@@ -300,6 +309,8 @@ def main() -> int:
             audit_meta = parse_json_field(audit_match.get("metadata_json"))
             require(audit_meta.get("knowledge_retrieval_evidence_consumed") is True, f"audit metadata missing consumption proof: {audit_meta}", failures)
             require(bool(audit_meta.get("knowledge_retrieval_packet_hash")), f"audit metadata missing packet hash: {audit_meta}", failures)
+            audit_task_context = audit_meta.get("knowledge_retrieval_task_context") or {}
+            require(audit_task_context.get("task_id") == task_id, f"audit metadata missing task context: {audit_task_context}", failures)
 
             status, evidence_report, raw = http_json(
                 base_url,
@@ -336,6 +347,7 @@ def main() -> int:
                 "audit_meta": audit_meta,
                 "report_knowledge": report_knowledge,
                 "report_summary": report_summary,
+                "task_context": worker_task_context,
             }
             raw_key_hits = forbidden_raw_key_paths(scoped_payload)
             require(not raw_key_hits, f"raw fields leaked in evidence metadata: {raw_key_hits}", failures)
@@ -403,6 +415,9 @@ def main() -> int:
             require(missing_worker_evidence.get("consumed") is False, f"missing-knowledge evidence should not be consumed: {missing_worker_evidence}", failures)
             require(missing_worker_evidence.get("status") == "unavailable", f"missing-knowledge evidence should be unavailable: {missing_worker_evidence}", failures)
             require(missing_worker_evidence.get("raw_prompt_omitted") is True, f"missing-knowledge raw prompt omission missing: {missing_worker_evidence}", failures)
+            missing_task_context = missing_worker_evidence.get("task_context") or {}
+            require(missing_task_context.get("task_id") == missing_task_id, f"missing-knowledge evidence missing task context: {missing_task_context}", failures)
+            require(missing_task_context.get("task_text_omitted") is True, f"missing-knowledge task context should omit text: {missing_task_context}", failures)
             require(missing_result.get("plan_evidence_pass") is not True, f"missing-knowledge manifest should not pass quality gate: {missing_result}", failures)
 
             status, missing_run_detail, raw = http_json(base_url, f"/api/runs/{missing_run_id}")
@@ -443,6 +458,7 @@ def main() -> int:
                 "rubric": missing_rubric,
                 "report_knowledge": missing_report_knowledge,
                 "report_summary": missing_report_summary,
+                "task_context": missing_task_context,
             }
             missing_raw_key_hits = forbidden_raw_key_paths(missing_scoped_payload)
             require(not missing_raw_key_hits, f"raw fields leaked in missing-knowledge metadata: {missing_raw_key_hits}", failures)

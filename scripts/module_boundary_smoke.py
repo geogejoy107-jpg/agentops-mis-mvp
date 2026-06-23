@@ -896,6 +896,12 @@ def main() -> int:
         None,
         {
             "requires_prepared_action_for_external_write": True,
+            "knowledge_retrieval_task_context": {
+                "task_id": "tsk_smoke",
+                "query_source": "task_id",
+                "task_text_omitted": True,
+                "token_omitted": True,
+            },
             "raw_payload_stored": False,
         },
     )
