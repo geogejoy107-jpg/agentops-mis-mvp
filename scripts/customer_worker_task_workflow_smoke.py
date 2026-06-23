@@ -10,8 +10,17 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+
+
+TOKEN_PATTERNS = [
+    re.compile(r"agtok_[A-Za-z0-9_]+"),
+    re.compile(r"agtsess_[A-Za-z0-9_]+"),
+    re.compile(r"sk-[A-Za-z0-9]{20,}"),
+    re.compile(r"ntn_[A-Za-z0-9]{8,}"),
+]
 
 
 def http_json(method: str, base_url: str, path: str, payload: dict | None = None):
@@ -34,6 +43,25 @@ def http_json(method: str, base_url: str, path: str, payload: dict | None = None
 def require(condition: bool, message: str, failures: list[str]) -> None:
     if not condition:
         failures.append(message)
+
+
+def require_live_admission_packet(result: dict, adapter: str, failures: list[str]) -> None:
+    packet = result.get("local_loop_admission_packet") or {}
+    admission = packet.get("admission") or {}
+    dispatch = ((packet.get("local_deployment") or {}).get("customer_worker_dispatch") or {})
+    worker_start = ((packet.get("local_deployment") or {}).get("worker_start") or {})
+    require(packet.get("operation") == "operator_local_loop_admission_packet", f"{adapter} admission packet missing: {packet}", failures)
+    require(packet.get("adapter") == adapter, f"{adapter} admission adapter mismatch: {packet}", failures)
+    require(admission.get("method_gate_count", 0) >= 8, f"{adapter} admission method gates missing: {packet}", failures)
+    require(admission.get("live_dispatch_requires_confirm_run") is True, f"{adapter} admission confirm wall missing: {packet}", failures)
+    require(dispatch.get("requires_confirm_run_flag") is True, f"{adapter} dispatch confirm flag missing: {packet}", failures)
+    require("--confirm-run" in str(dispatch.get("command") or ""), f"{adapter} dispatch command missing confirm-run: {packet}", failures)
+    require("--confirm-run" in str(worker_start.get("command") or ""), f"{adapter} worker start command missing confirm-run: {packet}", failures)
+    require((packet.get("safety") or {}).get("read_only") is True, f"{adapter} admission read-only proof missing: {packet}", failures)
+    require((packet.get("safety") or {}).get("ledger_mutated") is False, f"{adapter} admission ledger proof missing: {packet}", failures)
+    require((packet.get("safety") or {}).get("server_executes_shell") is False, f"{adapter} admission server-shell proof missing: {packet}", failures)
+    require(packet.get("live_execution_performed") is False, f"{adapter} admission live execution proof missing: {packet}", failures)
+    require(packet.get("token_omitted") is True, f"{adapter} admission token proof missing: {packet}", failures)
 
 
 def main() -> int:
@@ -91,9 +119,10 @@ def main() -> int:
     require(confirm_gate.get("dry_run") is True, f"Hermes without confirm should be dry_run/planned: {confirm_gate}", failures)
     require(confirm_gate.get("reason") == "confirm_run_required_for_live_adapter", f"confirm gate reason missing: {confirm_gate}", failures)
     require(bool(confirm_gate.get("task_id")), f"confirm gate should still create planned task: {confirm_gate}", failures)
+    require_live_admission_packet(confirm_gate, "hermes", failures)
 
     serialized = json.dumps({"result": result, "confirm_gate": confirm_gate}, ensure_ascii=False)
-    require("agtok_" not in serialized and "agtsess_" not in serialized and "sk-" not in serialized and "ntn_" not in serialized, "workflow output leaked token-like material", failures)
+    require(not any(pattern.search(serialized) for pattern in TOKEN_PATTERNS), "workflow output leaked token-like material", failures)
 
     print(json.dumps({
         "ok": not failures,
