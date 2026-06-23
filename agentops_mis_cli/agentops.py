@@ -2267,6 +2267,8 @@ def cmd_knowledge_index(args, client: AgentOpsClient) -> dict:
 def cmd_knowledge_evidence_packet(args, client: AgentOpsClient) -> dict:
     return client.get("/api/agent-gateway/knowledge/evidence-packet", query={
         "q": args.query,
+        "task_id": args.task_id,
+        "adapter": args.adapter,
         "limit": args.limit,
         "baseline_limit": args.baseline_limit,
     })
@@ -3782,6 +3784,8 @@ def build_parser() -> argparse.ArgumentParser:
     knowledge_index.set_defaults(handler="knowledge_index")
     knowledge_packet = knowledge_sub.add_parser("evidence-packet", help="Read retrieval quality and provenance proof without exposing raw content.")
     knowledge_packet.add_argument("query", nargs="?", default="")
+    knowledge_packet.add_argument("--task-id", default=None, help="Build the retrieval packet from a MIS task without exposing raw task text.")
+    knowledge_packet.add_argument("--adapter", default=None, help="Optional runtime adapter hint used only for task-aware query hashing.")
     knowledge_packet.add_argument("--limit", type=int, default=5)
     knowledge_packet.add_argument("--baseline-limit", type=int, default=5)
     knowledge_packet.set_defaults(handler="knowledge_evidence_packet")

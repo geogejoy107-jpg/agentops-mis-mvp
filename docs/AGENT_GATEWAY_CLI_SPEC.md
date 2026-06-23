@@ -166,8 +166,15 @@ execution.
 
 ```bash
 agentops knowledge evidence-packet "Agent Gateway CLI commands" --limit 5
+agentops knowledge evidence-packet --task-id <task_id> --adapter mock --limit 5
 curl -fsS "http://127.0.0.1:8787/api/knowledge/evidence-packet?q=Agent%20Gateway%20CLI&limit=5" | jq .
 ```
+
+When `--task-id` is provided, MIS builds the same bounded task-aware retrieval
+query used by `agentops-worker` from the task title, description, acceptance
+criteria, risk and adapter hint, but the response still omits raw task text and
+returns only `task_context`, `query_hash`, retrieval IDs, paths, source hashes
+and metrics.
 
 The Agent Gateway route requires `knowledge:read`. Packet reads are non-mutating:
 they do not refresh the index, pull tasks, start runs, write tool calls, or call

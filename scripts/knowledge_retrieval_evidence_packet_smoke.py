@@ -158,24 +158,27 @@ def assert_packet(payload: dict, failures: list[str]) -> None:
                 require(forbidden not in row, f"baseline result leaked {forbidden}: {row}", failures)
 
 
-def run_cli(base_url: str, token: str, workspace: str) -> subprocess.CompletedProcess[str]:
+def run_cli(base_url: str, token: str, workspace: str, task_id: str | None = None) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env.pop("AGENTOPS_API_KEY", None)
+    cmd = [
+        str(CLI),
+        "--base-url",
+        base_url,
+        "--api-key",
+        token,
+        "--workspace-id",
+        workspace,
+        "knowledge",
+        "evidence-packet",
+    ]
+    if task_id:
+        cmd.extend(["--task-id", task_id, "--adapter", "mock"])
+    else:
+        cmd.append("Agent Gateway CLI commands task pull run heartbeat")
+    cmd.extend(["--limit", "5"])
     return subprocess.run(
-        [
-            str(CLI),
-            "--base-url",
-            base_url,
-            "--api-key",
-            token,
-            "--workspace-id",
-            workspace,
-            "knowledge",
-            "evidence-packet",
-            "Agent Gateway CLI commands task pull run heartbeat",
-            "--limit",
-            "5",
-        ],
+        cmd,
         cwd=ROOT,
         env=env,
         capture_output=True,
@@ -215,7 +218,7 @@ def main() -> int:
                 "agent_id": agent_id,
                 "name": "Knowledge Retrieval Evidence Packet Smoke",
                 "runtime_type": "mock",
-                "scopes": ["knowledge:read", "knowledge:write"],
+                "scopes": ["knowledge:read", "knowledge:write", "tasks:create"],
                 "ttl_days": 1,
             })
             require(status == 201, f"enrollment failed: {status} {enrollment}", failures)
@@ -234,6 +237,19 @@ def main() -> int:
             outputs.append(raw)
             require(status == 200, f"knowledge index failed: {status} {indexed}", failures)
             require(int(indexed.get("indexed") or 0) >= 20, f"too few docs indexed: {indexed}", failures)
+            status, task, raw = http_json(base_url, "/api/agent-gateway/tasks", "POST", {
+                "workspace_id": workspace,
+                "title": f"Task-aware knowledge packet smoke {stamp}",
+                "description": (
+                    "Use Agent Gateway knowledge evidence to plan a worker loop for Hermes/OpenClaw adapter safety, "
+                    "plan evidence, run ledger writeback, and approval-gated external actions."
+                ),
+                "acceptance_criteria": "Evidence packet must be task-aware while omitting raw task text.",
+                "risk_level": "medium",
+            }, token=token, workspace=workspace)
+            outputs.append(raw)
+            task_id = task.get("task_id")
+            require(status == 201 and bool(task_id), f"task create failed: {status} {task}", failures)
             before = table_counts(db_path)
 
             status, packet, raw = http_json(
@@ -257,6 +273,23 @@ def main() -> int:
             outputs.append(raw)
             require(status == 200, f"packet alias API failed: {status} {alias_packet}", failures)
             assert_packet(alias_packet, failures)
+
+            status, task_packet, raw = http_json(
+                base_url,
+                "/api/agent-gateway/knowledge/evidence-packet",
+                token=token,
+                workspace=workspace,
+                query={"task_id": task_id, "adapter": "mock", "limit": 5},
+            )
+            outputs.append(raw)
+            require(status == 200, f"task packet API failed: {status} {task_packet}", failures)
+            assert_packet(task_packet, failures)
+            task_context = task_packet.get("task_context") or {}
+            require(task_context.get("task_id") == task_id, f"task packet context missing task id: {task_context}", failures)
+            require(task_context.get("task_found") is True, f"task packet should find task: {task_context}", failures)
+            require(task_context.get("query_source") == "task_id", f"task packet should use task_id source: {task_context}", failures)
+            require(task_context.get("task_text_omitted") is True, f"task packet should omit raw task text: {task_context}", failures)
+            require("Task-aware knowledge packet smoke" not in raw, f"task packet leaked raw title: {raw}", failures)
 
             status, readiness, raw = http_json(base_url, "/api/local/readiness", workspace=workspace)
             outputs.append(raw)
@@ -284,6 +317,16 @@ def main() -> int:
             require(cli.returncode == 0, f"CLI packet failed: {cli.stderr or cli.stdout}", failures)
             if cli.returncode == 0:
                 assert_packet(json.loads(cli.stdout), failures)
+
+            cli_task = run_cli(base_url, token, workspace, task_id=task_id)
+            outputs.append(cli_task.stdout)
+            outputs.append(cli_task.stderr)
+            require(cli_task.returncode == 0, f"CLI task packet failed: {cli_task.stderr or cli_task.stdout}", failures)
+            if cli_task.returncode == 0:
+                cli_task_packet = json.loads(cli_task.stdout)
+                assert_packet(cli_task_packet, failures)
+                require((cli_task_packet.get("task_context") or {}).get("task_id") == task_id, f"CLI task context missing: {cli_task_packet}", failures)
+                require((cli_task_packet.get("task_context") or {}).get("task_text_omitted") is True, f"CLI task text omission missing: {cli_task_packet}", failures)
 
             after = table_counts(db_path)
             require(after == before, f"read-only packet mutated DB counts: before={before} after={after}", failures)

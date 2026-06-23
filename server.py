@@ -5037,6 +5037,32 @@ def safe_knowledge_evidence_result(row: dict) -> dict:
     }
 
 
+def knowledge_retrieval_query_value(qs: dict, *keys: str, default: str = "") -> str:
+    for key in keys:
+        value = qs.get(key)
+        if isinstance(value, list):
+            value = value[0] if value else ""
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return default
+
+
+def knowledge_task_query(task: dict, adapter: str | None = None) -> str:
+    title = redact_text(task.get("title"), 90)
+    description = redact_text(task.get("description"), 220)
+    acceptance = redact_text(task.get("acceptance_criteria"), 160)
+    runtime = redact_text(adapter or task.get("runtime_type") or task.get("model_provider") or "worker", 40)
+    risk = redact_text(task.get("risk_level") or "medium", 32)
+    task_terms = " ".join(part for part in [title, description, acceptance] if part).strip()
+    query = (
+        f"Agent Gateway worker task evidence adapter {runtime} risk {risk}. "
+        f"{task_terms} "
+        "READ PLAN RETRIEVE COMPARE EXECUTE VERIFY RECORD method block "
+        "run ledger tool evaluation audit approval artifact worker adapter"
+    )
+    return redact_text(query, 240)
+
+
 def knowledge_retrieval_evidence_packet(conn: sqlite3.Connection, qs: dict, headers=None, auth_ctx=None) -> tuple[dict, int]:
     headers = headers or {}
     qs = qs or {}
@@ -5045,7 +5071,54 @@ def knowledge_retrieval_evidence_packet(conn: sqlite3.Connection, qs: dict, head
         or headers.get("X-AgentOps-Workspace-Id")
         or (qs.get("workspace_id") or ["local-demo"])[0]
     )
-    query = redact_text((qs.get("q") or qs.get("query") or ["READ PLAN RETRIEVE COMPARE VERIFY RECORD"])[0], 240)
+    task_id = knowledge_retrieval_query_value(qs, "task_id")
+    adapter = knowledge_retrieval_query_value(qs, "adapter", "runtime_type")
+    task_context = {
+        "task_id": task_id or None,
+        "task_found": False,
+        "query_source": "explicit_query",
+        "source_fields": [],
+        "task_text_omitted": True,
+        "token_omitted": True,
+    }
+    query = redact_text(knowledge_retrieval_query_value(qs, "q", "query", default="READ PLAN RETRIEVE COMPARE VERIFY RECORD"), 240)
+    if task_id:
+        task_row = conn.execute(
+            """SELECT task_id, workspace_id, title, description, acceptance_criteria,
+                risk_level, owner_agent_id
+            FROM tasks WHERE task_id=? AND workspace_id=?""",
+            (task_id, workspace_id),
+        ).fetchone()
+        if not task_row:
+            return {
+                "provider": "agentops-knowledge",
+                "operation": "knowledge_retrieval_evidence_packet",
+                "status": "not_found",
+                "error": "task_not_found",
+                "workspace_id": workspace_id,
+                "task_context": {
+                    **task_context,
+                    "query_source": "task_id",
+                    "task_id": task_id,
+                },
+                "query_omitted": True,
+                "raw_prompt_omitted": True,
+                "raw_response_omitted": True,
+                "raw_content_omitted": True,
+                "token_omitted": True,
+            }, 404
+        task = dict(task_row)
+        query = knowledge_task_query(task, adapter=adapter)
+        task_context = {
+            **task_context,
+            "task_id": task_id,
+            "task_found": True,
+            "query_source": "task_id",
+            "workspace_id": workspace_id,
+            "agent_id": task.get("owner_agent_id"),
+            "source_fields": ["title", "description", "acceptance_criteria", "risk_level"],
+            "task_text_omitted": True,
+        }
     limit = bounded_int((qs.get("limit") or ["5"])[0], 5, 1, 10)
     baseline_limit = bounded_int((qs.get("baseline_limit") or ["5"])[0], 5, 1, 10)
     search_auth_ctx = auth_ctx if auth_ctx is not None else {}
@@ -5150,6 +5223,7 @@ def knowledge_retrieval_evidence_packet(conn: sqlite3.Connection, qs: dict, head
         "version": "v0",
         "status": status,
         "workspace_id": workspace_id,
+        "task_context": task_context,
         "query_hash": stable_hash(query or "recent"),
         "query_omitted": True,
         "counts": counts,
