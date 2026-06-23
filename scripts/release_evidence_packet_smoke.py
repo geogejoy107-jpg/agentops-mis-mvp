@@ -266,7 +266,7 @@ TEST_COMMANDS = [
     },
     {
         "id": "operator_start_check_cli",
-        "command": "python3 scripts/operator_start_check_smoke.py --base-url $AGENTOPS_BASE_URL --adapter hermes --adapter openclaw",
+        "command": "python3 scripts/operator_start_check_smoke.py --base-url \"$AGENTOPS_BASE_URL\" --adapter hermes --adapter openclaw",
         "summary": "CLI/API parity smoke for the pre-task start-check command used before local Hermes/OpenClaw/Codex loop work.",
         "ci_step": "Server-backed smoke suite",
     },
