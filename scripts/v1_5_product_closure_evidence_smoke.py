@@ -111,6 +111,7 @@ def main() -> int:
                 "scripts/runtime_capability_manifest_smoke.py",
                 "scripts/runtime_connector_trust_smoke.py",
                 "scripts/worker_adapter_readiness_smoke.py",
+                "scripts/v1_5_live_product_readiness_smoke.py",
             ],
             source_markers={
                 "agentops_mis_cli/worker.py": ["--adapter", "hermes", "openclaw"],
@@ -233,6 +234,7 @@ def main() -> int:
                 "scripts/merge_readiness_status_smoke.py",
                 "scripts/github_required_checks_smoke.py",
                 "scripts/open_source_adoption_boundary_smoke.py",
+                "scripts/v1_5_live_product_readiness_smoke.py",
             ],
             source_markers={
                 "docs/V1_5_MERGE_READINESS_CHECKLIST.md": ["READY_TO_MERGE", "Backend deterministic smokes", "UI build"],
@@ -262,6 +264,9 @@ def main() -> int:
     runtime_doctor_command = "python3 scripts/operator_runtime_doctor_smoke.py"
     require(runtime_doctor_command in release_text, "release evidence packet missing operator runtime-doctor smoke", failures)
     require(runtime_doctor_command in ci_text, "CI workflow missing operator runtime-doctor smoke", failures)
+    live_readiness_command = "python3 scripts/v1_5_live_product_readiness_smoke.py --require-adapter hermes --require-adapter openclaw"
+    require(live_readiness_command in release_text, "release evidence packet missing live product-readiness proof command", failures)
+    require(live_readiness_command not in ci_text, "live product-readiness proof must remain manual-live and out of CI", failures)
 
     output = json.dumps({"operation": "v1_5_product_closure_evidence", "ok": not failures, "evidence_class": "static_ci_matrix", "product_readiness_proof": False, "items": items, "failures": failures, "safety": {"read_only": True, "ledger_mutated": False, "live_execution_performed": False, "token_omitted": True}}, ensure_ascii=False, indent=2)
     require(not any(pattern.search(output) for pattern in SECRET_PATTERNS), "evidence output leaked token-like material", failures)

@@ -78,6 +78,13 @@ TEST_COMMANDS = [
         "manual_only": True,
     },
     {
+        "id": "v1_5_live_product_readiness",
+        "command": "python3 scripts/v1_5_live_product_readiness_smoke.py --require-adapter hermes --require-adapter openclaw",
+        "summary": "Read-only manual live ledger proof that fresh Hermes/OpenClaw customer-worker runs have full run/tool/eval/runtime/audit/artifact/memory/approval/plan-evidence coverage.",
+        "ci_step": "manual-live-local",
+        "manual_only": True,
+    },
+    {
         "id": "customer_worker_hermes_retry_gateway",
         "command": "python3 scripts/customer_worker_hermes_retry_gateway_smoke.py",
         "summary": "Deterministic loopback Hermes-compatible gateway smoke proving customer-worker retry metadata is wired through the real adapter path; not live product-readiness proof.",
