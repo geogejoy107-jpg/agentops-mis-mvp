@@ -128,12 +128,15 @@ def require(condition: bool, message: str, failures: list[str]) -> None:
         failures.append(message)
 
 
-def validate_packet(payload: dict, label: str, task_id: str, agent_id: str, failures: list[str]) -> None:
+def validate_packet(payload: dict, label: str, task_id: str, agent_id: str, failures: list[str], *, expected_control_operation: str = "operator_loop_control", expected_handoff_mode: str = "lightweight") -> None:
     require(payload.get("operation") == "operator_loop_launch_packet", f"{label} operation mismatch: {payload}", failures)
     require(payload.get("method") == "READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD", f"{label} method mismatch: {payload}", failures)
     require(payload.get("task_id") == task_id, f"{label} task mismatch: {payload.get('task_id')} != {task_id}", failures)
     require(payload.get("agent_id") == agent_id, f"{label} agent mismatch: {payload.get('agent_id')} != {agent_id}", failures)
     require(payload.get("token_omitted") is True, f"{label} token omission missing: {payload}", failures)
+    summary = payload.get("summary") or {}
+    require(summary.get("handoff_mode") == expected_handoff_mode, f"{label} handoff mode wrong: {summary}", failures)
+    require(summary.get("operator_control_status") in {"ready", "attention", "blocked", "unknown", None}, f"{label} operator control status unexpected: {summary}", failures)
     safety = payload.get("safety") or {}
     require(safety.get("read_only") is True, f"{label} read_only missing: {safety}", failures)
     require(safety.get("ledger_mutated") is False, f"{label} should not mutate ledger: {safety}", failures)
@@ -162,6 +165,7 @@ def validate_packet(payload: dict, label: str, task_id: str, agent_id: str, fail
     require("agentops agent-plan verify" in joined, f"{label} missing plan verify command: {commands}", failures)
     require("agentops knowledge search" in joined, f"{label} missing knowledge search command: {commands}", failures)
     require("agentops commander repo-map" in joined, f"{label} missing commander repo-map command: {commands}", failures)
+    require("agentops operator loop-control" in joined, f"{label} missing lightweight loop-control command: {commands}", failures)
     require("agentops operator loop-self-check" in joined, f"{label} missing loop self-check command: {commands}", failures)
     require("agentops operator evidence-report" in joined, f"{label} missing evidence report command: {commands}", failures)
     require("agentops operator action-receipts" in joined, f"{label} missing action receipts command: {commands}", failures)
@@ -244,7 +248,13 @@ def validate_packet(payload: dict, label: str, task_id: str, agent_id: str, fail
     require((sources.get("intake") or {}).get("operation") == "task_intake_checklist", f"{label} missing intake source: {sources}", failures)
     require((sources.get("knowledge_search") or {}).get("operation") == "knowledge_search", f"{label} missing knowledge source: {sources}", failures)
     require((sources.get("repo_map") or {}).get("operation") == "repo_map", f"{label} missing repo-map source: {sources}", failures)
-    require((sources.get("handoff") or {}).get("operation") == "operator_handoff", f"{label} missing handoff source: {sources}", failures)
+    operator_control = sources.get("operator_control") or {}
+    handoff_source = sources.get("handoff") or {}
+    require(operator_control.get("operation") == expected_control_operation, f"{label} missing operator control source: {sources}", failures)
+    require(operator_control.get("mode") == expected_handoff_mode, f"{label} operator control mode mismatch: {operator_control}", failures)
+    require(handoff_source.get("operation") == expected_control_operation, f"{label} handoff compatibility source mismatch: {sources}", failures)
+    require(handoff_source.get("mode") == expected_handoff_mode, f"{label} handoff mode mismatch: {handoff_source}", failures)
+    require(operator_control.get("token_omitted") is True and handoff_source.get("token_omitted") is True, f"{label} control source token omission missing: {sources}", failures)
 
 
 def main() -> int:
@@ -316,6 +326,23 @@ def main() -> int:
             cli_payload = load_json(cli_proc.stdout)
             require(cli_proc.returncode == 0, f"CLI launch packet failed: {cli_proc.stderr or cli_proc.stdout}", failures)
             validate_packet(cli_payload, "cli", task_id, agent_id, failures)
+            full_status, full_payload = http_json(
+                base_url,
+                "/api/operator/loop-launch-packet",
+                {"task_id": task_id, "agent_id": agent_id, "limit": 8, "q": "Agent Work Method Block", "full_handoff": "true"},
+            )
+            outputs.append(json.dumps(full_payload, ensure_ascii=False))
+            require(full_status == 200, f"Full handoff API status mismatch: {full_status} {full_payload}", failures)
+            validate_packet(full_payload, "api_full_handoff", task_id, agent_id, failures, expected_control_operation="operator_handoff", expected_handoff_mode="full")
+            full_cli = run_cli(
+                base_url,
+                ["operator", "loop-launch-packet", "--task-id", task_id, "--agent-id", agent_id, "--limit", "8", "--query", "Agent Work Method Block", "--full-handoff"],
+                env,
+            )
+            outputs.extend([full_cli.stdout, full_cli.stderr])
+            full_cli_payload = load_json(full_cli.stdout)
+            require(full_cli.returncode == 0, f"Full handoff CLI launch packet failed: {full_cli.stderr or full_cli.stdout}", failures)
+            validate_packet(full_cli_payload, "cli_full_handoff", task_id, agent_id, failures, expected_control_operation="operator_handoff", expected_handoff_mode="full")
             after = db_fingerprint(db_path)
             require(before == after, f"launch packet changed database fingerprint: {before} -> {after}", failures)
             require(not leaked("\n".join(outputs)), "loop launch packet leaked token-like material", failures)

@@ -210,6 +210,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "operator_loop_launch_packet",
+        "command": "python3 scripts/operator_loop_launch_packet_smoke.py",
+        "summary": "Agent Work Method launch packet supports default lightweight loop-control and explicit full handoff modes without mutating ledgers.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "task_detail_evidence_ui",
         "command": "python3 scripts/task_detail_evidence_ui_smoke.py",
         "summary": "Task detail page exposes delivery evidence state, latest run and approval links.",

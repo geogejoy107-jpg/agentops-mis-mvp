@@ -1759,13 +1759,19 @@ same gate decision as the operator console.
 
 ```bash
 agentops operator loop-launch-packet --task-id tsk_123 --agent-id agt_worker --limit 8
+agentops operator loop-launch-packet --task-id tsk_123 --agent-id agt_worker --handoff-mode full
 ```
 
 Maps to `GET /api/operator/loop-launch-packet`. This is a read-only Agent Work
 Method launch packet for Hermes, OpenClaw, Codex, or a remote Agent. It combines
 the intake checklist, safe knowledge-search metadata, repo-map localization,
-operator handoff state, and a complete agent-plan draft into one machine-readable
+operator control state, and a complete agent-plan draft into one machine-readable
 `READ -> PLAN -> RETRIEVE -> COMPARE -> EXECUTE -> VERIFY -> RECORD` sequence.
+Default control uses lightweight `operator loop-control`; `--handoff-mode full`
+or `--full-handoff` switches the packet to deeper `operator handoff`
+diagnostics. The payload exposes `sources.operator_control` and a
+backward-compatible `sources.handoff` alias so older agents still find the
+control source while newer agents can branch on `summary.handoff_mode`.
 It emits commands for loop self-check, knowledge search, commander repo-map
 localization, plan creation/verification, intake comparison, enforced task
 pull, loop verification, plan-evidence binding, evidence reporting, Action

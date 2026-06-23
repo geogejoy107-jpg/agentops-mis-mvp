@@ -16963,6 +16963,10 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
         120,
     )
     query = redact_text((qs.get("q") or qs.get("query") or ["READ PLAN RETRIEVE COMPARE VERIFY RECORD"])[0], 240)
+    requested_handoff_mode = str((qs.get("handoff_mode") or qs.get("mode") or ["lightweight"])[0] or "lightweight").strip().lower()
+    if str((qs.get("full_handoff") or [""])[0]).strip().lower() in {"1", "true", "yes", "on"}:
+        requested_handoff_mode = "full"
+    handoff_mode = "full" if requested_handoff_mode == "full" else "lightweight"
     intake = operator_task_intake_checklist(conn, workspace_id, limit=limit)
     selected_task = None
     if task_id:
@@ -16996,7 +17000,10 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
         }
         for row in (knowledge_payload.get("results") or [])
     ]
-    handoff = operator_handoff(conn, headers, {"limit": [str(limit)]}, auth_ctx=auth_ctx)
+    if handoff_mode == "full":
+        operator_control = operator_handoff(conn, headers, {"limit": [str(limit)]}, auth_ctx=auth_ctx)
+    else:
+        operator_control = operator_loop_control(conn, headers, {"limit": [str(limit)]}, auth_ctx=auth_ctx)
     selected_task_id = (selected_task or {}).get("task_id") or task_id or "<task_id>"
     selected_title = (selected_task or {}).get("title") or selected_task_id
     assigned_agent_ids = (selected_task or {}).get("assigned_agent_ids") or []
@@ -17079,22 +17086,27 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
     retrieve_command = f"agentops knowledge search {shlex.quote(query)} --limit {min(limit, 10)}"
     compare_command = "agentops operator intake-checklist --limit 20"
     execute_command = f"agentops task pull --agent-id {shlex.quote(agent_id)} --status planned --limit 5 --enforce-intake"
-    self_check_command = "agentops operator loop-self-check --limit 12"
+    loop_control_command = f"agentops operator loop-control --limit {limit}"
+    deep_self_check_command = "agentops operator loop-self-check --limit 12"
+    self_check_command = deep_self_check_command if handoff_mode == "full" else loop_control_command
     verify_command = "agentops operator loop-audit --limit 20"
     evidence_report_command = "agentops operator evidence-report --limit 12"
-    handoff_command = "agentops operator handoff --limit 12"
+    deep_handoff_command = "agentops operator handoff --limit 12"
+    handoff_command = deep_handoff_command if handoff_mode == "full" else loop_control_command
     action_receipts_command = "agentops operator action-receipts --limit 20"
     record_command = "agentops review queue --limit 20"
-    loop_health = handoff.get("loop_health") or {}
+    loop_health = operator_control.get("loop_health") or {}
+    operator_control_summary = operator_control.get("control_summary") or {}
+    operator_control_operation = operator_control.get("operation") or ("operator_handoff" if handoff_mode == "full" else "operator_loop_control")
     health_gates = loop_health.get("gates") or {}
     receipt_eval_gate = health_gates.get("receipt_evaluations") or {}
-    evidence_work_order = ((handoff.get("work_order") or {}).get("evidence_report") or {})
+    evidence_work_order = ((operator_control.get("work_order") or {}).get("evidence_report") or {})
     advance_policy = advance_loop_policy_summary()
     evaluation_contract = {
         "operation": "loop_evaluation_contract",
-        "status": loop_health.get("status") or handoff.get("status") or "unknown",
+        "status": loop_health.get("status") or operator_control_summary.get("status") or operator_control.get("status") or "unknown",
         "score": loop_health.get("score"),
-        "score_source": "operator_handoff.loop_health",
+        "score_source": "operator_handoff.loop_health" if handoff_mode == "full" else "operator_loop_control.control_summary",
         "minimum_exit_criteria": [
             "Agent Plan verifies before execution",
             "intake gates are not blocked for the selected task",
@@ -17104,7 +17116,7 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
             "Action Queue receipt is recorded and evaluated when a bounded advance action is used",
             "no raw prompt, raw response, customer body, token, or credential is exposed",
         ],
-        "required_commands": [self_check_command, verify_command, evidence_report_command, action_receipts_command],
+        "required_commands": list(dict.fromkeys([self_check_command, deep_self_check_command, verify_command, evidence_report_command, action_receipts_command])),
         "required_ledgers": [
             "agent_plans",
             "plan_evidence_manifests",
@@ -17155,7 +17167,7 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
         },
         "token_omitted": True,
     }
-    advance_loop = ((handoff.get("work_order") or {}).get("advance_loop") or {})
+    advance_loop = ((operator_control.get("work_order") or {}).get("advance_loop") or {})
     advance_summary = advance_loop.get("summary") or {}
     advance_selected = advance_loop.get("selected_item") or {}
     advance_preview_command = advance_loop.get("preview_command") or "agentops operator advance-loop --limit 12"
@@ -17238,8 +17250,8 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
         reason = "copy and run this read-only command, then verify the next gate"
         blocked_reason = None
         if step_id == "pre_advance_self_check":
-            status = normalize_chain_status(loop_health.get("status") or handoff.get("status"), "ready")
-            reason = "handoff loop health feeds the self-check gate"
+            status = normalize_chain_status(loop_health.get("status") or operator_control_summary.get("status") or operator_control.get("status"), "ready")
+            reason = "operator control readback feeds the self-check gate"
         elif step_id == "bounded_advance_preview":
             status = normalize_chain_status(advance_summary.get("selected_status") or advance_loop.get("status"), "attention")
             reason = "preview is read-only and selects at most one allowlisted next action"
@@ -17267,7 +17279,7 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
             status = normalize_chain_status(receipt_eval_gate.get("status") or loop_health.get("status"), "ready")
             reason = "review queue and action receipt evaluation coverage feed RECORD readiness"
         elif step_id == "loop_audit_final":
-            status = normalize_chain_status(loop_health.get("status") or handoff.get("status"), "ready")
+            status = normalize_chain_status(loop_health.get("status") or operator_control_summary.get("status") or operator_control.get("status"), "ready")
             reason = "final loop-audit must read back no loop-local blocked gates"
         if receipt_state.get("required") and receipt_state.get("verified"):
             status = "verified"
@@ -17294,7 +17306,7 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
             "mutating": False,
             "confirm_required": False,
             "receipt_required": False,
-            "source": "operator_loop_self_check",
+            "source": "operator_loop_self_check" if handoff_mode == "full" else "operator_loop_control",
             "next_on_pass": "bounded_advance_preview",
             "token_omitted": True,
         },
@@ -17308,7 +17320,7 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
             "mutating": False,
             "confirm_required": False,
             "receipt_required": False,
-            "source": "operator_handoff.advance_loop",
+            "source": f"{operator_control_operation}.advance_loop",
             "selected_gate": advance_summary.get("selected_gate"),
             "selected_status": advance_summary.get("selected_status") or advance_loop.get("status"),
             "policy_id": advance_policy.get("policy_id"),
@@ -17468,7 +17480,7 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
     launch_sequence = [
         {
             "phase": "READ",
-            "commands": ["git status --short --branch", "git rev-parse --short HEAD", handoff_command, self_check_command],
+            "commands": list(dict.fromkeys(["git status --short --branch", "git rev-parse --short HEAD", loop_control_command, handoff_command, self_check_command, deep_self_check_command])),
             "evidence": referenced_specs,
         },
         {
@@ -17529,9 +17541,9 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
             "audit_contract": audit_contract,
         },
     ]
-    handoff_commands = ((handoff.get("work_order") or {}).get("commands") or [])[:8]
+    handoff_commands = ((operator_control.get("work_order") or {}).get("commands") or [])[:8]
     commands = []
-    for item in [self_check_command, retrieve_command, repo_map_command, plan_create_command, plan_verify_command, compare_command, execute_command, verify_command, evidence_report_command, plan_evidence_command, record_command, action_receipts_command, *handoff_commands]:
+    for item in [loop_control_command, self_check_command, deep_self_check_command, retrieve_command, repo_map_command, plan_create_command, plan_verify_command, compare_command, execute_command, verify_command, evidence_report_command, plan_evidence_command, record_command, action_receipts_command, deep_handoff_command, *handoff_commands]:
         if item and item not in commands:
             commands.append(item)
     return {
@@ -17548,7 +17560,9 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
             "selected_task_severity": (selected_task or {}).get("severity"),
             "knowledge_results": knowledge_payload.get("count", 0),
             "repo_map_files": repo_map_payload.get("selected_count", 0),
-            "handoff_status": handoff.get("status"),
+            "handoff_mode": handoff_mode,
+            "operator_control_status": operator_control.get("status"),
+            "handoff_status": operator_control.get("status"),
             "commands": len(commands),
             "approval_required": approval_required,
             "evaluation_status": evaluation_contract.get("status"),
@@ -17590,16 +17604,28 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
                 "raw_content_omitted": True,
                 "token_omitted": True,
             },
+            "operator_control": {
+                "operation": operator_control_operation,
+                "mode": handoff_mode,
+                "status": operator_control.get("status"),
+                "summary": operator_control.get("summary") or {},
+                "control_summary": operator_control.get("control_summary") or {},
+                "loop_health": operator_control.get("loop_health") or {},
+                "work_order": operator_control.get("work_order") or {},
+                "token_omitted": True,
+            },
             "handoff": {
-                "operation": handoff.get("operation"),
-                "status": handoff.get("status"),
-                "summary": handoff.get("summary") or {},
-                "loop_health": handoff.get("loop_health") or {},
-                "work_order": handoff.get("work_order") or {},
+                "operation": operator_control_operation,
+                "mode": handoff_mode,
+                "status": operator_control.get("status"),
+                "summary": operator_control.get("summary") or {},
+                "control_summary": operator_control.get("control_summary") or {},
+                "loop_health": operator_control.get("loop_health") or {},
+                "work_order": operator_control.get("work_order") or {},
                 "token_omitted": True,
             },
         },
-        "contract": "read-only loop launch packet for agents; it drafts commands and evidence requirements but does not create plans, run workers, approve gates, create memories, or mutate ledgers",
+        "contract": "read-only loop launch packet for agents; default control uses lightweight loop-control and --full-handoff is reserved for deeper diagnostics; it drafts commands and evidence requirements but does not create plans, run workers, approve gates, create memories, or mutate ledgers",
         "safety": {
             "read_only": True,
             "ledger_mutated": False,

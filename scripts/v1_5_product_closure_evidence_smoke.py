@@ -172,6 +172,7 @@ def main() -> int:
             scripts=[
                 "scripts/operator_runtime_doctor_smoke.py",
                 "scripts/operator_execution_mode_smoke.py",
+                "scripts/operator_loop_launch_packet_smoke.py",
                 "scripts/operator_action_queue_ui_smoke.py",
                 "scripts/operator_advance_loop_smoke.py",
                 "scripts/ai_employees_responsiveness_smoke.py",
@@ -254,6 +255,9 @@ def main() -> int:
     loop_control_command = "python3 scripts/operator_loop_control_smoke.py"
     require(loop_control_command in release_text, "release evidence packet missing operator loop-control smoke", failures)
     require(loop_control_command in ci_text, "CI workflow missing operator loop-control smoke", failures)
+    launch_packet_command = "python3 scripts/operator_loop_launch_packet_smoke.py"
+    require(launch_packet_command in release_text, "release evidence packet missing operator loop-launch-packet smoke", failures)
+    require(launch_packet_command in ci_text, "CI workflow missing operator loop-launch-packet smoke", failures)
     runtime_doctor_command = "python3 scripts/operator_runtime_doctor_smoke.py"
     require(runtime_doctor_command in release_text, "release evidence packet missing operator runtime-doctor smoke", failures)
     require(runtime_doctor_command in ci_text, "CI workflow missing operator runtime-doctor smoke", failures)

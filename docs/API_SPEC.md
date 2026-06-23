@@ -411,14 +411,21 @@ the `task_intake` source and reports `task_intake_checked`,
 `task_intake_missing_agent_plan`.
 
 `GET /api/operator/loop-launch-packet` is the read-only Agent Work Method
-handoff packet for Hermes, OpenClaw, Codex, or remote agents. Its RETRIEVE
-phase includes both safe knowledge-search metadata and a
+handoff packet for Hermes, OpenClaw, Codex, or remote agents. By default it uses
+the lightweight `operator loop-control` read model for next-step control so
+agents do not wait on the heavier full handoff graph before starting READ/PLAN
+work. Pass `handoff_mode=full` or `full_handoff=true` when deeper
+`operator handoff` diagnostics are required. Its RETRIEVE phase includes both
+safe knowledge-search metadata and a
 `GET /api/commander/repo-map` localization source: sanitized paths, symbols,
 content hashes, provenance, ranking proof, omission flags, and the exact
 `agentops commander repo-map` command to rerun. The embedded agent-plan draft
 uses those repo-map paths as initial `proposed_files_to_change` candidates
-when localization succeeds. The packet does not create plans, run workers,
-approve gates, create memories, mutate ledgers, or return raw file bodies.
+when localization succeeds. The response includes `sources.operator_control`
+plus a backward-compatible `sources.handoff` alias that names the active control
+source (`operator_loop_control` by default, `operator_handoff` in full mode).
+The packet does not create plans, run workers, approve gates, create memories,
+mutate ledgers, or return raw file bodies.
 
 `GET /api/operator/runtime-doctor` is the lightweight, read-only local runtime
 doctor for Hermes, OpenClaw, Codex supervision, and remote Agents. It samples

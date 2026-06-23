@@ -512,6 +512,8 @@ def cmd_operator_loop_launch_packet(args, client: AgentOpsClient) -> dict:
             "task_id": args.task_id,
             "agent_id": args.agent_id,
             "q": args.query,
+            "handoff_mode": args.handoff_mode,
+            "full_handoff": "true" if args.full_handoff else None,
         },
     )
 
@@ -2405,6 +2407,8 @@ def build_parser() -> argparse.ArgumentParser:
     operator_launch.add_argument("--task-id", default=None)
     operator_launch.add_argument("--agent-id", default=None)
     operator_launch.add_argument("--query", default="READ PLAN RETRIEVE COMPARE VERIFY RECORD")
+    operator_launch.add_argument("--handoff-mode", choices=["lightweight", "full"], default="lightweight", help="Use lightweight loop-control by default; choose full for deeper operator handoff diagnostics.")
+    operator_launch.add_argument("--full-handoff", action="store_true", help="Shortcut for --handoff-mode full.")
     operator_launch.set_defaults(handler="operator_loop_launch_packet")
     evidence_gap = operator_sub.add_parser("remediate-evidence-gap", help="Preview or create a Commander package for a run execution-evidence gap.")
     evidence_gap.add_argument("--run-id", required=True)
