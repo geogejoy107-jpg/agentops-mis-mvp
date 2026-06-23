@@ -173,6 +173,18 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
             f"{label} evidence remediation workflow gate {key} missing: {remediation_workflow_gate}",
             failures,
         )
+    workflow_recovery_gate = loop_health_gates.get("workflow_job_recovery") or {}
+    require(
+        workflow_recovery_gate.get("status") in {"pass", "attention", "blocked"},
+        f"{label} workflow job recovery gate missing: {workflow_recovery_gate}",
+        failures,
+    )
+    for key in ["items", "stuck_jobs", "retryable_failed_jobs", "blocked", "attention", "receipt_missing", "receipt_verified"]:
+        require(
+            isinstance(workflow_recovery_gate.get(key), int),
+            f"{label} workflow job recovery gate {key} missing: {workflow_recovery_gate}",
+            failures,
+        )
     score_parts = loop_health.get("score_parts") or {}
     require(isinstance(score_parts.get("receipt_evaluations"), int), f"{label} receipt evaluation score part missing: {score_parts}", failures)
     work_order = payload.get("work_order") or {}
@@ -194,6 +206,21 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
     require(evidence_safety.get("read_only") is True, f"{label} evidence report work order should be read-only: {evidence_safety}", failures)
     require(evidence_safety.get("ledger_mutated") is False, f"{label} evidence report work order should not mutate ledger: {evidence_safety}", failures)
     require(evidence_work_order.get("token_omitted") is True, f"{label} evidence report token omission missing: {evidence_work_order}", failures)
+    workflow_recovery = work_order.get("workflow_job_recovery") or {}
+    require(workflow_recovery.get("operation") == "workflow_job_recovery_work_order", f"{label} workflow job recovery work order missing: {workflow_recovery}", failures)
+    require(workflow_recovery.get("status") in {"ready", "attention", "blocked"}, f"{label} workflow job recovery status wrong: {workflow_recovery}", failures)
+    require(isinstance((workflow_recovery.get("summary") or {}).get("items"), int), f"{label} workflow job recovery summary missing: {workflow_recovery}", failures)
+    require(isinstance(workflow_recovery.get("items") or [], list), f"{label} workflow job recovery items missing: {workflow_recovery}", failures)
+    require(isinstance(workflow_recovery.get("next_actions") or [], list), f"{label} workflow job recovery next_actions missing: {workflow_recovery}", failures)
+    workflow_recovery_safety = workflow_recovery.get("safety") or {}
+    require(workflow_recovery_safety.get("read_only") is True, f"{label} workflow job recovery should be read-only: {workflow_recovery_safety}", failures)
+    require(workflow_recovery_safety.get("ledger_mutated") is False, f"{label} workflow job recovery should not mutate ledger: {workflow_recovery_safety}", failures)
+    for item in workflow_recovery.get("items") or []:
+        require(item.get("operation") == "workflow_job_recovery_item", f"{label} workflow recovery item operation wrong: {item}", failures)
+        require(str(item.get("preview_command") or "").startswith("agentops workflow recover-job --job-id "), f"{label} workflow recovery preview command missing: {item}", failures)
+        require("--confirm-recover" in str(item.get("confirm_command") or ""), f"{label} workflow recovery confirm command missing: {item}", failures)
+        require(str(item.get("receipt_verify_record_command") or "").startswith("agentops operator record-action-receipt "), f"{label} workflow recovery receipt command missing: {item}", failures)
+        require((item.get("receipt_state") or {}).get("source") == "operator.workflow_job_recovery", f"{label} workflow recovery receipt source missing: {item}", failures)
     remediation_chain = evidence_work_order.get("remediation_chain") or {}
     require(remediation_chain.get("operation") == "evidence_remediation_chain", f"{label} evidence remediation chain missing: {remediation_chain}", failures)
     require(remediation_chain.get("status") in {"attention", "empty"}, f"{label} evidence remediation chain status wrong: {remediation_chain}", failures)

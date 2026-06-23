@@ -10771,6 +10771,190 @@ def recover_workflow_job(conn, job_id: str, body: dict, headers=None) -> tuple[d
     return preview, 200
 
 
+def workflow_job_recovery_work_order(conn: sqlite3.Connection, workspace_id: str, limit: int = 8) -> dict:
+    workspace_id = normalize_workspace_id(workspace_id)
+    limit = min(max(int(limit or 8), 1), 25)
+    now_dt = dt.datetime.now(dt.timezone.utc)
+    active_rows = conn.execute(
+        """SELECT *
+        FROM workflow_jobs
+        WHERE COALESCE(workspace_id,'local-demo')=?
+          AND status IN ('queued','running')
+        ORDER BY updated_at ASC
+        LIMIT 500""",
+        (workspace_id,),
+    ).fetchall()
+    stuck_jobs: list[dict] = []
+    for row in active_rows:
+        projected = workflow_job_stuck_projection(row, now_dt=now_dt, threshold_sec=900)
+        if projected:
+            stuck_jobs.append(projected)
+        if len(stuck_jobs) >= limit:
+            break
+    retryable_failed_jobs = [
+        workflow_job_public(row) or {}
+        for row in conn.execute(
+            """SELECT *
+            FROM workflow_jobs
+            WHERE COALESCE(workspace_id,'local-demo')=?
+              AND status='failed'
+              AND result_task_id IS NOT NULL
+            ORDER BY updated_at DESC
+            LIMIT ?""",
+            (workspace_id, limit),
+        ).fetchall()
+    ]
+    receipt_rows = operator_action_receipt_rows(conn, workspace_id, min(max(limit * 40, 200), 1000))
+
+    def receipt_state(command: str, action_id: str, action_signature: str) -> dict:
+        command = command.strip()
+        command_hash = stable_hash(command) if command else ""
+        receipt = next((
+            item for item in receipt_rows
+            if str(item.get("action_signature") or "").strip() == action_signature
+            or str(item.get("action_id") or "").strip() == action_id
+            or str(item.get("action_command") or "").strip() == command
+            or str(item.get("action_hash") or "").strip() == command_hash
+        ), None)
+        status = (receipt or {}).get("status") or "missing"
+        return {
+            "required": True,
+            "status": status,
+            "verified": bool(receipt and status == "verified"),
+            "current": bool(receipt),
+            "receipt_id": (receipt or {}).get("receipt_id"),
+            "receipt_hash": (receipt or {}).get("tamper_chain_hash"),
+            "evaluation_pass_fail": (receipt or {}).get("evaluation_pass_fail"),
+            "evaluation_score": (receipt or {}).get("evaluation_score"),
+            "action_id": action_id,
+            "action_signature": action_signature,
+            "action_hash": command_hash,
+            "source": "operator.workflow_job_recovery",
+            "token_omitted": True,
+        }
+
+    def receipt_command(command: str, verify: str, action_id: str, action_signature: str, summary: str, *, status: str = "recorded", confirm: bool = False) -> str:
+        parts = [
+            "agentops", "operator", "record-action-receipt",
+            "--action-command", command,
+            "--verify-command", verify,
+            "--action-id", action_id,
+            "--action-signature", action_signature,
+            "--status", status,
+            "--source", "operator.workflow_job_recovery",
+            "--result-summary", summary,
+        ]
+        if confirm:
+            parts.append("--confirm-record")
+        return " ".join(shlex.quote(str(part)) for part in parts)
+
+    def item_for_job(job: dict, mode: str) -> dict | None:
+        job_id = str(job.get("job_id") or "").strip()
+        if not job_id:
+            return None
+        if mode == "retry":
+            task_id = str(job.get("result_task_id") or "").strip()
+            if not task_id:
+                return None
+            adapter = coerce_choice(job.get("adapter"), {"mock", "hermes", "openclaw"}, "mock")
+            action_id = f"workflow_job_recovery:{job_id}:retry"
+            action_signature = stable_id("op_action_sig", "workflow_job_recovery", workspace_id, job_id, "retry", task_id, adapter)[-18:]
+            preview_parts = ["agentops", "workflow", "recover-job", "--job-id", job_id, "--mode", "retry", "--task-id", task_id, "--adapter", adapter]
+            confirm_parts = [*preview_parts, "--confirm-recover", "--record-receipt"]
+            if adapter in {"hermes", "openclaw"}:
+                confirm_parts.append("--confirm-run")
+            verify = "agentops workflow jobs --status queued,running,completed,failed --limit 20"
+            summary = f"Workflow job {job_id} retry was queued or safely rejected with evidence."
+            severity = "attention"
+            reason = f"Failed workflow job can be retried through exact-task dispatch; adapter={adapter}."
+            confirm_required = adapter in {"hermes", "openclaw"}
+            task_id_value = task_id
+        else:
+            action_id = f"workflow_job_recovery:{job_id}:mark_failed"
+            action_signature = stable_id("op_action_sig", "workflow_job_recovery", workspace_id, job_id, "mark_failed")[-18:]
+            reason_text = "workflow job exceeded async threshold; operator recovery from handoff"
+            preview_parts = ["agentops", "workflow", "recover-job", "--job-id", job_id, "--mode", "mark-failed", "--reason", reason_text]
+            confirm_parts = [*preview_parts, "--confirm-recover", "--record-receipt"]
+            verify = f"agentops workflow job-status --job-id {shlex.quote(job_id)}"
+            summary = f"Workflow job {job_id} marked failed after recover-job review."
+            severity = "blocked"
+            reason = f"Workflow job exceeded async threshold; age_sec={job.get('age_sec') or 0}."
+            confirm_required = True
+            task_id_value = job.get("result_task_id")
+        preview_command = " ".join(shlex.quote(str(part)) for part in preview_parts)
+        confirm_command = " ".join(shlex.quote(str(part)) for part in confirm_parts)
+        receipt = receipt_state(confirm_command, action_id, action_signature)
+        record_command = receipt_command(confirm_command, verify, action_id, action_signature, summary)
+        verify_record_command = receipt_command(confirm_command, verify, action_id, action_signature, summary, status="verified", confirm=True)
+        return {
+            "operation": "workflow_job_recovery_item",
+            "job_id": job_id,
+            "mode": mode,
+            "status": "verified" if receipt.get("verified") else severity,
+            "severity": severity,
+            "title": job.get("title") or f"Workflow job recovery: {job_id}",
+            "summary": redact_text(reason, 360),
+            "preview_command": preview_command,
+            "confirm_command": confirm_command,
+            "verify_command": verify,
+            "receipt_record_command": record_command,
+            "receipt_verify_record_command": verify_record_command,
+            "receipt_next_command": verify_record_command,
+            "receipt_state": receipt,
+            "adapter": job.get("adapter"),
+            "confirm_required": confirm_required,
+            "live_confirm_required": bool(job.get("adapter") in {"hermes", "openclaw"}),
+            "task_id": task_id_value,
+            "run_id": job.get("result_run_id"),
+            "artifact_id": job.get("result_artifact_id"),
+            "age_sec": job.get("age_sec"),
+            "threshold_sec": job.get("threshold_sec"),
+            "error_summary": redact_text(job.get("error_message") or "", 240) if job.get("error_message") else None,
+            "raw_request_omitted": True,
+            "token_omitted": True,
+        }
+
+    items = [item for item in (item_for_job(job, "mark-failed") for job in stuck_jobs) if item]
+    items.extend(item for item in (item_for_job(job, "retry") for job in retryable_failed_jobs) if item)
+    items = items[:limit]
+    blocked = [item for item in items if item.get("severity") == "blocked" and not (item.get("receipt_state") or {}).get("verified")]
+    attention = [item for item in items if item.get("severity") == "attention" and not (item.get("receipt_state") or {}).get("verified")]
+    verified = [item for item in items if (item.get("receipt_state") or {}).get("verified")]
+    commands: list[str] = []
+    for item in items:
+        for key in ["preview_command", "confirm_command", "verify_command", "receipt_verify_record_command"]:
+            command = str(item.get(key) or "").strip()
+            if command and command not in commands:
+                commands.append(command)
+    return {
+        "operation": "workflow_job_recovery_work_order",
+        "status": "blocked" if blocked else "attention" if attention else "ready",
+        "workspace_id": workspace_id,
+        "summary": {
+            "items": len(items),
+            "stuck_jobs": len(stuck_jobs),
+            "retryable_failed_jobs": len(retryable_failed_jobs),
+            "blocked": len(blocked),
+            "attention": len(attention),
+            "receipt_required": len(items),
+            "receipt_verified": len(verified),
+            "receipt_missing": len(items) - len(verified),
+        },
+        "items": items,
+        "commands": commands[: min(len(commands), 24)],
+        "next_actions": [item["preview_command"] for item in items[:3]] or ["agentops workflow stuck-jobs --threshold-sec 900 --limit 25"],
+        "contract": "read-only workflow-job recovery work order for Hermes/OpenClaw/Codex; preview is read-only, confirmed recovery requires explicit --confirm-recover, receipts use operator.workflow_job_recovery, and live retry still requires --confirm-run",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_executes_shell": False,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
+
+
 def run_workflow_job_background(job_id: str, body: dict) -> None:
     started = now_iso()
     try:
@@ -16987,6 +17171,28 @@ def live_acceptance_readiness(conn: sqlite3.Connection, workspace_id: str = "loc
             ),
             "token_omitted": True,
         }
+    workflow_recovery = workflow_job_recovery_work_order(conn, workspace_id, limit=min(limit, 8))
+    workflow_recovery_summary = workflow_recovery.get("summary") or {}
+    workflow_recovery_hint = {
+        "operation": "workflow_job_recovery_hint",
+        "status": workflow_recovery.get("status"),
+        "summary": {
+            "items": int(workflow_recovery_summary.get("items") or 0),
+            "stuck_jobs": int(workflow_recovery_summary.get("stuck_jobs") or 0),
+            "retryable_failed_jobs": int(workflow_recovery_summary.get("retryable_failed_jobs") or 0),
+            "receipt_missing": int(workflow_recovery_summary.get("receipt_missing") or 0),
+        },
+        "inspect_command": "agentops workflow stuck-jobs --threshold-sec 900 --limit 25",
+        "handoff_command": f"agentops operator handoff --limit {min(limit, 8)}",
+        "contract": "read-only live-acceptance hint only; full recover-job preview/confirm contract is exposed through operator handoff and loop-launch packet",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
     overall = "ready" if all(item["ok"] for item in adapters.values()) else "attention"
     return {
         "provider": "agentops-operator",
@@ -17002,8 +17208,16 @@ def live_acceptance_readiness(conn: sqlite3.Connection, workspace_id: str = "loc
             "missing": sum(1 for item in adapters.values() if item["status"] == "missing"),
             "latest_failed": sum(1 for item in adapters.values() if item["status"] == "latest_failed"),
             "latest_incomplete": sum(1 for item in adapters.values() if item["status"] == "latest_incomplete"),
+            "workflow_job_recovery_items": int(workflow_recovery_summary.get("items") or 0),
+            "workflow_job_recovery_stuck_jobs": int(workflow_recovery_summary.get("stuck_jobs") or 0),
+            "workflow_job_recovery_retryable_failed_jobs": int(workflow_recovery_summary.get("retryable_failed_jobs") or 0),
+            "workflow_job_recovery_receipt_missing": int(workflow_recovery_summary.get("receipt_missing") or 0),
         },
-        "commands": {adapter: adapters[adapter]["next_action"] for adapter in adapters},
+        "commands": {
+            **{adapter: adapters[adapter]["next_action"] for adapter in adapters},
+            "workflow_jobs": workflow_recovery_hint["inspect_command"],
+        },
+        "workflow_job_recovery_hint": workflow_recovery_hint,
         "contract": "read-only live Hermes/OpenClaw customer-worker acceptance freshness; derives from ledger evidence only and does not call runtimes",
         "safety": {
             "read_only": True,
@@ -17446,6 +17660,8 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
         operator_control = operator_handoff(conn, headers, {"limit": [str(limit)]}, auth_ctx=auth_ctx)
     else:
         operator_control = operator_loop_control(conn, headers, {"limit": [str(limit)]}, auth_ctx=auth_ctx)
+    workflow_recovery_work_order = workflow_job_recovery_work_order(conn, workspace_id, limit=min(limit, 8))
+    workflow_recovery_summary = workflow_recovery_work_order.get("summary") or {}
     selected_task_id = (selected_task or {}).get("task_id") or task_id or "<task_id>"
     selected_title = (selected_task or {}).get("title") or selected_task_id
     assigned_agent_ids = (selected_task or {}).get("assigned_agent_ids") or []
@@ -17592,6 +17808,14 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
             "action_signature": evidence_work_order.get("action_signature"),
             "receipt_state": evidence_work_order.get("receipt_state") or {},
             "summary": evidence_work_order.get("summary") or {},
+            "token_omitted": True,
+        },
+        "workflow_job_recovery": {
+            "operation": workflow_recovery_work_order.get("operation"),
+            "status": workflow_recovery_work_order.get("status"),
+            "summary": workflow_recovery_summary,
+            "next_actions": workflow_recovery_work_order.get("next_actions") or [],
+            "safety": workflow_recovery_work_order.get("safety") or {},
             "token_omitted": True,
         },
         "bounded_runner": {
@@ -17972,9 +18196,15 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
         },
         {
             "phase": "VERIFY",
-            "commands": [verify_command, evidence_report_command],
+            "commands": [verify_command, evidence_report_command, "agentops workflow stuck-jobs --threshold-sec 900 --limit 25"],
             "contract": "run targeted checks and keep failed evidence visible",
             "evaluation_contract": evaluation_contract,
+            "workflow_job_recovery": {
+                "status": workflow_recovery_work_order.get("status"),
+                "summary": workflow_recovery_summary,
+                "next_actions": workflow_recovery_work_order.get("next_actions") or [],
+                "token_omitted": True,
+            },
         },
         {
             "phase": "RECORD",
@@ -17985,7 +18215,15 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
     ]
     handoff_commands = ((operator_control.get("work_order") or {}).get("commands") or [])[:8]
     commands = []
-    for item in [loop_control_command, self_check_command, deep_self_check_command, retrieve_command, repo_map_command, plan_create_command, plan_verify_command, compare_command, execute_command, verify_command, evidence_report_command, plan_evidence_command, record_command, action_receipts_command, deep_handoff_command, *handoff_commands]:
+    workflow_recovery_commands = [
+        str(command or "").strip()
+        for command in [
+            *(workflow_recovery_work_order.get("next_actions") or []),
+            *(workflow_recovery_work_order.get("commands") or []),
+        ]
+        if str(command or "").strip()
+    ]
+    for item in [loop_control_command, self_check_command, deep_self_check_command, retrieve_command, repo_map_command, plan_create_command, plan_verify_command, compare_command, execute_command, verify_command, evidence_report_command, "agentops workflow stuck-jobs --threshold-sec 900 --limit 25", plan_evidence_command, record_command, action_receipts_command, deep_handoff_command, *workflow_recovery_commands[:6], *handoff_commands]:
         if item and item not in commands:
             commands.append(item)
     return {
@@ -18014,6 +18252,11 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
             "control_status": control_summary.get("status"),
             "control_mode": control_summary.get("mode"),
             "recommended_step": (control_summary.get("recommended_step") or {}).get("step_id"),
+            "workflow_job_recovery_status": workflow_recovery_work_order.get("status"),
+            "workflow_job_recovery_items": int(workflow_recovery_summary.get("items") or 0),
+            "workflow_job_recovery_stuck_jobs": int(workflow_recovery_summary.get("stuck_jobs") or 0),
+            "workflow_job_recovery_retryable_failed_jobs": int(workflow_recovery_summary.get("retryable_failed_jobs") or 0),
+            "workflow_job_recovery_receipt_missing": int(workflow_recovery_summary.get("receipt_missing") or 0),
         },
         "launch_sequence": launch_sequence,
         "execution_chain": execution_chain,
@@ -18021,6 +18264,7 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
         "agent_plan_draft": launch_sequence[1]["draft"],
         "evaluation_contract": evaluation_contract,
         "audit_contract": audit_contract,
+        "workflow_job_recovery": workflow_recovery_work_order,
         "commands": commands[:24],
         "sources": {
             "intake": intake,
@@ -18056,6 +18300,7 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
                 "work_order": operator_control.get("work_order") or {},
                 "token_omitted": True,
             },
+            "workflow_job_recovery": workflow_recovery_work_order,
             "handoff": {
                 "operation": operator_control_operation,
                 "mode": handoff_mode,
@@ -18766,103 +19011,45 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             },
         )
 
-    workflow_recovery_stuck_jobs = workflow_stuck_jobs(conn, threshold_sec=900, limit=max(limit, 8))
-    workflow_recovery_retryable_failed_jobs = rows_to_dicts(conn.execute(
-        """SELECT *
-        FROM workflow_jobs
-        WHERE status='failed' AND result_task_id IS NOT NULL
-        ORDER BY updated_at DESC
-        LIMIT ?""",
-        (max(limit, 8),),
-    ).fetchall())
-    for job in workflow_recovery_stuck_jobs[:limit]:
+    workflow_recovery_work_order = workflow_job_recovery_work_order(conn, workspace_id, limit=max(limit, 8))
+    workflow_recovery_summary = workflow_recovery_work_order.get("summary") or {}
+    for job in (workflow_recovery_work_order.get("items") or [])[:limit]:
         job_id = str(job.get("job_id") or "").strip()
-        if not job_id:
+        command = str(job.get("confirm_command") or "").strip()
+        verify_command = str(job.get("verify_command") or "").strip()
+        if not job_id or not command:
             continue
-        command = (
-            "agentops workflow job-mark-failed "
-            f"--job-id {shlex.quote(job_id)} "
-            "--reason 'workflow job exceeded async threshold; operator recovery from action-plan'"
-        )
         add_action(
             "workflow_job_recovery",
             job.get("title") or f"Mark stuck workflow job failed: {job_id}",
             command,
-            priority=112,
-            severity="blocked",
-            source="workflow_job_recovery:stuck",
-            summary=(
-                f"{job.get('workflow_type') or 'workflow'} job has been {job.get('status') or 'active'} "
-                f"for {job.get('age_sec') or 0}s; mark failed before retrying or reassigning."
-            ),
-            ui_route="/workspace/agents",
+            priority=112 if job.get("mode") == "mark-failed" else 101,
+            severity=str(job.get("severity") or "attention"),
+            source=f"workflow_job_recovery:{job.get('mode') or 'recover'}",
+            summary=job.get("summary") or "",
+            ui_route="/workspace/agents" if job.get("mode") == "mark-failed" else f"/admin/tasks/{job.get('task_id')}",
             evidence={
                 "job_id": job_id,
                 "workflow_type": job.get("workflow_type"),
-                "status": job.get("status"),
                 "adapter": job.get("adapter"),
+                "mode": job.get("mode"),
+                "confirm_required": job.get("confirm_required"),
+                "live_confirm_required": job.get("live_confirm_required"),
                 "age_sec": job.get("age_sec"),
                 "threshold_sec": job.get("threshold_sec"),
                 "stuck_reason": job.get("stuck_reason"),
-                "result_task_id": job.get("result_task_id"),
-                "result_run_id": job.get("result_run_id"),
+                "task_id": job.get("task_id"),
+                "run_id": job.get("run_id"),
+                "artifact_id": job.get("artifact_id"),
+                "preview_command": job.get("preview_command"),
+                "receipt_next_command": job.get("receipt_next_command"),
                 "raw_request_omitted": True,
             },
-            verify_command_override=f"agentops workflow job-status --job-id {shlex.quote(job_id)}",
-            action_signature_override=stable_id("op_action_sig", "workflow_job_recovery", workspace_id, job_id, "mark_failed")[-18:],
-            action_id_override=f"workflow_job_recovery:{job_id}:mark_failed",
+            verify_command_override=verify_command or None,
+            action_signature_override=str(job.get("action_signature") or ""),
+            action_id_override=str(job.get("action_id") or ""),
             receipt_source="operator.workflow_job_recovery",
-            receipt_result_summary=f"Workflow job {job_id} marked failed after stuck recovery review.",
-        )
-
-    for job in workflow_recovery_retryable_failed_jobs[:limit]:
-        job_id = str(job.get("job_id") or "").strip()
-        task_id = str(job.get("result_task_id") or "").strip()
-        if not job_id or not task_id:
-            continue
-        adapter = str(job.get("adapter") or "mock").strip()
-        if adapter not in {"mock", "hermes", "openclaw"}:
-            adapter = "mock"
-        command_parts = [
-            "agentops", "commander", "dispatch-batch",
-            "--task-id", task_id,
-            "--status", "all",
-            "--limit", "1",
-            "--adapter", adapter,
-        ]
-        confirm_required = adapter in {"hermes", "openclaw"}
-        if confirm_required:
-            command_parts.append("--confirm-run")
-        command = " ".join(shlex.quote(part) for part in command_parts)
-        add_action(
-            "workflow_job_recovery",
-            job.get("title") or f"Retry failed workflow job: {job_id}",
-            command,
-            priority=101,
-            severity="attention",
-            source="workflow_job_recovery:retry",
-            summary=(
-                f"Failed workflow job can be retried through Commander exact-task dispatch; "
-                f"adapter={adapter}; live_confirm_required={confirm_required}."
-            ),
-            ui_route=f"/admin/tasks/{task_id}",
-            evidence={
-                "job_id": job_id,
-                "workflow_type": job.get("workflow_type"),
-                "status": job.get("status"),
-                "adapter": adapter,
-                "confirm_required": confirm_required,
-                "task_id": task_id,
-                "run_id": job.get("result_run_id"),
-                "artifact_id": job.get("result_artifact_id"),
-                "error_message": redact_text(job.get("error_message") or "", 240),
-                "raw_request_omitted": True,
-            },
-            verify_command_override="agentops workflow jobs --status queued,running,completed,failed --limit 20",
-            action_signature_override=stable_id("op_action_sig", "workflow_job_recovery", workspace_id, job_id, "retry", task_id, adapter)[-18:],
-            action_id_override=f"workflow_job_recovery:{job_id}:retry",
-            receipt_source="operator.workflow_job_recovery",
-            receipt_result_summary=f"Workflow job {job_id} retry was queued or safely rejected with evidence.",
+            receipt_result_summary=f"Workflow job {job_id} recovery action completed through recover-job.",
         )
 
     adapter_summary = adapter_readiness.get("summary") or {}
@@ -19343,15 +19530,16 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
         "status": "blocked" if workflow_recovery_blocked else "attention" if workflow_recovery_actions else "ready",
         "summary": {
             "actions": len(workflow_recovery_actions),
-            "stuck_jobs": len(workflow_recovery_stuck_jobs),
-            "retryable_failed_jobs": len(workflow_recovery_retryable_failed_jobs),
+            "stuck_jobs": workflow_recovery_summary.get("stuck_jobs", 0),
+            "retryable_failed_jobs": workflow_recovery_summary.get("retryable_failed_jobs", 0),
             "blocked": workflow_recovery_blocked,
             "attention": len([item for item in workflow_recovery_actions if item.get("severity") == "attention"]),
             "receipt_missing": len([item for item in workflow_recovery_actions if not item.get("receipt_verified")]),
             "receipt_verified": len([item for item in workflow_recovery_actions if item.get("receipt_verified")]),
         },
         "items": workflow_recovery_actions[:limit],
-        "contract": "projects workflow-job stuck/failed recovery into Action Queue commands for Codex/Hermes/OpenClaw; commands are explicit CLI actions and receipts govern RECORD",
+        "work_order": workflow_recovery_work_order,
+        "contract": "projects workflow-job stuck/failed recovery into recover-job Action Queue commands for Codex/Hermes/OpenClaw; commands are explicit CLI actions, confirmed recovery requires --confirm-recover, and receipts govern RECORD",
         "safety": {
             "read_only": True,
             "ledger_mutated": False,
@@ -20425,6 +20613,16 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
     evidence_report_summary = evidence_report.get("summary") or {}
     evidence_report_runs = evidence_report.get("runs") or []
     evidence_report_commands = evidence_report.get("recommended_commands") or []
+    workflow_recovery_work_order = workflow_job_recovery_work_order(conn, workspace_id, limit=min(limit, 8))
+    workflow_recovery_summary = workflow_recovery_work_order.get("summary") or {}
+    workflow_recovery_status = str(workflow_recovery_work_order.get("status") or "ready")
+    workflow_recovery_items = int(workflow_recovery_summary.get("items") or 0)
+    workflow_recovery_stuck_jobs = int(workflow_recovery_summary.get("stuck_jobs") or 0)
+    workflow_recovery_retryable_failed_jobs = int(workflow_recovery_summary.get("retryable_failed_jobs") or 0)
+    workflow_recovery_blocked = int(workflow_recovery_summary.get("blocked") or 0)
+    workflow_recovery_attention = int(workflow_recovery_summary.get("attention") or 0)
+    workflow_recovery_receipt_missing = int(workflow_recovery_summary.get("receipt_missing") or 0)
+    workflow_recovery_receipt_verified = int(workflow_recovery_summary.get("receipt_verified") or 0)
     receipt_coverage = action_plan.get("receipt_coverage") or {}
     loop_record = loop_audit.get("loop_record") or {}
     action_receipts = action_plan.get("action_receipts") or {}
@@ -21094,6 +21292,10 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
         loop_health_risks.append({"id": "evidence_remediation_workflow_blocked", "severity": "blocked", "count": remediation_workflow_blocked, "next_action": (remediation_chain.get("next_actions") or ["agentops operator handoff --limit 12"])[0]})
     elif remediation_workflow_ready or remediation_workflow_receipt_missing:
         loop_health_risks.append({"id": "evidence_remediation_workflow_attention", "severity": "attention", "count": remediation_workflow_ready + remediation_workflow_receipt_missing, "next_action": (remediation_chain.get("next_actions") or ["agentops operator handoff --limit 12"])[0]})
+    if workflow_recovery_blocked:
+        loop_health_risks.append({"id": "workflow_job_recovery_blocked", "severity": "blocked", "count": workflow_recovery_blocked, "next_action": (workflow_recovery_work_order.get("next_actions") or ["agentops workflow stuck-jobs --threshold-sec 900 --limit 25"])[0]})
+    elif workflow_recovery_attention or workflow_recovery_receipt_missing:
+        loop_health_risks.append({"id": "workflow_job_recovery_attention", "severity": "attention", "count": workflow_recovery_attention + workflow_recovery_receipt_missing, "next_action": (workflow_recovery_work_order.get("next_actions") or ["agentops workflow stuck-jobs --threshold-sec 900 --limit 25"])[0]})
     if loop_record_status not in {"ready", "pass", "closed"}:
         loop_health_risks.append({"id": "loop_record_not_closed", "severity": "attention", "count": int(loop_record.get("candidate_count") or 0) + int(loop_record.get("pending_approval_count") or 0), "next_action": loop_record.get("next_action") or "agentops review queue --limit 20"})
     auth_mode = (auth_ctx or {}).get("mode") or "unknown"
@@ -21102,6 +21304,16 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
         loop_health_risks.append({"id": "auth_boundary_unknown", "severity": "blocked", "count": 1, "next_action": "agentops status"})
     safety_ready = True
     handoff_commands: list[str] = []
+    for command in workflow_recovery_work_order.get("next_actions") or []:
+        command = str(command or "").strip()
+        if command and command not in handoff_commands:
+            handoff_commands.append(command)
+    for command in workflow_recovery_work_order.get("commands") or []:
+        command = str(command or "").strip()
+        if command and command not in handoff_commands:
+            handoff_commands.append(command)
+        if len(handoff_commands) >= 20:
+            break
     for command in evidence_report_work_order.get("next_actions") or []:
         command = str(command or "").strip()
         if command and command not in handoff_commands:
@@ -21184,6 +21396,17 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
             "pending_approvals": evidence_report_pending_approvals,
             "next_action": (evidence_report_work_order.get("next_actions") or ["agentops operator evidence-report --limit 8"])[0],
         },
+        "workflow_job_recovery": {
+            "status": "blocked" if workflow_recovery_status == "blocked" else "attention" if workflow_recovery_status == "attention" else "pass",
+            "items": workflow_recovery_items,
+            "stuck_jobs": workflow_recovery_stuck_jobs,
+            "retryable_failed_jobs": workflow_recovery_retryable_failed_jobs,
+            "blocked": workflow_recovery_blocked,
+            "attention": workflow_recovery_attention,
+            "receipt_missing": workflow_recovery_receipt_missing,
+            "receipt_verified": workflow_recovery_receipt_verified,
+            "next_action": (workflow_recovery_work_order.get("next_actions") or ["agentops workflow stuck-jobs --threshold-sec 900 --limit 25"])[0],
+        },
         "evidence_remediation_workflow": {
             "status": "blocked" if remediation_workflow_blocked else "attention" if remediation_workflow_ready or remediation_workflow_receipt_missing else "pass",
             "items": int(remediation_summary.get("items") or 0),
@@ -21225,7 +21448,7 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
         10 if safety_ready else 0,
     ]
     loop_health_score = min(max(sum(score_parts), 0), 100)
-    loop_health_status = "blocked" if loop_blocked or receipt_evaluation_fail or evidence_report_blocked or remediation_workflow_blocked or not auth_ready or not safety_ready else "attention" if loop_health_risks or loop_health_score < 90 else "ready"
+    loop_health_status = "blocked" if loop_blocked or receipt_evaluation_fail or evidence_report_blocked or remediation_workflow_blocked or workflow_recovery_blocked or not auth_ready or not safety_ready else "attention" if loop_health_risks or loop_health_score < 90 else "ready"
     loop_health_payload = {
         "operation": "operator_loop_health",
         "status": loop_health_status,
@@ -21296,6 +21519,11 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
             "receipt_failure_memory_failed_receipts": receipt_failure_memory_failed_receipts,
             "receipt_failure_memory_existing_candidates": receipt_failure_memory_existing_candidates,
             "receipt_failure_memory_work_items": len(receipt_failure_work_order_items),
+            "workflow_job_recovery_items": workflow_recovery_items,
+            "workflow_job_recovery_stuck_jobs": workflow_recovery_stuck_jobs,
+            "workflow_job_recovery_retryable_failed_jobs": workflow_recovery_retryable_failed_jobs,
+            "workflow_job_recovery_receipt_missing": workflow_recovery_receipt_missing,
+            "workflow_job_recovery_receipt_verified": workflow_recovery_receipt_verified,
             "advance_loop_work_items": 1 if advance_loop_selected_item else 0,
             "control_status": control_summary.get("status"),
             "control_mode": control_summary.get("mode"),
@@ -21312,6 +21540,7 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
             "next_actions": loop_audit.get("next_actions") or [],
             "top_operator_actions": action_plan_actions[: min(limit, 8)],
             "receipt_failure_memory": receipt_failure_work_order,
+            "workflow_job_recovery": workflow_recovery_work_order,
             "advance_loop": advance_loop_work_order,
             "commands": handoff_commands[:20],
             "token_omitted": True,
@@ -21351,6 +21580,13 @@ def operator_handoff(conn: sqlite3.Connection, headers, qs=None, auth_ctx=None) 
                 "summary": evidence_report_summary,
                 "safety": evidence_report.get("safety") or {},
                 "contract": evidence_report.get("contract"),
+            },
+            "workflow_job_recovery": {
+                "status": workflow_recovery_work_order.get("status"),
+                "summary": workflow_recovery_summary,
+                "safety": workflow_recovery_work_order.get("safety") or {},
+                "contract": workflow_recovery_work_order.get("contract"),
+                "token_omitted": True,
             },
         },
         "loop_health": loop_health_payload,

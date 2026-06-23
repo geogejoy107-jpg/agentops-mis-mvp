@@ -170,6 +170,7 @@ def validate_packet(payload: dict, label: str, task_id: str, agent_id: str, fail
     require("agentops operator evidence-report" in joined, f"{label} missing evidence report command: {commands}", failures)
     require("agentops operator action-receipts" in joined, f"{label} missing action receipts command: {commands}", failures)
     require("agentops plan-evidence create" in joined, f"{label} missing plan evidence command: {commands}", failures)
+    require("agentops workflow stuck-jobs --threshold-sec 900 --limit 25" in joined, f"{label} missing workflow recovery inspect command: {commands}", failures)
     evaluation_contract = payload.get("evaluation_contract") or {}
     require(evaluation_contract.get("operation") == "loop_evaluation_contract", f"{label} evaluation contract missing: {evaluation_contract}", failures)
     require(evaluation_contract.get("status") in {"ready", "attention", "blocked", "unknown"}, f"{label} evaluation status wrong: {evaluation_contract}", failures)
@@ -184,6 +185,10 @@ def validate_packet(payload: dict, label: str, task_id: str, agent_id: str, fail
     require(audit_contract.get("tamper_chain_required") is True, f"{label} tamper chain requirement missing: {audit_contract}", failures)
     require(audit_contract.get("record_required") is True, f"{label} record requirement missing: {audit_contract}", failures)
     require(audit_contract.get("token_omitted") is True, f"{label} audit token omission missing: {audit_contract}", failures)
+    audit_recovery = audit_contract.get("workflow_job_recovery") or {}
+    require(audit_recovery.get("operation") == "workflow_job_recovery_work_order", f"{label} audit workflow recovery missing: {audit_recovery}", failures)
+    require(audit_recovery.get("status") in {"ready", "attention", "blocked"}, f"{label} audit workflow recovery status wrong: {audit_recovery}", failures)
+    require(isinstance((audit_recovery.get("summary") or {}).get("items"), int), f"{label} audit workflow recovery summary missing: {audit_recovery}", failures)
     bounded_runner = audit_contract.get("bounded_runner") or {}
     require(bounded_runner.get("policy_id") == "advance_loop_local_bounded_v1", f"{label} bounded policy missing: {bounded_runner}", failures)
     require(bounded_runner.get("server_executes_shell") is False, f"{label} server shell boundary missing: {bounded_runner}", failures)
@@ -202,6 +207,8 @@ def validate_packet(payload: dict, label: str, task_id: str, agent_id: str, fail
         require((item.get("source_provenance") or {}).get("raw_content_returned") is False, f"{label} repo-map provenance leaked raw body: {item}", failures)
         require(item.get("snippets_omitted") is True and item.get("raw_content_omitted") is True, f"{label} repo-map file should omit snippets/raw body: {item}", failures)
     require((verify_phase.get("evaluation_contract") or {}).get("operation") == "loop_evaluation_contract", f"{label} verify phase lacks evaluation contract: {verify_phase}", failures)
+    verify_recovery = verify_phase.get("workflow_job_recovery") or {}
+    require(verify_recovery.get("status") in {"ready", "attention", "blocked"}, f"{label} verify phase lacks workflow recovery: {verify_phase}", failures)
     require((record_phase.get("audit_contract") or {}).get("operation") == "loop_audit_contract", f"{label} record phase lacks audit contract: {record_phase}", failures)
     execution_chain = payload.get("execution_chain") or []
     require(len(execution_chain) >= 7, f"{label} execution chain too short: {execution_chain}", failures)
@@ -248,6 +255,9 @@ def validate_packet(payload: dict, label: str, task_id: str, agent_id: str, fail
     require((sources.get("intake") or {}).get("operation") == "task_intake_checklist", f"{label} missing intake source: {sources}", failures)
     require((sources.get("knowledge_search") or {}).get("operation") == "knowledge_search", f"{label} missing knowledge source: {sources}", failures)
     require((sources.get("repo_map") or {}).get("operation") == "repo_map", f"{label} missing repo-map source: {sources}", failures)
+    recovery_source = sources.get("workflow_job_recovery") or {}
+    require(recovery_source.get("operation") == "workflow_job_recovery_work_order", f"{label} missing workflow recovery source: {sources}", failures)
+    require(isinstance((recovery_source.get("summary") or {}).get("items"), int), f"{label} workflow recovery source summary missing: {recovery_source}", failures)
     operator_control = sources.get("operator_control") or {}
     handoff_source = sources.get("handoff") or {}
     require(operator_control.get("operation") == expected_control_operation, f"{label} missing operator control source: {sources}", failures)
@@ -278,6 +288,11 @@ def validate_brief(payload: dict, label: str, task_id: str, agent_id: str, adapt
     require("agentops run get --run-id <run_id>" in (payload.get("readback_commands") or []), f"{label} run readback command missing: {payload}", failures)
     require("agentops operator loop-control --limit 8" in (payload.get("commands") or []), f"{label} loop-control command missing: {payload}", failures)
     require("agentops operator advance-loop --fast-control --limit 8" in (payload.get("commands") or []), f"{label} fast advance command missing: {payload}", failures)
+    workflow_recovery = payload.get("workflow_job_recovery") or {}
+    require(workflow_recovery.get("operation") == "workflow_job_recovery_work_order", f"{label} workflow recovery brief missing: {workflow_recovery}", failures)
+    require(workflow_recovery.get("status") in {"ready", "attention", "blocked"}, f"{label} workflow recovery brief status wrong: {workflow_recovery}", failures)
+    require(isinstance((workflow_recovery.get("summary") or {}).get("items"), int), f"{label} workflow recovery brief summary missing: {workflow_recovery}", failures)
+    require(isinstance(workflow_recovery.get("commands") or [], list), f"{label} workflow recovery brief commands missing: {workflow_recovery}", failures)
     chain = payload.get("execution_chain") or []
     require(isinstance(chain, list) and bool(chain), f"{label} compact execution chain missing: {payload}", failures)
     require(any(isinstance(item, dict) and item.get("next_safe_command") for item in chain), f"{label} compact chain lacks next_safe_command: {chain}", failures)

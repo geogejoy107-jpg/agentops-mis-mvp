@@ -124,14 +124,53 @@ def main() -> int:
         (
             item for item in recovery_actions
             if job_id in str(item.get("command") or "")
-            and str(item.get("command") or "").startswith("agentops workflow job-mark-failed --job-id ")
+            and str(item.get("command") or "").startswith("agentops workflow recover-job --job-id ")
+            and "--mode mark-failed" in str(item.get("command") or "")
         ),
         None,
     )
-    require(mark_action is not None, f"workflow recovery mark-failed action missing: {recovery_actions}")
+    require(mark_action is not None, f"workflow recovery recover-job action missing: {recovery_actions}")
     require(mark_action.get("verify_command") == f"agentops workflow job-status --job-id {job_id}", f"workflow recovery verify command mismatch: {mark_action}")
     require("--source operator.workflow_job_recovery" in (mark_action.get("receipt_record_command") or ""), f"workflow recovery receipt source missing: {mark_action}")
     require("--status verified" in (mark_action.get("receipt_verify_record_command") or ""), f"workflow recovery verify receipt command missing: {mark_action}")
+    require((mark_action.get("evidence") or {}).get("confirm_required") is True, f"workflow recovery confirm wall missing: {mark_action}")
+    require(str((mark_action.get("evidence") or {}).get("preview_command") or "").startswith("agentops workflow recover-job --job-id "), f"workflow recovery preview command missing: {mark_action}")
+
+    handoff = run_cli(args.base_url, ["operator", "handoff", "--limit", "20"])
+    handoff_payload = load_json(handoff)
+    require(handoff.returncode == 0, f"operator handoff failed: {handoff.stderr or handoff.stdout}")
+    handoff_recovery = ((handoff_payload.get("work_order") or {}).get("workflow_job_recovery") or {})
+    require(handoff_recovery.get("operation") == "workflow_job_recovery_work_order", f"handoff recovery work order missing: {handoff_recovery}")
+    handoff_recovery_items = handoff_recovery.get("items") or []
+    handoff_recovery_item = next((item for item in handoff_recovery_items if item.get("job_id") == job_id), None)
+    require(handoff_recovery_item is not None, f"handoff recovery item missing: {handoff_recovery_items}")
+    require(str(handoff_recovery_item.get("preview_command") or "").startswith("agentops workflow recover-job --job-id "), f"handoff recovery preview missing: {handoff_recovery_item}")
+    require("--confirm-recover" in str(handoff_recovery_item.get("confirm_command") or ""), f"handoff recovery confirm missing: {handoff_recovery_item}")
+    require((handoff_payload.get("loop_health") or {}).get("gates", {}).get("workflow_job_recovery", {}).get("status") in {"blocked", "attention", "pass"}, f"handoff workflow recovery gate missing: {handoff_payload.get('loop_health')}")
+
+    launch_packet = run_cli(args.base_url, ["operator", "loop-launch-packet", "--limit", "20"])
+    launch_payload = load_json(launch_packet)
+    require(launch_packet.returncode == 0, f"loop-launch-packet failed: {launch_packet.stderr or launch_packet.stdout}")
+    launch_recovery = (launch_payload.get("sources") or {}).get("workflow_job_recovery") or {}
+    require(launch_recovery.get("operation") == "workflow_job_recovery_work_order", f"launch recovery source missing: {launch_recovery}")
+    require(any(item.get("job_id") == job_id for item in (launch_recovery.get("items") or [])), f"launch recovery item missing: {launch_recovery}")
+    require("agentops workflow recover-job --job-id" in "\n".join(launch_payload.get("commands") or []), f"launch recovery command missing: {launch_payload.get('commands')}")
+
+    launch_brief = run_cli(args.base_url, ["operator", "loop-launch-packet", "--limit", "20", "--brief", "--adapter", "hermes"])
+    launch_brief_payload = load_json(launch_brief)
+    require(launch_brief.returncode == 0, f"loop-launch-packet brief failed: {launch_brief.stderr or launch_brief.stdout}")
+    brief_recovery = launch_brief_payload.get("workflow_job_recovery") or {}
+    require(brief_recovery.get("operation") == "workflow_job_recovery_work_order", f"brief recovery missing: {brief_recovery}")
+    require(any(item.get("job_id") == job_id for item in (brief_recovery.get("items") or [])), f"brief recovery item missing: {brief_recovery}")
+    require("agentops workflow recover-job --job-id" in "\n".join(launch_brief_payload.get("commands") or []), f"brief recovery command missing: {launch_brief_payload.get('commands')}")
+
+    live_acceptance = run_cli(args.base_url, ["operator", "live-acceptance", "--limit", "8"])
+    live_payload = load_json(live_acceptance)
+    require(live_acceptance.returncode == 0, f"live-acceptance failed: {live_acceptance.stderr or live_acceptance.stdout}")
+    live_hint = live_payload.get("workflow_job_recovery_hint") or {}
+    require(live_hint.get("operation") == "workflow_job_recovery_hint", f"live recovery hint missing: {live_hint}")
+    require((live_hint.get("summary") or {}).get("stuck_jobs", 0) >= 1, f"live recovery hint stuck count missing: {live_hint}")
+    require((live_payload.get("commands") or {}).get("workflow_jobs") == "agentops workflow stuck-jobs --threshold-sec 900 --limit 25", f"live recovery inspect command missing: {live_payload.get('commands')}")
 
     recover_preview = run_cli(args.base_url, [
         "workflow",

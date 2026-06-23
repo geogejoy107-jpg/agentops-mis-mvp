@@ -539,6 +539,24 @@ def compact_loop_launch_packet(payload: dict, *, adapter: str) -> dict:
     evaluation = payload.get("evaluation_contract") if isinstance(payload.get("evaluation_contract"), dict) else {}
     audit = payload.get("audit_contract") if isinstance(payload.get("audit_contract"), dict) else {}
     agent_plan_draft = payload.get("agent_plan_draft") if isinstance(payload.get("agent_plan_draft"), dict) else {}
+    sources = payload.get("sources") if isinstance(payload.get("sources"), dict) else {}
+    workflow_recovery = payload.get("workflow_job_recovery") if isinstance(payload.get("workflow_job_recovery"), dict) else {}
+    if not workflow_recovery:
+        workflow_recovery = sources.get("workflow_job_recovery") if isinstance(sources.get("workflow_job_recovery"), dict) else {}
+    if not workflow_recovery:
+        handoff = sources.get("handoff") if isinstance(sources.get("handoff"), dict) else {}
+        handoff_work_order = handoff.get("work_order") if isinstance(handoff.get("work_order"), dict) else {}
+        workflow_recovery = handoff_work_order.get("workflow_job_recovery") if isinstance(handoff_work_order.get("workflow_job_recovery"), dict) else {}
+    workflow_recovery_summary = workflow_recovery.get("summary") if isinstance(workflow_recovery.get("summary"), dict) else {}
+    workflow_recovery_items = workflow_recovery.get("items") if isinstance(workflow_recovery.get("items"), list) else []
+    workflow_recovery_commands = []
+    for command in [
+        *(workflow_recovery.get("next_actions") if isinstance(workflow_recovery.get("next_actions"), list) else []),
+        *(workflow_recovery.get("commands") if isinstance(workflow_recovery.get("commands"), list) else []),
+    ]:
+        command = str(command or "").strip()
+        if command and command not in workflow_recovery_commands:
+            workflow_recovery_commands.append(command)
     chain = payload.get("execution_chain") if isinstance(payload.get("execution_chain"), list) else []
     compact_chain = []
     for item in chain:
@@ -603,6 +621,11 @@ def compact_loop_launch_packet(payload: dict, *, adapter: str) -> dict:
             "required_ledgers": evaluation.get("required_ledgers") or [],
             "agent_plan_risk": agent_plan_draft.get("risk_level"),
             "agent_plan_approval_required": bool(agent_plan_draft.get("approval_required")),
+            "workflow_job_recovery_status": workflow_recovery.get("status"),
+            "workflow_job_recovery_items": workflow_recovery_summary.get("items"),
+            "workflow_job_recovery_stuck_jobs": workflow_recovery_summary.get("stuck_jobs"),
+            "workflow_job_recovery_retryable_failed_jobs": workflow_recovery_summary.get("retryable_failed_jobs"),
+            "workflow_job_recovery_receipt_missing": workflow_recovery_summary.get("receipt_missing"),
         },
         "next_command": control.get("next_command") or recommended.get("command"),
         "verify_command": control.get("verify_command") or recommended.get("verify_command"),
@@ -611,6 +634,30 @@ def compact_loop_launch_packet(payload: dict, *, adapter: str) -> dict:
         "live_run_command": live_run_command,
         "readback_commands": readback_commands,
         "runtime_doctor_command": "agentops operator runtime-doctor --limit 8",
+        "workflow_job_recovery": {
+            "operation": workflow_recovery.get("operation"),
+            "status": workflow_recovery.get("status"),
+            "summary": workflow_recovery_summary,
+            "next_actions": workflow_recovery.get("next_actions") or [],
+            "commands": workflow_recovery_commands[:8],
+            "items": [
+                {
+                    "job_id": item.get("job_id"),
+                    "mode": item.get("mode"),
+                    "status": item.get("status"),
+                    "preview_command": item.get("preview_command"),
+                    "confirm_command": item.get("confirm_command"),
+                    "verify_command": item.get("verify_command"),
+                    "receipt_verify_record_command": item.get("receipt_verify_record_command"),
+                    "receipt_state": item.get("receipt_state") or {},
+                    "token_omitted": True,
+                }
+                for item in workflow_recovery_items[:3]
+                if isinstance(item, dict)
+            ],
+            "contract": "compact recover-job work order projection; preview first, confirm only with --confirm-recover, then record/verify receipt",
+            "token_omitted": True,
+        },
         "execution_chain": compact_chain,
         "policy": {
             "policy_id": control.get("policy_id") or (audit.get("bounded_runner") or {}).get("policy_id"),
@@ -633,6 +680,7 @@ def compact_loop_launch_packet(payload: dict, *, adapter: str) -> dict:
             "agentops operator advance-loop --fast-control --limit 8",
             live_run_command,
             *readback_commands,
+            *workflow_recovery_commands[:6],
         ],
         "contract": "compact copy-only launch brief for Hermes/OpenClaw/Codex; derived from loop-launch-packet without mutating ledgers, executing runtimes, or exposing raw prompts/responses/tokens",
         "token_omitted": True,

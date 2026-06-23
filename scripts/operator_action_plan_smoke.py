@@ -426,15 +426,17 @@ def validate_plan(payload: dict, label: str, failures: list[str], limit: int) ->
             require("--source operator.workflow_job_recovery" in (action.get("receipt_record_command") or ""), f"{label} workflow recovery receipt source missing: {action}", failures)
             require("--source operator.workflow_job_recovery" in (action.get("receipt_verify_record_command") or ""), f"{label} workflow recovery verify receipt source missing: {action}", failures)
             require(
-                command.startswith("agentops workflow job-mark-failed --job-id ")
-                or command.startswith("agentops commander dispatch-batch --task-id "),
+                command.startswith("agentops workflow recover-job --job-id "),
                 f"{label} workflow recovery command outside allowed set: {action}",
                 failures,
             )
-            if command.startswith("agentops workflow job-mark-failed --job-id "):
+            if "--mode mark-failed" in command:
                 require(verify_command.startswith("agentops workflow job-status --job-id "), f"{label} workflow mark-failed verify command wrong: {action}", failures)
-                require((action.get("evidence") or {}).get("stuck_reason") == "workflow_job_exceeded_threshold", f"{label} workflow stuck evidence missing: {action}", failures)
-            if command.startswith("agentops commander dispatch-batch --task-id "):
+                evidence = action.get("evidence") or {}
+                require(evidence.get("mode") == "mark-failed", f"{label} workflow recover mode missing: {action}", failures)
+                require(evidence.get("confirm_required") is True, f"{label} workflow recover confirm missing: {action}", failures)
+                require(str(evidence.get("preview_command") or "").startswith("agentops workflow recover-job --job-id "), f"{label} workflow recover preview missing: {action}", failures)
+            if "--mode retry" in command:
                 require(verify_command == "agentops workflow jobs --status queued,running,completed,failed --limit 20", f"{label} workflow retry verify command wrong: {action}", failures)
                 require(bool((action.get("evidence") or {}).get("task_id")), f"{label} workflow retry task id missing: {action}", failures)
         require(bool(action.get("source")), f"{label} source missing: {action}", failures)
