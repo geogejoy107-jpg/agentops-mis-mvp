@@ -1749,6 +1749,28 @@ def main() -> int:
         "operation": "local_readiness",
         "status": "attention",
         "summary": {"recommended_adapter": "hermes"},
+        "running_instance": {
+            "operation": "running_instance_identity",
+            "status": "current",
+            "current": True,
+            "server_started_after_source_mtime": True,
+            "git_head_sha": "abc123",
+            "git_head_short": "abc123",
+            "git_branch": "codex/agent-gateway-kb-demo",
+            "git_dirty_entries": 0,
+            "latest_source_path": "server.py",
+            "safety": {"read_only": True, "server_executes_shell": False, "token_omitted": True},
+            "token_omitted": True,
+        },
+        "gates": [
+            {
+                "id": "running_instance_freshness",
+                "ok": True,
+                "status": "current",
+                "next_action": "agentops local readiness --require-current-code",
+                "token_omitted": True,
+            },
+        ],
         "local_run_path": [
             {
                 "step_id": "preview_worker_service_control",
@@ -1775,6 +1797,7 @@ def main() -> int:
         ],
     })
     require(local_run_path.get("operation") == "local_run_path_compact", "operator start-check local path operation failed", failures)
+    require((local_run_path.get("current_code_gate") or {}).get("ok") is True, "operator start-check current-code fixture gate failed", failures)
     require((local_run_path.get("safety") or {}).get("server_executes_shell") is False, "operator start-check local path server-shell proof failed", failures)
     require(bool(local_run_path.get("service_control_preview")), "operator start-check service preview projection failed", failures)
     launch_brief = compact_start_check_launch_brief(
