@@ -752,6 +752,14 @@ export interface LocalRunPathStep {
   service_control_preview?: boolean;
   copy_only?: boolean;
   server_executes_shell?: boolean;
+  receipt_required?: boolean;
+  control_readback_required?: boolean;
+  receipt_command?: string | null;
+  receipt_record_command?: string | null;
+  receipt_verify_record_command?: string | null;
+  receipt_state?: Record<string, unknown>;
+  action_signature?: string | null;
+  source?: string | null;
   token_omitted?: boolean;
 }
 
@@ -4130,6 +4138,14 @@ export async function loadLocalReadiness(): Promise<LocalReadinessPayload> {
     service_control_preview: step.service_control_preview === undefined ? undefined : boolValue(step.service_control_preview),
     copy_only: step.copy_only === undefined ? undefined : boolValue(step.copy_only),
     server_executes_shell: step.server_executes_shell === undefined ? undefined : boolValue(step.server_executes_shell),
+    receipt_required: step.receipt_required === undefined ? undefined : boolValue(step.receipt_required),
+    control_readback_required: step.control_readback_required === undefined ? undefined : boolValue(step.control_readback_required),
+    receipt_command: step.receipt_command ? String(step.receipt_command) : null,
+    receipt_record_command: step.receipt_record_command ? String(step.receipt_record_command) : null,
+    receipt_verify_record_command: step.receipt_verify_record_command ? String(step.receipt_verify_record_command) : null,
+    receipt_state: typeof step.receipt_state === "object" && step.receipt_state !== null ? step.receipt_state as Record<string, unknown> : undefined,
+    action_signature: step.action_signature ? String(step.action_signature) : null,
+    source: step.source ? String(step.source) : null,
     token_omitted: step.token_omitted === undefined ? undefined : boolValue(step.token_omitted),
   })).filter((step) => step.step_id && step.command);
   return {
@@ -5249,6 +5265,53 @@ export async function recordOperatorActionReceipt(input: {
     receipt: receiptRaw ? normalizeOperatorActionReceipt(receiptRaw) : undefined,
     evaluation: evaluationRaw || null,
     next_actions: asArray<unknown>(raw.next_actions).map(String).filter(Boolean),
+    safety: {
+      read_only: boolValue(safetyRaw.read_only),
+      ledger_mutated: boolValue(safetyRaw.ledger_mutated),
+      live_execution_performed: boolValue(safetyRaw.live_execution_performed),
+      raw_prompt_omitted: boolValue(safetyRaw.raw_prompt_omitted),
+      raw_response_omitted: boolValue(safetyRaw.raw_response_omitted),
+      token_omitted: boolValue(safetyRaw.token_omitted),
+    },
+    token_omitted: raw.token_omitted === undefined ? undefined : boolValue(raw.token_omitted),
+  };
+}
+
+export async function recordOperatorActionControlReadback(input: {
+  receipt_id: string;
+  source?: string;
+  control_readback: Record<string, unknown>;
+}): Promise<{
+  provider?: string;
+  operation?: string;
+  status: string;
+  workspace_id?: string;
+  readback?: Record<string, unknown> | null;
+  safety?: {
+    read_only: boolean;
+    ledger_mutated: boolean;
+    live_execution_performed: boolean;
+    raw_prompt_omitted: boolean;
+    raw_response_omitted: boolean;
+    token_omitted: boolean;
+  };
+  token_omitted?: boolean;
+}> {
+  const raw = await apiJsonWithStatuses<Record<string, unknown>>("/operator/action-receipts/control-readback", {
+    method: "POST",
+    body: JSON.stringify({
+      receipt_id: input.receipt_id,
+      source: input.source || "ui.local_run_path.control_readback",
+      control_readback: input.control_readback,
+    }),
+  }, [400, 404]);
+  const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
+  return {
+    provider: raw.provider ? String(raw.provider) : undefined,
+    operation: raw.operation ? String(raw.operation) : undefined,
+    status: String(raw.status || raw.error || "recorded"),
+    workspace_id: raw.workspace_id ? String(raw.workspace_id) : undefined,
+    readback: typeof raw.readback === "object" && raw.readback !== null ? raw.readback as Record<string, unknown> : null,
     safety: {
       read_only: boolValue(safetyRaw.read_only),
       ledger_mutated: boolValue(safetyRaw.ledger_mutated),

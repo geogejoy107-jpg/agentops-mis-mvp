@@ -17537,6 +17537,31 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
     )
     service_control_command = f"agentops worker service-control --manager launchd --action restart --adapter {recommended_adapter} --agent-id agt_worker_daemon_{recommended_adapter}"
     service_control_verify_command = f"agentops worker service-check --manager launchd --adapter {recommended_adapter} --agent-id agt_worker_daemon_{recommended_adapter}"
+    service_control_action_signature = stable_hash(
+        "local_readiness.service_control_preview:"
+        f"{recommended_adapter}:{service_control_command}:{service_control_verify_command}"
+    )
+    service_control_receipt_base = [
+        "agentops", "operator", "record-action-receipt",
+        "--action-command", service_control_command,
+        "--verify-command", service_control_verify_command,
+        "--action-id", "local_readiness.service_control_preview",
+        "--action-signature", service_control_action_signature,
+        "--source", "local_readiness.service_control_preview",
+    ]
+    service_control_receipt_record_command = " ".join(
+        shlex.quote(str(part))
+        for part in [*service_control_receipt_base, "--status", "recorded"]
+    )
+    service_control_receipt_verify_command = " ".join(
+        shlex.quote(str(part))
+        for part in [
+            *service_control_receipt_base,
+            "--status", "verified",
+            "--result-summary", "Worker service-control preview inspected and service-check reviewed.",
+            "--confirm-record",
+        ]
+    )
     live_dispatch_command = (
         "agentops workflow customer-worker-task --adapter mock --title 'Local readiness demo' --description 'Verify full MIS evidence.'"
         if recommended_adapter == "mock"
@@ -17617,6 +17642,16 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
             "writes_ledger": False,
             "live_execution": False,
             "service_control_preview": True,
+            "copy_only": True,
+            "server_executes_shell": False,
+            "receipt_required": True,
+            "control_readback_required": True,
+            "receipt_command": "agentops operator action-receipts --limit 20",
+            "receipt_record_command": service_control_receipt_record_command,
+            "receipt_verify_record_command": service_control_receipt_verify_command,
+            "action_signature": service_control_action_signature,
+            "source": "local_readiness.service_control_preview",
+            "token_omitted": True,
         },
         {
             "step_id": "dispatch_customer_task",
@@ -17666,6 +17701,68 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
         step["copy_only"] = True
         step["server_executes_shell"] = False
         step["token_omitted"] = True
+    receipt_lookup_rows = operator_action_receipt_rows(conn, workspace_id, 200)
+
+    def local_run_path_receipt_state(step: dict) -> dict:
+        command = str(step.get("command") or "").strip()
+        action_signature = str(step.get("action_signature") or "").strip()
+        receipt_required = bool(step.get("receipt_required"))
+        if not receipt_required:
+            return {
+                "required": False,
+                "status": "not_required",
+                "match": "not_required",
+                "verified": True,
+                "token_omitted": True,
+            }
+        command_hash = stable_hash(command) if command else ""
+        stale_candidate: dict | None = None
+        matched: dict | None = None
+        match = "missing"
+        for receipt in receipt_lookup_rows:
+            receipt_command = str(receipt.get("action_command") or "").strip()
+            receipt_action_hash = str(receipt.get("action_hash") or "").strip()
+            if command and (receipt_command == command or receipt_action_hash == command_hash):
+                matched = receipt
+                match = "current"
+                break
+            receipt_signature = str(receipt.get("action_signature") or "").strip()
+            if action_signature and receipt_signature == action_signature:
+                stale_candidate = stale_candidate or receipt
+        if matched is None and stale_candidate:
+            matched = stale_candidate
+            match = "stale"
+        underlying_status = str((matched or {}).get("status") or "missing")
+        evaluation = (matched or {}).get("evaluation") or {}
+        receipt_hash = (
+            (matched or {}).get("tamper_chain_hash")
+            or (matched or {}).get("verify_hash")
+            or (matched or {}).get("action_hash")
+            or (matched or {}).get("audit_id")
+        )
+        return {
+            "required": True,
+            "status": "stale" if match == "stale" else underlying_status,
+            "underlying_status": underlying_status,
+            "match": match,
+            "current": match == "current",
+            "verified": match == "current" and underlying_status == "verified",
+            "receipt_id": (matched or {}).get("receipt_id"),
+            "receipt_hash": receipt_hash,
+            "control_readback_attached": bool((matched or {}).get("control_readback")),
+            "control_readback_id": (matched or {}).get("control_readback_id"),
+            "control_readback_hash": (matched or {}).get("control_readback_hash"),
+            "evaluation_id": (matched or {}).get("evaluation_id") or evaluation.get("evaluation_id"),
+            "evaluation_pass_fail": (matched or {}).get("evaluation_pass_fail") or evaluation.get("pass_fail"),
+            "action_signature": action_signature or (matched or {}).get("action_signature"),
+            "action_hash": (matched or {}).get("action_hash") or (command_hash if command else None),
+            "verify_hash": (matched or {}).get("verify_hash"),
+            "token_omitted": True,
+        }
+
+    for step in local_run_path:
+        if step.get("receipt_required"):
+            step["receipt_state"] = local_run_path_receipt_state(step)
     return {
         "provider": "agentops-local",
         "operation": "local_readiness",

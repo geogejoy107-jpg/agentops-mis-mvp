@@ -87,4 +87,9 @@ def operator_action_receipt_public(row: Any) -> dict[str, Any]:
 
 def operator_receipt_requires_control_readback(receipt: dict[str, Any]) -> bool:
     source = str(receipt.get("source") or "")
-    return source.startswith("advance_loop:") or source == "handoff.evidence_remediation"
+    return (
+        source.startswith("advance_loop:")
+        or source == "handoff.evidence_remediation"
+        or source.startswith("local_readiness.service_control_preview")
+        or source.startswith("ui.local_run_path.service_control_preview")
+    )

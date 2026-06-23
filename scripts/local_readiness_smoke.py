@@ -155,6 +155,13 @@ def validate(payload: dict) -> None:
     require("service-control" in service_step.get("command", ""), f"service-control preview command missing: {service_step}")
     require(service_step.get("service_control_preview") is True, f"service-control preview flag missing: {service_step}")
     require(service_step.get("mutating") is False and service_step.get("live_execution") is False, f"service-control preview should be non-mutating: {service_step}")
+    require(service_step.get("receipt_required") is True, f"service-control receipt flag missing: {service_step}")
+    require(service_step.get("control_readback_required") is True, f"service-control control readback flag missing: {service_step}")
+    require("record-action-receipt" in str(service_step.get("receipt_record_command") or ""), f"service-control receipt preview command missing: {service_step}")
+    require("--confirm-record" not in str(service_step.get("receipt_record_command") or ""), f"service-control receipt preview should not confirm: {service_step}")
+    require("record-action-receipt" in str(service_step.get("receipt_verify_record_command") or ""), f"service-control verify receipt command missing: {service_step}")
+    require("--confirm-record" in str(service_step.get("receipt_verify_record_command") or ""), f"service-control verify receipt command should confirm record: {service_step}")
+    require(str(service_step.get("action_signature") or ""), f"service-control action signature missing: {service_step}")
     for step in local_run_path:
         require(step.get("command"), f"local run path step missing command: {step}")
         require(step.get("copy_only") is True, f"local run path step must be copy-only: {step}")

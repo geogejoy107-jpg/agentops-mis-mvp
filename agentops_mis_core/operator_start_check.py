@@ -393,6 +393,14 @@ def compact_start_check_local_run_path(local: dict[str, Any]) -> dict[str, Any]:
             "service_control_preview": bool(step.get("service_control_preview")),
             "copy_only": step.get("copy_only", True) is not False,
             "server_executes_shell": bool(step.get("server_executes_shell")),
+            "receipt_required": bool(step.get("receipt_required")),
+            "control_readback_required": bool(step.get("control_readback_required")),
+            "receipt_command": step.get("receipt_command"),
+            "receipt_record_command": step.get("receipt_record_command"),
+            "receipt_verify_record_command": step.get("receipt_verify_record_command"),
+            "receipt_state": step.get("receipt_state") if isinstance(step.get("receipt_state"), dict) else None,
+            "action_signature": step.get("action_signature"),
+            "source": step.get("source"),
             "token_omitted": step.get("token_omitted", True) is not False,
         })
     service_step = next((step for step in compact_steps if step.get("step_id") == "preview_worker_service_control"), None)

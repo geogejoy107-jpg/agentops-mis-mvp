@@ -53,6 +53,7 @@ import {
   promoteCommanderSynthesis,
   previewAgentGatewayEnrollmentPolicy,
   proposeReceiptFailureMemory,
+  recordOperatorActionControlReadback,
   recordOperatorActionReceipt,
   releaseWorkerTask,
   restartLocalWorkerDaemon,
@@ -2639,6 +2640,95 @@ export function AIEmployees() {
       });
       setDispatchResult(`${copy.actionReceipts}: ${result.status} · ${result.receipt?.receipt_id || ""}`);
       await refresh();
+    } catch (err) {
+      setDispatchResult(err instanceof Error ? err.message : String(err));
+    } finally {
+      setReceiptAction(null);
+    }
+  };
+
+  const recordLocalRunPathReceipt = async (
+    step: LocalRunPathStep,
+    status: "recorded" | "verified",
+  ) => {
+    const actionKey = `local-run-path-receipt:${status}:${step.step_id}`;
+    setReceiptAction(actionKey);
+    setDispatchResult(null);
+    try {
+      const result = await recordOperatorActionReceipt({
+        action_command: step.command,
+        verify_command: step.verify_command || undefined,
+        action_id: step.step_id,
+        action_signature: step.action_signature || undefined,
+        source: step.source || "ui.local_run_path",
+        status,
+        result_summary: status === "verified"
+          ? `Operator verified local run-path step ${step.step_id}.`
+          : `Operator recorded local run-path step ${step.step_id}.`,
+      });
+      setDispatchResult(`${copy.actionReceipts}: ${result.status} · ${result.receipt?.receipt_id || ""}`);
+      await refresh();
+    } catch (err) {
+      setDispatchResult(err instanceof Error ? err.message : String(err));
+    } finally {
+      setReceiptAction(null);
+    }
+  };
+
+  const recordLocalRunPathControlReadback = async (step: LocalRunPathStep) => {
+    const actionKey = `local-run-path-readback:${step.step_id}`;
+    setReceiptAction(actionKey);
+    setDispatchResult(null);
+    try {
+      const state = step.receipt_state || {};
+      let receiptId = String(state.receipt_id || "");
+      if (!receiptId || !state.verified) {
+        const receiptResult = await recordOperatorActionReceipt({
+          action_command: step.command,
+          verify_command: step.verify_command || undefined,
+          action_id: step.step_id,
+          action_signature: step.action_signature || undefined,
+          source: step.source || "ui.local_run_path.service_control_preview",
+          status: "verified",
+          result_summary: `Operator verified local run-path step ${step.step_id} before control readback.`,
+        });
+        receiptId = receiptResult.receipt?.receipt_id || receiptId;
+      }
+      if (!receiptId) throw new Error("receipt_id_required");
+      const readback = await recordOperatorActionControlReadback({
+        receipt_id: receiptId,
+        source: `${step.source || "ui.local_run_path.service_control_preview"}.control_readback`,
+        control_readback: {
+          before: {
+            step_id: step.step_id,
+            status: step.status,
+            adapter: step.adapter,
+            service_control_preview: Boolean(step.service_control_preview),
+          },
+          after: {
+            verify_command: step.verify_command || null,
+            service_check_expected: true,
+            confirmed_os_mutation: false,
+          },
+          self_check: {
+            copy_only: step.copy_only !== false,
+            server_executes_shell: false,
+            writes_ledger_for_service_control: false,
+            live_execution_performed: false,
+            token_omitted: true,
+          },
+          cache: {
+            refresh_cache_required_after_receipt: true,
+          },
+          token_omitted: true,
+        },
+      });
+      setDispatchResult(`${copy.controlReadback}: ${readback.status} · ${receiptId}`);
+      await Promise.allSettled([
+        refreshPanel("local_readiness"),
+        refreshPanel("operator_action_receipts"),
+        refreshPanel("operator_action_plan"),
+      ]);
     } catch (err) {
       setDispatchResult(err instanceof Error ? err.message : String(err));
     } finally {
@@ -6392,6 +6482,16 @@ export function AIEmployees() {
 
           {localServiceControlStep && (
             <div className="rounded p-2 mt-3" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+              {(() => {
+                const receiptState = localServiceControlStep.receipt_state || {};
+                const receiptStatus = String(receiptState.status || (localServiceControlStep.receipt_required ? "missing" : "not_required"));
+                const receiptHash = String(receiptState.receipt_hash || receiptState.action_hash || receiptState.receipt_id || "").slice(0, 10);
+                const serviceVerifyBusy = receiptAction === `local-run-path-receipt:verified:${localServiceControlStep.step_id}`;
+                const serviceReadbackBusy = receiptAction === `local-run-path-readback:${localServiceControlStep.step_id}`;
+                const serviceReceiptVerified = Boolean(receiptState.verified);
+                const serviceReadbackAttached = Boolean(receiptState.control_readback_attached || receiptState.control_readback_id);
+                return (
+                  <>
               <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
@@ -6400,6 +6500,8 @@ export function AIEmployees() {
                     <StatusBadge status={localServiceControlStep.status || "preview"} />
                     <StatusBadge status={localServiceControlStep.server_executes_shell === false ? "pass" : "blocked"} label={localServiceControlStep.server_executes_shell === false ? "no server shell" : "server shell"} />
                     <StatusBadge status={localServiceControlStep.writes_ledger ? "blocked" : "pass"} label={localServiceControlStep.writes_ledger ? "ledger write" : "no ledger write"} />
+                    <StatusBadge status={serviceReceiptVerified ? "pass" : "attention"} label={`${copy.receiptProof}: ${receiptStatus}${receiptHash ? ` · ${receiptHash}` : ""}`} />
+                    <StatusBadge status={serviceReadbackAttached ? "pass" : "attention"} label={`${copy.controlReadback}: ${serviceReadbackAttached ? copy.yes : copy.no}`} />
                   </div>
                   <div className="text-[9px] mt-1 line-clamp-2" style={{ color: "var(--mis-dim)" }}>
                     {localServiceControlStep.detail || copy.serviceControlPreviewSummary}
@@ -6432,7 +6534,53 @@ export function AIEmployees() {
                     <span className="text-[8px] truncate" style={{ color: "var(--mis-muted)" }}>{copiedIntakeCommand === localServiceControlStep.verify_command ? copy.copiedCommand : localServiceControlStep.verify_command}</span>
                   </button>
                 )}
+                {localServiceControlStep.receipt_required && (
+                  <>
+                    {localServiceControlStep.receipt_verify_record_command && (
+                      <button
+                        type="button"
+                        onClick={() => void copyIntakeCommand(String(localServiceControlStep.receipt_verify_record_command))}
+                        className="flex items-center gap-1 rounded px-2 py-1 text-left min-w-0"
+                        style={{ color: "var(--mis-warning)", background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.18)" }}
+                        title={String(localServiceControlStep.receipt_verify_record_command)}
+                      >
+                        <Copy size={9} />
+                        <span className="text-[9px] font-semibold shrink-0">{copy.copyVerifyReceiptCommand}</span>
+                        <span className="text-[8px] truncate" style={{ color: "var(--mis-muted)" }}>{copiedIntakeCommand === localServiceControlStep.receipt_verify_record_command ? copy.copiedCommand : localServiceControlStep.receipt_verify_record_command}</span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => void recordLocalRunPathReceipt(localServiceControlStep, "verified")}
+                      disabled={Boolean(receiptAction)}
+                      className="flex items-center gap-1 rounded px-2 py-1 text-left min-w-0 disabled:opacity-50"
+                      style={{ color: "var(--mis-success)", background: "rgba(45,212,191,0.10)", border: "1px solid rgba(45,212,191,0.20)" }}
+                      title={copy.recordVerifyReceipt}
+                    >
+                      {serviceVerifyBusy ? <RefreshCw size={9} /> : <CheckCircle2 size={9} />}
+                      <span className="text-[9px] font-semibold shrink-0">{serviceVerifyBusy ? copy.recordingReceipt : copy.recordVerifyReceipt}</span>
+                      <span className="text-[8px] truncate" style={{ color: "var(--mis-muted)" }}>{localServiceControlStep.receipt_command || copy.actionReceipts}</span>
+                    </button>
+                    {localServiceControlStep.control_readback_required && (
+                      <button
+                        type="button"
+                        onClick={() => void recordLocalRunPathControlReadback(localServiceControlStep)}
+                        disabled={Boolean(receiptAction)}
+                        className="flex items-center gap-1 rounded px-2 py-1 text-left min-w-0 disabled:opacity-50"
+                        style={{ color: "var(--mis-cyan)", background: "rgba(34,211,238,0.08)", border: "1px solid rgba(34,211,238,0.20)" }}
+                        title={copy.controlReadback}
+                      >
+                        {serviceReadbackBusy ? <RefreshCw size={9} /> : <Activity size={9} />}
+                        <span className="text-[9px] font-semibold shrink-0">{serviceReadbackBusy ? copy.recordingReceipt : copy.controlReadback}</span>
+                        <span className="text-[8px] truncate" style={{ color: "var(--mis-muted)" }}>{localServiceControlStep.verify_command || copy.serviceCheckCommand}</span>
+                      </button>
+                    )}
+                  </>
+                )}
               </div>
+                  </>
+                );
+              })()}
             </div>
           )}
 
@@ -6464,6 +6612,18 @@ export function AIEmployees() {
                     <div className="flex flex-wrap gap-1 mt-1.5">
                       <StatusBadge status={step.copy_only ? "pass" : "attention"} label="copy-only" />
                       <StatusBadge status={step.server_executes_shell === false ? "pass" : "blocked"} label="no server shell" />
+                      {step.receipt_required && (
+                        <StatusBadge
+                          status={Boolean(step.receipt_state?.verified) ? "pass" : "attention"}
+                          label={`${copy.receiptProof}: ${String(step.receipt_state?.status || "missing")}`}
+                        />
+                      )}
+                      {step.control_readback_required && (
+                        <StatusBadge
+                          status={step.receipt_state?.control_readback_attached ? "pass" : "attention"}
+                          label={`${copy.controlReadback}: ${step.receipt_state?.control_readback_attached ? copy.yes : copy.no}`}
+                        />
+                      )}
                       {step.confirm_required && <StatusBadge status="attention" label={copy.confirmRequired} />}
                       {step.live_execution && <StatusBadge status="attention" label="live" />}
                       {step.writes_ledger && <StatusBadge status="ready" label="ledger" />}
