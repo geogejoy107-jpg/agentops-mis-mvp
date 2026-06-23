@@ -72,6 +72,8 @@ def main() -> int:
         scopes = [
             "agents:write",
             "agents:heartbeat",
+            "knowledge:read",
+            "knowledge:write",
             "agent_plans:read",
             "agent_plans:write",
             "plan_evidence:read",
@@ -91,6 +93,7 @@ def main() -> int:
             "name": "Remote Worker Smoke",
             "role": "Remote Worker Smoke",
             "runtime_type": args.adapter,
+            "workspace_id": "local-demo",
             "scopes": scopes,
             "ttl_days": 1,
             "heartbeat_timeout_sec": 60,

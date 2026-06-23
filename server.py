@@ -7866,7 +7866,12 @@ def agent_gateway_record_tool_call(conn, body) -> tuple[dict, int]:
     if external_side_effect_intent and risk in {"low", "medium"}:
         risk = "high"
     status = coerce_choice(body.get("status"), {"planned", "running", "completed", "failed", "blocked", "waiting_approval"}, "completed" if risk in {"low", "medium"} else "waiting_approval")
-    high_risk_side_effect = risk in {"high", "critical"} and (
+    side_effect_like_tool = (
+        tool_name in RISKY_TOOLS
+        or bool(body.get("side_effect_id"))
+        or external_side_effect_intent
+    )
+    high_risk_side_effect = risk in {"high", "critical"} and side_effect_like_tool and (
         status == "completed"
         or bool(body.get("side_effect_id"))
         or external_side_effect_intent
