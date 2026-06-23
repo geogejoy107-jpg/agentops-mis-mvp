@@ -725,10 +725,40 @@ def operator_local_loop_admission_packet(
     can_preview = decision.get("can_preview_loop") is True
     can_confirm_loop = decision.get("can_confirm_bounded_loop") is True
     live_required = adapter in {"hermes", "openclaw"}
-    service_command = service_step.get("command") if service_step else None
-    service_verify = service_step.get("verify_command") if service_step else None
-    start_worker_command = start_worker_step.get("command")
-    dispatch_command = dispatch_step.get("command") or acceptance_commands.get("live_dispatch_template")
+    start_worker_matches_adapter = not start_worker_step or start_worker_step.get("adapter") in {None, adapter}
+    service_matches_adapter = not service_step or service_step.get("adapter") in {None, adapter}
+    dispatch_matches_adapter = not dispatch_step or dispatch_step.get("adapter") in {None, adapter}
+    start_worker_command = start_worker_step.get("command") if start_worker_matches_adapter else None
+    start_worker_verify = start_worker_step.get("verify_command") or "agentops worker status"
+    service_command = service_step.get("command") if service_matches_adapter else None
+    service_verify = service_step.get("verify_command") if service_matches_adapter else None
+    dispatch_command = dispatch_step.get("command") if dispatch_matches_adapter else None
+    dispatch_verify = dispatch_step.get("verify_command") if dispatch_matches_adapter else None
+    if live_required:
+        start_worker_command = start_worker_command or f"agentops worker start --adapter {adapter} --confirm-run --poll-interval 5 --max-tasks 0"
+        service_command = service_command or f"agentops worker service-control --manager launchd --action restart --adapter {adapter} --agent-id agt_worker_daemon_{adapter}"
+        service_verify = service_verify or f"agentops worker service-check --manager launchd --adapter {adapter} --agent-id agt_worker_daemon_{adapter}"
+        dispatch_command = acceptance_commands.get("live_dispatch_template") or (
+            "agentops workflow run-task "
+            f"--adapter {adapter} "
+            "--confirm-run "
+            f"--worker-agent-id <{adapter}_agent_id> "
+            "--title '<task title>' "
+            "--description '<task description>'"
+        )
+        dispatch_verify = dispatch_verify or f"agentops operator live-product-readiness --require-adapter {adapter}"
+    else:
+        start_worker_command = start_worker_command or f"agentops worker start --adapter {adapter} --poll-interval 5 --max-tasks 0"
+        service_command = service_command or f"agentops worker service-control --manager launchd --action restart --adapter {adapter} --agent-id agt_worker_daemon_{adapter}"
+        service_verify = service_verify or f"agentops worker service-check --manager launchd --adapter {adapter} --agent-id agt_worker_daemon_{adapter}"
+        dispatch_command = dispatch_command or acceptance_commands.get("live_dispatch_template") or (
+            "agentops workflow run-task "
+            f"--adapter {adapter} "
+            f"--worker-agent-id <{adapter}_agent_id> "
+            "--title '<task title>' "
+            "--description '<task description>'"
+        )
+        dispatch_verify = dispatch_verify or "agentops run list --limit 5"
     first_safe_commands = [
         acceptance_commands.get("start_check"),
         agent_commands.get("agent_plan_create"),
@@ -774,26 +804,26 @@ def operator_local_loop_admission_packet(
         "local_deployment": {
             "worker_start": {
                 "command": start_worker_command,
-                "verify_command": start_worker_step.get("verify_command"),
-                "confirm_required": bool(start_worker_step.get("confirm_required")),
-                "live_execution": bool(start_worker_step.get("live_execution")),
-                "server_executes_shell": bool(start_worker_step.get("server_executes_shell")),
+                "verify_command": start_worker_verify,
+                "confirm_required": bool(start_worker_step.get("confirm_required")) or live_required,
+                "live_execution": bool(start_worker_step.get("live_execution")) or live_required,
+                "server_executes_shell": False if live_required else bool(start_worker_step.get("server_executes_shell")),
                 "token_omitted": True,
             },
             "service_control_preview": {
                 "command": service_command,
                 "verify_command": service_verify,
-                "confirm_required": bool(service_step.get("confirm_required")) if service_step else False,
-                "preview_only": bool(service_step.get("service_control_preview")) if service_step else False,
-                "live_execution": bool(service_step.get("live_execution")) if service_step else False,
-                "server_executes_shell": bool(service_step.get("server_executes_shell")) if service_step else False,
+                "confirm_required": bool(service_step.get("confirm_required")) if service_matches_adapter and service_step else bool(live_required),
+                "preview_only": True if live_required else bool(service_step.get("service_control_preview")) if service_step else False,
+                "live_execution": False,
+                "server_executes_shell": False,
                 "token_omitted": True,
             },
             "customer_worker_dispatch": {
                 "command": dispatch_command,
-                "verify_command": dispatch_step.get("verify_command"),
+                "verify_command": dispatch_verify,
                 "confirm_required": bool(dispatch_step.get("confirm_required")) or live_required,
-                "writes_ledger": bool(dispatch_step.get("writes_ledger")),
+                "writes_ledger": bool(dispatch_step.get("writes_ledger")) or live_required,
                 "live_execution": bool(dispatch_step.get("live_execution")) or live_required,
                 "requires_confirm_run_flag": live_required,
                 "token_omitted": True,
