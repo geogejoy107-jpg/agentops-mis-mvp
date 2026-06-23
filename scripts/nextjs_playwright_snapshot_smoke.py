@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import json
 import os
 import re
@@ -29,6 +30,22 @@ ROOT = Path(__file__).resolve().parents[1]
 NEXT_APP = ROOT / "ui" / "next-app"
 PWCLI = Path.home() / ".codex" / "skills" / "playwright" / "scripts" / "playwright_cli.sh"
 NEXT_ENV = NEXT_APP / "next-env.d.ts"
+RAW_RETENTION_HOLD_MARKERS = [
+    "Highly confidential Next deployment subject",
+    "Raw Next deployment legal hold reason",
+]
+READ_ONLY_LEDGER_TABLES = [
+    "tasks",
+    "runs",
+    "tool_calls",
+    "approvals",
+    "memories",
+    "evaluations",
+    "artifacts",
+    "audit_logs",
+    "agent_plans",
+    "plan_evidence_manifests",
+]
 
 ROUTES = [
     ("/workspace", ["Workspace control plane", "Active tasks", "Pending approval queue"]),
@@ -129,6 +146,57 @@ def http_form(url: str, payload: dict[str, str]) -> int:
         if exc.code in {302, 303, 307, 308}:
             return int(exc.code)
         raise
+
+
+def db_dump_hash(path: str) -> str:
+    with sqlite3.connect(path) as conn:
+        dumped = "\n".join(conn.iterdump())
+    return hashlib.sha256(dumped.encode("utf-8")).hexdigest()
+
+
+def read_only_ledger_hash(path: str) -> str:
+    parts: list[str] = []
+    with sqlite3.connect(path) as conn:
+        conn.row_factory = sqlite3.Row
+        for table in READ_ONLY_LEDGER_TABLES:
+            rows = conn.execute(f"SELECT * FROM {table} ORDER BY 1").fetchall()
+            parts.append(table)
+            parts.extend(json.dumps(dict(row), ensure_ascii=False, sort_keys=True) for row in rows)
+    return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
+
+
+def prepare_minimal_sqlite_db(path: Path) -> None:
+    sys.path.insert(0, str(ROOT))
+    import server  # noqa: PLC0415
+
+    with sqlite3.connect(path) as conn:
+        conn.executescript(server.SCHEMA_SQL)
+        now = "2026-06-23T00:00:00+00:00"
+        conn.execute(
+            "INSERT INTO users(user_id,name,email,role,created_at) VALUES(?,?,?,?,?)",
+            ("usr_next_deployment_retention", "Next Deployment Retention", "next-deployment-retention@example.local", "admin", now),
+        )
+        conn.execute(
+            """INSERT INTO agents(agent_id,name,role,description,runtime_type,model_provider,model_name,status,permission_level,allowed_tools,budget_limit_usd,owner_user_id,created_at,updated_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                "agt_next_deployment_retention",
+                "Next Deployment Retention Agent",
+                "Auditor",
+                "Minimal fixture agent for configured Next deployment retention smoke.",
+                "mock",
+                "mock",
+                "mock-model",
+                "idle",
+                "standard",
+                "[]",
+                0,
+                "usr_next_deployment_retention",
+                now,
+                now,
+            ),
+        )
+        conn.commit()
 
 
 def seed_customer_project_fixture(db_path: str) -> str:
@@ -292,6 +360,48 @@ def write_entitlement_fixture(path: Path, edition: str) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
 
 
+def write_retention_controls_fixture(path: Path) -> None:
+    payload = {
+        "legal_hold_registry_configured": True,
+        "retention_windows": {
+            "free_local_days": 30,
+            "pro_workspace_days": 365,
+            "max_retention_days": 3650,
+        },
+        "cleanup_policy": {
+            "approval_required": True,
+            "legal_hold_required_before_cleanup": True,
+            "cleanup_execution_enabled": False,
+            "cleanup_endpoint_exposed": False,
+        },
+        "legal_holds": [
+            {
+                "hold_id": "hold_next_deployment_active",
+                "workspace_id": "local-demo",
+                "scope": "workspace",
+                "status": "active",
+                "reason_code": "customer_dispute",
+                "raw_reason": "Raw Next deployment legal hold reason must not leave the UI. agtok_next_hold sk-next-hold",
+                "subject": "Highly confidential Next deployment subject must be omitted.",
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "expires_at": None,
+            },
+            {
+                "hold_id": "hold_next_deployment_released",
+                "workspace_id": "local-demo",
+                "scope": "task",
+                "status": "released",
+                "reason_code": "matter_closed",
+                "raw_reason": "Raw Next deployment legal hold reason must not leave the UI. agtok_next_released sk-next-released",
+                "subject": "Highly confidential Next deployment subject must be omitted.",
+                "created_at": "2026-01-02T00:00:00+00:00",
+                "expires_at": "2026-02-01T00:00:00+00:00",
+            },
+        ],
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+
+
 def wait_for_json(url: str, predicate, description: str, timeout_sec: int = 10) -> object:
     deadline = time.time() + timeout_sec
     last_value: object | None = None
@@ -314,6 +424,10 @@ def restore_next_env() -> None:
 def leaked_secret(text: str) -> bool:
     markers = ["Authorization: " + "Bearer", "agtok" + "_", "agtsess" + "_", "sk" + "-", "ntn" + "_"]
     return any(marker in text for marker in markers)
+
+
+def leaked_raw_retention_hold(text: str) -> bool:
+    return any(marker in text for marker in RAW_RETENTION_HOLD_MARKERS)
 
 
 def require(condition: bool, message: str) -> None:
@@ -762,10 +876,108 @@ def verify_dispatch_template_run_success(next_base: str, entitlement_path: Path,
     }
 
 
+def gate_status(payload: dict, gate_id: str) -> str | None:
+    for gate in payload.get("gates") or []:
+        if isinstance(gate, dict) and gate.get("id") == gate_id:
+            return gate.get("status")
+    return None
+
+
+def verify_deployment_configured_retention(
+    next_base: str,
+    entitlement_path: Path,
+    retention_controls_path: Path,
+    db_path: str,
+    env: dict[str, str],
+) -> dict:
+    write_entitlement_fixture(entitlement_path, "pro_workspace")
+    write_retention_controls_fixture(retention_controls_path)
+    before_hash = read_only_ledger_hash(db_path)
+
+    deployment = http_json(f"{next_base}/api/mis/deployment/readiness")
+    controls = http_json(f"{next_base}/api/mis/audit/retention-controls")
+    policy = http_json(f"{next_base}/api/mis/audit/retention-policy")
+    dangerous_controls = http_json(f"{next_base}/api/mis/audit/retention-controls?cleanup=true")
+    require(isinstance(deployment, dict), f"Deployment readiness did not return an object: {deployment!r}")
+    require(isinstance(controls, dict), f"Retention controls did not return an object: {controls!r}")
+    require(isinstance(policy, dict), f"Retention policy did not return an object: {policy!r}")
+    require(isinstance(dangerous_controls, dict), f"Dangerous retention controls probe did not return an object: {dangerous_controls!r}")
+
+    retention = deployment.get("retention") or {}
+    control_details = controls.get("controls") or {}
+    legal_hold_summary = controls.get("legal_hold_summary") or {}
+    require(deployment.get("contract_id") == "deployment_readiness_v1", f"Wrong deployment contract: {deployment}")
+    require(deployment.get("edition") == "pro_workspace", f"Deployment page proxy did not see pro_workspace: {deployment}")
+    require(retention.get("status") == "ready", f"Deployment retention policy should be ready: {retention}")
+    require(retention.get("controls_status") == "ready", f"Deployment retention controls should be ready: {retention}")
+    require(gate_status(deployment, "retention_policy") == "ready", f"Deployment retention policy gate not ready: {deployment.get('gates')}")
+    require(gate_status(deployment, "retention_controls") == "ready", f"Deployment retention controls gate not ready: {deployment.get('gates')}")
+    require(retention.get("capability_enabled") is True, f"Deployment retention capability not enabled: {retention}")
+    require(retention.get("legal_hold_registry_configured") is True, f"Deployment retention registry not configured: {retention}")
+    require(retention.get("active_legal_holds") == 1, f"Deployment active legal hold count mismatch: {retention}")
+    require(retention.get("cleanup_endpoint_exposed") is False, f"Deployment cleanup endpoint should remain closed: {retention}")
+    require(retention.get("destructive_cleanup_supported") is False, f"Deployment destructive cleanup should remain unsupported: {retention}")
+    require(retention.get("delete_performed") is False and retention.get("rows_deleted") == 0, f"Deployment retention should not delete rows: {retention}")
+    require(policy.get("status") == "ready", f"Retention policy proxy should be ready: {policy}")
+    require(controls.get("status") == "ready", f"Retention controls proxy should be ready: {controls}")
+    require(control_details.get("cleanup_approval_required") is True, f"Cleanup approval missing: {controls}")
+    require(control_details.get("legal_hold_required_before_cleanup") is True, f"Legal hold cleanup check missing: {controls}")
+    require(control_details.get("cleanup_endpoint_exposed") is False, f"Cleanup endpoint exposed through controls: {controls}")
+    require(control_details.get("destructive_cleanup_supported") is False, f"Destructive cleanup exposed through controls: {controls}")
+    require(legal_hold_summary.get("active_holds") == 1, f"Controls active hold count mismatch: {controls}")
+    dangerous_details = dangerous_controls.get("controls") or {}
+    require(dangerous_controls.get("status") == "blocked", f"Dangerous cleanup query should fail closed: {dangerous_controls}")
+    require("dangerous_cleanup_parameter_rejected" in set(dangerous_controls.get("blocked_reasons") or []), f"Dangerous cleanup query missing blocked reason: {dangerous_controls}")
+    require(dangerous_details.get("delete_performed") is False, f"Dangerous cleanup query should not delete: {dangerous_controls}")
+    require(dangerous_details.get("rows_deleted") == 0, f"Dangerous cleanup query should keep rows_deleted=0: {dangerous_controls}")
+
+    target = next_base.rstrip("/") + "/workspace/deployment"
+    goto = playwright(env, "goto", target)
+    require(goto.returncode == 0, f"Playwright goto failed for configured deployment page: {goto.stderr or goto.stdout}")
+    snapshot = wait_for_snapshot_text(
+        env,
+        "/workspace/deployment",
+        lambda text: (
+            "Deployment readiness verdict" in text
+            and "edition pro_workspace" in text
+            and "retention true" in text
+            and "hold registry true" in text
+            and "active holds 1" in text
+            and "cleanup endpoint false" in text
+            and "destructive cleanup false" in text
+        ),
+        "deployment page to render configured retention controls",
+        timeout_sec=15,
+    )
+    combined = "\n".join([
+        json.dumps(deployment, ensure_ascii=False, sort_keys=True),
+        json.dumps(controls, ensure_ascii=False, sort_keys=True),
+        json.dumps(policy, ensure_ascii=False, sort_keys=True),
+        json.dumps(dangerous_controls, ensure_ascii=False, sort_keys=True),
+        snapshot,
+    ])
+    require(not leaked_secret(combined), "Configured deployment retention evidence leaked token-like material")
+    require(not leaked_raw_retention_hold(combined), "Configured deployment retention evidence leaked raw hold detail")
+    after_hash = read_only_ledger_hash(db_path)
+    require(before_hash == after_hash, "Configured deployment retention page/proxy mutated the read-only ledger tables")
+    return {
+        "deployment_status": deployment.get("status"),
+        "deployment_ready": deployment.get("deployment_ready"),
+        "edition": deployment.get("edition"),
+        "retention_status": retention.get("status"),
+        "controls_status": retention.get("controls_status"),
+        "active_legal_holds": retention.get("active_legal_holds"),
+        "retention_policy_gate": gate_status(deployment, "retention_policy"),
+        "retention_controls_gate": gate_status(deployment, "retention_controls"),
+        "read_only_hash_checked": True,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run Next.js Playwright snapshot smoke.")
     parser.add_argument("--api-port", type=int, default=0)
     parser.add_argument("--next-port", type=int, default=0)
+    parser.add_argument("--configured-retention-fixture", action="store_true", help="Run only the isolated pro_workspace deployment retention controls browser fixture.")
     args = parser.parse_args()
 
     if not PWCLI.exists():
@@ -774,6 +986,8 @@ def main() -> int:
     if run(["bash", "-lc", "command -v npx >/dev/null 2>&1"]).returncode != 0:
         print(json.dumps({"ok": False, "error": "npx is required for Playwright CLI wrapper"}, indent=2), file=sys.stderr)
         return 1
+    if args.configured_retention_fixture:
+        return run_configured_retention_fixture(args.api_port, args.next_port)
 
     api_port = args.api_port or free_port()
     next_port = args.next_port or free_port()
@@ -786,10 +1000,12 @@ def main() -> int:
         with tempfile.TemporaryDirectory(prefix="agentops-next-pw-") as tmp:
             db_path = str(Path(tmp) / "agentops.db")
             entitlement_path = Path(tmp) / "entitlements.local.json"
+            retention_controls_path = Path(tmp) / "retention-controls.local.json"
             write_entitlement_fixture(entitlement_path, "free_local")
             reset_env = os.environ.copy()
             reset_env["AGENTOPS_DB_PATH"] = db_path
             reset_env["AGENTOPS_ENTITLEMENTS_PATH"] = str(entitlement_path)
+            reset_env["AGENTOPS_RETENTION_CONTROLS_PATH"] = str(retention_controls_path)
             reset = run(["python3", "server.py", "--host", "127.0.0.1", "--port", str(api_port), "--reset"], env=reset_env, timeout=30)
             require(reset.returncode == 0, f"seed reset failed: {reset.stderr or reset.stdout}")
             project_id = seed_customer_project_fixture(db_path)
@@ -797,6 +1013,7 @@ def main() -> int:
             api_env = os.environ.copy()
             api_env["AGENTOPS_DB_PATH"] = db_path
             api_env["AGENTOPS_ENTITLEMENTS_PATH"] = str(entitlement_path)
+            api_env["AGENTOPS_RETENTION_CONTROLS_PATH"] = str(retention_controls_path)
             api_proc = start_process(["python3", "server.py", "--host", "127.0.0.1", "--port", str(api_port)], cwd=ROOT, env=api_env)
             processes.append(api_proc)
             wait_http(f"{api_base}/api/dashboard/metrics")
@@ -838,6 +1055,8 @@ def main() -> int:
                 "commercial_report_templates": http_json(f"{next_base}/api/mis/commercial/entitlements").get("capabilities", {}).get("report_templates"),
                 "governance_sessions_token_omitted": http_json(f"{next_base}/api/mis/agent-gateway/sessions").get("token_omitted"),
                 "deployment_local_token_omitted": http_json(f"{next_base}/api/mis/local/readiness").get("token_omitted"),
+                "deployment_retention_status": http_json(f"{next_base}/api/mis/deployment/readiness").get("retention", {}).get("status"),
+                "deployment_retention_controls_status": http_json(f"{next_base}/api/mis/deployment/readiness").get("retention", {}).get("controls_status"),
                 "customer_projects": len(http_json(f"{next_base}/api/mis/workflows/customer-projects?limit=25").get("projects", [])),
                 "runtime_connectors": len(http_json(f"{next_base}/api/mis/runtime-connectors")),
                 "notion_writeback_allowed": http_json(f"{next_base}/api/mis/integrations/notion/status").get("writeback_allowed"),
@@ -875,6 +1094,75 @@ def main() -> int:
                     proc.kill()
         run(["bash", "-lc", f"lsof -tiTCP:{next_port} -sTCP:LISTEN | xargs -r kill"], timeout=10)
         run(["bash", "-lc", f"lsof -tiTCP:{api_port} -sTCP:LISTEN | xargs -r kill"], timeout=10)
+        run(["rm", "-rf", str(NEXT_APP / ".next")], timeout=10)
+        restore_next_env()
+
+
+def run_configured_retention_fixture(api_port_arg: int, next_port_arg: int) -> int:
+    api_port = api_port_arg or free_port()
+    next_port = next_port_arg or free_port()
+    api_base = f"http://127.0.0.1:{api_port}"
+    next_base = f"http://127.0.0.1:{next_port}"
+    session = f"agentops-next-deployment-retention-{uuid.uuid4().hex[:8]}"
+    processes: list[subprocess.Popen[str]] = []
+    try:
+        with tempfile.TemporaryDirectory(prefix="agentops-next-deployment-retention-") as tmp:
+            tmp_path = Path(tmp)
+            db_path = str(tmp_path / "agentops.db")
+            entitlement_path = tmp_path / "entitlements.local.json"
+            retention_controls_path = tmp_path / "retention-controls.local.json"
+            write_entitlement_fixture(entitlement_path, "pro_workspace")
+            write_retention_controls_fixture(retention_controls_path)
+            prepare_minimal_sqlite_db(Path(db_path))
+
+            api_env = os.environ.copy()
+            api_env["AGENTOPS_DB_PATH"] = db_path
+            api_env["AGENTOPS_ENTITLEMENTS_PATH"] = str(entitlement_path)
+            api_env["AGENTOPS_RETENTION_CONTROLS_PATH"] = str(retention_controls_path)
+            api_env["AGENTOPS_BASE_URL"] = api_base
+            api_proc = start_process(["python3", "server.py", "--host", "127.0.0.1", "--port", str(api_port)], cwd=ROOT, env=api_env)
+            processes.append(api_proc)
+            wait_http(f"{api_base}/api/deployment/readiness")
+
+            next_env = os.environ.copy()
+            next_env["AGENTOPS_API_BASE"] = f"{api_base}/api"
+            next_proc = start_process(["npx", "next", "dev", "-p", str(next_port)], cwd=NEXT_APP, env=next_env)
+            processes.append(next_proc)
+            wait_http(f"{next_base}/workspace/deployment")
+
+            pw_env = os.environ.copy()
+            pw_env["PLAYWRIGHT_CLI_SESSION"] = session
+            opened = playwright(pw_env, "open", f"{next_base}/workspace/deployment")
+            require(opened.returncode == 0, f"Playwright open failed: {opened.stderr or opened.stdout}")
+            resized = playwright(pw_env, "resize", "1365", "900")
+            require(resized.returncode == 0, f"Playwright resize failed: {resized.stderr or resized.stdout}")
+            result = verify_deployment_configured_retention(next_base, entitlement_path, retention_controls_path, db_path, pw_env)
+            try:
+                playwright(pw_env, "close", timeout=10)
+            except subprocess.TimeoutExpired:
+                playwright(pw_env, "kill-all", timeout=20)
+            print(json.dumps({
+                "ok": True,
+                "contract": "nextjs_deployment_configured_retention_fixture_v1",
+                "api_base": api_base,
+                "next_base": next_base,
+                "deployment_configured_retention_controls": result,
+                "secret_leaked": False,
+            }, ensure_ascii=False, indent=2, sort_keys=True))
+            return 0
+    except Exception as exc:
+        print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False, indent=2, sort_keys=True), file=sys.stderr)
+        return 1
+    finally:
+        for proc in reversed(processes):
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait(timeout=10)
+        run(["bash", "-lc", f"lsof -tiTCP:{next_port} -sTCP:LISTEN | xargs -r kill"], timeout=10)
         run(["rm", "-rf", str(NEXT_APP / ".next")], timeout=10)
         restore_next_env()
 

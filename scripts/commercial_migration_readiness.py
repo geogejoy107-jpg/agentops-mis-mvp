@@ -692,8 +692,20 @@ def main() -> int:
             and file_contains("ui/next-app/src/components/DeploymentPage.tsx", "Deployment readiness verdict")
             and file_contains("ui/next-app/src/components/DeploymentPage.tsx", "audit_retention_policy_v1")
             and file_contains("ui/next-app/src/components/DeploymentPage.tsx", "audit_retention_controls_v1")
+            and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "verify_deployment_configured_retention")
+            and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "deployment_configured_retention_controls")
+            and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "--configured-retention-fixture")
+            and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "nextjs_deployment_configured_retention_fixture_v1")
+            and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "AGENTOPS_RETENTION_CONTROLS_PATH")
+            and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "active_legal_holds")
+            and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "cleanup_endpoint_exposed")
+            and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "destructive_cleanup_supported")
+            and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "retention-controls?cleanup=true")
+            and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "dangerous_cleanup_parameter_rejected")
+            and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "Raw Next deployment legal hold reason")
+            and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "db_dump_hash")
             and (ROOT / "scripts" / "deployment_readiness_smoke.py").exists(),
-            "Gate 5 deployment readiness API, CLI, smoke, audit retention policy/controls previews, and Next.js verdict panel are present",
+            "Gate 5 deployment readiness API, CLI, smoke, audit retention policy/controls previews, and configured Next.js verdict panel are present",
         ),
         check(
             "blocked_generated_or_runtime_artifacts_absent",
@@ -782,6 +794,7 @@ def main() -> int:
                 "python3 scripts/audit_retention_policy_smoke.py",
                 "python3 scripts/audit_retention_controls_smoke.py --configured-fixture",
                 "python3 scripts/deployment_readiness_smoke.py --configured-retention-fixture",
+                "python3 scripts/nextjs_playwright_snapshot_smoke.py --configured-retention-fixture",
                 "python3 scripts/byoc_deployment_acceptance_smoke.py",
                 "backup/restore and signed export checks",
             ],

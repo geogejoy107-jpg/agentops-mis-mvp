@@ -436,7 +436,13 @@ Must be true:
   `python3 scripts/deployment_readiness_smoke.py --configured-retention-fixture`;
   this configured mode proves the deployment verdict sees ready retention
   controls from a temporary legal-hold registry while other BYOC gates may
-  remain attention/gated.
+  remain attention/gated. The Next.js browser parity smoke also flips an
+  isolated entitlement fixture to `pro_workspace`, loads a temporary
+  `AGENTOPS_RETENTION_CONTROLS_PATH`, and verifies `/workspace/deployment`
+  renders ready retention policy/controls gates, `active holds 1`, cleanup
+  closed, dangerous cleanup queries fail closed, raw legal-hold detail omitted,
+  and no SQLite ledger mutation. Verify the focused browser fixture with
+  `python3 scripts/nextjs_playwright_snapshot_smoke.py --configured-retention-fixture`.
 - `audit_retention_policy_v1` exposes a read-only audit retention policy
   preview through `GET /api/audit/retention-policy` and
   `agentops audit retention-policy`. It proves policy source, retention-day

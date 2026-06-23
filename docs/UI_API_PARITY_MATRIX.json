@@ -744,6 +744,7 @@
       ],
       "evidence_commands": [
         "python3 scripts/nextjs_playwright_snapshot_smoke.py",
+        "python3 scripts/nextjs_playwright_snapshot_smoke.py --configured-retention-fixture",
         "python3 scripts/nextjs_parity_smoke.py",
         "python3 scripts/commercial_entitlements_smoke.py"
       ],
@@ -783,7 +784,7 @@
     },
     {
       "id": "deployment_next_only",
-      "capability": "Local/BYOC deployment readiness, backup/restore evidence, retention/export gates, and storage backend status.",
+      "capability": "Local/BYOC deployment readiness, backup/restore evidence, configured retention/export gates, and storage backend status.",
       "status": "next_only",
       "gate4_required": true,
       "vite_routes": [],
