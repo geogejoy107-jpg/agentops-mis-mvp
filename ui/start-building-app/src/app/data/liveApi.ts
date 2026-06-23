@@ -740,7 +740,7 @@ export interface LocalRunPathStep {
   label: string;
   phase: string;
   status: string;
-  adapter?: string;
+  adapter?: WorkerAdapterName;
   command: string;
   verify_command?: string | null;
   route?: string | null;
@@ -3979,7 +3979,7 @@ export async function loadLocalReadiness(): Promise<LocalReadinessPayload> {
     label: String(step.label || step.step_id || ""),
     phase: String(step.phase || ""),
     status: String(step.status || "unknown"),
-    adapter: step.adapter ? String(step.adapter) : undefined,
+    adapter: ["mock", "hermes", "openclaw"].includes(String(step.adapter)) ? String(step.adapter) as WorkerAdapterName : undefined,
     command: String(step.command || ""),
     verify_command: step.verify_command ? String(step.verify_command) : null,
     route: step.route ? String(step.route) : null,
