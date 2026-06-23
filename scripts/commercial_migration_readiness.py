@@ -529,6 +529,7 @@ def main() -> int:
             and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "gateway_approval_other_agent_status")
             and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "gateway_run_heartbeat_task_mismatch_status")
             and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "gateway_run_heartbeat_terminal_revival_status")
+            and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "gateway_run_completion_heartbeat_status")
             and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "gateway_audit_mismatch_status")
             and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "gateway_non_allowlisted_write_status")
             and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "postgres_http_gateway_execution_start_write_v1")
@@ -539,6 +540,9 @@ def main() -> int:
             and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "postgres_http_gateway_memory_write_v1")
             and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "postgres_http_gateway_heartbeat_write_v1")
             and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "postgres_http_gateway_run_heartbeat_write_v1")
+            and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "postgres_http_gateway_run_completion_heartbeat_write_v1")
+            and file_contains("docs/POSTGRES_PARITY_CONTRACT.md", "postgres_http_gateway_run_completion_heartbeat_write_v1")
+            and file_contains("docs/AGENT_GATEWAY_CLI_SPEC.md", "complete a running run through heartbeat")
             and file_contains("server.py", '("POST", "/api/agent-gateway/tool-calls")')
             and file_contains("server.py", '("POST", "/api/agent-gateway/artifacts")')
             and file_contains("server.py", '("POST", "/api/agent-gateway/evaluations/submit")')
@@ -551,6 +555,14 @@ def main() -> int:
             and file_contains("server.py", '("POST", "/api/agent-gateway/audit")')
             and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "gateway_heartbeat_write_status")
             and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "gateway_run_heartbeat_write_status")
+            and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "gateway_run_completion_heartbeat_status")
+            and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "gateway_completion_run_id")
+            and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "gateway_completion_task_id")
+            and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "gateway_completion_agent_id")
+            and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "gateway_completion_run_status")
+            and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "gateway_completion_task_status")
+            and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "gateway_completion_agent_status")
+            and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "gateway_completion_run_ended")
             and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "gateway_tool_write_status")
             and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "gateway_eval_write_status")
             and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "gateway_artifact_write_status")
@@ -573,10 +585,12 @@ def main() -> int:
             and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "gateway_approval_task_wait_audit_count")
             and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "gateway_heartbeat_runtime_event_count")
             and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "gateway_run_heartbeat_runtime_event_count")
+            and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "gateway_run_completion_heartbeat_runtime_event_count")
+            and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "gateway_run_completion_heartbeat_audit_count")
             and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "gateway_token_last_heartbeat")
             and file_contains("scripts/storage_postgres_http_write_task_smoke.py", "gateway_audit_runtime_event_count")
             and (ROOT / "scripts" / "storage_postgres_http_write_task_smoke.py").exists(),
-            "experimental Postgres HTTP task, Agent Gateway task, claim, run-start, agent/run heartbeat, tool/eval/artifact evidence, Agent Plan, plan-evidence manifest, memory candidate, approval request, and run-bound audit write routes are explicitly allowlisted, smoke-tested, and documented",
+            "experimental Postgres HTTP task, Agent Gateway task, claim, run-start, agent/run progress and completion heartbeat, tool/eval/artifact evidence, Agent Plan, plan-evidence manifest, memory candidate, approval request, and run-bound audit write routes are explicitly allowlisted, smoke-tested, and documented",
         ),
         check(
             "blocked_generated_or_runtime_artifacts_absent",

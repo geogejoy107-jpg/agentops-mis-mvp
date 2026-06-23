@@ -43,8 +43,11 @@ GATEWAY_AGENT_ID = "agt_pg_gateway_write"
 GATEWAY_OBSERVER_AGENT_ID = "agt_pg_gateway_observer"
 GATEWAY_OTHER_AGENT_ID = "agt_pg_gateway_other"
 GATEWAY_INTRUDER_AGENT_ID = "agt_pg_gateway_intruder"
+GATEWAY_COMPLETION_AGENT_ID = "agt_pg_gateway_completion"
 GATEWAY_TASK_ID = "tsk_pg_gateway_write_task"
 GATEWAY_RUN_ID = "run_pg_gateway_write_start"
+GATEWAY_COMPLETION_TASK_ID = "tsk_pg_gateway_completion_heartbeat"
+GATEWAY_COMPLETION_RUN_ID = "run_pg_gateway_completion_heartbeat"
 GATEWAY_TOOL_CALL_ID = "tc_pg_gateway_write_evidence"
 GATEWAY_EVALUATION_ID = "eval_pg_gateway_write_evidence"
 GATEWAY_ARTIFACT_ID = "art_pg_gateway_write_evidence"
@@ -138,6 +141,7 @@ def seed_reference_rows(adapter: PostgresAdapter) -> None:
         (GATEWAY_OBSERVER_AGENT_ID, "Postgres Gateway Observer"),
         (GATEWAY_OTHER_AGENT_ID, "Postgres Gateway Other Agent"),
         (GATEWAY_INTRUDER_AGENT_ID, "Postgres Gateway Intruder Agent"),
+        (GATEWAY_COMPLETION_AGENT_ID, "Postgres Gateway Completion Agent"),
     ]:
         adapter.execute(
             """INSERT INTO agents(agent_id,name,role,description,runtime_type,model_provider,model_name,status,permission_level,allowed_tools,budget_limit_usd,owner_user_id,created_at,updated_at)
@@ -150,7 +154,7 @@ def seed_reference_rows(adapter: PostgresAdapter) -> None:
                 "runtime_type": "mock",
                 "model_provider": "mock",
                 "model_name": "mock-model",
-                "status": "idle",
+                "status": "running" if agent_id == GATEWAY_COMPLETION_AGENT_ID else "idle",
                 "permission_level": "standard",
                 "allowed_tools": "[]",
                 "budget_limit_usd": 0,
@@ -348,6 +352,57 @@ def seed_reference_rows(adapter: PostgresAdapter) -> None:
             "error_type": None,
             "error_message": None,
             "trace_id": "trace_pg_gateway_terminal_heartbeat",
+            "parent_run_id": None,
+            "delegation_id": None,
+            "approval_required": 0,
+            "created_at": now,
+        },
+    )
+    adapter.execute(
+        """INSERT INTO tasks(task_id,workspace_id,title,description,requester_id,owner_agent_id,collaborator_agent_ids,status,priority,due_date,acceptance_criteria,risk_level,budget_limit_usd,created_at,updated_at)
+        VALUES(:task_id,:workspace_id,:title,:description,:requester_id,:owner_agent_id,:collaborator_agent_ids,:status,:priority,:due_date,:acceptance_criteria,:risk_level,:budget_limit_usd,:created_at,:updated_at)""",
+        {
+            "task_id": GATEWAY_COMPLETION_TASK_ID,
+            "workspace_id": GATEWAY_WORKSPACE_ID,
+            "title": "Seeded run heartbeat completion task",
+            "description": "Run heartbeat completion must close this running run and task.",
+            "requester_id": "usr_customer_demo",
+            "owner_agent_id": GATEWAY_COMPLETION_AGENT_ID,
+            "collaborator_agent_ids": "[]",
+            "status": "running",
+            "priority": "high",
+            "due_date": None,
+            "acceptance_criteria": "Completion heartbeat sets run/task completed and agent idle.",
+            "risk_level": "low",
+            "budget_limit_usd": 1.0,
+            "created_at": now,
+            "updated_at": now,
+        },
+    )
+    adapter.execute(
+        """INSERT INTO runs(run_id,workspace_id,task_id,agent_id,runtime_type,status,started_at,ended_at,duration_ms,input_summary,output_summary,model_provider,model_name,input_tokens,output_tokens,reasoning_tokens,cost_usd,error_type,error_message,trace_id,parent_run_id,delegation_id,approval_required,created_at)
+        VALUES(:run_id,:workspace_id,:task_id,:agent_id,:runtime_type,:status,:started_at,:ended_at,:duration_ms,:input_summary,:output_summary,:model_provider,:model_name,:input_tokens,:output_tokens,:reasoning_tokens,:cost_usd,:error_type,:error_message,:trace_id,:parent_run_id,:delegation_id,:approval_required,:created_at)""",
+        {
+            "run_id": GATEWAY_COMPLETION_RUN_ID,
+            "workspace_id": GATEWAY_WORKSPACE_ID,
+            "task_id": GATEWAY_COMPLETION_TASK_ID,
+            "agent_id": GATEWAY_COMPLETION_AGENT_ID,
+            "runtime_type": "mock",
+            "status": "running",
+            "started_at": now,
+            "ended_at": None,
+            "duration_ms": None,
+            "input_summary": "Seeded running run for heartbeat completion.",
+            "output_summary": None,
+            "model_provider": "mock",
+            "model_name": "mock-model",
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "reasoning_tokens": 0,
+            "cost_usd": 0,
+            "error_type": None,
+            "error_message": None,
+            "trace_id": "trace_pg_gateway_completion_heartbeat",
             "parent_run_id": None,
             "delegation_id": None,
             "approval_required": 0,
@@ -613,6 +668,7 @@ def main() -> int:
             gateway_token = "agtok_pg_" + container_smoke.secrets.token_urlsafe(24)
             gateway_observer_token = "agtok_pg_observer_" + container_smoke.secrets.token_urlsafe(18)
             gateway_intruder_token = "agtok_pg_intruder_" + container_smoke.secrets.token_urlsafe(18)
+            gateway_completion_token = "agtok_pg_completion_" + container_smoke.secrets.token_urlsafe(18)
             seed_gateway_token(
                 adapter,
                 token_id=GATEWAY_TOKEN_ID,
@@ -663,6 +719,14 @@ def main() -> int:
                     "approvals:request",
                     "audit:write",
                 ],
+            )
+            seed_gateway_token(
+                adapter,
+                token_id="tok_pg_gateway_completion",
+                raw_token=gateway_completion_token,
+                agent_id=GATEWAY_COMPLETION_AGENT_ID,
+                workspace_id=GATEWAY_WORKSPACE_ID,
+                scopes=["runs:write"],
             )
             adapter.close()
             adapter = None
@@ -963,6 +1027,18 @@ def main() -> int:
                     "output_tokens": 17,
                     "cost_usd": 0.0123,
                     "output_summary": "Postgres Gateway run heartbeat write proof.",
+                },
+            )
+            gateway_run_completion_heartbeat_status, gateway_run_completion_heartbeat_payload = request_json_with_token(
+                f"{write_base}/api/agent-gateway/runs/{GATEWAY_COMPLETION_RUN_ID}/heartbeat",
+                token=gateway_completion_token,
+                body={
+                    "task_id": GATEWAY_COMPLETION_TASK_ID,
+                    "status": "completed",
+                    "duration_ms": 3456,
+                    "output_tokens": 29,
+                    "cost_usd": 0.019,
+                    "output_summary": "Postgres Gateway run completion heartbeat proof.",
                 },
             )
             gateway_intruder_claim_status, gateway_intruder_claim_payload = request_json_with_token(
@@ -1329,6 +1405,9 @@ def main() -> int:
             gateway_run_row = adapter.fetchone("SELECT * FROM runs WHERE run_id=?", [GATEWAY_RUN_ID])
             gateway_heartbeat_agent_row = adapter.fetchone("SELECT * FROM agents WHERE agent_id=?", [GATEWAY_AGENT_ID])
             gateway_terminal_heartbeat_run_row = adapter.fetchone("SELECT * FROM runs WHERE run_id=?", [GATEWAY_TERMINAL_HEARTBEAT_RUN_ID])
+            gateway_completion_run_row = adapter.fetchone("SELECT * FROM runs WHERE run_id=?", [GATEWAY_COMPLETION_RUN_ID])
+            gateway_completion_task_row = adapter.fetchone("SELECT * FROM tasks WHERE task_id=?", [GATEWAY_COMPLETION_TASK_ID])
+            gateway_completion_agent_row = adapter.fetchone("SELECT * FROM agents WHERE agent_id=?", [GATEWAY_COMPLETION_AGENT_ID])
             gateway_missing_run_scope_row = adapter.fetchone("SELECT * FROM runs WHERE run_id=?", [f"{GATEWAY_RUN_ID}_missing_scope"])
             gateway_intruder_run_row = adapter.fetchone("SELECT * FROM runs WHERE run_id=?", [f"{GATEWAY_RUN_ID}_intruder"])
             gateway_tool_row = adapter.fetchone("SELECT * FROM tool_calls WHERE tool_call_id=?", [GATEWAY_TOOL_CALL_ID])
@@ -1384,6 +1463,8 @@ def main() -> int:
             gateway_heartbeat_audit_count = adapter.fetchone("SELECT COUNT(*) AS c FROM audit_logs WHERE entity_type=? AND entity_id=? AND action=?", ["agents", GATEWAY_AGENT_ID, "agent_gateway.heartbeat"])["c"]
             gateway_run_heartbeat_runtime_event_count = adapter.fetchone("SELECT COUNT(*) AS c FROM runtime_events WHERE run_id=? AND event_type=?", [GATEWAY_RUN_ID, "run.heartbeat"])["c"]
             gateway_run_heartbeat_audit_count = adapter.fetchone("SELECT COUNT(*) AS c FROM audit_logs WHERE entity_type=? AND entity_id=? AND action=?", ["runs", GATEWAY_RUN_ID, "agent_gateway.run_heartbeat"])["c"]
+            gateway_run_completion_heartbeat_runtime_event_count = adapter.fetchone("SELECT COUNT(*) AS c FROM runtime_events WHERE run_id=? AND event_type=?", [GATEWAY_COMPLETION_RUN_ID, "run.heartbeat"])["c"]
+            gateway_run_completion_heartbeat_audit_count = adapter.fetchone("SELECT COUNT(*) AS c FROM audit_logs WHERE entity_type=? AND entity_id=? AND action=?", ["runs", GATEWAY_COMPLETION_RUN_ID, "agent_gateway.run_heartbeat"])["c"]
             gateway_tool_runtime_event_count = adapter.fetchone("SELECT COUNT(*) AS c FROM runtime_events WHERE run_id=? AND event_type=?", [GATEWAY_RUN_ID, "tool_call.record"])["c"]
             gateway_eval_runtime_event_count = adapter.fetchone("SELECT COUNT(*) AS c FROM runtime_events WHERE run_id=? AND event_type=?", [GATEWAY_RUN_ID, "evaluation.submit"])["c"]
             gateway_artifact_runtime_event_count = adapter.fetchone("SELECT COUNT(*) AS c FROM runtime_events WHERE run_id=? AND event_type=?", [GATEWAY_RUN_ID, "artifact.record"])["c"]
@@ -1513,6 +1594,9 @@ def main() -> int:
             gateway_run_heartbeat = gateway_run_heartbeat_write_payload.get("run") or {}
             if gateway_run_heartbeat_write_status != 200 or gateway_run_heartbeat.get("run_id") != GATEWAY_RUN_ID or gateway_run_heartbeat.get("status") != "running" or gateway_run_heartbeat.get("output_summary") != "Postgres Gateway run heartbeat write proof.":
                 failures.append(f"gateway_run_heartbeat_write_mismatch:{gateway_run_heartbeat_write_status}:{gateway_run_heartbeat_write_payload}")
+            gateway_run_completion_heartbeat = gateway_run_completion_heartbeat_payload.get("run") or {}
+            if gateway_run_completion_heartbeat_status != 200 or gateway_run_completion_heartbeat.get("run_id") != GATEWAY_COMPLETION_RUN_ID or gateway_run_completion_heartbeat.get("status") != "completed" or gateway_run_completion_heartbeat.get("output_summary") != "Postgres Gateway run completion heartbeat proof.":
+                failures.append(f"gateway_run_completion_heartbeat_mismatch:{gateway_run_completion_heartbeat_status}:{gateway_run_completion_heartbeat_payload}")
             if gateway_intruder_claim_status != 403 or "another agent" not in json.dumps(gateway_intruder_claim_payload, ensure_ascii=False).lower():
                 failures.append(f"gateway_intruder_claim_mismatch:{gateway_intruder_claim_status}:{gateway_intruder_claim_payload}")
             if gateway_intruder_run_status != 403 or "another agent" not in json.dumps(gateway_intruder_run_payload, ensure_ascii=False).lower():
@@ -1675,6 +1759,12 @@ def main() -> int:
                 failures.append(f"postgres_gateway_heartbeat_agent_row_mismatch:{gateway_heartbeat_agent_row}")
             if not gateway_terminal_heartbeat_run_row or gateway_terminal_heartbeat_run_row.get("status") != "completed" or gateway_terminal_heartbeat_run_row.get("output_summary") != "Already completed and immutable to heartbeat revival.":
                 failures.append(f"postgres_gateway_terminal_heartbeat_overwritten:{gateway_terminal_heartbeat_run_row}")
+            if not gateway_completion_run_row or gateway_completion_run_row.get("status") != "completed" or gateway_completion_run_row.get("ended_at") is None or gateway_completion_run_row.get("output_summary") != "Postgres Gateway run completion heartbeat proof." or int(gateway_completion_run_row.get("duration_ms") or 0) != 3456 or int(gateway_completion_run_row.get("output_tokens") or 0) != 29:
+                failures.append(f"postgres_gateway_completion_run_row_mismatch:{gateway_completion_run_row}")
+            if not gateway_completion_task_row or gateway_completion_task_row.get("status") != "completed":
+                failures.append(f"postgres_gateway_completion_task_not_completed:{gateway_completion_task_row}")
+            if not gateway_completion_agent_row or gateway_completion_agent_row.get("status") != "idle":
+                failures.append(f"postgres_gateway_completion_agent_not_idle:{gateway_completion_agent_row}")
             if not gateway_tool_row or gateway_tool_row.get("run_id") != GATEWAY_RUN_ID or gateway_tool_row.get("agent_id") != GATEWAY_AGENT_ID:
                 failures.append(f"postgres_gateway_tool_row_mismatch:{gateway_tool_row}")
             if not gateway_eval_row or gateway_eval_row.get("run_id") != GATEWAY_RUN_ID or gateway_eval_row.get("task_id") != GATEWAY_TASK_ID:
@@ -1719,6 +1809,10 @@ def main() -> int:
                 failures.append("postgres_gateway_run_heartbeat_runtime_event_missing")
             if int(gateway_run_heartbeat_audit_count or 0) < 1:
                 failures.append("postgres_gateway_run_heartbeat_audit_missing")
+            if int(gateway_run_completion_heartbeat_runtime_event_count or 0) < 1:
+                failures.append("postgres_gateway_run_completion_heartbeat_runtime_event_missing")
+            if int(gateway_run_completion_heartbeat_audit_count or 0) < 1:
+                failures.append("postgres_gateway_run_completion_heartbeat_audit_missing")
             if int(gateway_tool_runtime_event_count or 0) < 1:
                 failures.append("postgres_gateway_tool_runtime_event_missing")
             if int(gateway_eval_runtime_event_count or 0) < 1:
@@ -1794,6 +1888,7 @@ def main() -> int:
                     gateway_run_heartbeat_intruder_payload,
                     gateway_run_heartbeat_terminal_revival_payload,
                     gateway_run_heartbeat_write_payload,
+                    gateway_run_completion_heartbeat_payload,
                     gateway_missing_tool_scope_payload,
                     gateway_tool_write_payload,
                     gateway_missing_eval_scope_payload,
@@ -1847,7 +1942,7 @@ def main() -> int:
                 ensure_ascii=False,
                 sort_keys=True,
             )
-            if gateway_token in transcript or gateway_observer_token in transcript or gateway_intruder_token in transcript:
+            if gateway_token in transcript or gateway_observer_token in transcript or gateway_intruder_token in transcript or gateway_completion_token in transcript:
                 failures.append("postgres_gateway_raw_token_leaked")
 
             output = {
@@ -1864,6 +1959,7 @@ def main() -> int:
                     "postgres_http_gateway_audit_write_v1",
                     "postgres_http_gateway_heartbeat_write_v1",
                     "postgres_http_gateway_run_heartbeat_write_v1",
+                    "postgres_http_gateway_run_completion_heartbeat_write_v1",
                     "postgres_http_gateway_memory_write_v1",
                 ],
                 "image": args.image,
@@ -1930,6 +2026,7 @@ def main() -> int:
                 "gateway_run_heartbeat_intruder_status": gateway_run_heartbeat_intruder_status,
                 "gateway_run_heartbeat_terminal_revival_status": gateway_run_heartbeat_terminal_revival_status,
                 "gateway_run_heartbeat_write_status": gateway_run_heartbeat_write_status,
+                "gateway_run_completion_heartbeat_status": gateway_run_completion_heartbeat_status,
                 "gateway_tool_write_status": gateway_tool_write_status,
                 "gateway_eval_write_status": gateway_eval_write_status,
                 "gateway_artifact_write_status": gateway_artifact_write_status,
@@ -1966,6 +2063,13 @@ def main() -> int:
                 "task_id": TASK_ID,
                 "gateway_task_id": GATEWAY_TASK_ID,
                 "gateway_run_id": GATEWAY_RUN_ID,
+                "gateway_completion_run_id": GATEWAY_COMPLETION_RUN_ID,
+                "gateway_completion_task_id": GATEWAY_COMPLETION_TASK_ID,
+                "gateway_completion_agent_id": GATEWAY_COMPLETION_AGENT_ID,
+                "gateway_completion_run_status": gateway_completion_run_row.get("status") if gateway_completion_run_row else None,
+                "gateway_completion_task_status": gateway_completion_task_row.get("status") if gateway_completion_task_row else None,
+                "gateway_completion_agent_status": gateway_completion_agent_row.get("status") if gateway_completion_agent_row else None,
+                "gateway_completion_run_ended": bool(gateway_completion_run_row and gateway_completion_run_row.get("ended_at")),
                 "gateway_tool_call_id": GATEWAY_TOOL_CALL_ID,
                 "gateway_evaluation_id": GATEWAY_EVALUATION_ID,
                 "gateway_artifact_id": GATEWAY_ARTIFACT_ID,
@@ -1988,6 +2092,8 @@ def main() -> int:
                 "gateway_heartbeat_audit_count": int(gateway_heartbeat_audit_count or 0),
                 "gateway_run_heartbeat_runtime_event_count": int(gateway_run_heartbeat_runtime_event_count or 0),
                 "gateway_run_heartbeat_audit_count": int(gateway_run_heartbeat_audit_count or 0),
+                "gateway_run_completion_heartbeat_runtime_event_count": int(gateway_run_completion_heartbeat_runtime_event_count or 0),
+                "gateway_run_completion_heartbeat_audit_count": int(gateway_run_completion_heartbeat_audit_count or 0),
                 "gateway_tool_runtime_event_count": int(gateway_tool_runtime_event_count or 0),
                 "gateway_eval_runtime_event_count": int(gateway_eval_runtime_event_count or 0),
                 "gateway_artifact_runtime_event_count": int(gateway_artifact_runtime_event_count or 0),

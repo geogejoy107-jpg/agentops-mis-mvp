@@ -366,6 +366,7 @@ def storage_backend_status(headers=None) -> dict:
                 "postgres_http_gateway_audit_write_v1",
                 "postgres_http_gateway_heartbeat_write_v1",
                 "postgres_http_gateway_run_heartbeat_write_v1",
+                "postgres_http_gateway_run_completion_heartbeat_write_v1",
                 "postgres_http_gateway_memory_write_v1",
             ] if write_http else ["postgres_http_read_parity_v1"],
         }
@@ -418,6 +419,7 @@ def postgres_read_only_write_block(method: str, path: str) -> dict:
             "postgres_http_gateway_audit_write_v1",
             "postgres_http_gateway_heartbeat_write_v1",
             "postgres_http_gateway_run_heartbeat_write_v1",
+            "postgres_http_gateway_run_completion_heartbeat_write_v1",
             "postgres_http_gateway_memory_write_v1",
         ],
     }

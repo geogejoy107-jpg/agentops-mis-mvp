@@ -136,7 +136,7 @@ Must be true:
 - Postgres write helpers must match SQLite outcomes and snapshots before any
   routed HTTP/CLI write surface is enabled.
 - The first routed Postgres HTTP writes are explicit task, execution-start,
-  agent/run heartbeat, execution-evidence, plan-evidence, memory-candidate,
+  agent/run progress and completion heartbeat, execution-evidence, plan-evidence, memory-candidate,
   approval-request, and run/task-bound audit allowlist routes behind
   `AGENTOPS_POSTGRES_WRITE_HTTP=1`:
   `POST /api/tasks`, scoped `POST /api/agent-gateway/tasks`, scoped
@@ -152,7 +152,7 @@ Must be true:
   `POST /api/agent-gateway/memories/propose`, scoped
   `POST /api/agent-gateway/approvals/request`, and scoped
   `POST /api/agent-gateway/audit`; read-only mode must still block all of them,
-  the allowlisted writes must persist task/run/heartbeat/tool/evaluation/artifact/Agent
+  the allowlisted writes must persist task/run/progress-heartbeat/completion-heartbeat/tool/evaluation/artifact/Agent
   Plan/plan-evidence/memory/approval/audit/runtime evidence in
   Postgres, scoped Gateway writes must reject absent tokens, missing scopes,
   body/header cross-workspace, cross-agent, same-workspace intruder attempts,

@@ -47,7 +47,7 @@ and snapshots, and keeps HTTP/CLI writes fail-closed until a routed write
 adapter is explicitly proven. The eleventh layer is the first routed write
 contract, `postgres_http_write_task_parity_v1`, which keeps Postgres HTTP
 writes blocked by default, then enables only explicit task, execution-start,
-agent/run heartbeat, evidence, plan, memory-candidate, approval-request, and audit
+agent/run progress and completion heartbeat, evidence, plan, memory-candidate, approval-request, and audit
 allowlist routes under `AGENTOPS_POSTGRES_WRITE_HTTP=1`: `POST /api/tasks`,
 scoped `POST /api/agent-gateway/tasks`, scoped
 `POST /api/agent-gateway/tasks/:task_id/claim`, scoped
@@ -55,9 +55,9 @@ scoped `POST /api/agent-gateway/tasks`, scoped
 scoped `POST /api/agent-gateway/runs/:run_id/heartbeat`, scoped Gateway
 tool/evaluation/artifact evidence, Agent Plan, plan-evidence manifest, memory
 proposal, and run/task approval/audit routes. It proves task, run, heartbeat,
-evidence, plan, memory, approval, runtime event, and audit rows persist in
-Postgres while missing scopes, cross-workspace, cross-agent, same-workspace
-intruder, terminal run revival, memory overwrite, approval overwrite, and
+completion sync, evidence, plan, memory, approval, runtime event, and audit rows
+persist in Postgres while missing scopes, cross-workspace, cross-agent,
+same-workspace intruder, terminal run revival, memory overwrite, approval overwrite, and
 non-allowlisted writes still fail closed.
 
 All layers are intentionally derived from `server.SCHEMA_SQL`, because
@@ -230,6 +230,7 @@ Current local evidence on `codex/commercial-migration-closed-loop`:
   `postgres_http_gateway_execution_start_write_v1`,
   `postgres_http_gateway_heartbeat_write_v1`,
   `postgres_http_gateway_run_heartbeat_write_v1`,
+  `postgres_http_gateway_run_completion_heartbeat_write_v1`,
   `postgres_http_gateway_evidence_write_v1`,
   `postgres_http_gateway_plan_evidence_write_v1`,
   `postgres_http_gateway_approval_write_v1`,
@@ -245,7 +246,8 @@ Current local evidence on `codex/commercial-migration-closed-loop`:
   `tsk_pg_http_write_task` and scoped Gateway task `tsk_pg_gateway_write_task`,
   claimed the Gateway task, started `run_pg_gateway_write_start`, updated agent
   heartbeat state and token `last_heartbeat_at`, wrote a run heartbeat for
-  `run_pg_gateway_write_start`, wrote
+  `run_pg_gateway_write_start`, completed `run_pg_gateway_completion_heartbeat`
+  through run heartbeat and verified task completion plus agent idle sync, wrote
   `tc_pg_gateway_write_evidence`, `eval_pg_gateway_write_evidence`, and
   `art_pg_gateway_write_evidence`, created `plan_pg_gateway_write`, submitted
   verified manifest `pem_pg_gateway_write`, proposed candidate memory
