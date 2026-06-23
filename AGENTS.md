@@ -68,12 +68,14 @@ New ideas start as `Inbox` or `Proposed`. Only human-reviewed `Approved` or veri
 - Create and verify an Agent Plan before meaningful changes.
 - Manage slow live runtimes, CI, browser builds, and subagent work as asynchronous lanes. Do not sit idle waiting for Hermes/OpenClaw/CI/subagents unless their result is on the immediate critical path; while a lane is running, continue non-overlapping implementation, verification, docs/spec updates, or another independent lane.
 - Treat async lane management as a hard execution requirement, not a style preference. If any command, CI run, live runtime, browser build, or subagent is expected to take more than about 60 seconds, immediately switch to another safe useful lane and poll/merge the slow result later.
+- After starting any >60s command, CI run, live runtime, browser build, or subagent, schedule the next safe lane before the first poll. Polling first counts as serial waiting unless no independent safe lane exists or the pending result is the immediate critical path.
 - In fast product-delivery mode, keep a compact commander board of running lanes, merged results, blockers, and next lane. Merge useful completed lane results immediately; do not wait for every subagent/check to finish before continuing safe mainline work.
 - Make the commander board explicit before any intentional wait during substantial product work, especially when Hermes/OpenClaw, CI, browser, or subagent lanes are running.
 - If two or more independent work items exist, start or continue another lane before waiting. Serial waiting is allowed only after recording the concrete blocker or no-safe-lane reason.
 - Preserve this async execution mode across resumes, context compaction, and heartbeat continuations; resumed threads should continue the active lane board instead of restarting into serial waiting.
 - Do not batch-close or parallel-close subagents for tidiness. Close only when resource limits require it, and never make cleanup the critical path while coding/verification can continue.
 - In AgentOps MIS fast mode, use subagents, parallel reads/checks, background commands, and independent verification lanes as execution accelerators, not just audit helpers. If a subagent is slow or unavailable, keep the main thread moving on the highest-value safe slice and merge late results when they arrive.
+- Use subagents for disjoint implementation, verification, docs/spec, and integration lanes whenever that accelerates delivery; do not reserve them only for late audit/acceptance review.
 - Before any intentional wait in substantial product work, state the lane board and the concrete reason no independent safe lane can proceed.
 - If a resume, context compaction, or long tool output leaves the thread idle, recover by inspecting active lanes, advancing one independent safe slice, and polling/merging pending lanes afterward.
 - Do not let an Agent self-approve its own high-risk plan.
