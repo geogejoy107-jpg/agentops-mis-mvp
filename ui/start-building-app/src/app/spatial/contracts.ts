@@ -77,6 +77,7 @@ export interface SpatialAuthorityRef {
 
 export interface SpatialPortal {
   id: string;
+  nodeId: string;
   label: LocalizedText;
   authorityRef: SpatialAuthorityRef;
   interaction: "open-route" | "open-detail" | "focus-node";
