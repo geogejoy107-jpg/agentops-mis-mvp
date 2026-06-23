@@ -53,9 +53,10 @@ route retirement:
 ## Current Important Gaps
 
 - Pixel Office is only partially represented in Next.js. Next currently proves
-  template entitlement dispatch and mock-only customer-worker dispatch, but Vite
-  remains canonical for the visual map, local brief, async job status, live
-  runtime execution, and richer owner dispatch workflow.
+  template entitlement dispatch, mock-only customer-worker dispatch, and
+  mock-only async customer-worker job status readback, but Vite remains
+  canonical for the visual map, local brief, live runtime execution, and richer
+  owner dispatch workflow.
 - Worker console is only partially represented in Next.js. Next is read-only for
   production safety and readiness; Vite remains canonical for local worker
   start/stop/restart, task release, remote enrollment mutation, and detailed
@@ -138,6 +139,7 @@ python3 scripts/nextjs_agent_gateway_task_proxy_smoke.py
 python3 scripts/nextjs_agent_gateway_cli_worker_dogfood_smoke.py
 python3 scripts/nextjs_worker_dispatch_once_smoke.py
 python3 scripts/nextjs_customer_worker_dispatch_smoke.py
+python3 scripts/nextjs_customer_worker_async_job_smoke.py
 python3 scripts/nextjs_worker_stuck_release_smoke.py
 python3 scripts/nextjs_enrollment_request_smoke.py
 python3 scripts/nextjs_worker_daemon_control_smoke.py
@@ -181,6 +183,15 @@ customer-worker task, read task/run/delivery-approval/verified plan-evidence
 back through the Next proxy, render the dispatch evidence strip, and reject
 Hermes/OpenClaw before upstream execution with
 `customer_worker_mock_only_next_parity`.
+
+`python3 scripts/nextjs_customer_worker_async_job_smoke.py`
+(`nextjs_customer_worker_async_job_v1`) starts isolated MIS API and Next.js
+servers, proves `POST /api/mis/workflows/customer-worker-task/submit` plus the
+Next `/workspace/dispatch/customer-worker-job` form fallback can submit one
+safe `mock` async customer-worker job, read the completed workflow job and
+task/run/verified plan-evidence back through the Next proxy, render the async
+job list on `/workspace/dispatch`, and reject Hermes/OpenClaw before job
+creation with `customer_worker_mock_only_next_parity`.
 
 `python3 scripts/nextjs_worker_stuck_release_smoke.py`
 (`nextjs_worker_stuck_release_v1`) starts isolated MIS API and Next.js servers,

@@ -1,5 +1,5 @@
 import { DispatchParityPage } from "@/components/DispatchPage";
-import { loadServerCommercialEntitlements, loadServerCustomerTaskTemplates } from "@/lib/misServer";
+import { loadServerCommercialEntitlements, loadServerCustomerTaskTemplates, loadServerWorkflowJobs } from "@/lib/misServer";
 
 export const dynamic = "force-dynamic";
 
@@ -14,9 +14,10 @@ function one(value: string | string[] | undefined) {
 }
 
 export default async function DispatchPage({ searchParams }: PageProps) {
-  const [entitlements, templates, params] = await Promise.all([
+  const [entitlements, templates, workflowJobs, params] = await Promise.all([
     loadServerCommercialEntitlements(),
     loadServerCustomerTaskTemplates(),
+    loadServerWorkflowJobs(),
     searchParams || Promise.resolve({} as SearchParams),
   ]);
   return (
@@ -25,6 +26,8 @@ export default async function DispatchPage({ searchParams }: PageProps) {
       entitlementsError={entitlements.error}
       templates={templates.data}
       templatesError={templates.error}
+      workflowJobs={workflowJobs.data}
+      workflowJobsError={workflowJobs.error}
       feedback={{
         status: one(params.run_status),
         capability: one(params.capability),
@@ -40,6 +43,8 @@ export default async function DispatchPage({ searchParams }: PageProps) {
         customerWorkerManifestId: one(params.customer_worker_manifest_id),
         customerWorkerApprovalId: one(params.customer_worker_approval_id),
         customerWorkerError: one(params.customer_worker_error),
+        customerWorkerJobStatus: one(params.customer_worker_job_status),
+        customerWorkerJobId: one(params.customer_worker_job_id),
       }}
     />
   );

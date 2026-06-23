@@ -24,6 +24,7 @@ python3 scripts/nextjs_agent_gateway_task_proxy_smoke.py
 python3 scripts/nextjs_agent_gateway_cli_worker_dogfood_smoke.py
 python3 scripts/nextjs_worker_dispatch_once_smoke.py
 python3 scripts/nextjs_customer_worker_dispatch_smoke.py
+python3 scripts/nextjs_customer_worker_async_job_smoke.py
 python3 scripts/nextjs_worker_stuck_release_smoke.py
 python3 scripts/nextjs_enrollment_request_smoke.py
 python3 scripts/nextjs_worker_daemon_control_smoke.py
@@ -48,6 +49,7 @@ memory review actions through the Next.js UI, verifies the state change through
 - App Router route: `/workspace/deployment`
 - App Router route: `/workspace/dispatch`
 - App Router route: `/workspace/dispatch/customer-worker`
+- App Router route: `/workspace/dispatch/customer-worker-job`
 - App Router route: `/workspace/evidence/[manifestId]`
 - App Router route: `/workspace/tasks`
 - App Router route: `/workspace/tasks/[taskId]`
@@ -77,6 +79,12 @@ memory review actions through the Next.js UI, verifies the state change through
   delivery approval and verified plan-evidence back through the Next proxy, and
   reject Hermes/OpenClaw with `customer_worker_mock_only_next_parity` before
   upstream execution.
+- Customer-worker async job contract: the Next dispatch page can submit one
+  safe mock `POST /api/mis/workflows/customer-worker-task/submit` through the
+  MIS proxy and the `/workspace/dispatch/customer-worker-job` form fallback,
+  read the completed workflow job plus task/run/verified plan-evidence back
+  through the Next proxy, and reject Hermes/OpenClaw with
+  `customer_worker_mock_only_next_parity` before job creation.
 - Worker recovery contract: the Next worker console can read stuck tasks and
   release one stale running task through `POST /api/mis/workers/tasks/release`
   plus the `/workspace/agents/release-task` form fallback; the proxy rejects
@@ -101,7 +109,7 @@ memory review actions through the Next.js UI, verifies the state change through
 - Interaction contract: approval review and memory review write through the Next.js UI, with client fetch plus Next form fallback routes, then refresh from the MIS API proxy
 - Ledger detail contract: task/run detail routes are read-only, load through the MIS API proxy, and expose linked evidence rows plus token omission state
 - Customer delivery contract: reports and customer project report pages load from the MIS API, surface Agent Plan / plan-evidence status, link to a read-only evidence drilldown, and report archive writes through a Next form fallback route before refreshing the report artifact evidence
-- Dispatch contract: customer task templates and commercial entitlement gates load from the MIS API; template execution uses a Next form fallback and must surface Free Local `report_templates` blocking without creating a project, then create a ledger-backed project/report artifact when an isolated `pro_workspace` entitlement fixture is active. The dispatch page also supports mock-only customer-worker task execution with delivery approval and plan-evidence readback. Live runtime execution, async job status, and local-brief controls remain canonical in Vite until later Gate 4 slices.
+- Dispatch contract: customer task templates and commercial entitlement gates load from the MIS API; template execution uses a Next form fallback and must surface Free Local `report_templates` blocking without creating a project, then create a ledger-backed project/report artifact when an isolated `pro_workspace` entitlement fixture is active. The dispatch page also supports mock-only customer-worker task execution and mock-only async job submission/status readback with delivery approval and plan-evidence proof. Live runtime execution and local-brief controls remain canonical in Vite until later Gate 4 slices.
 - Canonical predecessors:
   - `ui/start-building-app/src/app/components/pages/WorkspaceHome.tsx`
   - `ui/start-building-app/src/app/components/pages/AIEmployees.tsx`

@@ -835,6 +835,47 @@ export type CustomerTaskTemplateListPayload = {
   safe_defaults?: Record<string, unknown>;
 };
 
+export type WorkflowJob = {
+  job_id: string;
+  workspace_id?: string;
+  workflow_type?: string;
+  status?: string;
+  template_id?: string | null;
+  adapter?: string | null;
+  confirm_run?: boolean | number;
+  title?: string | null;
+  input_summary?: string | null;
+  request_hash?: string | null;
+  result_task_id?: string | null;
+  result_run_id?: string | null;
+  result_artifact_id?: string | null;
+  error_message?: string | null;
+  created_at?: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+  updated_at?: string;
+  result?: {
+    provider?: string;
+    workflow?: string;
+    ok?: boolean;
+    task_id?: string;
+    run_id?: string;
+    artifact_id?: string;
+    approval_id?: string;
+    plan_evidence_manifest_id?: string;
+    evidence?: Record<string, number>;
+    error?: string | null;
+  };
+  raw_request_omitted?: boolean;
+  token_omitted?: boolean;
+};
+
+export type WorkflowJobListPayload = {
+  jobs: WorkflowJob[];
+  workspace_id?: string;
+  token_omitted?: boolean;
+};
+
 export type PlanEvidenceManifest = {
   manifest_id?: string;
   workspace_id?: string;
@@ -1213,6 +1254,10 @@ export async function loadStorageBackendStatus(): Promise<StorageBackendStatus> 
 
 export async function loadCustomerTaskTemplates(): Promise<CustomerTaskTemplateListPayload> {
   return misJson<CustomerTaskTemplateListPayload>("/workflows/customer-task-templates");
+}
+
+export async function loadWorkflowJobs(limit = 8): Promise<WorkflowJobListPayload> {
+  return misJson<WorkflowJobListPayload>(`/workflows/jobs?limit=${encodeURIComponent(String(limit))}`);
 }
 
 export async function loadAgentControlSnapshot(): Promise<AgentControlSnapshot> {

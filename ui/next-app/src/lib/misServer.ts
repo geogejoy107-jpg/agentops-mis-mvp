@@ -23,6 +23,7 @@ import type {
   TaskDetailPayload,
   WorkerStatusSummary,
   AuditSummary,
+  WorkflowJobListPayload,
 } from "./mis";
 
 const TARGET_BASE = process.env.AGENTOPS_API_BASE || "http://127.0.0.1:8765/api";
@@ -175,6 +176,14 @@ export async function loadServerCustomerTaskTemplates(): Promise<ServerLoadResul
     return { data: await serverMisJson<CustomerTaskTemplateListPayload>("/workflows/customer-task-templates"), error: null };
   } catch (err) {
     return { data: { templates: [] }, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export async function loadServerWorkflowJobs(limit = 6): Promise<ServerLoadResult<WorkflowJobListPayload>> {
+  try {
+    return { data: await serverMisJson<WorkflowJobListPayload>(`/workflows/jobs?limit=${encodeURIComponent(String(limit))}`), error: null };
+  } catch (err) {
+    return { data: { jobs: [] }, error: err instanceof Error ? err.message : String(err) };
   }
 }
 

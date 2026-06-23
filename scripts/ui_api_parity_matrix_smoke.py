@@ -140,6 +140,7 @@ def main() -> int:
     require("nextjs_agent_gateway_cli_worker_dogfood_v1" in route_contracts, "matrix policy must include the Next Gateway CLI worker dogfood contract")
     require("nextjs_worker_dispatch_once_v1" in route_contracts, "matrix policy must include the Next worker dispatch contract")
     require("nextjs_customer_worker_dispatch_v1" in route_contracts, "matrix policy must include the Next customer-worker dispatch contract")
+    require("nextjs_customer_worker_async_job_v1" in route_contracts, "matrix policy must include the Next customer-worker async job contract")
     require("nextjs_worker_stuck_release_v1" in route_contracts, "matrix policy must include the Next worker stuck release contract")
     require("nextjs_enrollment_request_v1" in route_contracts, "matrix policy must include the Next enrollment request contract")
     require("nextjs_worker_daemon_control_v1" in route_contracts, "matrix policy must include the Next worker daemon control contract")
@@ -242,11 +243,13 @@ def main() -> int:
     require("live_worker_daemon_not_allowed_next_parity" in worker_console_gate, "worker_console retirement gate must record live daemon fail-closed evidence")
     require("force_release_not_allowed_next_parity" in worker_console_gate, "worker_console retirement gate must record force-release fail-closed evidence")
     require("enrollment_token_issue_not_allowed_next_parity" in worker_console_gate, "worker_console retirement gate must record raw enrollment token issue fail-closed evidence")
-    assert_entry_routes(entries_by_id.get("pixel_office_and_dispatch"), "pixel_office_and_dispatch", ["/workspace/pixel-office"], ["/workspace/dispatch", "/workspace/dispatch/template-run", "/workspace/dispatch/customer-worker"])
+    assert_entry_routes(entries_by_id.get("pixel_office_and_dispatch"), "pixel_office_and_dispatch", ["/workspace/pixel-office"], ["/workspace/dispatch", "/workspace/dispatch/template-run", "/workspace/dispatch/customer-worker", "/workspace/dispatch/customer-worker-job"])
     pixel_dispatch_evidence = entries_by_id.get("pixel_office_and_dispatch", {}).get("evidence_commands") or []
     require("python3 scripts/nextjs_customer_worker_dispatch_smoke.py" in pixel_dispatch_evidence, "pixel_office_and_dispatch must include Next customer-worker dispatch mutation evidence")
+    require("python3 scripts/nextjs_customer_worker_async_job_smoke.py" in pixel_dispatch_evidence, "pixel_office_and_dispatch must include Next customer-worker async job evidence")
     pixel_dispatch_gate = str(entries_by_id.get("pixel_office_and_dispatch", {}).get("retirement_gate") or "")
     require("mock-only customer-worker dispatch" in pixel_dispatch_gate, "pixel_office_and_dispatch retirement gate must record mock-only customer-worker dispatch evidence")
+    require("mock-only async customer-worker job" in pixel_dispatch_gate, "pixel_office_and_dispatch retirement gate must record mock-only async customer-worker job evidence")
     assert_entry_routes(entries_by_id.get("tool_calls"), "tool_calls", ["/admin/toolcalls"], ["/workspace/tool-calls"])
     tool_call_evidence = entries_by_id.get("tool_calls", {}).get("evidence_commands") or []
     require("python3 scripts/nextjs_parity_smoke.py" in tool_call_evidence, "tool_calls must include Next static parity evidence")
@@ -267,6 +270,7 @@ def main() -> int:
     require("python3 scripts/nextjs_agent_gateway_task_proxy_smoke.py" in next_proxy_evidence, "next_mis_proxy must include Next Gateway task proxy evidence")
     require("python3 scripts/nextjs_agent_gateway_cli_worker_dogfood_smoke.py" in next_proxy_evidence, "next_mis_proxy must include Next Gateway CLI worker dogfood evidence")
     require("python3 scripts/nextjs_customer_worker_dispatch_smoke.py" in next_proxy_evidence, "next_mis_proxy must include Next customer-worker dispatch proxy evidence")
+    require("python3 scripts/nextjs_customer_worker_async_job_smoke.py" in next_proxy_evidence, "next_mis_proxy must include Next customer-worker async job proxy evidence")
     require("python3 scripts/nextjs_enrollment_request_smoke.py" in next_proxy_evidence, "next_mis_proxy must include Next enrollment proxy guard evidence")
 
     vite_routes = actual_vite_routes()

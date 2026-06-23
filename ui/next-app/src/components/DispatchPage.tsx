@@ -1,7 +1,7 @@
 import Link from "next/link";
-import { LockKeyhole, Play, ShieldCheck, Workflow } from "lucide-react";
+import { Clock3, LockKeyhole, Play, ShieldCheck, Workflow } from "lucide-react";
 import { AppFrame } from "./AppFrame";
-import type { CommercialEntitlementStatus, CustomerTaskTemplateListPayload } from "@/lib/mis";
+import type { CommercialEntitlementStatus, CustomerTaskTemplateListPayload, WorkflowJobListPayload } from "@/lib/mis";
 
 type DispatchFeedback = {
   status?: string;
@@ -18,6 +18,8 @@ type DispatchFeedback = {
   customerWorkerManifestId?: string;
   customerWorkerApprovalId?: string;
   customerWorkerError?: string;
+  customerWorkerJobStatus?: string;
+  customerWorkerJobId?: string;
 };
 
 function boolText(value: unknown) {
@@ -35,17 +37,22 @@ export function DispatchParityPage({
   entitlementsError,
   templates,
   templatesError,
+  workflowJobs,
+  workflowJobsError,
   feedback,
 }: Readonly<{
   entitlements: CommercialEntitlementStatus;
   entitlementsError?: string | null;
   templates: CustomerTaskTemplateListPayload;
   templatesError?: string | null;
+  workflowJobs: WorkflowJobListPayload;
+  workflowJobsError?: string | null;
   feedback?: DispatchFeedback;
 }>) {
   const reportTemplateGate = gateFor(entitlements, "report_templates");
   const reportTemplatesEnabled = Boolean(entitlements.capabilities?.report_templates);
   const rows = templates.templates || [];
+  const jobs = workflowJobs.jobs || [];
 
   return (
     <AppFrame>
@@ -60,6 +67,7 @@ export function DispatchParityPage({
 
       {entitlementsError ? <div className="banner error">Entitlements unavailable: {entitlementsError}</div> : null}
       {templatesError ? <div className="banner error">Templates unavailable: {templatesError}</div> : null}
+      {workflowJobsError ? <div className="banner error">Workflow jobs unavailable: {workflowJobsError}</div> : null}
       {feedback?.status === "blocked" ? (
         <div className="banner warn">
           <strong>Entitlement required:</strong> {feedback.capability || "report_templates"} requires {feedback.requiredEdition || "pro_workspace"}; current edition is {feedback.currentEdition || entitlements.edition || "free_local"}.
@@ -81,6 +89,15 @@ export function DispatchParityPage({
         </div>
       ) : null}
       {feedback?.customerWorkerStatus === "failed" ? <div className="banner error">Customer worker failed: {feedback.customerWorkerError || "unknown"}</div> : null}
+      {feedback?.customerWorkerJobStatus === "blocked" ? (
+        <div className="banner warn">
+          <strong>Async worker job blocked:</strong> {feedback.customerWorkerError || "customer_worker_mock_only_next_parity"} · adapter {feedback.customerWorkerAdapter || "unknown"}
+        </div>
+      ) : null}
+      {feedback?.customerWorkerJobStatus === "submitted" && feedback.customerWorkerJobId ? (
+        <div className="banner success">Async customer worker job submitted: {feedback.customerWorkerJobId}</div>
+      ) : null}
+      {feedback?.customerWorkerJobStatus === "failed" ? <div className="banner error">Async worker job failed: {feedback.customerWorkerError || "unknown"}</div> : null}
       {feedback?.error ? <div className="banner error">Dispatch failed: {feedback.error}</div> : null}
 
       <section className="grid">
@@ -175,6 +192,63 @@ export function DispatchParityPage({
           </label>
           <button className="miniButton good" type="submit"><Play size={13} /> Dispatch worker</button>
         </form>
+      </section>
+
+      <section className="panel wide">
+        <div className="panelHeader">
+          <h2><Clock3 size={14} /> Async worker jobs</h2>
+          <span>{jobs.length} recent</span>
+        </div>
+        <div className="proofStrip">
+          <span>submit mock only</span>
+          <span>token omitted {boolText(workflowJobs.token_omitted)}</span>
+          <span>last job {feedback?.customerWorkerJobId || jobs[0]?.job_id || "none"}</span>
+        </div>
+        <form className="formGrid" method="post" action="/workspace/dispatch/customer-worker-job">
+          <label className="field">
+            <span>Title</span>
+            <input name="title" defaultValue="Next async customer worker job" />
+          </label>
+          <label className="field">
+            <span>Adapter</span>
+            <select name="adapter" defaultValue="mock">
+              <option value="mock">mock</option>
+              <option value="hermes">hermes</option>
+              <option value="openclaw">openclaw</option>
+            </select>
+          </label>
+          <label className="field">
+            <span>Worker agent</span>
+            <input name="worker_agent_id" defaultValue="agt_next_customer_worker_async" />
+          </label>
+          <label className="field wideField">
+            <span>Description</span>
+            <textarea name="description" defaultValue="Next.js submits one safe async customer-worker job and reads job status back through the MIS proxy." />
+          </label>
+          <label className="field wideField">
+            <span>Acceptance</span>
+            <textarea name="acceptance_criteria" defaultValue="Workflow job must complete with run, artifact, delivery approval, and verified plan evidence without token leakage." />
+          </label>
+          <button className="miniButton good" type="submit"><Clock3 size={13} /> Submit async job</button>
+        </form>
+        <div className="list">
+          {jobs.length ? jobs.map((job) => (
+            <article className="row tall" key={job.job_id}>
+              <div>
+                <strong>{job.title || job.job_id}</strong>
+                <span>{job.job_id} · {job.workflow_type || "workflow"} · {job.status || "status unknown"}</span>
+                <p>{job.input_summary || job.error_message || "No job summary loaded."}</p>
+              </div>
+              <div className="rowActions">
+                <span className="metaPill">adapter {job.adapter || "mock"}</span>
+                <span className="metaPill">raw omitted {boolText(job.raw_request_omitted)}</span>
+                {job.result_task_id ? <Link className="miniButton" href={`/workspace/tasks/${encodeURIComponent(job.result_task_id)}`}>Task</Link> : null}
+                {job.result_run_id ? <Link className="miniButton" href={`/workspace/runs/${encodeURIComponent(job.result_run_id)}`}>Run</Link> : null}
+                {job.result?.plan_evidence_manifest_id ? <Link className="miniButton" href={`/workspace/evidence/${encodeURIComponent(job.result.plan_evidence_manifest_id)}`}>Evidence</Link> : null}
+              </div>
+            </article>
+          )) : <p className="empty">No workflow jobs loaded.</p>}
+        </div>
       </section>
     </AppFrame>
   );

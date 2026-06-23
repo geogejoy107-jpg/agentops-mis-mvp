@@ -234,6 +234,7 @@ python3 scripts/nextjs_agent_gateway_task_proxy_smoke.py
 python3 scripts/nextjs_agent_gateway_cli_worker_dogfood_smoke.py
 python3 scripts/nextjs_worker_dispatch_once_smoke.py
 python3 scripts/nextjs_customer_worker_dispatch_smoke.py
+python3 scripts/nextjs_customer_worker_async_job_smoke.py
 python3 scripts/nextjs_worker_stuck_release_smoke.py
 python3 scripts/nextjs_enrollment_request_smoke.py
 python3 scripts/nextjs_worker_daemon_control_smoke.py
@@ -252,6 +253,14 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   dispatch, read task/run/delivery approval/verified plan-evidence back through
   the Next proxy, and fail closed for Hermes/OpenClaw with
   `customer_worker_mock_only_next_parity`.
+
+  `python3 scripts/nextjs_customer_worker_async_job_smoke.py`
+  (`nextjs_customer_worker_async_job_v1`) starts isolated MIS API and Next.js
+  servers, proves Next `/api/mis/workflows/customer-worker-task/submit` plus
+  `/workspace/dispatch/customer-worker-job` can submit one safe mock async
+  customer-worker job, read workflow job/task/run/verified plan-evidence back
+  through the Next proxy, render the async job list, and fail closed before job
+  creation for Hermes/OpenClaw with `customer_worker_mock_only_next_parity`.
 
   The task/run route parity smoke starts isolated MIS API and Next.js servers,
   verifies Next task/run list links to detail routes, compares direct MIS API
@@ -398,6 +407,7 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   - `ui/next-app/app/workspace/customer-projects/[projectId]/report/page.tsx`
   - `ui/next-app/app/workspace/customer-projects/[projectId]/report/archive/route.ts`
   - `ui/next-app/app/workspace/dispatch/customer-worker/route.ts`
+  - `ui/next-app/app/workspace/dispatch/customer-worker-job/route.ts`
   - `ui/next-app/app/workspace/audit/page.tsx`
   - `ui/next-app/app/api/mis/[...path]/route.ts`
   - `ui/next-app/src/lib/mis.ts`
@@ -420,6 +430,7 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   - `scripts/nextjs_agent_gateway_cli_worker_dogfood_smoke.py`
   - `scripts/nextjs_worker_dispatch_once_smoke.py`
   - `scripts/nextjs_customer_worker_dispatch_smoke.py`
+  - `scripts/nextjs_customer_worker_async_job_smoke.py`
   - `scripts/nextjs_worker_stuck_release_smoke.py`
   - `scripts/nextjs_worker_daemon_control_smoke.py`
   - `scripts/nextjs_enrollment_request_smoke.py`

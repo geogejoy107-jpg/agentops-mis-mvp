@@ -40,6 +40,7 @@ def main() -> int:
         NEXT_APP / "app" / "workspace" / "dispatch" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "dispatch" / "template-run" / "route.ts",
         NEXT_APP / "app" / "workspace" / "dispatch" / "customer-worker" / "route.ts",
+        NEXT_APP / "app" / "workspace" / "dispatch" / "customer-worker-job" / "route.ts",
         NEXT_APP / "app" / "workspace" / "evidence" / "[manifestId]" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "tasks" / "page.tsx",
         NEXT_APP / "app" / "workspace" / "tasks" / "[taskId]" / "page.tsx",
@@ -91,6 +92,7 @@ def main() -> int:
         ROOT / "scripts" / "nextjs_agent_gateway_cli_worker_dogfood_smoke.py",
         ROOT / "scripts" / "nextjs_worker_dispatch_once_smoke.py",
         ROOT / "scripts" / "nextjs_customer_worker_dispatch_smoke.py",
+        ROOT / "scripts" / "nextjs_customer_worker_async_job_smoke.py",
         ROOT / "scripts" / "nextjs_worker_stuck_release_smoke.py",
         ROOT / "scripts" / "nextjs_enrollment_request_smoke.py",
         ROOT / "scripts" / "nextjs_worker_daemon_control_smoke.py",
@@ -109,6 +111,7 @@ def main() -> int:
     report_archive_route_text = read_text(NEXT_APP / "app" / "workspace" / "customer-projects" / "[projectId]" / "report" / "archive" / "route.ts")
     dispatch_route_text = read_text(NEXT_APP / "app" / "workspace" / "dispatch" / "template-run" / "route.ts")
     customer_worker_dispatch_route_text = read_text(NEXT_APP / "app" / "workspace" / "dispatch" / "customer-worker" / "route.ts")
+    customer_worker_job_route_text = read_text(NEXT_APP / "app" / "workspace" / "dispatch" / "customer-worker-job" / "route.ts")
     connector_trust_route_text = read_text(NEXT_APP / "app" / "workspace" / "connectors" / "trust" / "route.ts")
     notion_export_route_text = read_text(NEXT_APP / "app" / "workspace" / "external-bases" / "notion" / "export" / "route.ts")
     agents_dispatch_route_text = read_text(NEXT_APP / "app" / "workspace" / "agents" / "dispatch-once" / "route.ts")
@@ -143,6 +146,7 @@ def main() -> int:
     gateway_cli_worker_dogfood_smoke_text = read_text(ROOT / "scripts" / "nextjs_agent_gateway_cli_worker_dogfood_smoke.py")
     worker_dispatch_smoke_text = read_text(ROOT / "scripts" / "nextjs_worker_dispatch_once_smoke.py")
     customer_worker_dispatch_smoke_text = read_text(ROOT / "scripts" / "nextjs_customer_worker_dispatch_smoke.py")
+    customer_worker_async_job_smoke_text = read_text(ROOT / "scripts" / "nextjs_customer_worker_async_job_smoke.py")
     worker_release_smoke_text = read_text(ROOT / "scripts" / "nextjs_worker_stuck_release_smoke.py")
     enrollment_request_smoke_text = read_text(ROOT / "scripts" / "nextjs_enrollment_request_smoke.py")
     worker_daemon_smoke_text = read_text(ROOT / "scripts" / "nextjs_worker_daemon_control_smoke.py")
@@ -182,6 +186,11 @@ def main() -> int:
     require("/workspace/dispatch/customer-worker" in customer_worker_dispatch_smoke_text, "Next customer-worker dispatch smoke must exercise the dispatch form fallback route")
     require("customer_worker_mock_only_next_parity" in customer_worker_dispatch_smoke_text, "Next customer-worker dispatch smoke must prove non-mock proxy and form dispatch fail closed")
     require("waiting_approval" in customer_worker_dispatch_smoke_text and "plan-evidence-manifests/:id/verify" in customer_worker_dispatch_smoke_text, "Next customer-worker dispatch smoke must verify delivery approval and plan evidence readback")
+    require("nextjs_customer_worker_async_job_v1" in customer_worker_async_job_smoke_text, "Next customer-worker async job smoke contract is missing")
+    require("/api/mis/workflows/customer-worker-task/submit" in customer_worker_async_job_smoke_text, "Next customer-worker async smoke must exercise the /api/mis submit proxy route")
+    require("/workspace/dispatch/customer-worker-job" in customer_worker_async_job_smoke_text, "Next customer-worker async smoke must exercise the async form fallback route")
+    require("/api/mis/workflows/jobs/:job_id" in customer_worker_async_job_smoke_text, "Next customer-worker async smoke must read job status through the Next proxy")
+    require("customer_worker_mock_only_next_parity" in customer_worker_async_job_smoke_text, "Next customer-worker async smoke must prove non-mock async submit fails closed")
     require("nextjs_worker_stuck_release_v1" in worker_release_smoke_text, "Next worker stuck release smoke contract is missing")
     require("/api/mis/workers/tasks/release" in worker_release_smoke_text, "Next worker stuck release smoke must exercise the /api/mis release route")
     require("/workspace/agents/release-task" in worker_release_smoke_text, "Next worker stuck release smoke must exercise the release form fallback")
@@ -233,7 +242,10 @@ def main() -> int:
     require("/workflows/customer-projects/${encodeURIComponent(projectId)}/report-artifact" in report_archive_route_text, "customer report archive fallback must write through MIS API")
     require("/workflows/customer-task-templates/run" in dispatch_route_text and "entitlement_required" in dispatch_route_text, "dispatch template fallback must preserve entitlement blocking")
     require("/workflows/customer-worker-task" in customer_worker_dispatch_route_text and "customer_worker_mock_only_next_parity" in customer_worker_dispatch_route_text, "customer-worker dispatch fallback must preserve mock-only blocking")
+    require("/workflows/customer-worker-task/submit" in customer_worker_job_route_text and "customer_worker_mock_only_next_parity" in customer_worker_job_route_text, "customer-worker async fallback must preserve mock-only blocking")
     require("Customer worker dispatch" in dispatch_page_text and "/workspace/dispatch/customer-worker" in dispatch_page_text, "dispatch parity page must expose customer-worker dispatch form")
+    require("Async worker jobs" in dispatch_page_text and "/workspace/dispatch/customer-worker-job" in dispatch_page_text, "dispatch parity page must expose async customer-worker job form")
+    require("/workflows/jobs?limit=" in server_lib_text and "loadServerWorkflowJobs" in server_lib_text, "server-side dispatch loaders must include workflow job readback")
     require("/runtime-connectors/${encodeURIComponent(connectorId)}/trust" in connector_trust_route_text, "connector trust form fallback must write through MIS API")
     require("/integrations/notion/export-confirmed" in notion_export_route_text and "/integrations/notion/dry-run-export" in notion_export_route_text, "Notion export form fallback must write through MIS API")
     require("/workspace/tasks" in app_frame_text and "/workspace/runs" in app_frame_text, "Next.js nav must expose task and run parity routes")
@@ -365,6 +377,7 @@ def main() -> int:
             "/workspace/deployment",
             "/workspace/dispatch",
             "/workspace/dispatch/customer-worker",
+            "/workspace/dispatch/customer-worker-job",
             "/workspace/evidence/[manifestId]",
             "/workspace/tasks",
             "/workspace/tasks/[taskId]",
@@ -389,6 +402,7 @@ def main() -> int:
             "nextjs_agent_gateway_cli_worker_dogfood_v1",
             "nextjs_worker_dispatch_once_v1",
             "nextjs_customer_worker_dispatch_v1",
+            "nextjs_customer_worker_async_job_v1",
             "nextjs_worker_stuck_release_v1",
             "nextjs_enrollment_request_v1",
             "nextjs_worker_daemon_control_v1",
