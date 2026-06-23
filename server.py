@@ -22888,7 +22888,7 @@ def operator_start_check(conn: sqlite3.Connection, headers, qs=None, auth_ctx=No
             "loop_driver_entry",
             label="Bounded loop driver entry",
             ok=loop_driver_entry.get("operation") == "operator_start_check_loop_driver_entry" and (loop_driver_entry.get("safety") or {}).get("server_executes_shell") is False,
-            status="pass" if loop_driver_entry.get("status") in {"ready", "attention"} else "blocked",
+            status=loop_driver_entry.get("status") if loop_driver_entry.get("status") in {"ready", "attention"} else "blocked",
             detail=(
                 f"review_items={((loop_driver_entry.get('review_snapshot') or {}).get('summary') or {}).get('review_items_total', 0)}; "
                 f"pending_approvals={((loop_driver_entry.get('review_snapshot') or {}).get('summary') or {}).get('pending_approvals', 0)}"
