@@ -584,6 +584,11 @@ Current v1.5 implementation:
   selected adapter path, dry-run/mock vs live-confirmed vs confirmation-missing
   vs adapter-blocked state, confirm-run wall, prepared-action wall, pending
   approval count, active async jobs, and copyable next commands.
+- `/workspace/workers` provides the dedicated Worker Control Console: it reads
+  real worker status, fleet health, adapter readiness, and operator
+  execution-mode state, then exposes focused one-shot dispatch, local daemon
+  start/restart/stop controls, ledger links, safety badges, and an explicit
+  live-confirm wall for Hermes/OpenClaw.
 - `/workspace/approvals` reads live approvals from the backend and can approve/reject through the real API.
 - `/admin/toolcalls` reads live tool-call evidence from the backend instead of mock data.
 - `/admin/tasks/:id` shows delivery artifacts and links related runs to their Run Detail pages.
@@ -612,12 +617,15 @@ Acceptance evidence:
 - `python3 scripts/approval_decision_side_effect_smoke.py` verified approve and reject status propagation.
 - `python3 scripts/operator_execution_mode_smoke.py` verifies the execution-mode
   API and CLI are scoped, read-only, non-mutating, and redacted.
+- `python3 scripts/worker_console_ui_smoke.py` verifies `/workspace/workers`,
+  sidebar/home entry points, live Worker API wiring, dispatch/daemon controls,
+  ledger links, and the live-confirm safety wall.
 
 Remaining product work:
 
-- Dedicated worker control console.
 - Better customer-facing task submission flow.
-- Clearer live/dry-run/approval state indicators.
+- Further polish for live/dry-run/approval state indicators across all
+  customer-facing task flows.
 
 ### 7. Customer-Task Usefulness
 

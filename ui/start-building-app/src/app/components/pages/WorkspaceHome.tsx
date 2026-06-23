@@ -146,10 +146,10 @@ export function WorkspaceHome() {
             color: "var(--mis-cyan)",
           },
           {
-            to: "/workspace/agents",
+            to: "/workspace/workers",
             icon: <TerminalSquare size={15} />,
             title: "Check worker readiness",
-            body: "See Hermes, OpenClaw, local daemon and remote agent enrollment state.",
+            body: "Operate mock, Hermes, and OpenClaw workers with live/dry-run and approval boundaries visible.",
             color: "var(--mis-purple)",
           },
           {

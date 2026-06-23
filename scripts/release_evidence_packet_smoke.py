@@ -225,6 +225,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "worker_console_ui",
+        "command": "python3 scripts/worker_console_ui_smoke.py",
+        "summary": "Dedicated Worker Console route, sidebar/home entry, live Worker API wiring, dispatch/daemon controls, ledger links and live-confirmation safety wall.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "commander_team_board_ui",
         "command": "python3 scripts/commander_team_board_ui_smoke.py",
         "summary": "AI Employees renders the scoped Commander team board with workflow-job evidence and safe project-board readback.",

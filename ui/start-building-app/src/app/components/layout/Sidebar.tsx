@@ -4,7 +4,7 @@ import { NavLink, useLocation } from "react-router";
 import {
   Home, CheckSquare, Bot, ShieldCheck, Brain, BarChart2, Package,
   Activity, List, Wrench, Plug, Database, ClipboardList, Map,
-  ChevronDown, ChevronRight, Zap,
+  ChevronDown, ChevronRight, Zap, TerminalSquare,
 } from "lucide-react";
 import { pick, usePreferences } from "../../context/PreferencesContext";
 
@@ -27,6 +27,7 @@ const navGroups: NavGroup[] = [
       { labelKey: "pixelOffice",  path: "/workspace/pixel-office", icon: <Map size={15} /> },
       { labelKey: "myTasks",      path: "/workspace/tasks",        icon: <CheckSquare size={15} /> },
       { labelKey: "aiEmployees",  path: "/workspace/agents",       icon: <Bot size={15} /> },
+      { labelKey: "workerConsole",path: "/workspace/workers",      icon: <TerminalSquare size={15} /> },
       { labelKey: "approvals",    path: "/workspace/approvals",    icon: <ShieldCheck size={15} /> },
       { labelKey: "memory",       path: "/workspace/memory",       icon: <Brain size={15} /> },
       { labelKey: "reports",      path: "/workspace/reports",      icon: <BarChart2 size={15} /> },
@@ -60,6 +61,7 @@ export function Sidebar() {
       pixelOffice: "Pixel Office",
       myTasks: "My Tasks",
       aiEmployees: "AI Employees",
+      workerConsole: "Worker Console",
       approvals: "Approvals",
       memory: "Memory",
       reports: "Reports",
@@ -81,6 +83,7 @@ export function Sidebar() {
       pixelOffice: "像素办公室",
       myTasks: "我的任务",
       aiEmployees: "AI 员工",
+      workerConsole: "Worker 控制台",
       approvals: "审批",
       memory: "记忆",
       reports: "报告",
