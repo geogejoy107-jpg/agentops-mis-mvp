@@ -131,6 +131,10 @@ def validate(payload: dict) -> None:
     require(payload.get("status") in {"ready", "attention", "blocked"}, f"bad status: {payload}")
     require(payload.get("live_execution_performed") is False, "readiness must not execute live work")
     require(payload.get("token_omitted") is True, "token omission proof missing")
+    require(isinstance(payload.get("local_demo_ready"), bool), "local_demo_ready flag missing")
+    require(isinstance(payload.get("local_security_boundary_ok"), bool), "local_security_boundary_ok flag missing")
+    require(isinstance(payload.get("production_ready"), bool), "production_ready flag missing")
+    require(payload.get("local_security_boundary_ok") is True, f"loopback local security boundary should be accepted: {payload.get('security_production_readiness')}")
     gates = payload.get("gates") or []
     gate_ids = {gate.get("id") for gate in gates}
     for gate_id in {"agent_gateway", "worker_fleet", "production_security", "adapter_route", "knowledge_memory", "evidence_chain", "commander_synthesis_loop", "runbook"}:
@@ -208,6 +212,9 @@ def validate(payload: dict) -> None:
     require(security.get("operation") == "production_readiness", f"security readiness missing: {security}")
     require(security.get("token_omitted") is True, "security readiness token omission proof missing")
     require(security.get("live_execution_performed") is False, "security readiness must not execute live work")
+    security_gate = next((gate for gate in gates if gate.get("id") == "production_security"), {})
+    require(security_gate.get("ok") is True, f"local readiness should accept loopback local-dev security boundary: {security_gate}")
+    require("production_ready=" in (security_gate.get("detail") or ""), f"security gate should still expose production readiness: {security_gate}")
 
 
 def exercise_service_control_receipt_readback(base_url: str, payload: dict) -> dict:

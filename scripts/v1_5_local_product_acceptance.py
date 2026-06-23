@@ -163,6 +163,9 @@ def validate_local_readiness(acc: Acceptance, label: str, payload: dict[str, Any
     acc.require(payload.get("status") in KNOWN_LOCAL_STATUSES, f"{label}: known status", payload.get("status"))
     validate_token_omission(acc, label, payload)
     validate_no_live_execution(acc, label, payload)
+    acc.require(isinstance(payload.get("local_demo_ready"), bool), f"{label}: local_demo_ready bool", payload.get("local_demo_ready"))
+    acc.require(isinstance(payload.get("local_security_boundary_ok"), bool), f"{label}: local security boundary bool", payload.get("local_security_boundary_ok"))
+    acc.require(isinstance(payload.get("production_ready"), bool), f"{label}: production_ready bool", payload.get("production_ready"))
 
     gates = payload.get("gates")
     acc.require(isinstance(gates, list) and bool(gates), f"{label}: gates present", len(gates or []))
@@ -181,6 +184,9 @@ def validate_local_readiness(acc: Acceptance, label: str, payload: dict[str, Any
     acc.require((payload.get("adapter_readiness") or {}).get("recommended_adapter") in KNOWN_ADAPTERS, f"{label}: recommended adapter known", payload.get("adapter_readiness"))
     security = payload.get("security_production_readiness") or {}
     acc.require(security.get("operation") == "production_readiness", f"{label}: security readiness operation", security)
+    security_gate = next((gate for gate in gates or [] if isinstance(gate, dict) and gate.get("id") == "production_security"), {})
+    acc.require(isinstance(security_gate.get("ok"), bool), f"{label}: production security gate ok bool", security_gate)
+    acc.require("production_ready=" in str(security_gate.get("detail") or ""), f"{label}: production security gate exposes production state", security_gate)
     validate_token_omission(acc, f"{label}: security readiness", security)
     validate_no_live_execution(acc, f"{label}: security readiness", security)
 

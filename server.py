@@ -17821,6 +17821,14 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
     gateway, gateway_status_code = agent_gateway_status(conn, headers)
     running_instance = running_instance_identity()
     security = security_production_readiness(conn, headers)
+    security_startup = security.get("startup_security") or {}
+    production_requested = bool(security.get("production_requested"))
+    production_ready = bool(security.get("production_ready"))
+    local_security_boundary_ok = (
+        security.get("status") in {"ready", "attention"}
+        and not bool(security_startup.get("failures"))
+        and not (production_requested and not production_ready)
+    )
     worker = worker_status(conn, refresh_runtime=refresh_runtime)
     adapter_summary = worker.get("adapter_readiness") or {}
     adapter_payload = worker_adapter_readiness(conn, refresh=refresh_runtime)
@@ -17887,6 +17895,9 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
         "knowledge_retrieval_mrr": knowledge_evidence_metrics.get("mrr"),
         "knowledge_retrieval_p95_ms": knowledge_evidence_metrics.get("p95_ms"),
         "knowledge_retrieval_fallback_queries": knowledge_evidence_metrics.get("fallback_queries"),
+        "local_security_boundary_ok": local_security_boundary_ok,
+        "production_ready": production_ready,
+        "production_security_requested": production_requested,
         "running_instance_current": bool(running_instance.get("current")),
         "running_instance_git_head": running_instance.get("git_head_sha"),
         "running_instance_git_dirty_entries": int(running_instance.get("git_dirty_entries") or 0),
@@ -17928,10 +17939,18 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
         {
             "id": "production_security",
             "label": "Production security boundary",
-            "ok": security.get("production_ready") is True,
+            "ok": local_security_boundary_ok,
             "status": security.get("status") or "unknown",
-            "detail": security.get("contract") or f"auth_mode={security.get('auth_mode')}",
-            "next_action": "agentops security production-readiness",
+            "detail": (
+                f"local_boundary_ok={local_security_boundary_ok}; "
+                f"production_ready={production_ready}; "
+                f"auth_mode={security.get('auth_mode') or 'unknown'}"
+            ),
+            "next_action": (
+                "agentops security production-readiness"
+                if not local_security_boundary_ok
+                else "For shared/production deployment, configure Gateway and admin credentials before exposing beyond loopback."
+            ),
         },
         {
             "id": "adapter_route",
@@ -18261,6 +18280,10 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
         "operation": "local_readiness",
         "status": overall,
         "ok": overall != "blocked",
+        "local_demo_ready": overall == "ready",
+        "local_security_boundary_ok": local_security_boundary_ok,
+        "production_ready": production_ready,
+        "production_security_requested": production_requested,
         "workspace_id": workspace_id,
         "gates": gates,
         "evidence": evidence,
