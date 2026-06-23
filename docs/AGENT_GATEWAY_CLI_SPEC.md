@@ -1996,7 +1996,10 @@ commands, and `/workspace/agents` renders copy buttons for those local CLI
 commands without letting the browser or server execute shell.
 `operator loop-driver` is the local CLI loop wrapper for Hermes/OpenClaw/Codex:
 preview mode reads `operator start-check` into an `acceptance_gate`, then reads
-the compact launch brief and policy without writing ledgers;
+the compact launch brief and policy without writing ledgers. It also returns
+`agent_loop_packet`, a machine-readable READ/PLAN/RETRIEVE/COMPARE/EXECUTE/
+VERIFY/RECORD command packet with acceptance, preflight, confirm-loop, verify,
+receipt, audit, and review commands for Hermes/OpenClaw/Codex;
 preview mode also reads `agentops worker readiness` into an
 `adapter_readiness` gate with the selected adapter's trust/readiness state,
 checks, `agentops worker preflight --adapter ...` command, and live-dispatch
@@ -2009,10 +2012,13 @@ start-check acceptance gate, adapter readiness, and the launch brief before each
 step. If `can_confirm_bounded_loop` is false or `server_executes_shell` is not
 false, it stops before advance. Otherwise it relies on the existing allowlist,
 receipts, and control-readback path, then refreshes the same
-`record_review_snapshot` after each step. The readiness and review gates are
-read-only evidence, not authorization: they do not create a new server shell
-execution surface and still refuse live/workflow/approval/external-write
-commands through the bounded-runner policy.
+`record_review_snapshot` after each step. Confirmed output includes initial and
+final `agent_loop_packet` readbacks, so a caller can see which phase and
+readback command should run next without reconstructing state from prose. The
+readiness, packet, and review gates are read-only evidence, not authorization:
+they do not create a new server shell execution surface and still refuse
+live/workflow/approval/external-write commands through the bounded-runner
+policy.
 
 ```bash
 agentops operator remediate-evidence-gap --run-id run_123

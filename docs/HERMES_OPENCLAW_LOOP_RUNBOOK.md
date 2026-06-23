@@ -124,20 +124,23 @@ agentops operator loop-driver --adapter openclaw --max-steps 3 --limit 8 --confi
 
 `loop-driver` is the local copy-only wrapper for repeated loop progress. Without
 `--confirm-loop` it returns a compact `acceptance_gate` from
-`operator start-check`, the compact launch brief, proposed safe commands, a
-RECORD review snapshot, and an `adapter_readiness` gate derived from
+`operator start-check`, an `agent_loop_packet` with the READ/PLAN/RETRIEVE/
+COMPARE/EXECUTE/VERIFY/RECORD command sequence, the compact launch brief,
+proposed safe commands, a RECORD review snapshot, and an `adapter_readiness`
+gate derived from
 `agentops worker readiness`, including the exact `agentops worker preflight
 --adapter ...` command, adapter trust/readiness state, checks, and
 live-dispatch blockers. With `--confirm-loop`, it re-reads the start-check
 acceptance gate before execution and before each step, then only calls
 `advance-loop --fast-control --confirm-advance` when `can_confirm_bounded_loop`
 is true and `server_executes_shell` is false. It records the control readback
-and action receipt evidence, refreshes the review snapshot, and stops at the
-bounded `--max-steps` cap. Acceptance/readiness/review gates do not grant live
-runtime execution, workflow dispatch, approvals, or server shell execution;
-Hermes/OpenClaw still copy and run explicit local commands, and live worker
-dispatch still requires `--confirm-run` plus any prepared-action approval
-required by the task.
+and action receipt evidence, refreshes the review snapshot, returns initial and
+final `agent_loop_packet` readbacks, and stops at the bounded `--max-steps`
+cap. Acceptance/readiness/packet/review gates do not grant live runtime
+execution, workflow dispatch, approvals, or server shell execution; Hermes/
+OpenClaw still copy and run explicit local commands, and live worker dispatch
+still requires `--confirm-run` plus any prepared-action approval required by the
+task.
 
 Workflow-job recovery from the shared Action Queue:
 

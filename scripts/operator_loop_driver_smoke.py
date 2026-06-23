@@ -147,11 +147,13 @@ def main() -> int:
             preview_review = preview_payload.get("record_review_snapshot") or {}
             preview_readiness = preview_payload.get("adapter_readiness") or {}
             preview_acceptance = preview_payload.get("acceptance_gate") or {}
+            preview_agent_packet = preview_payload.get("agent_loop_packet") or {}
             preview_readiness_commands = preview_readiness.get("commands") or {}
             preview_gate = preview_readiness.get("gate") or {}
             preview_remediation = preview_readiness.get("remediation") or {}
             preview_acceptance_decision = preview_acceptance.get("decision") or {}
             preview_acceptance_commands = preview_acceptance.get("commands") or {}
+            preview_agent_packet_commands = preview_agent_packet.get("commands") or {}
             require(preview_acceptance.get("operation") == "operator_loop_driver_acceptance_gate", f"preview acceptance gate missing: {preview_payload}", failures)
             require(preview_acceptance.get("source_operation") == "operator_start_check", f"preview acceptance source mismatch: {preview_acceptance}", failures)
             require(preview_acceptance_decision.get("can_confirm_bounded_loop") is True, f"preview acceptance confirm gate missing: {preview_acceptance}", failures)
@@ -160,6 +162,13 @@ def main() -> int:
             require(str(preview_acceptance_commands.get("start_check") or "").startswith("agentops operator start-check --adapter hermes"), f"preview start-check command missing: {preview_acceptance}", failures)
             require("--confirm-loop" in str(preview_acceptance_commands.get("loop_driver_confirm") or ""), f"preview loop confirm command missing: {preview_acceptance}", failures)
             require((preview_acceptance.get("safety") or {}).get("server_executes_shell") is False, f"preview acceptance server-shell boundary missing: {preview_acceptance}", failures)
+            require(preview_agent_packet.get("operation") == "operator_loop_driver_agent_loop_packet", f"preview agent loop packet missing: {preview_payload}", failures)
+            require(preview_agent_packet.get("current_phase") == "preview", f"preview agent loop phase wrong: {preview_agent_packet}", failures)
+            require(preview_agent_packet.get("ready_to_confirm_loop") is True, f"preview agent loop should be confirm-ready: {preview_agent_packet}", failures)
+            require({"read", "plan", "retrieve", "compare", "preflight", "execute", "verify", "record"}.issubset({item.get("phase") for item in (preview_agent_packet.get("phases") or [])}), f"preview agent loop phases missing: {preview_agent_packet}", failures)
+            require("--confirm-loop" in str(preview_agent_packet_commands.get("confirm_loop") or ""), f"preview agent loop confirm command missing: {preview_agent_packet}", failures)
+            require(str(preview_agent_packet_commands.get("loop_audit") or "").startswith("agentops operator loop-audit"), f"preview agent loop audit command missing: {preview_agent_packet}", failures)
+            require((preview_agent_packet.get("safety") or {}).get("server_executes_shell") is False, f"preview agent loop server shell boundary missing: {preview_agent_packet}", failures)
             require(initial_brief.get("operation") == "operator_loop_launch_brief", f"initial brief missing: {initial_brief}", failures)
             require((initial_brief.get("policy") or {}).get("server_executes_shell") is False, f"brief server shell boundary missing: {initial_brief}", failures)
             require(preview_review.get("operation") == "loop_driver_record_review_snapshot", f"preview record review snapshot missing: {preview_review}", failures)
@@ -196,10 +205,18 @@ def main() -> int:
             require((confirmed_payload.get("safety") or {}).get("server_executes_shell") is False, f"server shell boundary missing: {confirmed_payload}", failures)
             initial_acceptance = confirmed_payload.get("initial_acceptance_gate") or {}
             final_acceptance = confirmed_payload.get("acceptance_gate") or {}
+            initial_agent_packet = confirmed_payload.get("initial_agent_loop_packet") or {}
+            final_agent_packet = confirmed_payload.get("agent_loop_packet") or {}
             require(initial_acceptance.get("operation") == "operator_loop_driver_acceptance_gate", f"confirm initial acceptance missing: {confirmed_payload}", failures)
             require(final_acceptance.get("operation") == "operator_loop_driver_acceptance_gate", f"confirm final acceptance missing: {confirmed_payload}", failures)
             require((initial_acceptance.get("decision") or {}).get("can_confirm_bounded_loop") is True, f"confirm initial acceptance should allow bounded loop: {initial_acceptance}", failures)
             require((final_acceptance.get("safety") or {}).get("server_executes_shell") is False, f"confirm final acceptance server-shell boundary missing: {final_acceptance}", failures)
+            require(initial_agent_packet.get("operation") == "operator_loop_driver_agent_loop_packet", f"confirm initial agent loop packet missing: {confirmed_payload}", failures)
+            require(final_agent_packet.get("operation") == "operator_loop_driver_agent_loop_packet", f"confirm final agent loop packet missing: {confirmed_payload}", failures)
+            require(final_agent_packet.get("ready_to_confirm_loop") is True, f"confirm final agent packet not confirm-ready: {final_agent_packet}", failures)
+            require(final_agent_packet.get("steps_advanced") == confirmed_payload.get("steps_advanced"), f"confirm agent packet step count mismatch: {final_agent_packet}", failures)
+            require((final_agent_packet.get("commands") or {}).get("receipt_readback"), f"confirm agent packet receipt readback missing: {final_agent_packet}", failures)
+            require((final_agent_packet.get("safety") or {}).get("read_only") is True, f"confirm agent packet should remain read-only metadata: {final_agent_packet}", failures)
             final_readiness = confirmed_payload.get("adapter_readiness") or {}
             final_remediation = final_readiness.get("remediation") or {}
             require(final_readiness.get("operation") == "operator_loop_driver_adapter_readiness", f"confirm readiness missing: {final_readiness}", failures)
