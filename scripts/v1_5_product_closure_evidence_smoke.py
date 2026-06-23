@@ -153,7 +153,7 @@ def main() -> int:
             source_markers={
                 "server.py": ["/api/agent-gateway/enrollment/create", "/api/agent-gateway/session/create", "deployment_policy", "workspace_id"],
                 "agentops_mis_cli/agentops.py": ["cmd_enrollment_create", "session/create"],
-                "ui/start-building-app/src/app/components/pages/AIEmployees.tsx": ["hosted-enrollment-policy-gate", "createEnrollmentBlockedByPolicy", "agent-gateway-scope-effects"],
+                "ui/start-building-app/src/app/components/pages/AIEmployees.tsx": ["hosted-enrollment-policy-gate", "createEnrollmentBlockedByPolicy", "agent-gateway-scope-effects", "agent-gateway-worker-scope-readiness"],
             },
         ),
         item(

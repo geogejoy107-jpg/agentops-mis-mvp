@@ -86,7 +86,7 @@ TEST_COMMANDS = [
     {
         "id": "agent_gateway_scope_effects_ui",
         "command": "python3 scripts/agent_gateway_scope_effects_ui_smoke.py",
-        "summary": "Agent Gateway enrollment UI explains selected scope effects and links missing endpoint permissions to fail-closed HTTP 403 RBAC.",
+        "summary": "Agent Gateway enrollment UI explains selected scope effects, worker-loop viability and fail-closed HTTP 403 RBAC.",
         "ci_step": "Offline safety smokes",
     },
     {

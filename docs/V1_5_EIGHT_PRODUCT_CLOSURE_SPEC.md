@@ -504,6 +504,7 @@ Acceptance evidence:
   - a worker token can claim and start the same task.
 - `python3 scripts/agent_gateway_scope_effects_ui_smoke.py` verifies `/workspace/agents` explains selected scope effects:
   - read/heartbeat, execution, evidence-write, and governance scopes are grouped for operators,
+  - worker-loop viability is shown from the selected scopes before a token is issued,
   - the UI explicitly names server-side Agent Gateway enforcement and HTTP `403` fail-closed behavior.
 - `python3 scripts/task_claim_conflict_smoke.py` verified multi-worker claim safety:
   - two agents initially saw the same public pool task,

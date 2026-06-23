@@ -134,6 +134,17 @@ const DEFAULT_GATEWAY_SCOPES = [
   "audit:write",
 ];
 
+const WORKER_EXECUTION_REQUIRED_SCOPES = [
+  "agents:heartbeat",
+  "tasks:read",
+  "tasks:claim",
+  "runs:write",
+  "runtime_events:write",
+  "toolcalls:write",
+  "evaluations:submit",
+  "audit:write",
+];
+
 const GATEWAY_SCOPE_PRESETS = [
   {
     id: "worker",
@@ -1195,6 +1206,10 @@ export function AIEmployees() {
       adminKeyConfigured: "Admin key",
       scopeEffectsTitle: "Selected scope effects",
       scopeEffectsSummary: "Agent Gateway enforces these endpoint scopes server-side; missing permissions fail closed with HTTP 403.",
+      workerViability: "Worker viability",
+      workerViabilityReady: "Ready to run worker loop",
+      workerViabilityBlocked: "Missing worker-loop scopes",
+      requiredWorkerScopes: "Required worker scopes",
       readScopes: "Read/heartbeat",
       executionScopes: "Execution",
       evidenceWriteScopes: "Evidence writes",
@@ -1774,6 +1789,10 @@ export function AIEmployees() {
       adminKeyConfigured: "Admin key",
       scopeEffectsTitle: "已选 scope 影响",
       scopeEffectsSummary: "Agent Gateway 在服务端执行这些 endpoint scope；缺少权限会以 HTTP 403 失败关闭。",
+      workerViability: "Worker 可执行性",
+      workerViabilityReady: "可运行 worker loop",
+      workerViabilityBlocked: "缺少 worker-loop scope",
+      requiredWorkerScopes: "Worker 必需 scope",
       readScopes: "读取 / 心跳",
       executionScopes: "执行",
       evidenceWriteScopes: "证据写入",
@@ -3382,6 +3401,8 @@ export function AIEmployees() {
     .split(",")
     .map(item => item.trim())
     .filter(Boolean);
+  const missingSelectedWorkerScopes = WORKER_EXECUTION_REQUIRED_SCOPES.filter(scope => !scopeList.includes(scope));
+  const selectedScopeWorkerViable = scopeList.length > 0 && missingSelectedWorkerScopes.length === 0;
   const createEnrollmentBlockedByPolicy = Boolean(enrollmentPolicy && !enrollmentPolicy.direct_create_allowed);
   const scopeEffectRows = [
     {
@@ -8195,7 +8216,10 @@ export function AIEmployees() {
                       <div className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.scopeEffectsTitle}</div>
                       <div className="text-[10px] mt-1" style={{ color: "var(--mis-muted)" }}>{copy.scopeEffectsSummary}</div>
                     </div>
-                    <StatusBadge status="pass" label={`${copy.scopeRbacProof}: 403`} />
+                    <div className="flex flex-wrap gap-1.5 lg:justify-end">
+                      <StatusBadge status={selectedScopeWorkerViable ? "pass" : "attention"} label={`${copy.workerViability}: ${selectedScopeWorkerViable ? copy.workerViabilityReady : copy.workerViabilityBlocked}`} />
+                      <StatusBadge status="pass" label={`${copy.scopeRbacProof}: 403`} />
+                    </div>
                   </div>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3">
                     {scopeEffectRows.map(item => (
@@ -8207,6 +8231,28 @@ export function AIEmployees() {
                         </div>
                       </div>
                     ))}
+                  </div>
+                  <div
+                    data-testid="agent-gateway-worker-scope-readiness"
+                    className="rounded px-2 py-1.5 mt-3"
+                    style={{
+                      background: selectedScopeWorkerViable ? "rgba(42,157,143,0.08)" : "rgba(251,191,36,0.08)",
+                      border: selectedScopeWorkerViable ? "1px solid rgba(42,157,143,0.18)" : "1px solid rgba(251,191,36,0.18)",
+                    }}
+                  >
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-[9px] uppercase tracking-wide" style={{ color: "var(--mis-muted)" }}>{copy.requiredWorkerScopes}</span>
+                      <StatusBadge status={selectedScopeWorkerViable ? "pass" : "attention"} label={selectedScopeWorkerViable ? copy.workerViabilityReady : `${copy.missingWorkerScopes}: ${missingSelectedWorkerScopes.length}`} />
+                    </div>
+                    {missingSelectedWorkerScopes.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-1.5">
+                        {missingSelectedWorkerScopes.slice(0, 6).map(scope => (
+                          <span key={`selected-missing-${scope}`} className="text-[9px] px-1.5 py-0.5 rounded" style={{ background: "var(--mis-bg)", color: "var(--mis-muted)", border: "1px solid var(--mis-border)" }}>
+                            {scope}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-1.5 mt-3">
