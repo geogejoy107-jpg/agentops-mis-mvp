@@ -2,12 +2,17 @@ import topDownRpgCampus from "./manifests/top-down-rpg-campus.v0.json";
 import warmResearchArtKit from "./manifests/warm-research-art-kit.v0.json";
 import researchDistrict from "./manifests/research-district.v0.json";
 import { validateSpatialCatalog } from "./manifestValidation";
+import { validateAgentIdentityGrammar } from "./agentIdentityValidation";
 
-export const SPATIAL_OS_FOUNDATION = validateSpatialCatalog(
+const foundation = validateSpatialCatalog(
   topDownRpgCampus,
   warmResearchArtKit,
   researchDistrict,
 );
+
+validateAgentIdentityGrammar(foundation.artKit);
+
+export const SPATIAL_OS_FOUNDATION = foundation;
 
 export const SPATIAL_NODE_BY_ID = new Map(
   SPATIAL_OS_FOUNDATION.world.nodes.map((node) => [node.id, node] as const),
