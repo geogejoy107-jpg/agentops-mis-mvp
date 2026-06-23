@@ -629,11 +629,17 @@ Acceptance evidence:
   `/workspace/dispatch`, sidebar/home entry points, live workflow API wiring,
   template/worker dispatch controls, delivery board visibility, and the
   live-confirm/prepared-action safety language.
+- `python3 scripts/task_detail_evidence_ui_smoke.py` verifies task detail
+  now exposes an execution-posture strip for runtime mode, approval wall, and
+  delivery gate. The strip distinguishes Hermes/OpenClaw live evidence from
+  mock/offline evidence, shows pending approval state, and keeps customers from
+  inferring delivery readiness only from raw run tables.
 
 Remaining product work:
 
-- Further polish for live/dry-run/approval state indicators across all
-  customer-facing task flows.
+- Further polish for live/dry-run/approval state indicators across secondary
+  customer-facing task flows beyond Dispatch Desk, Worker Console and Task
+  Detail.
 
 ### 7. Customer-Task Usefulness
 

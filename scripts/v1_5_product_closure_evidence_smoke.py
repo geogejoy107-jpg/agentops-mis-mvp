@@ -212,7 +212,14 @@ def main() -> int:
                 "ui/start-building-app/src/app/components/pages/WorkspaceHome.tsx": ["/workspace/dispatch", "Dispatch customer task"],
                 "ui/start-building-app/src/app/components/pages/CustomerDispatchDesk.tsx": ["CustomerDispatchPanel", "loadAgents(metrics)", "loadDashboard()", "confirm_run", "prepared-action"],
                 "ui/start-building-app/src/app/components/pages/PixelOffice.tsx": ["CustomerDispatchPanel"],
-                "ui/start-building-app/src/app/components/pages/TaskDetail.tsx": ["Delivery Evidence Summary", "交付证据摘要", "evidenceCounts"],
+                "ui/start-building-app/src/app/components/pages/TaskDetail.tsx": [
+                    "Delivery Evidence Summary",
+                    "交付证据摘要",
+                    "evidenceCounts",
+                    "Execution Posture",
+                    "执行状态",
+                    "task-detail-execution-posture",
+                ],
                 "ui/start-building-app/src/app/components/pixel/CustomerDispatchPanel.tsx": [
                     "loadCustomerTaskTemplates",
                     "loadOperatorExecutionMode",
