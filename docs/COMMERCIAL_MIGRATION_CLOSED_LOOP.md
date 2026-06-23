@@ -447,8 +447,11 @@ Must be true:
   `agentops audit retention-controls`. It proves cleanup approval is required,
   legal-hold checks are required before any future cleanup, cleanup endpoints
   stay closed, legal-hold summaries omit raw subject/reason detail, and
-  destructive cleanup remains unsupported. Verify with
-  `python3 scripts/audit_retention_controls_smoke.py`.
+  destructive cleanup remains unsupported. Its configured fixture mode starts an
+  isolated `pro_workspace` server with a temporary legal-hold registry and
+  proves `active_holds` without leaking raw hold detail; this is readiness
+  evidence, not a legal system of record. Verify with
+  `python3 scripts/audit_retention_controls_smoke.py --configured-fixture`.
 - Postgres adapter and migrations pass the same core ledger acceptance used for
   SQLite.
 - Runtime connectors remain policy-gated and do not store raw secrets, raw

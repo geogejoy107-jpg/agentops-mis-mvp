@@ -51,7 +51,15 @@ days, cutoff, and eligible audit-row counts, but cleanup/delete parameters fail
 closed and `rows_deleted` must remain `0`.
 `agentops audit retention-controls` is also read-only. It reports whether
 cleanup approval and legal-hold checks are required and confirms cleanup
-endpoints remain closed.
+endpoints remain closed. When no legal-hold registry is configured, it reports
+that it cannot assert no holds instead of claiming zero holds.
+To preview a configured metadata-only registry fixture:
+
+```bash
+AGENTOPS_RETENTION_CONTROLS_PATH=config/retention-controls.example.json agentops audit retention-controls
+```
+
+This fixture is readiness evidence, not a legal system of record.
 
 ## Security Baseline
 
@@ -200,7 +208,7 @@ with the row payload must fail verification.
 ```bash
 python3 -m py_compile server.py scripts/*.py agentops_mis_cli/*.py
 python3 scripts/audit_retention_policy_smoke.py
-python3 scripts/audit_retention_controls_smoke.py
+python3 scripts/audit_retention_controls_smoke.py --configured-fixture
 python3 scripts/deployment_readiness_smoke.py
 python3 scripts/agentops_local_backup_smoke.py
 python3 scripts/byoc_deployment_acceptance_smoke.py

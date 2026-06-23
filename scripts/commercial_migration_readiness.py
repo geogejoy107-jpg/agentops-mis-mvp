@@ -660,6 +660,13 @@ def main() -> int:
             and file_contains("scripts/audit_retention_policy_smoke.py", "db_dump_hash")
             and file_contains("scripts/audit_retention_controls_smoke.py", "audit_retention_controls_v1")
             and file_contains("scripts/audit_retention_controls_smoke.py", "cleanup_approval_required")
+            and file_contains("scripts/audit_retention_controls_smoke.py", "--configured-fixture")
+            and file_contains("scripts/audit_retention_controls_smoke.py", "validate_configured_registry")
+            and file_contains("scripts/audit_retention_controls_smoke.py", "cannot_assert_no_holds")
+            and file_contains("scripts/audit_retention_controls_smoke.py", "Highly confidential subject")
+            and file_contains("config/retention-controls.example.json", '"legal_hold_registry_configured": true')
+            and file_contains("config/retention-controls.example.json", '"legal_holds"')
+            and file_contains("config/retention-controls.example.json", '"status": "active"')
             and file_contains("scripts/audit_retention_controls_smoke.py", "db_dump_hash")
             and file_contains("server.py", "def audit_retention_policy")
             and file_contains("server.py", "def audit_retention_controls")
@@ -762,7 +769,7 @@ def main() -> int:
                 "Postgres container parity smoke",
                 "Postgres ledger acceptance",
                 "python3 scripts/audit_retention_policy_smoke.py",
-                "python3 scripts/audit_retention_controls_smoke.py",
+                "python3 scripts/audit_retention_controls_smoke.py --configured-fixture",
                 "python3 scripts/deployment_readiness_smoke.py",
                 "python3 scripts/byoc_deployment_acceptance_smoke.py",
                 "backup/restore and signed export checks",

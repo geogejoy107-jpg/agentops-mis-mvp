@@ -275,6 +275,7 @@ def main() -> int:
     require("loadServerAuditRetentionPolicy" in read_text(NEXT_APP / "app" / "workspace" / "deployment" / "page.tsx"), "deployment page must request audit retention policy in parallel")
     require("audit_retention_policy_v1" in read_text(ROOT / "scripts" / "audit_retention_policy_smoke.py"), "audit retention policy smoke contract is missing")
     require("audit_retention_controls_v1" in deployment_page_text and "cleanup approval" in deployment_page_text and "legal hold check" in deployment_page_text, "deployment parity page must expose retention controls proof")
+    require("active holds" in deployment_page_text and "unknown" in deployment_page_text, "deployment parity page must avoid claiming zero legal holds when registry is absent")
     require("/audit/retention-controls" in server_lib_text and "loadServerAuditRetentionControls" in server_lib_text, "deployment parity page must directly load audit retention controls")
     require("loadServerAuditRetentionControls" in read_text(NEXT_APP / "app" / "workspace" / "deployment" / "page.tsx"), "deployment page must request audit retention controls in parallel")
     require("audit_retention_controls_v1" in read_text(ROOT / "scripts" / "audit_retention_controls_smoke.py"), "audit retention controls smoke contract is missing")
