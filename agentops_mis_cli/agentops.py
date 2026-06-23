@@ -688,6 +688,162 @@ def compact_loop_launch_packet(payload: dict, *, adapter: str) -> dict:
     }
 
 
+def compact_advance_loop_result(payload: dict) -> dict:
+    preview = payload.get("preview") if isinstance(payload.get("preview"), dict) else {}
+    receipt = payload.get("receipt") if isinstance(payload.get("receipt"), dict) else {}
+    receipt_row = receipt.get("receipt") if isinstance(receipt.get("receipt"), dict) else receipt
+    control = payload.get("control_readback") if isinstance(payload.get("control_readback"), dict) else {}
+    after = control.get("after") if isinstance(control.get("after"), dict) else {}
+    action_result = payload.get("action_result") if isinstance(payload.get("action_result"), dict) else {}
+    verify_result = payload.get("verify_result") if isinstance(payload.get("verify_result"), dict) else {}
+    return {
+        "operation": payload.get("operation"),
+        "status": payload.get("status"),
+        "advanced": bool(payload.get("advanced")),
+        "control_source": payload.get("control_source"),
+        "gate_id": preview.get("gate_id"),
+        "source": preview.get("source"),
+        "action_command": preview.get("action_command"),
+        "verify_command": preview.get("verify_command"),
+        "action_ok": action_result.get("ok"),
+        "verify_ok": verify_result.get("ok") if verify_result else None,
+        "receipt_id": receipt_row.get("receipt_id"),
+        "receipt_status": receipt_row.get("status"),
+        "control_after_status": after.get("status"),
+        "control_after_next_command": after.get("next_command"),
+        "raw_output_omitted": True,
+        "token_omitted": True,
+    }
+
+
+def fetch_loop_launch_brief(args, client: AgentOpsClient) -> dict:
+    payload = client.get(
+        "/api/operator/loop-launch-packet",
+        query={
+            "limit": args.limit,
+            "task_id": args.task_id,
+            "agent_id": args.agent_id,
+            "q": args.query,
+            "handoff_mode": args.handoff_mode,
+            "full_handoff": "true" if getattr(args, "full_handoff", False) else None,
+        },
+    )
+    return compact_loop_launch_packet(payload, adapter=args.adapter)
+
+
+def cmd_operator_loop_driver(args, client: AgentOpsClient) -> dict:
+    max_steps = min(max(int(args.max_steps or 1), 1), 5)
+    initial_brief = fetch_loop_launch_brief(args, client)
+    policy = advance_loop_policy_summary()
+    if not args.confirm_loop:
+        return {
+            "provider": "agentops-operator",
+            "operation": "operator_loop_driver",
+            "status": "preview",
+            "advanced": False,
+            "adapter": args.adapter,
+            "max_steps": max_steps,
+            "initial_brief": initial_brief,
+            "next_actions": [
+                "agentops operator loop-driver --confirm-loop --max-steps "
+                f"{max_steps} --adapter {args.adapter} --limit {args.limit}"
+            ],
+            "policy": {
+                **policy,
+                "driver_max_steps": 5,
+                "driver_uses": "operator loop-launch-packet --brief plus operator advance-loop --fast-control --confirm-advance",
+            },
+            "contract": "preview-only agent loop driver; reads the compact launch brief and shows the bounded loop path without executing commands or mutating ledgers",
+            "safety": {
+                "read_only": True,
+                "ledger_mutated": False,
+                "live_execution_performed": False,
+                "server_executes_shell": False,
+                "token_omitted": True,
+            },
+            "token_omitted": True,
+            "live_execution_performed": False,
+        }
+
+    steps: list[dict] = []
+    stop_reason = "max_steps_reached"
+    for index in range(max_steps):
+        before_brief = fetch_loop_launch_brief(args, client)
+        advance_args = argparse.Namespace(
+            loop_id=args.loop_id,
+            limit=args.limit,
+            timeout=args.timeout,
+            actor_id=args.actor_id,
+            fast_control=True,
+            confirm_advance=True,
+        )
+        advance_result = cmd_operator_advance_loop(advance_args, client)
+        after_brief = fetch_loop_launch_brief(args, client)
+        compact_advance = compact_advance_loop_result(advance_result)
+        step = {
+            "step": index + 1,
+            "before": {
+                "status": before_brief.get("status"),
+                "next_command": before_brief.get("next_command"),
+                "control_status": (before_brief.get("summary") or {}).get("control_status"),
+                "control_mode": (before_brief.get("summary") or {}).get("control_mode"),
+                "workflow_job_recovery_status": (before_brief.get("summary") or {}).get("workflow_job_recovery_status"),
+                "token_omitted": True,
+            },
+            "advance": compact_advance,
+            "after": {
+                "status": after_brief.get("status"),
+                "next_command": after_brief.get("next_command"),
+                "control_status": (after_brief.get("summary") or {}).get("control_status"),
+                "control_mode": (after_brief.get("summary") or {}).get("control_mode"),
+                "workflow_job_recovery_status": (after_brief.get("summary") or {}).get("workflow_job_recovery_status"),
+                "token_omitted": True,
+            },
+            "token_omitted": True,
+        }
+        steps.append(step)
+        status = str(advance_result.get("status") or "")
+        if status in {"empty", "blocked", "failed"} or not advance_result.get("advanced"):
+            stop_reason = status or "not_advanced"
+            break
+        after_summary = after_brief.get("summary") or {}
+        if after_summary.get("control_status") == "ready" and not after_brief.get("next_command"):
+            stop_reason = "control_ready"
+            break
+
+    final_brief = fetch_loop_launch_brief(args, client)
+    failed = [step for step in steps if (step.get("advance") or {}).get("status") in {"failed", "blocked"}]
+    advanced = [step for step in steps if (step.get("advance") or {}).get("advanced")]
+    return {
+        "provider": "agentops-operator",
+        "operation": "operator_loop_driver",
+        "status": "failed" if failed else "advanced" if advanced else "empty",
+        "adapter": args.adapter,
+        "max_steps": max_steps,
+        "steps_attempted": len(steps),
+        "steps_advanced": len(advanced),
+        "stop_reason": stop_reason,
+        "steps": steps,
+        "final_brief": final_brief,
+        "policy": {
+            **policy,
+            "driver_max_steps": 5,
+            "server_executes_shell": False,
+        },
+        "contract": "bounded local agent loop driver for Hermes/OpenClaw/Codex; each step re-reads the launch brief, delegates execution to advance-loop allowlist policy, records receipts/control-readback, and never runs live/workflow/approval commands",
+        "safety": {
+            "read_only": False,
+            "ledger_mutated": bool(advanced),
+            "live_execution_performed": False,
+            "server_executes_shell": False,
+            "raw_output_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+
+
 def cmd_operator_advance_loop_policy(args, client: AgentOpsClient) -> dict:
     sample_commands = [
         "agentops memory propose --type loop_record --text example --agent-id agt_example",
@@ -2643,6 +2799,20 @@ def build_parser() -> argparse.ArgumentParser:
     operator_launch.add_argument("--brief", action="store_true", help="Return a compact copy-only launch brief for Hermes/OpenClaw/Codex instead of the full packet.")
     operator_launch.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock", help="Adapter context to include in --brief preflight and live-confirmation guidance.")
     operator_launch.set_defaults(handler="operator_loop_launch_packet")
+    operator_loop_driver = operator_sub.add_parser("loop-driver", help="Preview or run a bounded multi-step local loop for Hermes/OpenClaw/Codex.")
+    operator_loop_driver.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
+    operator_loop_driver.add_argument("--max-steps", type=int, default=3, help="Maximum bounded advance-loop steps to run; capped at 5.")
+    operator_loop_driver.add_argument("--limit", type=int, default=8)
+    operator_loop_driver.add_argument("--loop-id", default=None)
+    operator_loop_driver.add_argument("--task-id", default=None)
+    operator_loop_driver.add_argument("--agent-id", default=None)
+    operator_loop_driver.add_argument("--query", default="READ PLAN RETRIEVE COMPARE VERIFY RECORD")
+    operator_loop_driver.add_argument("--handoff-mode", choices=["lightweight", "full"], default="lightweight")
+    operator_loop_driver.add_argument("--full-handoff", action="store_true", help="Shortcut for --handoff-mode full when reading the launch brief.")
+    operator_loop_driver.add_argument("--timeout", type=int, default=90)
+    operator_loop_driver.add_argument("--actor-id", default="usr_founder")
+    operator_loop_driver.add_argument("--confirm-loop", action="store_true", help="Run bounded advance-loop steps and record receipts/control-readback.")
+    operator_loop_driver.set_defaults(handler="operator_loop_driver")
     evidence_gap = operator_sub.add_parser("remediate-evidence-gap", help="Preview or create a Commander package for a run execution-evidence gap.")
     evidence_gap.add_argument("--run-id", required=True)
     evidence_gap.add_argument("--task-id", default=None)
@@ -3530,6 +3700,7 @@ HANDLERS = {
     "operator_command_center": cmd_operator_command_center,
     "operator_intake_checklist": cmd_operator_intake_checklist,
     "operator_loop_launch_packet": cmd_operator_loop_launch_packet,
+    "operator_loop_driver": cmd_operator_loop_driver,
     "operator_remediate_evidence_gap": cmd_operator_remediate_evidence_gap,
     "operator_close_evidence_gap": cmd_operator_close_evidence_gap,
     "commander_board": cmd_commander_board,

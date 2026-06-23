@@ -85,6 +85,7 @@ jobs:
           python3 scripts/operator_loop_audit_closed_loop_smoke.py
           python3 scripts/operator_advance_loop_smoke.py
           python3 scripts/operator_loop_control_smoke.py
+          python3 scripts/operator_loop_driver_smoke.py
           python3 scripts/operator_loop_launch_packet_smoke.py
 
       - name: Start isolated local server

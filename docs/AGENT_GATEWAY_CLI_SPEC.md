@@ -1854,6 +1854,8 @@ agentops operator advance-loop --fast-control --limit 8
 agentops operator advance-loop --loop-id loop_123 --limit 10 --confirm-advance
 agentops operator advance-loop-policy
 agentops operator loop-control --limit 8
+agentops operator loop-driver --adapter hermes --max-steps 3
+agentops operator loop-driver --adapter openclaw --max-steps 3 --confirm-loop
 ```
 
 Reads `GET /api/operator/handoff` and selects the first non-passing loop action
@@ -1892,6 +1894,13 @@ policy id for fast local loop steering.
 `operator handoff` exposes the same `work_order.advance_loop` preview/confirm
 commands, and `/workspace/agents` renders copy buttons for those local CLI
 commands without letting the browser or server execute shell.
+`operator loop-driver` is the local CLI loop wrapper for Hermes/OpenClaw/Codex:
+preview mode reads the compact launch brief and policy without writing ledgers;
+confirmed mode runs up to five `advance-loop --fast-control --confirm-advance`
+steps, re-reading the launch brief before each step and relying on the existing
+allowlist, receipts, and control-readback path. It does not create a new server
+shell execution surface and still refuses live/workflow/approval/external-write
+commands through the bounded-runner policy.
 
 ```bash
 agentops operator remediate-evidence-gap --run-id run_123

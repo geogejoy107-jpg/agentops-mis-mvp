@@ -216,6 +216,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "operator_loop_driver",
+        "command": "python3 scripts/operator_loop_driver_smoke.py",
+        "summary": "Hermes/OpenClaw/Codex loop driver previews compact launch briefs and confirms bounded multi-step advance-loop receipts without live execution.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "operator_loop_launch_packet",
         "command": "python3 scripts/operator_loop_launch_packet_smoke.py",
         "summary": "Agent Work Method launch packet supports default lightweight loop-control and explicit full handoff modes without mutating ledgers.",
