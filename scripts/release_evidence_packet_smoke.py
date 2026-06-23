@@ -84,6 +84,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "agent_gateway_scope_effects_ui",
+        "command": "python3 scripts/agent_gateway_scope_effects_ui_smoke.py",
+        "summary": "Agent Gateway enrollment UI explains selected scope effects and links missing endpoint permissions to fail-closed HTTP 403 RBAC.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "v1_5_current_code_product_evidence",
         "command": "python3 scripts/v1_5_current_code_product_evidence.py --base-url http://127.0.0.1:<current-code-port> --db-path /tmp/<current-code-agentops>.db --confirm-live",
         "summary": "Manual current-code product evidence orchestrator: rebuilds knowledge, runs Commander synthesis, executes confirmed Hermes/OpenClaw customer-worker acceptance, verifies live readiness readback, exercises remote/scoped worker fallback, and finishes with non-live local acceptance.",

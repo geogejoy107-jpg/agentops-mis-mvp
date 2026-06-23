@@ -502,6 +502,9 @@ Acceptance evidence:
   - heartbeat, task pull, and audit writes are allowed,
   - claim, run start, tool call, and artifact writes are rejected with HTTP `403 forbidden`,
   - a worker token can claim and start the same task.
+- `python3 scripts/agent_gateway_scope_effects_ui_smoke.py` verifies `/workspace/agents` explains selected scope effects:
+  - read/heartbeat, execution, evidence-write, and governance scopes are grouped for operators,
+  - the UI explicitly names server-side Agent Gateway enforcement and HTTP `403` fail-closed behavior.
 - `python3 scripts/task_claim_conflict_smoke.py` verified multi-worker claim safety:
   - two agents initially saw the same public pool task,
   - the first claim won,

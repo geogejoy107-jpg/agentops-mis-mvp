@@ -147,12 +147,13 @@ def main() -> int:
                 "scripts/remote_launch_packet_worker_smoke.py",
                 "scripts/enrollment_policy_preview_smoke.py",
                 "scripts/enrollment_hosted_policy_ui_smoke.py",
+                "scripts/agent_gateway_scope_effects_ui_smoke.py",
                 "scripts/workspace_isolation_smoke.py",
             ],
             source_markers={
                 "server.py": ["/api/agent-gateway/enrollment/create", "/api/agent-gateway/session/create", "deployment_policy", "workspace_id"],
                 "agentops_mis_cli/agentops.py": ["cmd_enrollment_create", "session/create"],
-                "ui/start-building-app/src/app/components/pages/AIEmployees.tsx": ["hosted-enrollment-policy-gate", "createEnrollmentBlockedByPolicy"],
+                "ui/start-building-app/src/app/components/pages/AIEmployees.tsx": ["hosted-enrollment-policy-gate", "createEnrollmentBlockedByPolicy", "agent-gateway-scope-effects"],
             },
         ),
         item(

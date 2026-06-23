@@ -1193,6 +1193,13 @@ export function AIEmployees() {
       directCreateAllowed: "Direct create allowed",
       approvalRequestRequired: "Approval required",
       adminKeyConfigured: "Admin key",
+      scopeEffectsTitle: "Selected scope effects",
+      scopeEffectsSummary: "Agent Gateway enforces these endpoint scopes server-side; missing permissions fail closed with HTTP 403.",
+      readScopes: "Read/heartbeat",
+      executionScopes: "Execution",
+      evidenceWriteScopes: "Evidence writes",
+      governanceScopes: "Governance",
+      scopeRbacProof: "RBAC proof",
       recommendedPath: "Recommended",
       invalidScopes: "Invalid scopes",
       privilegedScopes: "Privileged",
@@ -1765,6 +1772,13 @@ export function AIEmployees() {
       directCreateAllowed: "可直接创建",
       approvalRequestRequired: "需要审批",
       adminKeyConfigured: "Admin key",
+      scopeEffectsTitle: "已选 scope 影响",
+      scopeEffectsSummary: "Agent Gateway 在服务端执行这些 endpoint scope；缺少权限会以 HTTP 403 失败关闭。",
+      readScopes: "读取 / 心跳",
+      executionScopes: "执行",
+      evidenceWriteScopes: "证据写入",
+      governanceScopes: "治理",
+      scopeRbacProof: "RBAC 证明",
       recommendedPath: "推荐路径",
       invalidScopes: "无效 scope",
       privilegedScopes: "高权限",
@@ -3369,6 +3383,28 @@ export function AIEmployees() {
     .map(item => item.trim())
     .filter(Boolean);
   const createEnrollmentBlockedByPolicy = Boolean(enrollmentPolicy && !enrollmentPolicy.direct_create_allowed);
+  const scopeEffectRows = [
+    {
+      label: copy.readScopes,
+      value: scopeList.filter(scope => scope === "agents:heartbeat" || scope.endsWith(":read")).length,
+      status: scopeList.some(scope => scope === "agents:heartbeat" || scope.endsWith(":read")) ? "pass" : "planned",
+    },
+    {
+      label: copy.executionScopes,
+      value: scopeList.filter(scope => ["tasks:claim", "runs:write"].includes(scope)).length,
+      status: scopeList.some(scope => ["tasks:claim", "runs:write"].includes(scope)) ? "attention" : "planned",
+    },
+    {
+      label: copy.evidenceWriteScopes,
+      value: scopeList.filter(scope => ["toolcalls:write", "runtime_events:write", "artifacts:write", "evaluations:submit", "audit:write"].includes(scope)).length,
+      status: scopeList.some(scope => ["toolcalls:write", "runtime_events:write", "artifacts:write", "evaluations:submit", "audit:write"].includes(scope)) ? "attention" : "planned",
+    },
+    {
+      label: copy.governanceScopes,
+      value: scopeList.filter(scope => scope.startsWith("agent_plans:") || scope.startsWith("plan_evidence:") || scope.startsWith("approvals:") || scope.startsWith("memories:")).length,
+      status: scopeList.some(scope => scope.startsWith("agent_plans:") || scope.startsWith("plan_evidence:") || scope.startsWith("approvals:") || scope.startsWith("memories:")) ? "attention" : "planned",
+    },
+  ];
 
   useEffect(() => {
     let cancelled = false;
@@ -8147,6 +8183,30 @@ export function AIEmployees() {
                   </div>
                   <div className="text-[10px] mt-2" style={{ color: "var(--mis-muted)" }}>
                     {enrollmentPolicy.deployment_policy_summary || copy.enrollmentDeploymentPolicySummary}
+                  </div>
+                </div>
+                <div
+                  data-testid="agent-gateway-scope-effects"
+                  className="rounded px-2 py-2 mt-3"
+                  style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}
+                >
+                  <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.scopeEffectsTitle}</div>
+                      <div className="text-[10px] mt-1" style={{ color: "var(--mis-muted)" }}>{copy.scopeEffectsSummary}</div>
+                    </div>
+                    <StatusBadge status="pass" label={`${copy.scopeRbacProof}: 403`} />
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3">
+                    {scopeEffectRows.map(item => (
+                      <div key={item.label} className="rounded px-2 py-1" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                        <div className="text-[9px]" style={{ color: "var(--mis-muted)" }}>{item.label}</div>
+                        <div className="flex items-center justify-between gap-2 mt-0.5">
+                          <div className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{item.value}</div>
+                          <StatusBadge status={item.status} />
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-1.5 mt-3">

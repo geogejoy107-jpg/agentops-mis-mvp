@@ -81,6 +81,7 @@ The packet includes the canonical command manifest used for release review:
 - `python3 scripts/merge_readiness_status_smoke.py`
 - `python3 scripts/v1_5_product_closure_evidence_smoke.py`
 - `python3 scripts/enrollment_hosted_policy_ui_smoke.py`
+- `python3 scripts/agent_gateway_scope_effects_ui_smoke.py`
 - Manual current-code product evidence gate, intentionally not CI-backed:
   `python3 scripts/v1_5_current_code_product_evidence.py --base-url http://127.0.0.1:<current-code-port> --db-path /tmp/<current-code-agentops>.db --confirm-live`
 - Manual product-readiness gate, intentionally not CI-backed:
