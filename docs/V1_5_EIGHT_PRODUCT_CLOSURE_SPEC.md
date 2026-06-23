@@ -165,7 +165,7 @@ Acceptance evidence:
 
 Remaining product work:
 
-- OS service loading/restart automation. v1.5 now has safe template generation through `agentops-worker service-template`, dry-run-by-default file installation through `agentops-worker service-install`, and read-only diagnostics through `agentops-worker service-check`; it still does not load, restart, or mutate running OS service state automatically.
+- OS service automatic relaunch is still explicit-operator only. v1.5 now has safe template generation through `agentops-worker service-template`, dry-run-by-default file installation through `agentops-worker service-install`, read-only diagnostics through `agentops-worker service-check`, and preview-first OS service load/unload/restart through `agentops-worker service-control` / `agentops worker service-control`; real launchd/systemd mutation requires `--confirm-control`.
 - Full automatic relaunch after process death.
 - Production log rotation.
 - Fleet-level worker management.

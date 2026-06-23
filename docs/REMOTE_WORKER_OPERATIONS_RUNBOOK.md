@@ -214,6 +214,32 @@ install, load, unload, restart, or execute the worker. It omits raw service file
 content and fails closed if token-like values such as enrollment/session/API
 tokens are detected in a generated file.
 
+Preview OS service control before mutating launchd/systemd:
+
+```bash
+agentops-worker service-control \
+  --manager launchd \
+  --action load \
+  --adapter mock \
+  --agent-id agt_remote_builder
+```
+
+```bash
+agentops worker service-control \
+  --manager systemd \
+  --action restart \
+  --adapter mock \
+  --agent-id agt_remote_builder \
+  --service-path ~/.config/systemd/user/agentops-worker-agt_remote_builder.service
+```
+
+`service-control` is preview-only by default. It returns the exact
+`launchctl`/`systemctl` commands and service-check evidence without executing
+them. To mutate OS service state on the agent machine, re-run with
+`--confirm-control`. Load/restart fails closed if the service file contains
+token-like values or if a Hermes/OpenClaw service template lacks
+`--confirm-run`.
+
 ## Operations Loop
 
 1. Human creates or assigns a task in AgentOps MIS.
@@ -506,6 +532,7 @@ python3 scripts/agent_gateway_task_create_scope_smoke.py
 python3 scripts/agentops_workflow_run_task_smoke.py
 python3 scripts/worker_remote_fleet_status_smoke.py
 python3 scripts/worker_fleet_hygiene_smoke.py
+python3 scripts/agentops_worker_service_control_smoke.py
 python3 scripts/enrollment_policy_preview_smoke.py
 python3 scripts/agentops_worker_restart_smoke.py
 python3 scripts/agentops_local_backup_smoke.py
@@ -528,6 +555,9 @@ The expected proof is:
   placeholder template when `--confirm-install` is present.
 - `agentops worker service-check` returns JSON, omits raw service content, and
   detects token-like values without printing them.
+- `agentops worker service-control` is preview-only by default, refuses unsafe
+  token-like service files, and refuses Hermes/OpenClaw load/restart when the
+  service template lacks `--confirm-run`.
 - Hermes/OpenClaw daemon starts without `--confirm-run` fail closed.
 - Remote launch packet commands can create ledger evidence through Agent Gateway.
 - `agentops worker status` reports remote worker heartbeat/session health without

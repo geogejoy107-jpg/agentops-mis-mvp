@@ -186,6 +186,7 @@ The create response also includes a `next_steps` launch packet for the remote ma
 - launchd/systemd service template generation through `agentops-worker service-template`
 - dry-run-by-default service file installation through `agentops-worker service-install`
 - read-only service diagnostics through `agentops-worker service-check`
+- preview-first launchd/systemd load, unload, and restart through `agentops-worker service-control`
 - repo-local fallback commands using `python3 scripts/agent_worker.py ...`
 
 This packet is safe to display in the UI because it omits the token value from command strings.
@@ -2380,6 +2381,7 @@ The stuck-recovery helper verifies a stale running worker task is listed, releas
 The worker package helper installs the Python source package into a temporary venv, verifies `agentops-worker --help`, then runs a one-shot no-task worker loop against a local stub Agent Gateway. It proves the installable worker can register, pull, heartbeat, write state outside the repo, and omit token values.
 It also verifies `agentops-worker service-template --manager launchd|systemd` renders restartable service files with only a token placeholder, not a raw token.
 It verifies `agentops-worker service-install --manager launchd|systemd` defaults to dry-run and only writes a placeholder service file when explicitly confirmed.
+It verifies `agentops-worker service-control --manager launchd|systemd` previews load/unload/restart commands by default, requires explicit confirmation before OS mutation, and fails closed for token-like service files or live adapter templates missing `--confirm-run`.
 It verifies `agentops-worker preflight` can perform read-only Gateway/adapter readiness checks without executing tasks, writing ledger rows, or printing token values.
 The session-refresh helper verifies a loop worker using `--use-session` refreshes short-lived sessions before expiry and still completes multiple tasks with run/tool/evaluation evidence.
 The adapter-retry helper verifies retryable adapter failures can succeed after retry, while non-retryable safety gates such as missing `--confirm-run` stop after one attempt and still write failed run/tool/evaluation evidence.

@@ -1164,6 +1164,25 @@ def service_load_commands(manager: str, path: Path, label: str) -> dict:
     }
 
 
+def service_control_sequence(manager: str, path: Path, label: str, action: str) -> list[list[str]]:
+    commands = service_load_commands(manager, path, label)
+    if manager == "launchd":
+        if action == "load":
+            return [commands["load"]]
+        if action == "unload":
+            return [commands["unload"]]
+        return [commands["unload"], commands["load"]]
+    if action == "load":
+        return [commands["daemon_reload"], commands["enable_now"]]
+    if action == "unload":
+        return [commands["disable_now"]]
+    return [commands["daemon_reload"], ["systemctl", "--user", "restart", path.name]]
+
+
+def shell_join(command: list[str]) -> str:
+    return " ".join(shlex.quote(str(part)) for part in command)
+
+
 def read_service_file(path: Path) -> tuple[bool, str]:
     try:
         return True, path.read_text(encoding="utf-8", errors="replace")
@@ -1409,6 +1428,117 @@ def run_service_install(argv: list[str]) -> int:
     return 0 if payload.get("ok") else 1
 
 
+def execute_service_command(command: list[str], timeout: int) -> dict:
+    try:
+        proc = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=max(1, min(timeout, 60)),
+            check=False,
+        )
+        return {
+            "command": shell_join(command),
+            "returncode": proc.returncode,
+            "ok": proc.returncode == 0,
+            "summary": redact_text(proc.stdout or proc.stderr or "", 700),
+        }
+    except Exception as exc:
+        return {"command": shell_join(command), "ok": False, **safe_error(exc)}
+
+
+def control_service(args) -> dict:
+    label = args.label or service_label(args.agent_id)
+    service_path = Path(args.service_path).expanduser() if args.service_path else default_service_path(args.manager, args.agent_id, label)
+    check_args = argparse.Namespace(
+        manager=args.manager,
+        workspace_id=args.workspace_id,
+        agent_id=args.agent_id,
+        adapter=args.adapter,
+        label=label,
+        service_path=str(service_path),
+        api_key_placeholder=args.api_key_placeholder,
+        timeout=args.timeout,
+    )
+    service_check = check_service_installation(check_args)
+    service_file = service_check.get("service_file") or {}
+    exists = bool(service_file.get("exists"))
+    token_like_detected = bool(service_file.get("token_like_detected"))
+    confirm_gate_ok = bool(service_file.get("confirm_gate_ok"))
+    command_has_worker = bool(service_file.get("command_has_worker"))
+    planned = service_control_sequence(args.manager, service_path, label, args.action)
+    failures = []
+    if not exists:
+        failures.append("service file is missing")
+    if not command_has_worker:
+        failures.append("service file does not appear to run agentops-worker")
+    if args.action in {"load", "restart"} and token_like_detected:
+        failures.append("refusing to load/restart a service file containing token-like values")
+    if args.action in {"load", "restart"} and not confirm_gate_ok:
+        failures.append("refusing to load/restart Hermes/OpenClaw service without --confirm-run in the service template")
+    dry_run = not bool(args.confirm_control)
+    command_results = []
+    if not dry_run and not failures:
+        for command in planned:
+            result = execute_service_command(command, args.timeout)
+            command_results.append(result)
+            if not result.get("ok") and not (args.action == "restart" and len(command_results) == 1):
+                failures.append(f"service control command failed: {result.get('command')}")
+                break
+    setup_hints = []
+    if dry_run:
+        setup_hints.append("Preview only. Re-run with --confirm-control on the agent machine to mutate launchd/systemd state.")
+    if token_like_detected:
+        setup_hints.append("Move secrets out of the service file before load/restart; raw token-like content is never printed.")
+    if args.adapter in {"hermes", "openclaw"} and not confirm_gate_ok:
+        setup_hints.append("Live adapter services must include --confirm-run in the rendered worker command.")
+    return {
+        "ok": not failures,
+        "provider": "agentops-worker",
+        "command": "agentops-worker service-control",
+        "manager": args.manager,
+        "action": args.action,
+        "dry_run": dry_run,
+        "confirmed_control": bool(args.confirm_control),
+        "service_mutated": bool(args.confirm_control and not failures),
+        "service_path": str(service_path),
+        "label": label,
+        "agent_id": args.agent_id,
+        "workspace_id": args.workspace_id,
+        "adapter": args.adapter,
+        "service_check": service_check,
+        "planned_commands": [shell_join(command) for command in planned],
+        "command_results": command_results,
+        "failures": failures,
+        "setup_hints": setup_hints,
+        "live_execution_performed": bool(args.confirm_control and args.action in {"load", "restart"} and args.adapter in {"hermes", "openclaw"} and not failures),
+        "raw_content_omitted": True,
+        "token_omitted": True,
+    }
+
+
+def build_service_control_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Preview or explicitly run launchd/systemd control for an agentops-worker service.")
+    parser.add_argument("--manager", choices=["launchd", "systemd"], required=True)
+    parser.add_argument("--action", choices=["load", "unload", "restart"], required=True)
+    parser.add_argument("--workspace-id", default=os.environ.get("AGENTOPS_WORKSPACE_ID", DEFAULT_WORKSPACE_ID))
+    parser.add_argument("--agent-id", default=os.environ.get("AGENTOPS_AGENT_ID", DEFAULT_AGENT_ID))
+    parser.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
+    parser.add_argument("--label", default="")
+    parser.add_argument("--service-path", default="")
+    parser.add_argument("--api-key-placeholder", default="<paste one-time token here>")
+    parser.add_argument("--timeout", type=int, default=10)
+    parser.add_argument("--confirm-control", action="store_true", help="Actually call launchctl/systemctl. Default is preview only.")
+    return parser
+
+
+def run_service_control(argv: list[str]) -> int:
+    args = build_service_control_parser().parse_args(argv)
+    payload = control_service(args)
+    print(json_dumps(payload))
+    return 0 if payload.get("ok") else 1
+
+
 def render_service_template(argv: list[str]) -> int:
     args = build_service_template_parser().parse_args(argv)
     sys.stdout.write(render_service_template_for_args(args))
@@ -1544,6 +1674,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_service_install(argv[1:])
     if argv[:1] == ["service-check"]:
         return run_service_check(argv[1:])
+    if argv[:1] == ["service-control"]:
+        return run_service_control(argv[1:])
     if argv[:1] == ["preflight"]:
         return run_preflight(argv[1:])
     args = build_parser().parse_args(argv)

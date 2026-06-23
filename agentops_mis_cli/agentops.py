@@ -2702,6 +2702,26 @@ def cmd_worker_service_install(args, client: AgentOpsClient) -> dict:
     return payload
 
 
+def cmd_worker_service_control(args, client: AgentOpsClient) -> dict:
+    from . import worker as worker_mod
+
+    control_args = argparse.Namespace(
+        manager=args.manager,
+        action=args.service_action,
+        workspace_id=client.workspace_id,
+        agent_id=args.agent_id or client.agent_id or worker_mod.DEFAULT_AGENT_ID,
+        adapter=args.adapter,
+        label=args.label or "",
+        service_path=args.service_path or "",
+        api_key_placeholder=args.api_key_placeholder,
+        timeout=args.timeout,
+        confirm_control=bool(args.confirm_control),
+    )
+    payload = worker_mod.control_service(control_args)
+    payload["command"] = "agentops worker service-control"
+    return payload
+
+
 def cmd_worker_start(args, client: AgentOpsClient) -> dict:
     payload = {
         "adapter": args.adapter,
@@ -3804,6 +3824,17 @@ def build_parser() -> argparse.ArgumentParser:
     worker_service_install.add_argument("--overwrite", action="store_true")
     worker_service_install.add_argument("--timeout", type=int, default=5)
     worker_service_install.set_defaults(handler="worker_service_install")
+    worker_service_control = worker_sub.add_parser("service-control", help="Preview or explicitly run launchd/systemd load, unload, or restart for a worker service.")
+    worker_service_control.add_argument("--manager", choices=["launchd", "systemd"], required=True)
+    worker_service_control.add_argument("--action", dest="service_action", choices=["load", "unload", "restart"], required=True)
+    worker_service_control.add_argument("--agent-id", default=None)
+    worker_service_control.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
+    worker_service_control.add_argument("--label", default="")
+    worker_service_control.add_argument("--service-path", default="")
+    worker_service_control.add_argument("--api-key-placeholder", default="<paste one-time token here>")
+    worker_service_control.add_argument("--timeout", type=int, default=10)
+    worker_service_control.add_argument("--confirm-control", action="store_true", help="Actually call launchctl/systemctl. Default is preview only.")
+    worker_service_control.set_defaults(handler="worker_service_control")
     worker_start = worker_sub.add_parser("start", help="Start a local worker daemon through the MIS supervisor.")
     worker_start.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
     worker_start.add_argument("--agent-id", default=None)
@@ -4032,6 +4063,7 @@ HANDLERS = {
     "worker_preflight": cmd_worker_preflight,
     "worker_service_check": cmd_worker_service_check,
     "worker_service_install": cmd_worker_service_install,
+    "worker_service_control": cmd_worker_service_control,
     "worker_start": cmd_worker_start,
     "worker_stop": cmd_worker_stop,
     "worker_restart": cmd_worker_restart,

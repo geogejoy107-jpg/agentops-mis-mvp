@@ -1384,7 +1384,12 @@ a dry-run-by-default installation path for long-running agent machines. Without
 manual load commands. With `--confirm-install` it writes a placeholder-based
 service file with `0600` permissions, refuses to overwrite existing files unless
 `--overwrite` is present, and blocks token-like placeholders without leaking
-them. It still does not load launchd/systemd or execute the worker.
+them. `agentops-worker service-control` and `agentops worker service-control`
+now add preview-first launchd/systemd load, unload, and restart control. Without
+`--confirm-control` the command only returns planned OS commands and service
+check evidence. With `--confirm-control` it may mutate local OS service state on
+the agent machine, while still refusing load/restart for token-like service
+files or Hermes/OpenClaw templates missing `--confirm-run`.
 
 Latest remote worker fleet status smoke:
 
