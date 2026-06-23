@@ -147,6 +147,7 @@ The packet includes the canonical command manifest used for release review:
 - `python3 scripts/customer_worker_external_write_gate_smoke.py`
 - `python3 scripts/generic_external_side_effect_gate_smoke.py --base-url "$AGENTOPS_BASE_URL"`
 - `python3 scripts/agent_gateway_runtime_event_smoke.py --base-url "$AGENTOPS_BASE_URL"`
+- `python3 scripts/worker_adapter_retry_smoke.py --base-url "$AGENTOPS_BASE_URL"`
 - `python3 scripts/agent_gateway_knowledge_scope_smoke.py`
 - `python3 scripts/knowledge_scope_policy_smoke.py`
 - `python3 scripts/agent_gateway_reviewable_lists_smoke.py --base-url "$AGENTOPS_BASE_URL"`

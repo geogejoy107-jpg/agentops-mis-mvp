@@ -1753,6 +1753,7 @@ tasks:create
 tasks:read
 tasks:claim
 runs:write
+runtime_events:write
 toolcalls:write
 artifacts:write
 memories:propose
@@ -1792,3 +1793,31 @@ still creates and verifies an Agent Plan before `run_start`, then writes a
 verified plan-evidence manifest after tool/evaluation/artifact evidence. The
 strict intake-enforced daemon path remains available for pre-planned operator
 queues.
+
+## 2026-06-24 Worker Runtime Event Summary Gate
+
+Agent workers now record an automatic `agent_worker.adapter_execution_summary`
+runtime event after adapter execution and before tool/evaluation/artifact
+writeback. The event stores only summaries, prompt/payload hashes, latency,
+status, adapter, model name, and omission proof. It does not store raw prompts,
+raw responses, credentials, private messages, or full transcripts.
+
+For Hermes and OpenClaw this is intentionally a worker-side execution summary,
+not a claim that runtime-internal tool calls are fully structured or observable.
+Those adapters still carry `observation_level=ledger_summary_only` and
+`commercial_readiness=restricted_until_runtime_tool_events` until structured
+per-action runtime events are available from the runtime itself.
+
+Validated against an isolated local server:
+
+```text
+python3 scripts/worker_adapter_retry_smoke.py --base-url http://127.0.0.1:61575
+```
+
+Observed evidence:
+
+- mock retry success wrote runtime event `rte_d94ec882ab26`;
+- Hermes confirm-run gate failure wrote runtime event `rte_ee7872afdb40`;
+- tool-call args include `worker_runtime_event_id`,
+  `worker_runtime_event_summary_recorded:true`, and, for Hermes,
+  `runtime_internal_tools_remain_opaque:true`.

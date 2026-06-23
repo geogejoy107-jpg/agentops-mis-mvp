@@ -489,6 +489,12 @@ TEST_COMMANDS = [
         "ci_step": "Server-backed smoke suite",
     },
     {
+        "id": "worker_adapter_runtime_event_summary",
+        "command": "python3 scripts/worker_adapter_retry_smoke.py --base-url \"$AGENTOPS_BASE_URL\"",
+        "summary": "Agent workers automatically record adapter execution summaries into runtime_events while preserving Hermes/OpenClaw opaque-runtime restrictions.",
+        "ci_step": "Server-backed smoke suite",
+    },
+    {
         "id": "agent_gateway_knowledge_scope",
         "command": "python3 scripts/agent_gateway_knowledge_scope_smoke.py",
         "summary": "Agent Gateway scoped knowledge visibility, provenance and spoof-resistance gate.",

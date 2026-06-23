@@ -93,6 +93,26 @@ def run_detail(base_url: str, run_id: str) -> dict:
     return detail
 
 
+def verify_worker_runtime_event(detail: dict, adapter: str, expected_status: str) -> str:
+    runtime_events = detail.get("runtime_events") or []
+    matched = next(
+        (
+            item
+            for item in runtime_events
+            if item.get("event_type") == "agent_worker.adapter_execution_summary"
+            and item.get("status") == expected_status
+            and item.get("prompt_hash")
+            and item.get("raw_payload_hash")
+        ),
+        None,
+    )
+    require(matched is not None, f"{adapter} missing worker runtime summary event: {runtime_events}")
+    require((matched.get("input_summary") or "").find(f"adapter={adapter}") >= 0, f"{adapter} runtime event input summary mismatch: {matched}")
+    serialized = json.dumps(matched, ensure_ascii=False)
+    require("sk-" not in serialized and "raw prompt" not in serialized.lower(), f"{adapter} runtime event leaked unsafe content: {matched}")
+    return matched["runtime_event_id"]
+
+
 def verify_retry_success(base_url: str, worker_result: dict) -> dict:
     result = (worker_result.get("results") or [{}])[0]
     run_id = result.get("run_id")
@@ -106,16 +126,20 @@ def verify_retry_success(base_url: str, worker_result: dict) -> dict:
     tool_calls = detail.get("tool_calls") or []
     evaluations = detail.get("evaluations") or []
     require(run.get("status") == "completed", f"retry success run not completed: {run}")
+    runtime_event_id = verify_worker_runtime_event(detail, "mock", "completed")
     tool = next((item for item in tool_calls if item.get("tool_name") == "agent_worker.mock"), {})
     args = tool_args(tool)
     require(tool.get("status") == "completed", f"retry success tool call not completed: {tool_calls}")
     require(args.get("attempt_count") == 2 and args.get("max_attempts") == 2, f"retry args missing attempt metadata: {args}")
+    require(args.get("worker_runtime_event_id") == runtime_event_id, f"retry args missing runtime event id: {args}")
+    require(args.get("worker_runtime_event_summary_recorded") is True, f"retry args missing runtime summary flag: {args}")
     history = args.get("retry_history") or []
     require(len(history) == 2 and history[0].get("retryable") is True and history[1].get("ok") is True, f"retry history invalid: {history}")
     require(any(((ev.get("rubric_json") or ev.get("rubric") or "")).find("attempt_count") >= 0 for ev in evaluations), f"evaluation rubric missing attempt metadata: {evaluations}")
     return {
         "run_id": run_id,
         "attempt_count": args.get("attempt_count"),
+        "worker_runtime_event_id": runtime_event_id,
         "retry_history": history,
         "plan_id": result.get("plan_id"),
         "plan_evidence_manifest_id": result.get("plan_evidence_manifest_id"),
@@ -134,6 +158,7 @@ def verify_non_retry_failure(base_url: str, worker_result: dict) -> dict:
     run = detail.get("run") or {}
     tool_calls = detail.get("tool_calls") or []
     require(run.get("status") == "failed", f"non-retry run should fail: {run}")
+    runtime_event_id = verify_worker_runtime_event(detail, "hermes", "failed")
     tool = next((item for item in tool_calls if item.get("tool_name") == "agent_worker.hermes"), {})
     args = tool_args(tool)
     require(tool.get("status") == "failed", f"non-retry tool call should fail: {tool_calls}")
@@ -143,11 +168,15 @@ def verify_non_retry_failure(base_url: str, worker_result: dict) -> dict:
     require(args.get("risk_floor") == "medium" and args.get("effective_risk_level") == "medium", f"Hermes risk floor missing from tool args: {args}")
     require(args.get("commercial_readiness") == "restricted_until_runtime_tool_events", f"Hermes commercial restriction missing from tool args: {args}")
     require(args.get("requires_prepared_action_for_external_write") is True, f"Hermes prepared-action requirement missing from tool args: {args}")
+    require(args.get("worker_runtime_event_id") == runtime_event_id, f"Hermes tool args missing runtime event id: {args}")
+    require(args.get("worker_runtime_event_summary_recorded") is True, f"Hermes runtime summary flag missing: {args}")
+    require(args.get("runtime_internal_tools_remain_opaque") is True, f"Hermes opacity proof missing: {args}")
     history = args.get("retry_history") or []
     require(len(history) == 1 and history[0].get("retryable") is False, f"non-retry history invalid: {history}")
     return {
         "run_id": run_id,
         "attempt_count": args.get("attempt_count"),
+        "worker_runtime_event_id": runtime_event_id,
         "error_type": result.get("error_type"),
         "plan_id": result.get("plan_id"),
         "plan_evidence_manifest_id": result.get("plan_evidence_manifest_id"),
@@ -176,6 +205,7 @@ def smoke(base_url: str, stamp: str) -> dict:
                 "tasks:read",
                 "tasks:claim",
                 "runs:write",
+                "runtime_events:write",
                 "toolcalls:write",
                 "artifacts:write",
                 "memories:propose",
@@ -231,6 +261,7 @@ def smoke(base_url: str, stamp: str) -> dict:
             "retry_attempt_count": retry_result["attempt_count"],
             "retry_plan_id": retry_result["plan_id"],
             "retry_plan_evidence_manifest_id": retry_result["plan_evidence_manifest_id"],
+            "retry_worker_runtime_event_id": retry_result["worker_runtime_event_id"],
             "confirm_gate_task_id": gate_task_id,
             "confirm_gate_run_id": gate_result["run_id"],
             "confirm_gate_attempt_count": gate_result["attempt_count"],
@@ -238,6 +269,7 @@ def smoke(base_url: str, stamp: str) -> dict:
             "confirm_gate_plan_id": gate_result["plan_id"],
             "confirm_gate_plan_evidence_manifest_id": gate_result["plan_evidence_manifest_id"],
             "confirm_gate_plan_evidence_pass": gate_result["plan_evidence_pass"],
+            "confirm_gate_worker_runtime_event_id": gate_result["worker_runtime_event_id"],
             "token_omitted": True,
         }
     finally:

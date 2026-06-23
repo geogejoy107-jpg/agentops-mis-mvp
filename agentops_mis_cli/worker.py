@@ -1043,6 +1043,71 @@ def create_worker_plan_manifest(client: AgentOpsClient, plan_id: str, run_id: st
     return client.post("/api/agent-gateway/plan-evidence-manifests", payload)
 
 
+def adapter_model_name(args) -> str:
+    if args.adapter == "hermes":
+        return args.hermes_model
+    if args.adapter == "openclaw":
+        return args.openclaw_agent
+    return "agentops-mock-worker"
+
+
+def record_worker_runtime_event(
+    client: AgentOpsClient,
+    args,
+    *,
+    run_id: str,
+    task_id: str,
+    result: AdapterResult,
+    capability: dict,
+) -> dict:
+    event_payload = {
+        "workspace_id": client.workspace_id,
+        "agent_id": client.agent_id,
+        "run_id": run_id,
+        "adapter": args.adapter,
+        "event_type": "agent_worker.adapter_execution_summary",
+        "status": "completed" if result.ok else "failed",
+        "input_summary": (
+            f"Worker adapter={args.adapter} task={redact_text(task_id, 120)} "
+            f"observation={capability.get('observation_level')}"
+        ),
+        "output_summary": result.output_summary,
+        "error_message": result.error_message,
+        "latency_ms": result.duration_ms,
+        "model_name": adapter_model_name(args),
+        "prompt_hash": result.prompt_hash,
+        "raw_payload_hash": result.raw_payload_hash or stable_hash({
+            "adapter": args.adapter,
+            "run_id": run_id,
+            "task_id": task_id,
+            "ok": result.ok,
+            "error_type": result.error_type,
+            "attempt_count": result.attempt_count,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        }),
+        "metadata": {
+            "task_id": task_id,
+            "adapter": args.adapter,
+            "ok": result.ok,
+            "error_type": result.error_type,
+            "attempt_count": result.attempt_count,
+            "max_attempts": result.max_attempts,
+            "observation_level": capability.get("observation_level"),
+            "commercial_readiness": capability.get("commercial_readiness"),
+            "requires_prepared_action_for_external_write": capability.get("requires_prepared_action_for_external_write"),
+            "runtime_internal_tools_remain_opaque": capability.get("observation_level") == "ledger_summary_only",
+            "event_is_worker_summary_not_raw_trace": True,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
+        "source": "agentops-worker.adapter-execution-summary",
+    }
+    return client.post("/api/agent-gateway/runtime-events", event_payload)
+
+
 def process_one_task(client: AgentOpsClient, args) -> dict:
     pull_query = {
         "agent_id": client.agent_id,
@@ -1116,6 +1181,15 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
 
     result = execute_adapter_with_retries(task, args)
     tool_risk = max_risk(task.get("risk_level"), capability.get("risk_floor"))
+    runtime_event_payload = record_worker_runtime_event(
+        client,
+        args,
+        run_id=run_id,
+        task_id=task_id,
+        result=result,
+        capability=capability,
+    )
+    worker_runtime_event_id = ((runtime_event_payload.get("runtime_event") or {}).get("runtime_event_id"))
 
     tool_status = "completed" if result.ok else "failed"
     tool_payload = client.post("/api/agent-gateway/tool-calls", {
@@ -1142,6 +1216,9 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
             "effective_risk_level": tool_risk,
             "commercial_readiness": capability.get("commercial_readiness"),
             "requires_prepared_action_for_external_write": capability.get("requires_prepared_action_for_external_write"),
+            "worker_runtime_event_id": worker_runtime_event_id,
+            "worker_runtime_event_summary_recorded": bool(worker_runtime_event_id),
+            "runtime_internal_tools_remain_opaque": capability.get("observation_level") == "ledger_summary_only",
             "hermes_max_tokens": args.hermes_max_tokens if args.adapter == "hermes" else None,
             "knowledge_retrieval_evidence_consumed": bool(knowledge_evidence.get("knowledge_retrieval_evidence_consumed")),
             "knowledge_retrieval_packet_hash": knowledge_evidence.get("packet_hash"),
@@ -1219,6 +1296,9 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
             "effective_risk_level": tool_risk,
             "commercial_readiness": capability.get("commercial_readiness"),
             "requires_prepared_action_for_external_write": capability.get("requires_prepared_action_for_external_write"),
+            "worker_runtime_event_id": worker_runtime_event_id,
+            "worker_runtime_event_summary_recorded": bool(worker_runtime_event_id),
+            "runtime_internal_tools_remain_opaque": capability.get("observation_level") == "ledger_summary_only",
             "knowledge_retrieval_evidence_consumed": bool(knowledge_evidence.get("knowledge_retrieval_evidence_consumed")),
             "knowledge_retrieval_packet_hash": knowledge_evidence.get("packet_hash"),
             "knowledge_retrieval_query_hash": knowledge_evidence.get("query_hash"),
@@ -1294,6 +1374,9 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
             "effective_risk_level": tool_risk,
             "commercial_readiness": capability.get("commercial_readiness"),
             "requires_prepared_action_for_external_write": capability.get("requires_prepared_action_for_external_write"),
+            "worker_runtime_event_id": worker_runtime_event_id,
+            "worker_runtime_event_summary_recorded": bool(worker_runtime_event_id),
+            "runtime_internal_tools_remain_opaque": capability.get("observation_level") == "ledger_summary_only",
             "knowledge_retrieval_evidence_consumed": bool(knowledge_evidence.get("knowledge_retrieval_evidence_consumed")),
             "knowledge_retrieval_packet_hash": knowledge_evidence.get("packet_hash"),
             "knowledge_retrieval_query_hash": knowledge_evidence.get("query_hash"),
@@ -1344,6 +1427,7 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
         },
         "output_summary": result.output_summary,
         "error_type": result.error_type,
+        "worker_runtime_event_id": worker_runtime_event_id,
         "knowledge_retrieval_evidence": {
             "consumed": bool(knowledge_evidence.get("knowledge_retrieval_evidence_consumed")),
             "packet_hash": knowledge_evidence.get("packet_hash"),
