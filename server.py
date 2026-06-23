@@ -108,6 +108,12 @@ from agentops_mis_core.operator_command_center import (
     build_command_center_stale_worker_refs,
     command_center_status,
 )
+from agentops_mis_core.operator_evidence import (
+    build_operator_run_memory_review,
+    operator_evidence_report_status,
+    operator_evidence_report_summary,
+    operator_run_evidence_status,
+)
 from agentops_mis_core.read_model_cache import ReadModelCache
 from agentops_mis_core.worker_fleet import (
     build_worker_remote_fleet_summary,
@@ -18730,25 +18736,7 @@ def operator_run_memory_review(conn: sqlite3.Connection, run_id: str | None, tas
                LIMIT ?""",
             [*params, max(1, min(int(limit or 8), 25))],
         ).fetchall())
-    status_counts = {
-        "candidate": sum(1 for row in rows if row.get("review_status") == "candidate"),
-        "approved": sum(1 for row in rows if row.get("review_status") == "approved"),
-        "rejected": sum(1 for row in rows if row.get("review_status") == "rejected"),
-        "stale": sum(1 for row in rows if row.get("review_status") == "stale"),
-        "superseded": sum(1 for row in rows if row.get("review_status") == "superseded"),
-    }
-    pending_review = status_counts["candidate"] + status_counts["stale"]
-    status = "missing" if not rows else "pending_review" if pending_review else "reviewed"
-    return {
-        "status": status,
-        "total": len(rows),
-        "pending_review": pending_review,
-        "approved": status_counts["approved"],
-        "status_counts": status_counts,
-        "items": rows,
-        "raw_content_omitted": True,
-        "token_omitted": True,
-    }
+    return build_operator_run_memory_review(rows)
 
 
 def operator_run_evidence_item(conn: sqlite3.Connection, run: sqlite3.Row) -> dict:
@@ -18786,9 +18774,8 @@ def operator_run_evidence_item(conn: sqlite3.Connection, run: sqlite3.Row) -> di
         {"id": "memory_review_resolved", "ok": int(memory_review.get("pending_review") or 0) == 0, "message": "Run/task memory rows are approved/rejected/superseded rather than pending candidate/stale review."},
         {"id": "approval_queue_clear", "ok": not any(item.get("decision") == "pending" for item in approvals), "message": "Run has no pending approval rows."},
     ]
-    failed = [check for check in checks if not check["ok"]]
-    blocking_ids = {"agent_plan_bound", "agent_plan_verifies", "plan_approval_resolved", "plan_evidence_manifest_verified"}
-    status = "blocked" if any(check["id"] in blocking_ids for check in failed) else "attention" if failed else "ready"
+    evidence_status = operator_run_evidence_status(checks)
+    status = evidence_status["status"]
     commands = [
         f"agentops run get --run-id {run_id}",
     ]
@@ -18815,7 +18802,7 @@ def operator_run_evidence_item(conn: sqlite3.Connection, run: sqlite3.Row) -> di
         "run_status": run["status"],
         "status": status,
         "checks": checks,
-        "failed_check_ids": [check["id"] for check in failed],
+        "failed_check_ids": evidence_status["failed_check_ids"],
         "evidence_counts": counts,
         "agent_plan": {
             "plan_id": plan["plan_id"] if plan else None,
@@ -18868,25 +18855,8 @@ def operator_evidence_report(conn: sqlite3.Connection, headers, qs=None) -> dict
     ).fetchall()
     items = [operator_run_evidence_item(conn, row) for row in rows]
     receipt_summary = (list_operator_action_receipts(conn, {"workspace_id": [workspace_id], "limit": [str(min(max(limit, 8), 25))]}, headers).get("summary") or {})
-    summary = {
-        "runs": len(items),
-        "ready": sum(1 for item in items if item.get("status") == "ready"),
-        "attention": sum(1 for item in items if item.get("status") == "attention"),
-        "blocked": sum(1 for item in items if item.get("status") == "blocked"),
-        "verified_plan_evidence_manifests": sum(1 for item in items if (item.get("plan_evidence_manifest") or {}).get("verification_pass")),
-        "missing_plan_evidence_manifests": sum(1 for item in items if not (item.get("plan_evidence_manifest") or {}).get("manifest_id")),
-        "pending_approvals": sum(int((item.get("approvals") or {}).get("pending") or 0) for item in items),
-        "memory_reviews": sum(int((item.get("memory_review") or {}).get("total") or 0) for item in items),
-        "memory_review_ready": sum(1 for item in items if (item.get("memory_review") or {}).get("status") == "reviewed"),
-        "missing_memory_reviews": sum(1 for item in items if (item.get("memory_review") or {}).get("status") == "missing"),
-        "pending_memory_reviews": sum(int((item.get("memory_review") or {}).get("pending_review") or 0) for item in items),
-        "approval_required_plans": sum(1 for item in items if (item.get("agent_plan") or {}).get("approval_required")),
-        "approved_required_plans": sum(1 for item in items if (item.get("agent_plan") or {}).get("approval_required") and (item.get("agent_plan") or {}).get("approval_decision") == "approved"),
-        "action_receipts": int(receipt_summary.get("receipts") or 0),
-        "verified_action_receipts": int(receipt_summary.get("verified") or 0),
-        "evaluated_action_receipts": int(receipt_summary.get("evaluated") or 0),
-    }
-    status = "blocked" if summary["blocked"] else "attention" if summary["attention"] or summary["pending_approvals"] or summary["missing_memory_reviews"] or summary["pending_memory_reviews"] else "ready"
+    summary = operator_evidence_report_summary(items, receipt_summary)
+    status = operator_evidence_report_status(summary)
     return {
         "provider": "agentops-operator",
         "operation": "operator_evidence_report",

@@ -1175,6 +1175,39 @@ python3 scripts/operator_handoff_smoke.py --base-url "$AGENTOPS_BASE_URL"
 python3 scripts/operator_loop_launch_packet_smoke.py --base-url "$AGENTOPS_BASE_URL"
 ```
 
+### Slice 39: Operator Evidence Report Projection
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/operator_evidence.py`
+
+Moved out of `server.py`:
+
+- run/task memory-review public projection after server-owned memory row reads
+- run evidence ready/attention/blocked status classification
+- evidence-report summary aggregation across plan manifests, approvals, memory
+  review, and action receipts
+- evidence-report ready/attention/blocked status selection
+
+Still owned by `server.py`:
+
+- HTTP routes
+- SQLite run/task/memory/approval/manifest reads
+- Agent Plan and plan-evidence verification calls
+- recommended command construction
+- final response assembly and safety contract fields
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/operator_evidence_report_smoke.py
+python3 scripts/operator_handoff_smoke.py --base-url "$AGENTOPS_BASE_URL"
+python3 scripts/operator_start_check_smoke.py --base-url "$AGENTOPS_BASE_URL" --adapter hermes --adapter openclaw
+```
+
 ## Next Candidate Slices
 
 - Continue P1-05 with small smoke-backed strangler slices only; prefer pure
