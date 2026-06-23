@@ -420,10 +420,10 @@ def compact_runtime_current_code_gate(local: dict[str, Any]) -> dict[str, Any]:
         strict_command = f"{strict_command} --expect-head-sha {shlex.quote(git_head)}"
     has_runtime_signal = bool(runtime or source_gate)
     current = (
-        True
-        if not has_runtime_signal
-        else source_gate.get("ok") is True or runtime.get("current") is True or runtime.get("status") == "current"
-    )
+        source_gate.get("ok") is True
+        or runtime.get("current") is True
+        or runtime.get("status") == "current"
+    ) if has_runtime_signal else False
     status = runtime.get("status") or source_gate.get("status") or ("current" if current else "unknown")
     return {
         "operation": "local_current_code_gate",

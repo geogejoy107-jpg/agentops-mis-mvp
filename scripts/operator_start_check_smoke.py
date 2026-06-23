@@ -19,7 +19,10 @@ from urllib.request import Request, urlopen
 
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 CLI = ROOT / "scripts" / "agentops"
+from agentops_mis_core.operator_start_check import compact_runtime_current_code_gate
 SECRET_PATTERNS = [
     re.compile(r"Authorization:", re.IGNORECASE),
     re.compile(r"Bearer\s+[A-Za-z0-9._~+/=-]+"),
@@ -290,6 +293,9 @@ def main() -> int:
     args = parser.parse_args()
     outputs: list[str] = []
     try:
+        missing_runtime_gate = compact_runtime_current_code_gate({})
+        require(missing_runtime_gate.get("ok") is False, f"missing runtime signal must fail closed: {missing_runtime_gate}")
+        require(missing_runtime_gate.get("status") == "unknown", f"missing runtime signal status should be unknown: {missing_runtime_gate}")
         with tempfile.TemporaryDirectory(prefix="agentops-start-check-") as tmp:
             db_path = Path(tmp) / "agentops_mis.db"
             port = free_port()
