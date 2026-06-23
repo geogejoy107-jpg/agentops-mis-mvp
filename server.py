@@ -19728,6 +19728,106 @@ def operator_run_worker_knowledge_retrieval(conn: sqlite3.Connection, run_id: st
     }
 
 
+def operator_run_worker_runtime_summary(conn: sqlite3.Connection, run_id: str | None) -> dict:
+    if not run_id:
+        return {
+            "applicable": False,
+            "status": "not_applicable",
+            "worker_tool_calls": 0,
+            "summary_events": 0,
+            "token_omitted": True,
+        }
+    tool_rows = conn.execute(
+        """SELECT tool_call_id, tool_name, status, normalized_args_json
+        FROM tool_calls
+        WHERE run_id=? AND tool_name LIKE 'agent_worker.%'
+        ORDER BY created_at DESC""",
+        (run_id,),
+    ).fetchall()
+    event_rows = conn.execute(
+        """SELECT runtime_event_id,event_type,status,model_name,latency_ms,prompt_hash,raw_payload_hash,
+                  input_summary,output_summary,error_message,created_at
+        FROM runtime_events
+        WHERE run_id=? AND event_type='agent_worker.adapter_execution_summary'
+        ORDER BY created_at DESC""",
+        (run_id,),
+    ).fetchall()
+    tool_event_ids: set[str] = set()
+    tool_items = []
+    for row in tool_rows:
+        try:
+            args = json.loads(row["normalized_args_json"] or "{}")
+        except json.JSONDecodeError:
+            args = {}
+        event_id = args.get("worker_runtime_event_id")
+        if event_id:
+            tool_event_ids.add(str(event_id))
+        tool_items.append({
+            "tool_call_id": row["tool_call_id"],
+            "tool_name": row["tool_name"],
+            "tool_status": row["status"],
+            "worker_runtime_event_id": event_id,
+            "summary_recorded": bool(args.get("worker_runtime_event_summary_recorded")),
+            "runtime_internal_tools_remain_opaque": args.get("runtime_internal_tools_remain_opaque") is True,
+            "observation_level": args.get("observation_level"),
+            "commercial_readiness": args.get("commercial_readiness"),
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        })
+    event_items = []
+    for row in event_rows:
+        event_items.append({
+            "runtime_event_id": row["runtime_event_id"],
+            "event_type": row["event_type"],
+            "status": row["status"],
+            "model_name": redact_text(row["model_name"], 120) if row["model_name"] else None,
+            "latency_ms": row["latency_ms"],
+            "prompt_hash_present": bool(row["prompt_hash"]),
+            "payload_hash_present": bool(row["raw_payload_hash"]),
+            "input_summary": redact_text(row["input_summary"], 200) if row["input_summary"] else None,
+            "output_summary": redact_text(row["output_summary"], 200) if row["output_summary"] else None,
+            "error_message": redact_text(row["error_message"], 200) if row["error_message"] else None,
+            "created_at": row["created_at"],
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        })
+    applicable = bool(tool_rows)
+    ready_events = [
+        item for item in event_items
+        if item.get("runtime_event_id")
+        and item.get("prompt_hash_present")
+        and item.get("payload_hash_present")
+    ]
+    linked_event_ids = {
+        str(item.get("runtime_event_id"))
+        for item in ready_events
+        if item.get("runtime_event_id") in tool_event_ids
+    }
+    status = (
+        "not_applicable"
+        if not applicable
+        else "ready"
+        if ready_events and (not tool_event_ids or linked_event_ids)
+        else "missing"
+    )
+    return {
+        "applicable": applicable,
+        "status": status,
+        "worker_tool_calls": len(tool_rows),
+        "summary_events": len(event_items),
+        "linked_summary_events": len(linked_event_ids),
+        "event_ids": [item.get("runtime_event_id") for item in ready_events if item.get("runtime_event_id")],
+        "tool_items": tool_items[:5],
+        "events": event_items[:5],
+        "event_is_worker_summary_not_raw_trace": bool(ready_events),
+        "raw_prompt_omitted": True,
+        "raw_response_omitted": True,
+        "token_omitted": True,
+    }
+
+
 def operator_run_evidence_item(conn: sqlite3.Connection, run: sqlite3.Row) -> dict:
     run_id = run["run_id"]
     task_id = run["task_id"]
@@ -19746,6 +19846,7 @@ def operator_run_evidence_item(conn: sqlite3.Connection, run: sqlite3.Row) -> di
     ).fetchall())
     memory_review = operator_run_memory_review(conn, run_id, task_id)
     worker_knowledge_retrieval = operator_run_worker_knowledge_retrieval(conn, run_id)
+    worker_runtime_summary = operator_run_worker_runtime_summary(conn, run_id)
     gap_decision = latest_execution_evidence_gap_decision(conn, run_id)
     checks = [
         {"id": "agent_plan_bound", "ok": bool(run["agent_plan_id"] and run["plan_hash"]), "message": "Run is bound to an Agent Plan and plan_hash."},
@@ -19764,6 +19865,11 @@ def operator_run_evidence_item(conn: sqlite3.Connection, run: sqlite3.Row) -> di
             "id": "worker_knowledge_retrieval",
             "ok": not worker_knowledge_retrieval.get("applicable") or worker_knowledge_retrieval.get("status") == "ready",
             "message": "Agent worker runs consume compact knowledge retrieval evidence before adapter execution.",
+        },
+        {
+            "id": "worker_runtime_summary",
+            "ok": not worker_runtime_summary.get("applicable") or worker_runtime_summary.get("status") == "ready",
+            "message": "Agent worker runs record adapter execution summaries in runtime_events.",
         },
         {"id": "memory_review_recorded", "ok": int(memory_review.get("total") or 0) > 0, "message": "Run/task has a memory candidate or reviewed memory row."},
         {"id": "memory_review_resolved", "ok": int(memory_review.get("pending_review") or 0) == 0, "message": "Run/task memory rows are approved/rejected/superseded rather than pending candidate/stale review."},
@@ -19816,6 +19922,7 @@ def operator_run_evidence_item(conn: sqlite3.Connection, run: sqlite3.Row) -> di
             "failed_check_ids": [check.get("id") for check in (manifest_verification or {}).get("failed_checks") or []],
         },
         "worker_knowledge_retrieval": worker_knowledge_retrieval,
+        "worker_runtime_summary": worker_runtime_summary,
         "memory_review": memory_review,
         "approvals": {
             "count": len(approvals),

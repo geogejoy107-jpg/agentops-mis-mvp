@@ -84,6 +84,12 @@ def operator_evidence_report_summary(items: list[dict[str, Any]], receipt_summar
         "worker_knowledge_retrieval_unavailable": sum(
             1 for item in items if (item.get("worker_knowledge_retrieval") or {}).get("status") == "unavailable"
         ),
+        "worker_runtime_summary_ready": sum(
+            1 for item in items if (item.get("worker_runtime_summary") or {}).get("status") == "ready"
+        ),
+        "worker_runtime_summary_missing": sum(
+            1 for item in items if (item.get("worker_runtime_summary") or {}).get("status") == "missing"
+        ),
         "approval_required_plans": sum(1 for item in items if (item.get("agent_plan") or {}).get("approval_required")),
         "approved_required_plans": sum(
             1
@@ -107,6 +113,7 @@ def operator_evidence_report_status(summary: dict[str, Any]) -> str:
         or int(summary.get("pending_memory_reviews") or 0)
         or int(summary.get("worker_knowledge_retrieval_missing") or 0)
         or int(summary.get("worker_knowledge_retrieval_unavailable") or 0)
+        or int(summary.get("worker_runtime_summary_missing") or 0)
     ):
         return "attention"
     return "ready"

@@ -1821,3 +1821,5 @@ Observed evidence:
 - tool-call args include `worker_runtime_event_id`,
   `worker_runtime_event_summary_recorded:true`, and, for Hermes,
   `runtime_internal_tools_remain_opaque:true`.
+- `operator evidence-report` now exposes `worker_runtime_summary.status=ready`
+  and top-level `worker_runtime_summary_ready` counts for worker runs.

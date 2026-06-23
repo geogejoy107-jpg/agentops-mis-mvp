@@ -113,6 +113,22 @@ def verify_worker_runtime_event(detail: dict, adapter: str, expected_status: str
     return matched["runtime_event_id"]
 
 
+def verify_operator_runtime_summary(base_url: str, run_id: str, runtime_event_id: str, adapter: str) -> None:
+    status, report = http_json("GET", base_url, f"/api/operator/evidence-report?run_id={run_id}&limit=5")
+    require(status == 200, f"{adapter} operator evidence report failed: {status} {report}")
+    item = next((entry for entry in report.get("runs") or [] if entry.get("run_id") == run_id), None)
+    require(item is not None, f"{adapter} operator report missing run: {report}")
+    runtime_summary = item.get("worker_runtime_summary") or {}
+    require(runtime_summary.get("status") == "ready", f"{adapter} operator runtime summary not ready: {runtime_summary}")
+    require(runtime_event_id in (runtime_summary.get("event_ids") or []), f"{adapter} operator runtime event id missing: {runtime_summary}")
+    require(runtime_summary.get("raw_prompt_omitted") is True, f"{adapter} operator runtime summary missing raw prompt omission: {runtime_summary}")
+    checks = {check.get("id"): check for check in item.get("checks") or []}
+    require((checks.get("worker_runtime_summary") or {}).get("ok") is True, f"{adapter} worker runtime summary check missing: {checks}")
+    summary = report.get("summary") or {}
+    require(int(summary.get("worker_runtime_summary_ready") or 0) >= 1, f"{adapter} report summary missing runtime summary count: {summary}")
+    require(int(summary.get("worker_runtime_summary_missing") or 0) == 0, f"{adapter} report summary should not flag missing runtime summary: {summary}")
+
+
 def verify_retry_success(base_url: str, worker_result: dict) -> dict:
     result = (worker_result.get("results") or [{}])[0]
     run_id = result.get("run_id")
@@ -127,6 +143,7 @@ def verify_retry_success(base_url: str, worker_result: dict) -> dict:
     evaluations = detail.get("evaluations") or []
     require(run.get("status") == "completed", f"retry success run not completed: {run}")
     runtime_event_id = verify_worker_runtime_event(detail, "mock", "completed")
+    verify_operator_runtime_summary(base_url, run_id, runtime_event_id, "mock")
     tool = next((item for item in tool_calls if item.get("tool_name") == "agent_worker.mock"), {})
     args = tool_args(tool)
     require(tool.get("status") == "completed", f"retry success tool call not completed: {tool_calls}")
@@ -159,6 +176,7 @@ def verify_non_retry_failure(base_url: str, worker_result: dict) -> dict:
     tool_calls = detail.get("tool_calls") or []
     require(run.get("status") == "failed", f"non-retry run should fail: {run}")
     runtime_event_id = verify_worker_runtime_event(detail, "hermes", "failed")
+    verify_operator_runtime_summary(base_url, run_id, runtime_event_id, "hermes")
     tool = next((item for item in tool_calls if item.get("tool_name") == "agent_worker.hermes"), {})
     args = tool_args(tool)
     require(tool.get("status") == "failed", f"non-retry tool call should fail: {tool_calls}")
