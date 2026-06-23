@@ -1053,7 +1053,8 @@ def fetch_loop_launch_brief(args, client: AgentOpsClient) -> dict:
             "full_handoff": "true" if getattr(args, "full_handoff", False) else None,
         },
     )
-    return compact_loop_launch_packet(payload, adapter=args.adapter)
+    local_readiness = client.get("/api/local/readiness")
+    return compact_loop_launch_packet(payload, adapter=args.adapter, local_readiness=local_readiness)
 
 
 def compact_loop_driver_acceptance_gate(payload: dict, *, adapter: str) -> dict:
@@ -1088,6 +1089,8 @@ def compact_loop_driver_acceptance_gate(payload: dict, *, adapter: str) -> dict:
             "live_dispatch_requires_confirm_run": bool(decision.get("live_dispatch_requires_confirm_run")),
             "human_review_required": bool(decision.get("human_review_required")),
             "memory_review_required": bool(decision.get("memory_review_required")),
+            "current_code_required": decision.get("current_code_required") is not False,
+            "current_code_ok": decision.get("current_code_ok") is not False,
             "agent_plan_required": decision.get("agent_plan_required") is not False,
             "knowledge_search_required": decision.get("knowledge_search_required") is not False,
             "base_compare_required": decision.get("base_compare_required") is not False,
@@ -1100,12 +1103,15 @@ def compact_loop_driver_acceptance_gate(payload: dict, *, adapter: str) -> dict:
             "pending_approvals": int(summary.get("pending_approvals") or 0),
             "memory_candidates": int(summary.get("memory_candidates") or 0),
             "required_ledgers": summary.get("required_ledgers") or [],
+            "current_code_status": summary.get("current_code_status"),
+            "current_code_ok": summary.get("current_code_ok"),
             "runtime_doctor_status": summary.get("runtime_doctor_status"),
             "adapter_readiness": summary.get("adapter_readiness"),
             "live_product_readiness": summary.get("live_product_readiness"),
         },
         "commands": {
             "start_check": commands.get("start_check") or f"agentops operator start-check --adapter {adapter} --limit 8",
+            "current_code_check": commands.get("current_code_check"),
             "loop_driver_preview": commands.get("loop_driver_preview"),
             "loop_driver_confirm": commands.get("loop_driver_confirm"),
             "runtime_doctor": commands.get("runtime_doctor"),
