@@ -20,7 +20,9 @@ import {
   loadOperatorExecutionMode,
   loadWorkerAdapterReadiness,
   loadWorkerFleet,
+  loadWorkerFleetHygiene,
   loadWorkerStatus,
+  applyWorkerFleetHygiene,
   restartLocalWorkerDaemon,
   startLocalWorkerDaemon,
   stopLocalWorkerDaemon,
@@ -30,6 +32,7 @@ import {
   type WorkerAdapterReadinessPayload,
   type WorkerDaemonResult,
   type WorkerDispatchResult,
+  type WorkerFleetHygienePayload,
   type WorkerFleetPayload,
   type WorkerStatusPayload,
 } from "../../data/liveApi";
@@ -40,6 +43,7 @@ const WORKER_ADAPTERS: WorkerAdapterName[] = ["mock", "hermes", "openclaw"];
 interface WorkerConsoleData {
   workerStatus: WorkerStatusPayload;
   workerFleet: WorkerFleetPayload;
+  fleetHygiene: WorkerFleetHygienePayload;
   adapterReadiness: WorkerAdapterReadinessPayload;
   executionMode: OperatorExecutionModePayload;
 }
@@ -63,6 +67,8 @@ export function WorkerConsole() {
   const [copiedCommand, setCopiedCommand] = useState<string | null>(null);
   const [lastDispatch, setLastDispatch] = useState<WorkerDispatchResult | null>(null);
   const [lastDaemonResult, setLastDaemonResult] = useState<WorkerDaemonResult | null>(null);
+  const [lastHygieneResult, setLastHygieneResult] = useState<WorkerFleetHygienePayload | null>(null);
+  const [confirmCleanup, setConfirmCleanup] = useState(false);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
 
   const copy = pick(locale, {
@@ -79,6 +85,21 @@ export function WorkerConsole() {
       executionMode: "Execution Mode",
       adapterReadiness: "Adapter readiness",
       workerFleet: "Worker fleet",
+      fleetHygiene: "Fleet hygiene",
+      hygieneSummary: "Plan and apply cleanup for stuck worker tasks plus never-seen or stale remote enrollments. Apply requires explicit confirmation and never executes live runtimes.",
+      previewHygiene: "Preview hygiene",
+      applyHygiene: "Apply confirmed cleanup",
+      confirmCleanup: "Confirm cleanup",
+      confirmCleanupHint: "Releases stale running tasks, blocks linked stale runs, and revokes stale enrollments/sessions.",
+      actionsAvailable: "Actions available",
+      staleNeverSeen: "Never seen",
+      staleHeartbeat: "Heartbeat stale",
+      releasedTasks: "Released tasks",
+      revokedEnrollments: "Revoked enrollments",
+      hygieneReadOnly: "read-only plan",
+      hygieneApplied: "cleanup applied",
+      remoteLanes: "Remote lanes",
+      localLanes: "Local lanes",
       daemonControl: "Daemon control",
       dispatchOnce: "Dispatch once",
       startDaemon: "Start daemon",
@@ -134,6 +155,21 @@ export function WorkerConsole() {
       executionMode: "执行模式",
       adapterReadiness: "Adapter 就绪",
       workerFleet: "Worker Fleet",
+      fleetHygiene: "Fleet 清理",
+      hygieneSummary: "规划并执行卡住 worker 任务、从未 heartbeat 或 heartbeat 过期远程 enrollment 的清理。应用清理必须显式确认，且不会执行真实 runtime。",
+      previewHygiene: "预览清理计划",
+      applyHygiene: "确认执行清理",
+      confirmCleanup: "确认清理",
+      confirmCleanupHint: "会释放 stale running 任务、阻断关联 stale run，并吊销 stale enrollment/session。",
+      actionsAvailable: "可用动作",
+      staleNeverSeen: "从未 heartbeat",
+      staleHeartbeat: "Heartbeat 过期",
+      releasedTasks: "已释放任务",
+      revokedEnrollments: "已吊销 enrollment",
+      hygieneReadOnly: "只读计划",
+      hygieneApplied: "已执行清理",
+      remoteLanes: "远程 lane",
+      localLanes: "本地 lane",
       daemonControl: "常驻控制",
       dispatchOnce: "派发一次",
       startDaemon: "启动常驻",
@@ -179,17 +215,19 @@ export function WorkerConsole() {
   });
 
   const { data, loading, error, refresh } = useLiveData<WorkerConsoleData>(async () => {
-    const [workerStatus, workerFleet, adapterReadiness, executionMode] = await Promise.all([
+    const [workerStatus, workerFleet, fleetHygiene, adapterReadiness, executionMode] = await Promise.all([
       loadWorkerStatus(),
       loadWorkerFleet(),
+      loadWorkerFleetHygiene({ limit: 8 }),
       loadWorkerAdapterReadiness(),
       loadOperatorExecutionMode(selectedAdapter, confirmRun, 8),
     ]);
-    return { workerStatus, workerFleet, adapterReadiness, executionMode };
+    return { workerStatus, workerFleet, fleetHygiene, adapterReadiness, executionMode };
   }, [selectedAdapter, confirmRun]);
 
   const workerStatus = data?.workerStatus;
   const workerFleet = data?.workerFleet;
+  const fleetHygiene = lastHygieneResult || data?.fleetHygiene;
   const adapterReadiness = data?.adapterReadiness;
   const executionMode = data?.executionMode;
   const selectedRoute = executionMode?.selected_route;
@@ -261,6 +299,26 @@ export function WorkerConsole() {
     setLastDaemonResult(result);
     setActionMessage(result.ok ? "stopped" : result.error || "stop failed");
   });
+
+  const previewHygiene = () => runAction("hygiene:preview", async () => {
+    const result = await loadWorkerFleetHygiene({ limit: 8 });
+    setLastHygieneResult(result);
+    setActionMessage(`${copy.fleetHygiene}: ${result.status} · ${copy.actionsAvailable}: ${result.summary.actions_available}`);
+  });
+
+  const applyHygiene = () => runAction("hygiene:apply", async () => {
+    const result = await applyWorkerFleetHygiene({
+      limit: 8,
+      release_reason: "worker_console_confirmed_cleanup",
+    });
+    setLastHygieneResult(result);
+    setConfirmCleanup(false);
+    setActionMessage(`${copy.fleetHygiene}: ${result.status} · ${copy.releasedTasks}: ${result.summary.released_tasks ?? 0} · ${copy.revokedEnrollments}: ${result.summary.revoked_enrollments ?? 0}`);
+  });
+
+  const hygieneActionsAvailable = fleetHygiene?.summary.actions_available || 0;
+  const remoteLaneCount = workerFleet?.summary.remote_worker_count ?? workerStatus?.remote_worker_count ?? 0;
+  const localLaneCount = workerFleet?.summary.local_daemon_count ?? workerStatus?.worker_count ?? 0;
 
   const statCards = [
     { label: copy.runningDaemons, value: workerStatus?.running_workers ?? workerFleet?.summary.running_local_daemons ?? "—", status: (workerStatus?.running_workers || 0) > 0 ? "running" : "ready" },
@@ -479,6 +537,100 @@ export function WorkerConsole() {
           </div>
         </section>
       </div>
+
+      <section
+        data-testid="worker-fleet-hygiene-panel"
+        className="rounded-lg p-4"
+        style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}
+      >
+        <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <AlertTriangle size={14} style={{ color: hygieneActionsAvailable > 0 ? "#FBBF24" : "var(--mis-success)" }} />
+              <h2 className="text-sm font-semibold" style={{ color: "var(--mis-text)" }}>{copy.fleetHygiene}</h2>
+              <StatusBadge status={fleetHygiene?.status || "unknown"} />
+              <StatusBadge status={fleetHygiene?.safety.read_only ? "pass" : "attention"} label={copy.hygieneReadOnly} />
+              <StatusBadge status={fleetHygiene?.applied ? "completed" : "planned"} label={fleetHygiene?.applied ? copy.hygieneApplied : copy.actionsAvailable} />
+            </div>
+            <p className="mt-1 max-w-4xl text-[11px] leading-relaxed" style={{ color: "var(--mis-dim)" }}>{copy.hygieneSummary}</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="inline-flex items-center gap-2 rounded px-2 py-1 text-[11px]" style={{ background: confirmCleanup ? "rgba(251,191,36,0.12)" : "var(--mis-surface2)", color: confirmCleanup ? "#FBBF24" : "var(--mis-muted)", border: confirmCleanup ? "1px solid rgba(251,191,36,0.24)" : "1px solid var(--mis-border)" }}>
+              <input type="checkbox" checked={confirmCleanup} onChange={(event) => setConfirmCleanup(event.target.checked)} />
+              {copy.confirmCleanup}
+            </label>
+            <button onClick={previewHygiene} disabled={Boolean(busyAction)} className="inline-flex items-center gap-1.5 rounded px-3 py-1.5 text-[11px] disabled:opacity-45" style={{ background: "rgba(34,211,238,0.12)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.2)" }}>
+              {busyAction === "hygiene:preview" ? <RefreshCw size={12} /> : <Activity size={12} />}
+              {copy.previewHygiene}
+            </button>
+            <button onClick={applyHygiene} disabled={Boolean(busyAction) || !confirmCleanup || hygieneActionsAvailable === 0} className="inline-flex items-center gap-1.5 rounded px-3 py-1.5 text-[11px] disabled:opacity-45" style={{ background: "rgba(251,191,36,0.12)", color: "#FBBF24", border: "1px solid rgba(251,191,36,0.24)" }}>
+              {busyAction === "hygiene:apply" ? <RefreshCw size={12} /> : <ShieldCheck size={12} />}
+              {copy.applyHygiene}
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-3 rounded px-3 py-2 text-[11px]" style={{ background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.18)", color: "var(--mis-dim)" }}>
+          {copy.confirmCleanupHint} {copy.noLiveExecution}: {fleetHygiene?.live_execution_performed ? "false" : "true"} · {copy.tokenOmitted}: {fleetHygiene?.token_omitted ? "true" : "unknown"}
+        </div>
+
+        <div className="mt-4 grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-2">
+          {[
+            { label: copy.actionsAvailable, value: hygieneActionsAvailable, status: hygieneActionsAvailable > 0 ? "attention" : "pass" },
+            { label: copy.stuckTasks, value: fleetHygiene?.summary.stuck_tasks ?? 0, status: (fleetHygiene?.summary.stuck_tasks || 0) > 0 ? "attention" : "pass" },
+            { label: copy.staleNeverSeen, value: fleetHygiene?.summary.stale_never_seen_enrollments ?? 0, status: (fleetHygiene?.summary.stale_never_seen_enrollments || 0) > 0 ? "attention" : "pass" },
+            { label: copy.staleHeartbeat, value: fleetHygiene?.summary.stale_heartbeat_enrollments ?? 0, status: (fleetHygiene?.summary.stale_heartbeat_enrollments || 0) > 0 ? "attention" : "pass" },
+            { label: copy.releasedTasks, value: fleetHygiene?.summary.released_tasks ?? 0, status: fleetHygiene?.applied ? "completed" : "planned" },
+            { label: copy.revokedEnrollments, value: fleetHygiene?.summary.revoked_enrollments ?? 0, status: fleetHygiene?.applied ? "completed" : "planned" },
+            { label: copy.remoteLanes, value: remoteLaneCount, status: remoteLaneCount > 0 ? "ready" : "planned" },
+            { label: copy.localLanes, value: localLaneCount, status: localLaneCount > 0 ? "ready" : "planned" },
+          ].map((item) => (
+            <div key={item.label} className="rounded px-3 py-2" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+              <div className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{item.label}</div>
+              <div className="flex items-center justify-between gap-2 mt-1">
+                <div className="text-sm font-semibold truncate" style={{ color: "var(--mis-text)" }}>{item.value}</div>
+                <StatusBadge status={item.status} />
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-4 grid grid-cols-1 xl:grid-cols-3 gap-3">
+          <div className="rounded p-3" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+            <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.recommendedAction}</div>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {(fleetHygiene?.recommended_actions || ["agentops worker hygiene"]).slice(0, 4).map((command) => (
+                <button key={command} onClick={() => void copyCommand(command)} className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[9px]" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)", color: command.includes("--apply") ? "#FBBF24" : "var(--mis-cyan)" }}>
+                  <Copy size={8} />
+                  {copiedCommand === command ? copy.copied : commandLabel(command)}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="rounded p-3" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+            <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.staleNeverSeen}</div>
+            <div className="mt-2 space-y-1">
+              {(fleetHygiene?.stale_never_seen_enrollments || []).slice(0, 4).map((enrollment) => (
+                <div key={enrollment.token_ref || enrollment.agent_id} className="text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>
+                  {enrollment.agent_id} · {enrollment.token_ref || "token_ref"} · {enrollment.heartbeat_state}
+                </div>
+              ))}
+              {(fleetHygiene?.stale_never_seen_enrollments || []).length === 0 && <div className="text-[10px]" style={{ color: "var(--mis-dim)" }}>—</div>}
+            </div>
+          </div>
+          <div className="rounded p-3" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+            <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.staleHeartbeat}</div>
+            <div className="mt-2 space-y-1">
+              {(fleetHygiene?.stale_heartbeat_enrollments || []).slice(0, 4).map((enrollment) => (
+                <div key={enrollment.token_ref || enrollment.agent_id} className="text-[10px] truncate" style={{ color: "var(--mis-muted)" }}>
+                  {enrollment.agent_id} · {enrollment.token_ref || "token_ref"} · {enrollment.heartbeat_state}
+                </div>
+              ))}
+              {(fleetHygiene?.stale_heartbeat_enrollments || []).length === 0 && <div className="text-[10px]" style={{ color: "var(--mis-dim)" }}>—</div>}
+            </div>
+          </div>
+        </div>
+      </section>
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
         <section className="rounded-lg p-4" style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}>

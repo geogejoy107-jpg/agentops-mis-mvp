@@ -1547,6 +1547,13 @@ planned MIS task
 - The worker does not store full prompts or raw responses.
 - The worker is installable as a Python source package and can render/write/check launchd/systemd templates with OS-managed relaunch policy; it is not yet an npm package, signed binary, hosted fleet manager, or automatic OS service loader.
 - The UI/CLI worker status path now supports one-shot dispatch, local daemon start/stop, daemon state counters, daemon backoff state, daemon log tails, recent gateway events, remote enrollment/session health summaries, operator readiness cards, and stuck-task release controls; it is not a production fleet manager.
+- `/workspace/workers` now surfaces the same fleet hygiene path as the API/CLI:
+  it previews stuck worker task release plus never-seen / heartbeat-stale remote
+  enrollment cleanup, requires explicit cleanup confirmation before apply, and
+  displays token omission plus no-live-execution boundaries.
+  Local developer verification should prefer
+  `python3 scripts/worker_fleet_hygiene_smoke.py --isolated-fixture` so historic
+  demo enrollments cannot hide the fixture rows.
 - The worker status API/CLI now returns `fleet_health` gates and recommended
   CLI actions, so external agents and operator scripts can reason about whether
   the worker fleet is ready without scraping the browser UI.

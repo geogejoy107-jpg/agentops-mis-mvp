@@ -7,8 +7,12 @@ import datetime as dt
 import json
 import os
 import re
+import socket
 import sqlite3
+import subprocess
 import sys
+import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -55,6 +59,26 @@ def require(condition: bool, message: str) -> None:
 
 def token_like_leaked(payload: object) -> bool:
     return bool(re.search(r"(Authorization:|Bearer |agtok_[A-Za-z0-9_-]{16,}|agtsess_[A-Za-z0-9_-]{16,}|sk-[A-Za-z0-9_-]{16,}|ntn_[A-Za-z0-9_-]{16,})", json.dumps(payload, ensure_ascii=False)))
+
+
+def free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def wait_for_server(base_url: str, proc: subprocess.Popen[str], log_path: Path) -> None:
+    for _ in range(80):
+        if proc.poll() is not None:
+            raise RuntimeError(f"isolated server exited early; log={log_path.read_text(encoding='utf-8', errors='replace')[-4000:]}")
+        try:
+            status, _payload = http_json("GET", base_url, "/api/agent-gateway/status")
+            if status == 200:
+                return
+        except Exception:
+            pass
+        time.sleep(0.25)
+    raise RuntimeError(f"isolated server did not start; log={log_path.read_text(encoding='utf-8', errors='replace')[-4000:]}")
 
 
 def make_never_seen_stale(task_id: str, run_id: str, token_id: str) -> None:
@@ -223,12 +247,61 @@ def smoke(base_url: str, stamp: str) -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
+    global DB_PATH
     parser = argparse.ArgumentParser(description="Verify worker fleet hygiene plan/apply.")
     parser.add_argument("--base-url", default="http://127.0.0.1:8787")
+    parser.add_argument("--isolated-fixture", action="store_true", help="Start a temporary local server and SQLite DB so the smoke is not affected by demo ledger drift.")
     args = parser.parse_args(argv)
-    result = {"ok": True, "base_url": args.base_url, "smoke": smoke(args.base_url, now_stamp())}
-    print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
-    return 0
+    if not args.isolated_fixture:
+        result = {"ok": True, "base_url": args.base_url, "smoke": smoke(args.base_url, now_stamp())}
+        print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+
+    with tempfile.TemporaryDirectory(prefix="agentops_fleet_hygiene_") as tmp:
+        tmp_path = Path(tmp)
+        DB_PATH = tmp_path / "agentops_mis.db"
+        port = free_port()
+        base_url = f"http://127.0.0.1:{port}"
+        log_path = tmp_path / "server.log"
+        env = {
+            **os.environ,
+            "AGENTOPS_DB_PATH": str(DB_PATH),
+            "AGENTOPS_HOST": "127.0.0.1",
+            "AGENTOPS_PORT": str(port),
+            "AGENTOPS_BASE_URL": base_url,
+            "AGENTOPS_SKIP_SEED_EXPORTS": "1",
+            "HERMES_ALLOW_REAL_RUN": "false",
+            "DIFY_ALLOW_REAL_UPLOAD": "false",
+            "NOTION_TOKEN": "",
+            "NOTION_PARENT_PAGE_ID": "",
+            "NOTION_DATABASE_ID": "",
+        }
+        with log_path.open("w", encoding="utf-8") as log:
+            proc = subprocess.Popen(
+                [sys.executable, "server.py", "--host", "127.0.0.1", "--port", str(port)],
+                cwd=ROOT,
+                env=env,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+        try:
+            wait_for_server(base_url, proc, log_path)
+            result = {
+                "ok": True,
+                "base_url": base_url,
+                "isolated_fixture": True,
+                "db_path": str(DB_PATH),
+                "smoke": smoke(base_url, now_stamp()),
+            }
+            print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+            return 0
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
 
 
 if __name__ == "__main__":

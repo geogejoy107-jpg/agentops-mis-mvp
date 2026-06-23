@@ -183,7 +183,11 @@ Remaining product work:
   of v1.5; local/BYOC operators get safe service templates plus explicit load
   controls.
 - Full production log management. v1.5 now rotates repo-local worker daemon logs on daemon start/restart using `AGENTOPS_WORKER_LOG_MAX_BYTES` and `AGENTOPS_WORKER_LOG_BACKUPS`; external launchd/systemd service logs still depend on the host log system.
-- Fleet-level worker management.
+- Production fleet manager remains out of scope. v1.5 now has safe local/BYOC
+  fleet hygiene through API/CLI and `/workspace/workers`: operators can preview
+  stuck task release plus stale remote enrollment/session cleanup, then apply it
+  only after explicit cleanup confirmation. It never executes Hermes/OpenClaw
+  live work and keeps token/session ids omitted.
 
 ### 2. OpenClaw / Hermes Adapter Loop
 
@@ -619,7 +623,8 @@ Acceptance evidence:
   API and CLI are scoped, read-only, non-mutating, and redacted.
 - `python3 scripts/worker_console_ui_smoke.py` verifies `/workspace/workers`,
   sidebar/home entry points, live Worker API wiring, dispatch/daemon controls,
-  ledger links, and the live-confirm safety wall.
+  fleet hygiene preview/apply controls, ledger links, and the live-confirm
+  safety wall.
 - `python3 scripts/customer_dispatch_desk_ui_smoke.py` verifies
   `/workspace/dispatch`, sidebar/home entry points, live workflow API wiring,
   template/worker dispatch controls, delivery board visibility, and the

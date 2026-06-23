@@ -188,7 +188,7 @@ def main() -> int:
                 "server.py": ["/api/operator/runtime-doctor", "/api/operator/start-check", "/api/operator/execution-mode", "operator_runtime_doctor", "operator_start_check", "operator_execution_mode"],
                 "agentops_mis_cli/agentops.py": ["operator_runtime_doctor", "operator_start_check", "operator_execution_mode", "runtime-doctor", "start-check", "execution-mode"],
                 "ui/start-building-app/src/app/components/pages/AIEmployees.tsx": ["operator_loop_launch_packet", "operator_runtime_doctor", "operatorExecutionMode", "receipt_state", "Worker Fleet", "operatorHealthLoopControl", "commander-team-board"],
-                "ui/start-building-app/src/app/components/pages/WorkerConsole.tsx": ["Worker Control Console", "loadWorkerStatus", "loadWorkerAdapterReadiness", "dispatchLocalWorkerOnce", "startLocalWorkerDaemon", "liveBlocked"],
+                "ui/start-building-app/src/app/components/pages/WorkerConsole.tsx": ["Worker Control Console", "loadWorkerStatus", "loadWorkerAdapterReadiness", "loadWorkerFleetHygiene", "applyWorkerFleetHygiene", "worker-fleet-hygiene-panel", "dispatchLocalWorkerOnce", "startLocalWorkerDaemon", "liveBlocked"],
                 "ui/start-building-app/src/app/data/liveApi.ts": ["loadOperatorLoopLaunchPacket", "loadOperatorRuntimeDoctor", "loadOperatorExecutionMode", "loadWorkerStatus", "loop_control", "loadCommanderProjectBoard"],
             },
         ),
