@@ -423,6 +423,12 @@ first-class RECORD evidence: `required_ledgers` includes `memories` and
 `memory_review`, while the evidence-report gate exposes
 `memory_reviews`, `memory_review_ready`, `missing_memory_reviews`, and
 `pending_memory_reviews` for Hermes/OpenClaw/Codex before delivery closure.
+For worker-run observability, the same evidence report also exposes
+`worker_runtime_summary`, `worker_runtime_summary_ready`, and
+`worker_runtime_summary_missing`. These fields prove that the Agent Worker
+recorded a MIS ledger summary of adapter execution with event ids, hashes, and
+omission flags; they are not raw runtime traces and must not include full
+prompts, full responses, tokens, or private transcript content.
 It also includes an `action_package` section: each non-passing gate gets a
 copyable `action_command`, a scoped `verify_command`, a preview-only
 `receipt_record_command`, and a confirmed `receipt_verify_record_command`.

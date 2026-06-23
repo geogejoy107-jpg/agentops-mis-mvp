@@ -774,6 +774,13 @@ export function AIEmployees() {
       workerKnowledgePaths: "Knowledge paths",
       workerKnowledgePacket: "Packet",
       workerKnowledgeQuery: "Query",
+      workerRuntimeSummary: "Runtime summary",
+      workerRuntimeSummaryReady: "Runtime summaries ready",
+      workerRuntimeSummaryMissing: "Runtime summaries missing",
+      workerRuntimeSummaryEvents: "Summary events",
+      workerRuntimeSummaryLinked: "Linked",
+      workerRuntimeSummaryEvent: "Event",
+      runtimeRawTraceOmitted: "raw trace omitted",
       missingManifests: "Missing manifests",
       verifiedReceipts: "Verified receipts",
       demoReadinessTitle: "Demo readiness",
@@ -1362,6 +1369,13 @@ export function AIEmployees() {
       workerKnowledgePaths: "知识路径",
       workerKnowledgePacket: "证据包",
       workerKnowledgeQuery: "查询",
+      workerRuntimeSummary: "运行摘要",
+      workerRuntimeSummaryReady: "运行摘要已就绪",
+      workerRuntimeSummaryMissing: "运行摘要缺失",
+      workerRuntimeSummaryEvents: "摘要事件",
+      workerRuntimeSummaryLinked: "已关联",
+      workerRuntimeSummaryEvent: "事件",
+      runtimeRawTraceOmitted: "原始轨迹已省略",
       missingManifests: "缺失清单",
       verifiedReceipts: "已验收收据",
       demoReadinessTitle: "Demo 就绪",
@@ -4901,6 +4915,8 @@ export function AIEmployees() {
               { label: copy.verifiedReceipts, value: `${operatorEvidenceSummary?.verified_action_receipts ?? 0}/${operatorEvidenceSummary?.action_receipts ?? 0}`, status: (operatorEvidenceSummary?.verified_action_receipts || 0) > 0 ? "pass" : "planned" },
               { label: copy.workerKnowledgeReady, value: `${operatorEvidenceSummary?.worker_knowledge_retrieval_ready ?? 0}/${operatorEvidenceSummary?.worker_runs ?? 0}`, status: (operatorEvidenceSummary?.worker_knowledge_retrieval_ready || 0) > 0 ? "pass" : (operatorEvidenceSummary?.worker_runs || 0) > 0 ? "attention" : "planned" },
               { label: copy.workerKnowledgeMissing, value: (operatorEvidenceSummary?.worker_knowledge_retrieval_missing ?? 0) + (operatorEvidenceSummary?.worker_knowledge_retrieval_unavailable ?? 0), status: ((operatorEvidenceSummary?.worker_knowledge_retrieval_missing || 0) + (operatorEvidenceSummary?.worker_knowledge_retrieval_unavailable || 0)) > 0 ? "blocked" : "pass" },
+              { label: copy.workerRuntimeSummaryReady, value: `${operatorEvidenceSummary?.worker_runtime_summary_ready ?? 0}/${operatorEvidenceSummary?.worker_runs ?? 0}`, status: (operatorEvidenceSummary?.worker_runtime_summary_ready || 0) > 0 ? "pass" : (operatorEvidenceSummary?.worker_runs || 0) > 0 ? "attention" : "planned" },
+              { label: copy.workerRuntimeSummaryMissing, value: operatorEvidenceSummary?.worker_runtime_summary_missing ?? 0, status: (operatorEvidenceSummary?.worker_runtime_summary_missing || 0) > 0 ? "blocked" : "pass" },
             ].map((item) => (
               <div key={item.label} className="rounded px-2 py-1" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
                 <div className="text-[9px]" style={{ color: "var(--mis-muted)" }}>{item.label}</div>
@@ -4923,6 +4939,9 @@ export function AIEmployees() {
               const workerKnowledge = run.worker_knowledge_retrieval;
               const workerKnowledgeStatus = workerKnowledge?.status || "not_applicable";
               const workerKnowledgeBlocked = workerKnowledgeStatus === "missing" || workerKnowledgeStatus === "unavailable";
+              const workerRuntimeSummary = run.worker_runtime_summary;
+              const workerRuntimeSummaryStatus = workerRuntimeSummary?.status || "not_applicable";
+              const workerRuntimeSummaryBlocked = workerRuntimeSummaryStatus === "missing";
               return (
                 <div key={run.run_id} className="rounded px-3 py-2" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
                   <div className="flex items-start justify-between gap-2">
@@ -4950,6 +4969,11 @@ export function AIEmployees() {
                         {copy.workerKnowledge}: {workerKnowledgeStatus}
                       </span>
                     )}
+                    {workerRuntimeSummary?.applicable && (
+                      <span className="text-[9px] px-1.5 py-0.5 rounded" style={{ color: workerRuntimeSummaryBlocked ? "var(--mis-warning)" : "var(--mis-success)", background: workerRuntimeSummaryBlocked ? "rgba(251,191,36,0.08)" : "rgba(45,212,191,0.08)", border: workerRuntimeSummaryBlocked ? "1px solid rgba(251,191,36,0.22)" : "1px solid rgba(45,212,191,0.20)" }}>
+                        {copy.workerRuntimeSummary}: {workerRuntimeSummaryStatus}
+                      </span>
+                    )}
                   </div>
                   {workerKnowledge?.applicable && (
                     <div className="mt-2 rounded px-2 py-1" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
@@ -4961,6 +4985,19 @@ export function AIEmployees() {
                       </div>
                       <div className="text-[9px] mt-0.5 truncate" style={{ color: "var(--mis-muted)" }}>
                         {copy.workerKnowledgePacket}: {(workerKnowledge.packet_hashes?.[0] || "—").slice(0, 10)} · {copy.workerKnowledgeQuery}: {(workerKnowledge.query_hashes?.[0] || "—").slice(0, 10)}
+                      </div>
+                    </div>
+                  )}
+                  {workerRuntimeSummary?.applicable && (
+                    <div className="mt-2 rounded px-2 py-1" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="text-[9px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>
+                          {copy.workerRuntimeSummaryEvents}: {workerRuntimeSummary.summary_events || 0} · {copy.workerRuntimeSummaryLinked}: {workerRuntimeSummary.linked_summary_events || 0}
+                        </div>
+                        <StatusBadge status={workerRuntimeSummaryBlocked ? "blocked" : workerRuntimeSummaryStatus === "ready" ? "pass" : "attention"} />
+                      </div>
+                      <div className="text-[9px] mt-0.5 truncate" style={{ color: "var(--mis-muted)" }}>
+                        {copy.workerRuntimeSummaryEvent}: {(workerRuntimeSummary.event_ids?.[0] || "—").slice(0, 18)} · {copy.runtimeRawTraceOmitted}
                       </div>
                     </div>
                   )}
