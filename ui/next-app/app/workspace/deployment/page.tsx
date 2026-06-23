@@ -1,6 +1,7 @@
 import { DeploymentParityPage } from "@/components/DeploymentPage";
 import {
   loadServerAudit,
+  loadServerAuditRetentionControls,
   loadServerAuditRetentionPolicy,
   loadServerCommercialEntitlements,
   loadServerDeploymentReadiness,
@@ -12,9 +13,10 @@ import {
 export const dynamic = "force-dynamic";
 
 export default async function DeploymentPage() {
-  const [deployment, retentionPolicy, local, security, entitlements, storage, audit] = await Promise.all([
+  const [deployment, retentionPolicy, retentionControls, local, security, entitlements, storage, audit] = await Promise.all([
     loadServerDeploymentReadiness(),
     loadServerAuditRetentionPolicy(),
+    loadServerAuditRetentionControls(),
     loadServerLocalReadiness(),
     loadServerSecurityProductionReadiness(),
     loadServerCommercialEntitlements(),
@@ -25,12 +27,13 @@ export default async function DeploymentPage() {
     <DeploymentParityPage
       deployment={deployment.data}
       retentionPolicy={retentionPolicy.data}
+      retentionControls={retentionControls.data}
       local={local.data}
       security={security.data}
       entitlements={entitlements.data}
       storage={storage.data}
       audit={audit.data}
-      errors={[deployment.error, retentionPolicy.error, local.error, security.error, entitlements.error, storage.error, audit.error].filter(Boolean) as string[]}
+      errors={[deployment.error, retentionPolicy.error, retentionControls.error, local.error, security.error, entitlements.error, storage.error, audit.error].filter(Boolean) as string[]}
     />
   );
 }

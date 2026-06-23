@@ -36,7 +36,7 @@ ROUTES = [
     ("/workspace/agents/agt_cos", ["Agent Detail", "Per-agent performance", "Recent Runs"]),
     ("/workspace/commercial", ["Commercial", "Capability matrix", "Fail-closed gates"]),
     ("/workspace/governance", ["Governance", "Production readiness", "Session governance"]),
-    ("/workspace/deployment", ["Deployment", "Deployment readiness verdict", "Storage backend migration gate", "Storage and retention", "audit_retention_policy_v1"]),
+    ("/workspace/deployment", ["Deployment", "Deployment readiness verdict", "Storage backend migration gate", "Storage and retention", "audit_retention_policy_v1", "audit_retention_controls_v1"]),
     ("/workspace/tasks", ["Tasks", "running", "planned"]),
     ("/workspace/runs", ["Run Ledger", "Run", "Status"]),
     ("/workspace/tool-calls", ["Tool Call Ledger", "high-risk", "Run"]),

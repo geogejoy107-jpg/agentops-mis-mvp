@@ -47,6 +47,7 @@ OPENCLAW_HOME = Path(os.environ.get("OPENCLAW_HOME") or (Path.home() / ".opencla
 HERMES_HOME = Path.home() / ".hermes"
 OPENCLAW_BIN = Path(os.environ.get("OPENCLAW_BIN") or "/opt/homebrew/bin/openclaw")
 DEFAULT_ENTITLEMENTS_PATH = ROOT / "config" / "entitlements.local.json"
+DEFAULT_RETENTION_CONTROLS_PATH = ROOT / "config" / "retention-controls.local.json"
 STORAGE_BACKEND = os.environ.get("AGENTOPS_STORAGE_BACKEND", "sqlite").strip().lower() or "sqlite"
 POSTGRES_HTTP_WRITE_ALLOWED_ROUTES = {
     ("POST", "/api/agent-gateway/artifacts"),
@@ -12124,7 +12125,21 @@ def audit_retention_policy(conn: sqlite3.Connection, headers, qs: dict | None = 
     )
     capability_enabled = bool((entitlements.get("capabilities") or {}).get("longer_audit_retention"))
     generated = dt.datetime.now(dt.timezone.utc)
-    dangerous_params = {"apply", "delete", "confirm_delete", "confirm-delete", "cleanup", "execute"}
+    dangerous_params = {
+        "apply",
+        "delete",
+        "confirm_delete",
+        "confirm-delete",
+        "cleanup",
+        "execute",
+        "force",
+        "purge",
+        "truncate",
+        "approve_cleanup",
+        "approval_id",
+        "confirm_cleanup",
+        "legal_hold",
+    }
     dangerous_requested = sorted(key for key in dangerous_params if key in qs)
 
     requested_days = (qs.get("retention_days") or qs.get("retention-days") or [None])[0]
@@ -12224,6 +12239,9 @@ def audit_retention_policy(conn: sqlite3.Connection, headers, qs: dict | None = 
             "requested_retention_days": requested_days,
             "retention_days": retention_days,
             "cutoff_at": cutoff.isoformat(),
+            "audit_log_scope": "ledger_global",
+            "workspace_scope_supported": False,
+            "workspace_id_for_context": normalize_workspace_id(headers.get("X-AgentOps-Workspace-Id") or "local-demo") if headers else "local-demo",
             "dry_run_only": True,
             "cleanup_execution_enabled": False,
             "dangerous_params_rejected": dangerous_requested,
@@ -12276,12 +12294,226 @@ def audit_retention_policy(conn: sqlite3.Connection, headers, qs: dict | None = 
     }
 
 
+def audit_retention_controls(conn: sqlite3.Connection, headers, qs: dict | None = None) -> dict:
+    del conn
+    entitlements = entitlement_status(headers)
+    qs = qs or {}
+    capability_gate = next(
+        (gate for gate in entitlements.get("gates") or [] if gate.get("capability") == "longer_audit_retention"),
+        {},
+    )
+    capability_enabled = bool((entitlements.get("capabilities") or {}).get("longer_audit_retention"))
+    config_path = Path(os.environ.get("AGENTOPS_RETENTION_CONTROLS_PATH") or DEFAULT_RETENTION_CONTROLS_PATH).expanduser()
+    config = read_json_file(config_path, {}) if config_path.exists() else {}
+    cleanup_config = config.get("cleanup_policy") if isinstance(config.get("cleanup_policy"), dict) else {}
+    windows_config = config.get("retention_windows") if isinstance(config.get("retention_windows"), dict) else {}
+    legal_holds_config = config.get("legal_holds") if isinstance(config.get("legal_holds"), list) else []
+    dangerous_params = {
+        "apply",
+        "delete",
+        "confirm_delete",
+        "confirm-delete",
+        "cleanup",
+        "execute",
+        "force",
+        "purge",
+        "truncate",
+        "approve_cleanup",
+        "approval_id",
+        "confirm_cleanup",
+        "legal_hold",
+    }
+    dangerous_requested = sorted(key for key in dangerous_params if key in qs)
+
+    cleanup_approval_required = cleanup_config.get("approval_required", True) is True
+    legal_hold_required_before_cleanup = cleanup_config.get("legal_hold_required_before_cleanup", True) is True
+    cleanup_execution_enabled = cleanup_config.get("cleanup_execution_enabled", False) is True
+    cleanup_endpoint_exposed = cleanup_config.get("cleanup_endpoint_exposed", False) is True
+    legal_hold_registry_configured = config.get("legal_hold_registry_configured")
+    if not isinstance(legal_hold_registry_configured, bool):
+        legal_hold_registry_configured = bool(legal_holds_config)
+
+    hold_summaries = []
+    active_hold_count = 0
+    for item in legal_holds_config[:25]:
+        if not isinstance(item, dict):
+            continue
+        status = str(item.get("status") or "active")
+        if status == "active":
+            active_hold_count += 1
+        hold_summaries.append({
+            "hold_id": redact_text(item.get("hold_id") or "hold", 80),
+            "workspace_id": normalize_workspace_id(item.get("workspace_id") or "local-demo"),
+            "scope": redact_text(item.get("scope") or "workspace", 40),
+            "status": status,
+            "reason_code": redact_text(item.get("reason_code") or "unspecified", 60),
+            "created_at": item.get("created_at"),
+            "expires_at": item.get("expires_at"),
+            "raw_reason_omitted": True,
+            "raw_subject_omitted": True,
+        })
+
+    blocked_reasons = []
+    if dangerous_requested:
+        blocked_reasons.append("dangerous_cleanup_parameter_rejected")
+    if cleanup_execution_enabled:
+        blocked_reasons.append("cleanup_execution_enabled_not_allowed")
+    if cleanup_endpoint_exposed:
+        blocked_reasons.append("cleanup_endpoint_exposed_not_allowed")
+    if not cleanup_approval_required:
+        blocked_reasons.append("cleanup_approval_required_false")
+    if not legal_hold_required_before_cleanup:
+        blocked_reasons.append("legal_hold_check_required_false")
+
+    reported_total_holds = len(hold_summaries) if legal_hold_registry_configured else None
+    reported_active_holds = active_hold_count if legal_hold_registry_configured else None
+    status = (
+        "blocked"
+        if blocked_reasons
+        else "ready"
+        if capability_enabled and legal_hold_registry_configured
+        else "gated"
+        if not capability_enabled
+        else "attention"
+    )
+    gates = [
+        {
+            "id": "cleanup_approval_required",
+            "label": "Cleanup approval required",
+            "ok": cleanup_approval_required,
+            "status": "ready" if cleanup_approval_required else "blocked",
+            "detail": "Any future cleanup contract must require explicit customer approval.",
+            "next_action": "Keep retention cleanup behind an approval-bound contract.",
+        },
+        {
+            "id": "legal_hold_check_required",
+            "label": "Legal hold check required",
+            "ok": legal_hold_required_before_cleanup,
+            "status": "ready" if legal_hold_required_before_cleanup else "blocked",
+            "detail": "Cleanup remains blocked unless legal-hold checks are preserved.",
+            "next_action": "Configure legal-hold policy before any cleanup workflow is accepted.",
+        },
+        {
+            "id": "destructive_cleanup_closed",
+            "label": "Destructive cleanup closed",
+            "ok": not cleanup_execution_enabled and not cleanup_endpoint_exposed and not dangerous_requested,
+            "status": "ready" if not cleanup_execution_enabled and not cleanup_endpoint_exposed and not dangerous_requested else "blocked",
+            "detail": "No retention cleanup endpoint is exposed and no row deletion is performed.",
+            "next_action": "Reject cleanup/apply/delete parameters until a separate destructive contract exists.",
+        },
+        {
+            "id": "legal_hold_registry",
+            "label": "Legal hold registry",
+            "ok": True,
+            "status": "ready" if legal_hold_registry_configured else "attention",
+            "detail": (
+                f"{active_hold_count} active hold(s); registry_configured=true"
+                if legal_hold_registry_configured
+                else "legal hold registry not configured; cannot assert no holds"
+            ),
+            "next_action": "Set AGENTOPS_RETENTION_CONTROLS_PATH before enterprise retention handoff.",
+        },
+        {
+            "id": "entitlement_gate",
+            "label": "Longer retention entitlement gate",
+            "ok": True,
+            "status": "ready" if capability_enabled else "gated",
+            "detail": f"requires {capability_gate.get('required_edition') or 'pro_workspace'}; enabled={capability_enabled}",
+            "next_action": "Enable pro_workspace or higher before advertising retention controls as ready.",
+        },
+        {
+            "id": "raw_hold_details_omitted",
+            "label": "Raw hold details omitted",
+            "ok": True,
+            "status": "ready",
+            "detail": "Hold summaries omit raw reason text, subjects, transcripts, prompts, and responses.",
+            "next_action": "Keep legal-hold evidence metadata-only in readiness payloads.",
+        },
+    ]
+    return {
+        "provider": "agentops-retention",
+        "operation": "audit_retention_controls",
+        "contract_id": "audit_retention_controls_v1",
+        "generated_at": now_iso(),
+        "status": status,
+        "ok": status != "blocked",
+        "controls_ready": status == "ready",
+        "workspace_id": normalize_workspace_id(headers.get("X-AgentOps-Workspace-Id") or "local-demo") if headers else "local-demo",
+        "edition": entitlements.get("edition"),
+        "config": {
+            "path": str(config_path),
+            "loaded": bool(config),
+            "example_path": str(ROOT / "config" / "retention-controls.example.json"),
+        },
+        "retention_windows": {
+            "free_local_days": int(windows_config.get("free_local_days") or 30),
+            "pro_workspace_days": int(windows_config.get("pro_workspace_days") or 365),
+            "max_retention_days": int(windows_config.get("max_retention_days") or 3650),
+        },
+        "controls": {
+            "cleanup_approval_required": cleanup_approval_required,
+            "legal_hold_required_before_cleanup": legal_hold_required_before_cleanup,
+            "cleanup_execution_enabled": cleanup_execution_enabled,
+            "cleanup_endpoint_exposed": cleanup_endpoint_exposed,
+            "destructive_cleanup_supported": False,
+            "delete_supported": False,
+            "delete_performed": False,
+            "rows_deleted": 0,
+            "legal_hold_registry_configured": legal_hold_registry_configured,
+            "dangerous_params_rejected": dangerous_requested,
+        },
+        "legal_hold_summary": {
+            "total_holds": reported_total_holds,
+            "active_holds": reported_active_holds,
+            "holds": hold_summaries if legal_hold_registry_configured else [],
+            "cannot_assert_no_holds": not legal_hold_registry_configured,
+            "raw_hold_details_omitted": True,
+            "raw_reason_omitted": True,
+            "raw_subject_omitted": True,
+        },
+        "entitlement": {
+            "capability": "longer_audit_retention",
+            "capability_enabled": capability_enabled,
+            "required_edition": capability_gate.get("required_edition") or "pro_workspace",
+            "enforcement": capability_gate.get("enforcement") or "read_only_preview",
+        },
+        "gates": gates,
+        "next_actions": [
+            "python3 scripts/audit_retention_controls_smoke.py",
+            "Keep cleanup execution disabled until approval-bound legal-hold checks have a separate contract.",
+        ],
+        "blocked_reasons": blocked_reasons,
+        "safety": {
+            "read_only": True,
+            "live_execution_performed": False,
+            "billing_call_performed": False,
+            "cleanup_execution_enabled": cleanup_execution_enabled,
+            "cleanup_endpoint_exposed": cleanup_endpoint_exposed,
+            "delete_supported": False,
+            "delete_performed": False,
+            "rows_deleted": 0,
+            "token_omitted": True,
+            "raw_hold_details_omitted": True,
+            "raw_metadata_omitted": True,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+        },
+        "live_execution_performed": False,
+        "billing_call_performed": False,
+        "delete_supported": False,
+        "delete_performed": False,
+        "rows_deleted": 0,
+        "token_omitted": True,
+    }
+
+
 def deployment_readiness(conn: sqlite3.Connection, headers) -> dict:
     local = local_readiness(conn, headers)
     security = local.get("security_production_readiness") or security_production_readiness(conn, headers)
     entitlements = entitlement_status(headers)
     storage = storage_backend_status(headers)
     retention_policy = audit_retention_policy(conn, headers)
+    retention_controls = audit_retention_controls(conn, headers)
     deployment_checks = local.get("deployment_checks") or {}
     capabilities = entitlements.get("capabilities") or {}
 
@@ -12342,6 +12574,7 @@ def deployment_readiness(conn: sqlite3.Connection, headers) -> dict:
 
     signed_status = "ready" if signed_gate.get("enabled") and signed_export_proof_ok else "gated" if signed_export_proof_ok else "blocked"
     retention_status = retention_policy.get("status") if retention_policy.get("status") != "ready" else "ready" if retention_gate.get("enabled") else "gated"
+    retention_controls_status = retention_controls.get("status") if retention_controls.get("status") != "ready" else "ready" if retention_gate.get("enabled") else "gated"
     sso_status = "ready" if sso_gate.get("enabled") and connector_gate.get("enabled") else "gated"
     gates = [
         gate(
@@ -12391,6 +12624,14 @@ def deployment_readiness(conn: sqlite3.Connection, headers) -> dict:
             retention_status,
             f"{((retention_policy.get('counts') or {}).get('expired_candidates') or 0)} eligible row(s); delete_performed={retention_policy.get('delete_performed')}",
             "python3 scripts/audit_retention_policy_smoke.py",
+        ),
+        gate(
+            "retention_controls",
+            "Audit retention controls",
+            retention_controls.get("status") != "blocked",
+            retention_controls_status,
+            f"cleanup_approval={((retention_controls.get('controls') or {}).get('cleanup_approval_required'))}; legal_hold_registry={((retention_controls.get('controls') or {}).get('legal_hold_registry_configured'))}",
+            "python3 scripts/audit_retention_controls_smoke.py",
         ),
         gate(
             "sso_connector_policy",
@@ -12481,6 +12722,14 @@ def deployment_readiness(conn: sqlite3.Connection, headers) -> dict:
             "expired_candidates": (retention_policy.get("counts") or {}).get("expired_candidates"),
             "retained_count": (retention_policy.get("counts") or {}).get("retained_count"),
             "raw_rows_omitted": (retention_policy.get("policy") or {}).get("raw_rows_omitted"),
+            "controls_contract_id": retention_controls.get("contract_id"),
+            "controls_status": retention_controls_status,
+            "cleanup_approval_required": (retention_controls.get("controls") or {}).get("cleanup_approval_required"),
+            "legal_hold_required_before_cleanup": (retention_controls.get("controls") or {}).get("legal_hold_required_before_cleanup"),
+            "cleanup_endpoint_exposed": (retention_controls.get("controls") or {}).get("cleanup_endpoint_exposed"),
+            "destructive_cleanup_supported": (retention_controls.get("controls") or {}).get("destructive_cleanup_supported"),
+            "legal_hold_registry_configured": (retention_controls.get("controls") or {}).get("legal_hold_registry_configured"),
+            "active_legal_holds": (retention_controls.get("legal_hold_summary") or {}).get("active_holds"),
         },
         "enterprise_byoc": {
             "postgres_adapter": bool(postgres_gate.get("enabled")),
@@ -12493,6 +12742,7 @@ def deployment_readiness(conn: sqlite3.Connection, headers) -> dict:
             "byoc_deployment_acceptance_v1",
             "signed_audit_export_v1",
             "audit_retention_policy_v1",
+            "audit_retention_controls_v1",
             storage.get("contract") or "sqlite_free_local_default",
         ],
         "safety": {
@@ -13497,6 +13747,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(payload)
             if path == "/api/audit/retention-policy":
                 payload = audit_retention_policy(conn, self.headers, qs)
+                conn.rollback()
+                return self.send_json(payload)
+            if path == "/api/audit/retention-controls":
+                payload = audit_retention_controls(conn, self.headers, qs)
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/security/production-readiness":

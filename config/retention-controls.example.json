@@ -1,0 +1,25 @@
+{
+  "legal_hold_registry_configured": true,
+  "retention_windows": {
+    "free_local_days": 30,
+    "pro_workspace_days": 365,
+    "max_retention_days": 3650
+  },
+  "cleanup_policy": {
+    "approval_required": true,
+    "legal_hold_required_before_cleanup": true,
+    "cleanup_execution_enabled": false,
+    "cleanup_endpoint_exposed": false
+  },
+  "legal_holds": [
+    {
+      "hold_id": "hold_customer_dispute_demo",
+      "workspace_id": "local-demo",
+      "scope": "workspace",
+      "status": "active",
+      "reason_code": "customer_dispute",
+      "created_at": "2026-01-01T00:00:00+00:00",
+      "expires_at": null
+    }
+  ]
+}

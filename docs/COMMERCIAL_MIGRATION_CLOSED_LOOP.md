@@ -442,6 +442,13 @@ Must be true:
   enforcement. `delete`, `apply`, and cleanup-style query parameters fail
   closed while preserving `rows_deleted=0`. Verify with
   `python3 scripts/audit_retention_policy_smoke.py`.
+- `audit_retention_controls_v1` exposes read-only retention control readiness
+  through `GET /api/audit/retention-controls` and
+  `agentops audit retention-controls`. It proves cleanup approval is required,
+  legal-hold checks are required before any future cleanup, cleanup endpoints
+  stay closed, legal-hold summaries omit raw subject/reason detail, and
+  destructive cleanup remains unsupported. Verify with
+  `python3 scripts/audit_retention_controls_smoke.py`.
 - Postgres adapter and migrations pass the same core ledger acceptance used for
   SQLite.
 - Runtime connectors remain policy-gated and do not store raw secrets, raw

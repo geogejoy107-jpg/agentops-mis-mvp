@@ -653,20 +653,29 @@ def main() -> int:
             and file_contains("agentops_mis_cli/agentops.py", 'sub.add_parser("deployment"')
             and file_contains("scripts/deployment_readiness_smoke.py", "deployment_readiness_v1")
             and file_contains("scripts/deployment_readiness_smoke.py", "audit_retention_policy_v1")
+            and file_contains("scripts/deployment_readiness_smoke.py", "audit_retention_controls_v1")
             and file_contains("scripts/deployment_readiness_smoke.py", "agentops-deployment")
             and file_contains("scripts/audit_retention_policy_smoke.py", "audit_retention_policy_v1")
             and file_contains("scripts/audit_retention_policy_smoke.py", "delete_performed")
             and file_contains("scripts/audit_retention_policy_smoke.py", "db_dump_hash")
+            and file_contains("scripts/audit_retention_controls_smoke.py", "audit_retention_controls_v1")
+            and file_contains("scripts/audit_retention_controls_smoke.py", "cleanup_approval_required")
+            and file_contains("scripts/audit_retention_controls_smoke.py", "db_dump_hash")
             and file_contains("server.py", "def audit_retention_policy")
+            and file_contains("server.py", "def audit_retention_controls")
             and file_contains("server.py", "/api/audit/retention-policy")
+            and file_contains("server.py", "/api/audit/retention-controls")
             and file_contains("agentops_mis_cli/agentops.py", "cmd_audit_retention_policy")
+            and file_contains("agentops_mis_cli/agentops.py", "cmd_audit_retention_controls")
             and file_contains("scripts/nextjs_parity_smoke.py", "loadServerDeploymentReadiness")
             and file_contains("ui/next-app/src/lib/misServer.ts", "/deployment/readiness")
             and file_contains("ui/next-app/src/lib/misServer.ts", "/audit/retention-policy")
+            and file_contains("ui/next-app/src/lib/misServer.ts", "/audit/retention-controls")
             and file_contains("ui/next-app/src/components/DeploymentPage.tsx", "Deployment readiness verdict")
             and file_contains("ui/next-app/src/components/DeploymentPage.tsx", "audit_retention_policy_v1")
+            and file_contains("ui/next-app/src/components/DeploymentPage.tsx", "audit_retention_controls_v1")
             and (ROOT / "scripts" / "deployment_readiness_smoke.py").exists(),
-            "Gate 5 deployment readiness API, CLI, smoke, audit retention policy preview, and Next.js verdict panel are present",
+            "Gate 5 deployment readiness API, CLI, smoke, audit retention policy/controls previews, and Next.js verdict panel are present",
         ),
         check(
             "blocked_generated_or_runtime_artifacts_absent",
@@ -753,6 +762,7 @@ def main() -> int:
                 "Postgres container parity smoke",
                 "Postgres ledger acceptance",
                 "python3 scripts/audit_retention_policy_smoke.py",
+                "python3 scripts/audit_retention_controls_smoke.py",
                 "python3 scripts/deployment_readiness_smoke.py",
                 "python3 scripts/byoc_deployment_acceptance_smoke.py",
                 "backup/restore and signed export checks",

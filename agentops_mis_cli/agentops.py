@@ -282,6 +282,10 @@ def cmd_audit_retention_policy(args, client: AgentOpsClient) -> dict:
     return client.get("/api/audit/retention-policy", {"retention_days": getattr(args, "retention_days", None)})
 
 
+def cmd_audit_retention_controls(args, client: AgentOpsClient) -> dict:
+    return client.get("/api/audit/retention-controls")
+
+
 def cmd_commander_board(args, client: AgentOpsClient) -> dict:
     return client.get("/api/commander/project-board")
 
@@ -1687,6 +1691,8 @@ def build_parser() -> argparse.ArgumentParser:
     audit_retention_policy = audit_sub.add_parser("retention-policy", help="Show read-only audit retention policy preview.")
     audit_retention_policy.add_argument("--retention-days", type=int, default=None)
     audit_retention_policy.set_defaults(handler="audit_retention_policy")
+    audit_retention_controls = audit_sub.add_parser("retention-controls", help="Show read-only audit retention controls and legal-hold readiness.")
+    audit_retention_controls.set_defaults(handler="audit_retention_controls")
 
     workflow = sub.add_parser("workflow", help="Customer-facing workflow commands.")
     workflow_sub = workflow.add_subparsers(dest="action", required=True)
@@ -1947,6 +1953,7 @@ HANDLERS = {
     "demo_readiness": cmd_demo_readiness,
     "deployment_readiness": cmd_deployment_readiness,
     "audit_retention_policy": cmd_audit_retention_policy,
+    "audit_retention_controls": cmd_audit_retention_controls,
     "commander_board": cmd_commander_board,
     "commander_inbox": cmd_commander_inbox,
     "commander_plan": cmd_commander_plan,

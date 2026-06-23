@@ -88,6 +88,7 @@ def validate(payload: dict, label: str) -> None:
         "backup_restore",
         "signed_audit_export",
         "retention_policy",
+        "retention_controls",
         "sso_connector_policy",
         "omission_contract",
     }:
@@ -108,6 +109,11 @@ def validate(payload: dict, label: str) -> None:
     require(retention.get("rows_deleted") == 0, f"{label} retention rows_deleted must stay zero: {retention}")
     require(retention.get("raw_rows_omitted") is True, f"{label} retention raw rows must stay omitted: {retention}")
     require(isinstance(retention.get("expired_candidates"), int), f"{label} retention expired count missing: {retention}")
+    require(retention.get("controls_contract_id") == "audit_retention_controls_v1", f"{label} retention controls contract missing: {retention}")
+    require(retention.get("cleanup_approval_required") is True, f"{label} cleanup approval proof missing: {retention}")
+    require(retention.get("legal_hold_required_before_cleanup") is True, f"{label} legal-hold check proof missing: {retention}")
+    require(retention.get("cleanup_endpoint_exposed") is False, f"{label} cleanup endpoint must stay closed: {retention}")
+    require(retention.get("destructive_cleanup_supported") is False, f"{label} destructive cleanup must stay unsupported: {retention}")
     safety = payload.get("safety") or {}
     require(safety.get("read_only") is True, f"{label} safety.read_only missing")
     require(safety.get("browser_restore_write_exposed") is False, f"{label} browser restore safety missing")
@@ -117,6 +123,7 @@ def validate(payload: dict, label: str) -> None:
     require(safety.get("delete_performed") is False, f"{label} retention delete safety missing")
     require("deployment_readiness_v1" in set(payload.get("contracts") or []), f"{label} contract list missing")
     require("audit_retention_policy_v1" in set(payload.get("contracts") or []), f"{label} retention contract list missing")
+    require("audit_retention_controls_v1" in set(payload.get("contracts") or []), f"{label} retention controls contract list missing")
     require(isinstance(payload.get("next_actions"), list) and payload.get("next_actions"), f"{label} next_actions missing")
 
 

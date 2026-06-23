@@ -2,6 +2,7 @@ import { Archive, Database, FileCheck2, ServerCog, ShieldCheck } from "lucide-re
 import { AppFrame } from "./AppFrame";
 import type {
   AuditSummary,
+  AuditRetentionControlsPayload,
   AuditRetentionPolicyPayload,
   CommercialEntitlementStatus,
   DeploymentReadinessPayload,
@@ -60,6 +61,7 @@ function GateList({ gates }: Readonly<{ gates?: ReadinessGate[] }>) {
 export function DeploymentParityPage({
   deployment,
   retentionPolicy,
+  retentionControls,
   local,
   security,
   entitlements,
@@ -69,6 +71,7 @@ export function DeploymentParityPage({
 }: Readonly<{
   deployment: DeploymentReadinessPayload;
   retentionPolicy?: AuditRetentionPolicyPayload;
+  retentionControls?: AuditRetentionControlsPayload;
   local: LocalReadinessPayload;
   security: SecurityReadinessSummary;
   entitlements: CommercialEntitlementStatus;
@@ -96,6 +99,9 @@ export function DeploymentParityPage({
   const retention = deployment.retention || {};
   const retentionPolicyDetails = retentionPolicy?.policy || {};
   const retentionCounts = retentionPolicy?.counts || {};
+  const retentionControlDetails = retentionControls?.controls || {};
+  const legalHoldSummary = retentionControls?.legal_hold_summary || {};
+  const activeHoldText = legalHoldSummary.cannot_assert_no_holds ? "unknown" : count(legalHoldSummary.active_holds ?? retention.active_legal_holds);
 
   return (
     <AppFrame>
@@ -260,6 +266,15 @@ export function DeploymentParityPage({
             <span>delete performed {boolText(retentionPolicy?.delete_performed ?? retention.delete_performed)}</span>
             <span>rows deleted {count(retentionPolicy?.rows_deleted ?? retention.rows_deleted)}</span>
             <span>raw rows omitted {boolText(retentionPolicyDetails.raw_rows_omitted ?? retention.raw_rows_omitted)}</span>
+          </div>
+          <div className="proofStrip">
+            <span>retention controls {retentionControls?.contract_id || retention.controls_contract_id || "audit_retention_controls_v1"}</span>
+            <span>cleanup approval {boolText(retentionControlDetails.cleanup_approval_required ?? retention.cleanup_approval_required)}</span>
+            <span>legal hold check {boolText(retentionControlDetails.legal_hold_required_before_cleanup ?? retention.legal_hold_required_before_cleanup)}</span>
+            <span>hold registry {boolText(retentionControlDetails.legal_hold_registry_configured ?? retention.legal_hold_registry_configured)}</span>
+            <span>active holds {activeHoldText}</span>
+            <span>cleanup endpoint {boolText(retentionControlDetails.cleanup_endpoint_exposed ?? retention.cleanup_endpoint_exposed)}</span>
+            <span>destructive cleanup {boolText(retentionControlDetails.destructive_cleanup_supported ?? retention.destructive_cleanup_supported)}</span>
           </div>
           <div className="list compactList">
             {[retentionGate, postgresGate, signedExportGate].filter(Boolean).map((gate) => (

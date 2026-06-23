@@ -794,6 +794,7 @@
         "GET /local/readiness",
         "GET /deployment/readiness",
         "GET /audit/retention-policy",
+        "GET /audit/retention-controls",
         "GET /security/production-readiness",
         "GET /commercial/entitlements",
         "GET /storage/backend-status",
@@ -810,6 +811,7 @@
         "python3 scripts/nextjs_parity_smoke.py",
         "python3 scripts/storage_backend_selection_smoke.py",
         "python3 scripts/audit_retention_policy_smoke.py",
+        "python3 scripts/audit_retention_controls_smoke.py",
         "python3 scripts/deployment_readiness_smoke.py",
         "python3 scripts/byoc_deployment_acceptance_smoke.py"
       ],

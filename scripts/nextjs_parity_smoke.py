@@ -93,6 +93,7 @@ def main() -> int:
         ROOT / "scripts" / "nextjs_enrollment_request_smoke.py",
         ROOT / "scripts" / "nextjs_worker_daemon_control_smoke.py",
         ROOT / "scripts" / "audit_retention_policy_smoke.py",
+        ROOT / "scripts" / "audit_retention_controls_smoke.py",
         ROOT / "docs" / "UI_NAVIGATION_INVENTORY.json",
         ROOT / "docs" / "UI_ROUTE_RETIREMENT_PACKET.json",
     ]
@@ -273,6 +274,10 @@ def main() -> int:
     require("/audit/retention-policy" in server_lib_text and "loadServerAuditRetentionPolicy" in server_lib_text, "deployment parity page must directly load audit retention policy")
     require("loadServerAuditRetentionPolicy" in read_text(NEXT_APP / "app" / "workspace" / "deployment" / "page.tsx"), "deployment page must request audit retention policy in parallel")
     require("audit_retention_policy_v1" in read_text(ROOT / "scripts" / "audit_retention_policy_smoke.py"), "audit retention policy smoke contract is missing")
+    require("audit_retention_controls_v1" in deployment_page_text and "cleanup approval" in deployment_page_text and "legal hold check" in deployment_page_text, "deployment parity page must expose retention controls proof")
+    require("/audit/retention-controls" in server_lib_text and "loadServerAuditRetentionControls" in server_lib_text, "deployment parity page must directly load audit retention controls")
+    require("loadServerAuditRetentionControls" in read_text(NEXT_APP / "app" / "workspace" / "deployment" / "page.tsx"), "deployment page must request audit retention controls in parallel")
+    require("audit_retention_controls_v1" in read_text(ROOT / "scripts" / "audit_retention_controls_smoke.py"), "audit retention controls smoke contract is missing")
     require("loadServerLocalReadiness" in server_lib_text and "loadServerStorageBackendStatus" in server_lib_text, "deployment parity loaders are missing")
     require("DispatchParityPage" in dispatch_page_text and "Entitlement required" in dispatch_page_text, "dispatch parity page must expose fail-closed entitlement state")
     require("verify_dispatch_entitlement_block" in playwright_smoke_text and "verify_dispatch_template_run_success" in playwright_smoke_text, "browser smoke must verify both blocked and entitled dispatch paths")

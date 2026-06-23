@@ -338,6 +338,34 @@ export type AuditRetentionPolicyPayload = {
   error?: string;
 };
 
+export type AuditRetentionControlsPayload = {
+  provider?: string;
+  operation?: string;
+  contract_id?: string;
+  generated_at?: string;
+  status?: string;
+  ok?: boolean;
+  controls_ready?: boolean;
+  workspace_id?: string;
+  edition?: string;
+  config?: Record<string, boolean | string | number | undefined>;
+  retention_windows?: Record<string, boolean | string | number | undefined>;
+  controls?: Record<string, boolean | string | number | string[] | undefined>;
+  legal_hold_summary?: Record<string, boolean | string | number | unknown[] | undefined>;
+  entitlement?: Record<string, boolean | string | number | undefined>;
+  gates?: ReadinessGate[];
+  next_actions?: string[];
+  blocked_reasons?: string[];
+  safety?: Record<string, boolean | string | number | undefined>;
+  live_execution_performed?: boolean;
+  billing_call_performed?: boolean;
+  delete_supported?: boolean;
+  delete_performed?: boolean;
+  rows_deleted?: number;
+  token_omitted?: boolean;
+  error?: string;
+};
+
 export type WorkerStatusSummary = {
   provider?: string;
   status?: string;
