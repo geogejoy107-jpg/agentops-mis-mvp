@@ -40,9 +40,14 @@ agentops doctor
 agentops status
 agentops local readiness
 agentops deployment readiness
+agentops audit retention-policy
 agentops worker status
 agentops security production-readiness
 ```
+
+`agentops audit retention-policy` is a read-only preview. It reports retention
+days, cutoff, and eligible audit-row counts, but cleanup/delete parameters fail
+closed and `rows_deleted` must remain `0`.
 
 ## Security Baseline
 
@@ -190,6 +195,7 @@ with the row payload must fail verification.
 
 ```bash
 python3 -m py_compile server.py scripts/*.py agentops_mis_cli/*.py
+python3 scripts/audit_retention_policy_smoke.py
 python3 scripts/deployment_readiness_smoke.py
 python3 scripts/agentops_local_backup_smoke.py
 python3 scripts/byoc_deployment_acceptance_smoke.py

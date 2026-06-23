@@ -1,5 +1,6 @@
 import type {
   ApprovalSummary,
+  AuditRetentionPolicyPayload,
   AgentGatewaySessionsPayload,
   CommercialEntitlementStatus,
   CustomerDeliveryBoardPayload,
@@ -106,6 +107,14 @@ export async function loadServerLocalReadiness(): Promise<ServerLoadResult<Local
 export async function loadServerDeploymentReadiness(): Promise<ServerLoadResult<DeploymentReadinessPayload>> {
   try {
     return { data: await serverMisJson<DeploymentReadinessPayload>("/deployment/readiness"), error: null };
+  } catch (err) {
+    return { data: {}, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export async function loadServerAuditRetentionPolicy(): Promise<ServerLoadResult<AuditRetentionPolicyPayload>> {
+  try {
+    return { data: await serverMisJson<AuditRetentionPolicyPayload>("/audit/retention-policy"), error: null };
   } catch (err) {
     return { data: {}, error: err instanceof Error ? err.message : String(err) };
   }

@@ -12115,11 +12115,173 @@ def local_readiness(conn: sqlite3.Connection, headers) -> dict:
     }
 
 
+def audit_retention_policy(conn: sqlite3.Connection, headers, qs: dict | None = None) -> dict:
+    entitlements = entitlement_status(headers)
+    qs = qs or {}
+    capability_gate = next(
+        (gate for gate in entitlements.get("gates") or [] if gate.get("capability") == "longer_audit_retention"),
+        {},
+    )
+    capability_enabled = bool((entitlements.get("capabilities") or {}).get("longer_audit_retention"))
+    generated = dt.datetime.now(dt.timezone.utc)
+    dangerous_params = {"apply", "delete", "confirm_delete", "confirm-delete", "cleanup", "execute"}
+    dangerous_requested = sorted(key for key in dangerous_params if key in qs)
+
+    requested_days = (qs.get("retention_days") or qs.get("retention-days") or [None])[0]
+    try:
+        retention_days = int(requested_days) if requested_days is not None else 365 if capability_enabled else 30
+    except (TypeError, ValueError):
+        retention_days = 0
+
+    invalid_retention_days = retention_days <= 0 or retention_days > 3650
+    longer_than_free = retention_days > 30
+    cutoff = generated - dt.timedelta(days=retention_days)
+    rows = conn.execute("SELECT created_at FROM audit_logs").fetchall()
+    created_values = [str(row["created_at"] or "") for row in rows]
+
+    def parse_created_at(value: str) -> dt.datetime | None:
+        if not value:
+            return None
+        normalized = value.replace("Z", "+00:00")
+        try:
+            parsed = dt.datetime.fromisoformat(normalized)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=dt.timezone.utc)
+        return parsed.astimezone(dt.timezone.utc)
+
+    parsed_values = [parsed for parsed in (parse_created_at(value) for value in created_values) if parsed is not None]
+    expired_candidates = sum(1 for parsed in parsed_values if parsed < cutoff)
+    total_logs = len(created_values)
+    unparseable_created_at = total_logs - len(parsed_values)
+    status = (
+        "blocked"
+        if dangerous_requested or invalid_retention_days
+        else "gated"
+        if longer_than_free and not capability_enabled
+        else "ready"
+        if unparseable_created_at == 0
+        else "attention"
+    )
+    policy_source = "entitlement:longer_audit_retention" if capability_enabled else "free_local_default"
+    gates = [
+        {
+            "id": "retention_policy_configured",
+            "label": "Retention policy configured",
+            "ok": not invalid_retention_days,
+            "status": "ready" if not invalid_retention_days else "blocked",
+            "detail": f"{retention_days} day read-only preview from {policy_source}",
+            "next_action": "agentops audit retention-policy",
+        },
+        {
+            "id": "retention_dry_run",
+            "label": "Retention dry-run",
+            "ok": unparseable_created_at == 0,
+            "status": "ready" if unparseable_created_at == 0 else "attention",
+            "detail": f"{expired_candidates} eligible row(s), {total_logs - expired_candidates} retained row(s), {unparseable_created_at} unparseable timestamp(s)",
+            "next_action": "Normalize legacy audit timestamps before enabling destructive cleanup.",
+        },
+        {
+            "id": "destructive_cleanup_disabled",
+            "label": "Destructive cleanup disabled",
+            "ok": not dangerous_requested,
+            "status": "ready" if not dangerous_requested else "blocked",
+            "detail": "This contract never deletes audit rows or mutates the ledger.",
+            "next_action": "Add a separate customer-approved cleanup contract before any deletion path.",
+        },
+        {
+            "id": "raw_audit_rows_omitted",
+            "label": "Raw audit rows omitted",
+            "ok": True,
+            "status": "ready",
+            "detail": "Only counts, timestamps, policy metadata, and omission proofs are returned.",
+            "next_action": "Keep raw metadata out of readiness and UI payloads.",
+        },
+        {
+            "id": "entitlement_gate",
+            "label": "Longer retention entitlement gate",
+            "ok": True,
+            "status": "ready" if capability_enabled or not longer_than_free else "gated",
+            "detail": f"requires {capability_gate.get('required_edition') or 'pro_workspace'}; enabled={capability_enabled}",
+            "next_action": "Enable pro_workspace or higher before advertising longer audit retention.",
+        },
+    ]
+    return {
+        "provider": "agentops-retention",
+        "operation": "audit_retention_policy",
+        "contract_id": "audit_retention_policy_v1",
+        "generated_at": generated.isoformat(),
+        "status": status,
+        "ok": status != "blocked",
+        "policy_ready": status == "ready",
+        "dry_run": True,
+        "delete_supported": False,
+        "workspace_id": normalize_workspace_id(headers.get("X-AgentOps-Workspace-Id") or "local-demo") if headers else "local-demo",
+        "edition": entitlements.get("edition"),
+        "policy": {
+            "policy_source": policy_source,
+            "requested_retention_days": requested_days,
+            "retention_days": retention_days,
+            "cutoff_at": cutoff.isoformat(),
+            "dry_run_only": True,
+            "cleanup_execution_enabled": False,
+            "dangerous_params_rejected": dangerous_requested,
+            "delete_performed": False,
+            "rows_deleted": 0,
+            "raw_rows_omitted": True,
+            "raw_metadata_omitted": True,
+            "token_omitted": True,
+        },
+        "counts": {
+            "total_audit_logs": total_logs,
+            "expired_candidates": expired_candidates,
+            "retained_count": total_logs - expired_candidates,
+            "unparseable_created_at": unparseable_created_at,
+            "oldest_created_at": min(created_values) if created_values else None,
+            "newest_created_at": max(created_values) if created_values else None,
+        },
+        "entitlement": {
+            "capability": "longer_audit_retention",
+            "capability_enabled": capability_enabled,
+            "required_edition": capability_gate.get("required_edition") or "pro_workspace",
+            "enforcement": capability_gate.get("enforcement") or "read_only_preview",
+        },
+        "gates": gates,
+        "next_actions": [
+            "python3 scripts/audit_retention_policy_smoke.py",
+            "Keep audit cleanup disabled until a separate customer-approved destructive contract exists.",
+        ],
+        "blocked_reasons": (
+            ["dangerous_cleanup_parameter_rejected"] if dangerous_requested else []
+        ) + (["invalid_retention_days"] if invalid_retention_days else []),
+        "safety": {
+            "read_only": True,
+            "dry_run": True,
+            "live_execution_performed": False,
+            "billing_call_performed": False,
+            "delete_performed": False,
+            "rows_deleted": 0,
+            "token_omitted": True,
+            "raw_rows_omitted": True,
+            "raw_metadata_omitted": True,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+        },
+        "live_execution_performed": False,
+        "billing_call_performed": False,
+        "delete_performed": False,
+        "rows_deleted": 0,
+        "token_omitted": True,
+    }
+
+
 def deployment_readiness(conn: sqlite3.Connection, headers) -> dict:
     local = local_readiness(conn, headers)
     security = local.get("security_production_readiness") or security_production_readiness(conn, headers)
     entitlements = entitlement_status(headers)
     storage = storage_backend_status(headers)
+    retention_policy = audit_retention_policy(conn, headers)
     deployment_checks = local.get("deployment_checks") or {}
     capabilities = entitlements.get("capabilities") or {}
 
@@ -12179,7 +12341,7 @@ def deployment_readiness(conn: sqlite3.Connection, headers) -> dict:
     )
 
     signed_status = "ready" if signed_gate.get("enabled") and signed_export_proof_ok else "gated" if signed_export_proof_ok else "blocked"
-    retention_status = "ready" if retention_gate.get("enabled") else "gated"
+    retention_status = retention_policy.get("status") if retention_policy.get("status") != "ready" else "ready" if retention_gate.get("enabled") else "gated"
     sso_status = "ready" if sso_gate.get("enabled") and connector_gate.get("enabled") else "gated"
     gates = [
         gate(
@@ -12224,11 +12386,11 @@ def deployment_readiness(conn: sqlite3.Connection, headers) -> dict:
         ),
         gate(
             "retention_policy",
-            "Audit retention entitlement",
+            "Audit retention policy preview",
             True,
             retention_status,
-            f"requires {retention_gate.get('required_edition') or 'pro_workspace'}; enforcement={retention_gate.get('enforcement') or 'read_only_preview'}",
-            "Keep longer audit retention fail-closed until entitlement and retention policy are enabled.",
+            f"{((retention_policy.get('counts') or {}).get('expired_candidates') or 0)} eligible row(s); delete_performed={retention_policy.get('delete_performed')}",
+            "python3 scripts/audit_retention_policy_smoke.py",
         ),
         gate(
             "sso_connector_policy",
@@ -12304,9 +12466,21 @@ def deployment_readiness(conn: sqlite3.Connection, headers) -> dict:
         },
         "retention": {
             "status": retention_status,
+            "contract_id": retention_policy.get("contract_id"),
             "capability_enabled": bool(retention_gate.get("enabled")),
             "required_edition": retention_gate.get("required_edition") or "pro_workspace",
             "enforcement": retention_gate.get("enforcement") or "read_only_preview",
+            "policy_source": (retention_policy.get("policy") or {}).get("policy_source"),
+            "retention_days": (retention_policy.get("policy") or {}).get("retention_days"),
+            "cutoff_at": (retention_policy.get("policy") or {}).get("cutoff_at"),
+            "dry_run_only": (retention_policy.get("policy") or {}).get("dry_run_only"),
+            "cleanup_execution_enabled": (retention_policy.get("policy") or {}).get("cleanup_execution_enabled"),
+            "delete_performed": retention_policy.get("delete_performed"),
+            "rows_deleted": retention_policy.get("rows_deleted"),
+            "total_audit_logs": (retention_policy.get("counts") or {}).get("total_audit_logs"),
+            "expired_candidates": (retention_policy.get("counts") or {}).get("expired_candidates"),
+            "retained_count": (retention_policy.get("counts") or {}).get("retained_count"),
+            "raw_rows_omitted": (retention_policy.get("policy") or {}).get("raw_rows_omitted"),
         },
         "enterprise_byoc": {
             "postgres_adapter": bool(postgres_gate.get("enabled")),
@@ -12318,6 +12492,7 @@ def deployment_readiness(conn: sqlite3.Connection, headers) -> dict:
             "deployment_readiness_v1",
             "byoc_deployment_acceptance_v1",
             "signed_audit_export_v1",
+            "audit_retention_policy_v1",
             storage.get("contract") or "sqlite_free_local_default",
         ],
         "safety": {
@@ -12329,6 +12504,7 @@ def deployment_readiness(conn: sqlite3.Connection, headers) -> dict:
             "raw_prompt_omitted": True,
             "raw_response_omitted": True,
             "signing_key_omitted": True,
+            "delete_performed": False,
         },
         "live_execution_performed": False,
         "token_omitted": True,
@@ -13317,6 +13493,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(payload)
             if path == "/api/deployment/readiness":
                 payload = deployment_readiness(conn, self.headers)
+                conn.rollback()
+                return self.send_json(payload)
+            if path == "/api/audit/retention-policy":
+                payload = audit_retention_policy(conn, self.headers, qs)
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/security/production-readiness":

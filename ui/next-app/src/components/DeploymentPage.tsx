@@ -2,6 +2,7 @@ import { Archive, Database, FileCheck2, ServerCog, ShieldCheck } from "lucide-re
 import { AppFrame } from "./AppFrame";
 import type {
   AuditSummary,
+  AuditRetentionPolicyPayload,
   CommercialEntitlementStatus,
   DeploymentReadinessPayload,
   LocalReadinessPayload,
@@ -58,6 +59,7 @@ function GateList({ gates }: Readonly<{ gates?: ReadinessGate[] }>) {
 
 export function DeploymentParityPage({
   deployment,
+  retentionPolicy,
   local,
   security,
   entitlements,
@@ -66,6 +68,7 @@ export function DeploymentParityPage({
   errors,
 }: Readonly<{
   deployment: DeploymentReadinessPayload;
+  retentionPolicy?: AuditRetentionPolicyPayload;
   local: LocalReadinessPayload;
   security: SecurityReadinessSummary;
   entitlements: CommercialEntitlementStatus;
@@ -90,6 +93,9 @@ export function DeploymentParityPage({
   const connectorGate = gateFor(entitlements, "custom_connector_sdk");
   const storageChecks = Object.entries(storage.checks || {});
   const storageContract = storage.contract || (storage.selected_backend === "postgres" ? "postgres backend gate" : "sqlite free local");
+  const retention = deployment.retention || {};
+  const retentionPolicyDetails = retentionPolicy?.policy || {};
+  const retentionCounts = retentionPolicy?.counts || {};
 
   return (
     <AppFrame>
@@ -243,6 +249,17 @@ export function DeploymentParityPage({
             <span>postgres {boolText(entitlements.capabilities?.postgres_adapter)}</span>
             <span>retention {boolText(entitlements.capabilities?.longer_audit_retention)}</span>
             <span>signed export {boolText(entitlements.capabilities?.signed_audit_exports)}</span>
+          </div>
+          <div className="proofStrip">
+            <span>retention policy {retentionPolicy?.contract_id || retention.contract_id || "audit_retention_policy_v1"}</span>
+            <span>preview {retentionPolicy?.entitlement?.enforcement || retention.enforcement || "read_only_preview"}</span>
+            <span>days {count(retentionPolicyDetails.retention_days || retention.retention_days)}</span>
+            <span>eligible {count(retentionCounts.expired_candidates || retention.expired_candidates)}</span>
+            <span>dry-run {boolText(retentionPolicyDetails.dry_run_only ?? retention.dry_run_only)}</span>
+            <span>delete supported {boolText(retentionPolicy?.delete_supported)}</span>
+            <span>delete performed {boolText(retentionPolicy?.delete_performed ?? retention.delete_performed)}</span>
+            <span>rows deleted {count(retentionPolicy?.rows_deleted ?? retention.rows_deleted)}</span>
+            <span>raw rows omitted {boolText(retentionPolicyDetails.raw_rows_omitted ?? retention.raw_rows_omitted)}</span>
           </div>
           <div className="list compactList">
             {[retentionGate, postgresGate, signedExportGate].filter(Boolean).map((gate) => (

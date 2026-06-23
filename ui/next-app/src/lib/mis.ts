@@ -311,6 +311,33 @@ export type DeploymentReadinessPayload = {
   error?: string;
 };
 
+export type AuditRetentionPolicyPayload = {
+  provider?: string;
+  operation?: string;
+  contract_id?: string;
+  generated_at?: string;
+  status?: string;
+  ok?: boolean;
+  policy_ready?: boolean;
+  dry_run?: boolean;
+  delete_supported?: boolean;
+  workspace_id?: string;
+  edition?: string;
+  policy?: Record<string, boolean | string | number | string[] | undefined>;
+  counts?: Record<string, boolean | string | number | undefined | null>;
+  entitlement?: Record<string, boolean | string | number | undefined>;
+  gates?: ReadinessGate[];
+  next_actions?: string[];
+  blocked_reasons?: string[];
+  safety?: Record<string, boolean | string | number | undefined>;
+  live_execution_performed?: boolean;
+  billing_call_performed?: boolean;
+  delete_performed?: boolean;
+  rows_deleted?: number;
+  token_omitted?: boolean;
+  error?: string;
+};
+
 export type WorkerStatusSummary = {
   provider?: string;
   status?: string;

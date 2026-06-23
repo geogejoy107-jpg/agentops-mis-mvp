@@ -434,6 +434,14 @@ Must be true:
   retention, SSO/private connector gates, and omission contracts without
   executing live work, restoring a database, or printing secrets. Verify with
   `python3 scripts/deployment_readiness_smoke.py`.
+- `audit_retention_policy_v1` exposes a read-only audit retention policy
+  preview through `GET /api/audit/retention-policy` and
+  `agentops audit retention-policy`. It proves policy source, retention-day
+  bounds, cutoff calculation, eligible audit-row counts, and raw-row omission
+  without deleting rows, mutating the ledger, or claiming production retention
+  enforcement. `delete`, `apply`, and cleanup-style query parameters fail
+  closed while preserving `rows_deleted=0`. Verify with
+  `python3 scripts/audit_retention_policy_smoke.py`.
 - Postgres adapter and migrations pass the same core ledger acceptance used for
   SQLite.
 - Runtime connectors remain policy-gated and do not store raw secrets, raw
