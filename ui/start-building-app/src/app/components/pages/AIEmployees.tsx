@@ -903,6 +903,9 @@ export function AIEmployees() {
       afterQueueActive: "After queue active",
       afterQueueFailed: "After queue failed",
       afterQueueCompleted: "After queue completed",
+      retryWorkflowJob: "Retry job",
+      retryingWorkflowJob: "Retrying...",
+      markLaneJobFailed: "Mark job failed",
       persistedPackages: "Persisted packages",
       packageReadback: "Package readback",
       packageStatus: "Package status",
@@ -1429,6 +1432,9 @@ export function AIEmployees() {
       afterQueueActive: "排队后活跃",
       afterQueueFailed: "排队后失败",
       afterQueueCompleted: "排队后完成",
+      retryWorkflowJob: "重试 Job",
+      retryingWorkflowJob: "正在重试...",
+      markLaneJobFailed: "标记 Job failed",
       persistedPackages: "持久化工作包",
       packageReadback: "工作包读回",
       packageStatus: "工作包状态",
@@ -2825,6 +2831,40 @@ export function AIEmployees() {
     }
   };
 
+  const retryCommanderWorkflowJob = async (taskId: string, jobId: string, adapter: WorkerAdapterName = "mock") => {
+    const safeAdapter = WORKER_ADAPTERS.includes(adapter as (typeof WORKER_ADAPTERS)[number]) ? adapter : "mock";
+    const actionId = `commander-retry-${jobId}`;
+    setWorkflowJobAction(actionId);
+    setWorkflowJobResult(null);
+    try {
+      const result = await dispatchCommanderWorkPackageBatch({
+        project_id: commanderTeamBoard?.project_id || activeCommanderProject?.projectId || undefined,
+        plan_id: commanderTeamBoard?.plan_id || activeCommanderProject?.planId || undefined,
+        task_ids: [taskId],
+        adapter: safeAdapter,
+        status: "all",
+        limit: 1,
+        confirm_run: safeAdapter !== "mock",
+      });
+      setLastCommanderBatch(result);
+      setWorkflowJobResult(`${jobId}: retry ${result.ok ? "queued" : result.reason || "failed"} · ${result.job_ids.length} jobs`);
+      if (result.team_board_after_queue) {
+        setData((current) => current ? {
+          ...current,
+          commanderProjectBoard: current.commanderProjectBoard ? {
+            ...(current.commanderProjectBoard as CommanderProjectBoardPayload),
+            team_board: result.team_board_after_queue,
+          } : current.commanderProjectBoard,
+        } : current);
+      }
+      await refresh();
+    } catch (err) {
+      setWorkflowJobResult(err instanceof Error ? err.message : String(err));
+    } finally {
+      setWorkflowJobAction(null);
+    }
+  };
+
   const runWorkerOnce = async (adapter: "mock" | "hermes" | "openclaw") => {
     setDispatching(adapter);
     setDispatchResult(null);
@@ -3561,6 +3601,30 @@ export function AIEmployees() {
                       <span className="text-[10px] px-2 py-1 rounded font-mono" style={{ color: "var(--mis-muted)", background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}>
                         {lane.latest_workflow_job.job_id}
                       </span>
+                    )}
+                    {lane.latest_workflow_job?.job_id && ["queued", "running"].includes(lane.latest_workflow_job.status || "") && (
+                      <button
+                        data-testid="commander-team-board-mark-job-failed"
+                        onClick={() => lane.latest_workflow_job?.job_id && void markStuckWorkflowJobFailed(lane.latest_workflow_job.job_id)}
+                        disabled={Boolean(workflowJobAction)}
+                        className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded disabled:opacity-50"
+                        style={{ color: "#F87171", background: "rgba(248,113,113,0.10)", border: "1px solid rgba(248,113,113,0.22)" }}
+                      >
+                        {workflowJobAction === lane.latest_workflow_job.job_id ? <RefreshCw size={10} /> : <Square size={10} />}
+                        {workflowJobAction === lane.latest_workflow_job.job_id ? copy.markingJobFailed : copy.markLaneJobFailed}
+                      </button>
+                    )}
+                    {lane.latest_workflow_job?.job_id && lane.latest_workflow_job.status === "failed" && (
+                      <button
+                        data-testid="commander-team-board-retry-job"
+                        onClick={() => void retryCommanderWorkflowJob(lane.task_id, lane.latest_workflow_job?.job_id || lane.task_id, (lane.latest_workflow_job?.adapter || "mock") as WorkerAdapterName)}
+                        disabled={Boolean(workflowJobAction) || liveAdapterConfirmMissing((lane.latest_workflow_job?.adapter || "mock") as (typeof WORKER_ADAPTERS)[number])}
+                        className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded disabled:opacity-50"
+                        style={{ color: "var(--mis-warning)", background: "rgba(245,158,11,0.10)", border: "1px solid rgba(245,158,11,0.20)" }}
+                      >
+                        {workflowJobAction === `commander-retry-${lane.latest_workflow_job.job_id}` ? <RefreshCw size={10} /> : <RotateCw size={10} />}
+                        {workflowJobAction === `commander-retry-${lane.latest_workflow_job.job_id}` ? copy.retryingWorkflowJob : copy.retryWorkflowJob}
+                      </button>
                     )}
                     {lane.latest_run?.run_id && (
                       <Link to={`/admin/runs/${lane.latest_run.run_id}`} className="text-[10px] px-2 py-1 rounded" style={{ color: "var(--mis-cyan)", background: "rgba(34,211,238,0.10)", border: "1px solid rgba(34,211,238,0.18)" }}>

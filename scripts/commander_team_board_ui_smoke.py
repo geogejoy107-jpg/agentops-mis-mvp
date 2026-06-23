@@ -63,6 +63,11 @@ def main() -> int:
         "batch_dispatch_result_state": "lastCommanderBatch",
         "batch_after_queue_active": "commanderLastQueueBoard.summary.active_workflow_jobs",
         "batch_jobs_created": "lastCommanderBatch?.safety.jobs_created",
+        "team_board_mark_failed_button": 'data-testid="commander-team-board-mark-job-failed"',
+        "team_board_retry_button": 'data-testid="commander-team-board-retry-job"',
+        "team_board_mark_failed_handler": "markStuckWorkflowJobFailed(lane.latest_workflow_job.job_id)",
+        "team_board_retry_handler": "retryCommanderWorkflowJob(lane.task_id",
+        "team_board_retry_live_confirm": "liveAdapterConfirmMissing((lane.latest_workflow_job?.adapter || \"mock\")",
         "fallback_action_rows": "commanderActionRows",
         "scoped_refresh": "refresh({ commanderProject: nextProject })",
     }
@@ -93,6 +98,9 @@ def main() -> int:
     require("result_artifact_id" in board_block, "team board should surface workflow delivery artifact evidence", failures)
     require("dispatchCommanderPlannedBatch()" in board_block, "team board should expose a batch dispatch control", failures)
     require("commanderLastQueueBoard" in board_block, "team board should render after-queue readback evidence", failures)
+    require("commander-team-board-mark-job-failed" in board_block, "team board should expose active job mark-failed recovery", failures)
+    require("commander-team-board-retry-job" in board_block, "team board should expose failed job retry recovery", failures)
+    require("dispatchCommanderWorkPackageBatch" in ai and "status: \"all\"" in ai, "failed job retry should requeue the exact task through audited batch dispatch", failures)
     require("loadCommanderProjectBoard({ project_id: nextProject.projectId" in ai, "confirmed planner create should reload scoped project board", failures)
     require("loadCommanderWorkPackages({ project_id: nextProject.projectId" in ai, "confirmed planner create should reload scoped work packages", failures)
     require("team_board: null" in project_loader, "project board fallback should be safe/null when unavailable", failures)
