@@ -548,6 +548,27 @@ def compact_loop_launch_packet(payload: dict, *, adapter: str) -> dict:
             "token_omitted": item.get("token_omitted", True),
         })
     adapter_command = f"agentops worker preflight --adapter {adapter}"
+    live_run_command = (
+        "agentops workflow run-task "
+        f"--adapter {adapter} "
+        f"--confirm-run "
+        f"--worker-agent-id <{adapter}_agent_id> "
+        "--title '<task title>' "
+        "--description '<task description>'"
+    ) if adapter in {"hermes", "openclaw"} else (
+        "agentops workflow run-task "
+        "--adapter mock "
+        "--worker-agent-id <mock_agent_id> "
+        "--title '<task title>' "
+        "--description '<task description>'"
+    )
+    readback_commands = [
+        "agentops task get --task-id <task_id>",
+        "agentops run get --run-id <run_id>",
+        "agentops plan-evidence list --run-id <run_id>",
+        "agentops operator loop-audit --limit 20",
+        "agentops operator action-receipts --limit 20",
+    ]
     return {
         "provider": payload.get("provider", "agentops-operator"),
         "operation": "operator_loop_launch_brief",
@@ -577,6 +598,8 @@ def compact_loop_launch_packet(payload: dict, *, adapter: str) -> dict:
         "verify_command": control.get("verify_command") or recommended.get("verify_command"),
         "receipt_command": control.get("receipt_command") or recommended.get("receipt_command"),
         "adapter_preflight_command": adapter_command,
+        "live_run_command": live_run_command,
+        "readback_commands": readback_commands,
         "runtime_doctor_command": "agentops operator runtime-doctor --limit 8",
         "execution_chain": compact_chain,
         "policy": {
@@ -598,8 +621,8 @@ def compact_loop_launch_packet(payload: dict, *, adapter: str) -> dict:
             adapter_command,
             "agentops operator loop-control --limit 8",
             "agentops operator advance-loop --fast-control --limit 8",
-            "agentops operator loop-audit --limit 20",
-            "agentops operator action-receipts --limit 20",
+            live_run_command,
+            *readback_commands,
         ],
         "contract": "compact copy-only launch brief for Hermes/OpenClaw/Codex; derived from loop-launch-packet without mutating ledgers, executing runtimes, or exposing raw prompts/responses/tokens",
         "token_omitted": True,

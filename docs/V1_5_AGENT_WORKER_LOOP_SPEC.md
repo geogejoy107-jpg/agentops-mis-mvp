@@ -86,8 +86,8 @@ Task selection:
 Adapter execution:
 
 - `mock`: deterministic local summary, no external runtime.
-- `hermes`: calls `POST /api/integrations/hermes/run-task` with `confirm_run:true` only when worker gets `--confirm-run`.
-- `openclaw`: calls `POST /api/integrations/openclaw/probe` only when worker gets `--confirm-run`.
+- `hermes`: calls the configured local OpenAI-compatible Hermes gateway only when the worker gets `--confirm-run`.
+- `openclaw`: calls the configured local OpenClaw CLI only when the worker gets `--confirm-run`.
 - Retryable adapter failures can be retried with `--adapter-max-attempts` and `--adapter-retry-delay-sec`.
 - Safety gates such as missing `--confirm-run` return `ConfirmRunRequired` and are not retried.
 

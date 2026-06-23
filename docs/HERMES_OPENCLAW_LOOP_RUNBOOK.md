@@ -41,8 +41,10 @@ The brief is the preferred handoff payload when Codex wants Hermes or OpenClaw
 to continue a supervised loop without reading the full launch packet. It keeps
 only the adapter preflight command, current next/verify/receipt commands,
 compact execution-chain state, bounded-runner policy id, confirmation and
-prepared-action guidance, and read-only/token-omission proof. The agent should
-copy commands locally; the server never executes shell from the brief.
+prepared-action guidance, an explicit `agentops workflow run-task --adapter ...
+--confirm-run` live command template, readback commands for task/run/manifest
+evidence, and read-only/token-omission proof. The agent should copy commands
+locally; the server never executes shell from the brief.
 
 Bounded one-step advance:
 

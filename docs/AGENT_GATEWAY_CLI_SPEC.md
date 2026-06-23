@@ -1781,8 +1781,9 @@ CLI `--brief` keeps the server/API contract unchanged but emits a compact
 copy-only `operator_loop_launch_brief` for live local agents. The brief includes
 the adapter preflight command, the current next/verify/receipt commands, compact
 execution-chain rows, confirmation/prepared-action guidance for Hermes/OpenClaw,
-and the same read-only/token-omission safety proof without printing the full
-launch packet.
+an explicit `agentops workflow run-task --adapter ... --confirm-run` live command
+template, task/run/manifest readback commands, and the same read-only/token-
+omission safety proof without printing the full launch packet.
 It emits commands for loop self-check, knowledge search, commander repo-map
 localization, plan creation/verification, intake comparison, enforced task
 pull, loop verification, plan-evidence binding, evidence reporting, Action

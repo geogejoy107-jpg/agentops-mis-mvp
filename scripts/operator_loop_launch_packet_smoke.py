@@ -274,6 +274,8 @@ def validate_brief(payload: dict, label: str, task_id: str, agent_id: str, adapt
     require(policy.get("live_execution_requires_confirm_run") is True, f"{label} live confirmation guidance missing: {policy}", failures)
     require(policy.get("external_writes_require_prepared_action") is True, f"{label} prepared-action guidance missing: {policy}", failures)
     require(payload.get("adapter_preflight_command") == f"agentops worker preflight --adapter {adapter}", f"{label} adapter preflight command missing: {payload}", failures)
+    require(f"agentops workflow run-task --adapter {adapter} --confirm-run" in str(payload.get("live_run_command") or ""), f"{label} live run command missing: {payload}", failures)
+    require("agentops run get --run-id <run_id>" in (payload.get("readback_commands") or []), f"{label} run readback command missing: {payload}", failures)
     require("agentops operator loop-control --limit 8" in (payload.get("commands") or []), f"{label} loop-control command missing: {payload}", failures)
     require("agentops operator advance-loop --fast-control --limit 8" in (payload.get("commands") or []), f"{label} fast advance command missing: {payload}", failures)
     chain = payload.get("execution_chain") or []
@@ -359,6 +361,15 @@ def main() -> int:
             brief_payload = load_json(brief_cli.stdout)
             require(brief_cli.returncode == 0, f"Brief CLI launch packet failed: {brief_cli.stderr or brief_cli.stdout}", failures)
             validate_brief(brief_payload, "cli_brief", task_id, agent_id, "hermes", failures)
+            openclaw_brief_cli = run_cli(
+                base_url,
+                ["operator", "loop-launch-packet", "--task-id", task_id, "--agent-id", agent_id, "--limit", "8", "--query", "Agent Work Method Block", "--brief", "--adapter", "openclaw"],
+                env,
+            )
+            outputs.extend([openclaw_brief_cli.stdout, openclaw_brief_cli.stderr])
+            openclaw_brief_payload = load_json(openclaw_brief_cli.stdout)
+            require(openclaw_brief_cli.returncode == 0, f"OpenClaw brief CLI launch packet failed: {openclaw_brief_cli.stderr or openclaw_brief_cli.stdout}", failures)
+            validate_brief(openclaw_brief_payload, "cli_openclaw_brief", task_id, agent_id, "openclaw", failures)
             full_status, full_payload = http_json(
                 base_url,
                 "/api/operator/loop-launch-packet",
