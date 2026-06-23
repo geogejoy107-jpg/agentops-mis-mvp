@@ -146,9 +146,17 @@ def validate(payload: dict) -> None:
     knowledge_gate = next((gate for gate in gates if gate.get("id") == "knowledge_memory"), {})
     require("knowledge" in (knowledge_gate.get("detail") or "").lower(), f"knowledge gate should expose indexed knowledge counts: {knowledge_gate}")
     require(
-        "knowledge search" in (knowledge_gate.get("next_action") or "") or "knowledge index" in (knowledge_gate.get("next_action") or ""),
+        "knowledge evidence-packet" in (knowledge_gate.get("next_action") or "")
+        or "knowledge search" in (knowledge_gate.get("next_action") or "")
+        or "knowledge index" in (knowledge_gate.get("next_action") or ""),
         f"knowledge gate should route to knowledge CLI action: {knowledge_gate}",
     )
+    packet = payload.get("knowledge_retrieval_evidence") or {}
+    require(packet.get("operation") == "knowledge_retrieval_evidence_packet", f"knowledge retrieval evidence packet missing: {packet}")
+    require((packet.get("safety") or {}).get("read_only") is True, f"knowledge retrieval packet must be read-only: {packet}")
+    require(packet.get("query_omitted") is True, f"knowledge retrieval packet must omit query: {packet}")
+    require((packet.get("primary_search") or {}).get("query_omitted") is True, f"knowledge primary search must omit query: {packet}")
+    require((packet.get("metrics") or {}).get("recall_at_5") is not None, f"knowledge retrieval metrics missing: {packet}")
     for key in ["commander_synthesis_artifacts", "commander_synthesis_pending_reviews", "commander_synthesis_promoted_memories", "commander_synthesis_promoted_deliveries"]:
         require(isinstance(evidence.get(key), int), f"missing synthesis evidence count {key}: {evidence}")
     for key in ["live_acceptance_fresh_adapters", "live_acceptance_latest_failed_adapters", "live_acceptance_missing_adapters"]:

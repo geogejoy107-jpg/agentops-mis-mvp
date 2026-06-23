@@ -137,6 +137,23 @@ evidence counts, local runbook/doc presence, UI routes, and recommended next
 actions. It is the preferred first check before a local demo or after changing
 worker/gateway code.
 
+### `agentops knowledge evidence-packet`
+
+Returns a read-only retrieval evidence packet for agents and operators. It uses
+the existing Markdown/SQLite FTS knowledge index and reports retrieval IDs,
+document/chunk IDs, headings, source hashes, visibility, and baseline
+Recall@5/MRR/p95 metrics without returning raw snippets, raw content, raw
+prompts, raw responses, or tokens.
+
+```bash
+agentops knowledge evidence-packet "Agent Gateway CLI commands" --limit 5
+curl -fsS "http://127.0.0.1:8787/api/knowledge/evidence-packet?q=Agent%20Gateway%20CLI&limit=5" | jq .
+```
+
+The Agent Gateway route requires `knowledge:read`. Packet reads are non-mutating:
+they do not refresh the index, pull tasks, start runs, write tool calls, or call
+Hermes/OpenClaw.
+
 ### `agentops agent register`
 
 Registers or updates an AI digital employee identity.
@@ -2318,6 +2335,8 @@ Current endpoint scope map:
 | `GET /api/agent-gateway/artifacts` | `tasks:read` |
 | `POST /api/agent-gateway/artifacts` | `artifacts:write` |
 | `GET /api/agent-gateway/knowledge/search` | `knowledge:read` |
+| `GET /api/agent-gateway/knowledge/evidence-packet` | `knowledge:read` |
+| `GET /api/agent-gateway/knowledge/retrieval-evidence-packet` | `knowledge:read` |
 | `POST /api/agent-gateway/knowledge/index` | `knowledge:write` |
 | `GET /api/agent-gateway/agent-plans` | `agent_plans:read` |
 | `GET /api/agent-gateway/agent-plans/:plan_id` | `agent_plans:read` |

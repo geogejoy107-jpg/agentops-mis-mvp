@@ -4876,6 +4876,232 @@ def knowledge_search(conn: sqlite3.Connection, qs: dict, headers=None, auth_ctx=
     }, 200
 
 
+KNOWLEDGE_RETRIEVAL_EVIDENCE_CASES = [
+    {
+        "id": "en_gateway_cli",
+        "language": "en",
+        "query": "Agent Gateway CLI commands task pull run heartbeat approval memory eval audit",
+        "expected_paths": {"docs/AGENT_GATEWAY_CLI_SPEC.md"},
+    },
+    {
+        "id": "en_actor_model",
+        "language": "en",
+        "query": "Solo owner team member human approver AI digital employee external runtime surface model template model",
+        "expected_paths": {"docs/PRODUCT_USAGE_AND_ACTOR_MODEL.md"},
+    },
+    {
+        "id": "en_method_block",
+        "language": "en",
+        "query": "READ PLAN RETRIEVE COMPARE EXECUTE VERIFY RECORD method block",
+        "expected_paths": {"AGENT_WORKFLOW.md", "docs/AGENT_WORK_METHOD_BLOCK.md", "knowledge/runbooks/agent_work_method_runbook.md"},
+    },
+    {
+        "id": "zh_hermes_openclaw",
+        "language": "zh",
+        "query": "Hermes OpenClaw Loop Runbook mis-ledger plan_evidence_manifest 回写 证据",
+        "expected_paths": {"docs/HERMES_OPENCLAW_LOOP_RUNBOOK.md", "docs/REMOTE_WORKER_OPERATIONS_RUNBOOK.md"},
+    },
+    {
+        "id": "en_pixel_office",
+        "language": "en",
+        "query": "Pixel Office operating map zones route formal MIS pages task hall inspector operations bar",
+        "expected_paths": {"docs/PIXEL_OPERATING_MAP_SPEC.md", "docs/PIXEL_OPERATING_MAP_ACCEPTANCE.md"},
+    },
+]
+
+
+def percentile(values: list[float], percent: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(float(value) for value in values)
+    index = min(len(ordered) - 1, max(0, int(round((percent / 100.0) * (len(ordered) - 1)))))
+    return ordered[index]
+
+
+def reciprocal_rank(paths: list[str], expected_paths: set[str]) -> float:
+    for index, path in enumerate(paths, start=1):
+        if path in expected_paths:
+            return 1.0 / index
+    return 0.0
+
+
+def safe_knowledge_evidence_result(row: dict) -> dict:
+    return {
+        "doc_id": row.get("doc_id"),
+        "chunk_id": row.get("chunk_id"),
+        "path": row.get("path"),
+        "title": row.get("title"),
+        "category": row.get("category"),
+        "scope": row.get("scope"),
+        "workspace_id": row.get("workspace_id"),
+        "access_level": row.get("access_level"),
+        "retrieval_id": row.get("retrieval_id"),
+        "retrieval_granularity": row.get("retrieval_granularity"),
+        "chunk_heading": row.get("chunk_heading") or row.get("heading"),
+        "chunk_heading_path": row.get("chunk_heading_path") or row.get("heading_path"),
+        "source_hash": row.get("source_hash"),
+        "rank": row.get("rank"),
+        "snippet_omitted": True,
+        "content_summary_omitted": True,
+        "raw_content_omitted": True,
+        "raw_prompt_omitted": True,
+        "token_omitted": True,
+    }
+
+
+def knowledge_retrieval_evidence_packet(conn: sqlite3.Connection, qs: dict, headers=None, auth_ctx=None) -> tuple[dict, int]:
+    headers = headers or {}
+    qs = qs or {}
+    workspace_id = normalize_workspace_id(
+        (auth_ctx or {}).get("workspace_id")
+        or headers.get("X-AgentOps-Workspace-Id")
+        or (qs.get("workspace_id") or ["local-demo"])[0]
+    )
+    query = redact_text((qs.get("q") or qs.get("query") or ["READ PLAN RETRIEVE COMPARE VERIFY RECORD"])[0], 240)
+    limit = bounded_int((qs.get("limit") or ["5"])[0], 5, 1, 10)
+    baseline_limit = bounded_int((qs.get("baseline_limit") or ["5"])[0], 5, 1, 10)
+    search_auth_ctx = auth_ctx if auth_ctx is not None else {}
+    counts = {
+        "knowledge_documents": scalar_count(conn, "SELECT COUNT(*) FROM knowledge_documents"),
+        "knowledge_chunks": scalar_count(conn, "SELECT COUNT(*) FROM knowledge_chunks"),
+        "knowledge_chunk_fts_rows": scalar_count(conn, "SELECT COUNT(*) FROM knowledge_chunk_fts"),
+        "workspace_documents": scalar_count(
+            conn,
+            "SELECT COUNT(*) FROM knowledge_documents WHERE workspace_id IN ('global', ?)",
+            (workspace_id,),
+        ),
+        "workspace_chunks": scalar_count(
+            conn,
+            "SELECT COUNT(*) FROM knowledge_chunks WHERE workspace_id IN ('global', ?)",
+            (workspace_id,),
+        ),
+    }
+    primary_payload, _primary_status = knowledge_search(
+        conn,
+        {"q": [query], "limit": [str(limit)]},
+        headers,
+        auth_ctx=search_auth_ctx,
+    )
+    primary_results = [safe_knowledge_evidence_result(row) for row in (primary_payload.get("results") or [])]
+    per_query: list[dict] = []
+    reciprocal_ranks: list[float] = []
+    latencies_ms: list[float] = []
+    hits = 0
+    fallback_queries = 0
+    heading_chunk_queries = 0
+    for case in KNOWLEDGE_RETRIEVAL_EVIDENCE_CASES:
+        started = time.perf_counter()
+        payload, _status = knowledge_search(
+            conn,
+            {"q": [case["query"]], "limit": [str(baseline_limit)]},
+            headers,
+            auth_ctx=search_auth_ctx,
+        )
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        rows = payload.get("results") or []
+        paths = [str(row.get("path") or "") for row in rows]
+        rr = reciprocal_rank(paths, set(case["expected_paths"]))
+        hit = rr > 0
+        hits += 1 if hit else 0
+        reciprocal_ranks.append(rr)
+        latencies_ms.append(elapsed_ms)
+        quality = payload.get("search_quality") or {}
+        if quality.get("fallback_used"):
+            fallback_queries += 1
+        if quality.get("heading_aware_chunks"):
+            heading_chunk_queries += 1
+        per_query.append({
+            "id": case["id"],
+            "language": case["language"],
+            "query_hash": stable_hash(case["query"]),
+            "expected_paths": sorted(case["expected_paths"]),
+            "hit_at_5": hit,
+            "rank": int(1 / rr) if rr else None,
+            "latency_ms": round(elapsed_ms, 2),
+            "search_mode": payload.get("search_mode"),
+            "result_quality": quality.get("result_quality"),
+            "fallback_used": bool(quality.get("fallback_used")),
+            "heading_aware_chunks": bool(quality.get("heading_aware_chunks")),
+            "content_body_searched": bool(quality.get("content_body_searched")),
+            "top_results": [safe_knowledge_evidence_result(row) for row in rows[:baseline_limit]],
+            "token_omitted": True,
+        })
+    total = len(KNOWLEDGE_RETRIEVAL_EVIDENCE_CASES)
+    recall_at_5 = hits / total if total else 0.0
+    mrr = sum(reciprocal_ranks) / total if total else 0.0
+    p95_ms = percentile(latencies_ms, 95)
+    status = (
+        "ready"
+        if counts["knowledge_documents"] > 0
+        and counts["knowledge_chunks"] > 0
+        and counts["knowledge_chunk_fts_rows"] > 0
+        and recall_at_5 >= 0.8
+        and mrr >= 0.5
+        and fallback_queries == 0
+        else "attention"
+    )
+    metrics = {
+        "queries": total,
+        "hits_at_5": hits,
+        "recall_at_5": round(recall_at_5, 4),
+        "mrr": round(mrr, 4),
+        "p95_ms": round(p95_ms, 2),
+        "fallback_queries": fallback_queries,
+        "heading_chunk_queries": heading_chunk_queries,
+        "baseline_limit": baseline_limit,
+        "thresholds": {
+            "recall_at_5": 0.8,
+            "mrr": 0.5,
+            "fallback_queries": 0,
+        },
+        "token_omitted": True,
+    }
+    return {
+        "provider": "agentops-knowledge",
+        "operation": "knowledge_retrieval_evidence_packet",
+        "version": "v0",
+        "status": status,
+        "workspace_id": workspace_id,
+        "query_hash": stable_hash(query or "recent"),
+        "query_omitted": True,
+        "counts": counts,
+        "metrics": metrics,
+        "primary_search": {
+            "operation": primary_payload.get("operation"),
+            "query_hash": stable_hash(primary_payload.get("query") or query or "recent"),
+            "query_omitted": True,
+            "count": primary_payload.get("count"),
+            "search_quality": primary_payload.get("search_quality") or {},
+            "visibility": primary_payload.get("visibility") or {},
+            "index": primary_payload.get("index") or {},
+            "results": primary_results,
+            "snippet_omitted": True,
+            "content_summary_omitted": True,
+            "raw_content_omitted": True,
+            "raw_prompt_omitted": True,
+            "token_omitted": True,
+        },
+        "baseline": per_query,
+        "contract": "read-only retrieval evidence packet for agents/operators; uses existing Markdown/SQLite FTS index and returns IDs, hashes, headings and metrics without raw snippets, raw prompts, raw responses or credentials",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "task_mutated": False,
+            "run_mutated": False,
+            "tool_mutated": False,
+            "live_execution_performed": False,
+            "external_network": False,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "raw_content_omitted": True,
+            "snippet_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }, 200
+
+
 def list_agent_plans(conn: sqlite3.Connection, qs: dict, headers=None, auth_ctx=None) -> tuple[dict, int]:
     ident = agent_gateway_identity(headers or {}, qs=qs, auth_ctx=auth_ctx)
     limit = min(max(int((qs.get("limit") or ["25"])[0]), 1), 100)
@@ -17363,6 +17589,13 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
     workspace_id = normalize_workspace_id(headers.get("X-AgentOps-Workspace-Id") or "local-demo")
     live_acceptance = live_acceptance_readiness(conn, workspace_id)
     live_summary = live_acceptance.get("summary") or {}
+    knowledge_evidence, _knowledge_evidence_status = knowledge_retrieval_evidence_packet(
+        conn,
+        {"q": ["AgentOps MIS local worker knowledge retrieval evidence"], "limit": ["5"], "baseline_limit": ["5"]},
+        headers,
+        auth_ctx={},
+    )
+    knowledge_evidence_metrics = knowledge_evidence.get("metrics") or {}
     docs = [
         ("README", ROOT / "README.md"),
         ("remote_worker_runbook", ROOT / "docs" / "REMOTE_WORKER_OPERATIONS_RUNBOOK.md"),
@@ -17410,6 +17643,10 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
         "live_acceptance_fresh_adapters": int(live_summary.get("fresh") or 0),
         "live_acceptance_latest_failed_adapters": int(live_summary.get("latest_failed") or 0),
         "live_acceptance_missing_adapters": int(live_summary.get("missing") or 0),
+        "knowledge_retrieval_recall_at_5": knowledge_evidence_metrics.get("recall_at_5"),
+        "knowledge_retrieval_mrr": knowledge_evidence_metrics.get("mrr"),
+        "knowledge_retrieval_p95_ms": knowledge_evidence_metrics.get("p95_ms"),
+        "knowledge_retrieval_fallback_queries": knowledge_evidence_metrics.get("fallback_queries"),
     }
     evidence["has_task_run_tool_eval_audit_artifact_chain"] = evidence["closed_loop_runs"] > 0
     evidence["has_indexed_knowledge"] = evidence["knowledge_documents"] > 0 or evidence["knowledge_chunks"] > 0
@@ -17452,14 +17689,15 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
         {
             "id": "knowledge_memory",
             "label": "Memory/knowledge sedimentation",
-            "ok": evidence["has_memory_or_knowledge"],
-            "status": "ready" if evidence["has_memory_or_knowledge"] else "needs_seed_or_run",
+            "ok": evidence["has_memory_or_knowledge"] and knowledge_evidence.get("status") == "ready",
+            "status": knowledge_evidence.get("status") if evidence["has_memory_or_knowledge"] else "needs_seed_or_run",
             "detail": (
                 f"{evidence['memories']} memories, {evidence['memory_candidates']} candidates, "
-                f"{evidence['knowledge_documents']} knowledge docs, {evidence['knowledge_chunks']} chunks"
+                f"{evidence['knowledge_documents']} knowledge docs, {evidence['knowledge_chunks']} chunks, "
+                f"Recall@5={knowledge_evidence_metrics.get('recall_at_5')}, MRR={knowledge_evidence_metrics.get('mrr')}"
             ),
             "next_action": (
-                "agentops knowledge search \"project spec\" --limit 10"
+                "agentops knowledge evidence-packet \"project spec\" --limit 5"
                 if evidence["has_indexed_knowledge"]
                 else "agentops knowledge index --rebuild"
             ),
@@ -17776,6 +18014,7 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
         "security_production_readiness": security,
         "commander_synthesis_lifecycle": synthesis_lifecycle,
         "live_acceptance_readiness": live_acceptance,
+        "knowledge_retrieval_evidence": knowledge_evidence,
         "gateway": gateway,
         "docs": doc_status,
         "local_run_path": local_run_path,
@@ -18177,6 +18416,12 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
     knowledge_payload, _knowledge_status = knowledge_search(
         conn,
         {"q": [query], "limit": [str(min(limit, 10))]},
+        headers,
+        auth_ctx={} if auth_ctx is None else auth_ctx,
+    )
+    knowledge_evidence, _knowledge_evidence_status = knowledge_retrieval_evidence_packet(
+        conn,
+        {"q": [query], "limit": [str(min(limit, 10))], "baseline_limit": ["5"]},
         headers,
         auth_ctx={} if auth_ctx is None else auth_ctx,
     )
@@ -18780,6 +19025,9 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
             "intake_status": intake.get("status"),
             "selected_task_severity": (selected_task or {}).get("severity"),
             "knowledge_results": knowledge_payload.get("count", 0),
+            "knowledge_retrieval_status": knowledge_evidence.get("status"),
+            "knowledge_recall_at_5": (knowledge_evidence.get("metrics") or {}).get("recall_at_5"),
+            "knowledge_mrr": (knowledge_evidence.get("metrics") or {}).get("mrr"),
             "repo_map_files": repo_map_payload.get("selected_count", 0),
             "handoff_mode": handoff_mode,
             "operator_control_status": operator_control.get("status"),
@@ -18815,6 +19063,22 @@ def operator_loop_launch_packet(conn: sqlite3.Connection, headers, qs=None, auth
                 "count": knowledge_payload.get("count"),
                 "results": safe_knowledge_results,
                 "index": knowledge_payload.get("index") or {},
+                "token_omitted": True,
+            },
+            "knowledge_retrieval_evidence": {
+                "operation": knowledge_evidence.get("operation"),
+                "status": knowledge_evidence.get("status"),
+                "counts": knowledge_evidence.get("counts") or {},
+                "metrics": knowledge_evidence.get("metrics") or {},
+                "primary_search": {
+                    "count": ((knowledge_evidence.get("primary_search") or {}).get("count")),
+                    "search_quality": ((knowledge_evidence.get("primary_search") or {}).get("search_quality") or {}),
+                    "results": ((knowledge_evidence.get("primary_search") or {}).get("results") or []),
+                    "snippet_omitted": True,
+                    "raw_content_omitted": True,
+                    "token_omitted": True,
+                },
+                "safety": knowledge_evidence.get("safety") or {},
                 "token_omitted": True,
             },
             "repo_map": {
@@ -19625,6 +19889,66 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             evidence=adapter_summary,
         )
 
+    service_control_step = next(
+        (
+            step for step in (local_readiness_snapshot.get("local_run_path") or [])
+            if isinstance(step, dict)
+            and (step.get("service_control_preview") is True or step.get("step_id") == "preview_worker_service_control")
+        ),
+        {},
+    )
+    service_receipt_state = service_control_step.get("receipt_state") if isinstance(service_control_step.get("receipt_state"), dict) else {}
+    service_receipt_verified = bool(service_receipt_state.get("verified"))
+    service_control_readback_missing = bool(
+        service_control_step.get("control_readback_required")
+        and not service_receipt_state.get("control_readback_attached")
+    )
+    if service_control_step and (not service_receipt_verified or service_control_readback_missing):
+        service_action_signature = str(service_control_step.get("action_signature") or "")
+        service_action_id = str(service_control_step.get("step_id") or "preview_worker_service_control")
+        add_action(
+            "local_service_control",
+            (
+                "Record service-control readback"
+                if service_receipt_verified and service_control_readback_missing
+                else "Record service-control preview receipt"
+            ),
+            str(service_control_step.get("command") or ""),
+            priority=121 if service_control_readback_missing else 119,
+            severity="attention",
+            source=str(service_control_step.get("source") or "local_readiness.service_control_preview"),
+            summary=(
+                "Local worker service-control preview must have a verified Action Receipt and control readback "
+                "before Hermes/OpenClaw loop operators treat service supervision as closed."
+            ),
+            ui_route="/workspace/agents",
+            evidence={
+                "step_id": service_action_id,
+                "adapter": service_control_step.get("adapter"),
+                "status": service_control_step.get("status"),
+                "phase": service_control_step.get("phase"),
+                "service_control_preview": True,
+                "receipt_verified": service_receipt_verified,
+                "receipt_status": service_receipt_state.get("status"),
+                "receipt_id": service_receipt_state.get("receipt_id"),
+                "control_readback_required": bool(service_control_step.get("control_readback_required")),
+                "control_readback_attached": bool(service_receipt_state.get("control_readback_attached")),
+                "control_readback_missing": service_control_readback_missing,
+                "control_readback_hash": service_receipt_state.get("control_readback_hash"),
+                "verify_command": service_control_step.get("verify_command"),
+                "receipt_verify_record_command": service_control_step.get("receipt_verify_record_command"),
+                "copy_only": service_control_step.get("copy_only") is not False,
+                "server_executes_shell": False,
+                "live_execution_performed": False,
+                "token_omitted": True,
+            },
+            verify_command_override=str(service_control_step.get("verify_command") or "agentops local readiness"),
+            action_signature_override=service_action_signature,
+            action_id_override=service_action_id,
+            receipt_source=str(service_control_step.get("source") or "local_readiness.service_control_preview"),
+            receipt_result_summary="Worker service-control preview inspected and service-check reviewed.",
+        )
+
     review_summary = review.get("summary") or {}
     review_items_total = int(review_summary.get("review_items_total") or len(review.get("review_items") or []))
     operator_health_components = [
@@ -20082,6 +20406,10 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
         item for item in deduped
         if item.get("lane") == "workflow_job_recovery"
     ]
+    local_service_control_actions = [
+        item for item in deduped
+        if item.get("lane") == "local_service_control"
+    ]
     workflow_recovery_blocked = len([item for item in workflow_recovery_actions if item.get("severity") == "blocked"])
     workflow_recovery_source = {
         "operation": "workflow_job_recovery",
@@ -20176,6 +20504,12 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             "workflow_job_recovery_retryable_failed_jobs": (workflow_recovery_source.get("summary") or {}).get("retryable_failed_jobs", 0),
             "workflow_job_recovery_receipt_missing": (workflow_recovery_source.get("summary") or {}).get("receipt_missing", 0),
             "workflow_job_recovery_receipt_verified": (workflow_recovery_source.get("summary") or {}).get("receipt_verified", 0),
+            "local_service_control_actions": len(local_service_control_actions),
+            "local_service_control_receipt_missing": len([item for item in local_service_control_actions if not item.get("receipt_verified")]),
+            "local_service_control_readback_missing": len([
+                item for item in local_service_control_actions
+                if (item.get("evidence") or {}).get("control_readback_missing")
+            ]),
             "evidence_remediation_workflow_actions": (remediation_workflow_source.get("summary") or {}).get("actions", 0),
             "evidence_remediation_workflow_mutating": (remediation_workflow_source.get("summary") or {}).get("mutating", 0),
             "evidence_remediation_workflow_confirm_required": (remediation_workflow_source.get("summary") or {}).get("confirm_required", 0),
@@ -20223,6 +20557,7 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             "task_intake": task_intake.get("status"),
             "dispatch_evidence": dispatch_evidence.get("status"),
             "operator_health": operator_health_source.get("status"),
+            "local_service_control": "attention" if local_service_control_actions else "ready",
             "workflow_job_recovery": workflow_recovery_source.get("status"),
             "evidence_remediation_workflow": remediation_workflow_source.get("status"),
             "action_receipts": action_receipts.get("status"),
@@ -23518,21 +23853,48 @@ def operator_command_center(conn: sqlite3.Connection, headers, qs=None, auth_ctx
 
     next_actions: list[dict] = []
 
-    def add_next_action(source: str, command: str | None, *, title: str = "", priority: int = 100, verify_command: str | None = None, evidence: dict | None = None) -> None:
+    def add_next_action(
+        source: str,
+        command: str | None,
+        *,
+        title: str = "",
+        priority: int = 100,
+        verify_command: str | None = None,
+        evidence: dict | None = None,
+        action_signature: str | None = None,
+        receipt_required: bool = True,
+        receipt_status: str | None = None,
+        receipt_verified: bool | None = None,
+        receipt_hash: str | None = None,
+        receipt_record_command: str | None = None,
+        receipt_verify_record_command: str | None = None,
+        control_readback_required: bool | None = None,
+        control_readback_attached: bool | None = None,
+    ) -> None:
         command = str(command or "").strip()
         if not command:
             return
         if any(item.get("command") == command for item in next_actions):
             return
+        evidence_payload = evidence or {}
+        action_id = stable_id("cmd_center_action", workspace_id, source, command)[-18:]
         next_actions.append({
-            "action_id": stable_id("cmd_center_action", workspace_id, source, command)[-18:],
+            "action_id": action_id,
+            "action_signature": action_signature or action_id,
             "source": source,
             "title": redact_text(title or source, 160),
             "priority": int(priority),
             "command": redact_text(command, 500),
             "verify_command": redact_text(verify_command or "agentops operator command-center --limit 12", 500),
-            "evidence": evidence or {},
-            "receipt_required": True,
+            "evidence": evidence_payload,
+            "receipt_required": receipt_required,
+            "receipt_status": receipt_status or "missing",
+            "receipt_verified": bool(receipt_verified),
+            "receipt_hash": receipt_hash,
+            "receipt_record_command": redact_text(receipt_record_command, 900) if receipt_record_command else None,
+            "receipt_verify_record_command": redact_text(receipt_verify_record_command, 900) if receipt_verify_record_command else None,
+            "control_readback_required": bool(control_readback_required) if control_readback_required is not None else bool(evidence_payload.get("control_readback_required")),
+            "control_readback_attached": bool(control_readback_attached) if control_readback_attached is not None else bool(evidence_payload.get("control_readback_attached")),
             "token_omitted": True,
         })
 
@@ -23543,7 +23905,22 @@ def operator_command_center(conn: sqlite3.Connection, headers, qs=None, auth_ctx
             title=item.get("title") or "Operator action",
             priority=int(item.get("priority") or 100),
             verify_command=item.get("verify_command"),
-            evidence={"source_action_id": item.get("action_id"), "receipt_status": item.get("receipt_status")},
+            evidence={
+                **(item.get("evidence") if isinstance(item.get("evidence"), dict) else {}),
+                "source_action_id": item.get("action_id"),
+                "receipt_status": item.get("receipt_status"),
+                "receipt_verified": bool(item.get("receipt_verified")),
+                "receipt_hash": item.get("receipt_hash"),
+            },
+            action_signature=item.get("action_signature"),
+            receipt_required=item.get("receipt_required") is not False,
+            receipt_status=item.get("receipt_status"),
+            receipt_verified=bool(item.get("receipt_verified")),
+            receipt_hash=item.get("receipt_hash"),
+            receipt_record_command=item.get("receipt_record_command"),
+            receipt_verify_record_command=item.get("receipt_verify_record_command"),
+            control_readback_required=bool((item.get("evidence") or {}).get("control_readback_required")) if isinstance(item.get("evidence"), dict) else None,
+            control_readback_attached=bool((item.get("evidence") or {}).get("control_readback_attached")) if isinstance(item.get("evidence"), dict) else None,
         )
     for gap in commander_gaps[:limit]:
         add_next_action(
@@ -25465,6 +25842,22 @@ class Handler(BaseHTTPRequestHandler):
                 payload, status = knowledge_search(conn, query, self.headers, auth_ctx)
                 conn.commit()
                 return self.send_json(payload, status)
+            if path in {"/api/agent-gateway/knowledge/evidence-packet", "/api/agent-gateway/knowledge/retrieval-evidence-packet"}:
+                auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "knowledge:read")
+                if auth_error:
+                    return self.send_json(auth_error, agent_gateway_error_status(auth_error))
+                query = dict(qs)
+                if agent_gateway_is_bound_auth(auth_ctx):
+                    requested_header_workspace = normalize_workspace_id(self.headers.get("X-AgentOps-Workspace-Id") or auth_ctx["workspace_id"])
+                    if requested_header_workspace != auth_ctx["workspace_id"]:
+                        return self.send_json({"error": "forbidden", "message": "Agent token cannot use another workspace header."}, 403)
+                    requested_workspace = requested_workspace_from_qs(query, auth_ctx["workspace_id"])
+                    if requested_workspace != auth_ctx["workspace_id"]:
+                        return self.send_json({"error": "forbidden", "message": "Agent token cannot read knowledge evidence from another workspace."}, 403)
+                    query["workspace_id"] = [auth_ctx["workspace_id"]]
+                payload, status = knowledge_retrieval_evidence_packet(conn, query, self.headers, auth_ctx)
+                conn.rollback()
+                return self.send_json(payload, status)
             if path == "/api/agent-gateway/agent-plans":
                 auth_ctx, auth_error = agent_gateway_auth_context(conn, self.headers, "agent_plans:read")
                 if auth_error:
@@ -25672,6 +26065,10 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/knowledge/search":
                 payload, status = knowledge_search(conn, dict(qs), self.headers)
                 conn.commit()
+                return self.send_json(payload, status)
+            if path in {"/api/knowledge/evidence-packet", "/api/knowledge/retrieval-evidence-packet"}:
+                payload, status = knowledge_retrieval_evidence_packet(conn, dict(qs), self.headers, auth_ctx={})
+                conn.rollback()
                 return self.send_json(payload, status)
             if path == "/api/agent-plans":
                 payload, status = list_agent_plans(conn, dict(qs), self.headers)

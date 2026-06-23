@@ -156,6 +156,9 @@ def validate_plan(payload: dict, label: str, failures: list[str], limit: int) ->
         "operator_health_risks",
         "operator_health_blocked",
         "operator_health_attention",
+        "local_service_control_actions",
+        "local_service_control_receipt_missing",
+        "local_service_control_readback_missing",
         "workflow_job_recovery_actions",
         "workflow_job_recovery_stuck_jobs",
         "workflow_job_recovery_retryable_failed_jobs",
@@ -206,6 +209,8 @@ def validate_plan(payload: dict, label: str, failures: list[str], limit: int) ->
     require(isinstance(summary.get("recommended_adapter"), str), f"{label} recommended_adapter missing: {summary}", failures)
     actions = payload.get("actions")
     require(isinstance(actions, list), f"{label} actions missing", failures)
+    if not isinstance(actions, list):
+        actions = []
     require(len(actions) <= limit, f"{label} ignored limit: {len(actions)} > {limit}", failures)
     require(bool(payload.get("top_commands")), f"{label} top_commands missing", failures)
     require(isinstance(payload.get("source_status"), dict), f"{label} source_status missing", failures)
@@ -214,6 +219,7 @@ def validate_plan(payload: dict, label: str, failures: list[str], limit: int) ->
     require("task_intake" in (payload.get("source_status") or {}), f"{label} task intake source status missing: {payload.get('source_status')}", failures)
     require("dispatch_evidence" in (payload.get("source_status") or {}), f"{label} dispatch evidence source status missing: {payload.get('source_status')}", failures)
     require("operator_health" in (payload.get("source_status") or {}), f"{label} operator health source status missing: {payload.get('source_status')}", failures)
+    require("local_service_control" in (payload.get("source_status") or {}), f"{label} local service-control source status missing: {payload.get('source_status')}", failures)
     require("workflow_job_recovery" in (payload.get("source_status") or {}), f"{label} workflow job recovery source status missing: {payload.get('source_status')}", failures)
     require("evidence_remediation_workflow" in (payload.get("source_status") or {}), f"{label} evidence remediation workflow source status missing: {payload.get('source_status')}", failures)
     require("action_receipts" in (payload.get("source_status") or {}), f"{label} action receipts source status missing: {payload.get('source_status')}", failures)
@@ -439,6 +445,19 @@ def validate_plan(payload: dict, label: str, failures: list[str], limit: int) ->
             if "--mode retry" in command:
                 require(verify_command == "agentops workflow jobs --status queued,running,completed,failed --limit 20", f"{label} workflow retry verify command wrong: {action}", failures)
                 require(bool((action.get("evidence") or {}).get("task_id")), f"{label} workflow retry task id missing: {action}", failures)
+        if action.get("lane") == "local_service_control":
+            evidence = action.get("evidence") or {}
+            require(action.get("source") == "local_readiness.service_control_preview", f"{label} service-control source wrong: {action}", failures)
+            require("service-control" in str(action.get("command") or ""), f"{label} service-control command missing: {action}", failures)
+            require("service-check" in str(action.get("verify_command") or ""), f"{label} service-control verify command missing: {action}", failures)
+            require(evidence.get("step_id") == "preview_worker_service_control", f"{label} service-control step evidence missing: {action}", failures)
+            require(evidence.get("service_control_preview") is True, f"{label} service-control preview evidence missing: {action}", failures)
+            require(evidence.get("control_readback_required") is True, f"{label} service-control readback requirement missing: {action}", failures)
+            require(evidence.get("copy_only") is True, f"{label} service-control copy-only proof missing: {action}", failures)
+            require(evidence.get("server_executes_shell") is False, f"{label} service-control server shell proof missing: {action}", failures)
+            require(evidence.get("live_execution_performed") is False, f"{label} service-control live execution proof missing: {action}", failures)
+            require("--source local_readiness.service_control_preview" in (action.get("receipt_record_command") or ""), f"{label} service-control receipt source missing: {action}", failures)
+            require("--source local_readiness.service_control_preview" in (action.get("receipt_verify_record_command") or ""), f"{label} service-control verify receipt source missing: {action}", failures)
         require(bool(action.get("source")), f"{label} source missing: {action}", failures)
     for command in payload.get("top_commands") or []:
         require(

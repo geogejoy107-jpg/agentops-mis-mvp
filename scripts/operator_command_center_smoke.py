@@ -145,6 +145,26 @@ def assert_command_center(payload: dict, failures: list[str]) -> None:
     require("deliveries" in payload and "workers" in payload and "next_actions" in payload, f"missing operator lanes: {payload}", failures)
     require(((payload.get("commander") or {}).get("raw_source_omitted") is True), f"raw source omission missing: {payload}", failures)
     require(((payload.get("commander") or {}).get("raw_patch_omitted") is True), f"raw patch omission missing: {payload}", failures)
+    for item in payload.get("next_actions") or []:
+        require(bool(item.get("action_id")), f"next action id missing: {item}", failures)
+        require(bool(item.get("action_signature")), f"next action signature missing: {item}", failures)
+        require(isinstance(item.get("receipt_required"), bool), f"next action receipt_required missing: {item}", failures)
+        if item.get("receipt_required"):
+            require(item.get("receipt_status") in {"missing", "recorded", "verified", "failed", "skipped", "stale"}, f"next action receipt status missing: {item}", failures)
+    service_actions = [
+        item for item in payload.get("next_actions") or []
+        if item.get("source") == "operator_action_plan:local_service_control"
+    ]
+    if service_actions:
+        service_action = service_actions[0]
+        evidence = service_action.get("evidence") or {}
+        require("service-control" in str(service_action.get("command") or ""), f"service-control command center action missing command: {service_action}", failures)
+        require("service-check" in str(service_action.get("verify_command") or ""), f"service-control command center verify missing: {service_action}", failures)
+        require(service_action.get("receipt_status") in {"missing", "recorded", "verified", "stale"}, f"service-control command center receipt status missing: {service_action}", failures)
+        require(service_action.get("control_readback_required") is True, f"service-control command center readback flag missing: {service_action}", failures)
+        require(evidence.get("service_control_preview") is True, f"service-control command center evidence missing: {service_action}", failures)
+        require(evidence.get("server_executes_shell") is False, f"service-control command center server-shell proof missing: {service_action}", failures)
+        require(evidence.get("live_execution_performed") is False, f"service-control command center live proof missing: {service_action}", failures)
 
 
 def main() -> int:

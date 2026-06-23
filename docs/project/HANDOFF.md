@@ -51,7 +51,7 @@ The ledger contains accepted decisions, current risks, audit evidence, tasks, an
 ## Code-Line Facts
 
 - Last full static audit baseline: `8d1827e00629bdca4779794121ca4a31dfa3f1e1`.
-- Post-audit development includes customer local-deployment backup/restore, Commander Work Package Planner work, Agent Plan hard gating, prepared-action Approval Wall coverage, redaction/auth hardening, workspace/knowledge visibility gates, SQLite reliability gates, release evidence gates, and loop-launch contract UI/readback work.
+- Post-audit development includes customer local-deployment backup/restore, Commander Work Package Planner work, Agent Plan hard gating, prepared-action Approval Wall coverage, redaction/auth hardening, workspace/knowledge visibility gates, SQLite reliability gates, release evidence gates, loop-launch contract UI/readback work, and P1-06a Knowledge Retrieval Evidence Packet readbacks for local readiness and agent loop launch packets.
 - Governance was merged into `codex/agent-gateway-kb-demo` at `5f1706c3afed22156e0bb3dc06ca351f698713d9`.
 - Historical P0 findings are reconciled through `docs/V1_5_AGENT_GATEWAY_HARDENING_OBJECTIVE.md` and `docs/V1_5_MERGE_READINESS_CHECKLIST.md`; treat them as keep-green release gates after every new commit.
 - Current PR #1 must have green `Backend deterministic smokes` and `UI build` checks on the exact current HEAD before merge.
@@ -72,10 +72,11 @@ The current connectors cannot edit ChatGPT Project Instructions. The project own
 - Squash-merged PR `#6`; resulting development integration commit is `5f1706c3afed22156e0bb3dc06ca351f698713d9`.
 - Confirmed the Notion Control Center, Project Ledger, views, seed entries, and Docs SOP exist.
 - Strict release verification has confirmed that PR #1's required checks are green on the exact current HEAD when `merge_readiness_status_smoke.py --require-ready-to-merge` passes.
+- P1-06a Knowledge Retrieval Evidence Packet is guarded by `scripts/knowledge_retrieval_evidence_packet_smoke.py`, `scripts/knowledge_retrieval_quality_smoke.py`, `scripts/agent_gateway_knowledge_scope_smoke.py`, and `scripts/operator_loop_launch_packet_smoke.py`.
 
 ## Next Single Action
 
-After any new commit, re-run strict exact-head release gates and keep the PR in `READY_TO_MERGE`. The remaining manual dependency is still to paste `docs/project/CHATGPT_PROJECT_INSTRUCTIONS.md` into ChatGPT Project settings.
+After any new commit, re-run strict exact-head release gates and keep the PR in `READY_TO_MERGE`. Continue P1-06 with small knowledge/retrieval slices only; the remaining manual dependency is still to paste `docs/project/CHATGPT_PROJECT_INSTRUCTIONS.md` into ChatGPT Project settings.
 
 ## Project Delta
 

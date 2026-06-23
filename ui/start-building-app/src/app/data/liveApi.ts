@@ -1457,6 +1457,7 @@ export interface TaskIntakeChecklistPayload {
 
 export interface OperatorCommandCenterNextAction {
   action_id: string;
+  action_signature?: string | null;
   source: string;
   title: string;
   priority: number;
@@ -1464,6 +1465,13 @@ export interface OperatorCommandCenterNextAction {
   verify_command?: string | null;
   evidence?: Record<string, unknown>;
   receipt_required?: boolean;
+  receipt_status?: string;
+  receipt_verified?: boolean;
+  receipt_hash?: string | null;
+  receipt_record_command?: string | null;
+  receipt_verify_record_command?: string | null;
+  control_readback_required?: boolean;
+  control_readback_attached?: boolean;
   token_omitted?: boolean;
 }
 
@@ -5439,6 +5447,7 @@ export async function loadOperatorCommandCenter(limit = 12, projectId = ""): Pro
     },
     next_actions: asArray<Record<string, unknown>>(raw.next_actions).map((item) => ({
       action_id: String(item.action_id || item.command || ""),
+      action_signature: item.action_signature ? String(item.action_signature) : null,
       source: String(item.source || "operator_command_center"),
       title: String(item.title || item.source || "Command center action"),
       priority: numberValue(item.priority, 0),
@@ -5446,6 +5455,13 @@ export async function loadOperatorCommandCenter(limit = 12, projectId = ""): Pro
       verify_command: item.verify_command ? String(item.verify_command) : null,
       evidence: typeof item.evidence === "object" && item.evidence !== null ? item.evidence as Record<string, unknown> : undefined,
       receipt_required: item.receipt_required === undefined ? true : boolValue(item.receipt_required),
+      receipt_status: String(item.receipt_status || "missing"),
+      receipt_verified: boolValue(item.receipt_verified),
+      receipt_hash: item.receipt_hash ? String(item.receipt_hash) : null,
+      receipt_record_command: item.receipt_record_command ? String(item.receipt_record_command) : null,
+      receipt_verify_record_command: item.receipt_verify_record_command ? String(item.receipt_verify_record_command) : null,
+      control_readback_required: item.control_readback_required === undefined ? undefined : boolValue(item.control_readback_required),
+      control_readback_attached: item.control_readback_attached === undefined ? undefined : boolValue(item.control_readback_attached),
       token_omitted: item.token_omitted === undefined ? true : boolValue(item.token_omitted),
     })).filter((item) => item.command),
     contract: raw.contract ? String(raw.contract) : undefined,

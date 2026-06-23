@@ -2249,6 +2249,14 @@ def cmd_knowledge_index(args, client: AgentOpsClient) -> dict:
     return client.post("/api/agent-gateway/knowledge/index", {"rebuild": bool(args.rebuild)})
 
 
+def cmd_knowledge_evidence_packet(args, client: AgentOpsClient) -> dict:
+    return client.get("/api/agent-gateway/knowledge/evidence-packet", query={
+        "q": args.query,
+        "limit": args.limit,
+        "baseline_limit": args.baseline_limit,
+    })
+
+
 def cmd_agent_plan_create(args, client: AgentOpsClient) -> dict:
     payload = {
         "workspace_id": client.workspace_id,
@@ -3753,6 +3761,11 @@ def build_parser() -> argparse.ArgumentParser:
     knowledge_index = knowledge_sub.add_parser("index", help="Refresh the local Markdown knowledge FTS index.")
     knowledge_index.add_argument("--rebuild", action="store_true")
     knowledge_index.set_defaults(handler="knowledge_index")
+    knowledge_packet = knowledge_sub.add_parser("evidence-packet", help="Read retrieval quality and provenance proof without exposing raw content.")
+    knowledge_packet.add_argument("query", nargs="?", default="")
+    knowledge_packet.add_argument("--limit", type=int, default=5)
+    knowledge_packet.add_argument("--baseline-limit", type=int, default=5)
+    knowledge_packet.set_defaults(handler="knowledge_evidence_packet")
 
     agent_plan = sub.add_parser("agent-plan", help="Agent work method plan commands.")
     agent_plan_sub = agent_plan.add_subparsers(dest="action", required=True)
@@ -4359,6 +4372,7 @@ HANDLERS = {
     "artifact_record": cmd_artifact_record,
     "knowledge_search": cmd_knowledge_search,
     "knowledge_index": cmd_knowledge_index,
+    "knowledge_evidence_packet": cmd_knowledge_evidence_packet,
     "agent_plan_create": cmd_agent_plan_create,
     "agent_plan_list": cmd_agent_plan_list,
     "agent_plan_get": cmd_agent_plan_get,
