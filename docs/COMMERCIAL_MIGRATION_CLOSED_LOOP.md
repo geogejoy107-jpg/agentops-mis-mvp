@@ -94,15 +94,29 @@ Must be true:
   `AGENTOPS_API_KEY` or scoped agent token/session, Agent Gateway read/write
   routes return `401`; without `AGENTOPS_ADMIN_KEY`, enrollment/session admin
   routes return `401`.
+- `security_production_readiness_smoke.py --configured-production-fixture`
+  starts an isolated production-mode server with temporary API/admin keys,
+  proves no-auth readiness remains blocked, authenticated API and CLI readiness
+  become ready with `auth_mode=global_api_key`, admin-key enrollment list is
+  allowed, the SQLite ledger is not mutated, and the configured keys are omitted
+  from output.
+- `production_auth_fail_closed_smoke.py --configured-production-fixture` starts
+  an isolated production-mode server without API/admin keys and proves
+  enrollment, session, task-pull, and task-create Agent Gateway routes return
+  `401` without mutating the SQLite ledger.
+- The scope/workspace governance smokes use `--isolated-fixture` so they start
+  a temporary local server and SQLite ledger instead of depending on whatever
+  happens to be running on `127.0.0.1:8787`; Agent Gateway run-start checks
+  submit and verify a minimal Agent Plan before starting runs.
 - Verification includes:
 
 ```bash
-python3 scripts/production_auth_fail_closed_smoke.py
-python3 scripts/security_production_readiness_smoke.py
-python3 scripts/agent_gateway_scope_matrix_smoke.py
-python3 scripts/workspace_isolation_smoke.py
-python3 scripts/workspace_rbac_governance_smoke.py
-python3 scripts/workspace_memory_session_governance_smoke.py
+python3 scripts/production_auth_fail_closed_smoke.py --configured-production-fixture
+python3 scripts/security_production_readiness_smoke.py --configured-production-fixture
+python3 scripts/agent_gateway_scope_matrix_smoke.py --isolated-fixture
+python3 scripts/workspace_isolation_smoke.py --isolated-fixture
+python3 scripts/workspace_rbac_governance_smoke.py --isolated-fixture
+python3 scripts/workspace_memory_session_governance_smoke.py --isolated-fixture
 python3 scripts/enrollment_approval_workflow_smoke.py
 ```
 

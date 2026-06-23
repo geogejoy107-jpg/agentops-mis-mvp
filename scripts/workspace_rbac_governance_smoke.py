@@ -12,6 +12,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from smoke_isolated_server import isolated_server
+
 
 SECRET_MARKERS = [
     "Authorization" + ":",
@@ -101,7 +103,15 @@ def start_mock_run(base_url: str, workspace_id: str, task_id: str, agent_id: str
 def main() -> int:
     parser = argparse.ArgumentParser(description="Verify human/admin workspace governance.")
     parser.add_argument("--base-url", default=os.environ.get("AGENTOPS_BASE_URL", "http://127.0.0.1:8787"))
+    parser.add_argument("--isolated-fixture", action="store_true", help="Start a temporary local server and SQLite database for this smoke.")
     args = parser.parse_args()
+    if args.isolated_fixture:
+        with isolated_server("agentops-workspace-rbac-") as fixture:
+            return run_smoke(fixture["base_url"], isolated_fixture=True)
+    return run_smoke(args.base_url, isolated_fixture=False)
+
+
+def run_smoke(base_url: str, isolated_fixture: bool = False) -> int:
     stamp = now_stamp()
     workspace_a = f"ws_gov_a_{stamp}"
     workspace_b = f"ws_gov_b_{stamp}"
@@ -110,10 +120,10 @@ def main() -> int:
     task_b = f"tsk_gov_b_{stamp}"
     outputs: list[str] = []
     try:
-        create_task(args.base_url, workspace_a, task_a, agent_id, "workspace A governance smoke")
-        create_task(args.base_url, workspace_b, task_b, agent_id, "workspace B governance smoke")
-        run_a = start_mock_run(args.base_url, workspace_a, task_a, agent_id)
-        run_b = start_mock_run(args.base_url, workspace_b, task_b, agent_id)
+        create_task(base_url, workspace_a, task_a, agent_id, "workspace A governance smoke")
+        create_task(base_url, workspace_b, task_b, agent_id, "workspace B governance smoke")
+        run_a = start_mock_run(base_url, workspace_a, task_a, agent_id)
+        run_b = start_mock_run(base_url, workspace_b, task_b, agent_id)
 
         list_checks = [
             ("tasks", "/api/tasks", "task_id", task_a, task_b),
@@ -126,7 +136,7 @@ def main() -> int:
         ]
         list_results = {}
         for label, path, key, expected_id, forbidden_id in list_checks:
-            status, payload = http_json("GET", args.base_url, path, workspace_id=workspace_a)
+            status, payload = http_json("GET", base_url, path, workspace_id=workspace_a)
             outputs.append(json.dumps(payload, ensure_ascii=False, sort_keys=True))
             require(status == 200, f"{label} list failed: {status} {payload}")
             ids = ids_from_rows(payload, key)
@@ -139,11 +149,11 @@ def main() -> int:
             ("run_detail", f"/api/runs/{run_b}"),
         ]
         for label, path in detail_checks:
-            status, payload = http_json("GET", args.base_url, path, workspace_id=workspace_a)
+            status, payload = http_json("GET", base_url, path, workspace_id=workspace_a)
             outputs.append(json.dumps(payload, ensure_ascii=False, sort_keys=True))
             require(status == 404, f"{label} should hide workspace B object from workspace A: {status} {payload}")
 
-        status, audit_payload = http_json("GET", args.base_url, "/api/audit", workspace_id=workspace_a)
+        status, audit_payload = http_json("GET", base_url, "/api/audit", workspace_id=workspace_a)
         outputs.append(json.dumps(audit_payload, ensure_ascii=False, sort_keys=True))
         require(status == 200, f"audit list failed: {status} {audit_payload}")
         audit_text = json.dumps(audit_payload, ensure_ascii=False, sort_keys=True)
@@ -153,6 +163,8 @@ def main() -> int:
         require(not leaked_secret("\n".join(outputs)), "workspace governance smoke leaked token-like material")
         print(json.dumps({
             "ok": True,
+            "base_url": base_url,
+            "isolated_fixture": isolated_fixture,
             "workspace_a": workspace_a,
             "workspace_b": workspace_b,
             "task_a": task_a,

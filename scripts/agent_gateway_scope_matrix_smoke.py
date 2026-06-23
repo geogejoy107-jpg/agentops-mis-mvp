@@ -11,6 +11,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from smoke_isolated_server import isolated_server
+
 
 def now_stamp() -> str:
     return dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d%H%M%S")
@@ -72,6 +74,26 @@ def expect_forbidden(label: str, status: int, payload: dict) -> str:
     return payload.get("message", "")
 
 
+def submit_verified_agent_plan(base_url: str, token: str, task_id: str, label: str) -> str:
+    status, payload = http_json("POST", base_url, "/api/agent-gateway/agent-plans", {
+        "task_id": task_id,
+        "task_understanding": f"Run the scope matrix smoke for {label}.",
+        "referenced_specs": ["docs/AGENT_GATEWAY_CLI_SPEC.md"],
+        "referenced_memories": ["workspace scope isolation fixture"],
+        "referenced_bases": ["Agent Gateway scoped token contract"],
+        "execution_steps": ["read task", "claim task", "start run"],
+        "verification_plan": "Verify scoped allow/deny responses and token omission.",
+        "rollback_plan": "Revoke temporary enrollment tokens and discard the isolated SQLite database.",
+        "risk_level": "low",
+    }, token=token)
+    require(status == 201, f"agent plan create failed for {label}: {status} {payload}")
+    plan_id = (payload.get("agent_plan") or {}).get("plan_id")
+    require(plan_id, f"agent plan id missing for {label}: {payload}")
+    status, verified = http_json("GET", base_url, f"/api/agent-gateway/agent-plans/{plan_id}/verify", token=token)
+    require(status == 200 and (verified.get("verification") or {}).get("pass") is True, f"agent plan verify failed for {label}: {status} {verified}")
+    return str(plan_id)
+
+
 def smoke(base_url: str, stamp: str) -> dict:
     observer_agent = f"agt_scope_observer_{stamp}"
     worker_agent = f"agt_scope_worker_{stamp}"
@@ -80,7 +102,7 @@ def smoke(base_url: str, stamp: str) -> dict:
     worker_token_id = None
     try:
         observer = create_enrollment(base_url, observer_agent, "Scope Matrix Observer", ["agents:heartbeat", "tasks:read", "audit:write"])
-        worker = create_enrollment(base_url, worker_agent, "Scope Matrix Worker", ["agents:heartbeat", "tasks:read", "tasks:claim", "runs:write", "toolcalls:write", "artifacts:write", "evaluations:submit", "audit:write"])
+        worker = create_enrollment(base_url, worker_agent, "Scope Matrix Worker", ["agents:heartbeat", "tasks:read", "tasks:claim", "agent_plans:read", "agent_plans:write", "runs:write", "toolcalls:write", "artifacts:write", "evaluations:submit", "audit:write"])
         observer_token = observer["token"]
         worker_token = worker["token"]
         observer_token_id = observer["token_id"]
@@ -116,6 +138,8 @@ def smoke(base_url: str, stamp: str) -> dict:
         }, token=observer_token)
         require(status == 201, f"observer audit failed: {status} {audit}")
 
+        plan_id = submit_verified_agent_plan(base_url, worker_token, task_id, "scope matrix worker")
+
         forbidden = {}
         status, body = http_json("POST", base_url, f"/api/agent-gateway/tasks/{task_id}/claim", {"runtime_type": "mock"}, token=observer_token)
         forbidden["claim"] = expect_forbidden("claim", status, body)
@@ -141,10 +165,11 @@ def smoke(base_url: str, stamp: str) -> dict:
             "worker_agent": worker_agent,
             "task_id": task_id,
             "run_id": run_id,
+            "plan_id": plan_id,
             "observer_allowed": ["agents:heartbeat", "tasks:read", "audit:write"],
             "observer_forbidden": sorted(forbidden),
-            "observer_token_id": observer_token_id,
-            "worker_token_id": worker_token_id,
+            "observer_token_id_omitted": bool(observer_token_id),
+            "worker_token_id_omitted": bool(worker_token_id),
             "token_omitted": True,
         }
     finally:
@@ -156,8 +181,13 @@ def smoke(base_url: str, stamp: str) -> dict:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Verify Agent Gateway scope enforcement matrix.")
     parser.add_argument("--base-url", default="http://127.0.0.1:8787")
+    parser.add_argument("--isolated-fixture", action="store_true", help="Start a temporary local server and SQLite database for this smoke.")
     args = parser.parse_args(argv)
-    result = {"ok": True, "base_url": args.base_url, "smoke": smoke(args.base_url, now_stamp())}
+    if args.isolated_fixture:
+        with isolated_server("agentops-scope-matrix-") as fixture:
+            result = {"ok": True, "base_url": fixture["base_url"], "isolated_fixture": True, "smoke": smoke(fixture["base_url"], now_stamp())}
+    else:
+        result = {"ok": True, "base_url": args.base_url, "isolated_fixture": False, "smoke": smoke(args.base_url, now_stamp())}
     print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
     return 0
 

@@ -203,8 +203,29 @@ def main() -> int:
         check(
             "production_readiness_surface_exists",
             file_contains("server.py", "/api/security/production-readiness")
-            and file_contains("agentops_mis_cli/agentops.py", "production-readiness"),
-            "server API and CLI production-readiness command are present",
+            and file_contains("agentops_mis_cli/agentops.py", "production-readiness")
+            and file_contains("scripts/production_auth_fail_closed_smoke.py", "--configured-production-fixture")
+            and file_contains("scripts/production_auth_fail_closed_smoke.py", "AGENTOPS_DEPLOYMENT_MODE")
+            and file_contains("scripts/production_auth_fail_closed_smoke.py", "read_only_hash_checked")
+            and file_contains("scripts/security_production_readiness_smoke.py", "--configured-production-fixture")
+            and file_contains("scripts/security_production_readiness_smoke.py", "AGENTOPS_DEPLOYMENT_MODE")
+            and file_contains("scripts/security_production_readiness_smoke.py", "validate_configured_blocked")
+            and file_contains("scripts/security_production_readiness_smoke.py", "validate_configured_ready")
+            and file_contains("scripts/security_production_readiness_smoke.py", "prod-api-key-fixture")
+            and file_contains("scripts/security_production_readiness_smoke.py", "admin_key_list_status")
+            and file_contains("scripts/security_production_readiness_smoke.py", "db_dump_hash"),
+            "server API, CLI production-readiness command, and configured production blocked/ready fixture are present",
+        ),
+        check(
+            "gate2_isolated_governance_fixtures_exist",
+            file_contains("scripts/smoke_isolated_server.py", "isolated_server")
+            and file_contains("scripts/agent_gateway_scope_matrix_smoke.py", "--isolated-fixture")
+            and file_contains("scripts/agent_gateway_scope_matrix_smoke.py", "submit_verified_agent_plan")
+            and file_contains("scripts/workspace_isolation_smoke.py", "--isolated-fixture")
+            and file_contains("scripts/workspace_isolation_smoke.py", "submit_verified_agent_plan")
+            and file_contains("scripts/workspace_rbac_governance_smoke.py", "--isolated-fixture")
+            and file_contains("scripts/workspace_memory_session_governance_smoke.py", "--isolated-fixture"),
+            "Gate 2 workspace/scope governance smokes can start isolated temporary servers and avoid live ledger contamination",
         ),
         check(
             "entitlement_direction_recorded",
@@ -769,12 +790,12 @@ def main() -> int:
             "name": "Production Safety Baseline",
             "status": "next",
             "verify": [
-                "python3 scripts/production_auth_fail_closed_smoke.py",
-                "python3 scripts/security_production_readiness_smoke.py",
-                "python3 scripts/agent_gateway_scope_matrix_smoke.py",
-                "python3 scripts/workspace_isolation_smoke.py",
-                "python3 scripts/workspace_rbac_governance_smoke.py",
-                "python3 scripts/workspace_memory_session_governance_smoke.py",
+                "python3 scripts/production_auth_fail_closed_smoke.py --configured-production-fixture",
+                "python3 scripts/security_production_readiness_smoke.py --configured-production-fixture",
+                "python3 scripts/agent_gateway_scope_matrix_smoke.py --isolated-fixture",
+                "python3 scripts/workspace_isolation_smoke.py --isolated-fixture",
+                "python3 scripts/workspace_rbac_governance_smoke.py --isolated-fixture",
+                "python3 scripts/workspace_memory_session_governance_smoke.py --isolated-fixture",
             ],
         },
         {
