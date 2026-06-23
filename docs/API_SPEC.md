@@ -440,16 +440,26 @@ execution, and Action Queue receipts. It requires `tasks:read` for supplied
 Agent Gateway tokens/sessions and never starts runtimes, executes tasks, mutates
 ledgers/connectors, or exposes tokens/raw prompts/raw responses.
 
+`GET /api/operator/live-acceptance` is the read-only Hermes/OpenClaw live
+customer-worker acceptance freshness projection. It samples recent local worker
+runs per adapter and checks tool calls, evaluations, runtime events, audit logs,
+artifacts, memory candidates, approvals, and verified plan-evidence manifests.
+Each adapter returns `fresh`, `stale`, `missing`, `latest_failed`, or
+`latest_incomplete` plus a manual `customer_worker_real_runtime_acceptance.py
+--confirm-live` command. It requires `tasks:read` for supplied Agent Gateway
+tokens/sessions and never calls runtimes, starts workers, creates tasks, mutates
+ledgers, or exposes tokens/raw prompts/raw responses.
+
 `GET /api/operator/execution-mode` is the read-only dispatch-mode projection
 used by UI, CLI operators, and external agents before choosing a worker path.
 It accepts `adapter=mock|hermes|openclaw` and optional `confirm_run=true`, then
 returns the selected path (`dry_run_or_mock`, `live_confirmation_required`,
 `live_confirmed`, or `adapter_route_blocked`), selected adapter readiness,
 confirm-run wall, prepared-action wall, pending approval count, active async
-workflow job count, and copyable next commands. It reuses runtime-doctor and
-adapter-readiness evidence, requires `tasks:read` for supplied Agent Gateway
-tokens/sessions, and never starts adapters, creates tasks, writes approvals, or
-mutates ledgers.
+workflow job count, live acceptance freshness, and copyable next commands. It
+reuses runtime-doctor, adapter-readiness, and live-acceptance evidence, requires
+`tasks:read` for supplied Agent Gateway tokens/sessions, and never starts
+adapters, creates tasks, writes approvals, or mutates ledgers.
 
 `GET /api/operator/loop-control` is the lightweight, read-only next-step control
 projection for real local ledgers. It accepts optional `loop_id=<id>` and

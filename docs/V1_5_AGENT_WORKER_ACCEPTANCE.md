@@ -1189,11 +1189,14 @@ Latest one-command workflow run-task smoke:
 ```text
 script: python3 scripts/agentops_workflow_run_task_smoke.py
 command: ./scripts/agentops workflow run-task
-mock task: tsk_6f3a92928acf
-mock run: run_gw_d640cf0bba6c
+mock task: tsk_7ff17228045a
+mock run: run_gw_518e62e77161
+agent_plan: plan_57220e046f04bf45 verified=true
+plan_evidence: pem_1907d07d2e43ee13 verified=true
 tool_calls: 1
 evaluations: 1
-Hermes without confirm_run: planned task tsk_983fbfb28103, confirm_run_required_for_live_adapter
+manifest evidence: tool_calls 1, evaluations 1, artifacts 1, audit_logs 11
+Hermes without confirm_run: planned task tsk_1ee9039cee39, confirm_run_required_for_live_adapter
 secret_leaked: false
 ```
 

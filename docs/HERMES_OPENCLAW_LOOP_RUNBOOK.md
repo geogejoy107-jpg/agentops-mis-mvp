@@ -31,9 +31,11 @@ Quick loop-control brief for a live local adapter:
 
 ```bash
 agentops worker preflight --adapter hermes
+agentops operator live-acceptance --limit 8
 agentops operator loop-launch-packet --brief --adapter hermes --limit 8
 
 agentops worker preflight --adapter openclaw
+agentops operator live-acceptance --limit 8
 agentops operator loop-launch-packet --brief --adapter openclaw --limit 8
 ```
 
@@ -43,8 +45,11 @@ only the adapter preflight command, current next/verify/receipt commands,
 compact execution-chain state, bounded-runner policy id, confirmation and
 prepared-action guidance, an explicit `agentops workflow run-task --adapter ...
 --confirm-run` live command template, readback commands for task/run/manifest
-evidence, and read-only/token-omission proof. The agent should copy commands
-locally; the server never executes shell from the brief.
+evidence, and read-only/token-omission proof. `workflow run-task` readback now
+also returns compact `agent_plan` and `plan_evidence` proof with verified flags
+and evidence counts, so the next agent can distinguish a closed loop lane from
+a model-only summary. The agent should copy commands locally; the server never
+executes shell from the brief.
 
 Bounded one-step advance:
 

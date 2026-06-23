@@ -63,11 +63,22 @@ def validate(payload: dict) -> None:
     gate_ids = {gate.get("id") for gate in gates}
     for gate_id in {"agent_gateway", "worker_fleet", "production_security", "adapter_route", "knowledge_memory", "evidence_chain", "commander_synthesis_loop", "runbook"}:
         require(gate_id in gate_ids, f"missing gate {gate_id}: {payload}")
+    require("live_acceptance_freshness" in gate_ids, f"missing live acceptance gate: {payload}")
     evidence = payload.get("evidence") or {}
     for key in ["tasks", "runs", "tool_calls", "evaluations", "audit_logs", "artifacts", "memories", "approvals", "closed_loop_runs"]:
         require(isinstance(evidence.get(key), int), f"missing evidence count {key}: {evidence}")
     for key in ["commander_synthesis_artifacts", "commander_synthesis_pending_reviews", "commander_synthesis_promoted_memories", "commander_synthesis_promoted_deliveries"]:
         require(isinstance(evidence.get(key), int), f"missing synthesis evidence count {key}: {evidence}")
+    for key in ["live_acceptance_fresh_adapters", "live_acceptance_latest_failed_adapters", "live_acceptance_missing_adapters"]:
+        require(isinstance(evidence.get(key), int), f"missing live acceptance evidence count {key}: {evidence}")
+    live = payload.get("live_acceptance_readiness") or {}
+    require(live.get("operation") == "live_acceptance_readiness", f"live acceptance readiness missing: {live}")
+    require(live.get("live_execution_performed") is False, f"live acceptance readback must be read-only: {live}")
+    require((live.get("safety") or {}).get("read_only") is True, f"live acceptance safety missing: {live}")
+    adapters = live.get("adapters") or {}
+    for adapter in ["hermes", "openclaw"]:
+        require(adapter in adapters, f"live acceptance missing adapter {adapter}: {live}")
+        require(adapters[adapter].get("token_omitted") is True, f"live acceptance adapter token omission missing: {adapters[adapter]}")
     lifecycle = payload.get("commander_synthesis_lifecycle") or {}
     require(lifecycle.get("status") in {"empty", "created", "review_pending", "promotion_available", "promoted"}, f"bad synthesis lifecycle: {lifecycle}")
     require((lifecycle.get("safety") or {}).get("read_only") is True, f"synthesis lifecycle must be read-only: {lifecycle}")
@@ -81,7 +92,7 @@ def validate(payload: dict) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Verify AgentOps MIS local readiness closure.")
-    parser.add_argument("--base-url", default="http://127.0.0.1:8787")
+    parser.add_argument("--base-url", default=os.environ.get("AGENTOPS_BASE_URL", "http://127.0.0.1:8787"))
     args = parser.parse_args()
     try:
         status_code, api_payload = http_json(args.base_url, "/api/local/readiness")

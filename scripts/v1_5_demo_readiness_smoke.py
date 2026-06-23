@@ -21,6 +21,7 @@ REQUIRED_SHOTS = {
     "worker_fleet",
     "commander_inbox",
     "customer_task_loop",
+    "live_acceptance_freshness",
     "run_ledger_evidence",
 }
 
@@ -78,6 +79,10 @@ def validate(payload: dict, label: str) -> None:
         require(isinstance(shot.get("ok"), bool), f"{label} shot ok must be bool: {shot}")
     summary = payload.get("summary") or {}
     require(summary.get("shot_count") == len(shots), f"{label} shot_count mismatch")
+    require("live_acceptance_fresh_adapters" in summary, f"{label} live acceptance summary missing: {summary}")
+    live = payload.get("live_acceptance_readiness") or {}
+    require(live.get("operation") == "live_acceptance_readiness", f"{label} live acceptance readiness missing: {live}")
+    require((live.get("safety") or {}).get("read_only") is True, f"{label} live acceptance read-only proof missing: {live}")
     require(isinstance(payload.get("next_actions"), list) and payload.get("next_actions"), f"{label} next_actions missing")
     require("read-only" in (payload.get("contract") or ""), f"{label} read-only contract missing")
 

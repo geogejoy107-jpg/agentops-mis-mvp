@@ -12,9 +12,15 @@ The goal for AgentOps MIS is not unchecked self-improvement. The goal is a local
 
 - LangGraph's production pattern for human-in-the-loop work is persistent interruption: pause execution, surface a review payload, then resume from saved state after a human decision. This maps to MIS approvals plus resumable workflow jobs.
 - LangChain's Human-in-the-Loop middleware treats risky tool calls as policy decisions before execution. This maps to MIS approval rules, risk levels, and tool-call gates.
+- OpenAI Agents SDK frames production agents around agent definitions, handoffs, guardrails, human review, results/state, integrations, and observability. This supports keeping MIS loop objects separate: task/run/plan/evidence/governance first, runtime adapter second.
+- AutoGen AgentChat's human-in-the-loop pattern exposes user feedback during a team run or via a user proxy. This maps to MIS review queue and approval lanes rather than agent-to-agent freeform chat as the source of authority.
+- CrewAI Flows model human feedback as an explicit pause/review/resume step. This reinforces that Hermes/OpenClaw loop progress should be represented as receipted steps, not implicit background autonomy.
 - Langfuse and Phoenix show the dominant open-source observability shape: traces, spans, evaluations, prompt/output metadata, datasets, and self-hosting. MIS should stay runtime-neutral and keep raw private content out of the ledger by default.
+- OpenTelemetry GenAI semantic conventions are converging on a shared vocabulary for model calls, tool calls, usage, and retrieval metadata. MIS should export to that shape later while keeping SQLite/MIS ledgers authoritative.
 - OpenLLMetry shows the likely integration standard: emit OpenTelemetry/OpenInference-style spans so external observability systems can ingest MIS activity without bespoke adapters.
 - Reflexion and Voyager support the "experience -> memory/skill -> retry" loop, but both imply a gate: only useful, verified experience should become reusable memory or skill.
+- Self-Refine supports iterative feedback/refinement without training, which maps to a bounded local loop only when each iteration has a verification record and a stop condition.
+- SWE-agent's Agent-Computer Interface result is a useful reminder that agents need a purpose-built command surface. For MIS this means `loop-launch-packet`, compact launch briefs, worker preflight, readback commands, and receipt recording are product features, not internal plumbing.
 - Recent agent-evaluation surveys emphasize realistic, continuously updated tasks and fine-grained metrics for planning, tool use, memory, safety, robustness, and cost-efficiency.
 - Self-evolving agent work such as EvolveR is promising but increases misevolution risk: memory, tools, workflows, and policies can degrade unless promotion is reviewed and reversible.
 
@@ -43,16 +49,24 @@ The goal for AgentOps MIS is not unchecked self-improvement. The goal is a local
 - Confirmed Action Queue receipts now have an operator-level evaluation ledger: `verified` and `failed` receipts write `operator_action_evaluations` plus an `operator.action_queue_evaluation` audit row, while preview and `recorded` receipts remain non-evaluating. Action-plan receipt matches expose the latest receipt evaluation so recovery work can be audited as action + verification + scored result.
 - The bounded loop runner policy now lives in `agentops_mis_cli/advance_loop_policy.py` and is exposed by `agentops operator advance-loop-policy`. CLI execution, backend handoff, UI display, and smoke tests reference the same `advance_loop_local_bounded_v1` contract so Hermes/OpenClaw/Codex can inspect the allowlist, denylists, server-shell boundary, and sample decisions before advancing a loop. The allowlist includes read-only `operator runtime-doctor` and unconfirmed `operator execution-mode` so agents can inspect adapter health and dispatch mode before acting; `--confirm-run` remains denied. After the evidence-report work order is receipted, unscoped `advance-loop` may run the read-only `operator remediate-evidence-gap --run-id ...` preview and record the `handoff.evidence_remediation` receipt; `--confirm-create`, close-gap, approvals, dispatch, and other mutating steps remain explicit operator paths.
 - `agentops operator loop-self-check` is the pre-advance check for agent loop work. It is read-only and aggregates the bounded policy contract, selected action allowlist decision, handoff health, receipt coverage, receipt evaluations, and audit-ledger proof so agents can inspect the loop boundary before running `advance-loop`.
+- `agentops workflow run-task` now returns compact Agent Plan and plan-evidence readback for worker execution: `readback.agent_plan_verified`, `readback.plan_evidence_verified`, top-level `agent_plan`, and top-level `plan_evidence` with evidence counts. This makes the one-command Hermes/OpenClaw/mock worker path prove it followed READ/PLAN/RETRIEVE/COMPARE/EXECUTE/VERIFY/RECORD instead of merely returning a model summary.
 
 ## Source Leads
 
 - LangGraph interrupts: https://docs.langchain.com/oss/python/langgraph/interrupts
 - LangChain HITL middleware: https://docs.langchain.com/oss/python/langchain/human-in-the-loop
+- OpenAI Agents SDK: https://developers.openai.com/api/docs/guides/agents
+- OpenAI Agents SDK tracing: https://openai.github.io/openai-agents-python/tracing/
+- AutoGen Human-in-the-Loop: https://microsoft.github.io/autogen/stable/user-guide/agentchat-user-guide/tutorial/human-in-the-loop.html
+- CrewAI Human Feedback in Flows: https://docs.crewai.com/en/learn/human-feedback-in-flows
 - Langfuse GitHub: https://github.com/langfuse/langfuse
 - Arize Phoenix GitHub: https://github.com/Arize-ai/phoenix
+- OpenTelemetry GenAI attributes: https://opentelemetry.io/docs/specs/semconv/registry/attributes/gen-ai/
 - OpenLLMetry GitHub: https://github.com/traceloop/openllmetry
 - Reflexion paper: https://arxiv.org/abs/2303.11366
+- Self-Refine paper: https://arxiv.org/abs/2303.17651
 - Voyager paper: https://arxiv.org/abs/2305.16291
+- SWE-agent paper: https://arxiv.org/abs/2405.15793
 - Survey on Evaluation of LLM-based Agents: https://arxiv.org/abs/2503.16416
 - EvolveR / experience-driven lifecycle: https://arxiv.org/abs/2510.16079
 - Misevolution risk paper: https://openreview.net/forum?id=Fd1jgQQW28

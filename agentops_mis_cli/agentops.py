@@ -485,6 +485,16 @@ def cmd_operator_runtime_doctor(args, client: AgentOpsClient) -> dict:
     )
 
 
+def cmd_operator_live_acceptance(args, client: AgentOpsClient) -> dict:
+    return client.get(
+        "/api/operator/live-acceptance",
+        query={
+            "freshness_hours": args.freshness_hours,
+            "limit": args.limit,
+        },
+    )
+
+
 def cmd_operator_execution_mode(args, client: AgentOpsClient) -> dict:
     return client.get(
         "/api/operator/execution-mode",
@@ -2062,13 +2072,41 @@ def cmd_workflow_run_task(args, client: AgentOpsClient) -> dict:
     run_id = first_result.get("run_id")
     run_detail = client.get(f"/api/agent-gateway/runs/{run_id}") if run_id else None
     task_detail = client.get(f"/api/agent-gateway/tasks/{task_id}") if task_id else None
+    run = (run_detail or {}).get("run") or {}
+    plan_id = first_result.get("plan_id") or run.get("agent_plan_id")
+    plan_verify = client.get(f"/api/agent-gateway/agent-plans/{plan_id}/verify") if plan_id else None
+    plan_verification = (plan_verify or {}).get("verification") or {}
+    agent_plan = (plan_verify or {}).get("agent_plan") or {}
+    manifest_id = first_result.get("plan_evidence_manifest_id")
+    if not manifest_id and run_id:
+        manifest_list = client.get("/api/agent-gateway/plan-evidence-manifests", query={"run_id": run_id, "limit": 1})
+        manifests = manifest_list.get("manifests") or []
+        manifest_id = (manifests[0] or {}).get("manifest_id") if manifests else None
+    manifest_verify = client.get(f"/api/agent-gateway/plan-evidence-manifests/{manifest_id}/verify") if manifest_id else None
+    manifest_verification = (manifest_verify or {}).get("verification") or {}
+    manifest = (manifest_verify or {}).get("manifest") or {}
+    agent_plan_readback = {
+        "plan_id": plan_id,
+        "status": agent_plan.get("status"),
+        "verified": bool(plan_verification.get("pass")),
+        "verification_status": plan_verification.get("status"),
+        "failed_checks": [item.get("id") for item in plan_verification.get("failed_checks") or []],
+        "token_omitted": True,
+    }
+    plan_evidence_readback = {
+        "manifest_id": manifest_id,
+        "status": manifest_verification.get("status") or manifest.get("status") or first_result.get("plan_evidence_status"),
+        "verified": bool(manifest_verification.get("pass")),
+        "evidence_counts": manifest_verification.get("evidence_counts") or {},
+        "failed_checks": [item.get("id") for item in manifest_verification.get("failed_checks") or []],
+        "token_omitted": True,
+    }
     evidence = {
         "tool_calls": len((run_detail or {}).get("tool_calls") or []),
         "evaluations": len((run_detail or {}).get("evaluations") or []),
         "approvals": len((run_detail or {}).get("approvals") or []),
         "artifacts": len((run_detail or {}).get("artifacts") or []),
     }
-    run = (run_detail or {}).get("run") or {}
     return {
         "ok": bool(exit_code == 0 and worker_result.get("ok") is True and run_id),
         "dry_run": False,
@@ -2086,7 +2124,13 @@ def cmd_workflow_run_task(args, client: AgentOpsClient) -> dict:
             "run_provider": (run_detail or {}).get("provider"),
             "task_provider": (task_detail or {}).get("provider"),
             "required_scope": "tasks:read",
+            "agent_plan_id": plan_id,
+            "agent_plan_verified": agent_plan_readback["verified"],
+            "plan_evidence_manifest_id": manifest_id,
+            "plan_evidence_verified": plan_evidence_readback["verified"],
         },
+        "agent_plan": agent_plan_readback,
+        "plan_evidence": plan_evidence_readback,
         "evidence": evidence,
         "created_task": created,
         "agent_register": register_result,
@@ -2503,6 +2547,10 @@ def build_parser() -> argparse.ArgumentParser:
     operator_runtime_doctor.add_argument("--limit", type=int, default=8)
     operator_runtime_doctor.add_argument("--runtime-base-url", default=None, help="Base URL to embed in suggested runtime commands; defaults to the server host.")
     operator_runtime_doctor.set_defaults(handler="operator_runtime_doctor")
+    operator_live_acceptance = operator_sub.add_parser("live-acceptance", help="Read Hermes/OpenClaw live customer-worker acceptance freshness without running adapters.")
+    operator_live_acceptance.add_argument("--freshness-hours", type=int, default=72)
+    operator_live_acceptance.add_argument("--limit", type=int, default=8)
+    operator_live_acceptance.set_defaults(handler="operator_live_acceptance")
     operator_execution_mode = operator_sub.add_parser("execution-mode", help="Read the current dispatch execution mode for mock/Hermes/OpenClaw without running adapters.")
     operator_execution_mode.add_argument("--adapter", choices=["mock", "hermes", "openclaw"], default="mock")
     operator_execution_mode.add_argument("--confirm-run", action="store_true", help="Preview the mode after explicit live confirmation; does not execute the adapter.")
@@ -3390,6 +3438,7 @@ HANDLERS = {
     "operator_advance_loop_policy": cmd_operator_advance_loop_policy,
     "operator_health": cmd_operator_health,
     "operator_runtime_doctor": cmd_operator_runtime_doctor,
+    "operator_live_acceptance": cmd_operator_live_acceptance,
     "operator_execution_mode": cmd_operator_execution_mode,
     "operator_command_center": cmd_operator_command_center,
     "operator_intake_checklist": cmd_operator_intake_checklist,

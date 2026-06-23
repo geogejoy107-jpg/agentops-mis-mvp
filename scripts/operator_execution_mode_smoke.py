@@ -39,8 +39,13 @@ def validate_payload(payload: dict, label: str, failures: list[str]) -> None:
     gates = {item.get("id"): item for item in payload.get("gates") or []}
     for gate_id in ["selected_adapter_route", "confirm_run_wall", "prepared_action_wall", "approval_waiting", "async_jobs"]:
         require(gate_id in gates, f"{label} missing gate {gate_id}: {gates}", failures)
+    require("live_acceptance_freshness" in gates, f"{label} missing live acceptance gate: {gates}", failures)
     commands = payload.get("commands") or {}
     require("agentops operator execution-mode" in commands.get("execution_mode", ""), f"{label} missing CLI command: {commands}", failures)
+    sources = payload.get("sources") or {}
+    live = sources.get("live_acceptance_readiness") or {}
+    require(live.get("operation") == "live_acceptance_readiness", f"{label} live acceptance source missing: {sources}", failures)
+    require((live.get("safety") or {}).get("read_only") is True, f"{label} live acceptance source not read-only: {live}", failures)
     safety = payload.get("safety") or {}
     require(safety.get("read_only") is True, f"{label} should be read-only: {safety}", failures)
     require(safety.get("ledger_mutated") is False, f"{label} should not mutate ledger: {safety}", failures)
@@ -113,6 +118,25 @@ def main() -> int:
             require(cli_proc.returncode == 0, f"CLI execution-mode failed: {cli_proc.stderr or cli_proc.stdout}", failures)
             cli_payload = load_json(cli_proc.stdout)
             validate_payload(cli_payload, "cli", failures)
+            live_status, live_payload = http_json(base_url, "/api/operator/live-acceptance?freshness_hours=72&limit=4")
+            outputs.append(json.dumps(live_payload, ensure_ascii=False))
+            require(live_status == 200, f"live acceptance status mismatch: {live_status} {live_payload}", failures)
+            require(live_payload.get("operation") == "live_acceptance_readiness", f"live acceptance operation mismatch: {live_payload}", failures)
+            require((live_payload.get("safety") or {}).get("read_only") is True, f"live acceptance must be read-only: {live_payload}", failures)
+            live_cli_proc = subprocess.run(
+                [str(CLI), "--base-url", base_url, "operator", "live-acceptance", "--freshness-hours", "72", "--limit", "4"],
+                cwd=ROOT,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=60,
+                check=False,
+            )
+            outputs.extend([live_cli_proc.stdout, live_cli_proc.stderr])
+            require(live_cli_proc.returncode == 0, f"CLI live-acceptance failed: {live_cli_proc.stderr or live_cli_proc.stdout}", failures)
+            live_cli_payload = load_json(live_cli_proc.stdout)
+            require(live_cli_payload.get("operation") == "live_acceptance_readiness", f"CLI live acceptance operation mismatch: {live_cli_payload}", failures)
+            require((live_cli_payload.get("safety") or {}).get("read_only") is True, f"CLI live acceptance must be read-only: {live_cli_payload}", failures)
             after = db_fingerprint(db_path)
             require(before == after, f"execution-mode mutated ledger: before={before} after={after}", failures)
         finally:

@@ -508,6 +508,27 @@ receipt recording. It never starts runtimes, executes tasks, mutates ledgers or
 connector rows, or exposes tokens. Supplied Agent Gateway tokens/sessions must
 carry `tasks:read` and remain workspace-bound.
 
+### `agentops operator live-acceptance`
+
+Reads Hermes/OpenClaw live customer-worker acceptance freshness from ledger
+evidence:
+
+```bash
+agentops operator live-acceptance --limit 8
+agentops operator live-acceptance --freshness-hours 72 --limit 8
+```
+
+Maps to `GET /api/operator/live-acceptance`. The command anchors on recent
+`customer_worker_result` delivery artifacts for local Hermes/OpenClaw customer
+worker runs, then checks the same run for matching adapter tool-call,
+evaluation, runtime-event, audit, memory, approval, and verified
+plan-evidence-manifest evidence. It returns adapter status as `fresh`, `stale`,
+`missing`, `latest_failed`, or `latest_incomplete`, plus the latest artifact and
+manifest ids when present. It also returns the manual
+`customer_worker_real_runtime_acceptance.py --confirm-live` command for each
+adapter. It never calls Hermes/OpenClaw, creates tasks, starts workers, mutates
+ledgers, or exposes raw prompts, raw responses, credentials, or tokens.
+
 ### `agentops operator execution-mode`
 
 Reads the current dispatch mode before a human or agent starts a customer task:
@@ -1073,11 +1094,17 @@ agentops workflow run-task \
 ```
 
 The command returns JSON with `task_id`, `run_id`, `run_status`,
-`task_status`, `evidence`, `readback`, and `token_omitted:true`. Final task/run
-evidence is fetched through `GET /api/agent-gateway/tasks/:id` and
+`task_status`, `evidence`, `readback`, compact `agent_plan`, compact
+`plan_evidence`, and `token_omitted:true`. Final task/run evidence is fetched
+through `GET /api/agent-gateway/tasks/:id` and
 `GET /api/agent-gateway/runs/:id` with `tasks:read`, not through public demo
-detail endpoints. It must not print raw tokens, full prompts, full raw model
-responses, credentials, or private transcripts. Without `--confirm-run`,
+detail endpoints. The readback also verifies the worker-created Agent Plan and
+plan-evidence manifest, exposing `readback.agent_plan_verified`,
+`readback.plan_evidence_verified`, `agent_plan.failed_checks`, and
+`plan_evidence.evidence_counts`. This makes the one-command worker path prove
+READ/PLAN/RETRIEVE/COMPARE/EXECUTE/VERIFY/RECORD closure before another agent
+treats the run as done. It must not print raw tokens, full prompts, full raw
+model responses, credentials, or private transcripts. Without `--confirm-run`,
 Hermes/OpenClaw create a planned task but do not execute the live adapter.
 
 With `--confirm-run`, live Hermes/OpenClaw dispatch first checks the worker
