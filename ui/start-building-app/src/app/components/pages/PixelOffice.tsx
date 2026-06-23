@@ -23,6 +23,8 @@ import {
   type DashboardMetrics,
 } from "../../data/liveApi";
 import { pick, usePreferences } from "../../context/PreferencesContext";
+import { basicPixelProjectionAdapter } from "../../spatial/basicPixelProjection";
+import { SPATIAL_OS_FOUNDATION } from "../../spatial/catalog";
 import {
   agents as mockAgents,
   approvals as mockApprovals,
@@ -227,6 +229,17 @@ export function PixelOffice() {
 
   const taskCards = useMemo(() => deriveTaskCards(snapshot.tasks), [snapshot.tasks]);
 
+  const spatialSnapshot = useMemo(
+    () =>
+      basicPixelProjectionAdapter.project({
+        agents: pixelAgents,
+        taskCards,
+        metrics: pixelMetrics,
+        source: error ? "fallback" : "mixed",
+      }),
+    [error, pixelAgents, pixelMetrics, taskCards],
+  );
+
   const openRoute = (route: string) => {
     if (route.startsWith("http")) {
       window.open(route, "_blank", "noreferrer");
@@ -236,7 +249,15 @@ export function PixelOffice() {
   };
 
   return (
-    <div className="space-y-4 max-w-none">
+    <div
+      className="space-y-4 max-w-none"
+      data-spatial-contract={spatialSnapshot.schemaVersion}
+      data-spatial-world={spatialSnapshot.worldId}
+      data-spatial-template={SPATIAL_OS_FOUNDATION.template.id}
+      data-spatial-art-kit={SPATIAL_OS_FOUNDATION.artKit.id}
+      data-spatial-renderer="basic-lite"
+      data-spatial-entity-count={spatialSnapshot.entities.length}
+    >
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
