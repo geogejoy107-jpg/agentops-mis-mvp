@@ -116,14 +116,20 @@ const RUNTIME_COLOR: Record<string, string> = {
 
 const DEFAULT_GATEWAY_SCOPES = [
   "agents:heartbeat",
+  "agent_plans:read",
   "agent_plans:write",
+  "plan_evidence:read",
   "plan_evidence:write",
+  "knowledge:read",
+  "knowledge:write",
   "tasks:create",
   "tasks:read",
   "tasks:claim",
   "runs:write",
+  "runtime_events:write",
   "toolcalls:write",
   "artifacts:write",
+  "memories:propose",
   "evaluations:submit",
   "audit:write",
 ];
@@ -135,7 +141,7 @@ const GATEWAY_SCOPE_PRESETS = [
   },
   {
     id: "observer",
-    scopes: ["agents:heartbeat", "tasks:read", "audit:write"],
+    scopes: ["agents:heartbeat", "knowledge:read", "agent_plans:read", "plan_evidence:read", "tasks:read", "audit:write"],
   },
   {
     id: "approval",
@@ -143,7 +149,7 @@ const GATEWAY_SCOPE_PRESETS = [
   },
   {
     id: "full",
-    scopes: ["agents:write", "agents:heartbeat", "agent_plans:read", "agent_plans:write", "plan_evidence:read", "plan_evidence:write", "tasks:create", "tasks:read", "tasks:claim", "runs:write", "toolcalls:write", "artifacts:write", "approvals:request", "memories:propose", "evaluations:submit", "audit:write"],
+    scopes: ["agents:write", "agents:heartbeat", "agent_plans:read", "agent_plans:write", "plan_evidence:read", "plan_evidence:write", "knowledge:read", "knowledge:write", "tasks:create", "tasks:read", "tasks:claim", "runs:write", "runtime_events:write", "toolcalls:write", "artifacts:write", "approvals:request", "memories:propose", "evaluations:submit", "audit:write"],
   },
 ];
 

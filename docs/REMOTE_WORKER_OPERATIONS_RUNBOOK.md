@@ -82,6 +82,16 @@ Preview scope risk before issuing any token:
 For Hermes/OpenClaw or worker write scopes, prefer the approval-gated request
 path when the preview returns `approval_recommended=true`.
 
+The browser `/workspace/agents` Worker preset and the backend default worker
+enrollment scopes include `agent_plans:read/write`, `plan_evidence:read/write`,
+`knowledge:read/write`, `runtime_events:write`, `artifacts:write`, and
+`memories:propose` because the installable worker must retrieve task-aware
+knowledge evidence, write runtime events, record artifacts, propose memory, and
+verify the plan-evidence manifest. `knowledge:write` is intentionally treated as
+privileged because it lets an authorized worker refresh the local knowledge
+index; remote Hermes/OpenClaw workers should use the approval-gated enrollment
+path before receiving that scope set.
+
 ```bash
 ./scripts/agentops enrollment create \
   --agent-id agt_remote_builder \

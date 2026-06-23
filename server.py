@@ -2567,6 +2567,8 @@ AGENT_GATEWAY_WORKER_WRITE_SCOPES = {
     "evaluations:submit",
 }
 
+AGENT_GATEWAY_WORKER_ACTION_SCOPES = AGENT_GATEWAY_WORKER_WRITE_SCOPES - AGENT_GATEWAY_OBSERVER_SCOPES
+
 AGENT_GATEWAY_PRIVILEGED_SCOPES = {
     "agents:write",
     "knowledge:write",
@@ -2610,17 +2612,24 @@ def agent_gateway_enrollment_policy_preview(body) -> tuple[dict, int]:
     runtime_type = coerce_choice(body.get("runtime_type") or body.get("runtime"), VALID_RUNTIME_TYPES, "mock")
     workspace_id = normalize_workspace_id(body.get("workspace_id") or "local-demo")
     privileged = [scope for scope in scopes if scope in AGENT_GATEWAY_PRIVILEGED_SCOPES]
-    worker_writes = [scope for scope in scopes if scope in AGENT_GATEWAY_WORKER_WRITE_SCOPES]
     observer_only = bool(scopes) and set(scopes).issubset(AGENT_GATEWAY_OBSERVER_SCOPES)
+    worker_writes = [] if observer_only else [scope for scope in scopes if scope in AGENT_GATEWAY_WORKER_ACTION_SCOPES]
     missing_worker_scopes = [
         scope for scope in [
             "agents:heartbeat",
+            "agent_plans:read",
+            "agent_plans:write",
+            "plan_evidence:read",
+            "plan_evidence:write",
             "knowledge:read",
             "knowledge:write",
             "tasks:read",
             "tasks:claim",
             "runs:write",
+            "runtime_events:write",
             "toolcalls:write",
+            "artifacts:write",
+            "memories:propose",
             "evaluations:submit",
             "audit:write",
         ] if scope not in scopes

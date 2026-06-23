@@ -74,13 +74,47 @@ def main() -> int:
         require(worker.get("policy") == "worker", f"worker policy mismatch: {worker}")
         require(worker.get("approval_recommended") is True, f"worker should recommend approval: {worker}")
         require(worker.get("recommended_path") == "request_approval", f"worker path mismatch: {worker}")
+        require("knowledge:read" in worker.get("missing_worker_scopes", []), f"incomplete worker scopes should flag missing knowledge:read: {worker}")
+        require("runtime_events:write" in worker.get("missing_worker_scopes", []), f"incomplete worker scopes should flag missing runtime_events:write: {worker}")
         require(worker.get("safety", {}).get("read_only") is True, f"worker preview not read-only: {worker}")
         require(worker.get("safety", {}).get("ledger_mutated") is False, f"worker preview mutated ledger: {worker}")
+
+        complete_worker_scopes = [
+            "agents:heartbeat",
+            "agent_plans:read",
+            "agent_plans:write",
+            "plan_evidence:read",
+            "plan_evidence:write",
+            "knowledge:read",
+            "knowledge:write",
+            "tasks:create",
+            "tasks:read",
+            "tasks:claim",
+            "runs:write",
+            "runtime_events:write",
+            "toolcalls:write",
+            "artifacts:write",
+            "memories:propose",
+            "evaluations:submit",
+            "audit:write",
+        ]
+        status, complete_worker = http_json(args.base_url, {
+            "runtime_type": "openclaw",
+            "workspace_id": "local-demo",
+            "scopes": complete_worker_scopes,
+        })
+        require(status == 200, f"complete worker preview failed: {status} {complete_worker}")
+        require(complete_worker.get("policy") == "privileged", f"complete worker policy should be privileged because it can write knowledge: {complete_worker}")
+        require("knowledge:write" in complete_worker.get("privileged_scopes", []), f"complete worker should flag knowledge:write as privileged: {complete_worker}")
+        require(complete_worker.get("approval_recommended") is True, f"privileged complete worker should recommend approval: {complete_worker}")
+        require(complete_worker.get("missing_worker_scopes") == [], f"complete worker should not miss scopes: {complete_worker}")
+        worker_viability = next((gate for gate in complete_worker.get("gates", []) if gate.get("id") == "worker_viability"), {})
+        require(worker_viability.get("status") == "pass", f"complete worker viability should pass: {complete_worker}")
 
         status, observer = http_json(args.base_url, {
             "runtime_type": "mock",
             "workspace_id": "local-demo",
-            "scopes": ["agents:heartbeat", "tasks:read", "audit:write"],
+            "scopes": ["agents:heartbeat", "knowledge:read", "agent_plans:read", "plan_evidence:read", "tasks:read", "audit:write"],
         })
         require(status == 200, f"observer preview failed: {status} {observer}")
         require(observer.get("policy") == "observer", f"observer policy mismatch: {observer}")

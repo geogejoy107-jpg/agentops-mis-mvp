@@ -183,6 +183,16 @@ def main() -> int:
         'data-testid="one-time-issued-credential"',
         '<div className="mt-4">',
     )
+    default_gateway_scopes = extract_block(
+        ai,
+        "const DEFAULT_GATEWAY_SCOPES = [",
+        "const GATEWAY_SCOPE_PRESETS = [",
+    )
+    gateway_scope_presets = extract_block(
+        ai,
+        "const GATEWAY_SCOPE_PRESETS = [",
+        "const WORKER_ADAPTERS",
+    )
     copy_helper = extract_block(
         ai,
         "const copyIssuedCredential = async () => {",
@@ -212,10 +222,24 @@ def main() -> int:
     require("credentialCannotBeReadAgain" in one_time_card, "one-time card should explain the no-reread contract", failures)
     require("createdToken.token" not in recent_enrollments, "recent enrollments list must not render raw token", failures)
     require("clearIssuedCredential();" in ai, "UI should have a clearIssuedCredential lifecycle call", failures)
-    require("refresh = useCallback(async (options?: { preserveIssuedCredential?: boolean })" in ai, "refresh should support narrow preservation after issuance", failures)
+    require("const refresh = useCallback(async (options?:" in ai and "preserveIssuedCredential?: boolean" in ai, "refresh should support narrow preservation after issuance", failures)
     require("if (!options?.preserveIssuedCredential)" in ai, "ordinary refresh should clear issued credential", failures)
     require("await refresh({ preserveIssuedCredential: true });" in ai, "create/issue/rotate should preserve only the fresh one-time card", failures)
     require("onClick={() => void refresh()}" in ai, "manual refresh buttons should call refresh without preserving secrets", failures)
+    for scope in [
+        "agent_plans:read",
+        "agent_plans:write",
+        "plan_evidence:read",
+        "plan_evidence:write",
+        "knowledge:read",
+        "knowledge:write",
+        "runtime_events:write",
+        "artifacts:write",
+        "memories:propose",
+    ]:
+        require(scope in default_gateway_scopes, f"worker default preset missing required worker scope {scope}", failures)
+        require(scope in gateway_scope_presets, f"scope preset matrix missing {scope}", failures)
+    require('"agents:heartbeat", "knowledge:read", "agent_plans:read", "plan_evidence:read", "tasks:read", "audit:write"' in gateway_scope_presets, "observer preset should match backend observer scopes", failures)
 
     forbidden_long_lived_reads = [
         match.group(0)

@@ -197,7 +197,7 @@ agentops enrollment create \
   --agent-id agt_remote_builder \
   --name "Remote Builder" \
   --runtime openclaw \
-  --scopes agents:write,agents:heartbeat,knowledge:read,agent_plans:read,agent_plans:write,plan_evidence:read,plan_evidence:write,tasks:create,tasks:read,tasks:claim,runs:write,runtime_events:write,toolcalls:write,artifacts:write,memories:propose,evaluations:submit,audit:write \
+  --scopes agents:write,agents:heartbeat,knowledge:read,knowledge:write,agent_plans:read,agent_plans:write,plan_evidence:read,plan_evidence:write,tasks:create,tasks:read,tasks:claim,runs:write,runtime_events:write,toolcalls:write,artifacts:write,memories:propose,evaluations:submit,audit:write \
   --ttl-days 30
 ```
 
