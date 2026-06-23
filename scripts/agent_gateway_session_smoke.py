@@ -150,7 +150,17 @@ def smoke(base_url: str, stamp: str) -> dict:
 
         status, gateway_status = http_json("GET", base_url, "/api/agent-gateway/status", token=session_token)
         require(status == 200, f"session status failed: {status} {gateway_status}")
-        require((gateway_status.get("auth") or {}).get("mode") == "agent_session", f"wrong auth mode: {gateway_status}")
+        gateway_auth = gateway_status.get("auth") or {}
+        gateway_auth_serialized = json.dumps(gateway_auth, ensure_ascii=False)
+        require(gateway_auth.get("mode") == "agent_session", f"wrong auth mode: {gateway_status}")
+        require(gateway_auth.get("session_ref") == safe_ref("session_ref", session_id), f"wrong session ref: {gateway_status}")
+        require(gateway_auth.get("parent_token_ref") == safe_ref("token_ref", token_id), f"wrong parent token ref: {gateway_status}")
+        require(gateway_auth.get("session_id_omitted") is True, f"session id omission flag missing: {gateway_status}")
+        require(gateway_auth.get("parent_token_id_omitted") is True, f"parent token id omission flag missing: {gateway_status}")
+        require("session_id" not in gateway_auth, f"status auth leaked session_id field: {gateway_status}")
+        require("parent_token_id" not in gateway_auth, f"status auth leaked parent_token_id field: {gateway_status}")
+        require(session_id not in gateway_auth_serialized, f"status auth leaked raw session id: {gateway_status}")
+        require(token_id not in gateway_auth_serialized, f"status auth leaked raw parent token id: {gateway_status}")
 
         status, heartbeat = http_json("POST", base_url, "/api/agent-gateway/heartbeat", {
             "status": "idle",
@@ -196,13 +206,15 @@ def smoke(base_url: str, stamp: str) -> dict:
         return {
             "agent_id": agent_id,
             "task_id": task_id,
-            "token_id": enrollment.get("token_id"),
-            "session_id": session_id,
-            "revoked_session_id": revoke_session_id,
-            "cascade_session_id": cascade_session_id,
-            "expired_session_id": expire_session_id,
+            "token_ref": safe_ref("token_ref", enrollment.get("token_id") or ""),
+            "session_ref": safe_ref("session_ref", session_id),
+            "revoked_session_ref": safe_ref("session_ref", revoke_session_id),
+            "cascade_session_ref": safe_ref("session_ref", cascade_session_id),
+            "expired_session_ref": safe_ref("session_ref", expire_session_id),
             "session_scopes": session.get("scopes", []),
-            "auth_mode": (gateway_status.get("auth") or {}).get("mode"),
+            "auth_mode": gateway_auth.get("mode"),
+            "status_session_ref": gateway_auth.get("session_ref"),
+            "status_parent_token_ref": gateway_auth.get("parent_token_ref"),
             "listed_session_count": len(session_rows),
             "revoke_status": rejected.get("error"),
             "expired_status": expired.get("error"),

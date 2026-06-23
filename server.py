@@ -3566,7 +3566,8 @@ def agent_gateway_status(conn, headers) -> tuple[dict, int]:
         if row:
             safe_row = dict(row)
             payload["auth"].update({
-                "token_id": safe_row.get("token_id"),
+                "token_ref": stable_id("token_ref", safe_row.get("token_id"))[-12:],
+                "token_id_omitted": True,
                 "token_status": safe_row.get("status"),
                 "heartbeat_state": agent_gateway_token_heartbeat_state(safe_row),
                 "heartbeat_timeout_sec": safe_row.get("heartbeat_timeout_sec"),
@@ -3576,8 +3577,10 @@ def agent_gateway_status(conn, headers) -> tuple[dict, int]:
             })
     if auth_ctx.get("mode") == "agent_session":
         payload["auth"].update({
-            "session_id": auth_ctx.get("session_id"),
-            "parent_token_id": auth_ctx.get("token_id"),
+            "session_ref": stable_id("session_ref", auth_ctx.get("session_id"))[-12:],
+            "parent_token_ref": stable_id("token_ref", auth_ctx.get("token_id"))[-12:],
+            "session_id_omitted": True,
+            "parent_token_id_omitted": True,
             "session_expires_at": auth_ctx.get("expires_at"),
         })
     return payload, 200

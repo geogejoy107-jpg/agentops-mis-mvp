@@ -286,6 +286,9 @@ agentops enrollment revoke --agent-id agt_remote_builder
 
 The revoke response reports counts plus `token_refs`/`session_refs`; it does not
 echo raw enrollment token IDs, raw session IDs, token hashes, or token values.
+`agentops status` follows the same readback rule: token/session auth status
+returns `token_ref`, `session_ref`, or `parent_token_ref` plus omission flags,
+not raw enrollment token IDs or raw session IDs.
 
 ### `agentops enrollment rotate`
 
@@ -1527,7 +1530,15 @@ Never returns:
 
 - raw token value
 - token hash
+- raw enrollment token ID
+- raw short-lived session ID
+- raw parent token ID
 - full prompts or raw outputs
+
+When authenticated by a token or short-lived session, `auth` uses safe refs
+(`token_ref`, `session_ref`, `parent_token_ref`) and explicit omission flags
+(`token_id_omitted`, `session_id_omitted`, `parent_token_id_omitted`) so
+operators can correlate status without exposing raw credential identifiers.
 
 ### `POST /api/agent-gateway/register`
 
