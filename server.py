@@ -4653,12 +4653,12 @@ def sync_knowledge_index(conn: sqlite3.Connection, rebuild: bool = False) -> dic
     ensure_knowledge_chunks_table(conn)
     chunk_fts_available = ensure_knowledge_chunk_fts(conn)
     if rebuild:
-        conn.execute("DELETE FROM knowledge_documents")
+        if chunk_fts_available:
+            conn.execute("DELETE FROM knowledge_chunk_fts")
         conn.execute("DELETE FROM knowledge_chunks")
         if fts_available:
             conn.execute("DELETE FROM knowledge_fts")
-        if chunk_fts_available:
-            conn.execute("DELETE FROM knowledge_chunk_fts")
+        conn.execute("DELETE FROM knowledge_documents")
     indexed = 0
     changed = 0
     chunks_indexed = 0
@@ -4753,18 +4753,18 @@ def sync_knowledge_index(conn: sqlite3.Connection, rebuild: bool = False) -> dic
         changed += 1
     existing_ids = {row["doc_id"] for row in conn.execute("SELECT doc_id FROM knowledge_documents").fetchall()}
     for stale_id in sorted(existing_ids - seen_doc_ids):
-        conn.execute("DELETE FROM knowledge_documents WHERE doc_id=?", (stale_id,))
+        if chunk_fts_available:
+            conn.execute("DELETE FROM knowledge_chunk_fts WHERE doc_id=?", (stale_id,))
         conn.execute("DELETE FROM knowledge_chunks WHERE doc_id=?", (stale_id,))
         if fts_available:
             conn.execute("DELETE FROM knowledge_fts WHERE doc_id=?", (stale_id,))
-        if chunk_fts_available:
-            conn.execute("DELETE FROM knowledge_chunk_fts WHERE doc_id=?", (stale_id,))
+        conn.execute("DELETE FROM knowledge_documents WHERE doc_id=?", (stale_id,))
         deleted += 1
     existing_chunk_ids = {row["chunk_id"] for row in conn.execute("SELECT chunk_id FROM knowledge_chunks").fetchall()}
     for stale_chunk_id in sorted(existing_chunk_ids - seen_chunk_ids):
-        conn.execute("DELETE FROM knowledge_chunks WHERE chunk_id=?", (stale_chunk_id,))
         if chunk_fts_available:
             conn.execute("DELETE FROM knowledge_chunk_fts WHERE chunk_id=?", (stale_chunk_id,))
+        conn.execute("DELETE FROM knowledge_chunks WHERE chunk_id=?", (stale_chunk_id,))
     return {
         "indexed": indexed,
         "changed": changed,

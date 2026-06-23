@@ -32,6 +32,7 @@ from agentops_mis_core.operator_start_check import compact_start_check_local_run
 
 
 DEFAULT_BASE_URL = "http://127.0.0.1:8787"
+LOCAL_DEMO_DEFAULT_URL = os.environ.get("AGENTOPS_LOCAL_DEMO_DEFAULT_URL", DEFAULT_BASE_URL).rstrip("/")
 DEFAULT_WORKSPACE_ID = "local-demo"
 DEFAULT_REQUEST_TIMEOUT = 30
 CONFIG_PATH = Path(os.environ.get("AGENTOPS_CONFIG", "~/.agentops/config.json")).expanduser()
@@ -192,6 +193,47 @@ def add_current_code_check(payload: dict, args) -> dict:
     return payload
 
 
+def local_demo_default_probe(target_base_url: str = "", timeout: float = 0.8) -> dict:
+    probe_url = LOCAL_DEMO_DEFAULT_URL.rstrip("/")
+    same_as_target = bool(target_base_url) and target_base_url.rstrip("/") == probe_url
+    result = {
+        "operation": "local_demo_default_probe",
+        "base_url": probe_url,
+        "same_as_target": same_as_target,
+        "reachable": False,
+        "ready": False,
+        "status": "unknown",
+        "status_code": None,
+        "command": f"AGENTOPS_BASE_URL={probe_url} agentops status",
+        "repair_command": f"agentops login --base-url {probe_url}",
+        "token_omitted": True,
+    }
+    if same_as_target:
+        result["status"] = "target"
+        return result
+    try:
+        req = Request(probe_url + "/api/agent-gateway/status", headers={"Accept": "application/json"})
+        with urlopen(req, timeout=timeout) as res:
+            raw = res.read().decode("utf-8")
+            payload = json.loads(raw) if raw else {}
+            result.update({
+                "reachable": True,
+                "ready": payload.get("status") == "ready",
+                "status": payload.get("status") or "reachable",
+                "status_code": res.status,
+            })
+    except HTTPError as exc:
+        result.update({
+            "reachable": True,
+            "ready": False,
+            "status": "http_error",
+            "status_code": exc.code,
+        })
+    except (URLError, OSError, TimeoutError, json.JSONDecodeError):
+        result["status"] = "unreachable"
+    return result
+
+
 class AgentOpsClient:
     def __init__(self, context: dict):
         self.base_url = context["base_url"].rstrip("/")
@@ -203,13 +245,16 @@ class AgentOpsClient:
 
     def connection_hint(self) -> str:
         source = self.sources.get("base_url") or "unknown"
+        default_probe = local_demo_default_probe(self.base_url)
+        probe_status = "ready" if default_probe.get("ready") else default_probe.get("status", "unknown")
         hint = (
             f"base_url_source={source}; config_path={CONFIG_PATH}; "
-            f"local_demo_default={DEFAULT_BASE_URL}; "
-            f"try: AGENTOPS_BASE_URL={DEFAULT_BASE_URL} agentops status"
+            f"local_demo_default={LOCAL_DEMO_DEFAULT_URL}; "
+            f"local_demo_probe={probe_status}; "
+            f"try: AGENTOPS_BASE_URL={LOCAL_DEMO_DEFAULT_URL} agentops status"
         )
         if source == "config":
-            hint += f"; or update saved config: agentops login --base-url {DEFAULT_BASE_URL}"
+            hint += f"; or update saved config: agentops login --base-url {LOCAL_DEMO_DEFAULT_URL}"
         elif source == "env":
             hint += "; or unset/adjust AGENTOPS_BASE_URL"
         return hint
@@ -278,6 +323,7 @@ def cmd_doctor(args, client: AgentOpsClient) -> dict:
     checks = []
     gateway = None
     workers = None
+    local_probe = local_demo_default_probe(client.base_url)
     mode = cli_deployment_mode()
     production_requested = mode in {"production", "prod", "shared", "hosted"} or cli_truthy_env("AGENTOPS_REQUIRE_PRODUCTION_SECURITY")
     non_loopback_target = not cli_host_is_loopback(client.base_url)
@@ -338,6 +384,8 @@ def cmd_doctor(args, client: AgentOpsClient) -> dict:
         setup_hints.append("A token was provided but Agent Gateway did not authenticate it; rotate or re-enroll the agent.")
     if workers and workers.get("stuck_worker_tasks", 0):
         setup_hints.append("Stuck worker tasks detected. Run agentops worker stuck and agentops worker release after review.")
+    if not gateway and local_probe.get("ready"):
+        setup_hints.append(f"Configured base URL is unreachable, but local demo default is ready. Use AGENTOPS_BASE_URL={local_probe.get('base_url')} or run agentops login --base-url {local_probe.get('base_url')}.")
 
     deployment_safety = {
         "deployment_mode": mode,
@@ -366,6 +414,7 @@ def cmd_doctor(args, client: AgentOpsClient) -> dict:
             "token_omitted": True,
         },
         "deployment_safety": deployment_safety,
+        "local_demo_probe": local_probe,
         "checks": checks,
         "gateway": gateway,
         "worker_summary": {
