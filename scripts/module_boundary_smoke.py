@@ -105,6 +105,7 @@ from agentops_mis_core.worker_fleet import (
     worker_fleet_health,
 )
 from agentops_mis_core.workflow_jobs import (
+    build_workflow_job_recovery_work_order,
     workflow_jobs_list_response,
     workflow_job_mark_failed_response,
     workflow_job_not_active_response,
@@ -218,6 +219,7 @@ SERVER_WORKER_FLEET_IMPORTS = {
     "public_worker_revoked_enrollment",
 }
 EXTRACTED_WORKFLOW_JOB_HELPERS = {
+    "build_workflow_job_recovery_work_order",
     "workflow_jobs_list_response",
     "workflow_job_mark_failed_response",
     "workflow_job_not_active_response",
@@ -226,6 +228,7 @@ EXTRACTED_WORKFLOW_JOB_HELPERS = {
     "workflow_job_stuck_projection",
 }
 SERVER_WORKFLOW_JOB_IMPORTS = {
+    "build_workflow_job_recovery_work_order",
     "workflow_jobs_list_response",
     "workflow_job_mark_failed_response",
     "workflow_job_not_active_response",
@@ -1397,6 +1400,33 @@ def main() -> int:
         active_count=1,
         stuck_count=0,
     )
+    workflow_recovery_work_order = build_workflow_job_recovery_work_order(
+        workspace_id="local-demo",
+        stuck_jobs=[{
+            "job_id": "wfjob_recovery_stuck_projection_smoke",
+            "workflow_type": "customer_worker_task",
+            "status": "running",
+            "adapter": "mock",
+            "title": "Workflow recovery projection smoke",
+            "age_sec": 1200,
+            "threshold_sec": 900,
+            "stuck_reason": "workflow_job_exceeded_threshold",
+            "raw_request_omitted": True,
+            "token_omitted": True,
+        }],
+        retryable_failed_jobs=[{
+            "job_id": "wfjob_recovery_retry_projection_smoke",
+            "workflow_type": "customer_worker_task",
+            "status": "failed",
+            "adapter": "mock",
+            "result_task_id": "tsk_retry_projection_smoke",
+            "error_message": "smoke retryable failure",
+            "raw_request_omitted": True,
+            "token_omitted": True,
+        }],
+        receipt_rows=[],
+        limit=8,
+    )
     require(workflow_job_projection and workflow_job_projection.get("result", {}).get("ok") is True, "workflow job public projection result parse failed", failures)
     require(workflow_job_projection.get("raw_request_omitted") is True and workflow_job_projection.get("token_omitted") is True, "workflow job public projection omission proof missing", failures)
     require(workflow_job_bad_result_projection and workflow_job_bad_result_projection.get("result") == {}, "workflow job public projection bad JSON fallback failed", failures)
@@ -1411,6 +1441,12 @@ def main() -> int:
     require((workflow_list_response.get("filters") or {}).get("status") == ["completed", "running"], "workflow jobs list filters failed", failures)
     require(workflow_list_response.get("safety", {}).get("read_only") is True and workflow_list_response.get("token_omitted") is True, "workflow jobs list safety/token proof failed", failures)
     require("agentops workflow job-status --job-id <job_id> --wait" in (workflow_list_response.get("next_actions") or []), "workflow jobs list next action missing", failures)
+    require(workflow_recovery_work_order.get("operation") == "workflow_job_recovery_work_order", "workflow job recovery work-order operation failed", failures)
+    require((workflow_recovery_work_order.get("summary") or {}).get("items") == 2, "workflow job recovery work-order item summary failed", failures)
+    recovery_commands = "\n".join(workflow_recovery_work_order.get("commands") or [])
+    require("agentops workflow recover-job --job-id wfjob_recovery_stuck_projection_smoke --mode mark-failed" in recovery_commands, "workflow job recovery mark-failed command missing", failures)
+    require("agentops workflow recover-job --job-id wfjob_recovery_retry_projection_smoke --mode retry" in recovery_commands, "workflow job recovery retry command missing", failures)
+    require(workflow_recovery_work_order.get("safety", {}).get("read_only") is True and workflow_recovery_work_order.get("token_omitted") is True, "workflow job recovery work-order safety/token proof failed", failures)
     planned_task = {"task_id": "tsk_cmd_smoke_strategy", "status": "planned"}
     completed_task = {"task_id": "tsk_cmd_smoke_qa", "status": "completed"}
     require(commander_work_package_status(planned_task, None, {}) == "planned", "commander planned package status failed", failures)

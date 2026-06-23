@@ -1141,6 +1141,40 @@ python3 scripts/workflow_jobs_list_poll_smoke.py --base-url "$AGENTOPS_BASE_URL"
 python3 scripts/workflow_job_stuck_recovery_smoke.py --base-url "$AGENTOPS_BASE_URL"
 ```
 
+### Slice 38: Workflow Job Recovery Work-Order Projection
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/workflow_jobs.py`
+
+Moved out of `server.py`:
+
+- workflow-job recovery work-order response shape
+- recover-job preview/confirm/verify command projection
+- receipt state matching for recovery actions
+- receipt record/verify command projection
+- recovery summary and read-only safety metadata
+
+Still owned by `server.py`:
+
+- SQLite workflow-job reads and status filters
+- stuck-job threshold calculation inputs
+- operator action receipt row lookup
+- `recover-job` mutation route orchestration
+- runtime events, audit logs and commits
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/workflow_job_stuck_recovery_smoke.py --base-url "$AGENTOPS_BASE_URL"
+python3 scripts/operator_action_plan_smoke.py --base-url "$AGENTOPS_BASE_URL"
+python3 scripts/operator_handoff_smoke.py --base-url "$AGENTOPS_BASE_URL"
+python3 scripts/operator_loop_launch_packet_smoke.py --base-url "$AGENTOPS_BASE_URL"
+```
+
 ## Next Candidate Slices
 
 - Continue P1-05 with small smoke-backed strangler slices only; prefer pure
