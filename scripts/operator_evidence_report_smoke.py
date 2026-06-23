@@ -233,6 +233,15 @@ def main() -> int:
             summary = report.get("summary") or {}
             require(int(summary.get("memory_review_ready") or 0) >= 1, f"summary missing ready memory review: {summary}", failures)
             require(int(summary.get("pending_memory_reviews") or 0) == 0, f"summary should have no pending memory review: {summary}", failures)
+            require(int(summary.get("worker_runs") or 0) == 0, f"non-worker fixture should not count as worker run: {summary}", failures)
+            require(int(summary.get("worker_runtime_summary_ready") or 0) == 0, f"non-worker fixture should not count ready runtime summary: {summary}", failures)
+            require(int(summary.get("worker_runtime_summary_missing") or 0) == 0, f"non-worker fixture should not count missing runtime summary: {summary}", failures)
+            runtime_summary = item.get("worker_runtime_summary") or {}
+            require(runtime_summary.get("applicable") is False, f"non-worker run should mark runtime summary not applicable: {runtime_summary}", failures)
+            require(runtime_summary.get("status") == "not_applicable", f"non-worker runtime summary status should be not_applicable: {runtime_summary}", failures)
+            require(runtime_summary.get("raw_prompt_omitted") is True, f"runtime summary should preserve raw prompt omission: {runtime_summary}", failures)
+            require(runtime_summary.get("raw_response_omitted") is True, f"runtime summary should preserve raw response omission: {runtime_summary}", failures)
+            require(runtime_summary.get("token_omitted") is True, f"runtime summary should preserve token omission: {runtime_summary}", failures)
             counts = item.get("evidence_counts") or {}
             for key in ["tool_calls", "evaluations", "artifacts", "audit_logs"]:
                 require(int(counts.get(key) or 0) >= 1, f"missing {key} evidence count: {counts}", failures)
