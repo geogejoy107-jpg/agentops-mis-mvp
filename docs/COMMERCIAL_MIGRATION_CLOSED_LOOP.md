@@ -406,6 +406,7 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   - `ui/next-app/src/styles/globals.css`
   - `scripts/nextjs_parity_smoke.py`
   - `scripts/nextjs_agent_gateway_task_proxy_smoke.py`
+  - `scripts/nextjs_agent_gateway_cli_worker_dogfood_smoke.py`
   - `scripts/nextjs_worker_dispatch_once_smoke.py`
   - `scripts/nextjs_worker_stuck_release_smoke.py`
   - `scripts/nextjs_worker_daemon_control_smoke.py`

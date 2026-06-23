@@ -12,6 +12,7 @@
         "ui_navigation_inventory_v1",
         "ui_route_retirement_packet_v1",
         "nextjs_agent_gateway_task_proxy_v1",
+        "nextjs_agent_gateway_cli_worker_dogfood_v1",
         "nextjs_worker_dispatch_once_v1",
         "nextjs_worker_stuck_release_v1",
         "nextjs_enrollment_request_v1",
@@ -870,6 +871,7 @@
       ],
       "evidence_commands": [
         "python3 scripts/nextjs_agent_gateway_task_proxy_smoke.py",
+        "python3 scripts/nextjs_agent_gateway_cli_worker_dogfood_smoke.py",
         "python3 scripts/nextjs_enrollment_request_smoke.py",
         "python3 scripts/nextjs_playwright_snapshot_smoke.py",
         "python3 scripts/nextjs_parity_smoke.py"

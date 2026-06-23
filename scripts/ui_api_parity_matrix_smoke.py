@@ -137,6 +137,7 @@ def main() -> int:
     require("ui_navigation_inventory_v1" in route_contracts, "matrix policy must include the navigation inventory contract")
     require("ui_route_retirement_packet_v1" in route_contracts, "matrix policy must include the route retirement packet contract")
     require("nextjs_agent_gateway_task_proxy_v1" in route_contracts, "matrix policy must include the Next Gateway task proxy contract")
+    require("nextjs_agent_gateway_cli_worker_dogfood_v1" in route_contracts, "matrix policy must include the Next Gateway CLI worker dogfood contract")
     require("nextjs_worker_dispatch_once_v1" in route_contracts, "matrix policy must include the Next worker dispatch contract")
     require("nextjs_worker_stuck_release_v1" in route_contracts, "matrix policy must include the Next worker stuck release contract")
     require("nextjs_enrollment_request_v1" in route_contracts, "matrix policy must include the Next enrollment request contract")
@@ -258,6 +259,7 @@ def main() -> int:
     require("python3 scripts/nextjs_playwright_snapshot_smoke.py" in notion_evidence, "external_bases_notion must include Next browser evidence")
     next_proxy_evidence = entries_by_id.get("next_mis_proxy", {}).get("evidence_commands") or []
     require("python3 scripts/nextjs_agent_gateway_task_proxy_smoke.py" in next_proxy_evidence, "next_mis_proxy must include Next Gateway task proxy evidence")
+    require("python3 scripts/nextjs_agent_gateway_cli_worker_dogfood_smoke.py" in next_proxy_evidence, "next_mis_proxy must include Next Gateway CLI worker dogfood evidence")
     require("python3 scripts/nextjs_enrollment_request_smoke.py" in next_proxy_evidence, "next_mis_proxy must include Next enrollment proxy guard evidence")
 
     vite_routes = actual_vite_routes()
