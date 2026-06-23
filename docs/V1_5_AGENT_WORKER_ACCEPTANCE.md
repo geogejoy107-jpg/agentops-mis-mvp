@@ -1689,6 +1689,48 @@ Safety observations:
   internal tool events are ingested or high-risk actions are routed through
   prepared actions.
 
+## 2026-06-24 Current-Code Isolated Product Evidence
+
+Latest current-code evidence used an isolated `/tmp` SQLite database and a
+temporary local server, so the default repo database and tracked sample exports
+were not touched. The run rebuilt knowledge, created Commander synthesis
+evidence, executed real Hermes and OpenClaw customer-worker tasks, verified live
+readiness, exercised remote worker mock fallback, and finished with non-live
+local acceptance.
+
+```text
+head: a82642134e4dbbce729fc56010de3b6e74a37442
+server: http://127.0.0.1:57950
+db: /tmp/agentops_v15_current_code_57950.db
+script: AGENTOPS_DB_PATH=/tmp/agentops_v15_current_code_57950.db python3 scripts/v1_5_current_code_product_evidence.py --base-url http://127.0.0.1:57950 --db-path /tmp/agentops_v15_current_code_57950.db --confirm-live --timeout 900 --hermes-timeout 600 --hermes-max-tokens 512
+
+before readiness: attention
+after readiness: ready
+knowledge documents/chunks: 95 / 998
+commander synthesis artifacts: 1
+commander promoted deliveries: 1
+fresh live adapters: 2
+closed-loop runs after evidence: 16
+
+Hermes run: run_gw_87a1a98f9e19
+Hermes task: tsk_worker_ui_hermes_20260623225814_de550cf6
+Hermes artifact: art_customer_worker_task_run_gw_87a1a98f9e19
+Hermes approval: ap_customer_worker_delivery_run_gw_87a1a98f9e19
+Hermes manifest: pem_c09f0ac2664dd932
+Hermes evidence: tool_calls 1, evaluations 1, runtime_events 14, audit_logs 7, artifacts 2, memories 2, approvals 1, plan_evidence_manifests 1
+
+OpenClaw run: run_gw_32fd8474b6c9
+OpenClaw task: tsk_worker_ui_openclaw_20260623225847_80df63fd
+OpenClaw artifact: art_customer_worker_task_run_gw_32fd8474b6c9
+OpenClaw approval: ap_customer_worker_delivery_run_gw_32fd8474b6c9
+OpenClaw manifest: pem_6f796bbb7ce51093
+OpenClaw evidence: tool_calls 1, evaluations 1, runtime_events 14, audit_logs 7, artifacts 2, memories 2, approvals 1, plan_evidence_manifests 1
+
+remote worker fallback runs: run_gw_7e99d3d72636, run_gw_411ad2d1e001
+non-live local acceptance: 169 checks, 0 failures
+safety: raw_prompt_omitted true, raw_response_omitted true, token_omitted true, repo_artifacts_written false
+```
+
 ## 2026-06-22 Remote Worker Scope Baseline
 
 The worker now writes `agent_plan`, `plan_evidence_manifest`, `artifact`,
