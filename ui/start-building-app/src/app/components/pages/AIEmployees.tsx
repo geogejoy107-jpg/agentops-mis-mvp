@@ -2814,15 +2814,55 @@ export function AIEmployees() {
     }
   };
 
+  const recordWorkflowJobRecoveryReceipt = async (input: {
+    actionCommand: string;
+    verifyCommand: string;
+    actionId: string;
+    actionSignature: string;
+    resultSummary: string;
+    status?: "recorded" | "verified" | "failed" | "skipped";
+  }) => {
+    const receipt = await recordOperatorActionReceipt({
+      action_command: input.actionCommand,
+      verify_command: input.verifyCommand,
+      action_id: input.actionId,
+      action_signature: input.actionSignature,
+      source: "ui.commander_team_board.workflow_job_recovery",
+      status: input.status || "verified",
+      result_summary: input.resultSummary,
+    });
+    await Promise.allSettled([
+      refreshPanel("operator_action_receipts"),
+      refreshPanel("operator_action_plan"),
+      refreshPanel("operator_loop_audit"),
+    ]);
+    return receipt;
+  };
+
   const markStuckWorkflowJobFailed = async (jobId: string) => {
     setWorkflowJobAction(jobId);
     setWorkflowJobResult(null);
+    const reason = locale === "zh" ? "操作台标记卡住 workflow job 为 failed" : "Operator marked stuck workflow job as failed";
     try {
       const result = await markWorkflowJobFailed(
         jobId,
-        locale === "zh" ? "操作台标记卡住 workflow job 为 failed" : "Operator marked stuck workflow job as failed",
+        reason,
       );
-      setWorkflowJobResult(`${jobId}: ${result.marked_failed ? "failed" : result.reason || "not changed"}`);
+      let receiptLabel = "";
+      try {
+        const receipt = await recordWorkflowJobRecoveryReceipt({
+          actionCommand: `agentops workflow job-mark-failed --job-id ${jobId} --reason "${reason}"`,
+          verifyCommand: `agentops workflow job-status --job-id ${jobId}`,
+          actionId: `commander_workflow_job_mark_failed:${jobId}`,
+          actionSignature: `workflow_job:${jobId}:mark_failed`,
+          status: result.marked_failed ? "verified" : "failed",
+          resultSummary: `${jobId} mark-failed recovery result: ${result.marked_failed ? "failed" : result.reason || "not changed"}.`,
+        });
+        receiptLabel = ` · receipt ${receipt.receipt?.receipt_id || receipt.status}`;
+      } catch (receiptErr) {
+        receiptLabel = ` · receipt ${receiptErr instanceof Error ? receiptErr.message : String(receiptErr)}`;
+      }
+      setWorkflowJobResult(`${jobId}: ${result.marked_failed ? "failed" : result.reason || "not changed"}${receiptLabel}`);
       await refresh();
     } catch (err) {
       setWorkflowJobResult(err instanceof Error ? err.message : String(err));
@@ -2847,7 +2887,22 @@ export function AIEmployees() {
         confirm_run: safeAdapter !== "mock",
       });
       setLastCommanderBatch(result);
-      setWorkflowJobResult(`${jobId}: retry ${result.ok ? "queued" : result.reason || "failed"} · ${result.job_ids.length} jobs`);
+      let receiptLabel = "";
+      try {
+        const newJobId = result.job_ids[0] || "<queued_job_id>";
+        const receipt = await recordWorkflowJobRecoveryReceipt({
+          actionCommand: `agentops commander dispatch-batch --task-id ${taskId} --status all --limit 1 --adapter ${safeAdapter}${safeAdapter !== "mock" ? " --confirm-run" : ""}`,
+          verifyCommand: newJobId === "<queued_job_id>" ? "agentops workflow jobs --limit 20" : `agentops workflow job-status --job-id ${newJobId} --wait`,
+          actionId: `commander_workflow_job_retry:${jobId}`,
+          actionSignature: `workflow_job:${jobId}:retry:${taskId}:${safeAdapter}`,
+          status: result.ok ? "verified" : "failed",
+          resultSummary: `${jobId} retry recovery queued ${result.job_ids.length} replacement job(s) for task ${taskId}.`,
+        });
+        receiptLabel = ` · receipt ${receipt.receipt?.receipt_id || receipt.status}`;
+      } catch (receiptErr) {
+        receiptLabel = ` · receipt ${receiptErr instanceof Error ? receiptErr.message : String(receiptErr)}`;
+      }
+      setWorkflowJobResult(`${jobId}: retry ${result.ok ? "queued" : result.reason || "failed"} · ${result.job_ids.length} jobs${receiptLabel}`);
       if (result.team_board_after_queue) {
         setData((current) => current ? {
           ...current,

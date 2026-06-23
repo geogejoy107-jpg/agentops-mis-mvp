@@ -68,6 +68,13 @@ def main() -> int:
         "team_board_mark_failed_handler": "markStuckWorkflowJobFailed(lane.latest_workflow_job.job_id)",
         "team_board_retry_handler": "retryCommanderWorkflowJob(lane.task_id",
         "team_board_retry_live_confirm": "liveAdapterConfirmMissing((lane.latest_workflow_job?.adapter || \"mock\")",
+        "team_board_recovery_receipt_writer": "recordWorkflowJobRecoveryReceipt",
+        "team_board_recovery_receipt_source": "ui.commander_team_board.workflow_job_recovery",
+        "team_board_recovery_receipt_api": "recordOperatorActionReceipt({",
+        "team_board_recovery_receipt_refresh": 'refreshPanel("operator_action_receipts")',
+        "team_board_mark_failed_receipt_command": "agentops workflow job-mark-failed --job-id",
+        "team_board_retry_receipt_command": "agentops commander dispatch-batch --task-id",
+        "team_board_retry_verify_command": "agentops workflow job-status --job-id",
         "fallback_action_rows": "commanderActionRows",
         "scoped_refresh": "refresh({ commanderProject: nextProject })",
     }
@@ -101,6 +108,8 @@ def main() -> int:
     require("commander-team-board-mark-job-failed" in board_block, "team board should expose active job mark-failed recovery", failures)
     require("commander-team-board-retry-job" in board_block, "team board should expose failed job retry recovery", failures)
     require("dispatchCommanderWorkPackageBatch" in ai and "status: \"all\"" in ai, "failed job retry should requeue the exact task through audited batch dispatch", failures)
+    require("recordWorkflowJobRecoveryReceipt" in ai and "recordOperatorActionReceipt" in ai, "team board recovery should append operator action receipts", failures)
+    require("operator_action_receipts" in ai and "operator_action_plan" in ai, "team board recovery should refresh receipt/action-plan panels", failures)
     require("loadCommanderProjectBoard({ project_id: nextProject.projectId" in ai, "confirmed planner create should reload scoped project board", failures)
     require("loadCommanderWorkPackages({ project_id: nextProject.projectId" in ai, "confirmed planner create should reload scoped work packages", failures)
     require("team_board: null" in project_loader, "project board fallback should be safe/null when unavailable", failures)
