@@ -67,6 +67,16 @@ def validate(payload: dict) -> None:
     evidence = payload.get("evidence") or {}
     for key in ["tasks", "runs", "tool_calls", "evaluations", "audit_logs", "artifacts", "memories", "approvals", "closed_loop_runs"]:
         require(isinstance(evidence.get(key), int), f"missing evidence count {key}: {evidence}")
+    for key in ["knowledge_documents", "knowledge_chunks", "knowledge_chunk_fts_rows", "knowledge_workspace_documents", "knowledge_workspace_chunks"]:
+        require(isinstance(evidence.get(key), int), f"missing knowledge evidence count {key}: {evidence}")
+    for key in ["has_indexed_knowledge", "has_workspace_knowledge", "has_memory_or_knowledge"]:
+        require(isinstance(evidence.get(key), bool), f"missing knowledge readiness bool {key}: {evidence}")
+    knowledge_gate = next((gate for gate in gates if gate.get("id") == "knowledge_memory"), {})
+    require("knowledge" in (knowledge_gate.get("detail") or "").lower(), f"knowledge gate should expose indexed knowledge counts: {knowledge_gate}")
+    require(
+        "knowledge search" in (knowledge_gate.get("next_action") or "") or "knowledge index" in (knowledge_gate.get("next_action") or ""),
+        f"knowledge gate should route to knowledge CLI action: {knowledge_gate}",
+    )
     for key in ["commander_synthesis_artifacts", "commander_synthesis_pending_reviews", "commander_synthesis_promoted_memories", "commander_synthesis_promoted_deliveries"]:
         require(isinstance(evidence.get(key), int), f"missing synthesis evidence count {key}: {evidence}")
     for key in ["live_acceptance_fresh_adapters", "live_acceptance_latest_failed_adapters", "live_acceptance_missing_adapters"]:

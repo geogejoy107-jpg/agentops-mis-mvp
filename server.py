@@ -17344,6 +17344,19 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
         "memories": scalar_count(conn, "SELECT COUNT(*) FROM memories"),
         "memory_candidates": scalar_count(conn, "SELECT COUNT(*) FROM memories WHERE review_status='candidate'"),
         "approved_memories": scalar_count(conn, "SELECT COUNT(*) FROM memories WHERE review_status='approved'"),
+        "knowledge_documents": scalar_count(conn, "SELECT COUNT(*) FROM knowledge_documents"),
+        "knowledge_chunks": scalar_count(conn, "SELECT COUNT(*) FROM knowledge_chunks"),
+        "knowledge_chunk_fts_rows": scalar_count(conn, "SELECT COUNT(*) FROM knowledge_chunk_fts"),
+        "knowledge_workspace_documents": scalar_count(
+            conn,
+            "SELECT COUNT(*) FROM knowledge_documents WHERE workspace_id IN ('global', ?)",
+            (workspace_id,),
+        ),
+        "knowledge_workspace_chunks": scalar_count(
+            conn,
+            "SELECT COUNT(*) FROM knowledge_chunks WHERE workspace_id IN ('global', ?)",
+            (workspace_id,),
+        ),
         "pending_approvals": scalar_count(conn, "SELECT COUNT(*) FROM approvals WHERE decision='pending'"),
         "approvals": scalar_count(conn, "SELECT COUNT(*) FROM approvals"),
         "workflow_jobs": scalar_count(conn, "SELECT COUNT(*) FROM workflow_jobs"),
@@ -17359,7 +17372,9 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
         "live_acceptance_missing_adapters": int(live_summary.get("missing") or 0),
     }
     evidence["has_task_run_tool_eval_audit_artifact_chain"] = evidence["closed_loop_runs"] > 0
-    evidence["has_memory_or_knowledge"] = evidence["memories"] > 0
+    evidence["has_indexed_knowledge"] = evidence["knowledge_documents"] > 0 or evidence["knowledge_chunks"] > 0
+    evidence["has_workspace_knowledge"] = evidence["knowledge_workspace_documents"] > 0 or evidence["knowledge_workspace_chunks"] > 0
+    evidence["has_memory_or_knowledge"] = evidence["memories"] > 0 or evidence["has_indexed_knowledge"]
     evidence["has_approval_flow"] = evidence["approvals"] > 0
     gates = [
         {
@@ -17399,8 +17414,15 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
             "label": "Memory/knowledge sedimentation",
             "ok": evidence["has_memory_or_knowledge"],
             "status": "ready" if evidence["has_memory_or_knowledge"] else "needs_seed_or_run",
-            "detail": f"{evidence['memories']} memories, {evidence['memory_candidates']} candidates",
-            "next_action": "agentops memory propose --text '...' --type artifact_summary",
+            "detail": (
+                f"{evidence['memories']} memories, {evidence['memory_candidates']} candidates, "
+                f"{evidence['knowledge_documents']} knowledge docs, {evidence['knowledge_chunks']} chunks"
+            ),
+            "next_action": (
+                "agentops knowledge search \"project spec\" --limit 10"
+                if evidence["has_indexed_knowledge"]
+                else "agentops knowledge index --rebuild"
+            ),
         },
         {
             "id": "evidence_chain",

@@ -89,6 +89,12 @@ product exposes:
   is indexed as `global/internal`, scoped Agent Gateway tokens can only retrieve
   `global` plus their own workspace documents, and redaction happens before FTS
   indexing or snippet return.
+- Local readiness now surfaces Knowledge Index evidence alongside memory
+  governance: `GET /api/local/readiness` and `agentops local readiness` expose
+  knowledge document/chunk/FTS counts, workspace-visible knowledge counts, and a
+  `knowledge_memory` next action that routes to `agentops knowledge search` when
+  indexed knowledge exists. Retrieval quality remains proven by the dedicated
+  smoke instead of inferred from counts alone.
 - CLI/API-first execution for agents, with browser pages reserved for command,
   supervision, approval, and review.
 - Real Hermes/OpenClaw dogfood evidence in the ledger, cited by run ID and
@@ -920,6 +926,10 @@ Implemented and verified:
 - Customer-style knowledge-base bot project smoke with delivery artifact.
 - Customer task template API/UI path with KB bot template smoke.
 - Customer project report export from MIS ledger evidence.
+- Local readiness knowledge proof: `python3 scripts/local_readiness_smoke.py`
+  verifies knowledge document/chunk/FTS counters and the knowledge CLI next
+  action; `python3 scripts/knowledge_retrieval_quality_smoke.py` verifies the
+  heading-aware FTS5 retrieval baseline.
 
 Not yet product-complete:
 
