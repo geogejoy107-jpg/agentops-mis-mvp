@@ -152,11 +152,20 @@ def validate(payload: dict, adapter: str) -> None:
     agent_loop_packet = payload.get("agent_loop_packet") or {}
     agent_loop_commands = agent_loop_packet.get("commands") or {}
     agent_loop_phases = {item.get("phase") for item in (agent_loop_packet.get("phases") or [])}
+    agent_loop_phase_commands = agent_loop_packet.get("phase_commands") or {}
+    method_gates = agent_loop_packet.get("method_gates") or []
+    method_gate_ids = {gate.get("id") for gate in method_gates}
     require(agent_loop_packet.get("operation") == "operator_loop_driver_agent_loop_packet", f"agent loop packet missing: {agent_loop_packet}")
     require(agent_loop_packet.get("adapter") == adapter, f"agent loop packet adapter mismatch: {agent_loop_packet}")
     require(agent_loop_packet.get("current_phase") in {"preview", "blocked"}, f"agent loop phase mismatch: {agent_loop_packet}")
     require({"read", "plan", "retrieve", "compare", "preflight", "execute", "verify", "record"}.issubset(agent_loop_phases), f"agent loop phases missing: {agent_loop_packet}")
+    require({"read", "plan", "retrieve", "compare", "preflight", "execute", "verify", "record"}.issubset(set(agent_loop_phase_commands)), f"agent loop phase command map missing: {agent_loop_packet}")
+    require({"read_start_check", "plan_agent_plan", "retrieve_knowledge", "compare_base_reference", "preflight_adapter", "execute_bounded_loop", "verify_loop", "record_memory_candidate"}.issubset(method_gate_ids), f"agent loop method gates missing: {agent_loop_packet}")
+    require(all(gate.get("token_omitted") is True for gate in method_gates), f"agent loop method gate token proof missing: {agent_loop_packet}")
     require(str(agent_loop_commands.get("start_check") or "").startswith(f"agentops operator start-check --adapter {adapter}"), f"agent loop start-check missing: {agent_loop_packet}")
+    require(str(agent_loop_commands.get("agent_plan_create") or "").startswith("agentops agent-plan create"), f"agent loop plan command missing: {agent_loop_packet}")
+    require(str(agent_loop_commands.get("knowledge_search") or "").startswith("agentops knowledge search"), f"agent loop knowledge command missing: {agent_loop_packet}")
+    require(str(agent_loop_commands.get("base_reference") or "").startswith("agentops commander repo-map"), f"agent loop base-reference command missing: {agent_loop_packet}")
     require(str(agent_loop_commands.get("preview_loop") or "").startswith(f"agentops operator loop-driver --adapter {adapter}"), f"agent loop preview missing: {agent_loop_packet}")
     require("--confirm-loop" in str(agent_loop_commands.get("confirm_loop") or ""), f"agent loop confirm missing: {agent_loop_packet}")
     require(str(agent_loop_commands.get("adapter_preflight") or "").endswith(f"--adapter {adapter}"), f"agent loop preflight missing: {agent_loop_packet}")

@@ -154,6 +154,9 @@ def main() -> int:
             preview_acceptance_decision = preview_acceptance.get("decision") or {}
             preview_acceptance_commands = preview_acceptance.get("commands") or {}
             preview_agent_packet_commands = preview_agent_packet.get("commands") or {}
+            preview_agent_method_gates = preview_agent_packet.get("method_gates") or []
+            preview_agent_method_gate_ids = {gate.get("id") for gate in preview_agent_method_gates}
+            preview_agent_phase_commands = preview_agent_packet.get("phase_commands") or {}
             require(preview_acceptance.get("operation") == "operator_loop_driver_acceptance_gate", f"preview acceptance gate missing: {preview_payload}", failures)
             require(preview_acceptance.get("source_operation") == "operator_start_check", f"preview acceptance source mismatch: {preview_acceptance}", failures)
             require(preview_acceptance_decision.get("can_confirm_bounded_loop") is True, f"preview acceptance confirm gate missing: {preview_acceptance}", failures)
@@ -166,6 +169,12 @@ def main() -> int:
             require(preview_agent_packet.get("current_phase") == "preview", f"preview agent loop phase wrong: {preview_agent_packet}", failures)
             require(preview_agent_packet.get("ready_to_confirm_loop") is True, f"preview agent loop should be confirm-ready: {preview_agent_packet}", failures)
             require({"read", "plan", "retrieve", "compare", "preflight", "execute", "verify", "record"}.issubset({item.get("phase") for item in (preview_agent_packet.get("phases") or [])}), f"preview agent loop phases missing: {preview_agent_packet}", failures)
+            require({"read", "plan", "retrieve", "compare", "preflight", "execute", "verify", "record"}.issubset(set(preview_agent_phase_commands)), f"preview agent phase command map missing: {preview_agent_packet}", failures)
+            require({"read_start_check", "plan_agent_plan", "retrieve_knowledge", "compare_base_reference", "preflight_adapter", "execute_bounded_loop", "verify_loop", "record_memory_candidate"}.issubset(preview_agent_method_gate_ids), f"preview agent method gates missing: {preview_agent_packet}", failures)
+            require(all(gate.get("token_omitted") is True for gate in preview_agent_method_gates), f"preview agent method gate token proof missing: {preview_agent_packet}", failures)
+            require(str(preview_agent_packet_commands.get("agent_plan_create") or "").startswith("agentops agent-plan create"), f"preview agent plan command missing: {preview_agent_packet}", failures)
+            require(str(preview_agent_packet_commands.get("knowledge_search") or "").startswith("agentops knowledge search"), f"preview agent knowledge command missing: {preview_agent_packet}", failures)
+            require(str(preview_agent_packet_commands.get("base_reference") or "").startswith("agentops commander repo-map"), f"preview agent base-reference command missing: {preview_agent_packet}", failures)
             require("--confirm-loop" in str(preview_agent_packet_commands.get("confirm_loop") or ""), f"preview agent loop confirm command missing: {preview_agent_packet}", failures)
             require(str(preview_agent_packet_commands.get("loop_audit") or "").startswith("agentops operator loop-audit"), f"preview agent loop audit command missing: {preview_agent_packet}", failures)
             require((preview_agent_packet.get("safety") or {}).get("server_executes_shell") is False, f"preview agent loop server shell boundary missing: {preview_agent_packet}", failures)
@@ -215,6 +224,7 @@ def main() -> int:
             require(final_agent_packet.get("operation") == "operator_loop_driver_agent_loop_packet", f"confirm final agent loop packet missing: {confirmed_payload}", failures)
             require(final_agent_packet.get("ready_to_confirm_loop") is True, f"confirm final agent packet not confirm-ready: {final_agent_packet}", failures)
             require(final_agent_packet.get("steps_advanced") == confirmed_payload.get("steps_advanced"), f"confirm agent packet step count mismatch: {final_agent_packet}", failures)
+            require({"plan_agent_plan", "retrieve_knowledge", "compare_base_reference", "record_memory_candidate"}.issubset({gate.get("id") for gate in (final_agent_packet.get("method_gates") or [])}), f"confirm final agent method gates missing: {final_agent_packet}", failures)
             require((final_agent_packet.get("commands") or {}).get("receipt_readback"), f"confirm agent packet receipt readback missing: {final_agent_packet}", failures)
             require((final_agent_packet.get("safety") or {}).get("read_only") is True, f"confirm agent packet should remain read-only metadata: {final_agent_packet}", failures)
             final_readiness = confirmed_payload.get("adapter_readiness") or {}

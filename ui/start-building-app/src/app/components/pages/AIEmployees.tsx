@@ -800,6 +800,7 @@ export function AIEmployees() {
       loopDriverSummary: "Copy the bounded local loop wrapper: preview is read-only; confirm advances allowlisted steps with receipts and control readback.",
       loopDriverAgentPacket: "Agent loop packet",
       loopDriverAgentPacketSummary: "Live start-check projection for each adapter: current phase, safety gates, and next copy command.",
+      methodGates: "Method gates",
       currentPhase: "Current phase",
       readyToConfirmLoop: "Ready to confirm",
       phase: "Phase",
@@ -1344,6 +1345,7 @@ export function AIEmployees() {
       loopDriverSummary: "复制受限本地 loop wrapper：预览只读；确认后只推进 allowlist 步骤，并写入收据和控制回读。",
       loopDriverAgentPacket: "Agent Loop 机器包",
       loopDriverAgentPacketSummary: "每个 adapter 的 start-check 实时投影：当前阶段、安全闸和下一条可复制命令。",
+      methodGates: "方法 Gate",
       currentPhase: "当前阶段",
       readyToConfirmLoop: "可确认推进",
       phase: "阶段",
@@ -4445,6 +4447,39 @@ export function AIEmployees() {
                                 </button>
                               ))}
                             </div>
+                            {(packet.method_gates || []).length > 0 && (
+                              <div className="mt-1.5 pt-1.5" style={{ borderTop: "1px solid var(--mis-border)" }}>
+                                <div className="text-[8px] font-semibold mb-1" style={{ color: "var(--mis-muted)" }}>{copy.methodGates}</div>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
+                                  {(packet.method_gates || []).slice(0, 8).map((gate) => {
+                                    const gateStatus = gate.status === "blocked" || gate.status === "fail"
+                                      ? "blocked"
+                                      : gate.status === "ready" || gate.status === "pass"
+                                        ? "pass"
+                                        : gate.required
+                                          ? "attention"
+                                          : "pass";
+                                    return (
+                                      <button
+                                        key={`${packet.adapter}:method-gate:${gate.id}`}
+                                        type="button"
+                                        disabled={!gate.command}
+                                        onClick={() => gate.command && void copyIntakeCommand(String(gate.command))}
+                                        className="flex items-center justify-between gap-1 rounded px-1.5 py-0.5 text-left disabled:opacity-60"
+                                        style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)", color: "var(--mis-text)" }}
+                                        title={gate.proof || gate.command || gate.id}
+                                      >
+                                        <span className="truncate text-[8px]">{gate.id}</span>
+                                        <span className="inline-flex items-center gap-1 shrink-0 text-[8px]" style={{ color: gate.command ? "var(--mis-cyan)" : "var(--mis-muted)" }}>
+                                          {gate.command && <Copy size={8} />}
+                                          <StatusBadge status={gateStatus} label={gate.required ? "required" : "optional"} />
+                                        </span>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
                           </div>
                         ))}
                       </div>

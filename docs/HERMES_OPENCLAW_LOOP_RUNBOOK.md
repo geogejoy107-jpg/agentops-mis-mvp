@@ -142,6 +142,13 @@ OpenClaw still copy and run explicit local commands, and live worker dispatch
 still requires `--confirm-run` plus any prepared-action approval required by the
 task.
 
+For machine callers, read `agent_loop_packet.method_gates` before copying an
+execution command. The gates name the required Agent Work Method checkpoints:
+`plan_agent_plan`, `retrieve_knowledge`, `compare_base_reference`,
+`preflight_adapter`, `execute_bounded_loop`, `verify_loop`, and
+`record_memory_candidate`. `phase_commands` maps each phase to the exact local
+CLI command to copy.
+
 The local MIS UI mirrors this packet in `/workspace/agents`: the loop-driver
 panel reads Hermes and OpenClaw start-check packets, shows each adapter's
 current phase, `ready_to_confirm_loop` state, `server_executes_shell` proof, and

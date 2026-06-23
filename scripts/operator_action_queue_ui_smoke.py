@@ -87,6 +87,9 @@ EXPECTED_MARKERS = {
     "operator_loop_driver_packet_ready": "packet.ready_to_confirm_loop",
     "operator_loop_driver_packet_phase_command": "phase.command",
     "operator_loop_driver_packet_phase_copy": "copyIntakeCommand(String(phase.command",
+    "operator_loop_driver_packet_method_gates_title": "copy.methodGates",
+    "operator_loop_driver_packet_method_gates_render": "packet.method_gates || []",
+    "operator_loop_driver_packet_method_gate_copy": "copyIntakeCommand(String(gate.command",
     "operator_loop_driver_packet_server_shell": "operatorLoopDriverPackets?.safety.server_executes_shell",
     "operator_loop_driver_packet_panel_badge": 'panelStatusBadge("operator_loop_driver_packets")',
     "operator_loop_driver_packet_panel_refresh": 'panelRefreshButton("operator_loop_driver_packets")',
@@ -575,6 +578,10 @@ EXPECTED_LIVE_API_MARKERS = {
     "operator_loop_driver_packets_operation": 'operation: "operator_loop_driver_packets"',
     "operator_loop_driver_packets_adapters": 'const adapters: OperatorStartCheckAdapter[] = ["hermes", "openclaw"]',
     "operator_loop_driver_packets_server_shell": "server_executes_shell: packets.some",
+    "operator_loop_driver_packet_method_gate_type": "method_gates?: {",
+    "operator_loop_driver_packet_phase_commands_type": "phase_commands?: Record<string, string | null | undefined>",
+    "operator_loop_driver_agent_packet_method_gates": "method_gates: asArray<Record<string, unknown>>(raw.method_gates)",
+    "operator_loop_driver_agent_packet_phase_commands": "phase_commands: Object.fromEntries(Object.entries(phaseCommandsRaw)",
 }
 
 EXPECTED_SERVER_MARKERS = {

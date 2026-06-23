@@ -2200,8 +2200,20 @@ export interface OperatorLoopDriverAgentPacketPayload {
     phase: string;
     status: string;
     command?: string | null;
+    gate_id?: string;
     description?: string;
     confirm_required?: boolean;
+    token_omitted?: boolean;
+  }[];
+  phase_commands?: Record<string, string | null | undefined>;
+  method_gates?: {
+    id: string;
+    phase: string;
+    required: boolean;
+    status: string;
+    command?: string | null;
+    confirm_required?: boolean;
+    proof?: string;
     token_omitted?: boolean;
   }[];
   commands: Record<string, string | null | undefined>;
@@ -6231,6 +6243,7 @@ function normalizeOperatorLoopDriverAgentPacket(rawValue: unknown, adapter: stri
   const raw = typeof rawValue === "object" && rawValue !== null ? rawValue as Record<string, unknown> : {};
   const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
   const commandsRaw = typeof raw.commands === "object" && raw.commands !== null ? raw.commands as Record<string, unknown> : {};
+  const phaseCommandsRaw = typeof raw.phase_commands === "object" && raw.phase_commands !== null ? raw.phase_commands as Record<string, unknown> : {};
   return {
     operation: String(raw.operation || "operator_loop_driver_agent_loop_packet"),
     adapter: String(raw.adapter || adapter),
@@ -6243,10 +6256,25 @@ function normalizeOperatorLoopDriverAgentPacket(rawValue: unknown, adapter: stri
       phase: String(phase.phase || ""),
       status: String(phase.status || "unknown"),
       command: phase.command === undefined || phase.command === null ? null : String(phase.command),
+      gate_id: phase.gate_id ? String(phase.gate_id) : undefined,
       description: phase.description ? String(phase.description) : undefined,
       confirm_required: phase.confirm_required === undefined ? undefined : boolValue(phase.confirm_required),
       token_omitted: phase.token_omitted === undefined ? undefined : boolValue(phase.token_omitted),
     })).filter((phase) => phase.phase),
+    phase_commands: Object.fromEntries(Object.entries(phaseCommandsRaw).map(([key, value]) => [
+      key,
+      value === undefined || value === null ? null : String(value),
+    ])) as Record<string, string | null | undefined>,
+    method_gates: asArray<Record<string, unknown>>(raw.method_gates).map((gate) => ({
+      id: String(gate.id || ""),
+      phase: String(gate.phase || ""),
+      required: boolValue(gate.required),
+      status: String(gate.status || "unknown"),
+      command: gate.command === undefined || gate.command === null ? null : String(gate.command),
+      confirm_required: gate.confirm_required === undefined ? undefined : boolValue(gate.confirm_required),
+      proof: gate.proof ? String(gate.proof) : undefined,
+      token_omitted: gate.token_omitted === undefined ? undefined : boolValue(gate.token_omitted),
+    })).filter((gate) => gate.id && gate.phase),
     commands: Object.fromEntries(Object.entries(commandsRaw).map(([key, value]) => [
       key,
       value === undefined || value === null ? null : String(value),
@@ -6288,8 +6316,16 @@ export async function loadOperatorStartCheck(adapter: OperatorStartCheckAdapter 
       steps_advanced: 0,
       stop_reason: null,
       phases: [],
+      phase_commands: {
+        read: `agentops operator start-check --adapter ${adapter} --limit ${limit}`,
+        execute: `agentops operator loop-driver --adapter ${adapter} --max-steps 3 --limit ${limit} --confirm-loop`,
+      },
+      method_gates: [],
       commands: {
         start_check: `agentops operator start-check --adapter ${adapter} --limit ${limit}`,
+        agent_plan_create: "agentops agent-plan create --help",
+        knowledge_search: "agentops knowledge search --query '<task terms>'",
+        base_reference: "agentops commander repo-map --query '<task terms>'",
         preview_loop: `agentops operator loop-driver --adapter ${adapter} --max-steps 3 --limit ${limit}`,
         confirm_loop: null,
       },
