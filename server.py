@@ -48,6 +48,7 @@ HERMES_HOME = Path.home() / ".hermes"
 OPENCLAW_BIN = Path(os.environ.get("OPENCLAW_BIN") or "/opt/homebrew/bin/openclaw")
 DEFAULT_ENTITLEMENTS_PATH = ROOT / "config" / "entitlements.local.json"
 DEFAULT_RETENTION_CONTROLS_PATH = ROOT / "config" / "retention-controls.local.json"
+DEFAULT_ENTERPRISE_CONTROLS_PATH = ROOT / "config" / "enterprise-controls.local.json"
 STORAGE_BACKEND = os.environ.get("AGENTOPS_STORAGE_BACKEND", "sqlite").strip().lower() or "sqlite"
 POSTGRES_HTTP_WRITE_ALLOWED_ROUTES = {
     ("POST", "/api/agent-gateway/artifacts"),
@@ -262,6 +263,81 @@ def entitlement_status(headers) -> dict:
 
 def commercial_capability_enabled(capability: str) -> bool:
     return bool(entitlement_status(None).get("capabilities", {}).get(capability))
+
+
+def enterprise_byoc_controls(headers) -> dict:
+    entitlements = entitlement_status(headers)
+    capabilities = entitlements.get("capabilities") or {}
+    config_path = Path(os.environ.get("AGENTOPS_ENTERPRISE_CONTROLS_PATH") or DEFAULT_ENTERPRISE_CONTROLS_PATH).expanduser()
+    config = read_json_file(config_path, {}) if config_path.exists() else {}
+    sso_config = config.get("sso") if isinstance(config.get("sso"), dict) else {}
+    connector_config = config.get("private_connector_policy") if isinstance(config.get("private_connector_policy"), dict) else {}
+    connectors = connector_config.get("connectors") if isinstance(connector_config.get("connectors"), list) else []
+
+    sso_configured = bool(sso_config.get("configured")) and bool(sso_config.get("provider_type")) and bool(sso_config.get("issuer_url")) and bool(sso_config.get("redirect_uri"))
+    registry_configured = bool(connector_config.get("registry_configured")) and isinstance(connectors, list)
+    trust_policy_configured = bool(connector_config.get("trust_policy_configured"))
+    active_connectors = [item for item in connectors if isinstance(item, dict) and item.get("status") == "active"]
+    entitlement_ready = bool(capabilities.get("sso_hooks")) and bool(capabilities.get("custom_connector_sdk"))
+    controls_ready = entitlement_ready and sso_configured and registry_configured and trust_policy_configured
+    status = "ready" if controls_ready else "attention" if entitlement_ready else "gated"
+    connector_refs = [
+        {
+            "connector_id": str(item.get("connector_id") or item.get("id") or "connector_omitted"),
+            "provider": str(item.get("provider") or item.get("type") or "custom"),
+            "status": str(item.get("status") or "unknown"),
+        }
+        for item in connectors
+        if isinstance(item, dict)
+    ]
+    return {
+        "provider": "agentops-deployment",
+        "operation": "enterprise_byoc_controls",
+        "contract_id": "enterprise_byoc_controls_v1",
+        "generated_at": now_iso(),
+        "status": status,
+        "ok": status != "blocked",
+        "edition": entitlements.get("edition"),
+        "workspace_id": normalize_workspace_id(headers.get("X-AgentOps-Workspace-Id") or "local-demo") if headers else "local-demo",
+        "entitlement_ready": entitlement_ready,
+        "config": {
+            "path": str(config_path),
+            "loaded": bool(config),
+        },
+        "sso": {
+            "configured": sso_configured,
+            "provider_type": str(sso_config.get("provider_type") or "unconfigured"),
+            "issuer_configured": bool(sso_config.get("issuer_url")),
+            "redirect_uri_configured": bool(sso_config.get("redirect_uri")),
+            "client_id_configured": bool(sso_config.get("client_id")),
+            "client_secret_omitted": True,
+            "certificate_omitted": True,
+        },
+        "private_connector_policy": {
+            "registry_configured": registry_configured,
+            "trust_policy_configured": trust_policy_configured,
+            "total_connectors": len(connector_refs),
+            "active_connectors": len(active_connectors),
+            "connector_refs": connector_refs,
+            "raw_config_omitted": True,
+            "client_secret_omitted": True,
+        },
+        "safety": {
+            "read_only": True,
+            "live_execution_performed": False,
+            "token_omitted": True,
+            "raw_metadata_omitted": True,
+            "client_secret_omitted": True,
+            "certificate_omitted": True,
+        },
+        "next_actions": [
+            "Keep enterprise SSO/private connector metadata read-only until real provider acceptance is explicit."
+            if controls_ready
+            else "Configure enterprise SSO metadata and private connector registry before BYOC handoff."
+        ],
+        "live_execution_performed": False,
+        "token_omitted": True,
+    }
 
 
 def storage_backend_status(headers=None) -> dict:
@@ -12514,6 +12590,7 @@ def deployment_readiness(conn: sqlite3.Connection, headers) -> dict:
     storage = storage_backend_status(headers)
     retention_policy = audit_retention_policy(conn, headers)
     retention_controls = audit_retention_controls(conn, headers)
+    enterprise_controls = enterprise_byoc_controls(headers)
     deployment_checks = local.get("deployment_checks") or {}
     capabilities = entitlements.get("capabilities") or {}
 
@@ -12575,7 +12652,16 @@ def deployment_readiness(conn: sqlite3.Connection, headers) -> dict:
     signed_status = "ready" if signed_gate.get("enabled") and signed_export_proof_ok else "gated" if signed_export_proof_ok else "blocked"
     retention_status = retention_policy.get("status") if retention_policy.get("status") != "ready" else "ready" if retention_gate.get("enabled") else "gated"
     retention_controls_status = retention_controls.get("status") if retention_controls.get("status") != "ready" else "ready" if retention_gate.get("enabled") else "gated"
-    sso_status = "ready" if sso_gate.get("enabled") and connector_gate.get("enabled") else "gated"
+    sso_entitlement_ready = bool(sso_gate.get("enabled")) and bool(connector_gate.get("enabled"))
+    sso_controls_ready = enterprise_controls.get("status") == "ready"
+    sso_status = "ready" if sso_entitlement_ready and sso_controls_ready else "attention" if sso_entitlement_ready else "gated"
+    sso_next_action = (
+        "Keep SSO hooks and private connector SDK behind enterprise deployment policy review."
+        if sso_status == "ready"
+        else "Configure enterprise SSO metadata and private connector registry before BYOC handoff."
+        if sso_entitlement_ready
+        else "Enable enterprise_byoc before exposing SSO hooks or private connector SDK."
+    )
     gates = [
         gate(
             "local_readiness",
@@ -12638,8 +12724,8 @@ def deployment_readiness(conn: sqlite3.Connection, headers) -> dict:
             "SSO and private connector policy",
             True,
             sso_status,
-            f"sso={bool(sso_gate.get('enabled'))}, custom_connector_sdk={bool(connector_gate.get('enabled'))}",
-            "Enable enterprise_byoc before exposing SSO hooks or private connector SDK.",
+            f"sso={bool(sso_gate.get('enabled'))}, custom_connector_sdk={bool(connector_gate.get('enabled'))}, controls={enterprise_controls.get('status')}",
+            sso_next_action,
         ),
         gate(
             "omission_contract",
@@ -12737,8 +12823,24 @@ def deployment_readiness(conn: sqlite3.Connection, headers) -> dict:
             "signed_audit_exports": bool(signed_gate.get("enabled")),
             "custom_connector_sdk": bool(connector_gate.get("enabled")),
         },
+        "enterprise_controls": {
+            "status": enterprise_controls.get("status"),
+            "contract_id": enterprise_controls.get("contract_id"),
+            "entitlement_ready": enterprise_controls.get("entitlement_ready"),
+            "sso_configured": (enterprise_controls.get("sso") or {}).get("configured"),
+            "sso_provider_type": (enterprise_controls.get("sso") or {}).get("provider_type"),
+            "issuer_configured": (enterprise_controls.get("sso") or {}).get("issuer_configured"),
+            "redirect_uri_configured": (enterprise_controls.get("sso") or {}).get("redirect_uri_configured"),
+            "private_connector_registry_configured": (enterprise_controls.get("private_connector_policy") or {}).get("registry_configured"),
+            "private_connector_trust_policy_configured": (enterprise_controls.get("private_connector_policy") or {}).get("trust_policy_configured"),
+            "private_connector_total": (enterprise_controls.get("private_connector_policy") or {}).get("total_connectors"),
+            "private_connector_active": (enterprise_controls.get("private_connector_policy") or {}).get("active_connectors"),
+            "raw_metadata_omitted": (enterprise_controls.get("safety") or {}).get("raw_metadata_omitted"),
+            "client_secret_omitted": (enterprise_controls.get("safety") or {}).get("client_secret_omitted"),
+        },
         "contracts": [
             "deployment_readiness_v1",
+            "enterprise_byoc_controls_v1",
             "byoc_deployment_acceptance_v1",
             "signed_audit_export_v1",
             "audit_retention_policy_v1",
@@ -13743,6 +13845,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send_json(payload)
             if path == "/api/deployment/readiness":
                 payload = deployment_readiness(conn, self.headers)
+                conn.rollback()
+                return self.send_json(payload)
+            if path == "/api/deployment/enterprise-controls":
+                payload = enterprise_byoc_controls(self.headers)
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/audit/retention-policy":

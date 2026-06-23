@@ -659,17 +659,31 @@ def main() -> int:
         check(
             "deployment_readiness_surface_exists",
             file_contains("docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md", "deployment_readiness_v1")
+            and file_contains("docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md", "enterprise_byoc_controls_v1")
             and file_contains("server.py", "def deployment_readiness")
+            and file_contains("server.py", "def enterprise_byoc_controls")
             and file_contains("server.py", "/api/deployment/readiness")
+            and file_contains("server.py", "/api/deployment/enterprise-controls")
+            and file_contains("server.py", "AGENTOPS_ENTERPRISE_CONTROLS_PATH")
             and file_contains("agentops_mis_cli/agentops.py", "cmd_deployment_readiness")
+            and file_contains("agentops_mis_cli/agentops.py", "cmd_deployment_enterprise_controls")
             and file_contains("agentops_mis_cli/agentops.py", 'sub.add_parser("deployment"')
             and file_contains("scripts/deployment_readiness_smoke.py", "deployment_readiness_v1")
+            and file_contains("scripts/deployment_readiness_smoke.py", "enterprise_byoc_controls_v1")
             and file_contains("scripts/deployment_readiness_smoke.py", "audit_retention_policy_v1")
             and file_contains("scripts/deployment_readiness_smoke.py", "audit_retention_controls_v1")
             and file_contains("scripts/deployment_readiness_smoke.py", "--configured-retention-fixture")
+            and file_contains("scripts/deployment_readiness_smoke.py", "--configured-enterprise-fixture")
             and file_contains("scripts/deployment_readiness_smoke.py", "validate_configured_retention")
+            and file_contains("scripts/deployment_readiness_smoke.py", "validate_configured_enterprise")
             and file_contains("scripts/deployment_readiness_smoke.py", "AGENTOPS_RETENTION_CONTROLS_PATH")
             and file_contains("scripts/deployment_readiness_smoke.py", "pro_workspace")
+            and file_contains("scripts/deployment_readiness_smoke.py", "enterprise_byoc")
+            and file_contains("scripts/deployment_readiness_smoke.py", "write_enterprise_controls_fixture")
+            and file_contains("scripts/deployment_readiness_smoke.py", "sso_connector_policy")
+            and file_contains("scripts/deployment_readiness_smoke.py", "custom_connector_sdk")
+            and file_contains("scripts/deployment_readiness_smoke.py", "private_connector_total")
+            and file_contains("scripts/deployment_readiness_smoke.py", "raw-private-connector-token")
             and file_contains("scripts/deployment_readiness_smoke.py", "legal_hold_registry_configured")
             and file_contains("scripts/deployment_readiness_smoke.py", "active_legal_holds")
             and file_contains("scripts/deployment_readiness_smoke.py", "cleanup_approval_required")
@@ -690,6 +704,8 @@ def main() -> int:
             and file_contains("config/retention-controls.example.json", '"legal_hold_registry_configured": true')
             and file_contains("config/retention-controls.example.json", '"legal_holds"')
             and file_contains("config/retention-controls.example.json", '"status": "active"')
+            and file_contains("config/enterprise-controls.example.json", '"registry_configured": true')
+            and file_contains("config/enterprise-controls.example.json", '"trust_policy_configured": true')
             and file_contains("scripts/audit_retention_controls_smoke.py", "db_dump_hash")
             and file_contains("server.py", "def audit_retention_policy")
             and file_contains("server.py", "def audit_retention_controls")
@@ -699,16 +715,24 @@ def main() -> int:
             and file_contains("agentops_mis_cli/agentops.py", "cmd_audit_retention_controls")
             and file_contains("scripts/nextjs_parity_smoke.py", "loadServerDeploymentReadiness")
             and file_contains("ui/next-app/src/lib/misServer.ts", "/deployment/readiness")
+            and file_contains("ui/next-app/src/lib/misServer.ts", "/deployment/enterprise-controls")
             and file_contains("ui/next-app/src/lib/misServer.ts", "/audit/retention-policy")
             and file_contains("ui/next-app/src/lib/misServer.ts", "/audit/retention-controls")
             and file_contains("ui/next-app/src/components/DeploymentPage.tsx", "Deployment readiness verdict")
             and file_contains("ui/next-app/src/components/DeploymentPage.tsx", "audit_retention_policy_v1")
             and file_contains("ui/next-app/src/components/DeploymentPage.tsx", "audit_retention_controls_v1")
+            and file_contains("ui/next-app/src/components/DeploymentPage.tsx", "private connectors")
             and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "verify_deployment_configured_retention")
             and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "deployment_configured_retention_controls")
             and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "--configured-retention-fixture")
             and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "nextjs_deployment_configured_retention_fixture_v1")
+            and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "enterprise_byoc_controls_v1")
+            and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "enterprise_byoc")
+            and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "sso_connector_policy")
+            and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "connector sdk true")
+            and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "private connectors 1/2")
             and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "AGENTOPS_RETENTION_CONTROLS_PATH")
+            and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "AGENTOPS_ENTERPRISE_CONTROLS_PATH")
             and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "active_legal_holds")
             and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "cleanup_endpoint_exposed")
             and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "destructive_cleanup_supported")
@@ -717,7 +741,7 @@ def main() -> int:
             and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "Raw Next deployment legal hold reason")
             and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "db_dump_hash")
             and (ROOT / "scripts" / "deployment_readiness_smoke.py").exists(),
-            "Gate 5 deployment readiness API, CLI, smoke, audit retention policy/controls previews, and configured Next.js verdict panel are present",
+            "Gate 5 deployment readiness API, CLI, smoke, audit retention policy/controls previews, configured Enterprise SSO/private connector proof, and configured Next.js verdict panel are present",
         ),
         check(
             "blocked_generated_or_runtime_artifacts_absent",
@@ -805,7 +829,7 @@ def main() -> int:
                 "Postgres ledger acceptance",
                 "python3 scripts/audit_retention_policy_smoke.py",
                 "python3 scripts/audit_retention_controls_smoke.py --configured-fixture",
-                "python3 scripts/deployment_readiness_smoke.py --configured-retention-fixture",
+                "python3 scripts/deployment_readiness_smoke.py --configured-retention-fixture --configured-enterprise-fixture",
                 "python3 scripts/nextjs_playwright_snapshot_smoke.py --configured-retention-fixture",
                 "python3 scripts/byoc_deployment_acceptance_smoke.py",
                 "backup/restore and signed export checks",

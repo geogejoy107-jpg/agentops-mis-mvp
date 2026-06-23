@@ -266,6 +266,7 @@ def main() -> int:
     require("DeploymentParityPage" in deployment_page_text and "Backup and restore evidence" in deployment_page_text and "Storage and retention" in deployment_page_text, "deployment parity page must expose BYOC evidence")
     require("Deployment readiness verdict" in deployment_page_text and "loadServerDeploymentReadiness" in server_lib_text, "deployment parity page must load deployment readiness verdict")
     require("/deployment/readiness" in server_lib_text and "DeploymentReadinessPayload" in lib_text, "deployment readiness loader/type is missing")
+    require("/deployment/enterprise-controls" in server_lib_text and "EnterpriseControlsPayload" in lib_text, "enterprise controls loader/type is missing")
     require("raw rows printed false" in deployment_page_text and "Backup restore remains CLI-confirmed" in deployment_page_text, "deployment parity page must keep restore explicit and read-only")
     require("Recovery drill" in deployment_page_text and "Signed export" in deployment_page_text and "signed audit export requires a customer key" in deployment_page_text, "deployment parity page must expose recovery drill and signed audit export readiness")
     require("deployment_checks" in lib_text and "signed_audit_export_contract" in deployment_page_text and "signed_export_tamper_detection" in deployment_page_text, "deployment parity page must consume local deployment checks")

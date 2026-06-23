@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CLI = ROOT / "scripts" / "agentops"
 SECRET_MARKERS = ["AGENTOPS_API_KEY=", "Authorization:", "Bearer ", "agtok_", "agtsess_", "sk-", "ntn_"]
 RAW_HOLD_MARKERS = ["Highly confidential subject", "Raw legal hold reason"]
+RAW_ENTERPRISE_MARKERS = ["raw-sso-client-secret", "PRIVATE KEY", "raw-private-connector-token", "internal-admin-endpoint.local"]
 
 
 def require(condition: bool, message: str) -> None:
@@ -101,8 +102,8 @@ def prepare_minimal_sqlite_db(path: Path) -> None:
         conn.commit()
 
 
-def http_json(base_url: str) -> tuple[int, dict]:
-    req = urllib.request.Request(base_url.rstrip("/") + "/api/deployment/readiness", headers={"Accept": "application/json"}, method="GET")
+def http_json(base_url: str, path: str = "/api/deployment/readiness") -> tuple[int, dict]:
+    req = urllib.request.Request(base_url.rstrip("/") + path, headers={"Accept": "application/json"}, method="GET")
     try:
         with urllib.request.urlopen(req, timeout=20) as resp:
             return resp.status, json.loads(resp.read().decode("utf-8"))
@@ -130,11 +131,71 @@ def run_cli(base_url: str) -> subprocess.CompletedProcess[str]:
         )
 
 
-def start_configured_server(controls_path: Path, db_path: Path, port: int) -> subprocess.Popen[str]:
+def run_cli_enterprise_controls(base_url: str) -> subprocess.CompletedProcess[str]:
+    with tempfile.TemporaryDirectory(prefix="agentops-deployment-enterprise-controls-") as tmp:
+        env = os.environ.copy()
+        env["AGENTOPS_CONFIG"] = str(Path(tmp) / "config.json")
+        env.pop("AGENTOPS_API_KEY", None)
+        return subprocess.run(
+            [str(CLI), "--base-url", base_url, "deployment", "enterprise-controls"],
+            cwd=ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=45,
+            check=False,
+        )
+
+
+def write_enterprise_controls_fixture(path: Path) -> None:
+    path.write_text(
+        json.dumps({
+            "sso": {
+                "configured": True,
+                "provider_type": "oidc",
+                "issuer_url": "https://idp.example.local/oidc",
+                "redirect_uri": "https://agentops.example.local/auth/callback",
+                "client_id": "agentops-mis",
+                "client_secret": "raw-sso-client-secret sk-enterprise-sso",
+                "certificate_pem": "-----BEGIN PRIVATE KEY-----\nnot-real\n-----END PRIVATE KEY-----",
+            },
+            "private_connector_policy": {
+                "registry_configured": True,
+                "trust_policy_configured": True,
+                "connectors": [
+                    {
+                        "connector_id": "conn_private_dify",
+                        "provider": "dify",
+                        "status": "active",
+                        "base_url": "https://internal-admin-endpoint.local/dify",
+                        "client_secret": "raw-private-connector-token sk-private-connector",
+                    },
+                    {
+                        "connector_id": "conn_internal_kb",
+                        "provider": "custom",
+                        "status": "inactive",
+                        "base_url": "https://internal-admin-endpoint.local/kb",
+                        "client_secret": "raw-private-connector-token sk-private-kb",
+                    },
+                ],
+            },
+        }, ensure_ascii=False, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+
+
+def start_configured_server(controls_path: Path | None, db_path: Path, port: int, edition: str, enterprise_controls_path: Path | None = None) -> subprocess.Popen[str]:
     env = os.environ.copy()
     env["AGENTOPS_DB_PATH"] = str(db_path)
-    env["AGENTOPS_RETENTION_CONTROLS_PATH"] = str(controls_path)
-    env["AGENTOPS_EDITION"] = "pro_workspace"
+    if controls_path:
+        env["AGENTOPS_RETENTION_CONTROLS_PATH"] = str(controls_path)
+    else:
+        env.pop("AGENTOPS_RETENTION_CONTROLS_PATH", None)
+    if enterprise_controls_path:
+        env["AGENTOPS_ENTERPRISE_CONTROLS_PATH"] = str(enterprise_controls_path)
+    else:
+        env.pop("AGENTOPS_ENTERPRISE_CONTROLS_PATH", None)
+    env["AGENTOPS_EDITION"] = edition
     env.pop("AGENTOPS_ENTITLEMENTS_PATH", None)
     return subprocess.Popen(
         [sys.executable, "server.py", "--host", "127.0.0.1", "--port", str(port)],
@@ -225,6 +286,78 @@ def validate_configured_retention(payload: dict, label: str) -> None:
     require("audit_retention_controls_v1" in set(payload.get("contracts") or []), f"{label} controls contract missing")
 
 
+def validate_configured_enterprise(payload: dict, label: str) -> None:
+    validate(payload, label)
+    require(payload.get("edition") == "enterprise_byoc", f"{label} should use enterprise_byoc edition: {payload}")
+    enterprise = payload.get("enterprise_byoc") or {}
+    for capability in {"postgres_adapter", "sso_hooks", "signed_audit_exports", "custom_connector_sdk"}:
+        require(enterprise.get(capability) is True, f"{label} enterprise capability {capability} should be enabled: {enterprise}")
+    gates = {
+        gate.get("id"): gate
+        for gate in (payload.get("gates") or [])
+        if isinstance(gate, dict) and gate.get("id")
+    }
+    sso_gate = gates.get("sso_connector_policy") or {}
+    require(sso_gate.get("status") == "ready", f"{label} SSO/private connector gate should be ready: {sso_gate}")
+    require(sso_gate.get("ok") is True, f"{label} SSO/private connector gate should be ok: {sso_gate}")
+    require("enterprise deployment policy review" in str(sso_gate.get("next_action")), f"{label} SSO next action should be enterprise review, not enablement: {sso_gate}")
+    signed = payload.get("signed_audit_export") or {}
+    require(signed.get("status") == "ready", f"{label} signed audit export should be ready under enterprise: {signed}")
+    require(signed.get("capability_enabled") is True, f"{label} signed audit capability should be enabled: {signed}")
+    require(signed.get("required_edition") == "enterprise_byoc", f"{label} signed audit required edition mismatch: {signed}")
+    require(signed.get("customer_key_required") is True, f"{label} signed audit customer-key gate missing: {signed}")
+    require(signed.get("tamper_detection") is True, f"{label} signed audit tamper proof missing: {signed}")
+    require(signed.get("raw_metadata_omitted") is True, f"{label} signed audit raw metadata omission missing: {signed}")
+    storage = payload.get("storage") or {}
+    require(storage.get("selected_backend") == "sqlite", f"{label} enterprise fixture should not silently select Postgres: {storage}")
+    require(storage.get("fallback_performed") is False, f"{label} enterprise fixture should not perform storage fallback: {storage}")
+    controls = payload.get("enterprise_controls") or {}
+    require(controls.get("status") == "ready", f"{label} embedded enterprise controls should be ready: {controls}")
+    require(controls.get("contract_id") == "enterprise_byoc_controls_v1", f"{label} enterprise controls contract missing: {controls}")
+    require(controls.get("sso_configured") is True, f"{label} embedded SSO configured proof missing: {controls}")
+    require(controls.get("issuer_configured") is True, f"{label} embedded issuer proof missing: {controls}")
+    require(controls.get("redirect_uri_configured") is True, f"{label} embedded redirect proof missing: {controls}")
+    require(controls.get("private_connector_registry_configured") is True, f"{label} private connector registry proof missing: {controls}")
+    require(controls.get("private_connector_trust_policy_configured") is True, f"{label} private connector trust proof missing: {controls}")
+    require(controls.get("private_connector_total") == 2, f"{label} private connector total mismatch: {controls}")
+    require(controls.get("private_connector_active") == 1, f"{label} private connector active mismatch: {controls}")
+    require(controls.get("raw_metadata_omitted") is True, f"{label} raw metadata omission missing: {controls}")
+    require(controls.get("client_secret_omitted") is True, f"{label} client secret omission missing: {controls}")
+    require("enterprise_byoc_controls_v1" in set(payload.get("contracts") or []), f"{label} enterprise controls contract list missing")
+
+
+def validate_enterprise_controls(payload: dict, label: str) -> None:
+    require(payload.get("provider") == "agentops-deployment", f"{label} wrong provider: {payload}")
+    require(payload.get("operation") == "enterprise_byoc_controls", f"{label} wrong operation: {payload}")
+    require(payload.get("contract_id") == "enterprise_byoc_controls_v1", f"{label} contract missing: {payload}")
+    require(payload.get("edition") == "enterprise_byoc", f"{label} edition mismatch: {payload}")
+    require(payload.get("status") == "ready", f"{label} controls should be ready: {payload}")
+    require(payload.get("entitlement_ready") is True, f"{label} entitlement proof missing: {payload}")
+    sso = payload.get("sso") or {}
+    require(sso.get("configured") is True, f"{label} SSO configured missing: {sso}")
+    require(sso.get("provider_type") == "oidc", f"{label} SSO provider mismatch: {sso}")
+    require(sso.get("issuer_configured") is True, f"{label} issuer proof missing: {sso}")
+    require(sso.get("redirect_uri_configured") is True, f"{label} redirect proof missing: {sso}")
+    require(sso.get("client_id_configured") is True, f"{label} client id proof missing: {sso}")
+    require(sso.get("client_secret_omitted") is True, f"{label} client secret omission missing: {sso}")
+    require(sso.get("certificate_omitted") is True, f"{label} certificate omission missing: {sso}")
+    connector = payload.get("private_connector_policy") or {}
+    require(connector.get("registry_configured") is True, f"{label} registry proof missing: {connector}")
+    require(connector.get("trust_policy_configured") is True, f"{label} trust policy proof missing: {connector}")
+    require(connector.get("total_connectors") == 2, f"{label} connector total mismatch: {connector}")
+    require(connector.get("active_connectors") == 1, f"{label} active connector mismatch: {connector}")
+    require(connector.get("raw_config_omitted") is True, f"{label} raw config omission missing: {connector}")
+    require(connector.get("client_secret_omitted") is True, f"{label} connector secret omission missing: {connector}")
+    safety = payload.get("safety") or {}
+    require(safety.get("read_only") is True, f"{label} read-only proof missing: {safety}")
+    require(safety.get("live_execution_performed") is False, f"{label} should not execute live controls: {safety}")
+    require(safety.get("token_omitted") is True, f"{label} token omission missing: {safety}")
+    require(safety.get("raw_metadata_omitted") is True, f"{label} raw metadata omission missing: {safety}")
+    require(safety.get("client_secret_omitted") is True, f"{label} client secret omission missing: {safety}")
+    require(payload.get("live_execution_performed") is False, f"{label} live execution top-level proof missing")
+    require(payload.get("token_omitted") is True, f"{label} token omission top-level proof missing")
+
+
 def run_configured_retention_fixture() -> dict:
     proc: subprocess.Popen[str] | None = None
     with tempfile.TemporaryDirectory(prefix="agentops-deployment-retention-configured-") as tmp:
@@ -275,7 +408,7 @@ def run_configured_retention_fixture() -> dict:
         prepare_minimal_sqlite_db(db_path)
         port = free_port()
         base_url = f"http://127.0.0.1:{port}"
-        proc = start_configured_server(controls_path, db_path, port)
+        proc = start_configured_server(controls_path, db_path, port, "pro_workspace")
         try:
             wait_ready(base_url, proc)
             before_hash = db_dump_hash(str(db_path))
@@ -313,15 +446,82 @@ def run_configured_retention_fixture() -> dict:
                     proc.wait(timeout=5)
 
 
+def run_configured_enterprise_fixture() -> dict:
+    proc: subprocess.Popen[str] | None = None
+    with tempfile.TemporaryDirectory(prefix="agentops-deployment-enterprise-configured-") as tmp:
+        tmp_path = Path(tmp)
+        db_path = tmp_path / "agentops.db"
+        enterprise_controls_path = tmp_path / "enterprise-controls.local.json"
+        write_enterprise_controls_fixture(enterprise_controls_path)
+        prepare_minimal_sqlite_db(db_path)
+        port = free_port()
+        base_url = f"http://127.0.0.1:{port}"
+        proc = start_configured_server(None, db_path, port, "enterprise_byoc", enterprise_controls_path)
+        try:
+            wait_ready(base_url, proc)
+            before_hash = db_dump_hash(str(db_path))
+            status, api_payload = http_json(base_url)
+            require(status == 200, f"configured enterprise deployment readiness API failed: {status} {api_payload}")
+            validate_configured_enterprise(api_payload, "enterprise-api")
+            controls_status, controls_payload = http_json(base_url, "/api/deployment/enterprise-controls")
+            require(controls_status == 200, f"configured enterprise controls API failed: {controls_status} {controls_payload}")
+            validate_enterprise_controls(controls_payload, "enterprise-controls-api")
+            proc_cli = run_cli(base_url)
+            require(proc_cli.returncode == 0, f"configured enterprise deployment readiness CLI failed: {proc_cli.stderr or proc_cli.stdout}")
+            cli_payload = json.loads(proc_cli.stdout)
+            validate_configured_enterprise(cli_payload, "enterprise-cli")
+            proc_controls_cli = run_cli_enterprise_controls(base_url)
+            require(proc_controls_cli.returncode == 0, f"configured enterprise controls CLI failed: {proc_controls_cli.stderr or proc_controls_cli.stdout}")
+            cli_controls_payload = json.loads(proc_controls_cli.stdout)
+            validate_enterprise_controls(cli_controls_payload, "enterprise-controls-cli")
+            after_hash = db_dump_hash(str(db_path))
+            require(before_hash == after_hash, "configured enterprise deployment readiness mutated the SQLite ledger")
+            output_text = "\n".join([
+                json.dumps(api_payload, ensure_ascii=False, sort_keys=True),
+                json.dumps(controls_payload, ensure_ascii=False, sort_keys=True),
+                proc_cli.stdout,
+                proc_cli.stderr,
+                proc_controls_cli.stdout,
+                proc_controls_cli.stderr,
+            ])
+            require(not leaked_secret(output_text), "configured enterprise deployment readiness leaked token-like material")
+            require(not any(marker in output_text for marker in RAW_ENTERPRISE_MARKERS), "configured enterprise controls leaked raw enterprise metadata")
+            return {
+                "status": api_payload.get("status"),
+                "deployment_ready": api_payload.get("deployment_ready"),
+                "edition": api_payload.get("edition"),
+                "sso_connector_gate": next(
+                    (gate.get("status") for gate in (api_payload.get("gates") or []) if gate.get("id") == "sso_connector_policy"),
+                    None,
+                ),
+                "signed_export_status": (api_payload.get("signed_audit_export") or {}).get("status"),
+                "enterprise_controls_status": controls_payload.get("status"),
+                "sso_configured": (controls_payload.get("sso") or {}).get("configured"),
+                "private_connector_total": (controls_payload.get("private_connector_policy") or {}).get("total_connectors"),
+                "private_connector_active": (controls_payload.get("private_connector_policy") or {}).get("active_connectors"),
+                "enterprise_byoc": api_payload.get("enterprise_byoc"),
+                "read_only_hash_checked": True,
+            }
+        finally:
+            if proc and proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait(timeout=5)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Verify deployment readiness API and CLI.")
     parser.add_argument("--base-url", default=os.environ.get("AGENTOPS_BASE_URL"))
     parser.add_argument("--db-path", default=os.environ.get("AGENTOPS_DB_PATH"), help="Optional SQLite DB path used to assert read-only behavior.")
     parser.add_argument("--configured-retention-fixture", action="store_true", help="Also start an isolated pro_workspace server with configured legal-hold retention controls and verify deployment aggregation.")
+    parser.add_argument("--configured-enterprise-fixture", action="store_true", help="Also start an isolated enterprise_byoc server and verify SSO/private connector and signed-export gates through API and CLI.")
     args = parser.parse_args()
     outputs: list[str] = []
     try:
-        base_url = args.base_url or (None if args.configured_retention_fixture else "http://127.0.0.1:8787")
+        base_url = args.base_url or (None if (args.configured_retention_fixture or args.configured_enterprise_fixture) else "http://127.0.0.1:8787")
         api_payload: dict = {}
         cli_payload: dict = {}
         read_only_hash_checked = False
@@ -343,6 +543,7 @@ def main() -> int:
                 read_only_hash_checked = True
 
         configured = run_configured_retention_fixture() if args.configured_retention_fixture else None
+        enterprise = run_configured_enterprise_fixture() if args.configured_enterprise_fixture else None
         require(not leaked_secret("\n".join(outputs)), "deployment readiness leaked token-like material")
         print(json.dumps({
             "ok": True,
@@ -352,7 +553,10 @@ def main() -> int:
             "signed_export_status": (api_payload.get("signed_audit_export") or {}).get("status"),
             "retention_status": (api_payload.get("retention") or {}).get("status"),
             "configured_retention_fixture": configured,
-            "read_only_hash_checked": read_only_hash_checked or bool(configured and configured.get("read_only_hash_checked")),
+            "configured_enterprise_fixture": enterprise,
+            "read_only_hash_checked": read_only_hash_checked
+            or bool(configured and configured.get("read_only_hash_checked"))
+            or bool(enterprise and enterprise.get("read_only_hash_checked")),
             "secret_leaked": False,
         }, ensure_ascii=False, indent=2, sort_keys=True))
         return 0

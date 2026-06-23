@@ -304,7 +304,33 @@ export type DeploymentReadinessPayload = {
   signed_audit_export?: Record<string, boolean | string | number | undefined>;
   retention?: Record<string, boolean | string | number | undefined>;
   enterprise_byoc?: Record<string, boolean | string | number | undefined>;
+  enterprise_controls?: Record<string, boolean | string | number | undefined>;
   contracts?: string[];
+  safety?: Record<string, boolean | string | number | undefined>;
+  live_execution_performed?: boolean;
+  token_omitted?: boolean;
+  error?: string;
+};
+
+export type EnterpriseControlsPayload = {
+  provider?: string;
+  operation?: string;
+  contract_id?: string;
+  generated_at?: string;
+  status?: string;
+  ok?: boolean;
+  edition?: string;
+  entitlement_ready?: boolean;
+  sso?: Record<string, boolean | string | number | undefined>;
+  private_connector_policy?: {
+    registry_configured?: boolean;
+    trust_policy_configured?: boolean;
+    total_connectors?: number;
+    active_connectors?: number;
+    connector_refs?: { connector_id?: string; provider?: string; status?: string }[];
+    raw_config_omitted?: boolean;
+    client_secret_omitted?: boolean;
+  };
   safety?: Record<string, boolean | string | number | undefined>;
   live_execution_performed?: boolean;
   token_omitted?: boolean;

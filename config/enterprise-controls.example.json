@@ -1,0 +1,27 @@
+{
+  "private_connector_policy": {
+    "connectors": [
+      {
+        "connector_id": "conn_private_dify",
+        "provider": "dify",
+        "redacted_endpoint_ref": "private-dify.internal",
+        "status": "active"
+      },
+      {
+        "connector_id": "conn_internal_kb",
+        "provider": "custom",
+        "redacted_endpoint_ref": "internal-kb.internal",
+        "status": "inactive"
+      }
+    ],
+    "registry_configured": true,
+    "trust_policy_configured": true
+  },
+  "sso": {
+    "client_id": "agentops-mis",
+    "configured": true,
+    "issuer_url": "https://idp.example.local/oidc",
+    "provider_type": "oidc",
+    "redirect_uri": "https://agentops.example.local/auth/callback"
+  }
+}

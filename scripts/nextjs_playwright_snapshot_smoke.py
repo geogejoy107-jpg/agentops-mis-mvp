@@ -34,6 +34,11 @@ RAW_RETENTION_HOLD_MARKERS = [
     "Highly confidential Next deployment subject",
     "Raw Next deployment legal hold reason",
 ]
+RAW_ENTERPRISE_CONTROL_MARKERS = [
+    "raw-next-sso-client-secret",
+    "raw-next-private-connector-token",
+    "next-internal-admin-endpoint.local",
+]
 READ_ONLY_LEDGER_TABLES = [
     "tasks",
     "runs",
@@ -402,6 +407,40 @@ def write_retention_controls_fixture(path: Path) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
 
 
+def write_enterprise_controls_fixture(path: Path) -> None:
+    payload = {
+        "sso": {
+            "configured": True,
+            "provider_type": "oidc",
+            "issuer_url": "https://idp.example.local/oidc",
+            "redirect_uri": "https://agentops.example.local/auth/callback",
+            "client_id": "agentops-mis",
+            "client_secret": "raw-next-sso-client-secret sk-next-sso",
+        },
+        "private_connector_policy": {
+            "registry_configured": True,
+            "trust_policy_configured": True,
+            "connectors": [
+                {
+                    "connector_id": "conn_next_private_dify",
+                    "provider": "dify",
+                    "status": "active",
+                    "base_url": "https://next-internal-admin-endpoint.local/dify",
+                    "client_secret": "raw-next-private-connector-token sk-next-private",
+                },
+                {
+                    "connector_id": "conn_next_internal_kb",
+                    "provider": "custom",
+                    "status": "inactive",
+                    "base_url": "https://next-internal-admin-endpoint.local/kb",
+                    "client_secret": "raw-next-private-connector-token sk-next-kb",
+                },
+            ],
+        },
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+
+
 def wait_for_json(url: str, predicate, description: str, timeout_sec: int = 10) -> object:
     deadline = time.time() + timeout_sec
     last_value: object | None = None
@@ -428,6 +467,10 @@ def leaked_secret(text: str) -> bool:
 
 def leaked_raw_retention_hold(text: str) -> bool:
     return any(marker in text for marker in RAW_RETENTION_HOLD_MARKERS)
+
+
+def leaked_raw_enterprise_controls(text: str) -> bool:
+    return any(marker in text for marker in RAW_ENTERPRISE_CONTROL_MARKERS)
 
 
 def require(condition: bool, message: str) -> None:
@@ -888,18 +931,22 @@ def verify_deployment_configured_retention(
     next_base: str,
     entitlement_path: Path,
     retention_controls_path: Path,
+    enterprise_controls_path: Path,
     db_path: str,
     env: dict[str, str],
 ) -> dict:
-    write_entitlement_fixture(entitlement_path, "pro_workspace")
+    write_entitlement_fixture(entitlement_path, "enterprise_byoc")
     write_retention_controls_fixture(retention_controls_path)
+    write_enterprise_controls_fixture(enterprise_controls_path)
     before_hash = read_only_ledger_hash(db_path)
 
     deployment = http_json(f"{next_base}/api/mis/deployment/readiness")
+    enterprise_controls_payload = http_json(f"{next_base}/api/mis/deployment/enterprise-controls")
     controls = http_json(f"{next_base}/api/mis/audit/retention-controls")
     policy = http_json(f"{next_base}/api/mis/audit/retention-policy")
     dangerous_controls = http_json(f"{next_base}/api/mis/audit/retention-controls?cleanup=true")
     require(isinstance(deployment, dict), f"Deployment readiness did not return an object: {deployment!r}")
+    require(isinstance(enterprise_controls_payload, dict), f"Enterprise controls did not return an object: {enterprise_controls_payload!r}")
     require(isinstance(controls, dict), f"Retention controls did not return an object: {controls!r}")
     require(isinstance(policy, dict), f"Retention policy did not return an object: {policy!r}")
     require(isinstance(dangerous_controls, dict), f"Dangerous retention controls probe did not return an object: {dangerous_controls!r}")
@@ -908,7 +955,7 @@ def verify_deployment_configured_retention(
     control_details = controls.get("controls") or {}
     legal_hold_summary = controls.get("legal_hold_summary") or {}
     require(deployment.get("contract_id") == "deployment_readiness_v1", f"Wrong deployment contract: {deployment}")
-    require(deployment.get("edition") == "pro_workspace", f"Deployment page proxy did not see pro_workspace: {deployment}")
+    require(deployment.get("edition") == "enterprise_byoc", f"Deployment page proxy did not see enterprise_byoc: {deployment}")
     require(retention.get("status") == "ready", f"Deployment retention policy should be ready: {retention}")
     require(retention.get("controls_status") == "ready", f"Deployment retention controls should be ready: {retention}")
     require(gate_status(deployment, "retention_policy") == "ready", f"Deployment retention policy gate not ready: {deployment.get('gates')}")
@@ -919,6 +966,32 @@ def verify_deployment_configured_retention(
     require(retention.get("cleanup_endpoint_exposed") is False, f"Deployment cleanup endpoint should remain closed: {retention}")
     require(retention.get("destructive_cleanup_supported") is False, f"Deployment destructive cleanup should remain unsupported: {retention}")
     require(retention.get("delete_performed") is False and retention.get("rows_deleted") == 0, f"Deployment retention should not delete rows: {retention}")
+    enterprise = deployment.get("enterprise_byoc") or {}
+    embedded_enterprise_controls = deployment.get("enterprise_controls") or {}
+    require(enterprise.get("sso_hooks") is True, f"Enterprise SSO capability should be enabled: {enterprise}")
+    require(enterprise.get("custom_connector_sdk") is True, f"Enterprise connector SDK capability should be enabled: {enterprise}")
+    require(enterprise.get("signed_audit_exports") is True, f"Enterprise signed export capability should be enabled: {enterprise}")
+    require(gate_status(deployment, "sso_connector_policy") == "ready", f"SSO/private connector gate should be ready: {deployment.get('gates')}")
+    signed = deployment.get("signed_audit_export") or {}
+    require(signed.get("status") == "ready", f"Enterprise signed audit export should be ready: {signed}")
+    require(signed.get("capability_enabled") is True, f"Enterprise signed audit export capability should be enabled: {signed}")
+    require(embedded_enterprise_controls.get("status") == "ready", f"Embedded enterprise controls should be ready: {embedded_enterprise_controls}")
+    require(embedded_enterprise_controls.get("sso_configured") is True, f"Embedded SSO configured proof missing: {embedded_enterprise_controls}")
+    require(embedded_enterprise_controls.get("private_connector_registry_configured") is True, f"Embedded private connector registry proof missing: {embedded_enterprise_controls}")
+    require(embedded_enterprise_controls.get("private_connector_total") == 2, f"Embedded private connector total mismatch: {embedded_enterprise_controls}")
+    require(embedded_enterprise_controls.get("private_connector_active") == 1, f"Embedded private connector active mismatch: {embedded_enterprise_controls}")
+    enterprise_sso = enterprise_controls_payload.get("sso") or {}
+    enterprise_connectors = enterprise_controls_payload.get("private_connector_policy") or {}
+    enterprise_safety = enterprise_controls_payload.get("safety") or {}
+    require(enterprise_controls_payload.get("status") == "ready", f"Enterprise controls proxy should be ready: {enterprise_controls_payload}")
+    require(enterprise_controls_payload.get("contract_id") == "enterprise_byoc_controls_v1", f"Enterprise controls contract mismatch: {enterprise_controls_payload}")
+    require(enterprise_sso.get("configured") is True and enterprise_sso.get("provider_type") == "oidc", f"Enterprise controls SSO proof missing: {enterprise_controls_payload}")
+    require(enterprise_connectors.get("registry_configured") is True, f"Enterprise controls registry proof missing: {enterprise_controls_payload}")
+    require(enterprise_connectors.get("trust_policy_configured") is True, f"Enterprise controls trust proof missing: {enterprise_controls_payload}")
+    require(enterprise_connectors.get("total_connectors") == 2, f"Enterprise controls connector total mismatch: {enterprise_controls_payload}")
+    require(enterprise_connectors.get("active_connectors") == 1, f"Enterprise controls active connector mismatch: {enterprise_controls_payload}")
+    require(enterprise_safety.get("read_only") is True and enterprise_safety.get("live_execution_performed") is False, f"Enterprise controls safety proof missing: {enterprise_controls_payload}")
+    require(enterprise_safety.get("client_secret_omitted") is True and enterprise_safety.get("raw_metadata_omitted") is True, f"Enterprise controls omission proof missing: {enterprise_controls_payload}")
     require(policy.get("status") == "ready", f"Retention policy proxy should be ready: {policy}")
     require(controls.get("status") == "ready", f"Retention controls proxy should be ready: {controls}")
     require(control_details.get("cleanup_approval_required") is True, f"Cleanup approval missing: {controls}")
@@ -940,18 +1013,24 @@ def verify_deployment_configured_retention(
         "/workspace/deployment",
         lambda text: (
             "Deployment readiness verdict" in text
-            and "edition pro_workspace" in text
+            and "edition enterprise_byoc" in text
             and "retention true" in text
             and "hold registry true" in text
             and "active holds 1" in text
             and "cleanup endpoint false" in text
             and "destructive cleanup false" in text
+            and "sso true" in text
+            and "connector sdk true" in text
+            and "controls ready" in text
+            and "sso configured true" in text
+            and "private connectors 1/2" in text
         ),
-        "deployment page to render configured retention controls",
+        "deployment page to render configured enterprise retention and SSO/private connector controls",
         timeout_sec=15,
     )
     combined = "\n".join([
         json.dumps(deployment, ensure_ascii=False, sort_keys=True),
+        json.dumps(enterprise_controls_payload, ensure_ascii=False, sort_keys=True),
         json.dumps(controls, ensure_ascii=False, sort_keys=True),
         json.dumps(policy, ensure_ascii=False, sort_keys=True),
         json.dumps(dangerous_controls, ensure_ascii=False, sort_keys=True),
@@ -959,6 +1038,7 @@ def verify_deployment_configured_retention(
     ])
     require(not leaked_secret(combined), "Configured deployment retention evidence leaked token-like material")
     require(not leaked_raw_retention_hold(combined), "Configured deployment retention evidence leaked raw hold detail")
+    require(not leaked_raw_enterprise_controls(combined), "Configured deployment enterprise controls leaked raw metadata")
     after_hash = read_only_ledger_hash(db_path)
     require(before_hash == after_hash, "Configured deployment retention page/proxy mutated the read-only ledger tables")
     return {
@@ -970,6 +1050,12 @@ def verify_deployment_configured_retention(
         "active_legal_holds": retention.get("active_legal_holds"),
         "retention_policy_gate": gate_status(deployment, "retention_policy"),
         "retention_controls_gate": gate_status(deployment, "retention_controls"),
+        "sso_connector_gate": gate_status(deployment, "sso_connector_policy"),
+        "enterprise_controls_status": enterprise_controls_payload.get("status"),
+        "sso_configured": enterprise_sso.get("configured"),
+        "private_connector_total": enterprise_connectors.get("total_connectors"),
+        "private_connector_active": enterprise_connectors.get("active_connectors"),
+        "signed_export_status": signed.get("status"),
         "read_only_hash_checked": True,
     }
 
@@ -1007,6 +1093,7 @@ def main() -> int:
             reset_env["AGENTOPS_DB_PATH"] = db_path
             reset_env["AGENTOPS_ENTITLEMENTS_PATH"] = str(entitlement_path)
             reset_env["AGENTOPS_RETENTION_CONTROLS_PATH"] = str(retention_controls_path)
+            reset_env.pop("AGENTOPS_EDITION", None)
             reset = run(["python3", "server.py", "--host", "127.0.0.1", "--port", str(api_port), "--reset"], env=reset_env, timeout=30)
             require(reset.returncode == 0, f"seed reset failed: {reset.stderr or reset.stdout}")
             project_id = seed_customer_project_fixture(db_path)
@@ -1016,6 +1103,7 @@ def main() -> int:
             api_env["AGENTOPS_ENTITLEMENTS_PATH"] = str(entitlement_path)
             api_env["AGENTOPS_RETENTION_CONTROLS_PATH"] = str(retention_controls_path)
             api_env["AGENTOPS_BASE_URL"] = api_base
+            api_env.pop("AGENTOPS_EDITION", None)
             api_proc = start_process(["python3", "server.py", "--host", "127.0.0.1", "--port", str(api_port)], cwd=ROOT, env=api_env)
             processes.append(api_proc)
             wait_http(f"{api_base}/api/dashboard/metrics")
@@ -1113,15 +1201,19 @@ def run_configured_retention_fixture(api_port_arg: int, next_port_arg: int) -> i
             db_path = str(tmp_path / "agentops.db")
             entitlement_path = tmp_path / "entitlements.local.json"
             retention_controls_path = tmp_path / "retention-controls.local.json"
-            write_entitlement_fixture(entitlement_path, "pro_workspace")
+            enterprise_controls_path = tmp_path / "enterprise-controls.local.json"
+            write_entitlement_fixture(entitlement_path, "enterprise_byoc")
             write_retention_controls_fixture(retention_controls_path)
+            write_enterprise_controls_fixture(enterprise_controls_path)
             prepare_minimal_sqlite_db(Path(db_path))
 
             api_env = os.environ.copy()
             api_env["AGENTOPS_DB_PATH"] = db_path
             api_env["AGENTOPS_ENTITLEMENTS_PATH"] = str(entitlement_path)
             api_env["AGENTOPS_RETENTION_CONTROLS_PATH"] = str(retention_controls_path)
+            api_env["AGENTOPS_ENTERPRISE_CONTROLS_PATH"] = str(enterprise_controls_path)
             api_env["AGENTOPS_BASE_URL"] = api_base
+            api_env.pop("AGENTOPS_EDITION", None)
             api_proc = start_process(["python3", "server.py", "--host", "127.0.0.1", "--port", str(api_port)], cwd=ROOT, env=api_env)
             processes.append(api_proc)
             wait_http(f"{api_base}/api/deployment/readiness")
@@ -1138,7 +1230,7 @@ def run_configured_retention_fixture(api_port_arg: int, next_port_arg: int) -> i
             require(opened.returncode == 0, f"Playwright open failed: {opened.stderr or opened.stdout}")
             resized = playwright(pw_env, "resize", "1365", "900")
             require(resized.returncode == 0, f"Playwright resize failed: {resized.stderr or resized.stdout}")
-            result = verify_deployment_configured_retention(next_base, entitlement_path, retention_controls_path, db_path, pw_env)
+            result = verify_deployment_configured_retention(next_base, entitlement_path, retention_controls_path, enterprise_controls_path, db_path, pw_env)
             try:
                 playwright(pw_env, "close", timeout=10)
             except subprocess.TimeoutExpired:

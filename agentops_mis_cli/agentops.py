@@ -278,6 +278,10 @@ def cmd_deployment_readiness(args, client: AgentOpsClient) -> dict:
     return client.get("/api/deployment/readiness")
 
 
+def cmd_deployment_enterprise_controls(args, client: AgentOpsClient) -> dict:
+    return client.get("/api/deployment/enterprise-controls")
+
+
 def cmd_audit_retention_policy(args, client: AgentOpsClient) -> dict:
     return client.get("/api/audit/retention-policy", {"retention_days": getattr(args, "retention_days", None)})
 
@@ -1358,6 +1362,8 @@ def build_parser() -> argparse.ArgumentParser:
     deployment_sub = deployment.add_subparsers(dest="action", required=True)
     deployment_readiness = deployment_sub.add_parser("readiness", help="Show BYOC deployment gates, backup, signed export, storage, and retention readiness.")
     deployment_readiness.set_defaults(handler="deployment_readiness")
+    deployment_enterprise_controls = deployment_sub.add_parser("enterprise-controls", help="Show read-only Enterprise/BYOC SSO and private connector controls metadata.")
+    deployment_enterprise_controls.set_defaults(handler="deployment_enterprise_controls")
 
     commander = sub.add_parser("commander", help="Read-only commander surface readback commands.")
     commander_sub = commander.add_subparsers(dest="action", required=True)
@@ -1952,6 +1958,7 @@ HANDLERS = {
     "local_readiness": cmd_local_readiness,
     "demo_readiness": cmd_demo_readiness,
     "deployment_readiness": cmd_deployment_readiness,
+    "deployment_enterprise_controls": cmd_deployment_enterprise_controls,
     "audit_retention_policy": cmd_audit_retention_policy,
     "audit_retention_controls": cmd_audit_retention_controls,
     "commander_board": cmd_commander_board,

@@ -431,21 +431,33 @@ Must be true:
   overwrite safety copy, signed audit export with a customer key, raw metadata
   omission, and tamper detection. Verify with
   `python3 scripts/byoc_deployment_acceptance_smoke.py`.
+- `enterprise_byoc_controls_v1` exposes a read-only, metadata-only Enterprise
+  controls proof through `GET /api/deployment/enterprise-controls` and
+  `agentops deployment enterprise-controls`. It summarizes configured SSO
+  metadata and private connector registry/trust policy without exposing client
+  secrets, certificates, raw connector config, tokens, or executing live
+  connector work.
 - `deployment_readiness_v1` exposes the Gate 5 deployment verdict through
   `GET /api/deployment/readiness`, `agentops deployment readiness`, and the
   Next.js `/workspace/deployment` page. It aggregates local readiness,
   production security, storage backend, backup/restore, signed audit export,
   retention, SSO/private connector gates, and omission contracts without
   executing live work, restoring a database, or printing secrets. Verify with
-  `python3 scripts/deployment_readiness_smoke.py --configured-retention-fixture`;
-  this configured mode proves the deployment verdict sees ready retention
-  controls from a temporary legal-hold registry while other BYOC gates may
-  remain attention/gated. The Next.js browser parity smoke also flips an
-  isolated entitlement fixture to `pro_workspace`, loads a temporary
-  `AGENTOPS_RETENTION_CONTROLS_PATH`, and verifies `/workspace/deployment`
+  `python3 scripts/deployment_readiness_smoke.py --configured-retention-fixture --configured-enterprise-fixture`;
+  the configured retention mode proves the deployment verdict sees ready
+  retention controls from a temporary legal-hold registry, and the configured
+  Enterprise mode proves API and CLI readback show `enterprise_byoc_controls_v1`
+  and the SSO/private connector policy gate ready under `enterprise_byoc`
+  without selecting Postgres, exposing raw enterprise control metadata, or
+  mutating the ledger. The Next.js browser parity smoke also flips an
+  isolated entitlement fixture to `enterprise_byoc`, loads a temporary
+  `AGENTOPS_RETENTION_CONTROLS_PATH` and `AGENTOPS_ENTERPRISE_CONTROLS_PATH`,
+  and verifies `/workspace/deployment`
   renders ready retention policy/controls gates, `active holds 1`, cleanup
-  closed, dangerous cleanup queries fail closed, raw legal-hold detail omitted,
-  and no SQLite ledger mutation. Verify the focused browser fixture with
+  closed, ready SSO/private connector policy, `private connectors 1/2`,
+  dangerous cleanup queries fail closed, raw legal-hold detail omitted, raw
+  enterprise control metadata omitted, and no SQLite ledger mutation. Verify the
+  focused browser fixture with
   `python3 scripts/nextjs_playwright_snapshot_smoke.py --configured-retention-fixture`.
 - `audit_retention_policy_v1` exposes a read-only audit retention policy
   preview through `GET /api/audit/retention-policy` and

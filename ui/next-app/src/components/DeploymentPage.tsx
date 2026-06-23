@@ -97,6 +97,7 @@ export function DeploymentParityPage({
   const storageChecks = Object.entries(storage.checks || {});
   const storageContract = storage.contract || (storage.selected_backend === "postgres" ? "postgres backend gate" : "sqlite free local");
   const retention = deployment.retention || {};
+  const enterpriseControls = deployment.enterprise_controls || {};
   const retentionPolicyDetails = retentionPolicy?.policy || {};
   const retentionCounts = retentionPolicy?.counts || {};
   const retentionControlDetails = retentionControls?.controls || {};
@@ -297,6 +298,9 @@ export function DeploymentParityPage({
           <div className="proofStrip">
             <span>sso {boolText(entitlements.capabilities?.sso_hooks)}</span>
             <span>connector sdk {boolText(entitlements.capabilities?.custom_connector_sdk)}</span>
+            <span>controls {String(enterpriseControls.status || "unknown")}</span>
+            <span>sso configured {boolText(enterpriseControls.sso_configured)}</span>
+            <span>private connectors {count(enterpriseControls.private_connector_active)}/{count(enterpriseControls.private_connector_total)}</span>
             <span>raw prompts omitted {boolText(security.safety?.raw_prompt_omitted)}</span>
             <span>token omitted {boolText(security.safety?.token_omitted)}</span>
           </div>

@@ -784,7 +784,7 @@
     },
     {
       "id": "deployment_next_only",
-      "capability": "Local/BYOC deployment readiness, backup/restore evidence, configured retention/export gates, and storage backend status.",
+      "capability": "Local/BYOC deployment readiness, backup/restore evidence, configured retention/export gates, Enterprise SSO/private connector gates, and storage backend status.",
       "status": "next_only",
       "gate4_required": true,
       "vite_routes": [],
@@ -794,6 +794,7 @@
       "api_contracts": [
         "GET /local/readiness",
         "GET /deployment/readiness",
+        "GET /deployment/enterprise-controls",
         "GET /audit/retention-policy",
         "GET /audit/retention-controls",
         "GET /security/production-readiness",
@@ -813,7 +814,7 @@
         "python3 scripts/storage_backend_selection_smoke.py",
         "python3 scripts/audit_retention_policy_smoke.py",
         "python3 scripts/audit_retention_controls_smoke.py --configured-fixture",
-        "python3 scripts/deployment_readiness_smoke.py --configured-retention-fixture",
+        "python3 scripts/deployment_readiness_smoke.py --configured-retention-fixture --configured-enterprise-fixture",
         "python3 scripts/byoc_deployment_acceptance_smoke.py"
       ],
       "retirement_allowed": false,
