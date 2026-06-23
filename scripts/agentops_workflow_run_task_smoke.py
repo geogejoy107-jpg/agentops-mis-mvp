@@ -22,7 +22,7 @@ def run_cli(args: list[str], timeout: int = 180) -> subprocess.CompletedProcess[
     env = os.environ.copy()
     env.pop("AGENTOPS_API_KEY", None)
     env.pop("AGENTOPS_AGENT_ID", None)
-    env["AGENTOPS_BASE_URL"] = "http://127.0.0.1:8787"
+    env["AGENTOPS_BASE_URL"] = os.environ.get("AGENTOPS_BASE_URL", "http://127.0.0.1:8787")
     env["AGENTOPS_WORKSPACE_ID"] = "local-demo"
     return subprocess.run(
         [str(CLI), *args],

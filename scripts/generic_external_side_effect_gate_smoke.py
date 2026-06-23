@@ -103,6 +103,47 @@ def main() -> int:
     require(status in {200, 201}, f"loopback runtime evidence should not require prepared action: {status} {local_runtime_evidence}", failures)
     require((local_runtime_evidence.get("tool_call") or {}).get("status") == "completed", f"loopback runtime evidence should be completed: {local_runtime_evidence}", failures)
 
+    status, worker_runtime_evidence = http_json(args.base_url, "/api/agent-gateway/tool-calls", {
+        "workspace_id": "local-demo",
+        "run_id": run_id,
+        "agent_id": agent_id,
+        "tool_name": "agent_worker.openclaw",
+        "tool_category": "custom",
+        "risk_level": "medium",
+        "status": "completed",
+        "target_resource": "local://openclaw/main",
+        "args": {
+            "task_id": task_id,
+            "adapter": "openclaw",
+            "prompt_hash": "0" * 64,
+            "attempt_count": 1,
+            "max_attempts": 1,
+            "retry_history": [
+                {
+                    "attempt": 1,
+                    "ok": True,
+                    "error_type": None,
+                    "retryable": False,
+                    "summary": "OpenClaw worker returned a local runtime summary.",
+                }
+            ],
+            "observation_level": "ledger_summary_only",
+            "risk_floor": "medium",
+            "effective_risk_level": "medium",
+            "commercial_readiness": "restricted_until_runtime_tool_events",
+            "requires_prepared_action_for_external_write": True,
+            "secret_boundary": "trusted_worker_client_v1",
+            "raw_omitted": True,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
+        "result_summary": "OpenClaw local worker execution evidence should not be treated as an external write.",
+    })
+    outputs.append(json.dumps(worker_runtime_evidence, ensure_ascii=False))
+    require(status in {200, 201}, f"worker runtime evidence should not require prepared action: {status} {worker_runtime_evidence}", failures)
+    require((worker_runtime_evidence.get("tool_call") or {}).get("status") == "completed", f"worker runtime evidence should be completed: {worker_runtime_evidence}", failures)
+
     generic_external = {
         "workspace_id": "local-demo",
         "run_id": run_id,

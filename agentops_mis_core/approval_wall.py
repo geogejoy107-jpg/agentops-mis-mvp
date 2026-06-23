@@ -369,15 +369,37 @@ def tool_call_has_external_side_effect_intent(
     # Capability metadata says whether a runtime would need a prepared action
     # for external writes; it is not itself an external write intent.
     safe_metadata_keys = {
+        "attempt_count",
+        "commercial_readiness",
         "requires_prepared_action_for_external_write",
         "credential_storage",
         "credential_storage_policy",
         "credentials_stored",
+        "credential_transport",
+        "effective_risk_level",
+        "max_attempts",
+        "model_visible_credentials",
+        "observation_level",
+        "agent_id",
+        "plan_id",
+        "prompt_hash",
+        "raw_omitted",
         "raw_document_storage",
         "raw_documents_stored",
         "raw_payload_stored",
         "raw_text_omitted",
+        "raw_prompt_omitted",
+        "raw_response_omitted",
+        "retry_history",
+        "risk_floor",
+        "run_id",
+        "secret_boundary",
+        "secrets_in_output",
+        "secrets_in_prompt",
         "summary_only",
+        "task_id",
+        "token_omitted",
+        "workspace_id",
     }
     for key in list(scanned_args):
         if key in safe_metadata_keys or str(key).endswith("_storage"):

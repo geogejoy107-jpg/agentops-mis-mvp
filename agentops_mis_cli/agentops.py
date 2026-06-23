@@ -2028,6 +2028,7 @@ def cmd_workflow_run_task(args, client: AgentOpsClient) -> dict:
         "--adapter",
         args.adapter,
         "--once",
+        "--no-enforce-intake",
         "--status",
         "planned",
         "--adapter-max-attempts",
