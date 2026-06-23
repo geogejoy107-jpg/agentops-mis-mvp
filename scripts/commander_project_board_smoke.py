@@ -128,6 +128,22 @@ def validate(payload: dict) -> None:
     require(isinstance(payload.get("recent_work_packages"), list), "recent_work_packages must be a list")
 
 
+def validate_scoped_team_board(payload: dict) -> None:
+    validate(payload)
+    team_filter = payload.get("team_board_filter") or {}
+    require(team_filter.get("applied") is True, f"team_board_filter should be applied: {team_filter}")
+    require(team_filter.get("project_id") == "proj_mvp", f"team_board_filter project mismatch: {team_filter}")
+    team_board = payload.get("team_board") or {}
+    require(team_board.get("status") in {"empty", "ready", "attention", "blocked"}, f"bad team_board status: {team_board}")
+    require((team_board.get("safety") or {}).get("read_only") is True, f"team_board should be read-only: {team_board}")
+    require(team_board.get("live_execution_performed") is False, f"team_board should not execute runtime: {team_board}")
+    require(isinstance(team_board.get("lanes"), list), f"team_board lanes missing: {team_board}")
+    require(isinstance(team_board.get("dependency_edges"), list), f"team_board dependency edges missing: {team_board}")
+    require(isinstance((team_board.get("summary") or {}).get("status_counts"), dict), f"team_board summary missing: {team_board}")
+    require(isinstance((team_board.get("summary") or {}).get("owner_counts"), dict), f"team_board owners missing: {team_board}")
+    require(payload.get("team_work_packages_summary") is not None, f"team work package summary missing: {payload}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Verify Commander Project Board read-only API.")
     parser.add_argument("--base-url", default="http://127.0.0.1:8787")
@@ -141,6 +157,11 @@ def main() -> int:
         raw = json.dumps(payload, ensure_ascii=False, sort_keys=True)
         require(not token_like_leak(raw), "project board leaked token-like material")
         validate(payload)
+        scoped_status, scoped_payload = http_json(args.base_url, "/api/commander/project-board?project_id=proj_mvp&limit=5")
+        require(scoped_status == 200, f"scoped project board API failed: {scoped_status} {scoped_payload}")
+        scoped_raw = json.dumps(scoped_payload, ensure_ascii=False, sort_keys=True)
+        require(not token_like_leak(scoped_raw), "scoped project board leaked token-like material")
+        validate_scoped_team_board(scoped_payload)
         after = db_fingerprint(db_path)
         if before is not None and after is not None:
             require(before == after, f"database fingerprint changed: before={before} after={after}")
@@ -150,6 +171,7 @@ def main() -> int:
             "gate_count": len(payload.get("integration_gates") or []),
             "action_count": len(payload.get("recommended_next_actions") or []),
             "recent_work_packages": len(payload.get("recent_work_packages") or []),
+            "scoped_team_lanes": len((scoped_payload.get("team_board") or {}).get("lanes") or []),
             "db_fingerprint_checked": before is not None and after is not None,
             "secret_leaked": False,
         }

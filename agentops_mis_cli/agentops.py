@@ -1032,7 +1032,11 @@ def cmd_operator_close_evidence_gap(args, client: AgentOpsClient) -> dict:
 
 
 def cmd_commander_board(args, client: AgentOpsClient) -> dict:
-    return client.get("/api/commander/project-board")
+    return client.get("/api/commander/project-board", query={
+        "project_id": getattr(args, "project_id", None),
+        "plan_id": getattr(args, "plan_id", None),
+        "limit": getattr(args, "limit", None),
+    })
 
 
 def cmd_commander_repo_map(args, client: AgentOpsClient) -> dict:
@@ -2604,6 +2608,9 @@ def build_parser() -> argparse.ArgumentParser:
     commander = sub.add_parser("commander", help="Commander planning, dispatch and readback commands.")
     commander_sub = commander.add_subparsers(dest="action", required=True)
     commander_board = commander_sub.add_parser("board", help="Read the Commander project board.")
+    commander_board.add_argument("--project-id", default=None, help="Optional Commander project id for a scoped team board.")
+    commander_board.add_argument("--plan-id", default=None, help="Optional Commander plan id for a scoped team board.")
+    commander_board.add_argument("--limit", type=int, default=25, help="Maximum scoped work packages to include in team_board.")
     commander_board.set_defaults(handler="commander_board")
     commander_repo_map = commander_sub.add_parser("repo-map", help="Localize relevant repo files for a coding work package.")
     commander_repo_map.add_argument("query", nargs="?", default="", help="Task or feature query to localize.")

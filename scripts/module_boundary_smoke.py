@@ -78,6 +78,7 @@ from agentops_mis_core.gateway_runs import (
 )
 from agentops_mis_core.read_model_cache import ReadModelCache
 from agentops_mis_core.commander_work_packages import (
+    build_commander_team_board,
     build_commander_work_packages_readback,
     build_commander_project_board_gates,
     commander_project_board_next_actions,
@@ -1439,6 +1440,19 @@ def main() -> int:
     require((commander_readback.get("summary", {}).get("coding_evidence") or {}).get("partial") == 1, "commander coding evidence summary failed", failures)
     require(commander_readback.get("safety", {}).get("read_only") is True, "commander readback must stay read-only", failures)
     require(commander_readback.get("recommended_next_actions"), "commander readback missing next actions", failures)
+    commander_team_board = build_commander_team_board(
+        packages=[
+            {**commander_item, "owner_agent_id": "agt_builder", "lane_id": "implementation", "dependencies": ["tsk_cmd_dependency"], "latest_run": {"run_id": "run_cmd_smoke", "status": "completed", "created_at": "2026-06-23T00:00:00+00:00"}},
+            {"task_id": "tsk_cmd_blocked", "project_id": "proj_cmd_smoke", "package_status": "blocked", "owner_agent_id": "agt_reviewer", "coding_evidence_gate": {"status": "missing"}},
+        ],
+        workspace_id="local-demo",
+        project_id="proj_cmd_smoke",
+        plan_id="cmdplan_smoke",
+    )
+    require(commander_team_board.get("status") == "blocked", "commander team board blocked status failed", failures)
+    require((commander_team_board.get("summary") or {}).get("total_lanes") == 2, "commander team board lane summary failed", failures)
+    require((commander_team_board.get("summary") or {}).get("dependency_edges") == 1, "commander team board dependency summary failed", failures)
+    require((commander_team_board.get("safety") or {}).get("read_only") is True, "commander team board must stay read-only", failures)
     commander_gates = build_commander_project_board_gates(
         closed_loop_runs=0,
         worker_status={"status": "ready", "running_workers": 0, "stuck_worker_tasks": 0},

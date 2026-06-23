@@ -108,6 +108,105 @@ def commander_work_package_next_actions(packages: list[dict[str, Any]]) -> list[
     return next_actions[:8]
 
 
+def build_commander_team_board(
+    *,
+    packages: list[dict[str, Any]],
+    workspace_id: str,
+    project_id: str | None,
+    plan_id: str | None,
+) -> dict[str, Any]:
+    status_counts: dict[str, int] = {}
+    owner_counts: dict[str, int] = {}
+    dependency_edges: list[dict[str, str]] = []
+    lanes: list[dict[str, Any]] = []
+    ready_for_review: list[str] = []
+    blocked: list[str] = []
+    missing_coding_evidence: list[str] = []
+
+    task_ids = {str(item.get("task_id") or "") for item in packages}
+    for item in packages:
+        task_id = str(item.get("task_id") or "")
+        package_status = str(item.get("package_status") or item.get("status") or "unknown")
+        owner_agent_id = str(item.get("owner_agent_id") or "unassigned")
+        status_counts[package_status] = status_counts.get(package_status, 0) + 1
+        owner_counts[owner_agent_id] = owner_counts.get(owner_agent_id, 0) + 1
+        dependencies = [str(dep) for dep in (item.get("dependencies") or []) if dep]
+        for dep in dependencies:
+            dependency_edges.append({
+                "from_task_id": dep,
+                "to_task_id": task_id,
+                "known_in_board": dep in task_ids,
+            })
+        if package_status == "ready_for_review":
+            ready_for_review.append(task_id)
+        if package_status == "blocked":
+            blocked.append(task_id)
+        if ((item.get("coding_evidence_gate") or {}).get("status") in {"missing", "partial"}):
+            missing_coding_evidence.append(task_id)
+        latest_run = item.get("latest_run") or {}
+        lanes.append({
+            "task_id": task_id,
+            "lane_id": item.get("lane_id"),
+            "title": item.get("title"),
+            "owner_agent_id": item.get("owner_agent_id"),
+            "collaborator_agent_ids": item.get("collaborator_agent_ids") or [],
+            "status": item.get("status"),
+            "package_status": package_status,
+            "priority": item.get("priority"),
+            "risk_level": item.get("risk_level"),
+            "dependencies": dependencies,
+            "dependency_count": len(dependencies),
+            "latest_run": {
+                "run_id": latest_run.get("run_id"),
+                "status": latest_run.get("status"),
+                "created_at": latest_run.get("created_at"),
+            } if latest_run else None,
+            "evidence_counts": item.get("evidence_counts") or {},
+            "localization_gate": item.get("localization_gate") or {},
+            "coding_evidence_gate": item.get("coding_evidence_gate") or {},
+            "recommended_action": item.get("recommended_action"),
+        })
+
+    if blocked:
+        board_status = "blocked"
+    elif ready_for_review or missing_coding_evidence or status_counts.get("still_running") or status_counts.get("planned"):
+        board_status = "attention"
+    else:
+        board_status = "ready" if lanes else "empty"
+
+    return {
+        "status": board_status,
+        "workspace_id": workspace_id,
+        "project_id": project_id or None,
+        "plan_id": plan_id or None,
+        "summary": {
+            "total_lanes": len(lanes),
+            "status_counts": status_counts,
+            "owner_counts": owner_counts,
+            "ready_for_review": len(ready_for_review),
+            "blocked": len(blocked),
+            "missing_coding_evidence": len(missing_coding_evidence),
+            "dependency_edges": len(dependency_edges),
+        },
+        "lanes": lanes,
+        "dependency_edges": dependency_edges,
+        "ready_for_review_task_ids": ready_for_review,
+        "blocked_task_ids": blocked,
+        "missing_coding_evidence_task_ids": missing_coding_evidence,
+        "next_actions": commander_work_package_next_actions(packages),
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "token_omitted": True,
+            "raw_prompt_omitted": True,
+            "raw_source_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
+
+
 def build_commander_work_packages_readback(
     *,
     packages: list[dict[str, Any]],

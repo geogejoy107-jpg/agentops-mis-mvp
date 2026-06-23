@@ -94,6 +94,7 @@ from agentops_mis_core.gateway_runs import (
     run_heartbeat_terminal_task_status,
 )
 from agentops_mis_core.commander_work_packages import (
+    build_commander_team_board,
     build_commander_work_packages_readback,
     build_commander_project_board_gates,
     commander_project_board_next_actions,
@@ -13575,13 +13576,37 @@ def commander_repo_map(qs=None, headers=None) -> dict:
     }
 
 
-def commander_project_board(conn: sqlite3.Connection, headers) -> dict:
+def commander_project_board(conn: sqlite3.Connection, headers, qs=None) -> dict:
+    qs = qs or {}
     readiness, worker = safe_commander_readiness_snapshot(conn, headers)
     adapter_payload = worker_adapter_readiness(conn, refresh=False)
     conn.rollback()
     workspace_id = normalize_workspace_id(headers.get("X-AgentOps-Workspace-Id") or "local-demo")
     live_acceptance = live_acceptance_readiness(conn, workspace_id)
     live_acceptance_summary = live_acceptance.get("summary") or {}
+    project_id = commander_safe_text((qs.get("project_id") or [""])[0], 120)
+    plan_id = commander_safe_text((qs.get("plan_id") or [""])[0], 120)
+    try:
+        team_limit_raw = int((qs.get("limit") or ["25"])[0])
+    except Exception:
+        team_limit_raw = 25
+    team_limit = min(max(team_limit_raw, 1), 100)
+    team_readback = None
+    team_board = None
+    if project_id or plan_id:
+        team_readback = commander_work_packages_readback(conn, {
+            "workspace_id": [workspace_id],
+            "project_id": [project_id],
+            "plan_id": [plan_id],
+            "status": ["all"],
+            "limit": [str(team_limit)],
+        }, headers)
+        team_board = build_commander_team_board(
+            packages=team_readback.get("work_packages") or [],
+            workspace_id=workspace_id,
+            project_id=project_id or None,
+            plan_id=plan_id or None,
+        )
 
     task_counts = status_counts(conn, "tasks", VALID_TASK_STATUSES)
     run_counts = status_counts(conn, "runs")
@@ -13726,6 +13751,14 @@ def commander_project_board(conn: sqlite3.Connection, headers) -> dict:
             "result_run_id": job.get("result_run_id"),
         } for job in stuck_jobs],
         "recent_work_packages": recent_work_packages,
+        "team_board": team_board,
+        "team_board_filter": {
+            "project_id": project_id or None,
+            "plan_id": plan_id or None,
+            "limit": team_limit,
+            "applied": bool(project_id or plan_id),
+        },
+        "team_work_packages_summary": (team_readback or {}).get("summary"),
         "integration_gates": integration_gates,
         "recommended_next_actions": recommended_next_actions[:8],
         "safety": {
@@ -23847,7 +23880,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/commander/project-board":
-                payload = commander_project_board(conn, self.headers)
+                payload = commander_project_board(conn, self.headers, qs)
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/commander/repo-map":
