@@ -20,7 +20,10 @@ DIST = "agentops_mis_cli"
 VERSION = "0.1.0"
 DIST_INFO = f"{DIST}-{VERSION}.dist-info"
 ROOT = Path(__file__).resolve().parents[1]
-PACKAGE = ROOT / "agentops_mis_cli"
+PACKAGES = [
+    ROOT / "agentops_mis_cli",
+    ROOT / "agentops_mis_core",
+]
 
 
 def _metadata() -> str:
@@ -62,9 +65,10 @@ def _hash(data: bytes) -> tuple[str, str]:
 
 def _package_files() -> list[tuple[str, bytes]]:
     files = []
-    for path in sorted(PACKAGE.glob("*.py")):
-        rel = path.relative_to(ROOT).as_posix()
-        files.append((rel, path.read_bytes()))
+    for package in PACKAGES:
+        for path in sorted(package.glob("*.py")):
+            rel = path.relative_to(ROOT).as_posix()
+            files.append((rel, path.read_bytes()))
     return files
 
 
@@ -113,7 +117,7 @@ def build_sdist(sdist_directory: str, config_settings=None) -> str:
     prefix = f"{DIST}-{VERSION}"
     include = [
         ROOT / "pyproject.toml",
-        *sorted(PACKAGE.glob("*.py")),
+        *(path for package in PACKAGES for path in sorted(package.glob("*.py"))),
         ROOT / "README.md",
     ]
     with tarfile.open(target, "w:gz") as tf:
