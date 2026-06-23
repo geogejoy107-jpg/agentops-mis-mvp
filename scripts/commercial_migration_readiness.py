@@ -645,6 +645,21 @@ def main() -> int:
             "Gate 5 BYOC deployment acceptance covers backup/restore confirmation, pre-restore safety copy, signed audit export key requirement, tamper detection, raw metadata omission, and Next.js deployment readiness",
         ),
         check(
+            "deployment_readiness_surface_exists",
+            file_contains("docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md", "deployment_readiness_v1")
+            and file_contains("server.py", "def deployment_readiness")
+            and file_contains("server.py", "/api/deployment/readiness")
+            and file_contains("agentops_mis_cli/agentops.py", "cmd_deployment_readiness")
+            and file_contains("agentops_mis_cli/agentops.py", 'sub.add_parser("deployment"')
+            and file_contains("scripts/deployment_readiness_smoke.py", "deployment_readiness_v1")
+            and file_contains("scripts/deployment_readiness_smoke.py", "agentops-deployment")
+            and file_contains("scripts/nextjs_parity_smoke.py", "loadServerDeploymentReadiness")
+            and file_contains("ui/next-app/src/lib/misServer.ts", "/deployment/readiness")
+            and file_contains("ui/next-app/src/components/DeploymentPage.tsx", "Deployment readiness verdict")
+            and (ROOT / "scripts" / "deployment_readiness_smoke.py").exists(),
+            "Gate 5 deployment readiness API, CLI, smoke, and Next.js verdict panel are present",
+        ),
+        check(
             "blocked_generated_or_runtime_artifacts_absent",
             not blocked_paths,
             "blocked_paths=" + json.dumps(blocked_paths, ensure_ascii=False),
@@ -728,6 +743,7 @@ def main() -> int:
             "verify": [
                 "Postgres container parity smoke",
                 "Postgres ledger acceptance",
+                "python3 scripts/deployment_readiness_smoke.py",
                 "python3 scripts/byoc_deployment_acceptance_smoke.py",
                 "backup/restore and signed export checks",
             ],

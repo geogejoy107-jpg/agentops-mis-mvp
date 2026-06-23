@@ -3,6 +3,7 @@ import { AppFrame } from "./AppFrame";
 import type {
   AuditSummary,
   CommercialEntitlementStatus,
+  DeploymentReadinessPayload,
   LocalReadinessPayload,
   ReadinessGate,
   SecurityReadinessSummary,
@@ -56,6 +57,7 @@ function GateList({ gates }: Readonly<{ gates?: ReadinessGate[] }>) {
 }
 
 export function DeploymentParityPage({
+  deployment,
   local,
   security,
   entitlements,
@@ -63,6 +65,7 @@ export function DeploymentParityPage({
   audit,
   errors,
 }: Readonly<{
+  deployment: DeploymentReadinessPayload;
   local: LocalReadinessPayload;
   security: SecurityReadinessSummary;
   entitlements: CommercialEntitlementStatus;
@@ -73,6 +76,7 @@ export function DeploymentParityPage({
   const evidence = local.evidence || {};
   const docs = local.docs || [];
   const deploymentChecks = local.deployment_checks || {};
+  const deploymentSafety = deployment.safety || {};
   const docIds = new Set(docs.filter((doc) => doc.exists).map((doc) => doc.id));
   const backupDocsReady = ["customer_local_deployment_runbook", "local_backup_utility", "local_backup_smoke", "byoc_deployment_acceptance_smoke"].every((id) => docIds.has(id));
   const signedAuditExportReady = deploymentChecks.signed_audit_export_utility === true && deploymentChecks.signed_audit_export_contract === true;
@@ -95,7 +99,7 @@ export function DeploymentParityPage({
           <h1>Deployment</h1>
           <p className="subtle">Read-only local-first and BYOC evidence for deployment health, backup, retention, and connector policy</p>
         </div>
-        <span className="status statusGood">read-only</span>
+        <span className={statusClass(deployment.status || "ready")}>{deployment.status || "read-only"}</span>
       </header>
 
       {(errors || []).filter(Boolean).map((error) => (
@@ -104,6 +108,7 @@ export function DeploymentParityPage({
 
       <section className="metrics">
         {[
+          ["Deployment", deployment.status || "unknown"],
           ["Local readiness", local.status || "unknown"],
           ["Production", security.status || "unknown"],
           ["Storage", `${storage.active_backend || "unknown"} / ${storage.selected_backend || "unknown"}`],
@@ -117,6 +122,23 @@ export function DeploymentParityPage({
             <strong>{String(value)}</strong>
           </div>
         ))}
+      </section>
+
+      <section className="panel wide">
+        <div className="panelHeader">
+          <h2><ServerCog size={14} /> Deployment readiness verdict</h2>
+          <span className={statusClass(deployment.status)}>{deployment.status || "unknown"}</span>
+        </div>
+        <div className="proofStrip">
+          <span>contract {deployment.contract_id || "deployment_readiness_v1"}</span>
+          <span>edition {deployment.edition || entitlements.edition || "free_local"}</span>
+          <span>deployment ready {boolText(deployment.deployment_ready)}</span>
+          <span>read-only {boolText(deploymentSafety.read_only)}</span>
+          <span>live execution {boolText(deployment.live_execution_performed)}</span>
+          <span>token omitted {boolText(deployment.token_omitted)}</span>
+          <span>browser restore {deploymentSafety.browser_restore_write_exposed ? "open" : "closed"}</span>
+        </div>
+        <GateList gates={deployment.gates} />
       </section>
 
       <section className="grid">

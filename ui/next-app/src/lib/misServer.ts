@@ -6,6 +6,7 @@ import type {
   CustomerProjectIndexPayload,
   CustomerProjectReportPayload,
   CustomerTaskTemplateListPayload,
+  DeploymentReadinessPayload,
   EvidenceDrilldownPayload,
   AgentPlanVerifyPayload,
   LocalReadinessPayload,
@@ -97,6 +98,14 @@ export async function loadServerStorageBackendStatus(): Promise<ServerLoadResult
 export async function loadServerLocalReadiness(): Promise<ServerLoadResult<LocalReadinessPayload>> {
   try {
     return { data: await serverMisJson<LocalReadinessPayload>("/local/readiness"), error: null };
+  } catch (err) {
+    return { data: {}, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export async function loadServerDeploymentReadiness(): Promise<ServerLoadResult<DeploymentReadinessPayload>> {
+  try {
+    return { data: await serverMisJson<DeploymentReadinessPayload>("/deployment/readiness"), error: null };
   } catch (err) {
     return { data: {}, error: err instanceof Error ? err.message : String(err) };
   }

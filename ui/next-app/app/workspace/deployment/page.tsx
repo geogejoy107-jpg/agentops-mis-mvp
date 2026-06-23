@@ -2,6 +2,7 @@ import { DeploymentParityPage } from "@/components/DeploymentPage";
 import {
   loadServerAudit,
   loadServerCommercialEntitlements,
+  loadServerDeploymentReadiness,
   loadServerLocalReadiness,
   loadServerSecurityProductionReadiness,
   loadServerStorageBackendStatus,
@@ -10,7 +11,8 @@ import {
 export const dynamic = "force-dynamic";
 
 export default async function DeploymentPage() {
-  const [local, security, entitlements, storage, audit] = await Promise.all([
+  const [deployment, local, security, entitlements, storage, audit] = await Promise.all([
+    loadServerDeploymentReadiness(),
     loadServerLocalReadiness(),
     loadServerSecurityProductionReadiness(),
     loadServerCommercialEntitlements(),
@@ -19,12 +21,13 @@ export default async function DeploymentPage() {
   ]);
   return (
     <DeploymentParityPage
+      deployment={deployment.data}
       local={local.data}
       security={security.data}
       entitlements={entitlements.data}
       storage={storage.data}
       audit={audit.data}
-      errors={[local.error, security.error, entitlements.error, storage.error, audit.error].filter(Boolean) as string[]}
+      errors={[deployment.error, local.error, security.error, entitlements.error, storage.error, audit.error].filter(Boolean) as string[]}
     />
   );
 }

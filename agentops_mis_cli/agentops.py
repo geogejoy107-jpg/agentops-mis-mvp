@@ -274,6 +274,10 @@ def cmd_demo_readiness(args, client: AgentOpsClient) -> dict:
     return client.get("/api/demo/readiness")
 
 
+def cmd_deployment_readiness(args, client: AgentOpsClient) -> dict:
+    return client.get("/api/deployment/readiness")
+
+
 def cmd_commander_board(args, client: AgentOpsClient) -> dict:
     return client.get("/api/commander/project-board")
 
@@ -1342,6 +1346,11 @@ def build_parser() -> argparse.ArgumentParser:
     demo_readiness = demo_sub.add_parser("readiness", help="Show the canonical v1.5 classroom recording path readiness.")
     demo_readiness.set_defaults(handler="demo_readiness")
 
+    deployment = sub.add_parser("deployment", help="Read-only local/BYOC deployment readiness commands.")
+    deployment_sub = deployment.add_subparsers(dest="action", required=True)
+    deployment_readiness = deployment_sub.add_parser("readiness", help="Show BYOC deployment gates, backup, signed export, storage, and retention readiness.")
+    deployment_readiness.set_defaults(handler="deployment_readiness")
+
     commander = sub.add_parser("commander", help="Read-only commander surface readback commands.")
     commander_sub = commander.add_subparsers(dest="action", required=True)
     commander_board = commander_sub.add_parser("board", help="Read the Commander project board.")
@@ -1929,6 +1938,7 @@ HANDLERS = {
     "doctor": cmd_doctor,
     "local_readiness": cmd_local_readiness,
     "demo_readiness": cmd_demo_readiness,
+    "deployment_readiness": cmd_deployment_readiness,
     "commander_board": cmd_commander_board,
     "commander_inbox": cmd_commander_inbox,
     "commander_plan": cmd_commander_plan,

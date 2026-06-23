@@ -427,6 +427,13 @@ Must be true:
   overwrite safety copy, signed audit export with a customer key, raw metadata
   omission, and tamper detection. Verify with
   `python3 scripts/byoc_deployment_acceptance_smoke.py`.
+- `deployment_readiness_v1` exposes the Gate 5 deployment verdict through
+  `GET /api/deployment/readiness`, `agentops deployment readiness`, and the
+  Next.js `/workspace/deployment` page. It aggregates local readiness,
+  production security, storage backend, backup/restore, signed audit export,
+  retention, SSO/private connector gates, and omission contracts without
+  executing live work, restoring a database, or printing secrets. Verify with
+  `python3 scripts/deployment_readiness_smoke.py`.
 - Postgres adapter and migrations pass the same core ledger acceptance used for
   SQLite.
 - Runtime connectors remain policy-gated and do not store raw secrets, raw

@@ -285,6 +285,32 @@ export type LocalReadinessPayload = {
   error?: string;
 };
 
+export type DeploymentReadinessPayload = {
+  provider?: string;
+  operation?: string;
+  contract_id?: string;
+  generated_at?: string;
+  status?: string;
+  ok?: boolean;
+  deployment_ready?: boolean;
+  workspace_id?: string;
+  edition?: string;
+  gates?: ReadinessGate[];
+  next_actions?: string[];
+  local?: Record<string, boolean | string | number | undefined>;
+  security?: Record<string, boolean | string | number | undefined>;
+  storage?: Record<string, boolean | string | number | undefined>;
+  backup_restore?: Record<string, boolean | string | number | undefined>;
+  signed_audit_export?: Record<string, boolean | string | number | undefined>;
+  retention?: Record<string, boolean | string | number | undefined>;
+  enterprise_byoc?: Record<string, boolean | string | number | undefined>;
+  contracts?: string[];
+  safety?: Record<string, boolean | string | number | undefined>;
+  live_execution_performed?: boolean;
+  token_omitted?: boolean;
+  error?: string;
+};
+
 export type WorkerStatusSummary = {
   provider?: string;
   status?: string;

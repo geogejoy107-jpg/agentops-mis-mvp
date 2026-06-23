@@ -12115,6 +12115,226 @@ def local_readiness(conn: sqlite3.Connection, headers) -> dict:
     }
 
 
+def deployment_readiness(conn: sqlite3.Connection, headers) -> dict:
+    local = local_readiness(conn, headers)
+    security = local.get("security_production_readiness") or security_production_readiness(conn, headers)
+    entitlements = entitlement_status(headers)
+    storage = storage_backend_status(headers)
+    deployment_checks = local.get("deployment_checks") or {}
+    capabilities = entitlements.get("capabilities") or {}
+
+    def capability_gate(capability: str) -> dict:
+        for gate in entitlements.get("gates") or []:
+            if gate.get("capability") == capability:
+                return gate
+        return {
+            "capability": capability,
+            "enabled": bool(capabilities.get(capability)),
+            "status": "enabled" if capabilities.get(capability) else "disabled",
+        }
+
+    def gate(gate_id: str, label: str, ok: bool, status: str, detail: str, next_action: str) -> dict:
+        return {
+            "id": gate_id,
+            "label": label,
+            "ok": bool(ok),
+            "status": status,
+            "detail": detail,
+            "next_action": next_action,
+        }
+
+    backup_ok = all(deployment_checks.get(key) is True for key in [
+        "backup_restore_utility",
+        "backup_restore_smoke",
+        "byoc_deployment_acceptance_smoke",
+        "restore_requires_cli_confirmation",
+        "overwrite_creates_pre_restore_copy",
+        "token_omitted",
+    ]) and deployment_checks.get("browser_restore_write_exposed") is False
+    signed_export_proof_ok = all(deployment_checks.get(key) is True for key in [
+        "signed_audit_export_utility",
+        "signed_audit_export_contract",
+        "signed_export_requires_customer_key",
+        "signed_export_tamper_detection",
+        "raw_metadata_omitted",
+        "token_omitted",
+    ])
+    signed_gate = capability_gate("signed_audit_exports")
+    retention_gate = capability_gate("longer_audit_retention")
+    sso_gate = capability_gate("sso_hooks")
+    connector_gate = capability_gate("custom_connector_sdk")
+    postgres_gate = capability_gate("postgres_adapter")
+
+    selected_storage = storage.get("selected_backend") or "sqlite"
+    postgres_selected = selected_storage == "postgres"
+    postgres_ready = storage.get("status") == "active" and storage.get("active_backend") == "postgres"
+    postgres_gate_status = "ready" if postgres_ready else "blocked" if postgres_selected else "gated"
+    postgres_gate_ok = postgres_ready or not postgres_selected
+    postgres_detail = (
+        storage.get("contract")
+        if postgres_ready
+        else storage.get("reason")
+        if postgres_selected
+        else "SQLite is active; Postgres remains enterprise_byoc gated until selected and proven."
+    )
+
+    signed_status = "ready" if signed_gate.get("enabled") and signed_export_proof_ok else "gated" if signed_export_proof_ok else "blocked"
+    retention_status = "ready" if retention_gate.get("enabled") else "gated"
+    sso_status = "ready" if sso_gate.get("enabled") and connector_gate.get("enabled") else "gated"
+    gates = [
+        gate(
+            "local_readiness",
+            "Local-first product readiness",
+            local.get("ok") is True,
+            local.get("status") or "unknown",
+            f"{(local.get('evidence') or {}).get('closed_loop_runs', 0)} closed-loop run(s)",
+            "agentops local readiness",
+        ),
+        gate(
+            "production_security",
+            "Production security boundary",
+            security.get("status") != "blocked",
+            security.get("status") or "unknown",
+            security.get("contract") or f"auth_mode={security.get('auth_mode')}",
+            "agentops security production-readiness",
+        ),
+        gate(
+            "storage_backend",
+            "Storage backend migration gate",
+            postgres_gate_ok,
+            postgres_gate_status,
+            str(postgres_detail or "storage backend status unavailable"),
+            "agentops deployment readiness",
+        ),
+        gate(
+            "backup_restore",
+            "Backup and restore drill",
+            backup_ok,
+            "ready" if backup_ok else "blocked",
+            "CLI-confirmed restore, overwrite safety copy, isolated smoke, and no browser restore write.",
+            "python3 scripts/byoc_deployment_acceptance_smoke.py",
+        ),
+        gate(
+            "signed_audit_export",
+            "Signed audit export",
+            signed_export_proof_ok,
+            signed_status,
+            "Customer-key HMAC export is available and tamper-checked; entitlement controls whether it is enabled.",
+            "Set the audit export signing key, then run python3 scripts/agentops_signed_audit_export.py export",
+        ),
+        gate(
+            "retention_policy",
+            "Audit retention entitlement",
+            True,
+            retention_status,
+            f"requires {retention_gate.get('required_edition') or 'pro_workspace'}; enforcement={retention_gate.get('enforcement') or 'read_only_preview'}",
+            "Keep longer audit retention fail-closed until entitlement and retention policy are enabled.",
+        ),
+        gate(
+            "sso_connector_policy",
+            "SSO and private connector policy",
+            True,
+            sso_status,
+            f"sso={bool(sso_gate.get('enabled'))}, custom_connector_sdk={bool(connector_gate.get('enabled'))}",
+            "Enable enterprise_byoc before exposing SSO hooks or private connector SDK.",
+        ),
+        gate(
+            "omission_contract",
+            "Secret and raw-content omission",
+            deployment_checks.get("token_omitted") is True and deployment_checks.get("raw_metadata_omitted") is True,
+            "ready" if deployment_checks.get("token_omitted") is True and deployment_checks.get("raw_metadata_omitted") is True else "blocked",
+            "Tokens, signing key, raw metadata, prompts, and raw responses stay omitted from readiness output.",
+            "python3 scripts/deployment_readiness_smoke.py",
+        ),
+    ]
+    blockers = [item for item in gates if not item["ok"] or item["status"] == "blocked"]
+    warnings = [item for item in gates if item["status"] in {"attention", "gated", "warn"}]
+    status = "blocked" if blockers else "attention" if warnings else "ready"
+    next_actions = [item["next_action"] for item in gates if item["status"] in {"blocked", "attention", "gated", "warn"}]
+    return {
+        "provider": "agentops-deployment",
+        "operation": "deployment_readiness",
+        "contract_id": "deployment_readiness_v1",
+        "generated_at": now_iso(),
+        "status": status,
+        "ok": status != "blocked",
+        "deployment_ready": status == "ready",
+        "workspace_id": local.get("workspace_id") or normalize_workspace_id(headers.get("X-AgentOps-Workspace-Id") or "local-demo"),
+        "edition": entitlements.get("edition"),
+        "gates": gates,
+        "next_actions": next_actions or ["Keep monitoring deployment readiness gates before BYOC handoff."],
+        "local": {
+            "status": local.get("status"),
+            "ok": local.get("ok"),
+            "closed_loop_runs": (local.get("evidence") or {}).get("closed_loop_runs"),
+        },
+        "security": {
+            "status": security.get("status"),
+            "production_ready": security.get("production_ready"),
+            "production_requested": security.get("production_requested"),
+            "auth_mode": security.get("auth_mode"),
+        },
+        "storage": {
+            "status": storage.get("status"),
+            "selected_backend": storage.get("selected_backend"),
+            "active_backend": storage.get("active_backend"),
+            "reason": storage.get("reason"),
+            "contract": storage.get("contract"),
+            "fallback_performed": storage.get("fallback_performed"),
+            "writes_allowed": storage.get("writes_allowed"),
+        },
+        "backup_restore": {
+            "status": "ready" if backup_ok else "blocked",
+            "utility_ready": deployment_checks.get("backup_restore_utility") is True,
+            "smoke_ready": deployment_checks.get("backup_restore_smoke") is True,
+            "recovery_drill_ready": deployment_checks.get("byoc_deployment_acceptance_smoke") is True,
+            "restore_requires_cli_confirmation": deployment_checks.get("restore_requires_cli_confirmation") is True,
+            "overwrite_creates_pre_restore_copy": deployment_checks.get("overwrite_creates_pre_restore_copy") is True,
+            "browser_restore_write_exposed": deployment_checks.get("browser_restore_write_exposed") is True,
+        },
+        "signed_audit_export": {
+            "status": signed_status,
+            "capability_enabled": bool(signed_gate.get("enabled")),
+            "required_edition": signed_gate.get("required_edition") or "enterprise_byoc",
+            "utility_ready": deployment_checks.get("signed_audit_export_utility") is True,
+            "contract_ready": deployment_checks.get("signed_audit_export_contract") is True,
+            "customer_key_required": deployment_checks.get("signed_export_requires_customer_key") is True,
+            "tamper_detection": deployment_checks.get("signed_export_tamper_detection") is True,
+            "raw_metadata_omitted": deployment_checks.get("raw_metadata_omitted") is True,
+        },
+        "retention": {
+            "status": retention_status,
+            "capability_enabled": bool(retention_gate.get("enabled")),
+            "required_edition": retention_gate.get("required_edition") or "pro_workspace",
+            "enforcement": retention_gate.get("enforcement") or "read_only_preview",
+        },
+        "enterprise_byoc": {
+            "postgres_adapter": bool(postgres_gate.get("enabled")),
+            "sso_hooks": bool(sso_gate.get("enabled")),
+            "signed_audit_exports": bool(signed_gate.get("enabled")),
+            "custom_connector_sdk": bool(connector_gate.get("enabled")),
+        },
+        "contracts": [
+            "deployment_readiness_v1",
+            "byoc_deployment_acceptance_v1",
+            "signed_audit_export_v1",
+            storage.get("contract") or "sqlite_free_local_default",
+        ],
+        "safety": {
+            "read_only": True,
+            "live_execution_performed": False,
+            "browser_restore_write_exposed": False,
+            "token_omitted": True,
+            "raw_metadata_omitted": deployment_checks.get("raw_metadata_omitted") is True,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "signing_key_omitted": True,
+        },
+        "live_execution_performed": False,
+        "token_omitted": True,
+    }
+
+
 def dispatch_local_worker_once(conn, body: dict) -> dict:
     adapter = coerce_choice(body.get("adapter"), {"mock", "hermes", "openclaw"}, "mock")
     confirm_run = bool(body.get("confirm_run"))
@@ -13094,6 +13314,10 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/local/readiness":
                 payload = local_readiness(conn, self.headers)
                 conn.commit()
+                return self.send_json(payload)
+            if path == "/api/deployment/readiness":
+                payload = deployment_readiness(conn, self.headers)
+                conn.rollback()
                 return self.send_json(payload)
             if path == "/api/security/production-readiness":
                 payload = security_production_readiness(conn, self.headers)

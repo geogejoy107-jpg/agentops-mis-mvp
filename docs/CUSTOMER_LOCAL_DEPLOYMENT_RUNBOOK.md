@@ -39,6 +39,7 @@ Run read-only readiness:
 agentops doctor
 agentops status
 agentops local readiness
+agentops deployment readiness
 agentops worker status
 agentops security production-readiness
 ```
@@ -189,6 +190,7 @@ with the row payload must fail verification.
 
 ```bash
 python3 -m py_compile server.py scripts/*.py agentops_mis_cli/*.py
+python3 scripts/deployment_readiness_smoke.py
 python3 scripts/agentops_local_backup_smoke.py
 python3 scripts/byoc_deployment_acceptance_smoke.py
 python3 scripts/enrollment_policy_preview_smoke.py
