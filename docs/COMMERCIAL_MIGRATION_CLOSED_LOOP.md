@@ -233,6 +233,7 @@ python3 scripts/ui_route_retirement_packet_smoke.py
 python3 scripts/nextjs_agent_gateway_task_proxy_smoke.py
 python3 scripts/nextjs_agent_gateway_cli_worker_dogfood_smoke.py
 python3 scripts/nextjs_worker_dispatch_once_smoke.py
+python3 scripts/nextjs_customer_worker_dispatch_smoke.py
 python3 scripts/nextjs_worker_stuck_release_smoke.py
 python3 scripts/nextjs_enrollment_request_smoke.py
 python3 scripts/nextjs_worker_daemon_control_smoke.py
@@ -243,6 +244,14 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   The matrix smoke statically compares actual Vite routes, actual Next App
   Router pages/routes, API contracts, evidence commands, and retirement gates so
   page parity cannot drift into undocumented route replacement.
+
+  `python3 scripts/nextjs_customer_worker_dispatch_smoke.py`
+  (`nextjs_customer_worker_dispatch_v1`) starts isolated MIS API and Next.js
+  servers, proves Next `/api/mis/workflows/customer-worker-task` plus
+  `/workspace/dispatch/customer-worker` can run one safe mock customer-worker
+  dispatch, read task/run/delivery approval/verified plan-evidence back through
+  the Next proxy, and fail closed for Hermes/OpenClaw with
+  `customer_worker_mock_only_next_parity`.
 
   The task/run route parity smoke starts isolated MIS API and Next.js servers,
   verifies Next task/run list links to detail routes, compares direct MIS API
@@ -354,6 +363,7 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   upstream execution.
 
 - First migration artifact:
+  - `agentops_mis_cli/worker.py`
   - `ui/next-app/app/workspace/page.tsx`
   - `ui/next-app/app/workspace/agents/page.tsx`
   - `ui/next-app/app/workspace/agents/[agentId]/page.tsx`
@@ -387,6 +397,7 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   - `ui/next-app/app/workspace/reports/page.tsx`
   - `ui/next-app/app/workspace/customer-projects/[projectId]/report/page.tsx`
   - `ui/next-app/app/workspace/customer-projects/[projectId]/report/archive/route.ts`
+  - `ui/next-app/app/workspace/dispatch/customer-worker/route.ts`
   - `ui/next-app/app/workspace/audit/page.tsx`
   - `ui/next-app/app/api/mis/[...path]/route.ts`
   - `ui/next-app/src/lib/mis.ts`
@@ -408,6 +419,7 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   - `scripts/nextjs_agent_gateway_task_proxy_smoke.py`
   - `scripts/nextjs_agent_gateway_cli_worker_dogfood_smoke.py`
   - `scripts/nextjs_worker_dispatch_once_smoke.py`
+  - `scripts/nextjs_customer_worker_dispatch_smoke.py`
   - `scripts/nextjs_worker_stuck_release_smoke.py`
   - `scripts/nextjs_worker_daemon_control_smoke.py`
   - `scripts/nextjs_enrollment_request_smoke.py`

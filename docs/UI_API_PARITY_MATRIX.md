@@ -53,9 +53,9 @@ route retirement:
 ## Current Important Gaps
 
 - Pixel Office is only partially represented in Next.js. Next currently proves
-  template entitlement dispatch, but Vite remains canonical for the visual map,
-  local brief, customer-worker dispatch form, async job status, and richer owner
-  dispatch workflow.
+  template entitlement dispatch and mock-only customer-worker dispatch, but Vite
+  remains canonical for the visual map, local brief, async job status, live
+  runtime execution, and richer owner dispatch workflow.
 - Worker console is only partially represented in Next.js. Next is read-only for
   production safety and readiness; Vite remains canonical for local worker
   start/stop/restart, task release, remote enrollment mutation, and detailed
@@ -137,6 +137,7 @@ cd ui/next-app && npm run build
 python3 scripts/nextjs_agent_gateway_task_proxy_smoke.py
 python3 scripts/nextjs_agent_gateway_cli_worker_dogfood_smoke.py
 python3 scripts/nextjs_worker_dispatch_once_smoke.py
+python3 scripts/nextjs_customer_worker_dispatch_smoke.py
 python3 scripts/nextjs_worker_stuck_release_smoke.py
 python3 scripts/nextjs_enrollment_request_smoke.py
 python3 scripts/nextjs_worker_daemon_control_smoke.py
@@ -171,6 +172,15 @@ ledger, then proves `POST /api/mis/workers/local/dispatch-once` and the Next
 persist task/run/plan-evidence proof, read the completed task back without
 token leakage, and reject non-mock proxy/form dispatch before upstream
 execution with `mock_only_next_parity`.
+
+`python3 scripts/nextjs_customer_worker_dispatch_smoke.py`
+(`nextjs_customer_worker_dispatch_v1`) starts isolated MIS API and Next.js
+servers, proves `POST /api/mis/workflows/customer-worker-task` plus the Next
+`/workspace/dispatch/customer-worker` form fallback can run one safe `mock`
+customer-worker task, read task/run/delivery-approval/verified plan-evidence
+back through the Next proxy, render the dispatch evidence strip, and reject
+Hermes/OpenClaw before upstream execution with
+`customer_worker_mock_only_next_parity`.
 
 `python3 scripts/nextjs_worker_stuck_release_smoke.py`
 (`nextjs_worker_stuck_release_v1`) starts isolated MIS API and Next.js servers,

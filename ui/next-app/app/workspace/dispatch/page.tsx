@@ -32,6 +32,14 @@ export default async function DispatchPage({ searchParams }: PageProps) {
         currentEdition: one(params.current_edition),
         projectId: one(params.project_id),
         error: one(params.error),
+        customerWorkerStatus: one(params.customer_worker_status),
+        customerWorkerAdapter: one(params.customer_worker_adapter),
+        customerWorkerTaskId: one(params.customer_worker_task_id),
+        customerWorkerRunId: one(params.customer_worker_run_id),
+        customerWorkerArtifactId: one(params.customer_worker_artifact_id),
+        customerWorkerManifestId: one(params.customer_worker_manifest_id),
+        customerWorkerApprovalId: one(params.customer_worker_approval_id),
+        customerWorkerError: one(params.customer_worker_error),
       }}
     />
   );

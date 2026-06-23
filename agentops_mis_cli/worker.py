@@ -653,6 +653,7 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
     final_status = "completed" if result.ok else "failed"
     client.post(f"/api/agent-gateway/runs/{run_id}/heartbeat", {
         "workspace_id": client.workspace_id,
+        "agent_id": client.agent_id,
         "status": final_status,
         "output_summary": result.output_summary,
         "duration_ms": result.duration_ms,

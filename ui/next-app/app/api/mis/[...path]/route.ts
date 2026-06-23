@@ -57,6 +57,13 @@ function isWorkerDispatchPath(path: string[]) {
   return path.join("/") === "workers/local/dispatch-once";
 }
 
+function isCustomerWorkerWorkflowPath(path: string[]) {
+  return [
+    "workflows/customer-worker-task",
+    "workflows/customer-worker-task/submit",
+  ].includes(path.join("/"));
+}
+
 function isWorkerReleasePath(path: string[]) {
   return path.join("/") === "workers/tasks/release";
 }
@@ -105,6 +112,14 @@ function workerDispatchAdapter(body: Buffer | undefined) {
     return "invalid_json";
   }
   return "mock";
+}
+
+function mockOnlyAdapterGuard(body: Buffer | undefined, error: string) {
+  const adapter = workerDispatchAdapter(body);
+  if (adapter !== "mock") {
+    return { ok: false, adapter, error: adapter === "invalid_json" ? "invalid_json" : error };
+  }
+  return { ok: true, adapter, error: "" };
 }
 
 function workerReleaseGuard(body: Buffer | undefined) {
@@ -340,9 +355,22 @@ async function proxy(request: NextRequest, context: RouteContext) {
     ? undefined
     : Buffer.from(new Uint8Array(await request.arrayBuffer()));
   if (request.method === "POST" && isWorkerDispatchPath(path)) {
-    const adapter = workerDispatchAdapter(body);
-    if (adapter !== "mock") {
-      return NextResponse.json({ ok: false, error: adapter === "invalid_json" ? "invalid_json" : "mock_only_next_parity" }, { status: 403 });
+    const guard = mockOnlyAdapterGuard(body, "mock_only_next_parity");
+    if (!guard.ok) {
+      return NextResponse.json({ ok: false, error: guard.error }, { status: 403 });
+    }
+  }
+  if (request.method === "POST" && isCustomerWorkerWorkflowPath(path)) {
+    const guard = mockOnlyAdapterGuard(body, "customer_worker_mock_only_next_parity");
+    if (!guard.ok) {
+      return NextResponse.json({
+        ok: false,
+        workflow: "customer_worker_task",
+        adapter: guard.adapter === "invalid_json" ? "unknown" : guard.adapter,
+        error: guard.error,
+        live_execution_performed: false,
+        token_omitted: true,
+      }, { status: 403, headers: { "Cache-Control": "no-store" } });
     }
   }
   if (request.method === "POST" && isWorkerReleasePath(path)) {

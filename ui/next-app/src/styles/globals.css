@@ -554,15 +554,21 @@ h2 {
 }
 
 .field input,
-.field select {
+.field select,
+.field textarea {
   width: 100%;
   min-height: 34px;
   border: 1px solid var(--border);
   background: #0d1118;
   color: var(--text);
-  padding: 0 9px;
+  padding: 8px 9px;
   font: inherit;
   font-size: 12px;
+}
+
+.field textarea {
+  min-height: 78px;
+  resize: vertical;
 }
 
 .wideField {

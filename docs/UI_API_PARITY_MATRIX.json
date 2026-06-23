@@ -14,6 +14,7 @@
         "nextjs_agent_gateway_task_proxy_v1",
         "nextjs_agent_gateway_cli_worker_dogfood_v1",
         "nextjs_worker_dispatch_once_v1",
+        "nextjs_customer_worker_dispatch_v1",
         "nextjs_worker_stuck_release_v1",
         "nextjs_enrollment_request_v1",
         "nextjs_worker_daemon_control_v1"
@@ -82,7 +83,7 @@
     },
     {
       "id": "pixel_office_and_dispatch",
-      "capability": "Pixel Office map plus customer task/template dispatch; Next currently proves isolated Pro template dispatch creates the six-task KB bot package, six runs, report artifact, six Agent Plans, and five verified manifests.",
+      "capability": "Pixel Office map plus customer task/template dispatch; Next currently proves isolated Pro template dispatch plus mock-only customer-worker dispatch with task/run/artifact/approval/plan-evidence readback.",
       "status": "partial",
       "gate4_required": true,
       "vite_routes": [
@@ -90,7 +91,8 @@
       ],
       "next_routes": [
         "/workspace/dispatch",
-        "/workspace/dispatch/template-run"
+        "/workspace/dispatch/template-run",
+        "/workspace/dispatch/customer-worker"
       ],
       "api_contracts": [
         "GET /dashboard/metrics",
@@ -111,6 +113,7 @@
       "next_files": [
         "ui/next-app/app/workspace/dispatch/page.tsx",
         "ui/next-app/app/workspace/dispatch/template-run/route.ts",
+        "ui/next-app/app/workspace/dispatch/customer-worker/route.ts",
         "ui/next-app/src/components/DispatchPage.tsx",
         "ui/next-app/src/lib/mis.ts",
         "ui/next-app/src/lib/misServer.ts"
@@ -118,10 +121,11 @@
       "evidence_commands": [
         "python3 scripts/vite_playwright_snapshot_smoke.py",
         "python3 scripts/nextjs_playwright_snapshot_smoke.py",
+        "python3 scripts/nextjs_customer_worker_dispatch_smoke.py",
         "python3 scripts/nextjs_parity_smoke.py"
       ],
       "retirement_allowed": false,
-      "retirement_gate": "Next currently proves Free Local blocking plus isolated Pro template entitlement dispatch with six-task KB bot evidence, six run rows, report artifact, six Agent Plans, and five verified manifests, not the full Pixel map, customer-worker dispatch form, async jobs, live runtime execution, or local-brief controls."
+      "retirement_gate": "Next currently proves Free Local blocking, isolated Pro template entitlement dispatch, and mock-only customer-worker dispatch with delivery approval and verified plan-evidence; it still lacks the full Pixel map, async jobs, live runtime execution, and local-brief controls."
     },
     {
       "id": "task_list",
@@ -861,7 +865,8 @@
         "ANY /api/mis/:path* -> AGENTOPS_API_BASE/:path*",
         "POST /api/mis/agent-gateway/tasks -> AGENTOPS_API_BASE/agent-gateway/tasks",
         "POST /api/mis/agent-gateway/enrollment/request -> AGENTOPS_API_BASE/agent-gateway/enrollment/request",
-        "POST /api/mis/agent-gateway/enrollment/create -> AGENTOPS_API_BASE blocked before upstream by enrollment_token_issue_not_allowed_next_parity"
+        "POST /api/mis/agent-gateway/enrollment/create -> AGENTOPS_API_BASE blocked before upstream by enrollment_token_issue_not_allowed_next_parity",
+        "POST /api/mis/workflows/customer-worker-task -> AGENTOPS_API_BASE/workflows/customer-worker-task with mock-only guard"
       ],
       "vite_files": [],
       "next_files": [
@@ -872,6 +877,7 @@
       "evidence_commands": [
         "python3 scripts/nextjs_agent_gateway_task_proxy_smoke.py",
         "python3 scripts/nextjs_agent_gateway_cli_worker_dogfood_smoke.py",
+        "python3 scripts/nextjs_customer_worker_dispatch_smoke.py",
         "python3 scripts/nextjs_enrollment_request_smoke.py",
         "python3 scripts/nextjs_playwright_snapshot_smoke.py",
         "python3 scripts/nextjs_parity_smoke.py"

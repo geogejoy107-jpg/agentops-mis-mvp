@@ -10,6 +10,14 @@ type DispatchFeedback = {
   currentEdition?: string;
   projectId?: string;
   error?: string;
+  customerWorkerStatus?: string;
+  customerWorkerAdapter?: string;
+  customerWorkerTaskId?: string;
+  customerWorkerRunId?: string;
+  customerWorkerArtifactId?: string;
+  customerWorkerManifestId?: string;
+  customerWorkerApprovalId?: string;
+  customerWorkerError?: string;
 };
 
 function boolText(value: unknown) {
@@ -62,6 +70,17 @@ export function DispatchParityPage({
           Customer project started: <Link href={`/workspace/customer-projects/${encodeURIComponent(feedback.projectId)}/report`}>{feedback.projectId}</Link>
         </div>
       ) : null}
+      {feedback?.customerWorkerStatus === "blocked" ? (
+        <div className="banner warn">
+          <strong>Worker dispatch blocked:</strong> {feedback.customerWorkerError || "customer_worker_mock_only_next_parity"} · adapter {feedback.customerWorkerAdapter || "unknown"}
+        </div>
+      ) : null}
+      {feedback?.customerWorkerStatus === "started" && feedback.customerWorkerTaskId ? (
+        <div className="banner success">
+          Customer worker dispatched: <Link href={`/workspace/tasks/${encodeURIComponent(feedback.customerWorkerTaskId)}`}>{feedback.customerWorkerTaskId}</Link>
+        </div>
+      ) : null}
+      {feedback?.customerWorkerStatus === "failed" ? <div className="banner error">Customer worker failed: {feedback.customerWorkerError || "unknown"}</div> : null}
       {feedback?.error ? <div className="banner error">Dispatch failed: {feedback.error}</div> : null}
 
       <section className="grid">
@@ -114,6 +133,48 @@ export function DispatchParityPage({
             </article>
           )) : <p className="empty">No customer task templates loaded.</p>}
         </div>
+      </section>
+
+      <section className="panel wide">
+        <div className="panelHeader">
+          <h2><Workflow size={14} /> Customer worker dispatch</h2>
+          <span>mock only</span>
+        </div>
+        <div className="proofStrip">
+          <span>adapter {feedback?.customerWorkerAdapter || "mock"}</span>
+          <span>task {feedback?.customerWorkerTaskId ? <Link href={`/workspace/tasks/${encodeURIComponent(feedback.customerWorkerTaskId)}`}>{feedback.customerWorkerTaskId}</Link> : "none"}</span>
+          <span>run {feedback?.customerWorkerRunId ? <Link href={`/workspace/runs/${encodeURIComponent(feedback.customerWorkerRunId)}`}>{feedback.customerWorkerRunId}</Link> : "none"}</span>
+          <span>artifact {feedback?.customerWorkerArtifactId || "none"}</span>
+          <span>manifest {feedback?.customerWorkerManifestId ? <Link href={`/workspace/evidence/${encodeURIComponent(feedback.customerWorkerManifestId)}`}>{feedback.customerWorkerManifestId}</Link> : "none"}</span>
+          <span>approval {feedback?.customerWorkerApprovalId || "none"}</span>
+        </div>
+        <form className="formGrid" method="post" action="/workspace/dispatch/customer-worker">
+          <label className="field">
+            <span>Title</span>
+            <input name="title" defaultValue="Next customer worker dispatch" />
+          </label>
+          <label className="field">
+            <span>Adapter</span>
+            <select name="adapter" defaultValue="mock">
+              <option value="mock">mock</option>
+              <option value="hermes">hermes</option>
+              <option value="openclaw">openclaw</option>
+            </select>
+          </label>
+          <label className="field">
+            <span>Worker agent</span>
+            <input name="worker_agent_id" defaultValue="agt_next_customer_worker" />
+          </label>
+          <label className="field wideField">
+            <span>Description</span>
+            <textarea name="description" defaultValue="Next.js dispatches one safe mock customer-worker task and reads back ledger evidence." />
+          </label>
+          <label className="field wideField">
+            <span>Acceptance</span>
+            <textarea name="acceptance_criteria" defaultValue="Worker must write run, tool, evaluation, audit, artifact, memory, approval, and verified plan evidence." />
+          </label>
+          <button className="miniButton good" type="submit"><Play size={13} /> Dispatch worker</button>
+        </form>
       </section>
     </AppFrame>
   );
