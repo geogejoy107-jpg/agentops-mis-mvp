@@ -1577,7 +1577,7 @@ planned MIS task
 - Async customer-worker submit now fails early and records a failed workflow job
   instead of accepting a job that cannot run.
 - Async template worker submit now uses the same live-route gate.
-- Remote enrollment token issuance/revocation/rotation, approval-gated enrollment request UI, endpoint-level scope enforcement, short-lived session tokens with list/revoke controls and worker-loop refresh, scope presets, a first enrollment UI, and minimal Agent Gateway workspace isolation now exist. Full RBAC, hosted multi-tenant isolation, and hosted enrollment policy UI remain future work.
+- Remote enrollment token issuance/revocation/rotation, approval-gated enrollment request UI, deployment-aware hosted policy gate, endpoint-level scope enforcement, selected-scope worker-loop readiness, short-lived session tokens with list/revoke controls and worker-loop refresh, scope presets, a first enrollment UI, and minimal Agent Gateway workspace isolation now exist. Full RBAC, hosted multi-tenant isolation, and production-grade hosted enrollment administration remain future work.
 
 ## 2026-06-22 Fleet Hygiene Recovery
 
