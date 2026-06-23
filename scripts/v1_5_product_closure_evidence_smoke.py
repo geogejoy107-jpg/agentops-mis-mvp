@@ -205,6 +205,7 @@ def main() -> int:
                 "scripts/delivery_approval_manifest_gate_smoke.py",
                 "scripts/customer_dispatch_desk_ui_smoke.py",
                 "scripts/task_detail_evidence_ui_smoke.py",
+                "scripts/run_detail_evidence_ui_smoke.py",
             ],
             source_markers={
                 "server.py": ["/api/workflows/customer-task-templates", "/api/workflows/customer-projects", "report-artifact"],
@@ -220,6 +221,12 @@ def main() -> int:
                     "Execution Posture",
                     "执行状态",
                     "task-detail-execution-posture",
+                ],
+                "ui/start-building-app/src/app/components/pages/RunDetail.tsx": [
+                    "Run Evidence Chain",
+                    "run-detail-evidence-chain",
+                    "evidenceChainStatus",
+                    "runtimeEvidenceStatus",
                 ],
                 "ui/start-building-app/src/app/components/pixel/CustomerDispatchPanel.tsx": [
                     "loadCustomerTaskTemplates",

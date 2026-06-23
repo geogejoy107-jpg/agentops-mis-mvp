@@ -297,6 +297,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "run_detail_evidence_ui",
+        "command": "python3 scripts/run_detail_evidence_ui_smoke.py",
+        "summary": "Run detail page exposes run evidence-chain state across tools, evaluations, artifacts, approvals, audit refs, benchmarks and live/mock runtime posture.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "security_readiness",
         "command": "python3 scripts/security_production_readiness_smoke.py --base-url \"$AGENTOPS_BASE_URL\"",
         "summary": "Server-backed security readiness gates.",

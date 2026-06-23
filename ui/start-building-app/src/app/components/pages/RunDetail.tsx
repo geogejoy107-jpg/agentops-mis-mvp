@@ -25,12 +25,29 @@ export function RunDetail() {
 
   const run = data.detail.run;
   const runTools = data.detail.tool_calls;
+  const runApprovals = data.detail.approvals;
+  const runArtifacts = data.detail.artifacts || [];
   const runEval = data.detail.evaluations[0];
+  const runEvaluations = data.detail.evaluations;
   const caseRuns = data.detail.evaluation_case_runs || [];
   const runAudit = data.auditLogs.filter(a => a.entity_id === run.run_id || runTools.some(tc => a.entity_id === tc.tool_call_id)).slice(0, 5);
   const childRuns = data.allRuns.filter(r => r.parent_run_id === run.run_id);
   const parentRun = run.parent_run_id ? data.allRuns.find(r => r.run_id === run.parent_run_id) : null;
   const score = runEval ? (runEval.score <= 1 ? Math.round(runEval.score * 100) : Math.round(runEval.score)) : 0;
+  const pendingApprovals = runApprovals.filter(approval => approval.decision === "pending");
+  const failedTools = runTools.filter(tool => ["failed", "error", "blocked"].includes(tool.status));
+  const failedEvals = runEvaluations.filter(ev => ev.pass_fail === "fail" || ev.pass_fail === "failed");
+  const liveRuntime = run.runtime_type === "hermes" || run.runtime_type === "openclaw";
+  const evidenceChainStatus = run.status === "failed" || run.status === "blocked" || failedTools.length > 0 || failedEvals.length > 0
+    ? "fail"
+    : pendingApprovals.length > 0 || run.approval_required
+      ? "attention"
+      : runTools.length > 0 && runEvaluations.length > 0 && runArtifacts.length > 0 && runAudit.length > 0
+        ? "pass"
+        : run.status === "running"
+          ? "running"
+          : "planned";
+  const runtimeEvidenceStatus = liveRuntime ? "live" : run.runtime_type === "mock" ? "dry_run" : "ready";
 
   return (
     <div className="space-y-5 w-full">
@@ -60,6 +77,70 @@ export function RunDetail() {
               <div className="text-xs mt-0.5 font-mono" style={{ color: "var(--mis-dim)" }}>{value}</div>
             </div>
           ))}
+        </div>
+      </div>
+
+      <div
+        data-testid="run-detail-evidence-chain"
+        className="rounded-xl p-4"
+        style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="text-xs font-semibold flex items-center gap-1.5" style={{ color: "var(--mis-text)" }}>
+              <ShieldCheck size={13} style={{ color: evidenceChainStatus === "fail" ? "#F87171" : evidenceChainStatus === "attention" ? "#FBBF24" : "var(--mis-success)" }} />
+              Run Evidence Chain
+            </div>
+            <p className="mt-1 text-[11px] leading-relaxed" style={{ color: "var(--mis-muted)" }}>
+              {evidenceChainStatus === "pass"
+                ? "Tool, evaluation, artifact and audit evidence are present for delivery review."
+                : evidenceChainStatus === "attention"
+                  ? "This run is waiting on human approval before it should be treated as accepted delivery."
+                  : evidenceChainStatus === "fail"
+                    ? "This run has failed or blocked evidence and needs operator review."
+                    : "The run evidence chain is still incomplete."}
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <StatusBadge status={evidenceChainStatus} size="md" label={`Chain: ${evidenceChainStatus}`} />
+            <StatusBadge status={runtimeEvidenceStatus} size="md" label={liveRuntime ? "Hermes/OpenClaw live" : run.runtime_type === "mock" ? "Mock/offline" : run.runtime_type} />
+          </div>
+        </div>
+        <div className="mt-3 grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2">
+          {[
+            { label: "Tool calls", value: runTools.length, status: failedTools.length > 0 ? "fail" : runTools.length > 0 ? "pass" : "planned" },
+            { label: "Evaluations", value: runEvaluations.length, status: failedEvals.length > 0 ? "fail" : runEvaluations.length > 0 ? "pass" : "planned" },
+            { label: "Artifacts", value: runArtifacts.length, status: runArtifacts.length > 0 ? "pass" : "planned" },
+            { label: "Approvals", value: `${pendingApprovals.length}/${runApprovals.length}`, status: pendingApprovals.length > 0 || run.approval_required ? "attention" : runApprovals.length > 0 ? "pass" : "planned" },
+            { label: "Audit refs", value: runAudit.length, status: runAudit.length > 0 ? "pass" : "planned" },
+            { label: "Benchmarks", value: caseRuns.length, status: caseRuns.length > 0 ? "pass" : "planned" },
+          ].map(item => (
+            <div key={item.label} className="rounded px-3 py-2" style={{ background: "var(--mis-surface2)", border: "1px solid rgba(148,163,184,0.14)" }}>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[10px]" style={{ color: "var(--mis-muted)" }}>{item.label}</span>
+                <StatusBadge status={item.status} />
+              </div>
+              <div className="mt-1 text-sm font-semibold" style={{ color: "var(--mis-text)" }}>{item.value}</div>
+            </div>
+          ))}
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2 text-[10px]">
+          <Link
+            to={`/admin/tasks/${run.task_id}`}
+            className="rounded px-2.5 py-1.5"
+            style={{ background: "rgba(34,211,238,0.10)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.22)" }}
+          >
+            Open task: {run.task_id}
+          </Link>
+          {pendingApprovals.length > 0 && (
+            <Link
+              to="/workspace/approvals"
+              className="rounded px-2.5 py-1.5"
+              style={{ background: "rgba(251,191,36,0.12)", color: "#FBBF24", border: "1px solid rgba(251,191,36,0.24)" }}
+            >
+              Review approvals: {pendingApprovals.length}
+            </Link>
+          )}
         </div>
       </div>
 
@@ -233,14 +314,14 @@ export function RunDetail() {
         </div>
       )}
 
-      {(data.detail.artifacts || []).length > 0 && (
+      {runArtifacts.length > 0 && (
         <div
           className="rounded-xl p-4"
           style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}
         >
           <div className="text-xs font-semibold mb-3" style={{ color: "var(--mis-text)" }}>Artifacts</div>
           <div className="space-y-2">
-            {(data.detail.artifacts || []).map((artifact) => (
+            {runArtifacts.map((artifact) => (
               <div key={artifact.artifact_id} className="p-3 rounded-lg" style={{ background: "var(--mis-surface2)" }}>
                 <div className="text-xs font-medium" style={{ color: "var(--mis-text)" }}>{artifact.title}</div>
                 <div className="text-[11px] mt-1" style={{ color: "var(--mis-dim)" }}>{artifact.summary}</div>

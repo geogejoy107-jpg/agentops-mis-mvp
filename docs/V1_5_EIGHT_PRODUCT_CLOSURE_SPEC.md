@@ -634,12 +634,17 @@ Acceptance evidence:
   delivery gate. The strip distinguishes Hermes/OpenClaw live evidence from
   mock/offline evidence, shows pending approval state, and keeps customers from
   inferring delivery readiness only from raw run tables.
+- `python3 scripts/run_detail_evidence_ui_smoke.py` verifies run detail now
+  exposes a run evidence-chain strip across tool calls, evaluations, artifacts,
+  approvals, audit references, benchmark cases and live/mock runtime posture.
+  This gives operators a single readback for whether a run has enough evidence
+  to support delivery review.
 
 Remaining product work:
 
 - Further polish for live/dry-run/approval state indicators across secondary
-  customer-facing task flows beyond Dispatch Desk, Worker Console and Task
-  Detail.
+  customer-facing task flows beyond Dispatch Desk, Worker Console, Task Detail
+  and Run Detail.
 
 ### 7. Customer-Task Usefulness
 
@@ -801,7 +806,8 @@ Acceptance evidence:
 
 Remaining product work:
 
-- Better task result page polish.
+- Better task result page polish beyond the first Run Detail evidence-chain
+  strip.
 
 ### 8. Productization Track
 

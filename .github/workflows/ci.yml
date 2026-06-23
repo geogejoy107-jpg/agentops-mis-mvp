@@ -85,6 +85,7 @@ jobs:
           python3 scripts/customer_dispatch_desk_ui_smoke.py
           python3 scripts/commander_team_board_ui_smoke.py
           python3 scripts/task_detail_evidence_ui_smoke.py
+          python3 scripts/run_detail_evidence_ui_smoke.py
           python3 scripts/startup_security_guard_smoke.py
           python3 scripts/operator_loop_audit_closed_loop_smoke.py
           python3 scripts/operator_advance_loop_smoke.py
