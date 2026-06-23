@@ -3,6 +3,7 @@ import { Link } from "react-router";
 import { Archive, CheckCircle2, ClipboardCheck, Clock3, Copy, Loader2, Play, RefreshCw, ShieldCheck } from "lucide-react";
 import type { Agent } from "../../data/mockData";
 import {
+  loadCustomerDeliveryBoard,
   loadWorkflowJobs,
   loadCustomerTaskTemplates,
   loadOperatorExecutionMode,
@@ -13,6 +14,7 @@ import {
   submitCustomerWorkerTaskJob,
   submitCustomerTaskTemplateJob,
   type CustomerTaskTemplate,
+  type CustomerDeliveryBoardPayload,
   type CustomerProjectReportArtifactResult,
   type CustomerTaskWorkflowResult,
   type KbBotProjectWorkflowResult,
@@ -39,6 +41,31 @@ function workflowLabel(job: WorkflowJob, zh: boolean) {
   if (job.workflow_type === "customer_worker_task") return zh ? "客户 Worker Job" : "Customer worker job";
   if (job.workflow_type === "customer_task_template") return zh ? "模板项目 Job" : "Template project job";
   return job.workflow_type || (zh ? "Workflow Job" : "Workflow job");
+}
+
+function deliveryStatusLabel(status: string, zh: boolean) {
+  const labels: Record<string, { zh: string; en: string }> = {
+    ready: { zh: "可交付", en: "Ready" },
+    waiting_approval: { zh: "待审批", en: "Waiting approval" },
+    in_progress: { zh: "进行中", en: "In progress" },
+    needs_attention: { zh: "需处理", en: "Needs attention" },
+  };
+  const found = labels[status];
+  return found ? found[zh ? "zh" : "en"] : status;
+}
+
+function deliveryStatusColor(status: string) {
+  if (status === "ready") return "var(--mis-success)";
+  if (status === "waiting_approval") return "#FBBF24";
+  if (status === "needs_attention") return "#FCA5A5";
+  return "var(--mis-cyan)";
+}
+
+function deliveryGateLabel(delivery: CustomerDeliveryBoardPayload["deliveries"][number], zh: boolean) {
+  const gate = delivery.delivery_approval_gate;
+  if (!gate?.required) return zh ? "无需审批门" : "No approval gate";
+  if (gate.pass) return zh ? "证据门通过" : "Evidence gate passed";
+  return zh ? "证据门待处理" : "Evidence gate pending";
 }
 
 const DEFAULT_COPY = {
@@ -80,6 +107,9 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
   const [kbResult, setKbResult] = useState<KbBotProjectWorkflowResult | null>(null);
   const [reportArtifact, setReportArtifact] = useState<CustomerProjectReportArtifactResult | null>(null);
   const [workflowJobs, setWorkflowJobs] = useState<WorkflowJob[]>([]);
+  const [deliveryBoard, setDeliveryBoard] = useState<CustomerDeliveryBoardPayload | null>(null);
+  const [deliveryBoardLoading, setDeliveryBoardLoading] = useState(false);
+  const [deliveryBoardError, setDeliveryBoardError] = useState<string | null>(null);
   const [templates, setTemplates] = useState<CustomerTaskTemplate[]>([]);
   const [executionMode, setExecutionMode] = useState<OperatorExecutionModePayload | null>(null);
   const [copiedExecutionCommand, setCopiedExecutionCommand] = useState(false);
@@ -165,8 +195,23 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
     setWorkflowJobs(payload.jobs || []);
   };
 
+  const refreshDeliveryBoard = async () => {
+    setDeliveryBoardLoading(true);
+    setDeliveryBoardError(null);
+    try {
+      const payload = await loadCustomerDeliveryBoard(4);
+      setDeliveryBoard(payload);
+    } catch (err) {
+      setDeliveryBoardError(err instanceof Error ? err.message : String(err));
+      setDeliveryBoard(null);
+    } finally {
+      setDeliveryBoardLoading(false);
+    }
+  };
+
   useEffect(() => {
     void refreshWorkflowJobs().catch(() => setWorkflowJobs([]));
+    void refreshDeliveryBoard().catch(() => undefined);
   }, []);
 
   useEffect(() => {
@@ -198,6 +243,8 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
       .join(", "),
     [runnableAgents, selected],
   );
+  const deliverySummary = deliveryBoard?.summary;
+  const deliveryRows = deliveryBoard?.deliveries?.slice(0, 4) || [];
 
   const applyTemplate = (template: CustomerTaskTemplate) => {
     setSelectedTemplateId(template.template_id);
@@ -233,6 +280,7 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
       });
       setResult(next);
       await onRefresh();
+      await refreshDeliveryBoard().catch(() => undefined);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -252,6 +300,7 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
       setKbResult(next);
       setReportArtifact(null);
       await onRefresh();
+      await refreshDeliveryBoard().catch(() => undefined);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -278,6 +327,7 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
       });
       setResult(next);
       await onRefresh();
+      await refreshDeliveryBoard().catch(() => undefined);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -304,6 +354,7 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
       setWorkflowJobs((current) => [next.job, ...current.filter((job) => job.job_id !== next.job_id)].slice(0, 6));
       await onRefresh();
       await refreshWorkflowJobs();
+      await refreshDeliveryBoard().catch(() => undefined);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -330,6 +381,7 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
       setWorkflowJobs((current) => [next.job, ...current.filter((job) => job.job_id !== next.job_id)].slice(0, 6));
       await onRefresh();
       await refreshWorkflowJobs();
+      await refreshDeliveryBoard().catch(() => undefined);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -345,6 +397,7 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
       const next = await persistCustomerProjectReportArtifact(kbResult.project_id);
       setReportArtifact(next);
       await onRefresh();
+      await refreshDeliveryBoard().catch(() => undefined);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -777,6 +830,101 @@ export function CustomerDispatchPanel({ agents, locale, onRefresh }: CustomerDis
                 {job.result?.approval_ids?.length ? <Link style={{ color: "#FBBF24" }} to="/workspace/approvals">{zh ? "审批" : "Approval"}</Link> : null}
                 {job.result?.project_id && <Link style={{ color: "var(--mis-success)" }} to={`/workspace/customer-projects/${job.result.project_id}/report`}>{zh ? "报告" : "Report"}</Link>}
                 {job.error_message && <span style={{ color: "#FCA5A5" }}>{job.error_message}</span>}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="mt-4 rounded p-3" style={{ background: "var(--mis-surface2)", border: "1px solid rgba(148,163,184,0.14)" }}>
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <div className="flex items-center gap-2 text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>
+              <Archive size={13} style={{ color: "var(--mis-success)" }} />
+              {zh ? "客户交付看板" : "Customer delivery board"}
+            </div>
+            <p className="mt-1 text-[10px] leading-relaxed" style={{ color: "var(--mis-muted)" }}>
+              {zh ? "从 MIS 交付账本读取最近交付、审批门、评估和审计计数；这里只读，不触发真实运行。"
+                : "Reads recent deliveries, approval gates, evaluations and audit counts from the MIS delivery ledger. Read-only; no live execution."}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded px-2 py-1 text-[10px]" style={{ background: "rgba(42,157,143,0.10)", color: "var(--mis-success)", border: "1px solid rgba(42,157,143,0.20)" }}>
+              {zh ? "只读" : "Read-only"}: {deliveryBoard?.safety?.read_only ? (zh ? "是" : "yes") : "—"}
+            </span>
+            <span className="rounded px-2 py-1 text-[10px]" style={{ background: "rgba(34,211,238,0.10)", color: "var(--mis-cyan)", border: "1px solid rgba(34,211,238,0.20)" }}>
+              {zh ? "未执行" : "No execution"}: {deliveryBoard?.safety?.live_execution_performed === false ? (zh ? "是" : "yes") : "—"}
+            </span>
+            <button
+              type="button"
+              onClick={() => refreshDeliveryBoard().catch((err) => setDeliveryBoardError(err instanceof Error ? err.message : String(err)))}
+              className="inline-flex items-center gap-1.5 rounded px-2.5 py-1.5 text-[10px]"
+              style={{ background: "rgba(148,163,184,0.10)", color: "var(--mis-text)", border: "1px solid rgba(148,163,184,0.18)" }}
+            >
+              <RefreshCw size={12} />
+              {zh ? "刷新交付" : "Refresh deliveries"}
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-3 grid grid-cols-2 md:grid-cols-5 gap-2">
+          {[
+            { label: zh ? "交付" : "Deliveries", value: deliverySummary?.deliveries ?? 0, color: "var(--mis-cyan)" },
+            { label: zh ? "可交付" : "Ready", value: deliverySummary?.ready ?? 0, color: "var(--mis-success)" },
+            { label: zh ? "待审批" : "Waiting", value: deliverySummary?.waiting_approval ?? 0, color: "#FBBF24" },
+            { label: zh ? "需处理" : "Attention", value: deliverySummary?.needs_attention ?? 0, color: "#FCA5A5" },
+            { label: zh ? "审批数" : "Approvals", value: deliverySummary?.pending_approvals ?? 0, color: "#FBBF24" },
+          ].map((item) => (
+            <div key={item.label} className="rounded px-2.5 py-2" style={{ background: "var(--mis-surface)", border: "1px solid rgba(148,163,184,0.12)" }}>
+              <div className="text-[9px]" style={{ color: "var(--mis-muted)" }}>{item.label}</div>
+              <div className="mt-1 text-base font-semibold" style={{ color: item.color }}>{item.value}</div>
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-3 grid grid-cols-1 lg:grid-cols-2 gap-2">
+          {deliveryBoardLoading && (
+            <div className="text-[10px]" style={{ color: "var(--mis-dim)" }}>{zh ? "正在读取交付看板..." : "Loading delivery board..."}</div>
+          )}
+          {deliveryBoardError && (
+            <div className="text-[10px]" style={{ color: "#FCA5A5" }}>{deliveryBoardError}</div>
+          )}
+          {!deliveryBoardLoading && !deliveryBoardError && deliveryRows.length === 0 && (
+            <div className="text-[10px]" style={{ color: "var(--mis-dim)" }}>
+              {zh ? "暂无客户交付。先提交一个 worker 或项目 job。" : "No customer deliveries yet. Submit a worker or project job first."}
+            </div>
+          )}
+          {deliveryRows.map((delivery) => (
+            <div key={delivery.delivery_id} className="rounded p-2" style={{ background: "var(--mis-surface)", border: "1px solid rgba(148,163,184,0.12)" }}>
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="truncate text-[11px] font-medium" style={{ color: "var(--mis-text)" }}>{delivery.title || delivery.delivery_id}</div>
+                  <div className="mt-1 truncate text-[10px]" style={{ color: "var(--mis-muted)" }}>{delivery.artifact_id || delivery.task_id || delivery.delivery_id}</div>
+                </div>
+                <span className="shrink-0 rounded px-1.5 py-0.5 text-[9px]" style={{ background: "rgba(148,163,184,0.10)", color: deliveryStatusColor(delivery.status) }}>
+                  {deliveryStatusLabel(delivery.status, zh)}
+                </span>
+              </div>
+              {delivery.summary && <p className="mt-1 line-clamp-2 text-[10px] leading-relaxed" style={{ color: "var(--mis-dim)" }}>{delivery.summary}</p>}
+              <div className="mt-2 rounded px-2 py-1.5" style={{ background: "var(--mis-bg)", border: "1px solid rgba(148,163,184,0.12)" }}>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[10px] font-semibold" style={{ color: delivery.delivery_approval_gate?.pass ? "var(--mis-success)" : "#FBBF24" }}>{deliveryGateLabel(delivery, zh)}</span>
+                  <span className="truncate text-[9px]" style={{ color: "var(--mis-muted)" }}>{delivery.delivery_approval_gate?.manifest_id || (zh ? "暂无 manifest" : "no manifest")}</span>
+                </div>
+                <div className="mt-1 line-clamp-2 text-[9px]" style={{ color: "var(--mis-dim)" }}>
+                  {delivery.delivery_approval_gate?.message || delivery.next_action || (zh ? "交付审批会读取这个证据门。" : "Delivery approval consumes this evidence gate.")}
+                </div>
+              </div>
+              <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[10px]" style={{ color: "var(--mis-dim)" }}>
+                <span>{zh ? "审批" : "Approvals"}: {delivery.pending_approval_ids?.length || 0}</span>
+                <span>{zh ? "评估" : "Evals"}: {delivery.evaluation_summary?.count || 0}</span>
+                <span>{zh ? "审计" : "Audit"}: {delivery.evidence?.audit_logs || 0}</span>
+              </div>
+              <div className="mt-2 flex flex-wrap gap-2 text-[10px]">
+                {delivery.task_id && <Link style={{ color: "var(--mis-cyan)" }} to={`/admin/tasks/${delivery.task_id}`}>{zh ? "任务" : "Task"}</Link>}
+                {delivery.run_id && <Link style={{ color: "var(--mis-purple)" }} to={`/admin/runs/${delivery.run_id}`}>{zh ? "运行" : "Run"}</Link>}
+                {delivery.project_id && <Link style={{ color: "var(--mis-success)" }} to={`/workspace/customer-projects/${delivery.project_id}/report`}>{zh ? "报告" : "Report"}</Link>}
+                {delivery.pending_approval_ids?.length ? <Link style={{ color: "#FBBF24" }} to="/workspace/approvals">{zh ? "审批" : "Approval"}</Link> : null}
               </div>
             </div>
           ))}

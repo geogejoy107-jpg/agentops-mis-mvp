@@ -59,6 +59,8 @@ def main() -> int:
         "customer_dispatch_mis_workflow": "runCustomerWorkerTaskWorkflow",
         "customer_dispatch_async_mis_workflow": "submitCustomerWorkerTaskJob",
         "customer_dispatch_execution_mode": "loadOperatorExecutionMode",
+        "customer_dispatch_delivery_board": "loadCustomerDeliveryBoard",
+        "customer_dispatch_delivery_board_copy": "Customer delivery board",
         "customer_execution_mode_strip": 'data-testid="pixel-customer-execution-mode"',
         "customer_execution_mode_command": "agentops operator execution-mode --adapter",
         "template_workflow_api": "runCustomerTaskTemplateWorkflow",
