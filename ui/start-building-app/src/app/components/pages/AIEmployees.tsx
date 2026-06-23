@@ -94,6 +94,7 @@ import {
   type ReviewQueuePayload,
   type TaskIntakeChecklistItem,
   type WorkerAdapterName,
+  type WorkerDaemonResult,
   type WorkerDaemonLogPayload,
   type WorkerDispatchResult,
   type WorkerFleetHygienePayload,
@@ -299,6 +300,7 @@ export function AIEmployees() {
   const [customerTaskResult, setCustomerTaskResult] = useState<CustomerTaskWorkflowResult | null>(null);
   const [customerTaskJob, setCustomerTaskJob] = useState<WorkflowJob | null>(null);
   const [lastWorkerDispatch, setLastWorkerDispatch] = useState<WorkerDispatchResult | null>(null);
+  const [lastDaemonControl, setLastDaemonControl] = useState<WorkerDaemonResult | null>(null);
   const [copiedIntakeCommand, setCopiedIntakeCommand] = useState<string | null>(null);
   const [loopLaneBusy, setLoopLaneBusy] = useState(false);
   const [loopLaneError, setLoopLaneError] = useState<string | null>(null);
@@ -682,6 +684,13 @@ export function AIEmployees() {
   const staleEnrollments = enrollments.filter(item => item.heartbeat_state === "stale").length;
   const activeSessions = sessions.filter(item => item.session_state === "active").length;
   const runningDaemons = (workerStatus?.daemons || []).filter(daemon => daemon.running).length;
+  const lastDaemonAdmissionSummary = lastDaemonControl?.local_loop_admission_summary || lastDaemonControl?.task_intake?.local_loop_admission_summary;
+  const lastDaemonAdmissionSafety = lastDaemonAdmissionSummary?.safety || {};
+  const lastDaemonAdmissionCommands = lastDaemonAdmissionSummary?.next_safe_commands || [];
+  const lastDaemonAdmissionReadOnly = Boolean(lastDaemonAdmissionSafety.read_only);
+  const lastDaemonAdmissionLedgerMutated = Boolean(lastDaemonAdmissionSafety.ledger_mutated);
+  const lastDaemonAdmissionLiveExecuted = Boolean(lastDaemonAdmissionSafety.live_execution_performed);
+  const lastDaemonAdmissionServerShell = Boolean(lastDaemonAdmissionSafety.server_executes_shell);
   const stuckWorkerCount = Number(workerStatus?.stuck_worker_tasks || stuckTasks.length || 0);
   const stuckWorkflowJobCount = Number(workerStatus?.stuck_workflow_jobs || stuckWorkflowJobRefs.length || stuckWorkflowJobs.length || 0);
   const liveReadyAdapters = adapterReadiness?.summary.live_ready_adapters || workerStatus?.adapter_readiness?.live_ready_adapters || [];
@@ -802,6 +811,10 @@ export function AIEmployees() {
       loopDriverAgentPacketSummary: "Live start-check projection for each adapter: current phase, safety gates, and next copy command.",
       methodGates: "Method gates",
       localLoopAdmission: "Local loop admission",
+      daemonLoopAdmissionSummary: "Worker start/restart Method Block readback",
+      liveAdapterTasks: "Live adapter tasks",
+      passedAdmission: "Passed admission",
+      missingAdmission: "Missing admission",
       firstSafeCommands: "First safe commands",
       confirmCommands: "Confirm commands",
       currentPhase: "Current phase",
@@ -1353,6 +1366,10 @@ export function AIEmployees() {
       loopDriverAgentPacketSummary: "每个 adapter 的 start-check 实时投影：当前阶段、安全闸和下一条可复制命令。",
       methodGates: "方法 Gate",
       localLoopAdmission: "本地 Loop 准入包",
+      daemonLoopAdmissionSummary: "Worker 启停 Method Block 回读",
+      liveAdapterTasks: "Live adapter 任务",
+      passedAdmission: "已通过准入",
+      missingAdmission: "缺失准入",
       firstSafeCommands: "先执行命令",
       confirmCommands: "需确认命令",
       currentPhase: "当前阶段",
@@ -3031,8 +3048,10 @@ export function AIEmployees() {
         poll_interval: 2,
         max_tasks: 0,
       });
+      setLastDaemonControl(result);
       if (!result.ok && result.task_intake) {
-        const action = result.recommended_action || result.task_intake.next_actions?.[0] || copy.activeIntakeGate;
+        const admissionAction = result.local_loop_admission_summary?.next_safe_commands?.[0] || result.task_intake.local_loop_admission_summary?.next_safe_commands?.[0];
+        const action = admissionAction || result.recommended_action || result.task_intake.next_actions?.[0] || copy.activeIntakeGate;
         setDispatchResult(`${adapter} daemon: blocked · ${action}`);
         return;
       }
@@ -3056,8 +3075,10 @@ export function AIEmployees() {
         poll_interval: 2,
         max_tasks: 0,
       });
+      setLastDaemonControl(result);
       if (!result.ok && result.task_intake) {
-        const action = result.recommended_action || result.task_intake.next_actions?.[0] || copy.activeIntakeGate;
+        const admissionAction = result.local_loop_admission_summary?.next_safe_commands?.[0] || result.task_intake.local_loop_admission_summary?.next_safe_commands?.[0];
+        const action = admissionAction || result.recommended_action || result.task_intake.next_actions?.[0] || copy.activeIntakeGate;
         setDispatchResult(`${adapter} restart: blocked · ${action}`);
         return;
       }
@@ -7355,6 +7376,65 @@ export function AIEmployees() {
             {dispatching === "stop-daemons" ? copy.stopping : copy.stopDaemons}
           </button>
         </div>
+        {lastDaemonAdmissionSummary && (
+          <div className="rounded-lg p-3 mt-3" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+            <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <ShieldCheck size={13} style={{ color: "var(--mis-cyan)" }} />
+                  <div className="text-[11px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.daemonLoopAdmissionSummary}</div>
+                  <StatusBadge status={lastDaemonAdmissionSummary.local_loop_admission_ready ? "pass" : "blocked"} label={String(lastDaemonAdmissionSummary.adapter || "adapter")} />
+                  <StatusBadge status={lastDaemonAdmissionServerShell ? "blocked" : "pass"} label={lastDaemonAdmissionServerShell ? "server shell" : "copy-only"} />
+                  <StatusBadge status={lastDaemonAdmissionLiveExecuted ? "blocked" : "pass"} label={copy.liveExecutionProof} />
+                </div>
+                <div className="text-[10px] mt-1 truncate" style={{ color: "var(--mis-muted)" }}>
+                  {copy.liveAdapterTasks}: {lastDaemonAdmissionSummary.live_adapter_tasks_checked}
+                  {" · "}
+                  {copy.passedAdmission}: {lastDaemonAdmissionSummary.passed_local_loop_admission}
+                  {" · "}
+                  {copy.missingAdmission}: {lastDaemonAdmissionSummary.missing_local_loop_admission}
+                  {" · "}
+                  {copy.methodGates}: {lastDaemonAdmissionSummary.required_method_gates.length}
+                </div>
+              </div>
+              <StatusBadge status={lastDaemonControl?.ok ? "ready" : "blocked"} label={lastDaemonControl?.error || (lastDaemonControl?.ok ? "ok" : "blocked")} />
+            </div>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 mt-3">
+              <div className="rounded px-2 py-1.5" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                <div className="text-[9px] font-semibold mb-1" style={{ color: "var(--mis-muted)" }}>{copy.firstSafeCommands}</div>
+                <div className="flex flex-col gap-1">
+                  {lastDaemonAdmissionCommands.slice(0, 4).map((command, index) => (
+                    <button
+                      key={`daemon-admission:${index}:${command}`}
+                      type="button"
+                      onClick={() => void copyIntakeCommand(command)}
+                      className="flex items-center gap-1 rounded px-1.5 py-0.5 text-left"
+                      style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)", color: "var(--mis-text)" }}
+                      title={command}
+                    >
+                      <Copy size={8} />
+                      <span className="truncate text-[8px]">{copiedIntakeCommand === command ? copy.copiedCommand : command}</span>
+                    </button>
+                  ))}
+                  {lastDaemonAdmissionCommands.length === 0 && (
+                    <div className="text-[9px]" style={{ color: "var(--mis-muted)" }}>{copy.noRecommendedActions}</div>
+                  )}
+                </div>
+              </div>
+              <div className="rounded px-2 py-1.5" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                <div className="text-[9px] font-semibold mb-1" style={{ color: "var(--mis-muted)" }}>{copy.activeIntakeGate}</div>
+                <div className="text-[10px] line-clamp-2" style={{ color: "var(--mis-dim)" }}>
+                  {lastDaemonControl?.recommended_action || lastDaemonControl?.task_intake?.next_actions?.[0] || copy.workerStartBlockedHint}
+                </div>
+                <div className="flex flex-wrap gap-1 mt-2">
+                  <StatusBadge status={lastDaemonAdmissionReadOnly ? "pass" : "attention"} label={copy.readOnlyProof} />
+                  <StatusBadge status={lastDaemonAdmissionLedgerMutated ? "blocked" : "pass"} label={lastDaemonAdmissionLedgerMutated ? "ledger mutated" : "no ledger write"} />
+                  <StatusBadge status={lastDaemonAdmissionSummary.token_omitted ? "pass" : "attention"} label="token omitted" />
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 mt-4">
           {[
             { label: copy.workers, value: workerStatus?.worker_count ?? "—" },

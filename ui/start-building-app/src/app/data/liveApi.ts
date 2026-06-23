@@ -1418,12 +1418,28 @@ export interface TaskIntakeChecklistItem {
   token_omitted?: boolean;
 }
 
+export interface LocalLoopAdmissionSummary {
+  operation?: string;
+  adapter?: "mock" | "hermes" | "openclaw" | string | null;
+  agent_id?: string | null;
+  live_adapter_tasks_checked: number;
+  live_adapters: string[];
+  passed_local_loop_admission: number;
+  missing_local_loop_admission: number;
+  local_loop_admission_ready: boolean;
+  required_method_gates: string[];
+  next_safe_commands: string[];
+  safety?: Record<string, unknown>;
+  token_omitted?: boolean;
+}
+
 export interface TaskIntakeChecklistPayload {
   provider?: string;
   operation?: string;
   status?: string;
   workspace_id?: string;
   summary?: Record<string, number>;
+  local_loop_admission_summary?: LocalLoopAdmissionSummary;
   items: TaskIntakeChecklistItem[];
   next_actions?: string[];
   safety?: Record<string, unknown>;
@@ -2692,6 +2708,7 @@ export interface WorkerDaemonResult {
   error?: string;
   message?: string;
   recommended_action?: string;
+  local_loop_admission_summary?: LocalLoopAdmissionSummary;
   task_intake?: TaskIntakeChecklistPayload;
 }
 
@@ -4921,12 +4938,14 @@ function normalizeTaskIntakeChecklist(rawValue: unknown): TaskIntakeChecklistPay
   const raw = typeof rawValue === "object" && rawValue !== null ? rawValue as Record<string, unknown> : {};
   const summaryRaw = typeof raw.summary === "object" && raw.summary !== null ? raw.summary as Record<string, unknown> : {};
   const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
+  const localLoopAdmissionRaw = typeof raw.local_loop_admission_summary === "object" && raw.local_loop_admission_summary !== null ? raw.local_loop_admission_summary as Record<string, unknown> : {};
   return {
     provider: raw.provider ? String(raw.provider) : undefined,
     operation: raw.operation ? String(raw.operation) : undefined,
     status: raw.status ? String(raw.status) : undefined,
     workspace_id: raw.workspace_id ? String(raw.workspace_id) : undefined,
     summary: numberRecord(summaryRaw),
+    local_loop_admission_summary: normalizeLocalLoopAdmissionSummary(localLoopAdmissionRaw),
     items: asArray<Record<string, unknown>>(raw.items).map((item) => ({
       task_id: String(item.task_id || ""),
       title: String(item.title || item.task_id || "Task intake"),
@@ -4960,6 +4979,32 @@ function normalizeTaskIntakeChecklist(rawValue: unknown): TaskIntakeChecklistPay
       read_only: boolValue(safetyRaw.read_only),
       ledger_mutated: boolValue(safetyRaw.ledger_mutated),
       live_execution_performed: boolValue(safetyRaw.live_execution_performed),
+      token_omitted: boolValue(safetyRaw.token_omitted),
+    },
+    token_omitted: raw.token_omitted === undefined ? undefined : boolValue(raw.token_omitted),
+  };
+}
+
+function normalizeLocalLoopAdmissionSummary(rawValue: unknown): LocalLoopAdmissionSummary | undefined {
+  const raw = typeof rawValue === "object" && rawValue !== null ? rawValue as Record<string, unknown> : {};
+  if (!Object.keys(raw).length) return undefined;
+  const safetyRaw = typeof raw.safety === "object" && raw.safety !== null ? raw.safety as Record<string, unknown> : {};
+  return {
+    operation: raw.operation ? String(raw.operation) : undefined,
+    adapter: raw.adapter === null || raw.adapter === undefined ? null : String(raw.adapter),
+    agent_id: raw.agent_id === null || raw.agent_id === undefined ? null : String(raw.agent_id),
+    live_adapter_tasks_checked: numberValue(raw.live_adapter_tasks_checked, 0),
+    live_adapters: asArray<unknown>(raw.live_adapters).map(String).filter(Boolean),
+    passed_local_loop_admission: numberValue(raw.passed_local_loop_admission, 0),
+    missing_local_loop_admission: numberValue(raw.missing_local_loop_admission, 0),
+    local_loop_admission_ready: boolValue(raw.local_loop_admission_ready),
+    required_method_gates: asArray<unknown>(raw.required_method_gates).map(String).filter(Boolean),
+    next_safe_commands: asArray<unknown>(raw.next_safe_commands).map(String).filter(Boolean),
+    safety: {
+      read_only: boolValue(safetyRaw.read_only),
+      ledger_mutated: boolValue(safetyRaw.ledger_mutated),
+      live_execution_performed: boolValue(safetyRaw.live_execution_performed),
+      server_executes_shell: boolValue(safetyRaw.server_executes_shell),
       token_omitted: boolValue(safetyRaw.token_omitted),
     },
     token_omitted: raw.token_omitted === undefined ? undefined : boolValue(raw.token_omitted),

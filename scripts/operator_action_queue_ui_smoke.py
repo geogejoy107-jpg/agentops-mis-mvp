@@ -104,6 +104,14 @@ EXPECTED_MARKERS = {
     "remote_enrollment_start_check_label_zh": 'startCheckCommand: "启动检查"',
     "remote_enrollment_method_gate_render": "createdToken.next_steps.method_gate_contract.required_gates",
     "operator_loop_driver_packet_server_shell": "operatorLoopDriverPackets?.safety.server_executes_shell",
+    "worker_daemon_admission_state": "lastDaemonAdmissionSummary",
+    "worker_daemon_admission_label_en": 'daemonLoopAdmissionSummary: "Worker start/restart Method Block readback"',
+    "worker_daemon_admission_label_zh": 'daemonLoopAdmissionSummary: "Worker 启停 Method Block 回读"',
+    "worker_daemon_admission_next_command": "result.local_loop_admission_summary?.next_safe_commands?.[0]",
+    "worker_daemon_admission_render": "copy.daemonLoopAdmissionSummary",
+    "worker_daemon_admission_counts": "lastDaemonAdmissionSummary.passed_local_loop_admission",
+    "worker_daemon_admission_copy": "copyIntakeCommand(command)",
+    "worker_daemon_admission_no_shell": "lastDaemonAdmissionServerShell",
     "operator_loop_driver_packet_panel_badge": 'panelStatusBadge("operator_loop_driver_packets")',
     "operator_loop_driver_packet_panel_refresh": 'panelRefreshButton("operator_loop_driver_packets")',
     "operator_loop_driver_packet_panel_diagnostics": 'panelDiagnosticsButton("operator_loop_driver_packets")',
@@ -534,6 +542,8 @@ EXPECTED_MARKERS = {
 }
 
 EXPECTED_LIVE_API_MARKERS = {
+    "worker_daemon_admission_type": "export interface LocalLoopAdmissionSummary",
+    "worker_daemon_result_admission": "local_loop_admission_summary?: LocalLoopAdmissionSummary",
     "operator_loop_control_api_loader": "export async function loadOperatorLoopControl",
     "operator_loop_control_api_endpoint": "`/operator/loop-control?",
     "operator_runtime_doctor_payload_type": "export interface OperatorRuntimeDoctorPayload",
