@@ -1241,6 +1241,37 @@ python3 scripts/operator_start_check_smoke.py --base-url "$AGENTOPS_BASE_URL" --
 python3 scripts/operator_runtime_doctor_smoke.py --base-url "$AGENTOPS_BASE_URL"
 ```
 
+### Slice 41: Operator Loop-Control Projection
+
+Status: implemented
+
+Boundary:
+
+- `agentops_mis_core/operator_loop_control.py`
+
+Moved out of `server.py`:
+
+- operator loop-control summary projection from handoff state
+- operator loop-control gate projection for loop health/readiness surfaces
+
+Still owned by `server.py`:
+
+- HTTP routes
+- SQLite counts, receipt rows, and operator loop artifact/run/task/memory/
+  approval reads
+- selected action ladder construction
+- bounded-runner policy, loop health, and safety inputs
+- final loop-control, handoff, and self-check response assembly
+
+Verification:
+
+```bash
+python3 scripts/module_boundary_smoke.py
+python3 scripts/operator_loop_control_smoke.py
+python3 scripts/operator_handoff_smoke.py --base-url "$AGENTOPS_BASE_URL"
+python3 scripts/operator_loop_launch_packet_smoke.py --base-url "$AGENTOPS_BASE_URL"
+```
+
 ## Next Candidate Slices
 
 - Continue P1-05 with small smoke-backed strangler slices only; prefer pure

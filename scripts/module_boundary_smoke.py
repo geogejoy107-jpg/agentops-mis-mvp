@@ -104,6 +104,10 @@ from agentops_mis_core.operator_start_check import (
     compact_start_check_local_run_path,
     operator_start_check_gate,
 )
+from agentops_mis_core.operator_loop_control import (
+    operator_loop_control_gate,
+    operator_loop_control_summary_from_handoff,
+)
 from agentops_mis_core.worker_fleet import (
     build_worker_remote_fleet_summary,
     build_worker_fleet_hygiene_plan,
@@ -155,6 +159,7 @@ COMMANDER_WORK_PACKAGES = ROOT / "agentops_mis_core" / "commander_work_packages.
 OPERATOR_COMMAND_CENTER = ROOT / "agentops_mis_core" / "operator_command_center.py"
 OPERATOR_EVIDENCE = ROOT / "agentops_mis_core" / "operator_evidence.py"
 OPERATOR_START_CHECK = ROOT / "agentops_mis_core" / "operator_start_check.py"
+OPERATOR_LOOP_CONTROL = ROOT / "agentops_mis_core" / "operator_loop_control.py"
 WORKER_FLEET = ROOT / "agentops_mis_core" / "worker_fleet.py"
 WORKFLOW_JOBS = ROOT / "agentops_mis_core" / "workflow_jobs.py"
 BACKLOG = ROOT / "docs" / "project" / "BACKLOG.md"
@@ -300,6 +305,14 @@ SERVER_OPERATOR_START_CHECK_IMPORTS = {
     "compact_start_check_launch_brief",
     "compact_start_check_local_run_path",
     "operator_start_check_gate",
+}
+EXTRACTED_OPERATOR_LOOP_CONTROL_HELPERS = {
+    "operator_loop_control_gate",
+    "operator_loop_control_summary_from_handoff",
+}
+SERVER_OPERATOR_LOOP_CONTROL_IMPORTS = {
+    "operator_loop_control_gate",
+    "operator_loop_control_summary_from_handoff",
 }
 EXTRACTED_APPROVAL_WALL_HELPERS = {
     "approval_wall_recommended_actions",
@@ -478,6 +491,7 @@ def main() -> int:
     require(OPERATOR_COMMAND_CENTER.exists(), "operator command center core module missing", failures)
     require(OPERATOR_EVIDENCE.exists(), "operator evidence core module missing", failures)
     require(OPERATOR_START_CHECK.exists(), "operator start-check core module missing", failures)
+    require(OPERATOR_LOOP_CONTROL.exists(), "operator loop-control core module missing", failures)
     require(WORKER_FLEET.exists(), "worker fleet core module missing", failures)
     require(WORKFLOW_JOBS.exists(), "workflow jobs core module missing", failures)
     require("from agentops_mis_core.approval_wall import" in server_text, "server.py must import approval wall core module", failures)
@@ -488,6 +502,7 @@ def main() -> int:
     require("from agentops_mis_core.operator_command_center import" in server_text, "server.py must import operator command center core module", failures)
     require("from agentops_mis_core.operator_evidence import" in server_text, "server.py must import operator evidence core module", failures)
     require("from agentops_mis_core.operator_start_check import" in server_text, "server.py must import operator start-check core module", failures)
+    require("from agentops_mis_core.operator_loop_control import" in server_text, "server.py must import operator loop-control core module", failures)
     require("from agentops_mis_core.worker_fleet import" in server_text, "server.py must import worker fleet core module", failures)
     require("from agentops_mis_core.workflow_jobs import" in server_text, "server.py must import workflow jobs core module", failures)
     require("from agentops_mis_runtime.capabilities import" in server_text, "server.py must import runtime capability module", failures)
@@ -501,6 +516,7 @@ def main() -> int:
     operator_command_center_functions = function_names(OPERATOR_COMMAND_CENTER) if OPERATOR_COMMAND_CENTER.exists() else set()
     operator_evidence_functions = function_names(OPERATOR_EVIDENCE) if OPERATOR_EVIDENCE.exists() else set()
     operator_start_check_functions = function_names(OPERATOR_START_CHECK) if OPERATOR_START_CHECK.exists() else set()
+    operator_loop_control_functions = function_names(OPERATOR_LOOP_CONTROL) if OPERATOR_LOOP_CONTROL.exists() else set()
     worker_fleet_functions = function_names(WORKER_FLEET) if WORKER_FLEET.exists() else set()
     workflow_job_functions = function_names(WORKFLOW_JOBS) if WORKFLOW_JOBS.exists() else set()
     for helper in sorted(EXTRACTED_HELPERS):
@@ -527,6 +543,9 @@ def main() -> int:
     for helper in sorted(EXTRACTED_OPERATOR_START_CHECK_HELPERS):
         require(helper not in server_functions, f"server.py still defines {helper}", failures)
         require(helper in operator_start_check_functions, f"operator start-check module missing {helper}", failures)
+    for helper in sorted(EXTRACTED_OPERATOR_LOOP_CONTROL_HELPERS):
+        require(helper not in server_functions, f"server.py still defines {helper}", failures)
+        require(helper in operator_loop_control_functions, f"operator loop-control module missing {helper}", failures)
     for helper in sorted(EXTRACTED_APPROVAL_WALL_HELPERS):
         require(helper not in server_functions, f"server.py still defines {helper}", failures)
         require(helper in approval_wall_functions, f"approval wall module missing {helper}", failures)
@@ -558,6 +577,8 @@ def main() -> int:
         require(sources == {"agentops_mis_core.operator_evidence"}, f"{helper} imported from wrong or multiple modules: {sorted(sources)}", failures)
     for helper, sources in imported_symbol_sources(SERVER, SERVER_OPERATOR_START_CHECK_IMPORTS).items():
         require(sources == {"agentops_mis_core.operator_start_check"}, f"{helper} imported from wrong or multiple modules: {sorted(sources)}", failures)
+    for helper, sources in imported_symbol_sources(SERVER, SERVER_OPERATOR_LOOP_CONTROL_IMPORTS).items():
+        require(sources == {"agentops_mis_core.operator_loop_control"}, f"{helper} imported from wrong or multiple modules: {sorted(sources)}", failures)
     for helper, sources in imported_symbol_sources(SERVER, SERVER_APPROVAL_WALL_IMPORTS).items():
         require(sources == {"agentops_mis_core.approval_wall"}, f"{helper} imported from wrong or multiple modules: {sorted(sources)}", failures)
     for helper, sources in imported_symbol_sources(SERVER, SERVER_AGENT_PLAN_IMPORTS).items():
@@ -576,6 +597,7 @@ def main() -> int:
     operator_command_center_imports = imported_modules(OPERATOR_COMMAND_CENTER) if OPERATOR_COMMAND_CENTER.exists() else set()
     operator_evidence_imports = imported_modules(OPERATOR_EVIDENCE) if OPERATOR_EVIDENCE.exists() else set()
     operator_start_check_imports = imported_modules(OPERATOR_START_CHECK) if OPERATOR_START_CHECK.exists() else set()
+    operator_loop_control_imports = imported_modules(OPERATOR_LOOP_CONTROL) if OPERATOR_LOOP_CONTROL.exists() else set()
     worker_fleet_imports = imported_modules(WORKER_FLEET) if WORKER_FLEET.exists() else set()
     workflow_job_imports = imported_modules(WORKFLOW_JOBS) if WORKFLOW_JOBS.exists() else set()
     forbidden = sorted(module for module in imports if module in FORBIDDEN_RUNTIME_MODULE_IMPORTS)
@@ -611,6 +633,9 @@ def main() -> int:
     operator_start_check_forbidden = sorted(module for module in operator_start_check_imports if module in {"sqlite3", "subprocess", "http.server", "urllib.request"})
     require(not operator_start_check_forbidden, f"operator start-check module imports forbidden app/runtime dependencies: {operator_start_check_forbidden}", failures)
     require("server" not in operator_start_check_imports, "operator start-check module must not import server module", failures)
+    operator_loop_control_forbidden = sorted(module for module in operator_loop_control_imports if module in {"sqlite3", "subprocess", "http.server", "urllib.request"})
+    require(not operator_loop_control_forbidden, f"operator loop-control module imports forbidden app/runtime dependencies: {operator_loop_control_forbidden}", failures)
+    require("server" not in operator_loop_control_imports, "operator loop-control module must not import server module", failures)
     worker_fleet_forbidden = sorted(module for module in worker_fleet_imports if module in {"sqlite3", "subprocess", "http.server", "urllib.request"})
     require(not worker_fleet_forbidden, f"worker fleet module imports forbidden app/runtime dependencies: {worker_fleet_forbidden}", failures)
     require("server" not in worker_fleet_imports, "worker fleet module must not import server module", failures)
@@ -1750,6 +1775,45 @@ def main() -> int:
     require(((loop_driver_entry.get("review_snapshot") or {}).get("summary") or {}).get("pending_approvals") == 1, "operator start-check loop-driver review summary failed", failures)
     require((loop_driver_entry.get("safety") or {}).get("server_executes_shell") is False, "operator start-check loop-driver server-shell proof failed", failures)
     require(all(item.get("summary_omitted") is True for item in ((loop_driver_entry.get("review_snapshot") or {}).get("items") or [])), "operator start-check loop-driver item omission failed", failures)
+    loop_control = operator_loop_control_summary_from_handoff(
+        {
+            "status": "attention",
+            "selected_item": {
+                "gate_id": "runtime_doctor",
+                "gate_label": "Runtime doctor",
+                "gate_status": "attention",
+                "verify_command": "agentops operator loop-control --limit 5",
+                "receipt_verify_record_command": "agentops operator action-receipt record --source runtime_doctor",
+                "source": "operator_loop_control.runtime_doctor",
+                "action_signature": "sig_smoke",
+            },
+            "confirm_command": "agentops operator advance-loop --fast-control --confirm-advance --limit 5",
+            "preview_command": "agentops operator advance-loop --fast-control --limit 5",
+            "policy": {"policy_id": "bounded_runner_v1"},
+            "safety": {"server_shell_execution": False},
+        },
+        {"status": "attention"},
+        loop_id="loop_smoke",
+    )
+    loop_control_gate = operator_loop_control_gate(loop_control)
+    require(loop_control.get("status") == "attention", "operator loop-control selected status failed", failures)
+    require(loop_control.get("requires_human") is True and loop_control.get("copy_only") is True, "operator loop-control selected safety flags failed", failures)
+    require(loop_control.get("selected_gate") == "runtime_doctor", "operator loop-control selected gate failed", failures)
+    require((loop_control.get("recommended_step") or {}).get("receipt_required") is True, "operator loop-control receipt requirement failed", failures)
+    require(loop_control_gate.get("status") == "attention", "operator loop-control gate status failed", failures)
+    require(loop_control_gate.get("requires_receipt") is True, "operator loop-control gate receipt flag failed", failures)
+    require(loop_control_gate.get("server_executes_shell") is False, "operator loop-control gate server-shell proof failed", failures)
+    require(loop_control_gate.get("refresh_cache_required_after_receipt") is True, "operator loop-control cache refresh flag failed", failures)
+    ready_loop_control = operator_loop_control_summary_from_handoff(
+        {
+            "status": "ready",
+            "preview_command": "agentops operator advance-loop --limit 5",
+        },
+        {"status": "ready"},
+    )
+    require(ready_loop_control.get("status") == "ready", "operator loop-control ready status failed", failures)
+    require(ready_loop_control.get("mode") == "read_only_copy", "operator loop-control ready mode failed", failures)
+    require(ready_loop_control.get("requires_human") is False, "operator loop-control ready human flag failed", failures)
 
     command = "python3 scripts/module_boundary_smoke.py"
     require(command in ci_text, "module boundary smoke missing from CI", failures)
@@ -1765,13 +1829,14 @@ def main() -> int:
     require("agentops_mis_core/operator_command_center.py" in plan_text, "module boundary plan missing operator command center module", failures)
     require("agentops_mis_core/operator_evidence.py" in plan_text, "module boundary plan missing operator evidence module", failures)
     require("agentops_mis_core/operator_start_check.py" in plan_text, "module boundary plan missing operator start-check module", failures)
+    require("agentops_mis_core/operator_loop_control.py" in plan_text, "module boundary plan missing operator loop-control module", failures)
     require("agentops_mis_core/worker_fleet.py" in plan_text, "module boundary plan missing worker fleet module", failures)
     require("agentops_mis_core/workflow_jobs.py" in plan_text, "module boundary plan missing workflow jobs module", failures)
 
     output = {
         "ok": not failures,
         "operation": "module_boundary_smoke",
-        "boundary": "agentops_mis_runtime.capabilities+connectors+trust + agentops_mis_core.read_model_cache+approval_wall+agent_plans+gateway_runs+commander_work_packages+operator_command_center+operator_evidence+operator_start_check+worker_fleet+workflow_jobs",
+        "boundary": "agentops_mis_runtime.capabilities+connectors+trust + agentops_mis_core.read_model_cache+approval_wall+agent_plans+gateway_runs+commander_work_packages+operator_command_center+operator_evidence+operator_start_check+operator_loop_control+worker_fleet+workflow_jobs",
         "server_line_count": len(server_text.splitlines()),
         "module_imports": {
             "capabilities": sorted(imports),
@@ -1785,6 +1850,7 @@ def main() -> int:
             "operator_command_center": sorted(operator_command_center_imports),
             "operator_evidence": sorted(operator_evidence_imports),
             "operator_start_check": sorted(operator_start_check_imports),
+            "operator_loop_control": sorted(operator_loop_control_imports),
             "worker_fleet": sorted(worker_fleet_imports),
             "workflow_jobs": sorted(workflow_job_imports),
         },
