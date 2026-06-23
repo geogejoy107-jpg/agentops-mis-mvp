@@ -6,6 +6,7 @@ import type {
   SpatialWorldSnapshot,
 } from "./contracts";
 import { SPATIAL_OS_FOUNDATION } from "./catalog";
+import { deriveSpatialAgentIdentity } from "./agentIdentity";
 
 export interface BasicPixelProjectionInput {
   agents: PixelAgent[];
@@ -47,6 +48,12 @@ function projectAgent(agent: PixelAgent): SpatialEntity {
       route: agent.routeToDetail || `/admin/agents/${encodeURIComponent(agent.id)}`,
       provenance: "Basic Pixel Agent projection",
     },
+    visualIdentity: deriveSpatialAgentIdentity({
+      id: agent.id,
+      name: agent.name,
+      role: agent.role,
+      runtime: agent.runtime,
+    }),
     activity: agent.taskTitle || agent.status,
     metadata: {
       role: agent.role,
