@@ -18633,6 +18633,105 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             },
         )
 
+    workflow_recovery_stuck_jobs = workflow_stuck_jobs(conn, threshold_sec=900, limit=max(limit, 8))
+    workflow_recovery_retryable_failed_jobs = rows_to_dicts(conn.execute(
+        """SELECT *
+        FROM workflow_jobs
+        WHERE status='failed' AND result_task_id IS NOT NULL
+        ORDER BY updated_at DESC
+        LIMIT ?""",
+        (max(limit, 8),),
+    ).fetchall())
+    for job in workflow_recovery_stuck_jobs[:limit]:
+        job_id = str(job.get("job_id") or "").strip()
+        if not job_id:
+            continue
+        command = (
+            "agentops workflow job-mark-failed "
+            f"--job-id {shlex.quote(job_id)} "
+            "--reason 'workflow job exceeded async threshold; operator recovery from action-plan'"
+        )
+        add_action(
+            "workflow_job_recovery",
+            job.get("title") or f"Mark stuck workflow job failed: {job_id}",
+            command,
+            priority=112,
+            severity="blocked",
+            source="workflow_job_recovery:stuck",
+            summary=(
+                f"{job.get('workflow_type') or 'workflow'} job has been {job.get('status') or 'active'} "
+                f"for {job.get('age_sec') or 0}s; mark failed before retrying or reassigning."
+            ),
+            ui_route="/workspace/agents",
+            evidence={
+                "job_id": job_id,
+                "workflow_type": job.get("workflow_type"),
+                "status": job.get("status"),
+                "adapter": job.get("adapter"),
+                "age_sec": job.get("age_sec"),
+                "threshold_sec": job.get("threshold_sec"),
+                "stuck_reason": job.get("stuck_reason"),
+                "result_task_id": job.get("result_task_id"),
+                "result_run_id": job.get("result_run_id"),
+                "raw_request_omitted": True,
+            },
+            verify_command_override=f"agentops workflow job-status --job-id {shlex.quote(job_id)}",
+            action_signature_override=stable_id("op_action_sig", "workflow_job_recovery", workspace_id, job_id, "mark_failed")[-18:],
+            action_id_override=f"workflow_job_recovery:{job_id}:mark_failed",
+            receipt_source="operator.workflow_job_recovery",
+            receipt_result_summary=f"Workflow job {job_id} marked failed after stuck recovery review.",
+        )
+
+    for job in workflow_recovery_retryable_failed_jobs[:limit]:
+        job_id = str(job.get("job_id") or "").strip()
+        task_id = str(job.get("result_task_id") or "").strip()
+        if not job_id or not task_id:
+            continue
+        adapter = str(job.get("adapter") or "mock").strip()
+        if adapter not in {"mock", "hermes", "openclaw"}:
+            adapter = "mock"
+        command_parts = [
+            "agentops", "commander", "dispatch-batch",
+            "--task-id", task_id,
+            "--status", "all",
+            "--limit", "1",
+            "--adapter", adapter,
+        ]
+        confirm_required = adapter in {"hermes", "openclaw"}
+        if confirm_required:
+            command_parts.append("--confirm-run")
+        command = " ".join(shlex.quote(part) for part in command_parts)
+        add_action(
+            "workflow_job_recovery",
+            job.get("title") or f"Retry failed workflow job: {job_id}",
+            command,
+            priority=101,
+            severity="attention",
+            source="workflow_job_recovery:retry",
+            summary=(
+                f"Failed workflow job can be retried through Commander exact-task dispatch; "
+                f"adapter={adapter}; live_confirm_required={confirm_required}."
+            ),
+            ui_route=f"/admin/tasks/{task_id}",
+            evidence={
+                "job_id": job_id,
+                "workflow_type": job.get("workflow_type"),
+                "status": job.get("status"),
+                "adapter": adapter,
+                "confirm_required": confirm_required,
+                "task_id": task_id,
+                "run_id": job.get("result_run_id"),
+                "artifact_id": job.get("result_artifact_id"),
+                "error_message": redact_text(job.get("error_message") or "", 240),
+                "raw_request_omitted": True,
+            },
+            verify_command_override="agentops workflow jobs --status queued,running,completed,failed --limit 20",
+            action_signature_override=stable_id("op_action_sig", "workflow_job_recovery", workspace_id, job_id, "retry", task_id, adapter)[-18:],
+            action_id_override=f"workflow_job_recovery:{job_id}:retry",
+            receipt_source="operator.workflow_job_recovery",
+            receipt_result_summary=f"Workflow job {job_id} retry was queued or safely rejected with evidence.",
+        )
+
     adapter_summary = adapter_readiness.get("summary") or {}
     recommended_adapter = adapter_summary.get("recommended_adapter") or "mock"
     if adapter_readiness.get("status") != "ready" or recommended_adapter == "mock":
@@ -19101,6 +19200,33 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
         item for item in deduped
         if str(item.get("source") or "").startswith("evidence_remediation_workflow:")
     ]
+    workflow_recovery_actions = [
+        item for item in deduped
+        if item.get("lane") == "workflow_job_recovery"
+    ]
+    workflow_recovery_blocked = len([item for item in workflow_recovery_actions if item.get("severity") == "blocked"])
+    workflow_recovery_source = {
+        "operation": "workflow_job_recovery",
+        "status": "blocked" if workflow_recovery_blocked else "attention" if workflow_recovery_actions else "ready",
+        "summary": {
+            "actions": len(workflow_recovery_actions),
+            "stuck_jobs": len(workflow_recovery_stuck_jobs),
+            "retryable_failed_jobs": len(workflow_recovery_retryable_failed_jobs),
+            "blocked": workflow_recovery_blocked,
+            "attention": len([item for item in workflow_recovery_actions if item.get("severity") == "attention"]),
+            "receipt_missing": len([item for item in workflow_recovery_actions if not item.get("receipt_verified")]),
+            "receipt_verified": len([item for item in workflow_recovery_actions if item.get("receipt_verified")]),
+        },
+        "items": workflow_recovery_actions[:limit],
+        "contract": "projects workflow-job stuck/failed recovery into Action Queue commands for Codex/Hermes/OpenClaw; commands are explicit CLI actions and receipts govern RECORD",
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+    }
     remediation_workflow_source = {
         "status": "attention" if remediation_workflow_actions else "ready",
         "summary": {
@@ -19166,6 +19292,11 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             "operator_health_risks": (operator_health_source.get("summary") or {}).get("risks", 0),
             "operator_health_blocked": (operator_health_source.get("summary") or {}).get("blocked", 0),
             "operator_health_attention": (operator_health_source.get("summary") or {}).get("attention", 0),
+            "workflow_job_recovery_actions": (workflow_recovery_source.get("summary") or {}).get("actions", 0),
+            "workflow_job_recovery_stuck_jobs": (workflow_recovery_source.get("summary") or {}).get("stuck_jobs", 0),
+            "workflow_job_recovery_retryable_failed_jobs": (workflow_recovery_source.get("summary") or {}).get("retryable_failed_jobs", 0),
+            "workflow_job_recovery_receipt_missing": (workflow_recovery_source.get("summary") or {}).get("receipt_missing", 0),
+            "workflow_job_recovery_receipt_verified": (workflow_recovery_source.get("summary") or {}).get("receipt_verified", 0),
             "evidence_remediation_workflow_actions": (remediation_workflow_source.get("summary") or {}).get("actions", 0),
             "evidence_remediation_workflow_mutating": (remediation_workflow_source.get("summary") or {}).get("mutating", 0),
             "evidence_remediation_workflow_confirm_required": (remediation_workflow_source.get("summary") or {}).get("confirm_required", 0),
@@ -19213,6 +19344,7 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
             "task_intake": task_intake.get("status"),
             "dispatch_evidence": dispatch_evidence.get("status"),
             "operator_health": operator_health_source.get("status"),
+            "workflow_job_recovery": workflow_recovery_source.get("status"),
             "evidence_remediation_workflow": remediation_workflow_source.get("status"),
             "action_receipts": action_receipts.get("status"),
             "receipt_evaluation": receipt_evaluation_status,
@@ -19223,6 +19355,7 @@ def operator_action_plan(conn: sqlite3.Connection, headers, qs=None) -> dict:
         "task_intake": task_intake,
         "dispatch_evidence": dispatch_evidence,
         "operator_health": operator_health_source,
+        "workflow_job_recovery": workflow_recovery_source,
         "evidence_remediation_workflow": remediation_workflow_source,
         "action_receipts": action_receipts,
         "receipt_failure_memory": receipt_failure_memory,

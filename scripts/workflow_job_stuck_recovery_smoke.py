@@ -102,6 +102,30 @@ def main() -> int:
     stuck_ids = {item.get("job_id") for item in stuck_jobs}
     require(job_id in stuck_ids, f"stale workflow job missing: {stuck_ids}")
 
+    action_plan = run_cli(args.base_url, ["operator", "action-plan", "--limit", "20"])
+    action_plan_payload = load_json(action_plan)
+    require(action_plan.returncode == 0, f"operator action-plan failed: {action_plan.stderr or action_plan.stdout}")
+    workflow_recovery = action_plan_payload.get("workflow_job_recovery") or {}
+    workflow_summary = workflow_recovery.get("summary") or {}
+    require(workflow_recovery.get("operation") == "workflow_job_recovery", f"workflow recovery source missing: {workflow_recovery}")
+    require(workflow_summary.get("stuck_jobs", 0) >= 1, f"workflow recovery stuck count missing: {workflow_summary}")
+    recovery_actions = [
+        item for item in (action_plan_payload.get("actions") or [])
+        if item.get("lane") == "workflow_job_recovery"
+    ]
+    mark_action = next(
+        (
+            item for item in recovery_actions
+            if job_id in str(item.get("command") or "")
+            and str(item.get("command") or "").startswith("agentops workflow job-mark-failed --job-id ")
+        ),
+        None,
+    )
+    require(mark_action is not None, f"workflow recovery mark-failed action missing: {recovery_actions}")
+    require(mark_action.get("verify_command") == f"agentops workflow job-status --job-id {job_id}", f"workflow recovery verify command mismatch: {mark_action}")
+    require("--source operator.workflow_job_recovery" in (mark_action.get("receipt_record_command") or ""), f"workflow recovery receipt source missing: {mark_action}")
+    require("--status verified" in (mark_action.get("receipt_verify_record_command") or ""), f"workflow recovery verify receipt command missing: {mark_action}")
+
     marked = run_cli(args.base_url, [
         "workflow",
         "job-mark-failed",
@@ -123,7 +147,16 @@ def main() -> int:
     remaining_ids = {item.get("job_id") for item in (relisted_payload.get("stuck_jobs") or [])}
     require(job_id not in remaining_ids, f"marked job still appears stuck: {remaining_ids}")
 
-    combined = "\n".join([listed.stdout, listed.stderr, marked.stdout, marked.stderr, relisted.stdout, relisted.stderr])
+    combined = "\n".join([
+        listed.stdout,
+        listed.stderr,
+        action_plan.stdout,
+        action_plan.stderr,
+        marked.stdout,
+        marked.stderr,
+        relisted.stdout,
+        relisted.stderr,
+    ])
     require(not secret_leaked(combined), "workflow stuck recovery output leaked token-like material")
     print(json.dumps({
         "ok": True,

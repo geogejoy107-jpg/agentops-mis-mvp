@@ -80,6 +80,30 @@ agentops operator action-receipts --limit 20
 agentops operator loop-audit --limit 20
 ```
 
+Workflow-job recovery from the shared Action Queue:
+
+```bash
+agentops operator action-plan --limit 20
+agentops workflow stuck-jobs --threshold-sec 900 --limit 25
+agentops workflow job-mark-failed --job-id <job_id> --reason "<reason>"
+agentops workflow job-status --job-id <job_id>
+agentops operator record-action-receipt \
+  --action-command "<command from action-plan>" \
+  --verify-command "<verify_command from action-plan>" \
+  --status verified \
+  --source operator.workflow_job_recovery \
+  --confirm-record
+```
+
+`operator action-plan` projects stuck or retryable workflow jobs into the
+`workflow_job_recovery` lane with `command`, `verify_command`,
+`receipt_record_command`, and `receipt_verify_record_command`. Hermes,
+OpenClaw, and Codex should copy those generated commands instead of inventing
+their own recovery syntax. The action-plan and stuck-job reads are read-only;
+the mark-failed/retry command is the explicit action; the receipt command is
+the RECORD step. Live Hermes/OpenClaw retry commands still require explicit
+`--confirm-run`.
+
 Dry-run two rounds:
 
 ```bash
