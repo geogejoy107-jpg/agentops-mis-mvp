@@ -1,0 +1,75 @@
+name: UI v2 Validation
+
+on:
+  pull_request:
+    branches:
+      - codex/agent-gateway-kb-demo
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-visual:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      AGENTOPS_DB_PATH: ${{ runner.temp }}/ui-v2-validation.db
+      AGENTOPS_DEPLOYMENT_MODE: local
+      AGENTOPS_ALLOW_REAL_RUNS: "false"
+      VITE_UI_V2: "true"
+      VITE_AGENTOPS_PROXY_TARGET: http://127.0.0.1:8787
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          show-progress: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: ui/start-building-app/package-lock.json
+      - name: Compile backend
+        run: python3 -m py_compile server.py agentops_mis_cli/*.py
+      - name: Start isolated MIS
+        run: |
+          nohup python3 server.py > "${RUNNER_TEMP}/ui-v2-server.log" 2>&1 &
+          for attempt in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:8787/api/agent-gateway/status >/dev/null && exit 0
+            sleep 0.5
+          done
+          cat "${RUNNER_TEMP}/ui-v2-server.log"
+          exit 1
+      - name: Install and build frontend
+        working-directory: ui/start-building-app
+        run: |
+          npm ci
+          npm run build
+      - name: Install Chromium
+        working-directory: ui/start-building-app
+        run: |
+          npm install --no-save --package-lock=false playwright@1.53.1
+          npx playwright install --with-deps chromium
+      - name: Start Vite
+        working-directory: ui/start-building-app
+        run: nohup npm run dev -- --host 127.0.0.1 > "${RUNNER_TEMP}/ui-v2-vite.log" 2>&1 &
+      - name: Wait for UI
+        run: |
+          for attempt in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:5173/workspace >/dev/null && exit 0
+            sleep 0.5
+          done
+          cat "${RUNNER_TEMP}/ui-v2-vite.log"
+          exit 1
+      - name: Capture responsive screenshots
+        working-directory: ui/start-building-app
+        run: node tools/capture-ui-v2.mjs
+      - name: Upload visual evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-v2-responsive-screenshots
+          path: ui/start-building-app/visual-artifacts/*.png
+          if-no-files-found: error
+          retention-days: 14

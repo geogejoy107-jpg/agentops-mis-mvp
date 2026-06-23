@@ -1,0 +1,97 @@
+:root {
+  --ui-bg: var(--mis-bg);
+  --ui-surface-1: var(--mis-surface);
+  --ui-surface-2: var(--mis-surface2);
+  --ui-surface-raised: color-mix(in srgb, var(--mis-surface) 92%, white 8%);
+  --ui-text: var(--mis-text);
+  --ui-text-muted: var(--mis-dim);
+  --ui-text-subtle: var(--mis-muted);
+  --ui-border: var(--mis-border);
+  --ui-border-strong: color-mix(in srgb, var(--mis-border) 70%, var(--mis-text) 30%);
+  --ui-accent: var(--mis-primary);
+  --ui-accent-strong: var(--mis-cyan);
+  --ui-success: var(--mis-success);
+  --ui-warning: #f59e0b;
+  --ui-danger: #ef4444;
+  --ui-info: #3b82f6;
+  --ui-purple: var(--mis-purple);
+  --ui-radius-sm: 6px;
+  --ui-radius-md: 10px;
+  --ui-radius-lg: 14px;
+  --ui-shadow-sm: 0 1px 2px rgba(2, 6, 23, 0.08);
+  --ui-shadow-md: 0 16px 40px rgba(2, 6, 23, 0.15);
+  --ui-content-max: 1560px;
+  --ui-sidebar-width: 248px;
+  --ui-context-height: 38px;
+}
+
+.theme-enterprise,
+.theme-ops,
+.theme-workforce {
+  --ui-bg: var(--mis-bg);
+  --ui-surface-1: var(--mis-surface);
+  --ui-surface-2: var(--mis-surface2);
+  --ui-surface-raised: color-mix(in srgb, var(--mis-surface) 92%, white 8%);
+  --ui-text: var(--mis-text);
+  --ui-text-muted: var(--mis-dim);
+  --ui-text-subtle: var(--mis-muted);
+  --ui-border: var(--mis-border);
+  --ui-border-strong: color-mix(in srgb, var(--mis-border) 70%, var(--mis-text) 30%);
+  --ui-accent: var(--mis-primary);
+  --ui-accent-strong: var(--mis-cyan);
+  --ui-success: var(--mis-success);
+  --ui-purple: var(--mis-purple);
+}
+
+.theme-enterprise {
+  --ui-surface-raised: #ffffff;
+  --ui-shadow-md: 0 16px 40px rgba(15, 23, 42, 0.08);
+}
+
+.ui-v2-shell {
+  background: var(--ui-bg);
+  color: var(--ui-text);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.ui-v2-page {
+  width: min(100%, var(--ui-content-max));
+  margin-inline: auto;
+}
+
+.ui-v2-card {
+  background: var(--ui-surface-1);
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-md);
+  box-shadow: var(--ui-shadow-sm);
+}
+
+.ui-v2-interactive {
+  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease, transform 140ms ease;
+}
+
+.ui-v2-interactive:hover {
+  border-color: var(--ui-border-strong) !important;
+}
+
+.ui-v2-shell :focus-visible {
+  outline: 2px solid var(--ui-accent-strong);
+  outline-offset: 2px;
+}
+
+.ui-v2-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: var(--ui-border-strong) transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-v2-shell *,
+  .ui-v2-shell *::before,
+  .ui-v2-shell *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

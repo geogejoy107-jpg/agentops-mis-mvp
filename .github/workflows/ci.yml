@@ -101,6 +101,7 @@ jobs:
       - name: Server-backed smoke suite
         run: |
           set -euo pipefail
+          python3 scripts/ui_v2_agent_plan_smoke.py
           python3 scripts/security_production_readiness_smoke.py --base-url "$AGENTOPS_BASE_URL"
           python3 scripts/agentops_doctor_smoke.py
           python3 scripts/agent_plan_integrity_smoke.py --base-url "$AGENTOPS_BASE_URL"
@@ -171,3 +172,99 @@ jobs:
           set -euo pipefail
           npm ci
           npm run build
+
+  ui-visual:
+    name: UI responsive visual smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      AGENTOPS_DB_PATH: /tmp/agentops_ui_visual.db
+      AGENTOPS_DEPLOYMENT_MODE: local
+      HERMES_ALLOW_REAL_RUN: "false"
+      HERMES_REQUIRE_CONFIRM_RUN: "true"
+      VITE_UI_V2: "true"
+      VITE_AGENTOPS_PROXY_TARGET: http://127.0.0.1:8787
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: ui/start-building-app/package-lock.json
+
+      - name: Start isolated MIS
+        run: |
+          set -euo pipefail
+          python3 server.py --host 127.0.0.1 --port 8787 > "$RUNNER_TEMP/ui-v2-server.log" 2>&1 &
+          echo "$!" > "$RUNNER_TEMP/ui-v2-server.pid"
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8787/api/agent-gateway/status >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/ui-v2-server.log"
+          exit 1
+
+      - name: Install frontend and Chromium
+        working-directory: ui/start-building-app
+        run: |
+          set -euo pipefail
+          npm ci
+          npm install --no-save --package-lock=false playwright@1.53.1
+          npx playwright install --with-deps chromium
+
+      - name: Start Vite
+        working-directory: ui/start-building-app
+        run: |
+          set -euo pipefail
+          nohup npm run dev -- --host 127.0.0.1 > "$RUNNER_TEMP/ui-v2-vite.log" 2>&1 &
+          echo "$!" > "$RUNNER_TEMP/ui-v2-vite.pid"
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:5173/workspace >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/ui-v2-vite.log"
+          exit 1
+
+      - name: Capture responsive screenshots
+        working-directory: ui/start-building-app
+        run: node tools/capture-ui-v2.mjs
+
+      - name: Upload responsive screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-v2-responsive-screenshots
+          path: ui/start-building-app/visual-artifacts/*.png
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload UI visual logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-v2-visual-logs
+          path: |
+            ${{ runner.temp }}/ui-v2-server.log
+            ${{ runner.temp }}/ui-v2-vite.log
+          if-no-files-found: ignore
+
+      - name: Stop visual services
+        if: always()
+        run: |
+          for pidfile in "$RUNNER_TEMP/ui-v2-vite.pid" "$RUNNER_TEMP/ui-v2-server.pid"; do
+            if [ -f "$pidfile" ]; then
+              kill "$(cat "$pidfile")" 2>/dev/null || true
+            fi
+          done
