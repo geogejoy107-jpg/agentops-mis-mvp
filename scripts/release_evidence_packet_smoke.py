@@ -235,9 +235,21 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "operator_evidence_report",
+        "command": "python3 scripts/operator_evidence_report_smoke.py",
+        "summary": "Run-level evidence report checks Agent Plan binding, approval, verified plan evidence, tool/eval/artifact/audit rows, memory review closure, raw memory omission and read-only DB stability.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "operator_live_product_readiness",
         "command": "python3 scripts/operator_live_product_readiness_smoke.py",
         "summary": "CLI product-readiness proof reads fresh Hermes/OpenClaw live ledger evidence and fails closed without calling runtimes.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
+        "id": "agentops_cli_connection_hint",
+        "command": "python3 scripts/agentops_cli_connection_hint_smoke.py",
+        "summary": "CLI stale-base-url failures explain whether the target came from flag/env/config/default and show the local demo repair command without leaking tokens.",
         "ci_step": "Offline safety smokes",
     },
     {

@@ -731,7 +731,7 @@ export function AIEmployees() {
       healthScore: "Health score",
       healthRisks: "Health risks",
       evidenceReportTitle: "Evidence report",
-      evidenceReportSummary: "Run-level delivery evidence matrix across Agent Plan, approval, plan_evidence_manifest, ledger counts, pending approvals, and action receipts.",
+      evidenceReportSummary: "Run-level delivery evidence matrix across Agent Plan, approval, plan_evidence_manifest, memory review, ledger counts, pending approvals, and action receipts.",
       evidenceReportReady: "Ready runs",
       evidenceReportBlocked: "Blocked runs",
       missingManifests: "Missing manifests",
@@ -1269,7 +1269,7 @@ export function AIEmployees() {
       healthScore: "健康分",
       healthRisks: "健康风险",
       evidenceReportTitle: "证据报告",
-      evidenceReportSummary: "按 run 聚合 Agent Plan、审批、plan_evidence_manifest、账本计数、待审批和动作收据的交付证据矩阵。",
+      evidenceReportSummary: "按 run 聚合 Agent Plan、审批、plan_evidence_manifest、记忆评审、账本计数、待审批和动作收据的交付证据矩阵。",
       evidenceReportReady: "就绪 Run",
       evidenceReportBlocked: "阻塞 Run",
       missingManifests: "缺失清单",
@@ -4488,6 +4488,7 @@ export function AIEmployees() {
               { label: copy.planEvidence, value: operatorEvidenceSummary?.verified_plan_evidence_manifests ?? 0, status: (operatorEvidenceSummary?.verified_plan_evidence_manifests || 0) > 0 ? "pass" : "attention" },
               { label: copy.missingManifests, value: operatorEvidenceSummary?.missing_plan_evidence_manifests ?? 0, status: (operatorEvidenceSummary?.missing_plan_evidence_manifests || 0) > 0 ? "blocked" : "pass" },
               { label: copy.pendingApprovals, value: operatorEvidenceSummary?.pending_approvals ?? 0, status: (operatorEvidenceSummary?.pending_approvals || 0) > 0 ? "attention" : "pass" },
+              { label: copy.memoryReview, value: `${operatorEvidenceSummary?.memory_review_ready ?? 0}/${operatorEvidenceSummary?.memory_reviews ?? 0}`, status: ((operatorEvidenceSummary?.missing_memory_reviews || 0) + (operatorEvidenceSummary?.pending_memory_reviews || 0)) > 0 ? "attention" : "pass" },
               { label: copy.verifiedReceipts, value: `${operatorEvidenceSummary?.verified_action_receipts ?? 0}/${operatorEvidenceSummary?.action_receipts ?? 0}`, status: (operatorEvidenceSummary?.verified_action_receipts || 0) > 0 ? "pass" : "planned" },
             ].map((item) => (
               <div key={item.label} className="rounded px-2 py-1" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>

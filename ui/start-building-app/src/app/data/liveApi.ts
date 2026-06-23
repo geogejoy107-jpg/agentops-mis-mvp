@@ -1698,6 +1698,16 @@ export interface OperatorEvidenceReportRun {
     verification_pass?: boolean;
     failed_check_ids?: string[];
   };
+  memory_review?: {
+    status?: string;
+    total?: number;
+    pending_review?: number;
+    approved?: number;
+    status_counts?: Record<string, number>;
+    items?: Record<string, unknown>[];
+    raw_content_omitted?: boolean;
+    token_omitted?: boolean;
+  };
   approvals?: {
     count?: number;
     pending?: number;
@@ -1723,6 +1733,10 @@ export interface OperatorEvidenceReportPayload {
     verified_plan_evidence_manifests: number;
     missing_plan_evidence_manifests: number;
     pending_approvals: number;
+    memory_reviews: number;
+    memory_review_ready: number;
+    missing_memory_reviews: number;
+    pending_memory_reviews: number;
     approval_required_plans: number;
     approved_required_plans: number;
     action_receipts: number;
@@ -4952,6 +4966,7 @@ export async function loadOperatorEvidenceReport(limit = 8): Promise<OperatorEvi
   const normalizeReportRun = (item: Record<string, unknown>): OperatorEvidenceReportRun => {
     const agentPlanRaw = typeof item.agent_plan === "object" && item.agent_plan !== null ? item.agent_plan as Record<string, unknown> : {};
     const manifestRaw = typeof item.plan_evidence_manifest === "object" && item.plan_evidence_manifest !== null ? item.plan_evidence_manifest as Record<string, unknown> : {};
+    const memoryReviewRaw = typeof item.memory_review === "object" && item.memory_review !== null ? item.memory_review as Record<string, unknown> : {};
     const approvalsRaw = typeof item.approvals === "object" && item.approvals !== null ? item.approvals as Record<string, unknown> : {};
     return {
       run_id: String(item.run_id || ""),
@@ -4985,6 +5000,19 @@ export async function loadOperatorEvidenceReport(limit = 8): Promise<OperatorEvi
         verification_pass: boolValue(manifestRaw.verification_pass),
         failed_check_ids: asArray<unknown>(manifestRaw.failed_check_ids).map(String).filter(Boolean),
       },
+      memory_review: {
+        status: String(memoryReviewRaw.status || "unknown"),
+        total: numberValue(memoryReviewRaw.total, 0),
+        pending_review: numberValue(memoryReviewRaw.pending_review, 0),
+        approved: numberValue(memoryReviewRaw.approved, 0),
+        status_counts: Object.fromEntries(
+          Object.entries(typeof memoryReviewRaw.status_counts === "object" && memoryReviewRaw.status_counts !== null ? memoryReviewRaw.status_counts as Record<string, unknown> : {})
+            .map(([key, value]) => [key, numberValue(value, 0)]),
+        ),
+        items: asArray<Record<string, unknown>>(memoryReviewRaw.items),
+        raw_content_omitted: boolValue(memoryReviewRaw.raw_content_omitted),
+        token_omitted: boolValue(memoryReviewRaw.token_omitted),
+      },
       approvals: {
         count: numberValue(approvalsRaw.count, 0),
         pending: numberValue(approvalsRaw.pending, 0),
@@ -5010,6 +5038,10 @@ export async function loadOperatorEvidenceReport(limit = 8): Promise<OperatorEvi
       verified_plan_evidence_manifests: numberValue(summaryRaw.verified_plan_evidence_manifests, 0),
       missing_plan_evidence_manifests: numberValue(summaryRaw.missing_plan_evidence_manifests, 0),
       pending_approvals: numberValue(summaryRaw.pending_approvals, 0),
+      memory_reviews: numberValue(summaryRaw.memory_reviews, 0),
+      memory_review_ready: numberValue(summaryRaw.memory_review_ready, 0),
+      missing_memory_reviews: numberValue(summaryRaw.missing_memory_reviews, 0),
+      pending_memory_reviews: numberValue(summaryRaw.pending_memory_reviews, 0),
       approval_required_plans: numberValue(summaryRaw.approval_required_plans, 0),
       approved_required_plans: numberValue(summaryRaw.approved_required_plans, 0),
       action_receipts: numberValue(summaryRaw.action_receipts, 0),

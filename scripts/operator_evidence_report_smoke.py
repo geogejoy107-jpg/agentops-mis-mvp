@@ -6,6 +6,7 @@ import datetime as dt
 import json
 import os
 import re
+import socket
 import sqlite3
 import subprocess
 import sys
@@ -31,6 +32,12 @@ SECRET_PATTERNS = [
 
 def now_stamp() -> str:
     return dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d%H%M%S%f")
+
+
+def free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
 
 
 def wait_ready(base_url: str, proc: subprocess.Popen[str]) -> None:
@@ -119,7 +126,7 @@ def main() -> int:
     failures: list[str] = []
     outputs: list[str] = []
     stamp = now_stamp()
-    port = 18841
+    port = free_port()
     base_url = f"http://127.0.0.1:{port}"
     agent_id = f"agt_evidence_report_{stamp}"
     task_id = f"tsk_evidence_report_{stamp}"
@@ -187,6 +194,21 @@ def main() -> int:
                 "--artifact-ids", str((artifact.get("artifact") or {}).get("artifact_id") or ""),
             ], base_url, agent_id, outputs)
             require((manifest.get("verification") or {}).get("pass") is True, f"manifest did not verify: {manifest}", failures)
+            missing_memory_report = run_cli(["operator", "evidence-report", "--run-id", str(run_id), "--limit", "5"], base_url, agent_id, outputs)
+            missing_memory_item = (missing_memory_report.get("runs") or [{}])[0]
+            require(missing_memory_item.get("status") == "attention", f"missing memory review should require attention: {missing_memory_item}", failures)
+            require((missing_memory_item.get("memory_review") or {}).get("status") == "missing", f"missing memory status not surfaced: {missing_memory_item}", failures)
+            require("memory propose" in " ".join(missing_memory_item.get("recommended_commands") or []), f"missing memory command absent: {missing_memory_item}", failures)
+            memory = run_cli(["memory", "propose", "--run-id", str(run_id), "--task-id", task_id, "--agent-id", agent_id, "--scope", "task", "--type", "artifact_summary", "--text", "Operator evidence report fixture produced reviewed closure memory."], base_url, agent_id, outputs)
+            memory_id = (memory.get("memory") or {}).get("memory_id")
+            require(bool(memory_id), f"memory candidate missing: {memory}", failures)
+            pending_memory_report = run_cli(["operator", "evidence-report", "--run-id", str(run_id), "--limit", "5"], base_url, agent_id, outputs)
+            pending_memory_item = (pending_memory_report.get("runs") or [{}])[0]
+            require(pending_memory_item.get("status") == "attention", f"pending memory review should require attention: {pending_memory_item}", failures)
+            require((pending_memory_item.get("memory_review") or {}).get("status") == "pending_review", f"pending memory status not surfaced: {pending_memory_item}", failures)
+            require("memory list" in " ".join(pending_memory_item.get("recommended_commands") or []), f"pending memory command absent: {pending_memory_item}", failures)
+            approved_memory = run_cli(["memory", "approve", "--memory-id", str(memory_id)], base_url, agent_id, outputs)
+            require(approved_memory.get("review_status") == "approved", f"memory approval failed: {approved_memory}", failures)
             before_report = db_fingerprint(db_path)
             report = run_cli(["operator", "evidence-report", "--run-id", str(run_id), "--limit", "5"], base_url, agent_id, outputs)
             status, api_report = http_json("GET", base_url, f"/api/operator/evidence-report?run_id={run_id}&limit=5")
@@ -203,6 +225,14 @@ def main() -> int:
             require(all(check.get("ok") is True for check in item.get("checks") or []), f"expected every run check to pass: {item}", failures)
             require((item.get("agent_plan") or {}).get("approval_decision") == "approved", f"plan approval missing in report: {item}", failures)
             require((item.get("plan_evidence_manifest") or {}).get("verification_pass") is True, f"manifest missing in report: {item}", failures)
+            memory_review = item.get("memory_review") or {}
+            require(memory_review.get("status") == "reviewed", f"memory review should be reviewed: {item}", failures)
+            require(int(memory_review.get("approved") or 0) >= 1, f"approved memory count missing: {item}", failures)
+            require(memory_review.get("raw_content_omitted") is True, f"memory raw content should be omitted: {item}", failures)
+            require("canonical_text" not in json.dumps(memory_review, ensure_ascii=False), f"memory review leaked canonical text: {memory_review}", failures)
+            summary = report.get("summary") or {}
+            require(int(summary.get("memory_review_ready") or 0) >= 1, f"summary missing ready memory review: {summary}", failures)
+            require(int(summary.get("pending_memory_reviews") or 0) == 0, f"summary should have no pending memory review: {summary}", failures)
             counts = item.get("evidence_counts") or {}
             for key in ["tool_calls", "evaluations", "artifacts", "audit_logs"]:
                 require(int(counts.get(key) or 0) >= 1, f"missing {key} evidence count: {counts}", failures)
@@ -213,6 +243,7 @@ def main() -> int:
                 "plan_id": plan_id,
                 "approval_id": approval_id,
                 "manifest_id": (manifest.get("manifest") or {}).get("manifest_id"),
+                "memory_id": memory_id,
                 "report_status": report.get("status"),
                 "run_report_status": item.get("status"),
                 "db_fingerprint_unchanged": before_report is not None and before_report == after_report,

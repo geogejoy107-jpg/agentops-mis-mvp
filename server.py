@@ -18707,6 +18707,47 @@ def operator_dispatch_evidence_lane(conn: sqlite3.Connection, workspace_id: str,
     }
 
 
+def operator_run_memory_review(conn: sqlite3.Connection, run_id: str | None, task_id: str | None, limit: int = 8) -> dict:
+    where: list[str] = []
+    params: list[str] = []
+    if run_id:
+        where.append("source_ref=?")
+        params.append(run_id)
+    if task_id:
+        where.append("task_id=?")
+        params.append(task_id)
+    rows: list[dict] = []
+    if where:
+        rows = rows_to_dicts(conn.execute(
+            """SELECT memory_id, scope, memory_type, source_type, source_ref, task_id, agent_id,
+                      confidence, review_status, ttl_review_due_at, created_at, updated_at
+               FROM memories
+               WHERE """ + " OR ".join(where) + """
+               ORDER BY updated_at DESC
+               LIMIT ?""",
+            [*params, max(1, min(int(limit or 8), 25))],
+        ).fetchall())
+    status_counts = {
+        "candidate": sum(1 for row in rows if row.get("review_status") == "candidate"),
+        "approved": sum(1 for row in rows if row.get("review_status") == "approved"),
+        "rejected": sum(1 for row in rows if row.get("review_status") == "rejected"),
+        "stale": sum(1 for row in rows if row.get("review_status") == "stale"),
+        "superseded": sum(1 for row in rows if row.get("review_status") == "superseded"),
+    }
+    pending_review = status_counts["candidate"] + status_counts["stale"]
+    status = "missing" if not rows else "pending_review" if pending_review else "reviewed"
+    return {
+        "status": status,
+        "total": len(rows),
+        "pending_review": pending_review,
+        "approved": status_counts["approved"],
+        "status_counts": status_counts,
+        "items": rows,
+        "raw_content_omitted": True,
+        "token_omitted": True,
+    }
+
+
 def operator_run_evidence_item(conn: sqlite3.Connection, run: sqlite3.Row) -> dict:
     run_id = run["run_id"]
     task_id = run["task_id"]
@@ -18723,6 +18764,7 @@ def operator_run_evidence_item(conn: sqlite3.Connection, run: sqlite3.Row) -> di
         "SELECT approval_id,decision,tool_call_id,reason,created_at,decided_at FROM approvals WHERE run_id=? ORDER BY created_at DESC",
         (run_id,),
     ).fetchall())
+    memory_review = operator_run_memory_review(conn, run_id, task_id)
     gap_decision = latest_execution_evidence_gap_decision(conn, run_id)
     checks = [
         {"id": "agent_plan_bound", "ok": bool(run["agent_plan_id"] and run["plan_hash"]), "message": "Run is bound to an Agent Plan and plan_hash."},
@@ -18737,6 +18779,8 @@ def operator_run_evidence_item(conn: sqlite3.Connection, run: sqlite3.Row) -> di
         {"id": "evaluation_evidence", "ok": int(counts.get("evaluations") or 0) > 0, "message": "Run has evaluation evidence."},
         {"id": "artifact_evidence", "ok": int(counts.get("artifacts") or 0) > 0, "message": "Run or task has artifact evidence."},
         {"id": "audit_evidence", "ok": int(counts.get("audit_logs") or 0) > 0, "message": "Run/task chain has audit evidence."},
+        {"id": "memory_review_recorded", "ok": int(memory_review.get("total") or 0) > 0, "message": "Run/task has a memory candidate or reviewed memory row."},
+        {"id": "memory_review_resolved", "ok": int(memory_review.get("pending_review") or 0) == 0, "message": "Run/task memory rows are approved/rejected/superseded rather than pending candidate/stale review."},
         {"id": "approval_queue_clear", "ok": not any(item.get("decision") == "pending" for item in approvals), "message": "Run has no pending approval rows."},
     ]
     failed = [check for check in checks if not check["ok"]]
@@ -18755,6 +18799,10 @@ def operator_run_evidence_item(conn: sqlite3.Connection, run: sqlite3.Row) -> di
         pending_id = next((item.get("approval_id") for item in approvals if item.get("decision") == "pending"), None)
         if pending_id:
             commands.append(f"agentops approval inspect --approval-id {pending_id}")
+    if int(memory_review.get("total") or 0) == 0:
+        commands.append(f"agentops memory propose --agent-id {shlex.quote(run['agent_id'])} --task-id {shlex.quote(task_id or '')} --run-id {shlex.quote(run_id)} --scope task --type artifact_summary --text \"Summarize approved run outcome for review\"")
+    elif int(memory_review.get("pending_review") or 0) > 0:
+        commands.append(f"agentops memory list --task-id {shlex.quote(task_id or '')} --status candidate --limit 10")
     if status != "ready" and not gap_decision:
         commands.append(f"agentops operator remediate-evidence-gap --run-id {run_id} --confirm-create")
     return {
@@ -18782,6 +18830,7 @@ def operator_run_evidence_item(conn: sqlite3.Connection, run: sqlite3.Row) -> di
             "verification_pass": bool(manifest_verification and manifest_verification.get("pass")),
             "failed_check_ids": [check.get("id") for check in (manifest_verification or {}).get("failed_checks") or []],
         },
+        "memory_review": memory_review,
         "approvals": {
             "count": len(approvals),
             "pending": sum(1 for item in approvals if item.get("decision") == "pending"),
@@ -18824,13 +18873,17 @@ def operator_evidence_report(conn: sqlite3.Connection, headers, qs=None) -> dict
         "verified_plan_evidence_manifests": sum(1 for item in items if (item.get("plan_evidence_manifest") or {}).get("verification_pass")),
         "missing_plan_evidence_manifests": sum(1 for item in items if not (item.get("plan_evidence_manifest") or {}).get("manifest_id")),
         "pending_approvals": sum(int((item.get("approvals") or {}).get("pending") or 0) for item in items),
+        "memory_reviews": sum(int((item.get("memory_review") or {}).get("total") or 0) for item in items),
+        "memory_review_ready": sum(1 for item in items if (item.get("memory_review") or {}).get("status") == "reviewed"),
+        "missing_memory_reviews": sum(1 for item in items if (item.get("memory_review") or {}).get("status") == "missing"),
+        "pending_memory_reviews": sum(int((item.get("memory_review") or {}).get("pending_review") or 0) for item in items),
         "approval_required_plans": sum(1 for item in items if (item.get("agent_plan") or {}).get("approval_required")),
         "approved_required_plans": sum(1 for item in items if (item.get("agent_plan") or {}).get("approval_required") and (item.get("agent_plan") or {}).get("approval_decision") == "approved"),
         "action_receipts": int(receipt_summary.get("receipts") or 0),
         "verified_action_receipts": int(receipt_summary.get("verified") or 0),
         "evaluated_action_receipts": int(receipt_summary.get("evaluated") or 0),
     }
-    status = "blocked" if summary["blocked"] else "attention" if summary["attention"] or summary["pending_approvals"] else "ready"
+    status = "blocked" if summary["blocked"] else "attention" if summary["attention"] or summary["pending_approvals"] or summary["missing_memory_reviews"] or summary["pending_memory_reviews"] else "ready"
     return {
         "provider": "agentops-operator",
         "operation": "operator_evidence_report",
@@ -18839,7 +18892,7 @@ def operator_evidence_report(conn: sqlite3.Connection, headers, qs=None) -> dict
         "summary": summary,
         "runs": items,
         "recommended_commands": [command for item in items[:5] for command in (item.get("recommended_commands") or [])[:2]][:8],
-        "contract": "read-only execution evidence report; does not create plans, manifests, approvals, receipts, or memories",
+        "contract": "read-only execution evidence report; does not create plans, manifests, approvals, receipts, or memories; memory rows are summarized by id/status only and raw memory text is omitted",
         "safety": {
             "read_only": True,
             "ledger_mutated": False,

@@ -67,13 +67,15 @@ def resolved_context(args) -> dict:
         request_timeout = max(1, int(request_timeout_raw))
     except (TypeError, ValueError):
         request_timeout = DEFAULT_REQUEST_TIMEOUT
-    return {
+    context = {
         "base_url": (getattr(args, "base_url", None) or os.environ.get("AGENTOPS_BASE_URL") or config.get("base_url") or DEFAULT_BASE_URL).rstrip("/"),
         "api_key": getattr(args, "api_key", None) if getattr(args, "api_key", None) is not None else os.environ.get("AGENTOPS_API_KEY", config.get("api_key", "")),
         "workspace_id": getattr(args, "workspace_id", None) or os.environ.get("AGENTOPS_WORKSPACE_ID") or config.get("workspace_id") or DEFAULT_WORKSPACE_ID,
         "agent_id": getattr(args, "agent_id", None) or os.environ.get("AGENTOPS_AGENT_ID") or config.get("agent_id") or "",
         "request_timeout": request_timeout,
     }
+    context["sources"] = context_sources(args, config)
+    return context
 
 
 def context_sources(args, config: dict) -> dict:
@@ -149,6 +151,20 @@ class AgentOpsClient:
         self.workspace_id = context["workspace_id"]
         self.agent_id = context["agent_id"]
         self.request_timeout = int(context.get("request_timeout") or DEFAULT_REQUEST_TIMEOUT)
+        self.sources = context.get("sources") if isinstance(context.get("sources"), dict) else {}
+
+    def connection_hint(self) -> str:
+        source = self.sources.get("base_url") or "unknown"
+        hint = (
+            f"base_url_source={source}; config_path={CONFIG_PATH}; "
+            f"local_demo_default={DEFAULT_BASE_URL}; "
+            f"try: AGENTOPS_BASE_URL={DEFAULT_BASE_URL} agentops status"
+        )
+        if source == "config":
+            hint += f"; or update saved config: agentops login --base-url {DEFAULT_BASE_URL}"
+        elif source == "env":
+            hint += "; or unset/adjust AGENTOPS_BASE_URL"
+        return hint
 
     def request(self, method: str, path: str, payload: dict | None = None, query: dict | None = None):
         url = self.base_url + path
@@ -173,7 +189,7 @@ class AgentOpsClient:
             detail = exc.read().decode("utf-8", errors="replace")
             raise RuntimeError(f"{method} {path} failed: {exc.code} {redact_text(detail, 1200)}") from exc
         except URLError as exc:
-            raise RuntimeError(f"Cannot reach {redact_text(url, 500)}: {redact_text(str(exc.reason), 500)}") from exc
+            raise RuntimeError(f"Cannot reach {redact_text(url, 500)}: {redact_text(str(exc.reason), 500)}; {self.connection_hint()}") from exc
 
     def get(self, path: str, query: dict | None = None):
         return self.request("GET", path, query=query)

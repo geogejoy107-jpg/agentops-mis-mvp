@@ -210,6 +210,7 @@ EXPECTED_MARKERS = {
     "operator_evidence_report_label_zh": 'evidenceReportTitle: "证据报告"',
     "operator_evidence_report_summary_en": 'evidenceReportSummary: "Run-level delivery evidence matrix',
     "operator_evidence_report_summary_zh": 'evidenceReportSummary: "按 run 聚合',
+    "operator_evidence_report_memory_summary": "operatorEvidenceSummary?.memory_review_ready",
     "operator_evidence_report_commands": "operatorEvidenceCommands",
     "operator_evidence_report_top_runs": "operatorEvidenceTopRuns",
     "operator_evidence_report_copy": "copyIntakeCommand(firstCommand)",
