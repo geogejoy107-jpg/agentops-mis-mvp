@@ -288,6 +288,16 @@ Acceptance evidence:
   - mock transient failure succeeded after two attempts in `run_gw_a572f60ec9f4`,
   - Hermes without `--confirm-run` stopped after one non-retryable `ConfirmRunRequired` attempt in `run_gw_9951c583b9a7`,
   - raw token output remained omitted.
+- `python3 scripts/worker_prompt_profile_smoke.py` verifies task-to-runtime
+  prompt profile v1:
+  - worker classifies coding, knowledge-base, review/quality-gate, and general
+    customer tasks into distinct profile ids;
+  - each profile has a stable `worker_prompt_profiles_v1` version and
+    `prompt_profile_hash`;
+  - tool calls, evaluation rubrics, audit metadata, external-write
+    prepared-action metadata, and worker JSON output carry
+    `prompt_profile_id`, `prompt_profile_version`, and `prompt_profile_hash`;
+  - raw prompt/raw response/token material remains omitted.
 - `python3 scripts/customer_worker_external_write_gate_smoke.py` verifies that
   a confirmed Hermes customer-worker task with `external_write_intent:true`
   returns `202`, writes task/run/tool/prepared-action/approval/runtime/audit
@@ -296,8 +306,9 @@ Acceptance evidence:
 
 Remaining product work:
 
-- Rich task-to-runtime prompt profiles.
 - Rich runtime trust policy beyond the current trusted/review/blocked MVP.
+- Prompt profile v1 is ledger-visible; future work can add customer-editable
+  profile policies and per-template profile overrides.
 - Generalize the same prepared-action entry gate to every high-risk
   external connector/runtime side-effect path before shared/commercial
   deployment.
@@ -879,6 +890,7 @@ python3 scripts/task_claim_conflict_smoke.py
 python3 scripts/worker_stuck_recovery_smoke.py
 python3 scripts/worker_session_refresh_smoke.py
 python3 scripts/worker_adapter_retry_smoke.py
+python3 scripts/worker_prompt_profile_smoke.py
 python3 scripts/customer_task_template_smoke.py
 python3 scripts/agentops_workflow_template_cli_smoke.py
 python3 scripts/agentops_workflow_async_job_smoke.py

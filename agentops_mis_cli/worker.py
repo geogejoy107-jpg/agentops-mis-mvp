@@ -287,6 +287,9 @@ class AdapterResult:
     ok: bool
     output_summary: str
     prompt_hash: str
+    prompt_profile_id: str = "general_customer_delivery_summary"
+    prompt_profile_version: str = "worker_prompt_profiles_v1"
+    prompt_profile_hash: str | None = None
     raw_payload_hash: str | None = None
     error_type: str | None = None
     error_message: str | None = None
@@ -299,7 +302,78 @@ class AdapterResult:
     retry_history: list[dict] | None = None
 
 
-def build_task_prompt(task: dict) -> str:
+PROMPT_PROFILE_VERSION = "worker_prompt_profiles_v1"
+
+
+def select_task_prompt_profile(task: dict, adapter: str | None = None) -> dict:
+    combined = " ".join([
+        str(task.get("title") or ""),
+        str(task.get("description") or ""),
+        str(task.get("acceptance_criteria") or ""),
+    ]).lower()
+    profile_id = "general_customer_delivery_summary"
+    if any(term in combined for term in [
+        "coding", "code", "repo", "repository", "worktree", "branch", "patch", "test", "tsx", "typescript",
+        "代码", "仓库", "分支", "补丁", "测试", "修复", "实现", "前端", "后端",
+    ]):
+        profile_id = "local_coding_project_summary"
+    elif any(term in combined for term in [
+        "knowledge", "file search", "qa bot", "q&a", "dataset", "retrieval",
+        "知识库", "问答", "资料", "检索", "引用",
+    ]):
+        profile_id = "knowledge_base_delivery_summary"
+    elif any(term in combined for term in [
+        "review", "audit", "evaluate", "qa", "quality", "acceptance", "验收", "审计", "审查", "评估", "质量",
+    ]):
+        profile_id = "review_quality_gate_summary"
+    profile_map = {
+        "general_customer_delivery_summary": {
+            "objective": "Turn a customer task into a concise delivery summary with risks, evidence, and next actions.",
+            "output_contract": ["delivery_summary", "risks_or_blockers", "recommended_next_actions"],
+        },
+        "local_coding_project_summary": {
+            "objective": "Analyze a coding task and return implementation guidance plus verification commands without editing files directly.",
+            "output_contract": ["implementation_plan", "affected_surfaces", "verification_commands", "risks_or_blockers"],
+        },
+        "knowledge_base_delivery_summary": {
+            "objective": "Analyze a knowledge-base or Q&A bot task and return ingestion, retrieval, evaluation, and delivery guidance.",
+            "output_contract": ["source_preparation", "retrieval_design", "evaluation_questions", "delivery_report"],
+        },
+        "review_quality_gate_summary": {
+            "objective": "Review task evidence against acceptance gates and return pass/fail risks plus remediation steps.",
+            "output_contract": ["gate_assessment", "missing_evidence", "remediation_steps"],
+        },
+    }
+    profile = dict(profile_map.get(profile_id) or profile_map["general_customer_delivery_summary"])
+    profile.update({
+        "profile_id": profile_id,
+        "version": PROMPT_PROFILE_VERSION,
+        "adapter": adapter or "worker",
+        "channel": "ledger_summary_only",
+        "prohibited_actions": [
+            "shell_execution",
+            "browser_operation",
+            "filesystem_write",
+            "mis_api_write",
+            "external_publish_upload_or_deploy",
+            "credential_request",
+        ],
+        "raw_prompt_omitted": True,
+        "raw_response_omitted": True,
+        "token_omitted": True,
+    })
+    profile["profile_hash"] = stable_hash({
+        "profile_id": profile["profile_id"],
+        "version": profile["version"],
+        "channel": profile["channel"],
+        "output_contract": profile["output_contract"],
+        "prohibited_actions": profile["prohibited_actions"],
+    })
+    return profile
+
+
+def build_task_prompt_bundle(task: dict, adapter: str | None = None) -> tuple[str, dict]:
+    profile = select_task_prompt_profile(task, adapter=adapter)
     title = redact_text(task.get("title"), 180)
     description = redact_text(task.get("description"), 900)
     acceptance = redact_text(task.get("acceptance_criteria"), 500)
@@ -317,7 +391,16 @@ def build_task_prompt(task: dict) -> str:
         f"paths={', '.join(knowledge_paths) if knowledge_paths else 'none'}; "
         "raw_query/snippet/content/prompt/response/token omitted.\n"
     )
-    return (
+    profile_context = (
+        "执行画像："
+        f"profile_id={profile['profile_id']}; "
+        f"version={profile['version']}; "
+        f"profile_hash={profile['profile_hash'][:16]}; "
+        f"objective={profile['objective']}; "
+        f"output_contract={', '.join(profile['output_contract'])}; "
+        "raw profile prompt body omitted from MIS evidence.\n"
+    )
+    prompt = (
         "你是 AgentOps MIS 的本地 AI worker。请根据下面的任务摘要给出可交付结果。\n"
         "执行边界：本次调用是 ledger_summary_only 摘要通道，不是工具执行通道。"
         "不要调用终端、shell、浏览器、文件系统、MIS/API、外部工具或发布/上传/部署目标；"
@@ -329,8 +412,23 @@ def build_task_prompt(task: dict) -> str:
         f"任务风险：{risk}\n"
         f"任务描述：{description}\n"
         f"验收标准：{acceptance}\n"
+        f"{profile_context}"
         f"{knowledge_context}"
     )
+    return prompt, profile
+
+
+def build_task_prompt(task: dict, adapter: str | None = None) -> str:
+    prompt, _profile = build_task_prompt_bundle(task, adapter=adapter)
+    return prompt
+
+
+def adapter_result_profile_fields(profile: dict) -> dict:
+    return {
+        "prompt_profile_id": profile.get("profile_id") or "general_customer_delivery_summary",
+        "prompt_profile_version": profile.get("version") or PROMPT_PROFILE_VERSION,
+        "prompt_profile_hash": profile.get("profile_hash"),
+    }
 
 
 def worker_secret_boundary_metadata() -> dict:
@@ -347,12 +445,13 @@ def worker_secret_boundary_metadata() -> dict:
 
 
 def execute_mock(task: dict, attempt: int = 1, fail_before_success: int = 0) -> AdapterResult:
-    prompt = build_task_prompt(task)
+    prompt, profile = build_task_prompt_bundle(task, adapter="mock")
     if fail_before_success and attempt <= fail_before_success:
         return AdapterResult(
             ok=False,
             output_summary=f"Mock worker simulated transient adapter failure on attempt {attempt}.",
             prompt_hash=stable_hash(prompt),
+            **adapter_result_profile_fields(profile),
             raw_payload_hash=stable_hash({"adapter": "mock", "task_id": task.get("task_id"), "attempt": attempt, "simulated": True}),
             error_type="MockTransientFailure",
             error_message=f"Simulated transient adapter failure before success, attempt {attempt}.",
@@ -364,18 +463,20 @@ def execute_mock(task: dict, attempt: int = 1, fail_before_success: int = 0) -> 
         ok=True,
         output_summary=summary,
         prompt_hash=stable_hash(prompt),
+        **adapter_result_profile_fields(profile),
         raw_payload_hash=stable_hash({"adapter": "mock", "task_id": task.get("task_id"), "summary": summary}),
         target_resource="local://agentops/mock-worker",
     )
 
 
 def execute_hermes(task: dict, gateway_url: str, model: str, timeout: int, confirm_run: bool, max_tokens: int) -> AdapterResult:
-    prompt = build_task_prompt(task)
+    prompt, profile = build_task_prompt_bundle(task, adapter="hermes")
     if not confirm_run:
         return AdapterResult(
             ok=False,
             output_summary="Hermes adapter dry-run: pass --confirm-run to execute.",
             prompt_hash=stable_hash(prompt),
+            **adapter_result_profile_fields(profile),
             error_type="ConfirmRunRequired",
             error_message="Hermes live execution requires --confirm-run.",
             target_resource=gateway_url.rstrip() + "/v1/chat/completions",
@@ -403,6 +504,7 @@ def execute_hermes(task: dict, gateway_url: str, model: str, timeout: int, confi
             ok=bool(visible),
             output_summary=redact_text(visible, 200) if visible else "Hermes returned an empty response.",
             prompt_hash=stable_hash(prompt),
+            **adapter_result_profile_fields(profile),
             raw_payload_hash=stable_hash(response),
             error_type=None if visible else "HermesEmptyResponse",
             error_message=None if visible else "Hermes returned no visible content.",
@@ -416,6 +518,7 @@ def execute_hermes(task: dict, gateway_url: str, model: str, timeout: int, confi
             ok=False,
             output_summary="Hermes adapter execution failed.",
             prompt_hash=stable_hash(prompt),
+            **adapter_result_profile_fields(profile),
             error_type="HermesExecutionFailed",
             error_message=redact_text(str(exc), 200),
             duration_ms=int((time.time() - started) * 1000),
@@ -425,12 +528,13 @@ def execute_hermes(task: dict, gateway_url: str, model: str, timeout: int, confi
 
 
 def execute_openclaw(task: dict, binary_path: str, agent_name: str, timeout: int, confirm_run: bool) -> AdapterResult:
-    prompt = build_task_prompt(task)
+    prompt, profile = build_task_prompt_bundle(task, adapter="openclaw")
     if not confirm_run:
         return AdapterResult(
             ok=False,
             output_summary="OpenClaw adapter dry-run: pass --confirm-run to execute.",
             prompt_hash=stable_hash(prompt),
+            **adapter_result_profile_fields(profile),
             error_type="ConfirmRunRequired",
             error_message="OpenClaw live execution requires --confirm-run.",
             target_resource=f"local://openclaw/{agent_name}",
@@ -455,6 +559,7 @@ def execute_openclaw(task: dict, binary_path: str, agent_name: str, timeout: int
             ok=ok,
             output_summary=redact_text(visible, 200) if ok else "OpenClaw adapter execution failed.",
             prompt_hash=stable_hash(prompt),
+            **adapter_result_profile_fields(profile),
             raw_payload_hash=stable_hash(payload or {"stderr": proc.stderr, "returncode": proc.returncode}),
             error_type=None if ok else "OpenClawExecutionFailed",
             error_message=None if ok else redact_text(proc.stderr or visible or f"exit={proc.returncode}", 200),
@@ -467,6 +572,7 @@ def execute_openclaw(task: dict, binary_path: str, agent_name: str, timeout: int
             ok=False,
             output_summary="OpenClaw adapter execution failed.",
             prompt_hash=stable_hash(prompt),
+            **adapter_result_profile_fields(profile),
             error_type="OpenClawExecutionFailed",
             error_message=redact_text(str(exc), 200),
             duration_ms=int((time.time() - started) * 1000),
@@ -602,9 +708,13 @@ def create_worker_external_write_gate(client: AgentOpsClient, task: dict, args, 
     action_type = f"agent_worker.{args.adapter}.external_write"
     target_resource = f"{args.adapter}://external-write/{task_id}"
     tool_risk = max_risk(task.get("risk_level"), "high", capability.get("risk_floor"))
+    prompt_profile = select_task_prompt_profile(task, adapter=args.adapter)
     normalized_args = {
         "task_id": task_id,
         "adapter": args.adapter,
+        "prompt_profile_id": prompt_profile.get("profile_id"),
+        "prompt_profile_version": prompt_profile.get("version"),
+        "prompt_profile_hash": prompt_profile.get("profile_hash"),
         "title": redact_text(task.get("title"), 140),
         "external_write_intent": True,
         "target_resource": target_resource,
@@ -659,6 +769,9 @@ def create_worker_external_write_gate(client: AgentOpsClient, task: dict, args, 
             "tool_call_id": tool_call.get("tool_call_id"),
             "approval_id": approval.get("approval_id"),
             "prepared_action_id": prepared_action.get("action_id"),
+            "prompt_profile_id": prompt_profile.get("profile_id"),
+            "prompt_profile_version": prompt_profile.get("version"),
+            "prompt_profile_hash": prompt_profile.get("profile_hash"),
             "live_execution_performed": False,
             **worker_secret_boundary_metadata(),
         },
@@ -676,6 +789,14 @@ def create_worker_external_write_gate(client: AgentOpsClient, task: dict, args, 
         "approval_id": approval.get("approval_id"),
         "prepared_action_id": prepared_action.get("action_id"),
         "prepared_action_hash": prepared_action.get("action_hash"),
+        "prompt_profile": {
+            "profile_id": prompt_profile.get("profile_id"),
+            "version": prompt_profile.get("version"),
+            "profile_hash": prompt_profile.get("profile_hash"),
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
         "next_action": tool_payload.get("next_action"),
         "output_summary": "Worker paused before live runtime execution because the task appears to request an external write.",
         "secret_boundary": worker_secret_boundary_metadata(),
@@ -1010,6 +1131,9 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
             "task_id": task_id,
             "adapter": args.adapter,
             "prompt_hash": result.prompt_hash,
+            "prompt_profile_id": result.prompt_profile_id,
+            "prompt_profile_version": result.prompt_profile_version,
+            "prompt_profile_hash": result.prompt_profile_hash,
             "attempt_count": result.attempt_count,
             "max_attempts": result.max_attempts,
             "retry_history": result.retry_history or [],
@@ -1081,6 +1205,9 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
             "adapter": args.adapter,
             "requires_completed_run": True,
             "requires_knowledge_retrieval_evidence": True,
+            "prompt_profile_id": result.prompt_profile_id,
+            "prompt_profile_version": result.prompt_profile_version,
+            "prompt_profile_hash": result.prompt_profile_hash,
             "knowledge_retrieval_gate_pass": knowledge_gate_pass,
             "knowledge_retrieval_gate_status": knowledge_gate_status,
             "quality_gate_pass": evaluation_pass,
@@ -1155,6 +1282,9 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
             "adapter": args.adapter,
             "ok": result.ok,
             "prompt_hash": result.prompt_hash,
+            "prompt_profile_id": result.prompt_profile_id,
+            "prompt_profile_version": result.prompt_profile_version,
+            "prompt_profile_hash": result.prompt_profile_hash,
             "raw_payload_hash": result.raw_payload_hash,
             "attempt_count": result.attempt_count,
             "max_attempts": result.max_attempts,
@@ -1204,6 +1334,14 @@ def process_one_task(client: AgentOpsClient, args) -> dict:
         "adapter": args.adapter,
         "ok": result.ok,
         "attempt_count": result.attempt_count,
+        "prompt_profile": {
+            "profile_id": result.prompt_profile_id,
+            "version": result.prompt_profile_version,
+            "profile_hash": result.prompt_profile_hash,
+            "raw_prompt_omitted": True,
+            "raw_response_omitted": True,
+            "token_omitted": True,
+        },
         "output_summary": result.output_summary,
         "error_type": result.error_type,
         "knowledge_retrieval_evidence": {

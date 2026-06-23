@@ -96,6 +96,7 @@ The packet includes the canonical command manifest used for release review:
 - `python3 scripts/migration_rollback_smoke.py`
 - `python3 scripts/knowledge_retrieval_quality_smoke.py`
 - `python3 scripts/worker_knowledge_evidence_consumption_smoke.py`
+- `python3 scripts/worker_prompt_profile_smoke.py`
 - `python3 scripts/commander_repo_map_smoke.py`
 - `python3 scripts/commander_coding_project_template_smoke.py`
 - `python3 scripts/commander_coding_workspace_smoke.py`

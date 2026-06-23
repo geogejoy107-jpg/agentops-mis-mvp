@@ -171,6 +171,12 @@ TEST_COMMANDS = [
         "ci_step": "Offline safety smokes",
     },
     {
+        "id": "worker_prompt_profile",
+        "command": "python3 scripts/worker_prompt_profile_smoke.py",
+        "summary": "Agent worker selects task-to-runtime prompt profiles and records profile id/version/hash in tool, evaluation, audit and worker result evidence without raw prompt storage.",
+        "ci_step": "Offline safety smokes",
+    },
+    {
         "id": "commander_repo_map",
         "command": "python3 scripts/commander_repo_map_smoke.py",
         "summary": "Commander repo-map localization returns deterministic file/symbol candidates with provenance and redacted snippets.",

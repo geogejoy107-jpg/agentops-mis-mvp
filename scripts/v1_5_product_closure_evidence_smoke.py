@@ -112,9 +112,10 @@ def main() -> int:
                 "scripts/runtime_connector_trust_smoke.py",
                 "scripts/worker_adapter_readiness_smoke.py",
                 "scripts/v1_5_live_product_readiness_smoke.py",
+                "scripts/worker_prompt_profile_smoke.py",
             ],
             source_markers={
-                "agentops_mis_cli/worker.py": ["--adapter", "hermes", "openclaw"],
+                "agentops_mis_cli/worker.py": ["--adapter", "hermes", "openclaw", "select_task_prompt_profile", "prompt_profile_hash"],
                 "server.py": ["runtime_connector_trust_blocked", "runtime-capability-manifest-v1"],
             },
         ),
