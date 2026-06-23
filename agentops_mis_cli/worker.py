@@ -1257,18 +1257,21 @@ def check_service_installation(args) -> dict:
     adapter_present = args.adapter in content
     use_session_present = "--use-session" in content
     if args.manager == "launchd":
+        launchd_keepalive = bool(re.search(r"<key>KeepAlive</key>\s*<true/>", content))
         relaunch_policy = {
             "manager": "launchd",
-            "enabled": "<key>KeepAlive</key>" in content and "<true/>" in content,
+            "enabled": launchd_keepalive,
             "policy": "KeepAlive=true",
             "raw_content_omitted": True,
         }
     else:
+        systemd_restart_always = bool(re.search(r"(?m)^Restart=always$", content))
+        systemd_restart_sec_ok = bool(re.search(r"(?m)^RestartSec=5$", content))
         relaunch_policy = {
             "manager": "systemd",
-            "enabled": bool(re.search(r"(?m)^Restart=always$", content)),
+            "enabled": bool(systemd_restart_always and systemd_restart_sec_ok),
             "policy": "Restart=always",
-            "restart_sec": "5" if re.search(r"(?m)^RestartSec=5$", content) else None,
+            "restart_sec": "5" if systemd_restart_sec_ok else None,
             "raw_content_omitted": True,
         }
     confirm_gate_ok = args.adapter == "mock" or "--confirm-run" in content

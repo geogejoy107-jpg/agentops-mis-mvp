@@ -124,6 +124,27 @@ def main() -> int:
         require(systemd_payload.get("relaunch_policy", {}).get("policy") == "Restart=always", f"systemd policy not machine-readable: {systemd_payload}", failures)
         require(systemd_payload.get("relaunch_policy", {}).get("restart_sec") == "5", f"systemd restart delay missing: {systemd_payload}", failures)
 
+        weak_systemd_path = tmp_path / "agentops-worker-agt_service_check_weak.service"
+        weak_systemd_path.write_text(systemd_template.stdout.replace("RestartSec=5\n", ""), encoding="utf-8")
+        weak_systemd = run([
+            sys.executable,
+            "-m",
+            "agentops_mis_cli.worker",
+            "service-check",
+            "--manager",
+            "systemd",
+            "--agent-id",
+            "agt_service_check",
+            "--adapter",
+            "mock",
+            "--service-path",
+            str(weak_systemd_path),
+        ])
+        weak_systemd_payload = parse_json(weak_systemd)
+        require(weak_systemd.returncode == 1, f"systemd service without RestartSec should fail: {weak_systemd_payload}", failures)
+        require(weak_systemd_payload.get("relaunch_policy", {}).get("enabled") is False, f"weak systemd relaunch policy accepted: {weak_systemd_payload}", failures)
+        require(any("relaunch policy" in item for item in weak_systemd_payload.get("setup_hints") or []), f"weak systemd relaunch hint missing: {weak_systemd_payload}", failures)
+
         unsafe_path = tmp_path / "unsafe.plist"
         unsafe_path.write_text(template.stdout + "\n<!-- agtok_fake_should_not_be_printed -->\n", encoding="utf-8")
         unsafe = run([
@@ -144,7 +165,7 @@ def main() -> int:
         require(unsafe.returncode == 1, f"unsafe service-check should fail: {unsafe_payload}", failures)
         require(unsafe_payload.get("service_file", {}).get("token_like_detected") is True, f"unsafe token-like value was not detected: {unsafe_payload}", failures)
 
-        serialized = json.dumps({"direct": direct_payload, "cli": cli_payload, "systemd": systemd_payload, "unsafe": unsafe_payload}, ensure_ascii=False)
+        serialized = json.dumps({"direct": direct_payload, "cli": cli_payload, "systemd": systemd_payload, "weak_systemd": weak_systemd_payload, "unsafe": unsafe_payload}, ensure_ascii=False)
         require("agtok_fake_should_not_be_printed" not in serialized, "service-check leaked raw token-like content", failures)
         require("sk-" not in serialized and "ntn_" not in serialized, "service-check leaked secret-like content", failures)
 
