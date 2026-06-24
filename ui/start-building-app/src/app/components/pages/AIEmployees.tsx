@@ -26,6 +26,7 @@ import {
   loadIntegrationInbox,
   loadLocalReadiness,
   loadOperatorActionReceipts,
+  loadOperatorAgentLoopHandoff,
   loadOperatorCommandCenter,
   loadOperatorActionPlan,
   loadOperatorEvidenceReport,
@@ -81,6 +82,7 @@ import {
   type HermesOpenClawLoopWorkflowResult,
   type OperatorActionPlanPayload,
   type OperatorActionReceiptsPayload,
+  type OperatorAgentLoopHandoffPayload,
   type OperatorCommandCenterPayload,
   type OperatorEvidenceReportPayload,
   type OperatorExecutionModePayload,
@@ -183,6 +185,7 @@ type AIEmployeesLiveData = {
   operatorExecutionMode?: OperatorExecutionModePayload;
   operatorLoopControl?: OperatorLoopControlPayload;
   operatorLoopDriverPackets?: OperatorLoopDriverPacketsPayload;
+  operatorAgentLoopHandoff?: OperatorAgentLoopHandoffPayload;
   operatorRuntimeDoctor?: OperatorRuntimeDoctorPayload;
   executionModeAdapter?: WorkerAdapterName;
   executionModeConfirmRun?: boolean;
@@ -223,6 +226,7 @@ const AI_EMPLOYEES_PANEL_LOADERS: AIEmployeesPanelLoader[] = [
   { id: "operator_runtime_doctor", load: async () => ({ operatorRuntimeDoctor: await loadOperatorRuntimeDoctor(8) }) },
   { id: "operator_execution_mode", load: async (context) => ({ operatorExecutionMode: await loadOperatorExecutionMode(context.executionModeAdapter || "mock", Boolean(context.executionModeConfirmRun), 8) }) },
   { id: "operator_loop_control", load: async () => ({ operatorLoopControl: await loadOperatorLoopControl(8) }) },
+  { id: "operator_agent_loop_handoff", load: async () => ({ operatorAgentLoopHandoff: await loadOperatorAgentLoopHandoff(8) }) },
   { id: "operator_loop_driver_packets", load: async () => ({ operatorLoopDriverPackets: await loadOperatorLoopDriverPackets(8) }) },
   { id: "operator_command_center", load: async () => ({ operatorCommandCenter: await loadOperatorCommandCenter(12) }) },
   { id: "operator_action_plan", load: async () => ({ operatorActionPlan: await loadOperatorActionPlan(12) }) },
@@ -252,6 +256,7 @@ const AI_EMPLOYEES_CORE_PANEL_IDS = new Set([
   "operator_runtime_doctor",
   "operator_execution_mode",
   "operator_loop_control",
+  "operator_agent_loop_handoff",
   "operator_command_center",
   "operator_action_plan",
   "operator_evidence_report",
@@ -563,6 +568,7 @@ export function AIEmployees() {
   const operatorExecutionMode = data?.operatorExecutionMode as OperatorExecutionModePayload | undefined;
   const operatorLoopAudit = data?.operatorLoopAudit as OperatorLoopAuditPayload | undefined;
   const operatorLoopDriverPackets = data?.operatorLoopDriverPackets as OperatorLoopDriverPacketsPayload | undefined;
+  const operatorAgentLoopHandoff = data?.operatorAgentLoopHandoff as OperatorAgentLoopHandoffPayload | undefined;
   const operatorHandoff = data?.operatorHandoff as OperatorHandoffPayload | undefined;
   const operatorHealth = data?.operatorHealth as OperatorHealthPayload | undefined;
   const operatorLoopControl = data?.operatorLoopControl as OperatorLoopControlPayload | undefined;
@@ -840,6 +846,13 @@ export function AIEmployees() {
       confirmAdvanceLoop: "Confirm CLI",
       loopDriverTitle: "Hermes/OpenClaw loop driver",
       loopDriverSummary: "Copy the bounded local loop wrapper: preview is read-only; confirm advances allowlisted steps with receipts and control readback.",
+      agentLoopHandoffTitle: "Agent loop handoff",
+      agentLoopHandoffSummary: "Compact shared handoff for Hermes, OpenClaw, and Codex: current-code proof, fresh live evidence, Method gates, and copyable next commands.",
+      handoffReady: "Handoff ready",
+      boundedConfirmReady: "Bounded confirm",
+      liveDispatchReady: "Live dispatch",
+      freshLiveAdapters: "Fresh live adapters",
+      codexSupervisor: "Codex supervisor",
       loopDriverAgentPacket: "Agent loop packet",
       loopDriverAgentPacketSummary: "Live start-check projection for each adapter: current phase, safety gates, and next copy command.",
       methodGates: "Method gates",
@@ -1435,6 +1448,13 @@ export function AIEmployees() {
       confirmAdvanceLoop: "确认 CLI",
       loopDriverTitle: "Hermes/OpenClaw Loop Driver",
       loopDriverSummary: "复制受限本地 loop wrapper：预览只读；确认后只推进 allowlist 步骤，并写入收据和控制回读。",
+      agentLoopHandoffTitle: "Agent Loop 交接矩阵",
+      agentLoopHandoffSummary: "Hermes、OpenClaw、Codex 共享的紧凑交接包：current-code 证明、fresh live 证据、Method gate 和下一条可复制命令。",
+      handoffReady: "交接就绪",
+      boundedConfirmReady: "Bounded confirm",
+      liveDispatchReady: "Live dispatch",
+      freshLiveAdapters: "Fresh live adapters",
+      codexSupervisor: "Codex 监督",
       loopDriverAgentPacket: "Agent Loop 机器包",
       loopDriverAgentPacketSummary: "每个 adapter 的 start-check 实时投影：当前阶段、安全闸和下一条可复制命令。",
       methodGates: "方法 Gate",
@@ -2316,6 +2336,15 @@ export function AIEmployees() {
     ].filter(item => item.command);
   });
   const loopDriverVisibleCommands = loopDriverPacketCommandItems.length ? loopDriverPacketCommandItems : loopDriverCommands;
+  const agentLoopHandoffConsumers = operatorAgentLoopHandoff?.consumers || [];
+  const agentLoopHandoffCommands = [
+    { label: copy.agentLoopHandoffTitle, command: operatorAgentLoopHandoff?.codex_consumer?.commands.read_handoff || "agentops operator agent-loop-handoff --limit 8", color: "var(--mis-cyan)" },
+    ...agentLoopHandoffConsumers.flatMap((consumer) => [
+      { label: `${consumer.adapter} handoff`, command: consumer.commands.agent_loop_handoff || "", color: "var(--mis-cyan)" },
+      { label: `${consumer.adapter} start-check`, command: consumer.commands.start_check || "", color: "var(--mis-success)" },
+      { label: `${consumer.adapter} live proof`, command: consumer.commands.live_product_readiness || "", color: "var(--mis-warning)" },
+    ]),
+  ].filter(item => item.command).slice(0, 7);
   const advanceLoopSelectedGate = String(advanceLoopSummaryRaw.selected_gate || "—");
   const advanceLoopSelectedStatus = String(advanceLoopSummaryRaw.selected_status || advanceLoopRaw.status || "unknown");
   const advanceLoopServerShell = Boolean(advanceLoopPolicyRaw.server_executes_shell);
@@ -4669,6 +4698,84 @@ export function AIEmployees() {
                       </button>
                     ))}
                   </div>
+                  {operatorAgentLoopHandoff && (
+                    <div className="mt-2 pt-2" style={{ borderTop: "1px solid var(--mis-border)" }}>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <div className="text-[8px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.agentLoopHandoffTitle}</div>
+                        <StatusBadge status={operatorAgentLoopHandoff.status || "unknown"} />
+                        <StatusBadge status={operatorAgentLoopHandoff.summary.ready_for_handoff ? "pass" : "blocked"} label={`${copy.handoffReady}: ${String(operatorAgentLoopHandoff.summary.ready_for_handoff)}`} />
+                        <StatusBadge status={operatorAgentLoopHandoff.summary.ready_for_all_bounded_loop_confirm ? "pass" : "attention"} label={`${copy.boundedConfirmReady}: ${String(operatorAgentLoopHandoff.summary.ready_for_all_bounded_loop_confirm)}`} />
+                        <StatusBadge status={operatorAgentLoopHandoff.current_code.ok ? "pass" : "blocked"} label={operatorAgentLoopHandoff.current_code.status} />
+                        <StatusBadge status={operatorAgentLoopHandoff.safety.server_executes_shell ? "blocked" : "pass"} label={operatorAgentLoopHandoff.safety.server_executes_shell ? "server shell" : "copy-only"} />
+                        {panelStatusBadge("operator_agent_loop_handoff")}
+                        {panelRefreshButton("operator_agent_loop_handoff")}
+                        {panelDiagnosticsButton("operator_agent_loop_handoff")}
+                        {panelReceiptButton("operator_agent_loop_handoff")}
+                      </div>
+                      <div className="text-[8px] mt-1 line-clamp-2" style={{ color: "var(--mis-muted)" }}>{copy.agentLoopHandoffSummary}</div>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-1 mt-1.5">
+                        {[
+                          { label: copy.freshLiveAdapters, value: String(operatorAgentLoopHandoff.summary.fresh_live_adapters), status: operatorAgentLoopHandoff.summary.fresh_live_adapters >= 2 ? "pass" : "attention" },
+                          { label: copy.codexSupervisor, value: operatorAgentLoopHandoff.codex_consumer?.status || "unknown", status: operatorAgentLoopHandoff.codex_consumer?.status || "unknown" },
+                          { label: copy.handoffReady, value: `${operatorAgentLoopHandoff.summary.ready_consumers}/${operatorAgentLoopHandoff.summary.consumers}`, status: operatorAgentLoopHandoff.summary.ready_for_handoff ? "pass" : "blocked" },
+                          { label: copy.tokenOmitted, value: String(Boolean(operatorAgentLoopHandoff.token_omitted)), status: operatorAgentLoopHandoff.token_omitted ? "pass" : "attention" },
+                        ].map((item) => (
+                          <div key={`agent-loop-handoff-summary:${item.label}`} className="rounded px-1.5 py-1" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                            <div className="text-[8px]" style={{ color: "var(--mis-muted)" }}>{item.label}</div>
+                            <div className="flex items-center justify-between gap-1 mt-0.5">
+                              <span className="text-[9px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{item.value}</span>
+                              <StatusBadge status={item.status} />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="flex flex-wrap gap-1 mt-1.5">
+                        {agentLoopHandoffCommands.map((item) => (
+                          <button
+                            key={`agent-loop-handoff-command:${item.label}:${item.command}`}
+                            type="button"
+                            onClick={() => void copyIntakeCommand(String(item.command))}
+                            className="inline-flex items-center gap-1 text-[8px] px-1.5 py-0.5 rounded max-w-full"
+                            style={{ color: item.color, background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}
+                            title={String(item.command)}
+                          >
+                            <Copy size={8} />
+                            <span className="truncate max-w-[132px]">{copiedIntakeCommand === item.command ? copy.copiedCommand : item.label}</span>
+                          </button>
+                        ))}
+                      </div>
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-1.5 mt-1.5">
+                        {agentLoopHandoffConsumers.map((consumer) => (
+                          <div key={`agent-loop-handoff-consumer:${consumer.adapter}`} className="rounded p-1.5 min-w-0" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                            <div className="flex flex-wrap items-center justify-between gap-1">
+                              <div className="text-[8px] font-semibold uppercase" style={{ color: "var(--mis-text)" }}>{consumer.adapter}</div>
+                              <div className="flex flex-wrap gap-1">
+                                <StatusBadge status={consumer.status} />
+                                <StatusBadge status={consumer.ready_for_handoff ? "pass" : "blocked"} label={`${copy.handoffReady}: ${String(consumer.ready_for_handoff)}`} />
+                                <StatusBadge status={consumer.ready_for_live_dispatch ? "pass" : "attention"} label={`${copy.liveDispatchReady}: ${String(consumer.ready_for_live_dispatch)}`} />
+                              </div>
+                            </div>
+                            <div className="grid grid-cols-2 gap-1 mt-1">
+                              {[
+                                { label: copy.currentPhase, value: consumer.start_check.current_phase || "unknown", status: consumer.start_check.can_preview_loop ? "pass" : "blocked" },
+                                { label: copy.methodGates, value: String(consumer.method.method_gate_ids.length), status: consumer.method.method_gate_ids.length >= 8 ? "pass" : "attention" },
+                                { label: copy.freshLiveAdapters, value: consumer.live_product_readiness.status, status: consumer.live_product_readiness.fresh ? "pass" : "attention" },
+                                { label: copy.boundedConfirmReady, value: String(consumer.ready_for_bounded_loop_confirm), status: consumer.ready_for_bounded_loop_confirm ? "pass" : "attention" },
+                              ].map((item) => (
+                                <div key={`${consumer.adapter}:handoff:${item.label}`} className="rounded px-1.5 py-0.5" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                                  <div className="text-[8px]" style={{ color: "var(--mis-muted)" }}>{item.label}</div>
+                                  <div className="flex items-center justify-between gap-1 mt-0.5">
+                                    <span className="text-[8px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{item.value}</span>
+                                    <StatusBadge status={item.status} />
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   {loopDriverPacketItems.length > 0 && (
                     <div className="mt-2 pt-2" style={{ borderTop: "1px solid var(--mis-border)" }}>
                       <div className="flex flex-wrap items-center gap-1.5">

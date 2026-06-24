@@ -2357,6 +2357,116 @@ export interface OperatorLoopDriverPacketsPayload {
   live_execution_performed?: boolean;
 }
 
+export interface OperatorAgentLoopHandoffConsumerPayload {
+  operation: string;
+  adapter: string;
+  status: string;
+  ready_for_handoff: boolean;
+  ready_for_bounded_loop_confirm: boolean;
+  ready_for_live_dispatch: boolean;
+  blockers: string[];
+  attention: string[];
+  start_check: {
+    status: string;
+    command?: string | null;
+    current_phase?: string | null;
+    can_preview_loop: boolean;
+    can_confirm_bounded_loop: boolean;
+    live_dispatch_requires_confirm_run: boolean;
+    human_review_required: boolean;
+    memory_review_required: boolean;
+    server_executes_shell: boolean;
+    token_omitted?: boolean;
+  };
+  launch_brief: {
+    status: string;
+    next_command?: string | null;
+    verify_command?: string | null;
+    receipt_command?: string | null;
+    current_code_ok?: boolean;
+    control_mode?: string | null;
+    recommended_step?: string | null;
+    token_omitted?: boolean;
+  };
+  live_product_readiness: {
+    adapter: string;
+    status: string;
+    fresh: boolean;
+    run_id?: string | null;
+    task_id?: string | null;
+    artifact_id?: string | null;
+    plan_evidence_manifest_id?: string | null;
+    command?: string | null;
+    token_omitted?: boolean;
+  };
+  method: {
+    phases: string[];
+    phase_commands: Record<string, string | null | undefined>;
+    method_gate_ids: string[];
+    required_gate_ids: string[];
+    token_omitted?: boolean;
+  };
+  commands: Record<string, string | null | undefined>;
+  safety: {
+    read_only: boolean;
+    ledger_mutated: boolean;
+    live_execution_performed: boolean;
+    server_executes_shell: boolean;
+    raw_prompt_omitted?: boolean;
+    raw_response_omitted?: boolean;
+    raw_content_omitted?: boolean;
+    token_omitted: boolean;
+  };
+  token_omitted?: boolean;
+}
+
+export interface OperatorAgentLoopHandoffPayload {
+  provider: string;
+  operation: string;
+  status: string;
+  workspace_id: string;
+  adapters: string[];
+  current_code: {
+    ok: boolean;
+    status: string;
+    git_head_sha?: string | null;
+    git_branch?: string | null;
+    server_pid?: number | null;
+    strict_command?: string | null;
+    token_omitted?: boolean;
+  };
+  summary: {
+    consumers: number;
+    ready_consumers: number;
+    attention_consumers: number;
+    blocked_consumers: number;
+    ready_for_handoff: boolean;
+    ready_for_all_bounded_loop_confirm: boolean;
+    fresh_live_adapters: number;
+    current_code_ok: boolean;
+  };
+  consumers: OperatorAgentLoopHandoffConsumerPayload[];
+  codex_consumer?: {
+    operation: string;
+    status: string;
+    uses_same_packets: boolean;
+    commands: Record<string, string | null | undefined>;
+    token_omitted?: boolean;
+  };
+  safety: {
+    read_only: boolean;
+    ledger_mutated: boolean;
+    live_execution_performed: boolean;
+    server_executes_shell: boolean;
+    raw_prompt_omitted?: boolean;
+    raw_response_omitted?: boolean;
+    raw_content_omitted?: boolean;
+    token_omitted: boolean;
+  };
+  token_omitted?: boolean;
+  live_execution_performed?: boolean;
+}
+
 export interface OperatorLoopControlPayload {
   provider: string;
   operation: string;
@@ -6694,6 +6804,200 @@ export async function loadOperatorLoopDriverPackets(limit = 8): Promise<Operator
       ledger_mutated: false,
       live_execution_performed: false,
       server_executes_shell: packets.some((packet) => packet.safety.server_executes_shell),
+      token_omitted: true,
+    },
+    token_omitted: true,
+    live_execution_performed: false,
+  };
+}
+
+function liveAcceptanceAdapter(raw: Record<string, unknown>, adapter: string): OperatorAgentLoopHandoffConsumerPayload["live_product_readiness"] {
+  const adaptersRaw = typeof raw.adapters === "object" && raw.adapters !== null ? raw.adapters as Record<string, unknown> : {};
+  const item = typeof adaptersRaw[adapter] === "object" && adaptersRaw[adapter] !== null ? adaptersRaw[adapter] as Record<string, unknown> : {};
+  const latest = typeof item.latest_passing === "object" && item.latest_passing !== null
+    ? item.latest_passing as Record<string, unknown>
+    : typeof item.latest_attempt === "object" && item.latest_attempt !== null
+      ? item.latest_attempt as Record<string, unknown>
+      : {};
+  return {
+    adapter,
+    status: String(item.status || (item.ok ? "fresh" : "missing")),
+    fresh: boolValue(item.ok) && latest.pass !== false,
+    run_id: latest.run_id ? String(latest.run_id) : null,
+    task_id: latest.task_id ? String(latest.task_id) : null,
+    artifact_id: latest.artifact_id ? String(latest.artifact_id) : null,
+    plan_evidence_manifest_id: latest.plan_evidence_manifest_id ? String(latest.plan_evidence_manifest_id) : null,
+    command: `agentops operator live-product-readiness --require-adapter ${adapter}`,
+    token_omitted: latest.token_omitted === undefined ? true : boolValue(latest.token_omitted),
+  };
+}
+
+export async function loadOperatorAgentLoopHandoff(limit = 8): Promise<OperatorAgentLoopHandoffPayload> {
+  const adapters: OperatorStartCheckAdapter[] = ["hermes", "openclaw"];
+  const [localReadiness, liveAcceptance, launchPacket, ...startChecks] = await Promise.all([
+    loadLocalReadiness(),
+    optionalApiJson<Record<string, unknown>>(`/operator/live-acceptance?${new URLSearchParams({ freshness_hours: "72", limit: String(limit) }).toString()}`, {
+      operation: "live_acceptance_readiness",
+      status: "unavailable",
+      adapters: {},
+      token_omitted: true,
+    }),
+    loadOperatorLoopLaunchPacket(limit, "Agent Work Method Block"),
+    ...adapters.map((adapter) => loadOperatorStartCheck(adapter, limit)),
+  ]);
+  const localRaw = localReadiness as unknown as Record<string, unknown>;
+  const runningRaw = typeof localRaw.running_instance === "object" && localRaw.running_instance !== null ? localRaw.running_instance as Record<string, unknown> : {};
+  const localCodeRaw = typeof localRaw.local_code_check === "object" && localRaw.local_code_check !== null ? localRaw.local_code_check as Record<string, unknown> : {};
+  const currentCodeOk = boolValue(runningRaw.current) || boolValue(localCodeRaw.ok);
+  const currentHead = runningRaw.git_head_sha || localCodeRaw.server_head_sha;
+  const currentCode = {
+    ok: currentCodeOk,
+    status: String(runningRaw.status || localCodeRaw.status || (currentCodeOk ? "current" : "unknown")),
+    git_head_sha: currentHead ? String(currentHead) : null,
+    git_branch: runningRaw.git_branch ? String(runningRaw.git_branch) : null,
+    server_pid: runningRaw.server_pid === undefined || runningRaw.server_pid === null ? null : numberValue(runningRaw.server_pid, 0),
+    strict_command: `agentops local readiness --require-current-code --expect-head-sha ${currentHead || "<head_sha>"}`,
+    token_omitted: true,
+  };
+  const control = launchPacket.control_summary || {};
+  const consumers: OperatorAgentLoopHandoffConsumerPayload[] = startChecks.map((check, index) => {
+    const adapter = adapters[index];
+    const packet = check.agent_loop_packet || normalizeOperatorLoopDriverAgentPacket(undefined, adapter, limit);
+    const acceptance = typeof check.acceptance_packet === "object" && check.acceptance_packet !== null ? check.acceptance_packet as Record<string, unknown> : {};
+    const decision = typeof acceptance.decision === "object" && acceptance.decision !== null ? acceptance.decision as Record<string, unknown> : {};
+    const live = liveAcceptanceAdapter(liveAcceptance, adapter);
+    const methodGateIds = (packet.method_gates || []).map((gate) => gate.id).filter(Boolean);
+    const phaseCommands = packet.phase_commands || {};
+    const requiredPhases = ["read", "plan", "retrieve", "compare", "preflight", "execute", "verify", "record"];
+    const blockers = [
+      ...(!currentCode.ok ? ["current_code_not_current"] : []),
+      ...(check.safety.server_executes_shell ? ["server_shell_safety_missing"] : []),
+      ...(methodGateIds.length === 0 ? ["method_gates_missing"] : []),
+      ...(requiredPhases.every((phase) => Object.prototype.hasOwnProperty.call(phaseCommands, phase)) ? [] : ["phase_commands_incomplete"]),
+      ...(decision.can_preview_loop === false ? ["preview_loop_not_allowed"] : []),
+    ];
+    const attention = [
+      ...(!packet.ready_to_confirm_loop ? ["bounded_loop_confirm_not_ready"] : []),
+      ...(!live.fresh ? ["live_product_evidence_not_fresh"] : []),
+      ...(check.status === "attention" ? ["start_check_attention"] : []),
+    ];
+    return {
+      operation: "agent_loop_handoff_consumer",
+      adapter,
+      status: blockers.length ? "blocked" : attention.length ? "attention" : "ready",
+      ready_for_handoff: blockers.length === 0,
+      ready_for_bounded_loop_confirm: blockers.length === 0 && packet.ready_to_confirm_loop,
+      ready_for_live_dispatch: blockers.length === 0 && live.fresh && decision.live_dispatch_allowed !== false,
+      blockers,
+      attention,
+      start_check: {
+        status: check.status,
+        command: packet.commands.start_check || `agentops operator start-check --adapter ${adapter} --limit ${limit}`,
+        current_phase: packet.current_phase,
+        can_preview_loop: decision.can_preview_loop !== false,
+        can_confirm_bounded_loop: packet.ready_to_confirm_loop,
+        live_dispatch_requires_confirm_run: decision.live_dispatch_requires_confirm_run !== false,
+        human_review_required: boolValue(decision.human_review_required),
+        memory_review_required: boolValue(decision.memory_review_required),
+        server_executes_shell: boolValue(check.safety.server_executes_shell),
+        token_omitted: true,
+      },
+      launch_brief: {
+        status: launchPacket.status,
+        next_command: control.next_command || null,
+        verify_command: control.verify_command || null,
+        receipt_command: control.receipt_command || null,
+        current_code_ok: currentCode.ok,
+        control_mode: control.mode || null,
+        recommended_step: typeof control.recommended_step === "object" && control.recommended_step !== null ? String((control.recommended_step as Record<string, unknown>).step_id || "") : null,
+        token_omitted: true,
+      },
+      live_product_readiness: live,
+      method: {
+        phases: requiredPhases,
+        phase_commands: Object.fromEntries(requiredPhases.map((phase) => [phase, phaseCommands[phase] || null])),
+        method_gate_ids: methodGateIds,
+        required_gate_ids: [
+          "read_start_check",
+          "read_current_code",
+          "plan_agent_plan",
+          "retrieve_knowledge",
+          "compare_base_reference",
+          "preflight_adapter",
+          "execute_bounded_loop",
+          "verify_loop",
+          "record_memory_candidate",
+        ],
+        token_omitted: true,
+      },
+      commands: {
+        agent_loop_handoff: `agentops operator agent-loop-handoff --adapter ${adapter} --limit ${limit}`,
+        local_readiness: currentCode.strict_command,
+        start_check: packet.commands.start_check || `agentops operator start-check --adapter ${adapter} --limit ${limit}`,
+        launch_brief: `agentops operator loop-launch-packet --brief --adapter ${adapter} --limit ${limit}`,
+        loop_driver_preview: packet.commands.preview_loop || `agentops operator loop-driver --adapter ${adapter} --max-steps 3 --limit ${limit}`,
+        loop_driver_confirm: packet.commands.confirm_loop || `agentops operator loop-driver --adapter ${adapter} --max-steps 3 --limit ${limit} --confirm-loop`,
+        adapter_preflight: packet.commands.adapter_preflight || `agentops worker preflight --adapter ${adapter}`,
+        live_product_readiness: live.command,
+        review_queue: packet.commands.review_queue || "agentops review queue --limit 20",
+      },
+      safety: {
+        read_only: true,
+        ledger_mutated: false,
+        live_execution_performed: false,
+        server_executes_shell: false,
+        raw_prompt_omitted: true,
+        raw_response_omitted: true,
+        raw_content_omitted: true,
+        token_omitted: true,
+      },
+      token_omitted: true,
+    };
+  });
+  const status = consumers.some((item) => item.status === "blocked")
+    ? "blocked"
+    : consumers.some((item) => item.status === "attention")
+      ? "attention"
+      : "ready";
+  return {
+    provider: "agentops-operator",
+    operation: "operator_agent_loop_handoff",
+    status,
+    workspace_id: launchPacket.workspace_id || localReadiness.workspace_id || "local-demo",
+    adapters,
+    current_code: currentCode,
+    summary: {
+      consumers: consumers.length + 1,
+      ready_consumers: consumers.filter((item) => item.status === "ready").length + (currentCode.ok ? 1 : 0),
+      attention_consumers: consumers.filter((item) => item.status === "attention").length,
+      blocked_consumers: consumers.filter((item) => item.status === "blocked").length + (currentCode.ok ? 0 : 1),
+      ready_for_handoff: consumers.every((item) => item.ready_for_handoff) && currentCode.ok,
+      ready_for_all_bounded_loop_confirm: consumers.every((item) => item.ready_for_bounded_loop_confirm),
+      fresh_live_adapters: consumers.filter((item) => item.live_product_readiness.fresh).length,
+      current_code_ok: currentCode.ok,
+    },
+    consumers,
+    codex_consumer: {
+      operation: "agent_loop_handoff_codex_consumer",
+      status: currentCode.ok ? "ready" : "blocked",
+      uses_same_packets: true,
+      commands: {
+        read_handoff: `agentops operator agent-loop-handoff --limit ${limit}`,
+        loop_control: `agentops operator loop-control --limit ${limit}`,
+        loop_launch_brief: `agentops operator loop-launch-packet --brief --adapter hermes --limit ${limit}`,
+        loop_driver_preview: `agentops operator loop-driver --adapter hermes --max-steps 3 --limit ${limit}`,
+        review_queue: "agentops review queue --limit 20",
+      },
+      token_omitted: true,
+    },
+    safety: {
+      read_only: true,
+      ledger_mutated: false,
+      live_execution_performed: false,
+      server_executes_shell: false,
+      raw_prompt_omitted: true,
+      raw_response_omitted: true,
+      raw_content_omitted: true,
       token_omitted: true,
     },
     token_omitted: true,
