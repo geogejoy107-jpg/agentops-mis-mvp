@@ -101,6 +101,7 @@ def blocked_supervision(adapter: str, *, task_id: str | None = None, agent_id: s
 
 def verify_server_customer_worker_consumption(failures: list[str]) -> dict:
     original_operator_loop_supervision = server.operator_loop_supervision
+    original_worker_adapter_readiness = server.worker_adapter_readiness
     blocked_payload = None
     external_payload = None
     try:
@@ -110,7 +111,35 @@ def verify_server_customer_worker_consumption(failures: list[str]) -> dict:
             agent_id = ((qs or {}).get("agent_id") or [None])[0]
             return blocked_supervision(adapter, task_id=task_id, agent_id=agent_id)
 
+        def fake_adapter_ready(conn, refresh: bool = True):
+            return {
+                "operation": "worker_adapter_readiness",
+                "status": "ready",
+                "summary": {"ready": 1, "unavailable": 0, "blocked": 0, "token_omitted": True},
+                "adapters": {
+                    "hermes": {
+                        "adapter": "hermes",
+                        "readiness": "ready",
+                        "recommended_action": "agentops worker preflight --adapter hermes",
+                        "connector_id": "rtc_hermes_default_gateway",
+                        "target_resource": "hermes://default-gateway",
+                        "observation_level": "ledger_summary_only",
+                        "commercial_readiness": "review_required",
+                        "capability_manifest": {
+                            "governance": {
+                                "requires_prepared_action_for_external_write": True,
+                                "token_omitted": True,
+                            },
+                            "token_omitted": True,
+                        },
+                        "token_omitted": True,
+                    }
+                },
+                "token_omitted": True,
+            }
+
         server.operator_loop_supervision = fake_blocked
+        server.worker_adapter_readiness = fake_adapter_ready
         with server.db() as conn:
             server.refresh_runtime_connectors(conn)
             conn.execute("UPDATE runtime_connectors SET trust_status='trusted', trust_note=NULL WHERE runtime_connector_id='rtc_hermes_default_gateway'")
@@ -158,6 +187,7 @@ def verify_server_customer_worker_consumption(failures: list[str]) -> dict:
         require(external_gate.get("safety", {}).get("server_executes_shell") is False, f"server external gate shell proof missing: {external_gate}", failures)
     finally:
         server.operator_loop_supervision = original_operator_loop_supervision
+        server.worker_adapter_readiness = original_worker_adapter_readiness
     return {"blocked": blocked_payload, "external": external_payload}
 
 
