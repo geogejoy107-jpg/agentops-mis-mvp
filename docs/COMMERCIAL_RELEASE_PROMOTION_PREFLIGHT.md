@@ -45,10 +45,11 @@ The runtime payload exposes `release_promotion_allowed`,
 `remote_sync_verified`, and `exact_head_ci_verified` so release operators can
 see which blocker still prevents promotion.
 
-For PR #22 head `1195c9b`, exact-head CI and remote sync are already verified
-from GitHub Actions run `28107647712`. Promotion must still remain blocked until
-release-grade receipts are promoted under a clean worktree and the handoff/merge
-gates explicitly allow release completion.
+For PR #22, the latest recorded exact-head CI evidence is GitHub Actions run
+`28107647712` for head `1195c9b`. Any newer evidence commit must still pass its
+own PR CI before `exact_head_ci_verified` can clear. Promotion must remain
+blocked until release-grade receipts are promoted under a clean worktree and the
+handoff/merge gates explicitly allow release completion.
 
 Invalid promotion evidence includes `manual_receipt_promotion_without_ci`,
 `uncommitted_dirty_promotion`, `local_only_release_grade_claim`,

@@ -61,7 +61,7 @@ REQUIRED_DOC_STRINGS = {
     "gate_5_byoc_enterprise_deployment",
     "local_receipts_complete_exact_head_required",
     "release-grade",
-    "exact_head_ci_verified=true",
+    "exact_head_ci_verified=false",
     "remote_sync_verified=true",
     "clean_worktree_verified=false",
     "28107647712",
@@ -143,7 +143,7 @@ def main() -> int:
     require(summary.get("gates_with_release_grade_receipts") == [], "release-grade receipts must be empty")
     require(summary.get("gates_missing_local_receipts") == [], "local receipt gaps should be empty")
     require(summary.get("gate_5_local_receipt_commands") == 7, "Gate 5 command count mismatch")
-    require(summary.get("exact_head_ci_verified") is True, "exact-head CI should be verified for the current PR head")
+    require(summary.get("exact_head_ci_verified") is False, "current HEAD exact-head CI must still be verified after the evidence commit")
     require(summary.get("remote_sync_verified") is True, "remote sync should be verified for the current PR head")
     require(summary.get("clean_worktree_verified") is False, "clean worktree must remain false")
     promotion_evidence = receipts.get("promotion_evidence") or {}
@@ -196,7 +196,7 @@ def main() -> int:
     require(payload.get("contract") == CONTRACT_ID, "receipt payload contract mismatch")
     require(payload.get("release_complete") is False, "receipt payload must not claim release completion")
     require(payload.get("commercial_handoff_allowed") is False, "receipt payload must not allow handoff")
-    require((payload.get("promotion_evidence") or {}).get("verified_head") == payload.get("current_git_head"), "promotion evidence must match current head")
+    require((payload.get("promotion_evidence") or {}).get("verified_head") != "", "promotion evidence must keep a verified head reference")
 
     if args.require_release_grade:
         release_grade = set((payload.get("receipt_summary") or {}).get("gates_with_release_grade_receipts") or [])

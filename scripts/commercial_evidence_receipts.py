@@ -72,14 +72,21 @@ def validate_promotion_evidence(receipts: dict[str, Any], current_head: str) -> 
     summary = dict(receipts.get("receipt_summary") or {})
     exact_head_ci_verified = summary.get("exact_head_ci_verified") is True
     remote_sync_verified = summary.get("remote_sync_verified") is True
-    if exact_head_ci_verified or remote_sync_verified:
-        require(evidence.get("state") == "exact_head_ci_and_real_runtime_verified_release_grade_blocked", "promotion evidence state mismatch")
-        require(str(evidence.get("verified_head")) == current_head, "promotion evidence head is not current")
+    if evidence:
+        require(evidence.get("state") in {
+            "exact_head_ci_and_real_runtime_verified_release_grade_blocked",
+            "latest_exact_head_ci_and_real_runtime_recorded_current_head_requires_ci",
+        }, "promotion evidence state mismatch")
+        if exact_head_ci_verified:
+            require(str(evidence.get("verified_head")) == current_head, "promotion evidence head is not current")
+        else:
+            require(str(evidence.get("verified_head")), "promotion evidence head missing")
         require(evidence.get("remote_sync_verified") is True, "promotion evidence remote sync missing")
         ci = evidence.get("exact_head_ci") or {}
         require(ci.get("provider") == "github_actions", "promotion evidence CI provider mismatch")
         require(ci.get("workflow") == "Commercial Migration CI", "promotion evidence CI workflow mismatch")
-        require(str(ci.get("head")) == current_head, "promotion evidence CI head mismatch")
+        expected_ci_head = current_head if exact_head_ci_verified else str(evidence.get("verified_head"))
+        require(str(ci.get("head")) == expected_ci_head, "promotion evidence CI head mismatch")
         require(str(ci.get("run_id")), "promotion evidence CI run id missing")
         require(ci.get("status") == "success", "promotion evidence CI status mismatch")
         jobs = [job for job in ci.get("jobs") or [] if isinstance(job, dict)]
@@ -100,8 +107,12 @@ def validate_promotion_evidence(receipts: dict[str, Any], current_head: str) -> 
         require(runtime.get("raw_response_omitted") is True, "promotion evidence raw response omission missing")
         require(runtime.get("token_values_omitted") is True, "promotion evidence token omission missing")
         blockers = set(evidence.get("release_grade_blockers") or [])
+        if not exact_head_ci_verified:
+            require("exact_head_ci_not_verified" in blockers, "promotion evidence must keep exact-head CI blocker")
         require("clean_worktree_not_verified" in blockers, "promotion evidence must keep clean-worktree blocker")
         require("release_complete_false" in blockers, "promotion evidence must keep release-complete blocker")
+    elif exact_head_ci_verified or remote_sync_verified:
+        require(False, "promotion evidence missing")
     return evidence
 
 

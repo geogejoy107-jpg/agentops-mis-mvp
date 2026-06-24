@@ -44,9 +44,11 @@ Hermes/OpenClaw checks. It names those required commands so the handoff status
 can show the operator exactly what still needs fresh evidence. Gates 1-5 can
 show `local_receipt_current=true` and
 `receipt_state=local_receipts_complete_exact_head_required` while
-`release_grade_current=false`; exact-head CI and remote sync are now verified
-for PR #22 head `1195c9b`, but clean worktree, release-grade receipt promotion,
-handoff, and merge readiness remain release blockers.
+`release_grade_current=false`; latest exact-head CI is recorded for prior PR
+head `1195c9b`, remote sync is verified for the current branch, and the current
+HEAD still needs its own green PR CI run before promotion. Clean worktree,
+release-grade receipt promotion, handoff, and merge readiness remain release
+blockers.
 
 Required heavy/live evidence remains:
 

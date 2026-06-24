@@ -47,6 +47,7 @@
     "release_promotion_preflight_not_ready",
     "release_complete_false_until_all_phase_gates_have_current_evidence",
     "release_grade_receipts_empty",
+    "exact_head_ci_not_verified",
     "clean_worktree_not_verified",
     "existing_local_dirty_files_are_outside_this_slice"
   ],

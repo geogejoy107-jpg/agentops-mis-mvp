@@ -11,15 +11,17 @@ handoff triage; release-grade evidence still requires a clean worktree and all
 phase gates current. Gates 1-5 now have local receipt state
 `local_receipts_complete_exact_head_required`.
 
-PR #22 now has exact-head CI and real-runtime promotion evidence for head
+PR #22 records latest exact-head CI and real-runtime promotion evidence for head
 `1195c9b`: GitHub Actions run `28107647712` passed `Commercial core gates`,
 `Storage and Postgres parity`, and `UI, deployment, and BYOC evidence`; isolated
 real Hermes/OpenClaw acceptance recorded Agent Gateway `run_gw_9752c0e5bdb4`,
 OpenClaw `run_api_integrations_openclaw_probe_20260624144648327413_4534396f`,
 and Hermes `run_api_integrations_hermes_run_task_20260624144711332542_da040e28`.
-The release-grade flags now show `exact_head_ci_verified=true` and
-`remote_sync_verified=true`, while `clean_worktree_verified=false` and
-`gates_with_release_grade_receipts=[]` still block release promotion.
+Because this evidence packet itself creates a newer commit, the current HEAD
+still shows `exact_head_ci_verified=false` until the new PR CI run passes. The
+release-grade flags now show `remote_sync_verified=true`, while
+`clean_worktree_verified=false` and `gates_with_release_grade_receipts=[]` still
+block release promotion.
 
 Read receipts:
 

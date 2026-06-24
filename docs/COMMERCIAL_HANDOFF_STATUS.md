@@ -16,9 +16,10 @@ does not mean the product is release-complete.
 The embedded current-evidence summary exposes `gates_with_local_receipts` and
 `gates_with_release_grade_receipts` so local Gate 1-5 receipts can be visible
 with `local_receipts_complete_exact_head_required` without changing
-release-grade readiness. Exact-head CI and remote sync are already verified for
-PR #22 head `1195c9b`; release-grade receipts, clean worktree, handoff, and
-merge readiness still block commercial handoff.
+release-grade readiness. Latest exact-head CI is recorded for prior PR head
+`1195c9b`, remote sync is verified for the current branch, and the current HEAD
+still needs its own green PR CI run before promotion. Release-grade receipts,
+clean worktree, handoff, and merge readiness still block commercial handoff.
 
 Expected source statuses are `gate_enforced_not_release_complete`,
 `freeze_active_not_release_complete`, and `blocked_release_evidence_required`.

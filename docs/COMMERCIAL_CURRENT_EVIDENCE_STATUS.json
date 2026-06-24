@@ -54,7 +54,7 @@
       "gate_5_byoc_enterprise_deployment": 7
     },
     "gate_5_local_receipt_commands": 7,
-    "exact_head_ci_verified": true,
+    "exact_head_ci_verified": false,
     "remote_sync_verified": true,
     "clean_worktree_verified": false
   },

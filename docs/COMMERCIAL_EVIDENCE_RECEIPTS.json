@@ -34,12 +34,12 @@
     },
     "gate_5_local_receipt_commands": 7,
     "gate_5_release_grade_current": false,
-    "exact_head_ci_verified": true,
+    "exact_head_ci_verified": false,
     "remote_sync_verified": true,
     "clean_worktree_verified": false
   },
   "promotion_evidence": {
-    "state": "exact_head_ci_and_real_runtime_verified_release_grade_blocked",
+    "state": "latest_exact_head_ci_and_real_runtime_recorded_current_head_requires_ci",
     "verified_head": "1195c9b",
     "branch": "codex/commercial-migration-closed-loop",
     "remote_sync_verified": true,
@@ -82,6 +82,7 @@
     },
     "release_grade_blockers": [
       "release_grade_receipts_empty",
+      "exact_head_ci_not_verified",
       "clean_worktree_not_verified",
       "tracked_dirty_files_present",
       "untracked_files_present",
@@ -119,6 +120,7 @@
       ],
       "release_blockers": [
         "release_grade_receipts_empty",
+        "exact_head_ci_not_verified",
         "clean_worktree_not_verified",
         "existing_local_dirty_files_are_outside_this_slice"
       ]
@@ -166,6 +168,7 @@
       ],
       "release_blockers": [
         "release_grade_receipts_empty",
+        "exact_head_ci_not_verified",
         "clean_worktree_not_verified",
         "existing_local_dirty_files_are_outside_this_slice"
       ]
@@ -258,6 +261,7 @@
       ],
       "release_blockers": [
         "release_grade_receipts_empty",
+        "exact_head_ci_not_verified",
         "clean_worktree_not_verified",
         "existing_local_dirty_files_are_outside_this_slice"
       ]
@@ -313,6 +317,7 @@
       ],
       "release_blockers": [
         "release_grade_receipts_empty",
+        "exact_head_ci_not_verified",
         "clean_worktree_not_verified",
         "existing_local_dirty_files_are_outside_this_slice"
       ]
@@ -378,6 +383,7 @@
       ],
       "release_blockers": [
         "release_grade_receipts_empty",
+        "exact_head_ci_not_verified",
         "clean_worktree_not_verified",
         "existing_local_dirty_files_are_outside_this_slice",
         "gates_1_4_still_require_release_grade_current_evidence"

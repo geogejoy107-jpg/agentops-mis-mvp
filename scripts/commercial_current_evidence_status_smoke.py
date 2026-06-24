@@ -222,7 +222,7 @@ def main() -> int:
     require("gate_5_byoc_enterprise_deployment" not in set(summary.get("gates_with_release_grade_receipts") or []), "Gate 5 must not be release-grade current")
     require(summary.get("gates_missing_local_receipts") == [], "local receipt gaps should be empty")
     require(summary.get("gate_5_local_receipt_commands") == 7, "Gate 5 local receipt count mismatch")
-    require(summary.get("exact_head_ci_verified") is True, "exact-head CI should be verified for the current PR head")
+    require(summary.get("exact_head_ci_verified") is False, "current HEAD exact-head CI must still be verified after the evidence commit")
     require(summary.get("remote_sync_verified") is True, "remote sync should be verified for the current PR head")
     require(summary.get("clean_worktree_verified") is False, "clean worktree must remain false")
     require(summary.get("heavy_evidence_not_executed_by_default") is True, "heavy evidence default policy missing")
