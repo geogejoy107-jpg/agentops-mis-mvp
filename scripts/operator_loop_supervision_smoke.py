@@ -284,6 +284,17 @@ def validate(payload: dict, failures: list[str], *, expect_quality_attention: bo
         if expect_quality_attention:
             require(contract_quality.get("status") == "attention", f"{adapter} work packet quality should be attention: {contract_quality}", failures)
             require(int(contract_quality.get("attention") or 0) >= 1, f"{adapter} work packet quality attention count missing: {contract_quality}", failures)
+        task_intake_auto_plan = evidence_contract.get("task_intake_auto_plan") or {}
+        require(evidence_contract.get("task_intake_auto_plan_required") in {True, False}, f"{adapter} task-intake auto-plan flag missing: {evidence_contract}", failures)
+        require(task_intake_auto_plan.get("status") in {"pass", "attention", "blocked"}, f"{adapter} task-intake auto-plan status missing: {task_intake_auto_plan}", failures)
+        require(task_intake_auto_plan.get("server_executes_shell") is False, f"{adapter} task-intake auto-plan shell proof missing: {task_intake_auto_plan}", failures)
+        require(task_intake_auto_plan.get("live_execution_performed") is False, f"{adapter} task-intake auto-plan live proof missing: {task_intake_auto_plan}", failures)
+        if task_intake_auto_plan.get("required") is True:
+            require("agentops operator intake-auto-plan" in str(task_intake_auto_plan.get("command") or ""), f"{adapter} task-intake auto-plan command missing: {task_intake_auto_plan}", failures)
+            if task_intake_auto_plan.get("high_or_critical_requires_human") is True:
+                require("--confirm-plan" not in str(task_intake_auto_plan.get("command") or ""), f"{adapter} high-risk task-intake command must stay preview-only: {task_intake_auto_plan}", failures)
+            else:
+                require("--confirm-plan" in str(task_intake_auto_plan.get("command") or ""), f"{adapter} low/medium task-intake command should be confirm-gated: {task_intake_auto_plan}", failures)
         contract_service = evidence_contract.get("service_managed_loop") or {}
         require(evidence_contract.get("service_managed_loop_required") is True, f"{adapter} work packet service-managed contract missing: {evidence_contract}", failures)
         require(contract_service.get("status") in {"pass", "attention"}, f"{adapter} work packet service closure status missing: {contract_service}", failures)
@@ -345,7 +356,7 @@ def validate(payload: dict, failures: list[str], *, expect_quality_attention: bo
         require(item_safety.get("ledger_mutated") is False, f"{adapter} ledger safety missing: {item_safety}", failures)
         require(item_safety.get("server_executes_shell") is False, f"{adapter} shell safety missing: {item_safety}", failures)
         gate_ids = {gate.get("id") for gate in (item.get("gates") or [])}
-        require({"handoff_ready", "current_code", "method_gates", "preview_loop", "local_deployment", "bounded_confirm", "plan_quality", "service_managed_loop", "record_pressure", "server_shell_boundary", "research_lab_packet", "research_lab_consumption"}.issubset(gate_ids), f"{adapter} gates missing: {gate_ids}", failures)
+        require({"handoff_ready", "current_code", "method_gates", "preview_loop", "local_deployment", "bounded_confirm", "plan_quality", "task_intake_auto_plan", "service_managed_loop", "record_pressure", "server_shell_boundary", "research_lab_packet", "research_lab_consumption"}.issubset(gate_ids), f"{adapter} gates missing: {gate_ids}", failures)
         quality_gate = next((gate for gate in (item.get("gates") or []) if gate.get("id") == "plan_quality"), {})
         require(quality_gate.get("status") in {"pass", "attention"}, f"{adapter} quality gate status missing: {quality_gate}", failures)
         require(quality_gate.get("hard_run_start_gate") is False, f"{adapter} quality gate should not hard-block run_start: {quality_gate}", failures)
@@ -353,6 +364,10 @@ def validate(payload: dict, failures: list[str], *, expect_quality_attention: bo
         if expect_quality_attention:
             require(quality_gate.get("status") == "attention", f"{adapter} quality gate should be attention: {quality_gate}", failures)
             require(item.get("can_confirm_bounded_loop") is True, f"{adapter} quality attention should not change structural confirm readiness: {item}", failures)
+        task_intake_gate = next((gate for gate in (item.get("gates") or []) if gate.get("id") == "task_intake_auto_plan"), {})
+        require(task_intake_gate.get("status") in {"pass", "attention", "blocked"}, f"{adapter} task-intake gate status missing: {task_intake_gate}", failures)
+        require(task_intake_gate.get("server_executes_shell") is False, f"{adapter} task-intake gate shell proof missing: {task_intake_gate}", failures)
+        require(task_intake_gate.get("live_execution_performed") is False, f"{adapter} task-intake gate live proof missing: {task_intake_gate}", failures)
         service_gate = next((gate for gate in (item.get("gates") or []) if gate.get("id") == "service_managed_loop"), {})
         require(service_gate.get("status") in {"pass", "attention"}, f"{adapter} service gate status missing: {service_gate}", failures)
         require(service_gate.get("hard_run_start_gate") is False, f"{adapter} service gate should not hard-block run_start: {service_gate}", failures)

@@ -25644,6 +25644,47 @@ def operator_agent_loop_handoff(conn: sqlite3.Connection, headers, qs=None, auth
     }
 
 
+def loop_supervision_task_intake_auto_plan(task_intake: dict, adapter: str) -> dict:
+    items = task_intake.get("items") if isinstance(task_intake.get("items"), list) else []
+    candidates: list[tuple[int, int, dict]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        failed_gate_ids = set(item.get("failed_gate_ids") or [])
+        if not ({"agent_plan", "verified_agent_plan"} & failed_gate_ids):
+            continue
+        assigned_adapter = item.get("assigned_adapter")
+        adapter_rank = 2 if assigned_adapter == adapter else 1 if not assigned_adapter else 0
+        if adapter_rank <= 0:
+            continue
+        candidates.append((adapter_rank, int(item.get("priority_score") or 0), item))
+    candidates.sort(key=lambda row: (row[0], row[1], str((row[2] or {}).get("task_id") or "")), reverse=True)
+    item = candidates[0][2] if candidates else {}
+    command = str(item.get("command") or "").strip()
+    risk = str(item.get("risk_level") or "medium")
+    confirm_required = "--confirm-plan" in command
+    high_risk = risk in {"high", "critical"}
+    return {
+        "required": bool(item),
+        "status": "blocked" if high_risk else "attention" if item else "pass",
+        "task_id": item.get("task_id"),
+        "agent_id": (item.get("assigned_agent_ids") or [None])[0],
+        "adapter": item.get("assigned_adapter") or adapter,
+        "risk_level": risk if item else None,
+        "failed_gate_ids": item.get("failed_gate_ids") or [],
+        "command": command or "agentops operator intake-checklist --limit 20",
+        "preview_command": command.replace(" --confirm-plan", "") if command else "agentops operator intake-checklist --limit 20",
+        "verify_command": "agentops operator intake-checklist --limit 20",
+        "confirm_required": confirm_required,
+        "high_or_critical_requires_human": high_risk,
+        "bounded_advance_command": "agentops operator advance-loop --source task_intake --limit 20 --confirm-advance" if confirm_required and not high_risk else None,
+        "hard_run_start_gate": True if item else False,
+        "server_executes_shell": False,
+        "live_execution_performed": False,
+        "token_omitted": True,
+    }
+
+
 def loop_supervision_item(
     consumer: dict,
     *,
@@ -25653,6 +25694,7 @@ def loop_supervision_item(
     plan_quality_evidence: dict | None = None,
     research_lab_packet: dict | None = None,
     research_lab_consumption: dict | None = None,
+    task_intake: dict | None = None,
 ) -> dict:
     adapter = str(consumer.get("adapter") or "mock")
     start_check = consumer.get("start_check") if isinstance(consumer.get("start_check"), dict) else {}
@@ -25737,6 +25779,10 @@ def loop_supervision_item(
     plan_quality_issue_count = int(plan_quality_evidence.get("issue_count") or 0)
     plan_quality_attention_required = plan_quality_issue_count > 0
     plan_quality_command = str(plan_quality_evidence.get("command") or managed_execution_commands.get("evidence_report") or "agentops operator evidence-report --limit 8")
+    task_intake = task_intake if isinstance(task_intake, dict) else {}
+    task_intake_auto_plan = loop_supervision_task_intake_auto_plan(task_intake, adapter)
+    task_intake_auto_plan_required = task_intake_auto_plan.get("required") is True
+    task_intake_auto_plan_command = str(task_intake_auto_plan.get("command") or "").strip()
     service_receipt_missing = service_managed_loop.get("receipt_required") is True and service_managed_loop.get("receipt_verified") is not True
     service_readback_missing = service_managed_loop.get("control_readback_required") is True and service_managed_loop.get("control_readback_attached") is not True
     service_activation_required = service_managed_loop.get("service_activation_required") is True
@@ -25785,6 +25831,9 @@ def loop_supervision_item(
     elif can_confirm and service_closure_required:
         status = "record_first"
         recommended_next_command = service_closure_command
+    elif can_confirm and task_intake_auto_plan_required:
+        status = "record_first"
+        recommended_next_command = task_intake_auto_plan_command
     elif can_confirm and research_lab_ready and not research_lab_consumed:
         status = "record_first"
         recommended_next_command = research_lab_consumption_record_command
@@ -25860,6 +25909,21 @@ def loop_supervision_item(
             "avg_score": plan_quality_evidence.get("avg_score"),
             "command": plan_quality_command,
             "hard_run_start_gate": False,
+            "token_omitted": True,
+        },
+        {
+            "id": "task_intake_auto_plan",
+            "ok": not task_intake_auto_plan_required,
+            "status": task_intake_auto_plan.get("status"),
+            "task_id": task_intake_auto_plan.get("task_id"),
+            "risk_level": task_intake_auto_plan.get("risk_level"),
+            "command": task_intake_auto_plan_command,
+            "verify_command": task_intake_auto_plan.get("verify_command"),
+            "confirm_required": task_intake_auto_plan.get("confirm_required") is True,
+            "high_or_critical_requires_human": task_intake_auto_plan.get("high_or_critical_requires_human") is True,
+            "hard_run_start_gate": task_intake_auto_plan.get("hard_run_start_gate") is True,
+            "server_executes_shell": False,
+            "live_execution_performed": False,
             "token_omitted": True,
         },
         {
@@ -25944,6 +26008,8 @@ def loop_supervision_item(
         primary_phase = "RECORD"
     elif recommended_next_command == plan_quality_command:
         primary_phase = "VERIFY"
+    elif task_intake_auto_plan_required and recommended_next_command == task_intake_auto_plan_command:
+        primary_phase = "PLAN"
     elif service_closure_required and recommended_next_command == service_closure_command:
         primary_phase = service_closure_phase
     elif recommended_next_command == research_lab_consumption_record_command:
@@ -25959,6 +26025,8 @@ def loop_supervision_item(
         if service_closure_required and recommended_next_command == service_closure_command
         else research_lab_consumption_verify_command
         if recommended_next_command == research_lab_consumption_record_command
+        else task_intake_auto_plan.get("verify_command")
+        if task_intake_auto_plan_required and recommended_next_command == task_intake_auto_plan_command
         else run_start_receipt_projection.get("verify_command")
         if primary_confirm_required
         else managed_execution_commands.get("evidence_report")
@@ -25973,8 +26041,8 @@ def loop_supervision_item(
         "receipt_required": primary_confirm_required,
         "verify_command": primary_verify_command,
         "control_readback_source": run_start_receipt_projection.get("control_readback_source") if primary_confirm_required else None,
-        "safe_to_auto_continue": bool(recommended_next_command) and not primary_confirm_required and not should_record and not plan_quality_attention_required and not service_closure_required and not server_shell,
-        "requires_human_before_effect": bool(primary_confirm_required or should_record or plan_quality_attention_required or service_closure_required),
+        "safe_to_auto_continue": bool(recommended_next_command) and not primary_confirm_required and not should_record and not plan_quality_attention_required and not service_closure_required and not task_intake_auto_plan_required and not server_shell,
+        "requires_human_before_effect": bool(primary_confirm_required or should_record or plan_quality_attention_required or service_closure_required or task_intake_auto_plan_required),
         "blockers": blockers
         + ([f"missing_method_gate:{gate}" for gate in missing_method_gates] if missing_method_gates else [])
         + ([] if local_deployment_adapter_ok else ["local_deployment_adapter_mismatch"]),
@@ -26000,7 +26068,7 @@ def loop_supervision_item(
         "loop_protocol": ["READ", "PLAN", "RETRIEVE", "COMPARE", "PREFLIGHT", "EXECUTE", "VERIFY", "RECORD"],
         "phase_commands": {
             "read": phase_commands.get("read") or commands.get("agent_loop_handoff"),
-            "plan": phase_commands.get("plan") or managed_execution_commands.get("agent_plan_create"),
+            "plan": task_intake_auto_plan_command or phase_commands.get("plan") or managed_execution_commands.get("agent_plan_create"),
             "retrieve": phase_commands.get("retrieve") or managed_execution_commands.get("knowledge_search"),
             "compare": phase_commands.get("compare") or managed_execution_commands.get("base_reference"),
             "preflight": phase_commands.get("preflight") or commands.get("adapter_preflight"),
@@ -26018,6 +26086,7 @@ def loop_supervision_item(
                     service_commands.get("service_check"),
                     service_commands.get("service_control_preview"),
                     commands.get("live_product_readiness"),
+                    task_intake_auto_plan.get("preview_command"),
                     plan_quality_command,
                     review_pressure["record_command"],
                     research_lab_read_command,
@@ -26031,6 +26100,7 @@ def loop_supervision_item(
                 command
                 for command in [
                     managed_execution_commands.get("agent_plan_create"),
+                    task_intake_auto_plan_command,
                     managed_execution_commands.get("knowledge_search"),
                     managed_execution_commands.get("base_reference"),
                     research_lab_phase_commands.get("PLAN"),
@@ -26096,6 +26166,8 @@ def loop_supervision_item(
         },
         "evidence_contract": {
             "agent_plan_required": True,
+            "task_intake_auto_plan_required": task_intake_auto_plan_required,
+            "task_intake_auto_plan": task_intake_auto_plan,
             "agent_plan_quality_audit_required": True,
             "agent_plan_quality": {
                 "status": plan_quality_evidence.get("status") or "not_applicable",
@@ -26181,6 +26253,7 @@ def loop_supervision_item(
         + ([] if local_deployment_adapter_ok else ["local_deployment_adapter_mismatch"]),
         "attention": attention
         + (["record_before_execute"] if should_record else [])
+        + (["task_intake_auto_plan_required"] if task_intake_auto_plan_required else [])
         + (["agent_plan_quality_attention"] if plan_quality_attention_required else [])
         + ([f"service_managed_loop:{service_closure_step}"] if service_closure_required and service_closure_step else [])
         + ([] if research_lab_consumed else ["research_lab_packet_consumption_missing"]),
@@ -26191,6 +26264,7 @@ def loop_supervision_item(
             "hard_run_start_gate": False,
             "token_omitted": True,
         },
+        "task_intake_auto_plan": task_intake_auto_plan,
         "service_closure": service_closure,
         "review_pressure": review_pressure,
         "gates": gates,
@@ -26323,6 +26397,7 @@ def operator_loop_supervision(conn: sqlite3.Connection, headers, qs=None, auth_c
         "token_omitted": True,
     }
     workspace_id = normalize_workspace_id(handoff.get("workspace_id") or effective_headers.get("X-AgentOps-Workspace-Id") or "local-demo")
+    task_intake = operator_task_intake_checklist(conn, workspace_id, limit=max(limit, 8))
     items = []
     for consumer in consumers:
         if not isinstance(consumer, dict):
@@ -26348,6 +26423,7 @@ def operator_loop_supervision(conn: sqlite3.Connection, headers, qs=None, auth_c
             plan_quality_evidence=plan_quality_evidence,
             research_lab_packet=research_packet,
             research_lab_consumption=research_consumption,
+            task_intake=task_intake,
             start_check_payload=operator_start_check(
                 conn,
                 headers,
