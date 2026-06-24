@@ -22,7 +22,9 @@ The target state is:
   `/api/commercial/release-status` and rendered on Next `/workspace/commercial`
   so release promotion, exact-head CI, and current-evidence blockers are visible
   in the migration track without running network, live runtime, or billing calls
-  during page load.
+  during page load. Operators can explicitly request external exact-head CI
+  readback with `?exact_head_ci=1` / `?include_external_ci_evidence=1`; that
+  readback is still read-only and must not flip release, handoff, or merge gates.
 - Commercial release replaces demo-only visual assets with original Pixel Office
   assets and keeps Star-Office assets out of public/commercial distribution.
 - Every migration step has a reversible branch, a named verification command,

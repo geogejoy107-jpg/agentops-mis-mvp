@@ -1002,6 +1002,9 @@ export type CommercialReleaseStatusPayload = {
     gates_with_local_receipts?: string[];
     gates_with_release_grade_receipts?: string[];
     exact_head_ci_verified?: boolean;
+    static_exact_head_ci_verified?: boolean;
+    effective_exact_head_ci_verified?: boolean;
+    exact_head_ci_source?: string;
     remote_sync_verified?: boolean;
     clean_worktree_verified?: boolean;
     postgres_required?: boolean;
@@ -1021,7 +1024,17 @@ export type CommercialReleaseStatusPayload = {
     contract_id?: string;
     checked?: boolean;
     network_called?: boolean;
+    external_check_requested?: boolean;
     exact_head_ci_verified?: boolean;
+    status?: string;
+    head?: string;
+    head_matches_current?: boolean;
+    run_id?: string;
+    workflow?: string;
+    url?: string;
+    required_jobs_success?: boolean;
+    job_gaps?: string[];
+    error?: string;
     command?: string;
     required_for_promotion?: boolean;
   };
@@ -1029,6 +1042,7 @@ export type CommercialReleaseStatusPayload = {
     include_external_ci_evidence?: string;
     strict_promotion?: string;
     exact_head_ci?: string;
+    release_status_external_ci_api?: string;
   };
   blockers?: string[];
   safety?: {
@@ -1701,8 +1715,13 @@ export async function loadCommercialEntitlements(): Promise<CommercialEntitlemen
   return misJson<CommercialEntitlementStatus>("/commercial/entitlements");
 }
 
-export async function loadCommercialReleaseStatus(): Promise<CommercialReleaseStatusPayload> {
-  return misJson<CommercialReleaseStatusPayload>("/commercial/release-status");
+export async function loadCommercialReleaseStatus(input?: { includeExternalCi?: boolean; requireExternalCi?: boolean; externalCiRunId?: string }): Promise<CommercialReleaseStatusPayload> {
+  const params = new URLSearchParams();
+  if (input?.includeExternalCi) params.set("include_external_ci_evidence", "1");
+  if (input?.requireExternalCi) params.set("require_external_ci_evidence", "1");
+  if (input?.externalCiRunId) params.set("external_ci_run_id", input.externalCiRunId);
+  const query = params.toString();
+  return misJson<CommercialReleaseStatusPayload>(`/commercial/release-status${query ? `?${query}` : ""}`);
 }
 
 export async function loadStorageBackendStatus(): Promise<StorageBackendStatus> {

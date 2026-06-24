@@ -323,7 +323,84 @@ def commercial_release_git_state() -> dict:
     }
 
 
-def commercial_release_status(headers) -> dict:
+def qs_flag(qs, name: str) -> bool:
+    values = qs.get(name) if isinstance(qs, dict) else None
+    if values is None:
+        return False
+    if not isinstance(values, list):
+        values = [values]
+    return any(str(value).strip().lower() in {"1", "true", "yes", "on"} for value in values)
+
+
+def qs_first(qs, name: str) -> str | None:
+    values = qs.get(name) if isinstance(qs, dict) else None
+    if values is None:
+        return None
+    if isinstance(values, list):
+        return str(values[0]) if values else None
+    return str(values)
+
+
+def commercial_release_external_ci_evidence(*, include_external_ci: bool, require_external_ci: bool = False, run_id: str | None = None) -> dict:
+    exact_head_command = "python3 scripts/commercial_exact_head_ci_evidence.py --from-gh --require-current-head"
+    if not include_external_ci and not require_external_ci:
+        return {
+            "contract_id": "commercial_exact_head_ci_evidence_v1",
+            "checked": False,
+            "network_called": False,
+            "exact_head_ci_verified": False,
+            "status": "external_ci_check_not_requested",
+            "command": exact_head_command,
+            "required_for_promotion": True,
+        }
+
+    args = [sys.executable, str(ROOT / "scripts" / "commercial_exact_head_ci_evidence.py"), "--from-gh"]
+    if require_external_ci:
+        args.append("--require-current-head")
+    if run_id:
+        args.extend(["--run-id", run_id])
+    proc = subprocess.run(
+        args,
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=90,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return {
+            "contract_id": "commercial_exact_head_ci_evidence_v1",
+            "checked": True,
+            "network_called": True,
+            "exact_head_ci_verified": False,
+            "status": "exact_head_ci_not_verified",
+            "error": redact_text((proc.stderr or proc.stdout).strip(), limit=500),
+            "command": exact_head_command,
+            "required_for_promotion": True,
+        }
+    payload = json.loads(proc.stdout or "{}")
+    github = payload.get("github_evidence") if isinstance(payload.get("github_evidence"), dict) else {}
+    return {
+        "contract_id": payload.get("contract") or "commercial_exact_head_ci_evidence_v1",
+        "checked": True,
+        "network_called": True,
+        "external_check_requested": bool(payload.get("external_check_requested")),
+        "exact_head_ci_verified": bool(payload.get("exact_head_ci_verified")),
+        "status": payload.get("status") or "unknown",
+        "head": payload.get("head"),
+        "head_matches_current": bool(github.get("head_matches_current")),
+        "run_id": str(github.get("run_id") or ""),
+        "workflow": github.get("workflow") or payload.get("workflow"),
+        "url": github.get("url"),
+        "required_jobs_success": bool(github.get("required_jobs_success")),
+        "job_gaps": list(github.get("job_gaps") or []),
+        "command": exact_head_command,
+        "required_for_promotion": True,
+    }
+
+
+def commercial_release_status(headers, qs=None) -> dict:
     docs_dir = ROOT / "docs"
     handoff = read_json_file(docs_dir / "COMMERCIAL_HANDOFF_STATUS.json", {})
     current = read_json_file(docs_dir / "COMMERCIAL_CURRENT_EVIDENCE_STATUS.json", {})
@@ -333,6 +410,14 @@ def commercial_release_status(headers) -> dict:
     receipt_summary = receipts.get("receipt_summary") if isinstance(receipts.get("receipt_summary"), dict) else {}
     exact_head_command = "python3 scripts/commercial_exact_head_ci_evidence.py --from-gh --require-current-head"
     strict_promotion_command = "python3 scripts/commercial_release_promotion_preflight.py --include-external-ci-evidence --require-promotion-ready"
+    include_external_ci = qs_flag(qs, "include_external_ci_evidence") or qs_flag(qs, "external_ci") or qs_flag(qs, "exact_head_ci")
+    require_external_ci = qs_flag(qs, "require_external_ci_evidence")
+    external_ci = commercial_release_external_ci_evidence(
+        include_external_ci=include_external_ci,
+        require_external_ci=require_external_ci,
+        run_id=qs_first(qs, "external_ci_run_id"),
+    )
+    effective_exact_head_ci_verified = bool(current_summary.get("exact_head_ci_verified") or external_ci.get("exact_head_ci_verified"))
     source_documents = [
         {"path": "docs/COMMERCIAL_HANDOFF_STATUS.json", "contract_id": handoff.get("contract_id"), "status": handoff.get("status")},
         {"path": "docs/COMMERCIAL_CURRENT_EVIDENCE_STATUS.json", "contract_id": current.get("contract_id"), "status": current.get("status")},
@@ -372,7 +457,10 @@ def commercial_release_status(headers) -> dict:
             "gates_requiring_current_evidence": list(current_summary.get("gates_requiring_current_evidence") or []),
             "gates_with_local_receipts": list(current_summary.get("gates_with_local_receipts") or []),
             "gates_with_release_grade_receipts": list(current_summary.get("gates_with_release_grade_receipts") or []),
-            "exact_head_ci_verified": bool(current_summary.get("exact_head_ci_verified")),
+            "exact_head_ci_verified": effective_exact_head_ci_verified,
+            "static_exact_head_ci_verified": bool(current_summary.get("exact_head_ci_verified")),
+            "effective_exact_head_ci_verified": effective_exact_head_ci_verified,
+            "exact_head_ci_source": "external_github_actions" if external_ci.get("exact_head_ci_verified") is True else "static_current_evidence_status",
             "remote_sync_verified": bool(current_summary.get("remote_sync_verified")),
             "clean_worktree_verified": bool(current_summary.get("clean_worktree_verified")),
             "postgres_required": bool(current_summary.get("postgres_required")),
@@ -388,25 +476,19 @@ def commercial_release_status(headers) -> dict:
             "remote_sync_verified": bool(receipt_summary.get("remote_sync_verified")),
             "clean_worktree_verified": bool(receipt_summary.get("clean_worktree_verified")),
         },
-        "external_exact_head_ci": {
-            "contract_id": "commercial_exact_head_ci_evidence_v1",
-            "checked": False,
-            "network_called": False,
-            "exact_head_ci_verified": False,
-            "command": exact_head_command,
-            "required_for_promotion": True,
-        },
+        "external_exact_head_ci": external_ci,
         "commands": {
             "include_external_ci_evidence": "python3 scripts/commercial_release_promotion_preflight.py --include-external-ci-evidence",
             "strict_promotion": strict_promotion_command,
             "exact_head_ci": exact_head_command,
+            "release_status_external_ci_api": "/api/commercial/release-status?include_external_ci_evidence=1",
         },
         "blockers": list(handoff.get("explicit_blockers") or preflight.get("known_blockers") or []),
         "safety": {
             "read_only": True,
             "ci_safe": True,
             "live_execution_performed": False,
-            "network_called": False,
+            "network_called": bool(external_ci.get("network_called")),
             "token_omitted": True,
             "raw_prompt_omitted": True,
             "raw_response_omitted": True,
@@ -14683,7 +14765,7 @@ class Handler(BaseHTTPRequestHandler):
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/commercial/release-status":
-                payload = commercial_release_status(self.headers)
+                payload = commercial_release_status(self.headers, qs)
                 conn.rollback()
                 return self.send_json(payload)
             if path == "/api/demo/readiness":

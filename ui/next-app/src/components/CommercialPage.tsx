@@ -110,8 +110,24 @@ export function CommercialParityPage({
             <span>{exactHead.contract_id || "commercial_exact_head_ci_evidence_v1"}</span>
             <span>network called {boolText(exactHead.network_called)}</span>
             <span>verified {boolText(currentEvidence.exact_head_ci_verified || exactHead.exact_head_ci_verified)}</span>
+            <span>source {currentEvidence.exact_head_ci_source || "static_current_evidence_status"}</span>
           </div>
+          {exactHead.checked ? (
+            <div className="list compactList">
+              <div className="row">
+                <div>
+                  <strong>{exactHead.status || "external check completed"}</strong>
+                  <span>{exactHead.run_id ? `run ${exactHead.run_id}` : "GitHub Actions readback"}</span>
+                </div>
+                <span className={statusClass(exactHead.exact_head_ci_verified)}>{exactHead.exact_head_ci_verified ? "verified" : "blocked"}</span>
+              </div>
+            </div>
+          ) : null}
           <p className="subtle"><code>{exactHead.command || release.commands?.exact_head_ci || "python3 scripts/commercial_exact_head_ci_evidence.py --from-gh --require-current-head"}</code></p>
+          <form action="/workspace/commercial" method="get" data-smoke="commercial-external-ci-readback-form">
+            <input type="hidden" name="exact_head_ci" value="1" />
+            <button className="miniButton" type="submit">Check exact-head CI</button>
+          </form>
         </div>
       </section>
 
