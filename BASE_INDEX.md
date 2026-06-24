@@ -20,6 +20,7 @@ This file is the short map of reusable bases and runtime foundations.
 
 - Markdown files under `knowledge/` and `docs/`.
 - SQLite FTS5 index through `knowledge_documents` and `knowledge_fts`.
+- `base_notion_project_ledger`: governed Notion Project Ledger base. Contract: `config/external_bases/notion_project_ledger.json`.
 - Future optional layer: embeddings, hybrid retrieval, and vector database only after the Markdown/SQLite layer is reliable.
 
 ## External Bases
