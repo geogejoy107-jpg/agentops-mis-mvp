@@ -24,6 +24,8 @@ REQUIRED_GATE_IDS = {
 REQUIRED_HANDOFF_COMMANDS = {
     "python3 scripts/release_evidence_packet_smoke.py",
     "python3 scripts/commercial_release_evidence_packet_smoke.py",
+    "python3 scripts/release_freeze_protocol_smoke.py",
+    "python3 scripts/merge_readiness_status_smoke.py",
     "python3 scripts/commercial_migration_readiness.py",
     "python3 scripts/byoc_deployment_acceptance_smoke.py --postgres-readiness-fixture",
     "python3 scripts/deployment_readiness_smoke.py --postgres-write-fixture",
@@ -105,6 +107,8 @@ REQUIRED_SOURCES = {
     "docs/RELEASE_EVIDENCE_PACKET.json": [
         "release_evidence_packet_v1",
         "commercial_release_evidence_packet_v1",
+        "release_freeze_protocol_smoke.py",
+        "merge_readiness_status_smoke.py",
         "byoc_deployment_acceptance_smoke.py --postgres-readiness-fixture",
         "nextjs_playwright_snapshot_smoke.py --postgres-write-fixture",
         "local_runtime_acceptance.py --live-openclaw --live-hermes",
@@ -112,12 +116,49 @@ REQUIRED_SOURCES = {
     "docs/RELEASE_EVIDENCE_PACKET.md": [
         "release_evidence_packet_v1",
         "commercial_release_evidence_packet_v1",
+        "release_freeze_protocol_smoke.py",
+        "merge_readiness_status_smoke.py",
         "mock-only",
+    ],
+    "docs/RELEASE_FREEZE_PROTOCOL.json": [
+        "release_freeze_protocol_v1",
+        "freeze_active_not_release_complete",
+        "commercial_release_evidence_packet_v1",
+        "byoc_deployment_acceptance_smoke.py --postgres-readiness-fixture",
+        "mock_only_product_claim",
+        "sqlite_fallback_as_postgres_proof",
+    ],
+    "docs/RELEASE_FREEZE_PROTOCOL.md": [
+        "release_freeze_protocol_v1",
+        "freeze_active_not_release_complete",
+        "release_freeze_protocol_smoke.py",
+    ],
+    "docs/MERGE_READINESS_STATUS.json": [
+        "merge_readiness_status_v1",
+        "blocked_release_evidence_required",
+        "commercial_release_evidence_packet_v1",
+        "release_freeze_protocol_v1",
+        "byoc_deployment_acceptance_smoke.py --postgres-readiness-fixture",
+    ],
+    "docs/MERGE_READINESS_STATUS.md": [
+        "merge_readiness_status_v1",
+        "blocked_release_evidence_required",
+        "merge_readiness_status_smoke.py",
     ],
     "scripts/release_evidence_packet_smoke.py": [
         "release_evidence_packet_v1",
         "commercial_release_evidence_packet_v1",
         "byoc_deployment_acceptance_smoke.py --postgres-readiness-fixture",
+    ],
+    "scripts/release_freeze_protocol_smoke.py": [
+        "release_freeze_protocol_v1",
+        "freeze_active_not_release_complete",
+        "release_evidence_packet_smoke.py",
+    ],
+    "scripts/merge_readiness_status_smoke.py": [
+        "merge_readiness_status_v1",
+        "blocked_release_evidence_required",
+        "release_freeze_protocol_smoke.py",
     ],
 }
 

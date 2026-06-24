@@ -1,0 +1,52 @@
+{
+  "contract_id": "release_freeze_protocol_v1",
+  "status": "freeze_active_not_release_complete",
+  "updated_at": "2026-06-24",
+  "scope": "commercial_migration_gate_5_byoc_postgres_handoff",
+  "release_evidence_packet": "docs/RELEASE_EVIDENCE_PACKET.json",
+  "commercial_packet": "docs/COMMERCIAL_RELEASE_EVIDENCE_PACKET.json",
+  "source_contract_id": "commercial_release_evidence_packet_v1",
+  "verification_command": "python3 scripts/release_freeze_protocol_smoke.py",
+  "release_complete": false,
+  "commercial_handoff_allowed": false,
+  "freeze_active": true,
+  "freeze_policies": {
+    "feature_expansion_paused_until_gate_evidence": true,
+    "agent_gateway_cli_api_mcp_unchanged": true,
+    "postgres_proof_must_not_be_skipped": true,
+    "mock_only_product_claims_forbidden": true,
+    "raw_prompts_responses_tokens_forbidden": true
+  },
+  "required_freeze_commands": [
+    "python3 scripts/release_evidence_packet_smoke.py",
+    "python3 scripts/commercial_release_evidence_packet_smoke.py",
+    "python3 scripts/commercial_migration_readiness.py",
+    "python3 scripts/deployment_readiness_smoke.py --postgres-write-fixture",
+    "python3 scripts/nextjs_playwright_snapshot_smoke.py --postgres-write-fixture",
+    "python3 scripts/byoc_deployment_acceptance_smoke.py --postgres-readiness-fixture",
+    "HERMES_ALLOW_REAL_RUN=true python3 scripts/local_runtime_acceptance.py --live-openclaw --live-hermes --require-hermes-api"
+  ],
+  "required_contracts": [
+    "release_evidence_packet_v1",
+    "commercial_release_evidence_packet_v1",
+    "deployment_readiness_postgres_runtime_write_fixture_v1",
+    "nextjs_deployment_postgres_runtime_write_fixture_v1",
+    "byoc_deployment_acceptance_v1",
+    "real_hermes_openclaw_acceptance"
+  ],
+  "strict_local_review_commands": [
+    "python3 scripts/release_evidence_packet_smoke.py",
+    "python3 scripts/release_freeze_protocol_smoke.py --require-clean",
+    "python3 scripts/merge_readiness_status_smoke.py --require-ready-to-merge"
+  ],
+  "must_not_use": [
+    "--skip-postgres-if-unavailable",
+    "mock_only_product_claim",
+    "release_complete_true",
+    "raw_prompts",
+    "raw_responses",
+    "private_transcripts",
+    "token_values",
+    "sqlite_fallback_as_postgres_proof"
+  ]
+}

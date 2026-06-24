@@ -18,6 +18,13 @@ Verify the detailed commercial packet:
 python3 scripts/commercial_release_evidence_packet_smoke.py
 ```
 
+Verify freeze and merge-readiness entry points:
+
+```bash
+python3 scripts/release_freeze_protocol_smoke.py
+python3 scripts/merge_readiness_status_smoke.py
+```
+
 Gate 5 release evidence must include:
 
 - `python3 scripts/deployment_readiness_smoke.py --postgres-write-fixture`

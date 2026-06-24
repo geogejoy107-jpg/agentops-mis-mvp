@@ -1,0 +1,50 @@
+{
+  "contract_id": "merge_readiness_status_v1",
+  "status": "blocked_release_evidence_required",
+  "updated_at": "2026-06-24",
+  "branch": "codex/commercial-migration-closed-loop",
+  "ready_to_merge": false,
+  "merge_allowed": false,
+  "commercial_handoff_allowed": false,
+  "release_complete": false,
+  "verification_command": "python3 scripts/merge_readiness_status_smoke.py",
+  "source_packet": "docs/COMMERCIAL_RELEASE_EVIDENCE_PACKET.json",
+  "source_contract_id": "commercial_release_evidence_packet_v1",
+  "release_evidence_packet": "docs/RELEASE_EVIDENCE_PACKET.json",
+  "release_freeze_protocol": "docs/RELEASE_FREEZE_PROTOCOL.json",
+  "release_freeze_contract_id": "release_freeze_protocol_v1",
+  "commercial_release_evidence_packet": "docs/COMMERCIAL_RELEASE_EVIDENCE_PACKET.json",
+  "required_before_ready": [
+    "python3 scripts/release_evidence_packet_smoke.py",
+    "python3 scripts/commercial_release_evidence_packet_smoke.py",
+    "python3 scripts/release_freeze_protocol_smoke.py",
+    "python3 scripts/commercial_migration_readiness.py",
+    "python3 scripts/deployment_readiness_smoke.py --postgres-write-fixture",
+    "python3 scripts/nextjs_playwright_snapshot_smoke.py --postgres-write-fixture",
+    "python3 scripts/byoc_deployment_acceptance_smoke.py --postgres-readiness-fixture",
+    "HERMES_ALLOW_REAL_RUN=true python3 scripts/local_runtime_acceptance.py --live-openclaw --live-hermes --require-hermes-api"
+  ],
+  "required_contracts": [
+    "release_evidence_packet_v1",
+    "release_freeze_protocol_v1",
+    "commercial_release_evidence_packet_v1",
+    "deployment_readiness_postgres_runtime_write_fixture_v1",
+    "nextjs_deployment_postgres_runtime_write_fixture_v1",
+    "byoc_deployment_acceptance_v1",
+    "real_hermes_openclaw_acceptance"
+  ],
+  "explicit_blockers": [
+    "release_complete_false_until_all_phase_gates_have_current_evidence",
+    "exact_head_ci_not_checked_in_this_worktree",
+    "remote_sync_not_checked_in_this_worktree",
+    "existing_local_dirty_files_are_outside_this_slice"
+  ],
+  "ready_requires": {
+    "release_complete": true,
+    "clean_worktree": true,
+    "upstream_synced": true,
+    "exact_head_ci_green": true,
+    "gate_5_byoc_postgres_handoff_verified": true,
+    "real_hermes_openclaw_acceptance_verified": true
+  }
+}

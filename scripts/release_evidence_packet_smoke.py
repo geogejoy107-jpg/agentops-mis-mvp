@@ -56,6 +56,8 @@ def main() -> int:
     require(packet.get("source_contract_id") == COMMERCIAL_CONTRACT_ID, "source contract mismatch")
     require(packet.get("verification_command") == "python3 scripts/release_evidence_packet_smoke.py", "verification command mismatch")
     require(packet.get("commercial_verification_command") == "python3 scripts/commercial_release_evidence_packet_smoke.py", "commercial verification command mismatch")
+    require(packet.get("freeze_verification_command") == "python3 scripts/release_freeze_protocol_smoke.py", "freeze verification command mismatch")
+    require(packet.get("merge_readiness_command") == "python3 scripts/merge_readiness_status_smoke.py", "merge readiness command mismatch")
     require(packet.get("release_complete") is False, "release entry point must not claim completion")
     require(REQUIRED_GATE5_COMMANDS <= set(packet.get("gate_5_required_commands") or []), "release packet misses Gate 5 commands")
     require(REQUIRED_GATE5_CONTRACTS <= set(packet.get("gate_5_required_contracts") or []), "release packet misses Gate 5 contracts")
@@ -77,6 +79,8 @@ def main() -> int:
     doc = read_text(PACKET_DOC)
     require(CONTRACT_ID in doc, "release packet doc must name the contract")
     require(COMMERCIAL_CONTRACT_ID in doc, "release packet doc must name the commercial contract")
+    require("release_freeze_protocol_smoke.py" in doc, "release packet doc must list freeze smoke")
+    require("merge_readiness_status_smoke.py" in doc, "release packet doc must list merge readiness smoke")
     for command in REQUIRED_GATE5_COMMANDS:
         require(command in doc, f"release packet doc missing {command}")
 

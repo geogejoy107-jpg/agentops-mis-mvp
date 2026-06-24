@@ -168,6 +168,10 @@ def main() -> int:
         "docs/POSTGRES_PARITY_CONTRACT.md",
         "docs/RELEASE_EVIDENCE_PACKET.md",
         "docs/RELEASE_EVIDENCE_PACKET.json",
+        "docs/RELEASE_FREEZE_PROTOCOL.md",
+        "docs/RELEASE_FREEZE_PROTOCOL.json",
+        "docs/MERGE_READINESS_STATUS.md",
+        "docs/MERGE_READINESS_STATUS.json",
         "docs/COMMERCIAL_RELEASE_EVIDENCE_PACKET.md",
         "docs/COMMERCIAL_RELEASE_EVIDENCE_PACKET.json",
         "docs/UI_ROUTE_NAMING_DECISION.md",
@@ -718,6 +722,39 @@ def main() -> int:
             "Commercial release evidence packet makes Gate 5 BYOC/Postgres and real Hermes/OpenClaw evidence machine-checkable",
         ),
         check(
+            "release_freeze_protocol_surface_exists",
+            file_contains("docs/RELEASE_FREEZE_PROTOCOL.json", "release_freeze_protocol_v1")
+            and file_contains("docs/RELEASE_FREEZE_PROTOCOL.json", "freeze_active_not_release_complete")
+            and file_contains("docs/RELEASE_FREEZE_PROTOCOL.json", "commercial_release_evidence_packet_v1")
+            and file_contains("docs/RELEASE_FREEZE_PROTOCOL.json", "byoc_deployment_acceptance_smoke.py --postgres-readiness-fixture")
+            and file_contains("docs/RELEASE_FREEZE_PROTOCOL.json", "nextjs_playwright_snapshot_smoke.py --postgres-write-fixture")
+            and file_contains("docs/RELEASE_FREEZE_PROTOCOL.json", "local_runtime_acceptance.py --live-openclaw --live-hermes")
+            and file_contains("docs/RELEASE_FREEZE_PROTOCOL.json", "sqlite_fallback_as_postgres_proof")
+            and file_contains("docs/RELEASE_FREEZE_PROTOCOL.md", "freeze_active_not_release_complete")
+            and file_contains("scripts/release_freeze_protocol_smoke.py", "release_freeze_protocol_v1")
+            and file_contains("scripts/release_freeze_protocol_smoke.py", "freeze_active_not_release_complete")
+            and file_contains("scripts/release_freeze_protocol_smoke.py", "release_evidence_packet_smoke.py")
+            and (ROOT / "scripts" / "release_freeze_protocol_smoke.py").exists(),
+            "Release freeze protocol keeps commercial handoff frozen until Gate 5 Postgres/BYOC and real runtime evidence are current",
+        ),
+        check(
+            "merge_readiness_status_surface_exists",
+            file_contains("docs/MERGE_READINESS_STATUS.json", "merge_readiness_status_v1")
+            and file_contains("docs/MERGE_READINESS_STATUS.json", "blocked_release_evidence_required")
+            and file_contains("docs/MERGE_READINESS_STATUS.json", '"merge_allowed": false')
+            and file_contains("docs/MERGE_READINESS_STATUS.json", '"commercial_handoff_allowed": false')
+            and file_contains("docs/MERGE_READINESS_STATUS.json", "release_freeze_protocol_v1")
+            and file_contains("docs/MERGE_READINESS_STATUS.json", "commercial_release_evidence_packet_v1")
+            and file_contains("docs/MERGE_READINESS_STATUS.json", "byoc_deployment_acceptance_smoke.py --postgres-readiness-fixture")
+            and file_contains("docs/MERGE_READINESS_STATUS.json", "local_runtime_acceptance.py --live-openclaw --live-hermes")
+            and file_contains("docs/MERGE_READINESS_STATUS.md", "blocked_release_evidence_required")
+            and file_contains("scripts/merge_readiness_status_smoke.py", "merge_readiness_status_v1")
+            and file_contains("scripts/merge_readiness_status_smoke.py", "blocked_release_evidence_required")
+            and file_contains("scripts/merge_readiness_status_smoke.py", "release_freeze_protocol_smoke.py")
+            and (ROOT / "scripts" / "merge_readiness_status_smoke.py").exists(),
+            "Merge readiness remains explicitly blocked until release, freeze, Gate 5 BYOC/Postgres, and real runtime evidence are current",
+        ),
+        check(
             "postgres_is_gated_not_immediate",
             file_contains("docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md", "Storage Boundary Before Postgres"),
             "Postgres migration is behind a storage-boundary gate",
@@ -1151,6 +1188,8 @@ def main() -> int:
                 "python3 scripts/nextjs_parity_smoke.py",
                 "python3 scripts/release_evidence_packet_smoke.py",
                 "python3 scripts/commercial_release_evidence_packet_smoke.py",
+                "python3 scripts/release_freeze_protocol_smoke.py",
+                "python3 scripts/merge_readiness_status_smoke.py",
                 "cd ui/start-building-app && npm run build",
                 "cd ui/next-app && npm run build",
                 "python3 scripts/ui_api_parity_matrix_smoke.py",
@@ -1192,6 +1231,8 @@ def main() -> int:
                 "Postgres ledger acceptance",
                 "python3 scripts/release_evidence_packet_smoke.py",
                 "python3 scripts/commercial_release_evidence_packet_smoke.py",
+                "python3 scripts/release_freeze_protocol_smoke.py",
+                "python3 scripts/merge_readiness_status_smoke.py",
                 "python3 scripts/audit_retention_policy_smoke.py",
                 "python3 scripts/audit_retention_controls_smoke.py --configured-fixture",
                 "python3 scripts/deployment_readiness_smoke.py --configured-retention-fixture --configured-enterprise-fixture",

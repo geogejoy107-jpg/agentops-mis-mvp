@@ -13,6 +13,14 @@ Verify the packet itself:
 python3 scripts/commercial_release_evidence_packet_smoke.py
 ```
 
+The standard release entry point, freeze gate, and merge-readiness gate are:
+
+```bash
+python3 scripts/release_evidence_packet_smoke.py
+python3 scripts/release_freeze_protocol_smoke.py
+python3 scripts/merge_readiness_status_smoke.py
+```
+
 ## Non-Negotiable Gates
 
 - Agent Gateway CLI/API/MCP remains the durable agent execution and evidence

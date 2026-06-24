@@ -6,6 +6,8 @@
   "source_contract_id": "commercial_release_evidence_packet_v1",
   "verification_command": "python3 scripts/release_evidence_packet_smoke.py",
   "commercial_verification_command": "python3 scripts/commercial_release_evidence_packet_smoke.py",
+  "freeze_verification_command": "python3 scripts/release_freeze_protocol_smoke.py",
+  "merge_readiness_command": "python3 scripts/merge_readiness_status_smoke.py",
   "release_complete": false,
   "gate_5_required_commands": [
     "python3 scripts/deployment_readiness_smoke.py --postgres-write-fixture",

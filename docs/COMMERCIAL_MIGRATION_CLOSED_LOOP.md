@@ -606,6 +606,13 @@ Must be true:
   acceptance before a commercial handoff can claim readiness. Verify with
   `python3 scripts/release_evidence_packet_smoke.py` and
   `python3 scripts/commercial_release_evidence_packet_smoke.py`.
+- `release_freeze_protocol_v1` keeps commercial handoff in
+  `freeze_active_not_release_complete`, and `merge_readiness_status_v1` keeps
+  merge status at `blocked_release_evidence_required` until release evidence,
+  Gate 5 BYOC/Postgres fixtures, real Hermes/OpenClaw acceptance, clean
+  worktree, remote sync, and exact-head CI evidence are current. Verify with
+  `python3 scripts/release_freeze_protocol_smoke.py` and
+  `python3 scripts/merge_readiness_status_smoke.py`.
 - The Next.js deployment parity page renders local readiness, backup/restore
   evidence, retention/export gates, SSO hooks, and private connector policy
   through read-only MIS proxy loaders; restore remains CLI-confirmed and is not
