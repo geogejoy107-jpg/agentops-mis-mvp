@@ -18,6 +18,7 @@ CONTRACT_ID = "commercial_handoff_status_v1"
 
 REQUIRED_STRINGS = {
     "commercial_handoff_status_v1",
+    "commercial_exact_head_ci_evidence_v1",
     "commercial_release_promotion_preflight_v1",
     "commercial_evidence_receipts_v1",
     "commercial_current_evidence_status_v1",
@@ -38,13 +39,16 @@ REQUIRED_STRINGS = {
     "gates_with_release_grade_receipts",
     "local_receipts_complete_exact_head_required",
     "phase_gate_statuses",
+    "python3 scripts/commercial_exact_head_ci_evidence_smoke.py",
+    "python3 scripts/commercial_exact_head_ci_evidence.py --from-gh --require-current-head",
     "python3 scripts/commercial_evidence_receipts.py",
     "python3 scripts/commercial_evidence_receipts_smoke.py",
     "python3 scripts/commercial_handoff_status.py",
     "python3 scripts/commercial_handoff_status_smoke.py",
     "python3 scripts/commercial_release_promotion_preflight.py",
+    "python3 scripts/commercial_release_promotion_preflight.py --include-external-ci-evidence",
     "python3 scripts/commercial_release_promotion_preflight_smoke.py",
-    "python3 scripts/commercial_release_promotion_preflight.py --require-promotion-ready",
+    "python3 scripts/commercial_release_promotion_preflight.py --include-external-ci-evidence --require-promotion-ready",
     "python3 scripts/commercial_current_evidence_status.py",
     "python3 scripts/commercial_current_evidence_status_smoke.py",
     "python3 scripts/deployment_readiness_smoke.py --postgres-write-fixture",
@@ -60,6 +64,7 @@ REQUIRED_SOURCES = {
     "docs/COMMERCIAL_HANDOFF_STATUS.md": REQUIRED_STRINGS,
     "scripts/commercial_handoff_status.py": {
         "commercial_handoff_status_v1",
+        "commercial_exact_head_ci_evidence_v1",
         "commercial_release_promotion_preflight_v1",
         "commercial_evidence_receipts_v1",
         "commercial_current_evidence_status_v1",
@@ -74,19 +79,23 @@ REQUIRED_SOURCES = {
         "--require-handoff-ready",
     },
     "docs/COMMERCIAL_RELEASE_PROMOTION_PREFLIGHT.json": {
+        "commercial_exact_head_ci_evidence_v1",
         "commercial_release_promotion_preflight_v1",
         "blocked_release_promotion_required",
         "release_promotion_allowed",
         "release_grade_update_allowed",
     },
     "docs/COMMERCIAL_RELEASE_PROMOTION_PREFLIGHT.md": {
+        "commercial_exact_head_ci_evidence.py",
         "commercial_release_promotion_preflight_v1",
         "commercial_release_promotion_preflight.py",
         "commercial_release_promotion_preflight_smoke.py",
         "--require-promotion-ready",
     },
     "scripts/commercial_release_promotion_preflight.py": {
+        "commercial_exact_head_ci_evidence.py",
         "commercial_release_promotion_preflight_v1",
+        "--include-external-ci-evidence",
         "--require-promotion-ready",
         "remote_sync_verified",
         "clean_worktree_verified",
@@ -117,6 +126,7 @@ REQUIRED_SOURCES = {
         "python3 scripts/commercial_handoff_status_smoke.py",
     },
     "docs/RELEASE_FREEZE_PROTOCOL.json": {
+        "commercial_exact_head_ci_evidence_v1",
         "commercial_evidence_receipts_v1",
         "python3 scripts/commercial_evidence_receipts_smoke.py",
         "commercial_current_evidence_status_v1",
@@ -125,6 +135,7 @@ REQUIRED_SOURCES = {
         "python3 scripts/commercial_handoff_status_smoke.py",
     },
     "docs/MERGE_READINESS_STATUS.json": {
+        "commercial_exact_head_ci_evidence_v1",
         "commercial_evidence_receipts_v1",
         "python3 scripts/commercial_evidence_receipts_smoke.py",
         "commercial_current_evidence_status_v1",

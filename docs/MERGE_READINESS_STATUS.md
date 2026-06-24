@@ -19,9 +19,12 @@ python3 scripts/merge_readiness_status_smoke.py
 Required before ready-to-merge:
 
 ```bash
+python3 scripts/commercial_exact_head_ci_evidence_smoke.py
+python3 scripts/commercial_exact_head_ci_evidence.py --from-gh --require-current-head
 python3 scripts/commercial_release_promotion_preflight.py
+python3 scripts/commercial_release_promotion_preflight.py --include-external-ci-evidence
 python3 scripts/commercial_release_promotion_preflight_smoke.py
-python3 scripts/commercial_release_promotion_preflight.py --require-promotion-ready
+python3 scripts/commercial_release_promotion_preflight.py --include-external-ci-evidence --require-promotion-ready
 python3 scripts/commercial_evidence_receipts_smoke.py
 python3 scripts/commercial_current_evidence_status_smoke.py
 python3 scripts/commercial_handoff_status_smoke.py

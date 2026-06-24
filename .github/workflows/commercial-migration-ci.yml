@@ -49,6 +49,7 @@ jobs:
       - name: Commercial evidence and governance gates
         run: |
           set -euo pipefail
+          python3 scripts/commercial_exact_head_ci_evidence_smoke.py
           python3 scripts/commercial_release_promotion_preflight_smoke.py
           python3 scripts/commercial_evidence_receipts_smoke.py
           python3 scripts/commercial_current_evidence_status_smoke.py

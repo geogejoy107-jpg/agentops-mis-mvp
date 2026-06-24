@@ -119,8 +119,12 @@ def build_payload() -> dict[str, Any]:
     required_commands = [
         "python3 scripts/commercial_handoff_status.py",
         "python3 scripts/commercial_handoff_status_smoke.py",
+        "python3 scripts/commercial_exact_head_ci_evidence_smoke.py",
+        "python3 scripts/commercial_exact_head_ci_evidence.py --from-gh --require-current-head",
         "python3 scripts/commercial_release_promotion_preflight.py",
+        "python3 scripts/commercial_release_promotion_preflight.py --include-external-ci-evidence",
         "python3 scripts/commercial_release_promotion_preflight_smoke.py",
+        "python3 scripts/commercial_release_promotion_preflight.py --include-external-ci-evidence --require-promotion-ready",
         "python3 scripts/commercial_evidence_receipts.py",
         "python3 scripts/commercial_evidence_receipts_smoke.py",
         "python3 scripts/commercial_current_evidence_status.py",
@@ -138,7 +142,7 @@ def build_payload() -> dict[str, Any]:
     extend_unique(required_commands, freeze.get("required_freeze_commands") or [])
     extend_unique(required_commands, merge.get("required_before_ready") or [])
 
-    required_contracts = [CONTRACT_ID, "commercial_evidence_receipts_v1", "commercial_current_evidence_status_v1"]
+    required_contracts = [CONTRACT_ID, "commercial_exact_head_ci_evidence_v1", "commercial_evidence_receipts_v1", "commercial_current_evidence_status_v1"]
     for spec in SOURCE_SPECS:
         append_unique(required_contracts, spec["contract_id"])
     extend_unique(required_contracts, release.get("gate_5_required_contracts") or [])

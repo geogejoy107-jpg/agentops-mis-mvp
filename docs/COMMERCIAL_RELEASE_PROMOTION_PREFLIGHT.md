@@ -13,18 +13,21 @@ Run the preflight:
 
 ```bash
 python3 scripts/commercial_release_promotion_preflight.py
+python3 scripts/commercial_release_promotion_preflight.py --include-external-ci-evidence
 ```
 
 Verify the preflight contract:
 
 ```bash
+python3 scripts/commercial_exact_head_ci_evidence_smoke.py
 python3 scripts/commercial_release_promotion_preflight_smoke.py
 ```
 
 Strict promotion assertions must fail until all promotion requirements are true:
 
 ```bash
-python3 scripts/commercial_release_promotion_preflight.py --require-promotion-ready
+python3 scripts/commercial_exact_head_ci_evidence.py --from-gh --require-current-head
+python3 scripts/commercial_release_promotion_preflight.py --include-external-ci-evidence --require-promotion-ready
 ```
 
 Promotion requires:
@@ -50,6 +53,13 @@ For PR #22, the latest recorded exact-head CI evidence is GitHub Actions run
 own PR CI before `exact_head_ci_verified` can clear. Promotion must remain
 blocked until release-grade receipts are promoted under a clean worktree and the
 handoff/merge gates explicitly allow release completion.
+
+Current-head CI proof must be read from external GitHub Actions state rather
+than committed JSON:
+
+```bash
+python3 scripts/commercial_exact_head_ci_evidence.py --from-gh --require-current-head
+```
 
 Invalid promotion evidence includes `manual_receipt_promotion_without_ci`,
 `uncommitted_dirty_promotion`, `local_only_release_grade_claim`,

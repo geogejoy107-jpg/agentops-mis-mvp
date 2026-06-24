@@ -820,19 +820,35 @@ def main() -> int:
             "Commercial current evidence status makes per-gate evidence freshness gaps machine-readable without executing heavy/live checks",
         ),
         check(
+            "commercial_exact_head_ci_evidence_surface_exists",
+            file_contains("docs/COMMERCIAL_RELEASE_PROMOTION_PREFLIGHT.json", "commercial_exact_head_ci_evidence_v1")
+            and file_contains("docs/COMMERCIAL_RELEASE_PROMOTION_PREFLIGHT.md", "commercial_exact_head_ci_evidence.py --from-gh --require-current-head")
+            and file_contains("docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md", "commercial_exact_head_ci_evidence.py --from-gh --require-current-head")
+            and file_contains("docs/COMMERCIAL_HANDOFF_STATUS.json", "commercial_exact_head_ci_evidence_v1")
+            and file_contains("docs/RELEASE_FREEZE_PROTOCOL.json", "commercial_exact_head_ci_evidence_v1")
+            and file_contains("docs/MERGE_READINESS_STATUS.json", "commercial_exact_head_ci_evidence_v1")
+            and file_contains("scripts/commercial_exact_head_ci_evidence.py", "commercial_exact_head_ci_evidence_v1")
+            and file_contains("scripts/commercial_exact_head_ci_evidence.py", "--require-current-head")
+            and file_contains("scripts/commercial_exact_head_ci_evidence_smoke.py", "commercial_exact_head_ci_evidence_v1")
+            and (ROOT / "scripts" / "commercial_exact_head_ci_evidence.py").exists()
+            and (ROOT / "scripts" / "commercial_exact_head_ci_evidence_smoke.py").exists(),
+            "Commercial exact-head CI evidence reader makes current-head GitHub Actions proof external to committed receipts",
+        ),
+        check(
             "commercial_release_promotion_preflight_surface_exists",
             file_contains("docs/COMMERCIAL_RELEASE_PROMOTION_PREFLIGHT.json", "commercial_release_promotion_preflight_v1")
             and file_contains("docs/COMMERCIAL_RELEASE_PROMOTION_PREFLIGHT.json", "blocked_release_promotion_required")
+            and file_contains("docs/COMMERCIAL_RELEASE_PROMOTION_PREFLIGHT.json", "commercial_exact_head_ci_evidence_v1")
             and file_contains("docs/COMMERCIAL_RELEASE_PROMOTION_PREFLIGHT.json", "release_promotion_allowed")
             and file_contains("docs/COMMERCIAL_RELEASE_PROMOTION_PREFLIGHT.json", "release_grade_update_allowed")
             and file_contains("docs/COMMERCIAL_RELEASE_PROMOTION_PREFLIGHT.md", "commercial_release_promotion_preflight_v1")
-            and file_contains("docs/COMMERCIAL_RELEASE_PROMOTION_PREFLIGHT.md", "--require-promotion-ready")
+            and file_contains("docs/COMMERCIAL_RELEASE_PROMOTION_PREFLIGHT.md", "--include-external-ci-evidence --require-promotion-ready")
             and file_contains("docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md", "commercial_release_promotion_preflight_v1")
             and file_contains("docs/COMMERCIAL_HANDOFF_STATUS.json", "commercial_release_promotion_preflight_v1")
             and file_contains("docs/RELEASE_FREEZE_PROTOCOL.json", "commercial_release_promotion_preflight_v1")
             and file_contains("docs/MERGE_READINESS_STATUS.json", "commercial_release_promotion_preflight_v1")
             and file_contains("scripts/commercial_release_promotion_preflight.py", "commercial_release_promotion_preflight_v1")
-            and file_contains("scripts/commercial_release_promotion_preflight.py", "--require-promotion-ready")
+            and file_contains("scripts/commercial_release_promotion_preflight.py", "--include-external-ci-evidence")
             and file_contains("scripts/commercial_release_promotion_preflight_smoke.py", "commercial_release_promotion_preflight_v1")
             and file_contains("scripts/commercial_release_promotion_preflight_smoke.py", "release_grade_receipts_empty")
             and (ROOT / "scripts" / "commercial_release_promotion_preflight.py").exists()

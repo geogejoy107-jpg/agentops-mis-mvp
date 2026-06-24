@@ -9,6 +9,7 @@
   "commercial_handoff_allowed": false,
   "ready_to_merge": false,
   "source_contracts": [
+    "commercial_exact_head_ci_evidence_v1",
     "commercial_evidence_receipts_v1",
     "commercial_current_evidence_status_v1",
     "commercial_handoff_status_v1",
@@ -36,9 +37,12 @@
     "ready_to_merge_false"
   ],
   "required_commands": [
+    "python3 scripts/commercial_exact_head_ci_evidence_smoke.py",
+    "python3 scripts/commercial_exact_head_ci_evidence.py --from-gh --require-current-head",
     "python3 scripts/commercial_release_promotion_preflight.py",
+    "python3 scripts/commercial_release_promotion_preflight.py --include-external-ci-evidence",
     "python3 scripts/commercial_release_promotion_preflight_smoke.py",
-    "python3 scripts/commercial_release_promotion_preflight.py --require-promotion-ready",
+    "python3 scripts/commercial_release_promotion_preflight.py --include-external-ci-evidence --require-promotion-ready",
     "python3 scripts/commercial_evidence_receipts.py --require-release-grade",
     "python3 scripts/commercial_current_evidence_status.py --require-current-evidence",
     "python3 scripts/commercial_handoff_status.py --require-handoff-ready",

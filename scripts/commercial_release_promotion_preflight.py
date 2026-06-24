@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACT_ID = "commercial_release_promotion_preflight_v1"
 PREFLIGHT_PATH = ROOT / "docs" / "COMMERCIAL_RELEASE_PROMOTION_PREFLIGHT.json"
+EXACT_HEAD_CI_SCRIPT = ROOT / "scripts" / "commercial_exact_head_ci_evidence.py"
 REQUIRED_RELEASE_GRADE_GATES = [
     "gate_1_product_packaging_and_entitlement",
     "gate_2_production_safety_baseline",
@@ -76,7 +78,42 @@ def source_payloads() -> list[dict[str, Any]]:
     return sources
 
 
-def build_payload() -> dict[str, Any]:
+def external_exact_head_ci_evidence(include_external_ci: bool, require_external_ci: bool, run_id: str | None) -> dict[str, Any]:
+    if not include_external_ci and not require_external_ci:
+        return {
+            "checked": False,
+            "exact_head_ci_verified": False,
+            "status": "external_ci_check_not_requested",
+        }
+    args = [sys.executable, str(EXACT_HEAD_CI_SCRIPT), "--from-gh"]
+    if require_external_ci:
+        args.append("--require-current-head")
+    if run_id:
+        args.extend(["--run-id", run_id])
+    proc = subprocess.run(
+        args,
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=90,
+        check=False,
+    )
+    if proc.returncode != 0:
+        if require_external_ci:
+            raise AssertionError(f"external exact-head CI evidence failed: {proc.stdout}{proc.stderr}")
+        return {
+            "checked": True,
+            "exact_head_ci_verified": False,
+            "status": "exact_head_ci_not_verified",
+            "error": (proc.stderr or proc.stdout).strip(),
+        }
+    payload = json.loads(proc.stdout)
+    payload["checked"] = True
+    return payload
+
+
+def build_payload(include_external_ci: bool = False, require_external_ci: bool = False, external_ci_run_id: str | None = None) -> dict[str, Any]:
     preflight = read_json(PREFLIGHT_PATH)
     require(preflight.get("contract_id") == CONTRACT_ID, "preflight contract mismatch")
     require(preflight.get("status") == "blocked_release_promotion_required", "preflight status mismatch")
@@ -105,7 +142,8 @@ def build_payload() -> dict[str, Any]:
 
     clean_worktree_verified = not status_lines
     remote_sync_verified = bool(upstream and "fatal:" not in upstream and ahead == 0 and behind == 0 and current_head == upstream_head)
-    exact_head_ci_verified = bool(receipt_summary.get("exact_head_ci_verified") is True)
+    external_ci = external_exact_head_ci_evidence(include_external_ci, require_external_ci, external_ci_run_id)
+    exact_head_ci_verified = bool(receipt_summary.get("exact_head_ci_verified") is True or external_ci.get("exact_head_ci_verified") is True)
     release_complete = bool(handoff.get("release_complete")) and bool(merge.get("release_complete"))
     commercial_handoff_allowed = bool(handoff.get("commercial_handoff_allowed")) and bool(merge.get("commercial_handoff_allowed"))
     ready_to_merge = bool(handoff.get("ready_to_merge")) and bool(merge.get("ready_to_merge"))
@@ -170,10 +208,12 @@ def build_payload() -> dict[str, Any]:
             "clean_worktree_verified": clean_worktree_verified,
             "remote_sync_verified": remote_sync_verified,
             "exact_head_ci_verified": exact_head_ci_verified,
+            "exact_head_ci_source": "external_github_actions" if external_ci.get("exact_head_ci_verified") is True else "receipt_summary",
             "release_complete": release_complete,
             "commercial_handoff_allowed": commercial_handoff_allowed,
             "ready_to_merge": ready_to_merge,
         },
+        "external_exact_head_ci_evidence": external_ci,
         "blockers": blockers,
         "required_commands": list(preflight.get("required_commands") or []),
         "must_not_use": list(preflight.get("must_not_use") or []),
@@ -184,9 +224,16 @@ def build_payload() -> dict[str, Any]:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Print commercial release promotion preflight.")
     parser.add_argument("--require-promotion-ready", action="store_true", help="Fail unless release-grade promotion is allowed.")
+    parser.add_argument("--include-external-ci-evidence", action="store_true", help="Query GitHub Actions for current HEAD exact CI evidence.")
+    parser.add_argument("--require-external-ci-evidence", action="store_true", help="Fail unless GitHub Actions verifies current HEAD exact CI evidence.")
+    parser.add_argument("--external-ci-run-id", help="Specific GitHub Actions run id to verify as exact-head CI evidence.")
     args = parser.parse_args()
 
-    payload = build_payload()
+    payload = build_payload(
+        include_external_ci=bool(args.include_external_ci_evidence or args.require_external_ci_evidence),
+        require_external_ci=bool(args.require_external_ci_evidence),
+        external_ci_run_id=args.external_ci_run_id,
+    )
     if args.require_promotion_ready:
         require(payload["promotion_checks"]["release_promotion_allowed"] is True, f"promotion blockers remain: {payload['blockers']}")
         require(payload["promotion_checks"]["release_grade_update_allowed"] is True, "release-grade update is not allowed")

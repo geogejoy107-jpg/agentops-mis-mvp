@@ -627,8 +627,10 @@ Must be true:
   blocks promotion until local receipts, release-grade receipts, clean worktree,
   remote sync, exact-head CI, handoff, and merge readiness are all current.
   Verify with `python3 scripts/commercial_release_promotion_preflight_smoke.py`;
-  strict promotion uses
-  `python3 scripts/commercial_release_promotion_preflight.py --require-promotion-ready`.
+  strict promotion first reads external GitHub Actions state with
+  `python3 scripts/commercial_exact_head_ci_evidence.py --from-gh --require-current-head`,
+  then uses
+  `python3 scripts/commercial_release_promotion_preflight.py --include-external-ci-evidence --require-promotion-ready`.
 - `release_freeze_protocol_v1` keeps commercial handoff in
   `freeze_active_not_release_complete`, and `merge_readiness_status_v1` keeps
   merge status at `blocked_release_evidence_required` until release evidence,

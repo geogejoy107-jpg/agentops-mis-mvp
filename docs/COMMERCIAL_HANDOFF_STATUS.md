@@ -20,6 +20,8 @@ release-grade readiness. Latest exact-head CI is recorded for prior PR head
 `1195c9b`, remote sync is verified for the current branch, and the current HEAD
 still needs its own green PR CI run before promotion. Release-grade receipts,
 clean worktree, handoff, and merge readiness still block commercial handoff.
+Current-head GitHub Actions proof is read through
+`commercial_exact_head_ci_evidence_v1`.
 
 Expected source statuses are `gate_enforced_not_release_complete`,
 `freeze_active_not_release_complete`, and `blocked_release_evidence_required`.
@@ -28,7 +30,9 @@ Read the current handoff status:
 
 ```bash
 python3 scripts/commercial_handoff_status.py
+python3 scripts/commercial_exact_head_ci_evidence.py --from-gh --require-current-head
 python3 scripts/commercial_release_promotion_preflight.py
+python3 scripts/commercial_release_promotion_preflight.py --include-external-ci-evidence
 python3 scripts/commercial_evidence_receipts.py
 python3 scripts/commercial_current_evidence_status.py
 ```
@@ -37,6 +41,7 @@ Verify the status contract:
 
 ```bash
 python3 scripts/commercial_handoff_status_smoke.py
+python3 scripts/commercial_exact_head_ci_evidence_smoke.py
 python3 scripts/commercial_release_promotion_preflight_smoke.py
 python3 scripts/commercial_evidence_receipts_smoke.py
 python3 scripts/commercial_current_evidence_status_smoke.py
@@ -46,7 +51,8 @@ Strict handoff assertions must fail while the status remains blocked:
 
 ```bash
 python3 scripts/commercial_handoff_status.py --require-handoff-ready
-python3 scripts/commercial_release_promotion_preflight.py --require-promotion-ready
+python3 scripts/commercial_exact_head_ci_evidence.py --from-gh --require-current-head
+python3 scripts/commercial_release_promotion_preflight.py --include-external-ci-evidence --require-promotion-ready
 python3 scripts/commercial_handoff_status_smoke.py --require-handoff-ready
 ```
 
@@ -59,9 +65,12 @@ Required evidence commands include:
 ```bash
 python3 scripts/commercial_handoff_status.py
 python3 scripts/commercial_handoff_status_smoke.py
+python3 scripts/commercial_exact_head_ci_evidence_smoke.py
+python3 scripts/commercial_exact_head_ci_evidence.py --from-gh --require-current-head
 python3 scripts/commercial_release_promotion_preflight.py
+python3 scripts/commercial_release_promotion_preflight.py --include-external-ci-evidence
 python3 scripts/commercial_release_promotion_preflight_smoke.py
-python3 scripts/commercial_release_promotion_preflight.py --require-promotion-ready
+python3 scripts/commercial_release_promotion_preflight.py --include-external-ci-evidence --require-promotion-ready
 python3 scripts/commercial_evidence_receipts.py
 python3 scripts/commercial_evidence_receipts_smoke.py
 python3 scripts/commercial_current_evidence_status.py

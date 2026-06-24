@@ -17,6 +17,7 @@ PREFLIGHT_SCRIPT = ROOT / "scripts" / "commercial_release_promotion_preflight.py
 CONTRACT_ID = "commercial_release_promotion_preflight_v1"
 
 REQUIRED_JSON_STRINGS = {
+    "commercial_exact_head_ci_evidence_v1",
     "commercial_release_promotion_preflight_v1",
     "blocked_release_promotion_required",
     "release_promotion_allowed",
@@ -28,10 +29,14 @@ REQUIRED_JSON_STRINGS = {
     "manual_receipt_promotion_without_ci",
     "uncommitted_dirty_promotion",
     "local_only_release_grade_claim",
+    "commercial_exact_head_ci_evidence.py --from-gh --require-current-head",
+    "--include-external-ci-evidence",
     "--require-promotion-ready",
 }
 
 REQUIRED_DOC_STRINGS = {
+    "commercial_exact_head_ci_evidence.py --from-gh --require-current-head",
+    "commercial_exact_head_ci_evidence_smoke.py",
     "commercial_release_promotion_preflight_v1",
     "blocked_release_promotion_required",
     "release_promotion_allowed",
@@ -39,6 +44,7 @@ REQUIRED_DOC_STRINGS = {
     "clean_worktree_verified",
     "remote_sync_verified",
     "exact_head_ci_verified",
+    "--include-external-ci-evidence",
     "--require-promotion-ready",
     "manual_receipt_promotion_without_ci",
     "uncommitted_dirty_promotion",
@@ -46,6 +52,7 @@ REQUIRED_DOC_STRINGS = {
 }
 
 REQUIRED_SCRIPT_STRINGS = {
+    "commercial_exact_head_ci_evidence.py",
     "commercial_release_promotion_preflight_v1",
     "blocked_release_promotion_required",
     "release_promotion_allowed",
@@ -54,6 +61,8 @@ REQUIRED_SCRIPT_STRINGS = {
     "remote_sync_verified",
     "exact_head_ci_verified",
     "release_grade_receipts_empty",
+    "--include-external-ci-evidence",
+    "--require-external-ci-evidence",
     "--require-promotion-ready",
 }
 
@@ -105,6 +114,9 @@ def main() -> int:
     require(preflight.get("release_grade_update_allowed") is False, "preflight must not allow release-grade updates")
     require(preflight.get("commercial_handoff_allowed") is False, "preflight must not allow handoff")
     require(preflight.get("ready_to_merge") is False, "preflight must not claim merge readiness")
+    require("commercial_exact_head_ci_evidence_v1" in set(preflight.get("source_contracts") or []), "exact-head CI evidence contract missing")
+    require("python3 scripts/commercial_exact_head_ci_evidence_smoke.py" in set(preflight.get("required_commands") or []), "exact-head CI evidence smoke missing")
+    require("python3 scripts/commercial_exact_head_ci_evidence.py --from-gh --require-current-head" in set(preflight.get("required_commands") or []), "exact-head CI evidence strict command missing")
 
     promotion_requires = preflight.get("promotion_requires") or {}
     for key in [

@@ -18,7 +18,10 @@
     "raw_prompts_responses_tokens_forbidden": true
   },
   "required_freeze_commands": [
+    "python3 scripts/commercial_exact_head_ci_evidence_smoke.py",
+    "python3 scripts/commercial_exact_head_ci_evidence.py --from-gh --require-current-head",
     "python3 scripts/commercial_release_promotion_preflight.py",
+    "python3 scripts/commercial_release_promotion_preflight.py --include-external-ci-evidence",
     "python3 scripts/commercial_release_promotion_preflight_smoke.py",
     "python3 scripts/commercial_evidence_receipts_smoke.py",
     "python3 scripts/commercial_current_evidence_status_smoke.py",
@@ -32,6 +35,7 @@
     "HERMES_ALLOW_REAL_RUN=true python3 scripts/local_runtime_acceptance.py --live-openclaw --live-hermes --require-hermes-api"
   ],
   "required_contracts": [
+    "commercial_exact_head_ci_evidence_v1",
     "commercial_release_promotion_preflight_v1",
     "commercial_evidence_receipts_v1",
     "commercial_current_evidence_status_v1",
@@ -44,7 +48,8 @@
     "real_hermes_openclaw_acceptance"
   ],
   "strict_local_review_commands": [
-    "python3 scripts/commercial_release_promotion_preflight.py --require-promotion-ready",
+    "python3 scripts/commercial_exact_head_ci_evidence.py --from-gh --require-current-head",
+    "python3 scripts/commercial_release_promotion_preflight.py --include-external-ci-evidence --require-promotion-ready",
     "python3 scripts/release_evidence_packet_smoke.py",
     "python3 scripts/release_freeze_protocol_smoke.py --require-clean",
     "python3 scripts/merge_readiness_status_smoke.py --require-ready-to-merge"
