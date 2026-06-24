@@ -81,6 +81,7 @@ def main() -> int:
             "tasks:read",
             "tasks:claim",
             "runs:write",
+            "runtime_events:write",
             "toolcalls:write",
             "artifacts:write",
             "approvals:request",
