@@ -1,0 +1,138 @@
+name: Commercial Migration CI
+
+on:
+  push:
+    branches:
+      - codex/commercial-migration-closed-loop
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: commercial-migration-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  AGENTOPS_DEPLOYMENT_MODE: local
+  AGENTOPS_HOST: 127.0.0.1
+  AGENTOPS_PORT: "8787"
+  AGENTOPS_BASE_URL: http://127.0.0.1:8787
+  AGENTOPS_SKIP_SEED_EXPORTS: "1"
+  HERMES_ALLOW_REAL_RUN: "false"
+  HERMES_REQUIRE_CONFIRM_RUN: "true"
+  DIFY_ALLOW_REAL_UPLOAD: "false"
+  NOTION_TOKEN: ""
+  NOTION_PARENT_PAGE_ID: ""
+  NOTION_DATABASE_ID: ""
+
+jobs:
+  commercial-core:
+    name: Commercial core gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Syntax and static checks
+        run: |
+          set -euo pipefail
+          python3 -m compileall -q scripts agentops_mis_cli agentops_mis_storage
+          git diff --check
+
+      - name: Commercial evidence and governance gates
+        run: |
+          set -euo pipefail
+          python3 scripts/commercial_release_promotion_preflight_smoke.py
+          python3 scripts/commercial_evidence_receipts_smoke.py
+          python3 scripts/commercial_current_evidence_status_smoke.py
+          python3 scripts/commercial_handoff_status_smoke.py
+          python3 scripts/release_evidence_packet_smoke.py
+          python3 scripts/commercial_release_evidence_packet_smoke.py
+          python3 scripts/release_freeze_protocol_smoke.py
+          python3 scripts/merge_readiness_status_smoke.py
+          python3 scripts/commercial_migration_readiness.py
+          python3 scripts/commercial_entitlements_smoke.py
+          python3 scripts/team_entitlement_enrollment_smoke.py
+          python3 scripts/enrollment_approval_workflow_smoke.py
+          python3 scripts/production_auth_fail_closed_smoke.py --configured-production-fixture
+          python3 scripts/security_production_readiness_smoke.py --configured-production-fixture
+          python3 scripts/agent_gateway_scope_matrix_smoke.py --isolated-fixture
+          python3 scripts/workspace_isolation_smoke.py --isolated-fixture
+          python3 scripts/workspace_rbac_governance_smoke.py --isolated-fixture
+          python3 scripts/workspace_memory_session_governance_smoke.py --isolated-fixture
+
+  storage-postgres:
+    name: Storage and Postgres parity
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Storage boundary and Postgres parity gates
+        run: |
+          set -euo pipefail
+          python3 scripts/storage_boundary_sqlite_smoke.py
+          python3 scripts/storage_postgres_contract_smoke.py
+          python3 scripts/storage_postgres_container_smoke.py
+          python3 scripts/storage_postgres_adapter_contract_smoke.py
+          python3 scripts/storage_postgres_optional_adapter_smoke.py
+          python3 scripts/storage_postgres_boundary_parity_smoke.py
+          python3 scripts/storage_postgres_route_read_model_smoke.py
+          python3 scripts/storage_backend_selection_smoke.py
+          python3 scripts/storage_postgres_http_read_parity_smoke.py
+          python3 scripts/storage_postgres_cli_read_parity_smoke.py
+          python3 scripts/storage_postgres_write_helper_parity_smoke.py
+          python3 scripts/storage_postgres_http_write_task_smoke.py
+          python3 scripts/storage_postgres_cli_write_parity_smoke.py
+
+  ui-and-deployment:
+    name: UI, deployment, and BYOC evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: UI parity and build gates
+        run: |
+          set -euo pipefail
+          python3 scripts/nextjs_parity_smoke.py
+          python3 scripts/ui_api_parity_matrix_smoke.py
+          python3 scripts/ui_covered_route_retirement_packet_smoke.py
+          python3 scripts/vite_playwright_snapshot_smoke.py
+          python3 scripts/nextjs_playwright_snapshot_smoke.py
+          (cd ui/start-building-app && npm ci && npm run build)
+          (cd ui/next-app && npm ci && npm run build)
+
+      - name: Deployment and BYOC gates
+        run: |
+          set -euo pipefail
+          python3 scripts/deployment_readiness_smoke.py --configured-retention-fixture --configured-enterprise-fixture
+          python3 scripts/deployment_readiness_smoke.py --postgres-write-fixture
+          python3 scripts/nextjs_playwright_snapshot_smoke.py --postgres-write-fixture
+          python3 scripts/byoc_deployment_acceptance_smoke.py --postgres-readiness-fixture
