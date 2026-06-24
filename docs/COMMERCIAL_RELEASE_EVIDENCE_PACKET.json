@@ -1,0 +1,172 @@
+{
+  "contract_id": "commercial_release_evidence_packet_v1",
+  "status": "gate_enforced_not_release_complete",
+  "updated_at": "2026-06-24",
+  "scope": {
+    "product": "AgentOps MIS commercial local-first/BYOC control plane",
+    "branch": "codex/commercial-migration-closed-loop",
+    "release_complete": false,
+    "completion_policy": "All phase gates must pass with current-state evidence before commercial release."
+  },
+  "policy": {
+    "agent_gateway_cli_api_mcp_durable": true,
+    "python_sqlite_vite_remain_canonical_until_parity": true,
+    "nextjs_replaces_routes_only_after_explicit_retirement": true,
+    "postgres_requires_storage_boundary_and_byoc_evidence": true,
+    "live_runtime_product_claims_require_real_hermes_openclaw": true,
+    "mock_evidence_is_ci_or_offline_only": true,
+    "forbidden_committed_material": [
+      "secrets",
+      "local_databases",
+      "generated_artifacts",
+      "raw_prompts",
+      "raw_responses",
+      "private_transcripts",
+      "token_values"
+    ],
+    "verification_command": "python3 scripts/commercial_release_evidence_packet_smoke.py"
+  },
+  "phase_gate_evidence": [
+    {
+      "id": "gate_0_isolated_commercial_track",
+      "status": "ready",
+      "required_commands": [
+        "python3 scripts/commercial_migration_readiness.py",
+        "git diff --check"
+      ],
+      "required_contracts": [
+        "no_big_bang",
+        "agent_gateway_cli_api_mcp_remains_durable"
+      ]
+    },
+    {
+      "id": "gate_1_product_packaging_and_entitlement",
+      "status": "evidence_required",
+      "required_commands": [
+        "python3 scripts/commercial_entitlements_smoke.py",
+        "python3 scripts/team_entitlement_enrollment_smoke.py",
+        "python3 scripts/enrollment_approval_workflow_smoke.py"
+      ],
+      "required_contracts": [
+        "free_local",
+        "pro_workspace",
+        "team_governance",
+        "enterprise_byoc",
+        "approval_policies",
+        "fail_closed"
+      ]
+    },
+    {
+      "id": "gate_2_production_safety_baseline",
+      "status": "evidence_required",
+      "required_commands": [
+        "python3 scripts/production_auth_fail_closed_smoke.py --configured-production-fixture",
+        "python3 scripts/security_production_readiness_smoke.py --configured-production-fixture",
+        "python3 scripts/agent_gateway_scope_matrix_smoke.py --isolated-fixture",
+        "python3 scripts/workspace_isolation_smoke.py --isolated-fixture",
+        "python3 scripts/workspace_rbac_governance_smoke.py --isolated-fixture",
+        "python3 scripts/workspace_memory_session_governance_smoke.py --isolated-fixture"
+      ],
+      "required_contracts": [
+        "production_auth_fail_closed",
+        "workspace_isolation",
+        "rbac_governance",
+        "short_lived_session_governance",
+        "token_omission"
+      ]
+    },
+    {
+      "id": "gate_3_storage_boundary_before_postgres",
+      "status": "evidence_required",
+      "required_commands": [
+        "python3 scripts/storage_boundary_sqlite_smoke.py",
+        "python3 scripts/storage_postgres_contract_smoke.py",
+        "python3 scripts/storage_postgres_container_smoke.py",
+        "python3 scripts/storage_postgres_adapter_contract_smoke.py",
+        "python3 scripts/storage_postgres_optional_adapter_smoke.py",
+        "python3 scripts/storage_postgres_boundary_parity_smoke.py",
+        "python3 scripts/storage_postgres_route_read_model_smoke.py",
+        "python3 scripts/storage_backend_selection_smoke.py",
+        "python3 scripts/storage_postgres_http_read_parity_smoke.py",
+        "python3 scripts/storage_postgres_cli_read_parity_smoke.py",
+        "python3 scripts/storage_postgres_write_helper_parity_smoke.py",
+        "python3 scripts/storage_postgres_http_write_task_smoke.py",
+        "python3 scripts/storage_postgres_cli_write_parity_smoke.py"
+      ],
+      "required_contracts": [
+        "postgres_boundary_fixture_parity_v1",
+        "postgres_route_read_model_parity_v1",
+        "storage_backend_selection_fail_closed_v1",
+        "postgres_http_read_parity_v1",
+        "postgres_cli_read_parity_v1",
+        "postgres_write_helper_parity_v1",
+        "postgres_http_write_task_parity_v1",
+        "postgres_cli_write_parity_v1"
+      ]
+    },
+    {
+      "id": "gate_4_ui_api_parity_before_nextjs",
+      "status": "started",
+      "required_commands": [
+        "python3 scripts/nextjs_parity_smoke.py",
+        "python3 scripts/ui_api_parity_matrix_smoke.py",
+        "python3 scripts/ui_covered_route_retirement_packet_smoke.py",
+        "python3 scripts/vite_playwright_snapshot_smoke.py",
+        "python3 scripts/nextjs_playwright_snapshot_smoke.py",
+        "cd ui/start-building-app && npm run build",
+        "cd ui/next-app && npm run build"
+      ],
+      "required_contracts": [
+        "ui_api_parity_matrix_v1",
+        "ui_covered_route_retirement_packet_v1",
+        "nextjs_deployment_postgres_runtime_write_fixture_v1",
+        "commercial_safe_pixel_office"
+      ]
+    },
+    {
+      "id": "gate_5_byoc_enterprise_deployment",
+      "status": "evidence_required",
+      "required_commands": [
+        "python3 scripts/audit_retention_policy_smoke.py",
+        "python3 scripts/audit_retention_controls_smoke.py --configured-fixture",
+        "python3 scripts/deployment_readiness_smoke.py --configured-retention-fixture --configured-enterprise-fixture",
+        "python3 scripts/deployment_readiness_smoke.py --postgres-write-fixture",
+        "python3 scripts/nextjs_playwright_snapshot_smoke.py --postgres-write-fixture",
+        "python3 scripts/byoc_deployment_acceptance_smoke.py --postgres-readiness-fixture",
+        "HERMES_ALLOW_REAL_RUN=true python3 scripts/local_runtime_acceptance.py --live-openclaw --live-hermes --require-hermes-api"
+      ],
+      "required_contracts": [
+        "audit_retention_policy_v1",
+        "audit_retention_controls_v1",
+        "deployment_readiness_v1",
+        "enterprise_byoc_controls_v1",
+        "deployment_readiness_postgres_runtime_write_fixture_v1",
+        "nextjs_deployment_postgres_runtime_write_fixture_v1",
+        "byoc_deployment_acceptance_v1",
+        "postgres_http_runtime_prepared_action_write_v1",
+        "postgres_http_runtime_approval_decision_write_v1",
+        "real_hermes_openclaw_acceptance"
+      ],
+      "must_not_use": [
+        "--skip-postgres-if-unavailable",
+        "mock_only_product_claim"
+      ]
+    }
+  ],
+  "handoff_required_commands": [
+    "python3 scripts/release_evidence_packet_smoke.py",
+    "python3 scripts/commercial_release_evidence_packet_smoke.py",
+    "python3 scripts/commercial_migration_readiness.py",
+    "python3 scripts/byoc_deployment_acceptance_smoke.py --postgres-readiness-fixture",
+    "python3 scripts/deployment_readiness_smoke.py --postgres-write-fixture",
+    "python3 scripts/nextjs_playwright_snapshot_smoke.py --postgres-write-fixture",
+    "HERMES_ALLOW_REAL_RUN=true python3 scripts/local_runtime_acceptance.py --live-openclaw --live-hermes --require-hermes-api"
+  ],
+  "sensitive_output_policy": {
+    "raw_prompts_allowed": false,
+    "raw_responses_allowed": false,
+    "token_values_allowed": false,
+    "private_transcripts_allowed": false,
+    "hash_or_ref_only": true
+  }
+}

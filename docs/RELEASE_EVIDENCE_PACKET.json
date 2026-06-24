@@ -1,0 +1,28 @@
+{
+  "contract_id": "release_evidence_packet_v1",
+  "status": "delegates_to_commercial_release_evidence_packet",
+  "updated_at": "2026-06-24",
+  "source_packet": "docs/COMMERCIAL_RELEASE_EVIDENCE_PACKET.json",
+  "source_contract_id": "commercial_release_evidence_packet_v1",
+  "verification_command": "python3 scripts/release_evidence_packet_smoke.py",
+  "commercial_verification_command": "python3 scripts/commercial_release_evidence_packet_smoke.py",
+  "release_complete": false,
+  "gate_5_required_commands": [
+    "python3 scripts/deployment_readiness_smoke.py --postgres-write-fixture",
+    "python3 scripts/nextjs_playwright_snapshot_smoke.py --postgres-write-fixture",
+    "python3 scripts/byoc_deployment_acceptance_smoke.py --postgres-readiness-fixture",
+    "HERMES_ALLOW_REAL_RUN=true python3 scripts/local_runtime_acceptance.py --live-openclaw --live-hermes --require-hermes-api"
+  ],
+  "gate_5_required_contracts": [
+    "deployment_readiness_postgres_runtime_write_fixture_v1",
+    "nextjs_deployment_postgres_runtime_write_fixture_v1",
+    "byoc_deployment_acceptance_v1",
+    "postgres_http_runtime_prepared_action_write_v1",
+    "postgres_http_runtime_approval_decision_write_v1",
+    "real_hermes_openclaw_acceptance"
+  ],
+  "must_not_use": [
+    "--skip-postgres-if-unavailable",
+    "mock_only_product_claim"
+  ]
+}
