@@ -845,9 +845,12 @@
       ],
       "evidence_commands": [
         "python3 scripts/nextjs_playwright_snapshot_smoke.py",
+        "python3 scripts/nextjs_control_tower_parity_smoke.py",
+        "python3 scripts/nextjs_enrollment_request_smoke.py",
         "python3 scripts/nextjs_parity_smoke.py",
         "python3 scripts/workspace_rbac_governance_smoke.py",
-        "python3 scripts/workspace_memory_session_governance_smoke.py"
+        "python3 scripts/workspace_memory_session_governance_smoke.py",
+        "python3 scripts/team_entitlement_enrollment_smoke.py"
       ],
       "retirement_allowed": false,
       "retirement_gate": "No Vite route is replaced; this is a commercial governance addition."

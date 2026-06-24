@@ -946,9 +946,12 @@ export type CommercialEntitlementStatus = {
   gates?: CommercialEntitlementGate[];
   safety?: {
     read_only?: boolean;
+    live_execution_performed?: boolean;
+    token_omitted?: boolean;
     billing_call_performed?: boolean;
   };
   token_omitted?: boolean;
+  live_execution_performed?: boolean;
 };
 
 export type StorageBackendStatus = {

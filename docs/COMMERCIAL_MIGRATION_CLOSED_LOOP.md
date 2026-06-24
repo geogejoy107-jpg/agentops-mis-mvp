@@ -355,8 +355,10 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
 
   The Next enrollment request smoke starts isolated MIS API and Next.js
   servers, proves the commercial App Router worker console can request remote
-  Agent Gateway enrollment through the approval path, rejects invalid scopes at
-  the Next guard, and keeps raw token mint routes blocked with
+  Agent Gateway enrollment through the approval path, proves the Team
+  Governance `approval_policies` entitlement gate is visible on
+  `/workspace/governance`, rejects invalid scopes at the Next guard, and keeps
+  raw token mint routes blocked with
   `enrollment_token_issue_not_allowed_next_parity`. Direct token issue,
   rotation, and revocation remain outside the Next browser migration slice.
 

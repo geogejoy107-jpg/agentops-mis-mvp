@@ -72,6 +72,7 @@ export function GovernanceParityPage({
   const sessionStates = countBy(sessions.sessions || [], (session) => session.session_state || session.status);
   const auditTypes = countBy(audit, (row) => row.action);
   const rbacGate = (entitlements.gates || []).find((gate) => gate.capability === "rbac");
+  const approvalPolicyGate = (entitlements.gates || []).find((gate) => gate.capability === "approval_policies");
   const sessionHygieneGate = (worker.fleet_health?.gates || []).find((gate) => gate.id === "session_hygiene");
 
   return (
@@ -94,6 +95,7 @@ export function GovernanceParityPage({
           ["Production", security.status || "unknown"],
           ["Auth mode", security.auth_mode || "unknown"],
           ["RBAC gate", rbacGate?.enabled ? "enabled" : rbacGate?.required_edition || "team_governance"],
+          ["Enrollment approvals", approvalPolicyGate?.enabled ? "enabled" : approvalPolicyGate?.required_edition || "team_governance"],
           ["Remote sessions", activeSessions.length],
           ["Audit events", audit.length],
           ["Token omitted", boolText(sessions.token_omitted !== false && security.safety?.token_omitted !== false)],
@@ -133,6 +135,25 @@ export function GovernanceParityPage({
           </div>
           <p className="subtle">
             RBAC and multi-project controls stay fail-closed behind edition gates until Team/Enterprise governance is active.
+          </p>
+        </div>
+
+        <div className="panel">
+          <div className="panelHeader">
+            <h2><KeyRound size={14} /> Remote enrollment approval</h2>
+            <span className={statusClass(approvalPolicyGate?.enabled ? "ready" : "attention")}>{approvalPolicyGate?.enabled ? "enabled" : "fail closed"}</span>
+          </div>
+          <div className="proofStrip">
+            <span>capability approval_policies</span>
+            <span>requires {approvalPolicyGate?.required_edition || "team_governance"}</span>
+            <span>enabled {boolText(approvalPolicyGate?.enabled)}</span>
+            <span>enforcement {approvalPolicyGate?.enforcement || "fail_closed"}</span>
+            <span>billing call {boolText(entitlements.safety?.billing_call_performed)}</span>
+            <span>live execution {boolText(entitlements.safety?.live_execution_performed ?? entitlements.live_execution_performed)}</span>
+            <span>token omitted {boolText(entitlements.safety?.token_omitted ?? entitlements.token_omitted)}</span>
+          </div>
+          <p className="subtle">
+            Remote Agent Gateway enrollment requests are visible in Next.js, but approval-policy mutation stays gated unless Team Governance or Enterprise/BYOC is active.
           </p>
         </div>
       </section>

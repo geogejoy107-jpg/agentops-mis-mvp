@@ -37,6 +37,7 @@ from nextjs_playwright_snapshot_smoke import (  # noqa: E402
     require,
     restore_next_env,
     run,
+    snapshot_route,
     start_process,
     wait_http,
 )
@@ -141,6 +142,30 @@ def main() -> int:
             processes.append(next_proc)
             wait_http(f"{next_base}/workspace/agents")
 
+            entitlement_status, entitlements = http_json_status("GET", f"{next_base}/api/mis/commercial/entitlements")
+            require(entitlement_status == 200, f"Team entitlement readback through Next failed: {entitlement_status} {entitlements}")
+            require(entitlements.get("edition") == "team_governance", f"Next entitlement readback should be team_governance: {entitlements}")
+            entitlement_gates = {
+                str(gate.get("capability")): gate
+                for gate in entitlements.get("gates") or []
+                if isinstance(gate, dict)
+            }
+            approval_gate = entitlement_gates.get("approval_policies") or {}
+            require(approval_gate.get("enabled") is True, f"Team approval_policies gate should be enabled: {approval_gate}")
+            require(approval_gate.get("required_edition") == "team_governance", f"Team approval_policies required edition mismatch: {approval_gate}")
+            require(approval_gate.get("enforcement") == "fail_closed", f"Team approval_policies should still be fail-closed enforcement: {approval_gate}")
+            require((entitlements.get("safety") or {}).get("billing_call_performed") is False, f"Team entitlement readback should not call billing: {entitlements}")
+            require((entitlements.get("safety") or {}).get("live_execution_performed") is False, f"Team entitlement readback should not execute live work: {entitlements}")
+            require(entitlements.get("token_omitted") is True, f"Team entitlement readback should omit tokens: {entitlements}")
+            governance_snapshot = snapshot_route(next_base, "/workspace/governance", [
+                "Remote enrollment approval",
+                "approval_policies",
+                "enabled true",
+                "team_governance",
+                "billing call false",
+                "token omitted true",
+            ], os.environ.copy())
+
             list_before_status, list_before = http_json_status("GET", f"{api_base}/api/agent-gateway/enrollments")
             require(list_before_status == 200, f"pre-enrollment list failed: {list_before_status} {list_before}")
             before_token_ids = enrollment_token_ids(list_before)
@@ -240,6 +265,8 @@ def main() -> int:
                 blocked,
                 requested,
                 blocked_issue,
+                entitlements,
+                governance_snapshot,
                 approval_row,
                 form_location,
                 invalid_form_location,
@@ -258,6 +285,7 @@ def main() -> int:
                 "blocked_issue_route": "/api/mis/agent-gateway/enrollment/issue-approved",
                 "form_route": "/workspace/agents/enrollment-request",
                 "backend_edition": "team_governance",
+                "approval_policies_gate": approval_gate.get("status"),
                 "preview_status": preview_status,
                 "invalid_preview_status": invalid_preview_status,
                 "blocked_status": blocked_status,

@@ -160,6 +160,22 @@ def main() -> int:
             require(postgres_status.get("server_backend_routable") is False, f"Free Local storage backend should not route Postgres writes: {proxy_storage}")
             require(proxy_storage.get("token_omitted") is True, f"storage backend route must omit token material: {proxy_storage}")
 
+            proxy_entitlements_status, proxy_entitlements = http_json_status("GET", f"{next_base}/api/mis/commercial/entitlements")
+            require(proxy_entitlements_status == 200, f"Next commercial entitlements proxy failed: {proxy_entitlements_status} {proxy_entitlements}")
+            require(proxy_entitlements.get("edition") == "free_local", f"control tower default edition should stay free_local: {proxy_entitlements}")
+            entitlement_gates = {
+                str(gate.get("capability")): gate
+                for gate in proxy_entitlements.get("gates") or []
+                if isinstance(gate, dict)
+            }
+            approval_gate = entitlement_gates.get("approval_policies") or {}
+            require(approval_gate.get("enabled") is False, f"Free Local approval_policies gate should be disabled: {approval_gate}")
+            require(approval_gate.get("required_edition") == "team_governance", f"approval_policies required edition mismatch: {approval_gate}")
+            require(approval_gate.get("enforcement") == "fail_closed", f"approval_policies should fail closed: {approval_gate}")
+            require((proxy_entitlements.get("safety") or {}).get("billing_call_performed") is False, f"entitlements should not call billing: {proxy_entitlements}")
+            require((proxy_entitlements.get("safety") or {}).get("live_execution_performed") is False, f"entitlements should not execute live work: {proxy_entitlements}")
+            require(proxy_entitlements.get("token_omitted") is True, f"entitlements should omit tokens: {proxy_entitlements}")
+
             pw_env = os.environ.copy()
             workspace_snapshot = snapshot_route(next_base, "/workspace", [
                 "Workspace control plane",
@@ -179,6 +195,9 @@ def main() -> int:
                 "Production readiness",
                 "Workspace and RBAC",
                 "Session governance",
+                "Remote enrollment approval",
+                "approval_policies",
+                "fail closed",
                 "Audit evidence",
                 "raw ids omitted",
             ], pw_env)
@@ -205,6 +224,7 @@ def main() -> int:
                 proxy_security,
                 proxy_local,
                 proxy_storage,
+                proxy_entitlements,
                 workspace_snapshot,
                 governance_snapshot,
                 deployment_snapshot,
@@ -226,6 +246,7 @@ def main() -> int:
                     "cost_leaders": len(proxy_dashboard.get("top_cost_agents") or []),
                 },
                 "storage_backend": proxy_storage.get("active_backend"),
+                "approval_policies_gate": approval_gate.get("status"),
                 "secret_leaked": False,
             }, ensure_ascii=False, indent=2, sort_keys=True))
             return 0

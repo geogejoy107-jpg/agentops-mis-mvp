@@ -256,9 +256,11 @@ forwarding and Next proxy task/job readback without token leakage.
 (`nextjs_control_tower_parity_v1`) starts isolated MIS API and Next.js servers,
 verifies `/workspace` split proof plus `/api/mis/dashboard/metrics`,
 `/api/mis/agents`, `/api/mis/security/production-readiness`,
-`/api/mis/local/readiness`, and `/api/mis/storage/backend-status`, opens
-`/workspace`, `/workspace/agents`, `/workspace/governance`, and
-`/workspace/deployment`, and checks the transcript for token-like leakage.
+`/api/mis/local/readiness`, `/api/mis/storage/backend-status`, and
+`/api/mis/commercial/entitlements`, proves Free Local keeps the
+`approval_policies` enrollment gate fail-closed, opens `/workspace`,
+`/workspace/agents`, `/workspace/governance`, and `/workspace/deployment`, and
+checks the transcript for token-like leakage.
 
 `python3 scripts/nextjs_local_brief_smoke.py` (`nextjs_local_brief_v1`) starts
 isolated MIS API and Next.js servers, proves the Next
@@ -357,7 +359,9 @@ and checks the template/base switching transcript for token-like leakage.
 
 `python3 scripts/nextjs_enrollment_request_smoke.py`
 (`nextjs_enrollment_request_v1`) starts isolated MIS API and Next.js servers,
-proves Next `/api/mis/agent-gateway/enrollment/policy-preview` is read-only,
+proves Team Governance entitlement readback enables `approval_policies` on
+`/workspace/governance`, proves Next
+`/api/mis/agent-gateway/enrollment/policy-preview` is read-only,
 proves invalid scopes are rejected by the Next guard before backend filtering,
 proves direct raw-token mint routes such as enrollment `create` and
 `issue-approved` fail closed with `enrollment_token_issue_not_allowed_next_parity`,
