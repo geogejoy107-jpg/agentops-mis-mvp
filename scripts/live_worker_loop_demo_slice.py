@@ -217,6 +217,11 @@ def compact_readiness(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def readiness_current_code_ok(payload: dict[str, Any]) -> bool:
+    evidence = payload.get("evidence") if isinstance(payload.get("evidence"), dict) else {}
+    return evidence.get("running_instance_current") is True
+
+
 def compact_live_acceptance(payload: dict[str, Any]) -> dict[str, Any]:
     failures = [str(item)[:360] for item in (payload.get("failures") or [])[:3]]
     return {
@@ -597,15 +602,50 @@ def main() -> int:
         print(serialized)
         return 0
 
+    if not readiness_ok or not readiness_current_code_ok(readiness):
+        output = {
+            "operation": "live_worker_loop_demo_slice",
+            "ok": False,
+            "mode": "confirmed_live",
+            "base_url": base_url,
+            "adapters": adapters,
+            "live_execution_performed": False,
+            "service_control_attempted": False,
+            "service_control_mutated": False,
+            "service_closure_attempted": False,
+            "ledger_mutated": False,
+            "commands": commands,
+            "steps": steps,
+            "failures": ["local_readiness_current_code_required"],
+            "safety": {
+                "raw_prompt_omitted": True,
+                "raw_response_omitted": True,
+                "token_omitted": True,
+                "uses_saved_cli_config": False,
+                "requires_explicit_confirm_live": True,
+                "requires_current_code_server": True,
+                "failed_before_service_control": True,
+                "failed_before_service_closure": True,
+                "failed_before_live_runtime": True,
+            },
+            "token_omitted": True,
+        }
+        serialized = json.dumps(output, ensure_ascii=False, indent=2, sort_keys=True)
+        if token_leaked(serialized):
+            print(json.dumps({"ok": False, "error": "token_like_output_detected"}, ensure_ascii=False, indent=2), file=sys.stderr)
+            return 1
+        print(serialized)
+        return 1
+
     service_control_attempted = False
     service_control_mutated = False
     if args.confirm_service_control:
         for adapter in adapters:
             control_command = service_control_command_args(
                 base_url,
+                adapter,
                 args.service_control_manager,
                 args.service_control_action,
-                adapter,
                 args.service_control_service_path_template,
                 confirm_control=True,
             )
