@@ -2081,12 +2081,18 @@ def _bootstrap_command_map(start_check: dict, supervision_item: dict, args) -> d
         or (service_managed_loop.get("commands") or {}).get("service_control_load_confirm")
         or f"agentops worker service-control --manager {args.manager} --action load --adapter {args.adapter} --agent-id agt_worker_daemon_{args.adapter} --confirm-control"
     )
+    fast_service_closure = bool(
+        getattr(args, "fast", False)
+        or start_check.get("mode") == "fast"
+        or ((start_check.get("summary") or {}).get("mode") == "fast_bootstrap_minimal")
+    )
     service_closure_record = " ".join(shlex.quote(str(part)) for part in [
         "agentops",
         "operator",
         "service-closure",
         "--adapter",
         args.adapter,
+        *(["--fast"] if fast_service_closure else []),
         "--run-service-check",
         "--confirm-record",
     ])

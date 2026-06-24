@@ -277,8 +277,11 @@ def validate_fast_bootstrap(payload: dict, adapter: str, failures: list[str], *,
     require(summary.get("deep_verification_required") is True, f"fast deep verification proof missing: {payload}", failures)
     require(summary.get("can_confirm_bounded_loop") is False, f"fast packet must not allow confirm-loop: {payload}", failures)
     commands = payload.get("commands") or {}
-    for key in ["current_code_check", "service_install_preview", "service_check", "loop_supervision", "loop_driver_auto_service_closure"]:
+    for key in ["current_code_check", "service_install_preview", "service_check", "service_closure_record", "loop_supervision", "loop_driver_auto_service_closure"]:
         require(commands.get(key), f"fast command {key} missing: {payload}", failures)
+    require("--fast" in str(commands.get("service_closure_record")), f"fast service-closure command missing --fast: {commands}", failures)
+    require("--run-service-check" in str(commands.get("service_closure_record")), f"fast service-closure command missing local check: {commands}", failures)
+    require("--confirm-record" in str(commands.get("service_closure_record")), f"fast service-closure command missing confirm record: {commands}", failures)
     require("--confirm-loop" in str(commands.get("loop_driver_auto_service_closure")), f"fast loop confirm command missing: {commands}", failures)
     steps = payload.get("bootstrap_steps") or []
     step_ids = {step.get("id") for step in steps}
