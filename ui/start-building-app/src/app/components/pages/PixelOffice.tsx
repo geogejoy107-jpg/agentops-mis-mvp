@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { Link, useNavigate } from "react-router";
 import { ArrowRight, ExternalLink, Map, MonitorCog, ShieldCheck, Sparkles } from "lucide-react";
 import { OperationsBar } from "../pixel/OperationsBar";
 import { CustomerDispatchPanel } from "../pixel/CustomerDispatchPanel";
 import { PixelOperatingMap } from "../pixel/PixelOperatingMap";
+import { PixelOfficeThemeSelector } from "../pixel/PixelOfficeThemeSelector";
 import {
   derivePixelAgents,
   derivePixelMetrics,
@@ -12,6 +13,13 @@ import {
   type PixelMetrics,
   zoneDisplay,
 } from "../pixel/pixelModel";
+import {
+  DEFAULT_PIXEL_OFFICE_THEME_ID,
+  getPixelOfficeTheme,
+  isPixelOfficeThemeId,
+  PIXEL_OFFICE_THEME_STORAGE_KEY,
+  type PixelOfficeThemeId,
+} from "../pixel/pixelOfficeTheme";
 import {
   loadAgents,
   loadApprovals,
@@ -118,12 +126,19 @@ function readSettled<T>(result: PromiseSettledResult<T>, fallback: T): T {
   return result.status === "fulfilled" ? result.value : fallback;
 }
 
+function readPixelOfficeThemeId(): PixelOfficeThemeId {
+  if (typeof window === "undefined") return DEFAULT_PIXEL_OFFICE_THEME_ID;
+  const stored = window.localStorage.getItem(PIXEL_OFFICE_THEME_STORAGE_KEY);
+  return isPixelOfficeThemeId(stored) ? stored : DEFAULT_PIXEL_OFFICE_THEME_ID;
+}
+
 export function PixelOffice() {
   const navigate = useNavigate();
   const { locale } = usePreferences();
   const [snapshot, setSnapshot] = useState<PixelOfficeSnapshot>(fallbackSnapshot);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pixelOfficeThemeId, setPixelOfficeThemeId] = useState<PixelOfficeThemeId>(readPixelOfficeThemeId);
   const copy = pick(locale, {
     en: {
       title: "Agent-MIS Pixel Operating Floor",
@@ -229,6 +244,21 @@ export function PixelOffice() {
 
   const taskCards = useMemo(() => deriveTaskCards(snapshot.tasks), [snapshot.tasks]);
 
+  const pixelOfficeTheme = useMemo(() => getPixelOfficeTheme(pixelOfficeThemeId), [pixelOfficeThemeId]);
+  const pixelOfficeThemeVars = useMemo(
+    () =>
+      ({
+        "--mis-cyan": pixelOfficeTheme.frame.glowA,
+        "--mis-purple": pixelOfficeTheme.frame.glowB,
+      }) as CSSProperties,
+    [pixelOfficeTheme],
+  );
+
+  const changePixelOfficeTheme = (themeId: PixelOfficeThemeId) => {
+    setPixelOfficeThemeId(themeId);
+    window.localStorage.setItem(PIXEL_OFFICE_THEME_STORAGE_KEY, themeId);
+  };
+
   const spatialSnapshot = useMemo(
     () =>
       basicPixelProjectionAdapter.project({
@@ -322,7 +352,14 @@ export function PixelOffice() {
 
       <OperationsBar metrics={pixelMetrics} loading={loading} error={error} onRefresh={refresh} locale={locale} />
 
-      <PixelOperatingMap agents={pixelAgents} taskCards={taskCards} metrics={pixelMetrics} onOpenRoute={openRoute} locale={locale} />
+      <PixelOfficeThemeSelector themeId={pixelOfficeThemeId} onChange={changePixelOfficeTheme} locale={locale} />
+
+      <div
+        data-pixel-office-theme={pixelOfficeTheme.id}
+        style={pixelOfficeThemeVars}
+      >
+        <PixelOperatingMap agents={pixelAgents} taskCards={taskCards} metrics={pixelMetrics} onOpenRoute={openRoute} locale={locale} />
+      </div>
 
       <section className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="rounded-lg p-4" style={{ background: "var(--mis-surface)", border: "1px solid var(--mis-border)" }}>
