@@ -486,6 +486,9 @@ def compact_start_check_local_run_path(local: dict[str, Any], *, adapter: str | 
         })
     requested_adapter = adapter if adapter in {"mock", "hermes", "openclaw"} else None
     service_managed_loop = local.get("service_managed_loop") if isinstance(local.get("service_managed_loop"), dict) else {}
+    service_managed_loops = local.get("service_managed_loops") if isinstance(local.get("service_managed_loops"), dict) else {}
+    if requested_adapter and isinstance(service_managed_loops.get(requested_adapter), dict):
+        service_managed_loop = service_managed_loops[requested_adapter]
     if requested_adapter:
         live_adapter = requested_adapter in {"hermes", "openclaw"}
         service_agent_id = f"agt_worker_daemon_{requested_adapter}"

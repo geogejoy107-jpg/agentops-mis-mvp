@@ -222,6 +222,15 @@ def validate(payload: dict) -> None:
     require((service_managed_loop.get("safety") or {}).get("server_executes_shell") is False, f"service-managed server-shell proof missing: {service_managed_loop}")
     require((service_managed_loop.get("safety") or {}).get("loads_service") is False, f"service-managed load boundary missing: {service_managed_loop}")
     require((service_managed_loop.get("safety") or {}).get("token_omitted") is True, f"service-managed token omission missing: {service_managed_loop}")
+    service_managed_loops = payload.get("service_managed_loops") or {}
+    require({"hermes", "openclaw"}.issubset(set(service_managed_loops)), f"adapter-scoped service-managed loops missing: {service_managed_loops}")
+    for adapter_name in ["hermes", "openclaw"]:
+        scoped_loop = service_managed_loops.get(adapter_name) or {}
+        scoped_commands = scoped_loop.get("commands") or {}
+        require(scoped_loop.get("adapter") == adapter_name, f"{adapter_name} service-managed loop adapter mismatch: {scoped_loop}")
+        require(f"--adapter {adapter_name}" in str(scoped_commands.get("service_check") or ""), f"{adapter_name} service-check command mismatch: {scoped_loop}")
+        require(f"--adapter {adapter_name}" in str(scoped_commands.get("record_control_readback") or ""), f"{adapter_name} readback command mismatch: {scoped_loop}")
+        require("service_check_ok" in str(scoped_commands.get("record_control_readback") or ""), f"{adapter_name} readback proof fields missing: {scoped_loop}")
     for step in local_run_path:
         require(step.get("command"), f"local run path step missing command: {step}")
         require(step.get("copy_only") is True, f"local run path step must be copy-only: {step}")
@@ -349,6 +358,13 @@ def exercise_service_control_receipt_readback(base_url: str, payload: dict) -> d
     require(service_managed_loop.get("service_confirm_gate_ok") is True, f"service-managed confirm gate not read back: {service_managed_loop}")
     require(service_managed_loop.get("service_relaunch_policy_ok") is True, f"service-managed relaunch policy not read back: {service_managed_loop}")
     require(str(service_managed_loop.get("control_readback_hash") or ""), f"service-managed readback hash missing: {service_managed_loop}")
+    service_managed_loops = reread_payload.get("service_managed_loops") or {}
+    recommended_adapter = service_managed_loop.get("adapter")
+    for adapter_name, scoped_loop in service_managed_loops.items():
+        if adapter_name == recommended_adapter:
+            require(scoped_loop.get("service_managed_loop_ready") is True, f"recommended adapter scoped loop should mirror ready state: {service_managed_loops}")
+        else:
+            require(scoped_loop.get("service_managed_loop_ready") is False, f"non-reviewed adapter inherited service readiness: {service_managed_loops}")
     return reread_payload
 
 

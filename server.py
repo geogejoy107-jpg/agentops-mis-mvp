@@ -18597,95 +18597,123 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
         {},
     )
     service_receipt_state = service_control_step.get("receipt_state") if isinstance(service_control_step.get("receipt_state"), dict) else {}
-    service_control_readback = service_receipt_state.get("control_readback") if isinstance(service_receipt_state.get("control_readback"), dict) else {}
-    service_control_readback_after = service_control_readback.get("after") if isinstance(service_control_readback.get("after"), dict) else {}
-    service_check_readback = service_control_readback_after.get("service_check") if isinstance(service_control_readback_after.get("service_check"), dict) else {}
-    service_file_readback = service_check_readback.get("service_file") if isinstance(service_check_readback.get("service_file"), dict) else {}
-    service_check_ok = (
-        service_control_readback_after.get("service_check_ok") is True
-        or service_check_readback.get("ok") is True
-    )
-    service_file_exists = (
-        service_control_readback_after.get("service_file_exists") is True
-        or service_file_readback.get("exists") is True
-    )
-    service_confirm_gate_ok = (
-        service_control_readback_after.get("confirm_gate_ok") is True
-        or service_file_readback.get("confirm_gate_ok") is True
-    )
-    service_relaunch_policy_ok = (
-        service_control_readback_after.get("relaunch_policy_ok") is True
-        or service_file_readback.get("relaunch_policy_ok") is True
-    )
-    service_control_readback_verified = bool(
-        service_receipt_state.get("verified") is True
-        and service_receipt_state.get("control_readback_attached") is True
-        and service_check_ok
-        and service_file_exists
-        and service_confirm_gate_ok
-        and service_relaunch_policy_ok
-    )
-    service_checked_status = (
-        "operator_verified_service_check"
-        if service_control_readback_verified
-        else (
-            "service_check_failed"
-            if service_receipt_state.get("control_readback_attached") is True
-            else "missing_readback"
+
+    def service_control_readback_status(receipt_state: dict) -> dict:
+        control_readback = receipt_state.get("control_readback") if isinstance(receipt_state.get("control_readback"), dict) else {}
+        readback_after = control_readback.get("after") if isinstance(control_readback.get("after"), dict) else {}
+        service_check = readback_after.get("service_check") if isinstance(readback_after.get("service_check"), dict) else {}
+        service_file = service_check.get("service_file") if isinstance(service_check.get("service_file"), dict) else {}
+        check_ok = readback_after.get("service_check_ok") is True or service_check.get("ok") is True
+        file_exists = readback_after.get("service_file_exists") is True or service_file.get("exists") is True
+        confirm_gate_ok = readback_after.get("confirm_gate_ok") is True or service_file.get("confirm_gate_ok") is True
+        relaunch_policy_ok = readback_after.get("relaunch_policy_ok") is True or service_file.get("relaunch_policy_ok") is True
+        verified = bool(
+            receipt_state.get("verified") is True
+            and receipt_state.get("control_readback_attached") is True
+            and check_ok
+            and file_exists
+            and confirm_gate_ok
+            and relaunch_policy_ok
         )
-    )
-    service_managed_loop = {
+        checked_status = (
+            "operator_verified_service_check"
+            if verified
+            else (
+                "service_check_failed"
+                if receipt_state.get("control_readback_attached") is True
+                else "missing_readback"
+            )
+        )
+        return {
+            "service_check_ok": bool(check_ok),
+            "service_file_exists": bool(file_exists),
+            "service_confirm_gate_ok": bool(confirm_gate_ok),
+            "service_relaunch_policy_ok": bool(relaunch_policy_ok),
+            "service_control_readback_verified": verified,
+            "checked_status": checked_status,
+            "readback_verification_status": "passed" if verified else checked_status,
+        }
+
+    def service_control_command_set(adapter: str, *, scoped: bool) -> dict:
+        command = f"agentops worker service-control --manager launchd --action restart --adapter {adapter} --agent-id agt_worker_daemon_{adapter}"
+        verify_command = f"agentops worker service-check --manager launchd --adapter {adapter} --agent-id agt_worker_daemon_{adapter}"
+        action_signature = stable_hash(
+            "local_readiness.service_control_preview:"
+            f"{adapter}:{command}:{verify_command}"
+        )
+        action_id = f"local_readiness.service_control_preview.{adapter}" if scoped else "local_readiness.service_control_preview"
+        source = action_id
+        receipt_base = [
+            "agentops", "operator", "record-action-receipt",
+            "--action-command", command,
+            "--verify-command", verify_command,
+            "--action-id", action_id,
+            "--action-signature", action_signature,
+            "--source", source,
+        ]
+        return {
+            "command": command,
+            "verify_command": verify_command,
+            "action_signature": action_signature,
+            "action_id": action_id,
+            "source": source,
+            "receipt_record_command": " ".join(shlex.quote(str(part)) for part in [*receipt_base, "--status", "recorded"]),
+            "receipt_verify_record_command": " ".join(shlex.quote(str(part)) for part in [
+                *receipt_base,
+                "--status", "verified",
+                "--result-summary", f"{adapter} worker service-control preview inspected and service-check reviewed.",
+                "--confirm-record",
+            ]),
+        }
+
+    def build_service_managed_loop(adapter: str, receipt_state: dict, command_set: dict) -> dict:
+        readback_status = service_control_readback_status(receipt_state)
+        ready = readback_status["service_control_readback_verified"]
+        verify_command = command_set["verify_command"]
+        return {
         "operation": "local_service_managed_loop_readiness",
-        "status": (
-            "ready"
-            if service_control_readback_verified
-            else "attention"
-        ),
-        "adapter": recommended_adapter,
+        "status": "ready" if ready else "attention",
+        "adapter": adapter,
         "manager": "launchd",
         "install_preview_available": True,
         "install_confirm_available": True,
-        "service_check_available": bool(service_control_verify_command),
-        "service_control_preview_available": bool(service_control_step.get("command")),
-        "receipt_required": bool(service_control_step.get("receipt_required")),
-        "receipt_verified": bool(service_receipt_state.get("verified")),
-        "receipt_id": service_receipt_state.get("receipt_id"),
-        "receipt_hash": service_receipt_state.get("receipt_hash"),
-        "control_readback_required": bool(service_control_step.get("control_readback_required")),
-        "control_readback_attached": bool(service_receipt_state.get("control_readback_attached")),
-        "control_readback_id": service_receipt_state.get("control_readback_id"),
-        "control_readback_hash": service_receipt_state.get("control_readback_hash"),
-        "service_check_ok": bool(service_check_ok),
-        "service_file_exists": bool(service_file_exists),
-        "service_confirm_gate_ok": bool(service_confirm_gate_ok),
-        "service_relaunch_policy_ok": bool(service_relaunch_policy_ok),
-        "readback_verification_status": "passed" if service_control_readback_verified else service_checked_status,
-        "service_managed_loop_ready": service_control_readback_verified,
-        "installed_status": (
-            "operator_verified_service_check"
-            if service_control_readback_verified
-            else "unverified"
-        ),
-        "checked_status": service_checked_status,
+        "service_check_available": bool(verify_command),
+        "service_control_preview_available": bool(command_set.get("command")),
+        "receipt_required": True,
+        "receipt_verified": bool(receipt_state.get("verified")),
+        "receipt_id": receipt_state.get("receipt_id"),
+        "receipt_hash": receipt_state.get("receipt_hash"),
+        "control_readback_required": True,
+        "control_readback_attached": bool(receipt_state.get("control_readback_attached")),
+        "control_readback_id": receipt_state.get("control_readback_id"),
+        "control_readback_hash": receipt_state.get("control_readback_hash"),
+        "service_check_ok": readback_status["service_check_ok"],
+        "service_file_exists": readback_status["service_file_exists"],
+        "service_confirm_gate_ok": readback_status["service_confirm_gate_ok"],
+        "service_relaunch_policy_ok": readback_status["service_relaunch_policy_ok"],
+        "readback_verification_status": readback_status["readback_verification_status"],
+        "service_managed_loop_ready": ready,
+        "installed_status": "operator_verified_service_check" if ready else "unverified",
+        "checked_status": readback_status["checked_status"],
         "commands": {
-            "service_install_preview": f"agentops worker service-install --manager launchd --adapter {recommended_adapter} --agent-id agt_worker_daemon_{recommended_adapter}{' --confirm-run' if recommended_adapter in {'hermes', 'openclaw'} else ''}",
-            "service_install_confirm": f"agentops worker service-install --manager launchd --adapter {recommended_adapter} --agent-id agt_worker_daemon_{recommended_adapter}{' --confirm-run' if recommended_adapter in {'hermes', 'openclaw'} else ''} --confirm-install",
-            "service_check": service_control_verify_command,
-            "service_control_preview": service_control_command,
-            "record_verified_receipt": service_control_receipt_verify_command,
+            "service_install_preview": f"agentops worker service-install --manager launchd --adapter {adapter} --agent-id agt_worker_daemon_{adapter}{' --confirm-run' if adapter in {'hermes', 'openclaw'} else ''}",
+            "service_install_confirm": f"agentops worker service-install --manager launchd --adapter {adapter} --agent-id agt_worker_daemon_{adapter}{' --confirm-run' if adapter in {'hermes', 'openclaw'} else ''} --confirm-install",
+            "service_check": verify_command,
+            "service_control_preview": command_set["command"],
+            "record_verified_receipt": command_set["receipt_verify_record_command"],
             "record_control_readback": " ".join(shlex.quote(str(part)) for part in [
                 "agentops", "operator", "record-control-readback",
-                "--receipt-id", service_receipt_state.get("receipt_id") or "<receipt_id>",
-                "--source", "local_readiness.service_control_preview.control_readback",
+                "--receipt-id", receipt_state.get("receipt_id") or "<receipt_id>",
+                "--source", f"{command_set['source']}.control_readback",
                 "--control-readback-json", json.dumps({
                     "before": {
-                        "step_id": service_control_step.get("step_id") or "preview_worker_service_control",
-                        "status": service_control_step.get("status") or "preview",
-                        "adapter": recommended_adapter,
+                        "step_id": "preview_worker_service_control",
+                        "status": "preview",
+                        "adapter": adapter,
                         "service_control_preview": True,
                     },
                     "after": {
-                        "verify_command": service_control_verify_command,
+                        "verify_command": verify_command,
                         "service_check_expected": True,
                         "service_check_ok": False,
                         "service_file_exists": False,
@@ -18719,6 +18747,34 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
         "token_omitted": True,
         "live_execution_performed": False,
     }
+
+    recommended_command_set = {
+        "command": service_control_command,
+        "verify_command": service_control_verify_command,
+        "action_signature": service_control_action_signature,
+        "action_id": "local_readiness.service_control_preview",
+        "source": "local_readiness.service_control_preview",
+        "receipt_record_command": service_control_receipt_record_command,
+        "receipt_verify_record_command": service_control_receipt_verify_command,
+    }
+    service_managed_loop = build_service_managed_loop(recommended_adapter, service_receipt_state, recommended_command_set)
+    service_managed_loops: dict[str, dict] = {recommended_adapter: service_managed_loop}
+    for adapter_name in ["hermes", "openclaw"]:
+        if adapter_name == recommended_adapter:
+            continue
+        command_set = service_control_command_set(adapter_name, scoped=True)
+        synthetic_step = {
+            "step_id": "preview_worker_service_control",
+            "command": command_set["command"],
+            "action_signature": command_set["action_signature"],
+            "receipt_required": True,
+            "control_readback_required": True,
+        }
+        service_managed_loops[adapter_name] = build_service_managed_loop(
+            adapter_name,
+            local_run_path_receipt_state(synthetic_step),
+            command_set,
+        )
     return {
         "provider": "agentops-local",
         "operation": "local_readiness",
@@ -18742,6 +18798,7 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
         "docs": doc_status,
         "local_run_path": local_run_path,
         "service_managed_loop": service_managed_loop,
+        "service_managed_loops": service_managed_loops,
         "ui_routes": {
             "worker_console": "/workspace/workers",
             "memory": "/workspace/memory",
