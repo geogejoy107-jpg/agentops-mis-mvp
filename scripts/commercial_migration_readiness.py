@@ -250,11 +250,19 @@ def main() -> int:
             "edition ladder exists in pricing/entitlement draft",
         ),
         check(
-            "entitlement_status_surface_exists",
+            "entitlement_fail_closed_surface_exists",
             file_contains("server.py", "/api/commercial/entitlements")
             and file_contains("agentops_mis_cli/agentops.py", "commercial_entitlements")
-            and (ROOT / "scripts" / "commercial_entitlements_smoke.py").exists(),
-            "read-only commercial entitlement API, CLI, and smoke test are present",
+            and file_contains("server.py", "COMMERCIAL_FAIL_CLOSED_CAPABILITIES")
+            and file_contains("server.py", '"approval_policies"')
+            and file_contains("scripts/commercial_entitlements_smoke.py", "validate_entitlement_audit")
+            and file_contains("scripts/commercial_entitlements_smoke.py", "validate_pro_template_run")
+            and file_contains("scripts/commercial_entitlements_smoke.py", "fail_closed")
+            and file_contains("scripts/team_entitlement_enrollment_smoke.py", "validate_downgrade_issue_block")
+            and file_contains("scripts/team_entitlement_enrollment_smoke.py", "team_governance")
+            and (ROOT / "scripts" / "commercial_entitlements_smoke.py").exists()
+            and (ROOT / "scripts" / "team_entitlement_enrollment_smoke.py").exists(),
+            "commercial entitlement API/CLI has fail-closed gates, audit evidence, Pro allow-path, and Team enrollment-policy smoke coverage",
         ),
         check(
             "nextjs_is_gated_not_immediate",

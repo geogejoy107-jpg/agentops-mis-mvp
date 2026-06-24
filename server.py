@@ -165,6 +165,12 @@ COMMERCIAL_CAPABILITY_GATES = {
     "custom_connector_sdk": "enterprise_byoc",
 }
 
+COMMERCIAL_FAIL_CLOSED_CAPABILITIES = {
+    "approval_policies",
+    "notion_confirmed_export",
+    "report_templates",
+}
+
 
 def now_iso() -> str:
     return dt.datetime.now(dt.timezone.utc).isoformat()
@@ -207,6 +213,12 @@ def inherited_capabilities(edition: str) -> dict:
     return merged
 
 
+def commercial_capability_enforcement(capability: str) -> str:
+    if capability in COMMERCIAL_FAIL_CLOSED_CAPABILITIES:
+        return "fail_closed"
+    return "read_only_preview"
+
+
 def entitlement_status(headers) -> dict:
     config_path = Path(os.environ.get("AGENTOPS_ENTITLEMENTS_PATH") or DEFAULT_ENTITLEMENTS_PATH).expanduser()
     config = read_json_file(config_path, {}) if config_path.exists() else {}
@@ -226,7 +238,7 @@ def entitlement_status(headers) -> dict:
             "required_edition": required_edition,
             "enabled": enabled,
             "status": "enabled" if enabled else "disabled",
-            "enforcement": "read_only_preview",
+            "enforcement": commercial_capability_enforcement(capability),
         })
     return {
         "provider": "agentops-commercial",
@@ -245,7 +257,7 @@ def entitlement_status(headers) -> dict:
         "capabilities": capabilities,
         "gates": gates,
         "next_actions": [
-            "Keep this surface read-only until entitlement smoke tests cover fail-closed behavior.",
+            "Keep this status surface read-only while explicit product-boundary gates fail closed.",
             "Add enforcement only at explicit product boundaries, not inside low-level ledger writes.",
             "Do not add billing-provider calls until local edition gates are stable.",
         ],
@@ -533,6 +545,7 @@ def commercial_entitlement_block(conn, capability: str, operation: str, actor: s
         "required_edition": required_edition,
         "current_edition": status.get("edition"),
         "current_edition_label": status.get("edition_label"),
+        "enforcement": commercial_capability_enforcement(capability),
         "created": False,
         "dry_run": False,
         "live_execution_performed": False,
@@ -4006,6 +4019,8 @@ def agent_gateway_create_enrollment(conn, body) -> tuple[dict, int]:
 
 
 def agent_gateway_request_enrollment(conn, body) -> tuple[dict, int]:
+    if not commercial_capability_enabled("approval_policies"):
+        return commercial_entitlement_block(conn, "approval_policies", "agent_gateway.enrollment.request", "agent-gateway-enrollment"), 403
     workspace_id = normalize_workspace_id(body.get("workspace_id") or "local-demo")
     agent_id = body.get("agent_id") or stable_id("agt_remote", body.get("name") or "remote-agent", workspace_id)
     runtime_type = coerce_choice(body.get("runtime_type") or body.get("runtime"), VALID_RUNTIME_TYPES, "mock")
@@ -4150,6 +4165,8 @@ def agent_gateway_issue_approved_enrollment(conn, body) -> tuple[dict, int]:
         request = conn.execute("SELECT * FROM agent_gateway_enrollment_requests WHERE approval_id=?", (approval_id,)).fetchone()
     if not request:
         return {"error": "not found", "message": "Enrollment request not found."}, 404
+    if not commercial_capability_enabled("approval_policies"):
+        return commercial_entitlement_block(conn, "approval_policies", "agent_gateway.enrollment.issue_approved", "agent-gateway-enrollment"), 403
     approval = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (request["approval_id"],)).fetchone()
     if not approval or approval["decision"] != "approved":
         return {"error": "approval_required", "message": "Enrollment request must be approved before issuing a token.", "approval_id": request["approval_id"]}, 409

@@ -721,6 +721,10 @@ Initial status:
 - Example config: `config/entitlements.example.json`
 - API: `GET /api/commercial/entitlements`
 - CLI: `agentops commercial entitlements`
+- Enforcement status: `notion_confirmed_export`, `report_templates`, and
+  `approval_policies` report `fail_closed` because they are enforced at
+  explicit product boundaries; capabilities without a product-boundary gate
+  remain `read_only_preview`.
 - First fail-closed gate: Free Local blocks `confirm_export:true` on
   `POST /api/integrations/notion/export-confirmed` for capability
   `notion_confirmed_export`, while Notion preview/dry-run stays available.
@@ -728,6 +732,15 @@ Initial status:
   `POST /api/workflows/customer-task-templates/run` and
   `POST /api/workflows/customer-task-templates/submit` for capability
   `report_templates`.
+- The entitlement smoke reads back `commercial.entitlement_blocked` audit logs
+  from an isolated SQLite ledger and then flips the same local fixture to
+  `pro_workspace` to prove the template run path is allowed without billing
+  calls or token exposure.
+- First Team Governance gate: Free Local and Pro Workspace block approval-based
+  remote Agent Gateway enrollment requests for capability `approval_policies`.
+  A `team_governance` fixture proves request -> approve -> issue-approved ->
+  heartbeat works, and a downgrade check proves approved pending requests cannot
+  issue tokens after the edition drops below Team.
 - Next.js parity evidence now covers both sides of that gate: Free Local blocks
   `Start template` without creating a project, while an isolated
   `pro_workspace` entitlement fixture allows the same Next.js form fallback to
@@ -748,7 +761,9 @@ Initial status:
 - Task and run detail drilldowns must remain read-only and expose linked
   approvals, evaluations, artifacts, audit/runtime evidence, and token-omission
   proof through the Next.js MIS proxy.
-- Smoke: `python3 scripts/commercial_entitlements_smoke.py`
+- Smoke:
+  `python3 scripts/commercial_entitlements_smoke.py`
+  `python3 scripts/team_entitlement_enrollment_smoke.py`
 
 ### WP2: Production Safety Contract
 

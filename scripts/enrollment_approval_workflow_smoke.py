@@ -6,9 +6,18 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import os
+from pathlib import Path
+import socket
+import subprocess
 import sys
+import tempfile
+import time
 import urllib.error
 import urllib.request
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def stamp() -> str:
@@ -37,6 +46,44 @@ def http_json(method: str, base_url: str, path: str, payload: dict | None = None
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise AssertionError(message)
+
+
+def free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def run(cmd: list[str], *, env: dict[str, str], timeout: int = 45) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(cmd, cwd=ROOT, env=env, text=True, capture_output=True, timeout=timeout, check=False)
+
+
+def start_server(port: int, env: dict[str, str]) -> subprocess.Popen[str]:
+    return subprocess.Popen(
+        [sys.executable, "server.py", "--host", "127.0.0.1", "--port", str(port)],
+        cwd=ROOT,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+
+
+def wait_ready(base_url: str, proc: subprocess.Popen[str], timeout_sec: int = 30) -> None:
+    deadline = time.time() + timeout_sec
+    last_error = ""
+    while time.time() < deadline:
+        if proc.poll() is not None:
+            out, _err = proc.communicate(timeout=1)
+            raise RuntimeError(f"server exited early: rc={proc.returncode} output={out}")
+        try:
+            status, payload = http_json("GET", base_url, "/api/commercial/entitlements")
+            if status == 200 and payload.get("edition") == "team_governance":
+                return
+        except Exception as exc:
+            last_error = str(exc)
+        time.sleep(0.25)
+    raise RuntimeError(f"server did not become ready as team_governance: {last_error}")
 
 
 def smoke(base_url: str, run_stamp: str) -> dict:
@@ -100,22 +147,52 @@ def smoke(base_url: str, run_stamp: str) -> dict:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Verify enrollment approval workflow.")
-    parser.add_argument("--base-url", default="http://127.0.0.1:8787")
+    parser.add_argument("--base-url", default=os.environ.get("AGENTOPS_BASE_URL"), help="Existing Team Governance MIS API. Omit to start an isolated team_governance fixture.")
     args = parser.parse_args(argv)
     result = {"ok": False, "base_url": args.base_url}
     token_id = None
+    proc: subprocess.Popen[str] | None = None
+    tmp_ctx: tempfile.TemporaryDirectory[str] | None = None
     try:
-        result["smoke"] = smoke(args.base_url, stamp())
-        token_id = (result["smoke"] or {}).get("token_id")
+        base_url = args.base_url
+        if not base_url:
+            tmp_ctx = tempfile.TemporaryDirectory(prefix="agentops-enrollment-approval-")
+            tmp = tmp_ctx.name
+            port = free_port()
+            base_url = f"http://127.0.0.1:{port}"
+            env = os.environ.copy()
+            env["AGENTOPS_DB_PATH"] = str(Path(tmp) / "agentops.db")
+            env["AGENTOPS_EDITION"] = "team_governance"
+            env["AGENTOPS_SKIP_SEED_EXPORTS"] = "1"
+            env.pop("AGENTOPS_ENTITLEMENTS_PATH", None)
+            reset = run([sys.executable, "server.py", "--host", "127.0.0.1", "--port", str(port), "--reset"], env=env, timeout=30)
+            require(reset.returncode == 0, f"seed reset failed: {reset.stderr or reset.stdout}")
+            proc = start_server(port, env)
+            wait_ready(base_url, proc)
+        result["base_url"] = base_url
+        result["fixture_edition"] = "team_governance" if not args.base_url else "external"
+        result["smoke"] = smoke(base_url, stamp())
+        token_id = (result["smoke"] or {}).pop("token_id", None)
+        if token_id:
+            result["smoke"]["token_ref"] = str(token_id)[-12:]
         result["ok"] = True
         return 0
     except Exception as exc:
         result["error"] = str(exc)
         return 1
     finally:
-        if token_id:
-            status, revoked = http_json("POST", args.base_url, "/api/agent-gateway/enrollment/revoke", {"token_id": token_id})
+        if token_id and result.get("base_url"):
+            status, revoked = http_json("POST", str(result["base_url"]), "/api/agent-gateway/enrollment/revoke", {"token_id": token_id})
             result["cleanup"] = {"status": status, "revoked": revoked.get("revoked")}
+        if proc and proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=5)
+        if tmp_ctx:
+            tmp_ctx.cleanup()
         print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
 
 

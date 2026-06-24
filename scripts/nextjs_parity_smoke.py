@@ -293,6 +293,7 @@ def main() -> int:
     require("nextjs_enrollment_request_v1" in enrollment_request_smoke_text, "Next enrollment request smoke contract is missing")
     require("/api/mis/agent-gateway/enrollment/policy-preview" in enrollment_request_smoke_text, "Next enrollment smoke must exercise policy preview through /api/mis")
     require("/api/mis/agent-gateway/enrollment/request" in enrollment_request_smoke_text, "Next enrollment smoke must exercise approval-gated request through /api/mis")
+    require('AGENTOPS_EDITION"] = "team_governance"' in enrollment_request_smoke_text and '"backend_edition": "team_governance"' in enrollment_request_smoke_text, "Next enrollment request smoke must run approval request flow against a Team Governance entitlement fixture")
     require("/workspace/agents/enrollment-request" in enrollment_request_smoke_text, "Next enrollment smoke must exercise the form fallback")
     require("enrollment_token_issue_not_allowed_next_parity" in enrollment_request_smoke_text, "Next enrollment smoke must prove raw token issue routes fail closed")
     require("invalid_scopes" in enrollment_request_smoke_text, "Next enrollment smoke must prove invalid scopes fail closed before backend filtering")

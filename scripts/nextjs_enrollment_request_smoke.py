@@ -121,12 +121,16 @@ def main() -> int:
             reset_env = os.environ.copy()
             reset_env["AGENTOPS_DB_PATH"] = db_path
             reset_env["AGENTOPS_BASE_URL"] = api_base
+            reset_env["AGENTOPS_EDITION"] = "team_governance"
+            reset_env.pop("AGENTOPS_ENTITLEMENTS_PATH", None)
             reset = run(["python3", "server.py", "--host", "127.0.0.1", "--port", str(api_port), "--reset"], env=reset_env, timeout=30)
             require(reset.returncode == 0, f"seed reset failed: {reset.stderr or reset.stdout}")
 
             api_env = os.environ.copy()
             api_env["AGENTOPS_DB_PATH"] = db_path
             api_env["AGENTOPS_BASE_URL"] = api_base
+            api_env["AGENTOPS_EDITION"] = "team_governance"
+            api_env.pop("AGENTOPS_ENTITLEMENTS_PATH", None)
             api_proc = start_process(["python3", "server.py", "--host", "127.0.0.1", "--port", str(api_port)], cwd=ROOT, env=api_env)
             processes.append(api_proc)
             wait_http(f"{api_base}/api/dashboard/metrics")
@@ -253,6 +257,7 @@ def main() -> int:
                 "blocked_token_route": "/api/mis/agent-gateway/enrollment/create",
                 "blocked_issue_route": "/api/mis/agent-gateway/enrollment/issue-approved",
                 "form_route": "/workspace/agents/enrollment-request",
+                "backend_edition": "team_governance",
                 "preview_status": preview_status,
                 "invalid_preview_status": invalid_preview_status,
                 "blocked_status": blocked_status,
