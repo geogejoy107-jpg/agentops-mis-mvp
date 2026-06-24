@@ -64,6 +64,9 @@ def main() -> int:
     require(packet.get("current_evidence_status_command") == "python3 scripts/commercial_current_evidence_status.py", "current evidence status command mismatch")
     require(packet.get("current_evidence_status_verification_command") == "python3 scripts/commercial_current_evidence_status_smoke.py", "current evidence status verification command mismatch")
     require(packet.get("current_evidence_status_contract_id") == "commercial_current_evidence_status_v1", "current evidence status contract mismatch")
+    require(packet.get("evidence_receipts_command") == "python3 scripts/commercial_evidence_receipts.py", "evidence receipts command mismatch")
+    require(packet.get("evidence_receipts_verification_command") == "python3 scripts/commercial_evidence_receipts_smoke.py", "evidence receipts verification command mismatch")
+    require(packet.get("evidence_receipts_contract_id") == "commercial_evidence_receipts_v1", "evidence receipts contract mismatch")
     require(packet.get("release_complete") is False, "release entry point must not claim completion")
     require(REQUIRED_GATE5_COMMANDS <= set(packet.get("gate_5_required_commands") or []), "release packet misses Gate 5 commands")
     require(REQUIRED_GATE5_CONTRACTS <= set(packet.get("gate_5_required_contracts") or []), "release packet misses Gate 5 contracts")
@@ -91,6 +94,9 @@ def main() -> int:
     require("commercial_handoff_status_smoke.py" in doc, "release packet doc must list handoff status smoke")
     require("commercial_current_evidence_status.py" in doc, "release packet doc must list current evidence status command")
     require("commercial_current_evidence_status_smoke.py" in doc, "release packet doc must list current evidence status smoke")
+    require("commercial_evidence_receipts.py" in doc, "release packet doc must list evidence receipts command")
+    require("commercial_evidence_receipts_smoke.py" in doc, "release packet doc must list evidence receipts smoke")
+    require("commercial_evidence_receipts_v1" in doc, "release packet doc must name evidence receipts contract")
     for command in REQUIRED_GATE5_COMMANDS:
         require(command in doc, f"release packet doc missing {command}")
 

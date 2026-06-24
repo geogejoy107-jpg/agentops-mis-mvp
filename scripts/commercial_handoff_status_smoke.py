@@ -18,6 +18,7 @@ CONTRACT_ID = "commercial_handoff_status_v1"
 
 REQUIRED_STRINGS = {
     "commercial_handoff_status_v1",
+    "commercial_evidence_receipts_v1",
     "commercial_current_evidence_status_v1",
     "commercial_release_evidence_packet_v1",
     "release_evidence_packet_v1",
@@ -32,7 +33,12 @@ REQUIRED_STRINGS = {
     "explicit_blockers",
     "required_commands",
     "current_evidence_status",
+    "gates_with_local_receipts",
+    "gates_with_release_grade_receipts",
+    "local_receipts_complete_exact_head_required",
     "phase_gate_statuses",
+    "python3 scripts/commercial_evidence_receipts.py",
+    "python3 scripts/commercial_evidence_receipts_smoke.py",
     "python3 scripts/commercial_handoff_status.py",
     "python3 scripts/commercial_handoff_status_smoke.py",
     "python3 scripts/commercial_current_evidence_status.py",
@@ -50,7 +56,9 @@ REQUIRED_SOURCES = {
     "docs/COMMERCIAL_HANDOFF_STATUS.md": REQUIRED_STRINGS,
     "scripts/commercial_handoff_status.py": {
         "commercial_handoff_status_v1",
+        "commercial_evidence_receipts_v1",
         "commercial_current_evidence_status_v1",
+        "gates_with_local_receipts",
         "commercial_handoff_allowed",
         "release_complete",
         "ready_to_merge",
@@ -61,35 +69,65 @@ REQUIRED_SOURCES = {
         "--require-handoff-ready",
     },
     "docs/COMMERCIAL_RELEASE_EVIDENCE_PACKET.json": {
+        "python3 scripts/commercial_evidence_receipts.py",
+        "python3 scripts/commercial_evidence_receipts_smoke.py",
         "python3 scripts/commercial_handoff_status.py",
         "python3 scripts/commercial_handoff_status_smoke.py",
         "python3 scripts/commercial_current_evidence_status.py",
         "python3 scripts/commercial_current_evidence_status_smoke.py",
     },
     "docs/RELEASE_EVIDENCE_PACKET.json": {
+        "evidence_receipts_command",
         "handoff_status_command",
         "current_evidence_status_command",
+        "commercial_evidence_receipts_v1",
         "commercial_current_evidence_status_v1",
+        "python3 scripts/commercial_evidence_receipts.py",
+        "python3 scripts/commercial_evidence_receipts_smoke.py",
         "python3 scripts/commercial_handoff_status.py",
         "python3 scripts/commercial_handoff_status_smoke.py",
     },
     "docs/RELEASE_FREEZE_PROTOCOL.json": {
+        "commercial_evidence_receipts_v1",
+        "python3 scripts/commercial_evidence_receipts_smoke.py",
         "commercial_current_evidence_status_v1",
         "python3 scripts/commercial_current_evidence_status_smoke.py",
         "commercial_handoff_status_v1",
         "python3 scripts/commercial_handoff_status_smoke.py",
     },
     "docs/MERGE_READINESS_STATUS.json": {
+        "commercial_evidence_receipts_v1",
+        "python3 scripts/commercial_evidence_receipts_smoke.py",
         "commercial_current_evidence_status_v1",
         "python3 scripts/commercial_current_evidence_status_smoke.py",
         "commercial_handoff_status_v1",
         "python3 scripts/commercial_handoff_status_smoke.py",
     },
     "docs/COMMERCIAL_CURRENT_EVIDENCE_STATUS.json": {
+        "commercial_evidence_receipts_v1",
         "commercial_current_evidence_status_v1",
         "phase_gate_evidence_statuses",
         "gates_requiring_current_evidence",
+        "gates_with_local_receipts",
         "current_evidence_required",
+    },
+    "docs/COMMERCIAL_EVIDENCE_RECEIPTS.json": {
+        "commercial_evidence_receipts_v1",
+        "partial_local_receipts_not_release_complete",
+        "gate_5_byoc_enterprise_deployment",
+    },
+    "docs/COMMERCIAL_EVIDENCE_RECEIPTS.md": {
+        "commercial_evidence_receipts_v1",
+        "commercial_evidence_receipts.py",
+        "commercial_evidence_receipts_smoke.py",
+    },
+    "scripts/commercial_evidence_receipts.py": {
+        "commercial_evidence_receipts_v1",
+        "--require-release-grade",
+    },
+    "scripts/commercial_evidence_receipts_smoke.py": {
+        "commercial_evidence_receipts_v1",
+        "release_grade_current",
     },
     "docs/COMMERCIAL_CURRENT_EVIDENCE_STATUS.md": {
         "commercial_current_evidence_status_v1",
@@ -97,18 +135,25 @@ REQUIRED_SOURCES = {
         "commercial_current_evidence_status_smoke.py",
     },
     "scripts/commercial_current_evidence_status.py": {
+        "commercial_evidence_receipts_v1",
         "commercial_current_evidence_status_v1",
         "phase_gate_evidence_statuses",
         "gates_requiring_current_evidence",
+        "local_receipt_current",
     },
     "scripts/commercial_current_evidence_status_smoke.py": {
+        "commercial_evidence_receipts_v1",
         "commercial_current_evidence_status_v1",
+        "gates_with_local_receipts",
         "current_evidence_required",
     },
     "scripts/commercial_migration_readiness.py": {
         "commercial_handoff_status_surface_exists",
+        "commercial_evidence_receipts_surface_exists",
         "commercial_handoff_status_v1",
+        "commercial_evidence_receipts_v1",
         "commercial_current_evidence_status_v1",
+        "commercial_evidence_receipts_smoke.py",
         "commercial_handoff_status_smoke.py",
     },
 }
@@ -194,6 +239,11 @@ def main() -> int:
     require(evidence.get("contract") == "commercial_current_evidence_status_v1", "current evidence contract missing from handoff payload")
     require(evidence.get("status") == "current_evidence_required", "current evidence status mismatch")
     require("gate_5_byoc_enterprise_deployment" in set(evidence.get("gates_requiring_current_evidence") or []), "current evidence Gate 5 gap missing")
+    require(evidence.get("gates_with_local_receipts") == ["gate_5_byoc_enterprise_deployment"], "handoff local receipt summary mismatch")
+    require(evidence.get("gates_with_release_grade_receipts") == [], "handoff release-grade receipt summary mismatch")
+    require(evidence.get("exact_head_ci_verified") is False, "handoff exact-head CI must remain false")
+    require(evidence.get("remote_sync_verified") is False, "handoff remote sync must remain false")
+    require(evidence.get("clean_worktree_verified") is False, "handoff clean worktree must remain false")
 
     if args.require_handoff_ready:
         require(payload.get("commercial_handoff_allowed") is True, "commercial handoff is not allowed")

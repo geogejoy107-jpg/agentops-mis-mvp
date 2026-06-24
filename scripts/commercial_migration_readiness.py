@@ -172,6 +172,8 @@ def main() -> int:
         "docs/RELEASE_FREEZE_PROTOCOL.json",
         "docs/MERGE_READINESS_STATUS.md",
         "docs/MERGE_READINESS_STATUS.json",
+        "docs/COMMERCIAL_EVIDENCE_RECEIPTS.md",
+        "docs/COMMERCIAL_EVIDENCE_RECEIPTS.json",
         "docs/COMMERCIAL_CURRENT_EVIDENCE_STATUS.md",
         "docs/COMMERCIAL_CURRENT_EVIDENCE_STATUS.json",
         "docs/COMMERCIAL_HANDOFF_STATUS.md",
@@ -728,6 +730,7 @@ def main() -> int:
         check(
             "commercial_handoff_status_surface_exists",
             file_contains("docs/COMMERCIAL_HANDOFF_STATUS.json", "commercial_handoff_status_v1")
+            and file_contains("docs/COMMERCIAL_HANDOFF_STATUS.json", "commercial_evidence_receipts_v1")
             and file_contains("docs/COMMERCIAL_HANDOFF_STATUS.json", "commercial_current_evidence_status_v1")
             and file_contains("docs/COMMERCIAL_HANDOFF_STATUS.json", "commercial_release_evidence_packet_v1")
             and file_contains("docs/COMMERCIAL_HANDOFF_STATUS.json", "release_evidence_packet_v1")
@@ -735,8 +738,11 @@ def main() -> int:
             and file_contains("docs/COMMERCIAL_HANDOFF_STATUS.json", "merge_readiness_status_v1")
             and file_contains("docs/COMMERCIAL_HANDOFF_STATUS.json", "phase_gate_statuses")
             and file_contains("docs/COMMERCIAL_HANDOFF_STATUS.json", "current_evidence_status")
+            and file_contains("docs/COMMERCIAL_HANDOFF_STATUS.json", "gates_with_local_receipts")
             and file_contains("docs/COMMERCIAL_HANDOFF_STATUS.json", "explicit_blockers")
             and file_contains("docs/COMMERCIAL_HANDOFF_STATUS.json", "required_commands")
+            and file_contains("docs/COMMERCIAL_HANDOFF_STATUS.json", "python3 scripts/commercial_evidence_receipts.py")
+            and file_contains("docs/COMMERCIAL_HANDOFF_STATUS.json", "python3 scripts/commercial_evidence_receipts_smoke.py")
             and file_contains("docs/COMMERCIAL_HANDOFF_STATUS.json", "python3 scripts/commercial_current_evidence_status.py")
             and file_contains("docs/COMMERCIAL_HANDOFF_STATUS.json", "python3 scripts/commercial_current_evidence_status_smoke.py")
             and file_contains("docs/COMMERCIAL_HANDOFF_STATUS.json", "python3 scripts/commercial_handoff_status.py")
@@ -749,22 +755,53 @@ def main() -> int:
             and file_contains("docs/MERGE_READINESS_STATUS.json", "commercial_handoff_status_v1")
             and file_contains("docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md", "commercial_handoff_status_v1")
             and file_contains("scripts/commercial_handoff_status.py", "commercial_handoff_status_v1")
+            and file_contains("scripts/commercial_handoff_status.py", "commercial_evidence_receipts_v1")
             and file_contains("scripts/commercial_handoff_status.py", "--require-handoff-ready")
             and file_contains("scripts/commercial_handoff_status_smoke.py", "commercial_handoff_status_v1")
+            and file_contains("scripts/commercial_handoff_status_smoke.py", "commercial_evidence_receipts_v1")
             and file_contains("scripts/commercial_handoff_status_smoke.py", "phase_gate_statuses")
             and (ROOT / "scripts" / "commercial_handoff_status.py").exists()
             and (ROOT / "scripts" / "commercial_handoff_status_smoke.py").exists(),
             "Commercial handoff status gives operators one CI-safe command for current gate states, blockers, and required evidence",
         ),
         check(
+            "commercial_evidence_receipts_surface_exists",
+            file_contains("docs/COMMERCIAL_EVIDENCE_RECEIPTS.json", "commercial_evidence_receipts_v1")
+            and file_contains("docs/COMMERCIAL_EVIDENCE_RECEIPTS.json", "partial_local_receipts_not_release_complete")
+            and file_contains("docs/COMMERCIAL_EVIDENCE_RECEIPTS.json", "local_receipts_complete_exact_head_required")
+            and file_contains("docs/COMMERCIAL_EVIDENCE_RECEIPTS.json", "gate_5_byoc_enterprise_deployment")
+            and file_contains("docs/COMMERCIAL_EVIDENCE_RECEIPTS.md", "commercial_evidence_receipts_v1")
+            and file_contains("docs/COMMERCIAL_EVIDENCE_RECEIPTS.md", "commercial_evidence_receipts_smoke.py")
+            and file_contains("docs/COMMERCIAL_CURRENT_EVIDENCE_STATUS.json", "gates_with_local_receipts")
+            and file_contains("docs/COMMERCIAL_CURRENT_EVIDENCE_STATUS.json", "release_grade_current")
+            and file_contains("docs/COMMERCIAL_HANDOFF_STATUS.json", "gates_with_local_receipts")
+            and file_contains("docs/RELEASE_EVIDENCE_PACKET.json", "evidence_receipts_contract_id")
+            and file_contains("docs/RELEASE_FREEZE_PROTOCOL.json", "commercial_evidence_receipts_v1")
+            and file_contains("docs/MERGE_READINESS_STATUS.json", "commercial_evidence_receipts_v1")
+            and file_contains("docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md", "commercial_evidence_receipts_v1")
+            and file_contains("scripts/commercial_evidence_receipts.py", "commercial_evidence_receipts_v1")
+            and file_contains("scripts/commercial_evidence_receipts.py", "--require-release-grade")
+            and file_contains("scripts/commercial_evidence_receipts_smoke.py", "commercial_evidence_receipts_v1")
+            and file_contains("scripts/commercial_evidence_receipts_smoke.py", "release_grade_current")
+            and (ROOT / "scripts" / "commercial_evidence_receipts.py").exists()
+            and (ROOT / "scripts" / "commercial_evidence_receipts_smoke.py").exists(),
+            "Commercial evidence receipts record local hash/ref-only Gate 5 evidence while keeping release-grade, handoff, and merge states false",
+        ),
+        check(
             "commercial_current_evidence_status_surface_exists",
             file_contains("docs/COMMERCIAL_CURRENT_EVIDENCE_STATUS.json", "commercial_current_evidence_status_v1")
+            and file_contains("docs/COMMERCIAL_CURRENT_EVIDENCE_STATUS.json", "commercial_evidence_receipts_v1")
             and file_contains("docs/COMMERCIAL_CURRENT_EVIDENCE_STATUS.json", "current_evidence_required")
             and file_contains("docs/COMMERCIAL_CURRENT_EVIDENCE_STATUS.json", "phase_gate_evidence_statuses")
             and file_contains("docs/COMMERCIAL_CURRENT_EVIDENCE_STATUS.json", "gates_requiring_current_evidence")
+            and file_contains("docs/COMMERCIAL_CURRENT_EVIDENCE_STATUS.json", "gates_with_local_receipts")
+            and file_contains("docs/COMMERCIAL_CURRENT_EVIDENCE_STATUS.json", "local_receipt_current")
+            and file_contains("docs/COMMERCIAL_CURRENT_EVIDENCE_STATUS.json", "release_grade_current")
             and file_contains("docs/COMMERCIAL_CURRENT_EVIDENCE_STATUS.json", "heavy_evidence_not_executed_by_default")
             and file_contains("docs/COMMERCIAL_CURRENT_EVIDENCE_STATUS.json", "gate_5_byoc_enterprise_deployment")
             and file_contains("docs/COMMERCIAL_CURRENT_EVIDENCE_STATUS.md", "commercial_current_evidence_status_v1")
+            and file_contains("docs/COMMERCIAL_CURRENT_EVIDENCE_STATUS.md", "commercial_evidence_receipts_v1")
+            and file_contains("docs/COMMERCIAL_CURRENT_EVIDENCE_STATUS.md", "commercial_evidence_receipts_smoke.py")
             and file_contains("docs/COMMERCIAL_CURRENT_EVIDENCE_STATUS.md", "commercial_current_evidence_status_smoke.py")
             and file_contains("docs/COMMERCIAL_RELEASE_EVIDENCE_PACKET.json", "commercial_current_evidence_status_smoke.py")
             and file_contains("docs/RELEASE_EVIDENCE_PACKET.json", "current_evidence_status_contract_id")
@@ -772,8 +809,11 @@ def main() -> int:
             and file_contains("docs/MERGE_READINESS_STATUS.json", "commercial_current_evidence_status_v1")
             and file_contains("docs/COMMERCIAL_MIGRATION_CLOSED_LOOP.md", "commercial_current_evidence_status_v1")
             and file_contains("scripts/commercial_current_evidence_status.py", "commercial_current_evidence_status_v1")
+            and file_contains("scripts/commercial_current_evidence_status.py", "commercial_evidence_receipts_v1")
+            and file_contains("scripts/commercial_current_evidence_status.py", "local_receipt_current")
             and file_contains("scripts/commercial_current_evidence_status.py", "--require-current-evidence")
             and file_contains("scripts/commercial_current_evidence_status_smoke.py", "commercial_current_evidence_status_v1")
+            and file_contains("scripts/commercial_current_evidence_status_smoke.py", "commercial_evidence_receipts_v1")
             and file_contains("scripts/commercial_current_evidence_status_smoke.py", "gates_requiring_current_evidence")
             and (ROOT / "scripts" / "commercial_current_evidence_status.py").exists()
             and (ROOT / "scripts" / "commercial_current_evidence_status_smoke.py").exists(),
@@ -1244,6 +1284,7 @@ def main() -> int:
             "status": "started",
             "verify": [
                 "python3 scripts/nextjs_parity_smoke.py",
+                "python3 scripts/commercial_evidence_receipts_smoke.py",
                 "python3 scripts/commercial_current_evidence_status_smoke.py",
                 "python3 scripts/commercial_handoff_status_smoke.py",
                 "python3 scripts/release_evidence_packet_smoke.py",
@@ -1289,6 +1330,7 @@ def main() -> int:
             "verify": [
                 "Postgres container parity smoke",
                 "Postgres ledger acceptance",
+                "python3 scripts/commercial_evidence_receipts_smoke.py",
                 "python3 scripts/commercial_current_evidence_status_smoke.py",
                 "python3 scripts/commercial_handoff_status_smoke.py",
                 "python3 scripts/release_evidence_packet_smoke.py",

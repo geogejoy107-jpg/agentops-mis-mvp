@@ -611,10 +611,16 @@ Must be true:
   `phase_gate_statuses`, `explicit_blockers`, and `required_commands` through
   `python3 scripts/commercial_handoff_status.py`; verify the surface with
   `python3 scripts/commercial_handoff_status_smoke.py`.
+- `commercial_evidence_receipts_v1` is the local hash/ref-only receipt ledger
+  for verified commands. Gate 5 can have local receipts while still not being
+  release-grade until exact-head CI, remote sync, clean worktree, and all phase
+  gates are current. Verify it with
+  `python3 scripts/commercial_evidence_receipts_smoke.py`.
 - `commercial_current_evidence_status_v1` is the evidence coverage layer under
-  the handoff aggregate. It reports per-gate `evidence_current` state,
-  `gates_requiring_current_evidence`, heavy/live evidence classes, and forbidden
-  evidence without executing Docker, browser, Postgres, or live runtime checks.
+  the handoff aggregate. It reports per-gate `evidence_current`,
+  `local_receipt_current`, `gates_requiring_current_evidence`, heavy/live
+  evidence classes, and forbidden evidence without executing Docker, browser,
+  Postgres, or live runtime checks.
   Verify with `python3 scripts/commercial_current_evidence_status_smoke.py`.
 - `release_freeze_protocol_v1` keeps commercial handoff in
   `freeze_active_not_release_complete`, and `merge_readiness_status_v1` keeps

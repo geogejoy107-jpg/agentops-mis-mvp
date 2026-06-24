@@ -8,6 +8,7 @@
   "commercial_handoff_allowed": false,
   "ready_to_merge": false,
   "source_packets": [
+    "docs/COMMERCIAL_EVIDENCE_RECEIPTS.json",
     "docs/COMMERCIAL_RELEASE_EVIDENCE_PACKET.json",
     "docs/RELEASE_EVIDENCE_PACKET.json",
     "docs/RELEASE_FREEZE_PROTOCOL.json",
@@ -35,7 +36,21 @@
     "postgres_required": true,
     "browser_required": true,
     "real_runtime_required": true,
-    "heavy_evidence_not_executed_by_default": true
+    "heavy_evidence_not_executed_by_default": true,
+    "gates_with_local_receipts": [
+      "gate_5_byoc_enterprise_deployment"
+    ],
+    "gates_with_release_grade_receipts": [],
+    "gates_missing_local_receipts": [
+      "gate_1_product_packaging_and_entitlement",
+      "gate_2_production_safety_baseline",
+      "gate_3_storage_boundary_before_postgres",
+      "gate_4_ui_api_parity_before_nextjs"
+    ],
+    "gate_5_local_receipt_commands": 7,
+    "exact_head_ci_verified": false,
+    "remote_sync_verified": false,
+    "clean_worktree_verified": false
   },
   "phase_gate_evidence_statuses": [
     {
@@ -43,6 +58,9 @@
       "packet_status": "ready",
       "evidence_current": true,
       "evidence_state": "static_contract_current",
+      "local_receipt_current": false,
+      "release_grade_current": false,
+      "receipt_state": "not_required_static_gate",
       "required_commands": [
         "python3 scripts/commercial_migration_readiness.py",
         "git diff --check"
@@ -57,6 +75,9 @@
       "packet_status": "evidence_required",
       "evidence_current": false,
       "evidence_state": "current_evidence_required",
+      "local_receipt_current": false,
+      "release_grade_current": false,
+      "receipt_state": "missing_local_receipts",
       "required_commands": [
         "python3 scripts/commercial_entitlements_smoke.py",
         "python3 scripts/team_entitlement_enrollment_smoke.py",
@@ -73,6 +94,9 @@
       "packet_status": "evidence_required",
       "evidence_current": false,
       "evidence_state": "current_evidence_required",
+      "local_receipt_current": false,
+      "release_grade_current": false,
+      "receipt_state": "missing_local_receipts",
       "required_commands": [
         "python3 scripts/production_auth_fail_closed_smoke.py --configured-production-fixture",
         "python3 scripts/security_production_readiness_smoke.py --configured-production-fixture",
@@ -94,6 +118,9 @@
       "packet_status": "evidence_required",
       "evidence_current": false,
       "evidence_state": "current_evidence_required",
+      "local_receipt_current": false,
+      "release_grade_current": false,
+      "receipt_state": "missing_local_receipts",
       "required_commands": [
         "python3 scripts/storage_boundary_sqlite_smoke.py",
         "python3 scripts/storage_postgres_contract_smoke.py",
@@ -122,6 +149,9 @@
       "packet_status": "started",
       "evidence_current": false,
       "evidence_state": "current_evidence_required",
+      "local_receipt_current": false,
+      "release_grade_current": false,
+      "receipt_state": "missing_local_receipts",
       "required_commands": [
         "python3 scripts/nextjs_parity_smoke.py",
         "python3 scripts/ui_api_parity_matrix_smoke.py",
@@ -142,7 +172,10 @@
       "id": "gate_5_byoc_enterprise_deployment",
       "packet_status": "evidence_required",
       "evidence_current": false,
-      "evidence_state": "current_evidence_required",
+      "evidence_state": "local_receipts_complete_exact_head_required",
+      "local_receipt_current": true,
+      "release_grade_current": false,
+      "receipt_state": "local_receipts_complete_exact_head_required",
       "required_commands": [
         "python3 scripts/audit_retention_policy_smoke.py",
         "python3 scripts/audit_retention_controls_smoke.py --configured-fixture",
@@ -166,6 +199,8 @@
     }
   ],
   "required_commands": [
+    "python3 scripts/commercial_evidence_receipts.py",
+    "python3 scripts/commercial_evidence_receipts_smoke.py",
     "python3 scripts/commercial_current_evidence_status.py",
     "python3 scripts/commercial_current_evidence_status_smoke.py",
     "python3 scripts/commercial_handoff_status.py",
@@ -181,6 +216,7 @@
     "HERMES_ALLOW_REAL_RUN=true python3 scripts/local_runtime_acceptance.py --live-openclaw --live-hermes --require-hermes-api"
   ],
   "required_contracts": [
+    "commercial_evidence_receipts_v1",
     "commercial_current_evidence_status_v1",
     "commercial_handoff_status_v1",
     "commercial_release_evidence_packet_v1",

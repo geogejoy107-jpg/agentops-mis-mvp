@@ -39,6 +39,11 @@ SOURCE_SPECS = [
         "expected_status": "blocked_release_evidence_required",
     },
     {
+        "path": "docs/COMMERCIAL_EVIDENCE_RECEIPTS.json",
+        "contract_id": "commercial_evidence_receipts_v1",
+        "expected_status": "partial_local_receipts_not_release_complete",
+    },
+    {
         "path": "docs/COMMERCIAL_CURRENT_EVIDENCE_STATUS.json",
         "contract_id": "commercial_current_evidence_status_v1",
         "expected_status": "current_evidence_required",
@@ -109,6 +114,8 @@ def build_payload() -> dict[str, Any]:
     required_commands = [
         "python3 scripts/commercial_handoff_status.py",
         "python3 scripts/commercial_handoff_status_smoke.py",
+        "python3 scripts/commercial_evidence_receipts.py",
+        "python3 scripts/commercial_evidence_receipts_smoke.py",
         "python3 scripts/commercial_current_evidence_status.py",
         "python3 scripts/commercial_current_evidence_status_smoke.py",
     ]
@@ -124,7 +131,7 @@ def build_payload() -> dict[str, Any]:
     extend_unique(required_commands, freeze.get("required_freeze_commands") or [])
     extend_unique(required_commands, merge.get("required_before_ready") or [])
 
-    required_contracts = [CONTRACT_ID, "commercial_current_evidence_status_v1"]
+    required_contracts = [CONTRACT_ID, "commercial_evidence_receipts_v1", "commercial_current_evidence_status_v1"]
     for spec in SOURCE_SPECS:
         append_unique(required_contracts, spec["contract_id"])
     extend_unique(required_contracts, release.get("gate_5_required_contracts") or [])
@@ -159,6 +166,12 @@ def build_payload() -> dict[str, Any]:
             "status": current_evidence.get("status"),
             "gates_requiring_current_evidence": (current_evidence.get("evidence_summary") or {}).get("gates_requiring_current_evidence") or [],
             "heavy_evidence_not_executed_by_default": (current_evidence.get("evidence_summary") or {}).get("heavy_evidence_not_executed_by_default"),
+            "gates_with_local_receipts": (current_evidence.get("evidence_summary") or {}).get("gates_with_local_receipts") or [],
+            "gates_with_release_grade_receipts": (current_evidence.get("evidence_summary") or {}).get("gates_with_release_grade_receipts") or [],
+            "gates_missing_local_receipts": (current_evidence.get("evidence_summary") or {}).get("gates_missing_local_receipts") or [],
+            "exact_head_ci_verified": (current_evidence.get("evidence_summary") or {}).get("exact_head_ci_verified"),
+            "remote_sync_verified": (current_evidence.get("evidence_summary") or {}).get("remote_sync_verified"),
+            "clean_worktree_verified": (current_evidence.get("evidence_summary") or {}).get("clean_worktree_verified"),
         },
         "explicit_blockers": list(merge.get("explicit_blockers") or []),
         "required_commands": required_commands,

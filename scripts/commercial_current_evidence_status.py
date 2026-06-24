@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,7 @@ CONTRACT_ID = "commercial_current_evidence_status_v1"
 STATUS_PATH = ROOT / "docs" / "COMMERCIAL_CURRENT_EVIDENCE_STATUS.json"
 
 SOURCE_SPECS = [
+    ("docs/COMMERCIAL_EVIDENCE_RECEIPTS.json", "commercial_evidence_receipts_v1", "partial_local_receipts_not_release_complete"),
     ("docs/COMMERCIAL_RELEASE_EVIDENCE_PACKET.json", "commercial_release_evidence_packet_v1", "gate_enforced_not_release_complete"),
     ("docs/RELEASE_EVIDENCE_PACKET.json", "release_evidence_packet_v1", "delegates_to_commercial_release_evidence_packet"),
     ("docs/RELEASE_FREEZE_PROTOCOL.json", "release_freeze_protocol_v1", "freeze_active_not_release_complete"),
@@ -50,6 +52,19 @@ def extend_unique(items: list[str], values: list[Any] | tuple[Any, ...] | set[An
         append_unique(items, str(value))
 
 
+def git_output(*args: str) -> str:
+    proc = subprocess.run(
+        ["git", *args],
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=30,
+        check=False,
+    )
+    return (proc.stdout or proc.stderr).strip()
+
+
 def command_classes(gate_id: str, commands: list[str]) -> list[str]:
     if gate_id in GATE_EVIDENCE_CLASSES:
         return list(GATE_EVIDENCE_CLASSES[gate_id])
@@ -82,16 +97,46 @@ def source_payloads() -> list[dict[str, Any]]:
     return sources
 
 
+def receipt_commands(receipt: dict[str, Any]) -> list[str]:
+    return [
+        str(item.get("command"))
+        for item in receipt.get("commands") or []
+        if isinstance(item, dict)
+    ]
+
+
+def receipt_commands_passed(receipt: dict[str, Any], required_commands: list[str]) -> bool:
+    commands = {
+        str(item.get("command"))
+        for item in receipt.get("commands") or []
+        if isinstance(item, dict) and item.get("status") == "passed"
+    }
+    return set(required_commands).issubset(commands)
+
+
 def build_payload() -> dict[str, Any]:
     static_status = read_json("docs/COMMERCIAL_CURRENT_EVIDENCE_STATUS.json")
     require(static_status.get("contract_id") == CONTRACT_ID, "current evidence status contract mismatch")
 
+    receipts = read_json("docs/COMMERCIAL_EVIDENCE_RECEIPTS.json")
     commercial = read_json("docs/COMMERCIAL_RELEASE_EVIDENCE_PACKET.json")
     release = read_json("docs/RELEASE_EVIDENCE_PACKET.json")
     freeze = read_json("docs/RELEASE_FREEZE_PROTOCOL.json")
     merge = read_json("docs/MERGE_READINESS_STATUS.json")
 
     source_packets = source_payloads()
+    receipt_summary = receipts.get("receipt_summary") or {}
+    release_grade_invariants_ready = (
+        receipt_summary.get("exact_head_ci_verified") is True
+        and receipt_summary.get("remote_sync_verified") is True
+        and receipt_summary.get("clean_worktree_verified") is True
+    )
+    current_head = git_output("rev-parse", "--short", "HEAD")
+    receipt_map = {
+        str(item.get("gate_id")): item
+        for item in receipts.get("phase_gate_receipts") or []
+        if isinstance(item, dict)
+    }
     gates: list[dict[str, Any]] = []
     for gate in commercial.get("phase_gate_evidence") or []:
         if not isinstance(gate, dict):
@@ -99,13 +144,35 @@ def build_payload() -> dict[str, Any]:
         gate_id = str(gate.get("id"))
         packet_status = str(gate.get("status"))
         commands = [str(command) for command in gate.get("required_commands") or []]
-        evidence_current = packet_status == "ready"
-        evidence_state = "static_contract_current" if evidence_current else "current_evidence_required"
+        receipt = receipt_map.get(gate_id) or {}
+        receipt_complete = bool(receipt) and receipt_commands_passed(receipt, commands)
+        local_receipt_current = bool(receipt.get("local_receipt_current") is True and receipt_complete)
+        receipt_release_grade_claim = bool(receipt.get("release_grade_current") is True)
+        if receipt_release_grade_claim:
+            require(release_grade_invariants_ready, f"{gate_id} release-grade receipt lacks exact-head/remote/clean proof")
+            require(str(receipt.get("verified_head")) == current_head, f"{gate_id} release-grade receipt is not for current HEAD")
+        release_grade_current = bool(local_receipt_current and receipt_release_grade_claim and release_grade_invariants_ready)
+        evidence_current = packet_status == "ready" or release_grade_current
+        if packet_status == "ready":
+            evidence_state = "static_contract_current"
+            receipt_state = "not_required_static_gate"
+        elif release_grade_current:
+            evidence_state = "release_grade_receipt_current"
+            receipt_state = str(receipt.get("receipt_state") or "release_grade_receipt_current")
+        elif local_receipt_current:
+            evidence_state = "local_receipts_complete_exact_head_required"
+            receipt_state = str(receipt.get("receipt_state") or "local_receipts_complete_exact_head_required")
+        else:
+            evidence_state = "current_evidence_required"
+            receipt_state = str(receipt.get("receipt_state") or "missing_local_receipts")
         item = {
             "id": gate_id,
             "packet_status": packet_status,
             "evidence_current": evidence_current,
             "evidence_state": evidence_state,
+            "local_receipt_current": local_receipt_current,
+            "release_grade_current": release_grade_current,
+            "receipt_state": receipt_state,
             "required_commands": commands,
             "required_contracts": [str(contract) for contract in gate.get("required_contracts") or []],
             "evidence_classes": command_classes(gate_id, commands),
@@ -118,6 +185,8 @@ def build_payload() -> dict[str, Any]:
 
     gates_requiring_current_evidence = [gate["id"] for gate in gates if not gate["evidence_current"]]
     required_commands = [
+        "python3 scripts/commercial_evidence_receipts.py",
+        "python3 scripts/commercial_evidence_receipts_smoke.py",
         "python3 scripts/commercial_current_evidence_status.py",
         "python3 scripts/commercial_current_evidence_status_smoke.py",
     ]
@@ -127,7 +196,7 @@ def build_payload() -> dict[str, Any]:
     extend_unique(required_commands, freeze.get("required_freeze_commands") or [])
     extend_unique(required_commands, merge.get("required_before_ready") or [])
 
-    required_contracts = [CONTRACT_ID]
+    required_contracts = ["commercial_evidence_receipts_v1", CONTRACT_ID, "commercial_handoff_status_v1"]
     for _, contract_id, _ in SOURCE_SPECS:
         append_unique(required_contracts, contract_id)
     extend_unique(required_contracts, release.get("gate_5_required_contracts") or [])
@@ -153,6 +222,13 @@ def build_payload() -> dict[str, Any]:
         "browser_required": any(gate["browser_required"] for gate in gates),
         "real_runtime_required": any(gate["real_runtime_required"] for gate in gates),
         "heavy_evidence_not_executed_by_default": True,
+        "gates_with_local_receipts": list((receipts.get("receipt_summary") or {}).get("gates_with_local_receipts") or []),
+        "gates_with_release_grade_receipts": list((receipts.get("receipt_summary") or {}).get("gates_with_release_grade_receipts") or []),
+        "gates_missing_local_receipts": list((receipts.get("receipt_summary") or {}).get("gates_missing_local_receipts") or []),
+        "gate_5_local_receipt_commands": (receipts.get("receipt_summary") or {}).get("gate_5_local_receipt_commands"),
+        "exact_head_ci_verified": (receipts.get("receipt_summary") or {}).get("exact_head_ci_verified"),
+        "remote_sync_verified": (receipts.get("receipt_summary") or {}).get("remote_sync_verified"),
+        "clean_worktree_verified": (receipts.get("receipt_summary") or {}).get("clean_worktree_verified"),
     }
 
     payload = {
@@ -177,7 +253,18 @@ def build_payload() -> dict[str, Any]:
     require(static_status.get("release_complete") is release_complete, "static release-complete state mismatch")
     require(static_status.get("commercial_handoff_allowed") is commercial_handoff_allowed, "static handoff state mismatch")
     require(static_status.get("ready_to_merge") is ready_to_merge, "static merge state mismatch")
-    require((static_status.get("evidence_summary") or {}).get("gates_requiring_current_evidence") == gates_requiring_current_evidence, "static evidence gap list mismatch")
+    static_summary = static_status.get("evidence_summary") or {}
+    for key in [
+        "gates_requiring_current_evidence",
+        "gates_with_local_receipts",
+        "gates_with_release_grade_receipts",
+        "gates_missing_local_receipts",
+        "gate_5_local_receipt_commands",
+        "exact_head_ci_verified",
+        "remote_sync_verified",
+        "clean_worktree_verified",
+    ]:
+        require(static_summary.get(key) == summary.get(key), f"static evidence summary mismatch for {key}")
     static_gates = {
         str(gate.get("id")): gate
         for gate in static_status.get("phase_gate_evidence_statuses") or []
@@ -187,7 +274,17 @@ def build_payload() -> dict[str, Any]:
     list_keys = {"required_commands", "evidence_classes", "must_not_use"}
     for gate in gates:
         static_gate = static_gates[gate["id"]]
-        for key in ["packet_status", "evidence_current", "evidence_state", "required_commands", "evidence_classes", "must_not_use"]:
+        for key in [
+            "packet_status",
+            "evidence_current",
+            "evidence_state",
+            "local_receipt_current",
+            "release_grade_current",
+            "receipt_state",
+            "required_commands",
+            "evidence_classes",
+            "must_not_use",
+        ]:
             static_value = static_gate.get(key, [] if key in list_keys else None)
             runtime_value = gate.get(key, [] if key in list_keys else None)
             require(static_value == runtime_value, f"static/runtime mismatch for {gate['id']} {key}")

@@ -29,6 +29,11 @@
       "expected_status": "blocked_release_evidence_required"
     },
     {
+      "path": "docs/COMMERCIAL_EVIDENCE_RECEIPTS.json",
+      "contract_id": "commercial_evidence_receipts_v1",
+      "expected_status": "partial_local_receipts_not_release_complete"
+    },
+    {
       "path": "docs/COMMERCIAL_CURRENT_EVIDENCE_STATUS.json",
       "contract_id": "commercial_current_evidence_status_v1",
       "expected_status": "current_evidence_required"
@@ -44,7 +49,21 @@
       "gate_4_ui_api_parity_before_nextjs",
       "gate_5_byoc_enterprise_deployment"
     ],
-    "heavy_evidence_not_executed_by_default": true
+    "heavy_evidence_not_executed_by_default": true,
+    "gates_with_local_receipts": [
+      "gate_5_byoc_enterprise_deployment"
+    ],
+    "gates_with_release_grade_receipts": [],
+    "gate_5_receipt_state": "local_receipts_complete_exact_head_required",
+    "gates_missing_local_receipts": [
+      "gate_1_product_packaging_and_entitlement",
+      "gate_2_production_safety_baseline",
+      "gate_3_storage_boundary_before_postgres",
+      "gate_4_ui_api_parity_before_nextjs"
+    ],
+    "exact_head_ci_verified": false,
+    "remote_sync_verified": false,
+    "clean_worktree_verified": false
   },
   "phase_gate_statuses": [
     {
@@ -81,6 +100,8 @@
   "required_commands": [
     "python3 scripts/commercial_handoff_status.py",
     "python3 scripts/commercial_handoff_status_smoke.py",
+    "python3 scripts/commercial_evidence_receipts.py",
+    "python3 scripts/commercial_evidence_receipts_smoke.py",
     "python3 scripts/commercial_current_evidence_status.py",
     "python3 scripts/commercial_current_evidence_status_smoke.py",
     "python3 scripts/release_evidence_packet_smoke.py",
@@ -95,6 +116,7 @@
   ],
   "required_contracts": [
     "commercial_handoff_status_v1",
+    "commercial_evidence_receipts_v1",
     "commercial_current_evidence_status_v1",
     "commercial_release_evidence_packet_v1",
     "release_evidence_packet_v1",

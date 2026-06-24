@@ -26,6 +26,7 @@ REQUIRED_GATE_IDS = {
 }
 
 REQUIRED_STRINGS = {
+    "commercial_evidence_receipts_v1",
     "commercial_current_evidence_status_v1",
     "commercial_handoff_status_v1",
     "commercial_release_evidence_packet_v1",
@@ -35,8 +36,15 @@ REQUIRED_STRINGS = {
     "current_evidence_required",
     "phase_gate_evidence_statuses",
     "gates_requiring_current_evidence",
+    "gates_with_local_receipts",
+    "gates_with_release_grade_receipts",
+    "local_receipt_current",
+    "release_grade_current",
+    "local_receipts_complete_exact_head_required",
     "evidence_current",
     "required_commands",
+    "python3 scripts/commercial_evidence_receipts.py",
+    "python3 scripts/commercial_evidence_receipts_smoke.py",
     "python3 scripts/commercial_current_evidence_status.py",
     "python3 scripts/commercial_current_evidence_status_smoke.py",
     "python3 scripts/deployment_readiness_smoke.py --postgres-write-fixture",
@@ -51,39 +59,82 @@ REQUIRED_SOURCES = {
     "docs/COMMERCIAL_CURRENT_EVIDENCE_STATUS.json": REQUIRED_STRINGS,
     "docs/COMMERCIAL_CURRENT_EVIDENCE_STATUS.md": REQUIRED_STRINGS,
     "scripts/commercial_current_evidence_status.py": {
+        "commercial_evidence_receipts_v1",
         "commercial_current_evidence_status_v1",
         "phase_gate_evidence_statuses",
         "gates_requiring_current_evidence",
+        "local_receipt_current",
+        "release_grade_current",
         "--require-current-evidence",
     },
+    "docs/COMMERCIAL_EVIDENCE_RECEIPTS.json": {
+        "commercial_evidence_receipts_v1",
+        "partial_local_receipts_not_release_complete",
+        "local_receipts_complete_exact_head_required",
+        "gate_5_byoc_enterprise_deployment",
+    },
+    "docs/COMMERCIAL_EVIDENCE_RECEIPTS.md": {
+        "commercial_evidence_receipts_v1",
+        "commercial_evidence_receipts.py",
+        "commercial_evidence_receipts_smoke.py",
+        "release-grade",
+    },
+    "scripts/commercial_evidence_receipts.py": {
+        "commercial_evidence_receipts_v1",
+        "--require-release-grade",
+        "local_receipt_current",
+    },
+    "scripts/commercial_evidence_receipts_smoke.py": {
+        "commercial_evidence_receipts_v1",
+        "gate_5_byoc_enterprise_deployment",
+        "release_grade_current",
+    },
     "docs/COMMERCIAL_HANDOFF_STATUS.json": {
+        "commercial_evidence_receipts_v1",
         "commercial_current_evidence_status_v1",
+        "gates_with_local_receipts",
         "commercial_current_evidence_status.py",
         "commercial_current_evidence_status_smoke.py",
+        "commercial_evidence_receipts.py",
+        "commercial_evidence_receipts_smoke.py",
     },
     "scripts/commercial_handoff_status.py": {
+        "commercial_evidence_receipts_v1",
         "commercial_current_evidence_status_v1",
+        "gates_with_local_receipts",
         "current_evidence_status",
     },
     "scripts/commercial_handoff_status_smoke.py": {
+        "commercial_evidence_receipts_v1",
         "commercial_current_evidence_status_v1",
+        "gates_with_local_receipts",
         "commercial_current_evidence_status_smoke.py",
+        "commercial_evidence_receipts_smoke.py",
     },
     "docs/RELEASE_EVIDENCE_PACKET.json": {
+        "evidence_receipts_command",
         "current_evidence_status_command",
+        "commercial_evidence_receipts_v1",
         "commercial_current_evidence_status_v1",
     },
     "docs/RELEASE_FREEZE_PROTOCOL.json": {
+        "commercial_evidence_receipts_v1",
         "commercial_current_evidence_status_v1",
+        "commercial_evidence_receipts_smoke.py",
         "commercial_current_evidence_status_smoke.py",
     },
     "docs/MERGE_READINESS_STATUS.json": {
+        "commercial_evidence_receipts_v1",
         "commercial_current_evidence_status_v1",
+        "commercial_evidence_receipts_smoke.py",
         "commercial_current_evidence_status_smoke.py",
     },
     "scripts/commercial_migration_readiness.py": {
+        "commercial_evidence_receipts_surface_exists",
         "commercial_current_evidence_status_surface_exists",
+        "commercial_evidence_receipts_v1",
         "commercial_current_evidence_status_v1",
+        "commercial_evidence_receipts_smoke.py",
         "commercial_current_evidence_status_smoke.py",
     },
 }
@@ -140,6 +191,11 @@ def main() -> int:
     for gate_id in REQUIRED_GATE_IDS - {"gate_0_isolated_commercial_track"}:
         require(gates[gate_id].get("evidence_current") is False, f"{gate_id} must still require current evidence")
     gate5 = gates["gate_5_byoc_enterprise_deployment"]
+    require(gates["gate_0_isolated_commercial_track"].get("receipt_state") == "not_required_static_gate", "Gate 0 should not require receipts")
+    require(gate5.get("local_receipt_current") is True, "Gate 5 local receipt should be current")
+    require(gate5.get("release_grade_current") is False, "Gate 5 must not be release-grade current")
+    require(gate5.get("evidence_current") is False, "Gate 5 local receipts must not satisfy current evidence")
+    require(gate5.get("receipt_state") == "local_receipts_complete_exact_head_required", "Gate 5 receipt state mismatch")
     require(gate5.get("real_runtime_required") is True or "real_runtime" in set(gate5.get("evidence_classes") or []), "Gate 5 must require real runtime evidence")
     require("mock_only_product_claim" in set(gate5.get("must_not_use") or []), "Gate 5 mock-only ban missing")
 
@@ -147,6 +203,13 @@ def main() -> int:
     require(summary.get("gate_count") == 6, "summary gate count mismatch")
     require(summary.get("ready_gate_count") == 1, "summary ready gate count mismatch")
     require("gate_5_byoc_enterprise_deployment" in set(summary.get("gates_requiring_current_evidence") or []), "Gate 5 gap missing")
+    require(summary.get("gates_with_local_receipts") == ["gate_5_byoc_enterprise_deployment"], "local receipt gate summary mismatch")
+    require(summary.get("gates_with_release_grade_receipts") == [], "release-grade receipt summary mismatch")
+    require("gate_5_byoc_enterprise_deployment" not in set(summary.get("gates_with_release_grade_receipts") or []), "Gate 5 must not be release-grade current")
+    require(summary.get("gate_5_local_receipt_commands") == 7, "Gate 5 local receipt count mismatch")
+    require(summary.get("exact_head_ci_verified") is False, "exact-head CI must remain false")
+    require(summary.get("remote_sync_verified") is False, "remote sync must remain false")
+    require(summary.get("clean_worktree_verified") is False, "clean worktree must remain false")
     require(summary.get("heavy_evidence_not_executed_by_default") is True, "heavy evidence default policy missing")
     require(summary.get("postgres_required") is True, "Postgres requirement missing")
     require(summary.get("browser_required") is True, "browser requirement missing")
@@ -167,6 +230,9 @@ def main() -> int:
     require(payload.get("ready_to_merge") is False, "operator must not claim merge ready")
     runtime_gaps = set((payload.get("evidence_summary") or {}).get("gates_requiring_current_evidence") or [])
     require("gate_5_byoc_enterprise_deployment" in runtime_gaps, "operator Gate 5 gap missing")
+    runtime_summary = payload.get("evidence_summary") or {}
+    require(runtime_summary.get("gates_with_local_receipts") == ["gate_5_byoc_enterprise_deployment"], "operator local receipt gate summary mismatch")
+    require(runtime_summary.get("gates_with_release_grade_receipts") == [], "operator release-grade receipt summary mismatch")
 
     if args.require_current_evidence:
         require(not runtime_gaps, f"current evidence gaps remain: {sorted(runtime_gaps)}")

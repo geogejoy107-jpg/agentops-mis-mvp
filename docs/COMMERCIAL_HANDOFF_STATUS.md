@@ -7,11 +7,15 @@ Current status: `blocked_release_evidence_required`.
 This is the operator-facing status surface for the commercial migration lane. It
 aggregates `commercial_release_evidence_packet_v1`,
 `release_evidence_packet_v1`, `release_freeze_protocol_v1`, and
-`merge_readiness_status_v1`, plus the
+`merge_readiness_status_v1`, plus `commercial_evidence_receipts_v1` and the
 `commercial_current_evidence_status_v1` evidence coverage map, without running
 Docker, browsers, or live agents.
 Passing the default check means the handoff status is internally consistent; it
 does not mean the product is release-complete.
+The embedded current-evidence summary exposes `gates_with_local_receipts` and
+`gates_with_release_grade_receipts` so local Gate 5 receipts can be visible
+with `local_receipts_complete_exact_head_required` without changing
+release-grade readiness.
 
 Expected source statuses are `gate_enforced_not_release_complete`,
 `freeze_active_not_release_complete`, and `blocked_release_evidence_required`.
@@ -20,6 +24,7 @@ Read the current handoff status:
 
 ```bash
 python3 scripts/commercial_handoff_status.py
+python3 scripts/commercial_evidence_receipts.py
 python3 scripts/commercial_current_evidence_status.py
 ```
 
@@ -27,6 +32,7 @@ Verify the status contract:
 
 ```bash
 python3 scripts/commercial_handoff_status_smoke.py
+python3 scripts/commercial_evidence_receipts_smoke.py
 python3 scripts/commercial_current_evidence_status_smoke.py
 ```
 
@@ -46,6 +52,8 @@ Required evidence commands include:
 ```bash
 python3 scripts/commercial_handoff_status.py
 python3 scripts/commercial_handoff_status_smoke.py
+python3 scripts/commercial_evidence_receipts.py
+python3 scripts/commercial_evidence_receipts_smoke.py
 python3 scripts/commercial_current_evidence_status.py
 python3 scripts/commercial_current_evidence_status_smoke.py
 python3 scripts/release_evidence_packet_smoke.py

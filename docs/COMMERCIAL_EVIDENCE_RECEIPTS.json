@@ -1,0 +1,113 @@
+{
+  "contract_id": "commercial_evidence_receipts_v1",
+  "status": "partial_local_receipts_not_release_complete",
+  "updated_at": "2026-06-24",
+  "ci_safe": true,
+  "description": "Read-only receipt ledger for local commercial evidence. Receipts are hash/ref-only and do not contain raw prompts, raw responses, secrets, private transcripts, local DBs, or generated artifacts.",
+  "release_complete": false,
+  "commercial_handoff_allowed": false,
+  "ready_to_merge": false,
+  "receipt_policy": {
+    "ok_true_means_receipts_are_internally_consistent": true,
+    "does_not_execute_heavy_or_live_commands": true,
+    "local_receipts_are_not_exact_head_ci": true,
+    "release_grade_requires_clean_worktree_remote_sync_and_exact_head_ci": true,
+    "hash_or_ref_only": true
+  },
+  "receipt_summary": {
+    "gate_count": 6,
+    "gates_with_local_receipts": [
+      "gate_5_byoc_enterprise_deployment"
+    ],
+    "gates_with_release_grade_receipts": [],
+    "gates_missing_local_receipts": [
+      "gate_1_product_packaging_and_entitlement",
+      "gate_2_production_safety_baseline",
+      "gate_3_storage_boundary_before_postgres",
+      "gate_4_ui_api_parity_before_nextjs"
+    ],
+    "gate_5_local_receipt_commands": 7,
+    "gate_5_release_grade_current": false,
+    "exact_head_ci_verified": false,
+    "remote_sync_verified": false,
+    "clean_worktree_verified": false
+  },
+  "phase_gate_receipts": [
+    {
+      "gate_id": "gate_5_byoc_enterprise_deployment",
+      "local_receipt_current": true,
+      "release_grade_current": false,
+      "receipt_state": "local_receipts_complete_exact_head_required",
+      "verified_head": "f1bc9bf",
+      "verified_at": "2026-06-24T22:05:55+08:00",
+      "environment": "local_isolated",
+      "evidence_level": "local_current_not_release_grade",
+      "commands": [
+        {
+          "command": "python3 scripts/audit_retention_policy_smoke.py",
+          "status": "passed",
+          "contract": "audit_retention_policy_v1"
+        },
+        {
+          "command": "python3 scripts/audit_retention_controls_smoke.py --configured-fixture",
+          "status": "passed",
+          "contract": "audit_retention_controls_v1"
+        },
+        {
+          "command": "python3 scripts/deployment_readiness_smoke.py --configured-retention-fixture --configured-enterprise-fixture",
+          "status": "passed",
+          "contract": "deployment_readiness_v1"
+        },
+        {
+          "command": "python3 scripts/deployment_readiness_smoke.py --postgres-write-fixture",
+          "status": "passed",
+          "contract": "deployment_readiness_postgres_runtime_write_fixture_v1",
+          "runtime_write_gate_status": "active",
+          "non_allowlisted_write_error": "postgres_read_only_backend",
+          "postgres_counts_unchanged": true
+        },
+        {
+          "command": "python3 scripts/nextjs_playwright_snapshot_smoke.py --postgres-write-fixture",
+          "status": "passed",
+          "contract": "nextjs_deployment_postgres_runtime_write_fixture_v1",
+          "runtime_write_gate_status": "active",
+          "postgres_counts_unchanged": true
+        },
+        {
+          "command": "python3 scripts/byoc_deployment_acceptance_smoke.py --postgres-readiness-fixture",
+          "status": "passed",
+          "contract": "byoc_deployment_acceptance_v1",
+          "runtime_write_gate_status": "active",
+          "non_allowlisted_write_error": "postgres_read_only_backend",
+          "postgres_counts_unchanged": true
+        },
+        {
+          "command": "HERMES_ALLOW_REAL_RUN=true python3 scripts/local_runtime_acceptance.py --live-openclaw --live-hermes --require-hermes-api",
+          "status": "passed",
+          "contract": "real_hermes_openclaw_acceptance",
+          "agent_gateway_run_id": "run_gw_dbcc32f95cb2",
+          "openclaw_run_id": "run_api_integrations_openclaw_probe_20260624140523119447_c9a9b3e2",
+          "hermes_run_id": "run_api_integrations_hermes_run_task_20260624140546556716_b7ff9772",
+          "raw_prompt_omitted": true,
+          "raw_response_omitted": true
+        }
+      ],
+      "release_blockers": [
+        "exact_head_ci_not_checked_in_this_worktree",
+        "remote_sync_not_checked_in_this_worktree",
+        "existing_local_dirty_files_are_outside_this_slice",
+        "gates_1_4_still_require_current_evidence"
+      ]
+    }
+  ],
+  "must_not_use": [
+    "--skip-postgres-if-unavailable",
+    "mock_only_product_claim",
+    "release_complete_true",
+    "raw_prompts",
+    "raw_responses",
+    "private_transcripts",
+    "token_values",
+    "sqlite_fallback_as_postgres_proof"
+  ]
+}
