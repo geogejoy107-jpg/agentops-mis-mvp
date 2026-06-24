@@ -201,6 +201,18 @@ def validate(payload: dict) -> None:
     require("record-action-receipt" in str(service_step.get("receipt_verify_record_command") or ""), f"service-control verify receipt command missing: {service_step}")
     require("--confirm-record" in str(service_step.get("receipt_verify_record_command") or ""), f"service-control verify receipt command should confirm record: {service_step}")
     require(str(service_step.get("action_signature") or ""), f"service-control action signature missing: {service_step}")
+    service_managed_loop = payload.get("service_managed_loop") or {}
+    require(service_managed_loop.get("operation") == "local_service_managed_loop_readiness", f"service-managed loop projection missing: {service_managed_loop}")
+    require(service_managed_loop.get("adapter") in {"mock", "hermes", "openclaw"}, f"service-managed loop adapter missing: {service_managed_loop}")
+    require(service_managed_loop.get("install_preview_available") is True, f"service-managed install preview missing: {service_managed_loop}")
+    require(service_managed_loop.get("install_confirm_available") is True, f"service-managed install confirm missing: {service_managed_loop}")
+    require(service_managed_loop.get("service_check_available") is True, f"service-managed service-check missing: {service_managed_loop}")
+    require(service_managed_loop.get("service_control_preview_available") is True, f"service-managed control preview missing: {service_managed_loop}")
+    require(service_managed_loop.get("receipt_required") is True, f"service-managed receipt requirement missing: {service_managed_loop}")
+    require(service_managed_loop.get("control_readback_required") is True, f"service-managed readback requirement missing: {service_managed_loop}")
+    require((service_managed_loop.get("safety") or {}).get("server_executes_shell") is False, f"service-managed server-shell proof missing: {service_managed_loop}")
+    require((service_managed_loop.get("safety") or {}).get("loads_service") is False, f"service-managed load boundary missing: {service_managed_loop}")
+    require((service_managed_loop.get("safety") or {}).get("token_omitted") is True, f"service-managed token omission missing: {service_managed_loop}")
     for step in local_run_path:
         require(step.get("command"), f"local run path step missing command: {step}")
         require(step.get("copy_only") is True, f"local run path step must be copy-only: {step}")
@@ -270,6 +282,11 @@ def exercise_service_control_receipt_readback(base_url: str, payload: dict) -> d
     require(receipt_state.get("verified") is True, f"service-control receipt not read back as verified: {updated_step}")
     require(receipt_state.get("control_readback_attached") is True, f"service-control control readback not attached: {updated_step}")
     require(str(receipt_state.get("control_readback_hash") or ""), f"service-control control readback hash missing: {updated_step}")
+    service_managed_loop = reread_payload.get("service_managed_loop") or {}
+    require(service_managed_loop.get("service_managed_loop_ready") is True, f"service-managed loop not ready after readback: {service_managed_loop}")
+    require(service_managed_loop.get("installed_status") == "operator_verified_service_check", f"service-managed install status not verified: {service_managed_loop}")
+    require(service_managed_loop.get("checked_status") == "operator_readback_attached", f"service-managed checked status not attached: {service_managed_loop}")
+    require(str(service_managed_loop.get("control_readback_hash") or ""), f"service-managed readback hash missing: {service_managed_loop}")
     return reread_payload
 
 

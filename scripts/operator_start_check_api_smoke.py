@@ -226,6 +226,7 @@ def validate_payload(payload: dict, adapter: str, failures: list[str]) -> None:
     admission_current_code = deployment.get("current_code_gate") or {}
     service_preview = deployment.get("service_control_preview") or {}
     service_install = deployment.get("service_install") or {}
+    service_managed_loop = deployment.get("service_managed_loop") or {}
     worker_start = deployment.get("worker_start") or {}
     customer_dispatch = deployment.get("customer_worker_dispatch") or {}
     admission_commands = admission_packet.get("commands") or {}
@@ -237,6 +238,13 @@ def validate_payload(payload: dict, adapter: str, failures: list[str]) -> None:
     require({"read", "plan", "retrieve", "compare", "preflight", "execute", "verify", "record"}.issubset(set(admission_packet.get("phase_commands") or {})), f"{adapter} admission phase commands missing: {admission_packet}", failures)
     require(service_preview.get("preview_only") is True, f"{adapter} service-control preview proof missing: {admission_packet}", failures)
     require(service_preview.get("server_executes_shell") is False, f"{adapter} service-control server-shell proof missing: {admission_packet}", failures)
+    require(service_managed_loop.get("operation") == "local_service_managed_loop_readiness", f"{adapter} service-managed loop projection missing: {admission_packet}", failures)
+    require(service_managed_loop.get("service_check_available") is True, f"{adapter} service-managed service-check missing: {admission_packet}", failures)
+    require(service_managed_loop.get("service_control_preview_available") is True, f"{adapter} service-managed control preview missing: {admission_packet}", failures)
+    require(service_managed_loop.get("receipt_required") is True, f"{adapter} service-managed receipt requirement missing: {admission_packet}", failures)
+    require(service_managed_loop.get("control_readback_required") is True, f"{adapter} service-managed readback requirement missing: {admission_packet}", failures)
+    require((service_managed_loop.get("safety") or {}).get("loads_service") is False, f"{adapter} service-managed load boundary missing: {admission_packet}", failures)
+    require((service_managed_loop.get("safety") or {}).get("server_executes_shell") is False, f"{adapter} service-managed server-shell proof missing: {admission_packet}", failures)
     require(service_install.get("preview_only_by_default") is True, f"{adapter} service-install preview proof missing: {admission_packet}", failures)
     require(service_install.get("loads_service") is False, f"{adapter} service-install must not load service: {admission_packet}", failures)
     require(service_install.get("server_executes_shell") is False, f"{adapter} service-install server-shell proof missing: {admission_packet}", failures)

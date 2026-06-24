@@ -492,6 +492,7 @@ def compact_start_check_local_run_path(local: dict[str, Any]) -> dict[str, Any]:
     ])
     commands = [command for command in dict.fromkeys(commands) if command]
     summary = local.get("summary") if isinstance(local.get("summary"), dict) else {}
+    service_managed_loop = local.get("service_managed_loop") if isinstance(local.get("service_managed_loop"), dict) else {}
     return {
         "operation": "local_run_path_compact",
         "source_operation": local.get("operation") or "local_readiness",
@@ -501,6 +502,7 @@ def compact_start_check_local_run_path(local: dict[str, Any]) -> dict[str, Any]:
         "steps": compact_steps,
         "commands": commands,
         "service_control_preview": service_step,
+        "service_managed_loop": service_managed_loop,
         "contract": "copy-only local boot/readiness/worker/service/dispatch/verify path; commands are for the operator or agent shell to copy, not for server-side shell execution",
         "safety": {
             "read_only": True,
@@ -812,6 +814,7 @@ def operator_local_loop_admission_packet(
     method_gate_ids = [str(gate.get("id")) for gate in method_gates if isinstance(gate, dict) and gate.get("id")]
     local_steps = local_run_path.get("steps") if isinstance(local_run_path.get("steps"), list) else []
     service_step = local_run_path.get("service_control_preview") if isinstance(local_run_path.get("service_control_preview"), dict) else {}
+    service_managed_loop = local_run_path.get("service_managed_loop") if isinstance(local_run_path.get("service_managed_loop"), dict) else {}
     current_code_gate = local_run_path.get("current_code_gate") if isinstance(local_run_path.get("current_code_gate"), dict) else {}
     current_code_command = (
         acceptance_commands.get("current_code_check")
@@ -976,6 +979,7 @@ def operator_local_loop_admission_packet(
                 "server_executes_shell": False,
                 "token_omitted": True,
             },
+            "service_managed_loop": service_managed_loop,
             "customer_worker_dispatch": {
                 "command": dispatch_command,
                 "verify_command": dispatch_verify,

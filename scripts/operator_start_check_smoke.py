@@ -249,6 +249,7 @@ def validate(payload: dict, adapter: str) -> None:
     deployment = admission_packet.get("local_deployment") or {}
     service_preview = deployment.get("service_control_preview") or {}
     service_install = deployment.get("service_install") or {}
+    service_managed_loop = deployment.get("service_managed_loop") or {}
     admission_current_code = deployment.get("current_code_gate") or {}
     worker_start = deployment.get("worker_start") or {}
     customer_dispatch = deployment.get("customer_worker_dispatch") or {}
@@ -261,6 +262,13 @@ def validate(payload: dict, adapter: str) -> None:
     require({"read", "plan", "retrieve", "compare", "preflight", "execute", "verify", "record"}.issubset(set(admission_packet.get("phase_commands") or {})), f"admission phase commands missing: {admission_packet}")
     require(service_preview.get("preview_only") is True, f"service-control preview proof missing: {admission_packet}")
     require(service_preview.get("server_executes_shell") is False, f"service-control server shell proof missing: {admission_packet}")
+    require(service_managed_loop.get("operation") == "local_service_managed_loop_readiness", f"service-managed loop projection missing: {admission_packet}")
+    require(service_managed_loop.get("service_check_available") is True, f"service-managed service-check missing: {admission_packet}")
+    require(service_managed_loop.get("service_control_preview_available") is True, f"service-managed control preview missing: {admission_packet}")
+    require(service_managed_loop.get("receipt_required") is True, f"service-managed receipt requirement missing: {admission_packet}")
+    require(service_managed_loop.get("control_readback_required") is True, f"service-managed readback requirement missing: {admission_packet}")
+    require((service_managed_loop.get("safety") or {}).get("loads_service") is False, f"service-managed load boundary missing: {admission_packet}")
+    require((service_managed_loop.get("safety") or {}).get("server_executes_shell") is False, f"service-managed server shell proof missing: {admission_packet}")
     require(service_install.get("preview_only_by_default") is True, f"service-install preview proof missing: {admission_packet}")
     require(service_install.get("loads_service") is False, f"service-install must not load service: {admission_packet}")
     require(service_install.get("server_executes_shell") is False, f"service-install server shell proof missing: {admission_packet}")

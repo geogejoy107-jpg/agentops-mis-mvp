@@ -142,6 +142,10 @@ export function WorkerConsole() {
       verifiedReceipt: "Verified receipt",
       recordVerifiedReceipt: "Record verified receipt",
       recordControlReadback: "Record control readback",
+      serviceManagedLoop: "Service-managed loop",
+      managedLoopReady: "managed loop ready",
+      installedStatus: "installed",
+      checkedStatus: "checked",
       receiptProof: "receipt",
       controlReadback: "readback",
       previewFirst: "preview first",
@@ -232,6 +236,10 @@ export function WorkerConsole() {
       verifiedReceipt: "验证回执",
       recordVerifiedReceipt: "记录验证回执",
       recordControlReadback: "记录控制回读",
+      serviceManagedLoop: "服务托管 Loop",
+      managedLoopReady: "托管 loop 就绪",
+      installedStatus: "安装状态",
+      checkedStatus: "检查状态",
       receiptProof: "回执",
       controlReadback: "回读",
       previewFirst: "先预览",
@@ -375,6 +383,9 @@ export function WorkerConsole() {
   const serviceInstall = (typeof localDeployment.service_install === "object" && localDeployment.service_install !== null
     ? localDeployment.service_install
     : {}) as Record<string, unknown>;
+  const serviceManagedLoop = (typeof localDeployment.service_managed_loop === "object" && localDeployment.service_managed_loop !== null
+    ? localDeployment.service_managed_loop
+    : {}) as Record<string, unknown>;
   const serviceInstallCommands = [
     { label: copy.serviceInstallPreview, command: serviceInstall.preview_command, status: serviceInstall.preview_command ? "pass" : "attention", confirm: false },
     { label: copy.confirmInstall, command: serviceInstall.confirm_command, status: serviceInstall.confirm_command ? "attention" : "blocked", confirm: true },
@@ -405,6 +416,13 @@ export function WorkerConsole() {
     { label: copy.receiptRequired, status: serviceControlStep?.receipt_required ? "attention" : "pass" },
     { label: copy.receiptAttached, status: serviceReceiptVerified ? "pass" : "attention" },
     { label: copy.readbackAttached, status: serviceReadbackAttached ? "pass" : "attention" },
+  ];
+  const serviceManagedReady = serviceManagedLoop.service_managed_loop_ready === true;
+  const serviceManagedStatus = String(serviceManagedLoop.status || (serviceManagedReady ? "ready" : "attention"));
+  const serviceManagedFacts = [
+    { label: copy.managedLoopReady, value: serviceManagedReady ? "yes" : "no", status: serviceManagedReady ? "pass" : "attention" },
+    { label: copy.installedStatus, value: String(serviceManagedLoop.installed_status || "unverified"), status: serviceManagedReady ? "pass" : "attention" },
+    { label: copy.checkedStatus, value: String(serviceManagedLoop.checked_status || "missing_readback"), status: serviceReadbackAttached ? "pass" : "attention" },
   ];
 
   const recordServiceControlReceipt = (step: LocalRunPathStep) => runAction(`service-receipt:${step.step_id}`, async () => {
@@ -721,6 +739,23 @@ export function WorkerConsole() {
                       <span className="text-[8px] truncate" style={{ color: "var(--mis-muted)" }}>{serviceControlStep.verify_command || copy.serviceCheck}</span>
                     </button>
                   )}
+                </div>
+                <div data-testid="worker-service-managed-loop" className="grid grid-cols-1 md:grid-cols-3 gap-2 mt-3">
+                  {serviceManagedFacts.map((item) => (
+                    <div key={item.label} className="rounded px-2 py-1.5" style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[9px] font-semibold truncate" style={{ color: "var(--mis-text)" }}>{item.label}</span>
+                        <StatusBadge status={item.status} />
+                      </div>
+                      <div className="text-[8px] truncate mt-1" style={{ color: item.status === "pass" ? "var(--mis-success)" : "var(--mis-warning)" }}>{item.value}</div>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                  <StatusBadge status={serviceManagedStatus} label={copy.serviceManagedLoop} />
+                  <StatusBadge status={serviceManagedLoop.loads_service ? "attention" : "pass"} label={copy.noServiceLoad} />
+                  <StatusBadge status={(serviceManagedLoop.safety as Record<string, unknown> | undefined)?.server_executes_shell === false ? "pass" : "attention"} label={copy.noServerShell} />
+                  <StatusBadge status={serviceManagedLoop.token_omitted === false ? "attention" : "pass"} label={copy.tokenOmitted} />
                 </div>
               </div>
             )}

@@ -18583,6 +18583,67 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
     for step in local_run_path:
         if step.get("receipt_required"):
             step["receipt_state"] = local_run_path_receipt_state(step)
+    service_control_step = next(
+        (
+            step
+            for step in local_run_path
+            if step.get("step_id") == "preview_worker_service_control"
+            or step.get("service_control_preview") is True
+        ),
+        {},
+    )
+    service_receipt_state = service_control_step.get("receipt_state") if isinstance(service_control_step.get("receipt_state"), dict) else {}
+    service_managed_loop = {
+        "operation": "local_service_managed_loop_readiness",
+        "status": (
+            "ready"
+            if service_receipt_state.get("verified") is True and service_receipt_state.get("control_readback_attached") is True
+            else "attention"
+        ),
+        "adapter": recommended_adapter,
+        "manager": "launchd",
+        "install_preview_available": True,
+        "install_confirm_available": True,
+        "service_check_available": bool(service_control_verify_command),
+        "service_control_preview_available": bool(service_control_step.get("command")),
+        "receipt_required": bool(service_control_step.get("receipt_required")),
+        "receipt_verified": bool(service_receipt_state.get("verified")),
+        "receipt_id": service_receipt_state.get("receipt_id"),
+        "receipt_hash": service_receipt_state.get("receipt_hash"),
+        "control_readback_required": bool(service_control_step.get("control_readback_required")),
+        "control_readback_attached": bool(service_receipt_state.get("control_readback_attached")),
+        "control_readback_id": service_receipt_state.get("control_readback_id"),
+        "control_readback_hash": service_receipt_state.get("control_readback_hash"),
+        "service_managed_loop_ready": bool(
+            service_receipt_state.get("verified") is True
+            and service_receipt_state.get("control_readback_attached") is True
+        ),
+        "installed_status": (
+            "operator_verified_service_check"
+            if service_receipt_state.get("verified") is True and service_receipt_state.get("control_readback_attached") is True
+            else "unverified"
+        ),
+        "checked_status": "operator_readback_attached" if service_receipt_state.get("control_readback_attached") is True else "missing_readback",
+        "commands": {
+            "service_install_preview": f"agentops worker service-install --manager launchd --adapter {recommended_adapter} --agent-id agt_worker_daemon_{recommended_adapter}{' --confirm-run' if recommended_adapter in {'hermes', 'openclaw'} else ''}",
+            "service_install_confirm": f"agentops worker service-install --manager launchd --adapter {recommended_adapter} --agent-id agt_worker_daemon_{recommended_adapter}{' --confirm-run' if recommended_adapter in {'hermes', 'openclaw'} else ''} --confirm-install",
+            "service_check": service_control_verify_command,
+            "service_control_preview": service_control_command,
+            "record_verified_receipt": service_control_receipt_verify_command,
+            "receipt_readback": "agentops operator action-receipts --limit 20",
+        },
+        "safety": {
+            "read_only": True,
+            "ledger_mutated": False,
+            "live_execution_performed": False,
+            "server_executes_shell": False,
+            "loads_service": False,
+            "raw_template_omitted": True,
+            "token_omitted": True,
+        },
+        "token_omitted": True,
+        "live_execution_performed": False,
+    }
     return {
         "provider": "agentops-local",
         "operation": "local_readiness",
@@ -18605,8 +18666,9 @@ def local_readiness(conn: sqlite3.Connection, headers, refresh_runtime: bool = T
         "gateway": gateway,
         "docs": doc_status,
         "local_run_path": local_run_path,
+        "service_managed_loop": service_managed_loop,
         "ui_routes": {
-            "worker_console": "/workspace/agents",
+            "worker_console": "/workspace/workers",
             "memory": "/workspace/memory",
             "approvals": "/workspace/approvals",
             "tool_calls": "/admin/toolcalls",
