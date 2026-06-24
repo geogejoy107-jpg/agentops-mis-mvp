@@ -79,6 +79,13 @@ allowed, the response includes `loop_supervision_gate.supervision_hash` so the
 run's first evidence packet shows which Method Block supervision state was
 crossed.
 
+The local `/workspace/agents` console mirrors this boundary: the Loop
+Supervision panel shows the read-only `run_start_admission` projection before a
+run exists, and the latest worker dispatch result shows the actual
+`loop_supervision_gate` consumed or blocked by the worker/Gateway path. Display
+is compact by design: status, short hash, recommended command, no-run-on-block,
+no-server-shell, no-live-execution, and token omission only.
+
 `start-check` is the preferred first read for a local loop. The CLI reads
 `GET /api/operator/start-check`, so Hermes/OpenClaw/Codex can use either the
 CLI or the local MIS HTTP API. It merges local readiness, worker readiness,

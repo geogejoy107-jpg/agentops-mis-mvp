@@ -496,6 +496,11 @@ layered `safe_read_commands`, `preview_commands`, and
 read immediately before copying a bounded `operator loop-driver --confirm-loop`
 command. It requires `tasks:read`, remains workspace-bound, and never runs
 loop-driver, workers, runtimes, approvals, shell commands, or ledger writes.
+Each adapter item includes `run_start_admission`, a compact read-only projection
+of the Agent Gateway `runs/start` precondition: `would_allow_run_start`,
+`run_start_loop_supervision_blocked`, `no_run_created_on_block`, the
+`loop_supervision_hash` binding field, safety proof, and recommended next
+command.
 Confirmed Hermes/OpenClaw customer-worker and installable worker execution
 paths consume this projection before live runtime invocation; they write only
 compact gate metadata/hash/status to audit/evidence and fail closed when bounded

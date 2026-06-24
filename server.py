@@ -7741,6 +7741,8 @@ def agent_gateway_run_start_loop_supervision_readback(
             "token_omitted": True,
         },
         "contract": "Agent Gateway run_start precondition for governed live runtimes; it reads loop supervision before run creation and blocks Hermes/OpenClaw/Codex starts when bounded confirm or no-server-shell safety is not proven.",
+        "live_execution_performed": False,
+        "server_executes_shell": False,
         "safety": {
             "read_only": True,
             "ledger_mutated": False,
@@ -24890,6 +24892,7 @@ def loop_supervision_item(consumer: dict, *, current_code: dict, limit: int, sta
             "token_omitted": True,
         },
     ]
+    would_allow_run_start = bool(can_confirm and not server_shell)
     return {
         "operation": "operator_loop_supervision_item",
         "adapter": adapter,
@@ -24942,6 +24945,33 @@ def loop_supervision_item(consumer: dict, *, current_code: dict, limit: int, sta
             "record_review": review_pressure["record_command"],
             "live_product_readiness": commands.get("live_product_readiness"),
             "recommended_next": recommended_next_command,
+        },
+        "run_start_admission": {
+            "operation": "operator_loop_supervision_run_start_admission",
+            "gateway_endpoint": "POST /api/agent-gateway/runs/start",
+            "runtime_type": adapter,
+            "governed_runtime": adapter in RUN_START_LOOP_SUPERVISION_RUNTIME_TYPES,
+            "would_allow_run_start": would_allow_run_start,
+            "would_block_run_start": not would_allow_run_start,
+            "fail_closed_error": "run_start_loop_supervision_blocked",
+            "no_run_created_on_block": True,
+            "agent_plan_required": True,
+            "supervision_hash_state": "bound_by_agent_gateway_run_start",
+            "run_metadata_field": "loop_supervision_hash",
+            "recommended_next": recommended_next_command,
+            "status": "pass" if would_allow_run_start else "blocked",
+            "contract": "read-only projection of the Agent Gateway run_start loop-supervision precondition; it does not create runs and hashes are bound only when Gateway consumes the gate during run_start.",
+            "safety": {
+                "read_only": True,
+                "ledger_mutated": False,
+                "live_execution_performed": False,
+                "server_executes_shell": False,
+                "raw_prompt_omitted": True,
+                "raw_response_omitted": True,
+                "raw_content_omitted": True,
+                "token_omitted": True,
+            },
+            "token_omitted": True,
         },
         "contract": "read-only pre-confirm supervision item for Hermes/OpenClaw/Codex loops; it classifies readiness but never executes preview, confirm, review, live-runtime, approval, or shell commands",
         "safety": {

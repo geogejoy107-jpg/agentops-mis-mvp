@@ -38,6 +38,21 @@ def leaked(text: str) -> bool:
     return any(pattern.search(text) for pattern in TOKEN_PATTERNS)
 
 
+def require_gate_safety(gate: dict, label: str, failures: list[str]) -> None:
+    safety = gate.get("safety") or {}
+    require(gate.get("token_omitted") is True, f"{label} token omission missing: {gate}", failures)
+    require(gate.get("live_execution_performed") is False, f"{label} live execution proof missing: {gate}", failures)
+    require(gate.get("server_executes_shell") is False, f"{label} shell proof missing: {gate}", failures)
+    require(safety.get("read_only") is True, f"{label} read-only proof missing: {safety}", failures)
+    require(safety.get("ledger_mutated") is False, f"{label} ledger mutation proof missing: {safety}", failures)
+    require(safety.get("live_execution_performed") is False, f"{label} safety live proof missing: {safety}", failures)
+    require(safety.get("server_executes_shell") is False, f"{label} safety shell proof missing: {safety}", failures)
+    require(safety.get("raw_prompt_omitted") is True, f"{label} raw prompt omission missing: {safety}", failures)
+    require(safety.get("raw_response_omitted") is True, f"{label} raw response omission missing: {safety}", failures)
+    require(safety.get("raw_content_omitted") is True, f"{label} raw content omission missing: {safety}", failures)
+    require(safety.get("token_omitted") is True, f"{label} safety token omission missing: {safety}", failures)
+
+
 def fake_supervision(adapter: str = "hermes", *, status: str = "record_first", can_confirm: bool = True) -> dict:
     blockers = [] if can_confirm else ["smoke_loop_supervision_blocked"]
     return {
@@ -207,6 +222,7 @@ def main() -> int:
             require(blocked_payload.get("error") == "run_start_loop_supervision_blocked", f"wrong block error: {blocked_payload}", failures)
             require(blocked_payload.get("live_execution_performed") is False, f"blocked path must not execute live runtime: {blocked_payload}", failures)
             require((blocked_payload.get("loop_supervision_gate") or {}).get("operation") == "agent_gateway_run_start_loop_supervision_gate", f"missing blocked gate: {blocked_payload}", failures)
+            require_gate_safety(blocked_payload.get("loop_supervision_gate") or {}, "blocked gate", failures)
             require(blocked_run_count == 0, f"blocked supervision created a run for {blocked_task}", failures)
             require(blocked_audit_count >= 1, "blocked run_start audit missing", failures)
 
@@ -225,6 +241,7 @@ def main() -> int:
             require(ready_status == 201, f"Hermes ready supervision should allow run_start: {ready_status} {ready_payload}", failures)
             require(ready_gate.get("ok") is True and ready_gate.get("status") == "record_first", f"ready gate should be attached: {ready_gate}", failures)
             require(bool(ready_gate.get("supervision_hash")), f"ready gate missing supervision_hash: {ready_gate}", failures)
+            require_gate_safety(ready_gate, "ready gate", failures)
             require((ready_payload.get("agent_plan") or {}).get("loop_supervision_hash") == ready_gate.get("supervision_hash"), f"run_start response missing plan supervision hash: {ready_payload}", failures)
 
             codex_task = "tsk_run_start_loop_codex"
@@ -240,6 +257,7 @@ def main() -> int:
             outputs.append(json.dumps(codex_payload, ensure_ascii=False))
             require(codex_status == 201, f"Codex current-code supervision should allow run_start: {codex_status} {codex_payload}", failures)
             require((codex_payload.get("loop_supervision_gate") or {}).get("runtime_type") == "codex", f"Codex gate missing: {codex_payload}", failures)
+            require_gate_safety(codex_payload.get("loop_supervision_gate") or {}, "codex gate", failures)
 
             mock_task = "tsk_run_start_loop_mock"
             mock_agent = "agt_run_start_loop_mock"

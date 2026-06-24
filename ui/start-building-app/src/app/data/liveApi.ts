@@ -2407,6 +2407,33 @@ export interface OperatorAgentLoopHandoffConsumerPayload {
     token_omitted?: boolean;
   };
   commands: Record<string, string | null | undefined>;
+  run_start_admission?: {
+    operation: string;
+    gateway_endpoint: string;
+    runtime_type: string;
+    governed_runtime: boolean;
+    would_allow_run_start: boolean;
+    would_block_run_start: boolean;
+    fail_closed_error: string;
+    no_run_created_on_block: boolean;
+    agent_plan_required: boolean;
+    supervision_hash_state: string;
+    run_metadata_field: string;
+    recommended_next?: string | null;
+    status: string;
+    contract?: string;
+    safety?: {
+      read_only?: boolean;
+      ledger_mutated?: boolean;
+      live_execution_performed?: boolean;
+      server_executes_shell?: boolean;
+      raw_prompt_omitted?: boolean;
+      raw_response_omitted?: boolean;
+      raw_content_omitted?: boolean;
+      token_omitted?: boolean;
+    };
+    token_omitted?: boolean;
+  };
   safety: {
     read_only: boolean;
     ledger_mutated: boolean;
@@ -2897,6 +2924,39 @@ export interface WorkerDaemonStatus {
   log_tail?: string[];
 }
 
+export interface AgentGatewayRunStartLoopSupervisionGate {
+  operation: string;
+  runtime_type?: string;
+  adapter?: string;
+  task_id?: string | null;
+  agent_id?: string | null;
+  ok?: boolean;
+  status?: string;
+  can_preview_loop?: boolean;
+  can_confirm_bounded_loop?: boolean;
+  should_record_before_execute?: boolean;
+  ready_for_live_dispatch?: boolean;
+  blockers?: string[];
+  attention?: string[];
+  reason?: string | null;
+  recommended_next?: string | null;
+  supervision_hash?: string | null;
+  commands?: Record<string, string | null | undefined>;
+  safety?: {
+    read_only?: boolean;
+    ledger_mutated?: boolean;
+    live_execution_performed?: boolean;
+    server_executes_shell?: boolean;
+    raw_prompt_omitted?: boolean;
+    raw_response_omitted?: boolean;
+    raw_content_omitted?: boolean;
+    token_omitted?: boolean;
+  };
+  token_omitted?: boolean;
+  live_execution_performed?: boolean;
+  server_executes_shell?: boolean;
+}
+
 export interface WorkerDispatchResult {
   provider: string;
   dry_run: boolean;
@@ -2905,6 +2965,8 @@ export interface WorkerDispatchResult {
   agent_id: string;
   task_id: string;
   run_id?: string | null;
+  run_start_attempted?: boolean;
+  loop_supervision_gate?: AgentGatewayRunStartLoopSupervisionGate | null;
   agent_plan_id?: string | null;
   plan_evidence_manifest_id?: string | null;
   plan_evidence_status?: string | null;
@@ -2936,6 +2998,8 @@ export interface WorkerDispatchResult {
       ok?: boolean;
       output_summary?: string;
       error_type?: string | null;
+      run_start_attempted?: boolean;
+      loop_supervision_gate?: AgentGatewayRunStartLoopSupervisionGate | null;
     }[];
   };
   error?: string | null;
@@ -7133,6 +7197,8 @@ export async function loadOperatorLoopSupervision(limit = 8): Promise<OperatorLo
     items: asArray<Record<string, unknown>>(raw.items).map((item) => {
       const itemSafety = typeof item.safety === "object" && item.safety !== null ? item.safety as Record<string, unknown> : {};
       const nextCommands = typeof item.next_commands === "object" && item.next_commands !== null ? item.next_commands as Record<string, unknown> : {};
+      const runStartAdmissionRaw = typeof item.run_start_admission === "object" && item.run_start_admission !== null ? item.run_start_admission as Record<string, unknown> : {};
+      const runStartSafetyRaw = typeof runStartAdmissionRaw.safety === "object" && runStartAdmissionRaw.safety !== null ? runStartAdmissionRaw.safety as Record<string, unknown> : {};
       return {
         operation: String(item.operation || "operator_loop_supervision_item"),
         adapter: String(item.adapter || "mock"),
@@ -7159,6 +7225,33 @@ export async function loadOperatorLoopSupervision(limit = 8): Promise<OperatorLo
           token_omitted: nextCommands.token_omitted === undefined ? undefined : boolValue(nextCommands.token_omitted),
         },
         commands: typeof item.commands === "object" && item.commands !== null ? item.commands as Record<string, string | null | undefined> : {},
+        run_start_admission: Object.keys(runStartAdmissionRaw).length ? {
+          operation: String(runStartAdmissionRaw.operation || "operator_loop_supervision_run_start_admission"),
+          gateway_endpoint: String(runStartAdmissionRaw.gateway_endpoint || "POST /api/agent-gateway/runs/start"),
+          runtime_type: String(runStartAdmissionRaw.runtime_type || item.adapter || "mock"),
+          governed_runtime: boolValue(runStartAdmissionRaw.governed_runtime),
+          would_allow_run_start: boolValue(runStartAdmissionRaw.would_allow_run_start),
+          would_block_run_start: boolValue(runStartAdmissionRaw.would_block_run_start),
+          fail_closed_error: String(runStartAdmissionRaw.fail_closed_error || "run_start_loop_supervision_blocked"),
+          no_run_created_on_block: runStartAdmissionRaw.no_run_created_on_block === undefined ? true : boolValue(runStartAdmissionRaw.no_run_created_on_block),
+          agent_plan_required: runStartAdmissionRaw.agent_plan_required === undefined ? true : boolValue(runStartAdmissionRaw.agent_plan_required),
+          supervision_hash_state: String(runStartAdmissionRaw.supervision_hash_state || "bound_by_agent_gateway_run_start"),
+          run_metadata_field: String(runStartAdmissionRaw.run_metadata_field || "loop_supervision_hash"),
+          recommended_next: runStartAdmissionRaw.recommended_next === undefined || runStartAdmissionRaw.recommended_next === null ? null : String(runStartAdmissionRaw.recommended_next),
+          status: String(runStartAdmissionRaw.status || (runStartAdmissionRaw.would_allow_run_start ? "pass" : "blocked")),
+          contract: runStartAdmissionRaw.contract === undefined || runStartAdmissionRaw.contract === null ? undefined : String(runStartAdmissionRaw.contract),
+          safety: {
+            read_only: runStartSafetyRaw.read_only === undefined ? true : boolValue(runStartSafetyRaw.read_only),
+            ledger_mutated: boolValue(runStartSafetyRaw.ledger_mutated),
+            live_execution_performed: boolValue(runStartSafetyRaw.live_execution_performed),
+            server_executes_shell: boolValue(runStartSafetyRaw.server_executes_shell),
+            raw_prompt_omitted: runStartSafetyRaw.raw_prompt_omitted === undefined ? true : boolValue(runStartSafetyRaw.raw_prompt_omitted),
+            raw_response_omitted: runStartSafetyRaw.raw_response_omitted === undefined ? true : boolValue(runStartSafetyRaw.raw_response_omitted),
+            raw_content_omitted: runStartSafetyRaw.raw_content_omitted === undefined ? true : boolValue(runStartSafetyRaw.raw_content_omitted),
+            token_omitted: runStartSafetyRaw.token_omitted === undefined ? true : boolValue(runStartSafetyRaw.token_omitted),
+          },
+          token_omitted: runStartAdmissionRaw.token_omitted === undefined ? undefined : boolValue(runStartAdmissionRaw.token_omitted),
+        } : undefined,
         safety: {
           read_only: itemSafety.read_only === undefined ? true : boolValue(itemSafety.read_only),
           ledger_mutated: boolValue(itemSafety.ledger_mutated),

@@ -706,6 +706,15 @@ workers, Hermes/OpenClaw, approvals, shell commands, or ledger mutations.
 Supplied Agent Gateway tokens/sessions require `tasks:read` and remain
 workspace-bound.
 
+Each adapter item also includes `run_start_admission`, a read-only projection of
+how Agent Gateway will consume the same gate before `runs/start`. It names the
+`POST /api/agent-gateway/runs/start` boundary, whether run creation would be
+allowed, the `run_start_loop_supervision_blocked` fail-closed error, the
+no-run-on-block rule, the `loop_supervision_hash` binding point, and the next
+safe command. `/workspace/agents` renders this projection and, after a local
+worker dispatch, the actual `loop_supervision_gate` returned by the worker or
+Gateway response.
+
 ### `agentops operator execution-mode`
 
 Reads the current dispatch mode before a human or agent starts a customer task:

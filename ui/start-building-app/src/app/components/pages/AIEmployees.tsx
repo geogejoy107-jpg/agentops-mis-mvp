@@ -856,6 +856,11 @@ export function AIEmployees() {
       agentLoopHandoffSummary: "Compact shared handoff for Hermes, OpenClaw, and Codex: current-code proof, fresh live evidence, Method gates, and copyable next commands.",
       loopSupervisionTitle: "Loop supervision",
       loopSupervisionSummary: "Pre-confirm gate for Hermes/OpenClaw: record pressure, bounded confirm readiness, and the next copy-only command.",
+      gatewayRunStartGate: "Gateway run_start gate",
+      gatewayRunStartSummary: "Agent Gateway consumes this supervision before run creation; blocked gates fail closed with 428 and create no run.",
+      wouldAllowRunStart: "Would allow run_start",
+      noRunOnBlock: "No run on block",
+      hashBinding: "Hash binding",
       recordFirst: "Record first",
       readyToConfirm: "Ready to confirm",
       handoffReady: "Handoff ready",
@@ -1462,6 +1467,11 @@ export function AIEmployees() {
       agentLoopHandoffSummary: "Hermes、OpenClaw、Codex 共享的紧凑交接包：current-code 证明、fresh live 证据、Method gate 和下一条可复制命令。",
       loopSupervisionTitle: "Loop 监管",
       loopSupervisionSummary: "Hermes/OpenClaw 确认执行前的 gate：RECORD 压力、bounded confirm 状态和下一条 copy-only 命令。",
+      gatewayRunStartGate: "Gateway run_start Gate",
+      gatewayRunStartSummary: "Agent Gateway 会在创建 run 之前消费这个监管 gate；阻塞时返回 428，且不创建 run。",
+      wouldAllowRunStart: "允许 run_start",
+      noRunOnBlock: "阻塞不建 run",
+      hashBinding: "Hash 绑定",
       recordFirst: "先 RECORD",
       readyToConfirm: "可确认",
       handoffReady: "交接就绪",
@@ -2098,6 +2108,16 @@ export function AIEmployees() {
   const selectedExecutionLabel = operatorExecutionMode?.mode
     ? `${operatorExecutionMode.mode} · ${operatorExecutionMode.selected_path || executionModeSummary?.selected_path || fallbackSelectedExecutionLabel}`
     : fallbackSelectedExecutionLabel;
+  const lastWorkerResultWithRunStartGate = lastWorkerDispatch?.worker_result?.results?.find((result) => result.loop_supervision_gate);
+  const lastWorkerRunStartGate = lastWorkerDispatch?.loop_supervision_gate || lastWorkerResultWithRunStartGate?.loop_supervision_gate || null;
+  const lastWorkerRunStartGateSafety = lastWorkerRunStartGate?.safety || {};
+  const lastWorkerRunStartGateHash = lastWorkerRunStartGate?.supervision_hash ? String(lastWorkerRunStartGate.supervision_hash).slice(0, 12) : "—";
+  const lastWorkerRunStartRecommendedNext = String(
+    lastWorkerRunStartGate?.recommended_next ||
+    lastWorkerRunStartGate?.commands?.recommended_next ||
+    lastWorkerRunStartGate?.commands?.record_review ||
+    ""
+  );
   const selectedRouteDetail = executionModeRoute
     ? `${executionModeRoute.readiness || "unknown"} · ${executionModeRoute.trust_status || "trust:unknown"}`
     : customerTaskForm.adapter === "mock"
@@ -4859,6 +4879,51 @@ export function AIEmployees() {
                                 </div>
                               ))}
                             </div>
+                            {item.run_start_admission && (
+                              <div
+                                className="mt-1.5 rounded p-1.5 min-w-0"
+                                style={{ background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}
+                              >
+                                <div className="flex flex-wrap items-center justify-between gap-1">
+                                  <div className="text-[8px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.gatewayRunStartGate}</div>
+                                  <div className="flex flex-wrap gap-1">
+                                    <StatusBadge status={item.run_start_admission.status} />
+                                    <StatusBadge status={item.run_start_admission.would_allow_run_start ? "pass" : "blocked"} label={`${copy.wouldAllowRunStart}: ${String(item.run_start_admission.would_allow_run_start)}`} />
+                                    <StatusBadge status={item.run_start_admission.no_run_created_on_block ? "pass" : "blocked"} label={`${copy.noRunOnBlock}: ${String(item.run_start_admission.no_run_created_on_block)}`} />
+                                    <StatusBadge status={item.run_start_admission.safety?.server_executes_shell ? "blocked" : "pass"} label={item.run_start_admission.safety?.server_executes_shell ? "server shell" : "no server shell"} />
+                                  </div>
+                                </div>
+                                <div className="text-[8px] mt-1 line-clamp-2" style={{ color: "var(--mis-muted)" }}>{copy.gatewayRunStartSummary}</div>
+                                <div className="grid grid-cols-2 gap-1 mt-1">
+                                  {[
+                                    { label: "HTTP", value: item.run_start_admission.fail_closed_error, status: item.run_start_admission.would_block_run_start ? "blocked" : "pass" },
+                                    { label: copy.hashBinding, value: item.run_start_admission.supervision_hash_state, status: item.run_start_admission.run_metadata_field === "loop_supervision_hash" ? "pass" : "attention" },
+                                    { label: "Agent Plan", value: String(item.run_start_admission.agent_plan_required), status: item.run_start_admission.agent_plan_required ? "pass" : "blocked" },
+                                    { label: "Endpoint", value: item.run_start_admission.gateway_endpoint, status: item.run_start_admission.governed_runtime ? "pass" : "attention" },
+                                  ].map((metric) => (
+                                    <div key={`${item.adapter}:run-start-admission:${metric.label}`} className="rounded px-1.5 py-0.5 min-w-0" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+                                      <div className="text-[8px]" style={{ color: "var(--mis-muted)" }}>{metric.label}</div>
+                                      <div className="flex items-center justify-between gap-1 mt-0.5">
+                                        <span className="text-[8px] font-semibold truncate" style={{ color: "var(--mis-text)" }} title={metric.value}>{metric.value}</span>
+                                        <StatusBadge status={metric.status} />
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                                {item.run_start_admission.recommended_next && (
+                                  <button
+                                    type="button"
+                                    onClick={() => void copyIntakeCommand(String(item.run_start_admission?.recommended_next || ""))}
+                                    className="inline-flex items-center gap-1 text-[8px] px-1.5 py-0.5 rounded max-w-full mt-1"
+                                    style={{ color: "var(--mis-cyan)", background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}
+                                    title={String(item.run_start_admission.recommended_next)}
+                                  >
+                                    <Copy size={8} />
+                                    <span className="truncate max-w-[180px]">{copiedIntakeCommand === item.run_start_admission.recommended_next ? copy.copiedCommand : item.run_start_admission.recommended_next}</span>
+                                  </button>
+                                )}
+                              </div>
+                            )}
                           </div>
                         ))}
                       </div>
@@ -7921,14 +7986,44 @@ export function AIEmployees() {
               {lastWorkerDispatch.run_id && (
                 <Link to={`/admin/runs/${lastWorkerDispatch.run_id}`} className="text-[10px] px-2 py-1 rounded" style={{ background: "rgba(45,212,191,0.10)", color: "var(--mis-success)", border: "1px solid rgba(45,212,191,0.18)" }}>{copy.openRun}</Link>
               )}
-              {Object.entries(lastWorkerDispatch.evidence?.evidence_counts || {}).slice(0, 6).map(([key, value]) => (
-                <span key={key} className="text-[10px] px-2 py-1 rounded" style={{ background: "var(--mis-bg)", color: "var(--mis-muted)", border: "1px solid var(--mis-border)" }}>
-                  {key}: {value}
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
+	              {Object.entries(lastWorkerDispatch.evidence?.evidence_counts || {}).slice(0, 6).map(([key, value]) => (
+	                <span key={key} className="text-[10px] px-2 py-1 rounded" style={{ background: "var(--mis-bg)", color: "var(--mis-muted)", border: "1px solid var(--mis-border)" }}>
+	                  {key}: {value}
+	                </span>
+	              ))}
+	            </div>
+	            {lastWorkerRunStartGate && (
+	              <div className="rounded p-2 mt-3" style={{ background: "var(--mis-bg)", border: "1px solid var(--mis-border)" }}>
+	                <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-2">
+	                  <div className="min-w-0">
+	                    <div className="flex flex-wrap items-center gap-1.5">
+	                      <div className="text-[10px] font-semibold" style={{ color: "var(--mis-text)" }}>{copy.gatewayRunStartGate}</div>
+	                      <StatusBadge status={lastWorkerRunStartGate.ok ? "pass" : String(lastWorkerRunStartGate.status || "blocked")} label={String(lastWorkerRunStartGate.status || "unknown")} />
+	                      <StatusBadge status={lastWorkerDispatch.run_start_attempted === false ? "attention" : "pass"} label={`run_start_attempted: ${String(lastWorkerDispatch.run_start_attempted !== false)}`} />
+	                      <StatusBadge status={lastWorkerRunStartGateSafety.server_executes_shell || lastWorkerRunStartGate.server_executes_shell ? "blocked" : "pass"} label={lastWorkerRunStartGateSafety.server_executes_shell || lastWorkerRunStartGate.server_executes_shell ? "server shell" : "no server shell"} />
+	                      <StatusBadge status={lastWorkerRunStartGateSafety.live_execution_performed || lastWorkerRunStartGate.live_execution_performed ? "blocked" : "pass"} label={lastWorkerRunStartGateSafety.live_execution_performed || lastWorkerRunStartGate.live_execution_performed ? "live executed" : copy.liveExecutionProof} />
+	                    </div>
+	                    <div className="text-[10px] mt-1 line-clamp-2" style={{ color: "var(--mis-muted)" }}>
+	                      {copy.hashBinding}: {lastWorkerRunStartGateHash} · {lastWorkerRunStartGate.operation}
+	                    </div>
+	                  </div>
+	                  {lastWorkerRunStartRecommendedNext && (
+	                    <button
+	                      type="button"
+	                      onClick={() => void copyIntakeCommand(lastWorkerRunStartRecommendedNext)}
+	                      className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded max-w-full"
+	                      style={{ color: "var(--mis-cyan)", background: "var(--mis-surface2)", border: "1px solid var(--mis-border)" }}
+	                      title={lastWorkerRunStartRecommendedNext}
+	                    >
+	                      <Copy size={10} />
+	                      <span className="truncate max-w-[220px]">{copiedIntakeCommand === lastWorkerRunStartRecommendedNext ? copy.copiedCommand : lastWorkerRunStartRecommendedNext}</span>
+	                    </button>
+	                  )}
+	                </div>
+	              </div>
+	            )}
+	          </div>
+	        )}
         <div className="flex gap-2 flex-wrap mt-4">
           {[
             { adapter: "mock" as const, label: copy.startMockDaemon },
