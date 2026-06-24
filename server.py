@@ -51,6 +51,7 @@ DEFAULT_RETENTION_CONTROLS_PATH = ROOT / "config" / "retention-controls.local.js
 DEFAULT_ENTERPRISE_CONTROLS_PATH = ROOT / "config" / "enterprise-controls.local.json"
 STORAGE_BACKEND = os.environ.get("AGENTOPS_STORAGE_BACKEND", "sqlite").strip().lower() or "sqlite"
 POSTGRES_HTTP_WRITE_ALLOWED_ROUTES = {
+    ("POST", "/api/approvals/:approval_id/approve"),
     ("POST", "/api/agent-gateway/artifacts"),
     ("POST", "/api/agent-gateway/agent-plans"),
     ("POST", "/api/agent-gateway/approvals/request"),
@@ -64,7 +65,13 @@ POSTGRES_HTTP_WRITE_ALLOWED_ROUTES = {
     ("POST", "/api/agent-gateway/tasks"),
     ("POST", "/api/agent-gateway/tasks/:task_id/claim"),
     ("POST", "/api/agent-gateway/tool-calls"),
+    ("POST", "/api/integrations/hermes/run-task"),
+    ("POST", "/api/integrations/openclaw/probe"),
     ("POST", "/api/tasks"),
+}
+POSTGRES_HTTP_PREPARED_ACTION_DECISION_TYPES = {
+    ("hermes", "runtime.hermes_run_task"),
+    ("openclaw", "runtime.openclaw_probe"),
 }
 
 RISKY_TOOLS = {
@@ -457,6 +464,8 @@ def storage_backend_status(headers=None) -> dict:
                 "postgres_http_gateway_run_heartbeat_write_v1",
                 "postgres_http_gateway_run_completion_heartbeat_write_v1",
                 "postgres_http_gateway_memory_write_v1",
+                "postgres_http_runtime_prepared_action_write_v1",
+                "postgres_http_runtime_approval_decision_write_v1",
             ] if write_http else ["postgres_http_read_parity_v1"],
         }
     return {
@@ -510,6 +519,8 @@ def postgres_read_only_write_block(method: str, path: str) -> dict:
             "postgres_http_gateway_run_heartbeat_write_v1",
             "postgres_http_gateway_run_completion_heartbeat_write_v1",
             "postgres_http_gateway_memory_write_v1",
+            "postgres_http_runtime_prepared_action_write_v1",
+            "postgres_http_runtime_approval_decision_write_v1",
         ],
     }
 
@@ -524,6 +535,10 @@ def postgres_write_route_key(method: str, path: str) -> tuple[str, str]:
         middle = path[len("/api/agent-gateway/runs/"):-len("/heartbeat")].strip("/")
         if middle and "/" not in middle:
             return normalized_method, "/api/agent-gateway/runs/:run_id/heartbeat"
+    if normalized_method == "POST" and path.startswith("/api/approvals/"):
+        parts = path[len("/api/approvals/"):].strip("/").split("/")
+        if len(parts) == 2 and parts[0] and parts[1] == "approve":
+            return normalized_method, f"/api/approvals/:approval_id/{parts[1]}"
     return normalized_method, path
 
 
@@ -532,6 +547,16 @@ def postgres_http_write_allowed(method: str, path: str) -> bool:
         return False
     status = storage_backend_status(None)
     return bool(status.get("status") == "active" and status.get("writes_allowed") is True)
+
+
+def postgres_prepared_action_decision_allowed(conn, approval_id: str) -> bool:
+    action = conn.execute(
+        "SELECT provider, action_type FROM prepared_actions WHERE approval_id=? ORDER BY created_at DESC LIMIT 1",
+        (approval_id,),
+    ).fetchone()
+    if not action:
+        return False
+    return (action["provider"], action["action_type"]) in POSTGRES_HTTP_PREPARED_ACTION_DECISION_TYPES
 
 
 def commercial_entitlement_block(conn, capability: str, operation: str, actor: str = "commercial-gate") -> dict:
@@ -15286,6 +15311,13 @@ class Handler(BaseHTTPRequestHandler):
         before = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (approval_id,)).fetchone()
         if not before:
             return self.send_json({"error": "not found"}, 404)
+        if STORAGE_BACKEND == "postgres" and (
+            decision != "approved" or not postgres_prepared_action_decision_allowed(conn, approval_id)
+        ):
+            return self.send_json(
+                postgres_read_only_write_block("POST", f"/api/approvals/{approval_id}/{'approve' if decision == 'approved' else 'reject'}"),
+                status=503,
+            )
         if decision == "approved" and customer_delivery_approval_requires_manifest(before):
             gate = delivery_manifest_gate(conn, before["run_id"])
             if not gate.get("pass"):

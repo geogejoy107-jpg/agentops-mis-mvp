@@ -251,11 +251,14 @@ Current local evidence on `codex/commercial-migration-closed-loop`:
   `postgres_http_gateway_plan_evidence_write_v1`,
   `postgres_http_gateway_approval_write_v1`,
   `postgres_http_gateway_audit_write_v1`, and
-  `postgres_http_gateway_memory_write_v1` passed against `postgres:16-alpine`
+  `postgres_http_gateway_memory_write_v1`,
+  `postgres_http_runtime_prepared_action_write_v1`, and
+  `postgres_http_runtime_approval_decision_write_v1` passed against `postgres:16-alpine`
   with a temporary psycopg target: read-only mode still returned
   `503 postgres_read_only_backend` for `POST /api/tasks` and
   scoped Agent Gateway task create/claim/run-start/tool/evaluation/artifact/
-  heartbeat/Agent Plan/plan-evidence/memory/approval/audit routes; explicit
+  heartbeat/Agent Plan/plan-evidence/memory/approval/audit plus fixed
+  Hermes/OpenClaw runtime prepared-action routes; explicit
   `AGENTOPS_POSTGRES_WRITE_HTTP=1` mode allowed only those task,
   execution-start, heartbeat, execution-evidence, plan-evidence,
   memory-candidate, approval-request, and run/task-bound audit routes, created
@@ -282,7 +285,11 @@ Current local evidence on `codex/commercial-migration-closed-loop`:
   memory overwrite, approval task/tool/requester mismatch, approved approval
   overwrite, audit task/run mismatch, and intruder audit without `run_id`
   Gateway requests at `403`, kept `POST /api/agent-gateway/knowledge/index` and
-  `POST /api/agents` blocked at `503`, kept `free_local_dependencies=[]`, and
+  `POST /api/agents` blocked at `503`, proved fixed OpenClaw and Hermes prepare
+  -> premature resume blocked -> row-gated approve -> hash mismatch blocked ->
+  exact resume consumed -> replay blocked with provider call count exactly one,
+  kept non-prepared approval decisions blocked at `503`, kept
+  `free_local_dependencies=[]`, and
   did not fall back to SQLite.
 - `postgres_cli_write_parity_v1`,
   `postgres_cli_gateway_task_write_v1`,

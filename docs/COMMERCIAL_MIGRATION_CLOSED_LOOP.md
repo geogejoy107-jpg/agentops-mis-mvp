@@ -151,7 +151,8 @@ Must be true:
   routed HTTP/CLI write surface is enabled.
 - The first routed Postgres HTTP writes are explicit task, execution-start,
   agent/run progress and completion heartbeat, execution-evidence, plan-evidence, memory-candidate,
-  approval-request, and run/task-bound audit allowlist routes behind
+  approval-request, run/task-bound audit, and fixed Hermes/OpenClaw
+  prepared-action exact-resume allowlist routes behind
   `AGENTOPS_POSTGRES_WRITE_HTTP=1`:
   `POST /api/tasks`, scoped `POST /api/agent-gateway/tasks`, scoped
   `POST /api/agent-gateway/tasks/:task_id/claim`, scoped
@@ -164,17 +165,23 @@ Must be true:
   `POST /api/agent-gateway/agent-plans`, scoped
   `POST /api/agent-gateway/plan-evidence-manifests`, scoped
   `POST /api/agent-gateway/memories/propose`, scoped
-  `POST /api/agent-gateway/approvals/request`, and scoped
-  `POST /api/agent-gateway/audit`; read-only mode must still block all of them,
+  `POST /api/agent-gateway/approvals/request`, scoped
+  `POST /api/agent-gateway/audit`, fixed
+  `POST /api/integrations/openclaw/probe`, fixed
+  `POST /api/integrations/hermes/run-task`, and row-gated
+  `POST /api/approvals/:approval_id/approve` for those two fixed runtime
+  prepared actions; read-only mode must still block all of them,
   the allowlisted writes must persist task/run/progress-heartbeat/completion-heartbeat/tool/evaluation/artifact/Agent
-  Plan/plan-evidence/memory/approval/audit/runtime evidence in
+  Plan/plan-evidence/memory/approval/audit/runtime/prepared-action evidence in
   Postgres, scoped Gateway writes must reject absent tokens, missing scopes,
   body/header cross-workspace, cross-agent, same-workspace intruder attempts,
   run heartbeat task mismatches, terminal run revival, memory overwrite attempts,
   manifest binding mismatches, approval task/tool/requester mismatches,
   approved approval overwrite attempts, and audit entity/run/task mismatches,
-  and broader mutation routes such as memory review decisions, knowledge index,
-  live-runtime heartbeat/daemon control, and admin mutations must
+  fixed runtime routes must reject premature resume/hash mismatch/replay while
+  consuming exactly once after approval, non-prepared approval decisions must
+  remain blocked, and broader mutation routes such as memory review decisions,
+  knowledge index, non-fixed live-runtime heartbeat/daemon control, and admin mutations must
   remain blocked until each has a dedicated smoke.
 - The first Postgres-backed Agent Gateway CLI/API writes must use the actual
   `agentops` CLI against the same allowlist, not direct HTTP fixtures only:
