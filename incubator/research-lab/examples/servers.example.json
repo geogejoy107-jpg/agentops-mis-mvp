@@ -1,0 +1,21 @@
+{
+  "profiles": [
+    {
+      "name": "lab-gpu-01",
+      "host": "gpu01.example.org",
+      "user": "research",
+      "port": 22,
+      "remote_root": "/srv/agentops-research-lab",
+      "python": "python3",
+      "host_key_policy": "strict",
+      "connect_timeout_seconds": 10,
+      "server_alive_interval": 15,
+      "server_alive_count_max": 3,
+      "max_parallel_jobs": 2,
+      "max_stage_bytes": 1073741824,
+      "identity_file": "~/.ssh/id_research_lab",
+      "known_hosts_file": "~/.ssh/known_hosts",
+      "tags": ["gpu", "research"]
+    }
+  ]
+}

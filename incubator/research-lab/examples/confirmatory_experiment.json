@@ -1,0 +1,65 @@
+{
+  "name": "local-confirmatory-smoke",
+  "stage": "confirmatory",
+  "executor": "local",
+  "command": [
+    "python",
+    "-c",
+    "print('RESEARCH_LAB_LOCAL_OK')"
+  ],
+  "matrix": {
+    "seed": [
+      11,
+      22
+    ]
+  },
+  "max_concurrency": 1,
+  "timeout_seconds": 30,
+  "retries": 0,
+  "workdir": ".",
+  "environment": {},
+  "integrity": {
+    "strict_actuals": true,
+    "required_actual_fields": [
+      "initialization_mode",
+      "training_scope",
+      "dataset_version"
+    ],
+    "minimum_completed_trials": 2,
+    "minimum_distinct_seeds": 2,
+    "allow_warning_deviations": false,
+    "require_provenance": true
+  },
+  "protocol": {
+    "research_question": "Can the local Research Lab protocol validator prove a frozen confirmatory spec?",
+    "primary_metric": "validator_pass",
+    "initialization_mode": "from_scratch",
+    "training_scope": "protocol_validation_only",
+    "dataset_version": "synthetic-local-v1",
+    "claim_policy": "eligible only after declared seeds and provenance are preserved"
+  },
+  "provenance": {
+    "code": {
+      "repository": "https://example.invalid/research-lab-demo.git",
+      "revision": "local-confirmatory-v1",
+      "dirty": false
+    },
+    "datasets": [
+      {
+        "name": "synthetic-local",
+        "uri": "dvc://synthetic/local",
+        "version": "synthetic-local-v1"
+      }
+    ],
+    "models": [],
+    "resolved_config": {
+      "seed_count": 2,
+      "mode": "validator_only"
+    },
+    "environment": {
+      "name": "python-runtime",
+      "uri": "pyproject.toml",
+      "version": "0.3.1"
+    }
+  }
+}
