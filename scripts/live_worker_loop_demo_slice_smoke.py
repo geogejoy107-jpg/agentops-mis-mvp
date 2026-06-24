@@ -138,6 +138,44 @@ def main() -> int:
     require(safety.get("requires_explicit_confirm_service_control") is True, f"service-control safety proof missing: {safety}", failures)
     require(safety.get("requires_explicit_confirm_service_closure") is True, f"service-closure safety proof missing: {safety}", failures)
 
+    stale_proc = subprocess.run(
+        [
+            sys.executable,
+            "scripts/live_worker_loop_demo_slice.py",
+            "--base-url",
+            "http://127.0.0.1:9",
+            "--probe-timeout",
+            "1",
+            "--confirm-live",
+            "--adapter",
+            "hermes",
+            "--service-control-timeout",
+            "1",
+            "--request-timeout",
+            "1",
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=20,
+        check=False,
+    )
+    require(stale_proc.returncode == 1, f"stale current-code gate should fail closed: {stale_proc.stdout} {stale_proc.stderr}", failures)
+    try:
+        stale_payload = json.loads(stale_proc.stdout)
+    except json.JSONDecodeError as exc:
+        stale_payload = {}
+        failures.append(f"invalid stale gate JSON output: {exc}")
+    require(stale_payload.get("failures") == ["local_readiness_current_code_required"], f"stale gate failure mismatch: {stale_payload}", failures)
+    require(stale_payload.get("live_execution_performed") is False, f"stale gate attempted live runtime: {stale_payload}", failures)
+    require(stale_payload.get("service_control_attempted") is False, f"stale gate attempted service-control: {stale_payload}", failures)
+    require(stale_payload.get("service_closure_attempted") is False, f"stale gate attempted service-closure: {stale_payload}", failures)
+    require(stale_payload.get("ledger_mutated") is False, f"stale gate mutated ledger: {stale_payload}", failures)
+    stale_safety = stale_payload.get("safety") or {}
+    require(stale_safety.get("requires_current_code_server") is True, f"stale gate safety proof missing: {stale_safety}", failures)
+    require(stale_safety.get("failed_before_live_runtime") is True, f"stale gate live proof missing: {stale_safety}", failures)
+    require(not leaked_secret(stale_proc.stdout + stale_proc.stderr), "stale gate output leaked token-like material", failures)
+
     with tempfile.TemporaryDirectory(prefix="agentops-live-demo-preflight-") as tmp:
         tmp_path = Path(tmp)
         for adapter in ["hermes", "openclaw"]:
@@ -192,6 +230,21 @@ def main() -> int:
         require(not leaked_secret(preflight_proc.stdout + preflight_proc.stderr), "preflight output leaked token-like material", failures)
 
     demo_module = load_demo_module()
+    service_command = demo_module.service_control_command_args(
+        "http://127.0.0.1:9",
+        "hermes",
+        "launchd",
+        "load",
+        "/tmp/agentops-live/{adapter}.plist",
+        confirm_control=True,
+    )
+    command_text = " ".join(service_command)
+    require("--adapter hermes" in command_text, f"service-control helper adapter order regressed: {service_command}", failures)
+    require("--manager launchd" in command_text, f"service-control helper manager order regressed: {service_command}", failures)
+    require("--action load" in command_text, f"service-control helper action order regressed: {service_command}", failures)
+    require("--service-path /tmp/agentops-live/hermes.plist" in command_text, f"service-control helper service path regressed: {service_command}", failures)
+    require("--confirm-control" in service_command, f"service-control helper confirm flag missing: {service_command}", failures)
+
     open_gate_item = {
         "service_closure": {"required": True, "status": "attention", "step": "confirm_service_control_load"},
         "local_deployment": {
@@ -257,6 +310,8 @@ def main() -> int:
             "service_control_confirm_wall",
             "service_closure_fail_closed_helper",
             "preflight_service_control_preview",
+            "current_code_gate_before_live",
+            "service_control_command_helper_order",
         ],
     }, ensure_ascii=False, indent=2, sort_keys=True))
     return 0 if not failures else 1
