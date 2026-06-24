@@ -38,7 +38,7 @@ route retirement:
 | --- | --- | --- | --- |
 | Control tower | `control_tower` | `covered` | Not allowed |
 | Customer dispatch / Pixel Office | `pixel_office_and_dispatch` | `covered` | Not allowed |
-| Worker console | `worker_console` | `partial` | Not allowed |
+| Worker console | `worker_console` | `covered` | Not allowed |
 | Agent detail | `agent_detail` | `covered` | Not allowed |
 | Reports and delivery board | `reports` | `covered` | Not allowed |
 | Approvals | `approvals` | `covered` | Not allowed |
@@ -72,16 +72,20 @@ route retirement:
   signed export, and connector-policy gates. Vite `/admin` remains until an
   explicit route retirement commit preserves deep links, reruns browser
   evidence, and keeps Agent Gateway CLI/API/MCP unchanged.
-- Worker console is still partial but now has a focused Next.js
-  `/workspace/workers` surface. Next proves worker status, `/workers/fleet`
-  lane readback, `/workers/fleet/hygiene` read-only cleanup preview, adapter
-  readiness, local readiness, safe Agent Gateway session refs,
-  `/operator/execution-mode` read-only adapter route/confirm-run/prepared-action
-  wall readback, and visible fail-closed lifecycle boundaries while blocking
-  token/session lifecycle writes.
-  Vite/CLI remain canonical for direct token issuance, rotate/revoke/session
-  mutation, live worker controls, cleanup mutation, and detailed operator
-  controls.
+- Worker console is now covered by split Next.js routes. `/workspace/agents`
+  renders agent registry, production security, safe mock worker dispatch, mock
+  daemon controls, stuck-task release, approval-gated enrollment request, and
+  Agent Gateway session hygiene readback. `/workspace/workers` proves worker
+  status, `/workers/fleet` lane readback, `/workers/fleet/hygiene` read-only
+  cleanup preview, adapter readiness, local readiness, safe Agent Gateway
+  session refs, `/operator/execution-mode` read-only adapter route/confirm-run
+  and prepared-action wall readback, plus a visible Worker Console coverage
+  boundary. Agent Gateway CLI/API/MCP remains canonical for token
+  issue/rotate/revoke, session lifecycle, live daemon lifecycle, live dispatch
+  controls, cleanup mutation, and detailed operator mutation. Vite
+  `/workspace/agents` route retirement remains blocked until an explicit route
+  retirement commit preserves deep links, reruns browser evidence, and keeps
+  Agent Gateway CLI/API/MCP unchanged.
 - Template/base switching is now covered by `/workspace/templates`, backed by
   live `/template-packages`, `/template-bindings`, `/bases`, and
   `/migration/preview` readback/preview evidence. Vite `/admin/templates`
@@ -317,7 +321,9 @@ servers, opens `/workspace/workers`, verifies `/api/mis/workers/fleet`,
 `/api/mis/workers/fleet/hygiene`, and safe session readback stay token/session
 redacted and read-only, and proves the focused Worker Console shows fleet,
 hygiene, adapter readiness, session hygiene, and fail-closed lifecycle boundary
-evidence plus `/operator/execution-mode` readback without executing live work.
+evidence, the Worker Console coverage boundary, Agent Gateway CLI/API/MCP
+canonical lifecycle ownership, and `/operator/execution-mode` readback without
+executing live work.
 
 `python3 scripts/operator_execution_mode_smoke.py`
 (`operator_execution_mode_v1`) verifies `GET /api/operator/execution-mode`

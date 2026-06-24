@@ -450,6 +450,16 @@ python3 scripts/nextjs_playwright_snapshot_smoke.py
   `/workspace/agents` only renders session hygiene readback with token/session
   omission proof, while backend CLI/API lifecycle controls remain canonical.
 
+  `python3 scripts/nextjs_worker_console_parity_smoke.py`
+  (`nextjs_worker_console_parity_v1`) proves the split Worker Console coverage:
+  `/workspace/agents` handles registry, production security, safe mock worker
+  dispatch, mock daemon controls, stuck-task release, approval-gated enrollment,
+  and session hygiene, while `/workspace/workers` renders fleet/readiness,
+  hygiene preview, local readiness, operator execution-mode, and a visible
+  Worker Console coverage boundary. Agent Gateway CLI/API/MCP remains canonical
+  for token issue/rotate/revoke, session lifecycle, live daemon lifecycle, live
+  dispatch controls, cleanup mutation, and detailed operator mutation.
+
   The Next worker daemon control smoke starts isolated MIS API and Next.js
   servers with a temporary runtime directory, proves the Next
   `/api/mis/workers/local/start|restart|stop` proxy and

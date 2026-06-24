@@ -454,6 +454,11 @@ def main() -> int:
             and file_contains("ui/next-app/src/components/WorkerConsolePage.tsx", "worker_console_read_model_parity")
             and file_contains("ui/next-app/src/components/WorkerConsolePage.tsx", "worker-console-hygiene-plan")
             and file_contains("ui/next-app/src/components/WorkerConsolePage.tsx", "operator-execution-mode-readback")
+            and file_contains("ui/next-app/src/components/WorkerConsolePage.tsx", "worker-console-coverage-boundary")
+            and file_contains("ui/next-app/src/components/WorkerConsolePage.tsx", "Agent Gateway CLI/API/MCP canonical for token issue/rotate/revoke")
+            and file_contains("ui/next-app/src/components/WorkerConsolePage.tsx", "live daemon lifecycle requires CLI/API operator lane")
+            and file_contains("scripts/nextjs_worker_console_parity_smoke.py", "Worker Console coverage boundary")
+            and file_contains("scripts/nextjs_worker_console_parity_smoke.py", "Agent Gateway CLI/API/MCP canonical for token issue/rotate/revoke")
             and file_contains("server.py", "def operator_execution_mode")
             and file_contains("server.py", "/api/operator/execution-mode")
             and file_contains("agentops_mis_cli/agentops.py", "operator_execution_mode")
@@ -472,6 +477,8 @@ def main() -> int:
             and file_contains("docs/UI_API_PARITY_MATRIX.json", "nextjs_worker_gateway_lifecycle_guard_v1")
             and file_contains("docs/UI_API_PARITY_MATRIX.json", "nextjs_worker_console_parity_v1")
             and file_contains("docs/UI_API_PARITY_MATRIX.json", "operator_execution_mode_v1")
+            and file_contains("docs/UI_API_PARITY_MATRIX.json", "Worker Console coverage boundary")
+            and file_contains("docs/UI_API_PARITY_MATRIX.json", "Agent Gateway CLI/API/MCP remains canonical")
             and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "verify_dispatch_template_run_success")
             and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "/workspace/workers")
             and file_contains("scripts/nextjs_playwright_snapshot_smoke.py", "/workspace/pixel-office")
@@ -531,7 +538,7 @@ def main() -> int:
             and (ROOT / "scripts" / "nextjs_worker_console_parity_smoke.py").exists()
             and (ROOT / "scripts" / "operator_execution_mode_smoke.py").exists()
             and (ROOT / "scripts" / "nextjs_playwright_snapshot_smoke.py").exists(),
-            "parallel Next.js App Router track has API proxy, Gateway task-create proxy, CLI worker dogfood proof through the Next proxy, read-only Pixel Operating Map parity, split-route Control Tower parity across workspace/agents/governance/deployment, template/base switching readback for /template-packages, /template-bindings, /bases, and /migration/preview, local brief prepared-action exact resume with approval/hash/replay guards, worker mock dispatch, focused Worker Console read-model parity for fleet/hygiene/readiness/session safety plus operator execution-mode readback, customer-worker prepared-action exact resume for Hermes/OpenClaw plus ledger-derived safe resume readback, async customer-worker prepared-action submit/resume plus mock job status readback, mock daemon controls, stuck release, approval-gated enrollment request with raw-token issue blocked, Agent Gateway session/enrollment lifecycle writes blocked at the Next proxy with safe session hygiene readback, workspace/storage/tool-call/evaluation/runtime-connector/Notion external-base/agent-detail data contracts, deployment storage gate, and browser snapshot smoke including an isolated Pro template dispatch that creates the six-task KB bot package, six run rows, report artifact, six Agent Plans, and five verified manifests",
+            "parallel Next.js App Router track has API proxy, Gateway task-create proxy, CLI worker dogfood proof through the Next proxy, read-only Pixel Operating Map parity, split-route Control Tower parity across workspace/agents/governance/deployment, template/base switching readback for /template-packages, /template-bindings, /bases, and /migration/preview, local brief prepared-action exact resume with approval/hash/replay guards, covered split-route Worker Console parity across /workspace/agents and /workspace/workers with fleet/hygiene/readiness/session safety, mock worker/daemon controls, stuck release, approval-gated enrollment, operator execution-mode readback, and Agent Gateway CLI/API/MCP canonical lifecycle boundary, customer-worker prepared-action exact resume for Hermes/OpenClaw plus ledger-derived safe resume readback, async customer-worker prepared-action submit/resume plus mock job status readback, Agent Gateway session/enrollment lifecycle writes blocked at the Next proxy with safe session hygiene readback, workspace/storage/tool-call/evaluation/runtime-connector/Notion external-base/agent-detail data contracts, deployment storage gate, and browser snapshot smoke including an isolated Pro template dispatch that creates the six-task KB bot package, six run rows, report artifact, six Agent Plans, and five verified manifests",
         ),
         check(
             "pixel_office_dispatch_retirement_evidence_surface_exists",

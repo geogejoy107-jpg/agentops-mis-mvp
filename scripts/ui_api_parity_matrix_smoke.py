@@ -252,6 +252,7 @@ def main() -> int:
     require("python3 scripts/nextjs_worker_console_parity_smoke.py" in worker_console_evidence, "worker_console must include focused Next Worker Console parity evidence")
     require("python3 scripts/operator_execution_mode_smoke.py" in worker_console_evidence, "worker_console must include operator execution-mode readback evidence")
     assert_entry_routes(entries_by_id.get("worker_console"), "worker_console", ["/workspace/agents"], ["/workspace/agents", "/workspace/agents/dispatch-once", "/workspace/agents/release-task", "/workspace/agents/enrollment-request", "/workspace/agents/daemon-control", "/workspace/workers"])
+    require(entries_by_id.get("worker_console", {}).get("status") == "covered", "worker_console should be covered once Next split routes and CLI/API/MCP lifecycle boundary evidence exist")
     worker_console_contracts = entries_by_id.get("worker_console", {}).get("api_contracts") or []
     require("GET /workers/fleet" in worker_console_contracts, "worker_console must include worker fleet API readback")
     require("GET /workers/fleet/hygiene" in worker_console_contracts, "worker_console must include worker fleet hygiene readback")
@@ -266,6 +267,9 @@ def main() -> int:
     require("force_release_not_allowed_next_parity" in worker_console_gate, "worker_console retirement gate must record force-release fail-closed evidence")
     require("enrollment_token_issue_not_allowed_next_parity" in worker_console_gate, "worker_console retirement gate must record raw enrollment token issue fail-closed evidence")
     require("gateway_lifecycle_write_not_allowed_next_parity" in worker_console_gate, "worker_console retirement gate must record session/enrollment lifecycle write fail-closed evidence")
+    require("Worker Console coverage boundary" in worker_console_gate, "worker_console gate must record the coverage boundary")
+    require("Agent Gateway CLI/API/MCP remains canonical" in worker_console_gate, "worker_console gate must keep Agent Gateway CLI/API/MCP canonical")
+    require("explicit route retirement commit" in worker_console_gate, "worker_console gate must still require explicit route retirement")
     assert_entry_routes(entries_by_id.get("pixel_office_and_dispatch"), "pixel_office_and_dispatch", ["/workspace/pixel-office"], ["/workspace/pixel-office", "/workspace/pixel-office/local-brief", "/workspace/dispatch", "/workspace/dispatch/customer-task", "/workspace/dispatch/template-job", "/workspace/dispatch/template-run", "/workspace/dispatch/customer-worker", "/workspace/dispatch/customer-worker-job"])
     require(entries_by_id.get("pixel_office_and_dispatch", {}).get("status") == "covered", "pixel_office_and_dispatch should be covered once explicit retirement evidence exists")
     pixel_dispatch_evidence = entries_by_id.get("pixel_office_and_dispatch", {}).get("evidence_commands") or []

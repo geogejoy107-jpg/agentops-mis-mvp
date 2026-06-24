@@ -184,6 +184,33 @@ export function WorkerConsolePage(props: Readonly<WorkerConsoleProps>) {
         </p>
       </section>
 
+      <section className="panel wide" data-smoke="worker-console-coverage-boundary">
+        <div className="panelHeader">
+          <h2><TerminalSquare size={14} /> Worker Console coverage boundary</h2>
+          <span>covered, retirement blocked</span>
+        </div>
+        <p className="subtle">
+          Next covers the commercial worker console through split routes and guarded actions while preserving Agent Gateway CLI/API/MCP as the durable execution contract for live lifecycle mutation.
+        </p>
+        <div className="proofStrip">
+          <span>/workspace/agents remote enrollment approval request</span>
+          <span>/workspace/agents mock worker dispatch and daemon controls</span>
+          <span>/workspace/workers fleet/readiness/hygiene cockpit</span>
+          <span>Agent Gateway CLI/API/MCP canonical for token issue/rotate/revoke</span>
+          <span>Agent Gateway CLI/API/MCP canonical for session lifecycle</span>
+          <span>live daemon lifecycle requires CLI/API operator lane</span>
+          <span>Vite route retirement blocked</span>
+        </div>
+        <div className="miniMetrics">
+          <span>safe readbacks <strong>/workers/fleet</strong></span>
+          <span>hygiene <strong>preview only</strong></span>
+          <span>tokens <strong>approval gated</strong></span>
+          <span>sessions <strong>safe refs only</strong></span>
+          <span>live adapters <strong>prepared-action wall</strong></span>
+          <span>route state <strong>covered</strong></span>
+        </div>
+      </section>
+
       <section className="panel wide" data-smoke="operator-execution-mode-readback">
         <div className="panelHeader">
           <h2><TerminalSquare size={14} /> Operator execution mode</h2>

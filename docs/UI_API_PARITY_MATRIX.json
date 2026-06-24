@@ -233,7 +233,7 @@
     {
       "id": "worker_console",
       "capability": "AI employee registry, focused worker console, worker readiness, fleet readback, hygiene preview, local worker controls, remote enrollment, and customer dispatch.",
-      "status": "partial",
+      "status": "covered",
       "gate4_required": true,
       "vite_routes": [
         "/workspace/agents"
@@ -298,7 +298,7 @@
         "python3 scripts/nextjs_parity_smoke.py"
       ],
       "retirement_allowed": false,
-      "retirement_gate": "Next now proves worker_console_read_model_parity on /workspace/workers for worker status, /workers/fleet lanes, /workers/fleet/hygiene fleet hygiene read-only preview, adapter readiness, safe session refs, local readiness proof, and /operator/execution-mode read-only adapter route/confirm-run/prepared-action wall readback. It also proves safe mock worker dispatch, mock daemon start/restart/stop, stuck-task release, approval-gated enrollment request, and Agent Gateway session hygiene readback. It rejects non-mock proxy/form dispatch with mock_only_next_parity, rejects non-mock/live daemon controls with mock_daemon_only_next_parity and live_worker_daemon_not_allowed_next_parity, rejects force release with force_release_not_allowed_next_parity, blocks raw enrollment token issue routes with enrollment_token_issue_not_allowed_next_parity, and blocks Agent Gateway session create/session revoke/enrollment revoke lifecycle writes with gateway_lifecycle_write_not_allowed_next_parity. Vite/CLI live daemon controls, token issuance, rotate/revoke/session controls, live dispatch controls, cleanup mutation, and route retirement remain canonical."
+      "retirement_gate": "Next now covers the Worker Console through split routes: /workspace/agents renders agent registry, production security, safe mock worker dispatch, mock daemon start/restart/stop, stuck-task release, approval-gated enrollment request, and Agent Gateway session hygiene readback; /workspace/workers proves worker_console_read_model_parity for worker status, /workers/fleet lanes, /workers/fleet/hygiene fleet hygiene read-only preview, adapter readiness, safe session refs, local readiness proof, and /operator/execution-mode read-only adapter route/confirm-run/prepared-action wall readback. The Worker Console coverage boundary states Agent Gateway CLI/API/MCP remains canonical for token issue/rotate/revoke, session lifecycle, live daemon lifecycle, live dispatch controls, cleanup mutation, and detailed operator mutation. Next rejects non-mock proxy/form dispatch with mock_only_next_parity, rejects non-mock/live daemon controls with mock_daemon_only_next_parity and live_worker_daemon_not_allowed_next_parity, rejects force release with force_release_not_allowed_next_parity, blocks raw enrollment token issue routes with enrollment_token_issue_not_allowed_next_parity, and blocks Agent Gateway session create/session revoke/enrollment revoke lifecycle writes with gateway_lifecycle_write_not_allowed_next_parity. Vite /workspace/agents route retirement remains blocked until an explicit route retirement commit preserves deep links, reruns Vite/Next browser evidence, and keeps Agent Gateway CLI/API/MCP unchanged."
     },
     {
       "id": "agent_detail",
