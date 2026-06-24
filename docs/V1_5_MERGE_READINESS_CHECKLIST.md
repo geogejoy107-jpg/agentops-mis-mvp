@@ -15,7 +15,7 @@ findings before marking this branch release-candidate ready.
 - [x] Freeze a release-candidate SHA through the release evidence runtime source and hardening freeze protocol. `docs/RELEASE_FREEZE_PROTOCOL.md` records the freeze start baseline, while `scripts/release_evidence_packet_smoke.py` emits the exact current `git rev-parse HEAD` and `scripts/release_freeze_protocol_smoke.py` keeps the freeze protocol auditable without storing stale release packets.
 - [x] Pause unrelated feature work during hardening. `docs/RELEASE_FREEZE_PROTOCOL.md` now limits this branch to security, correctness, release-readiness, evidence-gate, CI, rollback, recovery and claim-narrowing changes until final RC/merge review; guarded by `scripts/release_freeze_protocol_smoke.py`.
 - [x] Confirm no databases, runtime state, credentials, generated service files or logs are tracked. Guarded by `scripts/release_branch_control_smoke.py`; `.env.example` is the only allowed env-like tracked file and secret-like content remains covered by `scripts/secret_scan_smoke.py`.
-- [x] Preserve reviewable functional history; do not turn all commits into one opaque change. Guarded by `scripts/release_branch_control_smoke.py`, which requires a merge-base and more than one reviewable commit ahead of `origin/main` when that ref is available.
+- [x] Preserve reviewable functional history; do not turn all commits into one opaque change. Guarded by `scripts/release_branch_control_smoke.py`, which requires a merge-base and more than one reviewable commit ahead of `origin/main` on release/feature branches, while allowing the post-merge `main` context when `HEAD` is exactly synchronized with `origin/main`.
 
 ```bash
 git fetch origin

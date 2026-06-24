@@ -93,6 +93,19 @@ def main_history() -> dict[str, int | None | bool]:
     }
 
 
+def is_merged_main_context(current_branch: str, upstream: str | None, main: dict[str, int | None | bool]) -> bool:
+    if current_branch != "main":
+        return False
+    if upstream not in ("origin/main", "main"):
+        return False
+    return (
+        main.get("main_ref") in ("origin/main", "main")
+        and main.get("merge_base_exists") is True
+        and int(main.get("ahead_main") or 0) == 0
+        and int(main.get("behind_main") or 0) == 0
+    )
+
+
 def unsafe_tracked_files(files: list[str]) -> list[str]:
     unsafe: list[str] = []
     for path in files:
@@ -126,6 +139,7 @@ def main() -> int:
     upstream = upstream_ref()
     upstream_counts = ahead_behind(upstream)
     main = main_history()
+    merged_main_context = is_merged_main_context(current_branch, upstream, main)
     status = status_entries()
     unsafe_files = unsafe_tracked_files(files)
 
@@ -142,7 +156,11 @@ def main() -> int:
         failures.append(f"tracked unsafe runtime/generated files: {unsafe_files[:20]}")
     if main.get("main_ref") and not main.get("merge_base_exists"):
         failures.append(f"no merge-base with {main.get('main_ref')}")
-    if main.get("ahead_main") is not None and int(main["ahead_main"] or 0) < args.min_reviewable_commits:
+    if (
+        not merged_main_context
+        and main.get("ahead_main") is not None
+        and int(main["ahead_main"] or 0) < args.min_reviewable_commits
+    ):
         failures.append(f"history ahead of main is too small for reviewable functional history: {main['ahead_main']}")
 
     payload = {
@@ -153,6 +171,8 @@ def main() -> int:
         "upstream": upstream,
         "upstream_sync": upstream_counts,
         "main_history": main,
+        "merged_main_context": merged_main_context,
+        "reviewable_history_required": not merged_main_context,
         "tracked_files": len(files),
         "unsafe_tracked_files": unsafe_files,
         "working_tree_entries": len(status),
