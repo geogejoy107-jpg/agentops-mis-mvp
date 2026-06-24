@@ -5,7 +5,8 @@ Contract: `release_evidence_packet_v1`
 This branch delegates the detailed release checklist to
 `commercial_release_evidence_packet_v1` in
 `docs/COMMERCIAL_RELEASE_EVIDENCE_PACKET.json`. The current operator handoff
-aggregate is `commercial_handoff_status_v1`.
+aggregate is `commercial_handoff_status_v1`, backed by
+`commercial_current_evidence_status_v1`.
 
 Verify the release packet entry point:
 
@@ -24,6 +25,8 @@ Verify freeze and merge-readiness entry points:
 ```bash
 python3 scripts/commercial_handoff_status.py
 python3 scripts/commercial_handoff_status_smoke.py
+python3 scripts/commercial_current_evidence_status.py
+python3 scripts/commercial_current_evidence_status_smoke.py
 python3 scripts/release_freeze_protocol_smoke.py
 python3 scripts/merge_readiness_status_smoke.py
 ```

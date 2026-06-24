@@ -61,6 +61,9 @@ def main() -> int:
     require(packet.get("handoff_status_command") == "python3 scripts/commercial_handoff_status.py", "handoff status command mismatch")
     require(packet.get("handoff_status_verification_command") == "python3 scripts/commercial_handoff_status_smoke.py", "handoff status verification command mismatch")
     require(packet.get("handoff_status_contract_id") == "commercial_handoff_status_v1", "handoff status contract mismatch")
+    require(packet.get("current_evidence_status_command") == "python3 scripts/commercial_current_evidence_status.py", "current evidence status command mismatch")
+    require(packet.get("current_evidence_status_verification_command") == "python3 scripts/commercial_current_evidence_status_smoke.py", "current evidence status verification command mismatch")
+    require(packet.get("current_evidence_status_contract_id") == "commercial_current_evidence_status_v1", "current evidence status contract mismatch")
     require(packet.get("release_complete") is False, "release entry point must not claim completion")
     require(REQUIRED_GATE5_COMMANDS <= set(packet.get("gate_5_required_commands") or []), "release packet misses Gate 5 commands")
     require(REQUIRED_GATE5_CONTRACTS <= set(packet.get("gate_5_required_contracts") or []), "release packet misses Gate 5 contracts")
@@ -86,6 +89,8 @@ def main() -> int:
     require("merge_readiness_status_smoke.py" in doc, "release packet doc must list merge readiness smoke")
     require("commercial_handoff_status.py" in doc, "release packet doc must list handoff status command")
     require("commercial_handoff_status_smoke.py" in doc, "release packet doc must list handoff status smoke")
+    require("commercial_current_evidence_status.py" in doc, "release packet doc must list current evidence status command")
+    require("commercial_current_evidence_status_smoke.py" in doc, "release packet doc must list current evidence status smoke")
     for command in REQUIRED_GATE5_COMMANDS:
         require(command in doc, f"release packet doc missing {command}")
 

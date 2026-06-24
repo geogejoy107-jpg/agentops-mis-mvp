@@ -27,8 +27,25 @@
       "path": "docs/MERGE_READINESS_STATUS.json",
       "contract_id": "merge_readiness_status_v1",
       "expected_status": "blocked_release_evidence_required"
+    },
+    {
+      "path": "docs/COMMERCIAL_CURRENT_EVIDENCE_STATUS.json",
+      "contract_id": "commercial_current_evidence_status_v1",
+      "expected_status": "current_evidence_required"
     }
   ],
+  "current_evidence_status": {
+    "contract_id": "commercial_current_evidence_status_v1",
+    "status": "current_evidence_required",
+    "gates_requiring_current_evidence": [
+      "gate_1_product_packaging_and_entitlement",
+      "gate_2_production_safety_baseline",
+      "gate_3_storage_boundary_before_postgres",
+      "gate_4_ui_api_parity_before_nextjs",
+      "gate_5_byoc_enterprise_deployment"
+    ],
+    "heavy_evidence_not_executed_by_default": true
+  },
   "phase_gate_statuses": [
     {
       "id": "gate_0_isolated_commercial_track",
@@ -64,6 +81,8 @@
   "required_commands": [
     "python3 scripts/commercial_handoff_status.py",
     "python3 scripts/commercial_handoff_status_smoke.py",
+    "python3 scripts/commercial_current_evidence_status.py",
+    "python3 scripts/commercial_current_evidence_status_smoke.py",
     "python3 scripts/release_evidence_packet_smoke.py",
     "python3 scripts/commercial_release_evidence_packet_smoke.py",
     "python3 scripts/release_freeze_protocol_smoke.py",
@@ -76,6 +95,7 @@
   ],
   "required_contracts": [
     "commercial_handoff_status_v1",
+    "commercial_current_evidence_status_v1",
     "commercial_release_evidence_packet_v1",
     "release_evidence_packet_v1",
     "release_freeze_protocol_v1",

@@ -38,6 +38,11 @@ SOURCE_SPECS = [
         "contract_id": "merge_readiness_status_v1",
         "expected_status": "blocked_release_evidence_required",
     },
+    {
+        "path": "docs/COMMERCIAL_CURRENT_EVIDENCE_STATUS.json",
+        "contract_id": "commercial_current_evidence_status_v1",
+        "expected_status": "current_evidence_required",
+    },
 ]
 
 
@@ -84,6 +89,7 @@ def build_payload() -> dict[str, Any]:
     release = read_json("docs/RELEASE_EVIDENCE_PACKET.json")
     freeze = read_json("docs/RELEASE_FREEZE_PROTOCOL.json")
     merge = read_json("docs/MERGE_READINESS_STATUS.json")
+    current_evidence = read_json("docs/COMMERCIAL_CURRENT_EVIDENCE_STATUS.json")
 
     sources = source_payloads()
     phase_gate_statuses = [
@@ -103,6 +109,8 @@ def build_payload() -> dict[str, Any]:
     required_commands = [
         "python3 scripts/commercial_handoff_status.py",
         "python3 scripts/commercial_handoff_status_smoke.py",
+        "python3 scripts/commercial_current_evidence_status.py",
+        "python3 scripts/commercial_current_evidence_status_smoke.py",
     ]
     extend_unique(required_commands, commercial.get("handoff_required_commands") or [])
     append_unique(required_commands, release.get("verification_command"))
@@ -111,10 +119,12 @@ def build_payload() -> dict[str, Any]:
     append_unique(required_commands, release.get("merge_readiness_command"))
     append_unique(required_commands, release.get("handoff_status_command"))
     append_unique(required_commands, release.get("handoff_status_verification_command"))
+    append_unique(required_commands, release.get("current_evidence_status_command"))
+    append_unique(required_commands, release.get("current_evidence_status_verification_command"))
     extend_unique(required_commands, freeze.get("required_freeze_commands") or [])
     extend_unique(required_commands, merge.get("required_before_ready") or [])
 
-    required_contracts = [CONTRACT_ID]
+    required_contracts = [CONTRACT_ID, "commercial_current_evidence_status_v1"]
     for spec in SOURCE_SPECS:
         append_unique(required_contracts, spec["contract_id"])
     extend_unique(required_contracts, release.get("gate_5_required_contracts") or [])
@@ -144,6 +154,12 @@ def build_payload() -> dict[str, Any]:
         "sources": sources,
         "phase_gate_statuses": phase_gate_statuses,
         "blocking_gates": blocking_gates,
+        "current_evidence_status": {
+            "contract": current_evidence.get("contract_id"),
+            "status": current_evidence.get("status"),
+            "gates_requiring_current_evidence": (current_evidence.get("evidence_summary") or {}).get("gates_requiring_current_evidence") or [],
+            "heavy_evidence_not_executed_by_default": (current_evidence.get("evidence_summary") or {}).get("heavy_evidence_not_executed_by_default"),
+        },
         "explicit_blockers": list(merge.get("explicit_blockers") or []),
         "required_commands": required_commands,
         "required_contracts": required_contracts,

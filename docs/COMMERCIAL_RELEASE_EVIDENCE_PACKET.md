@@ -12,6 +12,8 @@ Verify the packet itself:
 ```bash
 python3 scripts/commercial_handoff_status.py
 python3 scripts/commercial_handoff_status_smoke.py
+python3 scripts/commercial_current_evidence_status.py
+python3 scripts/commercial_current_evidence_status_smoke.py
 python3 scripts/commercial_release_evidence_packet_smoke.py
 ```
 
@@ -57,4 +59,5 @@ The BYOC handoff path must prove:
 
 The machine-readable source of truth is
 `docs/COMMERCIAL_RELEASE_EVIDENCE_PACKET.json`. The current handoff aggregate is
-`commercial_handoff_status_v1` in `docs/COMMERCIAL_HANDOFF_STATUS.json`.
+`commercial_handoff_status_v1` in `docs/COMMERCIAL_HANDOFF_STATUS.json`; its
+evidence coverage layer is `commercial_current_evidence_status_v1`.

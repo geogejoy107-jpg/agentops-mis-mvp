@@ -1,64 +1,78 @@
 {
-  "contract_id": "commercial_release_evidence_packet_v1",
-  "status": "gate_enforced_not_release_complete",
+  "contract_id": "commercial_current_evidence_status_v1",
+  "status": "current_evidence_required",
   "updated_at": "2026-06-24",
-  "scope": {
-    "product": "AgentOps MIS commercial local-first/BYOC control plane",
-    "branch": "codex/commercial-migration-closed-loop",
-    "release_complete": false,
-    "completion_policy": "All phase gates must pass with current-state evidence before commercial release."
+  "ci_safe": true,
+  "description": "Read-only evidence coverage map for commercial handoff gates. This packet does not execute heavy or live checks and does not claim release completion.",
+  "release_complete": false,
+  "commercial_handoff_allowed": false,
+  "ready_to_merge": false,
+  "source_packets": [
+    "docs/COMMERCIAL_RELEASE_EVIDENCE_PACKET.json",
+    "docs/RELEASE_EVIDENCE_PACKET.json",
+    "docs/RELEASE_FREEZE_PROTOCOL.json",
+    "docs/MERGE_READINESS_STATUS.json"
+  ],
+  "evidence_policy": {
+    "ok_true_means_contract_consistent": true,
+    "does_not_execute_heavy_or_live_commands": true,
+    "postgres_handoff_requires_no_skip": true,
+    "real_runtime_claims_require_live_hermes_openclaw": true,
+    "mock_only_product_claims_forbidden": true,
+    "exact_head_ci_required_before_merge": true,
+    "remote_sync_required_before_merge": true
   },
-  "policy": {
-    "agent_gateway_cli_api_mcp_durable": true,
-    "python_sqlite_vite_remain_canonical_until_parity": true,
-    "nextjs_replaces_routes_only_after_explicit_retirement": true,
-    "postgres_requires_storage_boundary_and_byoc_evidence": true,
-    "live_runtime_product_claims_require_real_hermes_openclaw": true,
-    "mock_evidence_is_ci_or_offline_only": true,
-    "forbidden_committed_material": [
-      "secrets",
-      "local_databases",
-      "generated_artifacts",
-      "raw_prompts",
-      "raw_responses",
-      "private_transcripts",
-      "token_values"
+  "evidence_summary": {
+    "gate_count": 6,
+    "ready_gate_count": 1,
+    "gates_requiring_current_evidence": [
+      "gate_1_product_packaging_and_entitlement",
+      "gate_2_production_safety_baseline",
+      "gate_3_storage_boundary_before_postgres",
+      "gate_4_ui_api_parity_before_nextjs",
+      "gate_5_byoc_enterprise_deployment"
     ],
-    "verification_command": "python3 scripts/commercial_release_evidence_packet_smoke.py"
+    "postgres_required": true,
+    "browser_required": true,
+    "real_runtime_required": true,
+    "heavy_evidence_not_executed_by_default": true
   },
-  "phase_gate_evidence": [
+  "phase_gate_evidence_statuses": [
     {
       "id": "gate_0_isolated_commercial_track",
-      "status": "ready",
+      "packet_status": "ready",
+      "evidence_current": true,
+      "evidence_state": "static_contract_current",
       "required_commands": [
         "python3 scripts/commercial_migration_readiness.py",
         "git diff --check"
       ],
-      "required_contracts": [
-        "no_big_bang",
-        "agent_gateway_cli_api_mcp_remains_durable"
+      "evidence_classes": [
+        "static",
+        "git"
       ]
     },
     {
       "id": "gate_1_product_packaging_and_entitlement",
-      "status": "evidence_required",
+      "packet_status": "evidence_required",
+      "evidence_current": false,
+      "evidence_state": "current_evidence_required",
       "required_commands": [
         "python3 scripts/commercial_entitlements_smoke.py",
         "python3 scripts/team_entitlement_enrollment_smoke.py",
         "python3 scripts/enrollment_approval_workflow_smoke.py"
       ],
-      "required_contracts": [
-        "free_local",
-        "pro_workspace",
-        "team_governance",
-        "enterprise_byoc",
-        "approval_policies",
-        "fail_closed"
+      "evidence_classes": [
+        "entitlement",
+        "fail_closed",
+        "isolated_fixture"
       ]
     },
     {
       "id": "gate_2_production_safety_baseline",
-      "status": "evidence_required",
+      "packet_status": "evidence_required",
+      "evidence_current": false,
+      "evidence_state": "current_evidence_required",
       "required_commands": [
         "python3 scripts/production_auth_fail_closed_smoke.py --configured-production-fixture",
         "python3 scripts/security_production_readiness_smoke.py --configured-production-fixture",
@@ -67,17 +81,19 @@
         "python3 scripts/workspace_rbac_governance_smoke.py --isolated-fixture",
         "python3 scripts/workspace_memory_session_governance_smoke.py --isolated-fixture"
       ],
-      "required_contracts": [
-        "production_auth_fail_closed",
+      "evidence_classes": [
+        "production_security",
         "workspace_isolation",
-        "rbac_governance",
-        "short_lived_session_governance",
-        "token_omission"
+        "rbac",
+        "session_governance",
+        "isolated_fixture"
       ]
     },
     {
       "id": "gate_3_storage_boundary_before_postgres",
-      "status": "evidence_required",
+      "packet_status": "evidence_required",
+      "evidence_current": false,
+      "evidence_state": "current_evidence_required",
       "required_commands": [
         "python3 scripts/storage_boundary_sqlite_smoke.py",
         "python3 scripts/storage_postgres_contract_smoke.py",
@@ -93,20 +109,19 @@
         "python3 scripts/storage_postgres_http_write_task_smoke.py",
         "python3 scripts/storage_postgres_cli_write_parity_smoke.py"
       ],
-      "required_contracts": [
-        "postgres_boundary_fixture_parity_v1",
-        "postgres_route_read_model_parity_v1",
-        "storage_backend_selection_fail_closed_v1",
-        "postgres_http_read_parity_v1",
-        "postgres_cli_read_parity_v1",
-        "postgres_write_helper_parity_v1",
-        "postgres_http_write_task_parity_v1",
-        "postgres_cli_write_parity_v1"
+      "evidence_classes": [
+        "storage_boundary",
+        "postgres",
+        "http_parity",
+        "cli_parity",
+        "write_parity"
       ]
     },
     {
       "id": "gate_4_ui_api_parity_before_nextjs",
-      "status": "started",
+      "packet_status": "started",
+      "evidence_current": false,
+      "evidence_state": "current_evidence_required",
       "required_commands": [
         "python3 scripts/nextjs_parity_smoke.py",
         "python3 scripts/ui_api_parity_matrix_smoke.py",
@@ -116,16 +131,18 @@
         "cd ui/start-building-app && npm run build",
         "cd ui/next-app && npm run build"
       ],
-      "required_contracts": [
-        "ui_api_parity_matrix_v1",
-        "ui_covered_route_retirement_packet_v1",
-        "nextjs_deployment_postgres_runtime_write_fixture_v1",
-        "commercial_safe_pixel_office"
+      "evidence_classes": [
+        "ui_api_parity",
+        "browser_snapshot",
+        "vite_build",
+        "nextjs_build"
       ]
     },
     {
       "id": "gate_5_byoc_enterprise_deployment",
-      "status": "evidence_required",
+      "packet_status": "evidence_required",
+      "evidence_current": false,
+      "evidence_state": "current_evidence_required",
       "required_commands": [
         "python3 scripts/audit_retention_policy_smoke.py",
         "python3 scripts/audit_retention_controls_smoke.py --configured-fixture",
@@ -135,17 +152,12 @@
         "python3 scripts/byoc_deployment_acceptance_smoke.py --postgres-readiness-fixture",
         "HERMES_ALLOW_REAL_RUN=true python3 scripts/local_runtime_acceptance.py --live-openclaw --live-hermes --require-hermes-api"
       ],
-      "required_contracts": [
-        "audit_retention_policy_v1",
-        "audit_retention_controls_v1",
-        "deployment_readiness_v1",
-        "enterprise_byoc_controls_v1",
-        "deployment_readiness_postgres_runtime_write_fixture_v1",
-        "nextjs_deployment_postgres_runtime_write_fixture_v1",
-        "byoc_deployment_acceptance_v1",
-        "postgres_http_runtime_prepared_action_write_v1",
-        "postgres_http_runtime_approval_decision_write_v1",
-        "real_hermes_openclaw_acceptance"
+      "evidence_classes": [
+        "audit_retention",
+        "enterprise_byoc",
+        "postgres",
+        "browser_snapshot",
+        "real_runtime"
       ],
       "must_not_use": [
         "--skip-postgres-if-unavailable",
@@ -153,26 +165,41 @@
       ]
     }
   ],
-  "handoff_required_commands": [
-    "python3 scripts/commercial_handoff_status.py",
-    "python3 scripts/commercial_handoff_status_smoke.py",
+  "required_commands": [
     "python3 scripts/commercial_current_evidence_status.py",
     "python3 scripts/commercial_current_evidence_status_smoke.py",
+    "python3 scripts/commercial_handoff_status.py",
+    "python3 scripts/commercial_handoff_status_smoke.py",
     "python3 scripts/release_evidence_packet_smoke.py",
     "python3 scripts/commercial_release_evidence_packet_smoke.py",
     "python3 scripts/release_freeze_protocol_smoke.py",
     "python3 scripts/merge_readiness_status_smoke.py",
     "python3 scripts/commercial_migration_readiness.py",
-    "python3 scripts/byoc_deployment_acceptance_smoke.py --postgres-readiness-fixture",
     "python3 scripts/deployment_readiness_smoke.py --postgres-write-fixture",
     "python3 scripts/nextjs_playwright_snapshot_smoke.py --postgres-write-fixture",
+    "python3 scripts/byoc_deployment_acceptance_smoke.py --postgres-readiness-fixture",
     "HERMES_ALLOW_REAL_RUN=true python3 scripts/local_runtime_acceptance.py --live-openclaw --live-hermes --require-hermes-api"
   ],
-  "sensitive_output_policy": {
-    "raw_prompts_allowed": false,
-    "raw_responses_allowed": false,
-    "token_values_allowed": false,
-    "private_transcripts_allowed": false,
-    "hash_or_ref_only": true
-  }
+  "required_contracts": [
+    "commercial_current_evidence_status_v1",
+    "commercial_handoff_status_v1",
+    "commercial_release_evidence_packet_v1",
+    "release_evidence_packet_v1",
+    "release_freeze_protocol_v1",
+    "merge_readiness_status_v1",
+    "deployment_readiness_postgres_runtime_write_fixture_v1",
+    "nextjs_deployment_postgres_runtime_write_fixture_v1",
+    "byoc_deployment_acceptance_v1",
+    "real_hermes_openclaw_acceptance"
+  ],
+  "must_not_use": [
+    "--skip-postgres-if-unavailable",
+    "mock_only_product_claim",
+    "release_complete_true",
+    "raw_prompts",
+    "raw_responses",
+    "private_transcripts",
+    "token_values",
+    "sqlite_fallback_as_postgres_proof"
+  ]
 }

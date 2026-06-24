@@ -18,6 +18,7 @@ CONTRACT_ID = "commercial_handoff_status_v1"
 
 REQUIRED_STRINGS = {
     "commercial_handoff_status_v1",
+    "commercial_current_evidence_status_v1",
     "commercial_release_evidence_packet_v1",
     "release_evidence_packet_v1",
     "release_freeze_protocol_v1",
@@ -30,9 +31,12 @@ REQUIRED_STRINGS = {
     "ready_to_merge",
     "explicit_blockers",
     "required_commands",
+    "current_evidence_status",
     "phase_gate_statuses",
     "python3 scripts/commercial_handoff_status.py",
     "python3 scripts/commercial_handoff_status_smoke.py",
+    "python3 scripts/commercial_current_evidence_status.py",
+    "python3 scripts/commercial_current_evidence_status_smoke.py",
     "python3 scripts/deployment_readiness_smoke.py --postgres-write-fixture",
     "python3 scripts/nextjs_playwright_snapshot_smoke.py --postgres-write-fixture",
     "python3 scripts/byoc_deployment_acceptance_smoke.py --postgres-readiness-fixture",
@@ -46,44 +50,68 @@ REQUIRED_SOURCES = {
     "docs/COMMERCIAL_HANDOFF_STATUS.md": REQUIRED_STRINGS,
     "scripts/commercial_handoff_status.py": {
         "commercial_handoff_status_v1",
+        "commercial_current_evidence_status_v1",
         "commercial_handoff_allowed",
         "release_complete",
         "ready_to_merge",
         "explicit_blockers",
         "required_commands",
+        "current_evidence_status",
         "phase_gate_statuses",
         "--require-handoff-ready",
     },
     "docs/COMMERCIAL_RELEASE_EVIDENCE_PACKET.json": {
         "python3 scripts/commercial_handoff_status.py",
         "python3 scripts/commercial_handoff_status_smoke.py",
+        "python3 scripts/commercial_current_evidence_status.py",
+        "python3 scripts/commercial_current_evidence_status_smoke.py",
     },
     "docs/RELEASE_EVIDENCE_PACKET.json": {
         "handoff_status_command",
+        "current_evidence_status_command",
+        "commercial_current_evidence_status_v1",
         "python3 scripts/commercial_handoff_status.py",
         "python3 scripts/commercial_handoff_status_smoke.py",
     },
     "docs/RELEASE_FREEZE_PROTOCOL.json": {
+        "commercial_current_evidence_status_v1",
+        "python3 scripts/commercial_current_evidence_status_smoke.py",
         "commercial_handoff_status_v1",
         "python3 scripts/commercial_handoff_status_smoke.py",
     },
     "docs/MERGE_READINESS_STATUS.json": {
+        "commercial_current_evidence_status_v1",
+        "python3 scripts/commercial_current_evidence_status_smoke.py",
         "commercial_handoff_status_v1",
         "python3 scripts/commercial_handoff_status_smoke.py",
+    },
+    "docs/COMMERCIAL_CURRENT_EVIDENCE_STATUS.json": {
+        "commercial_current_evidence_status_v1",
+        "phase_gate_evidence_statuses",
+        "gates_requiring_current_evidence",
+        "current_evidence_required",
+    },
+    "docs/COMMERCIAL_CURRENT_EVIDENCE_STATUS.md": {
+        "commercial_current_evidence_status_v1",
+        "commercial_current_evidence_status.py",
+        "commercial_current_evidence_status_smoke.py",
+    },
+    "scripts/commercial_current_evidence_status.py": {
+        "commercial_current_evidence_status_v1",
+        "phase_gate_evidence_statuses",
+        "gates_requiring_current_evidence",
+    },
+    "scripts/commercial_current_evidence_status_smoke.py": {
+        "commercial_current_evidence_status_v1",
+        "current_evidence_required",
     },
     "scripts/commercial_migration_readiness.py": {
         "commercial_handoff_status_surface_exists",
         "commercial_handoff_status_v1",
+        "commercial_current_evidence_status_v1",
         "commercial_handoff_status_smoke.py",
     },
 }
-
-STATIC_SMOKES = [
-    ROOT / "scripts" / "release_evidence_packet_smoke.py",
-    ROOT / "scripts" / "commercial_release_evidence_packet_smoke.py",
-    ROOT / "scripts" / "release_freeze_protocol_smoke.py",
-    ROOT / "scripts" / "merge_readiness_status_smoke.py",
-]
 
 EXPECTED_GATE_STATUSES = {
     "gate_0_isolated_commercial_track": "ready",
@@ -141,6 +169,8 @@ def main() -> int:
     require("release_complete_false_until_all_phase_gates_have_current_evidence" in set(status.get("explicit_blockers") or []), "release blocker missing")
     require("python3 scripts/commercial_handoff_status.py" in set(status.get("required_commands") or []), "operator command missing")
     require("python3 scripts/commercial_handoff_status_smoke.py" in set(status.get("required_commands") or []), "smoke command missing")
+    require("python3 scripts/commercial_current_evidence_status.py" in set(status.get("required_commands") or []), "current evidence command missing")
+    require("python3 scripts/commercial_current_evidence_status_smoke.py" in set(status.get("required_commands") or []), "current evidence smoke missing")
     require("--skip-postgres-if-unavailable" in set(status.get("must_not_use") or []), "Postgres skip ban missing")
     require("mock_only_product_claim" in set(status.get("must_not_use") or []), "mock-only ban missing")
 
@@ -160,9 +190,10 @@ def main() -> int:
     gate_statuses = {str(item.get("id")): str(item.get("status")) for item in payload.get("phase_gate_statuses") or [] if isinstance(item, dict)}
     require(gate_statuses == EXPECTED_GATE_STATUSES, f"operator gate statuses mismatch: {gate_statuses}")
     require("gate_5_byoc_enterprise_deployment" in set(payload.get("blocking_gates") or []), "Gate 5 must remain blocking")
-
-    for script in STATIC_SMOKES:
-        run_script(script)
+    evidence = payload.get("current_evidence_status") or {}
+    require(evidence.get("contract") == "commercial_current_evidence_status_v1", "current evidence contract missing from handoff payload")
+    require(evidence.get("status") == "current_evidence_required", "current evidence status mismatch")
+    require("gate_5_byoc_enterprise_deployment" in set(evidence.get("gates_requiring_current_evidence") or []), "current evidence Gate 5 gap missing")
 
     if args.require_handoff_ready:
         require(payload.get("commercial_handoff_allowed") is True, "commercial handoff is not allowed")
