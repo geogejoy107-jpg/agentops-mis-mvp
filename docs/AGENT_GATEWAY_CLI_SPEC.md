@@ -2163,6 +2163,9 @@ If the selected local MIS is stale or missing a required loop endpoint,
 `loop-bootstrap` returns a structured blocked packet with
 `error_type=stale_server_or_missing_endpoint`, current-code/restart/retry
 commands, token omission proof, and no ledger or service side effects.
+If a required local endpoint is present but exceeds the CLI request timeout,
+the command similarly returns `error_type=local_mis_endpoint_timeout` with a
+longer-timeout retry command instead of a Python traceback.
 `GET /api/operator/loop-bootstrap` exposes the same read-only startup packet to
 the local MIS and AI Employees console. The API never performs service-check or
 service-control itself; operators copy the returned CLI commands and run them

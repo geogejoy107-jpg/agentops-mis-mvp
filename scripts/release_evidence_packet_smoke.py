@@ -329,7 +329,7 @@ TEST_COMMANDS = [
     {
         "id": "operator_loop_bootstrap",
         "command": "python3 scripts/operator_loop_bootstrap_smoke.py",
-        "summary": "Hermes/OpenClaw local loop bootstrap packet orders service install, service-check, service closure, optional service activation, loop-driver auto service closure, and stale-server recovery commands without mutating ledgers, loading services, executing server shell, or running live adapters.",
+        "summary": "Hermes/OpenClaw local loop bootstrap packet orders service install, service-check, service closure, optional service activation, loop-driver auto service closure, stale-server recovery, and local endpoint-timeout recovery commands without mutating ledgers, loading services, executing server shell, or running live adapters.",
         "ci_step": "Offline safety smokes",
     },
     {

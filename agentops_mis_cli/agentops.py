@@ -348,6 +348,8 @@ class AgentOpsClient:
         except HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
             raise RuntimeError(f"{method} {path} failed: {exc.code} {redact_text(detail, 1200)}") from exc
+        except TimeoutError as exc:
+            raise RuntimeError(f"{method} {path} timed out after {self.request_timeout}s; {self.connection_hint()}") from exc
         except URLError as exc:
             raise RuntimeError(f"Cannot reach {redact_text(url, 500)}: {redact_text(str(exc.reason), 500)}; {self.connection_hint()}") from exc
 
@@ -1555,18 +1557,22 @@ def _with_requested_manager(command: str, manager: str) -> str:
     return command
 
 
-def _operator_loop_bootstrap_stale_endpoint(args, client: AgentOpsClient, *, endpoint: str, error: Exception) -> dict:
+def _operator_loop_bootstrap_stale_endpoint(args, client: AgentOpsClient, *, endpoint: str, error: Exception, error_type: str = "stale_server_or_missing_endpoint") -> dict:
     local_probe = local_demo_default_probe(client.base_url)
     current_code_command = f"AGENTOPS_BASE_URL={client.base_url} agentops local readiness --require-current-code"
+    retry_command = f"AGENTOPS_BASE_URL={client.base_url} agentops --request-timeout {max(int(getattr(args, 'request_timeout', 30) or 30), 120)} operator loop-bootstrap --adapter {args.adapter} --limit {args.limit} --run-service-check"
     repair_commands = [
         current_code_command,
         f"python3 scripts/run_local_stack.py --install-ui",
-        f"AGENTOPS_BASE_URL={client.base_url} agentops operator loop-bootstrap --adapter {args.adapter} --limit {args.limit} --run-service-check",
+        retry_command,
     ]
     if not local_probe.get("same_as_target") and local_probe.get("ready"):
         probe_url = str(local_probe.get("base_url") or LOCAL_DEMO_DEFAULT_URL)
-        repair_commands.insert(0, f"AGENTOPS_BASE_URL={probe_url} agentops operator loop-bootstrap --adapter {args.adapter} --limit {args.limit} --run-service-check")
+        repair_commands.insert(0, f"AGENTOPS_BASE_URL={probe_url} agentops --request-timeout {max(int(getattr(args, 'request_timeout', 30) or 30), 120)} operator loop-bootstrap --adapter {args.adapter} --limit {args.limit} --run-service-check")
         repair_commands.append(f"agentops login --base-url {probe_url}")
+    reason = "The selected MIS server is reachable but does not expose the loop-bootstrap dependency endpoint, or the saved CLI target points at an older/stopped local server."
+    if error_type == "local_mis_endpoint_timeout":
+        reason = "The selected MIS server is reachable, but a loop-bootstrap dependency endpoint exceeded the CLI request timeout on the current local ledger."
     return {
         "provider": "agentops-operator",
         "operation": "operator_loop_bootstrap",
@@ -1575,7 +1581,7 @@ def _operator_loop_bootstrap_stale_endpoint(args, client: AgentOpsClient, *, end
         "adapter": args.adapter,
         "workspace_id": client.workspace_id,
         "target_base_url": client.base_url,
-        "error_type": "stale_server_or_missing_endpoint",
+        "error_type": error_type,
         "missing_endpoint": endpoint,
         "error": redact_text(str(error), 800),
         "diagnostic": {
@@ -1586,7 +1592,8 @@ def _operator_loop_bootstrap_stale_endpoint(args, client: AgentOpsClient, *, end
             "current_code_command": current_code_command,
             "restart_current_code_command": "python3 scripts/run_local_stack.py --install-ui",
             "repair_commands": repair_commands,
-            "reason": "The selected MIS server is reachable but does not expose the loop-bootstrap dependency endpoint, or the saved CLI target points at an older/stopped local server.",
+            "retry_with_longer_timeout_command": retry_command,
+            "reason": reason,
             "token_omitted": True,
         },
         "next_action": repair_commands[0] if repair_commands else current_code_command,
@@ -1613,7 +1620,7 @@ def _operator_loop_bootstrap_stale_endpoint(args, client: AgentOpsClient, *, end
                 "id": "retry_loop_bootstrap",
                 "phase": "READ",
                 "status": "waiting",
-                "command": f"AGENTOPS_BASE_URL={client.base_url} agentops operator loop-bootstrap --adapter {args.adapter} --limit {args.limit} --run-service-check",
+                "command": retry_command,
                 "confirm_required": False,
                 "server_executes_shell": False,
                 "token_omitted": True,
@@ -1622,9 +1629,9 @@ def _operator_loop_bootstrap_stale_endpoint(args, client: AgentOpsClient, *, end
         "commands": {
             "current_code_check": current_code_command,
             "restart_current_mis": "python3 scripts/run_local_stack.py --install-ui",
-            "retry_loop_bootstrap": f"AGENTOPS_BASE_URL={client.base_url} agentops operator loop-bootstrap --adapter {args.adapter} --limit {args.limit} --run-service-check",
+            "retry_loop_bootstrap": retry_command,
         },
-        "contract": "blocked bootstrap recovery packet for Hermes/OpenClaw when the selected local MIS is stale or lacks loop-bootstrap dependency endpoints; it never executes shell, service-control, service-check, live adapters, or ledger writes",
+        "contract": "blocked bootstrap recovery packet for Hermes/OpenClaw when the selected local MIS is stale, slow, or lacks loop-bootstrap dependency endpoints; it never executes shell, service-control, service-check, live adapters, or ledger writes",
         "safety": {
             "read_only": True,
             "ledger_mutated": False,
@@ -1739,6 +1746,8 @@ def cmd_operator_loop_bootstrap(args, client: AgentOpsClient) -> dict:
     except RuntimeError as exc:
         if "/api/operator/start-check" in str(exc) and ("404" in str(exc) or "unknown endpoint" in str(exc)):
             return _operator_loop_bootstrap_stale_endpoint(args, client, endpoint="/api/operator/start-check", error=exc)
+        if "/api/operator/start-check" in str(exc) and "timed out" in str(exc).lower():
+            return _operator_loop_bootstrap_stale_endpoint(args, client, endpoint="/api/operator/start-check", error=exc, error_type="local_mis_endpoint_timeout")
         raise
     try:
         supervision = client.get(
@@ -1757,6 +1766,8 @@ def cmd_operator_loop_bootstrap(args, client: AgentOpsClient) -> dict:
     except RuntimeError as exc:
         if "/api/operator/loop-supervision" in str(exc) and ("404" in str(exc) or "unknown endpoint" in str(exc)):
             return _operator_loop_bootstrap_stale_endpoint(args, client, endpoint="/api/operator/loop-supervision", error=exc)
+        if "/api/operator/loop-supervision" in str(exc) and "timed out" in str(exc).lower():
+            return _operator_loop_bootstrap_stale_endpoint(args, client, endpoint="/api/operator/loop-supervision", error=exc, error_type="local_mis_endpoint_timeout")
         raise
     items = supervision.get("items") if isinstance(supervision.get("items"), list) else []
     supervision_item = next((row for row in items if isinstance(row, dict) and row.get("adapter") == args.adapter), {})

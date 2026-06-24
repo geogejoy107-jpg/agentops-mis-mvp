@@ -184,6 +184,10 @@ command fails closed as JSON instead of a bare 404. The blocked packet uses
 `error_type=stale_server_or_missing_endpoint` and includes current-code,
 restart, and retry commands so the agent can repair the local target before
 continuing.
+If the target is current but a heavy local endpoint exceeds the CLI timeout,
+the packet uses `error_type=local_mis_endpoint_timeout` and gives a
+longer-timeout retry command, again without writing ledgers or running local
+services.
 
 The same packet is available inside the local MIS through
 `GET /api/operator/loop-bootstrap?limit=8` and the AI Employees page. That API
